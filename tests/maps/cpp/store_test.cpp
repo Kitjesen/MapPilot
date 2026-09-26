@@ -195,18 +195,15 @@ void TestSavedRayEvidence(MapStore& store, const std::filesystem::path& root) {
   assert(tree->search(0.55, -0.55, 0.05) == nullptr);
 }
 
-// An imported point cloud has no saved rays: its OctoMap is a preview until
-// the cloud passes the point-cloud check and an operator approves it. Approval
-// is separate from evidence provenance and is cleared by an edit or rebuild.
-void TestPointCloudApproval(MapStore& store, const std::filesystem::path& root) {
+// An imported point cloud has no saved rays: its OctoMap is a preview that
+// can be viewed and used for localization, never activated for navigation.
+void TestPointCloudPreview(MapStore& store, const std::filesystem::path& root) {
   const std::string map_id = "imported_room";
   assert(store.CreateMap(map_id).ok);
   const auto dir = root / map_id;
   std::vector<lingtu::maps::PointXyz> room;
   for (int x = 0; x < 120; ++x)
     for (int y = 0; y < 80; ++y) room.push_back({x * 0.05F, y * 0.05F, 0.0F});
-  for (int x = 0; x < 120; ++x)
-    for (int z = 1; z < 30; ++z) room.push_back({x * 0.05F, 0.0F, z * 0.05F});
   std::string error;
   assert(lingtu::maps::WriteBinaryXyzPcd(dir / "map.pcd", room, &error));
 
@@ -215,77 +212,18 @@ void TestPointCloudApproval(MapStore& store, const std::filesystem::path& root) 
   options.resolution = 0.1;
   assert(lingtu::maps::JsonObjectBoolAtPath(
              pipeline.BuildOctomapArtifactJson(map_id, options), {"success"}) == true);
-  const auto metadata = [&] {
-    std::ifstream file(dir / "metadata.json");
-    return std::string((std::istreambuf_iterator<char>(file)), {});
-  };
-  const auto blocked_as_preview = [&] {
-    for (const auto& blocker : store.CheckMapActivation(map_id).blockers)
-      if (blocker.find("point-cloud preview") != std::string::npos) return true;
-    return false;
-  };
-  assert(blocked_as_preview());
-
-  const auto approved = pipeline.ApproveNavigationJson(map_id, "tester");
-  assert(lingtu::maps::JsonObjectStringAtPath(approved, {"status"}) == "approved");
-  assert(lingtu::maps::JsonObjectBoolAtPath(approved, {"check", "ok"}) == true);
-  assert(lingtu::maps::JsonObjectBoolAtPath(
-             metadata(), {"artifacts", "octomap", "navigation_ready"}) == false);
+  std::ifstream file(dir / "metadata.json");
+  const std::string metadata((std::istreambuf_iterator<char>(file)), {});
   assert(lingtu::maps::JsonObjectStringAtPath(
-             metadata(), {"artifacts", "octomap", "navigation_approval", "status"}) ==
-         "approved");
-  assert(lingtu::maps::JsonObjectStringAtPath(
-             metadata(), {"artifacts", "octomap", "navigation_approval", "approved_by"}) ==
-         "tester");
-  assert(lingtu::maps::JsonObjectNumberAtPath(
-             metadata(), {"artifacts", "octomap", "navigation_approval", "content_epoch"}) ==
-         static_cast<double>(store.ContentEpoch(map_id)));
-  assert(store.CheckMapActivation(map_id).ok);
-  assert(lingtu::maps::JsonObjectStringAtPath(pipeline.ApproveNavigationJson(map_id, "tester"),
-                                              {"status"}) == "already_approved");
-
-  lingtu::maps::OctomapEditOptions edit;
-  edit.state = "preblocked";
-  edit.x_m = 3.0;
-  edit.y_m = 2.0;
-  edit.z_m = 0.5;
-  edit.radius_m = 0.2;
-  assert(lingtu::maps::JsonObjectBoolAtPath(pipeline.EditOctomapVoxelsJson(map_id, edit),
-                                            {"success"}) == true);
-  assert(!lingtu::maps::JsonObjectStringAtPath(
-             metadata(), {"artifacts", "octomap", "navigation_approval", "status"}).has_value());
-  assert(!store.CheckMapActivation(map_id).ok);
-
-  options.resolution = 0.05;
+             metadata, {"artifacts", "octomap", "evidence_source"}) == "sampled_points");
   assert(lingtu::maps::JsonObjectBoolAtPath(
-             pipeline.BuildOctomapArtifactJson(map_id, options), {"success"}) == true);
-  assert(blocked_as_preview());
-
-  options.resolution = 0.1;
-  options.support_dilation_cells = 1;
-  assert(lingtu::maps::JsonObjectBoolAtPath(
-             pipeline.BuildOctomapArtifactJson(map_id, options), {"success"}) == true);
-  const auto dilated = pipeline.ApproveNavigationJson(map_id, "tester");
-  assert(lingtu::maps::JsonObjectStringAtPath(dilated, {"reason_code"}) ==
-         "point_cloud_check_failed");
-  assert(lingtu::maps::JsonObjectStringAtPath(dilated, {"message"})->find("support dilation") !=
-         std::string::npos);
-  assert(blocked_as_preview());
-
-  for (const auto field : {std::string("free_layers_above"),
-                           std::string("free_dilation_cells")}) {
-    options.support_dilation_cells = 0;
-    options.free_layers_above = field == "free_layers_above" ? 1 : 0;
-    options.free_dilation_cells = field == "free_dilation_cells" ? 1 : 0;
-    assert(lingtu::maps::JsonObjectBoolAtPath(
-               pipeline.BuildOctomapArtifactJson(map_id, options), {"success"}) == true);
-    const auto synthetic = pipeline.ApproveNavigationJson(map_id, "tester");
-    assert(lingtu::maps::JsonObjectStringAtPath(synthetic, {"reason_code"}) ==
-           "point_cloud_check_failed");
-    assert(lingtu::maps::JsonObjectStringAtPath(synthetic, {"message"})->find(field) !=
-           std::string::npos);
-    assert(blocked_as_preview());
-  }
+             metadata, {"artifacts", "octomap", "navigation_ready"}) == false);
+  const auto activation = store.CheckMapActivation(map_id);
+  assert(!activation.ok);
+  bool preview = false;
+  for (const auto& blocker : activation.blockers)
+    preview = preview || blocker.find("point-cloud preview") != std::string::npos;
+  assert(preview);
 }
 
 // One operator edit must decide a voxel regardless of how much ray evidence
@@ -456,7 +394,7 @@ int main() {
   assert(!incomplete_bundle.ok);
   bool incomplete_blocker = false;
   for (const auto& blocker : incomplete_bundle.blockers) {
-    incomplete_blocker |= blocker.find("saved-ray inputs are missing or incomplete") !=
+    incomplete_blocker |= blocker.find("saved scans are missing or incomplete") !=
                           std::string::npos;
   }
   assert(incomplete_blocker);
@@ -674,7 +612,7 @@ int main() {
 
   TestOctomapRoundTripKeepsEvidence(root);
   TestSavedRayEvidence(store, root);
-  TestPointCloudApproval(store, root);
+  TestPointCloudPreview(store, root);
   TestVoxelEditsSetState(store, root);
 #endif
 

@@ -1,4 +1,3 @@
-#include "lingtu/maps/build/import_check.hpp"
 #include "lingtu/maps/build/pcd.hpp"
 
 #include <cassert>
@@ -11,63 +10,9 @@
 #include <string>
 #include <vector>
 
-using lingtu::maps::CheckPointCloudForNavigation;
 using lingtu::maps::PointXyz;
 
 namespace {
-
-// A 6 m x 4 m room: floor sampled every `spacing` metres, two 2 m walls.
-std::vector<PointXyz> Room(double spacing) {
-  std::vector<PointXyz> points;
-  for (double x = 0.0; x < 6.0; x += spacing)
-    for (double y = 0.0; y < 4.0; y += spacing)
-      points.push_back({static_cast<float>(x), static_cast<float>(y), 0.0F});
-  for (double x = 0.0; x < 6.0; x += 0.05)
-    for (double z = 0.0; z < 2.0; z += 0.05) {
-      points.push_back({static_cast<float>(x), 0.0F, static_cast<float>(z)});
-      points.push_back({static_cast<float>(x), 4.0F, static_cast<float>(z)});
-    }
-  return points;
-}
-
-std::vector<PointXyz> RotatedAboutX(std::vector<PointXyz> points, double degrees) {
-  const double a = degrees * 3.14159265358979323846 / 180.0;
-  for (auto& p : points) {
-    const double y = p.y * std::cos(a) - p.z * std::sin(a);
-    const double z = p.y * std::sin(a) + p.z * std::cos(a);
-    p.y = static_cast<float>(y);
-    p.z = static_cast<float>(z);
-  }
-  return points;
-}
-
-bool Mentions(const lingtu::maps::PointCloudNavigationCheck& check, const std::string& text) {
-  for (const auto& blocker : check.blockers)
-    if (blocker.find(text) != std::string::npos) return true;
-  return false;
-}
-
-void TestNavigationCheck() {
-  const auto level = CheckPointCloudForNavigation(Room(0.02), 0.05);
-  assert(level.ok());
-  assert(level.floor_tilt_deg < 0.1);
-  assert(level.floor_fill > 0.9);
-
-  assert(Mentions(CheckPointCloudForNavigation(RotatedAboutX(Room(0.02), 8.0), 0.05), "tilted"));
-  assert(!CheckPointCloudForNavigation(RotatedAboutX(Room(0.02), 30.0), 0.05).ok());
-  std::vector<PointXyz> walls;
-  for (const auto& p : Room(0.02))
-    if (p.z > 0.0F) walls.push_back(p);
-  assert(!CheckPointCloudForNavigation(walls, 0.05).ok());
-
-  auto millimetres = Room(0.02);
-  for (auto& p : millimetres) { p.x *= 1000.0F; p.y *= 1000.0F; p.z *= 1000.0F; }
-  assert(Mentions(CheckPointCloudForNavigation(millimetres, 0.05), "check the units"));
-
-  const auto sparse = CheckPointCloudForNavigation(Room(0.2), 0.05);
-  assert(Mentions(sparse, "too sparse"));
-  assert(CheckPointCloudForNavigation(Room(0.2), 0.25).ok());
-}
 
 void Append(std::string& out, const void* data, std::size_t size) {
   out.append(static_cast<const char*>(data), size);
@@ -130,7 +75,6 @@ void TestBinaryCompressedPcd() {
 }  // namespace
 
 int main() {
-  TestNavigationCheck();
   TestBinaryCompressedPcd();
   return 0;
 }

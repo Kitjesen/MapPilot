@@ -26,9 +26,9 @@ struct MapStoreResult {
 struct ArtifactValidationOptions {
   bool require_octomap{false};
   bool require_occupancy{false};
-  // Activation is the motion boundary. Native saved-ray maps, or sampled
-  // point maps with a separate current operator approval, may be activated;
-  // provenance and approval are never represented by the same field.
+  // Activation is the motion boundary: only an OctoMap replayed natively from
+  // a complete set of saved scan rays may be activated. A point-cloud preview
+  // is for viewing and localization only.
   bool require_navigation_evidence{false};
   bool validate_metadata_identity{false};
   std::string expected_frame_id;

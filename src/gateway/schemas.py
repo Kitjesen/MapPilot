@@ -2093,7 +2093,6 @@ class ClientLinks(GatewayResponseModel):
     map_import_pcd: str | None = None
     map_crop: str | None = None
     map_mark_zone: str | None = None
-    map_approve_navigation: str | None = None
     map_build_octomap: str | None = None
     map_validate_plan: str | None = None
     map_cloud_reset: str | None = None

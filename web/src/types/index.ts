@@ -6,9 +6,9 @@ export interface MapInfo {
   has_occupancy?: boolean
   has_octomap?: boolean
   can_activate: boolean
-  // saved_rays / approved_point_cloud can navigate; preview needs a rebuild
-  // from saved scans or an approval; none has no planning map yet.
-  map_evidence?: 'saved_rays' | 'approved_point_cloud' | 'preview' | 'none'
+  // saved_rays can navigate; preview (an imported point cloud, or a map whose
+  // saved scans are gone) is for viewing and localization only.
+  map_evidence?: 'saved_rays' | 'preview' | 'none'
   state?: string | null
   is_active: boolean
   size_mb?: number
@@ -914,7 +914,6 @@ export interface ClientLinks {
   map_operation_cancel?: string
   map_operation_retry?: string
   map_import_pcd?: string
-  map_approve_navigation?: string
   map_crop?: string
   map_mark_zone?: string
   map_build_octomap?: string

@@ -926,8 +926,7 @@ def test_map_list_forwards_navigation_evidence(monkeypatch):
             "success": True,
             "active": "",
             "maps": [
-                {"name": "hall", "has_pcd": True, "can_activate": True,
-                 "map_evidence": "approved_point_cloud"},
+                {"name": "hall", "has_pcd": True, "can_activate": False, "map_evidence": "preview"},
                 {"name": "old", "has_pcd": True, "can_activate": False},
             ],
         },
@@ -937,38 +936,4 @@ def test_map_list_forwards_navigation_evidence(monkeypatch):
 
     payload = asyncio.run(_endpoint(app, "/api/v1/slam/maps")())
 
-    assert [item["map_evidence"] for item in payload["maps"]] == ["approved_point_cloud", "none"]
-
-
-def test_approve_navigation_reports_each_failed_check(monkeypatch):
-    from fastapi import FastAPI
-
-    import gateway.maps.routes as map_routes
-
-    commands = []
-
-    def approve(_gw, command):
-        commands.append(command)
-        return {
-            "success": False,
-            "reason_code": "point_cloud_check_failed",
-            "message": "floor is tilted 8 degrees; level the map so z points up",
-            "check": {"ok": False, "blockers": [
-                "floor is tilted 8 degrees; level the map so z points up",
-                "floor is too sparse for 0.05 m cells; import a denser cloud or build at a coarser resolution",
-            ]},
-        }
-
-    monkeypatch.setattr(map_routes, "_mapd_http_request", approve)
-    app = FastAPI()
-    map_routes.register_map_routes(app, SimpleNamespace())
-
-    response = asyncio.run(
-        _endpoint(app, "/api/v1/maps/{name}/approve_navigation")("hall", {"approved_by": "alice"})
-    )
-
-    assert response.status_code == 400
-    payload = _payload(response)
-    assert payload["reason_code"] == "point_cloud_check_failed"
-    assert len(payload["errors"]) == 2
-    assert commands == [{"action": "approve_map_navigation", "map_id": "hall", "approved_by": "alice"}]
+    assert [item["map_evidence"] for item in payload["maps"]] == ["preview", "none"]

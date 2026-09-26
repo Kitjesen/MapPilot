@@ -344,8 +344,6 @@ std::string Invoke(MapsServiceCore &service, mapd::SaveCoordinator *save_coordin
     options.timeout_sec = f.NumberOr("timeout_sec", 15.0);
     return service.EditOctomapVoxelsJson(f.String("map_id"), options);
   }
-  if (action == "approve_map_navigation")
-    return service.ApproveNavigationJson(f.String("map_id"), f.StringOr("approved_by", "operator"));
   if (action == "build_navigation_package")
     return service.BuildNavigationPackageJson(f.String("map_id"), OctomapOptions(f),
                                               f.BoolOr("include_esdf", true),

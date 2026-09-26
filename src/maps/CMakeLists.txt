@@ -39,13 +39,13 @@ add_library(lingtu_maps STATIC
   cpp/json.cpp
   cpp/semantic_taxonomy.cpp
   cpp/build/grid_artifacts.cpp
-  cpp/build/import_check.cpp
   cpp/build/occupancy_snapshot.cpp
   cpp/build/pcd.cpp
   cpp/build/saved_scans.cpp
   cpp/build/pipeline.cpp
   cpp/build/process.cpp
   cpp/semantic_map_persistence.cpp
+  cpp/patch_bundle.cpp
   cpp/save.cpp
   cpp/service.cpp
   cpp/service_jobs.cpp

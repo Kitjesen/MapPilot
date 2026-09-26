@@ -503,8 +503,10 @@ int main() {
     differing_receipt.source_point_count = 99U;
     Require(engine.ProvideSnapshot("receipt_count_differs", differing_receipt).accepted,
             "SaveMap rescanned map.pcd to compare receipt point count");
-    Require(WaitTerminal(engine, "receipt_count_differs").state == SaveJobState::kSucceeded,
-            "valid source with a sufficient receipt point count did not save");
+    const auto receipt_status = WaitTerminal(engine, "receipt_count_differs");
+    Require(receipt_status.state == SaveJobState::kSucceeded,
+            "valid source with a sufficient receipt point count did not save: " +
+                receipt_status.reason_code + " " + receipt_status.message);
 
     const auto request = Request("save_v1", "warehouse");
     const auto begin = engine.Begin(request);

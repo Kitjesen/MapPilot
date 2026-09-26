@@ -83,9 +83,6 @@ class MapPipelineCore {
   std::string EditOctomapVoxelsJson(
       const std::string& map_id,
       const OctomapEditOptions& options);
-  // Records a separate operator approval for a sampled-point OctoMap. This
-  // never changes the saved-ray navigation_ready provenance field.
-  std::string ApproveNavigationJson(const std::string& map_id, const std::string& approved_by);
   std::string BuildNavigationPackageJson(
       const std::string& map_id,
       const OctomapBuildOptions& options,
