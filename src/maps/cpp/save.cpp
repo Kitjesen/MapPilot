@@ -329,7 +329,6 @@ std::string RequestCanonical(const SaveMapRequest &request) {
       << request.octomap.slam_source << '\n'
       << request.octomap.localization_source << '\n'
       << request.octomap.mapping_source << '\n'
-      << request.octomap.timeout_sec << '\n'
       << request.require_slam_healthy << request.allow_unverified_snapshot << '\n'
       << request.minimum_point_count;
   if (!request.product_session_id.empty()) {
@@ -1393,7 +1392,6 @@ class SaveMapEngine::Impl {
     AppendKey(out, "octomap_slam_source", job.request.octomap.slam_source);
     AppendKey(out, "octomap_localization_source", job.request.octomap.localization_source);
     AppendKey(out, "octomap_mapping_source", job.request.octomap.mapping_source);
-    AppendKey(out, "octomap_timeout_sec", PreciseDouble(job.request.octomap.timeout_sec));
     if (job.snapshot.has_value()) {
       AppendKey(out, "snapshot_id", job.snapshot->snapshot_id);
       AppendKey(out, "snapshot_source_dir", job.snapshot->source_dir.string());
@@ -1462,9 +1460,9 @@ class SaveMapEngine::Impl {
     }
     job->request.require.occupancy = ParseBool(GetValue(values, "require_occupancy", "1"));
     job->request.require.octomap = ParseBool(GetValue(values, "require_octomap", "1"));
-    job->request.require.esdf = ParseBool(GetValue(values, "require_esdf", "1"));
+    job->request.require.esdf = ParseBool(GetValue(values, "require_esdf"));
     job->request.require.traversability =
-        ParseBool(GetValue(values, "require_traversability", "1"));
+        ParseBool(GetValue(values, "require_traversability"));
     job->request.require.semantic = ParseBool(GetValue(values, "require_semantic"));
     job->request.require_slam_healthy = ParseBool(GetValue(values, "require_slam_healthy", "1"));
     job->request.allow_unverified_snapshot =
@@ -1499,7 +1497,6 @@ class SaveMapEngine::Impl {
         GetValue(values, "octomap_localization_source", "unknown");
     job->request.octomap.mapping_source =
         GetValue(values, "octomap_mapping_source", "lingtu_maps_pipeline");
-    job->request.octomap.timeout_sec = ParseDouble(GetValue(values, "octomap_timeout_sec"), 60.0);
 
     job->status.job_id = GetValue(values, "job_id", job->request.request_id);
     job->status.request_id = job->request.request_id;

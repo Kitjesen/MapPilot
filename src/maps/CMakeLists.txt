@@ -340,6 +340,12 @@ if(BUILD_TESTING)
     ${_LINGTU_MAPS_TEST_DIR}/mapd_service_dispatch_test.cpp
   )
   target_link_libraries(lingtu_maps_mapd_service_dispatch_test PRIVATE lingtu_maps)
+  if(octomap_FOUND)
+    target_compile_definitions(
+      lingtu_maps_mapd_service_dispatch_test
+      PRIVATE LINGTU_MAPS_HAS_OCTOMAP=1
+    )
+  endif()
   add_test(
     NAME lingtu_maps_mapd_service_dispatch_test
     COMMAND lingtu_maps_mapd_service_dispatch_test

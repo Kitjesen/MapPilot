@@ -195,7 +195,8 @@ new map ID, or switch maps through ProductControl before modifying the old one.
 | `map.pcd`, `metadata.json` | Required canonical source and metadata |
 | `octomap.ot` | Current native navigation artifact |
 | `poses.txt`, `scan_origin.txt`, `patches/` | Required for a saved-ray navigation artifact; optional only for preview/diagnostic maps |
-| `occupancy.npz`, `esdf.npz`, `traversability.npz` | Optional derived products |
+| `occupancy.npz` | Default save output; consumed by saved-map exploration |
+| `esdf.npz`, `traversability.npz` | Explicit offline build outputs; not required by default save or 3D navigation |
 | `semantic_map.bin` | Optional semantic product; does not alone make a map activation-ready |
 
 SaveMap follows one transaction:

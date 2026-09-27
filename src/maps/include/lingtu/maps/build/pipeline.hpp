@@ -33,7 +33,6 @@ struct OctomapBuildOptions {
   std::string slam_source{"unknown"};
   std::string localization_source{"unknown"};
   std::string mapping_source{"lingtu_maps_pipeline"};
-  double timeout_sec{180.0};
   std::function<bool()> cancel_requested;
 };
 

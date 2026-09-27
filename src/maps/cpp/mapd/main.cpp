@@ -304,8 +304,8 @@ Options ParseOptions(int argc, char **argv) {
   const bool build_octomap = EnvEnabled("LINGTU_MAP_SAVE_BUILD_OCTOMAP", true);
   save_request.require.occupancy = true;
   save_request.require.octomap = build_octomap;
-  save_request.require.esdf = build_octomap;
-  save_request.require.traversability = build_octomap;
+  save_request.require.esdf = false;
+  save_request.require.traversability = false;
   save_request.require.semantic = false;
   save_request.source.dynamic_filter_enabled = EnvEnabled("LINGTU_SAVE_DYNAMIC_FILTER", true);
   save_request.source.dynamic_filter_required =
@@ -317,24 +317,12 @@ Options ParseOptions(int argc, char **argv) {
   save_request.octomap.resolution = ParseDouble(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_RESOLUTION",
                                                 std::to_string(save_request.octomap.resolution)),
                                                 "LINGTU_MAP_SAVE_OCTOMAP_RESOLUTION");
-  save_request.octomap.support_dilation_cells =
-      ParseInt(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_SUPPORT_DILATION_CELLS", "0"),
-               "LINGTU_MAP_SAVE_OCTOMAP_SUPPORT_DILATION_CELLS");
-  save_request.octomap.free_layers_above =
-      ParseInt(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_FREE_LAYERS_ABOVE", "0"),
-               "LINGTU_MAP_SAVE_OCTOMAP_FREE_LAYERS_ABOVE");
-  save_request.octomap.free_dilation_cells =
-      ParseInt(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_FREE_DILATION_CELLS", "0"),
-               "LINGTU_MAP_SAVE_OCTOMAP_FREE_DILATION_CELLS");
   save_request.octomap.frame_id = EnvOr("LINGTU_MAP_FRAME", "map");
   save_request.octomap.source_profile = EnvOr("LINGTU_PROFILE", "native_dds");
   save_request.octomap.data_source = EnvOr("LINGTU_DATA_SOURCE", "field");
   save_request.octomap.slam_source = "native_dds";
   save_request.octomap.localization_source = "native_dds";
   save_request.octomap.mapping_source = "save_map_product_chain";
-  save_request.octomap.timeout_sec = ParseDouble(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_TIMEOUT_SEC",
-                                                 std::to_string(save_request.octomap.timeout_sec)),
-                                                 "LINGTU_MAP_SAVE_OCTOMAP_TIMEOUT_SEC");
   if (EnvOr("LINGTU_ENV", "") == "sim" && options.product_session_id.empty()) {
     throw std::invalid_argument("LINGTU_PRODUCT_SESSION_ID is required in simulation");
   }

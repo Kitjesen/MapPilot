@@ -228,7 +228,6 @@ OctomapBuildOptions OctomapOptions(const Fields &fields) {
   options.slam_source = fields.StringOr("octomap_slam_source", "unknown");
   options.localization_source = fields.StringOr("octomap_localization_source", options.slam_source);
   options.mapping_source = fields.StringOr("octomap_mapping_source", "lingtu_maps_pipeline");
-  options.timeout_sec = fields.NumberOr("octomap_timeout_sec", options.timeout_sec);
   return options;
 }
 
@@ -346,8 +345,8 @@ std::string Invoke(MapsServiceCore &service, mapd::SaveCoordinator *save_coordin
   }
   if (action == "build_navigation_package")
     return service.BuildNavigationPackageJson(f.String("map_id"), OctomapOptions(f),
-                                              f.BoolOr("include_esdf", true),
-                                              f.BoolOr("include_traversability", true));
+                                              f.BoolOr("include_esdf", false),
+                                              f.BoolOr("include_traversability", false));
   if (action == "build_esdf_artifact")
     return service.BuildEsdfArtifactJson(f.String("map_id"));
   if (action == "build_traversability_artifact")

@@ -165,8 +165,6 @@ BuildOptions ParseBuildOptions(int argc, char **argv) {
       options.build.localization_source = next();
     } else if (argument == "--mapping-source") {
       options.build.mapping_source = next();
-    } else if (argument == "--timeout-s") {
-      options.build.timeout_sec = ParseDouble(next(), "--timeout-s");
     } else if (argument == "--help" || argument == "-h") {
       PrintUsage();
       std::exit(0);
@@ -177,10 +175,10 @@ BuildOptions ParseBuildOptions(int argc, char **argv) {
   if (!MapStore::IsValidMapId(options.map_id)) {
     throw std::invalid_argument("invalid map id");
   }
-  if (options.build.resolution <= 0.0 || options.build.timeout_sec <= 0.0 ||
-      options.build.support_dilation_cells < 0 || options.build.free_layers_above < 0 ||
+  if (options.build.resolution <= 0.0 || options.build.support_dilation_cells < 0 ||
+      options.build.free_layers_above < 0 ||
       options.build.free_dilation_cells < 0 || options.build.frame_id.empty()) {
-    throw std::invalid_argument("build geometry and timeout values must be positive");
+    throw std::invalid_argument("build geometry values must be positive");
   }
   return options;
 }

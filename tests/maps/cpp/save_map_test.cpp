@@ -241,7 +241,6 @@ SaveMapRequest Request(
   request.request_id = request_id;
   request.map_id = map_id;
   request.source.dynamic_filter_enabled = false;
-  request.octomap.timeout_sec = 30.0;
   request.require.semantic = false;
   return request;
 }
@@ -552,10 +551,10 @@ int main() {
         "SaveMap without a complete patch bundle did not publish the exact PGO skip contract");
     Require(std::filesystem::is_regular_file(status.map_dir / "octomap.ot"), "octomap missing");
     Require(std::filesystem::is_regular_file(status.map_dir / "occupancy.npz"), "occupancy missing");
-    Require(std::filesystem::is_regular_file(status.map_dir / "esdf.npz"), "ESDF missing");
-    Require(
-        std::filesystem::is_regular_file(status.map_dir / "traversability.npz"),
-        "traversability missing");
+    Require(!std::filesystem::exists(status.map_dir / "esdf.npz"),
+            "default SaveMap unexpectedly built ESDF");
+    Require(!std::filesystem::exists(status.map_dir / "traversability.npz"),
+            "default SaveMap unexpectedly built traversability");
     Require(!std::filesystem::exists(status.map_dir / ".versions"),
             "SaveMap retained a version-history directory");
     Require(!std::filesystem::exists(status.map_dir / "current_version.txt"),

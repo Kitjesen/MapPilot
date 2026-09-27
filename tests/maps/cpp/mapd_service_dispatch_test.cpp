@@ -141,6 +141,39 @@ int main() {
   }
   const auto imported = service.ImportPcdJson("preview", source, 0.0, {});
   assert(lingtu::maps::JsonObjectBoolAtPath(imported, {"success"}) == true);
+#if defined(LINGTU_MAPS_HAS_OCTOMAP)
+  const auto build_source = root / "build-defaults.pcd";
+  {
+    std::ofstream points(build_source);
+    points << "VERSION .7\nFIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\n"
+              "WIDTH 4\nHEIGHT 1\nPOINTS 4\nDATA ascii\n"
+              "0 0 0\n1 0 0\n0 1 0\n1 1 0\n";
+  }
+  const auto build_imported = service.ImportPcdJson("build_defaults", build_source, 0.0, {});
+  assert(lingtu::maps::JsonObjectBoolAtPath(build_imported, {"success"}) == true);
+  const auto default_package = DispatchServiceJson(
+      service, R"({"action":"build_navigation_package","map_id":"build_defaults"})");
+  assert(default_package.ok);
+  assert(lingtu::maps::JsonObjectBoolAtPath(default_package.json, {"success"}) == true);
+  const auto built_map = service.Store().MapPath("build_defaults");
+  assert(std::filesystem::is_regular_file(built_map / "occupancy.npz"));
+  assert(std::filesystem::is_regular_file(built_map / "octomap.ot"));
+  assert(!std::filesystem::exists(built_map / "esdf.npz"));
+  assert(!std::filesystem::exists(built_map / "traversability.npz"));
+  assert(lingtu::maps::JsonObjectBoolAtPath(
+             default_package.json, {"steps", "esdf", "requested"}) == false);
+  assert(lingtu::maps::JsonObjectBoolAtPath(
+             default_package.json, {"steps", "traversability", "requested"}) == false);
+
+  const auto explicit_esdf = DispatchServiceJson(
+      service, R"({"action":"build_esdf_artifact","map_id":"build_defaults"})");
+  assert(explicit_esdf.ok);
+  assert(std::filesystem::is_regular_file(built_map / "esdf.npz"));
+  const auto explicit_traversability = DispatchServiceJson(
+      service, R"({"action":"build_traversability_artifact","map_id":"build_defaults"})");
+  assert(explicit_traversability.ok);
+  assert(std::filesystem::is_regular_file(built_map / "traversability.npz"));
+#endif
   const auto preview = DispatchServiceJson(
       service, R"({"action":"get_map_points","map_id":"preview","max_points":80000})");
   assert(preview.ok);
