@@ -112,7 +112,7 @@ def test_native_release_installer_reads_current_product_identity() -> None:
         current_path.unlink(missing_ok=True)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.split("\0") == [
+    assert result.stdout.removesuffix("\0").split("\0") == [
         "nav",
         "real",
         "unitree/go2",

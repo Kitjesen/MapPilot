@@ -169,6 +169,7 @@ run_self_test() {
   local mapd_tar_listing
   local mapd_missing_output
   local map_opt_missing_output
+  local dashboard_missing_output
   local preflight_output
   local unexpected_root_output
   local fake_control
@@ -203,6 +204,7 @@ run_self_test() {
     "${test_root}/source/src/localization/fastlio2/config" \
     "${test_root}/source/src/nav/cpp" \
     "${test_root}/source/src/nav/inspection" \
+    "${test_root}/source/web/dist/assets" \
     "${install_prefix}/bin" \
     "${install_prefix}/etc/lingtu" \
     "${install_prefix}/lib/extensions/depthengine" \
@@ -225,6 +227,10 @@ run_self_test() {
   printf 'internal only\n' > "${test_root}/source/src/nav/inspection/internal.hpp"
   printf 'removed before packaging\n' > "${test_root}/source/config/deleted.txt"
   printf '/web/dist/\n' > "${test_root}/source/.gitignore"
+  printf '<html>Dashboard self-test</html>\n' \
+    > "${test_root}/source/web/dist/index.html"
+  printf 'console.log("dashboard self-test");\n' \
+    > "${test_root}/source/web/dist/assets/self-test.js"
   git -C "${test_root}/source" init -q
   git -C "${test_root}/source" add VERSION config sim src .gitignore
   rm "${test_root}/source/config/deleted.txt"
@@ -334,6 +340,25 @@ PY
     <<<"${unexpected_root_output}"
   rmdir "${install_prefix}/debug"
 
+  mv \
+    "${test_root}/source/web/dist/index.html" \
+    "${test_root}/source/web/dist/index.html.missing"
+  if dashboard_missing_output="$(
+    LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
+      LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
+      LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
+      SOURCE_DATE_EPOCH=1704067200 \
+      bash "${BASH_SOURCE[0]}" v0.0.0 "${test_root}/output-dashboard-missing" 2>&1
+  )"; then
+    echo "packager accepted a release without a built dashboard" >&2
+    return 1
+  fi
+  grep -Fq 'Native release dashboard is missing' \
+    <<<"${dashboard_missing_output}"
+  mv \
+    "${test_root}/source/web/dist/index.html.missing" \
+    "${test_root}/source/web/dist/index.html"
+
   LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
     LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
     LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
@@ -369,6 +394,10 @@ PY
     'lingtu-0.0.0-aarch64-native-release/src/localization/fastlio2/config/self-test.yaml' \
     <<<"${tar_listing}"
   grep -Fq 'lingtu-0.0.0-aarch64-native-release/install_nav.sh' \
+    <<<"${tar_listing}"
+  grep -Fq 'lingtu-0.0.0-aarch64-native-release/web/dist/index.html' \
+    <<<"${tar_listing}"
+  grep -Fq 'lingtu-0.0.0-aarch64-native-release/web/dist/assets/self-test.js' \
     <<<"${tar_listing}"
   grep -Fq \
     'lingtu-0.0.0-aarch64-native-release/src/nav/inspection/service.py' \
@@ -510,11 +539,6 @@ PY
     "Standard install prefix is missing executable: ${install_prefix}/bin/prune" \
     <<<"${mapd_missing_output}"
   install -m 0755 /dev/null "${install_prefix}/bin/prune"
-  mkdir -p "${test_root}/source/web/dist/assets"
-  printf '<html>Dashboard self-test</html>\n' \
-    > "${test_root}/source/web/dist/index.html"
-  printf 'console.log("dashboard self-test");\n' \
-    > "${test_root}/source/web/dist/assets/self-test.js"
   LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
     LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
     LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
@@ -801,6 +825,16 @@ trap cleanup EXIT
 PACKAGE_ROOT="${STAGING_DIR}/${PACKAGE_NAME}"
 mkdir -p "${PACKAGE_ROOT}"
 
+if [[ ! -s "${ROOT}/web/dist/index.html" ]]; then
+  echo "Native release dashboard is missing: build web/dist before packaging" >&2
+  exit 1
+fi
+if [[ ! -d "${ROOT}/web/dist/assets" ]] \
+    || [[ -z "$(find "${ROOT}/web/dist/assets" -type f -print -quit)" ]]; then
+  echo "Native release dashboard assets are missing: build web/dist before packaging" >&2
+  exit 1
+fi
+
 # Mirror the deployable Host tree while omitting development-only and explicit
 # compatibility surfaces. Native Fast-LIO2 only needs its runtime config here;
 # the algorithm implementation is already linked into the packaged binary.
@@ -855,10 +889,8 @@ list_checkout_files "${ROOT}" \
   "${ROOT}/" "${PACKAGE_ROOT}/"
 
 # The Gateway serves this built dashboard, which is ignored by Git.
-if [[ -d "${ROOT}/web/dist" ]]; then
-  mkdir -p "${PACKAGE_ROOT}/web/dist"
-  rsync -a "${ROOT}/web/dist/" "${PACKAGE_ROOT}/web/dist/"
-fi
+mkdir -p "${PACKAGE_ROOT}/web/dist"
+rsync -a "${ROOT}/web/dist/" "${PACKAGE_ROOT}/web/dist/"
 
 if [[ -e "${PACKAGE_ROOT}/src/nav/cpp" ]]; then
   echo "Native release must not contain internal source: src/nav/cpp" >&2

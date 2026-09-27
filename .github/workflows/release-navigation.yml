@@ -44,6 +44,13 @@ jobs:
           fetch-depth: 0
           submodules: false
 
+      - name: Configure Node.js for the field dashboard
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
       - name: Checkout DOSO SDK
         uses: actions/checkout@v4
         with:

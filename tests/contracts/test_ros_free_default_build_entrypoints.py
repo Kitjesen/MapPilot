@@ -95,6 +95,8 @@ def test_makefile_exposes_the_native_product_workflow() -> None:
         assert native_builder in makefile
 
     assert "if [ -f scripts/build/build_mapd.sh ]" in makefile
+    assert "npm --prefix web ci --silent" in makefile
+    assert "npm --prefix web run build" in makefile
     assert "$(PYTHON) -m pytest" in makefile
     assert "scripts/deploy/thunder/install_services.sh field-cpp" in makefile
     assert "$(PYTHON) -m lingtu.control switch map" in makefile
@@ -115,6 +117,8 @@ def test_active_ci_and_tag_release_use_native_aarch64_artifacts() -> None:
     assert "third_party/research_localization/small_gicp/include/**" in slam_workflow
     assert "bash scripts/build/build_slam_core.sh" in slam_workflow
     assert "runs-on: ubuntu-22.04-arm" in release_workflow
+    assert "actions/setup-node@v7" in release_workflow
+    assert "node-version: '24'" in release_workflow
     assert "make build PYTHON=python3" in release_workflow
     assert "bash scripts/deploy/package_native_release.sh --self-test" in release_workflow
     assert "dist/*native-release*" in release_workflow
@@ -126,6 +130,8 @@ def test_active_ci_and_tag_release_use_native_aarch64_artifacts() -> None:
     assert "build/dds_probe/lingtu_dds_probe" in package_script_text
     assert "git -C \"${ROOT}\" ls-files --error-unmatch" in package_script_text
     assert "build/maps/mapd" in package_script_text
+    assert "Native release dashboard is missing" in package_script_text
+    assert '"${ROOT}/web/dist/index.html"' in package_script_text
     assert "build/maps/liblingtu_maps.so" not in package_script_text
     assert 'INSTALLER_SOURCE="${SCRIPT_ROOT}/scripts/deploy/install_native_release.sh"' in package_script_text
     assert "Active Product requires maps/mapd" in installer_script_text

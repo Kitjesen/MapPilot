@@ -34,6 +34,9 @@ help:
 
 build:
 	@echo "Building native field Product ($(BUILD_TYPE))..."
+	@command -v npm >/dev/null 2>&1 || { echo "npm is required to build the field dashboard" >&2; exit 2; }
+	@npm --prefix web ci --silent
+	@npm --prefix web run build
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS=ON bash scripts/build/build_livox_sdk2_stream.sh
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" LINGTU_SLAM_BUILD_DDS_RUNTIME=ON bash scripts/build/build_slam_core.sh
 	@if [ -f scripts/build/build_mapd.sh ]; then CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_mapd.sh; fi
