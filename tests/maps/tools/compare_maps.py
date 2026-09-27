@@ -38,12 +38,16 @@ def run(
     argv: list[str], timeout_s: float, *, stdin_json: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     started = time.perf_counter()
+    stdin_bytes = (
+        None
+        if stdin_json is None
+        else json.dumps(stdin_json, separators=(",", ":")).encode("utf-8")
+    )
     try:
         completed = subprocess.run(
             argv,
-            input=None if stdin_json is None else json.dumps(stdin_json, separators=(",", ":")),
+            input=stdin_bytes,
             capture_output=True,
-            text=True,
             timeout=timeout_s,
             check=False,
         )
@@ -56,10 +60,12 @@ def run(
             "stderr": str(error),
         }
     elapsed_ms = (time.perf_counter() - started) * 1000.0
+    stdout = completed.stdout.decode("utf-8", errors="replace")
+    stderr = completed.stderr.decode("utf-8", errors="replace")
     parsed: Any = None
-    if completed.stdout.strip():
+    if stdout.strip():
         try:
-            parsed = json.loads(completed.stdout)
+            parsed = json.loads(stdout)
         except json.JSONDecodeError:
             parsed = None
     result = {
@@ -68,10 +74,10 @@ def run(
         "elapsed_ms": elapsed_ms,
         "stdout_json": parsed,
     }
-    if completed.stderr.strip():
-        result["stderr"] = completed.stderr.strip()
-    if parsed is None and completed.stdout.strip():
-        result["stdout"] = completed.stdout.strip()
+    if stderr.strip():
+        result["stderr"] = stderr.strip()
+    if parsed is None and stdout.strip():
+        result["stdout"] = stdout.strip()
     return result
 
 
