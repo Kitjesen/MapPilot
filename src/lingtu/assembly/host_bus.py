@@ -15,6 +15,7 @@ from nav.adapters.native.abi import (
     NATIVE_COMMAND_CAP_JOINT_STATE,
     NATIVE_COMMAND_CAP_MAP_SCENE,
     NATIVE_COMMAND_CAP_TRAVERSABILITY_GRID,
+    NativeCommandClientError,
     NativeCommandSession,
     get_native_command_session,
 )
@@ -321,8 +322,15 @@ class HostBus(Module):
 
     def _poll_paths(self) -> None:
         assert self._session is not None
-        self._publish_path(self._session.take_global_path(), self.global_path)
-        self._publish_path(self._session.take_local_path(), self.local_path)
+        for name, read, output in (
+            ("global", self._session.take_global_path, self.global_path),
+            ("local", self._session.take_local_path, self.local_path),
+        ):
+            try:
+                self._publish_path(read(), output)
+            except NativeCommandClientError as exc:
+                # A display read failure must not stop navigation state delivery.
+                logger.debug("%s path display sample discarded: %s", name, exc)
 
     def _poll_joint_state(self) -> None:
         assert self._session is not None
@@ -341,7 +349,11 @@ class HostBus(Module):
 
     def _poll_traversability(self) -> None:
         assert self._session is not None
-        payload = self._session.take_traversability_grid()
+        try:
+            payload = self._session.take_traversability_grid()
+        except NativeCommandClientError as exc:
+            self._traversability_error = f"native_traversability_read_failed:{exc}"
+            return
         if payload is None:
             return
         if not numpy_import_is_safe():

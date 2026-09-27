@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import struct
 import time
+from unittest.mock import Mock
 
 import pytest
 
 import lingtu.assembly.host_bus as host_bus_module
 from lingtu.assembly.host_bus import HostBus
+from nav.adapters.native.abi import NativeCommandClientError
 
 
 def _grid(
@@ -549,3 +551,64 @@ def test_host_bus_navigation_state_staleness_blocks_readiness(monkeypatch) -> No
     assert health["readiness"] == "navd_navigation_state_stale"
     assert health["navigation"]["max_age_s"] == 1.5
     assert health["navigation"]["age_s"] == pytest.approx(1.6)
+
+
+@pytest.mark.parametrize("stream", ["global_path", "local_path", "traversability_grid"])
+def test_display_read_failure_does_not_stop_navigation_updates(monkeypatch, stream) -> None:
+    bus = HostBus()
+    bus._running = True
+    bus._traversability_enabled = True
+    observed = []
+    global_paths = []
+    local_paths = []
+    bus.navigation_state._add_callback(observed.append)
+    bus.global_path._add_callback(global_paths.append)
+    bus.local_path._add_callback(local_paths.append)
+    session = Mock()
+    session.read_navigation_state.side_effect = [
+        {
+            "timestamp_s": time.time(), "frame_id": "map", "boot_id": "navd", "sequence": n,
+            "control_mode": 1, "lifecycle_state": 2, "active_task_id": "task",
+            "active_request_id": "goal", "goal_epoch": 1, "map_id": "room",
+            "map_content_epoch": 1, "planning_state": 2, "execution_state": 1,
+            "recovery_state": 0, "progress": 0.25, "authority": "autonomy",
+            "hold_reason": "", "failure_code": "",
+        }
+        for n in (1, 2)
+    ]
+    path = {"timestamp_s": time.time(), "frame_id": "map", "points": [{"x": 1, "y": 0, "z": 0}]}
+    session.take_navigation_goal_status.return_value = None
+    session.take_global_path.return_value = path
+    session.take_local_path.return_value = path
+    session.take_traversability_grid.return_value = None
+    getattr(session, "take_" + stream).side_effect = [
+        NativeCommandClientError("native telemetry read failed"),
+        None if stream == "traversability_grid" else path,
+    ]
+    bus._session = session
+    monkeypatch.setattr(bus._stop_event, "wait", Mock(side_effect=[False, False, True]))
+
+    bus._poll()
+
+    assert [state.sequence for state in observed] == [1, 2]
+    assert len(global_paths) == (1 if stream == "global_path" else 2)
+    assert len(local_paths) == (1 if stream == "local_path" else 2)
+    assert bus._running
+    assert bus._failure == ""
+    assert bus.startup_readiness() is None
+
+
+@pytest.mark.parametrize("method", ["read_navigation_state", "take_navigation_goal_status"])
+def test_core_navigation_read_failure_still_blocks_readiness(monkeypatch, method) -> None:
+    bus = HostBus()
+    bus._running = True
+    session = Mock()
+    session.read_navigation_state.return_value = None
+    getattr(session, method).side_effect = NativeCommandClientError("core read failed")
+    bus._session = session
+    monkeypatch.setattr(bus._stop_event, "wait", Mock(return_value=False))
+
+    bus._poll()
+
+    assert not bus._running
+    assert bus.startup_readiness() == "native_host_bus_failed:core read failed"
