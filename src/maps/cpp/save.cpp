@@ -330,8 +330,7 @@ std::string RequestCanonical(const SaveMapRequest &request) {
       << request.octomap.localization_source << '\n'
       << request.octomap.mapping_source << '\n'
       << request.octomap.timeout_sec << '\n'
-      << request.activate_on_success << request.require_slam_healthy
-      << request.allow_unverified_snapshot << '\n'
+      << request.require_slam_healthy << request.allow_unverified_snapshot << '\n'
       << request.minimum_point_count;
   if (!request.product_session_id.empty()) {
     out << '\n' << request.product_session_id;
@@ -821,12 +820,6 @@ std::string SaveMapStatusJson(const SaveMapStatus &status) {
          "\"completed_at_ns\":" +
          std::to_string(status.completed_at_ns) +
          ","
-         "\"activation_requested\":" +
-         (status.activation_requested ? "true" : "false") +
-         ","
-         "\"activation_succeeded\":" +
-         (status.activation_succeeded ? "true" : "false") +
-         ","
          "\"cancel_requested\":" +
          (status.cancel_requested ? "true" : "false") +
          ","
@@ -933,7 +926,6 @@ class SaveMapEngine::Impl {
     job->status.state = SaveJobState::kWaitingSnapshot;
     job->status.phase = SavePhase::kCapture;
     job->status.message = "waiting for map snapshot";
-    job->status.activation_requested = request.activate_on_success;
     job->status.created_at_ns = NowNs();
     job->status.updated_at_ns = job->status.created_at_ns;
     job->status.capture_dir = JobDir(request.request_id) / "capture";
@@ -1192,7 +1184,6 @@ class SaveMapEngine::Impl {
     job.status.cancel_requested = false;
     job.status.reason_code.clear();
     job.status.completed_at_ns = 0;
-    job.status.activation_succeeded = false;
     job.status.map_dir.clear();
     job.map_committed = false;
     job.status.artifact_report_json.clear();
@@ -1368,8 +1359,6 @@ class SaveMapEngine::Impl {
     AppendKey(out, "updated_at_ns", std::to_string(job.status.updated_at_ns));
     AppendKey(out, "completed_at_ns", std::to_string(job.status.completed_at_ns));
     AppendKey(out, "map_committed", job.map_committed ? "1" : "0");
-    AppendKey(out, "activation_requested", job.status.activation_requested ? "1" : "0");
-    AppendKey(out, "activation_succeeded", job.status.activation_succeeded ? "1" : "0");
     AppendKey(out, "cancel_requested", job.status.cancel_requested ? "1" : "0");
     AppendKey(out, "recovered", job.status.recovered ? "1" : "0");
     AppendKey(out, "require_occupancy", job.request.require.occupancy ? "1" : "0");
@@ -1377,7 +1366,6 @@ class SaveMapEngine::Impl {
     AppendKey(out, "require_esdf", job.request.require.esdf ? "1" : "0");
     AppendKey(out, "require_traversability", job.request.require.traversability ? "1" : "0");
     AppendKey(out, "require_semantic", job.request.require.semantic ? "1" : "0");
-    AppendKey(out, "activate_on_success", job.request.activate_on_success ? "1" : "0");
     AppendKey(out, "require_slam_healthy", job.request.require_slam_healthy ? "1" : "0");
     AppendKey(out, "allow_unverified_snapshot", job.request.allow_unverified_snapshot ? "1" : "0");
     AppendKey(out, "minimum_point_count", std::to_string(job.request.minimum_point_count));
@@ -1477,7 +1465,6 @@ class SaveMapEngine::Impl {
     job->request.require.traversability =
         ParseBool(GetValue(values, "require_traversability", "1"));
     job->request.require.semantic = ParseBool(GetValue(values, "require_semantic"));
-    job->request.activate_on_success = ParseBool(GetValue(values, "activate_on_success"));
     job->request.require_slam_healthy = ParseBool(GetValue(values, "require_slam_healthy", "1"));
     job->request.allow_unverified_snapshot =
         ParseBool(GetValue(values, "allow_unverified_snapshot"));
@@ -1531,9 +1518,6 @@ class SaveMapEngine::Impl {
     job->status.completed_at_ns =
         ParseIntegerStrict<std::int64_t>(GetValue(values, "completed_at_ns"));
     job->map_committed = ParseBool(GetValue(values, "map_committed"));
-    job->status.activation_requested = ParseBool(
-        GetValue(values, "activation_requested", job->request.activate_on_success ? "1" : "0"));
-    job->status.activation_succeeded = ParseBool(GetValue(values, "activation_succeeded"));
     job->status.cancel_requested = ParseBool(GetValue(values, "cancel_requested"));
     job->status.recovered = ParseBool(GetValue(values, "recovered"));
 
@@ -1679,23 +1663,16 @@ class SaveMapEngine::Impl {
       }
       if (committed_map && !terminal) {
         job->status.map_dir = map_dir;
-        job->status.activation_succeeded =
-            job->status.activation_requested && store_.ActiveMapId() == job->request.map_id;
       }
       if (!terminal) {
         job->status.recovered = true;
         job->status.cancel_requested = false;
         if (committed_map) {
-          job->status.state = job->status.activation_requested && !job->status.activation_succeeded
-                                  ? SaveJobState::kFailed
-                                  : SaveJobState::kSucceeded;
+          job->status.state = SaveJobState::kSucceeded;
           job->status.phase = SavePhase::kDone;
           job->status.progress = 1.0;
-          job->status.reason_code =
-              job->status.state == SaveJobState::kFailed ? "activation_failed_after_commit" : "";
-          job->status.message = job->status.state == SaveJobState::kFailed
-                                    ? "recovered committed map without requested activation"
-                                    : "recovered committed map";
+          job->status.reason_code.clear();
+          job->status.message = "recovered committed map";
           job->status.completed_at_ns = NowNs();
           std::error_code cleanup_error;
           std::filesystem::remove_all(WorkRoot(job->status.job_id), cleanup_error);
@@ -1788,16 +1765,10 @@ class SaveMapEngine::Impl {
     return job->status;
   }
 
-  void UpdateDurableEvidence(const std::shared_ptr<Job> &job, std::optional<bool> map_committed,
-                             std::optional<bool> activation_succeeded,
+  void UpdateDurableEvidence(const std::shared_ptr<Job> &job, bool map_committed,
                              const std::string &event = {}) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (map_committed.has_value()) {
-      job->map_committed = *map_committed;
-    }
-    if (activation_succeeded.has_value()) {
-      job->status.activation_succeeded = *activation_succeeded;
-    }
+    job->map_committed = map_committed;
     job->status.updated_at_ns = NowNs();
     PersistJobLocked(*job);
     if (!event.empty()) {
@@ -1919,6 +1890,17 @@ class SaveMapEngine::Impl {
       map_lock.reset();
       SetStatus(job, state, SavePhase::kDone, 1.0, message, reason);
     };
+    const auto allowed =
+        store_.CheckMapMutationAllowedWhileLocked(job->request.map_id, *map_lock);
+    if (!allowed.ok) {
+      finish(
+          SaveJobState::kFailed,
+          allowed.message,
+          allowed.message.find("active map conflict") != std::string::npos
+              ? "active_map_conflict"
+              : "active_map_state_invalid");
+      return;
+    }
 
     try {
       SetStatus(job, SaveJobState::kRunning, SavePhase::kValidate, 0.10,
@@ -2159,15 +2141,8 @@ class SaveMapEngine::Impl {
         }
         throw;
       }
-      UpdateDurableEvidence(job, true, std::nullopt, "MAP_COMMITTED");
+      UpdateDurableEvidence(job, true, "MAP_COMMITTED");
       std::filesystem::remove_all(commit_backup);
-      if (job->request.activate_on_success) {
-        const auto activated = store_.SetActiveMapWhileLocked(job->request.map_id, true, *map_lock);
-        if (!activated.ok) {
-          throw std::runtime_error("map committed but activation failed: " + activated.message);
-        }
-        UpdateDurableEvidence(job, std::nullopt, true, "ACTIVATION_SUCCEEDED");
-      }
       std::error_code cleanup_error;
       std::filesystem::remove_all(WorkRoot(job->status.job_id), cleanup_error);
       std::filesystem::remove_all(job->status.capture_dir, cleanup_error);
@@ -2179,23 +2154,14 @@ class SaveMapEngine::Impl {
           CommitBackup(store_.RootDir(), job->request.map_id, job->status.job_id);
       const bool committed = job->map_committed && std::filesystem::is_directory(map_dir);
       if (committed) {
-        const bool activation_succeeded =
-            job->status.activation_requested && store_.ActiveMapId() == job->request.map_id;
-        UpdateDurableEvidence(job, std::nullopt, activation_succeeded);
         std::error_code cleanup_error;
         std::filesystem::remove_all(commit_backup, cleanup_error);
         std::filesystem::remove_all(commit_stage, cleanup_error);
         std::filesystem::remove_all(WorkRoot(job->status.job_id), cleanup_error);
         std::filesystem::remove_all(job->status.capture_dir, cleanup_error);
-        if (job->status.activation_requested && !activation_succeeded) {
-          finish(SaveJobState::kFailed,
-                 std::string("map committed but requested activation failed: ") + exc.what(),
-                 "activation_failed_after_commit");
-        } else {
-          finish(SaveJobState::kSucceeded,
-                 std::string("recovered committed map after finalization error: ") + exc.what(),
-                 "");
-        }
+        finish(SaveJobState::kSucceeded,
+               std::string("recovered committed map after finalization error: ") + exc.what(),
+               "");
       } else if (CancelRequested(job->status.job_id)) {
         BeforePhase(job, job->status.phase, &map_lock);
       } else {

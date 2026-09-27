@@ -36,6 +36,15 @@ std::string MapsServiceCore::CreateMapJson(const std::string& map_id) {
 std::string MapsServiceCore::DeleteMapJson(const std::string& map_id) {
   try {
     const std::string id = MapStore::NormalizeMapId(map_id);
+    const auto allowed = store_.CheckMapMutationAllowed(id);
+    if (!allowed.ok) {
+      return FailureJson(
+          "delete",
+          allowed.message,
+          allowed.message.find("active map conflict") != std::string::npos
+              ? "active_map_conflict"
+              : "active_map_state_invalid");
+    }
     auto graph_lock = MapLock::TryAcquire(store_.RootDir(), "__map_graph__", "delete-map");
     if (!graph_lock.has_value()) {
       return FailureJson("delete", "map graph write in progress", "map_graph_busy");
@@ -61,6 +70,8 @@ std::string MapsServiceCore::DeleteMapJson(const std::string& map_id) {
       const std::string reason =
           result.message.find("write in progress") != std::string::npos
           ? "map_write_in_progress"
+          : result.message.find("active map conflict") != std::string::npos
+          ? "active_map_conflict"
           : result.message.find("active map state") != std::string::npos
           ? "active_map_state_invalid"
           : "map_not_found";
@@ -81,6 +92,15 @@ std::string MapsServiceCore::RenameMapJson(const std::string& map_id, const std:
   try {
     const std::string old_id = MapStore::NormalizeMapId(map_id);
     const std::string new_id = MapStore::NormalizeMapId(new_map_id);
+    const auto allowed = store_.CheckMapMutationAllowed(old_id);
+    if (!allowed.ok) {
+      return FailureJson(
+          "rename",
+          allowed.message,
+          allowed.message.find("active map conflict") != std::string::npos
+              ? "active_map_conflict"
+              : "active_map_state_invalid");
+    }
     auto graph_lock = MapLock::TryAcquire(store_.RootDir(), "__map_graph__", "rename-map");
     if (!graph_lock.has_value()) {
       return FailureJson("rename", "map graph write in progress", "map_graph_busy");
@@ -105,6 +125,8 @@ std::string MapsServiceCore::RenameMapJson(const std::string& map_id, const std:
     if (!result.ok) {
       const std::string reason = result.message.find("write in progress") != std::string::npos
           ? "map_write_in_progress"
+          : result.message.find("active map conflict") != std::string::npos
+          ? "active_map_conflict"
           : result.message.find("active map state") != std::string::npos
           ? "active_map_state_invalid"
           : (result.message.find("not found") != std::string::npos
@@ -128,6 +150,15 @@ std::string MapsServiceCore::RenameMapJson(const std::string& map_id, const std:
 std::string MapsServiceCore::RetireMapJson(const std::string& map_id) {
   try {
     const std::string id = MapStore::NormalizeMapId(map_id);
+    const auto allowed = store_.CheckMapMutationAllowed(id);
+    if (!allowed.ok) {
+      return FailureJson(
+          "retire",
+          allowed.message,
+          allowed.message.find("active map conflict") != std::string::npos
+              ? "active_map_conflict"
+              : "active_map_state_invalid");
+    }
     auto graph_lock = MapLock::TryAcquire(store_.RootDir(), "__map_graph__", "retire-map");
     if (!graph_lock.has_value()) {
       return FailureJson("retire", "map graph write in progress", "map_graph_busy");
@@ -153,6 +184,8 @@ std::string MapsServiceCore::RetireMapJson(const std::string& map_id) {
       const std::string reason =
           result.message.find("write in progress") != std::string::npos
           ? "map_write_in_progress"
+          : result.message.find("active map conflict") != std::string::npos
+          ? "active_map_conflict"
           : result.message.find("active map state") != std::string::npos
           ? "active_map_state_invalid"
           : "map_not_found";

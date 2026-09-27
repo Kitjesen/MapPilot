@@ -42,6 +42,37 @@ int main() {
   assert(record.ok);
   assert(record.json.find("dispatch_map") != std::string::npos);
   assert(record.json.find("\"map_dir\"") == std::string::npos);
+  assert(service.Store().SetActiveMap("dispatch_map", false).ok);
+  for (const std::string request : {
+           R"({"action":"delete_map","map_id":"dispatch_map"})",
+           R"({"action":"rename_map","map_id":"dispatch_map","new_map_id":"renamed"})",
+           R"({"action":"retire_map","map_id":"dispatch_map"})",
+       }) {
+    const auto conflict = DispatchServiceJson(service, request);
+    assert(!conflict.ok);
+    assert(lingtu::maps::JsonObjectStringAtPath(conflict.json, {"reason_code"}) ==
+           "active_map_conflict");
+    assert(service.Store().ActiveMapId() == "dispatch_map");
+  }
+  assert(service.Store().ClearActiveMap("dispatch_map").ok);
+  {
+    std::ofstream active_state(root / "active_map.txt", std::ios::binary | std::ios::trunc);
+    active_state << "../corrupt\n";
+  }
+  for (const std::string request : {
+           R"({"action":"delete_map","map_id":"dispatch_map"})",
+           R"({"action":"rename_map","map_id":"dispatch_map","new_map_id":"renamed"})",
+           R"({"action":"retire_map","map_id":"dispatch_map"})",
+       }) {
+    const auto invalid = DispatchServiceJson(service, request);
+    assert(!invalid.ok);
+    assert(lingtu::maps::JsonObjectStringAtPath(invalid.json, {"reason_code"}) ==
+           "active_map_state_invalid");
+  }
+  {
+    std::ofstream active_state(root / "active_map.txt", std::ios::binary | std::ios::trunc);
+    active_state << "\n";
+  }
   auto deleted = DispatchServiceJson(service, R"({"action":"delete_map","map_id":"dispatch_map"})");
   assert(deleted.ok);
 

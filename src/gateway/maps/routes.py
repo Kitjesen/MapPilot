@@ -343,6 +343,17 @@ def _map_lifecycle_response(
     )
 
 
+def _map_mutation_status_code(resp: dict[str, Any], *, default: int = 400) -> int:
+    if resp.get("success") is True:
+        return 200
+    reason_code = str(resp.get("reason_code") or "")
+    if reason_code == "map_not_found":
+        return 404
+    if reason_code in {"active_map_conflict", "active_map_state_invalid"}:
+        return 409
+    return default
+
+
 def _customer_map_lifecycle_response(
     resp: dict[str, Any],
     *,
@@ -603,7 +614,7 @@ def register_map_routes(app, gw) -> None:
             status_code=200 if ok else 404 if missing else 409,
             success_message="Map deleted.",
             failure_message="Map was not found." if missing else "Map could not be deleted.",
-            reason_code="map_not_found" if missing else "map_delete_failed" if not ok else None,
+            reason_code="map_not_found" if missing else None,
         )
 
     @app.post(
@@ -642,7 +653,7 @@ def register_map_routes(app, gw) -> None:
         return _customer_map_lifecycle_response(
             resp,
             name=name,
-            status_code=200 if ok else 400,
+            status_code=_map_mutation_status_code(resp),
             success_message="Map imported.",
             failure_message="Map could not be imported.",
         )
@@ -674,7 +685,7 @@ def register_map_routes(app, gw) -> None:
         return _customer_map_lifecycle_response(
             resp,
             name=name,
-            status_code=200 if ok else 400,
+            status_code=_map_mutation_status_code(resp),
             success_message="Map cropped.",
             failure_message="Map could not be cropped.",
             live_cloud_reset=ok,
@@ -701,7 +712,7 @@ def register_map_routes(app, gw) -> None:
         return _customer_map_lifecycle_response(
             resp,
             name=name,
-            status_code=200 if ok else 400,
+            status_code=_map_mutation_status_code(resp),
             success_message="Map zone updated.",
             failure_message="Map zone could not be updated.",
         )
@@ -758,8 +769,6 @@ def register_map_routes(app, gw) -> None:
             reason_code=(
                 "map_not_found"
                 if missing
-                else "occupancy_build_failed"
-                if not ok
                 else None
             ),
             occupancy_ok=ok,
@@ -781,7 +790,7 @@ def register_map_routes(app, gw) -> None:
         return _customer_map_lifecycle_response(
             resp,
             name=name,
-            status_code=200 if ok else 400,
+            status_code=_map_mutation_status_code(resp),
             success_message="OctoMap built.",
             failure_message="OctoMap could not be built.",
             octomap_ok=ok,
@@ -1015,12 +1024,12 @@ def register_map_routes(app, gw) -> None:
         resp = await asyncio.to_thread(_mapd_http_request, gw, cmd)
         if resp.get("success") is not True:
             message = str(resp.get("message") or "voxel edit failed")
-            code = 404 if "not found" in message.lower() else 400
-            return _map_lifecycle_response(
-                False,
-                message=message,
-                detail=resp,
-                status_code=code,
+            return _customer_map_lifecycle_response(
+                resp,
+                name=name,
+                status_code=_map_mutation_status_code(resp),
+                success_message="Map voxels updated.",
+                failure_message=message,
             )
         legacy = dict(resp)
         legacy.pop("success", None)
@@ -1133,11 +1142,18 @@ def register_map_routes(app, gw) -> None:
                 message=str(exc.detail),
                 status_code=int(exc.status_code),
             )
+        reason_code = str(resp.get("reason_code") or "")
         message = str(resp.get("message") or "").lower()
         status_code = (
             200
             if resp.get("success") is True
-            else (404 if "not found" in message else 409 if "exists" in message else 500)
+            else (
+                404
+                if reason_code == "map_not_found" or "not found" in message
+                else 409
+                if reason_code in {"active_map_conflict", "target_exists"} or "exists" in message
+                else 500
+            )
         )
         return _customer_map_lifecycle_response(
             resp,

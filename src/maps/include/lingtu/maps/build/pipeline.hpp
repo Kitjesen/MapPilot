@@ -92,12 +92,20 @@ class MapPipelineCore {
   std::string BuildTraversabilityArtifactJson(const std::string& map_id);
   std::string BuildSemanticArtifactJson(const std::string& map_id);
  private:
+  struct BuildLockResult {
+    bool ok{false};
+    std::string message;
+    std::string reason_code;
+  };
+
   std::filesystem::path BuildDir(const std::string& map_id) const;
   std::filesystem::path LockPath(const std::string& map_id) const;
   std::filesystem::path LockInfoPath(const std::string& map_id) const;
   void RecoverInterruptedBuilds() const;
   bool RecoverInterruptedBuild(const std::string& map_id) const;
-  bool TryCreateBuildLock(const std::string& map_id, const std::string& metadata) const;
+  BuildLockResult TryCreateBuildLock(
+      const std::string& map_id,
+      const std::string& metadata) const;
   std::filesystem::path LatestPath(const std::string& map_id) const;
   std::filesystem::path StatusPath(const std::string& map_id, const std::string& build_id) const;
 

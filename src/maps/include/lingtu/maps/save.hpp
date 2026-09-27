@@ -72,7 +72,6 @@ struct SaveMapRequest {
   PgoOptions pgo;
   SourceCommitOptions source;
   OctomapBuildOptions octomap;
-  bool activate_on_success{false};
   bool require_slam_healthy{true};
   // Development-only compatibility for snapshot sources without an atomic
   // native SLAM receipt. Field native_dds saves must leave this disabled.
@@ -97,8 +96,6 @@ struct SaveMapStatus {
   std::int64_t created_at_ns{0};
   std::int64_t updated_at_ns{0};
   std::int64_t completed_at_ns{0};
-  bool activation_requested{false};
-  bool activation_succeeded{false};
   bool cancel_requested{false};
   bool recovered{false};
   bool replayed{false};

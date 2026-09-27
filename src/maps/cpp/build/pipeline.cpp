@@ -1676,6 +1676,9 @@ bool MapPipelineCore::RecoverInterruptedBuild(const std::string &map_id) const {
   if (!recovery_lock.has_value()) {
     return false;
   }
+  if (!store_.CheckMapMutationAllowedWhileLocked(id, *recovery_lock).ok) {
+    return false;
+  }
 
   try {
     std::istringstream lock_info(ReadLockText(id));
@@ -1786,7 +1789,6 @@ std::string MapPipelineCore::ImportPcdJson(const std::string &map_id,
     }
 
     const auto map_dir = store_.MapPath(id);
-    std::filesystem::create_directories(map_dir);
     const auto pcd_path = map_dir / "map.pcd";
     static_cast<void>(RecoverInterruptedBuild(id));
     if (std::filesystem::exists(LockPath(id))) {
@@ -1806,9 +1808,9 @@ std::string MapPipelineCore::ImportPcdJson(const std::string &map_id,
     }
 
     build_id = MakeBuildId("SOURCE_MAP_IMPORT");
-    std::filesystem::create_directories(BuildDir(id));
-    if (!TryCreateBuildLock(id, build_id + "\nSOURCE_MAP_IMPORT\n")) {
-      return FailureJson("import_pcd", "map build already running", "build_in_progress");
+    const auto build_lock = TryCreateBuildLock(id, build_id + "\nSOURCE_MAP_IMPORT\n");
+    if (!build_lock.ok) {
+      return FailureJson("import_pcd", build_lock.message, build_lock.reason_code);
     }
     WriteStatus(id, build_id, "SOURCE_MAP_IMPORT", "RUNNING", 0.0, "source map import started");
 
@@ -1937,9 +1939,9 @@ std::string MapPipelineCore::CommitSavedSourceJson(const std::string &map_id,
     }
 
     build_id = MakeBuildId("SOURCE_MAP_SAVE");
-    std::filesystem::create_directories(BuildDir(id));
-    if (!TryCreateBuildLock(id, build_id + "\nSOURCE_MAP_SAVE\n")) {
-      return FailureJson("commit_saved_source", "map build already running", "build_in_progress");
+    const auto build_lock = TryCreateBuildLock(id, build_id + "\nSOURCE_MAP_SAVE\n");
+    if (!build_lock.ok) {
+      return FailureJson("commit_saved_source", build_lock.message, build_lock.reason_code);
     }
     WriteStatus(id, build_id, "SOURCE_MAP_SAVE", "RUNNING", 0.0, "saved source commit started");
 
@@ -2173,9 +2175,9 @@ std::string MapPipelineCore::CropPcdJson(const std::string &map_id, const PcdBou
     }
 
     build_id = MakeBuildId("SOURCE_MAP_CROP");
-    std::filesystem::create_directories(BuildDir(id));
-    if (!TryCreateBuildLock(id, build_id + "\nSOURCE_MAP_CROP\n")) {
-      return FailureJson("crop", "map build already running", "build_in_progress");
+    const auto build_lock = TryCreateBuildLock(id, build_id + "\nSOURCE_MAP_CROP\n");
+    if (!build_lock.ok) {
+      return FailureJson("crop", build_lock.message, build_lock.reason_code);
     }
     WriteStatus(id, build_id, "SOURCE_MAP_CROP", "RUNNING", 0.0, "source map crop started");
 
@@ -2299,10 +2301,10 @@ std::string MapPipelineCore::BuildOccupancySnapshotJson(const std::string &map_i
     }
 
     build_id = MakeBuildId("OCCUPANCY_SNAPSHOT");
-    std::filesystem::create_directories(BuildDir(id));
-    if (!TryCreateBuildLock(id, build_id + "\nOCCUPANCY_SNAPSHOT\n")) {
-      return FailureJson("build_occupancy_snapshot", "map build already running",
-                         "build_in_progress");
+    const auto build_lock = TryCreateBuildLock(id, build_id + "\nOCCUPANCY_SNAPSHOT\n");
+    if (!build_lock.ok) {
+      return FailureJson(
+          "build_occupancy_snapshot", build_lock.message, build_lock.reason_code);
     }
     WriteStatus(id, build_id, "OCCUPANCY_SNAPSHOT", "RUNNING", 0.0,
                 "occupancy snapshot build started");
@@ -2480,9 +2482,9 @@ std::string MapPipelineCore::BuildOctomapArtifactJson(const std::string &map_id,
     }
 
     build_id = MakeBuildId("OCTOMAP_ARTIFACT");
-    std::filesystem::create_directories(BuildDir(id));
-    if (!TryCreateBuildLock(id, build_id + "\nOCTOMAP_ARTIFACT\n")) {
-      return FailureJson("build_octomap", "map build already running", "build_in_progress");
+    const auto build_lock = TryCreateBuildLock(id, build_id + "\nOCTOMAP_ARTIFACT\n");
+    if (!build_lock.ok) {
+      return FailureJson("build_octomap", build_lock.message, build_lock.reason_code);
     }
     WriteStatus(id, build_id, "OCTOMAP_ARTIFACT", "RUNNING", 0.0,
                 "octomap artifact build started");
@@ -2691,9 +2693,9 @@ std::string MapPipelineCore::EditOctomapVoxelsJson(
     }
 
     build_id = MakeBuildId("OCTOMAP_EDIT");
-    std::filesystem::create_directories(BuildDir(id));
-    if (!TryCreateBuildLock(id, build_id + "\nOCTOMAP_EDIT\n")) {
-      return FailureJson("edit_voxels", "map build already running", "build_in_progress");
+    const auto build_lock = TryCreateBuildLock(id, build_id + "\nOCTOMAP_EDIT\n");
+    if (!build_lock.ok) {
+      return FailureJson("edit_voxels", build_lock.message, build_lock.reason_code);
     }
     WriteStatus(id, build_id, "OCTOMAP_EDIT", "RUNNING", 0.0,
                 "transactional OctoMap edit started");
@@ -2868,10 +2870,10 @@ std::string MapPipelineCore::BuildNavigationPackageJson(const std::string &map_i
     }
 
     build_id = MakeBuildId("NAVIGATION_PACKAGE");
-    std::filesystem::create_directories(BuildDir(id));
-    if (!TryCreateBuildLock(id, build_id + "\nNAVIGATION_PACKAGE\n")) {
-      return FailureJson("build_navigation_package", "map build already running",
-                         "build_in_progress");
+    const auto build_lock = TryCreateBuildLock(id, build_id + "\nNAVIGATION_PACKAGE\n");
+    if (!build_lock.ok) {
+      return FailureJson(
+          "build_navigation_package", build_lock.message, build_lock.reason_code);
     }
     WriteStatus(id, build_id, "NAVIGATION_PACKAGE", "RUNNING", 0.0,
                 "navigation package build started");
@@ -3139,9 +3141,9 @@ std::string MapPipelineCore::BuildEsdfArtifactJson(const std::string &map_id) {
     }
 
     build_id = MakeBuildId("ESDF_ARTIFACT");
-    std::filesystem::create_directories(BuildDir(id));
-    if (!TryCreateBuildLock(id, build_id + "\nESDF_ARTIFACT\n")) {
-      return FailureJson("build_esdf_artifact", "map build already running", "build_in_progress");
+    const auto build_lock = TryCreateBuildLock(id, build_id + "\nESDF_ARTIFACT\n");
+    if (!build_lock.ok) {
+      return FailureJson("build_esdf_artifact", build_lock.message, build_lock.reason_code);
     }
     WriteStatus(id, build_id, "ESDF_ARTIFACT", "RUNNING", 0.0, "esdf artifact build started");
 
@@ -3299,10 +3301,11 @@ std::string MapPipelineCore::BuildTraversabilityArtifactJson(const std::string &
     }
 
     build_id = MakeBuildId("TRAVERSABILITY_ARTIFACT");
-    std::filesystem::create_directories(BuildDir(id));
-    if (!TryCreateBuildLock(id, build_id + "\nTRAVERSABILITY_ARTIFACT\n")) {
-      return FailureJson("build_traversability_artifact", "map build already running",
-                         "build_in_progress");
+    const auto build_lock =
+        TryCreateBuildLock(id, build_id + "\nTRAVERSABILITY_ARTIFACT\n");
+    if (!build_lock.ok) {
+      return FailureJson(
+          "build_traversability_artifact", build_lock.message, build_lock.reason_code);
     }
     WriteStatus(id, build_id, "TRAVERSABILITY_ARTIFACT", "RUNNING", 0.0,
                 "traversability artifact build started");
@@ -3465,10 +3468,10 @@ std::string MapPipelineCore::BuildSemanticArtifactJson(const std::string &map_id
     }
 
     build_id = MakeBuildId("SEMANTIC_ARTIFACT");
-    std::filesystem::create_directories(BuildDir(id));
-    if (!TryCreateBuildLock(id, build_id + "\nSEMANTIC_ARTIFACT\n")) {
-      return FailureJson("build_semantic_artifact", "map build already running",
-                         "build_in_progress");
+    const auto build_lock = TryCreateBuildLock(id, build_id + "\nSEMANTIC_ARTIFACT\n");
+    if (!build_lock.ok) {
+      return FailureJson(
+          "build_semantic_artifact", build_lock.message, build_lock.reason_code);
     }
     WriteStatus(id, build_id, "SEMANTIC_ARTIFACT", "RUNNING", 0.0,
                 "semantic artifact build started");
@@ -3617,18 +3620,38 @@ std::filesystem::path MapPipelineCore::LockInfoPath(const std::string &map_id) c
   return LockPath(map_id) / "metadata.txt";
 }
 
-bool MapPipelineCore::TryCreateBuildLock(
+MapPipelineCore::BuildLockResult MapPipelineCore::TryCreateBuildLock(
     const std::string &map_id,
     const std::string &metadata) const {
+  const auto preflight = store_.CheckMapMutationAllowed(map_id);
+  if (!preflight.ok) {
+    return {
+        false,
+        preflight.message,
+        preflight.message.find("active map conflict") != std::string::npos
+            ? "active_map_conflict"
+            : "active_map_state_invalid"};
+  }
   static_cast<void>(RecoverInterruptedBuild(map_id));
   auto coordination_lock =
       MapLock::TryAcquire(store_.RootDir(), map_id, "map-pipeline-build-lock");
   if (!coordination_lock.has_value()) {
-    return false;
+    return {false, "map build already running", "build_in_progress"};
   }
+  const auto allowed = store_.CheckMapMutationAllowedWhileLocked(map_id, *coordination_lock);
+  if (!allowed.ok) {
+    return {
+        false,
+        allowed.message,
+        allowed.message.find("active map conflict") != std::string::npos
+            ? "active_map_conflict"
+            : "active_map_state_invalid"};
+  }
+  std::filesystem::create_directories(store_.MapPath(map_id));
+  std::filesystem::create_directories(BuildDir(map_id));
   const auto lock_path = LockPath(map_id);
   if (!std::filesystem::create_directory(lock_path)) {
-    return false;
+    return {false, "map build already running", "build_in_progress"};
   }
   try {
     WriteText(
@@ -3640,7 +3663,7 @@ bool MapPipelineCore::TryCreateBuildLock(
     std::filesystem::remove_all(lock_path, ignored);
     throw;
   }
-  return true;
+  return {true, {}, {}};
 }
 
 std::filesystem::path MapPipelineCore::LatestPath(const std::string &map_id) const {

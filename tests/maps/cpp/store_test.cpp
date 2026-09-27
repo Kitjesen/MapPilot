@@ -161,6 +161,9 @@ void TestSavedRayEvidence(MapStore& store, const std::filesystem::path& root) {
             "0.pcd 0 0 0 1 0 0 0\n1.pcd 0 0 0 1 0 0 0\n"
             "2.pcd 0 0 0 1 0 0 0\n3.pcd 0 0 0 1 0 0 0\n");
   WriteText(dir / "scan_origin.txt", "lidar_origin_in_patch 0 0 0\n");
+  WriteText(dir / "patch_bundle.manifest",
+            "LINGTU_PATCH_BUNDLE_V1\ncomplete 1\ndropped_count 0\n"
+            "first_sequence 0\nlast_sequence 3\npatch_count 4\n");
 
   lingtu::maps::MapPipelineCore pipeline(store);
   lingtu::maps::OctomapBuildOptions options;
@@ -478,6 +481,23 @@ int main() {
   assert(active.record->health.freshness == 0.0);
   assert(active.record->health.overall_score == 0.0);
 
+  lingtu::maps::MapPipelineCore active_pipeline(store);
+  const auto active_epoch = store.ContentEpoch("building_1f");
+  const auto active_import = active_pipeline.ImportPcdJson(
+      "building_1f", root / "building_1f" / "map.pcd", 0.0, {});
+  assert(lingtu::maps::JsonObjectBoolAtPath(active_import, {"success"}) == false);
+  assert(lingtu::maps::JsonObjectStringAtPath(active_import, {"reason_code"}) ==
+         "active_map_conflict");
+#if defined(LINGTU_MAPS_HAS_OCTOMAP)
+  const auto active_rebuild =
+      active_pipeline.BuildOctomapArtifactJson("building_1f", {});
+  assert(lingtu::maps::JsonObjectBoolAtPath(active_rebuild, {"success"}) == false);
+  assert(lingtu::maps::JsonObjectStringAtPath(active_rebuild, {"reason_code"}) ==
+         "active_map_conflict");
+#endif
+  assert(store.ContentEpoch("building_1f") == active_epoch);
+  assert(!std::filesystem::exists(root / "building_1f" / ".build_lock"));
+
   auto semantic_only = store.CreateMap("semantic_only");
   assert(semantic_only.ok);
   Touch(root / "semantic_only" / "semantic_map.bin");
@@ -496,22 +516,40 @@ int main() {
   assert(!stale_clear.ok);
   assert(store.ActiveMapId() == "building_1f");
 
-  auto renamed = store.RenameMap("building_1f", "building_2f");
-  assert(renamed.ok);
-  assert(store.ActiveMapId() == "building_2f");
-  assert(std::filesystem::is_directory(root / "building_2f"));
-  assert(!std::filesystem::exists(root / "active"));
+  const auto active_rename = store.RenameMap("building_1f", "building_2f");
+  assert(!active_rename.ok);
+  assert(active_rename.message == "active map conflict: building_1f");
+  assert(store.ActiveMapId() == "building_1f");
+  assert(std::filesystem::is_directory(root / "building_1f"));
+  assert(!std::filesystem::exists(root / "building_2f"));
 
+  const auto active_retire = store.RetireMap("building_1f");
+  assert(!active_retire.ok);
+  assert(active_retire.message == "active map conflict: building_1f");
+  assert(store.ActiveMapId() == "building_1f");
   auto record = store.GetActiveMap();
   assert(record.has_value());
-  assert(record->map_id == "building_2f");
-  assert(record->artifacts[0].source_map_id == "building_2f");
+  assert(record->map_id == "building_1f");
+  assert(record->state == MapState::kActive);
 
-  auto deleted = store.DeleteMap("building_2f");
-  assert(deleted.ok);
-  assert(store.ActiveMapId().empty());
-  auto semantic_deleted = store.DeleteMap("semantic_only");
-  assert(semantic_deleted.ok);
+  const auto active_delete = store.DeleteMap("building_1f");
+  assert(!active_delete.ok);
+  assert(active_delete.message == "active map conflict: building_1f");
+  assert(store.ActiveMapId() == "building_1f");
+  assert(std::filesystem::is_directory(root / "building_1f"));
+
+  const auto inactive_rename = store.RenameMap("semantic_only", "semantic_renamed");
+  assert(inactive_rename.ok);
+  assert(store.ActiveMapId() == "building_1f");
+  const auto inactive_retire = store.RetireMap("semantic_renamed");
+  assert(inactive_retire.ok);
+  assert(store.ActiveMapId() == "building_1f");
+  const auto inactive_delete = store.DeleteMap("semantic_renamed");
+  assert(inactive_delete.ok);
+  assert(store.ActiveMapId() == "building_1f");
+
+  assert(store.ClearActiveMap("building_1f").ok);
+  assert(store.DeleteMap("building_1f").ok);
   assert(store.ListMapIds().empty());
 
   auto guarded = store.CreateMap("guarded");
@@ -574,6 +612,9 @@ int main() {
       {{1.25F,.25F,-.75F}, {1.25F,-.75F,.25F}}, &pcd_error));
   WriteText(ray_dir / "poses.txt", "0.pcd 0 0 0 1 0 0 0\n");
   WriteText(ray_dir / "scan_origin.txt", "lidar_origin_in_patch 0 0 0\n");
+  WriteText(ray_dir / "patch_bundle.manifest",
+            "LINGTU_PATCH_BUNDLE_V1\ncomplete 1\ndropped_count 0\n"
+            "first_sequence 0\nlast_sequence 0\npatch_count 1\n");
   const auto ray_result = pipeline.BuildOctomapArtifactJson("ray_support",sampled_options);
   assert(lingtu::maps::JsonObjectBoolAtPath(ray_result,{"success"}) == true);
   const auto ray_loaded = lingtu::maps::LoadOctomapTree(ray_dir / "octomap.ot");

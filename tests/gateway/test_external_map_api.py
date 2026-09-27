@@ -453,6 +453,43 @@ def test_delete_saved_map_uses_customer_lifecycle_contract(monkeypatch):
     assert "/home/sunrise" not in json.dumps(payload)
 
 
+def test_active_map_mutations_preserve_native_conflict(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import gateway.maps.routes as map_routes
+
+    monkeypatch.setattr(
+        map_routes,
+        "_mapd_http_request",
+        lambda _gw, request: {
+            "action": request["action"],
+            "success": False,
+            "reason_code": "active_map_conflict",
+            "message": "active map conflict: warehouse",
+        },
+    )
+    app = FastAPI()
+    map_routes.register_map_routes(app, SimpleNamespace())
+
+    with TestClient(app) as client:
+        deleted = client.delete("/api/v1/maps/warehouse")
+        renamed = client.post(
+            "/api/v1/map/rename",
+            json={"old_name": "warehouse", "new_name": "warehouse2"},
+        )
+        rebuilt = client.post("/api/v1/maps/warehouse/build_octomap")
+        edited = client.post(
+            "/api/v1/maps/warehouse/voxels/edit",
+            json={"state": "occupied", "center": [0.0, 0.0, 0.0]},
+        )
+
+    for response in (deleted, renamed, rebuilt, edited):
+        assert response.status_code == 409
+        assert response.json()["success"] is False
+        assert response.json()["reason_code"] == "active_map_conflict"
+
+
 def test_build_saved_map_octomap_hides_native_paths(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient

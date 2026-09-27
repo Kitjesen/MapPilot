@@ -516,8 +516,6 @@ int main() {
     Require(provided.accepted, "snapshot was not accepted");
     const auto status = WaitTerminal(engine, "save_v1");
     Require(status.state == SaveJobState::kSucceeded, "SaveMap v1 failed: " + status.message);
-    Require(!status.activation_requested, "non-activating SaveMap reported activation request");
-    Require(!status.activation_succeeded, "non-activating SaveMap reported activation success");
     Require(status.map_dir == store.MapPath("warehouse"), "SaveMap status did not expose direct map dir");
     Require(std::filesystem::is_regular_file(status.map_dir / "map.pcd"), "map.pcd missing");
     Require(ReadFile(status.map_dir / "scan_origin.txt") == ReadFile(source_v1 / "scan_origin.txt"),
@@ -629,36 +627,27 @@ int main() {
   }
 
   {
+    Require(store.SetActiveMap("warehouse", false).ok,
+            "failed to establish active-map SaveMap conflict fixture");
+    const auto epoch_before = store.ContentEpoch("warehouse");
     SaveMapEngine engine(store);
-    auto request = Request("activate_success", "activated_map");
-    request.activate_on_success = true;
-    Require(engine.Begin(request).accepted, "activation success request rejected");
+    const auto request = Request("active_map_conflict", "warehouse");
+    Require(engine.Begin(request).accepted, "active-map conflict request rejected at ingress");
     Require(
         engine.ProvideSnapshot(
-            "activate_success", Snapshot("activate_success_snapshot", source_v1)).accepted,
-        "activation success snapshot rejected");
-    const auto status = WaitTerminal(engine, "activate_success");
-    Require(
-        status.state == SaveJobState::kSucceeded,
-        "SaveMap activation under held map lock failed: " + status.message);
-    Require(status.activation_requested, "activated SaveMap lost activation request evidence");
-    Require(status.activation_succeeded, "activated SaveMap lost activation success evidence");
-    Require(store.ActiveMapId() == "activated_map", "SaveMap did not activate committed map");
-  }
-
-  Require(
-      store.SetActiveMap("warehouse", false).ok,
-      "failed to switch away from activated map for recovery-history test");
-  {
-    SaveMapEngine recovered(store);
-    const auto status = recovered.GetStatus("activate_success");
-    Require(status.has_value(), "activated SaveMap status disappeared on restart");
-    Require(status->state == SaveJobState::kSucceeded,
-            "terminal activation success changed state on restart");
-    Require(status->activation_succeeded,
-            "restart rewrote historical activation success from current active-map state");
+            request.request_id, Snapshot("active_map_conflict_snapshot", source_v1)).accepted,
+        "active-map conflict snapshot rejected at ingress");
+    const auto status = WaitTerminal(engine, request.request_id);
+    Require(status.state == SaveJobState::kFailed,
+            "SaveMap overwrote the authoritative active map");
+    Require(status.reason_code == "active_map_conflict",
+            "SaveMap active-map conflict lost its stable reason");
     Require(store.ActiveMapId() == "warehouse",
-            "SaveMap recovery unexpectedly changed the current active map");
+            "rejected SaveMap changed the authoritative active map");
+    Require(store.ContentEpoch("warehouse") == epoch_before,
+            "rejected SaveMap changed active-map content");
+    Require(store.ClearActiveMap("warehouse").ok,
+            "failed to clear active-map SaveMap conflict fixture");
   }
 
   {
@@ -717,40 +706,6 @@ int main() {
     Require(!std::filesystem::exists(
                 store.RootDir() / ".save-backup-new_map_interrupted-new_map_interrupted"),
             "interrupted new map recovery created an empty backup marker");
-  }
-
-  {
-    SaveMapEngine engine(store);
-    auto request = Request("recover_activation_gap", "activation_gap_map");
-    request.activate_on_success = true;
-    Require(engine.Begin(request).accepted, "activation gap request rejected");
-    Require(
-        engine.ProvideSnapshot(
-            "recover_activation_gap",
-            Snapshot("activation_gap_snapshot", source_v1)).accepted,
-        "activation gap snapshot rejected");
-    const auto status = WaitTerminal(engine, "recover_activation_gap");
-    Require(status.state == SaveJobState::kSucceeded, "activation gap setup failed");
-  }
-  Require(
-      store.SetActiveMap("warehouse", false).ok,
-      "failed to simulate an activation gap after version commit");
-
-  {
-    const auto state =
-        store.RootDir() / ".save_jobs" / "recover_activation_gap" / "job.state";
-    ReplaceStateValue(state, "state", "RUNNING");
-    ReplaceStateValue(state, "phase", "COMMIT");
-    ReplaceStateValue(state, "completed_at_ns", "0");
-    ReplaceStateValue(state, "activation_succeeded", "0");
-    SaveMapEngine recovered(store);
-    const auto status = WaitTerminal(recovered, "recover_activation_gap");
-    Require(status.state == SaveJobState::kFailed,
-            "recovery reported committed-but-not-activated request as success");
-    Require(status.reason_code == "activation_failed_after_commit",
-            "recovery lost committed activation failure reason");
-    Require(status.activation_requested && !status.activation_succeeded,
-            "recovery misreported activation evidence");
   }
 
   {
@@ -1403,27 +1358,20 @@ int main() {
     std::filesystem::remove_all(active_state);
     std::filesystem::create_directory(active_state);
     SaveMapEngine engine(store);
-    auto request = Request("activation_failure", "activation_failure_map");
-    request.activate_on_success = true;
-    Require(engine.Begin(request).accepted, "activation failure request rejected");
+    const auto request = Request("active_state_invalid", "active_state_invalid_map");
+    Require(engine.Begin(request).accepted, "active-state failure request rejected");
     Require(
         engine.ProvideSnapshot(
-            "activation_failure",
-            Snapshot("activation_failure_snapshot", source_v2)).accepted,
-        "activation failure snapshot rejected");
-    const auto status = WaitTerminal(engine, "activation_failure");
+            request.request_id,
+            Snapshot("active_state_invalid_snapshot", source_v2)).accepted,
+        "active-state failure snapshot rejected");
+    const auto status = WaitTerminal(engine, request.request_id);
     Require(status.state == SaveJobState::kFailed,
-            "failed requested activation was reported as SaveMap success");
-    Require(status.reason_code == "activation_failed_after_commit",
-            "activation failure did not expose a stable reason code");
-    Require(status.activation_requested,
-            "activation failure did not preserve activation request evidence");
-    Require(!status.activation_succeeded,
-            "activation failure incorrectly reported activation success");
-    Require(store.ContentEpoch("activation_failure_map") > 0,
-            "activation failure discarded the already committed version");
-    Require(store.ActiveMapId() != "activation_failure_map",
-            "activation failure incorrectly changed active-map state");
+            "SaveMap accepted an invalid active-map state");
+    Require(status.reason_code == "active_map_state_invalid",
+            "invalid active-map state did not expose a stable reason code");
+    Require(!std::filesystem::exists(store.MapPath("active_state_invalid_map")),
+            "SaveMap mutated the map store after active-state validation failed");
     std::filesystem::remove_all(active_state);
   }
 

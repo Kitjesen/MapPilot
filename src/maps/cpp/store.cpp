@@ -553,30 +553,12 @@ MapStoreResult MapStore::DeleteMap(const std::string& map_id) {
   if (!active.has_value()) {
     return {false, active_error, std::nullopt};
   }
-  const bool was_active = *active == id;
+  if (*active == id) {
+    return {false, "active map conflict: " + id, std::nullopt, *active};
+  }
   try {
     const auto staged = UniqueDeletionStage(root_dir_, id);
-    if (was_active) {
-      // Clearing first prevents a crash from leaving active_map.txt pointing at
-      // a directory that has already been moved or deleted.
-      WriteActiveMapId("");
-    }
-    try {
-      std::filesystem::rename(dir, staged);
-    } catch (...) {
-      if (was_active) {
-        try {
-          WriteActiveMapId(id);
-        } catch (...) {
-          return {
-              false,
-              "map deletion failed and active map restore failed: " + id,
-              std::nullopt,
-              *active};
-        }
-      }
-      throw;
-    }
+    std::filesystem::rename(dir, staged);
     std::error_code cleanup_error;
     std::filesystem::remove_all(staged, cleanup_error);
     if (!cleanup_error) {
@@ -609,9 +591,6 @@ MapStoreResult MapStore::RenameMap(const std::string& map_id, const std::string&
   if (!std::filesystem::is_directory(src)) {
     return {false, "map not found: " + src_id, std::nullopt};
   }
-  if (std::filesystem::exists(dst)) {
-    return {false, "target exists: " + dst_id, std::nullopt};
-  }
   auto active_lock = MapLock::TryAcquire(root_dir_, kActiveMapLockId, "rename-map-active-state");
   if (!active_lock.has_value()) {
     return {false, "active map write in progress", std::nullopt};
@@ -621,59 +600,14 @@ MapStoreResult MapStore::RenameMap(const std::string& map_id, const std::string&
   if (!active.has_value()) {
     return {false, active_error, std::nullopt};
   }
-  const bool was_active = *active == src_id;
+  if (*active == src_id) {
+    return {false, "active map conflict: " + src_id, std::nullopt, *active};
+  }
+  if (std::filesystem::exists(dst)) {
+    return {false, "target exists: " + dst_id, std::nullopt, *active};
+  }
   try {
-    if (was_active) {
-      // Keep every crash-visible intermediate state non-dangling. The active
-      // map is briefly empty while the directory identity changes.
-      WriteActiveMapId("");
-    }
-    try {
-      std::filesystem::rename(src, dst);
-    } catch (...) {
-      if (was_active) {
-        try {
-          WriteActiveMapId(src_id);
-        } catch (...) {
-          return {
-              false,
-              "map rename failed and active map restore failed: " + src_id,
-              std::nullopt,
-              *active};
-        }
-      }
-      throw;
-    }
-    if (was_active) {
-      try {
-        WriteActiveMapId(dst_id);
-      } catch (const std::exception& exc) {
-        std::error_code rollback_error;
-        std::filesystem::rename(dst, src, rollback_error);
-        if (!rollback_error) {
-          try {
-            WriteActiveMapId(src_id);
-          } catch (...) {
-            return {
-                false,
-                std::string(exc.what()) + "; active map restore failed",
-                std::nullopt,
-                *active};
-          }
-          return {
-              false,
-              std::string(exc.what()) + "; map rename rolled back",
-              std::nullopt,
-              *active};
-        }
-        return {
-            false,
-            std::string(exc.what()) + "; map rename rollback failed: " +
-                rollback_error.message(),
-            std::nullopt,
-            *active};
-      }
-    }
+    std::filesystem::rename(src, dst);
   } catch (const std::exception& exc) {
     return {false, exc.what(), std::nullopt, *active};
   }
@@ -683,8 +617,6 @@ MapStoreResult MapStore::RenameMap(const std::string& map_id, const std::string&
       ? MapState::kFailed
       : lifecycle == LifecycleMarker::kRetired
       ? MapState::kRetired
-      : was_active
-      ? MapState::kActive
       : (HasNavigationArtifacts(content) ? MapState::kValidated
                                          : (std::filesystem::is_regular_file(content / "map.pcd")
                                                 ? MapState::kStale
@@ -715,27 +647,11 @@ MapStoreResult MapStore::RetireMap(const std::string& map_id) {
   if (!active.has_value()) {
     return {false, active_error, std::nullopt};
   }
-  const bool was_active = *active == id;
+  if (*active == id) {
+    return {false, "active map conflict: " + id, std::nullopt, *active};
+  }
   try {
-    if (was_active) {
-      WriteActiveMapId("");
-    }
-    try {
-      WriteTextAtomic(dir / kLifecycleStateFilename, "RETIRED\n");
-    } catch (...) {
-      if (was_active) {
-        try {
-          WriteActiveMapId(id);
-        } catch (...) {
-          return {
-              false,
-              "map retirement failed and active map restore failed: " + id,
-              std::nullopt,
-              *active};
-        }
-      }
-      throw;
-    }
+    WriteTextAtomic(dir / kLifecycleStateFilename, "RETIRED\n");
   } catch (const std::exception& exc) {
     return {false, exc.what(), std::nullopt, *active};
   }
@@ -744,6 +660,32 @@ MapStoreResult MapStore::RetireMap(const std::string& map_id) {
       "retired",
       ScanRecord(id, MapState::kRetired),
       *active};
+}
+
+MapStoreResult MapStore::CheckMapMutationAllowed(const std::string& map_id) const {
+  return CheckMapMutationAllowedUnlocked(NormalizeMapId(map_id));
+}
+
+MapStoreResult MapStore::CheckMapMutationAllowedWhileLocked(
+    const std::string& map_id,
+    const MapLock& map_lock) const {
+  const std::string id = NormalizeMapId(map_id);
+  if (!LockProtectsMap(map_lock, id)) {
+    return {false, "map lock does not protect map: " + id, std::nullopt};
+  }
+  return CheckMapMutationAllowedUnlocked(id);
+}
+
+MapStoreResult MapStore::CheckMapMutationAllowedUnlocked(const std::string& map_id) const {
+  std::string active_error;
+  const auto active = ReadActiveMapIdStrict(&active_error);
+  if (!active.has_value()) {
+    return {false, active_error, std::nullopt};
+  }
+  if (*active == map_id) {
+    return {false, "active map conflict: " + map_id, std::nullopt, *active};
+  }
+  return {true, "map mutation allowed", std::nullopt, *active};
 }
 
 DeclaredArtifactIdentityResult MapStore::ReadDeclaredArtifactIdentity(

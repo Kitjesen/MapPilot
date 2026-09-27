@@ -105,6 +105,10 @@ class MapStore {
   MapStoreResult DeleteMap(const std::string& map_id);
   MapStoreResult RenameMap(const std::string& map_id, const std::string& new_map_id);
   MapStoreResult RetireMap(const std::string& map_id);
+  MapStoreResult CheckMapMutationAllowed(const std::string& map_id) const;
+  MapStoreResult CheckMapMutationAllowedWhileLocked(
+      const std::string& map_id,
+      const MapLock& map_lock) const;
   DeclaredArtifactIdentityResult ReadDeclaredArtifactIdentity(
       const std::string& map_id,
       ArtifactType type,
@@ -143,6 +147,7 @@ class MapStore {
       const std::string& map_id,
       bool strict,
       const std::optional<std::string>& expected_active_map_id);
+  MapStoreResult CheckMapMutationAllowedUnlocked(const std::string& map_id) const;
   bool LockProtectsMap(const MapLock& map_lock, const std::string& map_id) const;
   std::optional<std::string> ReadActiveMapIdStrict(std::string* error) const;
   void WriteActiveMapId(const std::string& map_id) const;
