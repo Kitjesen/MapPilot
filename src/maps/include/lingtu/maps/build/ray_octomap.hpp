@@ -2,8 +2,12 @@
 #include "lingtu/maps/build/saved_scans.hpp"
 #include "lingtu/maps/build/pcd.hpp"
 #include <octomap/OcTree.h>
+#include <array>
 #include <stdexcept>
 #include <cmath>
+#include <cstdint>
+#include <map>
+#include <vector>
 
 namespace lingtu::maps {
 
@@ -22,6 +26,8 @@ inline std::size_t OccupiedVoxelCount(const octomap::OcTree& tree) {
 // lands 8 m away. OctoMap marks those surface cells free although the ray never
 // passed below the surface.
 inline constexpr double kGrazingGuardM = 1.0;
+// Match prune's metric endpoint confirmation across voxel boundaries.
+inline constexpr double kRetainedEndpointMatchM = 0.05;
 
 struct SavedRayOctomapStats {
   std::size_t valid_endpoints{0};
@@ -50,11 +56,17 @@ inline SavedRayOctomapStats PopulateSavedRayOctomap(
   if (!retained.ok || retained.points.empty())
     throw std::runtime_error("saved ray build requires retained map.pcd geometry");
   octomap::KeySet retained_keys;
+  std::map<std::array<std::int64_t, 3>, std::vector<PointXyz>> retained_buckets;
   for (const auto& point : retained.points) {
     octomap::OcTreeKey key;
     if (std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z) &&
-        tree.coordToKeyChecked(point.x, point.y, point.z, key))
+        tree.coordToKeyChecked(point.x, point.y, point.z, key)) {
       retained_keys.insert(key);
+      retained_buckets[{static_cast<std::int64_t>(std::floor(point.x / kRetainedEndpointMatchM)),
+                        static_cast<std::int64_t>(std::floor(point.y / kRetainedEndpointMatchM)),
+                        static_cast<std::int64_t>(std::floor(point.z / kRetainedEndpointMatchM))}]
+          .push_back(point);
+    }
   }
   if (retained_keys.empty())
     throw std::runtime_error("saved ray build retained map.pcd has no valid OctoMap keys");
@@ -79,7 +91,33 @@ inline SavedRayOctomapStats PopulateSavedRayOctomap(
           !tree.coordToKeyChecked(end, key))
         continue;
       ++stats.valid_endpoints;
-      const bool retained_endpoint = retained_keys.count(key) != 0U;
+      bool retained_endpoint = retained_keys.count(key) != 0U;
+      if (!retained_endpoint) {
+        // A sampled surface point may be in the adjacent voxel. Confirm the
+        // measured endpoint against its position, then keep the real hit key.
+        const std::array<std::int64_t, 3> bucket{
+            static_cast<std::int64_t>(std::floor(end.x() / kRetainedEndpointMatchM)),
+            static_cast<std::int64_t>(std::floor(end.y() / kRetainedEndpointMatchM)),
+            static_cast<std::int64_t>(std::floor(end.z() / kRetainedEndpointMatchM))};
+        const double match_distance_sq =
+            kRetainedEndpointMatchM * kRetainedEndpointMatchM;
+        for (int dx = -1; dx <= 1 && !retained_endpoint; ++dx)
+          for (int dy = -1; dy <= 1 && !retained_endpoint; ++dy)
+            for (int dz = -1; dz <= 1 && !retained_endpoint; ++dz) {
+              const auto nearby = retained_buckets.find(
+                  {bucket[0] + dx, bucket[1] + dy, bucket[2] + dz});
+              if (nearby == retained_buckets.end()) continue;
+              for (const auto& point : nearby->second) {
+                const double x = static_cast<double>(point.x) - end.x();
+                const double y = static_cast<double>(point.y) - end.y();
+                const double z = static_cast<double>(point.z) - end.z();
+                if (x * x + y * y + z * z <= match_distance_sq) {
+                  retained_endpoint = true;
+                  break;
+                }
+              }
+            }
+      }
       if (!retained_endpoint) {
         ++stats.dropped_endpoints;
       } else {

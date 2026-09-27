@@ -78,6 +78,52 @@ void TestDroppedEndpointKeepsMeasuredPrefix() {
   assert(NodeAt(tree, retained) != nullptr && tree.isNodeOccupied(NodeAt(tree, retained)));
 }
 
+void TestNearbyRetainedPointKeepsMeasuredEndpoint() {
+  TempDirectory directory("nearby_retained_endpoint");
+  const PointXyz retained{0.087589838F, 0.103406139F, -0.328530699F};
+  const PointXyz measured{0.099648373F, 0.097906159F, -0.310658816F};
+  WriteBundle(directory.path(), {retained}, {{measured}});
+
+  octomap::OcTree tree(0.05);
+  const auto stats = lingtu::maps::PopulateSavedRayOctomap(tree, directory.path());
+  assert(stats.valid_endpoints == 1U);
+  assert(stats.retained_endpoints == 1U);
+  assert(stats.dropped_endpoints == 0U);
+  assert(NodeAt(tree, measured) != nullptr && tree.isNodeOccupied(NodeAt(tree, measured)));
+  assert(NodeAt(tree, retained) == nullptr);
+}
+
+void TestRetainedPointBeyondFiveCentimetresDoesNotMatch() {
+  TempDirectory directory("retained_endpoint_too_far");
+  const PointXyz retained{1.101F, 0.05F, 0.05F};
+  const PointXyz measured{1.05F, 0.05F, 0.05F};
+  const PointXyz anchor{0.05F, 2.05F, 0.05F};
+  WriteBundle(directory.path(), {retained, anchor}, {{measured, anchor}});
+
+  octomap::OcTree tree(0.02);
+  const auto stats = lingtu::maps::PopulateSavedRayOctomap(tree, directory.path());
+  assert(stats.valid_endpoints == 2U);
+  assert(stats.retained_endpoints == 1U);
+  assert(stats.dropped_endpoints == 1U);
+  const auto* measured_node = NodeAt(tree, measured);
+  assert(measured_node == nullptr || !tree.isNodeOccupied(measured_node));
+}
+
+void TestRetainedEndpointMatchUsesThreeDimensionalDistance() {
+  TempDirectory directory("retained_endpoint_3d_distance");
+  const PointXyz retained{1.08F, 0.08F, 0.08F};
+  const PointXyz measured{1.05F, 0.05F, 0.05F};
+  const PointXyz anchor{0.05F, 2.05F, 0.05F};
+  WriteBundle(directory.path(), {retained, anchor}, {{measured, anchor}});
+
+  octomap::OcTree tree(0.02);
+  const auto stats = lingtu::maps::PopulateSavedRayOctomap(tree, directory.path());
+  assert(stats.retained_endpoints == 1U);
+  assert(stats.dropped_endpoints == 1U);
+  const auto* measured_node = NodeAt(tree, measured);
+  assert(measured_node == nullptr || !tree.isNodeOccupied(measured_node));
+}
+
 void TestSameFrameHitWinsOverMiss() {
   TempDirectory directory("hit_wins");
   const PointXyz hit{1.05F, 0.05F, 0.05F};
@@ -159,6 +205,9 @@ void TestNoRetainedEndpointFails() {
 
 int main() {
   TestDroppedEndpointKeepsMeasuredPrefix();
+  TestNearbyRetainedPointKeepsMeasuredEndpoint();
+  TestRetainedPointBeyondFiveCentimetresDoesNotMatch();
+  TestRetainedEndpointMatchUsesThreeDimensionalDistance();
   TestSameFrameHitWinsOverMiss();
   TestPerFrameDedupAndCrossFrameAccumulation();
   TestDiagonalGuardUsesMetricDistance();

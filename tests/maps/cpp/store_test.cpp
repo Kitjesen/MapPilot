@@ -471,7 +471,7 @@ int main() {
     std::ifstream file(metadata_file);
     const std::string edited_metadata((std::istreambuf_iterator<char>(file)), {});
     assert(!lingtu::maps::JsonObjectHasPath(edited_metadata, {"artifacts", "octomap", "stats"}));
-    assert(lingtu::maps::JsonObjectStringAtPath(edited_metadata, {"builder_version"}) != "0.3.0");
+    assert(lingtu::maps::JsonObjectStringAtPath(edited_metadata, {"builder_version"}) != "0.3.1");
   }
   WriteValidOccupancyMetadata(root / "building_1f" / "metadata.json");
   octomap::OcTree binary_tree(0.1);
@@ -730,10 +730,10 @@ int main() {
   };
   assert(build_status() == "reused");
   metadata = read_metadata();
-  assert(lingtu::maps::JsonObjectStringAtPath(metadata, {"builder_version"}) == "0.3.0");
-  const std::string version_field = "\"builder_version\":\"0.3.0\"";
+  assert(lingtu::maps::JsonObjectStringAtPath(metadata, {"builder_version"}) == "0.3.1");
+  const std::string version_field = "\"builder_version\":\"0.3.1\"";
   metadata.replace(metadata.find(version_field), version_field.size(),
-                   "\"builder_version\":\"0.2.0\"");
+                   "\"builder_version\":\"0.3.0\"");
   WriteText(ray_dir / "metadata.json", metadata);
   assert(build_status() == "built");
   // Missing any replay counter makes a saved-ray artifact ineligible for reuse.

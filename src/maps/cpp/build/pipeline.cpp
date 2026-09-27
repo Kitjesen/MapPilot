@@ -46,7 +46,7 @@ namespace {
 
 // Map artifacts are built only by the embedded OctoMap implementation.
 constexpr char kOctomapBuildMode[] = "native_octomap";
-constexpr char kBuilderVersion[] = "0.3.0";
+constexpr char kBuilderVersion[] = "0.3.1";
 
 std::uint64_t CurrentProcessIdValue() {
 #if defined(_WIN32)
