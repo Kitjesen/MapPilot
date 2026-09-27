@@ -6,6 +6,7 @@ export interface MapInfo {
   has_occupancy?: boolean
   has_octomap?: boolean
   can_activate: boolean
+  activation_blockers?: string[]
   // saved_rays can navigate; preview (an imported point cloud, or a map whose
   // saved scans are gone) is for viewing and localization only.
   map_evidence?: 'saved_rays' | 'preview' | 'none'

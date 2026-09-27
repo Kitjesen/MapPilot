@@ -1708,6 +1708,8 @@ class MapInfo(GatewayResponseModel):
     has_occupancy: bool = False
     has_octomap: bool = False
     can_activate: bool
+    activation_blockers: list[str] = Field(default_factory=list)
+    map_evidence: Literal["saved_rays", "preview", "none"] = "none"
     state: str | None = None
     is_active: bool = False
     size_mb: float | None = None

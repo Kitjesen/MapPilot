@@ -88,6 +88,12 @@ test('map page uses the map-list can_activate gate and requires both artifacts',
   assert.match(source, /mapIsActivationReady/)
 })
 
+test('map cards show the first activation blocker and retain all blockers in details', () => {
+  assert.match(source, /const activationBlockers = m\.activation_blockers \?\? \[\]/)
+  assert.match(source, /无法用于导航：\{activationBlockers\[0\]\}/)
+  assert.match(source, /activationBlockers\.map\(blocker => <p key=\{blocker\}>阻塞原因：\{blocker\}<\/p>\)/)
+})
+
 test('navigation session must match the map and have live localization', () => {
   const base = {
     mode: 'navigating' as const,

@@ -310,8 +310,8 @@ std::string MapsServiceCore::ListMapsJson() const {
       const bool has_octomap = IsNonEmptyRegularFile(dir / "octomap.ot");
       const bool has_esdf = IsNonEmptyRegularFile(dir / "esdf.npz");
       const bool has_traversability = IsNonEmptyRegularFile(dir / "traversability.npz");
-      const bool activation_ready =
-          store_.CheckMapActivationWhileLocked(id, *map_lock).ok;
+      const auto activation = store_.CheckMapActivationWhileLocked(id, *map_lock);
+      const bool activation_ready = activation.ok;
       const auto patches_dir = dir / "patches";
       size_t patch_count = 0U;
       if (std::filesystem::is_directory(patches_dir)) {
@@ -347,6 +347,7 @@ std::string MapsServiceCore::ListMapsJson() const {
           << "\"has_esdf\":" << BoolJson(has_esdf) << ","
           << "\"has_traversability\":" << BoolJson(has_traversability) << ","
           << "\"can_activate\":" << BoolJson(activation_ready) << ","
+          << "\"activation_blockers\":" << StringArrayJson(activation.blockers) << ","
           << "\"map_evidence\":" << JsonString(MapEvidence(dir, activation_ready)) << ","
           << "\"is_active\":" << BoolJson(record->state == MapState::kActive) << ","
           << "\"size_mb\":" << size_mb << ","

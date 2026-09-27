@@ -548,6 +548,14 @@ def register_map_routes(app, gw) -> None:
                     "has_occupancy": bool(item.get("has_occupancy")),
                     "has_octomap": bool(item.get("has_octomap")),
                     "can_activate": item["can_activate"],
+                    "activation_blockers": [
+                        str(blocker)
+                        for blocker in (
+                            item.get("activation_blockers")
+                            if isinstance(item.get("activation_blockers"), list)
+                            else []
+                        )
+                    ],
                     "map_evidence": str(item.get("map_evidence") or "none"),
                     "state": (
                         state
@@ -649,7 +657,6 @@ def register_map_routes(app, gw) -> None:
                 "bounds": payload.get("bounds"),
             },
         )
-        ok = resp.get("success") is True
         return _customer_map_lifecycle_response(
             resp,
             name=name,
@@ -708,7 +715,6 @@ def register_map_routes(app, gw) -> None:
         cmd["action"] = "edit_octomap_voxels"
         cmd["map_id"] = name
         resp = await asyncio.to_thread(_mapd_http_request, gw, cmd)
-        ok = resp.get("success") is True
         return _customer_map_lifecycle_response(
             resp,
             name=name,

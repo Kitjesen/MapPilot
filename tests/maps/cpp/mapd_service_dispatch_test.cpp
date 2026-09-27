@@ -38,6 +38,19 @@ int main() {
   auto relisted = DispatchServiceJson(service, R"({"action":"list_maps"})");
   assert(relisted.ok);
   assert(relisted.json.find("\"map_dir\"") == std::string::npos);
+  const auto activation = service.Store().CheckMapActivation("dispatch_map");
+  const auto parsed_relisted = lingtu::maps::ParseJson(relisted.json);
+  const auto& listed_maps =
+      parsed_relisted.AsObject("list response").at("maps").AsArray("maps");
+  assert(listed_maps.size() == 1U);
+  const auto& listed_blockers = listed_maps.front()
+                                    .AsObject("listed map")
+                                    .at("activation_blockers")
+                                    .AsArray("activation blockers");
+  assert(listed_blockers.size() == activation.blockers.size());
+  for (std::size_t i = 0; i < activation.blockers.size(); ++i) {
+    assert(listed_blockers[i].AsString("activation blocker") == activation.blockers[i]);
+  }
   auto record = DispatchServiceJson(service, R"({"action":"get_record","map_id":"dispatch_map"})");
   assert(record.ok);
   assert(record.json.find("dispatch_map") != std::string::npos);

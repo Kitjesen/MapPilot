@@ -46,6 +46,7 @@ namespace {
 
 // Map artifacts are built only by the embedded OctoMap implementation.
 constexpr char kOctomapBuildMode[] = "native_octomap";
+constexpr char kBuilderVersion[] = "0.3.0";
 
 std::uint64_t CurrentProcessIdValue() {
 #if defined(_WIN32)
@@ -200,6 +201,7 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
                          bool manual_voxel_edit = false, std::size_t manual_edit_count = 0U,
                          const std::string &last_edit_json = "null",
                          std::string saved_ray_stats = {}) {
+  std::string builder_version = kBuilderVersion;
   bool saved_rays = HasSavedRays(map_dir);
   // navigation_ready is provenance, not operator intent: only a native
   // replay of saved sensor rays may set it. Point-cloud approval is recorded
@@ -215,6 +217,8 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
         JsonObjectBoolAtPath(previous.str(),
             {"artifacts", "octomap", "navigation_ready"}).value_or(false);
     saved_ray_stats = SavedRayStatsJson(previous.str());
+    // Editing voxels is not a new replay. Do not relabel an old build as current.
+    builder_version = JsonObjectStringAtPath(previous.str(), {"builder_version"}).value_or("");
     // A voxel edit changes the navigation artifact. Drop any point-cloud
     // approval so the operator must confirm the edited map again.
   }
@@ -270,7 +274,8 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
             << "\"clamping_max\":" << kSavedMapSensorModel.clamping_max << "},"
             << (manual_voxel_edit ? "\"manual_voxel_edit\":true," : "")
             << (saved_ray_stats.empty() ? "" : "\"stats\":" + saved_ray_stats + ",")
-            << "\"builder\":{\"name\":\"LingTu MapsPipelineCore\",\"version\":\"0.2.0\"}"
+            << "\"builder\":{\"name\":\"LingTu MapsPipelineCore\",\"version\":"
+            << JsonString(builder_version) << "}"
             << "}";
 
   const std::string manual_edit_summary = manual_voxel_edit
@@ -327,8 +332,9 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
          "\"frame\":" +
          JsonString(options.frame_id) +
          ","
-         "\"builder\":{\"name\":\"LingTu MapsPipelineCore\",\"version\":\"0.2.0\"},"
-         "\"builder_version\":\"0.2.0\","
+         "\"builder\":{\"name\":\"LingTu MapsPipelineCore\",\"version\":" +
+         JsonString(builder_version) + "},"
+         "\"builder_version\":" + JsonString(builder_version) + ","
          "\"octomap\":{\"path\":" + JsonString(octomap_path.filename().string()) + "}"
          "}\n";
 }
@@ -358,6 +364,8 @@ bool ExistingMetadataAllowsReuse(const std::filesystem::path &metadata_path,
     return actual && std::abs(*actual-expected)<1e-9;
   };
   return number_matches("resolution", options.resolution) &&
+         JsonObjectStringAtPath(text, {"builder_version"}) == kBuilderVersion &&
+         (!saved_rays || !SavedRayStatsJson(text).empty()) &&
          number_matches("support_dilation_cells", saved_rays ? 0 : options.support_dilation_cells) &&
          number_matches("free_layers_above", saved_rays ? 0 : options.free_layers_above) &&
          number_matches("free_dilation_cells", saved_rays ? 0 : options.free_dilation_cells) &&

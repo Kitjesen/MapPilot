@@ -44,6 +44,7 @@ const MAP_EVIDENCE_LABEL: Record<string, string> = {
 
 function MapCard({ m, selected, readOnly, navigationReady, onPreview, onNavigate, onRename, onDelete }: CardProps) {
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const activationBlockers = m.activation_blockers ?? []
   return (
     <li className={`${styles.mapRow} ${selected ? styles.mapRowSelected : ''}`}>
       <div className={styles.mapRowMain}>
@@ -58,9 +59,12 @@ function MapCard({ m, selected, readOnly, navigationReady, onPreview, onNavigate
           <MoreHorizontal size={18} />
         </button>
       </div>
-      {!m.has_pcd && <span className={styles.rowHint}>暂无点云</span>}
+      {activationBlockers[0]
+        ? <span className={styles.rowHint}>无法用于导航：{activationBlockers[0]}</span>
+        : !m.has_pcd && <span className={styles.rowHint}>暂无点云</span>}
       {detailsOpen && <div className={styles.rowDetails}>
         <p>{mapIsActivationReady(m) ? '导航数据齐全，使用前仍需定位' : '导航数据未就绪'}</p>
+        {activationBlockers.map(blocker => <p key={blocker}>阻塞原因：{blocker}</p>)}
         {m.is_active && <p>当前加载的地图</p>}
         <div className={styles.mapMeta}>
           {m.has_pcd && <span>点云</span>}{m.has_octomap && <span>规划地图</span>}

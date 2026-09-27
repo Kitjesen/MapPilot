@@ -57,6 +57,7 @@ void WriteValidOccupancyMetadata(const std::filesystem::path& path) {
        << "\"octomap\":{\"path\":\"octomap.ot\",\"frame_id\":\"map\","
           "\"data_source\":\"field\",\"source_profile\":\"fastlio2\","
           "\"evidence_source\":\"saved_rays\",\"navigation_ready\":true,"
+          "\"encoding\":\"full_log_odds\","
           "\"build_mode\":\"native_octomap\"}}}";
 }
 
@@ -82,7 +83,7 @@ void WriteValidPlanningArtifacts(const std::filesystem::path& map_dir) {
   assert(tree.write((map_dir / "octomap.ot").string()));
 #else
   std::ofstream octomap(map_dir / "octomap.ot", std::ios::binary | std::ios::trunc);
-  octomap << "# Octomap OcTree binary file\nid OcTree\nsize 1\nres 0.1\ndata\n";
+  octomap << "# Octomap OcTree file\nid OcTree\nsize 1\nres 0.1\ndata\n";
   octomap.put('\0');
   assert(octomap.good());
 #endif
@@ -466,16 +467,36 @@ int main() {
   const auto edited = pipeline.EditOctomapVoxelsJson("building_1f", edit);
   assert(lingtu::maps::JsonObjectBoolAtPath(edited, {"success"}) == true);
   assert(store.CheckMapActivation("building_1f").ok);
+  {
+    std::ifstream file(metadata_file);
+    const std::string edited_metadata((std::istreambuf_iterator<char>(file)), {});
+    assert(!lingtu::maps::JsonObjectHasPath(edited_metadata, {"artifacts", "octomap", "stats"}));
+    assert(lingtu::maps::JsonObjectStringAtPath(edited_metadata, {"builder_version"}) != "0.3.0");
+  }
   WriteValidOccupancyMetadata(root / "building_1f" / "metadata.json");
   octomap::OcTree binary_tree(0.1);
   binary_tree.updateNode(octomap::point3d(0.0F, 0.0F, 0.5F), true);
   assert(binary_tree.writeBinary((root / "building_1f" / "octomap.ot").string()));
-  assert(store.CheckMapActivation("building_1f").ok);
+  assert(!store.CheckMapActivation("building_1f").ok);
+  // Binary trees remain valid for offline readers, including a .bt-only map.
+  assert(store.ValidateArtifacts("building_1f", validation_options).ok);
+  std::filesystem::rename(root / "building_1f" / "octomap.ot",
+                          root / "building_1f" / "octomap.bt");
+  assert(!store.CheckMapActivation("building_1f").ok);
+  std::filesystem::remove(root / "building_1f" / "octomap.bt");
   octomap::OcTree empty_tree(0.1);
   assert(empty_tree.write((root / "building_1f" / "octomap.ot").string()));
   assert(!store.CheckMapActivation("building_1f").ok);
   WriteValidPlanningArtifacts(root / "building_1f");
 #endif
+
+  std::string wrong_encoding = valid_metadata;
+  wrong_encoding.replace(wrong_encoding.find("full_log_odds"), 13, "binary_max_likelihood");
+  blocked_with(wrong_encoding, "full_log_odds");
+  std::string wrong_path = valid_metadata;
+  wrong_path.replace(wrong_path.find("octomap.ot"), 10, "octomap.bt");
+  blocked_with(wrong_path, "reference octomap.ot");
+  WriteText(metadata_file, valid_metadata);
 
   WriteText(root / "building_1f" / "map.pcd", "not a pcd\n");
   const auto bad_pcd_activation = store.CheckMapActivation("building_1f");
@@ -701,6 +722,30 @@ int main() {
   assert(lingtu::maps::JsonObjectStringAtPath(rebuilt, {"status"}) != "reused");
   assert(lingtu::maps::JsonObjectStringAtPath(
              read_metadata(), {"artifacts", "octomap", "encoding"}) == lossless);
+
+  const auto build_status = [&] {
+    return lingtu::maps::JsonObjectStringAtPath(
+        pipeline.BuildOctomapArtifactJson("ray_support", finer_options),
+        {"octomap_result", "status"});
+  };
+  assert(build_status() == "reused");
+  metadata = read_metadata();
+  assert(lingtu::maps::JsonObjectStringAtPath(metadata, {"builder_version"}) == "0.3.0");
+  const std::string version_field = "\"builder_version\":\"0.3.0\"";
+  metadata.replace(metadata.find(version_field), version_field.size(),
+                   "\"builder_version\":\"0.2.0\"");
+  WriteText(ray_dir / "metadata.json", metadata);
+  assert(build_status() == "built");
+  // Missing any replay counter makes a saved-ray artifact ineligible for reuse.
+  for (const char* name : {"valid_endpoints", "retained_endpoints", "dropped_endpoints",
+                           "free_updates", "hit_updates", "guarded_miss_suppressions"}) {
+    metadata = read_metadata();
+    const std::string key = std::string("\"") + name + "\"";
+    metadata.replace(metadata.find(key), key.size(), "\"old_counter\"");
+    WriteText(ray_dir / "metadata.json", metadata);
+    assert(build_status() == "built");
+  }
+  assert(build_status() == "reused");
 
   TestOctomapRoundTripKeepsEvidence(root);
   TestSavedRayEvidence(store, root);

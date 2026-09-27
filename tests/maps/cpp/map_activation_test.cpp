@@ -104,10 +104,10 @@ void CreateReadyMap(const std::filesystem::path &root, const std::string &id) {
   const auto octomap_result = pipeline.BuildOctomapArtifactJson(id, options);
   if (lingtu::maps::JsonObjectBoolAtPath(octomap_result, {"success"}) != true) {
     // Builds without OctoMap keep the existing header-only fallback. A build
-    // with OctoMap must exercise the real reader with a valid binary tree.
+    // with OctoMap must exercise the real reader with a valid full tree.
     Write(
         map / "octomap.ot",
-        "# Octomap OcTree binary file\n"
+        "# Octomap OcTree file\n"
         "id OcTree\n"
         "size 1\n"
         "res 0.1\n"
@@ -119,7 +119,7 @@ void CreateReadyMap(const std::filesystem::path &root, const std::string &id) {
       "{\"frame_id\":\"map\",\"artifacts\":{"
       "\"map_pcd\":{\"path\":\"map.pcd\"},"
       "\"octomap\":{\"path\":\"octomap.ot\",\"evidence_source\":\"saved_rays\","
-      "\"build_mode\":\"native_octomap\",\"navigation_ready\":true},"
+      "\"build_mode\":\"native_octomap\",\"encoding\":\"full_log_odds\",\"navigation_ready\":true},"
       "\"occupancy_grid\":{\"path\":\"occupancy.npz\"}}}");
 }
 
@@ -160,7 +160,7 @@ void TestMetadataMtimeDoesNotChangeContentEpoch() {
       "{\"frame_id\":\"map\",\"created_at\":\"replacement\",\"artifacts\":{"
       "\"map_pcd\":{\"path\":\"map.pcd\"},"
       "\"octomap\":{\"path\":\"octomap.ot\",\"evidence_source\":\"saved_rays\","
-      "\"build_mode\":\"native_octomap\",\"navigation_ready\":true},"
+      "\"build_mode\":\"native_octomap\",\"encoding\":\"full_log_odds\",\"navigation_ready\":true},"
       "\"occupancy_grid\":{\"path\":\"occupancy.npz\"}}}");
   std::filesystem::last_write_time(metadata_path, first_time + std::chrono::seconds(1));
 

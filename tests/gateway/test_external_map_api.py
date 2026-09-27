@@ -953,6 +953,7 @@ def test_pcd_errors_never_echo_native_paths(monkeypatch, error_kind, expected_re
 
 def test_map_list_forwards_navigation_evidence(monkeypatch):
     from fastapi import FastAPI
+    from fastapi.testclient import TestClient
 
     import gateway.maps.routes as map_routes
 
@@ -963,7 +964,13 @@ def test_map_list_forwards_navigation_evidence(monkeypatch):
             "success": True,
             "active": "",
             "maps": [
-                {"name": "hall", "has_pcd": True, "can_activate": False, "map_evidence": "preview"},
+                {
+                    "name": "hall",
+                    "has_pcd": True,
+                    "can_activate": False,
+                    "activation_blockers": ["octomap.ot is missing", "saved rays are missing"],
+                    "map_evidence": "preview",
+                },
                 {"name": "old", "has_pcd": True, "can_activate": False},
             ],
         },
@@ -971,6 +978,12 @@ def test_map_list_forwards_navigation_evidence(monkeypatch):
     app = FastAPI()
     map_routes.register_map_routes(app, SimpleNamespace())
 
-    payload = asyncio.run(_endpoint(app, "/api/v1/slam/maps")())
+    response = TestClient(app).get("/api/v1/slam/maps")
+    assert response.status_code == 200
+    payload = response.json()
 
     assert [item["map_evidence"] for item in payload["maps"]] == ["preview", "none"]
+    assert [item["activation_blockers"] for item in payload["maps"]] == [
+        ["octomap.ot is missing", "saved rays are missing"],
+        [],
+    ]

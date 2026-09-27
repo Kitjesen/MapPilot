@@ -861,7 +861,24 @@ ArtifactValidationResult MapStore::ValidateArtifactsUnlocked(
       result.metadata_ok ? ReadSmallTextFile(metadata_path) : std::string{};
   result.metadata_ok = result.metadata_ok && IsValidJsonObject(metadata);
   result.metadata_identity_ok = result.metadata_ok;
+  if (options.require_navigation_evidence) {
+    if (octomap == nullptr || std::filesystem::path(octomap->uri).filename() != "octomap.ot") {
+      result.blockers.push_back("navigation requires octomap.ot in full OcTree format");
+    } else {
+      std::ifstream tree_file(octomap->uri, std::ios::binary);
+      std::string header;
+      if (!std::getline(tree_file, header) || Trim(header) != "# Octomap OcTree file") {
+        result.blockers.push_back("octomap.ot is not full OcTree format; rebuild from saved rays");
+      }
+    }
+  }
   if (options.require_navigation_evidence && result.metadata_ok) {
+    if (JsonObjectStringAtPath(metadata, {"artifacts", "octomap", "path"}) != "octomap.ot") {
+      result.blockers.push_back("navigation metadata must reference octomap.ot");
+    }
+    if (JsonObjectStringAtPath(metadata, {"artifacts", "octomap", "encoding"}) != "full_log_odds") {
+      result.blockers.push_back("navigation requires full_log_odds OctoMap evidence");
+    }
     const auto navigation_ready =
         JsonObjectBoolAtPath(metadata, {"artifacts", "octomap", "navigation_ready"});
     const auto evidence =
