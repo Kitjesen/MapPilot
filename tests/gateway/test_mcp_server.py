@@ -99,7 +99,7 @@ class TestMCPPorts(unittest.TestCase):
         self.assertEqual(MCPServerModule._layer, 6)
 
     def test_in_ports(self):
-        for name in ("odometry", "scene_graph", "navigation_goal_status"):
+        for name in ("odometry", "scene_graph"):
             with self.subTest(port=name):
                 self.assertIsInstance(getattr(self.mod, name), In)
 

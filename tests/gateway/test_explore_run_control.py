@@ -244,7 +244,6 @@ def test_new_run_is_blocked_while_previous_run_truth_is_unresolved(
         "gateway.navigation.status.evaluate_navigation_gate",
         lambda _gw: {
             "can_accept_goal": True,
-            "can_execute_autonomy": True,
             "blockers": [],
             "advisories": [],
             "reason": "",

@@ -36,7 +36,7 @@ from gateway.schemas import InstructionRequest, LocationUpsertRequest
 from gateway.services.control_commands import ControlCommandService
 from gateway.services.native_control import estop as native_estop
 from runtime.module import Module, skill
-from runtime.msgs.nav import NavigationGoalStatus, Odometry
+from runtime.msgs.nav import Odometry
 from runtime.msgs.semantic import SceneGraph
 from runtime.registry import register
 from runtime.status_provider import RuntimeStatusProvider
@@ -104,7 +104,6 @@ class MCPServerModule(Module, layer=6):
     # -- receive telemetry for read-only queries ----------------------------
     odometry: In[Odometry]
     scene_graph: In[SceneGraph]
-    navigation_goal_status: In[NavigationGoalStatus]
 
     # -- outgoing commands --------------------------------------------------
     instruction: Out[str]
@@ -131,7 +130,6 @@ class MCPServerModule(Module, layer=6):
         # Cached telemetry (written by subscriptions)
         self._odom: dict | None = None
         self._sg_json: str = "{}"
-        self._navigation_goal_status_by_request: dict[str, dict[str, Any]] = {}
 
         # Injected by the Host after module startup.
         self._system_handle = None
@@ -251,7 +249,6 @@ class MCPServerModule(Module, layer=6):
     def setup(self) -> None:
         self.odometry.subscribe(self._on_odom)
         self.scene_graph.subscribe(self._on_sg)
-        self.navigation_goal_status.subscribe(self._on_navigation_goal_status)
 
     def start(self) -> None:
         with self._lifecycle_lock:
@@ -330,12 +327,6 @@ class MCPServerModule(Module, layer=6):
 
     def _on_sg(self, sg: SceneGraph) -> None:
         self._sg_json = sg.to_json() if hasattr(sg, "to_json") else str(sg)
-
-    def _on_navigation_goal_status(self, status: NavigationGoalStatus) -> None:
-        self._navigation_goal_status_by_request[status.request_id] = status.to_dict()
-        if len(self._navigation_goal_status_by_request) > 256:
-            oldest = next(iter(self._navigation_goal_status_by_request))
-            self._navigation_goal_status_by_request.pop(oldest, None)
 
     # -- built-in @skill tools (system + perception read) ------------------
 

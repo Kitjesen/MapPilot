@@ -30,12 +30,6 @@ def gateway_status_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
             "GatewayModule",
             "exploration_run_event",
         ),
-        WireSpec(
-            "host.bus",
-            "navigation_goal_status",
-            "MCPServerModule",
-            "navigation_goal_status",
-        ),
         WireSpec("host.bus", "navigation_state", "AgentPlannerModule", "navigation_state"),
         WireSpec(
             "host.bus",

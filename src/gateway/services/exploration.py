@@ -1420,7 +1420,7 @@ def exploration_start_readiness(gw: Any) -> dict[str, Any]:
             blockers.extend(str(code) for code in nav_blockers if str(code) not in exploration_ignored_nav_blockers)
         if isinstance(nav_advisories, list):
             advisories.extend(str(code) for code in nav_advisories)
-        if not blockers and navigation.get("can_execute_autonomy") is not True and not nav_blockers:
+        if not blockers and navigation.get("can_accept_goal") is not True and not nav_blockers:
             blockers.append(str(navigation.get("reason") or "navigation_not_ready"))
     except Exception as exc:
         logger.debug(

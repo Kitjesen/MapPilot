@@ -589,7 +589,10 @@ def test_map_backed_explore_projects_native_active_map() -> None:
     assert detect_current_mode(gateway) == ("exploring", "yard")
 
 
-def test_readiness_recovers_commit_that_landed_after_gateway_setup(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("can_accept_goal", [True, False, None])
+def test_readiness_recovers_commit_that_landed_after_gateway_setup(
+    tmp_path, monkeypatch, can_accept_goal
+) -> None:
     from gateway.navigation import status as runtime_status
 
     monkeypatch.setenv("LINGTU_SESSION_ROOT", str(tmp_path))
@@ -601,11 +604,10 @@ def test_readiness_recovers_commit_that_landed_after_gateway_setup(tmp_path, mon
         runtime_status,
         "evaluate_navigation_gate",
         lambda _gw: {
-            "can_accept_goal": True,
-            "can_execute_autonomy": True,
+            "can_accept_goal": can_accept_goal,
             "blockers": [],
             "advisories": [],
-            "reason": "",
+            "reason": "" if can_accept_goal is True else "navigation_not_ready",
             "navigation_state": {"lifecycle_state_name": "IDLE"},
         },
     )
@@ -615,8 +617,10 @@ def test_readiness_recovers_commit_that_landed_after_gateway_setup(tmp_path, mon
     readiness = exploration.exploration_start_readiness(gateway)
 
     assert gateway._session_mode == "exploring"
-    assert readiness["can_start"] is True
-    assert readiness["blockers"] == []
+    assert readiness["can_start"] is (can_accept_goal is True)
+    assert readiness["blockers"] == (
+        [] if can_accept_goal is True else ["navigation_not_ready"]
+    )
 
 
 def test_public_field_stop_hands_off_to_product_control() -> None:

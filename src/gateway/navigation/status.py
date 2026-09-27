@@ -541,7 +541,6 @@ def evaluate_navigation_gate(
 
     return {
         "can_accept_goal": can_accept_goal,
-        "can_execute_autonomy": can_accept_goal is True,
         "blockers": blockers,
         "advisories": [],
         "reason": reason,

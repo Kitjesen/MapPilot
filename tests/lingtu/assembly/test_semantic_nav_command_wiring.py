@@ -36,7 +36,7 @@ def test_semantic_nav_command_wires_to_goal_service_when_present() -> None:
     assert ("AgentPlannerModule", "goal_pose", "nav.goals", "goal_request") not in keys
 
 
-def test_mcp_uses_gateway_status_projection_but_keeps_goal_events() -> None:
+def test_mcp_uses_gateway_status_projection_without_duplicate_goal_cache() -> None:
     keys = {
         wire_key(spec)
         for spec in gateway_status_specs(_ctx("host.bus", "GatewayModule", "MCPServerModule"))
@@ -47,6 +47,12 @@ def test_mcp_uses_gateway_status_projection_but_keeps_goal_events() -> None:
         "host.bus",
         "navigation_goal_status",
         "MCPServerModule",
+        "navigation_goal_status",
+    ) not in keys
+    assert (
+        "host.bus",
+        "navigation_goal_status",
+        "GatewayModule",
         "navigation_goal_status",
     ) in keys
 
