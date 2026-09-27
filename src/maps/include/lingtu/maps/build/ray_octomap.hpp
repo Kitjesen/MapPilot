@@ -23,6 +23,19 @@ inline std::size_t OccupiedVoxelCount(const octomap::OcTree& tree) {
 // passed below the surface.
 inline constexpr double kGrazingGuardM = 1.0;
 
+struct SavedRayOctomapStats {
+  std::size_t valid_endpoints{0};
+  std::size_t retained_endpoints{0};
+  std::size_t dropped_endpoints{0};
+  std::size_t free_updates{0};
+  std::size_t hit_updates{0};
+  std::size_t guarded_miss_suppressions{0};
+
+  [[nodiscard]] std::size_t inserted_points() const noexcept {
+    return retained_endpoints;
+  }
+};
+
 // Replays the saved scans into `tree` from their sensor origins. The
 // save-time cleaned map.pcd decides which surfaces are static:
 //  * only endpoints inside a retained voxel are inserted, so returns the
@@ -37,7 +50,7 @@ inline constexpr double kGrazingGuardM = 1.0;
 // stays unknown. On 903room at 5 cm the Go2 planner accepts 91% of the path
 // the robot walked while mapping; plain replay (which freed 37% of the
 // retained voxels) 56%, and forcing every retained voxel occupied 61%.
-inline std::size_t PopulateSavedRayOctomap(
+inline SavedRayOctomapStats PopulateSavedRayOctomap(
     octomap::OcTree& tree, const std::filesystem::path& directory,
     const std::function<bool()>& cancelled = {}) {
   const auto retained = LoadPcdXyz(directory / "map.pcd");
@@ -59,7 +72,7 @@ inline std::size_t PopulateSavedRayOctomap(
         guarded.insert(octomap::OcTreeKey(key[0] + dx, key[1] + dy, key[2]));
 
   const auto guard_cells = static_cast<std::size_t>(kGrazingGuardM / tree.getResolution());
-  std::size_t count = 0;
+  SavedRayOctomapStats stats;
   octomap::KeyRay ray;
   VisitSavedScans(directory, [&](const SavedScan& scan) {
     if (cancelled && cancelled()) throw std::runtime_error("saved ray build cancelled");
@@ -71,24 +84,39 @@ inline std::size_t PopulateSavedRayOctomap(
       const octomap::point3d end(scan.xyz[i], scan.xyz[i + 1], scan.xyz[i + 2]);
       octomap::OcTreeKey key;
       if (!std::isfinite(end.x()) || !std::isfinite(end.y()) || !std::isfinite(end.z()) ||
-          !tree.coordToKeyChecked(end, key) || retained_keys.count(key) == 0U)
+          !tree.coordToKeyChecked(end, key))
         continue;
+      ++stats.valid_endpoints;
+      if (retained_keys.count(key) == 0U) {
+        ++stats.dropped_endpoints;
+        continue;
+      }
+      ++stats.retained_endpoints;
       occupied_cells.insert(key);
-      ++count;
       if (!tree.computeRayKeys(origin, end, ray)) continue;
       std::size_t to_end = ray.size();
       for (const auto& cell : ray) {
-        if (to_end-- > guard_cells || guarded.count(cell) == 0U) free_cells.insert(cell);
+        if (to_end-- > guard_cells || guarded.count(cell) == 0U) {
+          free_cells.insert(cell);
+        } else {
+          ++stats.guarded_miss_suppressions;
+        }
       }
     }
     for (const auto& cell : free_cells)
-      if (occupied_cells.count(cell) == 0U) tree.updateNode(cell, false, true);
-    for (const auto& cell : occupied_cells) tree.updateNode(cell, true, true);
+      if (occupied_cells.count(cell) == 0U) {
+        tree.updateNode(cell, false, true);
+        ++stats.free_updates;
+      }
+    for (const auto& cell : occupied_cells) {
+      tree.updateNode(cell, true, true);
+      ++stats.hit_updates;
+    }
   });
-  if (count == 0U)
+  if (stats.retained_endpoints == 0U)
     throw std::runtime_error("saved ray build retained map.pcd matched no saved scan endpoints");
   tree.updateInnerOccupancy();
-  return count;
+  return stats;
 }
 
 }  // namespace lingtu::maps

@@ -174,6 +174,25 @@ void TestSavedRayEvidence(MapStore& store, const std::filesystem::path& root) {
     return lingtu::maps::JsonObjectNumberAtPath(result, {"octomap_result", "report", "saved_rays", name});
   };
   assert(stat("inserted_points") == 7.0);
+  assert(stat("valid_endpoints") == 8.0);
+  assert(stat("retained_endpoints") == 7.0);
+  assert(stat("dropped_endpoints") == 1.0);
+  assert(stat("hit_updates") == 7.0);
+  assert(stat("free_updates").value_or(0.0) > 0.0);
+  assert(stat("guarded_miss_suppressions").value_or(0.0) > 0.0);
+  const auto read_metadata = [&] {
+    std::ifstream file(dir / "metadata.json");
+    return std::string((std::istreambuf_iterator<char>(file)), {});
+  };
+  const auto assert_stats = [&] {
+    const auto metadata = read_metadata();
+    for (const char* name : {"valid_endpoints", "retained_endpoints", "dropped_endpoints",
+                             "free_updates", "hit_updates", "guarded_miss_suppressions"}) {
+      assert(lingtu::maps::JsonObjectNumberAtPath(
+          metadata, {"artifacts", "octomap", "stats", name}) == stat(name));
+    }
+  };
+  assert_stats();
   assert(!lingtu::maps::JsonObjectNumberAtPath(
       result, {"octomap_result", "report", "saved_rays", "raised_voxels"}).has_value());
 
@@ -207,6 +226,13 @@ void TestSavedRayEvidence(MapStore& store, const std::filesystem::path& root) {
   // A return the dynamic filter discarded leaves no hit and no carved ray.
   assert(tree->search(person.x, person.y, person.z) == nullptr);
   assert(tree->search(0.55, -0.55, 0.05) == nullptr);
+  lingtu::maps::OctomapEditOptions edit;
+  edit.state = "occupied";
+  edit.x_m = 4.0;
+  edit.radius_m = 0.1;
+  assert(lingtu::maps::JsonObjectBoolAtPath(
+      pipeline.EditOctomapVoxelsJson(map_id, edit), {"success"}) == true);
+  assert_stats();
 }
 
 // An imported point cloud has no saved rays: its OctoMap is a preview that

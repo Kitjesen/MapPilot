@@ -176,12 +176,30 @@ std::string NormalizeShellCommandForSystem(std::string command) {
   return command;
 }
 
+// Replay counters describe historical observations, including after voxel edits.
+std::string SavedRayStatsJson(const std::string& metadata) {
+  std::ostringstream result;
+  result << "{";
+  bool first = true;
+  for (const char* name : {"valid_endpoints", "retained_endpoints", "dropped_endpoints",
+                           "free_updates", "hit_updates", "guarded_miss_suppressions"}) {
+    const auto value = JsonObjectNumberAtPath(metadata, {"artifacts", "octomap", "stats", name});
+    if (!value || *value < 0.0 || std::floor(*value) != *value) return {};
+    if (!first) result << ",";
+    first = false;
+    result << JsonString(name) << ":" << std::fixed << std::setprecision(0) << *value;
+  }
+  result << "}";
+  return result.str();
+}
+
 std::string MetadataJson(const std::string &map_id, const std::filesystem::path &map_dir,
                          const std::filesystem::path &pcd_path,
                          const std::filesystem::path &octomap_path,
                          const OctomapBuildOptions &options,
                          bool manual_voxel_edit = false, std::size_t manual_edit_count = 0U,
-                         const std::string &last_edit_json = "null") {
+                         const std::string &last_edit_json = "null",
+                         std::string saved_ray_stats = {}) {
   bool saved_rays = HasSavedRays(map_dir);
   // navigation_ready is provenance, not operator intent: only a native
   // replay of saved sensor rays may set it. Point-cloud approval is recorded
@@ -196,6 +214,7 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
     navigation_ready = saved_rays &&
         JsonObjectBoolAtPath(previous.str(),
             {"artifacts", "octomap", "navigation_ready"}).value_or(false);
+    saved_ray_stats = SavedRayStatsJson(previous.str());
     // A voxel edit changes the navigation artifact. Drop any point-cloud
     // approval so the operator must confirm the edited map again.
   }
@@ -250,6 +269,7 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
             << "\"clamping_min\":" << kSavedMapSensorModel.clamping_min << ","
             << "\"clamping_max\":" << kSavedMapSensorModel.clamping_max << "},"
             << (manual_voxel_edit ? "\"manual_voxel_edit\":true," : "")
+            << (saved_ray_stats.empty() ? "" : "\"stats\":" + saved_ray_stats + ",")
             << "\"builder\":{\"name\":\"LingTu MapsPipelineCore\",\"version\":\"0.2.0\"}"
             << "}";
 
@@ -1082,10 +1102,19 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
   }
 
   const bool saved_rays = HasSavedRays(map_dir);
-  std::size_t saved_ray_points = 0U;
+  SavedRayOctomapStats saved_ray_stats;
+  std::string saved_ray_stats_json;
   if (saved_rays) {
     try {
-      saved_ray_points = PopulateSavedRayOctomap(tree, map_dir, options.cancel_requested);
+      saved_ray_stats = PopulateSavedRayOctomap(tree, map_dir, options.cancel_requested);
+      std::ostringstream stats;
+      stats << "{\"valid_endpoints\":" << saved_ray_stats.valid_endpoints
+            << ",\"retained_endpoints\":" << saved_ray_stats.retained_endpoints
+            << ",\"dropped_endpoints\":" << saved_ray_stats.dropped_endpoints
+            << ",\"free_updates\":" << saved_ray_stats.free_updates
+            << ",\"hit_updates\":" << saved_ray_stats.hit_updates
+            << ",\"guarded_miss_suppressions\":" << saved_ray_stats.guarded_miss_suppressions << "}";
+      saved_ray_stats_json = stats.str();
     } catch (const std::exception& error) {
       return "{\"success\":false,\"reason_code\":\"saved_ray_build_failed\",\"message\":" +
           JsonString(error.what()) + "}";
@@ -1117,7 +1146,8 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
   }
   if (!WriteTextFile(
           metadata_path,
-          MetadataJson(map_id, map_dir, pcd_path, octomap_path, options))) {
+          MetadataJson(map_id, map_dir, pcd_path, octomap_path, options,
+                       false, 0U, "null", saved_ray_stats_json))) {
     return "{"
            "\"action\":\"build_octomap\","
            "\"success\":false,"
@@ -1170,7 +1200,8 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
          "\"occupied_voxels\":" +
          std::to_string(OccupiedVoxelCount(tree)) +
          (saved_rays ? ",\"saved_rays\":{\"inserted_points\":" +
-                           std::to_string(saved_ray_points) + "}"
+                           std::to_string(saved_ray_stats.retained_endpoints) + "," +
+                           saved_ray_stats_json.substr(1)
                      : std::string{}) +
          "}"
          "}";
