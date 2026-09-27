@@ -566,7 +566,7 @@ FastAPI's live OpenAPI UI remains available at `/docs`.
   - `POST /api/v1/maps/operations/{operation_id}/retry` — Retry a failed durable map-save operation
   - `DELETE /api/v1/maps/{name}` — Delete a saved map
   - `POST /api/v1/maps/{name}/build_occupancy` — Build a 2D occupancy artifact from a saved map
-  - `POST /api/v1/maps/{name}/build_octomap` — Build OctoPlanner3D octomap.ot from saved map.pcd
+  - `POST /api/v1/maps/{name}/build_octomap` — Build the native OctoPlanner3D octomap.ot; navigation activation requires saved-ray evidence, while point-cloud-only output is preview-only
   - `POST /api/v1/maps/{name}/crop` — Crop a saved map point cloud and invalidate derived artifacts
   - `POST /api/v1/maps/{name}/mark_zone` — Mark occupied/free/preblocked/traversable zones in the saved OctoMap
   - `GET /api/v1/maps/{name}/pcd` — Serve raw PCD file for inline preview
@@ -790,7 +790,7 @@ FastAPI's live OpenAPI UI remains available at `/docs`.
 **Handler:** `build_saved_map_occupancy`
 
 #### `POST /api/v1/maps/{name}/build_octomap`
-**Summary:** Build OctoPlanner3D octomap.ot from saved map.pcd
+**Summary:** Build the native OctoPlanner3D octomap.ot. A navigation artifact replays saved sensor rays; a point-cloud-only build is explicitly preview-only and cannot be activated for motion.
 **Response model:** `MapLifecycleResponse`
 **Handler:** `build_saved_map_octomap`
 

@@ -21,44 +21,22 @@ are not upstream navigation modes or an unconditional parity claim. Hardware
 clearance and command caps are resolved from the active RunPlan/RobotConfig;
 matching the upstream algorithm does not imply matching its effective parameters.
 
-## LingTu 3D ground-support extension
+## Global route and local collision ownership
 
 The pinned upstream `grid_map.h::getInflateOccupancy` queries the two rotated
-cylinder centres in the inflated 3D occupancy buffer. Its FSM collision callback
-checks the future trajectory. That contract does not itself establish measured
-ground support, step reachability, or absence of a drop beneath the robot.
+cylinder centres in the inflated 3D occupancy buffer. LingTu's `scan/Grid`
+keeps that contract, continuous segment/braking checks and moving-obstacle
+predictions. It does not require seven ground probes or an independently
+ray-cleared support patch before the FSM can plan.
 
-For robots with a calibrated support height, LingTu's `scan/Grid` additionally
-requires measured occupied voxels with observed free space above them. A local
-surface fit and footprint samples use the candidate's actual XYZ and heading;
-the first surface below the body is checked rather than skipping a nearer slab.
-Different surfaces at the same XY remain separate. Intermediate trajectory,
-braking and boundary-departure queries also require support. Missing evidence
-blocks motion. No 2D costmap participates in these decisions.
+OctoPlanner owns the autonomous route's observed-ground, unknown-space,
+step-height and slope checks. Its radius and support settings are not SCAN
+inputs. A clear local collision query does not prove ground support or gait
+feasibility; assisted teleop has no independent footstep/drop-off guarantee.
 
-A missing surface column may be interpolated from measured support with observed
-clearance within two cells and 10 cm per axis, with returns in every quadrant
-around the query. The local plane must meet slope and voxel-height residual
-limits; the query must have observed clearance immediately above it. A grazing
-ray through the surface cell alone is not evidence of a drop: a free cell below
-the fitted surface cell, a measured lower floor, a nearer slab, one-sided
-evidence or a larger gap prevents interpolation. Occupancy/free evidence remains
-unchanged; inferred samples are never written into the map or used recursively
-to grow support. This handles bounded sampling gaps; it does
-not solve a cold-start ground blind region under the robot. Startup diagnostics
-distinguish missing returns, height mismatch, unobserved clearance and incomplete
-surface patches.
-
-Mapd publishes measured occupancy, known free space and inflated collision bits
-in one typed DDS snapshot. Evidence changes advance its generation even when
-inflation stays unchanged. Decoded immutable storage is shared with the worker.
-Mapd and navd must be rebuilt and deployed together after this IDL change.
-
-This is an intentional change to candidate acceptance at the map-query seam,
-not an upstream feature or a modification of the B-spline/L-BFGS objective.
-It is a geometric support test at voxel resolution, not a footstep/gait planner
-or evidence that Go2 can execute arbitrary vertical trajectories. Live measured
-body height and the driver IMU tilt limit still constrain actual movement.
+Mapd's measured occupancy and known-free evidence remain in the typed snapshot.
+Removing the extra local gate does not convert unknown cells into measured
+free space, change ray integration or change the DDS contract.
 
 The corresponding upstream algorithm and its L-BFGS dependency are retained
 together under this directory for:

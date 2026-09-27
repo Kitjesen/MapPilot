@@ -1086,8 +1086,16 @@ int main(int argc, char **argv) {
     // sustained for the full persistence window are enough to represent a
     // real obstacle while still rejecting one-point lidar noise.
     blockage_config.minimum_obstacle_points = 2U;
-    blockage_config.overlay_radius_m =
-        std::max(0.1, cfg.obstacle_voxel_size_m + cfg.live_obstacle_inflation_radius_m);
+    blockage_config.obstacle_voxel_size_m = cfg.obstacle_voxel_size_m;
+    if (cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan) {
+      blockage_config.local_collision_radius_m =
+          cfg.collision_cylinder_radius_m + cfg.collision_cylinder_offset_m;
+      blockage_config.local_collision_below_m = cfg.collision_clearance_below_m;
+      blockage_config.local_collision_above_m = cfg.collision_clearance_above_m;
+      blockage_config.corridor_vertical_tolerance_m =
+          std::max(cfg.collision_clearance_below_m, cfg.collision_clearance_above_m) +
+          0.5 * cfg.obstacle_voxel_size_m;
+    }
     ActivePathBlockagePolicy active_path_blockage_policy(blockage_config);
     goal_replan_runtime_ptr = &goal_replan_runtime;
     GoalTerminalStatusDelivery goal_terminal_delivery(goal_status_outbox);

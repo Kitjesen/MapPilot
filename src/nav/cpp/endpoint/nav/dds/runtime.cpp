@@ -512,7 +512,8 @@ CommandBatch Dds::takeCommands(double now_steady_s) {
         batch.ordered.emplace_back(PlanPreviewRequest{
             headerStampSeconds(message.header), headerFrameId(message.header),
             stringValue(message.request_id),
-            {message.goal.x, message.goal.y, message.goal.z}});
+            {message.goal.x, message.goal.y, message.goal.z},
+            message.acceptance_radius_m});
       });
   drainReader<lingtu_dds_SemanticViewRequest>(
       semantic_view_reader_, lingtu_dds_SemanticViewRequest_desc,

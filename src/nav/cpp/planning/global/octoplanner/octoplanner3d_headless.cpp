@@ -427,10 +427,6 @@ void applyOptionsFromJson(PlannerOptions & options, const std::string & json)
     body,
     "same_floor_z_tolerance",
     options.same_floor_z_tolerance);
-  options.max_same_floor_z_excursion = optionalDouble(
-    body,
-    "max_same_floor_z_excursion",
-    options.max_same_floor_z_excursion);
   options.obstacle_clearance_radius_cells = optionalInt(
     body,
     "obstacle_clearance_radius_cells",
@@ -503,8 +499,6 @@ void emitConstraints(const PlannerOptions & options)
             << "\"same_floor_preference\":"
             << (options.same_floor_preference ? "true" : "false") << ','
             << "\"same_floor_z_tolerance\":" << options.same_floor_z_tolerance << ','
-            << "\"max_same_floor_z_excursion\":"
-            << options.max_same_floor_z_excursion << ','
             << "\"obstacle_clearance_radius_cells\":"
             << options.obstacle_clearance_radius_cells << ','
             << "\"obstacle_clearance_weight\":" << options.obstacle_clearance_weight << ','

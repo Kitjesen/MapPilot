@@ -146,18 +146,31 @@ def test_go2_standing_height_reaches_native_planner() -> None:
     assert compiled.environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_TOLERANCE_M"] == "0.05"
     assert compiled.environment["LINGTU_NAV_OCTO_STRICT_GROUND_SUPPORT"] == "0"
     assert compiled.environment["LINGTU_NAV_OCTO_GROUND_SUPPORT_XY_RADIUS_CELLS"] == "1"
-    assert compiled.environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"] == "0.25"
+    assert compiled.environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"] == "0.155"
     assert compiled.environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"] == "0.25"
     assert compiled.environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] == "0.19"
+    assert compiled.environment["LINGTU_NAV_OCTO_TERMINAL_GOAL_TOLERANCE_M"] == "0.15"
+    assert compiled.environment["LINGTU_NAV_OCTO_TERMINAL_GOAL_XY_TOLERANCE_M"] == "0.15"
+    assert compiled.environment["LINGTU_NAV_OCTO_TERMINAL_GOAL_Z_TOLERANCE_M"] == "0.15"
 
 
-@pytest.mark.parametrize("tolerance", [0.15, 0.25])
-def test_snapped_global_goal_uses_execution_arrival_tolerance(tolerance: float) -> None:
+@pytest.mark.parametrize("tolerance", [0.25, 0.45])
+def test_snapped_global_goal_uses_explicit_planner_tolerance(tolerance: float) -> None:
     config = _compiled_product_config("nav")
-    config["native_nav"]["goal_reached_m"] = tolerance
+    config["native_nav"]["octoplanner3d_terminal_goal_xy_tolerance_m"] = tolerance
     compiled = compile_native_nav_config("nav", config)
 
     assert float(compiled.environment["LINGTU_NAV_OCTO_TERMINAL_GOAL_XY_TOLERANCE_M"]) == tolerance
+
+
+def test_snapped_global_goal_does_not_change_execution_arrival_tolerance() -> None:
+    config = _compiled_product_config("nav")
+    config["native_nav"]["octoplanner3d_terminal_goal_xy_tolerance_m"] = 0.35
+    compiled = compile_native_nav_config("nav", config)
+
+    assert compiled.environment["LINGTU_NAV_GOAL_REACHED_M"] == "0.15"
+    assert compiled.environment["LINGTU_NAV_PATH_FOLLOWER_GOAL_TOLERANCE_M"] == "0.15"
+    assert compiled.environment["LINGTU_NAV_OCTO_TERMINAL_GOAL_XY_TOLERANCE_M"] == "0.35"
 
 
 def test_scan_mapd_inflation_covers_asymmetric_body_clearances() -> None:
@@ -270,21 +283,24 @@ def test_octoplanner_explicit_override_reaches_environment() -> None:
         (0.25, 0.18),
     ],
 )
-def test_octoplanner_default_radius_follows_robot_footprint(
+def test_octoplanner_default_radius_uses_width_independently_of_scan(
     radius: float, offset: float
 ) -> None:
     compiled = compile_native_nav_config(
         "nav",
         {
             "native_control_mode": "autonomy",
+            "vehicle_width_m": 0.31,
             "collision_cylinder_radius_m": radius,
             "collision_cylinder_offset_m": offset,
         },
     )
 
     assert float(compiled.environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"]) == pytest.approx(
-        radius
+        0.155
     )
+    assert compiled.parameters["collision_cylinder_radius_m"] == radius
+    assert compiled.parameters["collision_cylinder_offset_m"] == offset
 
 
 def test_velocity_smoother_is_left_to_the_native_endpoint() -> None:

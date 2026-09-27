@@ -80,7 +80,14 @@ class NativeNavigationClient:
         )
         return NavigationCommandReceipt(**receipt)
 
-    def preview_plan(self, x: float, y: float, z: float) -> dict[str, object]:
+    def preview_plan(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        *,
+        acceptance_radius_m: float | None = None,
+    ) -> dict[str, object]:
         """Return a read-only plan from the native endpoint planner."""
 
         request_id = f"plan-{os.getpid()}-{time.time_ns()}"
@@ -89,6 +96,7 @@ class NativeNavigationClient:
             float(x),
             float(y),
             float(z),
+            acceptance_radius_m=acceptance_radius_m,
         )
 
     def cancel_task(

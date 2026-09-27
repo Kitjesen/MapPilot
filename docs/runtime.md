@@ -13,7 +13,7 @@ Product declarations in `config/runtime_graph/products/*.yaml` and mappings in
 | Product | Runtime intent |
 | --- | --- |
 | `teleop` | Operator control through native limits and final output gates |
-| `teleop_avoid` | Mapping SLAM, live traversability, and native local avoidance |
+| `teleop_avoid` | Mapping SLAM, live 3D collision data, and native local avoidance |
 | `map` | Build a live map and transactionally save persistent artifacts |
 | `explore` | Live mapping without a map, or saved-map localization with a map |
 | `nav` | Saved-map localization, global/local planning, tracking, and control |
@@ -73,7 +73,7 @@ MID-360 / IMU
   -> native sensor process
   -> slamd
   -> odometry + registered cloud + MapObservation
-  -> mapd + standalone traversability
+  -> mapd (standalone traversability only when declared by the Product)
   -> navd
   -> rt/nav/cmd_vel
   -> lingtu-driver
@@ -81,8 +81,10 @@ MID-360 / IMU
 ```
 
 `navd` is the field navigation state authority and final logical command
-writer. Standalone traversability is the unique control-risk grid writer.
-`mapd` scene and visualization layers cannot replace that control input.
+writer. Standalone traversability is the unique control-risk grid writer for
+Products that declare it. The default SCAN `nav` and `teleop_avoid` Products
+consume Mapd's live 3D collision volume and do not require `/nav/traversability`.
+Visualization layers do not authorize motion.
 
 `lingtu-driver` is the unique hardware writer. Field Products have no Python
 algorithm fallback. Gateway translates requests and projects typed state; it
@@ -112,7 +114,7 @@ driver acknowledgement, and actuator evidence are separate claims.
 ```text
 operator sample
   + SLAM odometry and cloud
-  + traversability
+  + Mapd 3D collision volume
   -> LocalPlanner
   -> PathFollower
   -> final gates
@@ -140,6 +142,37 @@ typed goal
 different semantics. A terminal task result is correlated by `request_id`; it
 must not be inferred from a current-state snapshot.
 
+OctoPlanner owns the saved-map route and terrain constraints. SCAN owns the
+heading-dependent body envelope, live obstacle avoidance, and local trajectory.
+The global route radius is independent of SCAN's two-cylinder dimensions.
+
+SCAN receives fresh dynamic predictions directly. Executor does not add a
+second prediction-based wait/resume timer before local planning; it retains
+route progress, recovery, tracking, and final motion gates. A prediction that
+blocks the current global reference may still permit a local detour.
+
+Same-floor preference is a soft global search cost. A supported route is not
+discarded solely because its total height excursion exceeds a fixed threshold;
+per-edge terrain and collision constraints still apply.
+
+Preview carries the same requested acceptance radius as goal submission and
+uses the smaller of that radius and the configured terminal XY tolerance.
+Preview success describes a global route, not permission to move or a promise
+that the live local trajectory is executable.
+
+Persistent obstacle feedback follows the measured obstacle snapshot generation,
+not a traversability-grid generation. A viable local path suppresses this
+feedback. Otherwise, repeated observed blockage can request a bounded global
+replan with temporary measured obstacle voxels. Their Z extents remain one
+observation voxel, with different heights at the same XY retained separately;
+they are neither robot-inflated nor extended into vertical columns.
+
+A fresh SCAN collision sample can select nearby measured returns outside the
+global route corridor. The failed body sample is not itself obstacle geometry.
+Input or acceleration failures without spatial collision evidence do not create
+blocked regions. This feedback does not rewrite the saved OctoMap or bypass the
+existing stop-before-replan transaction.
+
 ## Maps and localization
 
 Canonical saved maps live at `<map-root>/<map-id>/`. Map identity has two
@@ -152,11 +185,16 @@ fields: `map_id` and a positive numeric `content_epoch`. DDS carries
 ProductControl is the only public map activation owner. SLAM, mapd, and the
 planner in one RunPlan must bind the same MapIdentity.
 
+Delete, rename, retire, source replacement, artifact rebuild, and voxel edits
+reject changes to the active map with `active_map_conflict`. SaveMap does not
+activate maps and cannot replace the active map under the same name. Save to a
+new map ID, or switch maps through ProductControl before modifying the old one.
+
 | Artifact | Role |
 | --- | --- |
 | `map.pcd`, `metadata.json` | Required canonical source and metadata |
 | `octomap.ot` | Current native navigation artifact |
-| `poses.txt`, `patches/` | Optional SLAM/optimization inputs |
+| `poses.txt`, `scan_origin.txt`, `patches/` | Required for a saved-ray navigation artifact; optional only for preview/diagnostic maps |
 | `occupancy.npz`, `esdf.npz`, `traversability.npz` | Optional derived products |
 | `semantic_map.bin` | Optional semantic product; does not alone make a map activation-ready |
 
@@ -192,6 +230,19 @@ global paths use `map`. Local sensor and control payloads use the declared
 
 ROS TF and ROS topic aliases are explicit compatibility surfaces. They cannot
 become the normal Product data plane.
+
+`/nav/state` publishes on the first control tick that observes a changed payload,
+including progress, authority, hold reason, and failure code. Unchanged state
+is refreshed every 0.2 seconds. Failed writes retry on the next tick; successful
+writes use a fresh timestamp and increasing sequence. This limits unchanged
+state traffic, not the control loop or motion-command rate. The browser uses
+the shared state-freshness rule for keyboard control and requires a new key
+press after control state becomes unknown or stale.
+
+The preview request includes `acceptance_radius_m` in DDS `PlanRequest`. Its
+native client export is `lingtu_nav_client_preview_plan_v2` with client ABI 11.
+Rebuild and deploy generated DDS types, native endpoints/client, and Python
+bindings together; an old native client is not compatible with this binding.
 
 ## Safety and readiness
 

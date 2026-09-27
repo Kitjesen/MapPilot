@@ -186,7 +186,6 @@ GoalPlanSubmitResult GoalPlanController::startPlanning(
       plan_context.start.y,
       plan_context.start.z,
   };
-  plan_context.request.start_yaw_rad = context.map_yaw_rad;
   plan_context.request.goal = {
       plan_context.goal.x,
       plan_context.goal.y,

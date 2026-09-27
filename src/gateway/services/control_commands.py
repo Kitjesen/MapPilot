@@ -129,7 +129,12 @@ class ControlCommandService:
         if not callable(operation):
             return self._unavailable(body)
         try:
-            result = operation(float(body.x), float(body.y), float(body.z))
+            result = operation(
+                float(body.x),
+                float(body.y),
+                float(body.z),
+                acceptance_radius_m=body.acceptance_radius_m,
+            )
         except Exception as exc:
             return self._unavailable(body, error=str(exc))
         if not isinstance(result, Mapping):

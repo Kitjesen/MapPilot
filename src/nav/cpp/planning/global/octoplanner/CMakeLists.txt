@@ -264,6 +264,10 @@ install(TARGETS octoplanner3d_pcd_to_octomap
 if(BUILD_TESTING)
   add_executable(octoplanner3d_sampled_pcd_smoke sampled_pcd_smoke.cpp)
   target_link_libraries(octoplanner3d_sampled_pcd_smoke PRIVATE octomap_vendor octomath_vendor)
+  if(OCTOPLANNER3D_ENABLE_PCD)
+    target_compile_definitions(octoplanner3d_sampled_pcd_smoke PRIVATE OCTOPLANNER3D_TEST_DIRECT_PCD=1)
+    target_link_libraries(octoplanner3d_sampled_pcd_smoke PRIVATE octoplanner3d_pcd_converter)
+  endif()
   add_test(NAME octoplanner3d_sampled_pcd_smoke
     COMMAND octoplanner3d_sampled_pcd_smoke
       $<TARGET_FILE:octoplanner3d_pcd_to_octomap>

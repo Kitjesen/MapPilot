@@ -53,7 +53,7 @@ MESSAGE_FIELDS = {
     'lingtu.dds.OperatorMotionSample': ('header', 'source_id', 'source_epoch', 'source_sequence', 'request_id', 'deadman', 'manual_mode', 'velocity', 'freshness_budget_ms', 'source_stamp_ns'),
     'lingtu.dds.OperatorMotionStatus': ('header', 'active_source_id', 'active_source_epoch', 'has_active_authority', 'holding', 'has_active_sample', 'last_sample_sequence', 'admitted_sequence', 'final_output_sequence', 'authority_reason', 'input_gate_reason', 'teleop_output', 'final_cmd_vel'),
     'lingtu.dds.Path': ('header', 'poses'),
-    'lingtu.dds.PlanRequest': ('header', 'request_id', 'goal'),
+    'lingtu.dds.PlanRequest': ('header', 'request_id', 'goal', 'acceptance_radius_m'),
     'lingtu.dds.PlanResult': ('header', 'request_id', 'feasible', 'start_valid', 'reason', 'elapsed_ms', 'planner', 'start', 'goal', 'path'),
     'lingtu.dds.Point': ('x', 'y', 'z'),
     'lingtu.dds.PointCloud2': ('header', 'height', 'width', 'fields', 'is_bigendian', 'point_step', 'row_step', 'data', 'is_dense'),

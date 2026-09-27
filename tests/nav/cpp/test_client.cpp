@@ -2412,12 +2412,13 @@ void testPlanPreview() {
   result.struct_size = sizeof(result);
   int call_result = -1;
   std::thread caller([&]() {
-    call_result = lingtu_nav_client_preview_plan_v1(
+    call_result = lingtu_nav_client_preview_plan_v2(
         client,
         "preview-001",
         4.0,
         5.0,
         0.5,
+        0.25,
         2000,
         &result,
         nullptr,
@@ -2429,7 +2430,7 @@ void testPlanPreview() {
       std::string(request->request_id) == "preview-001" &&
           std::string(request->header.frame_id) == "map" &&
           request->goal.x == 4.0 && request->goal.y == 5.0 &&
-          request->goal.z == 0.5,
+          request->goal.z == 0.5 && request->acceptance_radius_m == 0.25,
       "plan preview request was not published exactly");
   const std::string request_id = request->request_id;
   returnLoan(request_reader, request);
@@ -2466,13 +2467,30 @@ void testPlanPreview() {
           std::string(result.frame_id) == "map" &&
           std::string(result.planner) == "far" && result.elapsed_ms == 12.5,
       "plan preview result metadata was not preserved");
-  std::vector<lingtu_nav_path_point> copied(result.point_count);
-  call_result = lingtu_nav_client_preview_plan_v1(
+  call_result = lingtu_nav_client_preview_plan_v2(
       client,
       request_id.c_str(),
       4.0,
       5.0,
       0.5,
+      0.3,
+      2000,
+      &result,
+      nullptr,
+      0U);
+  check(
+      call_result == -1 &&
+          std::string(lingtu_nav_client_last_error(client)).find("does not match") !=
+              std::string::npos,
+      "plan preview retry accepted a different request under the staged identity");
+  std::vector<lingtu_nav_path_point> copied(result.point_count);
+  call_result = lingtu_nav_client_preview_plan_v2(
+      client,
+      request_id.c_str(),
+      4.0,
+      5.0,
+      0.5,
+      0.25,
       2000,
       &result,
       copied.data(),

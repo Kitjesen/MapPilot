@@ -71,7 +71,8 @@ test('the dashboard adopts the authoritative active task instead of relying on l
     'utf8',
   )
 
-  assert.match(app, /const activeTaskId = sseState\.navigationStatus\?\.task\.task_id/)
+  assert.match(app, /const liveNavigation = liveNavigationStatus\(sseState, nowMs \/ 1000\)/)
+  assert.match(app, /const activeTaskId = liveNavigation\?\.task\.task_id/)
   assert.doesNotMatch(app, /activeRequestId/)
   assert.doesNotMatch(app, /mission\.raw|active_task_id|active_request_id/)
   assert.match(app, /currentNavigationTaskStore\.adoptAuthoritative/)

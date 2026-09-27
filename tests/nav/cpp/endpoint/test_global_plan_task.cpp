@@ -114,13 +114,10 @@ int main() {
   requested_overlay.revision = 17U;
   requested_overlay.frame_epoch = 4U;
   requested_overlay.obstacle_generation = 23U;
-  requested_overlay.traversability_generation = 29U;
   requested_overlay.blocked_regions.push_back({{2.0, 2.0, 0.5}, 0.6, -0.2, 1.8});
   overlay_completion.result.overlay_revision = requested_overlay.revision;
   overlay_completion.result.overlay_frame_epoch = requested_overlay.frame_epoch;
   overlay_completion.result.overlay_obstacle_generation = requested_overlay.obstacle_generation;
-  overlay_completion.result.overlay_traversability_generation =
-      requested_overlay.traversability_generation;
   require(lingtu::nav::endpoint::globalPlanStaleReason(overlay_completion, 11, 4,
                                                        overlay_completion.result.map_identity)
               .empty(),
@@ -148,5 +145,15 @@ int main() {
     std::this_thread::sleep_for(1ms);
   }
   require(!task.busy(), "cancelled task did not stop");
+
+  GlobalPlanContext timed;
+  timed.request_id = "preview-timeout";
+  timed.request = first.request;
+  timed.timeout = 5ms;
+  require(task.start(timed), "timed preview did not start");
+  const auto timed_result = waitForResult(task);
+  require(timed_result.has_value() && timed_result->result.cancelled && timed_result->timed_out,
+          "timed preview did not release the planner with a timeout result");
+  require(!task.busy(), "timed preview left the planner busy");
   return 0;
 }

@@ -602,8 +602,6 @@ CliConfig parseArgs(int argc, char **argv) {
                "LINGTU_NAV_OCTO_SAME_FLOOR_PREFERENCE");
   applyEnvDouble(cfg.octoplanner_options.same_floor_z_tolerance,
                  "LINGTU_NAV_OCTO_SAME_FLOOR_Z_TOLERANCE_M");
-  applyEnvDouble(cfg.octoplanner_options.max_same_floor_z_excursion,
-                 "LINGTU_NAV_OCTO_MAX_SAME_FLOOR_Z_EXCURSION_M");
   applyEnvInt(cfg.octoplanner_options.obstacle_clearance_radius_cells,
               "LINGTU_NAV_OCTO_OBSTACLE_CLEARANCE_RADIUS_CELLS");
   applyEnvDouble(cfg.octoplanner_options.obstacle_clearance_weight,
@@ -834,8 +832,6 @@ CliConfig parseArgs(int argc, char **argv) {
           parseBool(next(), "--octo-same-floor-preference");
     } else if (arg == "--octo-same-floor-z-tolerance-m") {
       cfg.octoplanner_options.same_floor_z_tolerance = parseDouble(next(), arg.c_str());
-    } else if (arg == "--octo-max-same-floor-z-excursion-m") {
-      cfg.octoplanner_options.max_same_floor_z_excursion = parseDouble(next(), arg.c_str());
     } else if (arg == "--octo-obstacle-clearance-radius-cells") {
       cfg.octoplanner_options.obstacle_clearance_radius_cells = parseInt(next(), arg.c_str());
     } else if (arg == "--octo-obstacle-clearance-weight") {
@@ -1143,11 +1139,6 @@ CliConfig parseArgs(int argc, char **argv) {
   cfg.collision_clearance_above_m = std::max(0.0, cfg.collision_clearance_above_m);
   auto &octo = cfg.octoplanner_options;
   octo.robot_radius = std::max(0.0, octo.robot_radius);
-  if (cfg.global_planner == GlobalPlannerBackend::OctoPlanner3D &&
-      cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan) {
-    octo.robot_radius = cfg.collision_cylinder_radius_m;
-    octo.cylinder_offset_m = cfg.collision_cylinder_offset_m;
-  }
   octo.body_clearance_below_m = std::max(0.0, octo.body_clearance_below_m);
   octo.body_clearance_above_m = std::max(0.0, octo.body_clearance_above_m);
   octo.max_iterations = std::max(1, octo.max_iterations);
@@ -1164,7 +1155,6 @@ CliConfig parseArgs(int argc, char **argv) {
   octo.max_step_height = std::max(0.0, octo.max_step_height);
   octo.max_slope = std::max(0.0, octo.max_slope);
   octo.same_floor_z_tolerance = std::max(0.0, octo.same_floor_z_tolerance);
-  octo.max_same_floor_z_excursion = std::max(0.0, octo.max_same_floor_z_excursion);
   octo.obstacle_clearance_radius_cells = std::max(0, octo.obstacle_clearance_radius_cells);
   octo.obstacle_clearance_weight = std::max(0.0, octo.obstacle_clearance_weight);
   octo.terminal_goal_tolerance_m = std::max(0.0, octo.terminal_goal_tolerance_m);

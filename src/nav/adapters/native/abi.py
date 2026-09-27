@@ -18,7 +18,7 @@ from typing import Any
 # Field Products package the Host and native client in one atomically switched
 # release. Exact equality intentionally fails closed.
 # Append-only extensions inside a release are advertised by capability bits.
-NATIVE_COMMAND_ABI_VERSION = 10
+NATIVE_COMMAND_ABI_VERSION = 11
 NATIVE_COMMAND_CAP_NAVIGATION = 1 << 0
 NATIVE_COMMAND_CAP_INSPECTION = 1 << 1
 NATIVE_COMMAND_CAP_EXPLORATION = 1 << 2
@@ -977,10 +977,11 @@ class NativeCommandSession:
                 return
             self._require_capability(NATIVE_COMMAND_CAP_PLAN_PREVIEW, "plan preview")
             try:
-                preview = self.library.lingtu_nav_client_preview_plan_v1
+                preview = self.library.lingtu_nav_client_preview_plan_v2
                 preview.argtypes = [
                     ctypes.c_void_p,
                     ctypes.c_char_p,
+                    ctypes.c_double,
                     ctypes.c_double,
                     ctypes.c_double,
                     ctypes.c_double,
@@ -1449,6 +1450,8 @@ class NativeCommandSession:
         x: float,
         y: float,
         z: float,
+        *,
+        acceptance_radius_m: float | None = None,
     ) -> dict[str, object]:
         """Run the endpoint planner without creating a navigation task."""
 
@@ -1456,7 +1459,10 @@ class NativeCommandSession:
         request = str(request_id or "").strip()
         if not request:
             raise ValueError("request_id is required")
-        function = self.library.lingtu_nav_client_preview_plan_v1
+        acceptance_radius = (
+            0.0 if acceptance_radius_m is None else float(acceptance_radius_m)
+        )
+        function = self.library.lingtu_nav_client_preview_plan_v2
         with self.lock:
             self.require_open()
             handle = self.handle
@@ -1472,6 +1478,7 @@ class NativeCommandSession:
                     float(x),
                     float(y),
                     float(z),
+                    acceptance_radius,
                     self.goal_timeout_ms,
                     ctypes.byref(result),
                     None,
@@ -1501,6 +1508,7 @@ class NativeCommandSession:
                         float(x),
                         float(y),
                         float(z),
+                        acceptance_radius,
                         self.goal_timeout_ms,
                         ctypes.byref(result),
                         point_buffer,

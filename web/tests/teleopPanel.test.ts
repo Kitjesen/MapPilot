@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
+import { liveNavigationStatus } from '../src/services/navigationStatus.ts'
+import type { NavigationStatusResponse } from '../src/types/index.ts'
 
 import {
   TeleopWsClient,
@@ -80,6 +82,7 @@ class FocusElement {
 
 // Compile the actual component callbacks; no copy of their keyboard logic is tested.
 const keyboardNames = new Set([
+  'commandFromKeys', 'sendCurrentInput',
   'blocksTeleopKeyboard', 'teleopKey', 'clearInputIntent', 'sendHold', 'setManualEscape',
   'quiesceInput', 'quiesceForInteraction', 'onKeyDown', 'onKeyUp',
   'onShortcutToggle',
@@ -133,6 +136,27 @@ test('a physical key release clears motion even when the input method changes it
   assert.equal(h.state.holds, 1)
 })
 
+test('fresh keys and released axes send the latest velocity without waiting for the refresh timer', () => {
+  const h = keyboardHarness()
+  h.onKeyDown(keyEvent('w', h.panel))
+  assert.equal(h.state.moves.length, 1)
+  assert.equal(h.state.moves[0].vxMps, 0.5)
+  h.onKeyDown(keyEvent('w', h.panel, true))
+  assert.equal(h.state.moves.length, 1, 'OS key-repeat must not add another publication clock')
+  h.onKeyDown(keyEvent('a', h.panel))
+  assert.equal(h.state.moves.at(-1)?.vyMps, 0.5)
+  h.onKeyUp(keyEvent('a', h.panel))
+  assert.equal(h.state.moves.at(-1)?.vxMps, 0.5)
+  assert.equal(h.state.moves.at(-1)?.vyMps, 0)
+  h.onKeyDown(keyEvent('Shift', h.panel))
+  assert.equal(h.state.moves.at(-1)?.vxMps, 0.2)
+  h.onKeyUp(keyEvent('Shift', h.panel))
+  assert.equal(h.state.moves.at(-1)?.vxMps, 0.5)
+  h.onKeyUp(keyEvent('w', h.panel))
+  assert.equal(h.state.holds, 1)
+  assert.equal(h.inputActiveRef.current, false)
+})
+
 test('delayed gateway receipts cannot create a queue of old motion commands ahead of hold', () => {
   const socket = new FakeSocket()
   const client = new TeleopWsClient({ url: '/ws/teleop', socketFactory: () => socket })
@@ -149,23 +173,30 @@ test('delayed gateway receipts cannot create a queue of old motion commands ahea
   }
 })
 
-function keyboardHarness(connected = true, connectionReady = true) {
+function keyboardHarness(connected = true, connectionReady = true, statusAgeS = 0, resume = false,
+  authority: NavigationStatusResponse['control']['authority'] = 'NONE') {
   const body = new FocusElement('body')
   const panel = new FocusElement('div', body)
-  const state = { precision: false, manual: false, holds: 0, connects: 0 }
+  const state = { precision: false, manual: false, holds: 0, connects: 0, moves: [] as Record<string, unknown>[] }
   const keysRef = { current: new Set<string>() }
   const blockedKeysRef = { current: new Set<string>() }
   const document = { activeElement: body }
+  const navigation = liveNavigationStatus({
+    connected, stateSnapshot: null, stateSnapshotReceivedAt: null,
+    navigationStatus: { ts: 100, control: { resume_required: resume, authority } } as NavigationStatusResponse,
+  }, 100 + statusAgeS)
+  const controlKnown = componentValue('controlKnown', { navigation })
   const context = {
     Element: FocusElement, HTMLElement: FocusElement,
     document,
     panelRef: { current: Object.assign(panel, { focus: () => { document.activeElement = panel } }) }, keysRef, blockedKeysRef,
     directionsRef: { current: new Set<string>() },
     inputActiveRef: { current: false }, manualModeRef: { current: false },
-    clientRef: { current: { hold: () => { state.holds += 1 } } },
+    clientRef: { current: { hold: () => { state.holds += 1 }, move: (command: Record<string, unknown>) => state.moves.push(command) } },
+    precisionMode: false, PRECISION_SCALE: 0.4, teleopLimits: { linearMps: 0.5, yawRadS: 1.0 },
     product: 'teleop_avoid', enabled: componentValue('enabled', {
-      sseState: { connected }, product: 'teleop_avoid', teleopPath: '/ws/teleop',
-    }), connectionReady, resumeRequired: false,
+      controlKnown, product: 'teleop_avoid', teleopPath: '/ws/teleop',
+    }), connectionReady, resumeRequired: componentValue('resumeRequired', { navigation }),
     connectClient: () => { state.connects += 1 },
     onExit: () => {},
     setPrecisionMode: (value: boolean) => { state.precision = value },
@@ -564,17 +595,43 @@ test('disconnected telemetry blocks motion despite cached teleop configuration a
   assert.equal(h.state.connects, 0)
 })
 
+test('stale control truth blocks keys even with an open socket and either cached resume value', () => {
+  for (const resume of [false, true]) {
+    const h = keyboardHarness(true, true, 8, resume)
+    for (const key of ['w', 'a', 'q', 'm']) h.onKeyDown(keyEvent(key, h.panel))
+    assert.equal(h.enabled, false)
+    assert.equal(h.keysRef.current.size, 0)
+    assert.equal(h.manualModeRef.current, false)
+    assert.equal(h.state.moves.length, 0)
+  }
+  const fresh = keyboardHarness(true, true, 0, false)
+  fresh.onKeyDown(keyEvent('w', fresh.panel, true))
+  assert.equal(fresh.state.moves.length, 0, 'fresh status must not replay a held key')
+  fresh.onKeyDown(keyEvent('w', fresh.panel))
+  assert.equal(fresh.state.moves.length, 1)
+  const latched = keyboardHarness(true, true, 0, true)
+  latched.onKeyDown(keyEvent('w', latched.panel))
+  assert.equal(latched.state.moves.length, 0)
+  const unknown = keyboardHarness(true, true, 0, false, 'UNKNOWN')
+  unknown.onKeyDown(keyEvent('w', unknown.panel))
+  assert.equal(unknown.state.moves.length, 0, 'fresh UNKNOWN control cannot accept keys')
+})
+
 test('teleop status cannot advertise keyboard control while telemetry is disconnected', () => {
   const context = {
     sseState: { connected: false }, enabled: false, connectionReady: true,
     resumeRequired: false, bootstrapError: null, precisionMode: false,
     sessionActive: false, openState: 'open',
+    controlKnown: true,
   }
   assert.equal(componentValue('controlStatus', context), '连接已断开')
   assert.equal(componentValue('controlStatus', { ...context, resumeRequired: true }), '连接已断开')
   assert.equal(componentValue('controlStatus', {
     ...context, sseState: { connected: true }, enabled: true, connectionReady: false,
   }), '按键开始')
+  assert.equal(componentValue('controlStatus', {
+    ...context, sseState: { connected: true }, controlKnown: false,
+  }), '控制状态未知')
 })
 
 test('opening shortcut help clears held motion and requires release before another move', () => {

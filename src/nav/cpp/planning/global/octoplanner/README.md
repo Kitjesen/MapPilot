@@ -43,8 +43,13 @@ PCL supplies the ASCII/binary reader when available; the no-PCL ASCII reader
 feeds the same occupancy, support dilation, and free-envelope builder. Free
 envelopes are generated only above detected support surfaces. A cloud with no
 usable occupied voxels fails without writing an empty OctoMap. The optional
-direct-PCD planner backend still uses its separate vendored converter; normal
-Product navigation consumes the saved OctoMap instead.
+direct-PCD backend preserves one occupied voxel per sampled point location,
+without a second point-count/cluster filter or invented support/free padding.
+Like the PCD import in
+[jie_3d_nav](https://github.com/6-robot/jie_3d_nav/blob/995a3a544ce6e7bec6f205569339d5125843d727/jie_octomap/src/pcd_to_octomap_node.cpp),
+this is geometry conversion, not ray evidence. It cannot itself establish
+navigation readiness; normal Product navigation consumes the saved OctoMap.
+The PCL-enabled sampled-PCD regression covers both converter entry points.
 
 Support seeds must be exposed (no occupied voxel immediately above) and have
 exposed neighbors in at least three of the four directly adjacent XY cells,
@@ -97,6 +102,18 @@ fallback searches. These describe grid planning, not verified robot stair
 climbing capability.
 
 ## Support surfaces and collision envelopes
+
+Endpoint resolution uses the nearest traversable candidate and validates its
+connection to the measured start. It does not reject a request through a
+separate measured-heading body/support precheck. Global vertices, edges and
+simplified segments check a 3D route cylinder. Its default radius is half the
+configured vehicle width (Go2: 0.155 m), independently configurable through
+`octoplanner3d_robot_radius`. SCAN's double-cylinder radius and longitudinal
+offset are not global-planner inputs. Ground support, unknown-space evidence,
+vertical clearance, step and slope constraints remain part of route search.
+SCAN owns the full heading-dependent body envelope, local obstacle avoidance
+and executable trajectory from the current pose. A global preview is a route
+proposal; it does not authorize an infeasible turn or override SCAN's stop.
 
 The production route uses OctoPlanner3D's neighbouring occupied-support query
 so a single missing floor voxel in a saved scan does not block an otherwise

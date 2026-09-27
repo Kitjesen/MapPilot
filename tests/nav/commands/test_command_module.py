@@ -29,8 +29,8 @@ class _NavigationClient:
             reason="accepted",
         )
 
-    def preview_plan(self, x, y, z):
-        self.calls.append(("preview_plan", x, y, z))
+    def preview_plan(self, x, y, z, *, acceptance_radius_m=None):
+        self.calls.append(("preview_plan", x, y, z, acceptance_radius_m))
         return {
             "feasible": True,
             "start_valid": True,
@@ -384,7 +384,9 @@ def test_commands_expose_native_plan_preview(monkeypatch) -> None:
         lambda *, required: navigation,
     )
 
-    result = command_module.Commands().preview_plan(1, 2, 0.3)
+    result = command_module.Commands().preview_plan(
+        1, 2, 0.3, acceptance_radius_m=0.2
+    )
 
     assert result == {
         "feasible": True,
@@ -392,7 +394,7 @@ def test_commands_expose_native_plan_preview(monkeypatch) -> None:
         "reason": "planned",
         "path": [{"x": 1.0, "y": 2.0, "z": 0.3}],
     }
-    assert navigation.calls == [("preview_plan", 1.0, 2.0, 0.3)]
+    assert navigation.calls == [("preview_plan", 1.0, 2.0, 0.3, 0.2)]
 
 
 def test_commands_resume_autonomy_returns_plain_native_receipt(monkeypatch) -> None:

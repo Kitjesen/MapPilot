@@ -10,6 +10,21 @@
 
 namespace lingtu::nav::endpoint {
 
+std::optional<nav_kernel::Vec3> localCollisionHint(
+    const nav_kernel::LocalPlannerDebugSnapshot &debug, double now_s, double max_age_s) {
+  const auto &attempt = debug.scanAttempt;
+  const double age = now_s - attempt.timestampS;
+  if (!debug.valid || debug.backend != nav_kernel::LocalPlannerBackend::Scan ||
+      !attempt.attempted || attempt.success || !attempt.collisionValid ||
+      attempt.collisionState <= 0 || attempt.dynamicViolationValid ||
+      !std::isfinite(age) || age < 0.0 || !std::isfinite(max_age_s) ||
+      max_age_s <= 0.0 || age > max_age_s) return std::nullopt;
+  const auto &point = attempt.collisionPosition;
+  if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z))
+    return std::nullopt;
+  return point;
+}
+
 nav_kernel::PredictionView makePredictionView(
     const std::vector<nav_kernel::PredictedObstacle> &volumes,
     double received_s, double now_s, double max_age_s) {

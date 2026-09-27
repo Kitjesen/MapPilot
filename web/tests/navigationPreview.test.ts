@@ -1,7 +1,40 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { previewNavigationPlan } from '../src/services/api.ts'
 import { navigationPreviewIsCurrent, sceneGoalHeight } from '../src/services/navigationPreview.ts'
 import type { PlanPreviewResponse } from '../src/types/index.ts'
+
+const originalFetch = globalThis.fetch
+test.afterEach(() => { globalThis.fetch = originalFetch })
+
+test('the direct plan preview API forwards the effective acceptance radius', async () => {
+  let body: Record<string, unknown> | null = null
+  globalThis.fetch = async (_input, init) => {
+    body = JSON.parse(String(init?.body)) as Record<string, unknown>
+    return Response.json({
+      schema_version: 1,
+      ok: true,
+      feasible: false,
+      frame_id: 'map',
+      start: null,
+      goal: { x: 1, y: 2, z: 0.3 },
+      path: [],
+      count: 0,
+      source: 'native_nav',
+      reasons: ['no_path'],
+      ts: 1,
+    })
+  }
+
+  await previewNavigationPlan(1, 2, 0.3, 0.25)
+
+  assert.deepEqual(body, {
+    x: 1,
+    y: 2,
+    z: 0.3,
+    acceptance_radius_m: 0.25,
+  })
+})
 
 test('a preview cannot authorize a path from a robot pose that has since moved', () => {
   const preview = { feasible: true, frame_id: 'map', start: { x: 1, y: 2, z: .2 } } as PlanPreviewResponse

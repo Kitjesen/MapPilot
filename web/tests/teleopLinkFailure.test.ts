@@ -74,6 +74,7 @@ class FocusElement {
 
 // Compile the actual component callbacks; no copy of their keyboard logic is tested.
 const keyboardNames = new Set([
+  'commandFromKeys', 'sendCurrentInput',
   'blocksTeleopKeyboard', 'teleopKey', 'clearInputIntent', 'sendHold', 'setManualEscape',
   'quiesceInput', 'quiesceForInteraction', 'onKeyDown', 'onKeyUp',
 ])
@@ -145,7 +146,7 @@ test('delayed gateway receipts cannot create a queue of old motion commands ahea
 function keyboardHarness(connected = true, connectionReady = true) {
   const body = new FocusElement('body')
   const panel = new FocusElement('div', body)
-  const state = { precision: false, manual: false, holds: 0, connects: 0 }
+  const state = { precision: false, manual: false, holds: 0, connects: 0, moves: [] as Record<string, unknown>[] }
   const keysRef = { current: new Set<string>() }
   const blockedKeysRef = { current: new Set<string>() }
   const document = { activeElement: body }
@@ -155,7 +156,8 @@ function keyboardHarness(connected = true, connectionReady = true) {
     panelRef: { current: Object.assign(panel, { focus: () => { document.activeElement = panel } }) }, keysRef, blockedKeysRef,
     directionsRef: { current: new Set<string>() },
     inputActiveRef: { current: false }, manualModeRef: { current: false },
-    clientRef: { current: { hold: () => { state.holds += 1 } } },
+    clientRef: { current: { hold: () => { state.holds += 1 }, move: (command: Record<string, unknown>) => state.moves.push(command) } },
+    precisionMode: false, PRECISION_SCALE: 0.4, teleopLimits: { linearMps: 0.5, yawRadS: 1.0 },
     product: 'teleop_avoid', enabled: componentValue('enabled', {
       sseState: { connected }, product: 'teleop_avoid', teleopPath: '/ws/teleop',
     }), connectionReady, resumeRequired: false,
@@ -262,6 +264,40 @@ test('occupied during old connection cleanup retries without replaying motion', 
   } finally { client.disconnect() }
 })
 
+for (const ackType of ['input_ack', 'ingress_ack']) {
+  test(`${ackType} windows expire while idle without rejecting the next physical key`, t => {
+    let now = 1000
+    t.mock.method(performance, 'now', () => now)
+    const socket = new FakeSocket()
+    const acks: TeleopAck[] = []
+    const client = new TeleopWsClient({ url: '/ws/teleop', socketFactory: () => socket, onAck: ack => acks.push(ack) })
+    client.connect()
+    socket.open()
+    try {
+      client.move({ vxMps: 0.5, deadman: true })
+      let request = JSON.parse(socket.sent.at(-1)!)
+      if (ackType === 'ingress_ack') {
+        socket.receive({ type: 'input_ack', request_id: request.request_id, input_window: 'first' })
+        client.move({ vxMps: 0.5, deadman: true })
+        request = JSON.parse(socket.sent.at(-1)!)
+      }
+      // Network time belongs to the same budget; receipt must not restart it.
+      now = 1250
+      socket.receive({ type: ackType, request_id: request.request_id, input_window: 'idle' })
+      now = 1400
+      client.move({ vxMps: 0.2, deadman: true })
+      const refresh = JSON.parse(socket.sent.at(-1)!)
+      assert.equal(refresh.type, 'input_request', 'never send velocity with the expired window')
+      const sentBeforeAck = socket.sent.length
+      socket.receive({ type: 'input_ack', request_id: refresh.request_id, input_window: 'fresh' })
+      assert.equal(socket.sent.length, sentBeforeAck, 'an ACK must not replay velocity')
+      client.move({ vxMps: 0.2, deadman: true })
+      assert.equal(JSON.parse(socket.sent.at(-1)!).input_window, 'fresh')
+      assert.equal(acks.some(ack => ack.type === 'control_rejected'), false)
+    } finally { client.disconnect() }
+  })
+}
+
 test('idle connection probes detect a silent broken cable without sending velocity', async () => {
   const socket = new FakeSocket()
   const client = new TeleopWsClient({ url: '/ws/teleop', inputTimeoutMs: 5, socketFactory: () => socket })
@@ -317,6 +353,33 @@ test('pressing a browser modifier while driving immediately clears the held inte
   assert.equal(h.state.holds, 1)
   h.onKeyDown(keyEvent('w', h.panel, true))
   assert.equal(h.keysRef.current.size, 0)
+})
+
+test('opening a ready teleop panel prepares the connection before any direction key', () => {
+  let effect: ts.Expression | undefined
+  function find(node: ts.Node) {
+    if (ts.isCallExpression(node) && node.expression.getText(keyboardAst) === 'useEffect'
+      && node.arguments[1]?.getText(keyboardAst) === '[closeClient, connectClient, enabled]') effect = node.arguments[0]
+    ts.forEachChild(node, find)
+  }
+  find(keyboardAst)
+  assert.ok(effect)
+  for (const enabled of [false, true]) {
+    const calls: string[] = []
+    let scheduled: (() => void) | undefined
+    const run = runInNewContext(ts.transpileModule(`(${effect.getText(keyboardAst)})`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 },
+    }).outputText, {
+      enabled,
+      connectClient: () => calls.push('connect'), closeClient: () => calls.push('close'),
+      window: { setTimeout: (fn: () => void) => { scheduled = fn; return 1 }, clearTimeout: () => {} },
+    }) as () => () => void
+    const cleanup = run()
+    assert.ok(scheduled)
+    scheduled()
+    assert.deepEqual(calls, [enabled ? 'connect' : 'close'])
+    cleanup()
+  }
 })
 
 test('a direction pressed before connection only connects and cannot be replayed on open', () => {

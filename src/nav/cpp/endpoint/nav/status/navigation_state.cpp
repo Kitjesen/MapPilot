@@ -1,10 +1,21 @@
 #include "status/navigation_state.hpp"
 
 #include <utility>
+#include <tuple>
 
 #include "runtime/goal/plan.hpp"
 
 namespace lingtu::nav::endpoint {
+namespace {
+auto stateFields(const NavigationStateSample &state) {
+  return std::tie(state.control_mode, state.lifecycle_state, state.active_task_id,
+                  state.active_request_id, state.goal_epoch, state.map_id,
+                  state.map_content_epoch, state.planning_state, state.execution_state,
+                  state.recovery_state, state.progress, state.authority,
+                  state.hold_reason, state.failure_code);
+}
+}  // namespace
+
 NavigationStateTracker::NavigationStateTracker(NavigationControlState control_mode) {
   state_.control_mode = static_cast<std::int32_t>(control_mode);
 }
@@ -109,6 +120,20 @@ NavigationStateSample NavigationStateTracker::sample(const NavigationStateContex
     }
   }
   return out;
+}
+
+bool NavigationStateTracker::publishIfDue(
+    const NavigationStateSample &sample, double now_s,
+    const std::function<bool(const NavigationStateSample &)> &publish) {
+  // Changes are immediate; an unchanged heartbeat keeps Host freshness valid.
+  if (last_published_ && stateFields(*last_published_) == stateFields(sample) &&
+      now_s >= last_published_s_ && now_s - last_published_s_ < 0.2) {
+    return false;
+  }
+  if (!publish(sample)) return false;  // Retry on the next tick after a failed write.
+  last_published_ = sample;
+  last_published_s_ = now_s;
+  return true;
 }
 
 bool NavigationStateTracker::isActiveLifecycle(std::int32_t lifecycle) {

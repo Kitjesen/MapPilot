@@ -49,8 +49,7 @@ ActivePathBlockagePolicyConfig config() {
   value.corridor_vertical_tolerance_m = 0.75;
   value.obstacle_height_min_m = 0.10;
   value.obstacle_height_max_m = 1.20;
-  value.overlay_radius_m = 0.65;
-  value.overlay_half_height_m = 1.25;
+  value.obstacle_voxel_size_m = 0.1;
   value.max_regions = 8U;
   value.minimum_obstacle_points = 4U;
   return value;
@@ -86,7 +85,7 @@ std::vector<float> staticBlockage(float x = 2.0F) {
 }
 
 ActivePathBlockageObservation
-observation(double now_s, std::uint64_t cloud_generation, std::uint64_t traversability_generation,
+observation(double now_s, std::uint64_t cloud_generation,
             const std::vector<nav_kernel::Vec3> &active_path,
             const std::vector<float> &live_obstacles, GoalReplanIdentity identity = goalIdentity(),
             std::uint64_t frame_epoch = 3U, nav_kernel::Vec3 robot = {0.0, 0.0, 0.0},
@@ -101,7 +100,6 @@ observation(double now_s, std::uint64_t cloud_generation, std::uint64_t traversa
   value.active_global_path = &active_path;
   value.live_obstacles_xyzh = &live_obstacles;
   value.cloud_generation = cloud_generation;
-  value.traversability_generation = traversability_generation;
   return value;
 }
 
@@ -110,11 +108,11 @@ void testStaticLiveOccupancyTriggers() {
   const auto active_path = path();
   const auto blocked = staticBlockage();
 
-  require(!policy.observe(observation(20.0, 10U, 20U, active_path, blocked)),
+  require(!policy.observe(observation(20.0, 10U, active_path, blocked)),
           "first static occupancy observation triggered");
-  require(!policy.observe(observation(20.5, 11U, 21U, active_path, blocked)),
+  require(!policy.observe(observation(20.5, 11U, active_path, blocked)),
           "second static occupancy observation triggered early");
-  const auto trigger = policy.observe(observation(21.0, 12U, 22U, active_path, blocked));
+  const auto trigger = policy.observe(observation(21.0, 12U, active_path, blocked));
   require(trigger.has_value(), "persistent static live occupancy did not trigger");
   require(trigger->kind == GoalReplanTriggerKind::kPersistentPathObstruction,
           "static occupancy trigger kind changed");
@@ -129,11 +127,11 @@ void testTransientAndSparseOccupancyDoNotTrigger() {
   const std::vector<float> clear;
 
   ActivePathBlockagePolicy transient(config());
-  require(!transient.observe(observation(10.0, 1U, 1U, active_path, blocked)),
+  require(!transient.observe(observation(10.0, 1U, active_path, blocked)),
           "first transient observation triggered");
-  require(!transient.observe(observation(10.4, 2U, 2U, active_path, blocked)),
+  require(!transient.observe(observation(10.4, 2U, active_path, blocked)),
           "short transient obstruction triggered");
-  require(!transient.observe(observation(10.6, 3U, 3U, active_path, clear)),
+  require(!transient.observe(observation(10.6, 3U, active_path, clear)),
           "fresh clear corridor emitted a trigger");
   require(transient.snapshot().fresh_blocked_observations == 0U,
           "fresh clear corridor did not reset transient evidence");
@@ -142,8 +140,7 @@ void testTransientAndSparseOccupancyDoNotTrigger() {
   const auto sparse_points =
       pointCloud({{1.9F, -0.1F, 0.2F, 0.4F}, {2.0F, 0.0F, 0.2F, 0.4F}, {2.1F, 0.1F, 0.2F, 0.4F}});
   for (std::uint64_t generation = 1U; generation <= 5U; ++generation) {
-    require(!sparse.observe(observation(12.0 + static_cast<double>(generation), generation,
-                                        generation, active_path, sparse_points)),
+    require(!sparse.observe(observation(12.0 + static_cast<double>(generation), generation, active_path, sparse_points)),
             "sparse corridor noise triggered");
   }
   require(sparse.snapshot().fresh_blocked_observations == 0U,
@@ -157,19 +154,18 @@ void testViableLocalPathDefersGlobalReplan() {
   const auto blocked = staticBlockage();
 
   for (std::uint64_t generation = 1U; generation <= 4U; ++generation) {
-    require(!policy.observe(observation(5.0 + static_cast<double>(generation), generation,
-                                        generation, active_path, blocked, goalIdentity(), 3U,
+    require(!policy.observe(observation(5.0 + static_cast<double>(generation), generation, active_path, blocked, goalIdentity(), 3U,
                                         {0.0, 0.0, 0.0}, true, true)),
             "viable local path was interrupted by global corridor blockage");
   }
   require(policy.snapshot().fresh_blocked_observations == 0U,
           "viable local path accumulated global replan evidence");
 
-  require(!policy.observe(observation(10.0, 5U, 5U, active_path, blocked)),
+  require(!policy.observe(observation(10.0, 5U, active_path, blocked)),
           "first blockage after local path loss triggered");
-  require(!policy.observe(observation(10.5, 6U, 6U, active_path, blocked)),
+  require(!policy.observe(observation(10.5, 6U, active_path, blocked)),
           "second blockage after local path loss triggered early");
-  require(policy.observe(observation(11.0, 7U, 7U, active_path, blocked)).has_value(),
+  require(policy.observe(observation(11.0, 7U, active_path, blocked)).has_value(),
           "persistent blockage after local path loss did not trigger");
 }
 
@@ -184,8 +180,7 @@ void testGroundAndOutOfEnvelopeReturnsDoNotTrigger() {
   });
 
   for (std::uint64_t generation = 1U; generation <= 5U; ++generation) {
-    require(!policy.observe(observation(15.0 + static_cast<double>(generation), generation,
-                                        generation, active_path, non_obstacles)),
+    require(!policy.observe(observation(15.0 + static_cast<double>(generation), generation, active_path, non_obstacles)),
             "ground or out-of-envelope returns triggered a path obstruction");
   }
   require(policy.snapshot().fresh_blocked_observations == 0U,
@@ -203,15 +198,13 @@ void testOnlyForwardCorridorBlocks() {
 
   ActivePathBlockagePolicy lateral_policy(config());
   for (std::uint64_t generation = 1U; generation <= 4U; ++generation) {
-    require(!lateral_policy.observe(observation(30.0 + static_cast<double>(generation), generation,
-                                                generation, active_path, lateral)),
+    require(!lateral_policy.observe(observation(30.0 + static_cast<double>(generation), generation, active_path, lateral)),
             "live occupancy outside corridor triggered");
   }
 
   ActivePathBlockagePolicy distant_policy(config());
   for (std::uint64_t generation = 1U; generation <= 4U; ++generation) {
-    require(!distant_policy.observe(observation(35.0 + static_cast<double>(generation), generation,
-                                                generation, active_path, beyond_lookahead)),
+    require(!distant_policy.observe(observation(35.0 + static_cast<double>(generation), generation, active_path, beyond_lookahead)),
             "live occupancy beyond lookahead triggered");
   }
 
@@ -220,8 +213,7 @@ void testOnlyForwardCorridorBlocks() {
   appendObstacleGroup(behind, 1.0F);
   const nav_kernel::Vec3 robot_mid_path{4.0, 0.0, 0.0};
   for (std::uint64_t generation = 1U; generation <= 4U; ++generation) {
-    require(!behind_policy.observe(observation(40.0 + static_cast<double>(generation), generation,
-                                               generation, active_path, behind, goalIdentity(), 3U,
+    require(!behind_policy.observe(observation(40.0 + static_cast<double>(generation), generation, active_path, behind, goalIdentity(), 3U,
                                                robot_mid_path)),
             "live occupancy behind nearest path point triggered");
   }
@@ -232,35 +224,35 @@ void testIdentityAndFrameChangesResetEvidence() {
   const auto blocked = staticBlockage();
 
   ActivePathBlockagePolicy goal_change(config());
-  require(!goal_change.observe(observation(50.0, 1U, 1U, active_path, blocked)),
+  require(!goal_change.observe(observation(50.0, 1U, active_path, blocked)),
           "goal reset setup triggered");
-  require(!goal_change.observe(observation(50.6, 2U, 2U, active_path, blocked)),
+  require(!goal_change.observe(observation(50.6, 2U, active_path, blocked)),
           "goal reset setup triggered early");
   require(!goal_change.observe(
-              observation(51.2, 3U, 3U, active_path, blocked, goalIdentity("task-b", "req-b", 1U))),
+              observation(51.2, 3U, active_path, blocked, goalIdentity("task-b", "req-b", 1U))),
           "new goal inherited prior evidence");
   require(goal_change.snapshot().fresh_blocked_observations == 1U,
           "new goal did not restart evidence count");
 
   ActivePathBlockagePolicy map_change(config());
-  require(!map_change.observe(observation(52.0, 1U, 1U, active_path, blocked)),
+  require(!map_change.observe(observation(52.0, 1U, active_path, blocked)),
           "map reset setup triggered");
-  require(!map_change.observe(observation(52.6, 2U, 2U, active_path, blocked)),
+  require(!map_change.observe(observation(52.6, 2U, active_path, blocked)),
           "map reset setup triggered early");
   require(!map_change.observe(
-              observation(53.2, 3U, 3U, active_path, blocked,
+              observation(53.2, 3U, active_path, blocked,
                           goalIdentity("task-a", "req-a", 11U, mapIdentity("map-b", 8)))),
           "new map inherited prior evidence");
   require(map_change.snapshot().fresh_blocked_observations == 1U,
           "new map did not restart evidence count");
 
   ActivePathBlockagePolicy frame_change(config());
-  require(!frame_change.observe(observation(54.0, 1U, 1U, active_path, blocked)),
+  require(!frame_change.observe(observation(54.0, 1U, active_path, blocked)),
           "frame reset setup triggered");
-  require(!frame_change.observe(observation(54.6, 2U, 2U, active_path, blocked)),
+  require(!frame_change.observe(observation(54.6, 2U, active_path, blocked)),
           "frame reset setup triggered early");
   require(
-      !frame_change.observe(observation(55.2, 3U, 3U, active_path, blocked, goalIdentity(), 4U)),
+      !frame_change.observe(observation(55.2, 3U, active_path, blocked, goalIdentity(), 4U)),
       "new frame epoch inherited prior evidence");
   require(frame_change.snapshot().fresh_blocked_observations == 1U,
           "new frame epoch did not restart evidence count");
@@ -272,35 +264,34 @@ void testStaleClearDoesNotEraseButFreshClearDoes() {
   const auto blocked = staticBlockage();
   const std::vector<float> clear;
 
-  require(!policy.observe(observation(60.0, 10U, 20U, active_path, blocked)),
+  require(!policy.observe(observation(60.0, 10U, active_path, blocked)),
           "clear freshness setup triggered");
   require(policy.snapshot().fresh_blocked_observations == 1U,
           "fresh blocked evidence was not recorded");
+  const auto previous_blockers = policy.snapshot().current_blocker_count;
 
-  require(!policy.observe(observation(60.2, 10U, 20U, active_path, clear)),
+  require(!policy.observe(observation(60.2, 10U, active_path, clear)),
           "duplicate-generation clear triggered");
   require(policy.snapshot().fresh_blocked_observations == 1U,
           "duplicate-generation clear erased evidence");
+  require(policy.snapshot().current_blocker_count == previous_blockers,
+          "duplicate cloud recomputed and replaced obstacle evidence");
 
-  require(!policy.observe(observation(60.4, 11U, 20U, active_path, clear)),
-          "partially fresh clear triggered");
-  require(policy.snapshot().fresh_blocked_observations == 1U,
-          "partially fresh clear erased evidence");
 
-  require(!policy.observe(observation(60.6, 0U, 21U, active_path, clear)),
+  require(!policy.observe(observation(60.6, 0U, active_path, clear)),
           "missing-generation clear triggered");
   require(policy.snapshot().fresh_blocked_observations == 1U,
           "missing-generation clear erased evidence");
 
-  require(!policy.observe(observation(60.8, 11U, 21U, active_path, blocked)),
+  require(!policy.observe(observation(60.8, 11U, active_path, blocked)),
           "second fresh blocked observation triggered early");
   require(policy.snapshot().fresh_blocked_observations == 2U,
           "blocked evidence did not survive stale clear samples");
 
-  require(!policy.observe(observation(61.0, 12U, 22U, active_path, clear)),
+  require(!policy.observe(observation(61.0, 12U, active_path, clear)),
           "fresh clear observation triggered");
   require(policy.snapshot().fresh_blocked_observations == 0U,
-          "fresh dual-generation clear did not erase evidence");
+          "fresh cloud clear did not erase evidence");
 }
 
 void testClockAndGenerationRollbackResetEvidence() {
@@ -308,21 +299,21 @@ void testClockAndGenerationRollbackResetEvidence() {
   const auto blocked = staticBlockage();
 
   ActivePathBlockagePolicy clock(config());
-  require(!clock.observe(observation(70.0, 10U, 10U, active_path, blocked)),
+  require(!clock.observe(observation(70.0, 10U, active_path, blocked)),
           "clock rollback setup triggered");
-  require(!clock.observe(observation(70.6, 11U, 11U, active_path, blocked)),
+  require(!clock.observe(observation(70.6, 11U, active_path, blocked)),
           "clock rollback setup triggered early");
-  require(!clock.observe(observation(69.0, 12U, 12U, active_path, blocked)),
+  require(!clock.observe(observation(69.0, 12U, active_path, blocked)),
           "clock rollback triggered");
   require(clock.snapshot().fresh_blocked_observations == 0U,
           "clock rollback did not reset evidence");
 
   ActivePathBlockagePolicy generation(config());
-  require(!generation.observe(observation(80.0, 10U, 20U, active_path, blocked)),
+  require(!generation.observe(observation(80.0, 10U, active_path, blocked)),
           "generation rollback setup triggered");
-  require(!generation.observe(observation(80.6, 11U, 21U, active_path, blocked)),
+  require(!generation.observe(observation(80.6, 11U, active_path, blocked)),
           "generation rollback setup triggered early");
-  require(!generation.observe(observation(81.2, 9U, 22U, active_path, blocked)),
+  require(!generation.observe(observation(81.2, 9U, active_path, blocked)),
           "generation rollback triggered");
   require(generation.snapshot().fresh_blocked_observations == 0U,
           "generation rollback did not reset evidence");
@@ -339,32 +330,88 @@ void testOverlayIsDeterministicDeduplicatedAndBounded() {
   appendObstacleGroup(blocked, 3.0F);
   appendObstacleGroup(blocked, 2.0F);
 
-  require(!policy.observe(observation(90.0, 101U, 201U, active_path, blocked)),
+  require(!policy.observe(observation(90.0, 101U, active_path, blocked)),
           "overlay setup triggered");
-  require(!policy.observe(observation(90.5, 102U, 202U, active_path, blocked)),
+  require(!policy.observe(observation(90.5, 102U, active_path, blocked)),
           "overlay setup triggered early");
-  const auto trigger = policy.observe(observation(91.0, 103U, 203U, active_path, blocked));
+  const auto trigger = policy.observe(observation(91.0, 103U, active_path, blocked));
   require(trigger.has_value(), "overlay trigger missing");
   const auto &overlay = trigger->temporary_overlay;
   require(overlay.revision != 0U, "overlay revision is zero");
   require(overlay.frame_epoch == 3U, "overlay frame epoch changed");
   require(overlay.obstacle_generation == 103U, "overlay obstacle generation changed");
-  require(overlay.traversability_generation == 203U, "overlay traversability generation changed");
   require(overlay.blocked_regions.size() == value.max_regions,
           "overlay spatial deduplication or region cap changed");
-  require(overlay.blocked_regions[0].center.x < overlay.blocked_regions[1].center.x &&
-              overlay.blocked_regions[1].center.x < overlay.blocked_regions[2].center.x,
+  require(overlay.blocked_regions[0].center.x <= overlay.blocked_regions[1].center.x &&
+              overlay.blocked_regions[1].center.x <= overlay.blocked_regions[2].center.x,
           "overlay regions are not ordered by forward path distance");
-  require(std::abs(overlay.blocked_regions.front().radius_xy_m - value.overlay_radius_m) < 1e-12,
-          "overlay radius changed");
-  require(std::abs(overlay.blocked_regions.front().min_z - (0.2 - value.overlay_half_height_m)) <
-                  1e-6 &&
-              std::abs(overlay.blocked_regions.front().max_z -
-                       (0.2 + value.overlay_half_height_m)) < 1e-6,
-          "overlay height bounds changed");
+  require(std::abs(overlay.blocked_regions.front().radius_xy_m -
+                   value.obstacle_voxel_size_m / std::sqrt(2.0)) < 1e-12,
+          "overlay repeats robot or obstacle inflation");
+  require(std::abs(overlay.blocked_regions.front().max_z -
+                   overlay.blocked_regions.front().min_z - value.obstacle_voxel_size_m) < 1e-6,
+          "overlay height is not the measured voxel height");
 
-  require(!policy.observe(observation(92.0, 104U, 204U, active_path, blocked)),
+  require(!policy.observe(observation(92.0, 104U, active_path, blocked)),
           "same identity emitted a second trigger");
+}
+
+void testOverlayPreservesSeparatedMeasuredHeights() {
+  ActivePathBlockagePolicy policy(config());
+  const auto active_path = path();
+  const auto blocked = pointCloud({
+      {2.02F, 0.02F, 0.22F, 0.4F}, {2.03F, 0.03F, 0.23F, 0.4F},
+      {2.02F, 0.02F, 0.62F, 0.8F}, {2.03F, 0.03F, 0.63F, 0.8F},
+  });
+  require(!policy.observe(observation(93.0, 1U, active_path, blocked)), "height setup triggered");
+  require(!policy.observe(observation(93.5, 2U, active_path, blocked)), "height setup early trigger");
+  const auto trigger = policy.observe(observation(94.0, 3U, active_path, blocked));
+  require(trigger.has_value(), "height fixture did not trigger");
+  const auto &regions = trigger->temporary_overlay.blocked_regions;
+  require(regions.size() == 2U, "same XY different Z was dropped or same voxel was duplicated");
+  require(std::abs(regions[0].center.x - regions[1].center.x) < 1e-12 &&
+              std::abs(regions[0].center.y - regions[1].center.y) < 1e-12,
+          "same XY fixture changed");
+  require(std::abs(regions[0].min_z - 0.2) < 1e-6 &&
+              std::abs(regions[0].max_z - 0.3) < 1e-6 &&
+              std::abs(regions[1].min_z - 0.6) < 1e-6 &&
+              std::abs(regions[1].max_z - 0.7) < 1e-6,
+          "measured obstacle voxels invented a column through the vertical gap");
+}
+
+void testLocalCollisionSelectsOnlyNearbyMeasuredObstacles() {
+  auto value = config();
+  value.max_regions = 2U;
+  value.minimum_obstacle_points = 2U;
+  value.local_collision_radius_m = 0.25;
+  value.local_collision_below_m = 0.1;
+  value.local_collision_above_m = 0.1;
+  ActivePathBlockagePolicy policy(value);
+  const auto active_path = path();
+  std::vector<float> blocked = staticBlockage(1.0F);
+  const auto local_points = pointCloud({
+      {2.02F, 1.02F, 0.32F, 0.4F}, {2.12F, 1.02F, 0.32F, 0.4F},
+      {2.02F, 1.02F, 0.62F, 0.7F}, {2.12F, 1.02F, 0.62F, 0.7F},
+  });
+  blocked.insert(blocked.end(), local_points.begin(), local_points.end());
+  auto sample = [&](double now, std::uint64_t generation, const std::vector<float> &points) {
+    auto input = observation(now, generation, active_path, points);
+    input.local_collision_position = nav_kernel::Vec3{2.0, 1.0, 0.3};
+    return policy.observe(input);
+  };
+  require(!sample(95.0, 1U, blocked), "local collision setup triggered");
+  require(!sample(95.5, 2U, blocked), "local collision setup early trigger");
+  const auto trigger = sample(96.0, 3U, blocked);
+  require(trigger.has_value() && trigger->temporary_overlay.blocked_regions.size() == 2U,
+          "measured local collision did not produce bounded regions");
+  for (const auto &region : trigger->temporary_overlay.blocked_regions) {
+    require(region.center.y > 1.0 && region.max_z <= 0.4 + 1e-6,
+            "local collision evidence lost priority or included a different height");
+  }
+  policy.reset();
+  const std::vector<float> clear;
+  require(!sample(97.0, 4U, clear) && !sample(97.5, 5U, clear) && !sample(98.0, 6U, clear),
+          "a failed trajectory pose fabricated occupancy without observed points");
 }
 
 void testInactiveInvalidAndMalformedEvidenceReset() {
@@ -373,18 +420,18 @@ void testInactiveInvalidAndMalformedEvidenceReset() {
   const std::vector<nav_kernel::Vec3> empty_path;
   const auto blocked = staticBlockage();
 
-  require(!policy.observe(observation(100.0, 1U, 1U, active_path, blocked)),
+  require(!policy.observe(observation(100.0, 1U, active_path, blocked)),
           "invalid evidence setup triggered");
-  require(!policy.observe(observation(100.6, 2U, 2U, empty_path, blocked)), "empty path triggered");
+  require(!policy.observe(observation(100.6, 2U, empty_path, blocked)), "empty path triggered");
   require(policy.snapshot().fresh_blocked_observations == 0U, "empty path did not reset evidence");
 
   const std::vector<float> malformed{1.0F, 0.0F, 0.2F};
-  require(!policy.observe(observation(101.0, 3U, 3U, active_path, malformed)),
+  require(!policy.observe(observation(101.0, 3U, active_path, malformed)),
           "malformed xyzh triggered");
   require(policy.snapshot().fresh_blocked_observations == 0U,
           "malformed xyzh did not reset evidence");
 
-  require(!policy.observe(observation(101.5, 4U, 4U, active_path, blocked, goalIdentity(), 3U,
+  require(!policy.observe(observation(101.5, 4U, active_path, blocked, goalIdentity(), 3U,
                                       {0.0, 0.0, 0.0}, false)),
           "inactive external goal triggered");
   require(!policy.snapshot().goal.has_value(), "inactive external goal retained binding");
@@ -406,7 +453,7 @@ void testInadmissibleGoalPlanStateDoesNotConsumeOneShotTrigger() {
     ActivePathBlockagePolicy policy(config());
     GoalPlanSnapshot goal_plan;
     auto observe = [&](double now_s, std::uint64_t generation) {
-      return policy.observe(observation(now_s, generation, generation, active_path, blocked,
+      return policy.observe(observation(now_s, generation, active_path, blocked,
                                         goalIdentity(), 3U, {0.0, 0.0, 0.0},
                                         goalPlanAcceptsReplanTrigger(goal_plan)));
     };
@@ -451,11 +498,11 @@ void testConfigValidation() {
   value.obstacle_height_max_m = value.obstacle_height_min_m - 0.01;
   expect_invalid(value, "inverted obstacle-height envelope was accepted");
   value = config();
-  value.overlay_radius_m = std::numeric_limits<double>::infinity();
-  expect_invalid(value, "infinite overlay radius was accepted");
+  value.obstacle_voxel_size_m = std::numeric_limits<double>::infinity();
+  expect_invalid(value, "infinite obstacle voxel size was accepted");
   value = config();
-  value.overlay_half_height_m = 0.0;
-  expect_invalid(value, "zero overlay height was accepted");
+  value.obstacle_voxel_size_m = 0.0;
+  expect_invalid(value, "zero obstacle voxel size was accepted");
   value = config();
   value.max_regions = 65U;
   expect_invalid(value, "planner-incompatible region count was accepted");
@@ -476,6 +523,8 @@ int main() {
   testStaleClearDoesNotEraseButFreshClearDoes();
   testClockAndGenerationRollbackResetEvidence();
   testOverlayIsDeterministicDeduplicatedAndBounded();
+  testOverlayPreservesSeparatedMeasuredHeights();
+  testLocalCollisionSelectsOnlyNearbyMeasuredObstacles();
   testInactiveInvalidAndMalformedEvidenceReset();
   testInadmissibleGoalPlanStateDoesNotConsumeOneShotTrigger();
   testConfigValidation();

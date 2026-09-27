@@ -12,7 +12,6 @@
 #include <cstddef>
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -43,15 +42,12 @@ class Pcd2OctomapConverter
 public:
   Pcd2OctomapConverter();
 
-  // 主流程：读取 PCD -> 体素过滤 -> 连通域过滤 -> 生成 OctoMap -> 保存 .bt
+  // Preserve sampled PCD geometry without inferring ground or free space.
   bool convert();
 
   void setInputPcdFile(const std::string & path);
   void setOutputBtFile(const std::string & path);
   void setResolution(double resolution);
-  void setFreeEnvelopeLayers(int layers);
-  void setFreeEnvelopeDilationCells(int cells);
-  void setSupportDilationCells(int cells);
 
   // 查询接口
   bool isPointFree(const octomap::point3d & p) const;
@@ -70,13 +66,8 @@ public:
 
 private:
   bool loadPointCloud();
-  void buildVoxelCounts();
-  void filterByPointCount();
-  void filterByConnectedClusters();
+  void buildOccupiedKeys();
   void fillOcTree();
-  std::unordered_set<Key, KeyHash> horizontalSupportKeys() const;
-  std::unordered_set<Key, KeyHash> dilatedOccupiedKeys();
-  void carveFreeEnvelope();
   bool saveOctomap() const;
 
 private:
@@ -85,19 +76,12 @@ private:
   std::string output_bt_ = "result_cleaned.bt";
 
   double resolution_ = 0.2;          // Octomap 分辨率，单位：米
-  int min_points_per_voxel_ = 3;     // 每个 voxel 至少多少个点才算占据
-  int min_cluster_voxels_ = 4;       // 连通 voxel 数少于该值则视为噪点
-  int support_xy_dilation_cells_ = 1;
-  int free_layers_above_ = 3;
-  int free_xy_dilation_cells_ = 1;
   // ===============================================================
 
   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_;
   std::shared_ptr<octomap::OcTree> tree_;
 
-  std::unordered_map<Key, std::size_t, KeyHash> voxel_counts_;
   std::unordered_set<Key, KeyHash> occupied_keys_;
-  std::unordered_set<Key, KeyHash> support_keys_;
 };
 
 }  // namespace pcd2octomap

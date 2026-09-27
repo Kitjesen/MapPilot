@@ -136,13 +136,25 @@ class Commands(Module, layer=3):
         }
 
     @rpc
-    def preview_plan(self, x: float, y: float, z: float) -> dict[str, object]:
+    def preview_plan(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        *,
+        acceptance_radius_m: float | None = None,
+    ) -> dict[str, object]:
         """Run one read-only plan through the native navigation endpoint."""
 
         client = get_native_navigation_client(required=True)
         if client is None:
             raise RuntimeError("native navigation command boundary is unavailable")
-        return client.preview_plan(float(x), float(y), float(z))
+        return client.preview_plan(
+            float(x),
+            float(y),
+            float(z),
+            acceptance_radius_m=acceptance_radius_m,
+        )
 
     @rpc
     def send_goal(

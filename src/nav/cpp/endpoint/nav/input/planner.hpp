@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 #include "navigation/executor.hpp"
@@ -47,5 +48,10 @@ PlanView makePlanView(const PlanConfig &config, PlanData &data, double now_s,
 nav_kernel::PredictionView makePredictionView(
     const std::vector<nav_kernel::PredictedObstacle> &volumes,
     double received_s, double now_s, double max_age_s);
+
+// A rejected body position in the SCAN planning frame, never an obstacle voxel.
+// The endpoint uses this only to select nearby measured obstacle geometry.
+std::optional<nav_kernel::Vec3> localCollisionHint(
+    const nav_kernel::LocalPlannerDebugSnapshot &debug, double now_s, double max_age_s);
 
 }  // namespace lingtu::nav::endpoint

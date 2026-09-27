@@ -124,6 +124,18 @@ void testConfiguredPathMustBelongToActiveMap() {
   require(!result.ok(), "non-active octomap path unexpectedly passed gate");
 }
 
+void testPcdPreviewCannotEnterNavigationGate() {
+  TempMapRoot root;
+  (void)writeValidMap(root.path());
+  ActiveOctomapGate gate(mapIdentity());
+
+  const auto result = gate.currentIdentity(root.path() / "field" / "map.pcd");
+
+  require(!result.ok(), "point-cloud preview unexpectedly passed the OctoMap gate");
+  require(result.reason.find("PCD preview") != std::string::npos,
+          "PCD rejection did not explain the navigation artifact requirement");
+}
+
 void testMissingArtifactNeverInvokesPlanner() {
   TempMapRoot root;
   const auto configured = writeValidMap(root.path());
@@ -193,6 +205,7 @@ int main() {
   try {
     testValidActiveMapGetsPrivateSnapshot();
     testConfiguredPathMustBelongToActiveMap();
+    testPcdPreviewCannotEnterNavigationGate();
     testMissingArtifactNeverInvokesPlanner();
     testPlannerLoadsImmutableSnapshotAfterValidation();
     testRepeatedPrepareReusesValidatedSnapshot();

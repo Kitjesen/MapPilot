@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -60,11 +61,15 @@ class NavigationStateTracker {
 
   void observe(const GoalPlanStatus &status);
   [[nodiscard]] NavigationStateSample sample(const NavigationStateContext &context) const;
+  bool publishIfDue(const NavigationStateSample &sample, double now_s,
+                    const std::function<bool(const NavigationStateSample &)> &publish);
 
  private:
   static bool isActiveLifecycle(std::int32_t lifecycle);
 
   NavigationStateSample state_;
+  std::optional<NavigationStateSample> last_published_;
+  double last_published_s_{0.0};
 };
 
 }  // namespace lingtu::nav::endpoint

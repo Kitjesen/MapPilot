@@ -37,6 +37,12 @@ ActiveOctomapGate::ActiveOctomapGate(lingtu::nav::plan::MapIdentity identity)
 
 ActiveOctomapIdentityResult ActiveOctomapGate::currentIdentity(
     const std::filesystem::path &configured_octomap_path) const {
+  const auto extension = configured_octomap_path.extension().string();
+  if (extension != ".ot" && extension != ".OT" && extension != ".bt" && extension != ".BT") {
+    return {std::nullopt,
+            "configured octomap must be a validated .ot or .bt artifact; PCD preview input is "
+            "not a navigation map"};
+  }
   return boundIdentity<ActiveOctomapIdentityResult>(configured_octomap_path, identity_,
                                                      "octomap");
 }

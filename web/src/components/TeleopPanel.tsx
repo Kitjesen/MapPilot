@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent 
 import { ChevronDown, Gamepad2, Keyboard, RotateCcw, X } from 'lucide-react'
 import type { AppBootstrapResponse, ProductName, SSEState, ToastKind } from '../types'
 import * as api from '../services/api'
+import { liveNavigationStatus } from '../services/navigationStatus'
 import {
   TeleopWsClient,
   type TeleopAck,
@@ -104,6 +105,7 @@ export function TeleopPanel({ sseState, showToast, onExit }: TeleopPanelProps) {
   const [resumePending, setResumePending] = useState(false)
   const [precisionMode, setPrecisionMode] = useState(false)
   const [speedLimit, setSpeedLimit] = useState(0.5)
+  const [nowMs, setNowMs] = useState(() => Date.now())
   const panelRef = useRef<HTMLDivElement>(null)
   const keysRef = useRef<Set<string>>(new Set())
   const blockedKeysRef = useRef<Set<string>>(new Set())
@@ -125,9 +127,16 @@ export function TeleopPanel({ sseState, showToast, onExit }: TeleopPanelProps) {
   const teleopLimits = useMemo(() => ({ ...backendLimits,
     linearMps: Math.min(speedLimit, backendLimits.linearMps),
   }), [backendLimits, speedLimit])
-  const resumeRequired = sseState.navigationStatus?.control.resume_required === true
-  const enabled = Boolean(sseState.connected && product && teleopPath)
+  const navigation = liveNavigationStatus(sseState, nowMs / 1000)
+  const controlKnown = navigation !== null && navigation.control.authority !== 'UNKNOWN'
+  const resumeRequired = navigation?.control.resume_required === true
+  const enabled = Boolean(controlKnown && product && teleopPath)
   const connectionReady = openState === 'open'
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     if (!product) return undefined
@@ -194,10 +203,13 @@ export function TeleopPanel({ sseState, showToast, onExit }: TeleopPanelProps) {
   }, [clearInputIntent, showToast, teleopPath])
 
   useEffect(() => {
-    if (enabled) return undefined
-    const timer = window.setTimeout(() => closeClient(), 0)
+    // Opening the panel prepares transport; only a fresh key can request motion.
+    const timer = window.setTimeout(() => {
+      if (enabled) connectClient()
+      else closeClient()
+    }, 0)
     return () => window.clearTimeout(timer)
-  }, [closeClient, enabled])
+  }, [closeClient, connectClient, enabled])
 
   useEffect(() => {
     panelRef.current?.focus({ preventScroll: true })
@@ -208,6 +220,20 @@ export function TeleopPanel({ sseState, showToast, onExit }: TeleopPanelProps) {
     clientRef.current?.hold()
     inputActiveRef.current = false
   }, [])
+
+  const sendCurrentInput = useCallback((precise = precisionMode) => {
+    if (!enabled || !connectionReady || resumeRequired) return
+    if (keysRef.current.size > 0) {
+      clientRef.current?.move({
+        ...commandFromKeys(keysRef.current, teleopLimits, precise ? PRECISION_SCALE : 1),
+        deadman: true,
+        manualMode: manualModeRef.current,
+      })
+      inputActiveRef.current = true
+    } else if (inputActiveRef.current) {
+      sendHold()
+    }
+  }, [connectionReady, enabled, precisionMode, resumeRequired, sendHold, teleopLimits])
 
   const setManualEscape = useCallback((active: boolean) => {
     if (active && enabled && !connectionReady) connectClient()
@@ -291,6 +317,7 @@ export function TeleopPanel({ sseState, showToast, onExit }: TeleopPanelProps) {
       if (event.repeat && (key === 'm' || key === 'shift')) return
       if (key === 'shift') {
         setPrecisionMode(true)
+        sendCurrentInput(true)
         return
       }
       if (key === 'm' && product === 'teleop_avoid' && connectionReady && !resumeRequired) {
@@ -310,7 +337,9 @@ export function TeleopPanel({ sseState, showToast, onExit }: TeleopPanelProps) {
           event.preventDefault()
           return
         }
+        const alreadyHeld = keysRef.current.has(key)
         keysRef.current.add(key)
+        if (!alreadyHeld) sendCurrentInput()
         event.preventDefault()
       }
     }
@@ -320,6 +349,7 @@ export function TeleopPanel({ sseState, showToast, onExit }: TeleopPanelProps) {
       const inputBlocked = blocksTeleopKeyboard(event.target, panelRef.current)
       if (key === 'shift') {
         setPrecisionMode(false)
+        sendCurrentInput(false)
         return
       }
       if (key === 'm') {
@@ -335,6 +365,7 @@ export function TeleopPanel({ sseState, showToast, onExit }: TeleopPanelProps) {
         const tracked = keysRef.current.delete(key)
         if ((tracked || wasBlocked) && !inputBlocked) event.preventDefault()
         if (tracked && keysRef.current.size === 0) sendHold()
+        else if (tracked) sendCurrentInput()
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -347,45 +378,27 @@ export function TeleopPanel({ sseState, showToast, onExit }: TeleopPanelProps) {
       document.removeEventListener('focusin', quiesceForInteraction)
       document.removeEventListener('pointerdown', quiesceForInteraction, true)
     }
-  }, [connectClient, connectionReady, enabled, onExit, product, quiesceInput, resumeRequired, sendHold, setManualEscape])
+  }, [connectClient, connectionReady, enabled, onExit, product, quiesceInput, resumeRequired, sendCurrentInput, sendHold, setManualEscape])
 
   useEffect(() => {
     if (!enabled || !connectionReady || resumeRequired) return
-    const timer = window.setInterval(() => {
-      const fromKeys = commandFromKeys(
-        keysRef.current,
-        teleopLimits,
-        precisionMode ? PRECISION_SCALE : 1,
-      )
-      const { vxMps, vyMps, yawRps } = fromKeys
-      const deadman = keysRef.current.size > 0
-      if (deadman) {
-        clientRef.current?.move({
-          vxMps,
-          vyMps,
-          yawRps,
-          deadman: true,
-          manualMode: manualModeRef.current,
-        })
-        inputActiveRef.current = true
-      } else if (inputActiveRef.current) {
-        sendHold()
-      }
-    }, SEND_INTERVAL_MS)
+    const timer = window.setInterval(() => sendCurrentInput(), SEND_INTERVAL_MS)
     return () => window.clearInterval(timer)
-  }, [connectionReady, enabled, precisionMode, resumeRequired, sendHold, teleopLimits])
+  }, [connectionReady, enabled, resumeRequired, sendCurrentInput])
 
   const controlDisabledReason = useMemo(() => {
     if (!sseState.connected) return '实时连接已断开，恢复后请重新按键'
     if (!product) return '当前模式不支持网页遥控'
     if (bootstrapError) return '无法获取遥控配置，正在重试'
     if (!teleopPath) return '正在准备遥控'
+    if (!controlKnown) return '控制状态未知或已过期，等待更新后请重新按键'
     if (resumeRequired) return '请恢复控制后重新按键'
     if (!connectionReady) return sessionActive ? '正在连接遥控，连接后请重新按键' : '按住方向键开始，松键停车'
     return ''
-  }, [bootstrapError, connectionReady, product, resumeRequired, sessionActive, sseState.connected, teleopPath])
+  }, [bootstrapError, connectionReady, controlKnown, product, resumeRequired, sessionActive, sseState.connected, teleopPath])
 
   const controlStatus = !sseState.connected ? '连接已断开'
+    : !controlKnown ? '控制状态未知'
     : resumeRequired ? '需恢复控制' : bootstrapError ? '连接失败'
     : !enabled ? '准备中' : connectionReady ? (precisionMode ? '精细模式' : '遥控已连接')
     : sessionActive ? (openState === 'error' || openState === 'closed' ? '连接已断开' : '连接中') : '按键开始'
@@ -437,7 +450,7 @@ export function TeleopPanel({ sseState, showToast, onExit }: TeleopPanelProps) {
       }}><X size={15} aria-hidden="true" /></button>
       <span className={styles.connection} role="status" title={controlDisabledReason || controlStatus}
         data-connected={connectionReady && enabled && !resumeRequired}
-        data-attention={!sseState.connected || resumeRequired || Boolean(bootstrapError) || openState === 'error' || (openState === 'closed' && sessionActive)}>
+        data-attention={!controlKnown || resumeRequired || Boolean(bootstrapError) || openState === 'error' || (openState === 'closed' && sessionActive)}>
         <i aria-hidden="true" /><span>{controlStatus}</span>
       </span>
       {resumeRequired && <button className={styles.actionBtn} disabled={resumePending || !sseState.connected} onClick={resumeControl}>

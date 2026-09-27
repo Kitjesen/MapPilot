@@ -48,12 +48,6 @@ struct ScanPlannerParams {
   double velocityTolerance = 1.0;
   double accelerationTolerance = 1.0;
   double collisionDistance = 0.20;
-  // Grounded-robot extension at the GridMap seam, in metres / dz per dxy.
-  // Zero height keeps the upstream collision-only query contract.
-  double supportHeight = 0.0;
-  double supportHeightTolerance = 0.0;
-  double maxStepHeight = 0.0;
-  double maxSupportSlope = 0.0;
 };
 
 struct LocalPlannerParams {
@@ -375,6 +369,7 @@ struct LocalPlanCandidate {
 
 struct ScanAttemptDiagnostics {
   std::uint64_t attemptId{0};
+  double timestampS{0.0};  // Attempt time; timer/status refreshes do not renew it.
   bool attempted{false};
   bool success{false};
   std::string stage;

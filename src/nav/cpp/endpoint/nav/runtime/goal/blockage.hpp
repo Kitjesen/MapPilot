@@ -19,8 +19,11 @@ struct ActivePathBlockagePolicyConfig {
   double corridor_vertical_tolerance_m{1.0};
   double obstacle_height_min_m{0.10};
   double obstacle_height_max_m{1.20};
-  double overlay_radius_m{0.75};
-  double overlay_half_height_m{1.5};
+  // Measured obstacle voxel size, without robot or obstacle inflation.
+  double obstacle_voxel_size_m{0.08};
+  double local_collision_radius_m{0.44};
+  double local_collision_below_m{0.10};
+  double local_collision_above_m{0.10};
   std::size_t max_regions{16U};
   std::size_t minimum_obstacle_points{4U};
 };
@@ -37,18 +40,18 @@ struct ActivePathBlockageObservation {
   GoalReplanIdentity goal{};
   std::uint64_t frame_epoch{0U};
   nav_kernel::Vec3 robot_position{};
+  // Failed local trajectory pose; only selects nearby measured obstacle points.
+  std::optional<nav_kernel::Vec3> local_collision_position;
   const std::vector<nav_kernel::Vec3> *active_global_path{nullptr};
   // Borrowed x/y/z/height tuples from the current MotionLayer snapshot.
   const std::vector<float> *live_obstacles_xyzh{nullptr};
   std::uint64_t cloud_generation{0U};
-  std::uint64_t traversability_generation{0U};
 };
 
 struct ActivePathBlockagePolicySnapshot {
   std::optional<GoalReplanIdentity> goal;
   std::uint64_t frame_epoch{0U};
   std::uint64_t last_cloud_generation{0U};
-  std::uint64_t last_traversability_generation{0U};
   std::size_t fresh_blocked_observations{0U};
   std::size_t current_blocker_count{0U};
   double first_blocked_s{-1.0};
@@ -56,7 +59,8 @@ struct ActivePathBlockagePolicySnapshot {
   std::string reason{"idle"};
 };
 
-// Detects only a persistent blockage of the current forward path corridor.
+// Detects persistent measured obstacles in the forward path corridor or around
+// a failed local trajectory pose.
 // This policy uses current occupancy only. Velocity prediction and TTC belong
 // to NAV-DYN-01 and must not leak into global replan admission.
 class ActivePathBlockagePolicy {
@@ -73,6 +77,8 @@ class ActivePathBlockagePolicy {
  private:
   struct CorridorBlocker {
     double along_path_m{0.0};
+    bool near_local_collision{false};
+    double collision_distance_m{0.0};
     double height{0.0};
     lingtu::nav::plan::GlobalPlanBlockedRegion region{};
   };
@@ -81,8 +87,6 @@ class ActivePathBlockagePolicy {
   [[nodiscard]] bool sameBinding(const GoalReplanIdentity &goal, std::uint64_t frame_epoch) const;
   void bind(const GoalReplanIdentity &goal, std::uint64_t frame_epoch);
   void clearAccumulation(const char *reason);
-  void setGenerationBaseline(std::uint64_t cloud_generation,
-                             std::uint64_t traversability_generation);
   [[nodiscard]] std::vector<CorridorBlocker>
   corridorBlockers(const ActivePathBlockageObservation &observation) const;
 
@@ -90,7 +94,6 @@ class ActivePathBlockagePolicy {
   std::optional<GoalReplanIdentity> goal_;
   std::uint64_t frame_epoch_{0U};
   std::uint64_t last_cloud_generation_{0U};
-  std::uint64_t last_traversability_generation_{0U};
   std::size_t fresh_blocked_observations_{0U};
   std::size_t current_blocker_count_{0U};
   double first_blocked_s_{-1.0};

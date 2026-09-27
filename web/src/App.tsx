@@ -61,12 +61,13 @@ function Dashboard() {
   const sseState = useSSE(
     elevationSubscription ? '/api/v1/events?include_elevation=1' : '/api/v1/events',
   )
-  const activeTaskId = sseState.navigationStatus?.task.task_id
   const { toasts, show: showToast, dismiss } = useToast()
   const { theme, resolvedTheme, setTheme } = useTheme()
   const [locale, setLocale] = useState<Locale>(() => readStoredLocale())
   const [uptimeSeconds, setUptimeSeconds] = useState(0)
   const [nowMs, setNowMs] = useState(() => Date.now())
+  const liveNavigation = liveNavigationStatus(sseState, nowMs / 1000)
+  const activeTaskId = liveNavigation?.task.task_id
   const [activeTab, setActiveTab] = useState<Tab>('scene')
   const [selectedSavedMap, setSelectedSavedMap] = useState<string | null>(null)
   const handleProductChanged = useCallback(() => setActiveTab('scene'), [])

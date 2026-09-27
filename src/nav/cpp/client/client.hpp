@@ -288,7 +288,8 @@ class LINGTU_NAV_CLIENT_API Client {
         double y,
         double z,
         int timeout_ms = 1000,
-        const std::string& request_id = {});
+        const std::string& request_id = {},
+        double acceptance_radius_m = 0.0);
     [[nodiscard]] NavigationCommandReceipt cancelTask(
         const std::string& task_id,
         const std::string& reason,

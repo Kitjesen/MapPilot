@@ -31,6 +31,12 @@ std::shared_ptr<octomap::OcTree> makeMap(bool step, bool wall = false)
   const auto occupy = [&](int x, int y, int z) {
     map->updateNode(octomap::point3d(center(x), center(y), center(z)), true);
   };
+  // Model the traversable volume as measured free ray evidence.  Unknown
+  // cells are reserved for the dedicated gap/absence cases below.
+  for (int x = -8; x <= 8; ++x)
+    for (int y = -4; y <= 4; ++y)
+      for (int z = 0; z <= 10; ++z)
+        map->updateNode(octomap::point3d(center(x), center(y), center(z)), false);
   for (int x = -8; x <= 8; ++x) {
     for (int y = -4; y <= 4; ++y) {
       // A 0.30 m riser needs an extended edge with two support layers. A
@@ -76,6 +82,14 @@ std::shared_ptr<octomap::OcTree> makeFullSizeStairs(bool wall = false, bool gap 
   const auto occupy = [&](int x, int y, int z) {
     map->updateNode(octomap::point3d(center(x), center(y), center(z)), true);
   };
+  // Saved-ray maps contain explicit free cells above each tread.  Leave the
+  // requested gap completely absent so it remains unknown and impassable.
+  for (int x = -25; x <= 60; ++x) {
+    if (gap && x >= 9 && x <= 21) continue;
+    for (int y = -11; y <= 11; ++y)
+      for (int z = 0; z <= 40; ++z)
+        map->updateNode(octomap::point3d(center(x), center(y), center(z)), false);
+  }
   // Rasterized 0.15 m rise / 0.30 m run, 2.2 m wide; the current factory flight.
   for (int x = -25; x <= 60; ++x) {
     if (gap && x >= 9 && x <= 21) continue;
@@ -100,6 +114,10 @@ void checkFullSizeStairs()
   auto options = config();
   options.robot_radius = 0.640512;
   options.max_iterations = 30000;
+  // The synthetic staircase has complete direct support. Keep this large
+  // geometry regression on the strict diagnostic predicate; the production
+  // default remains the relaxed one-voxel fallback exercised below.
+  options.strict_direct_ground_support = true;
   planner.setConfig(options);
   planner.setOctomap(makeFullSizeStairs());
   const auto bottom = point(-15,2);
@@ -112,6 +130,10 @@ void checkFullSizeStairs()
   require(run(planner,bottom,top).empty(), "full-size stairs crossed a missing flight");
 
   auto flat = std::make_shared<octomap::OcTree>(0.1);
+  for (int x = -20; x <= 20; ++x)
+    for (int y = -20; y <= 20; ++y)
+      for (int z = 0; z <= 10; ++z)
+        flat->updateNode(octomap::point3d(center(x),center(y),center(z)), false);
   for (int x = -20; x <= 20; ++x)
     for (int y = -20; y <= 20; ++y)
       flat->updateNode(octomap::point3d(center(x),center(y),center(0)), true);

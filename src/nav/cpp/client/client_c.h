@@ -17,7 +17,7 @@ enum {
   // Field Products atomically package this library with its Host bindings.
   // Mixed global ABI versions fail closed; append-only feature discovery
   // within one version uses the capability bits below.
-  LINGTU_NAV_CLIENT_ABI_VERSION = 10,
+  LINGTU_NAV_CLIENT_ABI_VERSION = 11,
 };
 
 enum {
@@ -401,13 +401,16 @@ LINGTU_NAV_CLIENT_API int lingtu_nav_client_start_task_with_receipt_v2(
 
 // Runs one read-only native global plan. Returns 2 with the required
 // point_count when the caller buffer is too small and retains that result by
-// request_id for retry. Returns 1 after a complete copy and -1 on error.
-LINGTU_NAV_CLIENT_API int lingtu_nav_client_preview_plan_v1(
+// request_id for retry. Zero acceptance radius retains the Product default;
+// a positive value tightens the terminal XY tolerance. Returns 1 after a
+// complete copy and -1 on error.
+LINGTU_NAV_CLIENT_API int lingtu_nav_client_preview_plan_v2(
     lingtu_nav_client_handle handle,
     const char* request_id,
     double x,
     double y,
     double z,
+    double acceptance_radius_m,
     int timeout_ms,
     lingtu_nav_plan_result_v1* result,
     lingtu_nav_path_point* points,

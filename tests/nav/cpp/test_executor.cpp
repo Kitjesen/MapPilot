@@ -466,179 +466,60 @@ TEST(Executor, ScanUsesSeparatePlanarAndHeightGoalTolerances) {
   EXPECT_EQ(reached.reason, "goal_reached");
 }
 
-TEST(Executor, DynamicCrossingWaitsWithoutStartingRecoveryAndTimesOut) {
+TEST(Executor, FreshDynamicPredictionLetsScanPlanWithoutExecutorWait) {
   auto executor = makeScanExecutor(3.0, .6, 3, .1);
-  executor.setRoute({{{0,0,.5},{3,0,.5}}});
-  const nav_kernel::PredictedObstacle crossing{{.65,-1,.5},{.65,1,.5},.1,.1,1};
-  const auto tick = [&](double stamp) {
+  executor.setRoute({{{0, 0, .5}, {3, 0, .5}}});
+  const nav_kernel::PredictedObstacle crossing{{1.0, -.2, .5},
+                                                {1.0, .2, .5}, .05, .1, 1};
+  const auto tick = [&] {
+    constexpr double stamp = 1.0;
     auto obs = emptyScanObservation(stamp);
-    obs.predictions = {&crossing,1,stamp+.35};
-    return executor.tick(routeInput({{0,0,.5},0},nullptr,0,stamp,{},obs));
+    obs.predictions = {&crossing, 1, stamp + .35, stamp, .35};
+    return executor.tick(routeInput({{0, 0, .5}, 0}, nullptr, 0, stamp, {}, obs));
   };
-  auto out = tick(1.0);
-  EXPECT_EQ(out.reason,"dynamic_obstacle_wait");
-  EXPECT_DOUBLE_EQ(out.cmd_vel.vx,0);
-  EXPECT_DOUBLE_EQ(out.cmd_vel.wz,0);
-  for (int i = 1; i <= 10; ++i) out = tick(1.0 + i*.05);
-  EXPECT_EQ(out.reason,"dynamic_obstacle_wait");
-  EXPECT_EQ(out.recovery_attempt,0);
-  for (int i = 11; i <= 22; ++i) out = tick(1.0 + i*.05);
-  EXPECT_NE(out.dynamic_avoidance,"clear");
+
+  const auto out = awaitScanOutput(tick);
+
+  EXPECT_TRUE(out.path_found) << out.reason << ": " << out.local_planner_debug.searchReason;
+  EXPECT_GT(std::hypot(out.cmd_vel.vx, out.cmd_vel.vy), 0.0);
+  ASSERT_FALSE(out.local_path_body.empty());
+  EXPECT_TRUE(std::any_of(out.local_path_body.begin(), out.local_path_body.end(),
+                          [](const nav_kernel::Vec3 &point) { return std::abs(point.y) > .1; }))
+      << "SCAN must own the collision-timed detour, not Executor waiting";
+  EXPECT_EQ(out.prediction_count, 1U);
+  EXPECT_NE(out.reason, "dynamic_obstacle_wait");
   EXPECT_FALSE(out.recovery_verified);
-  for (int i = 23; i <= 202; ++i) out = tick(1.0 + i*.05);
-  EXPECT_EQ(out.reason,"dynamic_obstacle_timeout");
-  EXPECT_TRUE(out.recovery_exhausted);
-  EXPECT_DOUBLE_EQ(out.cmd_vel.vx,0);
-  EXPECT_DOUBLE_EQ(out.cmd_vel.wz,0);
 }
 
-TEST(Executor, DynamicCrossingNeedsFreshClearObservationAndDoesNotLeaveWaitAfterExpiry) {
-  auto executor = makeScanExecutor();
-  executor.setRoute({{{0,0,.5},{3,0,.5}}});
-  const nav_kernel::PredictedObstacle crossing{{.65,-1,.5},{.65,1,.5},.1,.1,1};
-  auto obs = emptyScanObservation(1);
-  obs.predictions = {&crossing,1,1.35};
-  ASSERT_EQ(executor.tick(routeInput({{0,0,.5},0},nullptr,0,1,{},obs)).reason,
-            "dynamic_obstacle_wait");
-  obs = emptyScanObservation(1.5);
-  obs.predictions = {&crossing,1,1.35};
-  auto out = executor.tick(routeInput({{0,0,.5},0},nullptr,0,1.5,{},obs));
-  EXPECT_EQ(out.reason,"dynamic_prediction_stale");
-  obs = emptyScanObservation(1.6);
-  obs.predictions = {nullptr,0,1.95};
-  EXPECT_EQ(executor.tick(routeInput({{0,0,.5},0},nullptr,0,1.6,{},obs)).reason,
-            "dynamic_obstacle_wait");
-  for (double stamp : {1.7, 1.8, 1.9}) {
-    obs = emptyScanObservation(stamp);
-    obs.predictions = {nullptr,0,stamp+.35};
-    executor.tick(routeInput({{0,0,.5},0},nullptr,0,stamp,{},obs));
-  }
-  obs = emptyScanObservation(1.95);
-  obs.predictions = {nullptr,0,2.3};
-  out = executor.tick(routeInput({{0,0,.5},0},nullptr,0,1.95,{},obs));
-  EXPECT_EQ(out.dynamic_avoidance,"resuming");
-  EXPECT_FALSE(out.recovery_exhausted);
-  obs = emptyScanObservation(2.0);
-  obs.predictions = {nullptr,0,2.35};
-  out = executor.tick(routeInput({{.11,0,.5},0},nullptr,0,2.0,{},obs));
-  EXPECT_EQ(out.dynamic_avoidance,"clear") << "Only observed resumed motion ends the episode";
-}
-
-TEST(Executor, ClearPredictionWithoutResumedMotionKeepsTheOriginalTimeout) {
-  auto executor = makeScanExecutor();
-  executor.setRoute({{{0,0,.5},{3,0,.5}}});
-  const nav_kernel::PredictedObstacle crossing{{.65,-1,.5},{.65,1,.5},.1,.1,1};
-  auto obs = emptyScanObservation(1);
-  obs.predictions = {&crossing,1,1.35};
-  ASSERT_EQ(executor.tick(routeInput({{0,0,.5},0},nullptr,0,1,{},obs)).reason,
-            "dynamic_obstacle_wait");
-  lingtu::nav::navigation::ExecutionOutput out;
-  for (int i = 1; i <= 202; ++i) {
-    const double stamp = 1.0 + i * .05;
-    obs = emptyScanObservation(stamp);
-    obs.predictions = {nullptr,0,stamp+.35};
-    out = executor.tick(routeInput({{0,0,.5},0},nullptr,0,stamp,{},obs));
-  }
-  EXPECT_EQ(out.reason,"dynamic_resume_timeout");
-  EXPECT_EQ(out.dynamic_avoidance,"timeout");
-  EXPECT_TRUE(out.recovery_exhausted);
-  EXPECT_DOUBLE_EQ(out.cmd_vel.vx,0);
-  EXPECT_DOUBLE_EQ(out.cmd_vel.wz,0);
-}
-
-TEST(Executor, ForwardClockGapDoesNotEraseDynamicEncounterBudget) {
-  auto executor = makeScanExecutor();
-  executor.setRoute({{{0,0,.5},{3,0,.5}}});
-  const nav_kernel::PredictedObstacle crossing{{.65,-1,.5},{.65,1,.5},.1,.1,1};
-  const auto tick = [&](double stamp) {
-    auto obs = emptyScanObservation(stamp);
-    obs.predictions = {&crossing,1,stamp+.35};
-    return executor.tick(routeInput({{0,0,.5},0},nullptr,0,stamp,{},obs));
-  };
-  tick(1.0);
-  tick(1.1);
-  const auto gap = tick(1.6);
-  EXPECT_EQ(gap.reason,"scan_execution_clock_discontinuity");
-  EXPECT_EQ(gap.dynamic_avoidance,"stale");
-  EXPECT_DOUBLE_EQ(gap.cmd_vel.vx,0);
-  lingtu::nav::navigation::ExecutionOutput out;
-  for (int i = 1; i <= 191; ++i) out = tick(1.6 + i*.05);
-  EXPECT_EQ(out.reason,"dynamic_obstacle_timeout");
-  EXPECT_TRUE(out.recovery_exhausted);
-}
-
-TEST(Executor, DynamicEpisodeHasTotalBudgetEvenWhenOdometryKeepsMoving) {
-  lingtu::nav::navigation::ExecutorConfig config;
-  config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
-  config.dynamic_episode_timeout_s = 2;
-  config.dynamic_blocked_timeout_s = 10;
-  config.dynamic_wait_s = 3;
-  nav_kernel::LocalPlannerParams params;
-  params.backend = nav_kernel::LocalPlannerBackend::Scan;
-  params.scan.voxelResolution = .1;
-  auto executor = makeConfiguredExecutor(config,params,"");
-  executor.setRoute({{{0,0,.5},{3,0,.5}}});
-  const nav_kernel::PredictedObstacle crossing{{.65,-1,.5},{.65,1,.5},.1,.1,1};
-  lingtu::nav::navigation::ExecutionOutput out;
-  for (int i = 0; i <= 41; ++i) {
-    const double stamp = 1+i*.05;
-    auto obs = emptyScanObservation(stamp);
-    obs.predictions = {&crossing,1,stamp+.35};
-    const double lateral = .13*std::sin(i*.2);
-    out = executor.tick(routeInput({{0,lateral,.5},0},nullptr,0,stamp,{},obs));
-  }
-  EXPECT_EQ(out.reason,"dynamic_obstacle_timeout");
-  EXPECT_LT(out.dynamic_blocked_s,config.dynamic_blocked_timeout_s);
-  EXPECT_TRUE(out.recovery_exhausted);
-  EXPECT_DOUBLE_EQ(out.cmd_vel.vx,0);
-}
-
-TEST(Executor, DynamicWaitTransitionsToExecutableDetour) {
-  auto executor = makeScanExecutor(3.0,.6,3,.1);
-  executor.setRoute({{{0,0,.5},{3,0,.5}}});
-  const nav_kernel::PredictedObstacle crossing{{1.0,-.2,.5},{1.0,.2,.5},.05,.1,1};
-  lingtu::nav::navigation::ExecutionOutput out;
-  bool waited = false;
-  bool moving = false;
-  for (int i = 0; i < 700; ++i) {
-    const double stamp = 1+i*.01;
-    auto obs = emptyScanObservation(stamp);
-    obs.predictions = {&crossing,1,stamp+.35};
-    out = executor.tick(routeInput({{0,0,.5},0},nullptr,0,stamp,{},obs));
-    waited = waited || out.dynamic_avoidance == "waiting";
-    moving = std::hypot(out.cmd_vel.vx,out.cmd_vel.vy) > 1e-4;
-    if (moving) break;
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-  }
-  EXPECT_TRUE(waited);
-  EXPECT_TRUE(moving) << out.reason << ": " << out.local_planner_debug.searchReason;
-  EXPECT_EQ(out.dynamic_avoidance,"detour");
-  EXPECT_FALSE(out.recovery_verified);
-  EXPECT_TRUE(out.path_found);
-}
-
-TEST(Executor, PredictionUsesMapToOdomTransformAndRouteResetClearsWaiting) {
+TEST(Executor, OdomPredictionTransformKeepsUnavoidableDynamicCollisionStoppedByScan) {
   lingtu::nav::navigation::ExecutorConfig config;
   config.planning_frame = lingtu::nav::navigation::PlanningFrame::Odom;
+  config.recovery.max_attempts = 0;
   nav_kernel::LocalPlannerParams params;
   params.backend = nav_kernel::LocalPlannerBackend::Scan;
   params.scan.voxelResolution = .1;
-  auto executor = makeConfiguredExecutor(config,params,"");
-  const lingtu::nav::navigation::MapFromOdomTransform tf{{10,5,0},M_PI/2};
-  executor.setRoute({{{10,5,.5},{10,8,.5}}});
-  lingtu::nav::tests::CollisionBitmap bitmap({5,0,-1},{15,10,2},.1);
-  const nav_kernel::PredictedObstacle crossing{{9,5.65,.5},{11,5.65,.5},.1,.1,1};
-  auto obs = emptyScanObservation(1);
-  obs.collision = bitmap.view(1,1);
-  obs.predictions = {&crossing,1,1.35};
-  auto out = executor.tick(odomInput({{10,5,.5},M_PI/2},{{0,0,.5},0},tf,
-                                        nullptr,0,1,{},obs));
-  EXPECT_EQ(out.reason,"dynamic_obstacle_wait");
-  executor.setRoute({{{10,5,.5},{10,2,.5}}});
-  obs.predictions = {nullptr,0,1.45};
-  out = executor.tick(odomInput({{10,5,.5},M_PI/2},{{0,0,.5},0},tf,
-                                    nullptr,0,1.1,{},obs));
-  EXPECT_EQ(out.dynamic_avoidance,"clear");
+  auto executor = makeConfiguredExecutor(config, params, "");
+  executor.setRoute({{{10, 5, .5}, {10, 8, .5}}});
+  const lingtu::nav::navigation::MapFromOdomTransform transform{{10, 5, 0}, M_PI / 2};
+  lingtu::nav::tests::CollisionBitmap bitmap({5, 0, -1}, {15, 10, 2}, .1);
+  const nav_kernel::PredictedObstacle blocking{{10, 5, .5}, {10, 5, .5}, .8, .1, 1};
+  const auto tick = [&] {
+    constexpr double stamp = 1.0;
+    auto obs = emptyScanObservation(stamp);
+    obs.collision = bitmap.view(stamp, 1);
+    obs.predictions = {&blocking, 1, stamp + .35, stamp, .35};
+    return executor.tick(odomInput({{10, 5, .5}, M_PI / 2}, {{0, 0, .5}, 0}, transform,
+                                   nullptr, 0, stamp, {}, obs));
+  };
+
+  const auto out = awaitScanOutput(tick);
+
+  EXPECT_FALSE(out.path_found) << out.reason;
+  EXPECT_EQ(out.prediction_count, 1U);
+  EXPECT_EQ(out.local_planner_debug.predictedObstacleCount, 1);
+  EXPECT_DOUBLE_EQ(out.cmd_vel.vx, 0);
+  EXPECT_DOUBLE_EQ(out.cmd_vel.vy, 0);
+  EXPECT_DOUBLE_EQ(out.cmd_vel.wz, 0);
 }
 
 TEST(Executor, ScanAnchorsRouteHeight) {

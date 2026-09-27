@@ -361,8 +361,6 @@ void testOctoPlanner3DPhysicalContractIsConfigurable() {
       "true",
       "--octo-same-floor-z-tolerance-m",
       "0.75",
-      "--octo-max-same-floor-z-excursion-m",
-      "2.0",
       "--octo-obstacle-clearance-radius-cells",
       "0",
       "--octo-obstacle-clearance-weight",
@@ -1089,19 +1087,12 @@ void testScanIsAnExplicitSecondLocalBackend() {
   require(rejected, "unknown local planner backend must fail startup");
 }
 
-void testScanDoesNotDuplicateLiveObstacleInflation() {
+void testScanHasSingleCollisionEnvelope() {
   CliConfig cfg;
   cfg.teleop_obstacle_margin_m = 0.15;
   cfg.live_obstacle_inflation_radius_m = 0.12;
   cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Scan;
-  cfg.octoplanner_options.support_height_m = .35;
-  cfg.octoplanner_options.support_height_tolerance_m = .05;
-  cfg.octoplanner_options.max_step_height = .15;
-  cfg.octoplanner_options.max_slope = .6;
   const auto scan = buildLocalPlannerParams(cfg);
-  require(scan.scan.supportHeight == .35 && scan.scan.supportHeightTolerance == .05 &&
-              scan.scan.maxStepHeight == .15 && scan.scan.maxSupportSlope == .6,
-          "SCAN must consume the same physical support limits as the global planner");
   require(std::abs(scan.footprintPadding) < 1e-12,
           "SCAN cylinder geometry already owns the complete hard envelope");
 
@@ -1175,6 +1166,7 @@ void testCommandBoundaryUsesActiveControlModeMotionLimits() {
 }
 
 void testScanCollisionEnvelopeIsConfigurable() {
+  ScopedEnvironment global_radius("LINGTU_NAV_OCTO_ROBOT_RADIUS_M", "0.155");
   const auto cfg = parse({
       "navd",
       "--local-planner",
@@ -1195,9 +1187,8 @@ void testScanCollisionEnvelopeIsConfigurable() {
           "SCAN prediction envelope must use the same radius as Mapd");
   require(std::abs(planner.scan.cylinderOffset - 0.24) < 1e-12,
           "SCAN collision offset must reach the planner");
-  require(std::abs(cfg.octoplanner_options.robot_radius - planner.scan.cylinderRadius) < 1e-12 &&
-              std::abs(cfg.octoplanner_options.cylinder_offset_m - planner.scan.cylinderOffset) < 1e-12,
-          "global OctoPlanner and local SCAN must use the same double cylinder");
+  require(std::abs(cfg.octoplanner_options.robot_radius - 0.155) < 1e-12,
+          "SCAN envelope must not overwrite the global route clearance");
   require(std::abs(planner.scan.bodyClearanceBelow - 0.22) < 1e-12,
           "SCAN lower body clearance must reach the planner");
   require(std::abs(planner.scan.bodyClearanceAbove - 0.36) < 1e-12,
@@ -1523,7 +1514,7 @@ int main() {
     testOctoPlanner3DPhysicalContractIsConfigurable();
     testFarPlannerIsAnExplicitOptionalBackend();
     testScanIsAnExplicitSecondLocalBackend();
-    testScanDoesNotDuplicateLiveObstacleInflation();
+    testScanHasSingleCollisionEnvelope();
     testLocalPlannerUsesConfiguredTraversabilityPolicy();
     testCommandBoundaryUsesActiveControlModeMotionLimits();
     testScanCollisionEnvelopeIsConfigurable();

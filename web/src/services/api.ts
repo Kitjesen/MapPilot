@@ -736,11 +736,13 @@ export async function previewNavigationPlan(
   x: number,
   y: number,
   z = 0,
+  acceptanceRadiusM: number | null = null,
 ): Promise<PlanPreviewResponse> {
   const body: PlanPreviewRequest = {
     x,
     y,
     z,
+    acceptance_radius_m: acceptanceRadiusM,
   }
   return postJson<PlanPreviewResponse>(apiPath('navigation_plan', '/api/v1/navigation/plan'), body)
 }

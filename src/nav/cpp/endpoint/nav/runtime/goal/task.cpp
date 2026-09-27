@@ -24,17 +24,14 @@ globalPlanStaleReason(const GlobalPlanCompletion &completion, std::uint64_t curr
   const auto &overlay = completion.context.request.temporary_overlay;
   const bool result_has_overlay_identity =
       completion.result.overlay_revision != 0U || completion.result.overlay_frame_epoch != 0U ||
-      completion.result.overlay_obstacle_generation != 0U ||
-      completion.result.overlay_traversability_generation != 0U;
+      completion.result.overlay_obstacle_generation != 0U;
   if (overlay.empty()) {
     if (result_has_overlay_identity) {
       return "unexpected_temporary_overlay_identity";
     }
   } else if (completion.result.overlay_revision != overlay.revision ||
              completion.result.overlay_frame_epoch != overlay.frame_epoch ||
-             completion.result.overlay_obstacle_generation != overlay.obstacle_generation ||
-             completion.result.overlay_traversability_generation !=
-                 overlay.traversability_generation) {
+             completion.result.overlay_obstacle_generation != overlay.obstacle_generation) {
     return "temporary_overlay_identity_mismatch";
   }
   if (!completion.result.map_identity.valid()) {
@@ -93,11 +90,16 @@ bool GlobalPlanTask::start(GlobalPlanContext context) {
   context_ = std::move(context);
   discard_result_ = false;
   cancel_requested_ = std::make_shared<std::atomic_bool>(false);
+  started_at_ = std::chrono::steady_clock::now();
   const auto request = context_->request;
   const auto cancel_requested = cancel_requested_;
-  future_ = std::async(std::launch::async, [planner = planner_, request, cancel_requested]() {
-    return planner(request, [cancel_requested]() {
-      return cancel_requested->load(std::memory_order_relaxed);
+  const auto deadline = context_->timeout.count() > 0
+                            ? started_at_ + context_->timeout
+                            : std::chrono::steady_clock::time_point::max();
+  future_ = std::async(std::launch::async, [planner = planner_, request, cancel_requested, deadline]() {
+    return planner(request, [cancel_requested, deadline]() {
+      return cancel_requested->load(std::memory_order_relaxed) ||
+             std::chrono::steady_clock::now() >= deadline;
     });
   });
   return true;
@@ -113,6 +115,9 @@ std::optional<GlobalPlanCompletion> GlobalPlanTask::poll() {
 
   GlobalPlanCompletion completion;
   completion.context = std::move(*context_);
+  completion.timed_out = completion.context.timeout.count() > 0 &&
+                         std::chrono::steady_clock::now() - started_at_ >=
+                             completion.context.timeout;
   context_.reset();
   cancel_requested_.reset();
   try {

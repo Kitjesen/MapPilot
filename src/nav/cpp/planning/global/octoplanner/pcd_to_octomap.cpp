@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -191,12 +192,6 @@ std::vector<Point> readPcd(const std::string & path)
 #endif
 }
 
-bool hasSuffix(const std::string & value, const std::string & suffix)
-{
-  return value.size() >= suffix.size() &&
-    value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
-}
-
 }  // namespace
 
 int main(int argc, char ** argv)
@@ -239,9 +234,11 @@ int main(int argc, char ** argv)
     }
     tree.updateInnerOccupancy();
 
-    const bool ok = hasSuffix(lower(cfg.output), ".bt")
-      ? tree.writeBinary(cfg.output)
-      : tree.write(cfg.output);
+    // Keep `.ot` lossless so an explicitly supplied saved-ray sidecar does
+    // not lose its accumulated hit/miss probabilities. `.bt` remains the
+    // deliberate maximum-likelihood preview format.
+    const auto extension = lower(std::filesystem::path(cfg.output).extension().string());
+    const bool ok = extension == ".bt" ? tree.writeBinary(cfg.output) : tree.write(cfg.output);
     if (!ok) {
       std::cerr << "failed to write OctoMap: " << cfg.output << std::endl;
       return 3;

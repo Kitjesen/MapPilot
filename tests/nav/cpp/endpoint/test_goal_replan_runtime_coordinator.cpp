@@ -91,7 +91,6 @@ bool sameTemporaryOverlay(const lingtu::nav::plan::GlobalPlanTemporaryOverlay &l
                           const lingtu::nav::plan::GlobalPlanTemporaryOverlay &rhs) {
   if (lhs.revision != rhs.revision || lhs.frame_epoch != rhs.frame_epoch ||
       lhs.obstacle_generation != rhs.obstacle_generation ||
-      lhs.traversability_generation != rhs.traversability_generation ||
       lhs.blocked_regions.size() != rhs.blocked_regions.size()) {
     return false;
   }
@@ -139,8 +138,6 @@ struct Fixture {
               result.overlay_revision = request.temporary_overlay.revision;
               result.overlay_frame_epoch = request.temporary_overlay.frame_epoch;
               result.overlay_obstacle_generation = request.temporary_overlay.obstacle_generation;
-              result.overlay_traversability_generation =
-                  request.temporary_overlay.traversability_generation;
               if (block_on_call.load() == call) {
                 while (!release_blocked.load() && !cancelled()) {
                   std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -300,7 +297,6 @@ struct Fixture {
     trigger.temporary_overlay.revision = 91U;
     trigger.temporary_overlay.frame_epoch = 3U;
     trigger.temporary_overlay.obstacle_generation = 101U;
-    trigger.temporary_overlay.traversability_generation = 103U;
     trigger.temporary_overlay.blocked_regions = {
         {{1.0, 0.25, 0.2}, 0.65, -0.4, 1.6},
         {{2.5, -0.5, 0.3}, 0.55, -0.3, 1.7},

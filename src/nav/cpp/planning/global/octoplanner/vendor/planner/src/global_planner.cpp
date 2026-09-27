@@ -24,7 +24,6 @@ namespace global_planner
     void OctoPlanner3D::setConfig(const PlannerConfig & config)
     {
         robot_radius_ = config.robot_radius;
-        cylinder_offset_m_ = config.cylinder_offset_m;
         body_clearance_below_m_ = config.body_clearance_below_m;
         body_clearance_above_m_ = config.body_clearance_above_m;
         max_iterations_ = config.max_iterations;
@@ -91,7 +90,7 @@ namespace global_planner
         rebuildDerivedLayers();
     }
 
-    void OctoPlanner3D::makePlan(const PointPose start,const PointPose goal,double start_yaw_rad)
+    void OctoPlanner3D::makePlan(const PointPose start,const PointPose goal)
     {
         occupied_blocks_.clear();
         last_occupied_block_ = nullptr;
@@ -99,7 +98,6 @@ namespace global_planner
         endpoint_resolution_ = {};
         search_info_ = {};
         start_point_ = start;
-        start_yaw_rad_ = start_yaw_rad;
         has_start_ = true;
 
         goal_point_ = goal;
@@ -162,25 +160,6 @@ namespace global_planner
         goal = goal_raw;
         endpoint_resolution_.start_raw_outside_bounds = !isInsideMetricBounds(start_raw);
         endpoint_resolution_.goal_raw_outside_bounds = !isInsideMetricBounds(goal_raw);
-
-        // In the calibrated continuous-height path the start is the measured
-        // body pose. Searching for a different start cannot repair its collision
-        // or missing support, and hides the cause behind a failed snap connection.
-        if (support_height_m_ > 0.0 && !lowest_traversable_only_ &&
-            !endpoint_resolution_.start_raw_outside_bounds) {
-            const octomap::point3d actual(start_point_.x, start_point_.y, start_point_.z);
-            const auto body = queryBody(actual, start_yaw_rad_, false);
-            if (body == TraversabilityFailure::OccupiedBody ||
-                body == TraversabilityFailure::ExternalPreblockedBody) {
-                endpoint_resolution_.failure = EndpointResolutionInfo::Failure::StartBodyOccupied;
-                return false;
-            }
-            if (require_ground_support_ &&
-                queryBody(actual, start_yaw_rad_, true) == TraversabilityFailure::GroundSupport) {
-                endpoint_resolution_.failure = EndpointResolutionInfo::Failure::StartGroundSupportMissing;
-                return false;
-            }
-        }
 
         if (!findNearestFreeCell(
                 start_raw,
@@ -560,9 +539,7 @@ namespace global_planner
         }
         if (support_height_m_ > 0.0 && !lowest_traversable_only_) {
             const auto a = planningPoint(from), b = planningPoint(to);
-            const double yaw = std::hypot(b.x() - a.x(), b.y() - a.y()) > 1e-9
-                ? std::atan2(b.y() - a.y(), b.x() - a.x()) : start_yaw_rad_;
-            if (!sweptBodyFree(a, b, yaw)) return false;
+            if (!sweptRouteFree(a, b)) return false;
         }
         return previous == to;
     }
@@ -687,8 +664,7 @@ namespace global_planner
         }
         if (support_height_m_ > 0.0 && !lowest_traversable_only_) {
             const auto a = planningPoint(from), b = planningPoint(to);
-            const double yaw = dxy > 1e-9 ? std::atan2(dy, dx) : start_yaw_rad_;
-            if (!sweptBodyFree(a, b, yaw)) return false;
+            if (!sweptRouteFree(a, b)) return false;
         }
         return true;
     }
@@ -821,13 +797,15 @@ namespace global_planner
 
     bool OctoPlanner3D::isCellTraversableDetailed(const GridIndex & idx, double robot_radius, bool require_ground_support,bool strict_direct_ground_support,int support_xy_radius_cells, int support_depth_cells, TraversabilityFailure * failure) const
     {
+        if (cellState(idx) == CellState::Unknown) {
+            if (failure) *failure = TraversabilityFailure::UnknownSpace;
+            return false;
+        }
         if (support_height_m_ > 0.0 && !lowest_traversable_only_) {
             auto cached = body_cache_.find(idx);
-            // A heading-free vertex checks its centre and ground; the swept
-            // edge checks both SCAN cylinders at its actual heading.
-            const double cell_radius = cylinder_offset_m_ > 0.0 ? 0.0 : robot_radius;
+            // Vertices and edges use route clearance, independent of SCAN.
             const auto result = require_ground_support && cached != body_cache_.end()
-                ? cached->second : queryWorld(planningPoint(idx), cell_radius, require_ground_support);
+                ? cached->second : queryWorld(planningPoint(idx), robot_radius, require_ground_support);
             if (require_ground_support) body_cache_.emplace(idx, result);
             if (failure) *failure = result;
             return result == TraversabilityFailure::None;
@@ -1431,7 +1409,7 @@ namespace global_planner
             idx.z - block_index.z * 16);
         auto & cached = (*last_occupied_block_)[offset];
         if (cached != CellState::Unqueried) return cached;
-        cached = CellState::Free;
+        cached = CellState::Unknown;
         if (!isInsideMetricBounds(idx)) {
             return cached;
         }
@@ -1460,6 +1438,8 @@ namespace global_planner
                 octree_->keyToCoord(key[1], depth),
                 octree_->keyToCoord(key[2], depth));
             cached = center == idx ? CellState::OccupiedLeafCenter : CellState::Occupied;
+        } else {
+            cached = CellState::Free;
         }
         return cached;
     }
@@ -1479,6 +1459,8 @@ namespace global_planner
         octree_->getMetricMax(max_x, max_y, max_z);
         if (p.x() < min_x || p.x() >= max_x || p.y() < min_y || p.y() >= max_y ||
             p.z() < min_z || p.z() >= max_z) return TraversabilityFailure::OutsideBounds;
+        if (require_support && cellState(worldToGrid(p.x(), p.y(), p.z())) == CellState::Unknown)
+            return TraversabilityFailure::UnknownSpace;
         const double r = octree_->getResolution();
         if (!external_preblocked_cells_.empty()) {
             const auto column = worldToGrid(p.x(), p.y(), p.z());
@@ -1575,28 +1557,8 @@ namespace global_planner
         return TraversabilityFailure::None;
     }
 
-    OctoPlanner3D::TraversabilityFailure OctoPlanner3D::queryBody(
-        const octomap::point3d &point, double yaw, bool require_support) const
-    {
-        if (cylinder_offset_m_ <= 0.0) {
-            return queryWorld(point, robot_radius_, require_support);
-        }
-        if (require_support) {
-            const auto support = queryWorld(point, 0.0, true);
-            if (support != TraversabilityFailure::None) return support;
-        }
-        for (const double sign : {-1.0, 1.0}) {
-            const octomap::point3d center(
-                point.x() + sign * cylinder_offset_m_ * std::cos(yaw),
-                point.y() + sign * cylinder_offset_m_ * std::sin(yaw), point.z());
-            const auto body = queryWorld(center, robot_radius_, false);
-            if (body != TraversabilityFailure::None) return body;
-        }
-        return TraversabilityFailure::None;
-    }
-
-    bool OctoPlanner3D::sweptBodyFree(
-        const octomap::point3d &from, const octomap::point3d &to, double yaw) const
+    bool OctoPlanner3D::sweptRouteFree(
+        const octomap::point3d &from, const octomap::point3d &to) const
     {
         const double length = (to - from).norm();
         const int count = std::max(1, static_cast<int>(std::ceil(
@@ -1607,8 +1569,30 @@ namespace global_planner
                 from.x() + t * (to.x() - from.x()),
                 from.y() + t * (to.y() - from.y()),
                 from.z() + t * (to.z() - from.z()));
-            if (queryBody(point, yaw, require_ground_support_) != TraversabilityFailure::None)
+            const auto failure = queryWorld(point, robot_radius_, require_ground_support_);
+            if (failure == TraversabilityFailure::None) continue;
+            // A step connects two supported stances. Its body moves continuously,
+            // while the observed tread height changes discontinuously. Keep the
+            // actual body sweep, but do not require its interpolated height to
+            // remain the nominal standing height above either tread.
+            if (failure != TraversabilityFailure::GroundSupport ||
+                std::abs(to.z() - from.z()) < 1e-7 || i == 0 || i == count ||
+                queryWorld(point, robot_radius_, false) != TraversabilityFailure::None)
                 return false;
+            bool supported = false;
+            const double lower_z = std::min(from.z(), to.z());
+            const double upper_z = std::max(from.z(), to.z());
+            const int levels = std::max(1, static_cast<int>(std::ceil(
+                (upper_z - lower_z) / octree_->getResolution())));
+            for (int level = 0; level <= levels && !supported; ++level) {
+                auto stance = point;
+                stance.z() = static_cast<float>(lower_z +
+                    (upper_z - lower_z) * static_cast<double>(level) / levels);
+                // Reuse the same first-surface, explicit-drop and neighbouring
+                // support rules at this XY, bounded by the endpoint stances.
+                supported = queryWorld(stance, 0.0, true) == TraversabilityFailure::None;
+            }
+            if (!supported) return false;
         }
         return true;
     }

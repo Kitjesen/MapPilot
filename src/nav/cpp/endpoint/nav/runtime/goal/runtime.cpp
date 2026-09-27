@@ -31,15 +31,13 @@ bool validPersistentOverlay(const GoalReplanTrigger &trigger, std::uint64_t fram
   const auto &overlay = trigger.temporary_overlay;
   return trigger.kind == GoalReplanTriggerKind::kPersistentPathObstruction && !overlay.empty() &&
          overlay.revision != 0U && overlay.frame_epoch != 0U &&
-         overlay.frame_epoch == frame_epoch && overlay.obstacle_generation != 0U &&
-         overlay.traversability_generation != 0U;
+         overlay.frame_epoch == frame_epoch && overlay.obstacle_generation != 0U;
 }
 
 bool validLocalRecoveryTrigger(const GoalReplanTrigger &trigger) {
   const auto &overlay = trigger.temporary_overlay;
   return trigger.kind == GoalReplanTriggerKind::kLocalRecoveryExhausted && overlay.empty() &&
-         overlay.revision == 0U && overlay.frame_epoch == 0U && overlay.obstacle_generation == 0U &&
-         overlay.traversability_generation == 0U;
+         overlay.revision == 0U && overlay.frame_epoch == 0U && overlay.obstacle_generation == 0U;
 }
 
 const char *replanStopReason(GoalReplanTriggerKind kind) {

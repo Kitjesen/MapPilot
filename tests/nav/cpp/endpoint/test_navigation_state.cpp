@@ -1,5 +1,6 @@
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "runtime/goal/plan.hpp"
 #include "status/navigation_state.hpp"
@@ -16,11 +17,54 @@ using lingtu::nav::endpoint::NavigationPlanningState;
 using lingtu::nav::endpoint::NavigationRecoveryState;
 using lingtu::nav::endpoint::NavigationStateContext;
 using lingtu::nav::endpoint::NavigationStateTracker;
+using lingtu::nav::endpoint::NavigationStateSample;
 
 void require(bool condition, const char *message) {
   if (!condition) {
     throw std::runtime_error(message);
   }
+}
+
+void testPublicationChangesHeartbeatAndRetry() {
+  NavigationStateTracker tracker(NavigationControlState::kAutonomy);
+  NavigationStateSample state = tracker.sample({});
+  int writes = 0;
+  bool accepted = true;
+  const auto publish = [&](const NavigationStateSample &) {
+    ++writes;
+    return accepted;
+  };
+  require(tracker.publishIfDue(state, 1.0, publish), "initial state must publish");
+  require(!tracker.publishIfDue(state, 1.19, publish) && writes == 1,
+          "unchanged control ticks must not publish");
+  require(tracker.publishIfDue(state, 1.21, publish), "unchanged state needs a heartbeat");
+
+  using Change = std::function<void(NavigationStateSample &)>;
+  const std::vector<Change> changes{
+      [](auto &s) { ++s.control_mode; }, [](auto &s) { ++s.lifecycle_state; },
+      [](auto &s) { s.active_task_id = "new-task"; },
+      [](auto &s) { s.active_request_id = "new-request"; },
+      [](auto &s) { ++s.goal_epoch; }, [](auto &s) { s.map_id = "room"; },
+      [](auto &s) { ++s.map_content_epoch; }, [](auto &s) { ++s.planning_state; },
+      [](auto &s) { ++s.execution_state; }, [](auto &s) { ++s.recovery_state; },
+      [](auto &s) { s.progress = .5F; }, [](auto &s) { s.authority = "operator"; },
+      [](auto &s) { s.hold_reason = "estop_latched"; },
+      [](auto &s) { s.failure_code = "planner_failed"; }};
+  for (const auto &change : changes) {
+    change(state);
+    require(tracker.publishIfDue(state, 1.22, publish), "a changed field waited for heartbeat");
+  }
+  state.hold_reason.clear();
+  accepted = false;
+  require(!tracker.publishIfDue(state, 1.23, publish), "failed write reported as sent");
+  const auto failed_writes = writes;
+  accepted = true;
+  require(tracker.publishIfDue(state, 1.24, publish) && writes == failed_writes + 1,
+          "changed state was not retried on the next tick");
+  accepted = false;
+  require(!tracker.publishIfDue(state, 1.45, publish), "failed heartbeat reported as sent");
+  accepted = true;
+  require(tracker.publishIfDue(state, 1.46, publish), "failed heartbeat was not retried");
 }
 
 void testLifecycleAndTransientHold() {
@@ -193,6 +237,7 @@ void testPendingTaskStatusesDoNotReplaceActiveRuntimeProjection() {
 }  // namespace
 
 int main() {
+  testPublicationChangesHeartbeatAndRetry();
   testLifecycleAndTransientHold();
   testExecutionRecoveryAndTerminalState();
   testFailureCarriesStableCode();

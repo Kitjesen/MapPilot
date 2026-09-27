@@ -27,7 +27,6 @@ planImmediately(const lingtu::nav::plan::GlobalPlanRequest &request,
   result.overlay_revision = request.temporary_overlay.revision;
   result.overlay_frame_epoch = request.temporary_overlay.frame_epoch;
   result.overlay_obstacle_generation = request.temporary_overlay.obstacle_generation;
-  result.overlay_traversability_generation = request.temporary_overlay.traversability_generation;
   result.path = {request.start, request.goal};
   return result;
 }
@@ -477,7 +476,6 @@ int main() {
     overlay_context.temporary_overlay.revision = 9U;
     overlay_context.temporary_overlay.frame_epoch = context.frame_epoch;
     overlay_context.temporary_overlay.obstacle_generation = 21U;
-    overlay_context.temporary_overlay.traversability_generation = 13U;
     overlay_context.temporary_overlay.blocked_regions.push_back({{2.0, 3.0, 0.5}, 0.7, -0.2, 1.8});
     require(overlay_controller.submit(request, overlay_context).accepted,
             "overlay fixture initial goal was rejected");
@@ -509,7 +507,6 @@ int main() {
     require(observed_overlay.revision == 9U &&
                 observed_overlay.frame_epoch == context.frame_epoch &&
                 observed_overlay.obstacle_generation == 21U &&
-                observed_overlay.traversability_generation == 13U &&
                 observed_overlay.blocked_regions.size() == 1U &&
                 observed_overlay.blocked_regions.front().radius_xy_m == 0.7,
             "GoalPlan did not preserve the request-scoped overlay across replan admission");

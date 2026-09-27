@@ -48,6 +48,8 @@ export type TeleopConnectionState = 'idle' | 'connecting' | 'open' | 'closed' | 
 
 const WS_OPEN = 1
 const WS_CONNECTING = 0
+// Matches Gateway's one-use input window; idle heartbeats are less frequent.
+const INPUT_WINDOW_MS = 350
 
 function finiteOrZero(value: number): number {
   if (!Number.isFinite(value)) return 0
@@ -128,6 +130,7 @@ export class TeleopWsClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private pendingRequest: string | null = null
   private inputWindow: string | null = null
+  private inputWindowDeadlineMs = 0
   private inputTimer: ReturnType<typeof setTimeout> | null = null
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
 
@@ -137,7 +140,7 @@ export class TeleopWsClient {
     this.onAck = options.onAck
     this.onState = options.onState
     this.reconnectDelayMs = Math.max(0, options.reconnectDelayMs ?? 1000)
-    this.inputTimeoutMs = Math.min(350, Math.max(1, options.inputTimeoutMs ?? 350))
+    this.inputTimeoutMs = Math.min(INPUT_WINDOW_MS, Math.max(1, options.inputTimeoutMs ?? INPUT_WINDOW_MS))
   }
 
   connect(): void {
@@ -208,6 +211,7 @@ export class TeleopWsClient {
     if (command.deadman) {
       // At most one outstanding input; a slow connection cannot build a FIFO.
       if (this.pendingRequest) return null
+      if (performance.now() >= this.inputWindowDeadlineMs) this.inputWindow = null
       if (!this.inputWindow) {
         const id = requestId('input', ++this.sequence)
         this.waitForInputAck(id)
@@ -275,6 +279,8 @@ export class TeleopWsClient {
   private waitForInputAck(id: string): void {
     this.clearPendingInput()
     this.pendingRequest = id
+    // Start at send time, not ACK receipt: network delay cannot extend validity.
+    this.inputWindowDeadlineMs = performance.now() + INPUT_WINDOW_MS
     this.inputTimer = setTimeout(() => {
       this.clearPendingInput()
       this.inputWindow = null

@@ -93,9 +93,6 @@ TEST(FarPlanner, RejectsTemporaryOverlayUntilBackendCanHonorIt) {
   EXPECT_EQ(
       result.overlay_obstacle_generation,
       request.temporary_overlay.obstacle_generation);
-  EXPECT_EQ(
-      result.overlay_traversability_generation,
-      request.temporary_overlay.traversability_generation);
 }
 
 TEST(FarPlanner, RoutesAroundOccupiedWallWithVisibilityCorners) {

@@ -34,8 +34,6 @@ void CopyOverlayIdentity(const GlobalPlanRequest& request, GlobalPlanResult* res
   result->overlay_revision = request.temporary_overlay.revision;
   result->overlay_frame_epoch = request.temporary_overlay.frame_epoch;
   result->overlay_obstacle_generation = request.temporary_overlay.obstacle_generation;
-  result->overlay_traversability_generation =
-      request.temporary_overlay.traversability_generation;
 }
 
 }  // namespace

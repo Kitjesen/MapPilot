@@ -2175,6 +2175,13 @@ def test_product_env_and_session_parameters_are_resolved_before_launch() -> None
     assert product.native_process_environment["LINGTU_NAV_SEGMENT_MAX_DISTANCE_M"] == "2.0"
 
 
+def test_nav_product_uses_the_field_scan_acceleration_tolerance() -> None:
+    product = compile_run_plan("nav", "real", robot="unitree/go2")
+
+    assert product.parameters["scan_planner.acceleration_tolerance"] == 1.2
+    assert product.native_process_environment["LINGTU_NAV_SCAN_ACCELERATION_TOLERANCE"] == "1.2"
+
+
 def test_parameter_validation_uses_declared_traversability_publish_rate() -> None:
     graph = load_runtime_graph()
     envs = deepcopy(graph.envs)
@@ -2262,7 +2269,7 @@ def test_nav_octoplanner_radius_comes_from_native_nav_contract() -> None:
     plan = compile_run_plan("nav", "sim", env_config={"backend": "mujoco"})
 
     assert float(plan.native_process_environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"]) == pytest.approx(
-        float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"])
+        0.5 * float(plan.native_process_environment["LINGTU_NAV_VEHICLE_WIDTH_M"])
     )
 
 

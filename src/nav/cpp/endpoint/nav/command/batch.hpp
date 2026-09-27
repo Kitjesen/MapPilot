@@ -34,6 +34,7 @@ struct PlanPreviewRequest {
   std::string frame_id;
   std::string request_id;
   nav_kernel::Vec3 goal{};
+  double acceptance_radius_m{0.0};
 };
 
 struct OperatorMotionControlSample {

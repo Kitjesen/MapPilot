@@ -367,6 +367,7 @@ export interface PlanPreviewRequest {
   y: number
   z?: number
   frame_id?: 'map'
+  acceptance_radius_m?: number | null
 }
 
 export interface PlanPreviewResponse {

@@ -40,14 +40,6 @@ class Grid {
                                     double yawDeceleration) const noexcept;
 
  private:
-  [[nodiscard]] bool supported(const Vec3 &center, double yaw,
-                               const char **failure = nullptr) const noexcept;
-  [[nodiscard]] bool supportedSegment(const Vec3 &start, double startYaw,
-                                      const Vec3 &end, double endYaw) const noexcept;
-  [[nodiscard]] bool supportPatch(double x, double y, double bodyZ,
-                                  double &height, const char **failure = nullptr) const noexcept;
-  [[nodiscard]] bool evidenceBit(const std::vector<std::uint8_t> &bits,
-                                 int x, int y, int z) const noexcept;
   [[nodiscard]] int occupiedState(const Vec3 &planningPoint) const noexcept;
   [[nodiscard]] int measuredSegmentOccupancy(const Vec3 &start, double startYaw,
                                               const Vec3 &end, double endYaw) const noexcept;
@@ -61,9 +53,6 @@ class Grid {
   bool checkObstacle_{false};
   double configuredResolution_{0.0};
   double cylinderOffset_{0.0};
-  double supportHalfLength_{0.0};
-  double supportHalfWidth_{0.0};
-  ScanPlannerParams support_{};
   std::optional<double> bodyHeading_{};
   double robotYaw_{0.0};
   double predictionAgeS_{0.0}, predictionHorizonS_{1.0};

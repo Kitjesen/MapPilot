@@ -348,6 +348,30 @@ def test_web_map_goal_preserves_optional_heading():
     assert construct_goal_from_request(GoalRequest(x=1.0, y=2.0)).yaw == 0.0
 
 
+def test_constructed_goal_preview_preserves_the_submission_acceptance_radius():
+    from gateway.navigation.goals import construct_goal_from_request
+    from gateway.schemas import GoalCandidateRequest
+
+    goal = construct_goal_from_request(
+        GoalCandidateRequest(
+            x=1.0,
+            y=2.0,
+            z=0.3,
+            yaw=0.7,
+            acceptance_radius_m=0.25,
+            max_speed_mps=0.4,
+        )
+    )
+
+    assert goal.preview_request().model_dump() == {
+        "x": 1.0,
+        "y": 2.0,
+        "z": 0.3,
+        "frame_id": "map",
+        "acceptance_radius_m": 0.25,
+    }
+
+
 def test_plan_preview_uses_native_navigation_without_readiness_gate():
     from gateway.schemas import PlanPreviewRequest, PlanPreviewResponse
     from gateway.services.control_commands import ControlCommandService
@@ -355,8 +379,8 @@ def test_plan_preview_uses_native_navigation_without_readiness_gate():
     calls = []
 
     class Commands:
-        def preview_plan(self, x, y, z):
-            calls.append((x, y, z))
+        def preview_plan(self, x, y, z, *, acceptance_radius_m=None):
+            calls.append((x, y, z, acceptance_radius_m))
             return {
                 "start_valid": True,
                 "start": {"x": 0.0, "y": 0.0, "z": 0.0},
@@ -375,16 +399,62 @@ def test_plan_preview_uses_native_navigation_without_readiness_gate():
 
     gateway = SimpleNamespace(_nav_commands=Commands())
     payload = ControlCommandService(gateway).preview_plan(
-        PlanPreviewRequest(x=3.0, y=4.0)
+        PlanPreviewRequest(x=3.0, y=4.0, acceptance_radius_m=0.25)
     )
     preview = PlanPreviewResponse.model_validate(payload)
 
-    assert calls == [(3.0, 4.0, 0.0)]
+    assert calls == [(3.0, 4.0, 0.0, 0.25)]
     assert preview.feasible is True
     assert preview.count == 2
     assert preview.distance_m == 5.0
     assert preview.source == "native_nav"
     assert preview.reasons == []
+
+
+def test_goal_candidate_route_forwards_acceptance_radius_to_native_preview():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import GoalCandidateRequest
+
+    calls = []
+
+    class Commands:
+        def preview_plan(self, x, y, z, *, acceptance_radius_m=None):
+            calls.append((x, y, z, acceptance_radius_m))
+            return {
+                "start_valid": False,
+                "goal": {"x": x, "y": y, "z": z},
+                "path": [],
+                "feasible": False,
+                "reason": "no_path",
+                "frame_id": "map",
+                "timestamp_s": 10.0,
+            }
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._nav_commands = Commands()
+
+    payload = asyncio.run(
+        _endpoint(gateway, "/api/v1/navigation/goal_candidate")(
+            GoalCandidateRequest(
+                x=3.0,
+                y=4.0,
+                z=0.2,
+                acceptance_radius_m=0.25,
+            )
+        )
+    )
+
+    assert payload["target"]["acceptance_radius_m"] == 0.25
+    assert payload["preview"]["goal"] == {
+        "x": 3.0,
+        "y": 4.0,
+        "z": 0.2,
+        "frame_id": "map",
+        "ts": 10.0,
+        "metadata": {},
+    }
+    assert calls == [(3.0, 4.0, 0.2, 0.25)]
 
 
 def test_plan_preview_explains_missing_native_preview():
@@ -405,7 +475,7 @@ def test_plan_preview_preserves_native_failure_reason():
     from gateway.services.control_commands import ControlCommandService
 
     class Commands:
-        def preview_plan(self, x, y, z):
+        def preview_plan(self, x, y, z, *, acceptance_radius_m=None):
             raise RuntimeError("native planner map is not loaded")
 
     payload = ControlCommandService(SimpleNamespace(_nav_commands=Commands())).preview_plan(
@@ -447,7 +517,7 @@ def test_saved_map_preview_checks_active_map_then_returns_native_preview(tmp_pat
     from gateway.schemas import PlanPreviewRequest
 
     class Commands:
-        def preview_plan(self, x, y, z):
+        def preview_plan(self, x, y, z, *, acceptance_radius_m=None):
             return {
                 "start_valid": False,
                 "start": {"x": 0.0, "y": 0.0, "z": 0.0},

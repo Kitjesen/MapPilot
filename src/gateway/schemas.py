@@ -249,6 +249,7 @@ class PlanPreviewRequest(BaseModel):
     y: float
     z: float = 0.0
     frame_id: MapFrameId = GATEWAY_MAP_FRAME_ID
+    acceptance_radius_m: float | None = Field(default=None, gt=0, le=20)
 
     @field_validator("x", "y", "z")
     @classmethod

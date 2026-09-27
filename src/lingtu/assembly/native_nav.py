@@ -56,9 +56,20 @@ _OCTOPLANNER_CONFIG = {
     "octoplanner3d_max_slope": ("LINGTU_NAV_OCTO_MAX_SLOPE", 0.0),
     "octoplanner3d_same_floor_preference": ("LINGTU_NAV_OCTO_SAME_FLOOR_PREFERENCE", True),
     "octoplanner3d_same_floor_z_tolerance": ("LINGTU_NAV_OCTO_SAME_FLOOR_Z_TOLERANCE_M", 0.75),
-    "octoplanner3d_max_same_floor_z_excursion": ("LINGTU_NAV_OCTO_MAX_SAME_FLOOR_Z_EXCURSION_M", 2.0),
     "octoplanner3d_obstacle_clearance_radius_cells": ("LINGTU_NAV_OCTO_OBSTACLE_CLEARANCE_RADIUS_CELLS", 2),
     "octoplanner3d_obstacle_clearance_weight": ("LINGTU_NAV_OCTO_OBSTACLE_CLEARANCE_WEIGHT", 1.5),
+    "octoplanner3d_terminal_goal_tolerance_m": (
+        "LINGTU_NAV_OCTO_TERMINAL_GOAL_TOLERANCE_M",
+        0.5,
+    ),
+    "octoplanner3d_terminal_goal_xy_tolerance_m": (
+        "LINGTU_NAV_OCTO_TERMINAL_GOAL_XY_TOLERANCE_M",
+        0.35,
+    ),
+    "octoplanner3d_terminal_goal_z_tolerance_m": (
+        "LINGTU_NAV_OCTO_TERMINAL_GOAL_Z_TOLERANCE_M",
+        0.75,
+    ),
 }
 
 def local_planner_name(value: Any) -> str:
@@ -319,8 +330,6 @@ class NativeNavConfig:
         # calibration must not disable the physical collision envelope.
         env["LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M"] = env["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"]
         env["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"] = env["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"]
-        # A snapped route endpoint must satisfy the same XY arrival gate as execution.
-        env["LINGTU_NAV_OCTO_TERMINAL_GOAL_XY_TOLERANCE_M"] = env["LINGTU_NAV_GOAL_REACHED_M"]
         return env
 
     def as_dict(self) -> dict[str, Any]:
@@ -491,11 +500,9 @@ def compile_native_nav_config(
         "octoplanner3d_robot_radius" not in native_nav_config
         and "octoplanner3d_robot_radius" not in config
     ):
-        # Global and SCAN use the same cylinder radius. The native planner
-        # takes the cylinder offset from the same robot geometry.
-        native_nav["octoplanner3d"]["octoplanner3d_robot_radius"] = parameters[
-            "collision_cylinder_radius_m"
-        ]
+        # Global search uses the robot's narrow dimension. SCAN owns the
+        # heading-dependent body envelope and executable trajectories.
+        native_nav["octoplanner3d"]["octoplanner3d_robot_radius"] = 0.5 * vehicle_width_m
     if parameters["teleop_planner_horizon_m"] < 0.5:
         raise ValueError("teleop_planner_horizon_m must be at least 0.5")
     if parameters["tick_hz"] <= 0.0:

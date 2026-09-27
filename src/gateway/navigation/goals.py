@@ -48,6 +48,7 @@ class ConstructedGoal:
             y=self.y,
             z=self.z,
             frame_id=self.frame_id,
+            acceptance_radius_m=self.acceptance_radius_m,
         )
 
     def target_payload(self, *, ts: float | None = None) -> dict[str, Any]:

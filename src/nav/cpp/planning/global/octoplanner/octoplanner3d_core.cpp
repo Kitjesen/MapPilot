@@ -54,8 +54,6 @@ void copyOverlayIdentity(const PlanRequest & request, PlanResult & result)
   result.overlay_revision = request.temporary_overlay.revision;
   result.overlay_frame_epoch = request.temporary_overlay.frame_epoch;
   result.overlay_obstacle_generation = request.temporary_overlay.obstacle_generation;
-  result.overlay_traversability_generation =
-    request.temporary_overlay.traversability_generation;
 }
 
 std::string validateTemporaryOverlay(const PlanRequest & request)
@@ -72,9 +70,6 @@ std::string validateTemporaryOverlay(const PlanRequest & request)
   }
   if (overlay.obstacle_generation == 0U) {
     return "temporary_overlay_obstacle_generation_missing";
-  }
-  if (overlay.traversability_generation == 0U) {
-    return "temporary_overlay_traversability_generation_missing";
   }
   if (overlay.blocked_regions.size() > kMaxTemporaryBlockedRegions) {
     return "temporary_overlay_region_limit_exceeded";
@@ -186,8 +181,6 @@ std::shared_ptr<octomap::OcTree> loadOctomap(const std::string & map_path)
     pcd2octomap::Pcd2OctomapConverter converter;
     converter.setInputPcdFile(path.string());
     converter.setOutputBtFile(pcdOutputPath(path).string());
-    converter.setFreeEnvelopeLayers(3);
-    converter.setFreeEnvelopeDilationCells(1);
     if (!converter.convert()) {
       throw std::runtime_error("failed to convert PCD to OctoMap: " + map_path);
     }
@@ -252,9 +245,6 @@ global_planner::PlannerConfig plannerConfig(const PlannerOptions & options)
   if (std::isfinite(options.robot_radius) && options.robot_radius > 0.0) {
     config.robot_radius = options.robot_radius;
   }
-  config.cylinder_offset_m =
-    std::isfinite(options.cylinder_offset_m) && options.cylinder_offset_m > 0.0
-    ? options.cylinder_offset_m : 0.0;
   config.body_clearance_below_m =
     std::isfinite(options.body_clearance_below_m) && options.body_clearance_below_m > 0.0
     ? options.body_clearance_below_m
@@ -325,33 +315,9 @@ double nonnegativeOrDefault(double value, double fallback)
   return fallback;
 }
 
-bool hasAcceptableSameFloorExcursion(
-  const PlanRequest & request,
-  const std::vector<Point> & path)
-{
-  const auto & options = request.options;
-  if (!options.same_floor_preference || path.empty()) {
-    return true;
-  }
-
-  const double start_goal_dz = std::abs(request.goal.z - request.start.z);
-  const double tolerance = std::max(0.0, options.same_floor_z_tolerance);
-  const double max_excursion = options.max_same_floor_z_excursion;
-  if (start_goal_dz > tolerance || !std::isfinite(max_excursion) || max_excursion <= 0.0) {
-    return true;
-  }
-
-  const auto [minimum, maximum] = std::minmax_element(
-    path.begin(),
-    path.end(),
-    [](const Point & lhs, const Point & rhs) { return lhs.z < rhs.z; });
-  return maximum->z - minimum->z <= max_excursion;
-}
-
 bool sameOptions(const PlannerOptions & lhs, const PlannerOptions & rhs)
 {
   return lhs.robot_radius == rhs.robot_radius &&
-         lhs.cylinder_offset_m == rhs.cylinder_offset_m &&
          lhs.body_clearance_below_m == rhs.body_clearance_below_m &&
          lhs.body_clearance_above_m == rhs.body_clearance_above_m &&
          lhs.max_iterations == rhs.max_iterations &&
@@ -373,7 +339,6 @@ bool sameOptions(const PlannerOptions & lhs, const PlannerOptions & rhs)
          lhs.max_slope == rhs.max_slope &&
          lhs.same_floor_preference == rhs.same_floor_preference &&
          lhs.same_floor_z_tolerance == rhs.same_floor_z_tolerance &&
-         lhs.max_same_floor_z_excursion == rhs.max_same_floor_z_excursion &&
          lhs.obstacle_clearance_radius_cells == rhs.obstacle_clearance_radius_cells &&
          lhs.obstacle_clearance_weight == rhs.obstacle_clearance_weight &&
          lhs.terminal_goal_tolerance_m == rhs.terminal_goal_tolerance_m &&
@@ -388,7 +353,6 @@ bool sameOverlay(
   if (lhs.revision != rhs.revision ||
       lhs.frame_epoch != rhs.frame_epoch ||
       lhs.obstacle_generation != rhs.obstacle_generation ||
-      lhs.traversability_generation != rhs.traversability_generation ||
       lhs.blocked_regions.size() != rhs.blocked_regions.size()) {
     return false;
   }
@@ -450,16 +414,12 @@ std::string endpointResolutionFailureReason(
 {
   using Failure = global_planner::OctoPlanner3D::EndpointResolutionInfo::Failure;
   switch (resolution.failure) {
+    case Failure::StartConnectionBlocked:
+      return "start_connection_blocked";
     case Failure::StartSnapExhausted:
       return resolution.start_raw_outside_bounds
         ? "start_outside_static_map"
         : "start_snap_exhausted";
-    case Failure::StartConnectionBlocked:
-      return "start_connection_blocked";
-    case Failure::StartBodyOccupied:
-      return "start_body_occupied";
-    case Failure::StartGroundSupportMissing:
-      return "start_ground_support_unconfirmed";
     case Failure::GoalSnapExhausted:
       return resolution.goal_raw_outside_bounds
         ? "goal_outside_static_map"
@@ -479,19 +439,12 @@ PlanResult runPreparedPlanner(
   if (cancel_check && cancel_check()) {
     return cancelledResult(request, started);
   }
-  if (!std::isfinite(request.start_yaw_rad)) {
-    PlanResult result;
-    result.options = request.options;
-    copyOverlayIdentity(request, result);
-    result.failure_reason = "invalid_start_heading";
-    return result;
-  }
   const auto start = toPlannerPoint(request.start);
   const auto goal = toPlannerPoint(request.goal);
 
   std::vector<global_planner::PointPose> native_path;
   planner.setCancelCheck(cancel_check);
-  planner.makePlan(start, goal, request.start_yaw_rad);
+  planner.makePlan(start, goal);
   planner.getPlannerResults(native_path);
   const auto endpoint_resolution = planner.endpointResolution();
   const auto search_info = planner.searchInfo();
@@ -513,10 +466,6 @@ PlanResult runPreparedPlanner(
     if (search_info.outcome == global_planner::OctoPlanner3D::SearchInfo::Outcome::IterationLimit) {
       result.failure_reason = "search_iteration_limit";
     }
-  }
-  if (!hasAcceptableSameFloorExcursion(request, result.path)) {
-    result.failure_reason = "same_floor_z_excursion";
-    result.path.clear();
   }
   result.ok = !result.path.empty();
   if (!result.ok && result.failure_reason.empty()) {

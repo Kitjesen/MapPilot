@@ -10,6 +10,9 @@ const statusStyles = readFileSync(
   new URL('../src/components/StatusBar.module.css', import.meta.url),
   'utf8',
 )
+const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+const chatSource = readFileSync(new URL('../src/components/ChatPanel.tsx', import.meta.url), 'utf8')
+const teleopSource = readFileSync(new URL('../src/components/TeleopPanel.tsx', import.meta.url), 'utf8')
 
 test('status metrics normalize negative zero before rendering', () => {
   assert.match(statusSource, /normalizeDisplayZero/)
@@ -45,4 +48,13 @@ test('status bar only presents live navigation status', () => {
 test('status bar version comes from the web package, not a literal', () => {
   assert.match(statusSource, /import\.meta\.env\.VITE_APP_VERSION/)
   assert.doesNotMatch(statusSource, /'版本'\)\} \d/)
+})
+
+test('all operator surfaces gate cached navigation status by freshness', () => {
+  assert.match(appSource, /liveNavigationStatus\(sseState, nowMs \/ 1000\)/)
+  assert.match(chatSource, /liveNavigationStatus\(sseState, Date\.now\(\) \/ 1000\)/)
+  assert.doesNotMatch(appSource, /const activeTaskId = sseState\.navigationStatus/)
+  assert.doesNotMatch(chatSource, /presentNavigationStatus\(sseState\.navigationStatus/)
+  assert.match(teleopSource, /liveNavigationStatus\(sseState, nowMs \/ 1000\)/)
+  assert.doesNotMatch(teleopSource, /const resumeRequired = sseState\.navigationStatus/)
 })

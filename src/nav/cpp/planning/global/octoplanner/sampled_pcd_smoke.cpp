@@ -1,5 +1,9 @@
 #include <octomap/OcTree.h>
 
+#ifdef OCTOPLANNER3D_TEST_DIRECT_PCD
+#include "pcd2octomap_converter.h"
+#endif
+
 #include <array>
 #include <cstdlib>
 #include <filesystem>
@@ -91,6 +95,23 @@ int main(int argc, char** argv) {
         const auto input = root / (name + ".pcd");
         const auto output = root / (name + "_d" + std::to_string(dilation) + ".ot");
         writePcd(input, points, binary);
+#ifdef OCTOPLANNER3D_TEST_DIRECT_PCD
+        if (dilation == 0) {
+          pcd2octomap::Pcd2OctomapConverter direct;
+          direct.setResolution(.2);
+          direct.setInputPcdFile(input.string());
+          direct.setOutputBtFile((root / (name + "_direct.ot")).string());
+          require(direct.convert(), "direct PCD conversion failed");
+          const auto tree = direct.getOctomap();
+          for (const auto& point : points) {
+            const auto* node = tree->search(point[0], point[1], point[2]);
+            require(node && tree->isNodeOccupied(node), "direct PCD erased sampled ground or thin obstacle");
+          }
+          require(tree->search(0.1, 0.1, -0.1) == nullptr, "direct PCD invented free space above ground");
+          require(tree->search(1.1, 0.1, -0.3) == nullptr, "direct PCD padded the ground boundary");
+          require(tree->search(3.1, 3.1, 1.3) == nullptr, "direct PCD invented free space above a thin obstacle");
+        }
+#endif
         require(convert(argv[1], input, output, dilation) == 0, "sampled cloud conversion failed");
         std::unique_ptr<octomap::AbstractOcTree> raw(octomap::AbstractOcTree::read(output.string()));
         const auto* tree = dynamic_cast<const octomap::OcTree*>(raw.get());

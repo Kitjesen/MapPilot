@@ -2,6 +2,7 @@
 
 #include <octomap/OcTree.h>
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
@@ -29,7 +30,12 @@ void addFloor(octomap::OcTree & tree)
 {
   for (int ix = -22; ix <= 22; ++ix) {
     for (int iy = -8; iy <= 8; ++iy) {
-      occupyCell(tree, ix, iy, 0);
+      // The robot-space above the floor is observed free in a saved-ray map;
+      // leave other regions unknown so the no-air-climb checks remain valid.
+      for (int iz = 0; iz <= 16; ++iz) {
+        tree.updateNode(
+          octomap::point3d(center(ix), center(iy), center(iz)), false);
+      }
       occupyCell(tree, ix, iy, 0);
     }
   }
@@ -80,8 +86,12 @@ std::filesystem::path writeHumpMap()
 {
   octomap::OcTree tree(kResolution);
   tree.setProbHit(0.7);
-  for (int ix = -10; ix <= 10; ++ix) {
-    const int height = std::max(0, 3 - std::abs(ix));
+  for (int ix = -16; ix <= 16; ++ix)
+    for (int iy = -1; iy <= 1; ++iy)
+      for (int iz = 0; iz <= 16; ++iz)
+        tree.updateNode(octomap::point3d(center(ix), center(iy), center(iz)), false);
+  for (int ix = -16; ix <= 16; ++ix) {
+    const int height = std::max(0, 12 - std::abs(ix));
     for (int iy = -1; iy <= 1; ++iy) {
       occupyCell(tree, ix, iy, height);
     }
@@ -101,6 +111,10 @@ std::filesystem::path writeWallClimbMap()
 {
   octomap::OcTree tree(kResolution);
   tree.setProbHit(0.7);
+  for (int ix = -8; ix <= 8; ++ix)
+    for (int iy = -4; iy <= 4; ++iy)
+      for (int iz = 0; iz <= 12; ++iz)
+        tree.updateNode(octomap::point3d(center(ix), center(iy), center(iz)), false);
   for (int ix = -8; ix <= -2; ++ix) {
     for (int iy = -4; iy <= 4; ++iy) {
       occupyCell(tree, ix, iy, 0);
@@ -327,7 +341,6 @@ int main()
     overlay_request.temporary_overlay.revision = 1U;
     overlay_request.temporary_overlay.frame_epoch = 7U;
     overlay_request.temporary_overlay.obstacle_generation = 11U;
-    overlay_request.temporary_overlay.traversability_generation = 13U;
     overlay_request.temporary_overlay.blocked_regions.push_back(blocked_region);
     const auto detoured =
       overlay_session.run(overlay_map_path, overlay_map_identity, overlay_request);
@@ -340,8 +353,6 @@ int main()
         detoured.overlay_frame_epoch != overlay_request.temporary_overlay.frame_epoch ||
         detoured.overlay_obstacle_generation !=
           overlay_request.temporary_overlay.obstacle_generation ||
-        detoured.overlay_traversability_generation !=
-          overlay_request.temporary_overlay.traversability_generation ||
         overlay_session.mapLoadCount() != 1U) {
       std::cerr << "temporary overlay identity was not echoed or reloaded the immutable map\n";
       return 19;
@@ -375,8 +386,6 @@ int main()
     missing_frame.frame_epoch = 0U;
     auto missing_obstacles = overlay_request.temporary_overlay;
     missing_obstacles.obstacle_generation = 0U;
-    auto missing_traversability = overlay_request.temporary_overlay;
-    missing_traversability.traversability_generation = 0U;
     auto invalid_geometry = overlay_request.temporary_overlay;
     invalid_geometry.blocked_regions.front().radius_xy_m = 0.0;
     auto overflowing_geometry = overlay_request.temporary_overlay;
@@ -389,8 +398,6 @@ int main()
     if (!rejectedBeforeLoad(missing_frame, "temporary_overlay_frame_epoch_missing") ||
         !rejectedBeforeLoad(
           missing_obstacles, "temporary_overlay_obstacle_generation_missing") ||
-        !rejectedBeforeLoad(
-          missing_traversability, "temporary_overlay_traversability_generation_missing") ||
         !rejectedBeforeLoad(invalid_geometry, "temporary_overlay_region_invalid") ||
         !rejectedBeforeLoad(overflowing_geometry, "temporary_overlay_region_invalid") ||
         !rejectedBeforeLoad(
@@ -508,7 +515,7 @@ int main()
         {center(18), center(0), center(1)});
     if (start_snap_result.ok ||
         start_snap_result.failure_reason != "start_snap_exhausted") {
-      std::cerr << "in-map unsupported start did not report snap exhaustion; reason="
+      std::cerr << "in-map unsupported start did not use the official snap failure; reason="
                 << start_snap_result.failure_reason << "\n";
       return 16;
     }
@@ -522,7 +529,8 @@ int main()
       displaced_start_options);
     if (displaced_start_result.ok ||
         displaced_start_result.failure_reason != "start_connection_blocked") {
-      std::cerr << "unsupported actual start was connected to a distant snapped start\n";
+      std::cerr << "unsupported high start crossed an untraversable snap connection; reason="
+                << displaced_start_result.failure_reason << "\n";
       return 30;
     }
 
@@ -593,25 +601,19 @@ int main()
     hump_options.ground_support_xy_radius_cells = 0;
     hump_options.enable_preblocked_costmap = false;
     hump_options.obstacle_clearance_radius_cells = 0;
-    hump_options.max_same_floor_z_excursion = 1.0;
     const auto hump_result = plan(
       hump_map_path.string(),
-      {center(-8), center(0), center(1)},
-      {center(8), center(0), center(1)},
+      {center(-14), center(0), center(1)},
+      {center(14), center(0), center(1)},
       hump_options);
     if (!hump_result.ok || !hump_result.reached_goal) {
-      std::cerr << "expected same-floor hump route to succeed before excursion gating\n";
+      std::cerr << "same-floor preference rejected a supported route over a rise\n";
       return 9;
     }
-    hump_options.max_same_floor_z_excursion = 0.2;
-    const auto excessive_excursion_result = plan(
-      hump_map_path.string(),
-      {center(-8), center(0), center(1)},
-      {center(8), center(0), center(1)},
-      hump_options);
-    if (excessive_excursion_result.ok ||
-        excessive_excursion_result.failure_reason != "same_floor_z_excursion") {
-      std::cerr << "same-floor route with excessive z excursion was not rejected\n";
+    const auto [low, high] = std::minmax_element(hump_result.path.begin(), hump_result.path.end(),
+        [](const auto &a, const auto &b) { return a.z < b.z; });
+    if (high->z - low->z <= 2.0) {
+      std::cerr << "supported rise fixture did not exercise the former two-metre veto\n";
       return 10;
     }
 
@@ -625,7 +627,7 @@ int main()
       << "\"cancelled_request_rejected\":true,"
       << "\"outside_static_map_rejected\":true,"
       << "\"start_static_map_boundary_rejected\":true,"
-      << "\"same_floor_z_excursion_rejected\":true,"
+      << "\"supported_same_floor_rise_allowed\":true,"
       << "\"temporary_overlay_detour\":true,"
       << "\"temporary_overlay_request_scoped\":true,"
       << "\"map_path\":\"" << map_path.string() << "\"}\n";

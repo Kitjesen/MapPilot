@@ -26,7 +26,12 @@ LingTu-specific code is only the boundary:
   `GridMap::getInflateOccupancy()` query. It does not build, inflate, score, or
   smooth another map. The segment query also reads this bitmap, traversing
   cells between successive front/rear cylinder-center samples without
-  allocating a temporary map or container.
+  allocating a temporary map or container. Global support, step-height and
+  slope settings do not enter this adapter. The seven-point support gate and
+  its per-probe free-ray requirement have been removed; sparse ground returns
+  cannot invalidate an otherwise complete local collision bitmap. Mapd still
+  retains the measured occupied/free evidence, and autonomous route support
+  remains OctoPlanner's responsibility.
 - `backend.*` converts `LocalPlanRequest` odometry and Route/MotionIntent into
   official FSM inputs, then converts the emitted B-spline message into
   `SplineTarget`. An emergency-stop state is exposed as `NearFieldStop`,

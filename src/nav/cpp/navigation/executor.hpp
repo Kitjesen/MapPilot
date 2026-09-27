@@ -36,10 +36,6 @@ struct ExecutorConfig {
   double slow_rate_2{0.5};
   double slow_rate_3{0.75};
   nav_kernel::FollowerParams follower{};
-  double dynamic_wait_s{1.0};
-  double dynamic_clear_s{0.3};
-  double dynamic_blocked_timeout_s{10.0};
-  double dynamic_episode_timeout_s{30.0};
 };
 
 struct ExecutionOutput {
@@ -220,7 +216,6 @@ class Executor {
   void resetAutonomyProgress();
   bool recoveryObservationAdvanced(const ExecutionObservation &observation) const;
   void clearRecoveryObservationWait();
-  void resetDynamicAvoidance();
 
   ExecutorConfig config_;
   nav_kernel::local::Planner local_planner_;
@@ -271,11 +266,6 @@ class Executor {
   double final_motion_blocked_since_s_{-1.0};
   bool traj_frozen_{false};
   bool intent_mode_{false};
-  double dynamic_wait_since_s_{-1.0};
-  double dynamic_clear_since_s_{-1.0};
-  double dynamic_progress_s_{-1.0};
-  nav_kernel::Vec3 dynamic_progress_position_{};
-  bool dynamic_resuming_{false};
 };
 
 }  // namespace lingtu::nav::navigation

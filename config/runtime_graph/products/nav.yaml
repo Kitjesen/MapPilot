@@ -104,6 +104,11 @@ native_nav:
   use_traversability_cost: false
   corridor_lookahead_m: 3.5
   goal_reached_m: 0.15
+  # Do not report a route as feasible when its snapped endpoint stops short
+  # of the clicked goal beyond the execution arrival threshold.
+  octoplanner3d_terminal_goal_tolerance_m: 0.15
+  octoplanner3d_terminal_goal_xy_tolerance_m: 0.15
+  octoplanner3d_terminal_goal_z_tolerance_m: 0.15
   waypoint_reached_m: 0.20
   path_follower_goal_tolerance_m: 0.15
   path_follower_lookahead_m: 0.35
@@ -130,6 +135,9 @@ native_nav:
     rotation_sample_step_rad: 0.05
   allow_teleop_takeover: true
   teleop_local_planner: true
+parameters:
+  # Keep the upstream 0.5 m/s^2 target; allow sampled derivatives up to 1.7 m/s^2.
+  scan_planner.acceleration_tolerance: 1.2
 processes:
   - lidar
   - imu

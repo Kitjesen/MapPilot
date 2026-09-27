@@ -656,6 +656,7 @@ struct PlanRequest {
   Header header;
   string request_id;
   Point goal;
+  double acceptance_radius_m;
 };
 @final
 struct PlanResult {

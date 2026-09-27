@@ -402,6 +402,7 @@ class Backend::Impl {
       return;
     lastObservedAttemptId_ = attempt.attemptId;
     lastAttempt_ = attemptDiagnostics(attempt);
+    lastAttempt_.timestampS = input.clock.timestampS;
     debug_.scanAttempt = lastAttempt_;
 
     // The final attempted result at the tick boundary defines a failure episode.

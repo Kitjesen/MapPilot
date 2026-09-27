@@ -15,8 +15,7 @@ constexpr double kMaximumLookaheadM = 1000.0;
 constexpr double kMaximumCorridorRadiusM = 10.0;
 constexpr double kMaximumVerticalToleranceM = 20.0;
 constexpr double kMaximumObstacleHeightM = 20.0;
-constexpr double kMaximumOverlayRadiusM = 10.0;
-constexpr double kMaximumOverlayHalfHeightM = 10.0;
+constexpr double kMaximumObstacleVoxelSizeM = 10.0;
 constexpr std::size_t kMaximumMinimumObstaclePoints = 1000000U;
 
 bool finiteInRange(double value, double minimum, double maximum) {
@@ -55,13 +54,15 @@ ActivePathBlockagePolicy::ActivePathBlockagePolicy(ActivePathBlockagePolicyConfi
                      kMaximumObstacleHeightM)) {
     throw std::invalid_argument("active_path_blockage_obstacle_height_invalid");
   }
-  if (!finiteInRange(config_.overlay_radius_m, std::numeric_limits<double>::min(),
-                     kMaximumOverlayRadiusM)) {
-    throw std::invalid_argument("active_path_blockage_overlay_radius_invalid");
+  if (!finiteInRange(config_.obstacle_voxel_size_m, std::numeric_limits<double>::min(),
+                     kMaximumObstacleVoxelSizeM)) {
+    throw std::invalid_argument("active_path_blockage_voxel_size_invalid");
   }
-  if (!finiteInRange(config_.overlay_half_height_m, std::numeric_limits<double>::min(),
-                     kMaximumOverlayHalfHeightM)) {
-    throw std::invalid_argument("active_path_blockage_overlay_height_invalid");
+  if (!finiteInRange(config_.local_collision_radius_m, std::numeric_limits<double>::min(),
+                     kMaximumCorridorRadiusM) ||
+      !finiteInRange(config_.local_collision_below_m, 0.0, kMaximumVerticalToleranceM) ||
+      !finiteInRange(config_.local_collision_above_m, 0.0, kMaximumVerticalToleranceM)) {
+    throw std::invalid_argument("active_path_blockage_local_collision_bounds_invalid");
   }
   if (config_.max_regions == 0U || config_.max_regions > kMaximumOverlayRegions) {
     throw std::invalid_argument("active_path_blockage_region_count_invalid");
@@ -85,7 +86,6 @@ void ActivePathBlockagePolicy::bind(const GoalReplanIdentity &goal, std::uint64_
   goal_ = goal;
   frame_epoch_ = frame_epoch;
   last_cloud_generation_ = 0U;
-  last_traversability_generation_ = 0U;
   fresh_blocked_observations_ = 0U;
   current_blocker_count_ = 0U;
   first_blocked_s_ = -1.0;
@@ -99,12 +99,6 @@ void ActivePathBlockagePolicy::clearAccumulation(const char *reason) {
   current_blocker_count_ = 0U;
   first_blocked_s_ = -1.0;
   reason_ = reason;
-}
-
-void ActivePathBlockagePolicy::setGenerationBaseline(std::uint64_t cloud_generation,
-                                                     std::uint64_t traversability_generation) {
-  last_cloud_generation_ = cloud_generation;
-  last_traversability_generation_ = traversability_generation;
 }
 
 std::vector<ActivePathBlockagePolicy::CorridorBlocker>
@@ -202,15 +196,30 @@ ActivePathBlockagePolicy::corridorBlockers(const ActivePathBlockageObservation &
       }
     }
 
-    if (!std::isfinite(best_along)) {
+    bool near_local_collision = false;
+    double collision_distance = 0.0;
+    if (observation.local_collision_position) {
+      const auto &collision = *observation.local_collision_position;
+      const double half_voxel = config_.obstacle_voxel_size_m * 0.5;
+      near_local_collision =
+          std::hypot(x - collision.x, y - collision.y) <=
+              config_.local_collision_radius_m + half_voxel &&
+          z >= collision.z - config_.local_collision_below_m - half_voxel &&
+          z <= collision.z + config_.local_collision_above_m + half_voxel;
+      collision_distance = safeDistance3D({x, y, z}, collision);
+    }
+    if (!std::isfinite(best_along) && !near_local_collision) {
       continue;
     }
-    const double min_z = z - config_.overlay_half_height_m;
-    const double max_z = z + config_.overlay_half_height_m;
-    const double min_x = x - config_.overlay_radius_m;
-    const double max_x = x + config_.overlay_radius_m;
-    const double min_y = y - config_.overlay_radius_m;
-    const double max_y = y + config_.overlay_radius_m;
+    // Represent the observed voxel, not a robot-inflated vertical column.
+    // The global planner applies its own route clearance to this geometry.
+    const double size = config_.obstacle_voxel_size_m;
+    const double min_x = std::floor(x / size) * size;
+    const double min_y = std::floor(y / size) * size;
+    const double min_z = std::floor(z / size) * size;
+    const double max_x = min_x + size;
+    const double max_y = min_y + size;
+    const double max_z = min_z + size;
     if (!std::isfinite(min_z) || !std::isfinite(max_z) || !std::isfinite(min_x) ||
         !std::isfinite(max_x) || !std::isfinite(min_y) || !std::isfinite(max_y)) {
       continue;
@@ -218,9 +227,12 @@ ActivePathBlockagePolicy::corridorBlockers(const ActivePathBlockageObservation &
 
     CorridorBlocker blocker;
     blocker.along_path_m = best_along;
+    blocker.near_local_collision = near_local_collision;
+    blocker.collision_distance_m = collision_distance;
     blocker.height = height;
-    blocker.region.center = {x, y, z};
-    blocker.region.radius_xy_m = config_.overlay_radius_m;
+    blocker.region.center = {(min_x + max_x) * 0.5, (min_y + max_y) * 0.5,
+                             (min_z + max_z) * 0.5};
+    blocker.region.radius_xy_m = size / std::sqrt(2.0);
     blocker.region.min_z = min_z;
     blocker.region.max_z = max_z;
     result.push_back(std::move(blocker));
@@ -228,6 +240,13 @@ ActivePathBlockagePolicy::corridorBlockers(const ActivePathBlockageObservation &
 
   std::sort(result.begin(), result.end(),
             [](const CorridorBlocker &left, const CorridorBlocker &right) {
+              if (left.near_local_collision != right.near_local_collision) {
+                return left.near_local_collision;
+              }
+              if (left.near_local_collision &&
+                  left.collision_distance_m != right.collision_distance_m) {
+                return left.collision_distance_m < right.collision_distance_m;
+              }
               if (left.along_path_m != right.along_path_m) {
                 return left.along_path_m < right.along_path_m;
               }
@@ -258,7 +277,9 @@ ActivePathBlockagePolicy::observe(const ActivePathBlockageObservation &observati
   }
 
   if (!std::isfinite(observation.now_s) || observation.now_s < 0.0 ||
-      !validPoint(observation.robot_position) || observation.active_global_path == nullptr ||
+      !validPoint(observation.robot_position) ||
+      (observation.local_collision_position && !validPoint(*observation.local_collision_position)) ||
+      observation.active_global_path == nullptr ||
       observation.live_obstacles_xyzh == nullptr ||
       observation.live_obstacles_xyzh->size() % 4U != 0U) {
     clearAccumulation("invalid_observation");
@@ -268,53 +289,50 @@ ActivePathBlockagePolicy::observe(const ActivePathBlockageObservation &observati
   if (last_now_s_ >= 0.0 && observation.now_s < last_now_s_) {
     clearAccumulation("clock_rollback");
     last_now_s_ = observation.now_s;
-    setGenerationBaseline(observation.cloud_generation, observation.traversability_generation);
+    last_cloud_generation_ = observation.cloud_generation;
     return std::nullopt;
   }
   last_now_s_ = observation.now_s;
 
-  if (observation.cloud_generation == 0U || observation.traversability_generation == 0U) {
+  if (observation.cloud_generation == 0U) {
     reason_ = "generation_missing";
     return std::nullopt;
   }
-  if ((last_cloud_generation_ != 0U && observation.cloud_generation < last_cloud_generation_) ||
-      (last_traversability_generation_ != 0U &&
-       observation.traversability_generation < last_traversability_generation_)) {
+  if (last_cloud_generation_ != 0U && observation.cloud_generation < last_cloud_generation_) {
     clearAccumulation("generation_rollback");
-    setGenerationBaseline(observation.cloud_generation, observation.traversability_generation);
+    last_cloud_generation_ = observation.cloud_generation;
     return std::nullopt;
   }
 
-  const bool fresh_pair = (last_cloud_generation_ == 0U && last_traversability_generation_ == 0U) ||
-                          (observation.cloud_generation > last_cloud_generation_ &&
-                           observation.traversability_generation > last_traversability_generation_);
+  const bool fresh_cloud = last_cloud_generation_ == 0U ||
+                           observation.cloud_generation > last_cloud_generation_;
 
   const auto &path = *observation.active_global_path;
   if (path.empty() || std::any_of(path.begin(), path.end(), [](const nav_kernel::Vec3 &point) {
         return !validPoint(point);
       })) {
     clearAccumulation(path.empty() ? "active_path_empty" : "active_path_invalid");
-    if (fresh_pair) {
-      setGenerationBaseline(observation.cloud_generation, observation.traversability_generation);
+    if (fresh_cloud) {
+      last_cloud_generation_ = observation.cloud_generation;
     }
     return std::nullopt;
   }
 
   if (observation.local_path_viable) {
     clearAccumulation("local_path_viable");
-    if (fresh_pair) {
-      setGenerationBaseline(observation.cloud_generation, observation.traversability_generation);
+    if (fresh_cloud) {
+      last_cloud_generation_ = observation.cloud_generation;
     }
     return std::nullopt;
   }
 
-  std::vector<CorridorBlocker> blockers = corridorBlockers(observation);
-  current_blocker_count_ = blockers.size();
-  if (!fresh_pair) {
-    reason_ = "generation_pair_stale";
+  if (!fresh_cloud) {
+    reason_ = "cloud_generation_stale";
     return std::nullopt;
   }
-  setGenerationBaseline(observation.cloud_generation, observation.traversability_generation);
+  std::vector<CorridorBlocker> blockers = corridorBlockers(observation);
+  current_blocker_count_ = blockers.size();
+  last_cloud_generation_ = observation.cloud_generation;
   if (blockers.size() < config_.minimum_obstacle_points) {
     const std::size_t blocker_count = blockers.size();
     clearAccumulation(blockers.empty() ? "corridor_clear" : "corridor_sparse");
@@ -347,16 +365,14 @@ ActivePathBlockagePolicy::observe(const ActivePathBlockageObservation &observati
   trigger.temporary_overlay.revision = next_overlay_revision_;
   trigger.temporary_overlay.frame_epoch = frame_epoch_;
   trigger.temporary_overlay.obstacle_generation = observation.cloud_generation;
-  trigger.temporary_overlay.traversability_generation = observation.traversability_generation;
   trigger.temporary_overlay.blocked_regions.reserve(std::min(config_.max_regions, blockers.size()));
-  const double dedupe_distance_squared = config_.overlay_radius_m * config_.overlay_radius_m;
   for (const CorridorBlocker &blocker : blockers) {
     const bool duplicate =
         std::any_of(trigger.temporary_overlay.blocked_regions.begin(),
                     trigger.temporary_overlay.blocked_regions.end(), [&](const auto &region) {
-                      const double dx = blocker.region.center.x - region.center.x;
-                      const double dy = blocker.region.center.y - region.center.y;
-                      return dx * dx + dy * dy <= dedupe_distance_squared;
+                      return blocker.region.center.x == region.center.x &&
+                             blocker.region.center.y == region.center.y &&
+                             blocker.region.center.z == region.center.z;
                     });
     if (duplicate) {
       continue;
@@ -380,7 +396,6 @@ ActivePathBlockagePolicySnapshot ActivePathBlockagePolicy::snapshot() const {
   result.goal = goal_;
   result.frame_epoch = frame_epoch_;
   result.last_cloud_generation = last_cloud_generation_;
-  result.last_traversability_generation = last_traversability_generation_;
   result.fresh_blocked_observations = fresh_blocked_observations_;
   result.current_blocker_count = current_blocker_count_;
   result.first_blocked_s = first_blocked_s_;
@@ -393,7 +408,6 @@ void ActivePathBlockagePolicy::reset() {
   goal_.reset();
   frame_epoch_ = 0U;
   last_cloud_generation_ = 0U;
-  last_traversability_generation_ = 0U;
   fresh_blocked_observations_ = 0U;
   current_blocker_count_ = 0U;
   first_blocked_s_ = -1.0;

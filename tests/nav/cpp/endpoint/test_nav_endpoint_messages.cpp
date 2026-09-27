@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -17,6 +18,38 @@ void require(bool condition, const char *message) {
   if (!condition) {
     throw std::runtime_error(message);
   }
+}
+
+void testLocalCollisionHintRequiresFreshSpatialFailure() {
+  using lingtu::nav::endpoint::localCollisionHint;
+  nav_kernel::LocalPlannerDebugSnapshot debug;
+  debug.valid = true;
+  debug.backend = nav_kernel::LocalPlannerBackend::Scan;
+  debug.timestampS = 10.0;
+  auto &attempt = debug.scanAttempt;
+  attempt.timestampS = 10.0;
+  attempt.attempted = true;
+  attempt.collisionValid = true;
+  attempt.collisionState = 1;
+  attempt.collisionPosition = {1.0, 2.0, 0.4};
+  const auto point = localCollisionHint(debug, 10.1, .35);
+  require(point && point->x == 1.0 && point->y == 2.0 && point->z == .4,
+          "fresh collision must retain its map-frame body sample");
+  require(!localCollisionHint(debug, 10.4, .35), "old collision must not guide a new replan");
+  debug.timestampS = 10.4;
+  require(!localCollisionHint(debug, 10.4, .35), "timer tick must not renew old collision evidence");
+  require(!localCollisionHint(debug, 9.9, .35), "future collision timestamp must be rejected");
+  attempt.dynamicViolationValid = true;
+  require(!localCollisionHint(debug, 10.1, .35), "acceleration failure is not obstacle evidence");
+  attempt.dynamicViolationValid = false;
+  attempt.success = true;
+  require(!localCollisionHint(debug, 10.1, .35), "successful retry must clear collision hint");
+  attempt.success = false;
+  attempt.collisionState = -1;
+  require(!localCollisionHint(debug, 10.1, .35), "missing map data is not a measured collision");
+  attempt.collisionState = 1;
+  attempt.collisionPosition.z = std::numeric_limits<double>::quiet_NaN();
+  require(!localCollisionHint(debug, 10.1, .35), "invalid body sample must not reach map query");
 }
 
 void testCmuPlannerInputPrefersFreshTerrainAndFallsBackToRegisteredScan() {
@@ -304,6 +337,7 @@ void testLocalCollisionLayerDecodeKeepsCompletenessAndIdentity() {
 }  // namespace
 
 int main() {
+  testLocalCollisionHintRequiresFreshSpatialFailure();
   testCmuPlannerInputPrefersFreshTerrainAndFallsBackToRegisteredScan();
   testCanonicalFrameDecoders();
   testSourceStampValidationRejectsReplayAndFutureCommands();

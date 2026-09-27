@@ -86,7 +86,6 @@ struct ExternalBlockedRegion
 struct PlannerConfig
 {
   double robot_radius{0.20};
-  double cylinder_offset_m{0.0};
   double body_clearance_below_m{0.0};
   double body_clearance_above_m{0.0};
   int max_iterations{250000};
@@ -122,8 +121,6 @@ public:
       None,
       StartSnapExhausted,
       StartConnectionBlocked,
-      StartBodyOccupied,
-      StartGroundSupportMissing,
       GoalSnapExhausted,
     };
 
@@ -155,7 +152,7 @@ public:
 
   void setOctomap(std::shared_ptr<octomap::OcTree> map);
 
-  void makePlan(const PointPose start,const PointPose goal,double start_yaw_rad = 0.0);
+  void makePlan(const PointPose start,const PointPose goal);
 
   void getPlannerResults(std::vector<PointPose>& plannerResults);
 
@@ -181,6 +178,7 @@ private:
   enum class CellState : std::uint8_t
   {
     Unqueried,
+    Unknown,
     Free,
     Occupied,
     OccupiedLeafCenter,
@@ -190,6 +188,7 @@ private:
   {
     None,
     OutsideBounds,
+    UnknownSpace,
     GroundSupport,
     ExternalPreblockedBelow,
     ExternalPreblockedBody,
@@ -204,10 +203,7 @@ private:
   octomap::point3d planningPoint(const GridIndex & idx) const;
   TraversabilityFailure queryWorld(const octomap::point3d &point, double radius,
                                    bool require_support) const;
-  TraversabilityFailure queryBody(const octomap::point3d &point, double yaw,
-                                  bool require_support) const;
-  bool sweptBodyFree(const octomap::point3d &from, const octomap::point3d &to,
-                     double yaw) const;
+  bool sweptRouteFree(const octomap::point3d &from, const octomap::point3d &to) const;
   PointPose planning_offset_{};
 
   bool isInsideMetricBounds(const GridIndex & idx) const;
@@ -309,8 +305,6 @@ private:
   }
 
   double robot_radius_ = 0.20;
-  double cylinder_offset_m_ = 0.0;
-  double start_yaw_rad_ = 0.0;
   double body_clearance_below_m_ = 0.0;
   double body_clearance_above_m_ = 0.0;
   int max_iterations_ = 250000;

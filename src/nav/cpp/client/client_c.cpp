@@ -21,7 +21,14 @@ struct Handle {
   std::optional<lingtu::nav::commands::PathSnapshot> global_path_staging;
   std::optional<lingtu::nav::commands::PathSnapshot> local_path_staging;
   std::mutex plan_mutex;
-  std::unordered_map<std::string, lingtu::nav::commands::PlanResult> plan_staging;
+  struct StagedPlan {
+    double x{0.0};
+    double y{0.0};
+    double z{0.0};
+    double acceptance_radius_m{0.0};
+    lingtu::nav::commands::PlanResult result;
+  };
+  std::unordered_map<std::string, StagedPlan> plan_staging;
   std::mutex traversability_mutex;
   std::optional<lingtu::nav::commands::TraversabilityGridSnapshot> traversability_staging;
   std::mutex map_scene_mutex;
@@ -682,12 +689,13 @@ int lingtu_nav_client_start_task_with_receipt_v2(
   });
 }
 
-int lingtu_nav_client_preview_plan_v1(
+int lingtu_nav_client_preview_plan_v2(
     lingtu_nav_client_handle raw_handle,
     const char* request_id,
     double x,
     double y,
     double z,
+    double acceptance_radius_m,
     int timeout_ms,
     lingtu_nav_plan_result_v1* result,
     lingtu_nav_path_point* points,
@@ -707,10 +715,17 @@ int lingtu_nav_client_preview_plan_v1(
     auto staged = handle->plan_staging.find(key);
     if (staged == handle->plan_staging.end()) {
       auto plan = handle->client->navigation().preview(
-          x, y, z, timeout_ms, key);
-      staged = handle->plan_staging.emplace(key, std::move(plan)).first;
+          x, y, z, timeout_ms, key, acceptance_radius_m);
+      staged = handle->plan_staging.emplace(
+          key, Handle::StagedPlan{x, y, z, acceptance_radius_m, std::move(plan)})
+                   .first;
+    } else if (staged->second.x != x || staged->second.y != y ||
+               staged->second.z != z ||
+               staged->second.acceptance_radius_m != acceptance_radius_m) {
+      thread_error = "plan preview retry does not match the staged request";
+      return -1;
     }
-    const auto& plan = staged->second;
+    const auto& plan = staged->second.result;
     copyPlanResult(result, plan);
     if (plan.path.size() > point_capacity) {
       thread_error.clear();

@@ -107,7 +107,7 @@ class _Library:
         self.lingtu_nav_client_resume_autonomy_with_receipt_v1 = _Function(
             self._resume_autonomy_with_receipt
         )
-        self.lingtu_nav_client_preview_plan_v1 = _Function(self._preview_plan)
+        self.lingtu_nav_client_preview_plan_v2 = _Function(self._preview_plan)
         self.lingtu_nav_client_operator_motion_claim = _Function(self._operator_motion_claim)
         self.lingtu_nav_client_operator_motion_claim_with_receipt_v1 = _Function(
             self._operator_motion_claim_with_receipt
@@ -251,6 +251,7 @@ class _Library:
         x,
         y,
         z,
+        acceptance_radius_m,
         timeout_ms,
         result_pointer,
         points,
@@ -264,6 +265,7 @@ class _Library:
                 x,
                 y,
                 z,
+                acceptance_radius_m,
                 timeout_ms,
                 point_capacity,
             )
@@ -598,7 +600,9 @@ def test_native_client_previews_plan_without_creating_a_task(tmp_path, monkeypat
     monkeypatch.setattr("nav.adapters.native.commands.os.getpid", lambda: 23)
     monkeypatch.setattr("nav.adapters.native.commands.time.time_ns", lambda: 456)
 
-    preview = client.preview_plan(3.0, 4.0, 0.2)
+    preview = client.preview_plan(
+        3.0, 4.0, 0.2, acceptance_radius_m=0.35
+    )
     client.close()
 
     assert preview == {
@@ -620,8 +624,8 @@ def test_native_client_previews_plan_without_creating_a_task(tmp_path, monkeypat
     }
     assert library.calls == [
         ("create", 0),
-        ("preview_plan", 41, b"plan-23-456", 3.0, 4.0, 0.2, 250, 0),
-        ("preview_plan", 41, b"plan-23-456", 3.0, 4.0, 0.2, 250, 2),
+        ("preview_plan", 41, b"plan-23-456", 3.0, 4.0, 0.2, 0.35, 250, 0),
+        ("preview_plan", 41, b"plan-23-456", 3.0, 4.0, 0.2, 0.35, 250, 2),
         ("destroy", 41),
     ]
 

@@ -26,7 +26,6 @@ struct GlobalPlanTemporaryOverlay {
   std::uint64_t revision{0U};
   std::uint64_t frame_epoch{0U};
   std::uint64_t obstacle_generation{0U};
-  std::uint64_t traversability_generation{0U};
   std::vector<GlobalPlanBlockedRegion> blocked_regions{};
 
   bool empty() const noexcept { return blocked_regions.empty(); }
@@ -34,7 +33,6 @@ struct GlobalPlanTemporaryOverlay {
 
 struct GlobalPlannerOptions {
   double robot_radius{0.25};
-  double cylinder_offset_m{0.0};
   double body_clearance_below_m{0.0};
   double body_clearance_above_m{0.0};
   int max_iterations{500000};
@@ -45,7 +43,7 @@ struct GlobalPlannerOptions {
   // supported stance; strict direct support remains available for diagnostics.
   bool strict_direct_ground_support{false};
   int ground_support_xy_radius_cells{1};
-  int ground_support_depth_cells{1};
+  int ground_support_depth_cells{2};
   double support_height_m{0.0};
   double support_height_tolerance_m{0.0};
   int support_patch_radius_cells{0};
@@ -59,7 +57,6 @@ struct GlobalPlannerOptions {
   double max_slope{0.0};
   bool same_floor_preference{true};
   double same_floor_z_tolerance{0.75};
-  double max_same_floor_z_excursion{2.0};
   int obstacle_clearance_radius_cells{4};
   double obstacle_clearance_weight{2.0};
   double terminal_goal_tolerance_m{0.5};
@@ -85,7 +82,6 @@ inline bool sameMapIdentity(const MapIdentity& lhs, const MapIdentity& rhs) {
 
 struct GlobalPlanRequest {
   GlobalPlanPoint start{};
-  double start_yaw_rad{0.0};
   GlobalPlanPoint goal{};
   GlobalPlannerOptions options{};
   MapIdentity map_identity{};
@@ -108,7 +104,6 @@ struct GlobalPlanResult {
   std::uint64_t overlay_revision{0U};
   std::uint64_t overlay_frame_epoch{0U};
   std::uint64_t overlay_obstacle_generation{0U};
-  std::uint64_t overlay_traversability_generation{0U};
   std::vector<GlobalPlanPoint> path{};
 };
 

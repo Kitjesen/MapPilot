@@ -199,12 +199,12 @@ nav_kernel::LocalPlannerParams buildLocalPlannerParams(const CliConfig &cfg) {
           : cfg.teleop_obstacle_margin_m;
   out.backend = cfg.local_planner_backend;
   out.scan = cfg.scan_planner;
-  if (cfg.octoplanner_options.require_ground_support) {
-    out.scan.supportHeight = cfg.octoplanner_options.support_height_m;
-    out.scan.supportHeightTolerance = cfg.octoplanner_options.support_height_tolerance_m;
-    out.scan.maxStepHeight = cfg.octoplanner_options.max_step_height;
-    out.scan.maxSupportSlope = cfg.octoplanner_options.max_slope;
-  }
+  // OctoPlanner owns the global support, step-height, and slope checks.  The
+  // upstream SCAN local planner consumes the live 3D collision volume and does
+  // not require a second independently observed support patch at every local
+  // tick.  Reusing the global support-height parameters here made a sparse
+  // local collision snapshot reject a valid standing start before SCAN could
+  // evaluate its swept body collision.
   out.localCollisionMaxAge = cfg.local_collision_max_age_s;
   if (cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu) {
     // Upstream Go2 autonomous navigation is forward-only.  Planner and

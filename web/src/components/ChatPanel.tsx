@@ -8,7 +8,7 @@ import {
   matchSlashCommands,
   type SlashCommandSpec,
 } from '../utils/slashCommands'
-import { presentNavigationStatus } from '../services/navigationStatus'
+import { liveNavigationStatus, presentNavigationStatus } from '../services/navigationStatus'
 import { ThinkingBubble } from './ThinkingBubble'
 import styles from './ChatPanel.module.css'
 
@@ -48,6 +48,7 @@ export function ChatPanel({
       ts: Date.now(),
     },
   ])
+  const liveNavigation = liveNavigationStatus(sseState, Date.now() / 1000)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [suggestionIdx, setSuggestionIdx] = useState(0)
@@ -95,9 +96,9 @@ export function ChatPanel({
 
   // Report task changes from the same navigation status used by the rest of the UI.
   useEffect(() => {
-    const task = sseState.navigationStatus?.task
+    const task = liveNavigation?.task
     if (!task) return
-    const view = presentNavigationStatus(sseState.navigationStatus, 'zh')
+    const view = presentNavigationStatus(liveNavigation, 'zh')
     const key = `${task.task_id}:${view.task.state}`
     if (key === prevNavigationRef.current) return
     prevNavigationRef.current = key
@@ -105,7 +106,7 @@ export function ChatPanel({
     const text = `[${view.task.state}] ${view.task.label}`
 
     setMessages(prev => [...prev, { id: nextId(), role: 'system', text, ts: Date.now() }])
-  }, [sseState.navigationStatus])
+  }, [liveNavigation])
 
   const addSystem = useCallback((text: string) => {
     setMessages(prev => [...prev, { id: nextId(), role: 'system', text, ts: Date.now() }])

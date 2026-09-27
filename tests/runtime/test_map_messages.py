@@ -51,7 +51,7 @@ def test_map_control_request_is_typed_and_transport_round_trips():
             "action": "save",
             "name": "warehouse",
             "request_id": "save-17",
-            "activate_on_success": True,
+            "minimum_point_count": 100,
         }
     )
 
@@ -62,7 +62,7 @@ def test_map_control_request_is_typed_and_transport_round_trips():
     assert decoded.request_id == "save-17"
     assert decoded.params == {
         "name": "warehouse",
-        "activate_on_success": True,
+        "minimum_point_count": 100,
     }
     assert decoded.to_mapping()["request_id"] == "save-17"
     assert resolve_msg_type("map.MapControlRequest") is MapControlRequest

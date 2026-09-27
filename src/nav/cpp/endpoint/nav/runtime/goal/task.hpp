@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <future>
@@ -24,12 +25,14 @@ struct GlobalPlanContext {
   lingtu::nav::plan::GlobalPlanRequest request{};
   std::optional<double> max_speed_mps{};
   std::optional<double> acceptance_radius_m{};
+  std::chrono::milliseconds timeout{0};
 };
 
 struct GlobalPlanCompletion {
   GlobalPlanContext context{};
   lingtu::nav::plan::GlobalPlanResult result{};
   std::string error;
+  bool timed_out{false};
 };
 
 std::string globalPlanStaleReason(const GlobalPlanCompletion &completion,
@@ -59,6 +62,7 @@ class GlobalPlanTask {
   std::optional<GlobalPlanContext> context_;
   std::future<lingtu::nav::plan::GlobalPlanResult> future_;
   std::shared_ptr<std::atomic_bool> cancel_requested_;
+  std::chrono::steady_clock::time_point started_at_{};
   bool discard_result_{false};
 };
 

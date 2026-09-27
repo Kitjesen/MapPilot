@@ -185,7 +185,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto &odom_generation = state.odom_generation;
   auto &frame_epoch = state.frame_epoch;
   auto &cloud_generation = state.cloud_generation;
-  auto &traversability_generation = state.traversability_generation;
   auto &goal_count = state.goal_count;
   auto &cancel_count = state.cancel_count;
   auto &teleop_cmd_count = state.teleop_cmd_count;
@@ -767,11 +766,14 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       navigation_authority = "autonomy";
     }
     const auto navigation_state_write_start = SteadyClock::now();
-    (void)dds.publish(OutputEvent{navigation_state.sample(NavigationStateContext{
+    const auto navigation_sample = navigation_state.sample(NavigationStateContext{
         navigation_map_identity, control_authority.pathActive(), input_gate_state.ready,
         input_gate_state.reason, control_authority.estopLatched(), control_authority.estopReason(),
         control_authority.operatorTakeoverLatched(), last_local.recovery_state != 0,
-        navigation_authority})});
+        navigation_authority});
+    (void)navigation_state.publishIfDue(navigation_sample, steadySeconds(), [&](const auto &sample) {
+      return dds.publish(OutputEvent{sample}).published;
+    });
     timing.dds_write_ms += elapsedMs(navigation_state_write_start);
     auto status_runtime_state = statusRuntimeStateFromEndpoint(state);
     status_runtime_state.control_loop_hold = control_loop_guard.snapshot().hold_motion;
@@ -986,7 +988,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
         if (!completion->error.empty()) {
           reason = "planner_error";
         } else if (completion->result.cancelled) {
-          reason = "preview_cancelled";
+          reason = completion->timed_out ? "preview_timeout" : "preview_cancelled";
         } else {
           const auto map = current_map_identity();
           reason = globalPlanStaleReason(*completion, completion->context.goal_epoch, frame_epoch,
@@ -1127,6 +1129,10 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
         reject("invalid_goal");
         return;
       }
+      if (!std::isfinite(request.acceptance_radius_m) || request.acceptance_radius_m < 0.0) {
+        reject("goal_constraints_invalid");
+        return;
+      }
       if (!start_valid) {
         reject(state.odom_body ? "map_odom_tf_not_ready" : "odometry_not_ready");
         return;
@@ -1151,9 +1157,14 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       context.goal = goal;
       context.frame_epoch = frame_epoch;
       context.request.start = {start.x, start.y, start.z};
-      context.request.start_yaw_rad = map_body->yaw;
       context.request.goal = {goal.x, goal.y, goal.z};
       context.request.options = cfg.octoplanner_options;
+      if (request.acceptance_radius_m > 0.0) {
+        context.request.options.terminal_goal_xy_tolerance_m = std::min(
+            context.request.options.terminal_goal_xy_tolerance_m, request.acceptance_radius_m);
+      }
+      // Keep preview searches shorter than the client's 10-second wait.
+      context.timeout = std::chrono::seconds(7);
       if (!plan_preview.start(std::move(context))) {
         reject("planner_busy");
         return;
@@ -1565,7 +1576,11 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       blockage_observation.active_global_path = &last_global_path;
       blockage_observation.live_obstacles_xyzh = &obstacle_xyzh;
       blockage_observation.cloud_generation = cloud_generation;
-      blockage_observation.traversability_generation = traversability_generation;
+      // SCAN uses map-frame body positions. A failed sample only selects real
+      // nearby returns; it must never be stamped into the map as an obstacle.
+      blockage_observation.local_collision_position = localCollisionHint(
+          last_local_planner_debug, inputs.executionTime(blockage_observation.now_s),
+          cfg.local_collision_max_age_s);
       auto obstruction_trigger = active_path_blockage_policy.observe(blockage_observation);
       autonomy_result = autonomy_tick.tick(
           AutonomyTickInput{safety_config, map_body, input_gate_state, path_active_for_tick,

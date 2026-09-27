@@ -3043,10 +3043,15 @@ struct Client::Impl {
       double y,
       double z,
       int timeout_ms,
-      const std::string& requested_id) const {
+      const std::string& requested_id,
+      double acceptance_radius_m) const {
     requireFinite(x, "plan goal x");
     requireFinite(y, "plan goal y");
     requireFinite(z, "plan goal z");
+    requireFinite(acceptance_radius_m, "plan acceptance radius");
+    if (acceptance_radius_m < 0.0) {
+      throw std::invalid_argument("plan acceptance radius must be non-negative");
+    }
     const std::string request_id =
         requested_id.empty() ? makePlanRequestId() : requested_id;
     waitForReader(plan_writer, "nav_plan_request", timeout_ms);
@@ -3055,6 +3060,7 @@ struct Client::Impl {
     fillHeader(message.header, nowSeconds(), "map");
     message.request_id = const_cast<char*>(request_id.c_str());
     message.goal = {x, y, z};
+    message.acceptance_radius_m = acceptance_radius_m;
     const auto pending = registerPlan(request_id);
     try {
       checked(
@@ -3357,8 +3363,10 @@ PlanResult Client::NavigationCommands::preview(
     double y,
     double z,
     int timeout_ms,
-    const std::string& request_id) {
-  return owner_.impl_->preview(x, y, z, timeout_ms, request_id);
+    const std::string& request_id,
+    double acceptance_radius_m) {
+  return owner_.impl_->preview(
+      x, y, z, timeout_ms, request_id, acceptance_radius_m);
 }
 
 NavigationCommandReceipt Client::NavigationCommands::cancelTask(

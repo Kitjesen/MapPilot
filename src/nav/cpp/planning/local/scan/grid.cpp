@@ -1,4 +1,3 @@
-#include "planning/surface_support.hpp"
 // Mapd adapter for SCAN-Planner's GridMap query seam.
 // Upstream algorithm commit: 348e8a590a50a5a6bbab8d8c6dcfd171f009be26.
 // SPDX-License-Identifier: Apache-2.0
@@ -8,7 +7,6 @@
 #include <array>
 #include <cmath>
 #include <limits>
-#include <string_view>
 
 namespace nav_kernel::local::scan {
 namespace {
@@ -38,9 +36,6 @@ Grid::Grid(const LocalPlannerParams &params, const LocalPlanRequest &input)
     : checkObstacle_(params.checkObstacle),
       configuredResolution_(params.scan.voxelResolution),
       cylinderOffset_(std::max(0.0, params.scan.cylinderOffset)),
-      supportHalfLength_(0.5 * params.vehicleLength),
-      supportHalfWidth_(0.5 * params.vehicleWidth),
-      support_(params.scan),
       robotYaw_(input.robot.pose.yaw),
       collision_(input.environment.collision) {
   // Assisted translation preserves body heading instead of following the
@@ -66,13 +61,6 @@ Grid::Grid(const LocalPlannerParams &params, const LocalPlanRequest &input)
   if (std::abs(collision_.resolution - params.scan.voxelResolution) >
       std::max(1e-9, 1e-6 * params.scan.voxelResolution)) {
     reason_ = "collision_map_resolution_mismatch";
-    return;
-  }
-  if (support_.supportHeight > 0.0 &&
-      (!collision_.measuredOccupiedStorage || !collision_.knownFreeStorage ||
-       collision_.measuredOccupiedStorage->size() != collision_.inflatedBytes ||
-       collision_.knownFreeStorage->size() != collision_.inflatedBytes)) {
-    reason_ = "ground_support_evidence_missing";
     return;
   }
   if (input.environment.predictions.fresh(input.clock.timestampS)) {
@@ -102,11 +90,6 @@ Grid::Grid(const LocalPlannerParams &params, const LocalPlanRequest &input)
     }
   }
   reason_ = "ready";
-  const char *supportFailure = "robot_ground_support_unconfirmed";
-  if (support_.supportHeight > 0.0 &&
-      !supported(input.robot.pose.position, input.robot.pose.yaw, &supportFailure)) {
-    reason_ = supportFailure;
-  }
 }
 
 bool Grid::predictionIntersects(const Vec3 &start, double startYaw,
@@ -116,12 +99,18 @@ bool Grid::predictionIntersects(const Vec3 &start, double startYaw,
   for (const auto &prediction : predictions_) {
     if (std::max(start.z, end.z) < prediction.minZ ||
         std::min(start.z, end.z) > prediction.maxZ) continue;
+    const double ageFraction = std::clamp(predictionAgeS_ / predictionHorizonS_, 0.0, 1.0);
+    // The prediction begins at its observation time. Keep only the remaining
+    // sweep; retaining its past path invents obstacles the object has left.
+    const Vec3 current{prediction.start.x + ageFraction * (prediction.end.x - prediction.start.x),
+                       prediction.start.y + ageFraction * (prediction.end.y - prediction.start.y),
+                       0.0};
     for (const double sign : {-1.0, 1.0}) {
       const Vec3 from{start.x + sign*cylinderOffset_*std::cos(startYaw),
                        start.y + sign*cylinderOffset_*std::sin(startYaw), start.z};
       const Vec3 to{end.x + sign*cylinderOffset_*std::cos(endYaw),
                      end.y + sign*cylinderOffset_*std::sin(endYaw), end.z};
-      if (segmentSquared(from, to, prediction.start, prediction.end) <=
+      if (segmentSquared(from, to, current, prediction.end) <=
           prediction.radius * prediction.radius) return true;
     }
   }
@@ -156,7 +145,6 @@ bool Grid::obstacleFree(const Vec3 &center, double yaw) const noexcept {
 int Grid::inflatedOccupancy(const Vec3 &center, double yaw) const noexcept {
   if (!valid()) return -1;
   if (!checkObstacle_) return 0;
-  if (!supported(center, yaw)) return 1;
   if (predictionIntersects(center, yaw, center, yaw)) return 1;
   yaw = bodyHeading_.value_or(yaw);
   const double c = std::cos(yaw);
@@ -232,7 +220,6 @@ int Grid::trajectoryOccupancy(const Vec3 &start, const Vec3 &velocity,
 
 int Grid::measuredSegmentOccupancy(const Vec3 &start, double startYaw,
                                    const Vec3 &end, double endYaw) const noexcept {
-  if (!supportedSegment(start, startYaw, end, endYaw)) return 1;
   startYaw = bodyHeading_.value_or(startYaw);
   endYaw = bodyHeading_.value_or(endYaw);
   const double c = std::cos(collision_.gridFromPlanningYaw);
@@ -417,7 +404,6 @@ bool Grid::boundaryDepartureFree(const Pose &start, const Vec3 &end) const noexc
       std::abs(start.position.z - end.z) > 1e-6 ||
       distance2D(start.position, end) > 0.5 ||
       inflatedOccupancy(end, start.yaw) != 0) return false;
-  if (!supportedSegment(start.position, start.yaw, end, start.yaw)) return false;
   const double c = std::cos(collision_.gridFromPlanningYaw);
   const double s = std::sin(collision_.gridFromPlanningYaw);
   const auto toGrid = [&](const Vec3 &p, double sign) {
@@ -430,79 +416,6 @@ bool Grid::boundaryDepartureFree(const Pose &start, const Vec3 &end) const noexc
   for (double sign : {-1.0, 1.0})
     if (occupiedGridSegment(toGrid(start.position, sign), toGrid(end, sign), true) != 0)
       return false;
-  return true;
-}
-
-bool Grid::evidenceBit(const std::vector<std::uint8_t> &bits,
-                       int x, int y, int z) const noexcept {
-  if (x < 0 || x >= collision_.sizeX || y < 0 || y >= collision_.sizeY ||
-      z < 0 || z >= collision_.sizeZ) return false;
-  const auto index = (static_cast<std::size_t>(z) * collision_.sizeY + y) *
-                     collision_.sizeX + x;
-  return (bits[index / 8U] & (1U << (index % 8U))) != 0U;
-}
-
-bool Grid::supportPatch(double x, double y, double bodyZ, double &height,
-                        const char **failure) const noexcept {
-  const double r=collision_.resolution;
-  const int ox=int(std::llround(collision_.aabbMin.x/r));
-  const int oy=int(std::llround(collision_.aabbMin.y/r));
-  const int oz=int(std::llround(collision_.aabbMin.z/r));
-  const support::SurfaceQuery query{r,support_.supportHeight,support_.supportHeightTolerance,
-                                     support_.maxSupportSlope,oz,oz+collision_.sizeZ-1};
-  return support::surfacePatch(query,x,y,bodyZ,
-      [&](int ix,int iy,int iz) { return evidenceBit(*collision_.measuredOccupiedStorage,ix-ox,iy-oy,iz-oz); },
-      [&](int ix,int iy,int iz) { return evidenceBit(*collision_.knownFreeStorage,ix-ox,iy-oy,iz-oz); },
-      height,failure);
-}
-
-bool Grid::supported(const Vec3 &center, double yaw,
-                     const char **failure) const noexcept {
-  if (support_.supportHeight <= 0.0) return true;
-  if (!std::isfinite(center.x) || !std::isfinite(center.y) || !std::isfinite(center.z) ||
-      !std::isfinite(yaw) || !collision_.covers(center)) return false;
-  yaw = bodyHeading_.value_or(yaw) + collision_.gridFromPlanningYaw;
-  const double c = std::cos(collision_.gridFromPlanningYaw);
-  const double s = std::sin(collision_.gridFromPlanningYaw);
-  const Vec3 p{collision_.gridFromPlanningTranslation.x + c * center.x - s * center.y,
-               collision_.gridFromPlanningTranslation.y + s * center.x + c * center.y,
-               collision_.gridFromPlanningTranslation.z + center.z};
-  const double cy = std::cos(yaw), sy = std::sin(yaw);
-  // Ground evidence belongs under the robot's declared physical footprint,
-  // not under the obstacle-clearance halo of its collision cylinders.
-  const std::array<Vec3, 7> samples{{{0, 0, 0},
-      {supportHalfLength_, supportHalfWidth_, 0},
-      {supportHalfLength_, -supportHalfWidth_, 0},
-      {-supportHalfLength_, supportHalfWidth_, 0},
-      {-supportHalfLength_, -supportHalfWidth_, 0},
-      {supportHalfLength_, 0, 0}, {-supportHalfLength_, 0, 0}}};
-  double baseHeight = 0.0;
-  for (std::size_t i = 0; i < samples.size(); ++i) {
-    const auto &o = samples[i];
-    double height = 0.0;
-    if (!supportPatch(p.x + cy * o.x - sy * o.y, p.y + sy * o.x + cy * o.y,
-                      p.z, height, failure)) return false;
-    if (i == 0) baseHeight = height;
-    if (std::abs(height - baseHeight) > support_.maxStepHeight + 1e-9) return false;
-  }
-  return true;
-}
-
-bool Grid::supportedSegment(const Vec3 &start, double startYaw,
-                             const Vec3 &end, double endYaw) const noexcept {
-  if (support_.supportHeight <= 0.0) return true;
-  if (!collision_.covers(start) || !collision_.covers(end) ||
-      !std::isfinite(startYaw) || !std::isfinite(endYaw)) return false;
-  const double yawDelta = std::remainder(endYaw - startYaw, 2.0 * std::acos(-1.0));
-  const double distance = std::hypot(std::hypot(end.x - start.x, end.y - start.y), end.z - start.z);
-  const double supportRadius = std::hypot(supportHalfLength_, supportHalfWidth_);
-  const double swept = distance + supportRadius * std::abs(yawDelta);
-  const int count = std::max(1, static_cast<int>(std::ceil(swept / (0.5 * collision_.resolution))));
-  for (int i = 0; i <= count; ++i) {
-    const double t = static_cast<double>(i) / count;
-    if (!supported({start.x + t * (end.x - start.x), start.y + t * (end.y - start.y),
-                     start.z + t * (end.z - start.z)}, startYaw + t * yawDelta)) return false;
-  }
   return true;
 }
 

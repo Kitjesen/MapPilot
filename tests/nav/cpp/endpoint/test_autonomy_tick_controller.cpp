@@ -635,7 +635,6 @@ void testPrecomputedPersistentReplanBypassesPlannerAndFinalSafetyWithZeroCommand
   trigger.temporary_overlay.revision = 23U;
   trigger.temporary_overlay.frame_epoch = 3U;
   trigger.temporary_overlay.obstacle_generation = 41U;
-  trigger.temporary_overlay.traversability_generation = 43U;
   trigger.temporary_overlay.blocked_regions = {
       {{1.25, -0.5, 0.2}, 0.65, -0.4, 1.6},
       {{2.75, 0.25, 0.3}, 0.55, -0.3, 1.7},
@@ -677,8 +676,6 @@ void testPrecomputedPersistentReplanBypassesPlannerAndFinalSafetyWithZeroCommand
               actual.temporary_overlay.frame_epoch == expected.temporary_overlay.frame_epoch &&
               actual.temporary_overlay.obstacle_generation ==
                   expected.temporary_overlay.obstacle_generation &&
-              actual.temporary_overlay.traversability_generation ==
-                  expected.temporary_overlay.traversability_generation &&
               actual.temporary_overlay.blocked_regions.size() ==
                   expected.temporary_overlay.blocked_regions.size(),
           "precomputed replan overlay identity changed in the tick");

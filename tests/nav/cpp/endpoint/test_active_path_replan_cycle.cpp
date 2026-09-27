@@ -80,7 +80,6 @@ bool sameRegion(const GlobalPlanBlockedRegion &lhs, const GlobalPlanBlockedRegio
 bool sameOverlay(const GlobalPlanTemporaryOverlay &lhs, const GlobalPlanTemporaryOverlay &rhs) {
   if (lhs.revision != rhs.revision || lhs.frame_epoch != rhs.frame_epoch ||
       lhs.obstacle_generation != rhs.obstacle_generation ||
-      lhs.traversability_generation != rhs.traversability_generation ||
       lhs.blocked_regions.size() != rhs.blocked_regions.size()) {
     return false;
   }
@@ -140,8 +139,6 @@ struct Fixture {
               result.overlay_revision = request.temporary_overlay.revision;
               result.overlay_frame_epoch = request.temporary_overlay.frame_epoch;
               result.overlay_obstacle_generation = request.temporary_overlay.obstacle_generation;
-              result.overlay_traversability_generation =
-                  request.temporary_overlay.traversability_generation;
               result.path = {request.start, request.goal};
               return result;
             },
@@ -314,8 +311,7 @@ struct Fixture {
     config.lookahead_m = 5.0;
     config.corridor_radius_m = 0.5;
     config.corridor_vertical_tolerance_m = 0.75;
-    config.overlay_radius_m = 0.65;
-    config.overlay_half_height_m = 1.25;
+    config.obstacle_voxel_size_m = 0.1;
     config.max_regions = 8U;
     config.minimum_obstacle_points = 4U;
     ActivePathBlockagePolicy policy(config);
@@ -324,8 +320,7 @@ struct Fixture {
         2.08F, -0.08F, 0.2F, 0.4F, 2.08F, 0.08F, 0.2F, 0.4F,
     };
     const auto identity = activeIdentity();
-    auto observe = [&](double now_s, std::uint64_t cloud_generation,
-                       std::uint64_t traversability_generation) {
+    auto observe = [&](double now_s, std::uint64_t cloud_generation) {
       ActivePathBlockageObservation observation;
       observation.now_s = now_s;
       observation.external_active_goal = true;
@@ -335,13 +330,12 @@ struct Fixture {
       observation.active_global_path = &activations.back().path;
       observation.live_obstacles_xyzh = &blocked;
       observation.cloud_generation = cloud_generation;
-      observation.traversability_generation = traversability_generation;
       return policy.observe(observation);
     };
 
-    require(!observe(10.0, 101U, 201U), "first fresh blockage triggered early");
-    require(!observe(10.5, 102U, 202U), "second fresh blockage triggered early");
-    const auto trigger = observe(11.0, 103U, 203U);
+    require(!observe(10.0, 101U), "first fresh blockage triggered early");
+    require(!observe(10.5, 102U), "second fresh blockage triggered early");
+    const auto trigger = observe(11.0, 103U);
     require(trigger.has_value(), "persistent fresh blockage did not emit a trigger");
     require(trigger->kind == GoalReplanTriggerKind::kPersistentPathObstruction &&
                 trigger->reason == "persistent_path_obstruction" &&
