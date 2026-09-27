@@ -14,6 +14,8 @@ class VisibilityEvidence {
   VisibilityEvidence(const std::vector<PointXYZI>& points, const StaticCleanerOptions& options);
   void observe(const std::vector<PointXYZI>& scan, const Pose& pose);
   bool contradicted(std::size_t index) const;
+  bool groundProtected(std::size_t index) const;
+  const std::vector<bool>& groundEvidence() const;
   bool onSupportedSurface(std::size_t index) const;
 
  private:
@@ -23,6 +25,7 @@ class VisibilityEvidence {
   std::vector<std::uint32_t> free_frames_;
   std::vector<bool> seen_;
   std::vector<std::uint32_t> hit_frames_;
+  std::vector<bool> ground_protected_;
 };
 
 }  // namespace lingtu::map_cleaning

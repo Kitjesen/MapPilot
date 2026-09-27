@@ -55,6 +55,9 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
     if (options.min_free_frames < 2 || !std::isfinite(options.ray_tolerance_m)
         || options.ray_tolerance_m <= 0 || !std::isfinite(options.endpoint_margin_m)
         || options.endpoint_margin_m < options.ray_tolerance_m
+        || !std::isfinite(options.endpoint_confirm_radius_m)
+        || options.endpoint_confirm_radius_m <= 0
+        || options.endpoint_confirm_radius_m > options.endpoint_margin_m
         || !std::isfinite(options.max_ray_length_m) || options.max_ray_length_m <= 0) {
       return fail("bad_visibility_threshold", "visibility requires at least two frames and finite positive distances");
     }
@@ -164,9 +167,6 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
         const VoxelKey key = voxelKey(map_pt, options.voxel_size_m);
         VoxelEvidence &item = evidence[key];
         ++item.hits;
-        if (local_pt.z <= options.ground_z_threshold) {
-          ++item.ground_hits;
-        }
         if (item.last_frame != frame_idx) {
           item.last_frame = frame_idx;
           ++item.frame_count;
@@ -183,7 +183,8 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
     std::vector<PointXYZI> removed;
     kept.reserve(source_map.size());
 
-    const MovingScoreSummary score_summary = scoreMovingInstances(source_map, evidence, options);
+    const MovingScoreSummary score_summary =
+        scoreMovingInstances(source_map, evidence, visibility.groundEvidence(), options);
 
     std::uint64_t dynamic_voxels = 0;
     for (const auto &entry : evidence) {
@@ -198,11 +199,11 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
       if (visibility.contradicted(index)) ++result.free_space_candidate_points;
       const VoxelKey key = voxelKey(pt, options.voxel_size_m);
       auto found = evidence.find(key);
-      if (found == evidence.end()) {
-        ++result.kept_without_evidence_points;
-        kept.push_back(pt);
-      } else if (found->second.ground_hits > 0) {
+      if (visibility.groundProtected(index)) {
         ++result.kept_ground_points;
+        kept.push_back(pt);
+      } else if (found == evidence.end()) {
+        ++result.kept_without_evidence_points;
         kept.push_back(pt);
       } else if (visibility.contradicted(index)) {
         if (visibility.onSupportedSurface(index)) {

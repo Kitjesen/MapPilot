@@ -12,12 +12,28 @@ double distanceSquared(const PointXYZI& a, const PointXYZI& b) {
   const double dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
   return dx * dx + dy * dy + dz * dz;
 }
+
+PointXYZI inverseTransformPoint(const PointXYZI& point, const Pose& pose) {
+  const double norm =
+      std::sqrt(pose.qw * pose.qw + pose.qx * pose.qx + pose.qy * pose.qy + pose.qz * pose.qz);
+  const double qw = norm > 1e-12 ? pose.qw / norm : 1.0;
+  const double qx = norm > 1e-12 ? -pose.qx / norm : 0.0;
+  const double qy = norm > 1e-12 ? -pose.qy / norm : 0.0;
+  const double qz = norm > 1e-12 ? -pose.qz / norm : 0.0;
+  const PointXYZI translated{
+      static_cast<float>(point.x - pose.tx),
+      static_cast<float>(point.y - pose.ty),
+      static_cast<float>(point.z - pose.tz),
+      point.intensity,
+  };
+  return transformPoint(translated, {0, 0, 0, qw, qx, qy, qz});
+}
 }  // namespace
 
 VisibilityEvidence::VisibilityEvidence(const std::vector<PointXYZI>& points,
     const StaticCleanerOptions& options)
     : points_(points), options_(options), free_frames_(points.size()), seen_(points.size()),
-      hit_frames_(points.size()) {
+      hit_frames_(points.size()), ground_protected_(points.size()) {
   for (std::size_t i = 0; i < points.size(); ++i)
     cells_[voxelKey(points[i], options_.voxel_size_m)].push_back(i);
 }
@@ -28,8 +44,9 @@ void VisibilityEvidence::observe(const std::vector<PointXYZI>& scan, const Pose&
   std::unordered_set<std::size_t> occupied, free;
   const double voxel = options_.voxel_size_m;
   const double margin = options_.endpoint_margin_m;
+  const double confirm_radius = options_.endpoint_confirm_radius_m;
   const double tube = options_.ray_tolerance_m;
-  const int neighbors = static_cast<int>(std::ceil(margin / voxel));
+  const int neighbors = static_cast<int>(std::ceil(confirm_radius / voxel));
   for (const auto& local : scan) {
     const auto endpoint = transformPoint(local, pose);
     const auto key = voxelKey(endpoint, options_.voxel_size_m);
@@ -40,8 +57,11 @@ void VisibilityEvidence::observe(const std::vector<PointXYZI>& scan, const Pose&
           const auto found = cells_.find({key.x + x, key.y + y, key.z + z});
           if (found == cells_.end()) continue;
           for (const auto index : found->second)
-            if (distanceSquared(points_[index], endpoint) <= margin * margin)
+            if (distanceSquared(points_[index], endpoint) <= confirm_radius * confirm_radius) {
               occupied.insert(index);
+              const auto local_source = inverseTransformPoint(points_[index], pose);
+              if (local_source.z <= options_.ground_z_threshold) ground_protected_[index] = true;
+            }
         }
 
     const double length = std::sqrt(distanceSquared(origin, endpoint));
@@ -108,6 +128,14 @@ void VisibilityEvidence::observe(const std::vector<PointXYZI>& scan, const Pose&
 
 bool VisibilityEvidence::contradicted(std::size_t index) const {
   return seen_[index] && free_frames_[index] >= options_.min_free_frames;
+}
+
+bool VisibilityEvidence::groundProtected(std::size_t index) const {
+  return ground_protected_[index];
+}
+
+const std::vector<bool>& VisibilityEvidence::groundEvidence() const {
+  return ground_protected_;
 }
 
 bool VisibilityEvidence::onSupportedSurface(std::size_t index) const {

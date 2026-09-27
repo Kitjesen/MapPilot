@@ -98,7 +98,8 @@ if(BUILD_TESTING)
   add_executable(prune_test "${CMAKE_CURRENT_SOURCE_DIR}/../../../../tests/maps/cpp/prune_test.cpp")
   target_link_libraries(prune_test PRIVATE prune_core)
   foreach(test_case report dry_run empty_apply repeat_apply output_aliases truncated_source bad_threshold
-      visibility calibrated_origin ground pose_order missing_origin surface)
+      visibility endpoint_confirmation local_ground calibrated_origin ground mixed_ground pose_order
+      missing_origin surface)
     add_test(NAME prune_${test_case} COMMAND prune_test ${test_case})
   endforeach()
   if(LINGTU_PRUNE_ERASOR2)

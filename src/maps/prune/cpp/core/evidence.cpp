@@ -42,7 +42,7 @@ VoxelKey voxelKey(const PointXYZI &pt, float voxel_size_m) {
 }
 
 bool isProtected(const VoxelEvidence &evidence, const StaticCleanerOptions &options) {
-  return evidence.ground_hits > 0 || evidence.frame_count >= options.min_frame_support ||
+  return evidence.frame_count >= options.min_frame_support ||
          evidence.hits >= options.min_hit_support;
 }
 

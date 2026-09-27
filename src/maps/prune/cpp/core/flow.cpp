@@ -65,18 +65,18 @@ std::vector<StageSpec> productFlow() {
           "evidence",
           "ready",
           "voxelized posed scans",
-          "hits + ground_hits + frame_count",
+          "voxel hits + frame_count and confirmed per-point ground evidence",
           "prune_v2",
-          "Counts later observed free rays once per frame; measured endpoints win within a frame.",
+          "Counts later observed free rays once per frame; confirmed endpoints win within a frame.",
       },
       {
           "protect",
           "partial",
           "voxel evidence",
-          "protected static voxels",
+          "protected static points and voxels",
           "prune_v2",
-          "Keeps unconfirmed, low-height and locally supported planar points. Missing scans and "
-          "occlusion are not free evidence; full terrain segmentation is not implemented.",
+          "Keeps unconfirmed, confirmed low-height and locally supported planar points. Missing "
+          "scans and occlusion are not free evidence; full terrain segmentation is not implemented.",
       },
       {
           "score",

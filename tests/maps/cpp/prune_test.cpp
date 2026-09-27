@@ -144,8 +144,13 @@ void TruncatedSource() {
 void BadThreshold() {
   Fixture f;
   f.options.voxel_size_m = std::numeric_limits<float>::quiet_NaN();
-  const auto r = cleanStaticMap(f.options);
+  auto r = cleanStaticMap(f.options);
   Require(!r.success && r.reason_code == "bad_voxel_size", "NaN voxel size reached voxel indexing");
+  f.options.voxel_size_m = .20F;
+  f.options.endpoint_confirm_radius_m = .21F;
+  r = cleanStaticMap(f.options);
+  Require(!r.success && r.reason_code == "bad_visibility_threshold",
+      "endpoint confirmation radius exceeded the ray cutoff margin");
 }
 
 void VisibilityRules() {
@@ -160,7 +165,7 @@ void VisibilityRules() {
   Require(!v.contradicted(0), "two free frames should not meet the default three");
   v.observe({{4, 0, 0}}, {});
   Require(v.contradicted(0) && !v.contradicted(1), "free ray or unseen wall handling failed");
-  v.observe({{4, 0, 0}, {2, .1F, 0}}, {});
+  v.observe({{4, 0, 0}, {2, .04F, 0}}, {});
   Require(!v.contradicted(0), "same-frame nearby surface did not override free ray");
   for (int i = 0; i < 3; ++i) { v.observe({{1, 0, 0}}, {}); v.observe({}, {}); }
   Require(!v.contradicted(0), "occlusion or absent returns were counted as free");
@@ -168,6 +173,36 @@ void VisibilityRules() {
   for (int i = 0; i < 3; ++i) new_object.observe({{4, 0, 0}}, {});
   new_object.observe({{2, 0, 0}}, {});
   Require(!new_object.contradicted(0), "earlier free space deleted a later object");
+}
+
+void EndpointConfirmationRadius() {
+  StaticCleanerOptions options;
+  options.sensor_origin = std::array<float, 3>{0, 0, 0};
+  const std::vector<PointXYZI> map{{2, 0, 0}, {2, .06F, 0}};
+  VisibilityEvidence evidence(map, options);
+  evidence.observe(map, {});
+  for (int i = 0; i < 3; ++i) evidence.observe({{4, 0, 0}, {4, .12F, 0}}, {});
+  Require(evidence.contradicted(0) && evidence.contradicted(1),
+      "fixture did not establish free-space contradictions");
+  evidence.observe({{2, 0, 0}}, {});
+  Require(!evidence.contradicted(0), "confirmed endpoint did not reset its source point");
+  Require(evidence.contradicted(1), "endpoint confirmation leaked beyond five centimeters");
+}
+
+void LocalGroundEvidence() {
+  StaticCleanerOptions options;
+  options.sensor_origin = std::array<float, 3>{0, 0, 0};
+  const Pose pose{3, 2, -1, 0, 2, 0, 0};
+  const PointXYZI local_ground{1, 0, -.6F};
+  const PointXYZI local_body{1, .2F, .2F};
+  const std::vector<PointXYZI> map{
+      transformPoint(local_ground, pose), transformPoint(local_body, pose)};
+  VisibilityEvidence evidence(map, options);
+  evidence.observe({local_ground, local_body}, pose);
+  Require(evidence.groundProtected(0),
+      "tilted ground point was not classified from its own scan-local height");
+  Require(!evidence.groundProtected(1),
+      "map-frame low point was incorrectly classified as scan-local ground");
 }
 
 void CalibratedOrigin() {
@@ -200,6 +235,25 @@ void GroundProtection() {
   const auto r = cleanStaticMap(f.options);
   Require(r.success && r.free_space_candidate_points == 1 && r.kept_ground_points == 1 &&
       r.removed_points == 0, "low ground safeguard was overridden by free rays");
+}
+
+void MixedVoxelGroundProtection() {
+  Fixture f;
+  const PointXYZI ground{1, 0, -.46F};
+  const PointXYZI body{1, .08F, -.41F};
+  writePcd(f.root / "map.pcd", {ground, body});
+  writePcd(f.root / "patches/a.pcd", {ground, body});
+  writePcd(f.root / "patches/b.pcd", {});
+  for (const auto* name : {"c.pcd", "d.pcd", "e.pcd"})
+    writePcd(f.root / "patches" / name, {{2, 0, -.92F}, {2, .16F, -.82F}});
+  f.options.dry_run = true;
+  const auto r = cleanStaticMap(f.options);
+  Require(r.success && r.source_points == 2 && r.free_space_candidate_points == 2,
+      "mixed-voxel fixture did not establish two contradicted points");
+  Require(r.kept_points == 1 && r.removed_points == 1 && r.kept_ground_points == 1,
+      "ground evidence protected an entire voxel instead of one confirmed point");
+  Require(r.score_candidate_points == 1 && r.dynamic_candidate_voxels == 1,
+      "instance and voxel reports disagree with point-level ground decisions");
 }
 
 void PoseOrder() {
@@ -267,8 +321,11 @@ int main(int argc, char** argv) {
     else if (name == "truncated_source") TruncatedSource();
     else if (name == "bad_threshold") BadThreshold();
     else if (name == "visibility") VisibilityRules();
+    else if (name == "endpoint_confirmation") EndpointConfirmationRadius();
+    else if (name == "local_ground") LocalGroundEvidence();
     else if (name == "calibrated_origin") CalibratedOrigin();
     else if (name == "ground") GroundProtection();
+    else if (name == "mixed_ground") MixedVoxelGroundProtection();
     else if (name == "pose_order") PoseOrder();
     else if (name == "missing_origin") MissingOrigin();
     else if (name == "surface") SurfaceProtection();

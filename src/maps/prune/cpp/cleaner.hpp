@@ -16,6 +16,7 @@ struct StaticCleanerOptions {
   std::optional<std::array<float, 3>> sensor_origin;
   std::uint32_t min_free_frames{3};
   float ray_tolerance_m{0.05F};
+  float endpoint_confirm_radius_m{0.05F};
   float endpoint_margin_m{0.20F};
   float max_ray_length_m{20.0F};
   float voxel_size_m{0.20F};

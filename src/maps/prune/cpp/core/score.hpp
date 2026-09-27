@@ -29,6 +29,7 @@ struct MovingScoreSummary {
 MovingScoreSummary
 scoreMovingInstances(const std::vector<PointXYZI> &source_map,
                      const std::unordered_map<VoxelKey, VoxelEvidence, VoxelKeyHash> &evidence,
+                     const std::vector<bool> &ground_evidence,
                      const StaticCleanerOptions &options);
 
 }  // namespace lingtu::map_cleaning
