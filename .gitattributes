@@ -1,6 +1,7 @@
 /.gitattributes text eol=lf
 scripts/*.sh text eol=lf
 scripts/**/*.sh text eol=lf
+/tools/release/sync_versions.sh text eol=lf
 src/native/recording/tests/*.sh text eol=lf
 scripts/lingtu text eol=lf
 scripts/deploy/**/*.service text eol=lf

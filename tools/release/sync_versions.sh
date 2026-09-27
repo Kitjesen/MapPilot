@@ -72,16 +72,6 @@ def write_if_changed(path: Path, text: str) -> None:
     print(f"  {path.relative_to(root)}")
 
 
-def replace_one(path: Path, pattern: str, repl: str) -> None:
-    if not path.exists():
-        return
-    text = path.read_text(encoding="utf-8")
-    new, count = re.subn(pattern, repl, text, count=1, flags=re.MULTILINE)
-    if count != 1:
-        raise SystemExit(f"ERROR: expected one version field in {path}")
-    write_if_changed(path, new)
-
-
 def replace_toml_section_string(path: Path, section: str, key: str, value: str) -> None:
     if not path.exists():
         return
@@ -122,12 +112,6 @@ def replace_toml_section_string(path: Path, section: str, key: str, value: str) 
 print(f"==> Syncing LingTu version: {version}")
 
 replace_toml_section_string(root / "pyproject.toml", "project", "version", version)
-
-replace_one(
-    root / "config" / "robots" / "unitree" / "go2" / "robot.yaml",
-    r'(^\s*firmware_version:\s*)".*"',
-    rf'\g<1>"{version}"',
-)
 
 uv_lock = root / "uv.lock"
 if uv_lock.exists():
