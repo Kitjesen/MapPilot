@@ -114,6 +114,8 @@ void WriteCompletePatchBundle(
       << "first_sequence 0\n"
       << "last_sequence " << (patch_count - 1U) << "\n"
       << "patch_count " << patch_count << "\n";
+  std::ofstream(root / "scan_origin.txt", std::ios::binary)
+      << "lidar_origin_in_patch 0.16 0 0.12\n";
 }
 
 std::filesystem::path WriteFakePgo(const std::filesystem::path& root, bool fail = false) {
@@ -137,6 +139,7 @@ std::filesystem::path WriteFakePgo(const std::filesystem::path& root, bool fail 
          << "copy /y \"%~2\\map.pcd\" \"%~4\\map.pcd\" > nul\r\n"
          << "copy /y \"%~2\\map.pcd\" \"%~4\\patches\\000001.pcd\" > nul\r\n"
          << "copy /y \"%~2\\map.pcd\" \"%~4\\patches\\000002.pcd\" > nul\r\n"
+         << "copy /y \"%~2\\scan_origin.txt\" \"%~4\\scan_origin.txt\" > nul\r\n"
          << "(echo LINGTU_PATCH_BUNDLE_V1&echo complete 1&echo dropped_count 0&echo first_sequence 0&echo last_sequence 1&echo patch_count 2)>\"%~4\\patch_bundle.manifest\"\r\n"
          << "(echo 000001.pcd 0 0 0 1 0 0 0&echo 000002.pcd 1 0 0 1 0 0 0)>\"%~4\\poses.txt\"\r\n"
          << "echo {\"schema\":\"lingtu.map_optimization.v1\",\"success\":true,\"performed\":true,\"code\":\"optimized\",\"converged\":true,\"pose_count\":2,\"patch_count\":2,\"factor_count\":2}>\"%~4\\map_optimization.json\"\r\n"
@@ -144,6 +147,7 @@ std::filesystem::path WriteFakePgo(const std::filesystem::path& root, bool fail 
          << "if exist \"%~2\\bad_counts\" echo {\"schema\":\"lingtu.map_optimization.v1\",\"success\":true,\"code\":\"optimized\",\"converged\":true,\"pose_count\":2,\"patch_count\":2,\"factor_count\":1}>\"%~4\\map_optimization.json\"\r\n"
          << "if exist \"%~2\\bad_manifest\" (echo LINGTU_PATCH_BUNDLE_V1&echo complete 1&echo dropped_count 0&echo first_sequence 0&echo last_sequence 2&echo patch_count 3)>\"%~4\\patch_bundle.manifest\"\r\n"
          << "if exist \"%~2\\bad_pose_set\" echo other.pcd 0 0 0 1 0 0 0 >\"%~4\\poses.txt\"\r\n"
+         << "if exist \"%~2\\missing_scan_origin\" del /q \"%~4\\scan_origin.txt\"\r\n"
          << "if exist \"%~2\\performed_without_loop\" (echo {\"ok\":true,\"performed\":true,\"code\":\"optimized\",\"message\":\"optimized\",\"pose_count\":2,\"factor_count\":1,\"sequential_count\":1,\"loop_count\":0} & exit /b 0)\r\n"
          << "echo {\"ok\":true,\"performed\":true,\"code\":\"optimized\",\"message\":\"optimized\",\"pose_count\":2,\"factor_count\":2,\"sequential_count\":1,\"loop_count\":1}\r\n";
   }
@@ -172,6 +176,7 @@ std::filesystem::path WriteFakePgo(const std::filesystem::path& root, bool fail 
          << "cp \"$2/map.pcd\" \"$4/map.pcd\"\n"
          << "cp \"$2/map.pcd\" \"$4/patches/000001.pcd\"\n"
          << "cp \"$2/map.pcd\" \"$4/patches/000002.pcd\"\n"
+         << "cp \"$2/scan_origin.txt\" \"$4/scan_origin.txt\"\n"
          << "printf 'LINGTU_PATCH_BUNDLE_V1\\ncomplete 1\\ndropped_count 0\\nfirst_sequence 0\\nlast_sequence 1\\npatch_count 2\\n' > \"$4/patch_bundle.manifest\"\n"
          << "printf '000001.pcd 0 0 0 1 0 0 0\\n000002.pcd 1 0 0 1 0 0 0\\n' > \"$4/poses.txt\"\n"
          << "printf '{\"schema\":\"lingtu.map_optimization.v1\",\"success\":true,\"performed\":true,\"code\":\"optimized\",\"converged\":true,\"pose_count\":2,\"patch_count\":2,\"factor_count\":2}\\n' > \"$4/map_optimization.json\"\n"
@@ -179,6 +184,7 @@ std::filesystem::path WriteFakePgo(const std::filesystem::path& root, bool fail 
          << "[ ! -f \"$2/bad_counts\" ] || printf '{\"schema\":\"lingtu.map_optimization.v1\",\"success\":true,\"code\":\"optimized\",\"converged\":true,\"pose_count\":2,\"patch_count\":2,\"factor_count\":1}\\n' > \"$4/map_optimization.json\"\n"
          << "[ ! -f \"$2/bad_manifest\" ] || printf 'LINGTU_PATCH_BUNDLE_V1\\ncomplete 1\\ndropped_count 0\\nfirst_sequence 0\\nlast_sequence 2\\npatch_count 3\\n' > \"$4/patch_bundle.manifest\"\n"
          << "[ ! -f \"$2/bad_pose_set\" ] || printf 'other.pcd 0 0 0 1 0 0 0\\n' > \"$4/poses.txt\"\n"
+         << "[ ! -f \"$2/missing_scan_origin\" ] || rm -f \"$4/scan_origin.txt\"\n"
          << "if [ -f \"$2/performed_without_loop\" ]; then\n"
          << "  printf '{\"ok\":true,\"performed\":true,\"code\":\"optimized\",\"message\":\"optimized\",\"pose_count\":2,\"factor_count\":1,\"sequential_count\":1,\"loop_count\":0}\\n'\n"
          << "  exit 0\n"
@@ -729,6 +735,7 @@ int main() {
 
   const auto pgo_source = root / "snapshots" / "pgo";
   WriteAsciiPcd(pgo_source / "map.pcd", 20.0);
+  std::ofstream(pgo_source / "scan_origin.txt") << "lidar_origin_in_patch 0.16 0 0.12\n";
   WriteValidConstraints(pgo_source / "pose_graph.constraints");
   const auto fake_pgo = WriteFakePgo(root);
   const auto auto_pgo_source = root / "snapshots" / "pgo_auto_skip";
@@ -780,6 +787,8 @@ int main() {
             ReadFile(store.MapPath("auto_optimized_map") / "map_optimization.json"),
             {"code"}) == "optimized",
         "automatic PGO did not publish the optimized bundle");
+    Require(store.CheckMapActivation("auto_optimized_map").ok,
+            "automatic PGO produced a map that cannot be activated for navigation");
   }
   const auto sam_source = root / "snapshots" / "sam_online";
   WriteCompletePatchBundle(sam_source, 19.5, 2U);
@@ -884,6 +893,8 @@ int main() {
   }
   const auto explicit_skip_source = root / "snapshots" / "pgo_explicit_skip";
   WriteAsciiPcd(explicit_skip_source / "map.pcd", 20.25);
+  std::ofstream(explicit_skip_source / "scan_origin.txt")
+      << "lidar_origin_in_patch 0.16 0 0.12\n";
   WriteValidConstraints(explicit_skip_source / "pose_graph.constraints");
   std::ofstream(explicit_skip_source / "force_skip", std::ios::binary) << "1\n";
   {
@@ -983,9 +994,12 @@ int main() {
   Require(ReadFile(store.ContentPath("warehouse") / "map.pcd") == v1_content,
           "invalid PGO constraints changed the canonical map.pcd");
 
-  for (const std::string invalid_output : {"bad_report", "bad_counts", "bad_manifest", "bad_pose_set"}) {
+  for (const std::string invalid_output : {
+           "bad_report", "bad_counts", "bad_manifest", "bad_pose_set", "missing_scan_origin"}) {
     const auto invalid_output_source = root / "snapshots" / invalid_output;
     WriteAsciiPcd(invalid_output_source / "map.pcd", 22.0);
+    std::ofstream(invalid_output_source / "scan_origin.txt")
+        << "lidar_origin_in_patch 0.16 0 0.12\n";
     WriteValidConstraints(invalid_output_source / "pose_graph.constraints");
     std::ofstream(invalid_output_source / invalid_output, std::ios::binary) << "1\n";
     SaveMapEngine engine(store);

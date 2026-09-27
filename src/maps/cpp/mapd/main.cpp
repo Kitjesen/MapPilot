@@ -318,13 +318,13 @@ Options ParseOptions(int argc, char **argv) {
                                                 std::to_string(save_request.octomap.resolution)),
                                                 "LINGTU_MAP_SAVE_OCTOMAP_RESOLUTION");
   save_request.octomap.support_dilation_cells =
-      ParseInt(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_SUPPORT_DILATION_CELLS", "1"),
+      ParseInt(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_SUPPORT_DILATION_CELLS", "0"),
                "LINGTU_MAP_SAVE_OCTOMAP_SUPPORT_DILATION_CELLS");
   save_request.octomap.free_layers_above =
-      ParseInt(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_FREE_LAYERS_ABOVE", "3"),
+      ParseInt(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_FREE_LAYERS_ABOVE", "0"),
                "LINGTU_MAP_SAVE_OCTOMAP_FREE_LAYERS_ABOVE");
   save_request.octomap.free_dilation_cells =
-      ParseInt(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_FREE_DILATION_CELLS", "1"),
+      ParseInt(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_FREE_DILATION_CELLS", "0"),
                "LINGTU_MAP_SAVE_OCTOMAP_FREE_DILATION_CELLS");
   save_request.octomap.frame_id = EnvOr("LINGTU_MAP_FRAME", "map");
   save_request.octomap.source_profile = EnvOr("LINGTU_PROFILE", "native_dds");

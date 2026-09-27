@@ -622,6 +622,7 @@ bool IsValidPerformedPgoResult(const PgoCliResult &result, bool automatic) {
 bool HasPgoOutputBundle(const std::filesystem::path &output, const PgoCliResult &cli) {
   const auto patches = output / "patches";
   if (!IsNonEmptyRegularFile(output / "map.pcd") || !IsNonEmptyRegularFile(output / "poses.txt") ||
+      !IsNonEmptyRegularFile(output / "scan_origin.txt") ||
       !IsNonEmptyRegularFile(output / "patch_bundle.manifest") ||
       !IsNonEmptyRegularFile(output / "map_optimization.json") ||
       !std::filesystem::is_directory(patches)) {
