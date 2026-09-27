@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <unordered_set>
+#include <limits>
 
 #include "core/evidence.hpp"
 
@@ -33,7 +33,8 @@ PointXYZI inverseTransformPoint(const PointXYZI& point, const Pose& pose) {
 VisibilityEvidence::VisibilityEvidence(const std::vector<PointXYZI>& points,
     const StaticCleanerOptions& options)
     : points_(points), options_(options), free_frames_(points.size()), seen_(points.size()),
-      hit_frames_(points.size()), ground_protected_(points.size()) {
+      hit_frames_(points.size()), ground_protected_(points.size()),
+      occupied_stamp_(points.size()), free_stamp_(points.size()) {
   for (std::size_t i = 0; i < points.size(); ++i)
     cells_[voxelKey(points[i], options_.voxel_size_m)].push_back(i);
 }
@@ -41,7 +42,9 @@ VisibilityEvidence::VisibilityEvidence(const std::vector<PointXYZI>& points,
 void VisibilityEvidence::observe(const std::vector<PointXYZI>& scan, const Pose& pose) {
   const auto& xyz = *options_.sensor_origin;
   const auto origin = transformPoint({xyz[0], xyz[1], xyz[2]}, pose);
-  std::unordered_set<std::size_t> occupied, free;
+  ++frame_;
+  occupied_.clear();
+  free_.clear();
   const double voxel = options_.voxel_size_m;
   const double margin = options_.endpoint_margin_m;
   const double confirm_radius = options_.endpoint_confirm_radius_m;
@@ -57,10 +60,13 @@ void VisibilityEvidence::observe(const std::vector<PointXYZI>& scan, const Pose&
           const auto found = cells_.find({key.x + x, key.y + y, key.z + z});
           if (found == cells_.end()) continue;
           for (const auto index : found->second)
-            if (distanceSquared(points_[index], endpoint) <= confirm_radius * confirm_radius) {
-              occupied.insert(index);
-              const auto local_source = inverseTransformPoint(points_[index], pose);
-              if (local_source.z <= options_.ground_z_threshold) ground_protected_[index] = true;
+            if (occupied_stamp_[index] != frame_ &&
+                distanceSquared(points_[index], endpoint) <= confirm_radius * confirm_radius) {
+              occupied_stamp_[index] = frame_;
+              occupied_.push_back(index);
+              if (!ground_protected_[index] &&
+                  inverseTransformPoint(points_[index], pose).z <= options_.ground_z_threshold)
+                ground_protected_[index] = true;
             }
         }
 
@@ -103,11 +109,15 @@ void VisibilityEvidence::observe(const std::vector<PointXYZI>& scan, const Pose&
             const auto found = cells_.find({x, y, z});
             if (found == cells_.end()) continue;
             for (const auto index : found->second) {
+              if (free_stamp_[index] == frame_) continue;
               const auto& point = points_[index];
               const double offset[3] = {point.x - origin.x, point.y - origin.y, point.z - origin.z};
               const double along = offset[0] * direction[0] + offset[1] * direction[1] + offset[2] * direction[2];
               const double cross2 = std::max(0.0, distanceSquared(point, origin) - along * along);
-              if (along > margin && along < end && cross2 <= tube * tube) free.insert(index);
+              if (along > margin && along < end && cross2 <= tube * tube) {
+                free_stamp_[index] = frame_;
+                free_.push_back(index);
+              }
             }
           }
       travelled = next[axis];
@@ -116,13 +126,14 @@ void VisibilityEvidence::observe(const std::vector<PointXYZI>& scan, const Pose&
     }
   }
   // Occupied endpoints win over free rays in the same frame; one vote per frame.
-  for (const auto index : occupied) {
+  for (const auto index : occupied_) {
     seen_[index] = true;
     free_frames_[index] = 0;
     if (hit_frames_[index] < 2) ++hit_frames_[index];
   }
-  for (const auto index : free)
-    if (seen_[index] && occupied.count(index) == 0 && free_frames_[index] < options_.min_free_frames)
+  for (const auto index : free_)
+    if (seen_[index] && occupied_stamp_[index] != frame_ &&
+        free_frames_[index] < options_.min_free_frames)
       ++free_frames_[index];
 }
 

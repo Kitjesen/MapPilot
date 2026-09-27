@@ -26,6 +26,12 @@ class VisibilityEvidence {
   std::vector<bool> seen_;
   std::vector<std::uint32_t> hit_frames_;
   std::vector<bool> ground_protected_;
+  // A stamp equal to frame_ marks the point in the current frame; 0 is never current.
+  std::uint32_t frame_{0};
+  std::vector<std::uint32_t> occupied_stamp_;
+  std::vector<std::uint32_t> free_stamp_;
+  std::vector<std::size_t> occupied_;
+  std::vector<std::size_t> free_;
 };
 
 }  // namespace lingtu::map_cleaning
