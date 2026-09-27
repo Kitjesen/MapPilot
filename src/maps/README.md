@@ -94,30 +94,37 @@ files does not prove localization, body clearance, or footprint support.
 The navigation OctoMap has its own evidence contract:
 
 - When a save keeps `poses.txt`, `scan_origin.txt`, and `patches/`, the builder
-  replays each saved scan from its sensor origin. Only endpoints inside a voxel
-  that the cleaned `map.pcd` retained are inserted, so returns removed by the
-  save-time dynamic filter leave neither hits nor carved free space. Voxels keep
-  the hit/miss log-odds their rays accumulated; space no ray reached stays
-  unknown. The last metre of a ray does not lower a retained voxel, or a cell
+  replays each saved scan from its sensor origin. An endpoint matches retained
+  geometry when its voxel remains in the cleaned `map.pcd`, or when a retained
+  point is within 5 cm in 3D. The metric fallback uses the same confirmation
+  distance as prune, avoiding a lost hit when a sampled surface and its measured
+  return fall on opposite sides of a voxel boundary. Hits are written at the
+  measured endpoint, never at an unobserved sampled representative.
+  Removed endpoints still contribute their measured free prefix, but no hit or
+  inferred free space at or beyond the endpoint. Within a scan, updates are
+  deduplicated and hits win over misses. Voxels keep the hit/miss log-odds their
+  rays accumulated; space no ray reached stays unknown.
+  The last metre of a ray does not lower a retained voxel, or a cell
   beside one in the same layer: near its endpoint a ray grazing a floor stays
   within one voxel of the surface, and OctoMap would mark those surface cells
   (and 5 cm holes in the sampled floor) free although the ray never passed
   below the surface; the planner reads such a free cell as a drop. The rest of
   the ray still clears them, so a person the dynamic filter missed is carved
   away by later rays through where they stood. Every occupied voxel is a
-  measured hit; a guarded cell no endpoint reached stays unknown. On 903room at
-  5 cm the Go2 planner accepts 91% of the path the robot walked while mapping
-  (22 of 1356 samples lack ground support), against 56% for plain replay (which
-  freed 37% of the retained voxels) and 61% when every retained voxel was forced
-  occupied (which also put unmeasured points on the walked path).
+  measured hit; a guarded cell no endpoint reached stays unknown. Evidence
+  counts and fixed-input offline results are recorded in
+  [the 2026-09-27 validation record](../../docs/operations/maps-evidence-20260927.md).
+  An offline route is not field-motion acceptance.
 - Without those files the builder marks occupied voxels from sampled points and
   adds the configured free envelope above supports. That artifact is a preview.
 - `octomap.ot` is written with OctoMap's full encoding, never `writeBinary()`,
   which would reduce every voxel to occupied/free. `metadata.json` records
   `artifacts.octomap.encoding: full_log_odds`, the `sensor_model` the build used
   (OctoMap's defaults, which is what every reader applies), and
-  `navigation_ready`: `true` only for a saved-ray build. An artifact that is not
-  `full_log_odds` is rebuilt rather than reused.
+  `navigation_ready`: `true` only for a saved-ray build. Reuse requires
+  `full_log_odds`, the current builder version (`0.3.1`), and complete saved-ray
+  statistics. The version change rebuilds old exact-key-only artifacts; it does
+  not rerun cleanup or restore missing source geometry.
 - The build claims saved rays only when the scans are complete: `poses.txt`
   and `scan_origin.txt` are present and, when SLAM wrote a
   `patch_bundle.manifest`, no patch was dropped. A replay missing scans would
