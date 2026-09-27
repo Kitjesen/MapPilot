@@ -219,8 +219,8 @@ class Backend::Impl {
         !std::isfinite(input.clock.timestampS)) {
       return stop(LocalPlanStatus::InvalidInput, "route_invalid");
     }
-    // Direct backend callers also obey reference-generation ownership. Task
-    // validates each immutable snapshot on receipt; timer ticks reuse it.
+    // Validate a newly accepted immutable reference here so direct callers and
+    // the asynchronous Task share one geometry-validation boundary.
     if (referenceIdentityChanged(input, *route)) {
       for (int index = 0; index < route->count; ++index) {
         if (!finitePoint(route->points[index]))
@@ -320,6 +320,11 @@ class Backend::Impl {
       rememberReference(input, *route);
       referenceRejected_ = output.targetRejected;
     }
+    const Vec3 localTarget = planningPoint(fsm_->localTarget());
+    debug_.localTargetValid = fsm_->localTargetReady() && referenceInitialized_ &&
+                              !referenceRejected_ && finitePoint(localTarget);
+    if (debug_.localTargetValid)
+      debug_.localTarget = localTarget;
     debug_.searchReason = stateName(output.state);
 
     if (cancel && cancel()) {
@@ -428,7 +433,6 @@ class Backend::Impl {
       failure->intent = *intent;
     failure->reference.assign(route.points, route.points + route.count);
     failure->referenceGeneration = route.generation;
-    failure->referenceReachesGoal = route.reachesGoal;
     failure->collision = input.environment.collision;
     const auto &predictions = input.environment.predictions;
     if (predictions.count > 0 && predictions.fresh(input.clock.timestampS))

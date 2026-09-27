@@ -16,7 +16,7 @@ nav_kernel::LocalPlanRequest freeSpaceInput(double timestamp_s = 1.0) {
   nav_kernel::LocalPlanRequest input;
   input.robot.pose = {{0.0, 0.0, 0.0}, 0.0};
   input.objective = nav_kernel::RouteTarget{
-      {route.data(), static_cast<int>(route.size()), 1, false}};
+      {route.data(), static_cast<int>(route.size()), 1}};
   input.clock.timestampS = timestamp_s;
   return input;
 }

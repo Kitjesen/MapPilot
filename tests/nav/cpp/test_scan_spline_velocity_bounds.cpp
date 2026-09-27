@@ -24,7 +24,7 @@ void expectMovingBoundaryPlan(const Eigen::Vector3d &start,
   nav_kernel::LocalPlanRequest request;
   request.robot.pose = {route.front(), 0.0};
   request.objective = nav_kernel::RouteTarget{
-      {route.data(), static_cast<int>(route.size()), 1, false}};
+      {route.data(), static_cast<int>(route.size()), 1}};
   request.identity = {1, 1, 0};
   request.clock.timestampS = 1.0;
   request.environment.collision = bitmap.view();

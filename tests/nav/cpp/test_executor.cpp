@@ -799,7 +799,7 @@ TEST(Executor, ScanMotionIntentPublishedSplineHonorsExactDerivativeLimits) {
     request.robot.kinematics.linearVelocity = scenario.initial_velocity;
     request.objective = nav_kernel::MotionIntentTarget{
         {scenario.direction_rad * 180.0 / M_PI, scenario.speed / 0.75, 3.5, 90.0},
-        {route.data(), static_cast<int>(route.size()), 1U, false}};
+        {route.data(), static_cast<int>(route.size()), 1U}};
     request.maxLinearSpeedMps = scenario.speed;
     request.identity = {1U, 1U, 0U};
     request.clock = {100.0, false, nav_kernel::PlanClockMode::External};
@@ -2957,7 +2957,7 @@ TEST(Executor, RouteHeightCalibrationIsStableAcrossProgress) {
       << "route elevation must not be shifted back down when the robot has not climbed";
 }
 
-TEST(Executor, ScanProjectsOntoSparseRouteInsteadOfDrivingBackToWaypoint) {
+TEST(Executor, ScanReportsItsActualLocalTargetOnTheFullReference) {
   auto executor = makeScanExecutor(3.0);
   executor.setRoute(route({
       {0.0, 0.0, 0.0},
@@ -2971,8 +2971,12 @@ TEST(Executor, ScanProjectsOntoSparseRouteInsteadOfDrivingBackToWaypoint) {
   });
 
   ASSERT_TRUE(output.path_found) << output.reason;
-  EXPECT_NEAR(output.target.x, 8.0, 1e-6);
-  EXPECT_NEAR(output.target.y, 0.0, 1e-6);
+  ASSERT_TRUE(output.local_planner_debug.localTargetValid);
+  EXPECT_NEAR(output.target.x, output.local_planner_debug.localTarget.x, 1e-6);
+  EXPECT_NEAR(output.target.y, output.local_planner_debug.localTarget.y, 1e-6);
+  EXPECT_LT(output.target.x, 10.0);
+  EXPECT_EQ(output.target_index, 2U)
+      << "SCAN target_index remains the global-route endpoint index";
   ASSERT_GE(output.local_path_body.size(), 2U);
   for (const auto &point : output.local_path_body) {
     EXPECT_GE(point.x, -1e-6) << "the local route must not fold back to the sparse segment start";

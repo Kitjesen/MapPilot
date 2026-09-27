@@ -108,7 +108,7 @@ class PlannerFixture {
     request.robot.pose = vehicle_;
     route_ = {vehicle_.position, target_};
     request.objective = RouteTarget{{
-        route_.data(), static_cast<int>(route_.size()), 0, true}};
+        route_.data(), static_cast<int>(route_.size()), 0}};
     request.environment.obstacles = {obstaclePoints, pointCount};
     request.environment.traversability = traversability_;
     request.clock.timestampS = timestampS;

@@ -113,7 +113,7 @@ int main(int argc, char** argv) {
     input.robot.pose = {route.front(), 0.0};
     input.objective = nav_kernel::RouteTarget{{
         route.data(), static_cast<int>(route.size()),
-        1, false}};
+        1}};
     input.identity = {1, 1, 0};
     input.clock.timestampS = 1.0 + 0.01 * static_cast<double>(iteration + 5);
     input.environment.collision = collision.view(input.clock.timestampS, 1);

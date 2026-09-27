@@ -51,7 +51,7 @@ std::vector<nav_kernel::Vec3> planningPathToMap(
 nav_kernel::LocalPlanRequest makeLocalPlanRequest(
     const nav_kernel::Pose &vehicle, const std::vector<nav_kernel::Vec3> &route,
     const std::vector<nav_kernel::Vec3> *reference_route,
-    std::uint64_t route_generation, bool reaches_goal,
+    std::uint64_t route_generation,
     nav_kernel::LocalKinematicState kinematics, const ExecutionObservation &observation,
     const float *obstacle_xyzh, int obstacle_count, double timestamp_s,
     bool execution_frozen, const TraversabilityGridView &traversability,
@@ -60,7 +60,6 @@ nav_kernel::LocalPlanRequest makeLocalPlanRequest(
       route.empty() ? nullptr : route.data(),
       static_cast<int>(route.size()),
       route_generation,
-      reaches_goal,
   };
   nav_kernel::LocalPlanRequest request;
   request.robot = {vehicle, kinematics};
@@ -73,7 +72,6 @@ nav_kernel::LocalPlanRequest makeLocalPlanRequest(
         reference_route->data(),
         static_cast<int>(reference_route->size()),
         route_generation,
-        true,
     };
   }
   request.identity = {
@@ -517,11 +515,27 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
 
   goal_quiet_since_s_ = goal_last_odom_s_ = -1.0;
 
-  const SegmentTarget target = buildSegment(map_body, planning_body, map_from_odom);
-  buildReference(target, map_from_odom);
-  applyCommittedLocalGuide(map_body, planning_body, map_from_odom, timestamp_s);
-  output.target_index = target.index;
-  output.target = target.point;
+  const bool scan =
+      local_planner_.params().backend == nav_kernel::LocalPlannerBackend::Scan;
+  SegmentTarget target;
+  const std::vector<nav_kernel::Vec3> *plan_route = nullptr;
+  if (scan) {
+    if (reference.empty() || config_.planning_frame == PlanningFrame::Odom) {
+      target = buildSegment(map_body, planning_body, map_from_odom);
+      buildReference(target, map_from_odom);
+    }
+    plan_route = &reference;
+    output.target_index = route.size() - 1;
+    output.target = route.back();
+    output.target.z += height_offset_.value_or(0.0);
+  } else {
+    target = buildSegment(map_body, planning_body, map_from_odom);
+    buildReference(target, map_from_odom);
+    applyCommittedLocalGuide(map_body, planning_body, map_from_odom, timestamp_s);
+    plan_route = &segment;
+    output.target_index = target.index;
+    output.target = target.point;
+  }
   output.target_distance_m = nav_kernel::distance3D(output.target, map_body.position);
 
   if (recovery_observation_waiting_) {
@@ -544,7 +558,7 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   const nav_kernel::LocalKinematicState kinematics =
       planningKinematics(planning_body, observation, timestamp_s);
   nav_kernel::LocalPlanRequest plan_request = makeLocalPlanRequest(
-      planning_body, segment, &reference, generation, target.reachesGoal, kinematics, observation,
+      planning_body, *plan_route, scan ? nullptr : &reference, generation, kinematics, observation,
       obstacle_xyzh_planning, obstacle_count, timestamp_s,
       traj_frozen_, traversability);
   plan_request.maxLinearSpeedMps = std::min(
@@ -555,6 +569,12 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   }
   nav_kernel::LocalPlan plan =
       planLocal(plan_request, map_from_odom, &output.local_planner_debug);
+  if (scan && output.local_planner_debug.localTargetValid) {
+    output.target = map_from_odom.mapPointFromOdom(
+        output.local_planner_debug.localTarget);
+    output.target_distance_m =
+        nav_kernel::distance3D(output.target, map_body.position);
+  }
 
   const nav_kernel::LocalPlanStatus plan_status = plan.status();
   const bool plan_ready = plan.ready();
@@ -939,7 +959,7 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
       config_.teleop_intent_max_deviation_deg,
   };
   nav_kernel::LocalPlanRequest plan_request = makeLocalPlanRequest(
-      odom_map_body, intent_route, nullptr, generation, false, kinematics, observation,
+      odom_map_body, intent_route, nullptr, generation, kinematics, observation,
       obstacle_xyzh, obstacle_count, timestamp_s,
       traj_frozen_, traversability, &motion_intent);
   plan_request.maxLinearSpeedMps = std::min(

@@ -83,6 +83,12 @@ class SCANReplanFSM {
 
   [[nodiscard]] ScanReplanState state() const noexcept;
   [[nodiscard]] bool hasTarget() const noexcept;
+  [[nodiscard]] const Eigen::Vector3d &localTarget() const noexcept {
+    return localTargetPt_;
+  }
+  [[nodiscard]] bool localTargetReady() const noexcept {
+    return haveTarget_ && !haveNewTarget_;
+  }
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 

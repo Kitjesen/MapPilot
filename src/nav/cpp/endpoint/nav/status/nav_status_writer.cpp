@@ -732,7 +732,6 @@ std::string scanFailureSnapshotJson(const nav_kernel::ScanFailureSnapshot &failu
         << ", \"max_z\": " << prediction.maxZ << '}';
   }
   out << "]}, \"reference_generation\": " << failure.referenceGeneration
-      << ", \"reference_reaches_goal\": " << failure.referenceReachesGoal
       << ", \"reference\": ";
   points(failure.reference);
   out << ", \"intent\": ";

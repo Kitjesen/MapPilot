@@ -146,6 +146,14 @@ OctoPlanner owns the saved-map route and terrain constraints. SCAN owns the
 heading-dependent body envelope, live obstacle avoidance, and local trajectory.
 The global route radius is independent of SCAN's two-cylinder dimensions.
 
+In the production map-frame SCAN path, Executor constructs the complete
+reference once and reuses it until route replacement, suspension, or a frame
+epoch change. SCAN selects the local target; Executor does not rebuild a CMU
+corridor segment every control tick. Local target diagnostics use SCAN's
+generated target, falling back to the global endpoint until a new target is
+available. For SCAN, `target_index` identifies that global endpoint rather than
+local progress. CMU and odom-frame reference construction remain unchanged.
+
 SCAN receives fresh dynamic predictions directly. Executor does not add a
 second prediction-based wait/resume timer before local planning; it retains
 route progress, recovery, tracking, and final motion gates. A prediction that

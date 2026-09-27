@@ -198,7 +198,6 @@ struct LocalRouteView {
   const Vec3 *points{nullptr};
   int count{0};
   std::uint64_t generation{0};
-  bool reachesGoal{false};
 
   [[nodiscard]] bool valid() const noexcept { return points != nullptr && count >= 2; }
 
@@ -405,7 +404,6 @@ struct ScanFailureSnapshot {
   std::optional<LocalMotionIntent> intent;
   std::vector<Vec3> reference;
   std::uint64_t referenceGeneration{0};
-  bool referenceReachesGoal{false};
   LocalCollisionMapView collision;
   std::vector<PredictedObstacle> predictions;
   double predictionsObservedAtS{0.0}, predictionsHorizonS{1.0};
@@ -437,6 +435,8 @@ struct LocalPlannerDebugSnapshot {
   int anchorSearches{0};
   bool continuityReused{false};
   bool splineFallback{false};
+  bool localTargetValid{false};
+  Vec3 localTarget{};
   ScanAttemptDiagnostics scanAttempt;
   std::shared_ptr<const ScanFailureSnapshot> lastScanFailure;
   double pathScale{0.0};

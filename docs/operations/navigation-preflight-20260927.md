@@ -130,3 +130,33 @@ NX 若首次保存报告 `dynamic_filter_timeout`，采集数据保留，可在
 
 仍缺少首选 `903room_v4_5cm_rays` 完整包和现场墙/柱/残影标注，不能用旧图三个路线
 通过来宣称所有残影清理正确。只有上述实机运动验证完成，才能报告导航验收通过。
+
+## 2026-09-28 冗余清理
+
+- `57f849e1`：MCP 不再接收和缓存无人读取的目标状态，实际查询继续使用 Gateway。
+  删除准入别名 `can_execute_autonomy`，探索服务同步使用 `can_accept_goal`。
+  审查时称别名“没有消费者”不准确；探索服务确实读取它，已同步迁移并验证三态语义。
+- `46986e7d`：默认保存和 `build_navigation_package` 不再构建 ESDF、通行图文件。
+  occupancy 仍服务于探索，OctoMap 仍用于三维导航；显式辅助产物构建入口保留。
+  删除未执行的 OctoMap timeout 和 saved-ray 保存中无效的合成膨胀环境变量。
+- 生产 `SCAN + Map` 在完整 reference 已存在时复用它，首次构建、暂停/epoch 后的
+  重建、CMU 和 Odom-frame 构建路径保持原流程。局部目标由 SCAN 提供；新目标尚未
+  生成时显示全局终点，不读取旧局部目标。`target_index` 对 SCAN 表示全局终点索引。
+- 删除局部请求和失败快照中无控制作用的 `reachesGoal`；Task 不再重复逐点检查有限数，
+  Backend 保留新 reference 的统一检查，包括直接调用与异步调用。
+
+Gateway/MCP/探索/装配共 116 项回归及 41 个 subtests 已通过，受影响 Python 文件
+ruff 通过。三态测试先复现旧消费者在仅提供 `can_accept_goal=True` 时错误拒绝启动，
+同步迁移后允许、拒绝、未知三种结果均符合原语义。
+
+WSL `build/maps-mapd-wsl` 的 UDS dispatch 与 SaveMap 两项原生测试通过，覆盖默认
+省略 ESDF/通行图、occupancy 与完整 `.ot` 保留，以及显式构建辅助产物；`mapd`、
+`lingtu-mapctl` 编译通过。Windows 的另一个 Maps 构建目录未找到 OctoMap，因此
+不能运行完整 SaveMap 场景；该场景使用上述 WSL 结果，不记为 Windows 通过。
+
+Windows Release 的 `navd` 和六个受影响导航测试程序均编译通过。
+局部规划核心 50 项、样条速度约束 3 项、恢复序列 14 项、异步规划任务 17 项、
+SCAN 81 项、Executor 96 项全部通过，共 261 项，覆盖非有限路线输入拒绝、
+新 reference 的目标更新、暂停恢复、坐标变换、CMU 原有路径和轨迹约束。
+
+本轮未改变 unknown、支撑、碰撞、步高、坡度或速度限值，未执行 MuJoCo 运动或实机部署。

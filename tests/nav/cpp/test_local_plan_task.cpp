@@ -30,7 +30,7 @@ struct RequestFixture {
         bitmap({-5.0, -5.0, -1.0}, {5.0, 5.0, 2.0}, 0.1) {
     request.robot.pose = {route.front(), 0.0};
     request.objective = nav_kernel::RouteTarget{
-        {route.data(), static_cast<int>(route.size()), 1, false}};
+        {route.data(), static_cast<int>(route.size()), 1}};
     request.identity = {1, 1, 0};
     request.clock.timestampS = 1.0;
     request.environment.collision = bitmap.view(1.0, 1);
@@ -45,7 +45,7 @@ struct RequestFixture {
   void setIntent(double directionBodyDeg, std::uint64_t generation = 1) {
     request.objective = nav_kernel::MotionIntentTarget{
         {directionBodyDeg, 1.0, 2.0, 90.0},
-        {route.data(), static_cast<int>(route.size()), generation, false}};
+        {route.data(), static_cast<int>(route.size()), generation}};
   }
 
   std::vector<nav_kernel::Vec3> route;
@@ -84,7 +84,7 @@ TEST(LocalPlanTask, BlockedTargetInvalidatesCachedSplineAndRecoversOnMapUpdate) 
   const auto oldId = std::get<nav_kernel::SplineTarget>(first.target()).trajectoryId;
   for (int x = -1; x <= 21; ++x)
     fixture.bitmap.occupyInflated({x * 0.1F, 0.0F, 0.5F}, 0.15, 0.1, 0.1);
-  fixture.request.objective = nav_kernel::RouteTarget{{fixture.route.data(), 2, 2, false}};
+  fixture.request.objective = nav_kernel::RouteTarget{{fixture.route.data(), 2, 2}};
   nav_kernel::LocalPlan plan;
   for (int tick = 0; tick < 200; ++tick) {
     fixture.request.clock.timestampS += 0.01;
@@ -335,7 +335,7 @@ TEST(LocalPlanTask, RouteGenerationOwnsReferenceReplacement) {
             std::abs(retained.previewPath().back().y));
 
   fixture.request.objective = nav_kernel::RouteTarget{
-      {fixture.route.data(), static_cast<int>(fixture.route.size()), 2, false}};
+      {fixture.route.data(), static_cast<int>(fixture.route.size()), 2}};
   nav_kernel::LocalPlan replaced = retained;
   for (int tick = 0; tick < 200; ++tick) {
     fixture.request.clock.timestampS += 0.01;
@@ -364,7 +364,7 @@ TEST(LocalPlanTask, OwnsReferenceAcrossAsyncTicks) {
   std::vector<nav_kernel::Vec3>{{0.0, 0.0, 0.5}, {0.0, 2.0, 0.5}}
       .swap(fixture.route);
   fixture.request.objective = nav_kernel::RouteTarget{
-      {fixture.route.data(), static_cast<int>(fixture.route.size()), 1, false}};
+      {fixture.route.data(), static_cast<int>(fixture.route.size()), 1}};
 
   const nav_kernel::LocalPlan plan = waitForPlan(task, fixture);
   ASSERT_TRUE(plan.ready());
@@ -380,7 +380,7 @@ TEST(LocalPlanTask, UsesCompleteReferenceInsteadOfShortGuide) {
   const std::vector<nav_kernel::Vec3> reference{
       {0.0, 0.0, 0.5}, {0.0, 1.0, 0.5}, {0.0, 2.0, 0.5}};
   fixture.request.reference = {
-      reference.data(), static_cast<int>(reference.size()), 1, true};
+      reference.data(), static_cast<int>(reference.size()), 1};
 
   const nav_kernel::LocalPlan plan = waitForPlan(task, fixture);
 
@@ -400,7 +400,7 @@ TEST(LocalPlanTask, DropsCompletionForSupersededReference) {
 
   fixture.route[1] = {0.0, 2.0, 0.5};
   fixture.request.objective = nav_kernel::RouteTarget{
-      {fixture.route.data(), static_cast<int>(fixture.route.size()), 2, false}};
+      {fixture.route.data(), static_cast<int>(fixture.route.size()), 2}};
 
   nav_kernel::LocalPlan plan;
   for (int tick = 0; tick < 400; ++tick) {

@@ -216,7 +216,7 @@ struct RequestFixture {
   explicit RequestFixture(std::vector<Vec3> value, double resolution = 0.1)
       : route(std::move(value)), bitmap({-5.0, -5.0, -1.0}, {5.0, 5.0, 2.0}, resolution) {
     request.robot.pose = {route.front(), 0.0};
-    request.objective = RouteTarget{{route.data(), static_cast<int>(route.size()), 1, false}};
+    request.objective = RouteTarget{{route.data(), static_cast<int>(route.size()), 1}};
     request.identity = {1, 1, 0};
     request.clock.timestampS = 1.0;
     request.environment.collision = bitmap.view(1.0, 1);
@@ -685,7 +685,7 @@ TEST(ScanReboundInitialization, FinishesCollisionSegmentBeyondCheckedPrefix) {
   using namespace nav_kernel::local::scan::upstream;
   RequestFixture fixture({{0.0, 0.0, 0.5}, {4.0, 0.0, 0.5}});
   fixture.request.objective = nav_kernel::MotionIntentTarget{
-      {0.0, 0.4, 4.0, 90.0}, {fixture.route.data(), 2, 1, false}};
+      {0.0, 0.4, 4.0, 90.0}, {fixture.route.data(), 2, 1}};
   for (int x = 12; x <= 33; ++x)
     for (int y = -3; y <= 2; ++y)
       fixture.bitmap.occupy({x * 0.1 + 0.05, y * 0.1 + 0.05, 0.55});
@@ -852,7 +852,6 @@ TEST(ScanAttemptDiagnostics, BackendRetainsFirstFailedTickAndOwnsItsCompleteMapA
     EXPECT_EQ(first->attempt.reason, "collision_at_trajectory_start");
     EXPECT_TRUE(first->checkObstacle);
     EXPECT_EQ(first->referenceGeneration, 1U);
-    EXPECT_FALSE(first->referenceReachesGoal);
     EXPECT_EQ(first->reference.size(), 2U);
     EXPECT_GT(first->candidateControlPoints.size(), 3U);
     ASSERT_TRUE(first->collision.inflatedStorage);
@@ -1154,7 +1153,7 @@ TEST(ScanBackend, MotionIntentFindsEitherOpenSideWhenReferenceTargetOrConnection
                                   z * 0.1 + 0.025});
       fixture.refreshCollision(2);
       fixture.request.objective = nav_kernel::MotionIntentTarget{
-          {0.0, 1.0, 3.5, 90.0}, {fixture.route.data(), 2, 1, false}};
+          {0.0, 1.0, 3.5, 90.0}, {fixture.route.data(), 2, 1}};
       fixture.request.maxLinearSpeedMps = 0.5;
       const auto params = scanParams();
       const nav_kernel::local::scan::Grid grid(params, fixture.request);
@@ -1199,7 +1198,7 @@ TEST(ScanBackend, MotionIntentShortensBlockedConnectionWhenSideTargetsAreUnavail
       fixture.bitmap.occupy({0.825, y * 0.1 + 0.025, z * 0.1 + 0.025});
   fixture.refreshCollision(2);
   fixture.request.objective = nav_kernel::MotionIntentTarget{
-      {0.0, 1.0, 3.5, 90.0}, {fixture.route.data(), 2, 1, false}};
+      {0.0, 1.0, 3.5, 90.0}, {fixture.route.data(), 2, 1}};
   fixture.request.maxLinearSpeedMps = 0.5;
   const auto params = scanParams();
   const nav_kernel::local::scan::Grid grid(params, fixture.request);
@@ -1234,7 +1233,7 @@ TEST(ScanBackend, MotionIntentPrefersAvailableRequestedDirectionOverLongSideDeto
     fixture.bitmap.occupy({x * 0.05 + 0.025, 1.025, 0.525});
   fixture.refreshCollision(2);
   fixture.request.objective = nav_kernel::MotionIntentTarget{
-      {90.0, 1.0, 3.5, 90.0}, {fixture.route.data(), 2, 1, false}};
+      {90.0, 1.0, 3.5, 90.0}, {fixture.route.data(), 2, 1}};
   fixture.request.maxLinearSpeedMps = 0.5;
   auto params = scanParams();
   params.scan.voxelResolution = 0.05;
@@ -1283,7 +1282,7 @@ TEST(ScanBackend, MotionIntentUsesShortSideTargetsWhenLongCandidatesAreBlocked) 
         }
         fixture.refreshCollision(2);
         fixture.request.objective = nav_kernel::MotionIntentTarget{
-            {0.0, 1.0, 3.5, 90.0}, {fixture.route.data(), 2, 1, false}};
+            {0.0, 1.0, 3.5, 90.0}, {fixture.route.data(), 2, 1}};
         fixture.request.maxLinearSpeedMps = 0.5;
         auto params = scanParams();
         params.scan.voxelResolution = 0.05;
@@ -1336,7 +1335,7 @@ TEST(ScanBackend, MotionIntentDoesNotDetourOutsideAllowedDirection) {
         fixture.bitmap.occupy({x * 0.1 + 0.025, y * 0.1 + 0.025, z * 0.1 + 0.025});
   fixture.refreshCollision(2);
   fixture.request.objective = nav_kernel::MotionIntentTarget{
-      {0.0, 1.0, 3.5, 0.0}, {fixture.route.data(), 2, 1, false}};
+      {0.0, 1.0, 3.5, 0.0}, {fixture.route.data(), 2, 1}};
   nav_kernel::local::scan::Backend backend(scanParams());
   LocalPlan plan;
   for (int tick = 0; tick < 10; ++tick) {
@@ -1433,7 +1432,7 @@ TEST(ScanBackend, MotionIntentKeepsSideTargetThenRejoinsClearedReference) {
         fixture.bitmap.occupy({x * 0.1 + 0.025, y * 0.1 + 0.025, z * 0.1 + 0.025});
   fixture.refreshCollision(2);
   fixture.request.objective = nav_kernel::MotionIntentTarget{
-      {0.0, 1.0, 3.5, 90.0}, {fixture.route.data(), 2, 1, false}};
+      {0.0, 1.0, 3.5, 90.0}, {fixture.route.data(), 2, 1}};
   fixture.request.maxLinearSpeedMps = 0.5;
   nav_kernel::local::scan::Backend backend(scanParams());
   LocalPlan plan;
@@ -1494,7 +1493,7 @@ TEST(ScanBackend, MotionIntentRejectsFreeSideEndpointsBehindAnEnclosure) {
       }
   fixture.refreshCollision(2);
   fixture.request.objective = nav_kernel::MotionIntentTarget{
-      {0.0, 1.0, 3.5, 90.0}, {fixture.route.data(), 2, 1, false}};
+      {0.0, 1.0, 3.5, 90.0}, {fixture.route.data(), 2, 1}};
   const auto params = scanParams();
   const nav_kernel::local::scan::Grid grid(params, fixture.request);
   ASSERT_EQ(grid.inflatedOccupancy({0.025, 2.025, 0.525}, 0.0), 0);
@@ -1749,7 +1748,7 @@ TEST(ScanGridAdapter, LateralIntentUsesBodyFootprintInsteadOfPathTangent) {
   nav_kernel::local::scan::Grid autonomous(params, fixture.request);
   EXPECT_EQ(autonomous.segmentInflatedOccupancy(fixture.route.front(), M_PI / 2, end, M_PI / 2), 0);
   fixture.request.objective = nav_kernel::MotionIntentTarget{
-      {90.0, 0.5, 2.0, 90.0}, {fixture.route.data(), 2, 1, false}};
+      {90.0, 0.5, 2.0, 90.0}, {fixture.route.data(), 2, 1}};
   nav_kernel::local::scan::Grid lateral(params, fixture.request);
   EXPECT_EQ(lateral.segmentInflatedOccupancy(fixture.route.front(), M_PI / 2, end, M_PI / 2), 1);
   EXPECT_EQ(lateral.inflatedOccupancy({0.05, 0.75, 0.55}, M_PI / 2), 1);
@@ -1989,15 +1988,19 @@ TEST(ScanBackend, KeepsPublishedSplineUntilNewReferenceIsPlanned) {
     ready = backend.tick(fixture.request);
   }
   ASSERT_TRUE(ready.ready());
+  ASSERT_TRUE(backend.debugSnapshot().localTargetValid);
+  EXPECT_GT(backend.debugSnapshot().localTarget.x, 0.0);
   const auto previousId = std::get<SplineTarget>(ready.target()).trajectoryId;
 
   fixture.route = {{0.0, 0.0, 0.5}, {-2.0, 0.0, 0.5}};
   fixture.request.objective = RouteTarget{{
-      fixture.route.data(), static_cast<int>(fixture.route.size()), 2, false}};
+      fixture.route.data(), static_cast<int>(fixture.route.size()), 2}};
   fixture.request.clock.timestampS += 0.01;
   const LocalPlan changed = backend.tick(fixture.request);
 
   ASSERT_TRUE(changed.ready());
+  EXPECT_FALSE(backend.debugSnapshot().localTargetValid)
+      << "a newly accepted reference has no generated local target yet";
   EXPECT_EQ(std::get<SplineTarget>(changed.target()).trajectoryId, previousId);
 
   LocalPlan replacement = changed;
@@ -2025,7 +2028,7 @@ TEST(ScanBackend, AcceptsChangedReferenceShapeWithANewGeneration) {
 
   fixture.route[1] = {1.0, 0.8, 0.5};
   fixture.request.objective = RouteTarget{{
-      fixture.route.data(), static_cast<int>(fixture.route.size()), 2, false}};
+      fixture.route.data(), static_cast<int>(fixture.route.size()), 2}};
   fixture.request.clock.timestampS += 0.01;
   LocalPlan replacement = backend.tick(fixture.request);
   for (int tick = 0; tick < 8 &&
@@ -2405,7 +2408,7 @@ TEST(ScanBackend, HeldMotionIntentReplansBeforeShortSegmentStops) {
   // Keep planning completion at the input time to compare exact boundaries.
   fixture.request.clock.mode = nav_kernel::PlanClockMode::External;
   fixture.request.objective = nav_kernel::MotionIntentTarget{
-      {0.0, 0.5, 3.0, 90.0}, {fixture.route.data(), 2, 1, false}};
+      {0.0, 0.5, 3.0, 90.0}, {fixture.route.data(), 2, 1}};
   fixture.request.maxLinearSpeedMps = 0.5;
   auto params = scanParams();
   params.scan.planningHorizon = 0.5;
@@ -2485,7 +2488,7 @@ TEST(ScanBackend, HeldMotionIntentRetainsShortSideTargetUntilMeasuredArrival) {
     fixture.refreshCollision(2);
     fixture.request.clock.mode = nav_kernel::PlanClockMode::External;
     fixture.request.objective = nav_kernel::MotionIntentTarget{
-        {0.0, 1.0, 3.5, 90.0}, {fixture.route.data(), 2, 1, false}};
+        {0.0, 1.0, 3.5, 90.0}, {fixture.route.data(), 2, 1}};
     fixture.request.maxLinearSpeedMps = 0.5;
     auto params = scanParams();
     params.scan.voxelResolution = 0.05;
@@ -2656,7 +2659,7 @@ TEST(ScanBackend, BlockedReferenceDoesNotReplaceFsmTimerCallbacks) {
   for (int x = -1; x <= 21; ++x)
     fixture.bitmap.occupyInflated({x * 0.1F, 0.0F, 0.5F}, 0.15, 0.1, 0.1);
   fixture.refreshCollision(2);
-  fixture.request.objective = RouteTarget{{fixture.route.data(), 2, 2, false}};
+  fixture.request.objective = RouteTarget{{fixture.route.data(), 2, 2}};
   fixture.request.clock.timestampS += 0.01;
   plan = backend.tick(fixture.request);
   ASSERT_TRUE(plan.ready());
@@ -2672,7 +2675,7 @@ TEST(ScanBackend, BlockedReferenceDoesNotReplaceFsmTimerCallbacks) {
 
   fixture.bitmap.clear();
   fixture.refreshCollision(3);
-  fixture.request.objective = RouteTarget{{fixture.route.data(), 2, 3, false}};
+  fixture.request.objective = RouteTarget{{fixture.route.data(), 2, 3}};
   for (int tick = 0; tick < 20 && !plan.ready(); ++tick) {
     fixture.request.clock.timestampS += 0.01;
     plan = backend.tick(fixture.request);

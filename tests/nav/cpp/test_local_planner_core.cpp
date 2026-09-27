@@ -211,7 +211,7 @@ TEST(LocalPlanner, CmuUsesSalientRouteBendWhenTerminalTargetsMatch) {
     LocalPlanRequest input;
     input.robot.pose = {{0.0, 0.0, 0.0}, 0.0};
     input.objective = nav_kernel::RouteTarget{{
-        route.data(), static_cast<int>(route.size()), 1, false}};
+        route.data(), static_cast<int>(route.size()), 1}};
     input.clock.timestampS = timestamp;
     return planner.plan(input);
   };
@@ -245,7 +245,7 @@ TEST(LocalPlanner, CmuKeepsForwardHorizonWhenSalientBendIsNear) {
   LocalPlanRequest input;
   input.robot.pose = {{0.0, 0.0, 0.0}, 0.0};
   input.objective = nav_kernel::RouteTarget{{
-      route.data(), static_cast<int>(route.size()), 1, false}};
+      route.data(), static_cast<int>(route.size()), 1}};
   input.clock.timestampS = 1.0;
 
   const auto result = planner.plan(input);
@@ -281,7 +281,7 @@ TEST(LocalPlanner, CmuUsesMostSalientBendInDenseGridRoute) {
   LocalPlanRequest input;
   input.robot.pose = {{0.0, 0.0, 0.0}, 0.0};
   input.objective = nav_kernel::RouteTarget{{
-      route.data(), static_cast<int>(route.size()), 1, false}};
+      route.data(), static_cast<int>(route.size()), 1}};
   input.clock.timestampS = 1.0;
 
   const auto result = planner.plan(input);
@@ -308,7 +308,7 @@ TEST(LocalPlanRequest, MissingGridDoesNotReusePreviousFrame) {
   input.robot.pose = {{0.0, 0.0, 0.0}, 0.0};
   const std::array<Vec3, 2> route{{{0.0, 0.0, 0.0}, {5.0, 0.0, 0.0}}};
   input.objective = nav_kernel::RouteTarget{{
-      route.data(), static_cast<int>(route.size()), 1, true}};
+      route.data(), static_cast<int>(route.size()), 1}};
   input.environment.traversability = {blockedGrid.data(), 5, 5, 1.0, -2.5, -2.5};
   input.clock.timestampS = 1.0;
 
