@@ -223,9 +223,10 @@ void TestSavedRayEvidence(MapStore& store, const std::filesystem::path& root) {
   const auto* crossed = tree->search(0.55, 0.05, 0.05);
   assert(crossed != nullptr && !tree->isNodeOccupied(crossed));
   assert(tree->search(2.05, 0.05, 1.05) == nullptr);
-  // A return the dynamic filter discarded leaves no hit and no carved ray.
+  // A discarded return contributes its measured prefix, but no endpoint hit.
   assert(tree->search(person.x, person.y, person.z) == nullptr);
-  assert(tree->search(0.55, -0.55, 0.05) == nullptr);
+  const auto* dropped_prefix = tree->search(0.55, -0.55, 0.05);
+  assert(dropped_prefix != nullptr && !tree->isNodeOccupied(dropped_prefix));
   lingtu::maps::OctomapEditOptions edit;
   edit.state = "occupied";
   edit.x_m = 4.0;

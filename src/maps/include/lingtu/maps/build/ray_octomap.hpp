@@ -36,20 +36,13 @@ struct SavedRayOctomapStats {
   }
 };
 
-// Replays the saved scans into `tree` from their sensor origins. The
-// save-time cleaned map.pcd decides which surfaces are static:
-//  * only endpoints inside a retained voxel are inserted, so returns the
-//    dynamic filter discarded leave neither hits nor carved free space;
-//  * the last kGrazingGuardM of a ray does not lower a retained voxel, nor a
-//    cell beside one in the same layer: a 5 cm hole in the sampled floor that
-//    a grazing ray would otherwise mark free, which the planner reads as a
-//    drop. The rest of the ray still clears them, so a person the filter
-//    missed is carved away by the rays that later pass through where they
-//    stood.
-// Every occupied voxel is a measured hit; a guarded cell no ray end reached
-// stays unknown. On 903room at 5 cm the Go2 planner accepts 91% of the path
-// the robot walked while mapping; plain replay (which freed 37% of the
-// retained voxels) 56%, and forcing every retained voxel occupied 61%.
+// Replays saved scans into `tree` from their measured sensor origins. The
+// cleaned map.pcd decides which endpoints remain static. A removed endpoint
+// still contributes the measured free prefix before it, but contributes no
+// hit and does not infer anything at or beyond the endpoint. Near every raw
+// endpoint, misses against retained same-layer surface cells are suppressed
+// using a metric distance; farther ray cells remain ordinary free evidence.
+// Updates are de-duplicated per scan and measured hits win over misses.
 inline SavedRayOctomapStats PopulateSavedRayOctomap(
     octomap::OcTree& tree, const std::filesystem::path& directory,
     const std::function<bool()>& cancelled = {}) {
@@ -71,7 +64,6 @@ inline SavedRayOctomapStats PopulateSavedRayOctomap(
       for (int dy = -1; dy <= 1; ++dy)
         guarded.insert(octomap::OcTreeKey(key[0] + dx, key[1] + dy, key[2]));
 
-  const auto guard_cells = static_cast<std::size_t>(kGrazingGuardM / tree.getResolution());
   SavedRayOctomapStats stats;
   octomap::KeyRay ray;
   VisitSavedScans(directory, [&](const SavedScan& scan) {
@@ -87,20 +79,23 @@ inline SavedRayOctomapStats PopulateSavedRayOctomap(
           !tree.coordToKeyChecked(end, key))
         continue;
       ++stats.valid_endpoints;
-      if (retained_keys.count(key) == 0U) {
+      const bool retained_endpoint = retained_keys.count(key) != 0U;
+      if (!retained_endpoint) {
         ++stats.dropped_endpoints;
-        continue;
+      } else {
+        ++stats.retained_endpoints;
+        occupied_cells.insert(key);
       }
-      ++stats.retained_endpoints;
-      occupied_cells.insert(key);
       if (!tree.computeRayKeys(origin, end, ray)) continue;
-      std::size_t to_end = ray.size();
       for (const auto& cell : ray) {
-        if (to_end-- > guard_cells || guarded.count(cell) == 0U) {
-          free_cells.insert(cell);
-        } else {
-          ++stats.guarded_miss_suppressions;
+        if (guarded.count(cell) != 0U) {
+          const auto delta = tree.keyToCoord(cell) - end;
+          if (delta.norm_sq() <= kGrazingGuardM * kGrazingGuardM) {
+            ++stats.guarded_miss_suppressions;
+            continue;
+          }
         }
+        free_cells.insert(cell);
       }
     }
     for (const auto& cell : free_cells)
