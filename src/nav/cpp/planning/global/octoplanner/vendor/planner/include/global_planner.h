@@ -241,6 +241,7 @@ private:
 
   double getObstacleClearanceCost(const GridIndex & idx) const;
 
+  bool isStepWithinLimits(const GridIndex & step) const;
   bool isMotionAllowed(const GridIndex & from, const GridIndex & to) const;
 
   void rebuildDerivedLayers();

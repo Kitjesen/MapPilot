@@ -147,12 +147,35 @@ void checkFullSizeStairs()
   require(run(planner,point(0,2),point(0,2)).empty(), "flat-ground shelf beam lost body clearance");
 }
 
+void checkSlopeLimitedNeighborhood()
+{
+  Planner planner;
+  auto options = config();
+  options.max_slope = 0.57735;
+  planner.setConfig(options);
+  planner.setOctomap(makeMap(true));
+  const auto bottom = point(-4, 1), top = point(4, 4);
+  for (const bool ascent : {true, false}) {
+    require(!run(planner, ascent ? bottom : top, ascent ? top : bottom).empty(),
+      "slope-limited stair route failed");
+    const auto info = planner.searchInfo();
+    require(info.used_stair_connections && info.basic_iterations == 0 &&
+      info.extended_iterations > 0,
+      "horizontal-only basic graph searched for a different height layer");
+  }
+  planner.setOctomap(makeMap(false));
+  require(!run(planner, bottom, point(4, 1)).empty() &&
+    !planner.searchInfo().used_stair_connections,
+    "slope limit moved a flat route into the extended graph");
+}
+
 }  // namespace
 
 int main()
 {
   try {
     checkFullSizeStairs();
+    checkSlopeLimitedNeighborhood();
     Planner planner;
     const auto flat = makeMap(false);
     const auto step = makeMap(true);

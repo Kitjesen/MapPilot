@@ -298,6 +298,13 @@ namespace global_planner
             }
             const bool extended = stage == 1;
             const auto directions = makeSearchDirections(extended);
+            // With a slope below atan(1/sqrt(2)), the basic graph has only
+            // horizontal edges. It cannot reach a different height layer.
+            if (!extended && start.z != goal.z &&
+                std::none_of(directions.begin(), directions.end(),
+                    [](const GridIndex &direction) { return direction.z != 0; })) {
+                continue;
+            }
             search_info_.used_stair_connections = extended;
             auto & stage_iters = extended ? search_info_.extended_iterations : search_info_.basic_iterations;
             printf("OctoPlanner3D::startPlan stage=%s directions=%zu remaining_iterations=%d\n",
@@ -636,12 +643,12 @@ namespace global_planner
         return cost;
     }
 
-    bool OctoPlanner3D::isMotionAllowed(const GridIndex & from, const GridIndex & to) const
+    bool OctoPlanner3D::isStepWithinLimits(const GridIndex & step) const
     {
         const double r = octree_->getResolution();
-        const double dx = static_cast<double>(to.x - from.x) * r;
-        const double dy = static_cast<double>(to.y - from.y) * r;
-        const double dz = std::abs(static_cast<double>(to.z - from.z) * r);
+        const double dx = static_cast<double>(step.x) * r;
+        const double dy = static_cast<double>(step.y) * r;
+        const double dz = std::abs(static_cast<double>(step.z) * r);
         if (max_step_height_ > 0.0 && dz > max_step_height_) {
         return false;
         }
@@ -652,6 +659,12 @@ namespace global_planner
         if (max_slope_ > 0.0 && dz > 0.0 && dz / dxy > max_slope_) {
             return false;
         }
+        return true;
+    }
+
+    bool OctoPlanner3D::isMotionAllowed(const GridIndex & from, const GridIndex & to) const
+    {
+        if (!isStepWithinLimits({to.x - from.x, to.y - from.y, to.z - from.z})) return false;
         if (support_height_m_ > 0.0 && !lowest_traversable_only_) {
             const auto a = planningPoint(from), b = planningPoint(to);
             if (!sweptRouteFree(a, b)) return false;
@@ -673,7 +686,10 @@ namespace global_planner
                     {
                         continue;
                     }
-                    dirs.push_back(GridIndex{dx, dy, dz});
+                    // These bounds depend only on the offset. Apply them once,
+                    // before A* spends map queries on an impossible direction.
+                    if (isStepWithinLimits({dx, dy, dz}))
+                        dirs.push_back(GridIndex{dx, dy, dz});
                 }
             }
         }
@@ -703,6 +719,7 @@ namespace global_planner
                     {
                         continue;
                     }
+                    if (!isStepWithinLimits({dx, dy, dz})) continue;
                     dirs.push_back(GridIndex{dx, dy, -dz});
                     dirs.push_back(GridIndex{dx, dy, dz});
                 }
