@@ -260,3 +260,54 @@ Evidence: `field87.json`, `collision87.bin`, `user-previews87.json`,
 `maps-live-tests.log`, `build87.log`, `install87.log`. Existing `.86` and the
 saved map remain available. Refresh the dashboard and regenerate previews
 before the next supervised movement test.
+
+## Preview timeout after the first completed navigation
+
+The `.87` native status recorded one accepted goal and `SUCCESS / goal_reached`.
+The operator reported subsequent clicks as preview failures, not execution
+failures. Re-previewing that same goal at `(4.824567, -1.671504, 0.032779)`
+from the newly observed start `(0.349591, -0.632983, 0.034165)` returned
+`preview_timeout` after about 7022 ms. No new motion goal was submitted during
+this diagnosis.
+
+An offline ARM replay of `903room_v4_maps84/octomap.ot` and the runtime
+configuration reproduced the failure. Nearest-cell snapping selected
+`(0.35, -0.58, -0.02)`, one 5 cm layer below the measured start. With this
+slope limit the basic graph has eight horizontal neighbours, so the differing
+start/goal layers skipped that search and entered the 2776-direction stair
+fallback. It timed out after 821 extended iterations. The previous successful
+start `(0.402698, -0.482423, 0.029079)` still succeeded in 1175 basic iterations.
+This is a start-selection/search problem, not evidence of a one-goal session
+limit or recurrence of historical SCAN map seeding.
+
+Start snapping now reuses the existing route height-change penalty when
+`same_floor_preference` is enabled. Candidate geometry and support requirements
+are unchanged. It minimizes distance plus the existing vertical-change cost,
+with distance providing the lower bound to end candidate enumeration. Goal
+snapping still minimizes error to the requested goal within its existing
+tolerances. Necessary vertical snapping remains possible; no additional gate,
+parameter or longer timeout was added.
+
+The ARM prototype selected `(0.35, -0.53, 0.03)` and generated a three-waypoint
+route in 1149 basic iterations for the failed case; the previous successful
+case remained successful with two waypoints and 1175 iterations. This is offline
+planning evidence, not motion acceptance. Regression coverage checks the height
+preference, disabled preference, required vertical fallback, and the existing
+goal precision and 3D support/collision cases.
+
+WSL built the planner runtime and headless executable; `grid_smoke` and
+`no_air_climb_smoke` passed (2/2). These include required vertical fallback,
+step transitions, walls, unknown gaps and terminal-goal precision. Logs are
+`arrival-wsl-{configure,build,test}.log` in the local evidence directory.
+
+NX disconnected during regression work; the small PC's Ethernet adapter reported
+Disconnected / 0 bps. The final regression and full release installation on ARM
+remain pending. Last verified running release is `.87`, not this new fix.
+The first regression fixture used OctoMap `deleteNode` and hit an OctoMap node
+destructor assertion; the fixture now marks that candidate occupied instead,
+which directly models loss of the horizontal alternative without subtree
+deletion. No production OctoMap deletion code was changed.
+
+Evidence: local `after-arrival-status.json`, `after-arrival-http.json`,
+`arrival-search.cpp` in `build/go2-release-20260928/`; ARM `arrival-search.log`
+and `arrival-candidate.log` in `/home/unitree/field-release-20260928/`.

@@ -11,6 +11,41 @@ namespace global_planner {
 
 struct OctoPlannerGridQueryTest
 {
+  static void startSnapUsesRouteHeightPreference() {
+    auto tree = std::make_shared<octomap::OcTree>(.1);
+    tree->updateNode(octomap::point3d(-.5,-.5,-.5), false);
+    tree->updateNode(octomap::point3d(1,1,1), false);
+    tree->updateNode(octomap::point3d(.05,.05,.05), true);
+    tree->updateNode(octomap::point3d(.05,.05,-.05), false);
+    tree->updateNode(octomap::point3d(.25,.05,.05), false);
+    PlannerConfig config;
+    config.robot_radius = .001;
+    config.body_clearance_below_m = config.body_clearance_above_m = .01;
+    config.support_height_m = .35;
+    config.require_ground_support = false;
+    config.floor_change_penalty = 6;
+    OctoPlanner3D planner;
+    planner.setConfig(config);
+    planner.setOctomap(tree);
+    const auto seed = planner.worldToGrid(.05,.05,.05);
+    GridIndex snapped;
+    const auto snap = [&] {
+      return planner.findNearestFreeCell(seed,.001,3,false,false,0,2,snapped);
+    };
+    if (!snap() || !(snapped == planner.worldToGrid(.25,.05,.05)))
+      throw std::runtime_error("start snap ignored the route height-change preference");
+    config.same_floor_preference = false;
+    planner.setConfig(config);
+    if (!snap() || !(snapped == planner.worldToGrid(.05,.05,-.05)))
+      throw std::runtime_error("disabled height preference changed nearest start snapping");
+    config.same_floor_preference = true;
+    planner.setConfig(config);
+    tree->updateNode(octomap::point3d(.25,.05,.05), true);
+    planner.setOctomap(tree);
+    if (!snap() || !(snapped == planner.worldToGrid(.05,.05,-.05)))
+      throw std::runtime_error("height preference prevented necessary vertical snapping");
+  }
+
   static void goalSnapUsesRequestedPosition() {
     auto tree = std::make_shared<octomap::OcTree>(.1);
     tree->updateNode(octomap::point3d(-.05, .05, .05), false);
@@ -683,6 +718,7 @@ void checkResolution(double resolution)
 int main()
 {
   try {
+    global_planner::OctoPlannerGridQueryTest::startSnapUsesRouteHeightPreference();
     global_planner::OctoPlannerGridQueryTest::goalSnapUsesRequestedPosition();
     global_planner::OctoPlannerGridQueryTest::temporaryObstacleDoesNotCrossObservedFloor();
     global_planner::OctoPlannerGridQueryTest::stepTransitionsKeepObservedSupportAndBodyClearance();

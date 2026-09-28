@@ -611,19 +611,24 @@ namespace global_planner
             // bounds all remaining candidates without scanning the full cube.
             const double seed_distance = octree_->getResolution() * std::sqrt(
                 static_cast<double>(offset.x * offset.x + offset.y * offset.y + offset.z * offset.z));
-            if (reference && seed_distance - seed_error > best_distance + 1e-7) break;
+            if (seed_distance - seed_error > best_distance + 1e-7) break;
             const GridIndex candidate{seed.x + offset.x, seed.y + offset.y, seed.z + offset.z};
             if (!within_goal_tolerance(planningPoint(candidate))) continue;
             if (isPlanningCellTraversableDetailed(
                     candidate, robot_radius, require_ground_support, strict_direct_ground_support,
                     support_xy_radius_cells, support_depth_cells, nullptr)) {
-                const double distance = reference ? distance_to_reference(planningPoint(candidate)) : 0.0;
+                // Use the route's existing height-change preference for start
+                // snapping too. A slightly nearer lower cell can otherwise
+                // turn a level route into an unnecessary stair search.
+                // Goal snapping still minimizes error to the requested goal.
+                const double distance = reference ? distance_to_reference(planningPoint(candidate)) :
+                    seed_distance + (same_floor_preference_ ? std::max(0.0, floor_change_penalty_) *
+                        octree_->getResolution() * std::abs(offset.z) : 0.0);
                 if (!found || distance < best_distance) {
                     out = candidate;
                     best_distance = distance;
                     found = true;
                 }
-                if (!reference) return true;
             }
         }
         return found;
