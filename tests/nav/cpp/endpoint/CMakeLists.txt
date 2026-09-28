@@ -604,6 +604,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/inspection/inspection_command_coordinator.cpp"
     "${LINGTU_SRC_ROOT}/nav/inspection/inspection.cpp")
   target_include_directories(test_inspection_command_coordinator PRIVATE
+    "${LINGTU_NAV_CPP_ROOT}"
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav"
     "${LINGTU_SRC_ROOT}"
@@ -1604,6 +1605,7 @@ if(NOT TARGET test_inspection_command_coordinator
     "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_command_coordinator.cpp"
     "${_ENDPOINT_DIR}/nav/runtime/inspection/inspection_command_coordinator.cpp")
   target_include_directories(test_inspection_command_coordinator PRIVATE
+    "${LINGTU_NAV_CPP_ROOT}"
     "${_ENDPOINT_DIR}"
     "${_LINGTU_ROOT}/src"
     "${LINGTU_NAV_INCLUDE_DIR}"
