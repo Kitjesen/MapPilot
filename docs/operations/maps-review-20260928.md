@@ -158,3 +158,32 @@ Evidence: `build/go2-release-20260928/goal-pcd-evidence.json`,
 was built and tested offline on NX; the running service remains `.85`.
 Left-side floor capture and verification of right-side objects remain field
 work. No replacement of the active map, service restart or motion was done.
+
+## `.86` deployment and requested 0.5 m/s session
+
+After explicit deployment authorization, the ABI 11 full release `.86` was
+built from `8e2fae7968d2b231ac8a33788636ede3d3d939f1` and installed on NX.
+The ARM navigation build ran 490/490 passing tests. The release includes DDS,
+native clients/services, Host, maps/prune and the dashboard. ProductControl
+activated `nav` with the existing `903room_v4_maps84` candidate and user-requested
+`scan_planner.max_velocity_mps=0.5`, `scan_follower.max_vx_mps=0.5`, and
+`scan_follower.max_vy_mps=0.5`. These are session overrides, not changes to the
+robot's static configuration. The previous `.85` release remains available.
+
+All six field services were active. `/proc` confirmed `.86/bin/navd` and
+the Host's loaded `.86/lib/liblingtu_nav_client.so`. `/ready`, localization,
+native input and driver readiness passed; obstacle checking remained enabled.
+Post-install previews reused the original fixed target coordinates:
+
+| Target | Result | Native planning time |
+| --- | --- | ---: |
+| Forward 0.3 m | Feasible | 659 ms |
+| Forward 1.0 m | Feasible | 13 ms |
+| Left 1.0 m | `goal_snap_exhausted` | 0.52 ms |
+| Right 1.0 m | `goal_snap_exhausted` | 0.82 ms |
+
+The side cases now return a bounded endpoint failure, not successful routes.
+No motion goal was sent. The session was idle with zero velocity; 0.5 m/s
+field movement has not been validated. Evidence is in `field86.json`,
+`stationary86.json`, `build86.log` and `install86.log` under the local evidence
+directory. This deployment supersedes the earlier candidate-only status.
