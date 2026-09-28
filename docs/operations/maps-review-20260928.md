@@ -34,3 +34,84 @@ At the initial field check, small PC 192.168.66.95 and NX 192.168.123.18 were
 reachable; NX still had .82 installed and the queried services were inactive.
 These local checks do not establish MuJoCo or field navigation success.
 Deployment and field results must be recorded separately after completion.
+
+## Go2/NX deployment and stationary validation
+
+On 2026-09-28 the operator confirmed power, Ethernet, a stationary robot, and
+no scans to retain. The full native ABI 11 release
+`v2.3.0-go2.20260928.85`, commit
+`a303f1548739a9003bc94e0cff15b68ecd445e49`, was installed through the release
+installer. ProductControl committed the `real`, `unitree/go2`, `nav` session.
+The previous `.82` and `.84` releases remain available.
+
+ARM verification: navigation 490/490, driver 5/5, recording 14/14, Maps' seven
+build-script tests plus store/ray tests, and map optimizer 3/3 passed. Four
+focused OctoPlanner tests covered planning slices, neighboring support,
+walls/gaps, stair fallback, cancellation, and no airborne climbing.
+Full-build failures also exposed and repaired missing include directories in
+the inspection-command and terrain benchmark tests, a semantic-query fixture
+whose two-column gap was bridged by the supported one-cell neighbor fallback,
+and a stale LF attribute path after recording shell tests moved directories.
+
+The candidate `903room_v4_maps84` was rebuilt from the original map's
+`map.pcd.preclean` and its complete 132-frame ray bundle. It was exported and
+imported through Maps, then activated through ProductControl. The original
+`903room_v4_5cm_rays` remains unchanged. Candidate builder version is `0.3.1`;
+its imported content epoch is `1790596697069`. It contains 310,512 retained
+points, 298,774 occupied voxels, and a full `.ot`; it has no optional 2D layer.
+Replay statistics are:
+
+| Statistic | Count |
+| --- | ---: |
+| valid_endpoints | 1,041,159 |
+| retained_endpoints | 981,292 |
+| dropped_endpoints | 59,867 |
+| free_updates | 43,292,204 |
+| hit_updates | 811,450 |
+| guarded_miss_suppressions | 5,202,166 |
+
+Maps' local list query took 2.84 ms; the live Gateway list took 52 ms and
+reported `can_activate=true`, no blockers, and `ACTIVE`. Actual activation
+performed full artifact validation. The live localization converged and
+reported fresh poses; `/ready` returned ready. Native input gates were ready,
+obstacle checks enabled, and SCAN planner/follower speed limits were 0.2 m/s.
+The controller clamps planar velocity norm before the per-axis limits.
+
+## Search performance found during field preview
+
+The original fixed 0.3 m case needed 9.11 s of offline planning, exceeding
+the 7 s preview deadline. Its snapped goal was one height layer away. At the
+configured 30-degree slope, none of the basic 26-neighbor vertical offsets
+were legal, yet the planner exhausted about 18,900 basic nodes before trying
+the existing stair connections.
+
+The fix filters offsets by existing step/slope limits before map queries and
+skips the horizontal-only basic graph when start and goal heights differ.
+It changes no collision, support, unknown, slope, or goal-tolerance rule and
+adds no timeout/configuration switch. The fixed case fell to 0.71 s with the
+same map, start, goal, and options. A new regression checks ascent, descent,
+and preservation of the flat-route basic search.
+
+Final `.85` online previews reused the four original goal coordinates:
+
+| Goal relative to the initial observation | Result | Native planning time |
+| --- | --- | ---: |
+| Forward 0.3 m | Feasible | 767 ms |
+| Forward 1.0 m | Feasible | 13 ms |
+| Left 1.0 m | `goal_not_reached` | 16 ms |
+| Right 1.0 m | Feasible | 308 ms |
+
+The left target snaps approximately 0.262 m away, outside the existing
+0.15 m arrival tolerance. The fixed offline right-target case at the earlier
+exact start still exceeded 35 s; the later live preview has a newly estimated
+start and does not prove that fixed case repaired. Preserve that input for
+further search profiling; do not label every direction reachable.
+
+Evidence is retained under `build/go2-release-20260928/` locally and
+`/home/unitree/field-release-20260928/` on NX: `field85.json`,
+`stationary-previews.json`, `stationary-repeat.json`,
+`offline-preview-before.json`, `offline-preview-diagnosis.json`, and build /
+installation logs. No movement goal was sent: final native counters show
+`goals=0`, and output velocity is zero. This establishes Go2/NX deployment and
+stationary checks, not MuJoCo, S100P, or supervised ordinary-channel motion
+acceptance. A 0.3 m supervised trial was requested separately.
