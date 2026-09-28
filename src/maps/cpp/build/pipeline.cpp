@@ -1095,26 +1095,12 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
   tree.setOccupancyThres(kSavedMapSensorModel.occupancy_threshold);
   tree.setClampingThresMin(kSavedMapSensorModel.clamping_min);
   tree.setClampingThresMax(kSavedMapSensorModel.clamping_max);
-  using namespace sampled_octomap;
-  std::unordered_set<VoxelKey, VoxelKeyHash> support_keys;
-  const auto occupied = buildOccupiedKeys(
-      loaded.points, tree, options.support_dilation_cells, support_keys);
-  if (occupied.empty()) {
-    return "{"
-           "\"action\":\"build_octomap\","
-           "\"success\":false,"
-           "\"reason_code\":\"no_valid_octomap_keys\","
-           "\"message\":\"map.pcd points cannot be represented by OctoMap keys\","
-           "\"map_id\":" +
-           JsonString(map_id) + "}";
-  }
-
   const bool saved_rays = HasSavedRays(map_dir);
   SavedRayOctomapStats saved_ray_stats;
   std::string saved_ray_stats_json;
   if (saved_rays) {
     try {
-      saved_ray_stats = PopulateSavedRayOctomap(tree, map_dir, options.cancel_requested);
+      saved_ray_stats = PopulateSavedRayOctomap(tree, map_dir, loaded.points, options.cancel_requested);
       std::ostringstream stats;
       stats << "{\"valid_endpoints\":" << saved_ray_stats.valid_endpoints
             << ",\"retained_endpoints\":" << saved_ray_stats.retained_endpoints
@@ -1128,18 +1114,32 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
           JsonString(error.what()) + "}";
     }
   } else {
-  for (const auto &key : occupied) {
-    octomap::OcTreeKey octo_key;
-    octo_key.k[0] = key.x;
-    octo_key.k[1] = key.y;
-    octo_key.k[2] = key.z;
-    tree.updateNode(tree.keyToCoord(octo_key), true);
-  }
+    using namespace sampled_octomap;
+    std::unordered_set<VoxelKey, VoxelKeyHash> support_keys;
+    const auto occupied = buildOccupiedKeys(
+        loaded.points, tree, options.support_dilation_cells, support_keys);
+    if (occupied.empty()) {
+      return "{"
+             "\"action\":\"build_octomap\","
+             "\"success\":false,"
+             "\"reason_code\":\"no_valid_octomap_keys\","
+             "\"message\":\"map.pcd points cannot be represented by OctoMap keys\","
+             "\"map_id\":" +
+             JsonString(map_id) + "}";
+    }
 
-  for (const auto &key : support_keys) {
-    markFreeEnvelope(tree, key, std::max(0, options.free_layers_above),
-                     std::max(0, options.free_dilation_cells), occupied);
-  }
+    for (const auto &key : occupied) {
+      octomap::OcTreeKey octo_key;
+      octo_key.k[0] = key.x;
+      octo_key.k[1] = key.y;
+      octo_key.k[2] = key.z;
+      tree.updateNode(tree.keyToCoord(octo_key), true);
+    }
+
+    for (const auto &key : support_keys) {
+      markFreeEnvelope(tree, key, std::max(0, options.free_layers_above),
+                       std::max(0, options.free_dilation_cells), occupied);
+    }
   }
   tree.updateInnerOccupancy();
   std::filesystem::create_directories(octomap_path.parent_path());
@@ -2874,7 +2874,8 @@ std::string MapPipelineCore::EditOctomapVoxelsJson(
 std::string MapPipelineCore::BuildNavigationPackageJson(const std::string &map_id,
                                                         const OctomapBuildOptions &options,
                                                         bool include_esdf,
-                                                        bool include_traversability) {
+                                                        bool include_traversability,
+                                                        bool include_occupancy) {
   std::filesystem::path transaction_dir;
   std::vector<TransactionArtifactBackup> backups;
   std::string id;
@@ -2947,8 +2948,11 @@ std::string MapPipelineCore::BuildNavigationPackageJson(const std::string &map_i
     }
     backups = BackupTransactionArtifacts(store_, id, map_dir, transaction_dir);
 
-    const auto occupancy = BuildOccupancyProjectionSnapshot(staging_map_dir, true);
-    if (!occupancy.ok) {
+    const bool needs_occupancy = include_occupancy || include_esdf || include_traversability;
+    OccupancySnapshotResult occupancy;
+    if (needs_occupancy)
+      occupancy = BuildOccupancyProjectionSnapshot(staging_map_dir, true);
+    if (needs_occupancy && !occupancy.ok) {
       RollbackTransactionArtifacts(backups);
       WriteStatus(id, build_id, "NAVIGATION_PACKAGE", "FAILED", 0.0, occupancy.message);
       std::filesystem::remove_all(LockPath(id));
@@ -3114,7 +3118,8 @@ std::string MapPipelineCore::BuildNavigationPackageJson(const std::string &map_i
            ArtifactPathJson(map_dir, "metadata.json") +
            "},"
            "\"steps\":{"
-           "\"occupancy\":{\"success\":true,\"rows\":" +
+           "\"occupancy\":{\"requested\":" + std::string(needs_occupancy ? "true" : "false") +
+           ",\"success\":" + std::string(occupancy.ok ? "true" : "false") + ",\"rows\":" +
            std::to_string(occupancy.rows) + ",\"cols\":" + std::to_string(occupancy.cols) +
            "},"
            "\"esdf\":{\"requested\":" +

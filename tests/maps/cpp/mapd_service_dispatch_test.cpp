@@ -156,7 +156,9 @@ int main() {
   assert(default_package.ok);
   assert(lingtu::maps::JsonObjectBoolAtPath(default_package.json, {"success"}) == true);
   const auto built_map = service.Store().MapPath("build_defaults");
-  assert(std::filesystem::is_regular_file(built_map / "occupancy.npz"));
+  assert(!std::filesystem::exists(built_map / "occupancy.npz"));
+  assert(lingtu::maps::JsonObjectBoolAtPath(
+             default_package.json, {"steps", "occupancy", "requested"}) == false);
   assert(std::filesystem::is_regular_file(built_map / "octomap.ot"));
   assert(!std::filesystem::exists(built_map / "esdf.npz"));
   assert(!std::filesystem::exists(built_map / "traversability.npz"));
@@ -165,6 +167,10 @@ int main() {
   assert(lingtu::maps::JsonObjectBoolAtPath(
              default_package.json, {"steps", "traversability", "requested"}) == false);
 
+  const auto explicit_occupancy = DispatchServiceJson(
+      service, R"({"action":"build_occupancy_snapshot","map_id":"build_defaults"})");
+  assert(explicit_occupancy.ok);
+  assert(std::filesystem::is_regular_file(built_map / "occupancy.npz"));
   const auto explicit_esdf = DispatchServiceJson(
       service, R"({"action":"build_esdf_artifact","map_id":"build_defaults"})");
   assert(explicit_esdf.ok);

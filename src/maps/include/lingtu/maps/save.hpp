@@ -35,7 +35,7 @@ enum class SavePhase {
 };
 
 struct SaveRequirements {
-  bool occupancy{true};
+  bool occupancy{false};
   bool octomap{true};
   bool esdf{false};
   bool traversability{false};

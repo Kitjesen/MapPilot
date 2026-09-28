@@ -48,15 +48,23 @@ map save
   -> SaveMapEngine copies and validates the frozen source
   -> complete patch bundle enters native PGO (or records why it was skipped)
   -> calibrated visibility cleanup and source voxel filtering
-  -> build the OctoMap and occupancy artifacts required by saved-map navigation
+  -> build the 3D OctoMap required by saved-map navigation
   -> validate the required artifacts
   -> transactionally commit the complete candidate to MapStore
 ```
 
-ESDF and traversability are optional derived artifacts. They are omitted from
-the default save and `build_navigation_package` paths because the field 3D
-navigation chain does not consume them. Build either one explicitly through
-the corresponding Maps service action when an offline tool needs it.
+The 2D occupancy projection, ESDF, and traversability are optional derived
+artifacts, omitted from the default save and `build_navigation_package` paths.
+The field 3D navigation chain does not consume them. An explicit occupancy
+request still builds the projection; requesting ESDF or traversability also
+builds their required projection. Failed optional work only blocks a save
+when that work was requested.
+
+Map list and health queries check metadata, artifact presence, and the full
+OctoMap file header without parsing large point-cloud or tree payloads. They
+reuse the activation summary under the existing map lock. Actual activation
+continues to read and validate payloads; a positive list summary is not a
+substitute for successful activation.
 
 Observations acquired after the snapshot belong to a later save. Saving does
 not switch Products, activate the saved map, or publish a navigation goal.

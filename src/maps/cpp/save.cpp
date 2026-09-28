@@ -696,7 +696,7 @@ void VerifyRequiredArtifacts(const std::filesystem::path &dir, const SaveMapRequ
     }
   };
   require_file("map.pcd");
-  if (request.require.occupancy || request.require.octomap)
+  if (request.require.occupancy || request.require.esdf || request.require.traversability)
     require_file("occupancy.npz");
   if (request.require.octomap) {
     require_file("octomap.ot");
@@ -1458,7 +1458,7 @@ class SaveMapEngine::Impl {
         !MapStore::IsValidMapId(job->request.map_id)) {
       throw std::runtime_error("SaveMap job identity is inconsistent");
     }
-    job->request.require.occupancy = ParseBool(GetValue(values, "require_occupancy", "1"));
+    job->request.require.occupancy = ParseBool(GetValue(values, "require_occupancy", "0"));
     job->request.require.octomap = ParseBool(GetValue(values, "require_octomap", "1"));
     job->request.require.esdf = ParseBool(GetValue(values, "require_esdf"));
     job->request.require.traversability =
@@ -2052,7 +2052,8 @@ class SaveMapEngine::Impl {
       if (job->request.require.octomap) {
         build_result = pipeline.BuildNavigationPackageJson(job->request.map_id, octomap_options,
                                                            job->request.require.esdf,
-                                                           job->request.require.traversability);
+                                                           job->request.require.traversability,
+                                                           job->request.require.occupancy);
         SetReports(job, nullptr, &build_result);
         if (!JsonSucceeded(build_result)) {
           if (CancelRequested(job->status.job_id)) {
@@ -2064,7 +2065,8 @@ class SaveMapEngine::Impl {
           return;
         }
       } else {
-        if (job->request.require.occupancy) {
+        if (job->request.require.occupancy || job->request.require.esdf ||
+            job->request.require.traversability) {
           build_result = pipeline.BuildOccupancySnapshotJson(job->request.map_id);
           SetReports(job, nullptr, &build_result);
           if (!JsonSucceeded(build_result)) {

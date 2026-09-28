@@ -86,7 +86,8 @@ class MapPipelineCore {
       const std::string& map_id,
       const OctomapBuildOptions& options,
       bool include_esdf,
-      bool include_traversability);
+      bool include_traversability,
+      bool include_occupancy = false);
   std::string BuildEsdfArtifactJson(const std::string& map_id);
   std::string BuildTraversabilityArtifactJson(const std::string& map_id);
   std::string BuildSemanticArtifactJson(const std::string& map_id);

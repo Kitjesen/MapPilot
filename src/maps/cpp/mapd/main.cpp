@@ -302,7 +302,7 @@ Options ParseOptions(int argc, char **argv) {
   options.save.save_patches = EnvEnabled("LINGTU_MAP_SAVE_PATCHES", true);
   auto &save_request = options.save.request_defaults;
   const bool build_octomap = EnvEnabled("LINGTU_MAP_SAVE_BUILD_OCTOMAP", true);
-  save_request.require.occupancy = true;
+  save_request.require.occupancy = false;
   save_request.require.octomap = build_octomap;
   save_request.require.esdf = false;
   save_request.require.traversability = false;

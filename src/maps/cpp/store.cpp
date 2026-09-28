@@ -783,7 +783,7 @@ ArtifactValidationResult MapStore::ValidateArtifacts(
   return ValidateArtifactsUnlocked(id, options);
 }
 
-ArtifactValidationResult MapStore::CheckMapActivation(const std::string& map_id) const {
+ArtifactValidationResult MapStore::CheckMapActivation(const std::string& map_id, bool read_contents) const {
   const std::string id = NormalizeMapId(map_id);
   auto map_lock = MapLock::TryAcquire(root_dir_, id, "check-map-activation");
   if (!map_lock.has_value()) {
@@ -796,12 +796,12 @@ ArtifactValidationResult MapStore::CheckMapActivation(const std::string& map_id)
     result.blockers.push_back("map write in progress: " + id);
     return result;
   }
-  return CheckMapActivationUnlocked(id);
+  return CheckMapActivationUnlocked(id, read_contents);
 }
 
 ArtifactValidationResult MapStore::CheckMapActivationWhileLocked(
     const std::string& map_id,
-    const MapLock& map_lock) const {
+    const MapLock& map_lock, bool read_contents) const {
   const std::string id = NormalizeMapId(map_id);
   if (!LockProtectsMap(map_lock, id)) {
     ArtifactValidationResult result;
@@ -810,13 +810,14 @@ ArtifactValidationResult MapStore::CheckMapActivationWhileLocked(
     result.blockers.push_back("map lock does not protect map: " + id);
     return result;
   }
-  return CheckMapActivationUnlocked(id);
+  return CheckMapActivationUnlocked(id, read_contents);
 }
 
-ArtifactValidationResult MapStore::CheckMapActivationUnlocked(const std::string& map_id) const {
+ArtifactValidationResult MapStore::CheckMapActivationUnlocked(const std::string& map_id, bool read_contents) const {
   ArtifactValidationOptions options;
   options.require_octomap = true;
   options.require_navigation_evidence = true;
+  options.read_contents = read_contents;
   options.require_occupancy = false;
   options.expected_frame_id = "map";
   return ValidateArtifactsUnlocked(map_id, options);
@@ -978,7 +979,9 @@ ArtifactValidationResult MapStore::ValidateArtifactsUnlocked(
     }
     check->path = artifact->uri;
     check->exists = std::filesystem::is_regular_file(artifact->uri);
-    check->format_ok = check->exists && IsValidArtifact(*artifact);
+    check->format_ok = check->exists &&
+        (options.read_contents ? IsValidArtifact(*artifact)
+                               : std::filesystem::file_size(artifact->uri) > 0U);
   };
   fill_check(pointcloud, &result.map_pcd);
   fill_check(octomap, &result.octomap);

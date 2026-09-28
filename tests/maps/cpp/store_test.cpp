@@ -1,4 +1,5 @@
 #include "lingtu/maps/store.hpp"
+#include "lingtu/maps/service.hpp"
 #include "lingtu/maps/build/occupancy_snapshot.hpp"
 #include "lingtu/maps/build/pcd.hpp"
 #include "lingtu/maps/build/pipeline.hpp"
@@ -87,6 +88,31 @@ void WriteValidPlanningArtifacts(const std::filesystem::path& map_dir) {
   octomap.put('\0');
   assert(octomap.good());
 #endif
+}
+
+void TestQueryActivationSummary(const std::filesystem::path& root) {
+  using namespace lingtu::maps;
+  const auto directory = root / ".query_maps";
+  MapStore store(MapStoreConfig{directory});
+  assert(store.CreateMap("room").ok);
+  WriteValidPlanningArtifacts(directory / "room");
+  WriteValidOccupancyMetadata(directory / "room/metadata.json");
+  assert(store.CheckMapActivation("room").ok);
+  MapsServiceCore service(MapsServiceConfig{MapStoreConfig{directory}});
+  const auto listing = ParseJson(service.ListMapsJson());
+  const auto& item = listing.AsObject("list").at("maps").AsArray("maps").at(0).AsObject("map");
+  assert(std::get<bool>(item.at("can_activate").value));
+  const auto& health = item.at("record").AsObject("record").at("health").AsObject("health");
+  assert(std::get<bool>(health.at("activation_ready").value));
+  assert(store.SetActiveMap("room", true).ok);
+  assert(JsonObjectBoolAtPath(service.GetActiveMapJson(),
+                              {"record", "health", "activation_ready"}) == true);
+  assert(store.ClearActiveMap("room").ok);
+  // Query summaries do not load large payloads. Activation still validates them.
+  WriteText(directory / "room/map.pcd", "invalid payload\n");
+  assert(store.CheckMapActivation("room", false).ok);
+  assert(!store.CheckMapActivation("room").ok);
+  assert(!store.SetActiveMap("room", true).ok);
 }
 
 void WriteDuplicateFrameMetadata(const std::filesystem::path& path) {
@@ -331,6 +357,7 @@ void TestVoxelEditsSetState(MapStore& store, const std::filesystem::path& root) 
 
 int main() {
   const auto root = TempRoot();
+  TestQueryActivationSummary(root);
   MapStore store(MapStoreConfig{root});
 
   assert(MapStore::IsValidMapId("building_1f"));

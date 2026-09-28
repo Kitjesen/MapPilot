@@ -310,7 +310,7 @@ std::string MapsServiceCore::ListMapsJson() const {
       const bool has_octomap = IsNonEmptyRegularFile(dir / "octomap.ot");
       const bool has_esdf = IsNonEmptyRegularFile(dir / "esdf.npz");
       const bool has_traversability = IsNonEmptyRegularFile(dir / "traversability.npz");
-      const auto activation = store_.CheckMapActivationWhileLocked(id, *map_lock);
+      const auto activation = store_.CheckMapActivationWhileLocked(id, *map_lock, false);
       const bool activation_ready = activation.ok;
       const auto patches_dir = dir / "patches";
       size_t patch_count = 0U;
@@ -326,7 +326,7 @@ std::string MapsServiceCore::ListMapsJson() const {
         size_mb =
             static_cast<double>(std::filesystem::file_size(pcd_path)) / (1024.0 * 1024.0);
       }
-      const std::string record_json = RecordJson(*record);
+      const std::string record_json = RecordJson(*record, activation_ready);
       if (!store_.ValidateActiveState(&active_error)) {
         return FailureJson("list", active_error, "active_map_state_invalid");
       }
@@ -427,7 +427,8 @@ std::string MapsServiceCore::GetActiveMapJson() const {
           "get_active", "active map not found: " + active, "map_not_found");
     }
     const std::string artifacts_json = ActiveArtifactsJson(active);
-    const std::string record_json = RecordJson(*record);
+    const auto activation = store_.CheckMapActivationWhileLocked(active, *map_lock, false);
+    const std::string record_json = RecordJson(*record, activation.ok);
     if (!store_.ValidateActiveState(&active_error)) {
       return FailureJson("get_active", active_error, "active_map_state_invalid");
     }
@@ -725,7 +726,7 @@ std::string MapsServiceCore::GetMapPointsJson(
   }
 }
 
-std::string MapsServiceCore::RecordJson(const MapRecord& record) const {
+std::string MapsServiceCore::RecordJson(const MapRecord& record, std::optional<bool> activation_ready) const {
   std::ostringstream out;
   out
       << "{"
@@ -739,7 +740,7 @@ std::string MapsServiceCore::RecordJson(const MapRecord& record) const {
       << "},"
       << "\"artifacts\":" << ArtifactsJson(record) << ","
       << "\"metadata\":{},"
-      << "\"health\":" << HealthJson(record) << ","
+      << "\"health\":" << HealthJson(record, activation_ready) << ","
       << "\"lifecycle\":{"
       << "\"state\":" << JsonString(StateName(record.state))
       << "},"
@@ -798,7 +799,7 @@ std::string MapsServiceCore::CapabilitiesJson(const MapRecord& record) const {
   return caps.str();
 }
 
-std::string MapsServiceCore::HealthJson(const MapRecord& record) const {
+std::string MapsServiceCore::HealthJson(const MapRecord& record, std::optional<bool> activation) const {
   const auto snapshot = HealthModelFor(record)->Snapshot(UnixSecondsNow());
   const bool has_planning = HasPlanningArtifact(record);
   const bool localization_blocks = snapshot.localization.state == health::MetricState::kOk &&
@@ -809,7 +810,7 @@ std::string MapsServiceCore::HealthJson(const MapRecord& record) const {
       snapshot.collision.score < 0.35;
   const bool artifacts_block = snapshot.artifact_validation.state == health::MetricState::kOk &&
       snapshot.artifact_validation.score < 0.999;
-  const bool activation_ready = store_.CheckMapActivation(record.map_id).ok;
+  const bool activation_ready = activation ? *activation : store_.CheckMapActivation(record.map_id, false).ok;
   const bool runtime_health_blocked =
       localization_blocks || planning_blocks || collision_blocks;
   const bool runtime_health_complete =

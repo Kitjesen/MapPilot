@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -96,11 +97,11 @@ class MapsServiceCore {
   const MapStore &Store() const { return store_; }
 
  private:
-  std::string RecordJson(const MapRecord &record) const;
+  std::string RecordJson(const MapRecord &record, std::optional<bool> activation_ready = {}) const;
   std::string ArtifactJson(const MapArtifact &artifact) const;
   std::string ArtifactsJson(const MapRecord &record) const;
   std::string CapabilitiesJson(const MapRecord &record) const;
-  std::string HealthJson(const MapRecord &record) const;
+  std::string HealthJson(const MapRecord &record, std::optional<bool> activation_ready = {}) const;
   health::MapHealthModel *HealthModelFor(const MapRecord &record) const;
   std::string ActiveArtifactsJson(const std::string &map_id) const;
   std::filesystem::path PoiPath(const std::string &map_id) const;

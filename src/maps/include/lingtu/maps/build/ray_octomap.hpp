@@ -51,13 +51,13 @@ struct SavedRayOctomapStats {
 // Updates are de-duplicated per scan and measured hits win over misses.
 inline SavedRayOctomapStats PopulateSavedRayOctomap(
     octomap::OcTree& tree, const std::filesystem::path& directory,
+    const std::vector<PointXyz>& retained_points,
     const std::function<bool()>& cancelled = {}) {
-  const auto retained = LoadPcdXyz(directory / "map.pcd");
-  if (!retained.ok || retained.points.empty())
+  if (retained_points.empty())
     throw std::runtime_error("saved ray build requires retained map.pcd geometry");
   octomap::KeySet retained_keys;
   std::map<std::array<std::int64_t, 3>, std::vector<PointXyz>> retained_buckets;
-  for (const auto& point : retained.points) {
+  for (const auto& point : retained_points) {
     octomap::OcTreeKey key;
     if (std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z) &&
         tree.coordToKeyChecked(point.x, point.y, point.z, key)) {
@@ -150,6 +150,15 @@ inline SavedRayOctomapStats PopulateSavedRayOctomap(
     throw std::runtime_error("saved ray build retained map.pcd matched no saved scan endpoints");
   tree.updateInnerOccupancy();
   return stats;
+}
+
+inline SavedRayOctomapStats PopulateSavedRayOctomap(
+    octomap::OcTree& tree, const std::filesystem::path& directory,
+    const std::function<bool()>& cancelled = {}) {
+  const auto retained = LoadPcdXyz(directory / "map.pcd");
+  if (!retained.ok)
+    throw std::runtime_error("saved ray build requires retained map.pcd geometry");
+  return PopulateSavedRayOctomap(tree, directory, retained.points, cancelled);
 }
 
 }  // namespace lingtu::maps

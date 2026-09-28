@@ -34,6 +34,8 @@ struct ArtifactValidationOptions {
   std::string expected_frame_id;
   std::string expected_data_source;
   std::string expected_source_profile;
+  // Query summaries inspect declarations/files; activation reads full payloads.
+  bool read_contents{true};
 };
 
 struct ArtifactCheck {
@@ -116,10 +118,11 @@ class MapStore {
   ArtifactValidationResult ValidateArtifacts(
       const std::string& map_id,
       const ArtifactValidationOptions& options) const;
-  ArtifactValidationResult CheckMapActivation(const std::string& map_id) const;
+  ArtifactValidationResult CheckMapActivation(const std::string& map_id, bool read_contents = true) const;
   ArtifactValidationResult CheckMapActivationWhileLocked(
       const std::string& map_id,
-      const MapLock& map_lock) const;
+      const MapLock& map_lock,
+      bool read_contents = true) const;
   MapStoreResult SetActiveMap(
       const std::string& map_id,
       bool strict,
@@ -142,7 +145,7 @@ class MapStore {
   ArtifactValidationResult ValidateArtifactsUnlocked(
       const std::string& map_id,
       const ArtifactValidationOptions& options) const;
-  ArtifactValidationResult CheckMapActivationUnlocked(const std::string& map_id) const;
+  ArtifactValidationResult CheckMapActivationUnlocked(const std::string& map_id, bool read_contents = true) const;
   MapStoreResult SetActiveMapUnlocked(
       const std::string& map_id,
       bool strict,

@@ -355,6 +355,13 @@ void TestDerivedArtifactInvalidation(const std::filesystem::path& root) {
           "navigation package retained an omitted traversability layer");
   succeeded(pipeline.BuildNavigationPackageJson("derived", options, false, false));
   no_derived();
+  Require(!std::filesystem::exists(map / "occupancy.npz") &&
+              !std::filesystem::exists(map / "map.pgm") &&
+              !std::filesystem::exists(map / "map.yaml"),
+          "3D navigation package retained an omitted 2D projection");
+  succeeded(pipeline.BuildNavigationPackageJson("derived", options, false, false, true));
+  Require(std::filesystem::exists(map / "occupancy.npz"),
+          "explicit occupancy request was ignored");
 
   lingtu::maps::SourceCommitOptions source_options;
   source_options.dynamic_filter_enabled = false;
@@ -550,7 +557,8 @@ int main() {
             lingtu::maps::JsonObjectNumberAtPath(skip_report, {"loop_count"}) == 0.0,
         "SaveMap without a complete patch bundle did not publish the exact PGO skip contract");
     Require(std::filesystem::is_regular_file(status.map_dir / "octomap.ot"), "octomap missing");
-    Require(std::filesystem::is_regular_file(status.map_dir / "occupancy.npz"), "occupancy missing");
+    Require(!std::filesystem::exists(status.map_dir / "occupancy.npz"),
+            "default 3D SaveMap unexpectedly built a 2D projection");
     Require(!std::filesystem::exists(status.map_dir / "esdf.npz"),
             "default SaveMap unexpectedly built ESDF");
     Require(!std::filesystem::exists(status.map_dir / "traversability.npz"),
@@ -673,7 +681,8 @@ int main() {
     for (const auto& fixture : std::vector<std::pair<std::string, std::string>>{
              {"empty_required_artifact", "empty_required_map"},
              {"wrong_metadata_frame", "wrong_metadata_map"}}) {
-      const auto checked_request = Request(fixture.first, fixture.second);
+      auto checked_request = Request(fixture.first, fixture.second);
+      checked_request.require.occupancy = fixture.first == "empty_required_artifact";
       Require(checked.Begin(checked_request).accepted, "artifact validation request rejected");
       Require(checked.ProvideSnapshot(
                   fixture.first, Snapshot(fixture.first + "_snapshot", source_v1)).accepted,
