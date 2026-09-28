@@ -86,3 +86,28 @@ ProductControl 启动导航会话
 3 项 Bash 平台测试跳过；MSVC Release `navd` 构建通过。构建仍报告原有
 `stop.cpp` 的 `fopen` 弃用提示和 `loop.cpp` 命令分派的局部变量遮蔽提示，
 没有本轮新增诊断。未运行 MuJoCo、未构建 ARM 整包、未部署或实机运动。
+
+
+## 再审查：观测重置与任务缓存
+
+基线 `29aeb698`。复查范围为目标提交、局部恢复、持续障碍、换路事务、
+新目标/取消/接管，以及停止确认与终态交付；不是全仓库或实机验收。
+
+发现并复现一项 P2 问题：观测累计重置时，任务协调器的第二份障碍候选缓存
+可能没有同步清空。典型顺序是普通障碍云已形成候选，随后 SCAN 提供新的
+局部碰撞观测；检测器重置累计并计入第一帧，但协调器仅检查“累计为零”，
+因而保留旧候选。此时恢复耗尽会让替换路径请求误用旧障碍。
+
+修复将候选记录移回 `ActivePathBlockagePolicy`，与 bind/reset/clearAccumulation
+一起清理，删除协调器内的重复缓存与推测式清理。协调器只在恢复耗尽后读取
+候选。重复观测仍不累加、缺少新观测不伪造“障碍已清除”，现有运动检查不变。
+
+新增 `testCollisionObservationResetDiscardsOldObstruction` 在修改前明确失败：
+`observation reset reused the old obstacle overlay before new evidence matured`；
+修复后通过。原有换路、取消、新目标替换、输入等待、终态交付的测试继续验证。
+日志位于 `build/codex-scan-dynamic/recovery-review-*.log`。
+
+最终验证：换路链路、持续障碍策略、任务恢复协调器、NavigationRuntime、终态事务
+共 5 个原生测试程序全部通过，MSVC Release `navd` 构建通过。
+本轮未修改 Python/网页接口，未重复其无关测试，也未运行 MuJoCo 或实机。
+上述审查范围内未再发现新的流程冲突，不能据此宣称整仓库没有缺陷。

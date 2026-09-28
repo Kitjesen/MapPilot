@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
+#include <memory>
 #include <optional>
 #include <string>
 #include <thread>
@@ -535,11 +536,41 @@ void testRecoveredPathDiscardsOldObstruction() {
           "successful local recovery left an obsolete obstacle overlay behind");
 }
 
+void testCollisionObservationResetDiscardsOldObstruction() {
+  Fixture fixture;
+  fixture.activateInitialPath();
+  fixture.observePersistentBlockage();
+  nav_kernel::LocalCollisionEvidence evidence;
+  evidence.identity.frameEpoch = Fixture::kFrameEpoch;
+  evidence.collisionResetEpoch = 1;
+  evidence.collisionObservationSequence = 1;
+  evidence.collisionGeneration = 1;
+  evidence.voxelResolution = 0.1;
+  evidence.rejectedPosition = {3.0, 0.0, 0.3};
+  evidence.measuredPoints = std::make_shared<const std::vector<nav_kernel::Vec3>>(
+      std::vector<nav_kernel::Vec3>{{3.05, .05, .35}, {3.15, .05, .35},
+                                   {3.05, -.05, .35}, {3.15, -.05, .35}});
+  fixture.latest_observation.local_collision_evidence = &evidence;
+  fixture.latest_observation.now_s = 12.0;
+  const auto tick = fixture.runExhaustedAutonomy();
+  const auto armed = fixture.coordinator.handleAutonomyOutcome(
+      fixture.frame(12.0), {tick.outcome, fixture.goal_plan.snapshot(), false, false,
+                           fixture.latest_observation});
+  require(armed.reason == "backoff_pending", "recovery exhaustion was not handled");
+  const auto started = fixture.coordinator.advancePlanningCycle(fixture.frame(12.5));
+  require(started.replan_started, "exhaustion did not start a replacement");
+  fixture.waitForReplacementActivation(12.501);
+  const auto requests = fixture.plannerRequests();
+  require(requests.size() == 2U && requests.back().temporary_overlay.empty(),
+          "observation reset reused the old obstacle overlay before new evidence matured");
+}
+
 }  // namespace
 
 int main() {
   testPersistentBlockageRunsOneAtomicReplacementCycle();
   testStopConfirmationFailureRemainsFailClosed();
   testRecoveredPathDiscardsOldObstruction();
+  testCollisionObservationResetDiscardsOldObstruction();
   return 0;
 }

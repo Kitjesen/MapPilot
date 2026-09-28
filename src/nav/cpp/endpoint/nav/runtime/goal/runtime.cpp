@@ -377,7 +377,6 @@ GoalReplanRuntimeResult
 GoalReplanRuntimeCoordinator::interrupt(GoalReplanRuntimeInterruption interruption,
                                         double steady_now_s) {
   blockage_.reset();
-  obstruction_.reset();
   GoalReplanRuntimeResult result;
   if (surfacePendingTerminal(result)) {
     return result;
@@ -620,17 +619,9 @@ GoalReplanRuntimeCoordinator::handleAutonomyOutcome(const GoalReplanRuntimeFrame
   // Collect evidence without interrupting local retries or recovery motions.
   // Only a completed local recovery may ask this task owner for a new route.
   if (event.blockage) {
-    if (auto evidence = blockage_.observe(*event.blockage)) {
-      obstruction_ = std::move(evidence);
-    }
-    const auto snapshot = blockage_.snapshot();
-    if (snapshot.fresh_blocked_observations == 0U || !snapshot.goal ||
-        (obstruction_ && !sameGoalReplanIdentity(obstruction_->goal, *snapshot.goal))) {
-      obstruction_.reset();
-    }
+    (void)blockage_.observe(*event.blockage);
   } else {
     blockage_.reset();
-    obstruction_.reset();
   }
 
   const GoalPlanSnapshot current_snapshot = goal_plan_.snapshot();
@@ -699,9 +690,10 @@ GoalReplanRuntimeCoordinator::handleAutonomyOutcome(const GoalReplanRuntimeFrame
     return result;
   }
   GoalReplanTrigger trigger = *event.outcome.replan_trigger;
-  if (obstruction_ && sameGoalReplanIdentity(obstruction_->goal, trigger.goal) &&
-      validPersistentOverlay(*obstruction_, frame.fresh_admission.frame_epoch)) {
-    trigger = *obstruction_;
+  const auto &obstruction = blockage_.candidate();
+  if (obstruction && sameGoalReplanIdentity(obstruction->goal, trigger.goal) &&
+      validPersistentOverlay(*obstruction, frame.fresh_admission.frame_epoch)) {
+    trigger = *obstruction;
   }
   const char *stop_reason = replanStopReason(trigger.kind);
   if (!event.goal_snapshot.active_origin || !current_snapshot.active_origin) {

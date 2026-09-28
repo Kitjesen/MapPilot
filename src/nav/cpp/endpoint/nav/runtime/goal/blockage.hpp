@@ -72,6 +72,7 @@ class ActivePathBlockagePolicy {
   [[nodiscard]] std::optional<GoalReplanTrigger>
   observe(const ActivePathBlockageObservation &observation);
   [[nodiscard]] ActivePathBlockagePolicySnapshot snapshot() const;
+  [[nodiscard]] const std::optional<GoalReplanTrigger> &candidate() const { return candidate_; }
   void reset();
 
  private:
@@ -93,6 +94,7 @@ class ActivePathBlockagePolicy {
                    bool include_local_collision) const;
 
   ActivePathBlockagePolicyConfig config_;
+  std::optional<GoalReplanTrigger> candidate_;
   std::optional<GoalReplanIdentity> goal_;
   std::uint64_t frame_epoch_{0U};
   std::uint64_t last_cloud_generation_{0U};

@@ -156,7 +156,6 @@ class GoalReplanRuntimeCoordinator {
   MotionStopBarrier &motion_stop_;
   BoundedGoalReplanController bounded_;
   ActivePathBlockagePolicy blockage_;
-  std::optional<GoalReplanTrigger> obstruction_;
   std::optional<GoalReplanTrigger> pending_replan_trigger_;
   bool replacement_plan_in_progress_{false};
   std::uint64_t next_terminal_intent_id_{1U};

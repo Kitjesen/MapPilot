@@ -77,6 +77,7 @@ bool ActivePathBlockagePolicy::sameBinding(const GoalReplanIdentity &goal,
 }
 
 void ActivePathBlockagePolicy::bind(const GoalReplanIdentity &goal, std::uint64_t frame_epoch) {
+  candidate_.reset();
   goal_ = goal;
   frame_epoch_ = frame_epoch;
   last_cloud_generation_ = 0U;
@@ -91,6 +92,7 @@ void ActivePathBlockagePolicy::bind(const GoalReplanIdentity &goal, std::uint64_
 }
 
 void ActivePathBlockagePolicy::clearAccumulation(const char *reason) {
+  candidate_.reset();
   fresh_blocked_observations_ = 0U;
   current_blocker_count_ = 0U;
   first_blocked_s_ = -1.0;
@@ -463,7 +465,8 @@ ActivePathBlockagePolicy::observe(const ActivePathBlockageObservation &observati
     ++next_overlay_revision_;
   }
   reason_ = trigger.reason;
-  return trigger;
+  candidate_ = std::move(trigger);
+  return candidate_;
 }
 
 ActivePathBlockagePolicySnapshot ActivePathBlockagePolicy::snapshot() const {
@@ -482,6 +485,7 @@ ActivePathBlockagePolicySnapshot ActivePathBlockagePolicy::snapshot() const {
 }
 
 void ActivePathBlockagePolicy::reset() {
+  candidate_.reset();
   goal_.reset();
   frame_epoch_ = 0U;
   last_cloud_generation_ = 0U;
