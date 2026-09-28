@@ -49,9 +49,9 @@ nav_kernel::PredictionView makePredictionView(
     const std::vector<nav_kernel::PredictedObstacle> &volumes,
     double received_s, double now_s, double max_age_s);
 
-// A rejected body position in the SCAN planning frame, never an obstacle voxel.
-// The endpoint uses this only to select nearby measured obstacle geometry.
-std::optional<nav_kernel::Vec3> localCollisionHint(
+// Returns fresh backend-neutral collision evidence. Backend diagnostics are
+// interpreted before publication; the endpoint only validates time and IDs.
+const nav_kernel::LocalCollisionEvidence *localCollisionEvidence(
     const nav_kernel::LocalPlannerDebugSnapshot &debug, double now_s, double max_age_s);
 
 }  // namespace lingtu::nav::endpoint

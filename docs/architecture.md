@@ -182,6 +182,39 @@ hardware adapter.
 Python map or planning code may exist for development and simulation fallback
 work, but it cannot compete with field owners.
 
+### Global and local planning
+
+Product selects planners and declares their configuration. Assembly resolves
+those inputs into one RunPlan; ProductControl starts that plan. Neither layer
+implements search, selects a local target, or edits a generated trajectory.
+
+| Owner | Inputs and responsibility | Output |
+| --- | --- | --- |
+| Global planner | Saved 3D map, current map pose, final goal, global search settings | Ordered map-frame XYZ route points and route-search result |
+| Goal lifecycle | Request identity, current map identity, global-search completion and persistent execution blockage | Activate/replace/cancel a Route or request another global search |
+| Executor | Activated Route, measured pose/velocity, execution state | Local reference/objective and execution feedback |
+| Local planner | Reference, measured state, live collision/prediction data and its own settings | Executable local path or B-spline, or typed pending/blocked result |
+| Follower and final control | Executable local result, measured state, speed limits and motion authority | Checked body velocity for the driver |
+
+The global-to-local geometric contract is a reference polyline, not a sequence
+of separate navigation-goal commands. SCAN selects its local target and
+trajectory horizon from that reference. Pose updates do not create new routes.
+Frame and route identity travel with the geometry so stale work can be
+discarded; neither planner needs the other's backend type or tuning parameters.
+Reference points guide local planning; they are not individually mandatory
+arrival points. SCAN retains its own waypoint filtering, smoothing and local
+detour behavior, with collision validation of the executable trajectory.
+
+Persistent local blockage may request another global route through the goal
+lifecycle. The coordinator supplies measured temporary obstacle geometry when
+available. The local algorithm does not call global search, and the global
+algorithm does not inspect SCAN's FSM or optimizer failures. Saved global
+occupancy and live local collision maps retain separate owners. A local input
+hold can stop execution without invalidating an already computed global route.
+
+See [runtime conditions and parameters](runtime.md#route-trajectory-and-motion-conditions)
+and the [native navigation interfaces](../src/nav/cpp/README.md).
+
 ## Topics, frames, schemas, and IDs
 
 Topic declarations live in [`src/message/topics/`](../src/message/topics/);

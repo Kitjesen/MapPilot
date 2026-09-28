@@ -54,6 +54,7 @@ struct CliConfig {
   double segment_map_max_age_s{0.35};
   double waypoint_reached_m{0.6};
   double goal_reached_m{0.35};
+  double goal_height_tolerance_m{0.35};
   double path_follower_goal_tolerance_m{0.2};
   double path_follower_lookahead_m{0.3};
   double path_follower_max_speed_mps{0.5};

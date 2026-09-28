@@ -553,9 +553,7 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
 
 void testTrackingSnapshotPreservesProgressAndErrors() {
   Fixture fixture;
-  fixture.local.dynamic_avoidance = "waiting";
   fixture.local.prediction_count = 2;
-  fixture.local.dynamic_blocked_s = .7;
   fixture.local.tracking.active = true;
   fixture.local.tracking.trajectoryId = 47;
   fixture.local.tracking.executionTimeS = 1.25;
@@ -573,9 +571,7 @@ void testTrackingSnapshotPreservesProgressAndErrors() {
   require(publisher.publishIfDue(fixture.state, fixture.commands, previous, current),
           "tracking status snapshot must publish");
   publisher.flush();
-  require(contains(fixture.writes.back(), "\"dynamic_avoidance\": \"waiting\"") &&
-              contains(fixture.writes.back(), "\"prediction_count\": 2") &&
-              contains(fixture.writes.back(), "\"dynamic_blocked_s\": 0.700000"),
+  require(contains(fixture.writes.back(), "\"prediction_count\": 2"),
           "prediction decisions must survive asynchronous status publication");
   require(contains(fixture.writes.back(),
                    "\"tracking\": {\"active\": true, \"trajectory_id\": 47, "

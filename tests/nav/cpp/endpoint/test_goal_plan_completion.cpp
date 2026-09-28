@@ -626,12 +626,11 @@ int main() {
               .path_activated,
           "far single-point path was not activated");
   require(far_single_point_recorder.activations.size() == 1U &&
-              far_single_point_recorder.activations.front().path.size() == 2U,
-          "far single-point path was not repaired to two points");
+              far_single_point_recorder.activations.front().path.size() == 1U,
+          "far single-point backend path was changed");
   require(far_single_point_recorder.activations.front().path.front().x ==
-                  admission.map_position->x &&
-              far_single_point_recorder.activations.front().path.back().x == 4.0,
-          "far single-point path did not prepend current start");
+              4.0,
+          "far single-point backend path did not preserve its point");
 
   Recorder near_single_point_recorder;
   GoalPlanController near_single_point_controller(
@@ -645,19 +644,25 @@ int main() {
         return result;
       },
       near_single_point_recorder.actions());
-  require(near_single_point_controller.submit(request(), admission).accepted,
+  auto near_single_point_request = request();
+  near_single_point_request.target = GoalPlanTarget{
+      nav_kernel::Vec3{admission.map_position->x + 0.1,
+                       admission.map_position->y,
+                       admission.map_position->z},
+      0.25,
+  };
+  require(near_single_point_controller.submit(near_single_point_request, admission).accepted,
           "near single-point test could not start planning");
   require(waitForCompletion(near_single_point_controller,
                             GoalPlanAdvanceContext{admission.frame_epoch, false, 34.0})
               .path_activated,
           "near single-point path was not activated");
   require(near_single_point_recorder.activations.size() == 1U &&
-              near_single_point_recorder.activations.front().path.size() == 2U,
-          "near single-point path was not repaired to two points");
+              near_single_point_recorder.activations.front().path.size() == 1U,
+          "near single-point backend path was changed");
   require(near_single_point_recorder.activations.front().path.front().x ==
-                  admission.map_position->x &&
-              near_single_point_recorder.activations.front().path.back().x == 4.0,
-          "near single-point path did not append requested goal");
+              admission.map_position->x,
+          "near single-point backend path appended the requested goal");
 
   Recorder sequential_recorder;
   GoalPlanController sequential_controller(successfulPlan, sequential_recorder.actions());

@@ -42,6 +42,7 @@ struct StatusWriterConfig {
   double follower_goal_tolerance_m{0.0};
   double waypoint_reached_m{0.0};
   double goal_reached_m{0.0};
+  double goal_height_tolerance_m{0.0};
   double corridor_lookahead_m{0.0};
   double nominal_dt_s{0.0};
   bool publish_cmd_vel{false};
@@ -111,9 +112,7 @@ struct PlanDiagnostics {
 };
 
 struct LocalDiagnostics {
-  std::string dynamic_avoidance{"clear"};
   std::size_t prediction_count{0};
-  double dynamic_blocked_s{0.0};
   bool seen{false};
   bool active{false};
   bool goal_reached{false};

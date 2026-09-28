@@ -561,29 +561,17 @@ function SceneViewComponent({
   const missionState = navigationView.task.state
   const missionStateLabel = navigationView.task.label
   const hasGoal = ['PLANNING', 'EXECUTING', 'RECOVERING', 'PAUSED'].includes(missionState)
-  const dynamicLabels: Record<string, string> = {
-    waiting: '等待移动障碍通过',
-    waiting_for_detour: '正在寻找绕行路径',
-    resuming: '障碍已离开，正在恢复行走',
-    detour: '正在避让移动障碍',
-    stale: '障碍观测未更新，已暂停',
-    timeout: '避让未完成，已停止任务',
-  }
-  const dynamicLabel = nativeFresh && hasGoal && typeof lastLocal?.dynamic_avoidance === 'string'
-    ? dynamicLabels[lastLocal.dynamic_avoidance] : undefined
   const plannerLabel = !nativeFresh ? '规划未更新'
-    : dynamicLabel ?? (localPathPts.length > 1 && tracking?.active === true
+    : localPathPts.length > 1 && tracking?.active === true
       ? tracking.execution_frozen === true ? '轨迹已暂停' : '正在跟踪轨迹'
       : requestedMotion || hasGoal ? '等待可通行路径'
-        : '无运动请求')
+        : '无运动请求'
   const currentPlannerIssue = nativeFresh && (requestedMotion || hasGoal || missionState === 'FAILED')
     && localPathPts.length < 2 && typeof lastLocal?.reason === 'string'
     && !['superseded_by_new_goal', 'local_plan_pending'].includes(lastLocal.reason)
     && lastLocal.path_found === false ? lastLocal.reason : null
   const plannerIssueLabel = currentPlannerIssue === 'scan_initialization_failed' ? '局部规划初始化失败'
     : currentPlannerIssue === 'local_trajectory_blocked_near_robot' ? '机器人附近路径受阻'
-      : currentPlannerIssue === 'dynamic_obstacle_timeout' ? '移动障碍持续阻挡，已停止任务'
-      : currentPlannerIssue === 'dynamic_resume_timeout' ? '避让后未能恢复行走，已停止任务'
       : currentPlannerIssue
   const motionHeld = navigationView.motion.permission.state === 'HELD'
     || navigationView.motion.permission.state === 'ESTOPPED'

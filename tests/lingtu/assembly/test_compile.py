@@ -163,6 +163,46 @@ def test_scan_parameters_survive_run_plan_round_trip(env, tmp_path) -> None:
     assert not (set(expected) & set(loaded.as_dict()["launch"]["process_environment"]))
 
 
+@pytest.mark.parametrize("env", ["real", "sim"])
+@pytest.mark.parametrize("local_planner", ["scan", "cmu"])
+def test_nav_product_owns_arrival_height_across_envs_and_local_planners(
+    env: str,
+    local_planner: str,
+) -> None:
+    plan = compile_run_plan("nav", env, local_planner=local_planner)
+
+    assert plan.native_process_environment["LINGTU_NAV_GOAL_HEIGHT_TOLERANCE_M"] == "0.35"
+    assert "scan_planner.route_z_tolerance_m" not in plan.parameters
+    assert "LINGTU_NAV_SCAN_ROUTE_Z_TOLERANCE_M" not in plan.native_process_environment
+
+
+@pytest.mark.parametrize("env", ["real", "sim"])
+def test_scan_tuning_does_not_change_global_route_or_arrival_configuration(env: str) -> None:
+    baseline = compile_run_plan("nav", env)
+    changed = compile_run_plan(
+        "nav",
+        env,
+        parameter_overrides={
+            "scan_planner.collision_weight": 9.0,
+            "scan_planner.planning_horizon_m": 1.5,
+        },
+    )
+    prefix = "LINGTU_NAV_OCTO"
+
+    assert {
+        key: value
+        for key, value in baseline.native_process_environment.items()
+        if key.startswith(prefix)
+    } == {
+        key: value
+        for key, value in changed.native_process_environment.items()
+        if key.startswith(prefix)
+    }
+    assert changed.native_process_environment[
+        "LINGTU_NAV_GOAL_HEIGHT_TOLERANCE_M"
+    ] == "0.35"
+
+
 def test_scan_defaults_follow_product_motion_limits() -> None:
     from dataclasses import replace
 

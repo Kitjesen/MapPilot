@@ -145,6 +145,17 @@ must not be inferred from a current-state snapshot.
 OctoPlanner owns the saved-map route and terrain constraints. SCAN owns the
 heading-dependent body envelope, live obstacle avoidance, and local trajectory.
 The global route radius is independent of SCAN's two-cylinder dimensions.
+The goal adapter preserves the global planner's returned points, including a
+single-point arrival; it does not append the requested goal to make a longer
+path. SCAN-specific reference-spacing adjustments belong inside the SCAN
+adapter, not in Executor's shared route construction.
+
+Product owns task arrival policy through `native_nav.goal_reached_m` and
+`native_nav.goal_height_tolerance_m`. Switching between SCAN and CMU does not
+select a different arrival policy. The former
+`scan_planner.route_z_tolerance_m` parameter and its
+`LINGTU_NAV_SCAN_ROUTE_Z_TOLERANCE_M` binding are removed; regenerate RunPlan
+with the task-owned field. The `nav` Product explicitly retains 0.35 m for Z.
 
 Endpoint snapping follows the upstream OctoPlanner policy: choose a nearby
 traversable start and search from that candidate. There is no separate rejection
@@ -228,8 +239,11 @@ replan with temporary measured obstacle voxels. Their Z extents remain one
 observation voxel, with different heights at the same XY retained separately;
 they are neither robot-inflated nor extended into vertical columns.
 
-A fresh SCAN collision sample can select nearby measured returns outside the
-global route corridor. The failed body sample is not itself obstacle geometry.
+A local planner can report typed collision evidence outside the global route
+corridor. SCAN extracts nearby measured occupied cells from the same collision
+snapshot that rejected its trajectory. Coordination consumes that evidence
+without interpreting SCAN's private attempt diagnostics or inflated-only cells.
+The failed body sample is not itself obstacle geometry.
 Input or acceleration failures without spatial collision evidence do not create
 blocked regions. This feedback does not rewrite the saved OctoMap or bypass the
 existing stop-before-replan transaction.
@@ -258,7 +272,7 @@ and native status are the field source of truth.
 | Nominal speed / acceleration | 0.75 m/s / 0.50 m/s² | Product values; a goal's speed cap can reduce execution speed |
 | Sampled velocity allowance | 1.00 m/s | Spline acceptance allowance; follower commands remain capped at the configured/session speed |
 | Sampled acceleration allowance | 1.20 m/s² | Added to the nominal acceleration for the trajectory validation threshold (1.70 m/s²) |
-| Goal height tolerance | 0.35 m | Final arrival Z check; not a local trajectory-generation gate |
+| Goal height tolerance | 0.35 m | Product task-arrival Z value; Executor retains the existing lower bound from the active acceptance radius; not a SCAN setting |
 | Native tick rate | 100 Hz | FSM/controller cadence, not 100 complete optimizations per second |
 
 ## Maps and localization

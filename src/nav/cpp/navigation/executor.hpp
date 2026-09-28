@@ -65,9 +65,7 @@ struct ExecutionOutput {
   nav_kernel::LocalPlannerDebugSnapshot local_planner_debug;
   nav_kernel::Twist cmd_vel{};
   nav_kernel::FollowerTracking tracking{};
-  std::string dynamic_avoidance{"clear"};
   std::size_t prediction_count{0};
-  double dynamic_blocked_s{0.0};
 };
 
 struct ExecutionObservation {

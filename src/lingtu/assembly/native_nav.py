@@ -277,6 +277,9 @@ class NativeNavConfig:
             "LINGTU_NAV_DDS_TICK_HZ": _env_number(parameters["tick_hz"]),
             "LINGTU_NAV_CORRIDOR_LOOKAHEAD_M": _env_number(parameters["corridor_lookahead_m"]),
             "LINGTU_NAV_GOAL_REACHED_M": _env_number(parameters["goal_reached_m"]),
+            "LINGTU_NAV_GOAL_HEIGHT_TOLERANCE_M": _env_number(
+                parameters["goal_height_tolerance_m"]
+            ),
             "LINGTU_NAV_DYNAMIC_MIN_CELLS": str(parameters["dynamic_min_cells"]),
             "LINGTU_NAV_DYNAMIC_MIN_SPEED_MPS": _env_number(parameters["dynamic_min_speed_mps"]),
             "LINGTU_NAV_DYNAMIC_CONFIRM_FRAMES": str(parameters["dynamic_confirm_frames"]),
@@ -426,6 +429,14 @@ def compile_native_nav_config(
     path_follower_goal_tolerance_m = _finite_number(
         native_nav_config, "path_follower_goal_tolerance_m", 0.2
     )
+    goal_reached_m = _finite_number(native_nav_config, "goal_reached_m", 0.35)
+    goal_height_tolerance_m = _finite_number(
+        native_nav_config,
+        "goal_height_tolerance_m",
+        goal_reached_m,
+    )
+    if goal_height_tolerance_m <= 0.0:
+        raise ValueError("native_nav.goal_height_tolerance_m must be positive")
     parameters = {
         "tick_hz": _finite_number(native_nav_config, "tick_hz", 20.0),
         "corridor_lookahead_m": _finite_number(native_nav_config, "corridor_lookahead_m", 3.0),
@@ -436,7 +447,8 @@ def compile_native_nav_config(
         "dynamic_confirm_frames": _positive_integer(
             native_nav_config, "dynamic_confirm_frames", 4
         ),
-        "goal_reached_m": _finite_number(native_nav_config, "goal_reached_m", 0.35),
+        "goal_reached_m": goal_reached_m,
+        "goal_height_tolerance_m": goal_height_tolerance_m,
         "path_follower_goal_tolerance_m": path_follower_goal_tolerance_m,
         "path_follower_lookahead_m": _finite_number(
             native_nav_config, "path_follower_lookahead_m", 0.3

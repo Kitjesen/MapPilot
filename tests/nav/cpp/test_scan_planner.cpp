@@ -10,6 +10,7 @@
 #include "collision_bitmap.hpp"
 #include "planning/local/scan/backend.hpp"
 #include "planning/local/scan/grid.hpp"
+#include "planning/local/scan/reference.hpp"
 #include "planning/local/scan/task.hpp"
 #include "planning/local/scan/upstream/path_searching/dyn_a_star.h"
 #include "planning/local/scan/upstream/plan_env/grid_map.h"
@@ -1521,6 +1522,54 @@ TEST(ScanBackend, FinalApproachBelowTwentyCentimetresProducesMotionTrajectory) {
   EXPECT_NEAR(spline.position(spline.duration()).x, 0.18, 0.02);
 }
 
+TEST(ScanBackend, RemovesShortCollinearCorridorCutBeforeEndpoint) {
+  RequestFixture fixture({{0, 0, 0.5}, {3.5, 0, 0.5}, {3.7, 0, 0.5}});
+  fixture.request.robot.pose.yaw = M_PI;
+  nav_kernel::local::scan::Backend backend(scanParams());
+  LocalPlan plan;
+  for (int tick = 0; tick < 30 && !plan.ready(); ++tick) {
+    fixture.request.clock.timestampS += 0.01;
+    plan = backend.tick(fixture.request);
+  }
+  ASSERT_TRUE(plan.ready()) << backend.debugSnapshot().searchReason;
+  const nav_kernel::SplineView spline(std::get<SplineTarget>(plan.target()));
+  double minimumX = 0.0;
+  for (double time = 0.0; time <= spline.duration(); time += 0.01)
+    minimumX = std::min(minimumX, spline.position(time).x);
+  EXPECT_GE(minimumX, -0.02);
+  const auto debug = backend.debugSnapshot();
+  ASSERT_TRUE(debug.localTargetValid);
+  EXPECT_GT(debug.localTarget.x, 3.0);
+  EXPECT_LE(debug.localTarget.x, 3.7);
+  EXPECT_NEAR(spline.position(spline.duration()).x, debug.localTarget.x, 0.02);
+}
+
+TEST(ScanReferenceAdapter, FoldsOnlyShortCollinearCorridorCuts) {
+  const std::vector<Vec3> collinear{
+      {0, 0, 0.5}, {3.5, 0, 0.5}, {3.7, 0, 0.5}};
+  const auto folded = nav_kernel::local::scan::detail::adaptReferencePath(
+      {collinear.data(), static_cast<int>(collinear.size()), 1}, 0.4);
+  ASSERT_EQ(folded.size(), 2U);
+  EXPECT_DOUBLE_EQ(folded.back().x(), 3.7);
+  EXPECT_NEAR(folded.back().z(), 0.1, 1e-12);
+
+  const std::vector<Vec3> lateralBend{
+      {0, 0, 0.5}, {3.5, 0, 0.5}, {3.5, 0.2, 0.5}, {4.0, 0.2, 0.5}};
+  const auto lateral = nav_kernel::local::scan::detail::adaptReferencePath(
+      {lateralBend.data(), static_cast<int>(lateralBend.size()), 1}, 0.4);
+  ASSERT_EQ(lateral.size(), lateralBend.size());
+  EXPECT_DOUBLE_EQ(lateral[2].y(), 0.2);
+  EXPECT_DOUBLE_EQ(lateral.back().x(), 4.0);
+
+  const std::vector<Vec3> elevationBend{
+      {0, 0, 0.5}, {3.5, 0, 0.5}, {3.7, 0, 0.7}, {4.0, 0, 0.7}};
+  const auto elevated = nav_kernel::local::scan::detail::adaptReferencePath(
+      {elevationBend.data(), static_cast<int>(elevationBend.size()), 1}, 0.4);
+  ASSERT_EQ(elevated.size(), elevationBend.size());
+  EXPECT_NEAR(elevated[2].z(), 0.3, 1e-12);
+  EXPECT_DOUBLE_EQ(elevated.back().x(), 4.0);
+}
+
 TEST(ScanBackend, OccupiedEndpointFallbackRetainsGoalForMapRecovery) {
   RequestFixture fixture({{0, 0, 0.5}, {2, 0, 0.5}}, 0.05);
   for (int x = 1; x < 50; ++x)
@@ -2755,4 +2804,39 @@ TEST(ScanGrid, BoundaryDepartureRejectsActualMotionIntoAnObstacle) {
   EXPECT_FALSE(grid.boundaryDepartureMotionFree(pose, {0, -.3, 0}, {.1, 0, 0}, .3, .35, .5));
   f.bitmap.occupy({.275, -.025, .525});
   EXPECT_FALSE(grid.boundaryDepartureMotionFree(pose, {0, -.3, 0}, {}, .3, .35, .5));
+}
+
+TEST(ScanCollisionEvidence, UsesMeasuredVoxelsAndClearsOnReset) {
+  for (bool measured : {false, true}) {
+    SCOPED_TRACE(measured);
+    RequestFixture fixture({{0, 0, .5}, {2, 0, .5}});
+    for (double x = -.25; x < .3; x += .1)
+      for (double y = -.25; y < .3; y += .1)
+        for (double z = .25; z < .8; z += .1)
+          fixture.bitmap.occupy({x, y, z});
+    fixture.refreshCollision(2);
+    auto &collision = fixture.request.environment.collision;
+    CollisionBitmap observed({-5,-5,-1}, {5,5,2}, .1);
+    if (measured) observed.occupy({.05,.05,.55});
+    const auto bits = observed.view();
+    collision.measuredOccupiedStorage = std::make_shared<const std::vector<std::uint8_t>>(
+        bits.inflatedBits, bits.inflatedBits + bits.inflatedBytes);
+    nav_kernel::local::scan::Backend backend(scanParams());
+    for (int i = 0; i < 20 && !backend.debugSnapshot().collisionEvidence; ++i) {
+      fixture.request.clock.timestampS += .01;
+      (void)backend.tick(fixture.request);
+    }
+    const auto evidence = backend.debugSnapshot().collisionEvidence;
+    ASSERT_TRUE(evidence);
+    ASSERT_TRUE(evidence->measuredPoints);
+    EXPECT_EQ(evidence->measuredPoints->size(), measured ? 1U : 0U);
+    EXPECT_EQ(evidence->collisionGeneration, 2U);
+    EXPECT_EQ(evidence->collisionObservationSequence, 2U);
+    if (measured) {
+      EXPECT_NEAR(evidence->measuredPoints->front().x, .05, 1e-6);
+      EXPECT_NEAR(evidence->measuredPoints->front().z, .55, 1e-6);
+    }
+    backend.reset();
+    EXPECT_FALSE(backend.debugSnapshot().collisionEvidence);
+  }
 }

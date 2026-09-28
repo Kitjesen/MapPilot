@@ -10,6 +10,7 @@
 #include <Eigen/Geometry>
 
 #include "planning/local/scan/grid.hpp"
+#include "planning/local/scan/reference.hpp"
 #include "planning/local/scan/upstream/plan_manage/planner_manager.h"
 #include "planning/local/scan/upstream/plan_manage/scan_replan_fsm.h"
 
@@ -168,6 +169,84 @@ class GridBinding {
   GridMap &adapter_;
 };
 
+std::optional<LocalCollisionEvidence> measuredCollisionEvidence(
+    const LocalPlanRequest &input, const ScanAttemptDiagnostics &attempt,
+    const ScanPlannerParams &params) {
+  const LocalCollisionMapView &collision = input.environment.collision;
+  if (!attempt.collisionValid || attempt.collisionState <= 0 ||
+      attempt.dynamicViolationValid || !finitePoint(attempt.collisionPosition) ||
+      !collision.valid() || !collision.complete ||
+      !collision.measuredOccupiedStorage ||
+      collision.measuredOccupiedStorage->size() != collision.inflatedBytes ||
+      collision.resetEpoch == 0U || collision.observationSequence == 0U ||
+      collision.generation == 0U) {
+    return std::nullopt;
+  }
+
+  const double radius = std::max(0.0, params.cylinderRadius) +
+                        std::max(0.0, params.cylinderOffset);
+  const double below = std::max(0.0, params.bodyClearanceBelow);
+  const double above = std::max(0.0, params.bodyClearanceAbove);
+  if (!collision.coversCylinder(attempt.collisionPosition, radius, below, above)) {
+    return std::nullopt;
+  }
+  const double c = std::cos(collision.gridFromPlanningYaw);
+  const double s = std::sin(collision.gridFromPlanningYaw);
+  const Vec3 &rejected = attempt.collisionPosition;
+  const Vec3 grid_center{
+      collision.gridFromPlanningTranslation.x + c * rejected.x - s * rejected.y,
+      collision.gridFromPlanningTranslation.y + s * rejected.x + c * rejected.y,
+      collision.gridFromPlanningTranslation.z + rejected.z,
+  };
+  const auto index = [&](double value, double minimum, int size) {
+    return std::clamp(static_cast<int>(std::floor((value - minimum) /
+                                                  collision.resolution)),
+                      0, size - 1);
+  };
+  const int min_x = index(grid_center.x - radius, collision.aabbMin.x, collision.sizeX);
+  const int max_x = index(grid_center.x + radius, collision.aabbMin.x, collision.sizeX);
+  const int min_y = index(grid_center.y - radius, collision.aabbMin.y, collision.sizeY);
+  const int max_y = index(grid_center.y + radius, collision.aabbMin.y, collision.sizeY);
+  const int min_z = index(grid_center.z - below, collision.aabbMin.z, collision.sizeZ);
+  const int max_z = index(grid_center.z + above, collision.aabbMin.z, collision.sizeZ);
+
+  auto points = std::make_shared<std::vector<Vec3>>();
+  const auto &measured = *collision.measuredOccupiedStorage;
+  const std::size_t plane = static_cast<std::size_t>(collision.sizeX) *
+                            static_cast<std::size_t>(collision.sizeY);
+  for (int z = min_z; z <= max_z; ++z) {
+    for (int y = min_y; y <= max_y; ++y) {
+      for (int x = min_x; x <= max_x; ++x) {
+        const std::size_t linear = static_cast<std::size_t>(z) * plane +
+            static_cast<std::size_t>(y) * static_cast<std::size_t>(collision.sizeX) +
+            static_cast<std::size_t>(x);
+        if ((measured[linear / 8U] &
+             static_cast<std::uint8_t>(1U << (linear % 8U))) == 0U) {
+          continue;
+        }
+        const Vec3 point = collision.planningCellCenter(linear);
+        if (std::hypot(point.x - rejected.x, point.y - rejected.y) <=
+                radius + 0.5 * collision.resolution &&
+            point.z >= rejected.z - below - 0.5 * collision.resolution &&
+            point.z <= rejected.z + above + 0.5 * collision.resolution) {
+          points->push_back(point);
+        }
+      }
+    }
+  }
+
+  LocalCollisionEvidence evidence;
+  evidence.timestampS = input.clock.timestampS;
+  evidence.identity = input.identity;
+  evidence.collisionResetEpoch = collision.resetEpoch;
+  evidence.collisionObservationSequence = collision.observationSequence;
+  evidence.collisionGeneration = collision.generation;
+  evidence.rejectedPosition = rejected;
+  evidence.voxelResolution = collision.resolution;
+  evidence.measuredPoints = std::move(points);
+  return evidence;
+}
+
 }  // namespace
 
 class Backend::Impl {
@@ -198,6 +277,7 @@ class Backend::Impl {
     debug_.backend = LocalPlannerBackend::Scan;
     debug_.timestampS = input.clock.timestampS;
     debug_.scanAttempt = lastAttempt_;
+    debug_.collisionEvidence = lastCollisionEvidence_;
     debug_.lastScanFailure = lastFailure_;
 
     const auto stop = [this, started](LocalPlanStatus status,
@@ -303,16 +383,10 @@ class Backend::Impl {
                                activeSpline->maxLinearSpeedMps != plan.max_vel_ &&
                                fsm_->state() == ScanReplanState::EXEC_TRAJ;
       if (referenceIdentityChanged(input, *route) || speedReplan) {
-        std::vector<Eigen::Vector3d> reference;
-        reference.reserve(static_cast<std::size_t>(route->count));
-        for (int index = 0; index < route->count; ++index) {
-          Eigen::Vector3d point = eigenPoint(route->points[index]);
-          // LingTu routes use body-centre Z; upstream REFERENCE_PATH uses the
-          // ground-following surface and adds grid_map/body_height internally.
-          point.z() -= kOfficialBodyHeightM;
-          reference.push_back(point);
-        }
-        fsmInput.referencePath = std::move(reference);
+        // LingTu routes use body-centre Z; upstream REFERENCE_PATH uses the
+        // ground-following surface and adds grid_map/body_height internally.
+        fsmInput.referencePath =
+            detail::adaptReferencePath(*route, kOfficialBodyHeightM);
       }
       output = fsm_->tick(fsmInput);
     }
@@ -388,9 +462,11 @@ class Backend::Impl {
     emergencyStopped_ = false;
     lastFrameEpoch_ = 0;
     lastRouteGeneration_ = 0;
+    lastCollisionEvidence_.reset();
     debug_ = {};
     debug_.backend = LocalPlannerBackend::Scan;
     debug_.scanAttempt = lastAttempt_;
+    debug_.collisionEvidence = lastCollisionEvidence_;
     debug_.lastScanFailure = lastFailure_;
     lastObservedAttemptId_ = 0;
     failureEpisodeActive_ = false;
@@ -414,8 +490,12 @@ class Backend::Impl {
     // Failed internal retries followed by success in this tick do not start one.
     if (attempt.success) {
       failureEpisodeActive_ = false;
+      lastCollisionEvidence_.reset();
+      debug_.collisionEvidence.reset();
       return;
     }
+    lastCollisionEvidence_ = measuredCollisionEvidence(input, lastAttempt_, params_.scan);
+    debug_.collisionEvidence = lastCollisionEvidence_;
     if (failureEpisodeActive_)
       return;
     failureEpisodeActive_ = true;
@@ -517,6 +597,7 @@ class Backend::Impl {
   std::uint64_t failureSequence_{0};
   bool failureEpisodeActive_{false};
   ScanAttemptDiagnostics lastAttempt_{};
+  std::optional<LocalCollisionEvidence> lastCollisionEvidence_;
   std::shared_ptr<const ScanFailureSnapshot> lastFailure_;
   LocalPlannerDebugSnapshot debug_{};
 };

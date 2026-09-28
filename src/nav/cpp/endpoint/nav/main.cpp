@@ -1088,10 +1088,6 @@ int main(int argc, char **argv) {
     blockage_config.minimum_obstacle_points = 2U;
     blockage_config.obstacle_voxel_size_m = cfg.obstacle_voxel_size_m;
     if (cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan) {
-      blockage_config.local_collision_radius_m =
-          cfg.collision_cylinder_radius_m + cfg.collision_cylinder_offset_m;
-      blockage_config.local_collision_below_m = cfg.collision_clearance_below_m;
-      blockage_config.local_collision_above_m = cfg.collision_clearance_above_m;
       blockage_config.corridor_vertical_tolerance_m =
           std::max(cfg.collision_clearance_below_m, cfg.collision_clearance_above_m) +
           0.5 * cfg.obstacle_voxel_size_m;

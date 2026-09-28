@@ -117,7 +117,7 @@ differ:
 | Backend | Main output | Execution model |
 | --- | --- | --- |
 | CMU | Body-relative `PathTarget` | Follower selects a lookahead point and computes velocity online |
-| SCAN | Exact planning-frame `SplineTarget` (normally `odom`) | Follower evaluates the B-spline at the execution clock and converts control to body velocity |
+| SCAN | Exact planning-frame `SplineTarget` (Product composition selects `map`) | Follower evaluates the B-spline at the execution clock and converts control to body velocity |
 
 SCAN preview geometry is sampled from the spline on demand; it is not a second
 executable result. Assisted teleop uses the selected backend as well: CMU
@@ -130,7 +130,7 @@ between them implicitly. See
 | Data | Owner | Consumers |
 | --- | --- | --- |
 | Live occupied/inflated grid | Mapd in `src/maps/` | Navd receives a complete bitmap; SCAN queries it without rebuilding or inflating it |
-| Activated global Route | Executor | LocalPlanner receives the complete reference plus a bounded local segment |
+| Activated global Route | Executor | SCAN receives a stable complete map-frame reference; CMU receives a bounded odom-frame segment |
 | Reference/map snapshots for asynchronous SCAN | `planning/local/scan/task.*` | One serialized worker shares immutable snapshots across timer callbacks |
 | SCAN FSM and generated B-spline | `planning/local/scan/upstream/` through `backend.*` | Follower tracks the published trajectory; preview geometry is telemetry |
 | Final body velocity | Endpoint FinalControl | Driver is the only robot command forwarder |

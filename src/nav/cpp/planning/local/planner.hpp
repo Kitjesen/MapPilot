@@ -29,7 +29,6 @@ const char *localPlannerBackendName(LocalPlannerBackend backend);
 struct ScanPlannerParams {
   static constexpr double kMinReferenceWaypointDistanceM = 0.5;
   double voxelResolution = 0.05;
-  double routeZTolerance = 0.35;
   double bodyClearanceBelow = 0.25;
   double bodyClearanceAbove = 0.35;
   double cylinderOffset = 0.18;
@@ -388,6 +387,21 @@ struct ScanAttemptDiagnostics {
   double dynamicTimeS{-1.0};
 };
 
+// Backend-neutral evidence for one rejected local body pose. The points are
+// measured occupied voxel centres from the exact collision snapshot used by
+// that attempt; inflated-only cells and the rejected pose itself are not
+// obstacle evidence.
+struct LocalCollisionEvidence {
+  double timestampS{0.0};
+  PlanIdentity identity{};
+  std::uint64_t collisionResetEpoch{0};
+  std::uint64_t collisionObservationSequence{0};
+  std::uint64_t collisionGeneration{0};
+  Vec3 rejectedPosition{};
+  double voxelResolution{0.0};
+  std::shared_ptr<const std::vector<Vec3>> measuredPoints{};
+};
+
 // Final attempted result of the first failed FSM tick in the latest episode.
 // A tick that recovers through an internal retry is not a failure episode.
 // Large map bytes retain
@@ -438,6 +452,7 @@ struct LocalPlannerDebugSnapshot {
   bool localTargetValid{false};
   Vec3 localTarget{};
   ScanAttemptDiagnostics scanAttempt;
+  std::optional<LocalCollisionEvidence> collisionEvidence;
   std::shared_ptr<const ScanFailureSnapshot> lastScanFailure;
   double pathScale{0.0};
   double pathRange{0.0};

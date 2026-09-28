@@ -16,8 +16,8 @@ GlobalPlanner -> Route -> Executor -> LocalPlanner -> LocalPlan -> Follower
                                            endpoint FinalControl
 ```
 
-- `route.*` defines the activated global `Route` and computes progress plus
-  the bounded local route segment.
+- `route.*` defines the activated global `Route`, prepares the complete
+  reference, and computes a bounded segment where the execution mode needs it.
 - `executor.*` calls one already configured `local::Planner`, then one
   `Follower`, and returns execution state plus a pre-safety command.
 - `recovery.*` is invoked only when the typed planning state or measured
@@ -58,10 +58,16 @@ velocity. Small map-to-odom corrections update the measured robot pose, not
 the reference generation or spline execution clock.
 
 The complete map reference is prepared once after route activation and height
-calibration. Route progress updates only the local segment. Suspension or a
-frame-epoch reset discards the reference and pending local work; the next
-valid input rebuilds it. A new goal and cancellation use `setRoute()` and
-`clear()` respectively, which reset the planner and follower.
+calibration. The map-frame SCAN path reuses that reference; the odom-frame path
+continues to update its bounded local segment. Suspension or a frame-epoch
+reset discards the reference and pending local work; the next valid input
+rebuilds it. A new goal and cancellation use `setRoute()` and `clear()`
+respectively, which reset the planner and follower.
+
+The global route is one ordered polyline, not a stream of new goals for its
+individual points. SCAN owns local target selection and replanning along that
+polyline. Execution feedback goes to the endpoint's goal lifecycle; Executor
+and LocalPlanner never invoke global search themselves.
 
 ## Executor ownership
 

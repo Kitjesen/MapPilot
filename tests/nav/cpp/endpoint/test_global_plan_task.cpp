@@ -100,14 +100,14 @@ int main() {
   single_point.context.goal = {4.0, 5.0, 2.0};
   single_point.result.path = {
       {single_point.context.goal.x, single_point.context.goal.y, single_point.context.goal.z}};
-  const auto path_with_start = lingtu::nav::endpoint::globalPlanPath(single_point);
-  require(path_with_start.size() == 2U && path_with_start.front().x == 1.0,
-          "single-point plan did not include its start");
+  const auto goal_only_path = lingtu::nav::endpoint::globalPlanPath(single_point);
+  require(goal_only_path.size() == 1U && goal_only_path.front().x == 4.0,
+          "single-point plan did not preserve the backend result");
   single_point.result.path = {
       {single_point.context.start.x, single_point.context.start.y, single_point.context.start.z}};
-  const auto path_with_goal = lingtu::nav::endpoint::globalPlanPath(single_point);
-  require(path_with_goal.size() == 2U && path_with_goal.back().x == 4.0,
-          "start-only plan did not include its goal");
+  const auto start_only_path = lingtu::nav::endpoint::globalPlanPath(single_point);
+  require(start_only_path.size() == 1U && start_only_path.front().x == 1.0,
+          "start-only plan appended an unplanned goal segment");
 
   auto overlay_completion = *first_result;
   auto &requested_overlay = overlay_completion.context.request.temporary_overlay;

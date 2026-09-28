@@ -1,6 +1,5 @@
 #include "input/planner.hpp"
 
-#include <algorithm>
 #include <chrono>
 #include <cmath>
 
@@ -10,19 +9,20 @@
 
 namespace lingtu::nav::endpoint {
 
-std::optional<nav_kernel::Vec3> localCollisionHint(
+const nav_kernel::LocalCollisionEvidence *localCollisionEvidence(
     const nav_kernel::LocalPlannerDebugSnapshot &debug, double now_s, double max_age_s) {
-  const auto &attempt = debug.scanAttempt;
-  const double age = now_s - attempt.timestampS;
-  if (!debug.valid || debug.backend != nav_kernel::LocalPlannerBackend::Scan ||
-      !attempt.attempted || attempt.success || !attempt.collisionValid ||
-      attempt.collisionState <= 0 || attempt.dynamicViolationValid ||
+  if (!debug.collisionEvidence) return nullptr;
+  const auto &evidence = *debug.collisionEvidence;
+  const double age = now_s - evidence.timestampS;
+  if (evidence.identity.frameEpoch == 0U ||
+      evidence.collisionResetEpoch == 0U ||
+      evidence.collisionObservationSequence == 0U ||
+      evidence.collisionGeneration == 0U ||
+      !std::isfinite(evidence.voxelResolution) || evidence.voxelResolution <= 0.0 ||
+      !evidence.measuredPoints ||
       !std::isfinite(age) || age < 0.0 || !std::isfinite(max_age_s) ||
-      max_age_s <= 0.0 || age > max_age_s) return std::nullopt;
-  const auto &point = attempt.collisionPosition;
-  if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z))
-    return std::nullopt;
-  return point;
+      max_age_s <= 0.0 || age > max_age_s) return nullptr;
+  return &evidence;
 }
 
 nav_kernel::PredictionView makePredictionView(

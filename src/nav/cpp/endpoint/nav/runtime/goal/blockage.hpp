@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "nav_kernel/types.hpp"
+#include "planning/local/planner.hpp"
 #include "runtime/goal/trigger.hpp"
 
 namespace lingtu::nav::endpoint {
@@ -21,9 +21,6 @@ struct ActivePathBlockagePolicyConfig {
   double obstacle_height_max_m{1.20};
   // Measured obstacle voxel size, without robot or obstacle inflation.
   double obstacle_voxel_size_m{0.08};
-  double local_collision_radius_m{0.44};
-  double local_collision_below_m{0.10};
-  double local_collision_above_m{0.10};
   std::size_t max_regions{16U};
   std::size_t minimum_obstacle_points{4U};
 };
@@ -40,8 +37,9 @@ struct ActivePathBlockageObservation {
   GoalReplanIdentity goal{};
   std::uint64_t frame_epoch{0U};
   nav_kernel::Vec3 robot_position{};
-  // Failed local trajectory pose; only selects nearby measured obstacle points.
-  std::optional<nav_kernel::Vec3> local_collision_position;
+  // Fresh measured voxels from the exact local-collision snapshot that
+  // rejected a local body pose. The pose itself is not obstacle geometry.
+  const nav_kernel::LocalCollisionEvidence *local_collision_evidence{nullptr};
   const std::vector<nav_kernel::Vec3> *active_global_path{nullptr};
   // Borrowed x/y/z/height tuples from the current MotionLayer snapshot.
   const std::vector<float> *live_obstacles_xyzh{nullptr};
@@ -52,6 +50,9 @@ struct ActivePathBlockagePolicySnapshot {
   std::optional<GoalReplanIdentity> goal;
   std::uint64_t frame_epoch{0U};
   std::uint64_t last_cloud_generation{0U};
+  std::uint64_t last_collision_reset_epoch{0U};
+  std::uint64_t last_collision_observation_sequence{0U};
+  std::uint64_t last_collision_generation{0U};
   std::size_t fresh_blocked_observations{0U};
   std::size_t current_blocker_count{0U};
   double first_blocked_s{-1.0};
@@ -88,12 +89,17 @@ class ActivePathBlockagePolicy {
   void bind(const GoalReplanIdentity &goal, std::uint64_t frame_epoch);
   void clearAccumulation(const char *reason);
   [[nodiscard]] std::vector<CorridorBlocker>
-  corridorBlockers(const ActivePathBlockageObservation &observation) const;
+  corridorBlockers(const ActivePathBlockageObservation &observation,
+                   bool include_live_obstacles,
+                   bool include_local_collision) const;
 
   ActivePathBlockagePolicyConfig config_;
   std::optional<GoalReplanIdentity> goal_;
   std::uint64_t frame_epoch_{0U};
   std::uint64_t last_cloud_generation_{0U};
+  std::uint64_t last_collision_reset_epoch_{0U};
+  std::uint64_t last_collision_observation_sequence_{0U};
+  std::uint64_t last_collision_generation_{0U};
   std::size_t fresh_blocked_observations_{0U};
   std::size_t current_blocker_count_{0U};
   double first_blocked_s_{-1.0};

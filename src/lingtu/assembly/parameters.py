@@ -67,7 +67,6 @@ def _integer(value: Any) -> int:
 
 
 PARAMETER_SPECS: tuple[ParameterSpec, ...] = (
-    ParameterSpec("scan_planner.route_z_tolerance_m", "LINGTU_NAV_SCAN_ROUTE_Z_TOLERANCE_M", 0.35, float, 0.0, math.inf),
     ParameterSpec("scan_planner.control_point_spacing_m", "LINGTU_NAV_SCAN_CONTROL_POINT_SPACING_M", 0.20, float, 0.05, math.inf),
     ParameterSpec("scan_planner.replan_distance_m", "LINGTU_NAV_SCAN_REPLAN_DISTANCE_M", 1.0, float, 0.01, math.inf),
     ParameterSpec("scan_planner.no_replan_distance_m", "LINGTU_NAV_SCAN_NO_REPLAN_DISTANCE_M", 0.10, float, 0.01, math.inf),

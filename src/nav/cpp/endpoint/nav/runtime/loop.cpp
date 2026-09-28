@@ -1560,8 +1560,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
           path_active_for_tick && active_goal_identity.has_value() && map_body.has_value() &&
           input_gate_state.ready && control_authority.motionAllowed() &&
           goalPlanAcceptsReplanTrigger(goal_snapshot_for_tick) && !control_loop_guard_latched() &&
-          !inspection_executor.active() && !rolling_active &&
-          last_local.dynamic_avoidance == "clear";
+          !inspection_executor.active() && !rolling_active;
       blockage_observation.local_path_viable =
           last_local.active && last_local.path_found && !last_local.near_field_stop &&
           last_local.local_path_points >= 2U && last_local.recovery_state == 0 &&
@@ -1576,9 +1575,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       blockage_observation.active_global_path = &last_global_path;
       blockage_observation.live_obstacles_xyzh = &obstacle_xyzh;
       blockage_observation.cloud_generation = cloud_generation;
-      // SCAN uses map-frame body positions. A failed sample only selects real
-      // nearby returns; it must never be stamped into the map as an obstacle.
-      blockage_observation.local_collision_position = localCollisionHint(
+      blockage_observation.local_collision_evidence = localCollisionEvidence(
           last_local_planner_debug, inputs.executionTime(blockage_observation.now_s),
           cfg.local_collision_max_age_s);
       auto obstruction_trigger = active_path_blockage_policy.observe(blockage_observation);

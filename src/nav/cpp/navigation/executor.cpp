@@ -184,6 +184,15 @@ nav_kernel::LocalPlan Executor::planLocal(
   map_body.position = map_from_odom.mapPointFromOdom(request.robot.pose.position);
   map_body.yaw = nav_kernel::normalizeAngle(map_from_odom.yaw + request.robot.pose.yaw);
   *debug = debugSnapshotToMap(map_body, local_planner_.debugSnapshot());
+  if (debug->collisionEvidence && config_.planning_frame == PlanningFrame::Odom) {
+    auto &evidence = *debug->collisionEvidence;
+    evidence.rejectedPosition = map_from_odom.mapPointFromOdom(evidence.rejectedPosition);
+    if (evidence.measuredPoints) {
+      auto points = std::make_shared<std::vector<nav_kernel::Vec3>>(*evidence.measuredPoints);
+      for (auto &point : *points) point = map_from_odom.mapPointFromOdom(point);
+      evidence.measuredPoints = std::move(points);
+    }
+  }
   return plan;
 }
 

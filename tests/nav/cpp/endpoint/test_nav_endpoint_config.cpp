@@ -910,7 +910,6 @@ void testScanPlannerEnvironmentReachesCore() {
   };
   using Params = nav_kernel::ScanPlannerParams;
   const Binding bindings[] = {
-      {"LINGTU_NAV_SCAN_ROUTE_Z_TOLERANCE_M", &Params::routeZTolerance, 0.24},
       {"LINGTU_NAV_SCAN_CONTROL_POINT_SPACING_M", &Params::controlPointSpacing, 0.16},
       {"LINGTU_NAV_SCAN_REPLAN_DISTANCE_M", &Params::replanDistance, 0.8},
       {"LINGTU_NAV_SCAN_NO_REPLAN_DISTANCE_M", &Params::noReplanDistance, 0.08},
@@ -994,6 +993,34 @@ void testScanFollowerEnvironmentReachesExecutor() {
           "SCAN body velocity limits must reach Executor");
   require(std::abs(executor_config.follower.spline.finishDistance - 0.07) < 1e-12,
           "SCAN finish distance must reach Executor independently");
+}
+
+void testGoalHeightToleranceIsIndependentOfLocalPlanner() {
+  ScopedEnvironment height("LINGTU_NAV_GOAL_HEIGHT_TOLERANCE_M", "0.27");
+  ScopedEnvironment scan_tuning("LINGTU_NAV_SCAN_COLLISION_WEIGHT", "4.2");
+
+  const auto scan = parse({"navd", "--local-planner", "scan"});
+  const auto cmu = parse({"navd", "--local-planner", "cmu", "--path-library", "fixture-paths"});
+  require(std::abs(buildExecutorConfig(scan).goal_height_tolerance_m - 0.27) < 1e-12 &&
+              std::abs(buildExecutorConfig(cmu).goal_height_tolerance_m - 0.27) < 1e-12,
+          "Product arrival height must be independent of local planner and SCAN tuning");
+  require(std::abs(buildStatusWriterConfig(scan, inputGateConfig(scan))
+                       .goal_height_tolerance_m -
+                   0.27) < 1e-12,
+          "status must report the actual Product arrival height tolerance");
+}
+
+void testGoalHeightToleranceRejectsInvalidEnvironment() {
+  for (const char *value : {"0", "-0.1", "nan", "inf"}) {
+    ScopedEnvironment height("LINGTU_NAV_GOAL_HEIGHT_TOLERANCE_M", value);
+    bool rejected = false;
+    try {
+      (void)parse({"navd", "--local-planner", "scan"});
+    } catch (const std::runtime_error &) {
+      rejected = true;
+    }
+    require(rejected, "goal height tolerance must be finite and strictly positive");
+  }
 }
 
 void testControlLoopDeadlineMissRatioIsExplicitAndBounded() {
@@ -1492,6 +1519,8 @@ int main() {
     testRuntimeEnvironmentPrecedesDefaultsAndCliPrecedesEnvironment();
     testGo2RunPlanGeometryEnvironmentParsesExactly();
     testScanFollowerEnvironmentReachesExecutor();
+    testGoalHeightToleranceIsIndependentOfLocalPlanner();
+    testGoalHeightToleranceRejectsInvalidEnvironment();
     testScanPlannerEnvironmentReachesCore();
     testScanPlannerRejectsInvalidRuntimeParameters();
     testCompiledProductMotionContractParses();

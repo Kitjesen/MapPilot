@@ -379,39 +379,53 @@ void testOverlayPreservesSeparatedMeasuredHeights() {
           "measured obstacle voxels invented a column through the vertical gap");
 }
 
-void testLocalCollisionSelectsOnlyNearbyMeasuredObstacles() {
+void testLocalCollisionUsesItsOwnMeasuredObservations() {
   auto value = config();
   value.max_regions = 2U;
   value.minimum_obstacle_points = 2U;
-  value.local_collision_radius_m = 0.25;
-  value.local_collision_below_m = 0.1;
-  value.local_collision_above_m = 0.1;
   ActivePathBlockagePolicy policy(value);
   const auto active_path = path();
-  std::vector<float> blocked = staticBlockage(1.0F);
-  const auto local_points = pointCloud({
-      {2.02F, 1.02F, 0.32F, 0.4F}, {2.12F, 1.02F, 0.32F, 0.4F},
-      {2.02F, 1.02F, 0.62F, 0.7F}, {2.12F, 1.02F, 0.62F, 0.7F},
-  });
-  blocked.insert(blocked.end(), local_points.begin(), local_points.end());
-  auto sample = [&](double now, std::uint64_t generation, const std::vector<float> &points) {
-    auto input = observation(now, generation, active_path, points);
-    input.local_collision_position = nav_kernel::Vec3{2.0, 1.0, 0.3};
+  const std::vector<float> clear;
+  nav_kernel::LocalCollisionEvidence evidence;
+  evidence.identity.frameEpoch = 3;
+  evidence.collisionResetEpoch = 1;
+  evidence.collisionObservationSequence = 1;
+  evidence.collisionGeneration = 1;
+  evidence.voxelResolution = .1;
+  evidence.rejectedPosition = {2, 1, .3};
+  evidence.measuredPoints = std::make_shared<const std::vector<nav_kernel::Vec3>>(
+      std::vector<nav_kernel::Vec3>{{2.05, 1.05, .35}, {2.15, 1.05, .35}});
+  auto sample = [&](double now, std::uint64_t cloud) {
+    auto input = observation(now, cloud, active_path, clear);
+    input.local_collision_evidence = &evidence;
     return policy.observe(input);
   };
-  require(!sample(95.0, 1U, blocked), "local collision setup triggered");
-  require(!sample(95.5, 2U, blocked), "local collision setup early trigger");
-  const auto trigger = sample(96.0, 3U, blocked);
-  require(trigger.has_value() && trigger->temporary_overlay.blocked_regions.size() == 2U,
-          "measured local collision did not produce bounded regions");
+  require(!sample(95.0, 0), "local evidence first observation triggered");
+  require(policy.snapshot().fresh_blocked_observations == 1,
+          "local measured evidence must not require raw-cloud generation");
+  require(!sample(95.3, 10) && !sample(96.1, 11),
+          "new raw frames must not count repeated local evidence");
+  require(policy.snapshot().fresh_blocked_observations == 1,
+          "empty raw frames must not erase local collision accumulation");
+  evidence.collisionObservationSequence = evidence.collisionGeneration = 2;
+  require(!sample(96.2, 12), "second local observation triggered early");
+  evidence.collisionObservationSequence = evidence.collisionGeneration = 3;
+  const auto trigger = sample(96.3, 13);
+  require(trigger && trigger->temporary_overlay.blocked_regions.size() == 2,
+          "independent measured local evidence did not trigger replan");
+  require(trigger->temporary_overlay.obstacle_generation == 3,
+          "overlay must retain local collision generation");
   for (const auto &region : trigger->temporary_overlay.blocked_regions) {
-    require(region.center.y > 1.0 && region.max_z <= 0.4 + 1e-6,
-            "local collision evidence lost priority or included a different height");
+    require(region.center.y > 1 && region.max_z <= .4 + 1e-6,
+            "measured voxel position or height changed");
   }
   policy.reset();
-  const std::vector<float> clear;
-  require(!sample(97.0, 4U, clear) && !sample(97.5, 5U, clear) && !sample(98.0, 6U, clear),
-          "a failed trajectory pose fabricated occupancy without observed points");
+  evidence.measuredPoints = std::make_shared<const std::vector<nav_kernel::Vec3>>();
+  for (std::uint64_t sequence = 4; sequence <= 6; ++sequence) {
+    evidence.collisionObservationSequence = evidence.collisionGeneration = sequence;
+    require(!sample(97.0 + sequence, sequence),
+            "failed pose without measured points must not fabricate occupancy");
+  }
 }
 
 void testInactiveInvalidAndMalformedEvidenceReset() {
@@ -524,7 +538,7 @@ int main() {
   testClockAndGenerationRollbackResetEvidence();
   testOverlayIsDeterministicDeduplicatedAndBounded();
   testOverlayPreservesSeparatedMeasuredHeights();
-  testLocalCollisionSelectsOnlyNearbyMeasuredObstacles();
+  testLocalCollisionUsesItsOwnMeasuredObservations();
   testInactiveInvalidAndMalformedEvidenceReset();
   testInadmissibleGoalPlanStateDoesNotConsumeOneShotTrigger();
   testConfigValidation();

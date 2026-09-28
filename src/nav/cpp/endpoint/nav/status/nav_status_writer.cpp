@@ -706,7 +706,7 @@ std::string scanFailureSnapshotJson(const nav_kernel::ScanFailureSnapshot &failu
   const auto &p = failure.params;
   bool first = true;
   for (const auto &[name, value] : std::initializer_list<std::pair<const char *, double>>{
-      {"voxelResolution", p.voxelResolution}, {"routeZTolerance", p.routeZTolerance},
+      {"voxelResolution", p.voxelResolution},
       {"bodyClearanceBelow", p.bodyClearanceBelow}, {"bodyClearanceAbove", p.bodyClearanceAbove},
       {"cylinderOffset", p.cylinderOffset}, {"cylinderRadius", p.cylinderRadius},
       {"controlPointSpacing", p.controlPointSpacing},
@@ -856,6 +856,7 @@ void writeStatusSnapshot(
         << ", \"nominal_dt_s\": " << cfg.nominal_dt_s << "},\n"
         << "  \"nav_loop\": {\"waypoint_reached_m\": " << cfg.waypoint_reached_m
         << ", \"goal_reached_m\": " << cfg.goal_reached_m
+        << ", \"goal_height_tolerance_m\": " << cfg.goal_height_tolerance_m
         << ", \"corridor_lookahead_m\": " << cfg.corridor_lookahead_m << "},\n"
         << "  \"publish_cmd_vel\": " << (cfg.publish_cmd_vel ? "true" : "false") << ",\n"
         << "  \"check_obstacle\": " << (cfg.check_obstacle ? "true" : "false") << ",\n"
@@ -1167,9 +1168,7 @@ void writeStatusSnapshot(
     out << "\n"
         << "  },\n"
         << "  \"last_local\": {\n"
-        << "    \"dynamic_avoidance\": \"" << jsonEscape(local.dynamic_avoidance) << "\",\n"
         << "    \"prediction_count\": " << local.prediction_count << ",\n"
-        << "    \"dynamic_blocked_s\": " << local.dynamic_blocked_s << ",\n"
         << "    \"seen\": " << (local.seen ? "true" : "false") << ",\n"
         << "    \"active\": " << (local.active ? "true" : "false") << ",\n"
         << "    \"goal_reached\": " << (local.goal_reached ? "true" : "false") << ",\n"

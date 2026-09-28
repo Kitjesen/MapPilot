@@ -43,6 +43,7 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
         "dynamic_confirm_frames": 4,
         "dynamic_min_cells": 8,
         "dynamic_min_speed_mps": 0.25,
+        "goal_height_tolerance_m": 0.35,
         "goal_reached_m": 0.15,
         "path_follower_goal_tolerance_m": 0.15,
         "path_follower_lookahead_m": 0.35,
@@ -68,6 +69,7 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
     expected_environment = {
         "LINGTU_NAV_CORRIDOR_LOOKAHEAD_M": "3.5",
         "LINGTU_NAV_GOAL_REACHED_M": "0.15",
+        "LINGTU_NAV_GOAL_HEIGHT_TOLERANCE_M": "0.35",
         "LINGTU_NAV_CONTROL_MODE": "autonomy",
         "NAV_GLOBAL_PLANNER": "octoplanner3d",
         "LINGTU_NAV_LOCAL_PLANNER_BACKEND": "scan",
@@ -171,6 +173,78 @@ def test_snapped_global_goal_does_not_change_execution_arrival_tolerance() -> No
     assert compiled.environment["LINGTU_NAV_GOAL_REACHED_M"] == "0.15"
     assert compiled.environment["LINGTU_NAV_PATH_FOLLOWER_GOAL_TOLERANCE_M"] == "0.15"
     assert compiled.environment["LINGTU_NAV_OCTO_TERMINAL_GOAL_XY_TOLERANCE_M"] == "0.35"
+
+
+@pytest.mark.parametrize("env", ["real", "sim"])
+@pytest.mark.parametrize("local_planner", ["scan", "cmu"])
+def test_nav_product_height_arrival_is_independent_of_env_and_local_planner(
+    env: str,
+    local_planner: str,
+) -> None:
+    resolved = resolve_product_host_runtime(
+        "nav",
+        env,
+        robot="unitree/go2" if env == "real" else "doso/thunder_v4",
+        local_planner=local_planner,
+    )
+    compiled = compile_native_nav_config(
+        "nav",
+        {
+            **resolved.config,
+            "native_control_mode": resolved.product_spec["native_control_mode"],
+            "native_nav": dict(resolved.product_spec.get("native_nav", {})),
+        },
+    )
+
+    assert compiled.environment["LINGTU_NAV_GOAL_HEIGHT_TOLERANCE_M"] == "0.35"
+    assert "LINGTU_NAV_SCAN_ROUTE_Z_TOLERANCE_M" not in compiled.environment
+
+
+def test_scan_tuning_does_not_change_global_planner_or_arrival_configuration() -> None:
+    config = _compiled_product_config("nav")
+    baseline = compile_native_nav_config("nav", config)
+    changed = compile_native_nav_config(
+        "nav",
+        {
+            **config,
+            "parameters": {
+                "scan_planner.collision_weight": 9.0,
+                "scan_planner.planning_horizon_m": 1.5,
+            },
+        },
+    )
+    prefix = "LINGTU_NAV_OCTO"
+
+    assert {
+        key: value for key, value in baseline.environment.items() if key.startswith(prefix)
+    } == {
+        key: value for key, value in changed.environment.items() if key.startswith(prefix)
+    }
+    assert changed.environment["LINGTU_NAV_GOAL_HEIGHT_TOLERANCE_M"] == "0.35"
+
+
+def test_unspecified_goal_height_tolerance_follows_resolved_goal_distance() -> None:
+    compiled = compile_native_nav_config(
+        "test",
+        {
+            "native_control_mode": "autonomy",
+            "native_nav": {"goal_reached_m": 0.27},
+        },
+    )
+
+    assert compiled.environment["LINGTU_NAV_GOAL_HEIGHT_TOLERANCE_M"] == "0.27"
+
+
+@pytest.mark.parametrize("value", [0.0, -0.1, math.inf, math.nan])
+def test_goal_height_tolerance_must_be_finite_and_positive(value: float) -> None:
+    with pytest.raises(ValueError, match="goal_height_tolerance_m"):
+        compile_native_nav_config(
+            "test",
+            {
+                "native_control_mode": "autonomy",
+                "native_nav": {"goal_height_tolerance_m": value},
+            },
+        )
 
 
 def test_scan_mapd_inflation_covers_asymmetric_body_clearances() -> None:

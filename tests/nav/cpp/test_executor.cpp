@@ -383,6 +383,19 @@ TEST(Executor, StopsWhenGoalReached) {
   EXPECT_EQ(out.cmd_vel.wz, 0.0);
 }
 
+TEST(Executor, SinglePointBackendPathUsesItsPointAsTheGoal) {
+  auto loop = makeLoop();
+  loop.setRoute(route({{0.2, 0.0, 0.0}}));
+
+  const auto out =
+      settledGoal(loop, routeInput(pose(0.2, 0.0, 0.0, 0.0), nullptr, 0, 1.0));
+
+  EXPECT_FALSE(out.active);
+  EXPECT_TRUE(out.goal_reached);
+  EXPECT_EQ(out.target_index, 0U);
+  EXPECT_DOUBLE_EQ(out.target.x, 0.2);
+}
+
 TEST(Executor, DoesNotLatchArrivalWhenBodyReboundsOutsideGoal) {
   auto loop = makeLoop();
   loop.setRoute(route({{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}, std::nullopt, 0.12));
@@ -3227,4 +3240,46 @@ TEST(Executor, ScanTaskSpeedLimitAllowsBoundedMotion) {
                     << " time=" << out.tracking.executionTimeS
                     << " duration=" << out.tracking.durationS
                     << " error=" << out.tracking.positionErrorM;
+}
+
+TEST(Executor, ScanMeasuredCollisionFeedbackUsesMapCoordinatesExactlyOnce) {
+  using lingtu::nav::navigation::PlanningFrame;
+  for (const auto frame : {PlanningFrame::Map, PlanningFrame::Odom}) {
+    SCOPED_TRACE(frame == PlanningFrame::Map ? "map" : "odom");
+    lingtu::nav::navigation::ExecutorConfig config;
+    config.planning_frame = frame;
+    config.max_speed = .5;
+    config.recovery.blocked_interval_s = 10;
+    nav_kernel::LocalPlannerParams params;
+    params.backend = nav_kernel::LocalPlannerBackend::Scan;
+    params.scan.voxelResolution = .1;
+    auto executor = makeConfiguredExecutor(config, params, "");
+    executor.setRoute(route({{1,2,.5}, {1,4,.5}}));
+    auto obs = emptyScanObservation(1);
+    lingtu::nav::tests::CollisionBitmap bitmap({-10,-10,-2}, {10,10,2}, .1);
+    for (double x = .75; x < 1.3; x += .1)
+      for (double y = 1.75; y < 2.3; y += .1)
+        for (double z = .25; z < .8; z += .1) bitmap.occupy({x,y,z});
+    obs.collision = bitmap.view();
+    lingtu::nav::tests::CollisionBitmap measured({-10,-10,-2}, {10,10,2}, .1);
+    measured.occupy({1.05,2.05,.55});
+    const auto bits = measured.view();
+    obs.collision.measuredOccupiedStorage = std::make_shared<const std::vector<std::uint8_t>>(
+        bits.inflatedBits, bits.inflatedBits + bits.inflatedBytes);
+    const double yaw = std::acos(-1.0) / 2;
+    const lingtu::nav::navigation::MapFromOdomTransform transform{{1,2,0},yaw};
+    lingtu::nav::navigation::ExecutionOutput output;
+    for (int i = 0; i < 500 && !output.local_planner_debug.collisionEvidence; ++i) {
+      output = executor.tick(odomInput(pose(1,2,.5,yaw),pose(0,0,.5,0),
+          transform,nullptr,0,1,{},obs));
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_TRUE(output.local_planner_debug.collisionEvidence) << output.reason;
+    const auto &evidence = *output.local_planner_debug.collisionEvidence;
+    ASSERT_TRUE(evidence.measuredPoints);
+    ASSERT_EQ(evidence.measuredPoints->size(),1U);
+    EXPECT_NEAR(evidence.measuredPoints->front().x,1.05,1e-6);
+    EXPECT_NEAR(evidence.measuredPoints->front().y,2.05,1e-6);
+    EXPECT_NEAR(evidence.measuredPoints->front().z,.55,1e-6);
+  }
 }

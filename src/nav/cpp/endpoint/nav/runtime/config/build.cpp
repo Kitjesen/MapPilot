@@ -132,6 +132,7 @@ StatusWriterConfig buildStatusWriterConfig(const CliConfig &cfg,
   out.follower_goal_tolerance_m = follower.stopDisThre;
   out.waypoint_reached_m = cfg.waypoint_reached_m;
   out.goal_reached_m = cfg.goal_reached_m;
+  out.goal_height_tolerance_m = cfg.goal_height_tolerance_m;
   out.corridor_lookahead_m = cfg.corridor_lookahead_m;
   out.nominal_dt_s = follower.nominalDt;
   out.publish_cmd_vel = cfg.publish_cmd_vel;
@@ -264,15 +265,11 @@ buildExecutorConfig(const CliConfig &cfg) {
   out.planning_frame = cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan
                            ? lingtu::nav::navigation::PlanningFrame::Map
                            : lingtu::nav::navigation::PlanningFrame::Odom;
-  const nav_kernel::LocalPlannerParams planner = buildLocalPlannerParams(cfg);
   out.max_speed = cfg.path_follower_max_speed_mps;
   out.corridor_lookahead_m = cfg.corridor_lookahead_m;
   out.waypoint_reached_m = cfg.waypoint_reached_m;
   out.goal_reached_m = cfg.goal_reached_m;
-  out.goal_height_tolerance_m =
-      cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan
-          ? std::max(cfg.goal_reached_m, planner.scan.routeZTolerance)
-          : cfg.goal_reached_m;
+  out.goal_height_tolerance_m = cfg.goal_height_tolerance_m;
   out.teleop_intent_horizon_m = cfg.teleop_planner_horizon_m;
   out.teleop_intent_max_deviation_deg = cfg.teleop_planner_max_deviation_deg;
   out.follower = followerParams(cfg);

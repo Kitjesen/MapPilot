@@ -104,6 +104,7 @@ native_nav:
   use_traversability_cost: false
   corridor_lookahead_m: 3.5
   goal_reached_m: 0.15
+  goal_height_tolerance_m: 0.35
   # Do not report a route as feasible when its snapped endpoint stops short
   # of the clicked goal beyond the execution arrival threshold.
   octoplanner3d_terminal_goal_tolerance_m: 0.15

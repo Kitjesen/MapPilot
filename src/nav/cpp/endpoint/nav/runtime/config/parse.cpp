@@ -393,6 +393,7 @@ CliConfig parseArgs(int argc, char **argv) {
   cfg.path_follower_max_accel_mps2 = cfg.nav_max_accel_mps2;
   applyEnvDouble(cfg.waypoint_reached_m, "LINGTU_NAV_WAYPOINT_REACHED_M");
   applyEnvDouble(cfg.goal_reached_m, "LINGTU_NAV_GOAL_REACHED_M");
+  applyEnvDouble(cfg.goal_height_tolerance_m, "LINGTU_NAV_GOAL_HEIGHT_TOLERANCE_M");
   applyEnvDouble(cfg.path_follower_goal_tolerance_m, "LINGTU_NAV_PATH_FOLLOWER_GOAL_TOLERANCE_M");
   applyEnvDouble(cfg.path_follower_lookahead_m, "LINGTU_NAV_PATH_FOLLOWER_LOOKAHEAD_M");
   applyEnvDouble(cfg.path_follower_max_speed_mps, "LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS");
@@ -413,7 +414,6 @@ CliConfig parseArgs(int argc, char **argv) {
                                std::to_string(minimum));
     }
   };
-  scan_parameter(cfg.scan_planner.routeZTolerance, "LINGTU_NAV_SCAN_ROUTE_Z_TOLERANCE_M", 0.0);
   scan_parameter(cfg.scan_planner.controlPointSpacing, "LINGTU_NAV_SCAN_CONTROL_POINT_SPACING_M", 0.05);
   scan_parameter(cfg.scan_planner.replanDistance, "LINGTU_NAV_SCAN_REPLAN_DISTANCE_M", 0.01);
   scan_parameter(cfg.scan_planner.noReplanDistance, "LINGTU_NAV_SCAN_NO_REPLAN_DISTANCE_M", 0.01);
@@ -971,7 +971,8 @@ CliConfig parseArgs(int argc, char **argv) {
       !std::isfinite(cfg.control_loop_p95_utilization_limit) ||
       !std::isfinite(cfg.nav_max_speed_mps) ||
       !std::isfinite(cfg.nav_max_accel_mps2) || !std::isfinite(cfg.waypoint_reached_m) ||
-      !std::isfinite(cfg.goal_reached_m) || !std::isfinite(cfg.path_follower_goal_tolerance_m) ||
+      !std::isfinite(cfg.goal_reached_m) || !std::isfinite(cfg.goal_height_tolerance_m) ||
+      !std::isfinite(cfg.path_follower_goal_tolerance_m) ||
       !std::isfinite(cfg.path_follower_lookahead_m) ||
       !std::isfinite(cfg.path_follower_max_speed_mps) ||
       !std::isfinite(cfg.path_follower_min_speed_mps) ||
@@ -1035,6 +1036,9 @@ CliConfig parseArgs(int argc, char **argv) {
   cfg.nav_max_accel_mps2 = std::max(0.0, cfg.nav_max_accel_mps2);
   cfg.waypoint_reached_m = std::max(0.01, cfg.waypoint_reached_m);
   cfg.goal_reached_m = std::max(0.01, cfg.goal_reached_m);
+  if (cfg.goal_height_tolerance_m <= 0.0) {
+    throw std::runtime_error("goal height tolerance must be strictly positive");
+  }
   cfg.path_follower_goal_tolerance_m = std::max(0.01, cfg.path_follower_goal_tolerance_m);
   cfg.path_follower_lookahead_m = std::max(0.01, cfg.path_follower_lookahead_m);
   cfg.path_follower_max_speed_mps = std::max(0.0, cfg.path_follower_max_speed_mps);

@@ -1,7 +1,6 @@
 #include "runtime/goal/task.hpp"
 
 #include <chrono>
-#include <cmath>
 #include <exception>
 #include <stdexcept>
 #include <utility>
@@ -51,19 +50,6 @@ std::vector<nav_kernel::Vec3> globalPlanPath(const GlobalPlanCompletion &complet
   path.reserve(completion.result.path.size());
   for (const auto &point : completion.result.path) {
     path.push_back({point.x, point.y, point.z});
-  }
-  if (path.size() != 1U) {
-    return path;
-  }
-  const auto &start = completion.context.start;
-  const auto &point = path.front();
-  const double dx = start.x - point.x;
-  const double dy = start.y - point.y;
-  const double dz = start.z - point.z;
-  if (std::sqrt(dx * dx + dy * dy + dz * dz) > 0.02) {
-    path.insert(path.begin(), start);
-  } else {
-    path.push_back(completion.context.goal);
   }
   return path;
 }
