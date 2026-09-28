@@ -233,3 +233,30 @@ trajectory start; live-only occupancy produced an accepted trajectory. Live-only
 replays of the fixed 0.3 m and 1 m forward targets and the operator's first goal
 also produced trajectories. This checks local trajectory generation, not actual
 tracking or arrival. Replay source: `scan-user-replay.cpp` in the evidence folder.
+
+### `.87` installed and stationary validation
+
+Following fresh operator confirmation that the robot was stopped, the ABI 11
+full release `.87` was installed from commit `2ddf83e4`. All 28 ARM maps tests
+passed. ProductControl committed the `nav` session
+`product-3a245672d6e3415ca94288cd7e58486b` with `903room_v4_maps84` and the same
+0.5 m/s session limits. All six services were active; `/proc` verified `.87`
+mapd/navd executables and the Host's `.87` working directory/native client.
+HTTP readiness, fresh localization and goal admission passed; final velocity
+was zero and no motion target was submitted.
+
+The new live DDS collision snapshot cleared both cylinder queries. Reusing
+the old failure's long reference route on this newer snapshot still produced
+one `collision_after_refine` failure near x=2.7 m, demonstrating why an old
+preview is not a current execution guarantee. The three original user target
+coordinates were then re-previewed without motion. All global plans succeeded
+(711, 374 and 232 ms), and the unchanged SCAN backend generated trajectories
+for all three fresh reference paths against the captured `.87` live bitmap.
+These are stationary global previews plus offline initial local trajectories,
+not end-to-end motion/arrival acceptance.
+
+Evidence: `field87.json`, `collision87.bin`, `user-previews87.json`,
+`user-route87-{0,1,2}.txt`, `scan87-{0,1,2}.log`, `local-collision-comparison.json`,
+`maps-live-tests.log`, `build87.log`, `install87.log`. Existing `.86` and the
+saved map remain available. Refresh the dashboard and regenerate previews
+before the next supervised movement test.
