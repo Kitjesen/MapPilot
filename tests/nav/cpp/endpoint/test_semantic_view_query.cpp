@@ -43,8 +43,9 @@ struct Fixture {
       for (int y = -15; y <= 15; ++y) {
         const float px = static_cast<float>((x + 0.5) * 0.2);
         const float py = static_cast<float>((y + 0.5) * 0.2);
-        // Missing support separates two rooms even though their body space is free.
-        if (x != 3 && x != 4) tree.updateNode(octomap::point3d(px, py, -0.1F), true);
+        // Four missing columns leave a gap after the default one-cell
+        // neighbouring-support fallback extends each observed floor edge.
+        if (x < 3 || x > 6) tree.updateNode(octomap::point3d(px, py, -0.1F), true);
         for (const float z : {0.1F, 0.3F, 0.5F})
           tree.updateNode(octomap::point3d(px, py, z), false);
       }
@@ -162,7 +163,7 @@ int main() {
         "query lost its native/map identity");
     expect(std::abs(ready.reference_z - 0.1) < 1e-6, "candidate height was not snapped to tested layer");
     for (const auto& candidate : ready.candidates) {
-      expect(candidate.position.x < 0.6, "candidate crossed a missing ground-support stripe");
+      expect(candidate.position.x < 0.8, "candidate crossed a missing ground-support stripe");
       expect(candidate.position.z == ready.reference_z, "candidate used an untested height");
       expect(candidate.visible_cells > 0, "candidate reported zero visible geometry");
     }
