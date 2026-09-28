@@ -195,8 +195,11 @@ that the live local trajectory is executable.
 
 Goal admission does not require SCAN's local collision sample to be ready.
 The known `local_collision_missing`, `local_collision_future`,
-`local_collision_stale`, and `local_collision_incomplete` holds allow an initial
-global route request while motion remains held. Endpoint/Product readiness
+`collision_stale`, and `local_collision_incomplete` holds allow an initial
+global route request, including a queued request, while motion remains held.
+`collision_stale` is also the task/stop reason; it has no added `input_gate_` prefix.
+All four holds preserve a pending replacement. After recovery, the existing
+replacement flow replans from the stopped pose before activation. Endpoint/Product readiness
 still reports the hold, and native autonomy waits for InputGate recovery before
 running the local planner. Missing endpoint status, unhealthy localization,
 driver authority, E-stop and map identity failures retain their own checks.

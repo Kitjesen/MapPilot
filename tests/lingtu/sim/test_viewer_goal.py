@@ -231,7 +231,7 @@ def test_local_goal_http_ignores_system_proxy_and_reports_native_reply(bridge, m
             self.wfile.write(json.dumps(
                 {"accepted": True} if accepted else {
                     "error": "navigation_not_ready", "message": "not ready " * 50,
-                    "detail": {"blockers": ["local_collision_stale"]},
+                    "detail": {"blockers": ["collision_stale"]},
                 }
             ).encode())
 
@@ -246,7 +246,7 @@ def test_local_goal_http_ignores_system_proxy_and_reports_native_reply(bridge, m
         if accepted:
             assert "Goal submitted" in bridge._send([1, 2, .5])
         else:
-            with pytest.raises(ValueError, match=r"HTTP 409: local_collision_stale$"):
+            with pytest.raises(ValueError, match=r"HTTP 409: collision_stale$"):
                 bridge._send([1, 2, .5])
         assert len(requests) == 1
         assert requests[0].z == .5

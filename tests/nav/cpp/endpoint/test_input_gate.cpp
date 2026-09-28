@@ -220,7 +220,7 @@ void testScanRequiresCompleteFreshLocalCollision() {
   inputs.local_collision_stamp_s = 9.0;
   inputs.local_collision_receive_s = 9.0;
   state = gate.evaluate(inputs);
-  require(!state.ready && state.reason == "local_collision_stale",
+  require(!state.ready && state.reason == "collision_stale",
           "SCAN must reject a stale collision snapshot");
 
   inputs.local_collision_stamp_s = 10.0;

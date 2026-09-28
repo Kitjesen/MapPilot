@@ -48,7 +48,7 @@ LingTu-specific code is only the boundary:
 
 The SCAN core contains no DDS, Product, freshness, final-control, Route cost,
 partial-path, virtual-boundary, custom slope, or fallback logic. Endpoint input
-readiness owns `local_collision_stale`; an expired collision layer is not
+readiness owns `collision_stale`; an expired collision layer is not
 reported as an official `no_path` result.
 
 Mapd uses the upstream map profile: `0.05 m`, `200 x 200 x 100`, `5 m` rays,

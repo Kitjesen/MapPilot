@@ -110,12 +110,26 @@ ActivePathBlockagePolicy::corridorBlockers(const ActivePathBlockageObservation &
   }
 
   std::size_t nearest_index = 0U;
-  double nearest_distance = std::numeric_limits<double>::infinity();
-  for (std::size_t index = 0U; index < path.size(); ++index) {
-    const double distance = safeDistance3D(observation.robot_position, path[index]);
+  nav_kernel::Vec3 nearest_point = path.front();
+  double nearest_distance = safeDistance3D(observation.robot_position, nearest_point);
+  for (std::size_t index = 0U; index + 1U < path.size(); ++index) {
+    const auto &start = path[index];
+    const auto &end = path[index + 1U];
+    const double dx = end.x - start.x;
+    const double dy = end.y - start.y;
+    const double dz = end.z - start.z;
+    const double length_squared = dx * dx + dy * dy + dz * dz;
+    const auto &robot = observation.robot_position;
+    const double t = length_squared > 0.0
+                         ? std::clamp(((robot.x - start.x) * dx + (robot.y - start.y) * dy +
+                                       (robot.z - start.z) * dz) / length_squared, 0.0, 1.0)
+                         : 0.0;
+    const nav_kernel::Vec3 projected{start.x + t * dx, start.y + t * dy, start.z + t * dz};
+    const double distance = safeDistance3D(robot, projected);
     if (distance < nearest_distance) {
       nearest_distance = distance;
       nearest_index = index;
+      nearest_point = projected;
     }
   }
   if (!std::isfinite(nearest_distance)) {
@@ -147,7 +161,7 @@ ActivePathBlockagePolicy::corridorBlockers(const ActivePathBlockageObservation &
       double best_along = std::numeric_limits<double>::infinity();
       double cumulative = 0.0;
       for (std::size_t index = nearest_index; index < path.size(); ++index) {
-        const nav_kernel::Vec3 &start = path[index];
+        const nav_kernel::Vec3 &start = index == nearest_index ? nearest_point : path[index];
         if (index + 1U >= path.size()) {
           if (cumulative <= config_.lookahead_m) {
             const double xy_distance = std::hypot(x - start.x, y - start.y);

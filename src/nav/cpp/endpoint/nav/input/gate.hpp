@@ -9,6 +9,17 @@
 
 namespace lingtu::nav::endpoint {
 
+// Keep the collision freshness reason identical in status, tasks and stop output.
+inline std::string inputGateStopReason(const std::string &reason) {
+  return reason == "collision_stale" ? reason
+                                     : "input_gate_" + (reason.empty() ? "blocked" : reason);
+}
+
+inline bool localCollisionInputHold(const std::string &reason) noexcept {
+  return reason == "local_collision_missing" || reason == "local_collision_future" ||
+         reason == "collision_stale" || reason == "local_collision_incomplete";
+}
+
 enum class SourceStampDecision {
   kAccept,
   kClockRebase,

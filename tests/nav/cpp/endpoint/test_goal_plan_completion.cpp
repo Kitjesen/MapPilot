@@ -1566,6 +1566,24 @@ int main() {
   require(countStatus(pending_driver_recorder.statuses, "goal-active-b",
                       NavigationGoalState::Planning, "planning_queued") == 1U,
           "driver-control flow lost B's admitted queued status");
+  for (const char *reason : {"local_collision_missing", "local_collision_future",
+                             "collision_stale", "local_collision_incomplete"}) {
+    Recorder collision_recorder;
+    GoalPlanController collision_controller(slow_supersede_planner, collision_recorder.actions());
+    queue_superseding_goal(collision_controller, 50.1);
+    auto held = admission;
+    held.input_ready = false;
+    held.input_gate_reason = reason;
+    const auto resumed = collision_controller.resumePending(held);
+    require(resumed.accepted && resumed.reason == "planning_started" &&
+                !collision_controller.snapshot().pending_plan_queued,
+            "local collision hold rejected a queued global route request");
+    require_active_a_unchanged(collision_controller, collision_recorder,
+                               "starting queued global search changed the active route");
+    require(countStatus(collision_recorder.statuses, "goal-active-b", NavigationGoalState::Failed) == 0U,
+            "local collision hold published a terminal failure for queued B");
+  }
+
   Recorder pending_input_recorder;
   GoalPlanController pending_input_controller(slow_supersede_planner,
                                               pending_input_recorder.actions());

@@ -49,7 +49,7 @@ not evidence of arrival. This mouse input currently supports Windows only.
 
 The viewer connects directly to the loopback Gateway, without using system HTTP
 proxies. Rejections show the Gateway's specific blocker, such as
-`local_collision_stale` or `native_control_loop_unhealthy`. Under heavy machine
+`collision_stale` or `native_control_loop_unhealthy`. Under heavy machine
 load these gates can prevent motion even when the selected-point marker appears.
 The overlay prioritizes current input and control-loop health over an inactive
 historical timeout. Missing or unready control-loop health displays a waiting

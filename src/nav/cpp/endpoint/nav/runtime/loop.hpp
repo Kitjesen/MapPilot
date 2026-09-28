@@ -47,7 +47,7 @@ inline PostPlanningInputReadinessResult enforcePostPlanningInputReadiness(
   }
 
   const std::string reason =
-      std::string("input_gate_") + (input_gate.reason.empty() ? "blocked" : input_gate.reason);
+      inputGateStopReason(input_gate.reason);
   return {false, true, stop_motion(reason), reason};
 }
 

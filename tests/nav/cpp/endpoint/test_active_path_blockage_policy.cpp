@@ -526,6 +526,33 @@ void testInadmissibleGoalPlanStateDoesNotConsumeOneShotTrigger() {
   }
 }
 
+void testSparseRouteUsesForwardSegmentProjection() {
+  const std::vector<nav_kernel::Vec3> sparse{{0.0, 0.0, 0.0}, {10.0, 0.0, 0.0}};
+  const auto dense = path();
+  for (const auto *route : {&sparse, &dense}) {
+    for (const float obstacle_x : {4.0F, 7.0F}) {
+      ActivePathBlockagePolicy policy(config());
+      const auto obstacles = staticBlockage(obstacle_x);
+      std::optional<lingtu::nav::endpoint::GoalReplanTrigger> trigger;
+      for (int tick = 0; tick < 3; ++tick) {
+        trigger = policy.observe(observation(120.0 + tick * 0.6, tick + 1, *route,
+                                             obstacles, goalIdentity(), 3U, {6.0, 0.0, 0.0}));
+      }
+      require(trigger.has_value() == (obstacle_x == 7.0F),
+              "waypoint spacing skipped a forward obstacle or included an obstacle behind");
+    }
+  }
+  const std::vector<nav_kernel::Vec3> stacked{{0.0, 0.0, 0.0}, {10.0, 0.0, 0.0},
+                                             {10.0, 0.0, 3.0}, {0.0, 0.0, 3.0}};
+  ActivePathBlockagePolicy policy(config());
+  const auto lower_floor = staticBlockage(7.0F);
+  for (int tick = 0; tick < 3; ++tick) {
+    require(!policy.observe(observation(125.0 + tick * 0.6, tick + 1, stacked, lower_floor,
+                                         goalIdentity(), 3U, {6.0, 0.0, 3.0})),
+            "segment projection selected the wrong floor at the same XY");
+  }
+}
+
 void testConfigValidation() {
   auto expect_invalid = [](ActivePathBlockagePolicyConfig invalid, const char *message) {
     bool threw = false;
@@ -578,6 +605,7 @@ int main() {
   testCollisionDecayIsNotANewSensorObservation();
   testInactiveInvalidAndMalformedEvidenceReset();
   testInadmissibleGoalPlanStateDoesNotConsumeOneShotTrigger();
+  testSparseRouteUsesForwardSegmentProjection();
   testConfigValidation();
   return 0;
 }

@@ -7,13 +7,15 @@
 #include <stdexcept>
 #include <utility>
 
+#include "input/gate.hpp"
+
 namespace lingtu::nav::endpoint {
 
 bool goalPlanInputGapIsRecoverable(const std::string &reason) noexcept {
   return reason == "recovering" || reason == "odom_missing" || reason == "odom_stale" ||
          reason == "tf_missing" || reason == "tf_stale" || reason == "cloud_missing" ||
-         reason == "cloud_stale" || reason == "local_collision_missing" ||
-         reason == "local_collision_stale" || reason == "traversability_missing" ||
+         reason == "cloud_stale" || localCollisionInputHold(reason) ||
+         reason == "traversability_missing" ||
          reason == "traversability_stale" || reason == "localization_health_missing" ||
          reason == "localization_health_stale" || reason == "simulation_clock_missing" ||
          reason == "simulation_clock_stale";
@@ -269,11 +271,9 @@ GoalPlanController::resumePending(const GoalPlanAdmissionContext &fresh_context)
     return reject_pending(lingtu::message::NavigationGoalState::Cancelled,
                           fresh_context.driver_control_blocker, true, true);
   }
-  if (!fresh_context.input_ready) {
+  if (!fresh_context.input_ready && !localCollisionInputHold(fresh_context.input_gate_reason)) {
     return reject_pending(lingtu::message::NavigationGoalState::Failed,
-                          std::string{"input_gate_"} + (fresh_context.input_gate_reason.empty()
-                                                            ? "blocked"
-                                                            : fresh_context.input_gate_reason),
+                          inputGateStopReason(fresh_context.input_gate_reason),
                           false, true);
   }
   if (!std::isfinite(fresh_context.autonomy_request_not_before_s)) {
@@ -600,14 +600,11 @@ GoalPlanController::activateDeferredReplacement(double now_s,
     if (goalPlanInputGapIsRecoverable(reason)) {
       deferred_replacement_activation_->replan_after_input_gap = true;
       diagnostics_.accepted = false;
-      diagnostics_.reason = std::string{"input_gate_"} + reason;
+      diagnostics_.reason = inputGateStopReason(reason);
       return result;
     }
     return failDeferredReplacementLocked(lingtu::message::NavigationGoalState::Failed,
-                                         std::string{"input_gate_"} +
-                                             (fresh_context.input_gate_reason.empty()
-                                                  ? "blocked"
-                                                  : fresh_context.input_gate_reason));
+                                         inputGateStopReason(fresh_context.input_gate_reason));
   }
   if (!fresh_context.map_position) {
     return failDeferredReplacementLocked(lingtu::message::NavigationGoalState::Failed,
@@ -791,8 +788,7 @@ GoalPlanTaskTransition GoalPlanController::deferResume(const std::string &task_i
   }
   if (!context.input_ready) {
     return {false,
-            std::string{"input_gate_"} +
-                (context.input_gate_reason.empty() ? "blocked" : context.input_gate_reason),
+            inputGateStopReason(context.input_gate_reason),
             {}};
   }
   if (!context.retained_path_ready) {

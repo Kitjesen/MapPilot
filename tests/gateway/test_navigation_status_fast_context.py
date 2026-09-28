@@ -120,7 +120,7 @@ def test_lightweight_context_still_reads_current_native_safety_and_map_evidence(
     [
         "local_collision_missing",
         "local_collision_future",
-        "local_collision_stale",
+        "collision_stale",
         "local_collision_incomplete",
     ],
 )
@@ -147,12 +147,12 @@ def test_local_collision_input_hold_allows_goal_admission_but_holds_motion(nativ
         lambda state: state["input_gate"].update(ready=False, reason="odom_stale"),
         lambda state: state["input_gate"].update(ready=False, reason="driver_control_not_ready"),
         lambda state: (
-            state["input_gate"].update(ready=False, reason="local_collision_stale"),
+            state["input_gate"].update(ready=False, reason="collision_stale"),
             state["control_authority"].update(estop_latched=True),
         ),
         lambda state: state.update(stamp_s=time.time() - 10),
         lambda state: (
-            state["input_gate"].update(ready=False, reason="local_collision_stale"),
+            state["input_gate"].update(ready=False, reason="collision_stale"),
             state["far_input"].update(content_epoch=0),
         ),
     ],
@@ -168,7 +168,7 @@ def test_non_collision_native_failures_still_block_goal_admission(native_gateway
     assert project_navigation_status(gate)["goal_admission"]["state"] != "ACCEPTING"
 
 
-def test_goal_route_submits_during_local_collision_stale_hold(native_gateway):
+def test_goal_route_submits_during_collision_stale_hold(native_gateway):
     from gateway.schemas import GoalRequest
 
     class FakeGoals:
@@ -184,7 +184,7 @@ def test_goal_route_submits_during_local_collision_stale_hold(native_gateway):
             }
 
     gateway, snapshot, path, _events = native_gateway
-    snapshot["input_gate"] = {"ready": False, "reason": "local_collision_stale"}
+    snapshot["input_gate"] = {"ready": False, "reason": "collision_stale"}
     snapshot["navigation_ready"] = False
     path.write_text(json.dumps(snapshot), encoding="utf-8")
     goals = FakeGoals()

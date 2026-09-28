@@ -5,6 +5,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "input/gate.hpp"
+
 #include "safety/stop.hpp"
 
 namespace lingtu::nav::endpoint {
@@ -49,7 +51,8 @@ const char *replanStopReason(GoalReplanTriggerKind kind) {
 lingtu::message::NavigationGoalState deferredReplacementAdmissionState(const std::string &reason) {
   if (reason == "map_drift" || reason == "invalid_replan_admission" ||
       reason == "map_odom_tf_not_ready" || reason == "odometry_not_ready" ||
-      reason.rfind("input_gate_", 0) == 0 || reason.find("map") != std::string::npos ||
+      reason == "collision_stale" || reason.rfind("input_gate_", 0) == 0 ||
+      reason.find("map") != std::string::npos ||
       reason.find("odom") != std::string::npos) {
     return lingtu::message::NavigationGoalState::Failed;
   }
@@ -200,12 +203,10 @@ std::optional<BoundedGoalReplanGoal> GoalReplanRuntimeCoordinator::trackedGoal()
 GoalPlanAdmissionContext
 GoalReplanRuntimeCoordinator::normalizedAdmission(const GoalPlanAdmissionContext &context) {
   GoalPlanAdmissionContext result = context;
-  // replanActive/resumePending predate InputGate. Project it onto their existing
-  // blocker contract so a fresh blocked input cannot start a planner task.
+  // replanActive uses the existing blocker contract for execution-input recovery.
   if (!result.input_ready && result.driver_control_blocker.empty()) {
     result.driver_control_blocker =
-        std::string{"input_gate_"} +
-        (result.input_gate_reason.empty() ? "blocked" : result.input_gate_reason);
+        inputGateStopReason(result.input_gate_reason);
   }
   return result;
 }
@@ -242,8 +243,7 @@ GoalReplanRuntimeCoordinator::admissionFailure(const GoalReplanRuntimeFrameInput
     return context.driver_control_blocker;
   }
   if (!context.input_ready) {
-    return std::string{"input_gate_"} +
-           (context.input_gate_reason.empty() ? "blocked" : context.input_gate_reason);
+    return inputGateStopReason(context.input_gate_reason);
   }
   if (!context.map_position) {
     return context.odometry_ready ? "map_odom_tf_not_ready" : "odometry_not_ready";
@@ -814,8 +814,10 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
 
   if (replacement_plan_in_progress_) {
     const std::string admission_error = admissionFailure(input);
-    if (before.busy && before.active_task_id.empty() &&
-        admission_error.rfind("input_gate_", 0) == 0 &&
+    const bool input_hold =
+        !input.fresh_admission.input_ready &&
+        admission_error == inputGateStopReason(input.fresh_admission.input_gate_reason);
+    if (before.busy && before.active_task_id.empty() && input_hold &&
         !goalPlanInputGapIsRecoverable(input.fresh_admission.input_gate_reason)) {
       replacement_plan_in_progress_ = false;
       attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed,
@@ -823,7 +825,7 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
       return result;
     }
     GoalPlanAdvanceResult activated =
-        (admission_error.empty() || admission_error.rfind("input_gate_", 0) == 0)
+        (admission_error.empty() || input_hold)
             ? goal_plan_.activateDeferredReplacement(input.wall_now_s, input.fresh_admission)
             : goal_plan_.failDeferredReplacement(deferredReplacementAdmissionState(admission_error),
                                                  admission_error);
@@ -1112,7 +1114,7 @@ GoalReplanRuntimeCoordinator::drainPendingCycle(const GoalReplanRuntimeFrameInpu
     return result;
   }
   const GoalPlanSubmitResult resumed =
-      goal_plan_.resumePending(normalizedAdmission(frame.fresh_admission));
+      goal_plan_.resumePending(frame.fresh_admission);
   if (resumed.accepted) {
     replacement_plan_in_progress_ = true;
     result.pending_resumed = true;

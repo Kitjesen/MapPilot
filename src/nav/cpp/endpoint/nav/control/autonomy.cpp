@@ -260,7 +260,7 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
   }
 
   if (input.path_active && !input.input_gate.ready) {
-    final_control_.stop(now_s, std::string("input_gate_") + input.input_gate.reason);
+    final_control_.stop(now_s, inputGateStopReason(input.input_gate.reason));
     result.handled = true;
     result.clear_local_path = true;
     result.clear_local_planner_debug = true;
@@ -275,7 +275,7 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
     local.final_safety_stopped = true;
     local.final_safety_slowed = false;
     local.final_safety_limited = false;
-    local.final_safety_reason = std::string("input_gate_") + input.input_gate.reason;
+    local.final_safety_reason = inputGateStopReason(input.input_gate.reason);
     local.final_safety_obstacle_distance_m = -1.0;
     local.final_safety_traversability_cost = -1.0;
     local.path_follower_cmd_vel = {};

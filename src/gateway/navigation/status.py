@@ -33,7 +33,7 @@ _NATIVE_STATUS_UNSET = object()
 _GOAL_ADMISSION_INPUT_HOLDS = {
     "local_collision_missing",
     "local_collision_future",
-    "local_collision_stale",
+    "collision_stale",
     "local_collision_incomplete",
 }
 

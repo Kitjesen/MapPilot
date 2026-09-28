@@ -553,7 +553,7 @@ def test_motion_stage_rejects_wrong_collision_input_owner(local_planner: str | N
     assert result["nonzero_motion_allowed"] is False
 
 
-@pytest.mark.parametrize("reason", ["local_collision_stale", "local_collision_incomplete"])
+@pytest.mark.parametrize("reason", ["collision_stale", "local_collision_incomplete"])
 def test_motion_stage_rejects_scan_collision_gate_blocked(reason: str) -> None:
     snapshot = _compiled_go2_snapshot(None)
     snapshot["status_files"]["nav"]["json"]["input_gate"].update(ready=False, reason=reason)

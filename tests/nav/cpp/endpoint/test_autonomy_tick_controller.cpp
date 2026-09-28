@@ -232,7 +232,7 @@ void testBlockedInputGateFailsClosedWithoutPlanning() {
 }
 
 void testInputsExpiringDuringPlanningBlockPublicationWithoutCompletingGoal() {
-  for (const char *reason : {"cloud_stale", "local_collision_stale", "odom_stale",
+  for (const char *reason : {"cloud_stale", "collision_stale", "odom_stale",
                              "driver_control_stale"}) {
     Fixture fixture;
     fixture.next_output.cmd_vel = {0.3, 0.1, 0.2};
@@ -254,7 +254,9 @@ void testInputsExpiringDuringPlanningBlockPublicationWithoutCompletingGoal() {
     const auto readiness = enforcePostPlanningInputReadiness(
         planned.publish.command, fixture.gate, [&](const std::string &stop_reason) {
           ++hold_calls;
-          require(stop_reason == std::string("input_gate_") + reason,
+          require(stop_reason == (std::string(reason) == "collision_stale"
+                                      ? "collision_stale"
+                                      : std::string("input_gate_") + reason),
                   "the publication hold must expose the newly stale input");
           return true;
         });

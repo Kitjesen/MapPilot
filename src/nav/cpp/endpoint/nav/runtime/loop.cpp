@@ -512,8 +512,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
           input_gate_state = evaluate_input_gate();
           if (!input_gate_state.ready) {
             request.precondition_error =
-                std::string("input_gate_") +
-                (input_gate_state.reason.empty() ? "blocked" : input_gate_state.reason);
+                inputGateStopReason(input_gate_state.reason);
           } else if (runtime_guard_latched && !guard_resume.resume_allowed) {
             request.precondition_error = "control_loop_recovery_pending";
           }
@@ -529,8 +528,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
           operator_resume_required = true;
           result = {
               false,
-              std::string("input_gate_") +
-                  (input_gate_state.reason.empty() ? "blocked" : input_gate_state.reason),
+              inputGateStopReason(input_gate_state.reason),
           };
         }
       }
@@ -1720,7 +1718,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     const double publish_now = nowSeconds();
     if (inspection_executor.status().state == lingtu::nav::inspection::RunState::kNavigating &&
         path_active_for_tick && !input_gate_state.ready) {
-      if (inspection_executor.Pause(std::string("input_gate_") + input_gate_state.reason)) {
+      if (inspection_executor.Pause(inputGateStopReason(input_gate_state.reason))) {
         if (!motion_stop.clearEndpointMotion("inspection_input_gate_pause")) {
           record_zero_publish_failure("inspection_input_gate_pause");
         }
