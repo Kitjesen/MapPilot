@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from types import SimpleNamespace
@@ -8,6 +9,7 @@ from unittest.mock import Mock
 import pytest
 
 from gateway.gateway_module import GatewayModule
+from gateway.navigation.projection import project_navigation_status
 from gateway.navigation.status import evaluate_navigation_gate, handle_navigation_state
 from gateway.services.runtime_status import compiled_session_context
 
@@ -111,6 +113,100 @@ def test_lightweight_context_still_reads_current_native_safety_and_map_evidence(
     assert gate["can_accept_goal"] is not True
     assert blocker in gate["blockers"] or blocker == gate["reason"]
     gateway._session_snapshot.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "local_collision_missing",
+        "local_collision_future",
+        "local_collision_stale",
+        "local_collision_incomplete",
+    ],
+)
+def test_local_collision_input_hold_allows_goal_admission_but_holds_motion(native_gateway, reason):
+    gateway, snapshot, path, _events = native_gateway
+    snapshot["input_gate"] = {"ready": False, "reason": reason}
+    snapshot["navigation_ready"] = False
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    gate = evaluate_navigation_gate(gateway)
+    projection = project_navigation_status(gate)
+
+    assert gate["native_endpoint"]["input_gate"] == {"ready": False, "reason": reason}
+    assert projection["goal_admission"] == {"state": "ACCEPTING", "reason": ""}
+    assert projection["motion"]["permission"] == "HELD"
+    assert projection["motion"]["reason"] == reason
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda state: state.pop("input_gate"),
+        lambda state: state["input_gate"].update(ready=False, reason="localization_unhealthy"),
+        lambda state: state["input_gate"].update(ready=False, reason="odom_stale"),
+        lambda state: state["input_gate"].update(ready=False, reason="driver_control_not_ready"),
+        lambda state: (
+            state["input_gate"].update(ready=False, reason="local_collision_stale"),
+            state["control_authority"].update(estop_latched=True),
+        ),
+        lambda state: state.update(stamp_s=time.time() - 10),
+        lambda state: (
+            state["input_gate"].update(ready=False, reason="local_collision_stale"),
+            state["far_input"].update(content_epoch=0),
+        ),
+    ],
+)
+def test_non_collision_native_failures_still_block_goal_admission(native_gateway, change):
+    gateway, snapshot, path, _events = native_gateway
+    change(snapshot)
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    gate = evaluate_navigation_gate(gateway)
+
+    assert gate["can_accept_goal"] is not True
+    assert project_navigation_status(gate)["goal_admission"]["state"] != "ACCEPTING"
+
+
+def test_goal_route_submits_during_local_collision_stale_hold(native_gateway):
+    from gateway.schemas import GoalRequest
+
+    class FakeGoals:
+        def __init__(self) -> None:
+            self.submissions = []
+
+        def submit_goal(self, goal, *, task_id=None, request_id=None, action="goal", **_kwargs):
+            self.submissions.append((goal, task_id, request_id, action))
+            return {
+                "accepted": True,
+                "task_id": task_id,
+                "request_id": request_id,
+            }
+
+    gateway, snapshot, path, _events = native_gateway
+    snapshot["input_gate"] = {"ready": False, "reason": "local_collision_stale"}
+    snapshot["navigation_ready"] = False
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    goals = FakeGoals()
+    gateway.setup()
+    gateway.on_system_modules({"nav.goals": goals})
+    post_goal = next(route.endpoint for route in gateway._app.routes if route.path == "/api/v1/goal")
+
+    result = asyncio.run(
+        post_goal(
+            GoalRequest(
+                x=1.0,
+                y=2.0,
+                z=0.0,
+                request_id="collision-stale-goal",
+                client_id="test",
+            )
+        )
+    )
+
+    assert result["accepted"] is True
+    assert len(goals.submissions) == 1
+    assert goals.submissions[0][2] == "collision-stale-goal"
 
 
 def test_lightweight_context_preserves_localization_freshness_evidence(native_gateway):

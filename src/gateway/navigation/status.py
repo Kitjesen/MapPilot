@@ -29,6 +29,13 @@ from gateway.services.safety_status import safety_stop_active
 logger = logging.getLogger(__name__)
 NAVIGATION_STATUS_SCHEMA_VERSION = 3
 _NATIVE_STATUS_UNSET = object()
+# These holds allow goal planning to start while input_gate evidence still holds motion.
+_GOAL_ADMISSION_INPUT_HOLDS = {
+    "local_collision_missing",
+    "local_collision_future",
+    "local_collision_stale",
+    "local_collision_incomplete",
+}
 
 
 def _as_int(value: Any, default: int = 0) -> int:
@@ -497,8 +504,13 @@ def evaluate_navigation_gate(
     elif control["resume_required"]:
         blockers.append("resume_required")
     input_gate = _mapping(native_endpoint.get("input_gate"))
-    if input_gate.get("ready") is False:
-        blockers.append(str(input_gate.get("reason") or "input_gate_blocked"))
+    input_gate_reason = str(input_gate.get("reason") or "input_gate_blocked")
+    goal_admission_input_hold = (
+        input_gate.get("ready") is False
+        and input_gate_reason in _GOAL_ADMISSION_INPUT_HOLDS
+    )
+    if input_gate.get("ready") is False and not goal_admission_input_hold:
+        blockers.append(input_gate_reason)
     if session_mode not in {"navigating", "exploring"}:
         blockers.append("navigation_session_inactive")
 
@@ -509,6 +521,8 @@ def evaluate_navigation_gate(
         "native_navigation_ready_unavailable",
     }
     for code in endpoint_blockers:
+        if code == "native_input_gate_not_ready" and goal_admission_input_hold:
+            continue
         if code in source_unknown_codes:
             unknown_reason = unknown_reason or code
         else:

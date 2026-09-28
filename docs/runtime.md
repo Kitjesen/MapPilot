@@ -146,6 +146,20 @@ OctoPlanner owns the saved-map route and terrain constraints. SCAN owns the
 heading-dependent body envelope, live obstacle avoidance, and local trajectory.
 The global route radius is independent of SCAN's two-cylinder dimensions.
 
+Endpoint snapping follows the upstream OctoPlanner policy: choose a nearby
+traversable start and search from that candidate. There is no separate rejection
+of the measured start or mandatory straight-line connection from that start to
+the snapped candidate. The former `start_connection_blocked` gate is removed.
+The searched route retains its 3D support, unknown-space, clearance, step and
+slope constraints. These constraints cover the searched route, not the omitted
+measured-start-to-candidate connection.
+
+Executor anchors the local reference to the measured body pose. SCAN checks the
+resulting trajectory against live 3D inflated occupancy and dynamic predictions.
+It does not certify ground support or negative obstacles on that connection;
+snapping must not be described as physical relocation, nor preview success as
+complete terrain certification from the measured pose.
+
 In the production map-frame SCAN path, Executor constructs the complete
 reference once and reuses it until route replacement, suspension, or a frame
 epoch change. SCAN selects the local target; Executor does not rebuild a CMU
@@ -168,6 +182,45 @@ uses the smaller of that radius and the configured terminal XY tolerance.
 Preview success describes a global route, not permission to move or a promise
 that the live local trajectory is executable.
 
+Goal admission does not require SCAN's local collision sample to be ready.
+The known `local_collision_missing`, `local_collision_future`,
+`local_collision_stale`, and `local_collision_incomplete` holds allow an initial
+global route request while motion remains held. Endpoint/Product readiness
+still reports the hold, and native autonomy waits for InputGate recovery before
+running the local planner. Missing endpoint status, unhealthy localization,
+driver authority, E-stop and map identity failures retain their own checks.
+
+### Route, trajectory and motion conditions
+
+| Stage | Required evidence | Handling a failure |
+| --- | --- | --- |
+| Global preview | Valid map-frame target and tolerance, current map pose, configured planner map, available planner | Restore localization/map binding, correct the target, or wait for the current search |
+| Global route search | Traversable snapped endpoints and a connected 3D route satisfying support, unknown-space, clearance, step and slope rules | Inspect the failing map cells and input evidence; repair/rebuild a candidate map when the geometry is wrong |
+| Goal admission | Active navigation session, current endpoint status, valid task/request identity, control ownership, no E-stop/takeover hold, matching active map | Restore the identified session/authority/map condition; local collision holds alone do not prevent initial planning |
+| SCAN trajectory | Measured pose/velocity, valid reference, fresh complete local collision data, successful trajectory optimization and static/dynamic collision checks | Restore mapd input or let SCAN replan around observed obstacles; repeated spatial blockage can request a global replan |
+| Trajectory feasibility | Finite spline samples within configured speed/acceleration bounds | Inspect the reported quantity/time and reference continuity; change physical limits only with measured robot evidence |
+| Nonzero command | Active route, matching current map, recovered InputGate, motion authority, executable local result, follower/final safety checks, enabled command publication | Remain stopped while the failed condition is present; route-preview success does not bypass it |
+
+For Go2, input ages are bounded at 0.25 s for odometry/TF, 0.35 s for the
+required cloud, 0.50 s for local collision/localization health, and 0.35 s for
+driver control. Future-stamp tolerance is 0.05 s and recovery requires three
+valid frames. These are execution-input bounds, not additional terrain tests.
+
+SCAN's reference must retain at least two finite points after the upstream
+0.50 m waypoint-spacing filter. Its local target is selected along the
+reference within the 3.5 m horizon, outside inflated occupancy and normally at
+least 0.20 m ahead; the final goal is exempt from that distance condition.
+Blocked targets trigger an along-reference search before rejection. The
+rebound seed requires at least seven samples/control points. Optimization must
+succeed, the complete spline must pass swept 3D collision validation (also
+after refinement), and sampled velocity/acceleration must pass their configured
+acceptance bounds. A new reference is received on one FSM tick and generated
+on a later tick; asynchronous `Pending` is not a failed route.
+
+The follower's 0.80 rad heading freeze and final live-grid braking sweep act on
+execution after a spline exists. Goal-height tolerance likewise governs
+arrival, not whether SCAN may generate a trajectory.
+
 Persistent obstacle feedback follows the measured obstacle snapshot generation,
 not a traversability-grid generation. A viable local path suppresses this
 feedback. Otherwise, repeated observed blockage can request a bounded global
@@ -180,6 +233,33 @@ global route corridor. The failed body sample is not itself obstacle geometry.
 Input or acceleration failures without spatial collision evidence do not create
 blocked regions. This feedback does not rewrite the saved OctoMap or bypass the
 existing stop-before-replan transaction.
+
+### Go2 navigation parameter reference
+
+Resolving `compile_run_plan("nav", "real", robot="unitree/go2")` without
+session overrides gives the following values. They describe repository
+configuration, not the currently installed field release; the active RunPlan
+and native status are the field source of truth.
+
+| Parameter | Resolved value | Meaning |
+| --- | --- | --- |
+| Global route radius | 0.155 m | Half the Go2 width; independent of SCAN's body model |
+| Start/goal snap search | 24 cells per axis | At 5 cm resolution, up to 1.2 m per axis, not a 1.2 m Euclidean sphere |
+| Ground support | Required; strict direct support off; XY neighborhood 1 cell | Applied to searched global-route cells |
+| Body-to-support height | 0.35 m, tolerance 0.05 m | Go2 calibration |
+| Global maximum step / slope | 0.45 m / 0.57735 (30 degrees) | Geometric search bounds, not verified stair-climbing capability |
+| Terminal tolerance | 0.15 m in 3D, XY and Z | Preview also honors the requested acceptance radius |
+| SCAN body cylinders | Radius 0.25 m, offsets +/-0.19 m | Heading-dependent 0.50 m wide, 0.88 m long model |
+| Body vertical clearance | 0.10 m below and above | Applied when inflating the 3D collision volume |
+| Local collision maximum age | 0.50 s | Freshness condition for local planning and collision queries |
+| SCAN planning horizon | 3.5 m | Local target selection along the reference |
+| SCAN control-point spacing | 0.20 m | B-spline seed spacing |
+| SCAN replan / no-replan distance | 1.00 m / 0.10 m | FSM distance thresholds, not a fixed trajectory-update frequency |
+| Nominal speed / acceleration | 0.75 m/s / 0.50 m/s² | Product values; a goal's speed cap can reduce execution speed |
+| Sampled velocity allowance | 1.00 m/s | Spline acceptance allowance; follower commands remain capped at the configured/session speed |
+| Sampled acceleration allowance | 1.20 m/s² | Added to the nominal acceleration for the trajectory validation threshold (1.70 m/s²) |
+| Goal height tolerance | 0.35 m | Final arrival Z check; not a local trajectory-generation gate |
+| Native tick rate | 100 Hz | FSM/controller cadence, not 100 complete optimizations per second |
 
 ## Maps and localization
 
