@@ -451,24 +451,6 @@ void TestCollisionGenerationAdvancesOnlyWhenEvidenceChanges() {
   assert(grid.Generation() == occupied_generation + 1U);
 }
 
-void TestReferenceKeepsWindowAndHonorsRetainedGeometry() {
-  RollingOccupancyGrid grid(TestConfig());
-  grid.Reset("map",0,0,0,1);
-  const auto before=grid.Snapshot();
-  const std::vector<float> distant{31.2F,.1F,.1F};
-  assert(grid.UpdateReference(Frame(distant,10,30,0,0)).accepted_points==0);
-  assert(grid.Snapshot().origin_x_m==before.origin_x_m);
-  const std::vector<float> rays{3.2F,.1F,.1F};
-  grid.UpdateReference(Frame(rays,10));
-  assert(grid.StateAt(3.2,.1,.1)==OccupancyState::kOccupied);
-  const std::vector<float> retained{2.2F,1.1F,.1F};
-  grid.ReplaceReferenceHits(Frame(retained,10).cloud,10);
-  assert(grid.StateAt(3.2,.1,.1)==OccupancyState::kUnknown);
-  assert(!grid.InflatedContains(3.2,.1,.1));
-  assert(grid.StateAt(2.2,1.1,.1)==OccupancyState::kOccupied);
-  assert(grid.StateAt(1.2,.1,.1)==OccupancyState::kFree);
-}
-
 void TestEvidenceChangesWithoutInflationChangeAdvanceGeneration() {
   auto config = TestConfig();
   config.auto_roll = false;
@@ -892,7 +874,6 @@ void TestConfiguredLocalUpdateRangeMatchesUpstreamFilter() {
 }  // namespace
 
 int main() {
-  TestReferenceKeepsWindowAndHonorsRetainedGeometry();
   TestNewObstacleInKnownFreeSpaceRequiresObservedClearing();
   TestEndpointMajorityPreservesHistoryUntilObservedFree();
   TestClippedEndpointContributesOneFreeVote();

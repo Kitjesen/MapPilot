@@ -137,10 +137,6 @@ class RollingOccupancyGrid final {
       std::int64_t stamp_ns = 0);
 
   RollingOccupancyUpdateStats Update(const MapCloudFrame& frame);
-  // Seed a fixed local window before integrating live observations. Historical
-  // sensor positions must never roll the window away from the current robot.
-  RollingOccupancyUpdateStats UpdateReference(const MapCloudFrame& frame);
-  void ReplaceReferenceHits(const PointCloudView& retained, std::int64_t decay_stamp_ns);
   std::size_t Decay(std::int64_t now_ns);
 
   OccupancyState StateAt(double x_m, double y_m, double z_m) const;
@@ -160,7 +156,6 @@ class RollingOccupancyGrid final {
   std::uint64_t Generation() const;
 
  private:
-  RollingOccupancyUpdateStats UpdateImpl(const MapCloudFrame& frame, bool reference);
   struct Cell {
     double log_odds{0.0};
     std::uint16_t hits{0U};

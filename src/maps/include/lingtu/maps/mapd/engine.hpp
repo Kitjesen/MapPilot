@@ -110,7 +110,6 @@ struct SubmitResult {
 };
 
 struct State {
-  std::size_t reference_scans{0U};
   bool running{false};
   bool live{false};
   bool extended_layers_enabled{true};
@@ -201,7 +200,7 @@ class LiveMapEngine final {
   void Start();
   void Stop();
   SubmitResult Submit(Observation observation);
-  void SetReferenceMap(MapIdentity identity, std::filesystem::path directory);
+  void SetReferenceMap(MapIdentity identity);
 
   State GetState() const;
   Snapshot GetSnapshot() const;
@@ -259,10 +258,6 @@ class LiveMapEngine final {
 
   Config config_;
   MapIdentity reference_map_;
-  std::filesystem::path reference_directory_;
-  bool reference_attempted_{false};
-  std::size_t reference_scans_{0U};
-  std::string reference_error_;
   layers::VoxelLayerCore voxel_;
   layers::RollingOccupancyGrid occupancy_;
   PersistentBlockGrid accumulated_;

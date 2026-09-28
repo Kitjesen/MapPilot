@@ -905,41 +905,6 @@ std::size_t RollingOccupancyGrid::DecayLocked(std::int64_t now_ns) {
 }
 
 RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& frame) {
-  return UpdateImpl(frame, false);
-}
-
-RollingOccupancyUpdateStats RollingOccupancyGrid::UpdateReference(const MapCloudFrame& frame) {
-  return UpdateImpl(frame, true);
-}
-
-void RollingOccupancyGrid::ReplaceReferenceHits(const PointCloudView& retained, std::int64_t decay_stamp_ns) {
-  std::unique_lock<std::shared_mutex> lock(mutex_);
-  if (retained.frame_id != frame_id_)
-    throw std::invalid_argument("retained reference frame mismatch");
-  for (std::size_t i=0;i<cells_.size();++i) {
-    if (cells_[i].unresolved_hit || StateFor(cells_[i])==OccupancyState::kOccupied) {
-      cells_[i]=Cell{config_.min_log_odds-kUnknownLogOddsOffset};
-      RefreshMembership(i);
-    }
-  }
-  for (std::size_t i=0;i<retained.point_count;++i) {
-    const double x=ReadCoordinate(retained,i,0), y=ReadCoordinate(retained,i,1), z=ReadCoordinate(retained,i,2);
-    CellCoord coord;
-    if (!IsFinite(x) || !IsFinite(y) || !IsFinite(z) || !WorldToCell(x,y,z,&coord)) continue;
-    const auto index=PhysicalIndex(coord);
-    auto& cell=cells_[index];
-    cell.observed=true;
-    cell.unresolved_hit=true;
-    cell.log_odds=config_.max_log_odds;
-    cell.hits=std::max<std::uint16_t>(cell.hits,1U);
-    cell.last_observed_ns=decay_stamp_ns;
-    RefreshMembership(index);
-  }
-  if (collision_dirty_) ++generation_;
-  collision_dirty_=false;
-}
-
-RollingOccupancyUpdateStats RollingOccupancyGrid::UpdateImpl(const MapCloudFrame& frame, bool reference) {
   const PointCloudView& cloud = frame.cloud;
   const std::string incoming_frame = cloud.frame_id.empty() ? "map" : cloud.frame_id;
   if (cloud.stamp_ns < 0 || frame.decay_stamp_ns < 0 ||
@@ -963,7 +928,7 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::UpdateImpl(const MapCloudFrame
   RollingOccupancyUpdateStats stats;
   stats.input_points = cloud.point_count;
   collision_dirty_ = false;
-  if (config_.auto_roll && !reference) {
+  if (config_.auto_roll) {
     RollResult roll = RollToCenterLocked(
         frame.sensor_origin_x_m,
         frame.sensor_origin_y_m,
@@ -974,15 +939,6 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::UpdateImpl(const MapCloudFrame
     stats.rolled_out_cells = roll.chunk.Size();
   }
   stats.decayed_cells = DecayLocked(decay_stamp_ns);
-
-  // Only replay rays whose physical origins are inside this fixed window.
-  // Otherwise TraceRay cannot establish the segment's in-window free cells.
-  CellCoord origin_cell;
-  if (reference && !WorldToCell(frame.sensor_origin_x_m, frame.sensor_origin_y_m,
-                               frame.sensor_origin_z_m, &origin_cell)) {
-    stats.rejected_points = cloud.point_count;
-    return stats;
-  }
 
   std::vector<std::size_t> touched_indices;
   touched_indices.reserve(cloud.point_count * 8U);

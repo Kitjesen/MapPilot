@@ -1,13 +1,10 @@
 #include "lingtu/maps/mapd/engine.hpp"
 #include "lingtu/maps/layers/surface_projection.hpp"
-#include "lingtu/maps/build/saved_scans.hpp"
-#include "lingtu/maps/build/pcd.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstring>
-#include <fstream>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -199,17 +196,13 @@ void LiveMapEngine::Stop() {
   }
 }
 
-void LiveMapEngine::SetReferenceMap(MapIdentity identity, std::filesystem::path directory) {
+void LiveMapEngine::SetReferenceMap(MapIdentity identity) {
   std::lock_guard<std::mutex> lock(data_mutex_);
-  if (identity == reference_map_ && directory == reference_directory_) return;
+  if (identity == reference_map_) return;
   reference_map_ = std::move(identity);
-  reference_directory_ = std::move(directory);
   processed_epoch_ = 0U;
   processed_sequence_ = 0U;
   last_processed_steady_ns_ = 0;
-  reference_attempted_ = false;
-  reference_scans_ = 0U;
-  reference_error_.clear();
   snapshot_ = {};
   realtime_snapshot_generation_ = 0U;
   complete_snapshot_generation_ = 0U;
@@ -301,7 +294,6 @@ LiveMapEngine::QueueState LiveMapEngine::QueueStateLocked() const {
 
 State LiveMapEngine::BuildStateLocked(std::int64_t now_ns, const QueueState& queue) const {
   State state;
-  state.reference_scans = reference_scans_;
   state.running = queue.running && !queue.stop_requested;
   state.live = state.running && last_processed_steady_ns_ > 0 &&
       now_ns - last_processed_steady_ns_ <=
@@ -715,60 +707,8 @@ void LiveMapEngine::Process(Observation observation) {
     ResetForEpoch(observation);
   }
 
-  if (reference_map_.present && !mapping && !reference_attempted_) {
-    reference_attempted_ = true;
-    // Stream one keyframe at a time; never hold an entire field map in RAM.
-    // A failed bundle cannot leave a partially replayed reference in the grid.
-    try {
-      const auto check_epoch = [&] {
-        std::int64_t epoch = 0;
-        std::ifstream source(reference_directory_ / ".content_epoch");
-        if (!(source >> epoch) || epoch != reference_map_.content_epoch)
-          throw std::runtime_error("saved_scan_content_epoch_mismatch");
-      };
-      check_epoch();
-      std::ifstream edits(reference_directory_ / "voxel_edits.jsonl");
-      if (edits && edits.peek() != std::ifstream::traits_type::eof())
-        throw std::runtime_error("raw_scan_restore_requires_unedited_geometry");
-      VisitSavedScans(reference_directory_, [&](const SavedScan& scan) {
-        {
-          std::lock_guard<std::mutex> queue_lock(queue_mutex_);
-          if (stop_requested_) throw std::runtime_error("saved_scan_restore_cancelled");
-        }
-        OwnedPointCloud cloud;
-        cloud.frame_id = observation.map_frame;
-        cloud.stamp_ns = observation.stamp_ns;
-        cloud.point_count = scan.xyz.size()/3U;
-        cloud.interleaved.assign(scan.xyz.begin(),scan.xyz.end());
-        MapCloudFrame historical;
-        historical.cloud = cloud.View();
-        historical.precise_xyz = {scan.xyz.data(),scan.xyz.size()};
-        historical.sensor_origin_x_m = scan.origin[0];
-        historical.sensor_origin_y_m = scan.origin[1];
-        historical.sensor_origin_z_m = scan.origin[2];
-        historical.decay_stamp_ns = SteadyTimeNs();
-        if (occupancy_.UpdateReference(historical).accepted_points > 0U) ++reference_scans_;
-      });
-      auto retained=LoadPcdXyz(reference_directory_ / "map.pcd");
-      if (!retained.ok || retained.points.empty())
-        throw std::runtime_error("saved_scan_restore_requires_retained_geometry");
-      OwnedPointCloud retained_cloud;
-      retained_cloud.frame_id=observation.map_frame;
-      retained_cloud.point_count=retained.points.size();
-      retained_cloud.interleaved.reserve(retained.points.size()*3);
-      for (const auto& point : retained.points)
-        retained_cloud.interleaved.insert(retained_cloud.interleaved.end(),{point.x,point.y,point.z});
-      occupancy_.ReplaceReferenceHits(retained_cloud.View(),SteadyTimeNs());
-      check_epoch();
-    } catch (const std::exception& error) {
-      occupancy_.Reset(observation.map_frame, observation.sensor_origin_x_m,
-                       observation.sensor_origin_y_m, observation.sensor_origin_z_m,
-                       observation.stamp_ns);
-      reference_scans_ = 0U;
-      reference_error_ = std::string("saved_scan_restore_failed: ") + error.what();
-    }
-  }
-
+  // Saved geometry belongs to localization/global planning. SCAN occupancy
+  // is built only from this run's observations, never seeded from old scans.
   MapCloudFrame frame;
   frame.cloud = transformed.cloud.View();
   frame.precise_xyz = {transformed.precise_xyz.data(),
@@ -867,7 +807,7 @@ void LiveMapEngine::Process(Observation observation) {
   pose_quality_ = observation.pose_quality;
   pose_state_ = UpperAscii(observation.pose_state);
   pose_reason_ = observation.pose_reason;
-  last_error_ = reference_error_;
+  last_error_.clear();
   snapshot_.frame_id = observation.map_frame;
   snapshot_.stamp_ns = observation.stamp_ns;
   snapshot_.reset_epoch = observation.reset_epoch;
@@ -915,9 +855,6 @@ void LiveMapEngine::ResetForEpoch(const Observation& observation) {
       observation.sensor_origin_y_m,
       observation.sensor_origin_z_m,
       observation.stamp_ns);
-  reference_attempted_ = false;
-  reference_scans_ = 0U;
-  reference_error_.clear();
   accumulated_.Reset();
   accumulated_.SetFrame(observation.map_frame);
   accumulated_.SetStampNs(observation.stamp_ns);

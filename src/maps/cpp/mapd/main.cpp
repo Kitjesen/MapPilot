@@ -537,7 +537,6 @@ std::string StatusJson(const State &state, const DdsInputState &input, const Dds
          "\"map_layers_published_generation\":" +
          std::to_string(publications.map_layers.generation) + "," +
          "\"scene_published_generation\":" + std::to_string(publications.scene.generation) + "," +
-         "\"reference_scans\":" + std::to_string(state.reference_scans) + "," +
          "\"engine_error\":\"" + JsonEscape(state.last_error) + "\"," + "\"input_error\":\"" +
          JsonEscape(input.last_error) + "\"," + "\"output_error\":\"" +
          JsonEscape(output.last_error) + "\"}\n";
@@ -606,8 +605,7 @@ int main(int argc, char **argv) {
     }
     engine.Start();
     auto reference_identity = activation.ActiveIdentity();
-    engine.SetReferenceMap(reference_identity, reference_identity.present
-        ? maps_service.Store().ContentPath(reference_identity.map_id) : std::filesystem::path{});
+    engine.SetReferenceMap(reference_identity);
     if (query_server) {
       query_server->Start();
     }
@@ -654,8 +652,7 @@ int main(int argc, char **argv) {
         const auto active_identity = activation.ActiveIdentity();
         if (active_identity != reference_identity) {
           reference_identity = active_identity;
-          engine.SetReferenceMap(reference_identity, reference_identity.present
-              ? maps_service.Store().ContentPath(reference_identity.map_id) : std::filesystem::path{});
+          engine.SetReferenceMap(reference_identity);
         }
         result.producer_boot_id = dds.ProducerBootId();
         activation_results.emplace(request.request_id, CachedActivationResult{request, result});

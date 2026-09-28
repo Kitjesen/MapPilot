@@ -833,7 +833,7 @@ void TestGroundModelIsIndependentOfDisplayPointCap() {
   complete.Stop();
 }
 
-void TestSavedRayRestoreAndIdentityInvalidation() {
+void TestSavedMapDoesNotSeedLiveCollision() {
   const auto directory = std::filesystem::temp_directory_path() /
       ("lingtu-reference-" + std::to_string(WallTimeNs()));
   std::filesystem::create_directories(directory / "patches");
@@ -853,7 +853,7 @@ void TestSavedRayRestoreAndIdentityInvalidation() {
   identity.map_id = "room";
   identity.content_epoch = 101;
   identity.frame_id = "map";
-  engine.SetReferenceMap(identity,directory);
+  engine.SetReferenceMap(identity);
   engine.Start();
   const auto observation = [](std::uint64_t epoch, std::uint64_t sequence) {
     auto value = MakeObservation(epoch,sequence,0,0,0,{-1.25F,.25F,.25F});
@@ -868,7 +868,6 @@ void TestSavedRayRestoreAndIdentityInvalidation() {
   assert(engine.GetSnapshot().sequence == 0);
   assert(engine.Submit(observation(1,2)).accepted());
   assert(engine.WaitUntilProcessed(1,2,std::chrono::seconds(2)));
-  assert(engine.GetState().reference_scans == 1);
   const auto historical_hit = [](const auto& snapshot) {
     const auto& c = snapshot.collision;
     const int x = int(std::floor((1.25-c.min_x_m)/c.resolution_m));
@@ -877,26 +876,29 @@ void TestSavedRayRestoreAndIdentityInvalidation() {
     const auto i = (std::size_t(z)*c.size_y+y)*c.size_x+x;
     return (c.measured_occupied_bits[i/8] & (1U<<(i%8))) != 0;
   };
-  assert(historical_hit(engine.GetSnapshot()));
+  assert(!historical_hit(engine.GetSnapshot()));
   assert(engine.Submit(observation(2,1)).accepted());
   assert(engine.WaitUntilProcessed(2,1,std::chrono::seconds(2)));
-  assert(engine.GetState().reference_scans == 1);
-  assert(historical_hit(engine.GetSnapshot()));
-  // A broken later patch must discard the earlier, partially replayed geometry.
+  assert(!historical_hit(engine.GetSnapshot()));
+  // Saved scan files do not participate in local collision, even on reset.
   std::ofstream(directory / "poses.txt",std::ios::app) << "missing.pcd 0 0 0 1 0 0 0\n";
   assert(engine.Submit(observation(3,1)).accepted());
   assert(engine.WaitUntilProcessed(3,1,std::chrono::seconds(2)));
-  assert(engine.GetState().reference_scans == 0);
   assert(!historical_hit(engine.GetSnapshot()));
-  assert(engine.GetState().last_error.find("saved_scan_restore_failed") != std::string::npos);
+  assert(engine.GetState().last_error.empty());
+  // The same coordinate must block when a live scan actually hits it.
+  auto live_hit = observation(3,2);
+  live_hit.scan.interleaved = {1.25F,.25F,-.75F};
+  assert(engine.Submit(live_hit).accepted());
+  assert(engine.WaitUntilProcessed(3,2,std::chrono::seconds(2)));
+  assert(historical_hit(engine.GetSnapshot()));
   // A new mapping session must not use the previously selected saved map.
   auto mapping = MakeObservation(4,1,0,0,0,{-1.25F,.25F,.25F});
   mapping.pose_state = "MAPPING";
   assert(engine.Submit(mapping).accepted());
   assert(engine.WaitUntilProcessed(4,1,std::chrono::seconds(2)));
-  assert(engine.GetState().reference_scans == 0);
   assert(!historical_hit(engine.GetSnapshot()));
-  engine.SetReferenceMap({},{});
+  engine.SetReferenceMap({});
   assert(!engine.GetState().live);
   assert(engine.Submit(observation(4,2)).accepted());
   assert(engine.WaitUntilProcessed(4,2,std::chrono::seconds(2)));
@@ -908,7 +910,7 @@ void TestSavedRayRestoreAndIdentityInvalidation() {
 }  // namespace
 
 int main() {
-  TestSavedRayRestoreAndIdentityInvalidation();
+  TestSavedMapDoesNotSeedLiveCollision();
   TestGroundModelIsIndependentOfDisplayPointCap();
   TestGroundModelConsumesSoaSnapshotAndResetsWithEpoch();
   TestExactPoseTransformAndDerivedLayers();

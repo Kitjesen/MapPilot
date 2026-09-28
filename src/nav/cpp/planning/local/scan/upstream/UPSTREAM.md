@@ -80,6 +80,16 @@ from ray evidence or rolling-window eviction. AStar node-pool reuse is likewise
 an allocation optimization; node generation tags preserve the same search
 state and ordering.
 
+The local rolling grid starts unknown and consumes live `MapObservation`
+scans, as the upstream cloud/pose callbacks do. Saved patches and `map.pcd`
+are not replayed or forced into this grid at navigation startup. They belong
+to saved-map localization and global planning. Map identity still binds live
+observations to the active frame/epoch; relocalization clears the local grid.
+This removes LingTu's historical seeding extension, which kept old returns in
+the sensor blind region and could make every SCAN departure fail despite a
+valid global route. Unknown cells retain their evidence state; collision and
+braking queries are unchanged.
+
 Thunder's measured cylinder radius/offset are explicit robot inputs. The
 algorithm defaults remain the official Go2 values. RViz visualization, the Go2
 gait publisher, the kinematic simulator, the open-loop controller and the

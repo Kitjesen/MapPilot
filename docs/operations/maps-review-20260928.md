@@ -187,3 +187,49 @@ No motion goal was sent. The session was idle with zero velocity; 0.5 m/s
 field movement has not been validated. Evidence is in `field86.json`,
 `stationary86.json`, `build86.log` and `install86.log` under the local evidence
 directory. This deployment supersedes the earlier candidate-only status.
+
+## User goal failures: historical geometry in SCAN's local map
+
+The operator submitted three goals at about 22:16 on September 28. All were
+acknowledged, with six accepted global plans (approximately 63--344 ms) and
+no global planning failure. Local SCAN rebound optimization failed repeatedly,
+ending in `replan_budget_consumed`. Global previews alone did not validate
+this execution path.
+
+The live collision DDS snapshot contained 134 measured occupied cells within
+0.45 m horizontally and 0.30 m vertically of the body. All matched saved
+`map.pcd` geometry within 4.5 cm. A contemporaneous live scan contained no
+returns in that region. The nearest live return in the front-cylinder body
+height band was approximately 0.54 m from its centre. This is one stationary
+observation, not proof that every unobserved cell is free.
+
+Mapd restored 87 historical patches into the local window, then
+`ReplaceReferenceHits` forced all retained map points to saturated occupied.
+This resurrected ray-cleared geometry and retained historical returns in the
+current sensor blind region. An ARM replay with the same live scan repeated
+20 times still blocked the front cylinder with historical seeding; a fresh
+live-only rolling grid cleared both cylinder queries. Replaying historical
+rays without the final forced hits also blocked the front cylinder, so merely
+removing saturation was insufficient.
+
+The fix removes the historical local-grid seeding path and its unused APIs.
+The active map identity still rejects mismatched localization observations;
+epoch changes still reset local geometry. Saved maps remain inputs to
+localization and OctoPlanner3D, while SCAN consumes this run's live rolling
+occupancy, matching the pinned upstream cloud/pose input ownership. No change
+to robot dimensions, inflation, unknown handling, collision queries or speed
+limits is part of this fix.
+
+NX regression tests verify identity mismatch rejection, no historical seeding
+on epoch reset, and blocking when a live scan hits the same coordinate.
+Evidence: `user-goals.log`, `user-scan-failure.json`, `collision-live.bin`,
+`observation.bin`, `observation-meta.txt`, `local-reference-probe.cpp` under
+`build/go2-release-20260928/`. Motion acceptance remains separate from these
+offline/stationary results.
+
+The unchanged ARM SCAN backend also replayed the captured last reference route
+against both maps with the correct rolling AABB: historical seeding failed at
+trajectory start; live-only occupancy produced an accepted trajectory. Live-only
+replays of the fixed 0.3 m and 1 m forward targets and the operator's first goal
+also produced trajectories. This checks local trajectory generation, not actual
+tracking or arrival. Replay source: `scan-user-replay.cpp` in the evidence folder.
