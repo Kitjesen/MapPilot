@@ -356,8 +356,7 @@ ActivePathBlockagePolicy::observe(const ActivePathBlockageObservation &observati
       return std::nullopt;
     }
     fresh_collision = evidence.collisionResetEpoch > last_collision_reset_epoch_ ||
-        evidence.collisionObservationSequence > last_collision_observation_sequence_ ||
-        evidence.collisionGeneration > last_collision_generation_;
+        evidence.collisionObservationSequence > last_collision_observation_sequence_;
   }
 
   const auto &path = *observation.active_global_path;

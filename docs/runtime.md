@@ -244,6 +244,8 @@ corridor. SCAN extracts nearby measured occupied cells from the same collision
 snapshot that rejected its trajectory. Coordination consumes that evidence
 without interpreting SCAN's private attempt diagnostics or inflated-only cells.
 The failed body sample is not itself obstacle geometry.
+Persistence counts new sensor observation sequences, not collision-map version
+changes caused by decay. New observations still count when geometry is unchanged.
 Input or acceleration failures without spatial collision evidence do not create
 blocked regions. This feedback does not rewrite the saved OctoMap or bypass the
 existing stop-before-replan transaction.
@@ -272,7 +274,7 @@ and native status are the field source of truth.
 | Nominal speed / acceleration | 0.75 m/s / 0.50 m/s² | Product values; a goal's speed cap can reduce execution speed |
 | Sampled velocity allowance | 1.00 m/s | Spline acceptance allowance; follower commands remain capped at the configured/session speed |
 | Sampled acceleration allowance | 1.20 m/s² | Added to the nominal acceleration for the trajectory validation threshold (1.70 m/s²) |
-| Goal height tolerance | 0.35 m | Product task-arrival Z value; Executor retains the existing lower bound from the active acceptance radius; not a SCAN setting |
+| Goal height tolerance | 0.35 m | Product task-arrival Z value, independent of the planar acceptance radius; not a SCAN setting |
 | Native tick rate | 100 Hz | FSM/controller cadence, not 100 complete optimizations per second |
 
 ## Maps and localization

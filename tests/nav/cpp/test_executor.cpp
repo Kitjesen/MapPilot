@@ -3283,3 +3283,26 @@ TEST(Executor, ScanMeasuredCollisionFeedbackUsesMapCoordinatesExactlyOnce) {
     EXPECT_NEAR(evidence.measuredPoints->front().z,.55,1e-6);
   }
 }
+
+TEST(Executor, HorizontalAcceptanceDoesNotWidenTaskHeightTolerance) {
+  for (bool perGoalRadius : {false, true}) {
+    SCOPED_TRACE(perGoalRadius ? "goal override" : "Product radius");
+    lingtu::nav::navigation::ExecutorConfig config;
+    config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
+    config.goal_reached_m = perGoalRadius ? .1 : .8;
+    config.goal_height_tolerance_m = .2;
+    nav_kernel::LocalPlannerParams params;
+    params.backend = nav_kernel::LocalPlannerBackend::Scan;
+    auto executor = makeConfiguredExecutor(config, params, "");
+    executor.setRoute(route({{0,0,0},{1,0,.5}},std::nullopt,
+                            perGoalRadius ? .8 : .1));
+    executor.tick(routeInput(pose(0,0,0,0),nullptr,0,1));
+    const auto wrongHeight = settledGoal(executor,
+        routeInput(pose(1,0,0,0),nullptr,0,1.1));
+    EXPECT_FALSE(wrongHeight.goal_reached);
+    EXPECT_TRUE(wrongHeight.active);
+    const auto inHeight = settledGoal(executor,
+        routeInput(pose(1,0,.35,0),nullptr,0,3));
+    EXPECT_TRUE(inHeight.goal_reached) << inHeight.reason;
+  }
+}

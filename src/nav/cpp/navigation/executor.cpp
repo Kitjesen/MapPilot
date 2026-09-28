@@ -138,8 +138,7 @@ Executor::Executor(ExecutorConfig config, nav_kernel::local::Planner planner)
       recovery_(local_planner_.params(), config_.recovery),
       teleop_recovery_(local_planner_.params(), teleopRotationConfig(config_.recovery)) {
   config_.goal_yaw_tolerance_rad = std::max(0.0, config_.goal_yaw_tolerance_rad);
-  config_.goal_height_tolerance_m =
-      std::max(config_.goal_reached_m, config_.goal_height_tolerance_m);
+  config_.goal_height_tolerance_m = std::max(0.0, config_.goal_height_tolerance_m);
   config_.goal_yaw_kp = std::max(0.0, config_.goal_yaw_kp);
   config_.goal_yaw_max_rate = std::max(0.0, config_.goal_yaw_max_rate);
   config_.follower.maxSpeed = config_.max_speed;
@@ -219,8 +218,7 @@ void Executor::activateRoute(const std::vector<nav_kernel::Vec3> &path,
   goal_quiet_since_s_ = goal_last_odom_s_ = -1.0;
   height_offset_.reset();
   active_goal_reached_m_ = std::max(0.01, goal_reached_m.value_or(config_.goal_reached_m));
-  active_goal_height_tolerance_m_ = std::max(
-      active_goal_reached_m_, config_.goal_height_tolerance_m);
+  active_goal_height_tolerance_m_ = config_.goal_height_tolerance_m;
   active_goal_yaw_tolerance_rad_ =
       std::max(0.0, goal_yaw_tolerance_rad.value_or(config_.goal_yaw_tolerance_rad));
   progress = 0;

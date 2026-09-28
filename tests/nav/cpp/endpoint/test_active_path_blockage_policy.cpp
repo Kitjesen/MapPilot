@@ -428,6 +428,42 @@ void testLocalCollisionUsesItsOwnMeasuredObservations() {
   }
 }
 
+void testCollisionDecayIsNotANewSensorObservation() {
+  auto value = config();
+  value.minimum_obstacle_points = 2;
+  ActivePathBlockagePolicy policy(value);
+  const auto active_path = path();
+  const std::vector<float> clear;
+  nav_kernel::LocalCollisionEvidence evidence;
+  evidence.identity.frameEpoch = 3;
+  evidence.collisionResetEpoch = 1;
+  evidence.collisionObservationSequence = 10;
+  evidence.collisionGeneration = 20;
+  evidence.voxelResolution = .1;
+  evidence.rejectedPosition = {2,1,.3};
+  evidence.measuredPoints = std::make_shared<const std::vector<nav_kernel::Vec3>>(
+      std::vector<nav_kernel::Vec3>{{2.05,1.05,.35},{2.15,1.05,.35}});
+  auto sample = [&](double now) {
+    auto input = observation(now, 0, active_path, clear);
+    input.local_collision_evidence = &evidence;
+    return policy.observe(input);
+  };
+  require(!sample(10), "first observation triggered");
+  evidence.collisionGeneration = 21;
+  require(!sample(10.6), "decay-only update triggered");
+  evidence.collisionGeneration = 22;
+  require(!sample(11.2), "map decay counted as three sensor observations");
+  require(policy.snapshot().fresh_blocked_observations == 1,
+          "decay-only versions must not increase observation count");
+  // New scans may see unchanged geometry, so generation need not advance.
+  evidence.collisionObservationSequence = 11;
+  require(!sample(11.3), "second sensor observation triggered");
+  evidence.collisionObservationSequence = 12;
+  const auto trigger = sample(11.4);
+  require(trigger && trigger->temporary_overlay.obstacle_generation == 22,
+          "new scans on unchanged geometry must retain the newest overlay version");
+}
+
 void testInactiveInvalidAndMalformedEvidenceReset() {
   ActivePathBlockagePolicy policy(config());
   const auto active_path = path();
@@ -539,6 +575,7 @@ int main() {
   testOverlayIsDeterministicDeduplicatedAndBounded();
   testOverlayPreservesSeparatedMeasuredHeights();
   testLocalCollisionUsesItsOwnMeasuredObservations();
+  testCollisionDecayIsNotANewSensorObservation();
   testInactiveInvalidAndMalformedEvidenceReset();
   testInadmissibleGoalPlanStateDoesNotConsumeOneShotTrigger();
   testConfigValidation();
