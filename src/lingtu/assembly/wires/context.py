@@ -19,6 +19,7 @@ SEMANTIC_CAMERA_CONSUMERS = (
 )
 
 ODOMETRY_CONSUMERS = (
+    "nav.skills",
     "PerceptionModule",
     "SemanticMapperModule",
     "EpisodicMemoryModule",

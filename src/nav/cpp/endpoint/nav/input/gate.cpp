@@ -328,16 +328,6 @@ InputGateState InputGate::evaluate(const InputSnapshot &inputs) {
   } else if (config_.require_cloud && config_.cloud_max_age_s > 0.0 &&
              state.cloud_age_s > config_.cloud_max_age_s) {
     stop_reason = "cloud_stale";
-  } else if (config_.require_local_collision && inputs.local_collision_stamp_s <= 0.0) {
-    stop_reason = "local_collision_missing";
-  } else if (config_.require_local_collision &&
-             state.local_collision_age_s < -config_.future_tolerance_s) {
-    stop_reason = "local_collision_future";
-  } else if (config_.require_local_collision && config_.local_collision_max_age_s > 0.0 &&
-             state.local_collision_age_s > config_.local_collision_max_age_s) {
-    stop_reason = "collision_stale";
-  } else if (config_.require_local_collision && !inputs.local_collision_complete) {
-    stop_reason = "local_collision_incomplete";
   } else if (config_.require_traversability && inputs.traversability_stamp_s <= 0.0) {
     stop_reason = "traversability_missing";
   } else if (config_.require_traversability &&
@@ -362,6 +352,16 @@ InputGateState InputGate::evaluate(const InputSnapshot &inputs) {
     stop_reason = "localization_not_tracking";
   } else if (config_.require_localization_health && !inputs.localization_healthy) {
     stop_reason = "localization_unhealthy";
+  } else if (config_.require_local_collision && inputs.local_collision_stamp_s <= 0.0) {
+    stop_reason = "local_collision_missing";
+  } else if (config_.require_local_collision &&
+             state.local_collision_age_s < -config_.future_tolerance_s) {
+    stop_reason = "local_collision_future";
+  } else if (config_.require_local_collision && config_.local_collision_max_age_s > 0.0 &&
+             state.local_collision_age_s > config_.local_collision_max_age_s) {
+    stop_reason = "collision_stale";
+  } else if (config_.require_local_collision && !inputs.local_collision_complete) {
+    stop_reason = "local_collision_incomplete";
   }
 
   if (stop_reason != nullptr) {

@@ -926,7 +926,7 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     endpoint_loop = _read("src/nav/cpp/endpoint/nav/runtime/loop.cpp")
     input_projector = "\n".join(
         _read(f"src/nav/cpp/endpoint/nav/input/{name}")
-        for name in ("pose.cpp", "map.cpp", "health.cpp")
+        for name in ("pose.cpp", "map.cpp", "health.cpp", "motion_worker.cpp")
     )
     source = "\n".join(
         [
@@ -999,7 +999,8 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     assert "data.planner_obstacles.assign(" in source
     assert "sensorOriginFromBody(" in source
     assert "obstacle_xyzh," in source
-    assert "live_obstacles.stats()" in source
+    assert "result.stats = layer_.stats();" in source
+    assert "state_.motion_layer_stats = result->stats;" in source
     assert "constexpr double kLayerInflationM = 0.0;" in source
     assert "buildExecutorConfig(cfg)" in source
     assert "buildLocalPlannerParams(cfg)" in source
@@ -1007,23 +1008,19 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     assert "out.footprintPadding = planner_obstacle_margin_m;" in source
     assert "cfg.teleop_obstacle_margin_m + cfg.live_obstacle_inflation_radius_m" not in source
     assert "params.nominalDt = 1.0 / cfg.tick_hz;" in source
-    assert "dynamicClusters(32, stamp_s)" in source
-    assert "dynamicClusters(32, wall_now_s)" in source
+    assert "layer_.dynamicClusters(32, observation->stamp_s)" in source
     assert "const auto dynamic_clusters = live_obstacles.dynamicClusters(32, now);" not in source
-    assert (
-        "obstacles_.snapshot(state_.obstacle_xyzh, config_.max_obstacle_points, "
-        "state_.last_cloud_s)" in source
-    )
+    assert "layer_.snapshot(result.obstacles, max_points_, observation->stamp_s)" in source
     assert "if (xyzh.empty())" in source
-    assert "obstacle_snapshot_dirty" in source
+    assert "auto result = obstacles_.poll();" in source
     assert "timing.obstacle_snapshot_last_ms" in source
     assert "timing.motion_update_last_ms" in source
     assert "InputGate input_gate" in endpoint_bootstrap
     assert "state_.input_gate_state = gate_.evaluate(input);" in input_projector
     assert "path_active_for_tick && !input_gate_state.ready" in endpoint_loop
     navigation_state_publish = endpoint_loop.split(
-        "(void)dds.publish(OutputEvent{navigation_state.sample(NavigationStateContext{", 1
-    )[1].split("})});", 1)[0]
+        "navigation_state.sample(NavigationStateContext{", 1
+    )[1].split("});", 1)[0]
     assert "input_gate_state.ready" in navigation_state_publish
     assert "input_gate_state.reason" in navigation_state_publish
     assert "TransformBuffer pose_buffer" in source

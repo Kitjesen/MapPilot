@@ -230,6 +230,50 @@ void testScanRequiresCompleteFreshLocalCollision() {
   require(state.ready, "complete fresh Mapd collision input must open the SCAN gate");
 }
 
+void testLocalCollisionHoldDoesNotMaskPlanningInputs() {
+  lingtu::nav::endpoint::InputGateConfig cfg;
+  cfg.require_local_collision = true;
+  cfg.require_localization_health = true;
+  cfg.recovery_frames = 1;
+  for (int collision_case = 0; collision_case < 4; ++collision_case) {
+    auto inputs = input(10.0, 10.0, 10.0, 10.0, false, 1);
+    inputs.local_collision_stamp_s = collision_case == 0 ? 0.0 :
+                                      collision_case == 1 ? 11.0 :
+                                      collision_case == 2 ? 9.0 : 10.0;
+    inputs.local_collision_complete = collision_case != 3;
+    inputs.localization_health_stamp_s = 10.0;
+    inputs.localization_health_generation = 1;
+    inputs.localization_healthy = true;
+    inputs.localization_state = "TRACKING";
+    lingtu::nav::endpoint::InputGate gate(cfg);
+    auto state = gate.evaluate(inputs);
+    require(!state.ready && lingtu::nav::endpoint::localCollisionInputHold(state.reason),
+            "healthy localization must leave a local collision hold eligible for global planning");
+    inputs.localization_healthy = false;
+    inputs.localization_state = "LOST";
+    state = gate.evaluate(inputs);
+    require(state.reason == "localization_not_tracking",
+            "local collision hold must not hide LOST localization from goal admission");
+    inputs.localization_state = "TRACKING";
+    require(gate.evaluate(inputs).reason == "localization_unhealthy",
+            "local collision hold must not hide unhealthy localization");
+    inputs.localization_health_stamp_s = 0.0;
+    require(gate.evaluate(inputs).reason == "localization_health_missing",
+            "local collision hold must not hide missing localization");
+    inputs.localization_health_stamp_s = 9.0;
+    require(gate.evaluate(inputs).reason == "localization_health_stale",
+            "local collision hold must not hide stale localization");
+    inputs.localization_health_stamp_s = 11.0;
+    require(gate.evaluate(inputs).reason == "localization_health_future",
+            "local collision hold must not hide invalid localization time");
+    inputs.localization_health_stamp_s = 10.0;
+    inputs.localization_healthy = true;
+    inputs.localization_reason = "fastlio_state_nonfinite";
+    require(gate.evaluate(inputs).reason == "localization_catastrophic",
+            "local collision hold must not hide catastrophic localization");
+  }
+}
+
 void testTeleopAvoidRequiresFreshTraversabilityAndHealthyLocalization() {
   lingtu::nav::endpoint::InputGateConfig cfg;
   cfg.recovery_frames = 1;
@@ -666,6 +710,7 @@ int main() {
   testCloudCanBeOptional();
   testOdometryAndCloudCanBeOptionalForPureTeleop();
   testScanRequiresCompleteFreshLocalCollision();
+  testLocalCollisionHoldDoesNotMaskPlanningInputs();
   testTeleopAvoidRequiresFreshTraversabilityAndHealthyLocalization();
   testDivergentOdometryVelocityClosesTheGate();
   testSingleSampleOdometryPoseImpulseDoesNotCloseTheGate();

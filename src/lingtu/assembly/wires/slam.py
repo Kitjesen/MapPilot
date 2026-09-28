@@ -107,6 +107,7 @@ def localization_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
                 topic=TOPIC_SLAM_LOCALIZATION_QUALITY,
             ),
             WireSpec(adapter, "map_odom_tf", "GatewayModule", "map_odom_tf"),
+            WireSpec(adapter, "map_odom_tf", "nav.skills", "map_odom_tf"),
             WireSpec(adapter, "map_odom_tf", "PerceptionModule", "map_odom_tf"),
         )
     )

@@ -10,10 +10,15 @@ from typing import Any
 
 from nav.services.goals import build_goal_pose
 from runtime.module import Module, skill
-from runtime.msgs.nav import NavigationGoalStatus, NavigationState
+from runtime.msgs.geometry import Transform, Vector3
+from runtime.msgs.nav import NavigationGoalStatus, NavigationState, Odometry
 from runtime.registry import register
 from runtime.stream import In, Out
+from runtime.tf.conversions import map_from_odom_transform_from_mapping
 from runtime.tf.frames import map_frame_id, normalize_frame_id
+
+# Match the Host bus's default live-state freshness window; use receipt time.
+_OBSERVATION_MAX_AGE_S = 2.0
 
 
 @register("navigation_skills", "default", description="MCP/AI skills for navigation control")
@@ -27,6 +32,8 @@ class NavSkills(Module, layer=6):
     goal_status: In[dict]
     navigation_state: In[NavigationState]
     navigation_goal_status: In[NavigationGoalStatus]
+    odometry: In[Odometry]
+    map_odom_tf: In[dict]
 
     goal_command: Out[str]
 
@@ -34,6 +41,9 @@ class NavSkills(Module, layer=6):
         super().__init__(**config)
         self._planning_frame_id = normalize_frame_id(planning_frame_id) or map_frame_id()
         self._cached_navigation_state: dict[str, Any] = {}
+        self._navigation_state_received_s = 0.0
+        self._robot_position: tuple[Vector3, str, float] | None = None
+        self._map_odom_transform: tuple[Transform, float] | None = None
         self._acks: dict[str, dict[str, Any]] = {}
         self._pending: set[str] = set()
         self._owned_request_ids: OrderedDict[str, None] = OrderedDict()
@@ -45,6 +55,8 @@ class NavSkills(Module, layer=6):
         self.goal_status.subscribe(self._on_goal_status)
         self.navigation_state.subscribe(self._on_navigation_state)
         self.navigation_goal_status.subscribe(self._on_navigation_goal_status)
+        self.odometry.subscribe(self._on_odometry)
+        self.map_odom_tf.subscribe(self._on_map_odom_tf)
 
     def _on_goal_status(self, status: dict) -> None:
         if not isinstance(status, dict):
@@ -56,7 +68,22 @@ class NavSkills(Module, layer=6):
                     self._acks[request_id] = dict(status)
 
     def _on_navigation_state(self, state: NavigationState) -> None:
-        self._cached_navigation_state = state.to_dict()
+        with self._command_lock:
+            self._cached_navigation_state = state.to_dict()
+            self._navigation_state_received_s = time.monotonic()
+
+    def _on_odometry(self, odometry: Odometry) -> None:
+        with self._command_lock:
+            self._robot_position = (
+                Vector3(odometry.x, odometry.y, odometry.z),
+                normalize_frame_id(odometry.frame_id),
+                time.monotonic(),
+            )
+
+    def _on_map_odom_tf(self, payload: dict) -> None:
+        transform = map_from_odom_transform_from_mapping(payload)
+        with self._command_lock:
+            self._map_odom_transform = (transform, time.monotonic()) if transform else None
 
     def _on_navigation_goal_status(self, status: NavigationGoalStatus) -> None:
         with self._command_lock:
@@ -119,18 +146,7 @@ class NavSkills(Module, layer=6):
     @skill
     def get_navigation_status(self) -> str:
         """Return the canonical navigation mission status."""
-        if self._cached_navigation_state:
-            status = dict(self._cached_navigation_state)
-            status["state"] = status.get("lifecycle_state_name", "UNKNOWN")
-            status["source"] = "native_navigation_state"
-            return json.dumps(status)
-        return json.dumps(
-            {
-                "state": "UNKNOWN",
-                "reason": "navigation_state_unavailable",
-                "planning_frame_id": self._planning_frame_id,
-            }
-        )
+        return json.dumps(self._current_status())
 
     @skill
     def get_navigation_result(self, request_id: str) -> str:
@@ -211,11 +227,13 @@ class NavSkills(Module, layer=6):
     @skill
     def is_navigating(self) -> str:
         """Return whether a navigation mission is currently active."""
-        state = self._current_state_name()
+        status = self._current_status()
+        state = str(status["state"])
         return json.dumps(
             {
                 "state": state,
                 "active": self._is_active_state(state),
+                "reason": status.get("reason", ""),
             }
         )
 
@@ -223,14 +241,8 @@ class NavSkills(Module, layer=6):
     def get_navigation_progress(self) -> str:
         """Return a concise progress summary derived from mission status."""
         status = self._current_status()
-        if not status:
-            return json.dumps(
-                {
-                    "state": "UNKNOWN",
-                    "active": False,
-                    "reason": "navigation_state_unavailable",
-                }
-            )
+        if status["state"] == "UNKNOWN":
+            return json.dumps({**status, "active": False})
         state = str(status.get("state", "UNKNOWN"))
         wp_total = self._as_int(status.get("wp_total"))
         wp_index = self._as_int(status.get("wp_index"))
@@ -265,14 +277,17 @@ class NavSkills(Module, layer=6):
         }
 
     def _current_status(self) -> dict[str, Any]:
-        if self._cached_navigation_state:
-            status = dict(self._cached_navigation_state)
-            status["state"] = status.get("lifecycle_state_name", "UNKNOWN")
-            return status
-        return {}
-
-    def _current_state_name(self) -> str:
-        return str(self._current_status().get("state", "UNKNOWN"))
+        with self._command_lock:
+            if not self._cached_navigation_state:
+                reason = "navigation_state_unavailable"
+            elif time.monotonic() - self._navigation_state_received_s > _OBSERVATION_MAX_AGE_S:
+                reason = "navigation_state_stale"
+            else:
+                status = dict(self._cached_navigation_state)
+                status["state"] = status.get("lifecycle_state_name", "UNKNOWN")
+                status["source"] = "native_navigation_state"
+                return status
+        return {"state": "UNKNOWN", "reason": reason, "planning_frame_id": self._planning_frame_id}
 
     @staticmethod
     def _as_int(value: Any) -> int:
@@ -282,10 +297,27 @@ class NavSkills(Module, layer=6):
             return 0
 
     def _resolve_goal_z(self, z: float | None) -> float:
-        """Use explicit z, then the latest robot height, then zero."""
+        """Use explicit map height or the current map-frame robot height."""
         if z is not None:
             return float(z)
-        return 0.0
+        with self._command_lock:
+            odometry = self._robot_position
+            transform = self._map_odom_transform
+        now = time.monotonic()
+        if odometry is not None and now - odometry[2] <= _OBSERVATION_MAX_AGE_S:
+            position, frame, _ = odometry
+            if frame != self._planning_frame_id and transform is not None:
+                tf, received = transform
+                if (
+                    now - received <= _OBSERVATION_MAX_AGE_S
+                    and tf.frame_id == self._planning_frame_id
+                    and tf.child_frame_id == frame
+                ):
+                    position = tf.translation + tf.rotation.rotate_vector(position)
+                    frame = tf.frame_id
+            if frame == self._planning_frame_id and math.isfinite(position.z):
+                return position.z
+        raise ValueError("z is required until fresh map-frame odometry is available")
 
     def _request_id(self) -> str:
         return f"nav-{time.time_ns()}-{next(self._sequence)}"

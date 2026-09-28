@@ -203,6 +203,10 @@ replacement flow replans from the stopped pose before activation. Endpoint/Produ
 still reports the hold, and native autonomy waits for InputGate recovery before
 running the local planner. Missing endpoint status, unhealthy localization,
 driver authority, E-stop and map identity failures retain their own checks.
+InputGate evaluates required localization and traversability before the local
+collision holds. A simultaneous localization failure must remain the canonical
+reason, rather than being hidden by a hold that permits global goal admission.
+Gateway consumes that reason; it does not repeat native localization policy.
 
 ### Route, trajectory and motion conditions
 

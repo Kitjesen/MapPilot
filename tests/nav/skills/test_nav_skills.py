@@ -100,7 +100,7 @@ def test_nav_skills_preserves_request_id_through_native_command_capability() -> 
     goals.setup()
     _wire(skills, goals)
 
-    result = json.loads(skills.navigate_to(1.0, 2.0))
+    result = json.loads(skills.navigate_to(1.0, 2.0, z=0.0))
 
     assert result["accepted"] is True
     assert commands.task_id == result["task_id"]
@@ -202,7 +202,7 @@ def test_nav_skills_rejects_truthy_non_boolean_goal_ack() -> None:
 
     skills.goal_command.subscribe(acknowledge)
 
-    result = json.loads(skills.navigate_to(1.0, 2.0))
+    result = json.loads(skills.navigate_to(1.0, 2.0, z=0.0))
 
     assert result["accepted"] is False
     assert result["state"] == "rejected"
@@ -236,7 +236,7 @@ def test_nav_skills_returns_native_navigation_state() -> None:
     assert progress["progress_pct"] == 40.0
 
 
-def test_nav_skills_returns_only_owned_native_goal_status() -> None:
+def test_nav_skills_returns_only_owned_native_goal_status(monkeypatch) -> None:
     skills = NavSkills()
     skills.setup()
 
@@ -250,7 +250,7 @@ def test_nav_skills_returns_only_owned_native_goal_status() -> None:
         )
 
     skills.goal_command.subscribe(acknowledge)
-    submitted = json.loads(skills.navigate_to(1.0, 2.0))
+    submitted = json.loads(skills.navigate_to(1.0, 2.0, z=0.0))
     request_id = submitted["request_id"]
 
     skills.navigation_goal_status._deliver(
@@ -279,6 +279,7 @@ def test_nav_skills_returns_only_owned_native_goal_status() -> None:
         )
     )
 
+    monkeypatch.setattr("nav.skills.skills_module.time.monotonic", lambda: 1e12)
     result = json.loads(skills.get_navigation_result(request_id))
     foreign = json.loads(skills.get_navigation_result("inspection-other"))
 
@@ -304,7 +305,7 @@ def test_nav_skills_does_not_own_rejected_request() -> None:
         )
 
     skills.goal_command.subscribe(reject)
-    submitted = json.loads(skills.navigate_to(1.0, 2.0))
+    submitted = json.loads(skills.navigate_to(1.0, 2.0, z=0.0))
     result = json.loads(skills.get_navigation_result(submitted["request_id"]))
 
     assert submitted["accepted"] is False
@@ -353,3 +354,93 @@ def test_only_compiled_inspection_product_mounts_inspection_service() -> None:
     }
     assert nav_entries["nav.commands"]["require_inspection_task_commands"] is False
     assert inspection_entries["nav.commands"]["require_inspection_task_commands"] is True
+
+
+@pytest.mark.parametrize("getter", ["get_navigation_status", "get_navigation_progress", "is_navigating"])
+def test_live_navigation_state_expires_and_recovers(monkeypatch, getter) -> None:
+    now = [100.0]
+    monkeypatch.setattr("nav.skills.skills_module.time.monotonic", lambda: now[0])
+    skills = NavSkills()
+    skills.setup()
+    def read():
+        return json.loads(getattr(skills, getter)())
+    assert read()["state"] == "UNKNOWN"
+    state = NavigationState(ts=42.0, boot_id="test-boot", sequence=1, lifecycle_state=int(NavigationLifecycle.EXECUTING))
+    skills.navigation_state._deliver(state)
+    assert read()["state"] == "EXECUTING"
+    now[0] += 2.1
+    expired = read()
+    assert expired["state"] == "UNKNOWN"
+    assert expired["reason"] == "navigation_state_stale"
+    skills.navigation_state._deliver(NavigationState(ts=43.0, boot_id="test-boot", sequence=2,
+        lifecycle_state=int(NavigationLifecycle.RECOVERING)))
+    assert read()["state"] == "RECOVERING"
+
+
+def test_omitted_goal_height_uses_fresh_map_odometry(monkeypatch) -> None:
+    from runtime.msgs.geometry import Pose, Vector3
+    from runtime.msgs.nav import Odometry
+
+    now = [100.0]
+    monkeypatch.setattr("nav.skills.skills_module.time.monotonic", lambda: now[0])
+    skills = NavSkills()
+    skills.setup()
+    submitted = []
+    monkeypatch.setattr(skills, "_submit", lambda command: submitted.append(command) or json.dumps(command))
+    assert json.loads(skills.navigate_to(1, 2))["accepted"] is False
+    assert not submitted
+    skills.odometry._deliver(Odometry(frame_id="map", pose=Pose(position=Vector3(0, 0, 1.25))))
+    assert json.loads(skills.navigate_to(1, 2))["z"] == 1.25
+    assert json.loads(skills.navigate_to_deg(1, 2, yaw_deg=90))["z"] == 1.25
+    assert json.loads(skills.navigate_to(1, 2, z=0.0))["z"] == 0.0
+    now[0] += 2.1
+    assert json.loads(skills.navigate_to(1, 2))["accepted"] is False
+    assert json.loads(skills.navigate_to(1, 2, z=2.0))["z"] == 2.0
+    for frame, z in [("odom", 1.25), ("map", float("nan"))]:
+        skills.odometry._deliver(Odometry(frame_id=frame, pose=Pose(position=Vector3(0, 0, z))))
+        assert json.loads(skills.navigate_to(1, 2))["accepted"] is False
+
+
+def test_navigation_skills_receives_product_odometry() -> None:
+    from lingtu.assembly.compiler import compile_run_plan
+    from lingtu.assembly.products import resolve_product_host_runtime
+
+    resolved = resolve_product_host_runtime("nav", "real", robot="unitree/go2")
+    plan = compile_run_plan(resolved.product, resolved.env, robot="unitree/go2")
+    from lingtu.assembly.compiler import blueprint_from_run_plan
+
+    wires = blueprint_from_run_plan(plan)._wires
+    assert any(w.in_module == "nav.skills" and w.in_port == "odometry" for w in wires)
+    assert any(w.out_module == "SlamAdapterModule" and w.in_module == "nav.skills"
+               and w.in_port == "map_odom_tf" for w in wires)
+
+
+
+def test_goal_height_applies_existing_map_transform_once(monkeypatch) -> None:
+    import math
+
+    from runtime.msgs.geometry import Pose, Vector3
+    from runtime.msgs.nav import Odometry
+
+    now = [100.0]
+    monkeypatch.setattr("nav.skills.skills_module.time.monotonic", lambda: now[0])
+    skills = NavSkills()
+    skills.setup()
+    monkeypatch.setattr(skills, "_submit", json.dumps)
+    odometry = Odometry(frame_id="odom", pose=Pose(position=Vector3(1, 0, 0.3)))
+    skills.odometry._deliver(odometry)
+    transform = {"valid": True, "frame_id": "map", "child_frame_id": "odom",
+                 "tx": 0, "ty": 0, "tz": 2, "qx": 0, "qy": math.sin(math.pi / 4),
+                 "qz": 0, "qw": math.cos(math.pi / 4), "ts": 42.0}
+    skills.map_odom_tf._deliver(transform)
+    assert json.loads(skills.navigate_to(1, 2))["z"] == pytest.approx(1.0)
+    skills.odometry._deliver(Odometry(frame_id="map", pose=Pose(position=Vector3(0, 0, 1.25))))
+    assert json.loads(skills.navigate_to(1, 2))["z"] == 1.25
+    now[0] += 2.1
+    skills.odometry._deliver(odometry)
+    assert json.loads(skills.navigate_to(1, 2))["accepted"] is False
+    skills.map_odom_tf._deliver(transform)
+    assert json.loads(skills.navigate_to(1, 2))["z"] == pytest.approx(1.0)
+    skills.map_odom_tf._deliver({"valid": False})
+    assert json.loads(skills.navigate_to(1, 2))["accepted"] is False
+    assert json.loads(skills.navigate_to(1, 2, z=0.7))["z"] == 0.7

@@ -225,3 +225,17 @@ def test_compiled_session_context_rejects_mismatched_product(native_gateway):
     gateway._compiled_run_plan.lifecycle["product"] = "map"
     with pytest.raises(RuntimeError, match="lifecycle Product mismatch"):
         compiled_session_context(gateway)
+
+
+@pytest.mark.parametrize("reason", ["localization_not_tracking", "localization_health_missing",
+                                    "localization_health_stale", "localization_health_future",
+                                    "localization_unhealthy", "localization_catastrophic"])
+def test_native_localization_fault_takes_priority_over_local_collision_age(native_gateway, reason):
+    gateway, snapshot, path, _events = native_gateway
+    snapshot["input_gate"] = {"ready": False, "reason": reason,
+                              "local_collision_age_s": 3.0, "localization_healthy": False}
+    snapshot["navigation_ready"] = False
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    gate = evaluate_navigation_gate(gateway)
+    assert gate["can_accept_goal"] is False
+    assert reason in gate["blockers"]

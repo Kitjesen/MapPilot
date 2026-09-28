@@ -22,3 +22,16 @@ MCP / Agent
 - `SemanticPlannerModule`: free-text semantic instructions.
 
 The class is `NavSkills` and its runtime identity is `nav.skills`.
+
+Live status, progress, and activity reads share one snapshot. If no navigation
+state arrives for two seconds (the Host bus default freshness window), reads
+return `UNKNOWN` with `navigation_state_stale`. Completed request results remain
+queryable; they are history, not live state. No polling timer is added.
+
+`navigate_to` and `navigate_to_deg` preserve an explicit map-frame `z`. When
+omitted, `z` uses the latest robot position through the existing odometry and
+`map_odom_tf` ports. Odom-frame positions use the canonical map-from-odom
+transform; map-frame positions are not transformed twice. These observations
+must have arrived within two seconds. Without a usable position/transform,
+the caller must supply `z`; map zero is not a valid height default. This is
+coordinate completion, not a second localization or navigation gate.

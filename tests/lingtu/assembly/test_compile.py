@@ -1002,7 +1002,6 @@ def test_sim_mujoco_mapping_products_keep_fastlio2_mapping(
         ("teleop_avoid", None),
         ("map", None),
         ("nav", "standard"),
-        ("nav", "camera"),
         ("tracking", None),
         ("inspection", None),
         ("explore", "live"),
@@ -1038,7 +1037,7 @@ def test_sim_mujoco_every_product_compiles_for_windows_with_complete_pe_chain_an
         "/linux/" not in process.command.artifact.path for process in plan.processes if process.command is not None
     )
     assert plan.product == product
-    assert plan.product_variant == product_variant
+    assert plan.product_variant == resolved.product_variant
     process_order = {process.name: process.order for process in plan.processes}
     nav_order = process_order["nav_runtime"]
     feeder_order = process_order["mujoco_feeder"]
