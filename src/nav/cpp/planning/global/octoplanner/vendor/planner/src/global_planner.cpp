@@ -176,16 +176,6 @@ namespace global_planner
             return false;
         }
         endpoint_resolution_.start_snapped = !(start == start_raw);
-        // Snapping cannot teleport the robot over unsupported cells or through
-        // obstacles. Use the same segment checks as path simplification.
-        if (endpoint_resolution_.start_snapped &&
-            (!isCellTraversable(start_raw, robot_radius_, false, strict_direct_ground_support_,
-                                ground_support_xy_radius_cells_, ground_support_depth_cells_) ||
-             !hasTraversableLine(start_raw, start))) {
-            endpoint_resolution_.failure =
-                EndpointResolutionInfo::Failure::StartConnectionBlocked;
-            return false;
-        }
         if (!findNearestFreeCell(
                 goal_raw,
                 robot_radius_,

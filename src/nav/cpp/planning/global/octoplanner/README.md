@@ -103,17 +103,19 @@ climbing capability.
 
 ## Support surfaces and collision envelopes
 
-Endpoint resolution uses the nearest traversable candidate and validates its
-connection to the measured start. It does not reject a request through a
-separate measured-heading body/support precheck. Global vertices, edges and
-simplified segments check a 3D route cylinder. Its default radius is half the
-configured vehicle width (Go2: 0.155 m), independently configurable through
+Endpoint resolution searches from the nearest traversable start and toward the
+nearest traversable goal. The raw-to-snapped start segment is outside the global
+route and is not verified by OctoPlanner3D. Global vertices, edges and simplified
+segments check a 3D route cylinder. Its default radius is half the configured
+vehicle width (Go2: 0.155 m), independently configurable through
 `octoplanner3d_robot_radius`. SCAN's double-cylinder radius and longitudinal
 offset are not global-planner inputs. Ground support, unknown-space evidence,
 vertical clearance, step and slope constraints remain part of route search.
 SCAN owns the full heading-dependent body envelope, local obstacle avoidance
-and executable trajectory from the current pose. A global preview is a route
-proposal; it does not authorize an infeasible turn or override SCAN's stop.
+and executable trajectory from the current pose. Its local collision check does
+not guarantee support or drop-off safety on the raw-to-snapped segment. A global
+preview is a route proposal; it does not authorize an infeasible turn or
+override SCAN's stop.
 
 The production route uses OctoPlanner3D's neighbouring occupied-support query
 so a single missing floor voxel in a saved scan does not block an otherwise

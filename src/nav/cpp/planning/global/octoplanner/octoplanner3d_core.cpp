@@ -414,8 +414,6 @@ std::string endpointResolutionFailureReason(
 {
   using Failure = global_planner::OctoPlanner3D::EndpointResolutionInfo::Failure;
   switch (resolution.failure) {
-    case Failure::StartConnectionBlocked:
-      return "start_connection_blocked";
     case Failure::StartSnapExhausted:
       return resolution.start_raw_outside_bounds
         ? "start_outside_static_map"

@@ -527,9 +527,14 @@ int main()
       {center(-18), center(0), center(4)},
       {center(18), center(0), center(1)},
       displaced_start_options);
-    if (displaced_start_result.ok ||
-        displaced_start_result.failure_reason != "start_connection_blocked") {
-      std::cerr << "unsupported high start crossed an untraversable snap connection; reason="
+    // The global route starts at the nearest traversable voxel. It is only a
+    // proposal for SCAN and does not claim a physically safe descent from the
+    // measured high pose to that snapped start.
+    if (!displaced_start_result.ok || !displaced_start_result.reached_goal ||
+        displaced_start_result.path.empty() ||
+        displaced_start_result.path.front().z >= center(4) - 1e-6) {
+      std::cerr << "high raw start did not produce a route-only proposal "
+                << "from the snapped start; reason="
                 << displaced_start_result.failure_reason << "\n";
       return 30;
     }

@@ -363,9 +363,10 @@ struct OctoPlannerGridQueryTest
       std::vector<PointPose> path;
       planner.getPlannerResults(path);
       const auto resolution_info = planner.endpointResolution();
-      if (!path.empty() || resolution_info.failure !=
-          OctoPlanner3D::EndpointResolutionInfo::Failure::StartConnectionBlocked)
-        throw std::runtime_error("start snapping bypassed an occupied connection");
+      if (path.empty() || !resolution_info.start_snapped ||
+          resolution_info.failure != OctoPlanner3D::EndpointResolutionInfo::Failure::None)
+        throw std::runtime_error(
+          "occupied raw start did not route from its nearest traversable cell");
 
       tree = std::make_shared<octomap::OcTree>(r);
       tree->updateNode(octomap::point3d(-2,-2,-1), false);
@@ -633,11 +634,14 @@ void checkResolution(double resolution)
     blocked_start->updateNode(octomap::point3d(p.x, p.y, p.z), true);
   }
   planner.setOctomap(blocked_start);
-  expectPoint(planner, point(16, 16, 16, resolution), false,
-              "nearest-free start search bypassed a blocked start connection");
-  if (planner.endpointResolution().failure !=
-      global_planner::OctoPlanner3D::EndpointResolutionInfo::Failure::StartConnectionBlocked)
-    throw std::runtime_error("blocked start connection lost its diagnostic");
+  expectPoint(planner, point(16, 16, 16, resolution), true,
+              "nearest-free endpoint search did not route from a traversable cell");
+  const auto endpoint_resolution = planner.endpointResolution();
+  if (!endpoint_resolution.start_snapped || !endpoint_resolution.goal_snapped ||
+      endpoint_resolution.failure !=
+        global_planner::OctoPlanner3D::EndpointResolutionInfo::Failure::None)
+    throw std::runtime_error(
+      "occupied coincident endpoints did not preserve snap diagnostics");
 }
 
 }  // namespace
