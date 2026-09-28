@@ -72,6 +72,8 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
 
     target_include_directories(test_terrain_core PRIVATE
       "${LINGTU_SRC_ROOT}/maps/include")
+    target_include_directories(test_benchmark PRIVATE
+      "${LINGTU_SRC_ROOT}/maps/include")
 
     target_link_libraries(test_far_planner PRIVATE lingtu_nav_far)
     target_link_libraries(test_far_c_api PRIVATE lingtu_nav_far_c_api)
