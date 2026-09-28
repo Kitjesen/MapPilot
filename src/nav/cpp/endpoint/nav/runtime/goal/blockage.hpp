@@ -30,9 +30,8 @@ struct ActivePathBlockagePolicyConfig {
 struct ActivePathBlockageObservation {
   double now_s{0.0};
   bool external_active_goal{false};
-  // The previous autonomy tick produced a trackable local path. Command safety
-  // may still stop one tick, but global replanning must not preempt the local
-  // planner while it is already routing around the corridor obstacle.
+  // The current autonomy tick produced a trackable local path. A successful
+  // local route clears persistent obstacle evidence held by the task owner.
   bool local_path_viable{false};
   GoalReplanIdentity goal{};
   std::uint64_t frame_epoch{0U};
@@ -56,12 +55,12 @@ struct ActivePathBlockagePolicySnapshot {
   std::size_t fresh_blocked_observations{0U};
   std::size_t current_blocker_count{0U};
   double first_blocked_s{-1.0};
-  bool trigger_emitted{false};
   std::string reason{"idle"};
 };
 
 // Detects persistent measured obstacles in the forward path corridor or around
-// a failed local trajectory pose.
+// a failed local trajectory pose. After persistence is established, each fresh
+// observation refreshes the candidate overlay; the task owner decides when to use it.
 // This policy uses current occupancy only. Velocity prediction and TTC belong
 // to NAV-DYN-01 and must not leak into global replan admission.
 class ActivePathBlockagePolicy {
@@ -104,7 +103,6 @@ class ActivePathBlockagePolicy {
   std::size_t current_blocker_count_{0U};
   double first_blocked_s_{-1.0};
   double last_now_s_{-1.0};
-  bool trigger_emitted_{false};
   std::uint64_t next_overlay_revision_{1U};
   std::string reason_{"idle"};
 };

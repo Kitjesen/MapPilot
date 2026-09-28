@@ -134,7 +134,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto &plan_preview = ctx.plan_preview;
   auto &goal_plan = ctx.goal_plan;
   auto &goal_replan_runtime = ctx.goal_replan_runtime;
-  auto &active_path_blockage_policy = ctx.active_path_blockage_policy;
   auto &motion_stop = ctx.motion_stop;
   auto &goal_status_outbox = ctx.goal_status_outbox;
   auto &goal_terminal_delivery = ctx.goal_terminal_delivery;
@@ -1551,6 +1550,12 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
             *goal_snapshot_for_tick.active_map_identity,
         };
       }
+      autonomy_result = autonomy_tick.tick(
+          AutonomyTickInput{safety_config, map_body, input_gate_state, path_active_for_tick,
+                            goal_snapshot_for_tick.active_map_identity,
+                            control_authority.motionAllowed() && !control_loop_guard_latched(),
+                            rolling_active, cfg.publish_cmd_vel, traversability_grid, last_local,
+                            timing, active_goal_identity});
       ActivePathBlockageObservation blockage_observation;
       blockage_observation.now_s = steadySeconds();
       blockage_observation.external_active_goal =
@@ -1560,9 +1565,10 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
           goalPlanAcceptsReplanTrigger(goal_snapshot_for_tick) && !control_loop_guard_latched() &&
           !inspection_executor.active() && !rolling_active;
       blockage_observation.local_path_viable =
-          last_local.active && last_local.path_found && !last_local.near_field_stop &&
-          last_local.local_path_points >= 2U && last_local.recovery_state == 0 &&
-          !last_local.recovery_exhausted;
+          autonomy_result.local && autonomy_result.local->active &&
+          autonomy_result.local->path_found && !autonomy_result.local->near_field_stop &&
+          autonomy_result.local->local_path_points >= 2U &&
+          autonomy_result.local->recovery_state == 0 && !autonomy_result.local->recovery_exhausted;
       if (active_goal_identity) {
         blockage_observation.goal = *active_goal_identity;
       }
@@ -1574,15 +1580,11 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       blockage_observation.live_obstacles_xyzh = &obstacle_xyzh;
       blockage_observation.cloud_generation = cloud_generation;
       blockage_observation.local_collision_evidence = localCollisionEvidence(
-          last_local_planner_debug, inputs.executionTime(blockage_observation.now_s),
+          autonomy_result.output ? autonomy_result.output->local_planner_debug
+                                 : last_local_planner_debug,
+          inputs.executionTime(blockage_observation.now_s),
           cfg.local_collision_max_age_s);
-      auto obstruction_trigger = active_path_blockage_policy.observe(blockage_observation);
-      autonomy_result = autonomy_tick.tick(
-          AutonomyTickInput{safety_config, map_body, input_gate_state, path_active_for_tick,
-                            goal_snapshot_for_tick.active_map_identity,
-                            control_authority.motionAllowed() && !control_loop_guard_latched(),
-                            rolling_active, cfg.publish_cmd_vel, traversability_grid, last_local,
-                            timing, active_goal_identity, obstruction_trigger});
+
       GoalReplanRuntimeFrameInput autonomy_frame = runtime_frame;
       autonomy_frame.steady_now_s = steadySeconds();
       autonomy_frame.wall_now_s = nowSeconds();
@@ -1595,7 +1597,8 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
           autonomy_result.outcome.reason == "active_map_changed_during_navigation";
       return NavigationRuntimeAutonomyObservation{autonomy_frame, autonomy_result.outcome,
                                                   autonomy_result.handled,
-                                                  inspection_executor.active(), rolling_active};
+                                                  inspection_executor.active(), rolling_active,
+                                                  blockage_observation};
     };
     runtime_actions.apply_autonomy_outputs = [&](const GoalReplanRuntimeResult &) {
       if (autonomy_result.handled) {

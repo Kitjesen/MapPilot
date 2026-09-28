@@ -117,6 +117,24 @@ struct Fixture {
   LocalDiagnostics local;
   TimingDiagnostics timing;
   std::vector<float> unused_planner_obstacles;
+  std::vector<float> blocked{
+      1.92F, -0.08F, 0.2F, 0.4F, 1.92F, 0.08F, 0.2F, 0.4F,
+      2.08F, -0.08F, 0.2F, 0.4F, 2.08F, 0.08F, 0.2F, 0.4F,
+  };
+  ActivePathBlockageObservation latest_observation;
+
+  static ActivePathBlockagePolicyConfig blockageConfig() {
+    ActivePathBlockagePolicyConfig config;
+    config.persistence_s = 1.0;
+    config.minimum_fresh_observations = 3U;
+    config.lookahead_m = 5.0;
+    config.corridor_radius_m = 0.5;
+    config.corridor_vertical_tolerance_m = 0.75;
+    config.obstacle_voxel_size_m = 0.1;
+    config.max_regions = 8U;
+    config.minimum_obstacle_points = 4U;
+    return config;
+  }
   GoalPlanController goal_plan;
   MotionStopBarrier motion_stop;
   GoalReplanRuntimeCoordinator coordinator;
@@ -144,7 +162,7 @@ struct Fixture {
             },
             goalActions()),
         motion_stop(true, stopActions()),
-        coordinator(goal_plan, motion_stop, BoundedGoalReplanConfig{0.5}),
+        coordinator(goal_plan, motion_stop, BoundedGoalReplanConfig{0.5}, blockageConfig()),
         final_control(finalControlActions()),
         autonomy_tick(autonomyActions(), final_control) {
     input_gate.ready = true;
@@ -223,7 +241,8 @@ struct Fixture {
                                    lingtu::nav::navigation::TraversabilityGridView) {
       ++motion_calls;
       lingtu::nav::navigation::ExecutionOutput output;
-      output.cmd_vel = {0.4, 0.0, 0.2};
+      output.recovery_exhausted = true;
+      output.reason = "local_recovery_exhausted";
       return output;
     };
     actions.stop_linear_motion = [this] { ++stop_linear_motion_calls; };
@@ -303,22 +322,9 @@ struct Fixture {
             *snapshot.active_map_identity};
   }
 
-  GoalReplanTrigger observePersistentBlockage() const {
+  GoalReplanTrigger observePersistentBlockage() {
     require(!activations.empty(), "blockage observation requires an active path");
-    ActivePathBlockagePolicyConfig config;
-    config.persistence_s = 1.0;
-    config.minimum_fresh_observations = 3U;
-    config.lookahead_m = 5.0;
-    config.corridor_radius_m = 0.5;
-    config.corridor_vertical_tolerance_m = 0.75;
-    config.obstacle_voxel_size_m = 0.1;
-    config.max_regions = 8U;
-    config.minimum_obstacle_points = 4U;
-    ActivePathBlockagePolicy policy(config);
-    const std::vector<float> blocked{
-        1.92F, -0.08F, 0.2F, 0.4F, 1.92F, 0.08F, 0.2F, 0.4F,
-        2.08F, -0.08F, 0.2F, 0.4F, 2.08F, 0.08F, 0.2F, 0.4F,
-    };
+    ActivePathBlockagePolicy policy(blockageConfig());
     const auto identity = activeIdentity();
     auto observe = [&](double now_s, std::uint64_t cloud_generation) {
       ActivePathBlockageObservation observation;
@@ -330,6 +336,13 @@ struct Fixture {
       observation.active_global_path = &activations.back().path;
       observation.live_obstacles_xyzh = &blocked;
       observation.cloud_generation = cloud_generation;
+      latest_observation = observation;
+      const GoalReplanRuntimeAutonomyEvent event{
+          {}, goal_plan.snapshot(), false, false, observation};
+      const auto result = coordinator.handleAutonomyOutcome(frame(now_s), event);
+      require(!result.replan_started && !result.terminal_after_stop &&
+                  stop_control_calls == 0 && planner_calls.load() == 1,
+              "obstacle evidence interrupted local execution before recovery exhausted");
       return policy.observe(observation);
     };
 
@@ -342,18 +355,22 @@ struct Fixture {
                 lingtu::nav::endpoint::sameGoalReplanIdentity(trigger->goal, identity) &&
                 !trigger->temporary_overlay.empty(),
             "persistent blockage did not produce a valid typed trigger");
-    return *trigger;
+    for (std::size_t i = 0; i < blocked.size(); i += 4U) blocked[i] += 0.4F;
+    const auto updated = observe(11.2, 104U);
+    require(updated && updated->temporary_overlay.obstacle_generation == 104U,
+            "candidate overlay did not follow the obstacle during local recovery");
+    return *updated;
   }
 
-  AutonomyTickInput autonomyInput(const GoalReplanTrigger &trigger) {
+  AutonomyTickInput autonomyInput() {
     return {
         safety, map_body,       input_gate, true,   map_identity,     true,    false,
-        true,   traversability, local,      timing, activeIdentity(), trigger,
+        true,   traversability, local,      timing, activeIdentity(),
     };
   }
 
-  AutonomyTickResult runTriggeredAutonomy(const GoalReplanTrigger &trigger) {
-    return autonomy_tick.tick(autonomyInput(trigger));
+  AutonomyTickResult runExhaustedAutonomy() {
+    return autonomy_tick.tick(autonomyInput());
   }
 
   std::vector<GlobalPlanRequest> plannerRequests() const {
@@ -384,25 +401,24 @@ struct Fixture {
   }
 };
 
-void requireTriggeredAutonomyStoppedBeforePlanning(const Fixture &fixture,
-                                                   const AutonomyTickResult &result,
-                                                   const GoalReplanTrigger &expected) {
-  require(result.handled && result.clear_local_path && result.clear_local_planner_debug,
-          "typed blockage did not take over the autonomy tick");
-  require(fixture.planner_input_calls == 0 && fixture.motion_calls == 0 &&
+void requireRecoveryCompletedBeforeReplanning(const Fixture &fixture,
+                                               const AutonomyTickResult &result,
+                                               const GoalReplanTrigger &expected) {
+  require(result.handled && result.output && result.output->recovery_exhausted,
+          "local recovery did not run to exhaustion");
+  require(fixture.planner_input_calls == 1 && fixture.motion_calls == 1 &&
               fixture.command_safety_calls == 0,
-          "typed blockage entered Executor or the command boundary");
-  require(fixture.stop_linear_motion_calls == 1 && result.publish.cmd_vel &&
-              result.publish.command.vx == 0.0 && result.publish.command.vy == 0.0 &&
-              result.publish.command.wz == 0.0 && result.delta.cmd_vel_count == 1U,
-          "typed blockage did not produce exactly one immediate zero command intent");
-  require(
-      result.outcome.kind == AutonomyTickOutcomeKind::kGoalFailed &&
-          result.outcome.replan_trigger.has_value() &&
-          lingtu::nav::endpoint::sameGoalReplanIdentity(result.outcome.replan_trigger->goal,
-                                                        expected.goal) &&
-          sameOverlay(result.outcome.replan_trigger->temporary_overlay, expected.temporary_overlay),
-      "autonomy tick changed the typed trigger or its frozen overlay");
+          "local execution was bypassed or exhaustion produced a motion command");
+  require(result.publish.cmd_vel && result.publish.command.vx == 0.0 &&
+              result.publish.command.vy == 0.0 && result.publish.command.wz == 0.0,
+          "exhausted recovery did not hold zero velocity");
+  require(result.outcome.kind == AutonomyTickOutcomeKind::kGoalFailed &&
+              result.outcome.replan_trigger &&
+              result.outcome.replan_trigger->kind == GoalReplanTriggerKind::kLocalRecoveryExhausted &&
+              lingtu::nav::endpoint::sameGoalReplanIdentity(result.outcome.replan_trigger->goal,
+                                                          expected.goal) &&
+              result.outcome.replan_trigger->temporary_overlay.empty(),
+          "local execution should report exhaustion without deciding a global overlay");
 }
 
 void testPersistentBlockageRunsOneAtomicReplacementCycle() {
@@ -412,10 +428,11 @@ void testPersistentBlockageRunsOneAtomicReplacementCycle() {
 
   const GoalReplanTrigger trigger = fixture.observePersistentBlockage();
   const auto captured_snapshot = fixture.goal_plan.snapshot();
-  const auto tick = fixture.runTriggeredAutonomy(trigger);
-  requireTriggeredAutonomyStoppedBeforePlanning(fixture, tick, trigger);
+  const auto tick = fixture.runExhaustedAutonomy();
+  requireRecoveryCompletedBeforeReplanning(fixture, tick, trigger);
 
-  const GoalReplanRuntimeAutonomyEvent event{tick.outcome, captured_snapshot, false, false};
+  const GoalReplanRuntimeAutonomyEvent event{
+      tick.outcome, captured_snapshot, false, false, fixture.latest_observation};
   const auto armed = fixture.coordinator.handleAutonomyOutcome(fixture.frame(30.0), event);
   require(armed.handled && armed.reason == "backoff_pending" && !armed.replan_started &&
               !armed.terminal_after_stop.has_value() && fixture.stop_control_calls == 1 &&
@@ -459,10 +476,11 @@ void testStopConfirmationFailureRemainsFailClosed() {
 
   const GoalReplanTrigger trigger = fixture.observePersistentBlockage();
   const auto captured_snapshot = fixture.goal_plan.snapshot();
-  const auto tick = fixture.runTriggeredAutonomy(trigger);
-  requireTriggeredAutonomyStoppedBeforePlanning(fixture, tick, trigger);
+  const auto tick = fixture.runExhaustedAutonomy();
+  requireRecoveryCompletedBeforeReplanning(fixture, tick, trigger);
 
-  const GoalReplanRuntimeAutonomyEvent event{tick.outcome, captured_snapshot, false, false};
+  const GoalReplanRuntimeAutonomyEvent event{
+      tick.outcome, captured_snapshot, false, false, fixture.latest_observation};
   const auto failed = fixture.coordinator.handleAutonomyOutcome(fixture.frame(40.0), event);
   require(failed.handled && failed.reason == "stop_confirmation_timeout_goal_replan_pending" &&
               !failed.replan_started && failed.terminal_after_stop.has_value() &&
@@ -489,10 +507,39 @@ void testStopConfirmationFailureRemainsFailClosed() {
           "stop-failure terminal was not replayed exactly without starting a planner");
 }
 
+void testRecoveredPathDiscardsOldObstruction() {
+  Fixture fixture;
+  fixture.activateInitialPath();
+  fixture.observePersistentBlockage();
+  fixture.latest_observation.now_s = 12.0;
+  fixture.latest_observation.local_path_viable = true;
+  const auto recovered = fixture.coordinator.handleAutonomyOutcome(
+      fixture.frame(12.0), {{}, fixture.goal_plan.snapshot(), false, false,
+                            fixture.latest_observation});
+  require(!recovered.replan_started && fixture.stop_control_calls == 0,
+          "successful local recovery requested a global route");
+
+  fixture.latest_observation.local_path_viable = false;
+  fixture.latest_observation.now_s = 13.0;
+  fixture.latest_observation.cloud_generation = 105U;
+  const auto tick = fixture.runExhaustedAutonomy();
+  const auto armed = fixture.coordinator.handleAutonomyOutcome(
+      fixture.frame(13.0), {tick.outcome, fixture.goal_plan.snapshot(), false, false,
+                           fixture.latest_observation});
+  require(armed.reason == "backoff_pending", "later exhaustion did not reach the task owner");
+  const auto started = fixture.coordinator.advancePlanningCycle(fixture.frame(13.5));
+  require(started.replan_started, "later exhaustion did not start a replacement");
+  fixture.waitForReplacementActivation(13.501);
+  const auto requests = fixture.plannerRequests();
+  require(requests.size() == 2U && requests.back().temporary_overlay.empty(),
+          "successful local recovery left an obsolete obstacle overlay behind");
+}
+
 }  // namespace
 
 int main() {
   testPersistentBlockageRunsOneAtomicReplacementCycle();
   testStopConfirmationFailureRemainsFailClosed();
+  testRecoveredPathDiscardsOldObstruction();
   return 0;
 }

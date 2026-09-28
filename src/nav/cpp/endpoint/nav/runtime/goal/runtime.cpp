@@ -127,8 +127,9 @@ TerminalStopPolicy interruptionStopPolicy(GoalReplanRuntimeInterruption interrup
 
 GoalReplanRuntimeCoordinator::GoalReplanRuntimeCoordinator(GoalPlanController &goal_plan,
                                                            MotionStopBarrier &motion_stop,
-                                                           BoundedGoalReplanConfig config)
-    : goal_plan_(goal_plan), motion_stop_(motion_stop), bounded_(config) {}
+                                                           BoundedGoalReplanConfig config,
+                                                           ActivePathBlockagePolicyConfig blockage_config)
+    : goal_plan_(goal_plan), motion_stop_(motion_stop), bounded_(config), blockage_(blockage_config) {}
 
 GoalTerminalSchedulingDecision decideGoalTerminalScheduling(const GoalReplanRuntimeResult &result,
                                                             bool terminal_pending) {
@@ -375,6 +376,8 @@ bool GoalReplanRuntimeCoordinator::terminalPending() const {
 GoalReplanRuntimeResult
 GoalReplanRuntimeCoordinator::interrupt(GoalReplanRuntimeInterruption interruption,
                                         double steady_now_s) {
+  blockage_.reset();
+  obstruction_.reset();
   GoalReplanRuntimeResult result;
   if (surfacePendingTerminal(result)) {
     return result;
@@ -614,6 +617,22 @@ GoalReplanRuntimeCoordinator::handleAutonomyOutcome(const GoalReplanRuntimeFrame
     return result;
   }
 
+  // Collect evidence without interrupting local retries or recovery motions.
+  // Only a completed local recovery may ask this task owner for a new route.
+  if (event.blockage) {
+    if (auto evidence = blockage_.observe(*event.blockage)) {
+      obstruction_ = std::move(evidence);
+    }
+    const auto snapshot = blockage_.snapshot();
+    if (snapshot.fresh_blocked_observations == 0U || !snapshot.goal ||
+        (obstruction_ && !sameGoalReplanIdentity(obstruction_->goal, *snapshot.goal))) {
+      obstruction_.reset();
+    }
+  } else {
+    blockage_.reset();
+    obstruction_.reset();
+  }
+
   const GoalPlanSnapshot current_snapshot = goal_plan_.snapshot();
   const auto current = activeGoal(current_snapshot);
   if (!validTime(frame.steady_now_s)) {
@@ -671,13 +690,19 @@ GoalReplanRuntimeCoordinator::handleAutonomyOutcome(const GoalReplanRuntimeFrame
 
   const bool typed_replan_request = event.outcome.kind == AutonomyTickOutcomeKind::kGoalFailed &&
                                     event.outcome.replan_trigger.has_value() &&
+                                    event.outcome.replan_trigger->kind ==
+                                        GoalReplanTriggerKind::kLocalRecoveryExhausted &&
                                     !event.outcome.inspection_arrival_intent;
   if (!typed_replan_request || event.inspection_active || event.rolling_segment_active ||
       frame.inspection_active || frame.rolling_segment_active ||
       frame.fresh_admission.rolling_segment_active || frame.control_hold || frame.map_drift) {
     return result;
   }
-  const GoalReplanTrigger &trigger = *event.outcome.replan_trigger;
+  GoalReplanTrigger trigger = *event.outcome.replan_trigger;
+  if (obstruction_ && sameGoalReplanIdentity(obstruction_->goal, trigger.goal) &&
+      validPersistentOverlay(*obstruction_, frame.fresh_admission.frame_epoch)) {
+    trigger = *obstruction_;
+  }
   const char *stop_reason = replanStopReason(trigger.kind);
   if (!event.goal_snapshot.active_origin || !current_snapshot.active_origin) {
     if (current) {

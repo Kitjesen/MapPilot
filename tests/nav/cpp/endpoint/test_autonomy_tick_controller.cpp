@@ -157,8 +157,7 @@ struct Fixture {
   }
 
   AutonomyTickInput input(bool path_active = true, bool motion_allowed = true, bool rolling = false,
-                          bool publish = true,
-                          std::optional<GoalReplanTrigger> precomputed_trigger = std::nullopt) {
+                          bool publish = true) {
     return {
         safety,
         map_body,
@@ -172,7 +171,6 @@ struct Fixture {
         previous,
         timing,
         GoalReplanIdentity{"task-a", "request-a", 11U, active_identity},
-        std::move(precomputed_trigger),
     };
   }
 };
@@ -623,72 +621,20 @@ void testRecoveryOutcomesDistinguishRollingAndGenericGoals() {
           "rolling recovery exhaustion must remain a segment outcome");
 }
 
-void testPrecomputedPersistentReplanBypassesPlannerAndFinalSafetyWithZeroCommand() {
+void testRecoveryMotionIsNotPreemptedByTaskReplanning() {
   Fixture fixture;
-  fixture.next_output.cmd_vel = {0.8, 0.0, 0.4};
-  fixture.previous.tracking.active = true;
-  fixture.previous.tracking.trajectoryId = 17;
-  fixture.previous.tracking.executionTimeS = 1.25;
-
-  GoalReplanTrigger trigger;
-  trigger.kind = GoalReplanTriggerKind::kPersistentPathObstruction;
-  trigger.reason = "persistent_path_obstruction";
-  trigger.goal = GoalReplanIdentity{"task-a", "request-a", 11U, fixture.active_identity};
-  trigger.temporary_overlay.revision = 23U;
-  trigger.temporary_overlay.frame_epoch = 3U;
-  trigger.temporary_overlay.obstacle_generation = 41U;
-  trigger.temporary_overlay.blocked_regions = {
-      {{1.25, -0.5, 0.2}, 0.65, -0.4, 1.6},
-      {{2.75, 0.25, 0.3}, 0.55, -0.3, 1.7},
-  };
-  const GoalReplanTrigger expected = trigger;
+  fixture.next_output.active = true;
+  fixture.next_output.path_found = true;
+  fixture.next_output.recovery_state = 2;
+  fixture.next_output.recovery_verified = true;
+  fixture.next_output.cmd_vel = {0.1, 0.0, 0.0};
   AutonomyTickController controller(fixture.actions, fixture.control());
-
-  const auto result = controller.tick(fixture.input(true, true, false, true, trigger));
-
-  require(result.handled && result.clear_local_path && result.clear_local_planner_debug,
-          "persistent obstruction must synchronously take over the active tick");
-  require(fixture.current_map_calls == 1 && fixture.compute_calls == 0 && fixture.tick_calls == 0 &&
-              fixture.command_safety_calls == 0,
-          "persistent obstruction must bypass Executor and the command boundary");
-  require(fixture.stop_calls == 1 && !result.output.has_value() && result.publish.cmd_vel &&
-              near(result.publish.command.vx, 0.0) && near(result.publish.command.vy, 0.0) &&
-              near(result.publish.command.wz, 0.0) && result.delta.cmd_vel_count == 1U &&
-              result.delta.output_count == 0U,
-          "persistent obstruction must expose only one zero-command publish intent");
-  require(fixture.velocity_stop_calls == 1 &&
-              fixture.velocity_stop_reason == "persistent_path_obstruction",
-          "persistent obstruction must reset smoother state");
-  require(result.local.has_value() && result.local->near_field_stop &&
-              result.local->final_safety_stopped &&
-              result.local->final_safety_reason == "persistent_path_obstruction",
-          "persistent obstruction diagnostics must retain explicit stopped evidence");
-  require(!result.local->tracking.active && result.local->tracking.trajectoryId == 0 &&
-              near(result.local->tracking.executionTimeS, 0.0),
-          "replanning must discard tracking diagnostics for the stopped trajectory");
-  require(result.outcome.kind == AutonomyTickOutcomeKind::kGoalFailed &&
-              result.outcome.replan_trigger.has_value(),
-          "persistent obstruction must surface one typed replan outcome");
-
-  const auto &actual = *result.outcome.replan_trigger;
-  require(actual.kind == expected.kind && actual.reason == expected.reason &&
-              lingtu::nav::endpoint::sameGoalReplanIdentity(actual.goal, expected.goal),
-          "precomputed replan trigger kind, reason, or goal identity changed in the tick");
-  require(actual.temporary_overlay.revision == expected.temporary_overlay.revision &&
-              actual.temporary_overlay.frame_epoch == expected.temporary_overlay.frame_epoch &&
-              actual.temporary_overlay.obstacle_generation ==
-                  expected.temporary_overlay.obstacle_generation &&
-              actual.temporary_overlay.blocked_regions.size() ==
-                  expected.temporary_overlay.blocked_regions.size(),
-          "precomputed replan overlay identity changed in the tick");
-  for (std::size_t i = 0; i < actual.temporary_overlay.blocked_regions.size(); ++i) {
-    const auto &lhs = actual.temporary_overlay.blocked_regions[i];
-    const auto &rhs = expected.temporary_overlay.blocked_regions[i];
-    require(near(lhs.center.x, rhs.center.x) && near(lhs.center.y, rhs.center.y) &&
-                near(lhs.center.z, rhs.center.z) && near(lhs.radius_xy_m, rhs.radius_xy_m) &&
-                near(lhs.min_z, rhs.min_z) && near(lhs.max_z, rhs.max_z),
-            "precomputed blocked region changed in the tick");
-  }
+  const auto result = controller.tick(fixture.input());
+  require(result.output && result.output->recovery_state == 2,
+          "active recovery must execute through the normal autonomy tick");
+  require(result.outcome.kind == AutonomyTickOutcomeKind::kNone &&
+              !result.outcome.replan_trigger,
+          "active recovery must not request a global replacement");
 }
 
 void testActualCollisionRestartsPlannerInsteadOfHoldingUnsafeTrackingTarget() {
@@ -792,7 +738,7 @@ int main() {
     testUnpublishedCommandDoesNotAdvanceSmootherCommit();
     testVerifiedRecoveryCommandUsesPlannerDecision();
     testRecoveryOutcomesDistinguishRollingAndGenericGoals();
-    testPrecomputedPersistentReplanBypassesPlannerAndFinalSafetyWithZeroCommand();
+    testRecoveryMotionIsNotPreemptedByTaskReplanning();
     testReachedOutcomesDistinguishInspectionArrival();
     testActualCollisionRestartsPlannerInsteadOfHoldingUnsafeTrackingTarget();
     testBrakingSlowdownRetainsActiveTrajectory();

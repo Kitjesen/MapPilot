@@ -107,7 +107,6 @@ struct EndpointLoopContext {
   GlobalPlanTask &plan_preview;
   GoalPlanController &goal_plan;
   GoalReplanRuntimeCoordinator &goal_replan_runtime;
-  ActivePathBlockagePolicy &active_path_blockage_policy;
   MotionStopBarrier &motion_stop;
   NavigationGoalStatusOutbox &goal_status_outbox;
   GoalTerminalStatusDelivery &goal_terminal_delivery;

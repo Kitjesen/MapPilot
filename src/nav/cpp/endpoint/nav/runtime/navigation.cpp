@@ -39,7 +39,7 @@ NavigationRuntimeController::advanceFrame(const GoalReplanRuntimeFrameInput &fra
         observation.updated_frame,
         GoalReplanRuntimeAutonomyEvent{observation.outcome, pre_autonomy_goal_snapshot,
                                        observation.inspection_active,
-                                       observation.rolling_segment_active});
+                                       observation.rolling_segment_active, observation.blockage});
     result.autonomy_result = runtime_outcome;
 
     const NavigationRuntimePostAutonomyState post_state =

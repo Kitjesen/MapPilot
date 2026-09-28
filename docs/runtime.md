@@ -215,7 +215,7 @@ Gateway consumes that reason; it does not repeat native localization policy.
 | Global preview | Valid map-frame target and tolerance, current map pose, configured planner map, available planner | Restore localization/map binding, correct the target, or wait for the current search |
 | Global route search | Traversable snapped endpoints and a connected 3D route satisfying support, unknown-space, clearance, step and slope rules | Inspect the failing map cells and input evidence; repair/rebuild a candidate map when the geometry is wrong |
 | Goal admission | Active navigation session, current endpoint status, valid task/request identity, control ownership, no E-stop/takeover hold, matching active map | Restore the identified session/authority/map condition; local collision holds alone do not prevent initial planning |
-| SCAN trajectory | Measured pose/velocity, valid reference, fresh complete local collision data, successful trajectory optimization and static/dynamic collision checks | Restore mapd input or let SCAN replan around observed obstacles; repeated spatial blockage can request a global replan |
+| SCAN trajectory | Measured pose/velocity, valid reference, fresh complete local collision data, successful trajectory optimization and static/dynamic collision checks | Restore mapd input or let SCAN replan around observed obstacles; local recovery runs before the task coordinator may request a global replan |
 | Trajectory feasibility | Finite spline samples within configured speed/acceleration bounds | Inspect the reported quantity/time and reference continuity; change physical limits only with measured robot evidence |
 | Nonzero command | Active route, matching current map, recovered InputGate, motion authority, executable local result, follower/final safety checks, enabled command publication | Remain stopped while the failed condition is present; route-preview success does not bypass it |
 
@@ -239,12 +239,23 @@ The follower's 0.80 rad heading freeze and final live-grid braking sweep act on
 execution after a spline exists. Goal-height tolerance likewise governs
 arrival, not whether SCAN may generate a trajectory.
 
-Persistent obstacle feedback follows the measured obstacle snapshot generation,
-not a traversability-grid generation. A viable local path suppresses this
-feedback. Otherwise, repeated observed blockage can request a bounded global
-replan with temporary measured obstacle voxels. Their Z extents remain one
-observation voxel, with different heights at the same XY retained separately;
-they are neither robot-inflated nor extended into vertical columns.
+The task recovery sequence is local waiting/retry, checked local recovery,
+then at most one bounded replacement route after local recovery is exhausted.
+`Executor` runs the local recovery actions; `GoalReplanRuntimeCoordinator` owns
+the decision to stop and request another global route. Neither SCAN nor the
+obstacle observer may preempt a local execution tick to request global planning.
+A successful local recovery continues the current route. A replacement keeps
+the same task/request identity and uses the existing stop-confirmation and
+backoff transaction. Cancellation, takeover and map changes interrupt that
+transaction through the same task owner.
+
+The coordinator collects persistent obstacle evidence during execution. It
+follows measured obstacle snapshot generations, not traversability-grid
+versions, and refreshes candidate geometry with each new persistent observation.
+A viable local path or cleared corridor discards the candidate. Only after local
+recovery is exhausted may the coordinator attach it to a replacement request.
+The temporary measured voxels retain one-voxel Z extents and separate heights
+at the same XY; they are neither robot-inflated nor extended into vertical columns.
 
 A local planner can report typed collision evidence outside the global route
 corridor. SCAN extracts nearby measured occupied cells from the same collision

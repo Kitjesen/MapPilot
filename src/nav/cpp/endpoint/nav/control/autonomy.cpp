@@ -124,39 +124,6 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
       result.outcome.reason = map_blocker;
       return result;
     }
-    if (input.precomputed_replan_trigger) {
-      const GoalReplanTrigger &trigger = *input.precomputed_replan_trigger;
-      const std::string reason =
-          trigger.reason.empty() ? "persistent_path_obstruction" : trigger.reason;
-      actions_.stop_linear_motion();
-      final_control_.stop(now_s, reason);
-      result.clear_local_path = true;
-      result.clear_local_planner_debug = true;
-      auto local = input.previous_local;
-      local.seen = true;
-      local.active = false;
-      local.path_found = false;
-      local.tracking = {};
-      local.near_field_stop = true;
-      local.reason = reason;
-      local.final_safety_applied = false;
-      local.final_safety_stopped = true;
-      local.final_safety_slowed = false;
-      local.final_safety_limited = false;
-      local.final_safety_reason = reason;
-      local.final_safety_obstacle_distance_m = -1.0;
-      local.final_safety_traversability_cost = -1.0;
-      local.path_follower_cmd_vel = {};
-      local.cmd_vel = {};
-      result.local = std::move(local);
-      result.publish.cmd_vel = input.publish_cmd_vel;
-      result.publish.command = {};
-      result.delta.cmd_vel_count = input.publish_cmd_vel ? 1U : 0U;
-      result.outcome.kind = AutonomyTickOutcomeKind::kGoalFailed;
-      result.outcome.reason = reason;
-      result.outcome.replan_trigger = trigger;
-      return result;
-    }
     const auto planner_inputs = actions_.read_plan(now_s, input.timing);
     const bool has_obstacles =
         planner_inputs.obstacles != nullptr && !planner_inputs.obstacles->empty();

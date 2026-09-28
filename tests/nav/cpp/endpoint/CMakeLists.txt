@@ -207,6 +207,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/task.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/retry.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/plan.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/blockage.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/runtime.cpp")
   target_include_directories(test_goal_replan_runtime_coordinator PRIVATE
     "${LINGTU_SRC_ROOT}"
@@ -468,6 +469,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/task.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/retry.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/plan.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/blockage.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/runtime.cpp")
   target_include_directories(test_goal_terminal_status_delivery PRIVATE
     "${LINGTU_SRC_ROOT}"
@@ -502,6 +504,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/task.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/retry.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/plan.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/blockage.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/runtime.cpp")
   target_include_directories(test_goal_terminal_transaction PRIVATE
     "${LINGTU_SRC_ROOT}"
@@ -537,6 +540,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/task.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/retry.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/plan.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/blockage.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/runtime.cpp")
   target_include_directories(test_navigation_runtime_controller PRIVATE
     "${LINGTU_SRC_ROOT}"
@@ -570,6 +574,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/task.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/retry.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/plan.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/blockage.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/runtime.cpp")
   target_include_directories(test_goal_terminal_endpoint_acceptance PRIVATE
     "${LINGTU_SRC_ROOT}"
@@ -990,6 +995,7 @@ if(NOT TARGET test_goal_replan_runtime_coordinator
     "${_ENDPOINT_DIR}/nav/runtime/goal/task.cpp"
     "${_ENDPOINT_DIR}/nav/runtime/goal/retry.cpp"
     "${_ENDPOINT_DIR}/nav/runtime/goal/plan.cpp"
+    "${_ENDPOINT_DIR}/nav/runtime/goal/blockage.cpp"
     "${_ENDPOINT_DIR}/nav/runtime/goal/runtime.cpp")
   target_include_directories(test_goal_replan_runtime_coordinator PRIVATE
     "${_ENDPOINT_DIR}"
@@ -1041,6 +1047,7 @@ if(NOT TARGET test_goal_terminal_transaction
     "${_ENDPOINT_DIR}/nav/runtime/goal/task.cpp"
     "${_ENDPOINT_DIR}/nav/runtime/goal/retry.cpp"
     "${_ENDPOINT_DIR}/nav/runtime/goal/plan.cpp"
+    "${_ENDPOINT_DIR}/nav/runtime/goal/blockage.cpp"
     "${_ENDPOINT_DIR}/nav/runtime/goal/runtime.cpp")
   target_include_directories(test_goal_terminal_transaction PRIVATE
     "${_ENDPOINT_DIR}"
@@ -1067,6 +1074,7 @@ if(NOT TARGET test_navigation_runtime_controller
     "${_ENDPOINT_DIR}/nav/runtime/goal/task.cpp"
     "${_ENDPOINT_DIR}/nav/runtime/goal/retry.cpp"
     "${_ENDPOINT_DIR}/nav/runtime/goal/plan.cpp"
+    "${_ENDPOINT_DIR}/nav/runtime/goal/blockage.cpp"
     "${_ENDPOINT_DIR}/nav/runtime/goal/runtime.cpp")
   target_include_directories(test_navigation_runtime_controller PRIVATE
     "${_ENDPOINT_DIR}"

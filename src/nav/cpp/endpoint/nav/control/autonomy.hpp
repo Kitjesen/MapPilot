@@ -58,7 +58,6 @@ struct AutonomyTickInput {
   const LocalDiagnostics &previous_local;
   TimingDiagnostics &timing;
   std::optional<GoalReplanIdentity> active_goal_identity;
-  std::optional<GoalReplanTrigger> precomputed_replan_trigger;
 };
 
 struct AutonomyTickCounterDelta {

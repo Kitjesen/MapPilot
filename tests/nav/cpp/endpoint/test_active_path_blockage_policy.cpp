@@ -352,8 +352,16 @@ void testOverlayIsDeterministicDeduplicatedAndBounded() {
                    overlay.blocked_regions.front().min_z - value.obstacle_voxel_size_m) < 1e-6,
           "overlay height is not the measured voxel height");
 
-  require(!policy.observe(observation(92.0, 104U, active_path, blocked)),
-          "same identity emitted a second trigger");
+  require(!policy.observe(observation(91.1, 103U, active_path, blocked)),
+          "same sensor observation refreshed the candidate");
+  blocked.clear();
+  appendObstacleGroup(blocked, 3.0F);
+  const auto updated = policy.observe(observation(92.0, 104U, active_path, blocked));
+  require(updated && updated->temporary_overlay.obstacle_generation == 104U &&
+              updated->temporary_overlay.revision > overlay.revision &&
+              updated->temporary_overlay.blocked_regions.front().center.x >
+                  overlay.blocked_regions.front().center.x,
+          "persistent evidence retained old obstacle geometry during local recovery");
 }
 
 void testOverlayPreservesSeparatedMeasuredHeights() {
@@ -514,8 +522,7 @@ void testInadmissibleGoalPlanStateDoesNotConsumeOneShotTrigger() {
     goal_plan.*(gate_case.blocked_state) = true;
     require(!observe(111.2, 3U), "inadmissible goal plan emitted a persistent blockage trigger");
     require(!policy.snapshot().goal.has_value() &&
-                policy.snapshot().fresh_blocked_observations == 0U &&
-                !policy.snapshot().trigger_emitted,
+                policy.snapshot().fresh_blocked_observations == 0U,
             "inadmissible goal plan did not reset pending blockage evidence");
 
     goal_plan.*(gate_case.blocked_state) = false;

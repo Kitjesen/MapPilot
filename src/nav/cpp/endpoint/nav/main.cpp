@@ -1072,7 +1072,6 @@ int main(int argc, char **argv) {
     };
     motion_stop_actions.clear_global_path = [&]() { executor.clear(); };
     MotionStopBarrier motion_stop(cfg.publish_cmd_vel, std::move(motion_stop_actions));
-    GoalReplanRuntimeCoordinator goal_replan_runtime(goal_plan, motion_stop);
     ActivePathBlockagePolicyConfig blockage_config;
     blockage_config.persistence_s = 0.6;
     blockage_config.minimum_fresh_observations = 2U;
@@ -1092,7 +1091,7 @@ int main(int argc, char **argv) {
           std::max(cfg.collision_clearance_below_m, cfg.collision_clearance_above_m) +
           0.5 * cfg.obstacle_voxel_size_m;
     }
-    ActivePathBlockagePolicy active_path_blockage_policy(blockage_config);
+    GoalReplanRuntimeCoordinator goal_replan_runtime(goal_plan, motion_stop, {}, blockage_config);
     goal_replan_runtime_ptr = &goal_replan_runtime;
     GoalTerminalStatusDelivery goal_terminal_delivery(goal_status_outbox);
     InspectionCommandActions inspection_command_actions;
@@ -1403,7 +1402,6 @@ int main(int argc, char **argv) {
         plan_preview,
         goal_plan,
         goal_replan_runtime,
-        active_path_blockage_policy,
         motion_stop,
         goal_status_outbox,
         goal_terminal_delivery,

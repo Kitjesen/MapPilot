@@ -6,6 +6,7 @@
 
 #include "control/autonomy.hpp"
 #include "runtime/goal/retry.hpp"
+#include "runtime/goal/blockage.hpp"
 #include "runtime/goal/plan.hpp"
 
 namespace lingtu::nav::endpoint {
@@ -44,6 +45,7 @@ struct GoalReplanRuntimeAutonomyEvent {
   GoalPlanSnapshot goal_snapshot;
   bool inspection_active{false};
   bool rolling_segment_active{false};
+  std::optional<ActivePathBlockageObservation> blockage;
 };
 
 struct GoalReplanRuntimeFrameInput {
@@ -92,7 +94,8 @@ decideGoalTerminalScheduling(const GoalReplanRuntimeResult &result, bool termina
 class GoalReplanRuntimeCoordinator {
  public:
   GoalReplanRuntimeCoordinator(GoalPlanController &goal_plan, MotionStopBarrier &motion_stop,
-                               BoundedGoalReplanConfig config = {});
+                               BoundedGoalReplanConfig config = {},
+                               ActivePathBlockagePolicyConfig blockage_config = {});
 
   // Production order: command ingress -> advancePlanningCycle -> service any
   // surfaced terminal -> capture the pre-autonomy snapshot/run autonomy only
@@ -152,6 +155,8 @@ class GoalReplanRuntimeCoordinator {
   GoalPlanController &goal_plan_;
   MotionStopBarrier &motion_stop_;
   BoundedGoalReplanController bounded_;
+  ActivePathBlockagePolicy blockage_;
+  std::optional<GoalReplanTrigger> obstruction_;
   std::optional<GoalReplanTrigger> pending_replan_trigger_;
   bool replacement_plan_in_progress_{false};
   std::uint64_t next_terminal_intent_id_{1U};

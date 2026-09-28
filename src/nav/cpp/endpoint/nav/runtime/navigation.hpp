@@ -18,6 +18,7 @@ struct NavigationRuntimeAutonomyObservation {
   bool autonomy_tick_handled{false};
   bool inspection_active{false};
   bool rolling_segment_active{false};
+  std::optional<ActivePathBlockageObservation> blockage;
 };
 
 // Inspection state sampled after the endpoint has applied autonomy outputs.

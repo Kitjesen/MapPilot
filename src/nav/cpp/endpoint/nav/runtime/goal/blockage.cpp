@@ -87,7 +87,6 @@ void ActivePathBlockagePolicy::bind(const GoalReplanIdentity &goal, std::uint64_
   current_blocker_count_ = 0U;
   first_blocked_s_ = -1.0;
   last_now_s_ = -1.0;
-  trigger_emitted_ = false;
   reason_ = "identity_bound";
 }
 
@@ -419,10 +418,6 @@ ActivePathBlockagePolicy::observe(const ActivePathBlockageObservation &observati
     return std::nullopt;
   }
 
-  if (trigger_emitted_) {
-    reason_ = "trigger_already_emitted";
-    return std::nullopt;
-  }
   if (fresh_blocked_observations_ == 0U) {
     first_blocked_s_ = observation.now_s;
   }
@@ -467,7 +462,6 @@ ActivePathBlockagePolicy::observe(const ActivePathBlockageObservation &observati
   if (next_overlay_revision_ != std::numeric_limits<std::uint64_t>::max()) {
     ++next_overlay_revision_;
   }
-  trigger_emitted_ = true;
   reason_ = trigger.reason;
   return trigger;
 }
@@ -483,7 +477,6 @@ ActivePathBlockagePolicySnapshot ActivePathBlockagePolicy::snapshot() const {
   result.fresh_blocked_observations = fresh_blocked_observations_;
   result.current_blocker_count = current_blocker_count_;
   result.first_blocked_s = first_blocked_s_;
-  result.trigger_emitted = trigger_emitted_;
   result.reason = reason_;
   return result;
 }
@@ -499,7 +492,6 @@ void ActivePathBlockagePolicy::reset() {
   current_blocker_count_ = 0U;
   first_blocked_s_ = -1.0;
   last_now_s_ = -1.0;
-  trigger_emitted_ = false;
   reason_ = "reset";
 }
 

@@ -80,28 +80,6 @@ bool sameStatuses(const std::vector<GoalPlanStatus> &lhs, const std::vector<Goal
   return true;
 }
 
-bool sameBlockedRegion(const lingtu::nav::plan::GlobalPlanBlockedRegion &lhs,
-                       const lingtu::nav::plan::GlobalPlanBlockedRegion &rhs) {
-  return lhs.center.x == rhs.center.x && lhs.center.y == rhs.center.y &&
-         lhs.center.z == rhs.center.z && lhs.radius_xy_m == rhs.radius_xy_m &&
-         lhs.min_z == rhs.min_z && lhs.max_z == rhs.max_z;
-}
-
-bool sameTemporaryOverlay(const lingtu::nav::plan::GlobalPlanTemporaryOverlay &lhs,
-                          const lingtu::nav::plan::GlobalPlanTemporaryOverlay &rhs) {
-  if (lhs.revision != rhs.revision || lhs.frame_epoch != rhs.frame_epoch ||
-      lhs.obstacle_generation != rhs.obstacle_generation ||
-      lhs.blocked_regions.size() != rhs.blocked_regions.size()) {
-    return false;
-  }
-  for (std::size_t i = 0; i < lhs.blocked_regions.size(); ++i) {
-    if (!sameBlockedRegion(lhs.blocked_regions[i], rhs.blocked_regions[i])) {
-      return false;
-    }
-  }
-  return true;
-}
-
 struct Fixture {
   lingtu::nav::plan::MapIdentity map_identity{"field", 7, "map"};
   std::vector<GoalPlanStatus> statuses;
@@ -583,43 +561,16 @@ void testStaleExternalTerminalFailureCannotEndTheCurrentGoal() {
           "a stale external timeout stopped a different goal generation");
 }
 
-void testPersistentObstructionReplaysExactOverlayAfterStopAndBackoff() {
+void testPersistentObstructionCannotBypassLocalRecovery() {
   Fixture fixture;
   fixture.activate(fixture.request());
   const auto event = fixture.persistentObstructionEvent();
-  require(event.outcome.replan_trigger.has_value(),
-          "persistent obstruction fixture did not create a typed trigger");
-  const auto expected_trigger = *event.outcome.replan_trigger;
-
-  const auto armed = fixture.coordinator.handleAutonomyOutcome(fixture.frameInput(300.0), event);
-  require(armed.handled && armed.reason == "backoff_pending" && !armed.replan_started &&
-              fixture.stop_control_calls == 1 && fixture.clear_motion_calls == 1 &&
-              fixture.planner_calls.load() == 1,
-          "persistent obstruction must stop-confirm and only arm the bounded backoff");
-
-  const auto early = fixture.coordinator.advancePlanningCycle(fixture.frameInput(300.499));
-  require(early.handled && early.reason == "backoff_pending" && early.zero_kept_fresh &&
-              !early.replan_started && fixture.planner_calls.load() == 1,
-          "persistent obstruction started planning before the bounded deadline");
-
-  const auto started = fixture.coordinator.advancePlanningCycle(fixture.frameInput(300.5));
-  require(started.handled && started.reason == "replan_started" && started.replan_started,
-          "persistent obstruction did not start its one replacement plan at the deadline");
-  fixture.waitForPlannerCalls(2, "persistent obstruction planner call did not start");
-
-  const auto requests = fixture.plannerRequests();
-  require(requests.size() == 2U && requests.front().temporary_overlay.empty(),
-          "initial planning unexpectedly received the persistent obstruction overlay");
-  require(
-      sameTemporaryOverlay(requests.back().temporary_overlay, expected_trigger.temporary_overlay),
-      "persistent obstruction overlay identity or regions changed before planning");
-
-  const auto completed = fixture.waitForPlanning(
-      [](const GoalReplanRuntimeResult &result) { return result.plan_advance.path_activated; },
-      300.501);
-  require(completed.reason == "replan_completed" && !completed.terminal_after_stop.has_value(),
-          "planner overlay echo was not accepted as the successful replan completion");
+  const auto result = fixture.coordinator.handleAutonomyOutcome(fixture.frameInput(300.0), event);
+  require(!result.replan_started && !result.terminal_after_stop &&
+              fixture.stop_control_calls == 0 && fixture.planner_calls.load() == 1,
+          "an obstruction report alone must not stop or replan an active task");
 }
+
 void testHandleAutonomyOutcomeDoesNotAdvanceOrResume() {
   Fixture fixture;
   fixture.activate(fixture.request());
@@ -2590,7 +2541,7 @@ int main() {
   testLegacyRecoveryReasonWithoutTypedTriggerDoesNotArm();
   testExternalTerminalFailureWaitsForStopAndEndsWithoutReplanning();
   testStaleExternalTerminalFailureCannotEndTheCurrentGoal();
-  testPersistentObstructionReplaysExactOverlayAfterStopAndBackoff();
+  testPersistentObstructionCannotBypassLocalRecovery();
   testHandleAutonomyOutcomeDoesNotAdvanceOrResume();
   testAdvancePlanningCycleProgressesWithoutAutonomyOutcome();
   testRecoveryFailureOnlyArmsUntilAdvanceDeadline();
