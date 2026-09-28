@@ -11,6 +11,40 @@ namespace global_planner {
 
 struct OctoPlannerGridQueryTest
 {
+  static void goalSnapUsesRequestedPosition() {
+    auto tree = std::make_shared<octomap::OcTree>(.1);
+    tree->updateNode(octomap::point3d(-.05, .05, .05), false);
+    tree->updateNode(octomap::point3d(.05, .05, .05), true);
+    tree->updateNode(octomap::point3d(.15, .05, .05), false);
+    tree->updateNode(octomap::point3d(.25, .05, .05), false);
+    PlannerConfig config;
+    config.robot_radius = .001;
+    config.require_ground_support = false;
+    config.snap_search_radius_cells = 2;
+    config.enable_preblocked_costmap = false;
+    config.obstacle_clearance_radius_cells = 0;
+    OctoPlanner3D planner;
+    planner.setConfig(config);
+    planner.setOctomap(tree);
+    planner.makePlan({.25, .05, .05}, {.09, .05, .05});
+    std::vector<PointPose> path;
+    planner.getPlannerResults(path);
+    if (path.empty() || std::abs(path.back().x - .15) > 1e-6)
+      throw std::runtime_error("goal snap chose the nearest cell centre instead of the requested position");
+    config.terminal_goal_tolerance_m = .05;
+    planner.setConfig(config);
+    planner.makePlan({.25, .05, .05}, {.09, .05, .05});
+    planner.getPlannerResults(path);
+    if (!path.empty() || planner.searchInfo().basic_iterations != 0 ||
+        planner.searchInfo().extended_iterations != 0)
+      throw std::runtime_error("out-of-tolerance snapped goal still ran A*");
+    config.terminal_goal_tolerance_m = .07;
+    planner.setConfig(config);
+    planner.makePlan({.25, .05, .05}, {.09, .05, .05});
+    planner.getPlannerResults(path);
+    if (path.empty()) throw std::runtime_error("in-tolerance goal stopped planning");
+  }
+
   static void temporaryObstacleDoesNotCrossObservedFloor() {
     auto tree = std::make_shared<octomap::OcTree>(.05);
     for (int x = -8; x <= 8; ++x) for (int y = -8; y <= 8; ++y)
@@ -649,6 +683,7 @@ void checkResolution(double resolution)
 int main()
 {
   try {
+    global_planner::OctoPlannerGridQueryTest::goalSnapUsesRequestedPosition();
     global_planner::OctoPlannerGridQueryTest::temporaryObstacleDoesNotCrossObservedFloor();
     global_planner::OctoPlannerGridQueryTest::stepTransitionsKeepObservedSupportAndBodyClearance();
     global_planner::OctoPlannerGridQueryTest::routeClearancePassesNarrowCorridor();

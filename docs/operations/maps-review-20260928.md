@@ -115,3 +115,46 @@ installation logs. No movement goal was sent: final native counters show
 `goals=0`, and output velocity is zero. This establishes Go2/NX deployment and
 stationary checks, not MuJoCo, S100P, or supervised ordinary-channel motion
 acceptance. A 0.3 m supervised trial was requested separately.
+
+## Follow-up: directional preview diagnosis (21:07 onward)
+
+The four targets are fixed map coordinates generated from one observed pose;
+"left/right 1 m" describes their placement, not commanded sideways movement.
+No movement target was issued. A later `.85` stationary check passed both
+forward goals but timed out on both side goals after 7 seconds. The earlier
+right-goal success therefore does not establish repeatable availability.
+
+The side targets also have map limitations independent of search performance.
+At the left target, the raw `map.pcd.preclean`, cleaned cloud and voxelized
+cloud all contain **zero** points within 0.30 m horizontally in the expected
+floor band `z=[-0.40,-0.25]` m. The nearest raw floor point is 0.3194 m away.
+The adjacent OctoMap support columns are unknown. This local absence predates
+pruning; it must not be reported as floor points removed by this cleanup.
+At the right target, the 0.155 m radius / 0.20 m tall body region contains
+21 raw points, 19 cleaned points and 8 voxelized points. Those are map returns,
+not proof that the objects are still present in the current scene.
+
+The candidate code now ranks goal snap candidates by distance to the actual
+requested coordinate, rather than distance to its rounded grid cell. The
+existing total/XY/Z arrival tolerances are passed to candidate selection, so
+it does not run A* toward an endpoint that those same tolerances will reject.
+Out-of-tolerance or unavailable candidates return the existing snap-exhausted
+or outside-map reason with no route. Collision, ground support, unknown-space,
+step, slope and arrival tolerance values are unchanged. The existing grid-key
+hash was also improved; a hash-only experiment increased search throughput
+but did not resolve these failures on its own. Fixing the horizontal lattice
+did not resolve them and was not adopted.
+
+ARM candidate tests: 9/9 OctoPlanner CTest cases passed, including actual-point
+nearest snapping, no A* for an out-of-tolerance endpoint, an allowed endpoint,
+independent terminal bounds, walls, unknown gaps and stair transitions. Replays
+of the original three fixed cases and all four 21:07 cases preserved forward
+success and returned side-goal failures without timeout, in 0.78–0.85 seconds
+including process startup/map loading. This is prompt, accurate failure;
+it is **not** successful navigation to either side target.
+
+Evidence: `build/go2-release-20260928/goal-pcd-evidence.json`,
+`snap-bounded-results.json`, `selfcheck-previews.json`. This follow-up candidate
+was built and tested offline on NX; the running service remains `.85`.
+Left-side floor capture and verification of right-side objects remain field
+work. No replacement of the active map, service restart or motion was done.

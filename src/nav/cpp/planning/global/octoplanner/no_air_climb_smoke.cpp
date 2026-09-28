@@ -269,7 +269,7 @@ int main()
         if (bound == 3) options.terminal_goal_z_tolerance_m = 0.0;
       }
       const auto result = plan(map_path.string(), start, goal, options);
-      if (!result.ok || result.reached_goal) {
+      if (result.ok || result.reached_goal || result.failure_reason != "goal_snap_exhausted") {
         std::cerr << "snapped endpoint bypassed terminal bound " << bound
                   << "; ok=" << result.ok << " error=" << result.goal_error_m << "\n";
         return 29;
@@ -486,10 +486,10 @@ int main()
         start,
         {center(-26), center(0), center(1)},
         outside_map_snap_options);
-    if (!outside_map_snap_result.ok ||
+    if (outside_map_snap_result.ok ||
         outside_map_snap_result.reached_goal ||
-        !outside_map_snap_result.failure_reason.empty()) {
-      std::cerr << "near outside-map goal did not preserve snapped terminal semantics; ok="
+        outside_map_snap_result.failure_reason != "goal_outside_static_map") {
+      std::cerr << "outside-map goal beyond arrival tolerance was searched; ok="
                 << outside_map_snap_result.ok
                 << " reached=" << outside_map_snap_result.reached_goal
                 << " reason=" << outside_map_snap_result.failure_reason << "\n";

@@ -239,6 +239,14 @@ double zDistanceToGoal(const Point & point, const Point & goal)
   return std::abs(point.z - goal.z);
 }
 
+double nonnegativeOrDefault(double value, double fallback)
+{
+  if (std::isfinite(value) && value >= 0.0) {
+    return value;
+  }
+  return fallback;
+}
+
 global_planner::PlannerConfig plannerConfig(const PlannerOptions & options)
 {
   global_planner::PlannerConfig config;
@@ -258,6 +266,12 @@ global_planner::PlannerConfig plannerConfig(const PlannerOptions & options)
   }
   config.snap_search_radius_cells =
     std::max(0, options.snap_search_radius_cells);
+  // Apply the existing arrival contract while choosing a goal candidate,
+  // rather than searching a route that the same bounds will later reject.
+  config.terminal_goal_tolerance_m = nonnegativeOrDefault(options.terminal_goal_tolerance_m, 0.5);
+  config.terminal_goal_xy_tolerance_m = nonnegativeOrDefault(
+    options.terminal_goal_xy_tolerance_m, config.terminal_goal_tolerance_m);
+  config.terminal_goal_z_tolerance_m = nonnegativeOrDefault(options.terminal_goal_z_tolerance_m, 0.75);
   config.require_ground_support = options.require_ground_support;
   config.strict_direct_ground_support = options.strict_direct_ground_support;
   config.ground_support_xy_radius_cells =
@@ -305,14 +319,6 @@ global_planner::PlannerConfig plannerConfig(const PlannerOptions & options)
     config.obstacle_clearance_weight = options.obstacle_clearance_weight;
   }
   return config;
-}
-
-double nonnegativeOrDefault(double value, double fallback)
-{
-  if (std::isfinite(value) && value >= 0.0) {
-    return value;
-  }
-  return fallback;
 }
 
 bool sameOptions(const PlannerOptions & lhs, const PlannerOptions & rhs)

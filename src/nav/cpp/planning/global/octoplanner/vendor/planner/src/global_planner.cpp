@@ -28,6 +28,9 @@ namespace global_planner
         body_clearance_above_m_ = config.body_clearance_above_m;
         max_iterations_ = config.max_iterations;
         snap_search_radius_cells_ = config.snap_search_radius_cells;
+        terminal_goal_tolerance_m_ = config.terminal_goal_tolerance_m;
+        terminal_goal_xy_tolerance_m_ = config.terminal_goal_xy_tolerance_m;
+        terminal_goal_z_tolerance_m_ = config.terminal_goal_z_tolerance_m;
         require_ground_support_ = config.require_ground_support;
         strict_direct_ground_support_ = config.strict_direct_ground_support;
         ground_support_xy_radius_cells_ = config.ground_support_xy_radius_cells;
@@ -184,7 +187,7 @@ namespace global_planner
                 strict_direct_ground_support_,
                 ground_support_xy_radius_cells_,
                 ground_support_depth_cells_,
-                goal)) {
+                goal, &goal_point_)) {
             endpoint_resolution_.failure =
                 EndpointResolutionInfo::Failure::GoalSnapExhausted;
             printf("OctoPlanner3D::startPlan goal is occupied/out of map and no nearby free cell\n");
@@ -193,13 +196,13 @@ namespace global_planner
         endpoint_resolution_.goal_snapped = !(goal == goal_raw);
 
         if (!(start == start_raw)) {
-            const auto point = gridToWorld(start);
+            const auto point = planningPoint(start);
             printf(
                 "OctoPlanner3D::startPlan start snapped to free cell: [%.2f, %.2f, %.2f]\n",
                 point.x(), point.y(), point.z());
         }
         if (!(goal == goal_raw)) {
-            const auto point = gridToWorld(goal);
+            const auto point = planningPoint(goal);
             printf(
                 "OctoPlanner3D::startPlan goal snapped to free cell: [%.2f, %.2f, %.2f]\n",
                 point.x(), point.y(), point.z());
@@ -563,9 +566,20 @@ namespace global_planner
         return simplified;
     }
 
-    bool OctoPlanner3D::findNearestFreeCell(const GridIndex & seed, double robot_radius, int radius_cells, bool require_ground_support,bool strict_direct_ground_support, int support_xy_radius_cells, int support_depth_cells,GridIndex & out) const
+    bool OctoPlanner3D::findNearestFreeCell(const GridIndex & seed, double robot_radius, int radius_cells, bool require_ground_support,bool strict_direct_ground_support, int support_xy_radius_cells, int support_depth_cells,GridIndex & out, const PointPose * reference) const
     {
-        if (isPlanningCellTraversableDetailed(
+        const auto distance_to_reference = [&](const octomap::point3d &point) {
+            return std::hypot(point.x() - reference->x, point.y() - reference->y,
+                              point.z() - reference->z);
+        };
+        const auto within_goal_tolerance = [&](const octomap::point3d &point) {
+            return !reference ||
+                (distance_to_reference(point) <= terminal_goal_tolerance_m_ &&
+                 std::hypot(point.x() - reference->x, point.y() - reference->y) <= terminal_goal_xy_tolerance_m_ &&
+                 std::abs(point.z() - reference->z) <= terminal_goal_z_tolerance_m_);
+        };
+        const auto seed_point = planningPoint(seed);
+        if (within_goal_tolerance(seed_point) && isPlanningCellTraversableDetailed(
             seed, robot_radius, require_ground_support, strict_direct_ground_support,
             support_xy_radius_cells, support_depth_cells, nullptr))
         {
@@ -588,17 +602,31 @@ namespace global_planner
                        std::array<int, 5>{bxy + b.z * b.z, bxy, b.z, b.x, b.y};
             });
         }
+        const double seed_error = reference ? distance_to_reference(seed_point) : 0.0;
+        double best_distance = reference ? terminal_goal_tolerance_m_ : std::numeric_limits<double>::infinity();
+        bool found = false;
         for (const auto &offset : snap_offsets_) {
             if (cancel_check_ && cancel_check_()) return false;
+            // Offsets are ordered by seed distance. The triangle inequality
+            // bounds all remaining candidates without scanning the full cube.
+            const double seed_distance = octree_->getResolution() * std::sqrt(
+                static_cast<double>(offset.x * offset.x + offset.y * offset.y + offset.z * offset.z));
+            if (reference && seed_distance - seed_error > best_distance + 1e-7) break;
             const GridIndex candidate{seed.x + offset.x, seed.y + offset.y, seed.z + offset.z};
+            if (!within_goal_tolerance(planningPoint(candidate))) continue;
             if (isPlanningCellTraversableDetailed(
                     candidate, robot_radius, require_ground_support, strict_direct_ground_support,
                     support_xy_radius_cells, support_depth_cells, nullptr)) {
-                out = candidate;
-                return true;
+                const double distance = reference ? distance_to_reference(planningPoint(candidate)) : 0.0;
+                if (!found || distance < best_distance) {
+                    out = candidate;
+                    best_distance = distance;
+                    found = true;
+                }
+                if (!reference) return true;
             }
         }
-        return false;
+        return found;
     }
 
     double OctoPlanner3D::getPreblockedCost(const GridIndex & idx) const

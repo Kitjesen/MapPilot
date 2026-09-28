@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -43,7 +44,11 @@ struct GridIndexHash
     const std::size_t h1 = std::hash<int>{}(k.x);
     const std::size_t h2 = std::hash<int>{}(k.y);
     const std::size_t h3 = std::hash<int>{}(k.z);
-    return h1 ^ (h2 << 1) ^ (h3 << 2);
+    // Nearby integer coordinates must not collapse into the same few buckets.
+    std::size_t seed = h1;
+    seed ^= h2 + 0x9e3779b9U + (seed << 6) + (seed >> 2);
+    seed ^= h3 + 0x9e3779b9U + (seed << 6) + (seed >> 2);
+    return seed;
   }
 };
 
@@ -90,6 +95,9 @@ struct PlannerConfig
   double body_clearance_above_m{0.0};
   int max_iterations{250000};
   int snap_search_radius_cells{8};
+  double terminal_goal_tolerance_m{std::numeric_limits<double>::infinity()};
+  double terminal_goal_xy_tolerance_m{std::numeric_limits<double>::infinity()};
+  double terminal_goal_z_tolerance_m{std::numeric_limits<double>::infinity()};
   bool require_ground_support{true};
   bool strict_direct_ground_support{true};
   int ground_support_xy_radius_cells{0};
@@ -280,7 +288,8 @@ private:
     bool strict_direct_ground_support,
     int support_xy_radius_cells,
     int support_depth_cells,
-    GridIndex & out) const;
+    GridIndex & out,
+    const PointPose * reference = nullptr) const;
 
   bool resolvePlanEndpoints(GridIndex & start, GridIndex & goal);
 
@@ -309,6 +318,9 @@ private:
   double body_clearance_above_m_ = 0.0;
   int max_iterations_ = 250000;
   int snap_search_radius_cells_ = 8;
+  double terminal_goal_tolerance_m_ = std::numeric_limits<double>::infinity();
+  double terminal_goal_xy_tolerance_m_ = std::numeric_limits<double>::infinity();
+  double terminal_goal_z_tolerance_m_ = std::numeric_limits<double>::infinity();
   bool require_ground_support_ = true;
   bool strict_direct_ground_support_ = true;
   int ground_support_xy_radius_cells_ = 0;
