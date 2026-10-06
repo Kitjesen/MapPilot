@@ -50,14 +50,9 @@ Grid::Grid(const LocalPlannerParams &params, const LocalPlanRequest &input)
   if (!collision_.valid()) {
     return;
   }
-  if (!collision_.complete) {
-    reason_ = "collision_map_incomplete";
-    return;
-  }
-  if (collision_.resetEpoch == 0U || collision_.observationSequence == 0U ||
-      collision_.generation == 0U) {
-    return;
-  }
+  // `complete` and the epoch/sequence counters describe transport history.
+  // The bitmap itself has already passed the DDS decoder's exact-size and
+  // geometry checks; they are not additional collision-query prerequisites.
   if (std::abs(collision_.resolution - params.scan.voxelResolution) >
       std::max(1e-9, 1e-6 * params.scan.voxelResolution)) {
     reason_ = "collision_map_resolution_mismatch";
@@ -67,7 +62,9 @@ Grid::Grid(const LocalPlannerParams &params, const LocalPlanRequest &input)
     const auto &view = input.environment.predictions;
     if (!std::isfinite(view.observedAtS) || !std::isfinite(view.horizonS) ||
         view.horizonS <= 0.0) {
-      reason_ = "prediction_time_invalid";
+      // Dynamic predictions are an optional overlay.  Keep the measured 3D
+      // collision bitmap usable when that overlay has a malformed timestamp.
+      reason_ = "ready";
       return;
     }
     predictionAgeS_ = std::max(0.0, input.clock.timestampS - view.observedAtS);
@@ -80,8 +77,7 @@ Grid::Grid(const LocalPlannerParams &params, const LocalPlanRequest &input)
           !std::isfinite(prediction.radius) || prediction.radius < 0.0 ||
           !std::isfinite(prediction.minZ) || !std::isfinite(prediction.maxZ) ||
           prediction.minZ > prediction.maxZ) {
-        reason_ = "prediction_invalid";
-        return;
+        continue;
       }
       prediction.radius += params.scan.cylinderRadius;
       prediction.minZ -= std::max(0.0, params.scan.bodyClearanceAbove);

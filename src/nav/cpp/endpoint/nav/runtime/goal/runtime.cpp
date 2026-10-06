@@ -834,6 +834,8 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
     const bool input_hold =
         !input.fresh_admission.input_ready &&
         admission_error == inputGateStopReason(input.fresh_admission.input_gate_reason);
+    const bool pose_hold = admission_error == "map_odom_tf_not_ready" ||
+                           admission_error == "odometry_not_ready";
     if (before.busy && before.active_task_id.empty() && input_hold &&
         !goalPlanInputGapIsRecoverable(input.fresh_admission.input_gate_reason)) {
       replacement_plan_in_progress_ = false;
@@ -842,7 +844,7 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
       return result;
     }
     GoalPlanAdvanceResult activated =
-        (admission_error.empty() || input_hold)
+        (admission_error.empty() || input_hold || pose_hold)
             ? goal_plan_.activateDeferredReplacement(input.wall_now_s, input.fresh_admission)
             : goal_plan_.failDeferredReplacement(deferredReplacementAdmissionState(admission_error),
                                                  admission_error);
@@ -1041,6 +1043,11 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
   current = activeGoal(replan_snapshot);
   const auto retry = bounded_.snapshot();
   if (retry.state == BoundedGoalReplanState::kBackoffPending && current) {
+    if (!input.fresh_admission.map_position) {
+      result.handled = true;
+      result.reason = "replan_waiting_for_pose";
+      return result;
+    }
     const auto decision = bounded_.tick(*current, input.steady_now_s);
     result.handled = true;
     if (decision.action == BoundedGoalReplanAction::kHold) {
@@ -1136,6 +1143,30 @@ GoalReplanRuntimeCoordinator::drainPendingCycle(const GoalReplanRuntimeFrameInpu
     replacement_plan_in_progress_ = true;
     result.pending_resumed = true;
     result.reason = "pending_plan_resumed";
+    return result;
+  }
+  const bool waiting_for_input =
+      !frame.fresh_admission.input_ready &&
+      goalPlanInputGapIsRecoverable(frame.fresh_admission.input_gate_reason);
+  const bool waiting_for_map =
+      resumed.reason == "active_map_unavailable_before_pending_plan";
+  const bool waiting_for_pose = resumed.reason == "map_odom_tf_not_ready" ||
+                                resumed.reason == "odometry_not_ready";
+  if (waiting_for_input || waiting_for_map || waiting_for_pose) {
+    if (!motion_stop_.keepZeroFresh()) {
+      result.reason = "zero_refresh_failed";
+      attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed,
+                             result.reason, true);
+      return result;
+    }
+    result.zero_kept_fresh = true;
+    if (waiting_for_input) {
+      result.reason = "pending_waiting_for_inputs";
+    } else if (waiting_for_map) {
+      result.reason = "pending_waiting_for_map";
+    } else {
+      result.reason = "pending_waiting_for_pose";
+    }
     return result;
   }
   result.reason = resumed.reason;

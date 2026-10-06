@@ -7,6 +7,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -82,6 +83,7 @@ bool sameStatuses(const std::vector<GoalPlanStatus> &lhs, const std::vector<Goal
 
 struct Fixture {
   lingtu::nav::plan::MapIdentity map_identity{"field", 7, "map"};
+  bool map_lookup_available{true};
   std::vector<GoalPlanStatus> statuses;
   std::vector<GoalPlanPathActivation> activations;
   mutable std::mutex planner_requests_mutex;
@@ -147,7 +149,10 @@ struct Fixture {
     GoalPlanActions actions;
     actions.preempt_rolling = [](const std::string &) { return true; };
     actions.clear_external_inspection = [] {};
-    actions.current_map_identity = [this] { return GoalPlanMapIdentityResult{map_identity, {}}; };
+    actions.current_map_identity = [this] {
+      return map_lookup_available ? GoalPlanMapIdentityResult{map_identity, {}}
+                                  : GoalPlanMapIdentityResult{std::nullopt, "lookup_pending"};
+    };
     actions.publish_status = [this](const GoalPlanStatus &status) { statuses.push_back(status); };
     actions.inspection_active = [this] { return inspection_active; };
     actions.inspection_leg_failed = [](const std::string &, double) {};
@@ -519,7 +524,7 @@ void testExternalTerminalFailureWaitsForStopAndEndsWithoutReplanning() {
   auto event = fixture.recoveryEvent();
   event.outcome.replan_trigger.reset();
   event.outcome.terminal_failure_intent = true;
-  event.outcome.reason = "dynamic_resume_timeout";
+  event.outcome.reason = "localization_not_tracking";
   const auto pending = fixture.coordinator.handleAutonomyOutcome(fixture.frameInput(10.0), event);
   require(pending.handled && pending.terminal_after_stop && pending.terminal_intent_id != 0U &&
               pending.terminal_task_id == "task-a" && !pending.replan_started &&
@@ -527,7 +532,7 @@ void testExternalTerminalFailureWaitsForStopAndEndsWithoutReplanning() {
           "external terminal failure must defer one terminal without restarting planning");
   const auto &ticket = pending.terminal_after_stop->delivery_ticket;
   require(ticket.statuses.size() == 1U && ticket.statuses.front().state == NavigationGoalState::Failed &&
-              ticket.statuses.front().reason == "dynamic_resume_timeout" &&
+              ticket.statuses.front().reason == "localization_not_tracking" &&
               ticket.statuses.front().request_id == "request-a",
           "external failure terminal lost its reason or goal identity");
   fixture.confirmation = StopConfirmationState::TimedOut;
@@ -1093,7 +1098,7 @@ void testReplacementCompletionDefersBActivationUntilOldActiveTerminalAck() {
 
 void testReplacementWaitsForFreshInputsThenReplansFromStoppedPose() {
   for (const char *reason : {"local_collision_missing", "local_collision_future",
-                             "collision_stale", "local_collision_incomplete"}) {
+                             "collision_stale"}) {
     Fixture fixture;
     fixture.activate(fixture.request());
     auto replacement = fixture.request("task-b", "request-b");
@@ -1198,7 +1203,7 @@ void testReplacementInputWaitStillHonorsCancelAndSupersession() {
   }
 }
 
-void testReplacementInputFaultsStillFailInsteadOfWaiting() {
+void testReplacementInputFaultsWaitUnlessClockRegressed() {
   for (const bool replan_started : {false, true}) {
     for (const char *reason : {"simulation_clock_regressed", "odom_velocity_out_of_bounds",
                               "localization_not_tracking"}) {
@@ -1227,19 +1232,41 @@ void testReplacementInputFaultsStillFailInsteadOfWaiting() {
       auto fault = fixture.frameInput(33.1);
       fault.fresh_admission.input_ready = false;
       fault.fresh_admission.input_gate_reason = reason;
-      const auto failed = fixture.coordinator.advancePlanningCycle(fault);
-      require(failed.terminal_after_stop && failed.terminal_task_id == "task-b" &&
-                  failed.reason == std::string{"input_gate_"} + reason,
-              "irrecoverable input fault was held indefinitely or activated replacement");
-      fixture.commitTerminal(failed);
+      const auto observed = fixture.coordinator.advancePlanningCycle(fault);
+      if (std::string_view(reason) == "simulation_clock_regressed") {
+        require(observed.terminal_after_stop && observed.terminal_task_id == "task-b" &&
+                    observed.reason == std::string{"input_gate_"} + reason,
+                "invalid clock input was not terminalized");
+        fixture.commitTerminal(observed);
+        fixture.release_blocked.store(true);
+        const auto recovered =
+            fixture.coordinator.advancePlanningCycle(fixture.frameInput(33.2));
+        const auto terminal_state = replan_started ? NavigationGoalState::Cancelled
+                                                    : NavigationGoalState::Failed;
+        require(!recovered.plan_advance.path_activated &&
+                    fixture.countStatus("task-b", terminal_state) == 1U &&
+                    fixture.countStatus("task-b", NavigationGoalState::PathActive) == 0U,
+                "clock-failed replacement returned without a new request");
+        continue;
+      }
+
+      require(!observed.terminal_after_stop && observed.zero_kept_fresh,
+              "transient input fault interrupted the replacement task");
       fixture.release_blocked.store(true);
-      const auto recovered = fixture.coordinator.advancePlanningCycle(fixture.frameInput(33.2));
-      const auto terminal_state = replan_started ? NavigationGoalState::Cancelled
-                                                : NavigationGoalState::Failed;
-      require(!recovered.plan_advance.path_activated &&
-                  fixture.countStatus("task-b", terminal_state) == 1U &&
-                  fixture.countStatus("task-b", NavigationGoalState::PathActive) == 0U,
-              "failed input-fault replacement returned without a new request");
+      bool resumed = false;
+      for (int i = 0; i < 1000; ++i) {
+        const auto recovered =
+            fixture.coordinator.advancePlanningCycle(fixture.frameInput(33.2 + i * 0.001));
+        require(!recovered.terminal_after_stop,
+                "transient input fault produced a terminal on the recovery tick");
+        if (recovered.plan_advance.path_activated) {
+          resumed = true;
+          break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      require(resumed && fixture.goal_plan.snapshot().active_task_id == "task-b",
+              "replacement did not resume after transient input recovery");
     }
   }
 }
@@ -2036,7 +2063,7 @@ void testOnlyNewTaskRestoresRetryBudget() {
 
 void testPendingGoalDrainsAndResumesWithFreshBudget() {
   for (const char *reason : {"", "local_collision_missing", "local_collision_future",
-                             "collision_stale", "local_collision_incomplete"}) {
+                             "collision_stale"}) {
     Fixture fixture;
     fixture.activate(fixture.request());
     fixture.block_on_call.store(2);
@@ -2381,6 +2408,51 @@ void testInvalidTimeAdmissionAndIdentityFailClosed() {
           "map identity change did not fail closed");
 }
 
+void testReplanKeepsGoalAcrossPoseAndMapLookupGaps() {
+  Fixture fixture;
+  fixture.activate(fixture.request());
+  require(fixture.arm(300.0).reason == "backoff_pending", "fixture did not arm replan");
+  auto missing_pose = fixture.frameInput(300.5);
+  missing_pose.fresh_admission.map_position.reset();
+  const auto held = fixture.coordinator.advancePlanningCycle(missing_pose);
+  require(held.reason == "replan_waiting_for_pose" && held.zero_kept_fresh &&
+              !held.terminal_after_stop && fixture.planner_calls == 1 &&
+              fixture.coordinator.snapshot().state ==
+                  lingtu::nav::endpoint::BoundedGoalReplanState::kBackoffPending,
+          "temporary pose gap ended the goal or consumed the pending search");
+  fixture.map_lookup_available = false;
+  const auto started = fixture.coordinator.advancePlanningCycle(fixture.frameInput(300.6));
+  require(started.replan_started && !started.terminal_after_stop,
+          "temporary map lookup gap rejected the replan");
+  GoalReplanRuntimeResult completed;
+  for (int i = 0; i < 1000; ++i) {
+    completed = fixture.coordinator.advancePlanningCycle(fixture.frameInput(300.7));
+    if (completed.plan_advance.completion_consumed) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  require(completed.plan_advance.path_activated && !completed.terminal_after_stop &&
+              fixture.activations.size() == 2U &&
+              fixture.activations.back().map_identity->content_epoch == 7U,
+          "map-bound replan was discarded during a lookup gap");
+
+  Fixture changed;
+  changed.activate(changed.request());
+  require(changed.arm(310.0).reason == "backoff_pending", "map-change fixture did not arm");
+  changed.map_lookup_available = false;
+  changed.map_identity.content_epoch = 8U;
+  require(changed.coordinator.advancePlanningCycle(changed.frameInput(310.5)).replan_started,
+          "map-change search did not start");
+  for (int i = 0; i < 1000; ++i) {
+    completed = changed.coordinator.advancePlanningCycle(changed.frameInput(310.6));
+    if (completed.terminal_after_stop) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  require(completed.terminal_after_stop &&
+              completed.reason == "active_map_changed_during_replan" &&
+              changed.activations.size() == 1U,
+          "lookup gap allowed a replan from a different map to replace the bound route");
+}
+
 void testActiveShutdownCreatesProjectedCancelledIntentAndExactDuplicateReplay() {
   Fixture fixture;
   fixture.activate(fixture.request());
@@ -2559,7 +2631,7 @@ int main() {
   testReplacementCompletionDefersBActivationUntilOldActiveTerminalAck();
   testReplacementWaitsForFreshInputsThenReplansFromStoppedPose();
   testReplacementInputWaitStillHonorsCancelAndSupersession();
-  testReplacementInputFaultsStillFailInsteadOfWaiting();
+  testReplacementInputFaultsWaitUnlessClockRegressed();
   testReplacementActivationAfterAckRechecksFreshEstopAdmission();
   testReplacementActivationAfterAckRechecksStoredMapIdentity();
   testDeferredReplacementInterruptionsCloseBWithExactNonProjectingTerminals();
@@ -2582,6 +2654,7 @@ int main() {
   testInspectionInterruptionsProduceCancelledTicketsWithDiagnosticReasons();
   testIneligibleOutcomesNeverTakeOver();
   testInvalidTimeAdmissionAndIdentityFailClosed();
+  testReplanKeepsGoalAcrossPoseAndMapLookupGaps();
   testActiveShutdownCreatesProjectedCancelledIntentAndExactDuplicateReplay();
   testPlanningOnlyShutdownCreatesNonProjectedCancelledIntent();
   testShutdownWithoutGoalCreatesNoTerminalIntent();

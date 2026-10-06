@@ -22,16 +22,19 @@ that fails the corrected collision check is rejected or reoptimized.
 
 LingTu-specific code is only the boundary:
 
-- `grid.*` exposes Mapd's complete inflated bitmap through the official
+- `grid.*` exposes Mapd's inflated bitmap through the official
   `GridMap::getInflateOccupancy()` query. It does not build, inflate, score, or
   smooth another map. The segment query also reads this bitmap, traversing
   cells between successive front/rear cylinder-center samples without
   allocating a temporary map or container. Global support, step-height and
   slope settings do not enter this adapter. The seven-point support gate and
   its per-probe free-ray requirement have been removed; sparse ground returns
-  cannot invalidate an otherwise complete local collision bitmap. Mapd still
+  cannot invalidate an otherwise geometry-valid local collision bitmap. Mapd still
   retains the measured occupied/free evidence, and autonomous route support
-  remains OctoPlanner's responsibility.
+  remains OctoPlanner's responsibility. A zero collision result means no
+  inflated obstacle was found at the queried cells; it does not assert that
+  those cells have measured free-space evidence. `knownFreeStorage` remains
+  evidence, not an additional local collision gate.
 - `backend.*` converts `LocalPlanRequest` odometry and Route/MotionIntent into
   official FSM inputs, then converts the emitted B-spline message into
   `SplineTarget`. An emergency-stop state is exposed as `NearFieldStop`,

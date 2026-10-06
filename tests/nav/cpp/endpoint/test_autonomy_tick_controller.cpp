@@ -61,6 +61,7 @@ struct Fixture {
   int velocity_stop_calls{0};
   int stop_calls{0};
   int pause_calls{0};
+  double now_s{42.0};
   const float *tick_obstacles{nullptr};
   int tick_obstacle_count{-1};
   double tick_stamp{-1.0};
@@ -92,14 +93,14 @@ struct Fixture {
     shaped_velocity.valid = true;
     actions.steady_now_s = [&] {
       ++now_calls;
-      return 42.0;
+      return now_s;
     };
     actions.current_map_identity = [&] {
       ++current_map_calls;
       return current_map;
     };
     actions.read_plan = [&](double now_s, TimingDiagnostics &observed_timing) {
-      require(near(now_s, 42.0), "planner input callback must receive the tick timestamp");
+      require(near(now_s, this->now_s), "planner input callback must receive the tick timestamp");
       require(&observed_timing == &timing,
               "planner input callback must receive the endpoint timing object");
       ++compute_calls;
@@ -229,6 +230,108 @@ void testBlockedInputGateFailsClosedWithoutPlanning() {
           "blocked input must reset smoother state with the gate reason");
 }
 
+void testLocalizationHoldRecoversWithoutTerminalState() {
+  Fixture fixture;
+  fixture.gate.ready = false;
+  fixture.gate.reason = "localization_not_tracking";
+  AutonomyTickController controller(fixture.actions, fixture.control());
+
+  const auto held = controller.tick(fixture.input());
+  require(held.handled && held.publish.cmd_vel && near(held.publish.command.vx, 0.0) &&
+              held.outcome.kind == AutonomyTickOutcomeKind::kNone && fixture.tick_calls == 0,
+          "localization loss must hold motion without immediately terminating the goal");
+  fixture.now_s += 20.0;
+  fixture.gate.reason = "recovering";
+  require(controller.tick(fixture.input()).outcome.kind == AutonomyTickOutcomeKind::kNone,
+          "a temporary input hold must not become a terminal state");
+  fixture.now_s += 9.0;
+  fixture.gate.ready = true;
+  fixture.gate.reason.clear();
+  fixture.next_output.cmd_vel = {0.2, 0.0, 0.0};
+  const auto resumed = controller.tick(fixture.input());
+  require(resumed.outcome.kind == AutonomyTickOutcomeKind::kNone &&
+              fixture.tick_calls == 1 && near(resumed.publish.command.vx, 0.2),
+          "a healthy gate must resume through normal checked autonomy");
+
+  fixture.now_s += 2.0;
+  fixture.gate.ready = false;
+  fixture.gate.reason = "localization_not_tracking";
+  require(controller.tick(fixture.input()).outcome.kind == AutonomyTickOutcomeKind::kNone,
+          "a goal may hold again after a later localization loss");
+}
+
+void testLocalizationHoldDoesNotExpireTheGoal() {
+  for (const std::string gate_state : {"localization_not_tracking", "recovering",
+                                       "cloud_stale", "ready"}) {
+    Fixture fixture;
+    fixture.gate.ready = false;
+    fixture.gate.reason = "localization_not_tracking";
+    AutonomyTickController controller(fixture.actions, fixture.control());
+    controller.tick(fixture.input());
+    fixture.now_s += 20.0;
+    fixture.gate.reason = "cloud_stale";
+    require(controller.tick(fixture.input()).outcome.kind == AutonomyTickOutcomeKind::kNone,
+            "an intervening input gap must retain the localization recovery window");
+    fixture.now_s += 10.0;
+    fixture.gate.ready = gate_state == "ready";
+    fixture.gate.reason = gate_state;
+    fixture.next_output.cmd_vel = {0.2, 0.0, 0.0};
+    const auto held_or_resumed = controller.tick(fixture.input());
+    if (gate_state == "ready") {
+      require(held_or_resumed.outcome.kind == AutonomyTickOutcomeKind::kNone &&
+                  fixture.tick_calls == 1 && near(held_or_resumed.publish.command.vx, 0.2),
+              "a recovered gate must resume the same goal after a long hold");
+    } else {
+      require(held_or_resumed.outcome.kind == AutonomyTickOutcomeKind::kNone &&
+                  held_or_resumed.publish.cmd_vel && near(held_or_resumed.publish.command.vx, 0.0) &&
+                  fixture.tick_calls == 0 && fixture.commit_calls == 0 &&
+                  held_or_resumed.clear_local_path && held_or_resumed.local &&
+                  held_or_resumed.local->reason == gate_state,
+              "a long temporary input gap must hold zero without terminating the goal");
+    }
+  }
+}
+
+void testLocalizationHoldDoesNotCrossGoalOrControlChanges() {
+  for (const std::string transition : {"new_request", "new_epoch", "new_map", "inactive",
+                                       "authority_hold"}) {
+    Fixture fixture;
+    fixture.gate.ready = false;
+    fixture.gate.reason = "localization_not_tracking";
+    AutonomyTickController controller(fixture.actions, fixture.control());
+    controller.tick(fixture.input());
+    fixture.now_s += 20.0;
+    auto changed = fixture.input();
+    if (transition == "new_request") changed.active_goal_identity->request_id = "request-b";
+    if (transition == "new_epoch") ++changed.active_goal_identity->goal_epoch;
+    if (transition == "new_map") ++changed.active_goal_identity->map_identity.content_epoch;
+    if (transition == "inactive") changed.path_active = false;
+    if (transition == "authority_hold") changed.motion_allowed = false;
+    controller.tick(changed);
+    fixture.now_s += 11.0;
+    changed.path_active = true;
+    changed.motion_allowed = true;
+    fixture.gate.reason = "localization_not_tracking";
+    require(controller.tick(changed).outcome.kind == AutonomyTickOutcomeKind::kNone,
+            "a new goal or control interruption must not inherit stale hold state");
+  }
+}
+
+void testLocalizationHoldDoesNotTerminalizeRollingOrUnownedPaths() {
+  for (const bool rolling : {false, true}) {
+    Fixture fixture;
+    fixture.gate.ready = false;
+    fixture.gate.reason = "localization_not_tracking";
+    AutonomyTickController controller(fixture.actions, fixture.control());
+    auto input = fixture.input(true, true, rolling);
+    if (!rolling) input.active_goal_identity.reset();
+    controller.tick(input);
+    fixture.now_s += 31.0;
+    require(controller.tick(input).outcome.kind == AutonomyTickOutcomeKind::kNone,
+            "a localization hold must not terminalize rolling or unowned paths");
+  }
+}
+
 void testInputsExpiringDuringPlanningBlockPublicationWithoutCompletingGoal() {
   for (const char *reason : {"cloud_stale", "collision_stale", "odom_stale",
                              "driver_control_stale"}) {
@@ -280,7 +383,8 @@ void testInputsExpiringDuringPlanningBlockPublicationWithoutCompletingGoal() {
 }
 
 void testActiveMapIdentityGuardFailsClosedBeforePlanning() {
-  auto expect_blocked = [](Fixture &fixture, const char *expected_reason) {
+  auto expect_blocked = [](Fixture &fixture, const char *expected_reason,
+                           bool terminal = true) {
     fixture.next_output.cmd_vel = {0.3, 0.0, 0.0};
     fixture.previous.tracking.active = true;
     fixture.previous.tracking.trajectoryId = 17;
@@ -299,9 +403,14 @@ void testActiveMapIdentityGuardFailsClosedBeforePlanning() {
     require(result.publish.cmd_vel && near(result.publish.command.vx, 0.0) &&
                 near(result.publish.command.wz, 0.0),
             "map identity blocker must publish only zero");
-    require(result.outcome.kind == AutonomyTickOutcomeKind::kGoalFailed &&
-                result.outcome.reason == expected_reason,
-            "map identity blocker must fail the active goal with a stable reason");
+    if (terminal) {
+      require(result.outcome.kind == AutonomyTickOutcomeKind::kGoalFailed &&
+                  result.outcome.reason == expected_reason,
+              "map identity blocker must fail the active goal with a stable reason");
+    } else {
+      require(result.outcome.kind == AutonomyTickOutcomeKind::kNone,
+              "a temporary map lookup gap must hold without terminating the active goal");
+    }
     require(result.local.has_value() && result.local->reason == expected_reason &&
                 result.local->final_safety_reason == expected_reason &&
                 result.local->final_safety_stopped,
@@ -320,7 +429,7 @@ void testActiveMapIdentityGuardFailsClosedBeforePlanning() {
   Fixture unavailable_current;
   unavailable_current.current_map.identity.reset();
   unavailable_current.current_map.reason = "active_map_lookup_failed";
-  expect_blocked(unavailable_current, "active_map_unavailable_during_navigation");
+  expect_blocked(unavailable_current, "active_map_unavailable_during_navigation", false);
 
   Fixture changed_map_id;
   changed_map_id.current_map.identity->map_id = "field-b";
@@ -727,6 +836,10 @@ int main() {
   try {
     testIdleAndAuthorityDeniedDoNothing();
     testBlockedInputGateFailsClosedWithoutPlanning();
+    testLocalizationHoldRecoversWithoutTerminalState();
+    testLocalizationHoldDoesNotExpireTheGoal();
+    testLocalizationHoldDoesNotCrossGoalOrControlChanges();
+    testLocalizationHoldDoesNotTerminalizeRollingOrUnownedPaths();
     testInputsExpiringDuringPlanningBlockPublicationWithoutCompletingGoal();
     testActiveMapIdentityGuardFailsClosedBeforePlanning();
     testNormalTickProducesBorrowedInputIntentsAndDiagnostics();

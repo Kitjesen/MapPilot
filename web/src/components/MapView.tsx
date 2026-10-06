@@ -3,7 +3,7 @@ import { ArrowLeft, Map, FolderOpen, Trash2, RefreshCw, Save, Pencil, Navigation
 import type { MapInfo, NavigationStatusResponse, SessionEvent, ToastKind } from '../types'
 import * as api from '../services/api'
 import { formatMapSaveProgress, pendingMapSaveStatus, savedMapStatus, mapSaveProgressValue, mapSaveElapsedMs, formatMapSaveElapsed, type MapSaveStatus } from '../services/mapSavePresentation.ts'
-import { mapIsActivationReady, mapSaveBlockedReason, navigationRuntimeReady, navigationSessionReady } from '../services/mapReadiness'
+import { mapIsActivationReady, mapSaveBlockedReason, navigationGoalQueueReady } from '../services/mapReadiness'
 import { PointCloudViewer, type PointCloudPick } from './PointCloudViewer'
 import { PromptModal, ConfirmModal } from './Modal'
 import { text, type Locale } from '../i18n'
@@ -22,8 +22,6 @@ interface MapViewProps {
   navigationStatus: NavigationStatusResponse | null
   showToast: (msg: string, kind?: ToastKind) => void
   locale: Locale
-  motionStartAllowed: boolean
-  motionStartBlockedReason: string
 }
 // ── Map card ───────────────────────────────────────────────────
 interface CardProps {
@@ -95,8 +93,6 @@ export function MapView({
   navigationStatus,
   showToast,
   locale,
-  motionStartAllowed,
-  motionStartBlockedReason,
 }: MapViewProps) {
   const observe = isObservationMode()
   const saveBlockedReason = mapSaveBlockedReason(session)
@@ -166,8 +162,9 @@ export function MapView({
       api.fetchSession(),
       api.fetchNavigationStatus(),
     ])
-    if (!navigationRuntimeReady(session, navigation, mapName)) {
-      throw new Error(`当前导航未在地图 ${mapName} 就绪，请先确认已加载该地图、定位有效且可接收目标`)
+    if (!navigationGoalQueueReady(session, mapName)
+      || navigation.goal_admission.state !== 'ACCEPTING') {
+      throw new Error(`当前导航未在地图 ${mapName} 接收目标，请确认地图已加载且导航服务在线`)
     }
   }
 
@@ -267,10 +264,6 @@ export function MapView({
 
   const confirmPickedGoal = async () => {
     if (!pickedPoint || !selectedMap) return
-    if (!motionStartAllowed) {
-      showToast(motionStartBlockedReason, 'error')
-      return
-    }
     try {
       await ensureNavigationSession(selectedMap)
       const res = await api.navigateClick(pickedPoint.x, pickedPoint.y, {
@@ -306,10 +299,10 @@ export function MapView({
   const filteredMaps = maps.filter(map => map.name.toLowerCase().includes(search.trim().toLowerCase()))
   const selectedInfo = maps.find(map => map.name === selectedMap)
   const canPickGoal = !observe && selectedMap !== null && goalPickingMap === selectedMap
-    && session !== null && navigationSessionReady(session, selectedMap)
+    && session !== null && navigationGoalQueueReady(session, selectedMap)
   const goalAdmissionReady = navigationStatus?.goal_admission.state === 'ACCEPTING'
   const selectedNavigationReady = !observe && selectedMap !== null && selectedInfo !== undefined
-    && mapIsActivationReady(selectedInfo) && session !== null && navigationSessionReady(session, selectedMap)
+    && mapIsActivationReady(selectedInfo) && session !== null && navigationGoalQueueReady(session, selectedMap)
     && goalAdmissionReady
   const selectedMapActive = selectedMap !== null && session?.active_map === selectedMap
 
@@ -427,7 +420,7 @@ export function MapView({
               {filteredMaps.map(map => <MapCard key={map.name} m={map} selected={selectedMap === map.name}
                 readOnly={observe}
                 navigationReady={navigationStatus !== null && goalAdmissionReady
-                  && session !== null && navigationSessionReady(session, map.name)}
+                  && session !== null && navigationGoalQueueReady(session, map.name)}
                 onPreview={togglePreview} onNavigate={handleNavigate} onRename={handleRename} onDelete={handleDelete} />)}
             </ul>}
             {!loading && maps.length > 0 && filteredMaps.length === 0 && <p className={styles.stateMsg}>没有找到匹配的地图</p>}
@@ -446,7 +439,7 @@ export function MapView({
               {pickedPoint && <span>{pickedPoint.x.toFixed(2)}, {pickedPoint.y.toFixed(2)}, {pickedPoint.z.toFixed(2)} m</span>}
             </div>
             {pickedPoint && <button className={styles.primaryButton} onClick={confirmPickedGoal}
-              disabled={!motionStartAllowed} title={motionStartAllowed ? '发送导航目标' : motionStartBlockedReason}>发送目标</button>}
+              title="发送导航目标；定位暂时不可用时会排队等待">发送目标</button>}
             <button className={styles.quietButton} onClick={() => { setPickedPoint(null); setGoalPickingMap(null) }}>取消</button>
           </div>}
         </div>

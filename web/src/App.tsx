@@ -286,8 +286,6 @@ function Dashboard() {
             navigationStatus={liveNavigationStatus(sseState, nowMs / 1000)}
             showToast={showToast}
             locale={locale}
-            motionStartAllowed={motionStartGate.allowed}
-            motionStartBlockedReason={motionStartBlockedReason}
           />
         )}
         {activeTab === 'slam' && <SlamStatusPanel sseState={sseState} showToast={showToast} locale={locale} />}

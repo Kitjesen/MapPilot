@@ -173,6 +173,23 @@ void testGoalDispatchFailureFeedback() {
     Executor executor;
     start(executor, makeRoute());
     InspectionRuntimeController runtime(executor);
+    const auto first = runtime.tick(inputAt(1.1));
+    require(first.goal_dispatch.has_value(), "transient dispatch setup emits a goal");
+    const auto completion =
+        runtime.completeGoalDispatch(false, "map_odom_tf_not_ready", 1.2);
+    require(completion.consumed, "transient dispatch rejection is consumed");
+    require(executor.status().state == RunState::kPlanning &&
+                executor.status().reason == "route_started",
+            "transient pose gap keeps the inspection point pending");
+    const auto retry = runtime.tick(inputAt(1.3));
+    require(retry.goal_dispatch.has_value(),
+            "transient pose gap retries the same inspection goal");
+  }
+
+  {
+    Executor executor;
+    start(executor, makeRoute());
+    InspectionRuntimeController runtime(executor);
     const auto tick = runtime.tick(inputAt(1.1));
     require(tick.goal_dispatch.has_value(), "goal intent emitted");
     const auto completion = runtime.completeGoalDispatch(false, "goal_rejected", 1.2);
@@ -194,6 +211,21 @@ void testGoalDispatchFailureFeedback() {
     require(completion.clear_motion_reason == std::optional<std::string>{"planning_timeout"},
             "late planning start requests fail-closed motion clear");
   }
+}
+
+void testMissingMapSnapshotDoesNotFailTask() {
+  Executor executor;
+  start(executor, makeRoute());
+  InspectionRuntimeController runtime(executor);
+  startNavigation(executor, runtime);
+
+  auto missing = inputAt(2.0);
+  missing.active_map.reset();
+  const auto result = runtime.tick(missing);
+  require(result.ordered_intents.empty(),
+          "temporary missing map snapshot does not emit a stop");
+  require(executor.active() && executor.status().state == RunState::kNavigating,
+          "temporary missing map snapshot keeps the inspection active");
 }
 
 void testOnlyPostArrivalOdometrySettles() {
@@ -424,6 +456,7 @@ int main() {
   testStatusCadenceAndValidation();
   testGoalDispatchAndProgress();
   testGoalDispatchFailureFeedback();
+  testMissingMapSnapshotDoesNotFailTask();
   testOnlyPostArrivalOdometrySettles();
   testEvidenceDispatchFailure();
   testEvidenceResultOrderingAndFallbackReason();

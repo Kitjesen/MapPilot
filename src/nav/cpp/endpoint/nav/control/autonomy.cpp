@@ -120,8 +120,13 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
       result.publish.cmd_vel = input.publish_cmd_vel;
       result.publish.command = {};
       result.delta.cmd_vel_count = input.publish_cmd_vel ? 1U : 0U;
-      result.outcome.kind = AutonomyTickOutcomeKind::kGoalFailed;
-      result.outcome.reason = map_blocker;
+      // A map service lookup can be temporarily unavailable during a reload or
+      // DDS reconnect. Hold zero and keep the goal so the next valid identity
+      // can resume it; other map identity mismatches still fail closed.
+      if (map_blocker != "active_map_unavailable_during_navigation") {
+        result.outcome.kind = AutonomyTickOutcomeKind::kGoalFailed;
+        result.outcome.reason = map_blocker;
+      }
       return result;
     }
     const auto planner_inputs = actions_.read_plan(now_s, input.timing);
@@ -227,7 +232,9 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
   }
 
   if (input.path_active && !input.input_gate.ready) {
-    final_control_.stop(now_s, inputGateStopReason(input.input_gate.reason));
+    const std::string reason = input.input_gate.reason;
+    const std::string stop_reason = inputGateStopReason(reason);
+    final_control_.stop(now_s, stop_reason);
     result.handled = true;
     result.clear_local_path = true;
     result.clear_local_planner_debug = true;
@@ -237,12 +244,12 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
     local.path_found = false;
     local.tracking.executionFrozen = local.tracking.active;
     local.near_field_stop = true;
-    local.reason = input.input_gate.reason;
+    local.reason = reason;
     local.final_safety_applied = false;
     local.final_safety_stopped = true;
     local.final_safety_slowed = false;
     local.final_safety_limited = false;
-    local.final_safety_reason = inputGateStopReason(input.input_gate.reason);
+    local.final_safety_reason = stop_reason;
     local.final_safety_obstacle_distance_m = -1.0;
     local.final_safety_traversability_cost = -1.0;
     local.path_follower_cmd_vel = {};

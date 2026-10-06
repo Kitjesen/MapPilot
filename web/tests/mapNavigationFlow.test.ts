@@ -5,6 +5,7 @@ import test from 'node:test'
 import {
   mapIsActivationReady,
   mapSaveBlockedReason,
+  navigationGoalQueueReady,
   navigationRuntimeReady,
   navigationSessionReady,
   productReady,
@@ -63,13 +64,15 @@ test('map page navigates only when the current Product is ready', () => {
   assert.doesNotMatch(apiSource, /activateMap|\/api\/v1\/map\/activate/)
 })
 
-test('map-point goal is gated behind navigation-session readiness', () => {
+test('map-point goal is gated behind the active-map goal queue contract', () => {
   const readinessCheck = source.indexOf('ensureNavigationSession')
   const goalDispatch = source.indexOf('api.navigateClick')
 
   assert.notEqual(readinessCheck, -1)
   assert.notEqual(goalDispatch, -1)
   assert.ok(readinessCheck < goalDispatch)
+  assert.match(source, /navigationGoalQueueReady/)
+  assert.doesNotMatch(source, /if \(!motionStartAllowed\)/)
 })
 
 test('map page uses the map-list can_activate gate and requires both artifacts', () => {
@@ -129,6 +132,28 @@ test('navigation session must match the map and have live localization', () => {
     ),
     false,
   )
+})
+
+test('goal queue readiness does not require the next pose sample', () => {
+  const base = {
+    mode: 'navigating' as const,
+    env: 'real' as const,
+    product: 'nav' as const,
+    active_map: 'demo',
+    saved_active_map: 'demo',
+    map_has_pcd: true,
+    map_has_octomap: true,
+    since: 1,
+    icp_quality: 0.1,
+    localizer_ready: false,
+    pose_fresh: false,
+    explorer_available: false,
+  }
+
+  assert.equal(navigationGoalQueueReady(base, 'demo'), true)
+  assert.equal(navigationGoalQueueReady({ ...base, active_map: 'other' }, 'demo'), false)
+  assert.equal(navigationGoalQueueReady({ ...base, map_has_octomap: false }, 'demo'), false)
+  assert.equal(navigationGoalQueueReady({ ...base, product: null }, 'demo'), false)
 })
 
 test('scene saved-map preview opens the independent viewer without switching Product', () => {

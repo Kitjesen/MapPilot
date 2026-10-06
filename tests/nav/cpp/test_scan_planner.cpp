@@ -28,6 +28,55 @@ using nav_kernel::RouteTarget;
 using nav_kernel::SplineTarget;
 using nav_kernel::Vec3;
 
+TEST(ScanGridAdapter, TransportCountersDoNotOverrideValidCollisionGeometry) {
+  LocalPlannerParams params;
+  params.scan.voxelResolution = .1;
+  params.scan.cylinderOffset = 0;
+  CollisionBitmap bitmap({-2,-2,-1}, {2,2,2}, .1);
+  bitmap.occupy({.05,.05,.45});
+  LocalPlanRequest request;
+  request.environment.collision = bitmap.view();
+  request.environment.collision.complete = false;
+  request.environment.collision.resetEpoch = 0;
+  request.environment.collision.observationSequence = 0;
+  request.environment.collision.generation = 0;
+  const nav_kernel::local::scan::Grid grid(params, request);
+  ASSERT_TRUE(grid.valid()) << grid.reason();
+  EXPECT_EQ(grid.inflatedOccupancy({.05,.05,.45},0),1);
+  EXPECT_EQ(grid.inflatedOccupancy({1,1,.45},0),0);
+
+  request.environment.collision.inflatedBytes = 0;
+  const nav_kernel::local::scan::Grid malformed(params, request);
+  EXPECT_FALSE(malformed.valid());
+}
+
+TEST(ScanGridAdapter, InvalidOptionalPredictionKeepsMeasuredObstacles) {
+  LocalPlannerParams params;
+  params.scan.voxelResolution = .1;
+  params.scan.cylinderOffset = 0;
+  CollisionBitmap bitmap({-2,-2,-1}, {2,2,2}, .1);
+  bitmap.occupy({.05,.05,.45});
+  const nav_kernel::PredictedObstacle predictions[] = {
+      {{1,1,.4},{1,1,.4},-.1,.1,.8},
+      {{1,0,.4},{1,0,.4},.1,.1,.8},
+  };
+  LocalPlanRequest request;
+  request.clock.timestampS = 1;
+  request.environment.collision = bitmap.view(1,1);
+  request.environment.predictions = {predictions,2,2,1};
+  const nav_kernel::local::scan::Grid grid(params, request);
+  ASSERT_TRUE(grid.valid()) << grid.reason();
+  EXPECT_EQ(grid.predictionCount(),1U);
+  EXPECT_EQ(grid.inflatedOccupancy({.05,.05,.45},0),1);
+  EXPECT_EQ(grid.inflatedOccupancy({1,0,.45},0),1);
+
+  request.environment.predictions.horizonS = 0;
+  const nav_kernel::local::scan::Grid invalid_time(params, request);
+  ASSERT_TRUE(invalid_time.valid()) << invalid_time.reason();
+  EXPECT_EQ(invalid_time.predictionCount(),0U);
+  EXPECT_EQ(invalid_time.inflatedOccupancy({.05,.05,.45},0),1);
+}
+
 TEST(ScanGridAdapter, SparseGroundEvidenceDoesNotGateCollisionQueries) {
   LocalPlannerParams params;
   params.vehicleLength = .76;

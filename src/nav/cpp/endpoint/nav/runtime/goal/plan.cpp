@@ -13,12 +13,16 @@ namespace lingtu::nav::endpoint {
 
 bool goalPlanInputGapIsRecoverable(const std::string &reason) noexcept {
   return reason == "recovering" || reason == "odom_missing" || reason == "odom_stale" ||
-         reason == "tf_missing" || reason == "tf_stale" || reason == "cloud_missing" ||
-         reason == "cloud_stale" || localCollisionInputHold(reason) ||
+         reason == "odom_future" || reason == "odom_velocity_nonfinite" ||
+         reason == "odom_velocity_out_of_bounds" || reason == "tf_missing" ||
+         reason == "tf_future" || reason == "tf_stale" || reason == "cloud_missing" ||
+         reason == "cloud_future" || reason == "cloud_stale" || localCollisionInputHold(reason) ||
          reason == "traversability_missing" ||
-         reason == "traversability_stale" || reason == "localization_health_missing" ||
-         reason == "localization_health_stale" || reason == "simulation_clock_missing" ||
-         reason == "simulation_clock_stale";
+         reason == "traversability_future" || reason == "traversability_stale" ||
+         reason == "localization_health_missing" || reason == "localization_health_future" ||
+         reason == "localization_health_stale" || reason == "localization_not_tracking" ||
+         reason == "localization_unhealthy" || reason == "localization_catastrophic" ||
+         reason == "simulation_clock_missing" || reason == "simulation_clock_stale";
 }
 
 GoalPlanController::GoalPlanController(GlobalPlanTask::Planner planner, GoalPlanActions actions)
@@ -75,22 +79,23 @@ GoalPlanSubmitResult GoalPlanController::submit(const GoalPlanRequest &request,
     return reject(request.decode_error.empty() ? "invalid_goal" : request.decode_error, true, true);
   }
   diagnostics_.goal = request.target->position;
-  if (!context.map_position) {
-    return reject(context.odometry_ready ? "map_odom_tf_not_ready" : "odometry_not_ready");
-  }
-  diagnostics_.start = *context.map_position;
-
   if (!context.planner_map_configured) {
     return reject(context.planner_map_missing_reason);
   }
   const bool projects_to_navigation_state =
       active_task_id_.empty() || active_task_id_ == request.task_id;
-  if (request.origin == GoalPlanOrigin::kExternal && (pending_plan_start_ || task_.busy())) {
-    task_.cancel();
-    publishPendingTerminal(lingtu::message::NavigationGoalState::Cancelled,
-                           "superseded_by_new_goal");
+  const bool pose_gap = !context.map_position;
+  if (request.origin == GoalPlanOrigin::kExternal &&
+      (pending_plan_start_ || task_.busy() || pose_gap)) {
+    if (task_.busy()) {
+      task_.cancel();
+    }
+    if (pending_plan_start_) {
+      publishPendingTerminal(lingtu::message::NavigationGoalState::Cancelled,
+                             "superseded_by_new_goal");
+    }
     // A replan belongs to the still-active path; only its search is superseded.
-    if (!planning_is_replan_) {
+    if (!planning_is_replan_ && !planning_request_id_.empty()) {
       finishPlanning(lingtu::message::NavigationGoalState::Cancelled, "superseded_by_new_goal");
     }
     clearPlanningIdentity();
@@ -103,6 +108,10 @@ GoalPlanSubmitResult GoalPlanController::submit(const GoalPlanRequest &request,
     diagnostics_.reason = "planning_queued";
     return {true, "planning_queued", false, false, false, std::nullopt};
   }
+  if (!context.map_position) {
+    return reject(context.odometry_ready ? "map_odom_tf_not_ready" : "odometry_not_ready");
+  }
+  diagnostics_.start = *context.map_position;
   if (task_.busy()) {
     return reject("global_planner_busy");
   }
@@ -153,10 +162,8 @@ GoalPlanSubmitResult GoalPlanController::replanActive(const GoalPlanAdmissionCon
   }
 
   GoalPlanMapIdentityResult current_map = actions_.current_map_identity();
-  if (!current_map.identity || !current_map.identity->valid()) {
-    return reject("active_map_unavailable_before_replan", false, true);
-  }
-  if (!lingtu::nav::plan::sameMapIdentity(*active_map_identity_, *current_map.identity)) {
+  if (current_map.identity && current_map.identity->valid() &&
+      !lingtu::nav::plan::sameMapIdentity(*active_map_identity_, *current_map.identity)) {
     return reject("active_map_changed_before_replan", false, true);
   }
 
@@ -244,8 +251,9 @@ GoalPlanController::resumePending(const GoalPlanAdmissionContext &fresh_context)
   if (active_map_identity_ && active_map_identity_->valid()) {
     GoalPlanMapIdentityResult current_map = actions_.current_map_identity();
     if (!current_map.identity || !current_map.identity->valid()) {
-      return reject_pending(lingtu::message::NavigationGoalState::Failed,
-                            "active_map_unavailable_before_pending_plan", false, true);
+      diagnostics_.accepted = false;
+      diagnostics_.reason = "active_map_unavailable_before_pending_plan";
+      return {false, diagnostics_.reason, false, false, true, std::nullopt};
     }
     if (!lingtu::nav::plan::sameMapIdentity(*active_map_identity_, *current_map.identity)) {
       return reject_pending(lingtu::message::NavigationGoalState::Failed,
@@ -272,6 +280,14 @@ GoalPlanController::resumePending(const GoalPlanAdmissionContext &fresh_context)
                           fresh_context.driver_control_blocker, true, true);
   }
   if (!fresh_context.input_ready && !localCollisionInputHold(fresh_context.input_gate_reason)) {
+    if (goalPlanInputGapIsRecoverable(fresh_context.input_gate_reason)) {
+      // Keep the queued plan and wait for the next valid input frame. A
+      // transient sensor gap must not turn a stopped replacement into a
+      // terminal task result.
+      diagnostics_.accepted = false;
+      diagnostics_.reason = inputGateStopReason(fresh_context.input_gate_reason);
+      return {false, diagnostics_.reason, false, false, true, std::nullopt};
+    }
     return reject_pending(lingtu::message::NavigationGoalState::Failed,
                           inputGateStopReason(fresh_context.input_gate_reason),
                           false, true);
@@ -294,10 +310,10 @@ GoalPlanController::resumePending(const GoalPlanAdmissionContext &fresh_context)
   }
   diagnostics_.goal = pending.request.target->position;
   if (!fresh_context.map_position) {
-    return reject_pending(lingtu::message::NavigationGoalState::Failed,
-                          fresh_context.odometry_ready ? "map_odom_tf_not_ready"
-                                                       : "odometry_not_ready",
-                          false, false);
+    diagnostics_.accepted = false;
+    diagnostics_.reason = fresh_context.odometry_ready ? "map_odom_tf_not_ready"
+                                                        : "odometry_not_ready";
+    return {false, diagnostics_.reason, false, false, false, std::nullopt};
   }
   if (!std::isfinite(fresh_context.map_position->x) ||
       !std::isfinite(fresh_context.map_position->y) ||
@@ -361,8 +377,9 @@ GoalPlanAdvanceResult GoalPlanController::advance(const GoalPlanAdvanceContext &
   }
   std::string stale_reason =
       globalPlanStaleReason(*completion, goal_epoch_, context.frame_epoch, current_map.identity);
-  if (stale_reason.empty() && completing_replan && active_map_identity_ && current_map.identity &&
-      !lingtu::nav::plan::sameMapIdentity(*active_map_identity_, *current_map.identity)) {
+  if (stale_reason.empty() && completing_replan && active_map_identity_ &&
+      plan_result.map_identity.valid() &&
+      !lingtu::nav::plan::sameMapIdentity(*active_map_identity_, plan_result.map_identity)) {
     stale_reason = "active_map_changed_during_replan";
   }
   if (!stale_reason.empty()) {
@@ -371,7 +388,6 @@ GoalPlanAdvanceResult GoalPlanController::advance(const GoalPlanAdvanceContext &
     advance_result.counted_failure = true;
     advance_result.record_frame_error = true;
     const bool map_invalidated_plan = stale_reason == "planner_map_identity_missing" ||
-                                      stale_reason == "active_map_unavailable_after_planning" ||
                                       stale_reason == "active_map_changed_during_planning" ||
                                       stale_reason == "active_map_changed_during_replan";
     if (completing_replan) {
@@ -607,9 +623,10 @@ GoalPlanController::activateDeferredReplacement(double now_s,
                                          inputGateStopReason(fresh_context.input_gate_reason));
   }
   if (!fresh_context.map_position) {
-    return failDeferredReplacementLocked(lingtu::message::NavigationGoalState::Failed,
-                                         fresh_context.odometry_ready ? "map_odom_tf_not_ready"
-                                                                      : "odometry_not_ready");
+    diagnostics_.accepted = false;
+    diagnostics_.reason = fresh_context.odometry_ready ? "map_odom_tf_not_ready"
+                                                        : "odometry_not_ready";
+    return result;
   }
   if (!std::isfinite(fresh_context.map_position->x) ||
       !std::isfinite(fresh_context.map_position->y) ||
@@ -635,8 +652,9 @@ GoalPlanController::activateDeferredReplacement(double now_s,
   GoalPlanMapIdentityResult current_map = actions_.current_map_identity();
   if (!current_map.identity || !current_map.identity->valid()) {
     deferred_replacement_activation_ = std::move(ready);
-    return failDeferredReplacementLocked(lingtu::message::NavigationGoalState::Failed,
-                                         "active_map_unavailable_before_replacement_activation");
+    diagnostics_.accepted = false;
+    diagnostics_.reason = "active_map_unavailable_before_replacement_activation";
+    return result;
   }
   if (!lingtu::nav::plan::sameMapIdentity(*ready.activation.map_identity, *current_map.identity)) {
     deferred_replacement_activation_ = std::move(ready);
@@ -774,6 +792,28 @@ GoalPlanTaskTransition GoalPlanController::deferResume(const std::string &task_i
   if (!active_paused_) {
     return {false, "task_not_paused", {}};
   }
+  const std::uint64_t active_goal_epoch = active_goal_epoch_;
+  const auto make_resume_transition =
+      [this, task_id, request_id, active_goal_epoch](std::string reason) {
+        return GoalPlanTaskTransition{
+            true,
+            std::move(reason),
+            [this, task_id, request_id, active_goal_epoch] {
+              if (active_task_id_ != task_id || active_goal_epoch_ != active_goal_epoch ||
+                  !active_paused_) {
+                return;
+              }
+              active_request_id_ = request_id;
+              active_paused_ = false;
+              diagnostics_.seen = true;
+              diagnostics_.accepted = true;
+              diagnostics_.reached_goal = false;
+              diagnostics_.reason = "path_resumed";
+              publishStatus(task_id, request_id, active_goal_epoch,
+                            lingtu::message::NavigationGoalState::PathActive, "path_resumed");
+            },
+        };
+      };
   if (!context.motion_allowed) {
     return {false, "estop_latched", {}};
   }
@@ -787,6 +827,9 @@ GoalPlanTaskTransition GoalPlanController::deferResume(const std::string &task_i
     return {false, context.driver_control_blocker, {}};
   }
   if (!context.input_ready) {
+    if (goalPlanInputGapIsRecoverable(context.input_gate_reason)) {
+      return make_resume_transition("resume_waiting_for_inputs");
+    }
     return {false,
             inputGateStopReason(context.input_gate_reason),
             {}};
@@ -798,7 +841,8 @@ GoalPlanTaskTransition GoalPlanController::deferResume(const std::string &task_i
             {}};
   }
   if (!context.map_position) {
-    return {false, context.odometry_ready ? "map_odom_tf_not_ready" : "odometry_not_ready", {}};
+    return make_resume_transition(context.odometry_ready ? "resume_waiting_for_pose"
+                                                         : "resume_waiting_for_odometry");
   }
   if (!context.planner_map_configured) {
     return {false, context.planner_map_missing_reason, {}};
@@ -808,31 +852,13 @@ GoalPlanTaskTransition GoalPlanController::deferResume(const std::string &task_i
   }
   const GoalPlanMapIdentityResult current_map = actions_.current_map_identity();
   if (!current_map.identity || !current_map.identity->valid()) {
-    return {false, "active_map_unavailable_before_resume", {}};
+    return make_resume_transition("resume_waiting_for_map");
   }
   if (!lingtu::nav::plan::sameMapIdentity(*active_map_identity_, *current_map.identity)) {
     return {false, "active_map_changed_before_resume", {}};
   }
 
-  const std::uint64_t active_goal_epoch = active_goal_epoch_;
-  return {
-      true,
-      "resume_ready",
-      [this, task_id, request_id, active_goal_epoch] {
-        if (active_task_id_ != task_id || active_goal_epoch_ != active_goal_epoch ||
-            !active_paused_) {
-          return;
-        }
-        active_request_id_ = request_id;
-        active_paused_ = false;
-        diagnostics_.seen = true;
-        diagnostics_.accepted = true;
-        diagnostics_.reached_goal = false;
-        diagnostics_.reason = "path_resumed";
-        publishStatus(task_id, request_id, active_goal_epoch,
-                      lingtu::message::NavigationGoalState::PathActive, "path_resumed");
-      },
-  };
+  return make_resume_transition("resume_ready");
 }
 GoalPlanTaskTransition GoalPlanController::deferCancelPending(const std::string &task_id,
                                                               const std::string &request_id,

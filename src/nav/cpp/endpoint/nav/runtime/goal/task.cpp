@@ -36,10 +36,10 @@ globalPlanStaleReason(const GlobalPlanCompletion &completion, std::uint64_t curr
   if (!completion.result.map_identity.valid()) {
     return "planner_map_identity_missing";
   }
-  if (!current_map || !current_map->valid()) {
-    return "active_map_unavailable_after_planning";
-  }
-  if (!lingtu::nav::plan::sameMapIdentity(completion.result.map_identity, *current_map)) {
+  // Preserve a map-bound result across a temporary identity lookup gap.
+  // Autonomy verifies the current map before issuing any motion command.
+  if (current_map && current_map->valid() &&
+      !lingtu::nav::plan::sameMapIdentity(completion.result.map_identity, *current_map)) {
     return "active_map_changed_during_planning";
   }
   return {};

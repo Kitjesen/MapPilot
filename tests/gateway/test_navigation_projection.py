@@ -66,6 +66,47 @@ def test_runtime_hold_does_not_rewrite_task_as_paused() -> None:
     assert state["motion"]["reason"] == "stale_collision_map"
 
 
+def test_localization_hold_preserves_task_lifecycle_and_reports_motion_reason() -> None:
+    facts = _facts()
+    facts["navigation_state"].update(
+        lifecycle_state_name="PAUSED",
+        hold_reason="localization_not_tracking",
+    )
+    facts.update(can_accept_goal=False, blockers=["localization_not_tracking"])
+    facts["native_endpoint"]["input_gate"] = {
+        "ready": False,
+        "reason": "localization_not_tracking",
+    }
+
+    state = project_navigation_status(facts)
+
+    assert state["task"] == {
+        "state": "EXECUTING",
+        "task_id": "task-1",
+        "reason": "",
+    }
+    assert state["motion"]["permission"] == "HELD"
+    assert state["motion"]["reason"] == "localization_not_tracking"
+
+
+@pytest.mark.parametrize("terminal_state", ["SUCCESS", "FAILED", "CANCELLED"])
+def test_localization_hold_does_not_replace_terminal_task_event(terminal_state: str) -> None:
+    facts = _facts()
+    facts["goal_status"].update(state_name=terminal_state, reason="terminal_reason")
+    facts["navigation_state"].update(
+        lifecycle_state_name="PAUSED",
+        hold_reason="localization_not_tracking",
+    )
+
+    task = project_navigation_status(facts)["task"]
+
+    assert task == {
+        "state": terminal_state,
+        "task_id": "task-1",
+        "reason": "terminal_reason",
+    }
+
+
 @pytest.mark.parametrize(
     ("goal_state", "recovery", "expected"),
     [

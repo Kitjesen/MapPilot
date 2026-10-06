@@ -17,7 +17,7 @@ inline std::string inputGateStopReason(const std::string &reason) {
 
 inline bool localCollisionInputHold(const std::string &reason) noexcept {
   return reason == "local_collision_missing" || reason == "local_collision_future" ||
-         reason == "collision_stale" || reason == "local_collision_incomplete";
+         reason == "collision_stale";
 }
 
 enum class SourceStampDecision {
@@ -67,6 +67,7 @@ struct InputSnapshot {
   double local_collision_stamp_s{0.0};
   double local_collision_receive_s{0.0};
   std::uint64_t local_collision_sequence{0};
+  // Telemetry from Mapd; bitmap validity, geometry and freshness own the motion gate.
   bool local_collision_complete{false};
   double localization_health_stamp_s{0.0};
   double localization_health_receive_s{0.0};

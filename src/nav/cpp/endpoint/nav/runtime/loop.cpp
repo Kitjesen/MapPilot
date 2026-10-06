@@ -63,25 +63,6 @@ using lingtu::nav::endpoint::nowSeconds;
 using lingtu::nav::endpoint::sourceStampError;
 using lingtu::nav::endpoint::steadySeconds;
 
-bool inspectionPostArrivalState(lingtu::nav::inspection::RunState state) noexcept {
-  using RunState = lingtu::nav::inspection::RunState;
-  return state == RunState::kSettling || state == RunState::kDwelling ||
-         state == RunState::kActionPending;
-}
-
-bool localizationGateBlocked(const lingtu::nav::endpoint::InputGateState &state,
-                             const lingtu::nav::endpoint::InputGateConfig &config) noexcept {
-  if (!config.require_localization_health)
-    return false;
-  const double age_s = state.localization_health_age_s;
-  return !std::isfinite(age_s) || age_s < -config.future_tolerance_s ||
-         (config.localization_health_max_age_s > 0.0 &&
-          age_s > config.localization_health_max_age_s) ||
-         !state.localization_healthy || state.localization_state.empty() ||
-         !lingtu::nav::endpoint::isHealthyLocalizationState(state.localization_state) ||
-         lingtu::nav::endpoint::isCatastrophicLocalizationReason(state.localization_reason);
-}
-
 bool pathsMateriallyDiffer(const std::vector<nav_kernel::Vec3> &left,
                            const std::vector<nav_kernel::Vec3> &right) noexcept {
   if (left.size() != right.size())
@@ -1294,15 +1275,10 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto advance_runtime = [&](const SteadyClock::time_point &input_start,
                              TimingDiagnostics &timing) -> double {
     const std::uint64_t output_before_runtime = dds_status.final_output_sequence;
-    if (inspectionPostArrivalState(inspection_executor.status().state) &&
-        localizationGateBlocked(input_gate_state, gate_cfg)) {
-      if (inspection_executor.Pause("inspection_localization_health_blocked")) {
-        if (!motion_stop.clearEndpointMotion("inspection_post_arrival_localization_pause")) {
-          record_zero_publish_failure("inspection_post_arrival_localization_pause");
-        }
-        inspection_runtime.requestStatus();
-      }
-    }
+    // Keep the inspection phase across a transient localization gap. The
+    // navigation admission gate will hold the next motion command until the
+    // required inputs recover; a temporary input gap must not rewrite the
+    // inspection task state.
     const std::string driver_blocker = inputs.driverBlocker(SteadyClock::now());
     const bool driver_authority_now = driver_blocker.empty();
     if (driver_authority_previous && !driver_authority_now) {
@@ -1719,15 +1695,10 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       (void)goal_status_outbox.flush();
     }
     const double publish_now = nowSeconds();
-    if (inspection_executor.status().state == lingtu::nav::inspection::RunState::kNavigating &&
-        path_active_for_tick && !input_gate_state.ready) {
-      if (inspection_executor.Pause(inputGateStopReason(input_gate_state.reason))) {
-        if (!motion_stop.clearEndpointMotion("inspection_input_gate_pause")) {
-          record_zero_publish_failure("inspection_input_gate_pause");
-        }
-        inspection_runtime.requestStatus();
-      }
-    }
+    // Input freshness is a motion hold, not a task transition.  AutonomyTick
+    // and the post-planning readiness check already publish a checked zero;
+    // keeping the inspection leg in Navigating lets it resume when the next
+    // valid odometry/collision/localization frame arrives.
     auto inspection_event_record_result =
         lingtu::nav::inspection::TaskEventOutboxRecordResult::kAccepted;
     std::string inspection_checkpoint_error;

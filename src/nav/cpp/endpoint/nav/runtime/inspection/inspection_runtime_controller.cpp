@@ -2,11 +2,21 @@
 
 #include <cmath>
 #include <stdexcept>
+#include <string_view>
 
 namespace lingtu::nav::endpoint {
 namespace {
 
 using InspectionRunState = lingtu::nav::inspection::RunState;
+
+// Goal dispatch can race the first valid pose or a planner completion. Those
+// are transient admission gaps; keeping the inspection point pending lets the
+// next runtime tick submit it again. Invalid goals and actual planner failures
+// still go through the normal leg-failure policy.
+bool isRetryableGoalDispatchRejection(std::string_view reason) {
+  return reason == "map_odom_tf_not_ready" || reason == "odometry_not_ready" ||
+         reason == "global_planner_busy";
+}
 
 bool isMotionStoppingTimeout(const std::string &reason) {
   return reason == "planning_timeout" || reason == "navigation_stalled" ||
@@ -73,10 +83,11 @@ InspectionRuntimeController::tick(const InspectionRuntimeTickInput &input) {
   const InspectionRunState state_before_map_check = executor_.status().state;
   if (input.now_s >= next_map_check_s_) {
     next_map_check_s_ = input.now_s + config_.map_check_interval_s;
+    // A missing map snapshot is a temporary observation gap during reload or
+    // reconnect. Only a concrete, different identity is a map change; leave
+    // the task state untouched until the next snapshot arrives.
     if (input.active_map) {
       executor_.OnMapChanged(input.active_map->map_id, input.active_map->version);
-    } else if (executor_.active()) {
-      executor_.OnMapChanged("", -1);
     }
     if (state_before_map_check != executor_.status().state &&
         executor_.status().state == InspectionRunState::kFailed &&
@@ -143,7 +154,7 @@ InspectionRuntimeController::completeGoalDispatch(bool accepted, const std::stri
     if (!executor_.OnPlanningStarted(now_s)) {
       result.clear_motion_reason = executor_.status().reason;
     }
-  } else {
+  } else if (!isRetryableGoalDispatchRejection(reason)) {
     executor_.OnLegFailed(reason, now_s);
   }
   requestStatus();

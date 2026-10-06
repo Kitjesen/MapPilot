@@ -158,6 +158,56 @@ bool sameStatuses(const std::vector<GoalPlanStatus> &lhs, const std::vector<Goal
 int main() {
   {
     Recorder recorder;
+    GoalPlanController controller(successfulPlan, recorder.actions());
+    auto missing_pose = admissionContext();
+    missing_pose.map_position.reset();
+    missing_pose.odometry_ready = false;
+
+    const auto queued = controller.submit(request(), missing_pose);
+    require(queued.accepted && queued.reason == "planning_queued",
+            "initial goal was rejected while pose was temporarily unavailable");
+    require(controller.snapshot().pending_plan_queued,
+            "initial pose gap did not retain the goal for retry");
+    require(recorder.statuses.back().state == NavigationGoalState::Planning &&
+                recorder.statuses.back().reason == "planning_queued",
+            "queued initial goal did not publish a planning status");
+
+    const auto resumed = controller.resumePending(admissionContext());
+    require(resumed.accepted && resumed.reason == "planning_started",
+            "queued initial goal did not resume after pose recovery");
+    const auto completed = waitForCompletion(
+        controller, GoalPlanAdvanceContext{admissionContext().frame_epoch, false, 10.1});
+    require(completed.path_activated && !controller.snapshot().pending_plan_queued,
+            "queued initial goal did not activate after pose recovery");
+  }
+
+  {
+    Recorder recorder;
+    GoalPlanController controller(successfulPlan, recorder.actions());
+    const auto admission = admissionContext();
+    require(controller.submit(request(), admission).accepted,
+            "resume-gap fixture could not start planning");
+    require(waitForCompletion(controller, GoalPlanAdvanceContext{admission.frame_epoch, false, 11.0})
+                .path_activated,
+            "resume-gap fixture could not activate a path");
+    auto pause = controller.deferPause(request().task_id, "pause-for-gap", "operator_pause");
+    require(pause.accepted, "resume-gap fixture could not pause the active path");
+    pause.commit();
+
+    auto held = admission;
+    held.input_ready = false;
+    held.input_gate_reason = "localization_health_stale";
+    const auto waiting = controller.deferResume(request().task_id, "resume-during-gap", held);
+    require(waiting.accepted && waiting.reason == "resume_waiting_for_inputs",
+            "paused path rejected a recoverable input gap instead of waiting");
+    waiting.commit();
+    require(!controller.snapshot().active_paused &&
+                controller.snapshot().active_request_id == "resume-during-gap",
+            "resume during a recoverable input gap did not retain the active path");
+  }
+
+  {
+    Recorder recorder;
     std::atomic<int> radius_limited_plans{0};
     GoalPlanController controller(
         [&](const lingtu::nav::plan::GlobalPlanRequest &plan_request,
@@ -539,14 +589,27 @@ int main() {
           "active map unavailable completion was not consumed");
   require(active_map_unavailable_result.map_identity_error == "active_map_lookup_failed",
           "active map unavailable did not surface map lookup reason");
-  require(!active_map_unavailable_result.terminal_after_stop.has_value(),
-          "active map unavailable replacement requested an active stop barrier");
-  require(active_map_unavailable_recorder.statuses.size() == 4U &&
-              active_map_unavailable_recorder.statuses[3].state == NavigationGoalState::Failed,
-          "active map unavailable did not fail B exactly once");
+  require(!active_map_unavailable_result.counted_failure &&
+              active_map_unavailable_result.terminal_after_stop.has_value() &&
+              active_map_unavailable_result.terminal_after_stop->reason == "superseded_by_new_goal",
+          "map lookup gap discarded a completed replacement");
   require(active_map_unavailable_controller.snapshot().active_request_id == "goal-active-a" &&
               active_map_unavailable_recorder.activations.size() == 1U,
-          "active map unavailable replacement changed active A");
+           "replacement crossed the old route stop barrier");
+  active_map_unavailable_result.terminal_after_stop->commit();
+  const auto waiting_for_map =
+      active_map_unavailable_controller.activateDeferredReplacement(30.1, admission);
+  require(!waiting_for_map.path_activated && !waiting_for_map.terminal_after_stop &&
+              active_map_unavailable_controller.snapshot().deferred_replacement_request_id ==
+                  "goal-stale-b" &&
+              countStatus(active_map_unavailable_recorder.statuses, "goal-stale-b",
+                          NavigationGoalState::Failed) == 0U,
+          "replacement was lost while awaiting current map identity");
+  active_map_unavailable_recorder.current_map =
+      {lingtu::nav::plan::MapIdentity{"field", 7, "map"}, {}};
+  require(active_map_unavailable_controller.activateDeferredReplacement(30.2, admission)
+              .path_activated,
+          "map-bound replacement did not resume when lookup recovered");
 
   Recorder active_map_changed_recorder;
   GoalPlanController active_map_changed_controller(successfulPlan,
@@ -1567,7 +1630,7 @@ int main() {
                       NavigationGoalState::Planning, "planning_queued") == 1U,
           "driver-control flow lost B's admitted queued status");
   for (const char *reason : {"local_collision_missing", "local_collision_future",
-                             "collision_stale", "local_collision_incomplete"}) {
+                             "collision_stale"}) {
     Recorder collision_recorder;
     GoalPlanController collision_controller(slow_supersede_planner, collision_recorder.actions());
     queue_superseding_goal(collision_controller, 50.1);
@@ -1590,21 +1653,27 @@ int main() {
   queue_superseding_goal(pending_input_controller, 50.25);
   auto input_resume_context = admission;
   input_resume_context.input_ready = false;
-  input_resume_context.input_gate_reason = "localization_stale";
+  input_resume_context.input_gate_reason = "localization_health_stale";
   const auto input_resume = pending_input_controller.resumePending(input_resume_context);
-  require(!input_resume.accepted && input_resume.reason == "input_gate_localization_stale",
-          "pending resume did not reject fresh input gate failure");
-  require(!pending_input_controller.snapshot().pending_plan_queued &&
+  require(!input_resume.accepted && input_resume.reason == "input_gate_localization_health_stale",
+          "pending resume did not wait for transient input recovery");
+  require(pending_input_controller.snapshot().pending_plan_queued &&
               pending_input_controller.snapshot().active_task_id == active_a_request.task_id,
-          "input-gate pending rejection changed active A before stop commit");
+          "input-gate wait changed active A or discarded queued B");
   require_no_active_terminal_request(input_resume,
-                                     "input-gate rejection tried to terminate active A");
+                                     "input-gate wait tried to terminate active A");
   require_active_a_unchanged(pending_input_controller, pending_input_recorder,
-                             "input-gate rejection changed active A");
-  require(countStatus(pending_input_recorder.statuses, "goal-active-b", NavigationGoalState::Failed,
-                      "input_gate_localization_stale") == 1U &&
-              !lastStatus(pending_input_recorder.statuses).project_to_navigation_state,
-          "input-gate rejection did not publish one non-projecting terminal for queued B");
+                             "input-gate wait changed active A");
+  require(countStatus(pending_input_recorder.statuses, "goal-active-b",
+                      NavigationGoalState::Failed) == 0U &&
+              countStatus(pending_input_recorder.statuses, "goal-active-b",
+                          NavigationGoalState::Cancelled) == 0U,
+          "input-gate wait published a terminal for queued B");
+  auto recovered_input_context = admission;
+  const auto recovered_input = pending_input_controller.resumePending(recovered_input_context);
+  require(recovered_input.accepted && recovered_input.reason == "planning_started" &&
+              !pending_input_controller.snapshot().pending_plan_queued,
+          "pending route did not resume after fresh input returned");
 
   Recorder pending_nonfinite_position_recorder;
   GoalPlanController pending_nonfinite_position_controller(

@@ -192,7 +192,7 @@ void testOdometryAndCloudCanBeOptionalForPureTeleop() {
   require(state.cloud_age_s < 0.0, "optional cloud must be reported as not required");
 }
 
-void testScanRequiresCompleteFreshLocalCollision() {
+void testScanRequiresFreshLocalCollisionGeometry() {
   lingtu::nav::endpoint::InputGateConfig cfg;
   cfg.recovery_frames = 1;
   cfg.require_odom = false;
@@ -213,8 +213,8 @@ void testScanRequiresCompleteFreshLocalCollision() {
   inputs.local_collision_receive_s = 10.0;
   inputs.local_collision_sequence = 1;
   state = gate.evaluate(inputs);
-  require(!state.ready && state.reason == "local_collision_incomplete",
-          "SCAN must reject a truncated collision snapshot");
+  require(state.ready,
+          "a fresh collision bitmap must not be rejected by a transport completeness flag");
 
   inputs.local_collision_complete = true;
   inputs.local_collision_stamp_s = 9.0;
@@ -709,7 +709,7 @@ int main() {
   testFutureInputsCloseTheGate();
   testCloudCanBeOptional();
   testOdometryAndCloudCanBeOptionalForPureTeleop();
-  testScanRequiresCompleteFreshLocalCollision();
+  testScanRequiresFreshLocalCollisionGeometry();
   testLocalCollisionHoldDoesNotMaskPlanningInputs();
   testTeleopAvoidRequiresFreshTraversabilityAndHealthyLocalization();
   testDivergentOdometryVelocityClosesTheGate();

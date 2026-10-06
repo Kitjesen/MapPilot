@@ -45,6 +45,20 @@ export function navigationSessionReady(
   session: SessionEvent['data'],
   mapName: string,
 ): boolean {
+  return navigationGoalQueueReady(session, mapName)
+    && session.localizer_ready === true
+    && session.pose_fresh === true
+}
+
+/**
+ * A saved-map goal may be queued before the next localization/pose sample.
+ * Native navd keeps motion at zero until the missing input is fresh, so the
+ * browser should not turn a temporary sensor gap into a goal-selection refusal.
+ */
+export function navigationGoalQueueReady(
+  session: SessionEvent['data'],
+  mapName: string,
+): boolean {
   const activeMap = session.active_map ?? ''
   return session.mode === 'navigating'
     && session.product !== null
@@ -53,8 +67,6 @@ export function navigationSessionReady(
     && activeMap === mapName
     && session.map_has_pcd === true
     && session.map_has_octomap === true
-    && session.localizer_ready === true
-    && session.pose_fresh === true
 }
 
 export function navigationRuntimeReady(

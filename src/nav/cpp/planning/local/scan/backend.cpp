@@ -175,7 +175,7 @@ std::optional<LocalCollisionEvidence> measuredCollisionEvidence(
   const LocalCollisionMapView &collision = input.environment.collision;
   if (!attempt.collisionValid || attempt.collisionState <= 0 ||
       attempt.dynamicViolationValid || !finitePoint(attempt.collisionPosition) ||
-      !collision.valid() || !collision.complete ||
+      !collision.valid() ||
       !collision.measuredOccupiedStorage ||
       collision.measuredOccupiedStorage->size() != collision.inflatedBytes ||
       collision.resetEpoch == 0U || collision.observationSequence == 0U ||

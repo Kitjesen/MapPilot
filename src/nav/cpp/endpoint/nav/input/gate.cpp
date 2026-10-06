@@ -360,8 +360,6 @@ InputGateState InputGate::evaluate(const InputSnapshot &inputs) {
   } else if (config_.require_local_collision && config_.local_collision_max_age_s > 0.0 &&
              state.local_collision_age_s > config_.local_collision_max_age_s) {
     stop_reason = "collision_stale";
-  } else if (config_.require_local_collision && !inputs.local_collision_complete) {
-    stop_reason = "local_collision_incomplete";
   }
 
   if (stop_reason != nullptr) {

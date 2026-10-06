@@ -91,9 +91,8 @@ int main() {
   require(lingtu::nav::endpoint::globalPlanStaleReason(*first_result, 11, 4, changed_map) ==
               "active_map_changed_during_planning",
           "changed active map was not rejected");
-  require(lingtu::nav::endpoint::globalPlanStaleReason(*first_result, 11, 4, std::nullopt) ==
-              "active_map_unavailable_after_planning",
-          "missing active map was not rejected");
+  require(lingtu::nav::endpoint::globalPlanStaleReason(*first_result, 11, 4, std::nullopt).empty(),
+           "temporary active map lookup gap discarded a map-bound result");
 
   auto single_point = *first_result;
   single_point.context.start = {1.0, 2.0, 0.5};

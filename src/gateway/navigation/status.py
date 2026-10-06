@@ -29,12 +29,37 @@ from gateway.services.safety_status import safety_stop_active
 logger = logging.getLogger(__name__)
 NAVIGATION_STATUS_SCHEMA_VERSION = 3
 _NATIVE_STATUS_UNSET = object()
-# These holds allow goal planning to start while input_gate evidence still holds motion.
+# These are transient input holds.  The native goal controller can queue the
+# goal while they recover; the same gate still holds every motion command at
+# zero.  Hard admission barriers (estop, takeover, driver, session and map
+# identity) stay outside this set.
 _GOAL_ADMISSION_INPUT_HOLDS = {
+    "recovering",
+    "odom_missing",
+    "odom_stale",
+    "odom_future",
+    "odom_velocity_nonfinite",
+    "odom_velocity_out_of_bounds",
+    "tf_missing",
+    "tf_future",
+    "tf_stale",
+    "cloud_missing",
+    "cloud_future",
+    "cloud_stale",
     "local_collision_missing",
     "local_collision_future",
     "collision_stale",
-    "local_collision_incomplete",
+    "traversability_missing",
+    "traversability_future",
+    "traversability_stale",
+    "localization_health_missing",
+    "localization_health_future",
+    "localization_health_stale",
+    "localization_not_tracking",
+    "localization_unhealthy",
+    "localization_catastrophic",
+    "simulation_clock_missing",
+    "simulation_clock_stale",
 }
 
 

@@ -121,7 +121,6 @@ def test_lightweight_context_still_reads_current_native_safety_and_map_evidence(
         "local_collision_missing",
         "local_collision_future",
         "collision_stale",
-        "local_collision_incomplete",
     ],
 )
 def test_local_collision_input_hold_allows_goal_admission_but_holds_motion(native_gateway, reason):
@@ -143,8 +142,6 @@ def test_local_collision_input_hold_allows_goal_admission_but_holds_motion(nativ
     "change",
     [
         lambda state: state.pop("input_gate"),
-        lambda state: state["input_gate"].update(ready=False, reason="localization_unhealthy"),
-        lambda state: state["input_gate"].update(ready=False, reason="odom_stale"),
         lambda state: state["input_gate"].update(ready=False, reason="driver_control_not_ready"),
         lambda state: (
             state["input_gate"].update(ready=False, reason="collision_stale"),
@@ -168,7 +165,36 @@ def test_non_collision_native_failures_still_block_goal_admission(native_gateway
     assert project_navigation_status(gate)["goal_admission"]["state"] != "ACCEPTING"
 
 
-def test_goal_route_submits_during_collision_stale_hold(native_gateway):
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "recovering",
+        "localization_unhealthy",
+        "localization_not_tracking",
+        "odom_stale",
+        "tf_missing",
+        "cloud_stale",
+        "traversability_stale",
+        "simulation_clock_stale",
+    ],
+)
+def test_transient_input_holds_allow_goal_admission_but_hold_motion(native_gateway, reason):
+    gateway, snapshot, path, _events = native_gateway
+    snapshot["input_gate"] = {"ready": False, "reason": reason}
+    snapshot["navigation_ready"] = False
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    gate = evaluate_navigation_gate(gateway)
+    projection = project_navigation_status(gate)
+
+    assert gate["can_accept_goal"] is True
+    assert projection["goal_admission"] == {"state": "ACCEPTING", "reason": ""}
+    assert projection["motion"]["permission"] == "HELD"
+    assert projection["motion"]["reason"] == reason
+
+
+@pytest.mark.parametrize("reason", ["collision_stale", "localization_not_tracking", "odom_stale"])
+def test_goal_route_submits_during_transient_input_hold(native_gateway, reason):
     from gateway.schemas import GoalRequest
 
     class FakeGoals:
@@ -184,7 +210,7 @@ def test_goal_route_submits_during_collision_stale_hold(native_gateway):
             }
 
     gateway, snapshot, path, _events = native_gateway
-    snapshot["input_gate"] = {"ready": False, "reason": "collision_stale"}
+    snapshot["input_gate"] = {"ready": False, "reason": reason}
     snapshot["navigation_ready"] = False
     path.write_text(json.dumps(snapshot), encoding="utf-8")
     goals = FakeGoals()
@@ -230,12 +256,16 @@ def test_compiled_session_context_rejects_mismatched_product(native_gateway):
 @pytest.mark.parametrize("reason", ["localization_not_tracking", "localization_health_missing",
                                     "localization_health_stale", "localization_health_future",
                                     "localization_unhealthy", "localization_catastrophic"])
-def test_native_localization_fault_takes_priority_over_local_collision_age(native_gateway, reason):
+def test_transient_localization_fault_allows_goal_queue_without_motion(native_gateway, reason):
     gateway, snapshot, path, _events = native_gateway
     snapshot["input_gate"] = {"ready": False, "reason": reason,
                               "local_collision_age_s": 3.0, "localization_healthy": False}
     snapshot["navigation_ready"] = False
     path.write_text(json.dumps(snapshot), encoding="utf-8")
     gate = evaluate_navigation_gate(gateway)
-    assert gate["can_accept_goal"] is False
-    assert reason in gate["blockers"]
+    assert gate["can_accept_goal"] is True
+    assert reason not in gate["blockers"]
+    projection = project_navigation_status(gate)
+    assert projection["goal_admission"] == {"state": "ACCEPTING", "reason": ""}
+    assert projection["motion"]["permission"] == "HELD"
+    assert projection["motion"]["reason"] == reason
