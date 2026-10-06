@@ -268,6 +268,12 @@ exploration available. `SGNavReasoner` and `verify_and_reselect` likewise have n
 runtime planner callers. Their unit tests prove helpers, not the full search and
 re-observation loop.
 
+`frontiers/vlnav.py` implements the VL-Nav v7 visual/curiosity scoring and
+instance-first candidate ranking. It adapts existing `Frontier` clusters for
+offline experiments and preserves their geometry-provided reference height.
+It does not yet feed the live planner. See [the reproduction record](../../docs/research/vlnav.md)
+for the exact paper equations, deviations, tests, and remaining wiring.
+
 The strategy service regressions use concrete resolver, frontier scorer, and
 action executor instances. Only model responses are replaced for offline tests;
 permissive mocks cannot establish API compatibility or semantic model quality.
