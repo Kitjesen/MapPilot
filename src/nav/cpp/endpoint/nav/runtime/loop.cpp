@@ -1292,13 +1292,20 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       record_zero_publish_failure("driver_control_blocked:" + driver_blocker);
     }
     driver_authority_previous = driver_authority_now;
+    if (staged_inspection_goal &&
+        (inspection_executor.status().state != lingtu::nav::inspection::RunState::kPlanning ||
+         inspection_executor.status().task_id != staged_inspection_goal->task_id ||
+         inspection_executor.status().request_id != staged_inspection_goal->request_id)) {
+      staged_inspection_goal.reset();
+      inspection_runtime.clearActivePoint();
+    }
     if (staged_inspection_goal && !navigation_runtime_controller.terminalPending()) {
       const auto verdict = terminal_ingress(GoalTerminalIngressKind::kInspectionGoalDispatch);
       if (verdict.decision == GoalTerminalIngressDecision::kAllow) {
-        const auto identity = next_internal_goal_identity("inspection-leg");
         const auto dispatch_result =
             submit_goal(inspectionGoal(staged_inspection_goal->point, nowSeconds()),
-                        identity.first, identity.second, GoalPlanOrigin::kInspection);
+                        staged_inspection_goal->task_id, staged_inspection_goal->request_id,
+                        GoalPlanOrigin::kInspection);
         staged_inspection_goal.reset();
         const auto completion = inspection_runtime.completeGoalDispatch(
             dispatch_result.first, dispatch_result.second, nowSeconds());
@@ -1713,6 +1720,10 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
         return false;
       }
       inspection_event_record_result = inspection_task_event_outbox.Record(event);
+      if (inspection_event_record_result ==
+          lingtu::nav::inspection::TaskEventOutboxRecordResult::kAccepted) {
+        navigation_state.observeInspection(event.status);
+      }
       return inspection_event_record_result ==
              lingtu::nav::inspection::TaskEventOutboxRecordResult::kAccepted;
     });

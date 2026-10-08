@@ -11,8 +11,11 @@ bool NavigationGoalStatusOutbox::record(const GoalPlanStatus &status) {
   if (!valid(status) || containsIdentity(status)) {
     return false;
   }
-  records_.push_back(Record{status, false});
-  if (observe_) {
+  // Waypoint completion is consumed by the inspection executor in process.
+  // Only whole-task events cross DDS; terminal stop barriers still complete.
+  const bool internal = status.origin == GoalPlanOrigin::kInspection;
+  records_.push_back(Record{status, internal});
+  if (!internal && observe_) {
     observe_(records_.back().status);
   }
   return true;
@@ -68,7 +71,8 @@ bool NavigationGoalStatusOutbox::sameIdentity(const GoalPlanStatus &left,
   return left.task_id == right.task_id && left.request_id == right.request_id &&
          left.goal_epoch == right.goal_epoch && left.state == right.state &&
          left.reason == right.reason &&
-         left.project_to_navigation_state == right.project_to_navigation_state;
+         left.project_to_navigation_state == right.project_to_navigation_state &&
+         left.origin == right.origin;
 }
 
 bool NavigationGoalStatusOutbox::containsIdentity(const GoalPlanStatus &status) const {

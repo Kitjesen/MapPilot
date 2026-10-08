@@ -373,6 +373,7 @@ int main(int argc, char **argv) {
               lingtu::nav::inspection::TaskEventOutboxRecordResult::kAccepted) {
         throw std::runtime_error("inspection recovery event outbox initialization failed");
       }
+      navigation_state.observeInspection(inspection_recovery_event->status);
     }
 
     // -- Setup aliases shared by the controller wiring below ------------------

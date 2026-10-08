@@ -4,6 +4,7 @@
 
 #include "runtime/goal/plan.hpp"
 #include "status/navigation_state.hpp"
+#include "nav/inspection/inspection.hpp"
 
 namespace {
 
@@ -234,9 +235,48 @@ void testPendingTaskStatusesDoNotReplaceActiveRuntimeProjection() {
                   static_cast<int>(NavigationLifecycleState::kExecuting),
           "pending cancellation replaced the active runtime projection");
 }
+
+void testInspectionOwnsWholeTaskLifecycle() {
+  using lingtu::nav::inspection::RunState;
+  lingtu::nav::inspection::RunStatus run;
+  run.task_id = "inspection-1";
+  run.request_id = "start-1";
+  run.point_count = 2U;
+  NavigationStateTracker tracker(NavigationControlState::kAutonomy);
+  for (const auto phase : {RunState::kNavigating, RunState::kSettling,
+                          RunState::kActionPending, RunState::kDwelling,
+                          RunState::kPausing, RunState::kCancelling}) {
+    run.state = phase;
+    tracker.observeInspection(run);
+    GoalPlanStatus leg{run.task_id, run.request_id, 1U, NavigationGoalState::Reached, "arrived"};
+    leg.origin = lingtu::nav::endpoint::GoalPlanOrigin::kInspection;
+    tracker.observe(leg);
+    const auto state = tracker.sample({});
+    require(state.lifecycle_state == static_cast<int>(NavigationLifecycleState::kExecuting),
+            "a waypoint result or pending stop completed/paused the whole task");
+    require(state.active_task_id == run.task_id && state.active_request_id == run.request_id,
+            "inspection task identity was replaced");
+  }
+  run.state = RunState::kPaused;
+  run.request_id = "pause-1";
+  tracker.observeInspection(run);
+  require(tracker.sample({}).lifecycle_state == static_cast<int>(NavigationLifecycleState::kPaused),
+          "committed inspection pause missing");
+  run.state = RunState::kPlanning;
+  run.point_index = 1U;
+  run.request_id = "resume-1";
+  tracker.observeInspection(run);
+  require(tracker.sample({}).lifecycle_state == static_cast<int>(NavigationLifecycleState::kPlanning),
+          "resumed inspection did not plan the next leg");
+  run.state = RunState::kSucceeded;
+  tracker.observeInspection(run);
+  require(tracker.sample({}).lifecycle_state == static_cast<int>(NavigationLifecycleState::kSuccess),
+          "whole-route completion did not finish the task");
+}
 }  // namespace
 
 int main() {
+  testInspectionOwnsWholeTaskLifecycle();
   testPublicationChangesHeartbeatAndRetry();
   testLifecycleAndTransientHold();
   testExecutionRecoveryAndTerminalState();

@@ -184,12 +184,16 @@ struct Fixture {
     return result;
   }
 
-  void activateGoal() {
-    require(goal_plan.submit(request(), admission()).accepted, "fixture goal submission failed");
+  void activateGoal(GoalPlanOrigin origin = GoalPlanOrigin::kExternal) {
+    auto goal = request();
+    goal.origin = origin;
+    require(goal_plan.submit(goal, admission()).accepted, "fixture goal submission failed");
     for (int index = 0; index < 1000; ++index) {
       if (goal_plan.advance(GoalPlanAdvanceContext{7U, false, 2.0 + index * 0.001})
               .path_activated) {
-        require(outbox.flush() > 0U, "fixture initial goal statuses were not delivered");
+        const auto delivered = outbox.flush();
+        require(origin == GoalPlanOrigin::kInspection || delivered > 0U,
+                "fixture initial goal statuses were not delivered");
         return;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -298,55 +302,39 @@ void testPlanningTerminalBlocksAutonomyAndDrainUntilReplayAcknowledges() {
           "terminal replay repeated the stop-confirmed terminal commit");
 }
 
-void testInspectionFallbackReturnsCompletionOnlyAfterTerminalAck() {
-  Fixture fixture;
-  fixture.activateGoal();
-  fixture.writes_allowed = false;
-  std::size_t run_calls = 0U;
-  std::size_t apply_calls = 0U;
-  NavigationRuntimeFrameActions actions;
-  actions.complete_endpoint_work_before_autonomy = [](const GoalReplanRuntimeResult &) {};
-  actions.run_autonomy = [&](const GoalPlanSnapshot &snapshot) {
-    ++run_calls;
-    require(snapshot.active_task_id == "task-a", "fallback tick lost the captured active goal");
-    return NavigationRuntimeAutonomyObservation{
-        fixture.frame(30.1),
-        AutonomyTickOutcome{AutonomyTickOutcomeKind::kGoalFailed, "inspection_nav_failed", false,
-                            std::nullopt},
-        true,
-        true,
-        false,
+void testInspectionCompletionAfterStop() {
+  for (const auto kind : {AutonomyTickOutcomeKind::kGoalReached,
+                          AutonomyTickOutcomeKind::kGoalFailed}) {
+    Fixture fixture;
+    fixture.activateGoal(GoalPlanOrigin::kInspection);
+    fixture.confirmation = StopConfirmationState::Pending;
+    std::size_t run_calls = 0U;
+    auto actions = fixture.idleActions();
+    const std::string reason = kind == AutonomyTickOutcomeKind::kGoalReached
+                                   ? "goal_reached" : "local_recovery_exhausted";
+    actions.run_autonomy = [&](const GoalPlanSnapshot &) {
+      ++run_calls;
+      return NavigationRuntimeAutonomyObservation{
+          fixture.frame(30.1), AutonomyTickOutcome{kind, reason}, true, true, false, std::nullopt};
     };
-  };
-  actions.apply_autonomy_outputs = [&](const GoalReplanRuntimeResult &runtime_outcome) {
-    ++apply_calls;
-    require(!runtime_outcome.handled,
-            "external goal failure with active inspection bypassed fallback ownership");
-    return NavigationRuntimePostAutonomyState{true, true};
-  };
+    const auto pending = fixture.runtime.advanceFrame(fixture.frame(30.0), actions);
+    require(pending.autonomy_result && pending.autonomy_result->handled,
+            "inspection outcome did not reach its native owner");
+    require(!pending.inspection_completion && fixture.runtime.terminalPending(),
+            "inspection advanced before stop confirmation");
 
-  const auto pending = fixture.runtime.advanceFrame(fixture.frame(30.0), actions);
-
-  require(run_calls == 1U && apply_calls == 1U && pending.autonomy_result.has_value(),
-          "fallback frame did not run and apply one autonomy observation");
-  require(!pending.terminal_delivery_acknowledged && !pending.inspection_completion &&
-              !pending.pending_cycle_advanced && fixture.runtime.terminalPending(),
-          "inspection completion escaped before durable terminal acknowledgement");
-
-  fixture.writes_allowed = true;
-  const auto completed = fixture.runtime.advanceFrame(fixture.frame(30.2), actions);
-
-  require(run_calls == 1U && apply_calls == 1U,
-          "terminal replay reran the autonomy observation or output application");
-  require(completed.terminal_delivery_acknowledged && completed.inspection_completion &&
-              completed.inspection_completion->kind == AutonomyTickOutcomeKind::kGoalFailed &&
-              completed.inspection_completion->reason == "inspection_nav_failed" &&
-              completed.pending_cycle_advanced,
-          "terminal acknowledgement did not return the exact deferred inspection completion");
-
-  const auto next = fixture.runtime.advanceFrame(fixture.frame(30.3), fixture.idleActions());
-  require(!next.inspection_completion,
-          "acknowledged inspection completion was returned more than once");
+    fixture.confirmation = StopConfirmationState::Confirmed;
+    const auto completed = fixture.runtime.advanceFrame(fixture.frame(30.2), actions);
+    require(run_calls == 1U, "terminal replay reran navigation");
+    require(completed.inspection_completion && completed.inspection_completion->kind == kind &&
+                completed.inspection_completion->reason == reason,
+            "normal inspection completion was lost or changed");
+    require(completed.terminal_delivery_acknowledged && completed.pending_cycle_advanced,
+            "confirmed inspection leg did not release the next leg");
+    require(fixture.write_attempts.empty(), "internal waypoint result leaked as a public task end");
+    const auto next = fixture.runtime.advanceFrame(fixture.frame(30.3), fixture.idleActions());
+    require(!next.inspection_completion, "inspection completion was returned twice");
+  }
 }
 
 void testUnhandledAutonomyTickCannotCreateInspectionFallbackTerminal() {
@@ -522,7 +510,7 @@ int main() {
   try {
     testNormalFrameUsesStrictTypedContinuationOrder();
     testPlanningTerminalBlocksAutonomyAndDrainUntilReplayAcknowledges();
-    testInspectionFallbackReturnsCompletionOnlyAfterTerminalAck();
+    testInspectionCompletionAfterStop();
     testUnhandledAutonomyTickCannotCreateInspectionFallbackTerminal();
     testCapturedSnapshotCannotCommitReachedAfterGoalStateChangesDuringTick();
     testTerminalCompanionInterfacesForwardExactTransactions();

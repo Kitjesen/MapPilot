@@ -92,7 +92,8 @@ bool GoalTerminalStatusDelivery::sameStatus(const GoalPlanStatus &left,
   return left.task_id == right.task_id && left.request_id == right.request_id &&
          left.goal_epoch == right.goal_epoch && left.state == right.state &&
          left.reason == right.reason &&
-         left.project_to_navigation_state == right.project_to_navigation_state;
+         left.project_to_navigation_state == right.project_to_navigation_state &&
+         left.origin == right.origin;
 }
 
 bool GoalTerminalStatusDelivery::ticketDelivered(

@@ -117,7 +117,8 @@ InspectionRuntimeController::tick(const InspectionRuntimeTickInput &input) {
       if (!input.goal_plan_busy) {
         active_point_ = *point;
         goal_dispatch_outstanding_ = true;
-        result.goal_dispatch = InspectionGoalDispatchIntent{*point};
+        result.goal_dispatch = InspectionGoalDispatchIntent{
+            *point, executor_.status().task_id, executor_.status().request_id};
       }
     }
   }

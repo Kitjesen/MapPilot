@@ -7,6 +7,10 @@
 
 #include "message/protocol/navigation.hpp"
 
+namespace lingtu::nav::inspection {
+struct RunStatus;
+}
+
 namespace lingtu::nav::endpoint {
 
 struct GoalPlanStatus;
@@ -60,6 +64,7 @@ class NavigationStateTracker {
   explicit NavigationStateTracker(NavigationControlState control_mode);
 
   void observe(const GoalPlanStatus &status);
+  void observeInspection(const inspection::RunStatus &status);
   [[nodiscard]] NavigationStateSample sample(const NavigationStateContext &context) const;
   bool publishIfDue(const NavigationStateSample &sample, double now_s,
                     const std::function<bool(const NavigationStateSample &)> &publish);

@@ -51,7 +51,7 @@ Route makeRoute(std::string action = {}, double dwell_s = 0.0) {
 
 void start(Executor &executor, Route route, double now_s = 1.0) {
   std::string error;
-  require(executor.Start(std::move(route), "run-a", "map-a", 7, now_s, &error),
+  require(executor.Start(std::move(route), "task-a", "start-a", "map-a", 7, now_s, &error),
           "route starts: " + error);
 }
 
@@ -67,6 +67,9 @@ void startNavigation(Executor &executor, InspectionRuntimeController &runtime, d
   const auto tick = runtime.tick(input);
   require(tick.goal_dispatch.has_value(), "pending point becomes a goal intent");
   require(tick.goal_dispatch->point.id == "point-a", "goal intent preserves the active point");
+  require(tick.goal_dispatch->task_id == executor.status().task_id &&
+              tick.goal_dispatch->request_id == executor.status().request_id,
+          "waypoint dispatch must inherit the route task and current command IDs");
 
   const auto duplicate = runtime.tick(input);
   require(!duplicate.goal_dispatch.has_value(), "outstanding goal dispatch is not duplicated");
@@ -112,6 +115,50 @@ void reachActionPending(Executor &executor, InspectionRuntimeController &runtime
   }
   require(executor.status().state == RunState::kActionPending,
           "arrival settlement advances into action pending");
+}
+
+void testWaypointsAndResumeReuseTaskIdentity() {
+  Executor executor;
+  InspectionRuntimeController runtime(executor, InspectionRuntimeConfig{1.0, 0.5});
+  auto route = makeRoute();
+  auto next_point = route.points.front();
+  next_point.id = "point-b";
+  next_point.x_m += 1.0;
+  route.points.push_back(next_point);
+  route.failure_policy = FailurePolicy::kRetry;
+  route.max_retries = 1;
+  start(executor, route);
+  startNavigation(executor, runtime);
+  runtime.onGoalReached(1.2);
+  std::uint64_t generation = 0;
+  lingtu::nav::endpoint::InspectionRuntimeTickResult tick;
+  for (const double stamp : {1.3, 1.55, 1.81}) {
+    auto input = inputAt(stamp);
+    input.odom_generation = ++generation;
+    input.arrival_sample = lingtu::nav::inspection::ArrivalSample{stamp, 0.0, 0.0};
+    tick = runtime.tick(input);
+  }
+  if (!tick.goal_dispatch) tick = runtime.tick(inputAt(2.0));
+  require(tick.goal_dispatch.has_value() && tick.goal_dispatch->point.id == "point-b",
+          "second waypoint was not dispatched");
+  require(tick.goal_dispatch->task_id == "task-a" && tick.goal_dispatch->request_id == "start-a",
+          "advancing waypoint created another task or request");
+  (void)runtime.completeGoalDispatch(false, "planner_failed", 2.1);
+  tick = runtime.tick(inputAt(2.2));
+  require(tick.goal_dispatch.has_value() && tick.goal_dispatch->task_id == "task-a" &&
+              tick.goal_dispatch->request_id == "start-a",
+          "retry created another task or request");
+  require(executor.RequestPause("operator_pause", "pause-a", 2.3) && executor.CommitPause(2.3),
+          "pause failed");
+  require(!runtime.tick(inputAt(2.4)).goal_dispatch.has_value(), "paused route dispatched a goal");
+  require(executor.Resume("map-a", 7, 2.5, "resume-a"), "resume failed");
+  tick = runtime.tick(inputAt(2.6));
+  require(tick.goal_dispatch.has_value() && tick.goal_dispatch->task_id == "task-a" &&
+              tick.goal_dispatch->request_id == "resume-a",
+          "resume lost the parent task or latest command");
+  require(executor.RequestCancel("operator_cancel", "cancel-a", 2.7) && executor.CommitCancel(2.7),
+          "cancel failed");
+  require(!runtime.tick(inputAt(2.8)).goal_dispatch.has_value(), "cancelled route dispatched a goal");
 }
 
 void testStatusCadenceAndValidation() {
@@ -453,6 +500,7 @@ void testTimeoutAndMapChangeIntents() {
 }  // namespace
 
 int main() {
+  testWaypointsAndResumeReuseTaskIdentity();
   testStatusCadenceAndValidation();
   testGoalDispatchAndProgress();
   testGoalDispatchFailureFeedback();

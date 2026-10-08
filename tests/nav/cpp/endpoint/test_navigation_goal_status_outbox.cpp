@@ -163,10 +163,31 @@ void testMalformedIdentityFailsClosed() {
   require(observed == 0 && writes == 0, "malformed identities must not invoke callbacks");
 }
 
+void testInspectionLegsStayInternal() {
+  int observed = 0;
+  int writes = 0;
+  NavigationGoalStatusOutbox outbox([&](const GoalPlanStatus &) { ++observed; },
+                                   [&](const GoalPlanStatus &) { ++writes; return false; });
+  auto leg = status("inspection-1", "start-1", 1U, NavigationGoalState::Reached);
+  leg.origin = lingtu::nav::endpoint::GoalPlanOrigin::kInspection;
+  require(outbox.record(leg) && outbox.delivered(leg),
+          "internal leg must complete its terminal barrier without a DDS write");
+  ++leg.goal_epoch;
+  require(outbox.record(leg) && outbox.delivered(leg),
+          "next leg must reuse the task and request IDs with its own planning epoch");
+  require(outbox.flush() == 0U && observed == 0 && writes == 0,
+          "waypoint completion leaked as whole-task success");
+  leg.origin = lingtu::nav::endpoint::GoalPlanOrigin::kExternal;
+  require(outbox.record(leg) && !outbox.delivered(leg),
+          "external completion must still require delivery");
+  (void)outbox.flush();
+  require(observed == 1 && writes == 1, "external completion was suppressed");
+}
 }  // namespace
 
 int main() {
   try {
+    testInspectionLegsStayInternal();
     testRecordObservesOnceAndFlushesInInsertionOrder();
     testDeliveredRequiresExactTerminalStatusIdentity();
     testFailedWriteIsRetriedUnchanged();

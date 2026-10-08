@@ -104,7 +104,7 @@ GoalPlanSubmitResult GoalPlanController::submit(const GoalPlanRequest &request,
         DeferredPlanStart{request, pending_goal_epoch, projects_to_navigation_state};
     publishStatus(request.task_id, request.request_id, pending_goal_epoch,
                   lingtu::message::NavigationGoalState::Planning, "planning_queued",
-                  projects_to_navigation_state);
+                  projects_to_navigation_state, request.origin);
     diagnostics_.reason = "planning_queued";
     return {true, "planning_queued", false, false, false, std::nullopt};
   }
@@ -222,7 +222,7 @@ GoalPlanSubmitResult GoalPlanController::startPlanning(
   planning_origin_ = origin;
   publishStatus(planning_task_id_, planning_request_id_, planning_goal_epoch_,
                 lingtu::message::NavigationGoalState::Planning, planning_reason,
-                project_planning_to_navigation_state);
+                project_planning_to_navigation_state, origin);
   diagnostics_.reason = planning_reason;
   return {true,        is_replan ? "replan_started" : "planning_started", false, false, false,
           std::nullopt};
@@ -700,7 +700,7 @@ GoalPlanController::activateDeferredReplacement(double now_s,
   diagnostics_.goal = ready.target.position;
   publishStatus(active_task_id_, active_request_id_, active_goal_epoch_,
                 lingtu::message::NavigationGoalState::PathActive, "replacement_plan_completed",
-                true);
+                true, active_origin_);
   result.path_activated = true;
   return result;
 }
@@ -730,9 +730,9 @@ GoalPlanController::failDeferredReplacementLocked(lingtu::message::NavigationGoa
   result.terminal_after_stop = terminalAfterStop(
       reason, GoalPlanTerminalCommitWithTicket{
                   GoalPlanTerminalDeliveryTicket{{GoalPlanStatus{
-                      failed.task_id, failed.request_id, failed.goal_epoch, state, reason, false}}},
+                      failed.task_id, failed.request_id, failed.goal_epoch, state, reason, false, failed.origin}}},
                   terminalCommit({GoalPlanStatus{failed.task_id, failed.request_id,
-                                                 failed.goal_epoch, state, reason, false}})});
+                                                 failed.goal_epoch, state, reason, false, failed.origin}})});
   return result;
 }
 GoalPlanTaskTransition GoalPlanController::deferPause(const std::string &task_id,
@@ -772,7 +772,7 @@ GoalPlanTaskTransition GoalPlanController::deferPause(const std::string &task_id
         diagnostics_.reached_goal = false;
         diagnostics_.reason = pause_reason;
         publishStatus(task_id, request_id, active_goal_epoch,
-                      lingtu::message::NavigationGoalState::Paused, pause_reason);
+                      lingtu::message::NavigationGoalState::Paused, pause_reason, true, active_origin_);
       },
   };
 }
@@ -810,7 +810,7 @@ GoalPlanTaskTransition GoalPlanController::deferResume(const std::string &task_i
               diagnostics_.reached_goal = false;
               diagnostics_.reason = "path_resumed";
               publishStatus(task_id, request_id, active_goal_epoch,
-                            lingtu::message::NavigationGoalState::PathActive, "path_resumed");
+                            lingtu::message::NavigationGoalState::PathActive, "path_resumed", true, active_origin_);
             },
         };
       };
@@ -872,13 +872,14 @@ GoalPlanTaskTransition GoalPlanController::deferCancelPending(const std::string 
 
   const std::uint64_t pending_goal_epoch = pending_plan_start_->goal_epoch;
   const bool project_to_navigation_state = pending_plan_start_->project_to_navigation_state;
+  const auto origin = pending_plan_start_->request.origin;
   const std::string cancel_reason = reason.empty() ? "operator_cancel" : reason;
   pending_plan_start_.reset();
   auto publish_terminal = std::make_shared<bool>(true);
   return {
       true,
       "cancel_ready",
-      [this, task_id, request_id, pending_goal_epoch, cancel_reason, project_to_navigation_state,
+      [this, task_id, request_id, pending_goal_epoch, cancel_reason, project_to_navigation_state, origin,
        publish_terminal = std::move(publish_terminal)]() mutable {
         if (!*publish_terminal) {
           return;
@@ -886,7 +887,7 @@ GoalPlanTaskTransition GoalPlanController::deferCancelPending(const std::string 
         *publish_terminal = false;
         publishStatus(task_id, request_id, pending_goal_epoch,
                       lingtu::message::NavigationGoalState::Cancelled, cancel_reason,
-                      project_to_navigation_state);
+                      project_to_navigation_state, origin);
       },
   };
 }
@@ -906,6 +907,7 @@ GoalPlanTaskTransition GoalPlanController::deferCancelReplacementPlanning(
 
   const std::uint64_t planning_goal_epoch = planning_goal_epoch_;
   const std::string cancel_reason = reason.empty() ? "operator_cancel" : reason;
+  const auto origin = planning_origin_;
   task_.cancel();
   ++goal_epoch_;
   clearPlanningIdentity();
@@ -913,14 +915,14 @@ GoalPlanTaskTransition GoalPlanController::deferCancelReplacementPlanning(
   return {
       true,
       "cancel_ready",
-      [this, task_id, request_id, planning_goal_epoch, cancel_reason,
+      [this, task_id, request_id, planning_goal_epoch, cancel_reason, origin,
        publish_terminal = std::move(publish_terminal)]() mutable {
         if (!*publish_terminal) {
           return;
         }
         *publish_terminal = false;
         publishStatus(task_id, request_id, planning_goal_epoch,
-                      lingtu::message::NavigationGoalState::Cancelled, cancel_reason, false);
+                      lingtu::message::NavigationGoalState::Cancelled, cancel_reason, false, origin);
       },
   };
 }
@@ -949,6 +951,7 @@ GoalPlanController::deferAbortWithTicket(const std::string &reason,
         lingtu::message::NavigationGoalState::Cancelled,
         reason,
         project_planning_to_navigation_state,
+        planning_origin_,
     });
   }
   if (pending_plan_start) {
@@ -959,6 +962,7 @@ GoalPlanController::deferAbortWithTicket(const std::string &reason,
         lingtu::message::NavigationGoalState::Cancelled,
         reason,
         pending_plan_start->project_to_navigation_state,
+        pending_plan_start->request.origin,
     });
   }
   if (!active_request_id.empty()) {
@@ -968,6 +972,8 @@ GoalPlanController::deferAbortWithTicket(const std::string &reason,
         active_goal_epoch,
         lingtu::message::NavigationGoalState::Cancelled,
         reason,
+        true,
+        active_origin_,
     });
   }
   invalidateForHold(reason, false);
@@ -1054,6 +1060,8 @@ GoalPlanController::deferActiveTerminalWithTicket(lingtu::message::NavigationGoa
         active_goal_epoch,
         state,
         reason,
+        true,
+        active_origin_,
     });
   }
   GoalPlanTerminalDeliveryTicket ticket{pending_statuses};
@@ -1104,6 +1112,7 @@ GoalPlanController::deferPlanningAbortWithTicket(const std::string &reason,
         lingtu::message::NavigationGoalState::Cancelled,
         reason,
         project_planning_to_navigation_state,
+        planning_origin_,
     });
   }
   if (pending_plan_start) {
@@ -1114,6 +1123,7 @@ GoalPlanController::deferPlanningAbortWithTicket(const std::string &reason,
         lingtu::message::NavigationGoalState::Cancelled,
         reason,
         pending_plan_start->project_to_navigation_state,
+        pending_plan_start->request.origin,
     });
   }
   invalidateForHold(reason, false);
@@ -1160,7 +1170,7 @@ void GoalPlanController::invalidateForHold(const std::string &reason, bool close
 void GoalPlanController::finishPlanning(lingtu::message::NavigationGoalState state,
                                         const std::string &reason) {
   publishStatus(planning_task_id_, planning_request_id_, planning_goal_epoch_, state, reason,
-                planning_projects_to_navigation_state_);
+                planning_projects_to_navigation_state_, planning_origin_);
   clearPlanningIdentity();
 }
 
@@ -1177,7 +1187,7 @@ void GoalPlanController::publishPendingTerminal(lingtu::message::NavigationGoalS
   }
   publishStatus(pending_plan_start_->request.task_id, pending_plan_start_->request.request_id,
                 pending_plan_start_->goal_epoch, state, reason,
-                pending_plan_start_->project_to_navigation_state);
+                pending_plan_start_->project_to_navigation_state, pending_plan_start_->request.origin);
 }
 
 GoalPlanSnapshot GoalPlanController::snapshot() const {
@@ -1229,10 +1239,10 @@ void GoalPlanController::publishStatus(const std::string &task_id, const std::st
                                        std::uint64_t goal_epoch,
                                        lingtu::message::NavigationGoalState state,
                                        const std::string &reason,
-                                       bool project_to_navigation_state) {
+                                       bool project_to_navigation_state, GoalPlanOrigin origin) {
   if (!task_id.empty() && !request_id.empty()) {
     actions_.publish_status(
-        {task_id, request_id, goal_epoch, state, reason, project_to_navigation_state});
+        {task_id, request_id, goal_epoch, state, reason, project_to_navigation_state, origin});
   }
 }
 

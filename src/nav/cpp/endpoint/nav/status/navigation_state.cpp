@@ -4,6 +4,7 @@
 #include <tuple>
 
 #include "runtime/goal/plan.hpp"
+#include "nav/inspection/inspection.hpp"
 
 namespace lingtu::nav::endpoint {
 namespace {
@@ -21,7 +22,7 @@ NavigationStateTracker::NavigationStateTracker(NavigationControlState control_mo
 }
 
 void NavigationStateTracker::observe(const GoalPlanStatus &status) {
-  if (!status.project_to_navigation_state) {
+  if (!status.project_to_navigation_state || status.origin == GoalPlanOrigin::kInspection) {
     return;
   }
   state_.active_task_id = status.task_id;
@@ -81,6 +82,52 @@ void NavigationStateTracker::observe(const GoalPlanStatus &status) {
       state_.progress = -1.0F;
       state_.failure_code.clear();
       break;
+  }
+}
+
+void NavigationStateTracker::observeInspection(const inspection::RunStatus &status) {
+  using inspection::RunState;
+  using lingtu::message::NavigationGoalState;
+  NavigationGoalState goal_state = NavigationGoalState::PathActive;
+  switch (status.state) {
+    case RunState::kIdle:
+      return;
+    case RunState::kValidating:
+    case RunState::kPlanning:
+      goal_state = NavigationGoalState::Planning;
+      break;
+    case RunState::kPaused:
+      goal_state = NavigationGoalState::Paused;
+      break;
+    case RunState::kSucceeded:
+      goal_state = NavigationGoalState::Reached;
+      break;
+    case RunState::kFailed:
+      goal_state = NavigationGoalState::Failed;
+      break;
+    case RunState::kCancelled:
+      goal_state = NavigationGoalState::Cancelled;
+      break;
+    case RunState::kNavigating:
+    case RunState::kSettling:
+    case RunState::kActionPending:
+    case RunState::kDwelling:
+    case RunState::kRecovering:
+    case RunState::kPausing:
+    case RunState::kCancelling:
+      break;
+  }
+  observe(GoalPlanStatus{status.task_id, status.request_id, 0U, goal_state, status.reason});
+  state_.map_id = status.map_id;
+  state_.map_content_epoch = status.map_content_epoch;
+  if (status.state == RunState::kSettling || status.state == RunState::kActionPending ||
+      status.state == RunState::kDwelling || status.state == RunState::kPausing ||
+      status.state == RunState::kCancelling) {
+    state_.execution_state = static_cast<std::int32_t>(NavigationExecutionState::kIdle);
+  }
+  if (status.state == RunState::kRecovering) {
+    state_.lifecycle_state = static_cast<std::int32_t>(NavigationLifecycleState::kRecovering);
+    state_.recovery_state = static_cast<std::int32_t>(NavigationRecoveryState::kActive);
   }
 }
 

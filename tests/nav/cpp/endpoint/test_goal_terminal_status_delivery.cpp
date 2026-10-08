@@ -204,6 +204,11 @@ void testStageReplayWaitsForCommitAndRetriesBeforeExactAck() {
   require(delivery.stage(pending.terminal_intent_id, conflicting_ticket) ==
               GoalTerminalStatusDelivery::StageResult::kConflict,
           "same intent with a different ticket was accepted");
+  auto conflicting_origin = semantic_replay;
+  conflicting_origin.statuses.front().origin = GoalPlanOrigin::kInspection;
+  require(delivery.stage(pending.terminal_intent_id, conflicting_origin) ==
+              GoalTerminalStatusDelivery::StageResult::kConflict,
+          "same intent with a different delivery owner was accepted");
   require(delivery.stage(pending.terminal_intent_id + 1U, semantic_replay) ==
               GoalTerminalStatusDelivery::StageResult::kConflict,
           "different intent replaced the staged transaction");

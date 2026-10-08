@@ -4,6 +4,30 @@
 #include <utility>
 
 namespace lingtu::nav::endpoint {
+namespace {
+
+std::optional<AutonomyTickOutcome>
+inspectionCompletion(const GoalReplanRuntimeResult &result) {
+  if (!result.terminal_after_stop) {
+    return std::nullopt;
+  }
+  for (const auto &status : result.terminal_after_stop->delivery_ticket.statuses) {
+    if (status.origin != GoalPlanOrigin::kInspection) {
+      continue;
+    }
+    if (status.state == lingtu::message::NavigationGoalState::Reached) {
+      return AutonomyTickOutcome{AutonomyTickOutcomeKind::kGoalReached, status.reason,
+                                 false, std::nullopt};
+    }
+    if (status.state == lingtu::message::NavigationGoalState::Failed) {
+      return AutonomyTickOutcome{AutonomyTickOutcomeKind::kGoalFailed, status.reason,
+                                 false, std::nullopt};
+    }
+  }
+  return std::nullopt;
+}
+
+}  // namespace
 
 NavigationRuntimeController::NavigationRuntimeController(
     GoalPlanController &goal_plan, GoalReplanRuntimeCoordinator &goal_replan_runtime,
@@ -27,6 +51,9 @@ NavigationRuntimeController::advanceFrame(const GoalReplanRuntimeFrameInput &fra
   if (planning_schedule.service_terminal) {
     const GoalTerminalTransactionResult terminal = completeTerminal(result.planning_result);
     result.terminal_delivery_acknowledged |= terminal.delivery_acknowledged;
+    if (terminal.delivery_acknowledged) {
+      result.inspection_completion = inspectionCompletion(result.planning_result);
+    }
   }
 
   actions.complete_endpoint_work_before_autonomy(result.planning_result);
@@ -42,29 +69,16 @@ NavigationRuntimeController::advanceFrame(const GoalReplanRuntimeFrameInput &fra
                                        observation.rolling_segment_active, observation.blockage});
     result.autonomy_result = runtime_outcome;
 
-    const NavigationRuntimePostAutonomyState post_state =
-        actions.apply_autonomy_outputs(runtime_outcome);
-    std::optional<GoalReplanRuntimeResult> inspection_fallback_terminal;
-    if (observation.autonomy_tick_handled && !deferred_inspection_completion_ &&
-        shouldDeferInspectionCompletion(observation.outcome, runtime_outcome, post_state)) {
-      deferred_inspection_completion_ = observation.outcome;
-      inspection_fallback_terminal = goal_replan_runtime_.interrupt(
-          GoalReplanRuntimeInterruption::kControlHold, observation.updated_frame.steady_now_s);
-    }
-
-    const GoalReplanRuntimeResult &terminal_candidate =
-        inspection_fallback_terminal ? *inspection_fallback_terminal : runtime_outcome;
+    (void)actions.apply_autonomy_outputs(runtime_outcome);
     const GoalTerminalSchedulingDecision outcome_schedule =
-        decideGoalTerminalScheduling(terminal_candidate, goal_replan_runtime_.terminalPending());
+        decideGoalTerminalScheduling(runtime_outcome, goal_replan_runtime_.terminalPending());
     if (outcome_schedule.service_terminal) {
-      const GoalTerminalTransactionResult terminal = completeTerminal(terminal_candidate);
+      const GoalTerminalTransactionResult terminal = completeTerminal(runtime_outcome);
       result.terminal_delivery_acknowledged |= terminal.delivery_acknowledged;
+      if (terminal.delivery_acknowledged) {
+        result.inspection_completion = inspectionCompletion(runtime_outcome);
+      }
     }
-  }
-
-  if (result.terminal_delivery_acknowledged && deferred_inspection_completion_) {
-    result.inspection_completion = std::move(deferred_inspection_completion_);
-    deferred_inspection_completion_.reset();
   }
 
   if (!goal_replan_runtime_.terminalPending()) {
@@ -133,19 +147,6 @@ MotionStopTerminalBarrierResult NavigationRuntimeController::stopWhileTerminalPe
 MotionStopTerminalBarrierResult
 NavigationRuntimeController::estopWhileTerminalPending(const std::string &estop_reason) {
   return goal_terminal_transaction_.estopWhileTerminalPending(estop_reason);
-}
-
-bool NavigationRuntimeController::shouldDeferInspectionCompletion(
-    const AutonomyTickOutcome &outcome, const GoalReplanRuntimeResult &runtime_result,
-    const NavigationRuntimePostAutonomyState &post_state) {
-  if (runtime_result.handled) {
-    return false;
-  }
-  if (outcome.kind == AutonomyTickOutcomeKind::kGoalFailed) {
-    return post_state.inspection_navigation_active;
-  }
-  return outcome.kind == AutonomyTickOutcomeKind::kGoalReached &&
-         outcome.inspection_arrival_intent && post_state.inspection_active;
 }
 
 }  // namespace lingtu::nav::endpoint

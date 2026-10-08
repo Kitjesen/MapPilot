@@ -68,6 +68,7 @@ struct GoalPlanStatus {
   lingtu::message::NavigationGoalState state{lingtu::message::NavigationGoalState::Failed};
   std::string reason;
   bool project_to_navigation_state{true};
+  GoalPlanOrigin origin{GoalPlanOrigin::kExternal};
 };
 
 struct GoalPlanTerminalDeliveryTicket {
@@ -239,7 +240,8 @@ class GoalPlanController {
                                             bool record_frame_error = false);
   void publishStatus(const std::string &task_id, const std::string &request_id,
                      std::uint64_t goal_epoch, lingtu::message::NavigationGoalState state,
-                     const std::string &reason, bool project_to_navigation_state = true);
+                     const std::string &reason, bool project_to_navigation_state = true,
+                     GoalPlanOrigin origin = GoalPlanOrigin::kExternal);
   [[nodiscard]] GoalPlanTerminalCommit
   terminalCommit(std::vector<GoalPlanStatus> pending_statuses) const;
   [[nodiscard]] GoalPlanTerminalCommitWithTicket

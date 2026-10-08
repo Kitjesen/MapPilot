@@ -513,5 +513,43 @@ int main() {
     require(overlay_activations.size() == 2U, "overlay replan activated a path more than once");
   }
 
+  {
+    GoalPlanRequest leg = request;
+    leg.task_id = "inspection-task";
+    leg.request_id = "inspection-start";
+    leg.origin = GoalPlanOrigin::kInspection;
+    std::uint64_t previous_epoch = 0;
+    blocked_statuses.clear();
+    for (int point = 0; point < 2; ++point) {
+      require(blocked_controller.submit(leg, context).accepted, "inspection leg rejected");
+      bool activated = false;
+      for (int i = 0; i < 1000 && !activated; ++i) {
+        activated = blocked_controller.advance({context.frame_epoch, false, 40.0}).path_activated;
+        if (!activated) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      require(activated, "inspection leg failed to activate");
+      const auto epoch = blocked_controller.snapshot().active_goal_epoch;
+      require(epoch > previous_epoch, "next waypoint reused the old planning epoch");
+      previous_epoch = epoch;
+      auto terminal = blocked_controller.deferActiveTerminalWithTicket(
+          NavigationGoalState::Reached, "goal_reached");
+      require(terminal.ticket.statuses.size() == 1 &&
+                  terminal.ticket.statuses.front().origin == GoalPlanOrigin::kInspection,
+              "terminal barrier lost the inspection origin");
+      terminal.commit();
+    }
+    for (const auto &status : blocked_statuses) {
+      require(status.task_id == leg.task_id && status.request_id == leg.request_id &&
+                  status.origin == GoalPlanOrigin::kInspection,
+              "inspection leg published a separate task identity or lost its owner");
+    }
+    require(blocked_controller.submit(leg, context).accepted, "third inspection leg rejected");
+    auto cancelled = blocked_controller.deferAbortWithTicket("operator_cancel");
+    require(!cancelled.ticket.statuses.empty(), "cancel lost planning status");
+    for (const auto &status : cancelled.ticket.statuses) {
+      require(status.origin == GoalPlanOrigin::kInspection, "cancel lost inspection ownership");
+    }
+    cancelled.commit();
+  }
   return 0;
 }

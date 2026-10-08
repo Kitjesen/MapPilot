@@ -59,6 +59,8 @@ struct InspectionRuntimeIntent {
 
 struct InspectionGoalDispatchIntent {
   lingtu::nav::inspection::Point point;
+  std::string task_id;
+  std::string request_id;
 };
 
 struct InspectionEvidenceDispatchIntent {

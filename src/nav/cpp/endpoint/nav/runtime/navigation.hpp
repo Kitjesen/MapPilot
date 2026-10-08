@@ -91,15 +91,9 @@ class NavigationRuntimeController {
   estopWhileTerminalPending(const std::string &estop_reason);
 
  private:
-  [[nodiscard]] static bool
-  shouldDeferInspectionCompletion(const AutonomyTickOutcome &outcome,
-                                  const GoalReplanRuntimeResult &runtime_result,
-                                  const NavigationRuntimePostAutonomyState &post_state);
-
   GoalPlanController &goal_plan_;
   GoalReplanRuntimeCoordinator &goal_replan_runtime_;
   GoalTerminalTransaction &goal_terminal_transaction_;
-  std::optional<AutonomyTickOutcome> deferred_inspection_completion_;
 };
 
 }  // namespace lingtu::nav::endpoint
