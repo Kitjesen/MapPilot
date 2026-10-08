@@ -194,20 +194,34 @@ python -m sim.runtime.coordinator.live_visual `
   --gate visual-applied
 ```
 
-### MuJoCo Product Gate
+### MuJoCo simulation evidence
 
 ```bash
 python sim/scripts/mujoco/native_dds_sensors.py --lidar-backend mujoco_lidar
 ```
 
-This is the field-architecture compatibility/Product gate: MuJoCo MID-360/IMU records feed
-the same native DDS sensor boundary used by the field robot, then native C++
-SLAM publishes `/slam/*` for map/nav/explore validation. It is separate from
-the generic SessionRuntime Mid360 pipeline and does not close the new G5
-same-coordinated-run DDS gate. The only Product backend selector is `mujoco`;
-`mujoco_native` and `mujoco_host` are retired.
+This standalone sensor runner feeds MuJoCo MID-360/IMU records through the
+native DDS sensor boundary. It is an input diagnostic, not a complete
+ProductControl acceptance. It is separate from the generic SessionRuntime
+Mid360 pipeline and does not close the G5 same-coordinated-run DDS gate.
+The only Product backend selector is `mujoco`; `mujoco_native` and
+`mujoco_host` are retired.
 
-Current native-DDS acceptance commands are:
+For the current SCAN local-planner component:
+
+```bash
+PYTHONPATH=src:. python sim/scripts/mujoco/native_navigation_acceptance.py \
+  --manifest config/acceptance/mujoco/local_scan.json \
+  --mode motion \
+  --out-dir artifacts/mujoco_local_scan
+```
+
+This manifest isolates navigation using truth localization. It exercises
+SCAN, path following, and the simulated driver; it does not qualify Fast-LIO2,
+the full Product lifecycle, or a field robot. `local_cmu.json` is the separate
+CMU component comparison.
+
+For the existing 59.94 m native navigation scenario:
 
 ```bash
 PYTHONPATH=src:. python sim/scripts/mujoco/native_navigation_acceptance.py \
@@ -217,11 +231,15 @@ PYTHONPATH=src:. python sim/scripts/mujoco/native_navigation_acceptance.py \
   --out-dir artifacts/mujoco_native_nav_60m
 ```
 
-The `nav` Product catalog binds this immutable 59.94 m scenario directly to
-`native_navigation_acceptance.py`. It requires real Fast-LIO2 localization,
-physical rolling LiDAR, goal arrival, and at least 50 m of path length, net XY
-displacement, and goal-distance reduction. Repeated runs are orchestration,
-not a second acceptance implementation.
+`industrial_park_60m.json` explicitly selects CMU. It requires native Fast-LIO2
+localization, physical rolling LiDAR, goal arrival, and at least 50 m of path
+length, net XY displacement, and goal-distance reduction. Its result must not
+be described as SCAN qualification. A direct runner result is component
+evidence; Product acceptance additionally requires the exact RunPlan and the
+[ProductControl wrapper](#products-in-envsim) below.
+
+The wrapper checks the manifest against the RunPlan, including the selected
+local planner.
 
 The command below is a Linux/WSL component-diagnostic compatibility path. If it
 is used from a Windows shell, keep high-rate native status/log files on WSL
