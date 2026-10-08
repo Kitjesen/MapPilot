@@ -6,15 +6,11 @@ import math
 from collections.abc import Mapping
 from typing import Any, Final
 
-from gateway.navigation.tasks import (
-    NavigationTaskProjectionError,
-    project_navigation_goal_status,
-)
-
 _AUTONOMY_AUTHORITIES: Final = {"autonomy", "recovery", "path_follower"}
 _OPERATOR_AUTHORITIES: Final = {"teleop", "manual_hold", "operator"}
 _NO_AUTHORITIES: Final = {"none", "estop"}
 _STOP_CONFIRMATIONS: Final = {"NOT_REQUESTED", "PENDING", "CONFIRMED", "FAILED"}
+_TASK_STATES: Final = {"IDLE", "PLANNING", "EXECUTING", "PAUSED", "RECOVERING", "SUCCESS", "FAILED", "CANCELLED"}
 
 _DEFAULT_LINEAR_SPEED_THRESHOLD_MPS: Final = 0.03
 _DEFAULT_ANGULAR_SPEED_THRESHOLD_RADPS: Final = 0.08
@@ -61,7 +57,6 @@ def _task_projection(
     goal_status: Mapping[str, Any],
 ) -> dict[str, Any]:
     task_id = _text(navigation_state.get("active_task_id"))
-    request_id = _text(navigation_state.get("active_request_id"))
     if navigation_state_fresh is not True:
         return {
             "state": "UNKNOWN",
@@ -70,31 +65,20 @@ def _task_projection(
         }
     exact_status = _exact_goal_status(navigation_state, goal_status)
 
-    if exact_status:
-        try:
-            projected = project_navigation_goal_status(exact_status)
-        except NavigationTaskProjectionError:
-            projected = {}
-        state = _text(projected.get("lifecycle_state_name")).upper() or "UNKNOWN"
-        if state == "EXECUTING" and _text(navigation_state.get("recovery_state_name")).upper() == "ACTIVE":
-            state = "RECOVERING"
-        return {
-            "state": state,
-            "task_id": task_id,
-            "reason": _text(exact_status.get("reason")),
-        }
-
+    # Native execution owns lifecycle for both single goals and inspection.
+    # Goal events supplement the reason; a waypoint event is not a second task.
     lifecycle = _text(navigation_state.get("lifecycle_state_name")).upper()
-    if not task_id and not request_id and lifecycle == "IDLE":
-        return {
-            "state": "IDLE",
-            "task_id": "",
-            "reason": "",
-        }
+    reason = ""
+    if lifecycle == "FAILED":
+        reason = _text(navigation_state.get("failure_code"))
+    elif lifecycle == "PAUSED":
+        reason = _text(navigation_state.get("hold_reason"))
+    if not reason and _text(exact_status.get("state_name")).upper() == lifecycle:
+        reason = _text(exact_status.get("reason"))
     return {
-        "state": "UNKNOWN",
+        "state": lifecycle if lifecycle in _TASK_STATES else "UNKNOWN",
         "task_id": task_id,
-        "reason": "task_status_unavailable",
+        "reason": reason if lifecycle in _TASK_STATES else "task_status_unavailable",
     }
 
 

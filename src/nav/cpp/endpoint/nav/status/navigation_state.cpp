@@ -120,6 +120,7 @@ void NavigationStateTracker::observeInspection(const inspection::RunStatus &stat
   observe(GoalPlanStatus{status.task_id, status.request_id, 0U, goal_state, status.reason});
   state_.map_id = status.map_id;
   state_.map_content_epoch = status.map_content_epoch;
+  // Waiting at a waypoint is still part of the running task, not path following.
   if (status.state == RunState::kSettling || status.state == RunState::kActionPending ||
       status.state == RunState::kDwelling || status.state == RunState::kPausing ||
       status.state == RunState::kCancelling) {
@@ -145,7 +146,8 @@ NavigationStateSample NavigationStateTracker::sample(const NavigationStateContex
     out.planning_state = static_cast<std::int32_t>(NavigationPlanningState::kReady);
     out.execution_state = static_cast<std::int32_t>(NavigationExecutionState::kFollowing);
   }
-  if (context.recovery_active && isActiveLifecycle(out.lifecycle_state)) {
+  if (context.recovery_active && context.path_active &&
+      out.execution_state == static_cast<std::int32_t>(NavigationExecutionState::kFollowing)) {
     out.lifecycle_state = static_cast<std::int32_t>(NavigationLifecycleState::kRecovering);
     out.execution_state = static_cast<std::int32_t>(NavigationExecutionState::kBlocked);
     out.recovery_state = static_cast<std::int32_t>(NavigationRecoveryState::kActive);
@@ -162,9 +164,6 @@ NavigationStateSample NavigationStateTracker::sample(const NavigationStateContex
   }
   if (!hold_reason.empty()) {
     out.hold_reason = std::move(hold_reason);
-    if (isActiveLifecycle(out.lifecycle_state)) {
-      out.lifecycle_state = static_cast<std::int32_t>(NavigationLifecycleState::kPaused);
-    }
   }
   return out;
 }
@@ -181,13 +180,6 @@ bool NavigationStateTracker::publishIfDue(
   last_published_ = sample;
   last_published_s_ = now_s;
   return true;
-}
-
-bool NavigationStateTracker::isActiveLifecycle(std::int32_t lifecycle) {
-  return lifecycle == static_cast<std::int32_t>(NavigationLifecycleState::kPlanning) ||
-         lifecycle == static_cast<std::int32_t>(NavigationLifecycleState::kExecuting) ||
-         lifecycle == static_cast<std::int32_t>(NavigationLifecycleState::kRecovering) ||
-         lifecycle == static_cast<std::int32_t>(NavigationLifecycleState::kPaused);
 }
 
 }  // namespace lingtu::nav::endpoint

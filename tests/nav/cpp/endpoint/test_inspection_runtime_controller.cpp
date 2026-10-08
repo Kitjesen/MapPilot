@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -499,7 +500,7 @@ void testTimeoutAndMapChangeIntents() {
 
 }  // namespace
 
-int main() {
+int runTests() {
   testWaypointsAndResumeReuseTaskIdentity();
   testStatusCadenceAndValidation();
   testGoalDispatchAndProgress();
@@ -512,4 +513,13 @@ int main() {
   testActionTimeoutReleasesEvidenceDispatchLatch();
   testTimeoutAndMapChangeIntents();
   return 0;
+}
+
+int main() {
+  try {
+    return runTests();
+  } catch (const std::exception &exc) {
+    std::fprintf(stderr, "test_inspection_runtime_controller: FAIL: %s\n", exc.what());
+    return 1;
+  }
 }

@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -93,8 +94,8 @@ void testLifecycleAndTransientHold() {
   context.input_ready = false;
   context.input_gate_reason = "localization_stale";
   state = tracker.sample(context);
-  require(state.lifecycle_state == static_cast<int>(NavigationLifecycleState::kPaused),
-          "active goal must pause while input gate is blocked");
+  require(state.lifecycle_state == static_cast<int>(NavigationLifecycleState::kPlanning),
+          "input hold must not invent a task pause");
   require(state.hold_reason == "localization_stale", "hold reason missing");
 
   context.input_ready = true;
@@ -235,7 +236,6 @@ void testPendingTaskStatusesDoNotReplaceActiveRuntimeProjection() {
                   static_cast<int>(NavigationLifecycleState::kExecuting),
           "pending cancellation replaced the active runtime projection");
 }
-
 void testInspectionOwnsWholeTaskLifecycle() {
   using lingtu::nav::inspection::RunState;
   lingtu::nav::inspection::RunStatus run;
@@ -272,10 +272,47 @@ void testInspectionOwnsWholeTaskLifecycle() {
   tracker.observeInspection(run);
   require(tracker.sample({}).lifecycle_state == static_cast<int>(NavigationLifecycleState::kSuccess),
           "whole-route completion did not finish the task");
+
+  tracker.observe(GoalPlanStatus{"next-goal", "next-request", 9U,
+                                NavigationGoalState::Planning, "planning"});
+  require(tracker.sample({}).active_task_id == "next-goal",
+          "finished inspection prevented the next single goal from owning state");
 }
+void testRecoveryDoesNotReplaceWaitingTaskState() {
+  using lingtu::nav::inspection::RunState;
+  NavigationStateTracker tracker(NavigationControlState::kAutonomy);
+  NavigationStateContext context;
+  context.recovery_active = true;
+  context.path_active = true;
+  lingtu::nav::inspection::RunStatus run;
+  run.task_id = "inspection-1";
+  for (const auto phase : {RunState::kPaused, RunState::kPlanning, RunState::kSettling,
+                          RunState::kActionPending, RunState::kDwelling,
+                          RunState::kPausing, RunState::kCancelling}) {
+    run.state = phase;
+    tracker.observeInspection(run);
+    const auto expected = tracker.sample({});
+    const auto actual = tracker.sample(context);
+    require(actual.lifecycle_state == expected.lifecycle_state &&
+                actual.execution_state == expected.execution_state &&
+                actual.recovery_state == expected.recovery_state,
+            "old recovery flag replaced a paused/planning/waiting task");
+  }
+  run.state = RunState::kNavigating;
+  tracker.observeInspection(run);
+  require(tracker.sample(context).lifecycle_state ==
+              static_cast<int>(NavigationLifecycleState::kRecovering),
+          "active navigation recovery was hidden");
+  context.path_active = false;
+  require(tracker.sample(context).lifecycle_state ==
+              static_cast<int>(NavigationLifecycleState::kExecuting),
+          "recovery was shown without an active path");
+}
+
 }  // namespace
 
-int main() {
+int runTests() {
+  testRecoveryDoesNotReplaceWaitingTaskState();
   testInspectionOwnsWholeTaskLifecycle();
   testPublicationChangesHeartbeatAndRetry();
   testLifecycleAndTransientHold();
@@ -284,4 +321,13 @@ int main() {
   testExplicitTaskPausePersistsUntilPathResumes();
   testPendingTaskStatusesDoNotReplaceActiveRuntimeProjection();
   return 0;
+}
+
+int main() {
+  try {
+    return runTests();
+  } catch (const std::exception &exc) {
+    std::fprintf(stderr, "test_navigation_state: FAIL: %s\n", exc.what());
+    return 1;
+  }
 }

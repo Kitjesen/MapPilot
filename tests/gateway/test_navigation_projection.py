@@ -52,7 +52,6 @@ def _facts() -> dict[str, Any]:
 
 def test_runtime_hold_does_not_rewrite_task_as_paused() -> None:
     facts = _facts()
-    facts["navigation_state"]["lifecycle_state_name"] = "PAUSED"
     facts.update(can_accept_goal=False, blockers=["native_input_gate_not_ready"])
     facts["native_endpoint"]["input_gate"] = {
         "ready": False,
@@ -69,7 +68,7 @@ def test_runtime_hold_does_not_rewrite_task_as_paused() -> None:
 def test_localization_hold_preserves_task_lifecycle_and_reports_motion_reason() -> None:
     facts = _facts()
     facts["navigation_state"].update(
-        lifecycle_state_name="PAUSED",
+        lifecycle_state_name="EXECUTING",
         hold_reason="localization_not_tracking",
     )
     facts.update(can_accept_goal=False, blockers=["localization_not_tracking"])
@@ -89,12 +88,29 @@ def test_localization_hold_preserves_task_lifecycle_and_reports_motion_reason() 
     assert state["motion"]["reason"] == "localization_not_tracking"
 
 
+def test_committed_task_pause_remains_paused() -> None:
+    facts = _facts()
+    facts["navigation_state"].update(
+        lifecycle_state_name="PAUSED",
+        hold_reason="operator_pause",
+    )
+    facts["goal_status"].update(state_name="PAUSED", reason="operator_pause")
+
+    state = project_navigation_status(facts)
+
+    assert state["task"] == {
+        "state": "PAUSED",
+        "task_id": "task-1",
+        "reason": "operator_pause",
+    }
+
+
 @pytest.mark.parametrize("terminal_state", ["SUCCESS", "FAILED", "CANCELLED"])
 def test_localization_hold_does_not_replace_terminal_task_event(terminal_state: str) -> None:
     facts = _facts()
     facts["goal_status"].update(state_name=terminal_state, reason="terminal_reason")
     facts["navigation_state"].update(
-        lifecycle_state_name="PAUSED",
+        lifecycle_state_name=terminal_state,
         hold_reason="localization_not_tracking",
     )
 
@@ -117,7 +133,7 @@ def test_localization_hold_does_not_replace_terminal_task_event(terminal_state: 
         ("CANCELLED", "IDLE", "CANCELLED"),
     ],
 )
-def test_task_state_comes_from_exact_event_with_recovery_overlay(
+def test_task_state_comes_from_native_execution(
     goal_state: str,
     recovery: str,
     expected: str,
@@ -125,6 +141,7 @@ def test_task_state_comes_from_exact_event_with_recovery_overlay(
     facts = _facts()
     facts["goal_status"]["state_name"] = goal_state
     facts["navigation_state"]["recovery_state_name"] = recovery
+    facts["navigation_state"]["lifecycle_state_name"] = expected
 
     state = project_navigation_status(facts)
 
@@ -139,9 +156,26 @@ def test_unrelated_task_event_is_not_used() -> None:
     state = project_navigation_status(facts)
 
     assert state["task"] == {
-        "state": "UNKNOWN",
+        "state": "EXECUTING",
         "task_id": "task-1",
-        "reason": "task_status_unavailable",
+        "reason": "",
+    }
+
+
+def test_inspection_does_not_need_a_duplicate_single_goal_event() -> None:
+    facts = _facts()
+    facts["navigation_state"]["active_task_id"] = "inspection-1"
+    facts.pop("goal_status")
+    assert project_navigation_status(facts)["task"] == {
+        "state": "EXECUTING", "task_id": "inspection-1", "reason": "",
+    }
+
+
+def test_late_goal_event_cannot_overwrite_native_task_state() -> None:
+    facts = _facts()
+    facts["goal_status"].update(state_name="SUCCESS", reason="old_waypoint_arrived")
+    assert project_navigation_status(facts)["task"] == {
+        "state": "EXECUTING", "task_id": "task-1", "reason": "",
     }
 
 

@@ -70,8 +70,6 @@ class NavigationStateTracker {
                     const std::function<bool(const NavigationStateSample &)> &publish);
 
  private:
-  static bool isActiveLifecycle(std::int32_t lifecycle);
-
   NavigationStateSample state_;
   std::optional<NavigationStateSample> last_published_;
   double last_published_s_{0.0};
