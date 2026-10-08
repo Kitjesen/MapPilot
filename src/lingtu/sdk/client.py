@@ -24,7 +24,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 _CONNECTION_ERROR = "robot not reachable"
 _ULID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -472,19 +472,6 @@ class LingTuClient:
         """Navigate to a map-viewer click point."""
         return self._command("/api/v1/navigate/click", {"x": x, "y": y, "yaw": yaw})
 
-    def batch_go(self, waypoints: list[tuple[float, float, float]]) -> list[CommandResult]:
-        """Navigate through a sequence of waypoints (blocking)."""
-        results: list[CommandResult] = []
-        for x, y, yaw in waypoints:
-            result = self.go(x, y, yaw)
-            results.append(result)
-            if not result.ok:
-                break
-            if not result.task_id:
-                raise RuntimeError("Navigation command was accepted without a task_id")
-            self.wait_until_arrived(result.task_id)
-        return results
-
     def wait_until_arrived(
         self,
         task_id: str | None = None,
@@ -621,6 +608,111 @@ class LingTuClient:
     def path(self) -> dict[str, Any]:
         """Get the latest planned global path as a list of poses."""
         return self._get("/api/v1/path")
+
+    # ------------------------------------------------------------------
+    # Inspection
+    # ------------------------------------------------------------------
+
+    def inspection_routes(self, map_id: str | None = None) -> dict[str, Any]:
+        """List stored inspection routes, optionally for one map."""
+        path = "/api/v1/inspection/routes"
+        normalized_map_id = str(map_id or "").strip()
+        if normalized_map_id:
+            path = f"{path}?{urlencode({'map_id': normalized_map_id})}"
+        return self._get(path)
+
+    def start_inspection(
+        self,
+        route_id: str,
+        *,
+        map_id: str | None = None,
+        revision: int = 0,
+        request_id: str | None = None,
+    ) -> CommandResult:
+        """Submit a stored route for native inspection execution."""
+        normalized_route_id = str(route_id or "").strip()
+        if not normalized_route_id:
+            raise ValueError("route_id is required")
+        resolved_request_id = str(request_id or "").strip() or _new_request_id()
+        body: dict[str, Any] = {
+            "route_id": normalized_route_id,
+            "revision": revision,
+            "request_id": resolved_request_id,
+        }
+        normalized_map_id = str(map_id or "").strip()
+        if normalized_map_id:
+            body["map_id"] = normalized_map_id
+        result = self._command("/api/v1/inspection/tasks", body)
+        if result.request_id is None:
+            result.request_id = resolved_request_id
+        return result
+
+    def inspection_task(self, task_id: str) -> dict[str, Any]:
+        """Read the fact-backed state of one inspection task."""
+        encoded_task_id = self._inspection_task_id(task_id)
+        return self._get(f"/api/v1/inspection/tasks/{encoded_task_id}")
+
+    def pause_inspection(
+        self,
+        task_id: str,
+        *,
+        reason: str = "operator_pause",
+        request_id: str | None = None,
+    ) -> CommandResult:
+        """Request a pause for one inspection task."""
+        return self._control_inspection(task_id, "pause", reason, request_id)
+
+    def resume_inspection(
+        self,
+        task_id: str,
+        *,
+        reason: str = "operator_resume",
+        request_id: str | None = None,
+    ) -> CommandResult:
+        """Request resumption of one paused inspection task."""
+        return self._control_inspection(task_id, "resume", reason, request_id)
+
+    def cancel_inspection(
+        self,
+        task_id: str,
+        *,
+        reason: str = "operator_cancel",
+        request_id: str | None = None,
+    ) -> CommandResult:
+        """Request cancellation of one inspection task."""
+        return self._control_inspection(task_id, "cancel", reason, request_id)
+
+    def inspection_report(self, task_id: str) -> dict[str, Any]:
+        """Read the business report for one inspection task."""
+        encoded_task_id = self._inspection_task_id(task_id)
+        return self._get(f"/api/v1/inspection/tasks/{encoded_task_id}/report")
+
+    def _control_inspection(
+        self,
+        task_id: str,
+        action: str,
+        reason: str,
+        request_id: str | None,
+    ) -> CommandResult:
+        encoded_task_id = self._inspection_task_id(task_id)
+        resolved_request_id = str(request_id or "").strip() or _new_request_id()
+        result = self._command(
+            f"/api/v1/inspection/tasks/{encoded_task_id}/{action}",
+            {
+                "reason": str(reason or "").strip() or f"operator_{action}",
+                "request_id": resolved_request_id,
+            },
+        )
+        if result.request_id is None:
+            result.request_id = resolved_request_id
+        return result
+
+    @staticmethod
+    def _inspection_task_id(task_id: str) -> str:
+        normalized = str(task_id or "").strip()
+        if not normalized:
+            raise ValueError("task_id is required")
+        return quote(normalized, safe="")
 
     # ------------------------------------------------------------------
     # Maps

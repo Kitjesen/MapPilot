@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 
 from lingtu.sdk import LingTuClient
 
@@ -45,6 +46,27 @@ def main() -> None:
     # lingtu session
     sub.add_parser("session")
 
+    inspection_routes = sub.add_parser("inspection-routes")
+    inspection_routes.add_argument("--map-id")
+
+    inspection_start = sub.add_parser("inspection-start")
+    inspection_start.add_argument("route_id")
+    inspection_start.add_argument("--map-id")
+    inspection_start.add_argument("--revision", type=int, default=0)
+    inspection_start.add_argument("--request-id")
+
+    inspection_status = sub.add_parser("inspection-status")
+    inspection_status.add_argument("task_id")
+
+    for action in ("pause", "resume", "cancel"):
+        control = sub.add_parser(f"inspection-{action}")
+        control.add_argument("task_id")
+        control.add_argument("--reason", default=f"operator_{action}")
+        control.add_argument("--request-id")
+
+    inspection_report = sub.add_parser("inspection-report")
+    inspection_report.add_argument("task_id")
+
     args = p.parse_args()
     robot = LingTuClient(args.host, args.port)
 
@@ -86,6 +108,28 @@ def main() -> None:
         print(f"Mode: {s.mode}")
         print(f"Map: {s.active_map}")
         print(f"SLAM: {s.slam_profile}")
+    elif args.cmd == "inspection-routes":
+        print(json.dumps(robot.inspection_routes(args.map_id), ensure_ascii=False, indent=2))
+    elif args.cmd == "inspection-start":
+        result = robot.start_inspection(
+            args.route_id,
+            map_id=args.map_id,
+            revision=args.revision,
+            request_id=args.request_id,
+        )
+        print(json.dumps(result.raw, ensure_ascii=False, indent=2))
+    elif args.cmd == "inspection-status":
+        print(json.dumps(robot.inspection_task(args.task_id), ensure_ascii=False, indent=2))
+    elif args.cmd in {"inspection-pause", "inspection-resume", "inspection-cancel"}:
+        action = args.cmd.removeprefix("inspection-")
+        result = getattr(robot, f"{action}_inspection")(
+            args.task_id,
+            reason=args.reason,
+            request_id=args.request_id,
+        )
+        print(json.dumps(result.raw, ensure_ascii=False, indent=2))
+    elif args.cmd == "inspection-report":
+        print(json.dumps(robot.inspection_report(args.task_id), ensure_ascii=False, indent=2))
     else:
         p.print_help()
 

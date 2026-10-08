@@ -140,13 +140,6 @@ class AsyncLingTuClient:
         """Navigate to a map-viewer click point."""
         return await asyncio.to_thread(self._client.navigate_click, x, y, yaw)
 
-    async def batch_go(
-        self,
-        waypoints: list[tuple[float, float, float]],
-    ) -> list[CommandResult]:
-        """Navigate through a sequence of waypoints."""
-        return await asyncio.to_thread(self._client.batch_go, waypoints)
-
     async def wait_until_arrived(
         self,
         task_id: str | None = None,
@@ -192,6 +185,80 @@ class AsyncLingTuClient:
     async def path(self) -> dict[str, Any]:
         """Return the latest planned path."""
         return await asyncio.to_thread(self._client.path)
+
+    async def inspection_routes(self, map_id: str | None = None) -> dict[str, Any]:
+        """List stored inspection routes, optionally for one map."""
+        return await asyncio.to_thread(self._client.inspection_routes, map_id)
+
+    async def start_inspection(
+        self,
+        route_id: str,
+        *,
+        map_id: str | None = None,
+        revision: int = 0,
+        request_id: str | None = None,
+    ) -> CommandResult:
+        """Submit a stored route for native inspection execution."""
+        return await asyncio.to_thread(
+            self._client.start_inspection,
+            route_id,
+            map_id=map_id,
+            revision=revision,
+            request_id=request_id,
+        )
+
+    async def inspection_task(self, task_id: str) -> dict[str, Any]:
+        """Return the fact-backed state of one inspection task."""
+        return await asyncio.to_thread(self._client.inspection_task, task_id)
+
+    async def pause_inspection(
+        self,
+        task_id: str,
+        *,
+        reason: str = "operator_pause",
+        request_id: str | None = None,
+    ) -> CommandResult:
+        """Request a pause for one inspection task."""
+        return await asyncio.to_thread(
+            self._client.pause_inspection,
+            task_id,
+            reason=reason,
+            request_id=request_id,
+        )
+
+    async def resume_inspection(
+        self,
+        task_id: str,
+        *,
+        reason: str = "operator_resume",
+        request_id: str | None = None,
+    ) -> CommandResult:
+        """Request resumption of one paused inspection task."""
+        return await asyncio.to_thread(
+            self._client.resume_inspection,
+            task_id,
+            reason=reason,
+            request_id=request_id,
+        )
+
+    async def cancel_inspection(
+        self,
+        task_id: str,
+        *,
+        reason: str = "operator_cancel",
+        request_id: str | None = None,
+    ) -> CommandResult:
+        """Request cancellation of one inspection task."""
+        return await asyncio.to_thread(
+            self._client.cancel_inspection,
+            task_id,
+            reason=reason,
+            request_id=request_id,
+        )
+
+    async def inspection_report(self, task_id: str) -> dict[str, Any]:
+        """Return the business report for one inspection task."""
+        return await asyncio.to_thread(self._client.inspection_report, task_id)
 
     async def maps(self) -> MapList:
         """List saved maps."""

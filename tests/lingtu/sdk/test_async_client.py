@@ -186,6 +186,7 @@ class TestAsyncLingTuClient(unittest.IsolatedAsyncioTestCase):
             "bag_start",
             "bag_stop",
             "bag_status",
+            "batch_go",
             "swap",
             "use_map",
             "restore_map",

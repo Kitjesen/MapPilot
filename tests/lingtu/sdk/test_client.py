@@ -36,7 +36,14 @@ class TestLingTuClient(unittest.TestCase):
         self.assertIn("Pose2D", sdk_pkg.__all__)
 
     def test_removed_direct_runtime_mutations_are_not_sdk_methods(self) -> None:
-        for name in ("use_map", "restore_map", "start_session", "end_session", "drive"):
+        for name in (
+            "batch_go",
+            "use_map",
+            "restore_map",
+            "start_session",
+            "end_session",
+            "drive",
+        ):
             self.assertFalse(hasattr(LingTuClient, name), name)
         async_source = (
             Path(__file__).resolve().parents[3] / "src/lingtu/sdk/async_client.py"
@@ -426,39 +433,6 @@ class TestLingTuClient(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "FAILED.*planner_failed"):
             self.robot.wait_until_arrived(timeout=1.0, poll_interval=0.0)
-
-    def test_batch_go_waits_for_every_waypoint_including_final(self) -> None:
-        self.robot.go = Mock(
-            side_effect=[
-                CommandResult(
-                    ok=True,
-                    accepted=True,
-                    request_id="goal-1",
-                    task_id="navigation-task-1",
-                ),
-                CommandResult(
-                    ok=True,
-                    accepted=True,
-                    request_id="goal-2",
-                    task_id="navigation-task-2",
-                ),
-            ]
-        )
-        self.robot.wait_until_arrived = Mock()
-
-        results = self.robot.batch_go([(1.0, 2.0, 0.1), (3.0, 4.0, 0.2)])
-
-        self.assertEqual(len(results), 2)
-        self.assertEqual(
-            self.robot.wait_until_arrived.call_args_list,
-            [call("navigation-task-1"), call("navigation-task-2")],
-        )
-
-    def test_batch_go_rejects_accepted_goal_without_task_id(self) -> None:
-        self.robot.go = Mock(return_value=CommandResult(ok=True, accepted=True))
-
-        with self.assertRaisesRegex(RuntimeError, "without a task_id"):
-            self.robot.batch_go([(1.0, 2.0, 0.1)])
 
     @patch("urllib.request.urlopen")
     def test_command_without_explicit_success_signal_is_not_accepted(self, mock_urlopen) -> None:

@@ -82,6 +82,45 @@ blockers live at `/api/v1/readiness`, paths at `/api/v1/path`, native evidence a
 `/api/v1/navigation/dds_snapshot`, and exact terminal evidence at
 `/api/v1/navigation/tasks/{task_id}`.
 
+## Single targets and waypoint routes
+
+The scene and saved-map viewers each keep one target draft. Clicking A, B,
+then C before confirmation leaves C selected; it does not enqueue A or B.
+Candidate/path previews do not command motion. Confirming submits one
+external goal. A later accepted external goal replaces the current single
+goal; while planning is busy, the native pending slot keeps only the latest
+accepted goal. `planning_queued` is this single pending slot, not a FIFO.
+An active inspection task owns its route and rejects unrelated external goals.
+
+For ordered waypoints, edit and save a route in the inspection workbench,
+then submit it once through `POST /api/v1/inspection/tasks`. The native
+inspection executor advances points after arrival and configured point
+actions. One `task_id` identifies the whole task; `request_id` identifies
+each start/pause/resume/cancel command. Clients display status and submit
+commands; they do not advance points. Pause/resume preserves the current
+point, and cancellation ends the task through the existing stop handshake.
+A successful start/control response acknowledges submission, not execution
+or completion. Query the identified task for the native result.
+
+The Python SDK exposes `inspection_routes`, `start_inspection`,
+`inspection_task`, `pause_inspection`, `resume_inspection`,
+`cancel_inspection`, and `inspection_report`; AsyncLingTuClient delegates
+the same operations. The CLI exposes the corresponding `inspection-*`
+commands. The former `batch_go` Python waypoint loop has been removed.
+Use a stored native route instead; `go` and `wait_until_arrived` remain
+available for single-goal navigation.
+
+```python
+from lingtu.sdk import LingTuClient
+
+robot = LingTuClient("robot-host")
+routes = robot.inspection_routes()
+# Select an existing route from routes before starting it.
+result = robot.start_inspection("saved-route-id")
+if result.ok and result.task_id:
+    status = robot.inspection_task(result.task_id)
+```
+
 ## MCP tools
 
 This inventory is generated from `@skill` decorators. The Host exposes
@@ -566,7 +605,7 @@ FastAPI's live OpenAPI UI remains available at `/docs`.
   - `POST /api/v1/maps/operations/{operation_id}/retry` — Retry a failed durable map-save operation
   - `DELETE /api/v1/maps/{name}` — Delete a saved map
   - `POST /api/v1/maps/{name}/build_occupancy` — Build a 2D occupancy artifact from a saved map
-  - `POST /api/v1/maps/{name}/build_octomap` — Build the native OctoPlanner3D octomap.ot; navigation activation requires saved-ray evidence, while point-cloud-only output is preview-only
+  - `POST /api/v1/maps/{name}/build_octomap` — Build OctoPlanner3D octomap.ot from saved map.pcd
   - `POST /api/v1/maps/{name}/crop` — Crop a saved map point cloud and invalidate derived artifacts
   - `POST /api/v1/maps/{name}/mark_zone` — Mark occupied/free/preblocked/traversable zones in the saved OctoMap
   - `GET /api/v1/maps/{name}/pcd` — Serve raw PCD file for inline preview
@@ -790,7 +829,7 @@ FastAPI's live OpenAPI UI remains available at `/docs`.
 **Handler:** `build_saved_map_occupancy`
 
 #### `POST /api/v1/maps/{name}/build_octomap`
-**Summary:** Build the native OctoPlanner3D octomap.ot. A navigation artifact replays saved sensor rays; a point-cloud-only build is explicitly preview-only and cannot be activated for motion.
+**Summary:** Build OctoPlanner3D octomap.ot from saved map.pcd
 **Response model:** `MapLifecycleResponse`
 **Handler:** `build_saved_map_octomap`
 
