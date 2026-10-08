@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstdio>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -33,7 +34,7 @@ planImmediately(const lingtu::nav::plan::GlobalPlanRequest &request,
 
 }  // namespace
 
-int main() {
+int runTests() {
   using lingtu::message::NavigationGoalState;
   using lingtu::nav::endpoint::GoalPlanActions;
   using lingtu::nav::endpoint::GoalPlanAdmissionContext;
@@ -212,10 +213,31 @@ int main() {
   blocked_context = context;
   blocked_context.map_position.reset();
   blocked_context.odometry_ready = true;
-  expect_admission_rejection(request, blocked_context, "map_odom_tf_not_ready", false, false);
+  auto inspection_request = request;
+  inspection_request.origin = GoalPlanOrigin::kInspection;
+  expect_admission_rejection(inspection_request, blocked_context, "map_odom_tf_not_ready", false,
+                             false);
 
   blocked_context.odometry_ready = false;
-  expect_admission_rejection(request, blocked_context, "odometry_not_ready", false, false);
+  expect_admission_rejection(inspection_request, blocked_context, "odometry_not_ready", false, false);
+  {
+    std::vector<GoalPlanStatus> queued_statuses;
+    bool preempted = false;
+    GoalPlanController queued(
+        planImmediately, make_admission_actions(&queued_statuses, &preempted, true));
+    const auto result = queued.submit(request, blocked_context);
+    const auto queued_snapshot = queued.snapshot();
+    require(result.accepted && result.reason == "planning_queued" && !queued_snapshot.busy,
+            "external goal must wait for pose without starting search");
+    require(queued_snapshot.pending_plan_queued && queued_snapshot.goal_epoch == 1U &&
+                queued_snapshot.pending_task_id == request.task_id &&
+                queued_snapshot.pending_request_id == request.request_id,
+            "waiting for pose must preserve the pending goal identity");
+    require(queued_statuses.size() == 1U &&
+                queued_statuses.front().state == NavigationGoalState::Planning &&
+                queued_statuses.front().reason == "planning_queued",
+            "queued goal must publish its waiting state");
+  }
 
   blocked_context = context;
   blocked_context.planner_map_configured = false;
@@ -389,6 +411,20 @@ int main() {
             "a rejected resume changed the paused task state");
   };
 
+  const auto expect_resume_wait = [&](GoalPlanAdmissionContext candidate_context,
+                                      const std::string &expected_reason) {
+    const auto previous = success_controller.snapshot();
+    const auto status_count = success_statuses.size();
+    const auto result =
+        success_controller.deferResume(request.task_id, "resume-wait", candidate_context);
+    require(result.accepted && result.reason == expected_reason && result.commit,
+            "recoverable resume gap must retain a deferred transition");
+    const auto waiting = success_controller.snapshot();
+    require(waiting.active_paused && waiting.active_request_id == previous.active_request_id &&
+                success_statuses.size() == status_count,
+            "preparing a waiting resume must not commit execution state");
+  };
+
   auto blocked_resume_context = context;
   blocked_resume_context.motion_allowed = false;
   expect_resume_rejection(blocked_resume_context, "estop_latched");
@@ -408,8 +444,8 @@ int main() {
 
   blocked_resume_context = context;
   blocked_resume_context.input_ready = false;
-  blocked_resume_context.input_gate_reason = "localization_stale";
-  expect_resume_rejection(blocked_resume_context, "input_gate_localization_stale");
+  blocked_resume_context.input_gate_reason = "localization_health_stale";
+  expect_resume_wait(blocked_resume_context, "resume_waiting_for_inputs");
 
   blocked_resume_context = context;
   blocked_resume_context.retained_path_ready = false;
@@ -418,10 +454,10 @@ int main() {
 
   blocked_resume_context = context;
   blocked_resume_context.map_position.reset();
-  expect_resume_rejection(blocked_resume_context, "map_odom_tf_not_ready");
+  expect_resume_wait(blocked_resume_context, "resume_waiting_for_pose");
 
   blocked_resume_context.odometry_ready = false;
-  expect_resume_rejection(blocked_resume_context, "odometry_not_ready");
+  expect_resume_wait(blocked_resume_context, "resume_waiting_for_odometry");
 
   blocked_resume_context = context;
   blocked_resume_context.planner_map_configured = false;
@@ -429,7 +465,7 @@ int main() {
   expect_resume_rejection(blocked_resume_context, "active_octomap_not_configured");
 
   success_current_map.reset();
-  expect_resume_rejection(context, "active_map_unavailable_before_resume");
+  expect_resume_wait(context, "resume_waiting_for_map");
   success_current_map = lingtu::nav::plan::MapIdentity{"field", 8, "map"};
   expect_resume_rejection(context, "active_map_changed_before_resume");
   success_current_map = lingtu::nav::plan::MapIdentity{"field", 7, "map"};
@@ -552,4 +588,13 @@ int main() {
     cancelled.commit();
   }
   return 0;
+}
+
+int main() {
+  try {
+    return runTests();
+  } catch (const std::exception &exc) {
+    std::fprintf(stderr, "test_goal_plan_controller: FAIL: %s\n", exc.what());
+    return 1;
+  }
 }
