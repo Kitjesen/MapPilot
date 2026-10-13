@@ -217,3 +217,10 @@ This is an engineering release gate, not legal advice.
 Unit tests do not prove a Product. WSL does not prove Windows-native behavior.
 Simulation does not prove S100P motion safety. A roadmap item closes only when
 its named evidence gate passes and the owning contract is updated.
+
+## Next task architecture work
+
+The [task interface design](research/tasks.md) records the implemented Follow lifecycle
+and its local evidence. The [next upgrade plan](research/plan.md) starts with Agent
+ownership and real domain-task results. Native simulation and field qualification
+remain separate gates; ProductControl and native motion ownership are unchanged.

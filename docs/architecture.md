@@ -293,3 +293,10 @@ details live in [`src/README.md`](../src/README.md),
 Current operational behavior is detailed in [Runtime](./runtime.md). Evidence
 and open work belong in [Testing](./testing.md) and [Roadmap](./roadmap.md),
 not in this contract.
+
+## Task interface
+
+The [task interface design](research/tasks.md) records the implemented Follow lifecycle
+and its local evidence. The [next upgrade plan](research/plan.md) starts with Agent
+ownership and real domain-task results. Native simulation and field qualification
+remain separate gates; ProductControl and native motion ownership are unchanged.
