@@ -1,8 +1,11 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ChevronDown, LocateFixed, RefreshCw, Route } from 'lucide-react'
 import { text, type Locale } from '../i18n'
 import * as api from '../services/api'
-import type { SSEState, ToastKind } from '../types'
+import { selectDisplayedFollowTask } from '../services/followTask'
+import { liveNavigationStatus } from '../services/navigationStatus'
+import { presentVisualFollowStatus } from '../services/visualFollowStatus'
+import type { FollowTaskRef, SSEState, ToastKind } from '../types'
 import styles from './RobotStatusPanel.module.css'
 
 interface RobotStatusPanelProps {
@@ -30,14 +33,40 @@ export function RobotStatusPanel({
   const [visualTarget, setVisualTarget] = useState('')
   const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null)
   const [visualCommand, setVisualCommand] = useState<'find' | 'follow' | 'stop' | null>(null)
+  const [acceptedFollowTask, setAcceptedFollowTask] = useState<FollowTaskRef | null>(null)
   const session = sseState.session ?? refreshedSession
   const visualServo = sseState.visualServoStatus
+  const followStatus = visualServo
+    ? presentVisualFollowStatus(
+        visualServo,
+        liveNavigationStatus(sseState, Date.now() / 1000),
+        locale,
+      )
+    : null
   const followAvailable = visualServo?.follow_available === true
-  const trackedPersonId = visualServo?.person?.id ?? null
+  const displayedFollowTask = selectDisplayedFollowTask(
+    visualServo,
+    acceptedFollowTask,
+    session?.product_session_id,
+  )
+  const displayedFollowState = visualServo?.task_state
+    ?? (acceptedFollowTask ? 'accepted' : null)
+  const trackedPersonId = visualServo?.native_track_id ?? visualServo?.person?.id ?? null
+  const trackedIdentityId = visualServo?.target_identity_id ?? visualServo?.person?.identity_id
   const trackedPersonPosition = visualServo?.person?.position
   const visiblePeople = (sseState.sceneGraph?.objects ?? []).filter(
     person => person.id && ['person', 'people', 'human', 'pedestrian'].includes(person.label.toLowerCase()),
   )
+
+  useEffect(() => {
+    if (
+      acceptedFollowTask
+      && visualServo?.follow_task_id === acceptedFollowTask.follow_task_id
+      && visualServo.product_session_id === acceptedFollowTask.product_session_id
+    ) {
+      setAcceptedFollowTask(null)
+    }
+  }, [acceptedFollowTask, visualServo?.follow_task_id, visualServo?.product_session_id])
 
   const refresh = useCallback(async () => {
     setRefreshing(true)
@@ -95,6 +124,9 @@ export function RobotStatusPanel({
 
   const runVisualServo = useCallback(async (mode: 'find' | 'follow' | 'stop') => {
     const target = visualTarget.trim() || visualServo?.target?.trim() || ''
+    const followTaskAtClick = displayedFollowTask
+      ? { ...displayedFollowTask }
+      : null
     if (mode !== 'stop' && !motionStartAllowed) {
       showToast(motionStartBlockedReason, 'error')
       return
@@ -103,10 +135,29 @@ export function RobotStatusPanel({
       showToast(text(locale, 'Enter the person or object to track', '请输入要寻找或跟随的人或物体'), 'error')
       return
     }
+    if (mode === 'stop' && visualServo?.mode === 'follow' && !followTaskAtClick) {
+      showToast(text(locale, 'Follow task reference is not ready', '跟随任务引用尚未就绪'), 'error')
+      return
+    }
 
     setVisualCommand(mode)
     try {
-      const response = await api.sendVisualServo(mode, target || null, selectedPersonId)
+      const response = mode === 'stop' && followTaskAtClick
+        ? await api.cancelFollowTask(followTaskAtClick)
+        : await api.sendVisualServo(mode, target || null, selectedPersonId)
+      if (
+        mode === 'follow'
+        && response.ok
+        && typeof response.follow_task_id === 'string'
+        && typeof response.product_session_id === 'string'
+      ) {
+        setAcceptedFollowTask({
+          follow_task_id: response.follow_task_id,
+          product_session_id: response.product_session_id,
+        })
+      } else if (mode === 'find' && response.ok) {
+        setAcceptedFollowTask(null)
+      }
       showToast(
         response.ok
           ? text(locale, `${mode} command submitted`, `${mode === 'find' ? '寻找' : mode === 'follow' ? '跟随' : '停止'}命令已提交`)
@@ -121,7 +172,7 @@ export function RobotStatusPanel({
     } finally {
       setVisualCommand(null)
     }
-  }, [locale, motionStartAllowed, motionStartBlockedReason, selectedPersonId, showToast, visualServo?.target, visualTarget])
+  }, [displayedFollowTask, locale, motionStartAllowed, motionStartBlockedReason, selectedPersonId, showToast, visualServo?.mode, visualServo?.target, visualTarget])
 
   return (
     <section className={styles.panel} aria-label={text(locale, 'Robot status', '机器人状态')}>
@@ -180,11 +231,13 @@ export function RobotStatusPanel({
             <strong>{text(locale, 'Visual task', '视觉任务')}</strong>
             <span>
               {visualServo?.mode ?? 'idle'}
-              {visualServo?.target_id
-                ? ` · ID ${visualServo.target_id}`
-                : visualServo?.target
-                  ? ` · ${visualServo.target}`
-                  : ''}
+              {trackedIdentityId
+                ? ` · ${text(locale, 'Target', '目标')} ${trackedIdentityId.slice(0, 8)}`
+                : visualServo?.target_id
+                  ? ` · ${text(locale, 'Track', '轨迹')} ${visualServo.target_id}`
+                  : visualServo?.target
+                    ? ` · ${visualServo.target}`
+                    : ''}
             </span>
           </div>
           <input
@@ -238,37 +291,59 @@ export function RobotStatusPanel({
             </button>
             <button
               onClick={() => void runVisualServo('stop')}
-              disabled={visualCommand !== null}
+              disabled={visualCommand !== null || (visualServo?.mode === 'follow' && !displayedFollowTask)}
+              title={visualServo?.mode === 'follow' && !displayedFollowTask
+                ? text(locale, 'Follow task reference is not ready', '跟随任务引用尚未就绪')
+                : undefined}
             >
               {text(locale, 'Stop tracking', '停止跟随')}
             </button>
           </div>
+          {displayedFollowTask && (
+            <small className={styles.hotSwitch}>
+              {text(locale, 'Follow task', '跟随任务')} {displayedFollowTask.follow_task_id}
+              {displayedFollowState && ` · ${displayedFollowState}`}
+            </small>
+          )}
           {visualServo && (
             <>
-              <small className={styles.hotSwitch}>
-                {visualServo.state === 'stopping'
-                  ? text(locale, 'Stopping', '正在停止')
-                  : visualServo.state === 'following'
-                    ? text(locale, 'Following person', '正在跟人')
-                    : visualServo.state === 'lost'
-                      ? text(locale, 'Target lost', '目标丢失')
-                      : visualServo.state === 'failed'
-                        ? text(locale, 'Navigation failed', '导航失败')
-                  : !visualServo.follow_available
-                    ? text(locale, 'Person selection unavailable', '人员选择不可用')
-                    : visualServo.mode === 'idle'
-                      ? text(locale, 'Ready to switch task', '可直接切换任务')
-                      : visualServo.select === 'unavailable'
-                        ? text(locale, 'Target selection unavailable', '目标选择不可用')
-                        : text(locale, 'Waiting for target lock', '等待锁定目标')}
-              </small>
+              {followStatus && (
+                <div className={styles.followStatus}>
+                  <div>
+                    <span>{text(locale, 'Visual tracking', '视觉跟踪')}</span>
+                    <strong>{followStatus.visual.label}</strong>
+                  </div>
+                  {followStatus.visual.message && <small>{followStatus.visual.message}</small>}
+                  {followStatus.navigation && (
+                    <div>
+                      <span>{text(locale, 'Follow navigation', '跟随导航')}</span>
+                      <strong>{followStatus.navigation.label}</strong>
+                      {followStatus.navigation.message && <small>{followStatus.navigation.message}</small>}
+                    </div>
+                  )}
+                  <div>
+                    <span>{text(locale, 'Robot motion', '机器人运动')}</span>
+                    <strong>{followStatus.motion.observation}</strong>
+                    <small>
+                      {followStatus.motion.permission} · {followStatus.motion.stopConfirmation}
+                    </small>
+                    {followStatus.motion.reasonMessage && <small>{followStatus.motion.reasonMessage}</small>}
+                  </div>
+                </div>
+              )}
               {trackedPersonId && trackedPersonPosition && (
                 <small className={styles.hotSwitch}>
                   {visualServo?.target_visible
                     ? text(locale, 'Person locked', '人员已锁定')
                     : text(locale, 'Person temporarily lost', '人员暂时丢失')}
-                  {' · '}ID {trackedPersonId}
-                  {' · '}map ({trackedPersonPosition[0]?.toFixed(1)}, {trackedPersonPosition[1]?.toFixed(1)})
+                  {trackedIdentityId && (
+                    <> · {text(locale, 'Target', '目标')} {trackedIdentityId.slice(0, 8)}</>
+                  )}
+                  {' · '}{text(locale, 'Track', '轨迹')} {trackedPersonId}
+                  {' · '}{visualServo.target_visible
+                    ? text(locale, 'Map position', '地图位置')
+                    : text(locale, 'Last observed map position', '最后观测地图位置')}
+                  {' '}({trackedPersonPosition[0]?.toFixed(1)}, {trackedPersonPosition[1]?.toFixed(1)})
                   {typeof visualServo.distance_m === 'number' && (
                     <> · {visualServo.distance_m.toFixed(1)} m</>
                   )}

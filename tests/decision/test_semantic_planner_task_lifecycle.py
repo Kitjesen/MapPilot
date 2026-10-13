@@ -8,6 +8,7 @@ from unittest.mock import Mock
 import pytest
 
 from decision.modules.semantic_planner import SemanticPlannerModule
+from decision.modules.visual_servo import VisualServoModule
 from nav.services.goals import GoalService
 from runtime.msgs.geometry import Pose, PoseStamped, Vector3
 from runtime.msgs.nav import (
@@ -52,7 +53,9 @@ def planner(monkeypatch):
     service.on_system_modules({"nav.commands": commands})
     service.setup()
     module.setup()
-    module.on_system_modules({"nav.commands": commands})
+    visual = VisualServoModule()
+    module.on_system_modules({"nav.commands": commands, "VisualServoModule": visual})
+    module._test_visual = visual
     module.nav_command.subscribe(service.goal_command._deliver)
     service.goal_status.subscribe(module.goal_status._deliver)
     service.task_status.subscribe(module.navigation_goal_status._deliver)
@@ -125,7 +128,9 @@ def test_follow_handoff_cannot_resurrect_previous_scene_goal(planner):
     module._goal_resolver.fast_resolve.return_value.position = [3, 0, 0]
     module._on_scene_graph(_scene())
 
-    assert servo[-1] == "follow:person"
+    assert module._test_visual.get_servo_status()["target"] == "person"
+    assert module._follow_ref["follow_task_id"]
+    assert servo == []
     assert len(goals) == 1
     assert module._current_goal_pose is None
 
@@ -472,8 +477,10 @@ def test_failed_cancelled_goal_cannot_restart_on_next_scene(planner):
 def test_new_goal_stops_prior_visual_following(planner):
     module, goals, _, _, servo = planner
     module.instruction._deliver("follow person")
+    ref = module._follow_ref.copy()
     module.instruction._deliver("find chair")
-    assert servo == ["follow:person", "stop"]
+    assert servo == []
+    assert module._test_visual.get_follow_task(ref["follow_task_id"], ref["product_session_id"])["terminal"]
     assert len(goals) == 1
 
 

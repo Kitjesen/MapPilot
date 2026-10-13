@@ -59,6 +59,7 @@ _AGENT_SKILL_BLOCKLIST = {
     "cancel_mission",
     "start_inspection",
     "navigate_to_deg", "find_object", "follow_person", "stop_servo",
+    "start_follow", "cancel_follow_task",
     "run_agent_task", "cancel_agent_task",
     "vla_navigate", "go_to_tag",  # these adapters do not carry Agent task ownership
 }

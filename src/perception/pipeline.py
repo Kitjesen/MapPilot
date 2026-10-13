@@ -317,6 +317,7 @@ def to_runtime_detections(
         position = detection.position
         feature = getattr(detection, "features", None)
         has_feature = feature is not None and np.asarray(feature).size > 0
+        dino_feature = getattr(detection, "dino_feature", None)
         track_id = getattr(detection, "track_id", None)
         converted.append(
             CoreDetection3D(
@@ -330,6 +331,11 @@ def to_runtime_detections(
                 ),
                 bbox_2d=[float(value) for value in detection.bbox_2d],
                 clip_feature=np.asarray(feature) if has_feature else None,
+                dino_feature=(
+                    np.asarray(dino_feature, dtype=np.float32)
+                    if dino_feature is not None
+                    else None
+                ),
                 ts=float(source_ts),
             )
         )

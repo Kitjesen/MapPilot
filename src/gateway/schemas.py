@@ -312,6 +312,9 @@ class VisualServoRequest(BaseModel):
     mode: str = Field(default="find", max_length=16)
     target: str | None = Field(default=None, max_length=256)
     target_id: str | None = Field(default=None, max_length=128)
+    follow_task_id: str | None = Field(default=None, max_length=128)
+    product_session_id: str | None = Field(default=None, max_length=128)
+    reason: str = Field(default="operator_cancel", min_length=1, max_length=256)
     request_id: str | None = Field(default=None, max_length=128)
     client_id: str = Field(default="unknown", max_length=128)
 
@@ -324,13 +327,30 @@ class VisualServoRequest(BaseModel):
             self.target = self.target.strip()
         if self.target_id is not None:
             self.target_id = self.target_id.strip()
+        if self.follow_task_id is not None:
+            self.follow_task_id = self.follow_task_id.strip()
+        if self.product_session_id is not None:
+            self.product_session_id = self.product_session_id.strip()
         if self.target_id and self.mode != "follow":
             raise ValueError("target_id is only valid for follow")
+        if (self.follow_task_id or self.product_session_id) and self.mode != "stop":
+            raise ValueError("follow_task_id and product_session_id are only valid for stop")
+        if bool(self.follow_task_id) != bool(self.product_session_id):
+            raise ValueError("follow_task_id and product_session_id must be provided together")
         if self.mode == "find" and not self.target:
             raise ValueError("target is required for find")
         if self.mode == "follow" and not (self.target or self.target_id):
             raise ValueError("target or target_id is required for follow")
         return self
+
+
+class FollowTaskCancelRequest(BaseModel):
+    """Cancel one Follow execution in its original Product run."""
+
+    product_session_id: str = Field(min_length=1, max_length=128)
+    reason: str = Field(default="operator_cancel", min_length=1, max_length=256)
+    request_id: str | None = Field(default=None, max_length=128)
+    client_id: str = Field(default="unknown", max_length=128)
 
 
 class StopRequest(BaseModel):

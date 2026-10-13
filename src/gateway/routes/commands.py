@@ -12,7 +12,9 @@ from gateway.navigation.commands import (
     CommandBoundaryError,
 )
 from gateway.schemas import (
+    CancelRequest,
     ControlCommandResponse,
+    FollowTaskCancelRequest,
     GatewayErrorResponse,
     InstructionRequest,
     LeaseRequest,
@@ -174,10 +176,101 @@ def register_command_routes(app, gw) -> None:
                         ),
                     )
 
+        if body.mode == "follow":
+            start_follow = getattr(visual_servo, "start_follow", None)
+            if not callable(start_follow):
+                return command_service.rejected_response(
+                    "visual_servo",
+                    body,
+                    error="follow_lifecycle_unavailable",
+                    message="VisualServoModule does not expose the Follow lifecycle API.",
+                    detail=command_service.command_error_detail(
+                        reason_code="follow_lifecycle_unavailable",
+                        reason="VisualServoModule does not expose the Follow lifecycle API.",
+                        source="visual_servo",
+                        blockers=["follow_lifecycle_unavailable"],
+                    ),
+                )
+
+            def _start_follow() -> dict[str, Any]:
+                result = start_follow(
+                    description=body.target or "",
+                    target_id=body.target_id or "",
+                    request_id=body.request_id or "",
+                    client_id=body.client_id,
+                )
+                payload = dict(result) if isinstance(result, dict) else {"accepted": False}
+                payload.setdefault("status", str(payload.get("state") or "rejected"))
+                payload.setdefault("stage", "submitted" if payload.get("accepted") is True else "rejected")
+                payload.setdefault("execution_confirmed", False)
+                payload.setdefault("mode", "follow")
+                if payload.get("follow_task_id"):
+                    payload.setdefault("task_id", payload["follow_task_id"])
+                return payload
+
+            return command_service.run_motion_guarded_command(
+                "visual_servo",
+                body,
+                _start_follow,
+            )
+
+        if body.mode == "stop" and body.follow_task_id:
+            cancel_follow = getattr(visual_servo, "cancel_follow_task", None)
+            if not callable(cancel_follow):
+                return command_service.rejected_response(
+                    "visual_servo",
+                    body,
+                    error="follow_lifecycle_unavailable",
+                    message="VisualServoModule does not expose the Follow lifecycle API.",
+                    detail=command_service.command_error_detail(
+                        reason_code="follow_lifecycle_unavailable",
+                        reason="VisualServoModule does not expose the Follow lifecycle API.",
+                        source="visual_servo",
+                        blockers=["follow_lifecycle_unavailable"],
+                    ),
+                )
+
+            def _cancel_follow() -> dict[str, Any]:
+                result = cancel_follow(
+                    body.follow_task_id,
+                    body.product_session_id or "",
+                    reason=body.reason,
+                    request_id=body.request_id or "",
+                    client_id=body.client_id,
+                )
+                payload = dict(result) if isinstance(result, dict) else {"accepted": False}
+                payload.setdefault("status", str(payload.get("state") or "rejected"))
+                payload.setdefault("stage", "submitted" if payload.get("accepted") is True else "rejected")
+                payload.setdefault("mode", "follow")
+                payload.setdefault("task_id", body.follow_task_id)
+                return payload
+
+            return gw._run_control_command("visual_servo", body, _cancel_follow)
+
         if body.mode == "stop":
+            get_status = getattr(visual_servo, "get_servo_status", None)
+            current = get_status() if callable(get_status) else {}
+            active_follow = isinstance(current, dict) and (
+                current.get("mode") == "follow"
+                or (
+                    bool(current.get("follow_task_id"))
+                    and current.get("task_terminal") is False
+                )
+            )
+            if active_follow:
+                return command_service.rejected_response(
+                    "visual_servo",
+                    body,
+                    error="follow_task_ref_required",
+                    message="Stopping Follow requires follow_task_id and product_session_id.",
+                    detail=command_service.command_error_detail(
+                        reason_code="follow_task_ref_required",
+                        reason="Stopping Follow requires follow_task_id and product_session_id.",
+                        source="visual_servo",
+                        blockers=["follow_task_ref_required"],
+                    ),
+                )
             servo_target = "stop"
-        elif body.target_id:
-            servo_target = f"follow_id:{body.target_id}"
         else:
             servo_target = f"{body.mode}:{body.target}"
 
@@ -201,6 +294,76 @@ def register_command_routes(app, gw) -> None:
             body,
             _publish,
         )
+
+    @app.get(
+        "/api/v1/follow/{follow_task_id}",
+        summary="Read one Follow execution",
+    )
+    async def get_follow_task(follow_task_id: str, product_session_id: str):
+        modules = getattr(gw, "_all_modules", {}) or {}
+        visual_servo = modules.get("VisualServoModule")
+        query = getattr(visual_servo, "get_follow_task", None)
+        if not callable(query):
+            return {
+                "found": False,
+                "follow_task_id": follow_task_id,
+                "product_session_id": product_session_id,
+                "reason": "follow_lifecycle_unavailable",
+            }
+        result = query(follow_task_id, product_session_id)
+        return dict(result) if isinstance(result, dict) else {
+            "found": False,
+            "follow_task_id": follow_task_id,
+            "product_session_id": product_session_id,
+            "reason": "invalid_follow_task_view",
+        }
+
+    @app.post(
+        "/api/v1/follow/{follow_task_id}/cancel",
+        summary="Cancel one Follow execution",
+        response_model=ControlCommandResponse,
+        responses=CONTROL_COMMAND_ERROR_RESPONSES,
+    )
+    async def cancel_follow_task(follow_task_id: str, body: FollowTaskCancelRequest):
+        modules = getattr(gw, "_all_modules", {}) or {}
+        visual_servo = modules.get("VisualServoModule")
+        cancel_follow = getattr(visual_servo, "cancel_follow_task", None)
+        if not callable(cancel_follow):
+            return command_service.rejected_response(
+                "follow_cancel",
+                body,
+                error="follow_lifecycle_unavailable",
+                message="VisualServoModule does not expose the Follow lifecycle API.",
+                detail=command_service.command_error_detail(
+                    reason_code="follow_lifecycle_unavailable",
+                    reason="VisualServoModule does not expose the Follow lifecycle API.",
+                    source="visual_servo",
+                    blockers=["follow_lifecycle_unavailable"],
+                ),
+            )
+
+        def _cancel() -> dict[str, Any]:
+            result = cancel_follow(
+                follow_task_id,
+                body.product_session_id,
+                reason=body.reason,
+                request_id=body.request_id or "",
+                client_id=body.client_id,
+            )
+            payload = dict(result) if isinstance(result, dict) else {"accepted": False}
+            payload.setdefault("status", str(payload.get("state") or "rejected"))
+            payload.setdefault("stage", "submitted" if payload.get("accepted") is True else "rejected")
+            payload.setdefault("mode", "follow")
+            payload.setdefault("task_id", follow_task_id)
+            return payload
+
+        journal_body = CancelRequest(
+            reason=body.reason,
+            task_id=f"{body.product_session_id}:{follow_task_id}",
+            request_id=body.request_id,
+            client_id=body.client_id,
+        )
+        return gw._run_control_command("follow_cancel", journal_body, _cancel)
 
     @app.post(
         "/api/v1/mode",

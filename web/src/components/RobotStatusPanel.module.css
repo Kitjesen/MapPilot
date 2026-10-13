@@ -28,7 +28,8 @@
 
 .title h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--t-title-size);
+  line-height: var(--leading-heading);
 }
 
 .iconButton,
@@ -64,12 +65,13 @@
 
 .grid span {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--t-caption-size);
 }
 
 .grid strong {
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--t-body-em-size);
+  font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -81,9 +83,10 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 7px 0;
+  min-height: 40px;
+  padding: 9px 0;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--t-label-size);
   list-style: none;
   cursor: pointer;
 }
@@ -138,7 +141,7 @@
 .visualHeader {
   justify-content: space-between;
   gap: 10px;
-  font-size: 12px;
+  font-size: var(--t-caption-size);
 }
 
 .visualHeader span,
@@ -203,7 +206,37 @@
 }
 
 .hotSwitch {
-  font-size: 11px;
+  font-size: var(--t-caption-size);
+}
+
+.followStatus {
+  display: grid;
+  gap: 7px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: var(--bg-layer-2);
+}
+
+.followStatus > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 10px;
+  align-items: baseline;
+}
+
+.followStatus span,
+.followStatus small {
+  color: var(--text-dim);
+  font-size: var(--t-caption-size);
+}
+
+.followStatus strong {
+  font-size: var(--t-body-em-size);
+  text-align: right;
+}
+
+.followStatus small {
+  grid-column: 1 / -1;
 }
 
 @keyframes spin {

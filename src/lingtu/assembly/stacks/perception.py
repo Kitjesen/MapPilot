@@ -147,6 +147,7 @@ def _perception_runtime_config(robot_config, detector_name: str, config: dict):
                 "model_path",
             )
         ),
+        server_url=str(config.get("vision_service_url", "")),
         world=str(config.get("world", "")),
         scenario_entities=tuple(config.get("scenario_entities", ())),
     )

@@ -99,6 +99,47 @@ class NavigationCommandReceipt:
 
 
 @dataclass(frozen=True)
+class VisualGoalRequest:
+    """One visual-servo navigation child with its caller-owned identities."""
+
+    msg_name: ClassVar[str] = "lingtu.runtime.VisualGoalRequest"
+
+    goal: PoseStamped
+    task_id: str
+    request_id: str
+    product_session_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.goal, PoseStamped):
+            raise ValueError("VisualGoalRequest.goal must be PoseStamped")
+        if not isinstance(self.task_id, str) or not self.task_id.strip():
+            raise ValueError("VisualGoalRequest.task_id is required")
+        if not isinstance(self.request_id, str) or not self.request_id.strip():
+            raise ValueError("VisualGoalRequest.request_id is required")
+        if self.task_id == self.request_id:
+            raise ValueError("VisualGoalRequest.task_id and request_id must be distinct")
+
+
+@dataclass(frozen=True)
+class VisualGoalCancel:
+    """Scoped cancellation of visual-servo navigation children."""
+
+    msg_name: ClassVar[str] = "lingtu.runtime.VisualGoalCancel"
+
+    task_ids: tuple[str, ...]
+    reason: str = "visual_servo_stop"
+    product_session_id: str = ""
+
+    def __post_init__(self) -> None:
+        ids = tuple(str(task_id).strip() for task_id in self.task_ids)
+        if not ids or any(not task_id for task_id in ids):
+            raise ValueError("VisualGoalCancel.task_ids must contain task IDs")
+        if len(set(ids)) != len(ids):
+            raise ValueError("VisualGoalCancel.task_ids must be unique")
+        object.__setattr__(self, "task_ids", ids)
+
+
+@dataclass(frozen=True)
 class OperatorMotionReceipt:
     """Authoritative receipt for operator motion authority requests."""
 

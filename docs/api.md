@@ -8,6 +8,32 @@ This file combines the small maintained integration contract with
 inventories generated from source. Do not hand-edit the generated
 method or route lists; run `python tools/docs/extract_api_docs.py`.
 
+## Follow task lifecycle
+
+Follow is an owned execution rather than a stream of anonymous visual-servo
+commands. Start it with `POST /api/v1/visual_servo` using `mode=follow` and a
+`target` description or explicit `target_id`. A successful receipt returns both
+`follow_task_id` and `product_session_id`; retain both values for every later
+operation. The same owner methods are available to MCP as `start_follow`,
+`get_follow_task`, and `cancel_follow_task`.
+
+Query one execution with
+`GET /api/v1/follow/{follow_task_id}?product_session_id=...`. The returned
+`state` and `terminal` describe the Follow execution; `details` contains the
+current visual and native-navigation projection. A missing task or a task from
+another Product run returns `found=false` with `follow_task_not_found` or
+`product_session_mismatch`. Clients must not substitute the current Follow ID
+when retrying an operation for an older task.
+
+Cancel with `POST /api/v1/follow/{follow_task_id}/cancel`, passing the original
+`product_session_id` plus optional `reason`, `request_id`, and `client_id`.
+Admission acknowledges a cancellation request; query the task until
+`terminal=true` for the outcome backed by its native child tasks. Cancelling an
+old or already terminal Follow never cancels navigation owned by a newer one.
+The legacy `mode=stop` command remains available for non-Follow visual search.
+When Follow is active it requires the same explicit task and Product-session
+reference and never falls back to a global visual-servo stop.
+
 ## Integration boundaries
 
 | Surface | Endpoint | Owner |
@@ -189,6 +215,41 @@ _SemanticPlannerModule - unified semantic planning in one Module._
 ## src/decision/modules/visual_servo.py
 _Visual servo Module._
 
+### `start_follow`
+**Module:** `VisualServoModule`
+**Description:** Start one Follow execution; retain the returned task and session IDs.
+**Return type:** `dict`
+**Parameters:**
+| Parameter | Type |
+|-----------|------|
+| `description` | `str` |
+| `target_id` | `str` |
+| `request_id` | `str` |
+| `client_id` | `str` |
+
+### `get_follow_task`
+**Module:** `VisualServoModule`
+**Description:** Query a Follow in this Host's last 64 executions; no restart recovery.
+**Return type:** `dict`
+**Parameters:**
+| Parameter | Type |
+|-----------|------|
+| `follow_task_id` | `str` |
+| `product_session_id` | `str` |
+
+### `cancel_follow_task`
+**Module:** `VisualServoModule`
+**Description:** Cancel only the referenced Follow and wait for its native child terminals.
+**Return type:** `dict`
+**Parameters:**
+| Parameter | Type |
+|-----------|------|
+| `follow_task_id` | `str` |
+| `product_session_id` | `str` |
+| `reason` | `str` |
+| `request_id` | `str` |
+| `client_id` | `str` |
+
 ### `find_object`
 **Module:** `VisualServoModule`
 **Description:** Trigger visual find mode for a target object.
@@ -201,17 +262,23 @@ _Visual servo Module._
 ### `follow_person`
 **Module:** `VisualServoModule`
 **Description:** Trigger person following mode.
-**Return type:** `str`
+**Return type:** `dict`
 **Parameters:**
 | Parameter | Type |
 |-----------|------|
 | `description` | `str` |
+| `request_id` | `str` |
+| `client_id` | `str` |
 
 ### `stop_servo`
 **Module:** `VisualServoModule`
-**Description:** Stop all visual tracking.
-**Return type:** `str`
-**Parameters:** None
+**Description:** Cancel Follow by reference, or stop the current object approach.
+**Return type:** `dict`
+**Parameters:**
+| Parameter | Type |
+|-----------|------|
+| `follow_task_id` | `str` |
+| `product_session_id` | `str` |
 
 ### `get_servo_status`
 **Module:** `VisualServoModule`
@@ -646,6 +713,8 @@ FastAPI's live OpenAPI UI remains available at `/docs`.
   - `GET /api/v1/camera/status` — Camera frame availability and rates
 - **src/gateway/routes/commands.py**:
   - `POST /api/v1/estop/reset` — Explicitly release the native software emergency-stop latch
+  - `GET /api/v1/follow/{follow_task_id}` — Read one Follow execution
+  - `POST /api/v1/follow/{follow_task_id}/cancel` — Cancel one Follow execution
   - `POST /api/v1/instruction` — Natural language navigation instruction
   - `POST /api/v1/lease` — Acquire/release/renew control lease
   - `POST /api/v1/mode` — Switch operating mode
@@ -998,6 +1067,15 @@ FastAPI's live OpenAPI UI remains available at `/docs`.
 **Summary:** Explicitly release the native software emergency-stop latch
 **Response model:** `ControlCommandResponse`
 **Handler:** `post_estop_reset`
+
+#### `GET /api/v1/follow/{follow_task_id}`
+**Summary:** Read one Follow execution
+**Handler:** `get_follow_task`
+
+#### `POST /api/v1/follow/{follow_task_id}/cancel`
+**Summary:** Cancel one Follow execution
+**Response model:** `ControlCommandResponse`
+**Handler:** `cancel_follow_task`
 
 #### `POST /api/v1/instruction`
 **Summary:** Natural language navigation instruction

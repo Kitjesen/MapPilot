@@ -35,6 +35,7 @@ class DetectorSpec:
     min_box_size_px: int = 12
     device: str = ""
     model_path: str = ""
+    server_url: str = ""
     world: str = ""
     scenario_entities: tuple[Mapping[str, Any], ...] = ()
 
@@ -131,6 +132,9 @@ class RgbdObservationSource:
             u16_fallback=self._u16_depth_scale,
         )
         detections_2d: list[Any]
+        set_source_ts = getattr(self._detector, "set_source_ts", None)
+        if callable(set_source_ts):
+            set_source_ts(float(color.ts))
         if self._detector_tracker is not None:
             try:
                 detections_2d = list(self._detector_tracker.track(bgr, text_prompt))
@@ -227,6 +231,11 @@ class RgbdObservationSource:
             bbox_2d=np.asarray(detection.bbox),
             depth=float(center_depth),
             features=np.asarray(getattr(detection, "features", np.array([]))),
+            dino_feature=(
+                np.asarray(detection.dino_feature, dtype=np.float32)
+                if getattr(detection, "dino_feature", None) is not None
+                else None
+            ),
             points=points if points is not None else np.empty((0, 3)),
             track_id=getattr(detection, "track_id", None),
         )
@@ -370,6 +379,17 @@ class GroundingDINODetectorProvider:
         return GroundingDINODetector(**kwargs)
 
 
+@register("detector", "remote", description="Shared remote RGB detector")
+class RemoteDetectorProvider:
+    label = "RemoteDetector"
+
+    @staticmethod
+    def create(spec: DetectorSpec) -> Any:
+        from perception.remote import RemoteDetector
+
+        return RemoteDetector(server_url=spec.server_url, confidence=spec.confidence)
+
+
 @register("detector", "sim_scene", description="Simulation scene observer")
 class SimSceneDetectorProvider:
     label = "SimSceneObserver"
@@ -389,10 +409,10 @@ class CLIPEncoderProvider:
     label = "CLIPEncoder"
 
     @staticmethod
-    def create() -> Any:
+    def create(*, model_path: str | None = None, device: str = "auto") -> Any:
         from perception.encoding.clip_encoder import CLIPEncoder
 
-        return CLIPEncoder()
+        return CLIPEncoder(model_path=model_path, device=device)
 
 
 @register("encoder", "mobileclip", description="MobileCLIP text encoder")
@@ -404,6 +424,48 @@ class MobileCLIPEncoderProvider:
         from perception.encoding.mobileclip_encoder import MobileCLIPEncoder
 
         return MobileCLIPEncoder()
+
+
+@register("encoder", "dino", description="DINOv3 person crop appearance encoder")
+class DinoEncoderProvider:
+    @staticmethod
+    def create(
+        *, model_path: str = "", device: str = "auto", cpu_threads: int = 4
+    ) -> Any:
+        from perception.encoding.dino import DinoEncoder
+
+        return DinoEncoder(
+            model_path=model_path,
+            device=device,
+            cpu_threads=cpu_threads,
+        )
+
+
+@register("encoder", "clip_remote", description="Remote CLIP encoder")
+class RemoteCLIPEncoderProvider:
+    @staticmethod
+    def create(*, server_url: str, **_: Any) -> Any:
+        from perception.remote import RemoteCLIPEncoder
+
+        return RemoteCLIPEncoder(server_url)
+
+
+@register("encoder", "dino_remote", description="Remote DINO encoder")
+class RemoteDinoEncoderProvider:
+    @staticmethod
+    def create(*, server_url: str, **_: Any) -> Any:
+        from perception.remote import RemoteDinoEncoder
+
+        return RemoteDinoEncoder(server_url)
+
+
+@register("vlm", "remote", description="Remote vision-language client")
+class RemoteVisionClientProvider:
+    @staticmethod
+    def create(*, server_url: str, **_: Any) -> Any:
+        from perception.remote import RemoteVisionClient
+
+        return RemoteVisionClient(server_url)
 
 
 def create_observation_source(

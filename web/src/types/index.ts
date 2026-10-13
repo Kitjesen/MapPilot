@@ -1291,12 +1291,39 @@ export interface VisualServoRequest {
   mode: VisualServoMode
   target?: string | null
   target_id?: string | null
+  follow_task_id?: string | null
+  product_session_id?: string | null
   client_id?: string
   request_id?: string | null
 }
 
+export interface FollowTaskRef {
+  follow_task_id: string
+  product_session_id: string
+}
+
+export interface FollowTaskCommandResponse extends ControlCommandResponse {
+  follow_task_id: string
+  product_session_id: string
+  state: string
+  terminal: boolean
+}
+
+export interface FollowTaskStatusResponse {
+  found: boolean
+  follow_task_id: string
+  product_session_id: string
+  state: string
+  terminal: boolean
+  reason?: string | null
+  details?: Record<string, unknown> | null
+  [key: string]: unknown
+}
+
 export interface VisualServoPersonStatus {
   id: string | null
+  identity_id?: string
+  native_track_id?: string
   position: number[]
   velocity: number[]
   last_seen: number
@@ -1305,12 +1332,19 @@ export interface VisualServoPersonStatus {
 
 export interface VisualServoStatus {
   mode: 'idle' | 'find' | 'follow'
+  follow_task_id?: string | null
+  product_session_id?: string | null
+  task_state?: string | null
+  task_terminal?: boolean | null
   target: string | null
   target_id: string | null
+  target_identity_id?: string | null
+  native_track_id?: string | null
   select: string | null
   follow_available: boolean
   target_visible: boolean
   state: string
+  reason?: string
   navigation_state: string
   navigation_task_id: string | null
   navigation_reason: string

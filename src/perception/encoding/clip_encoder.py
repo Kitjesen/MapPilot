@@ -52,6 +52,7 @@ class CLIPEncoder:
         cache_size: int | None = None,
         batch_size: int | None = None,
         multi_scale: bool | None = None,
+        model_path: str | None = None,
     ):
         """
         初始化CLIP编码器
@@ -63,6 +64,7 @@ class CLIPEncoder:
             cache_size: 缓存大小
             batch_size: 批处理大小
             multi_scale: 是否使用多尺度特征
+            model_path: Local checkpoint path; None uses OpenAI pretrained weights.
         """
         # Resolve tunable defaults from robot_config.yaml; explicit kwargs win.
         cfg = get_config().perception.encoder
@@ -75,6 +77,7 @@ class CLIPEncoder:
             except ImportError:
                 device = "cpu"
         self._device = device
+        self._model_path = model_path
         self._enable_cache = enable_cache
         self._cache_size = cache_size if cache_size is not None else cfg.clip_cache_size
         self._batch_size = batch_size if batch_size is not None else cfg.clip_batch_size
@@ -134,7 +137,7 @@ class CLIPEncoder:
 
             self._model, _, self._preprocess = open_clip.create_model_and_transforms(
                 clip_model_name,
-                pretrained="openai",
+                pretrained=self._model_path or "openai",
                 device=self._device,
             )
             self._tokenizer = open_clip.get_tokenizer(clip_model_name)
@@ -166,7 +169,7 @@ class CLIPEncoder:
                 self._device = "cpu"
                 self._model, _, self._preprocess = open_clip.create_model_and_transforms(
                     clip_model_name,
-                    pretrained="openai",
+                    pretrained=self._model_path or "openai",
                     device="cpu",
                 )
                 self._tokenizer = open_clip.get_tokenizer(clip_model_name)

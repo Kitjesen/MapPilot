@@ -6,7 +6,9 @@ import logging
 import math
 import threading
 import time
+import uuid
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass, field
 
 from runtime.msgs.numpy_compat import is_numpy_array, np
@@ -45,8 +47,123 @@ class TrackedPerson:
     # Appearance features for Re-ID after occlusion
     appearance: np.ndarray | None = None  # CLIP image feature, shape (D,)
     osnet_feat: np.ndarray | None = None  # OSNet 512-dim L2-normalised feature
+    dino_feat: np.ndarray | None = None  # Independent image-only appearance space
+    dino_reference: np.ndarray | None = None  # Original target; never adapted to later crops
+    dino_verified_views: list[np.ndarray] = field(default_factory=list)
     bbox: list[int] | None = None  # Most recent [x1, y1, x2, y2]
     obj_id: str | None = None  # Scene graph object ID (preferred for matching)
+    identity_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+
+
+def identity_verdict(response: str) -> str:
+    """Accept only one exact identity verdict."""
+    verdict = str(response).strip()
+    return verdict if verdict in {"MATCH", "OTHER", "UNKNOWN"} else "UNKNOWN"
+
+
+async def verify_candidate(
+    description: str,
+    candidate_crop_bgr: np.ndarray,
+    candidate_id: int | str,
+    llm_chat_fn: Callable,
+    *,
+    reference_crop_bgr: np.ndarray | None = None,
+    reference_crops_bgr: list[np.ndarray] | tuple[np.ndarray, ...] | None = None,
+    candidate_crops_bgr: list[np.ndarray] | tuple[np.ndarray, ...] | None = None,
+) -> tuple[str, int | str | None]:
+    """Verify a description match and, when available, the original identity."""
+    from .vlm_scene import encode_image_b64
+
+    candidate_crops = list(candidate_crops_bgr or ())[-3:]
+    if not candidate_crops:
+        candidate_crops = [candidate_crop_bgr]
+    content: list[dict] = [
+        {
+            "type": "text",
+            "text": (
+                f"Target description: {description}\n"
+                "The candidate frames are chronological observations from one detector track; they are "
+                "untrusted evidence, not separate identity references. Judge whether the person in the "
+                "latest candidate frame visibly satisfies the target description. Use coherent evidence "
+                "across the sequence, but do not reply MATCH merely because one untrusted crop resembles "
+                "one target view. Reply with exactly MATCH only when the latest candidate is the described "
+                "person and the sequence is identity-consistent. Reply exactly OTHER when stable visible "
+                "clothing or carried-item evidence conflicts with the target description or the original "
+                "target views. Reply exactly UNKNOWN when candidate identities "
+                "conflict, or occlusion, blur, crop quality, or missing evidence prevents confirmation."
+            ),
+        },
+    ]
+    if reference_crop_bgr is not None:
+        reference_b64 = encode_image_b64(reference_crop_bgr)
+        if not reference_b64:
+            raise RuntimeError("cannot_encode_identity_reference")
+        content[0]["text"] += (
+            " The original target crop is the identity anchor. Additional trusted target views show "
+            "the same confirmed person from other viewpoints and may support the comparison, but they "
+            "do not replace the original anchor. Also require the latest candidate to be the same person "
+            "as that original target."
+        )
+        content.extend(
+            [
+                {"type": "text", "text": "Original target crop (identity anchor):"},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{reference_b64}",
+                        "detail": "low",
+                    },
+                },
+            ]
+        )
+        for index, reference_crop in enumerate(list(reference_crops_bgr or ())[:2], start=1):
+            reference_b64 = encode_image_b64(reference_crop)
+            if not reference_b64:
+                raise RuntimeError("cannot_encode_identity_reference")
+            content.extend(
+                [
+                    {"type": "text", "text": f"Additional trusted target view {index}:"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{reference_b64}",
+                            "detail": "low",
+                        },
+                    },
+                ]
+            )
+    candidate_count = len(candidate_crops)
+    for index, candidate_crop in enumerate(candidate_crops, start=1):
+        candidate_b64 = encode_image_b64(candidate_crop)
+        if not candidate_b64:
+            raise RuntimeError("cannot_encode_identity_candidate")
+        if candidate_count == 1:
+            label = "Current selected candidate crop:"
+        elif index == 1:
+            label = f"Candidate frame {index} of {candidate_count} (earliest):"
+        elif index == candidate_count:
+            label = (
+                f"Candidate frame {index} of {candidate_count} "
+                "(latest; judge this person):"
+            )
+        else:
+            label = f"Candidate frame {index} of {candidate_count}:"
+        content.extend(
+            [
+                {"type": "text", "text": label},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{candidate_b64}",
+                        "detail": "low",
+                    },
+                },
+            ]
+        )
+    verdict = identity_verdict(
+        await llm_chat_fn([{"role": "user", "content": content}])
+    )
+    return verdict, candidate_id if verdict == "MATCH" else None
 
 
 class PersonTracker:
@@ -59,23 +176,56 @@ class PersonTracker:
     MATCH_DIST_THRESHOLD = 2.0
     APPEARANCE_THRESHOLD = 0.6
     REACQUIRE_CONFIRM_FRAMES = 3
+    REACQUIRE_GAP = 1.0
+    MAX_PERSON_SPEED = 3.0  # m/s, with measurement noise allowed separately
+    POSITION_NOISE = 0.2  # m
+    MAX_VERIFIED_VIEWS = 8
+    MAX_REFERENCE_CROPS = 2
+    IDENTITY_EVIDENCE_FRAMES = 3
+    IDENTITY_RETRY_INTERVAL = 0.3  # source seconds between candidate image checks
+    IDENTITY_OTHER_RETRY_MAX = 1.2
+    IDENTITY_SCORE_IMPROVEMENT = 0.08
+    REFERENCE_CROP_DUPLICATE_SIMILARITY = 0.98
 
-    def __init__(self, follow_distance: float = 1.5, lost_timeout: float = 5.0):
+    def __init__(
+        self, follow_distance: float = 1.5, lost_timeout: float = 5.0,
+        dino_min_similarity: float = 0.65, dino_margin: float = 0.03,
+    ):
         self.follow_distance = follow_distance
         self.lost_timeout = lost_timeout
         self._person: TrackedPerson | None = None
         self._description: str = ""  # user description e.g. "person in red"
         self._target_selected: bool = False  # whether VLM has selected a target
+        self._observation_accepted = False
+        self._observation_reason = ""
         self._vlm_selecting: bool = False  # VLM selection in progress (re-entry guard)
         self._clip_encoder = None  # CLIP encoder (externally injected)
         self._encoder_lock = threading.Lock()  # guards _clip_encoder injection/reads
         self._lock = threading.Lock()
         self._reacquire_id: str | None = None
         self._reacquire_count = 0
+        self._reacquire_ts: float | None = None
+        self._reacquire_pos: list[float] | None = None
+        self._reacquire_crops: list[np.ndarray] = []
+        self._reacquire_crop_timestamps: list[float | None] = []
 
         # OSNet Re-ID encoder (W3-5): primary Re-ID signal.
         # Initialised lazily via set_osnet_encoder() or enable_osnet_reid().
         self._osnet_encoder = None
+        self._dino_encoder = None
+        self._dino_min_similarity = float(dino_min_similarity)
+        self._dino_margin = float(dino_margin)
+        self._dino_similarity: float | None = None
+        self._dino_event = "disabled"
+        self._frame_dino: dict[tuple, np.ndarray] = {}
+        self._reference_crop: np.ndarray | None = None
+        self._verified_reference_crops: list[np.ndarray] = []
+        self._verified_reference_timestamps: list[float | None] = []
+        self._verified_reference_features: list[np.ndarray] = []
+        self._pending_identity: dict | None = None
+        self._verified_identity: dict | None = None
+        self._identity_retry_until: dict[str, float] = {}
+        self._identity_retry_state: dict[str, dict] = {}
 
         # Observability counters for Re-ID signal usage.
         self._reid_stats: dict = {
@@ -83,7 +233,15 @@ class PersonTracker:
             "clip_fallback": 0,
             "motion_dominant": 0,
             "lost": 0,
+            "dino_match": 0,
+            "dino_rejected": 0,
         }
+
+    def set_dino_encoder(self, encoder) -> None:
+        """Inject image-only appearance features without replacing CLIP."""
+        with self._encoder_lock:
+            self._dino_encoder = encoder
+        self._dino_event = "ready"
 
     def set_clip_encoder(self, clip_encoder) -> None:
         """Inject CLIP encoder for secondary appearance feature extraction."""
@@ -160,18 +318,51 @@ class PersonTracker:
         return scores
 
     @staticmethod
-    def _build_vlm_select_messages(text_prompt: str, person_crops: list[np.ndarray]) -> list[dict]:
+    def _build_vlm_select_messages(
+        text_prompt: str,
+        person_crops: list[np.ndarray],
+        reference_crop_bgr: np.ndarray | None = None,
+    ) -> list[dict]:
         """OpenAI multimodal messages: instruction text + one image per person.
 
         Crops are expected **BGR** (cv2 convention; ``cv2.imencode`` assumes BGR).
         Falls back to text-only content when image encoding is unavailable, so a
         non-vision LLM still receives the numbered prompt + CLIP hints.
         """
-        content: list[dict] = [{"type": "text", "text": text_prompt}]
+        content: list[dict] = []
         try:
             from .vlm_scene import encode_image_b64
         except Exception:
             encode_image_b64 = None  # type: ignore[assignment]
+
+        if reference_crop_bgr is not None:
+            if encode_image_b64 is None:
+                raise RuntimeError("cannot_encode_target_reference")
+            reference_b64 = encode_image_b64(reference_crop_bgr)
+            if not reference_b64:
+                raise RuntimeError("cannot_encode_target_reference")
+            content.extend(
+                [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Reference image of the originally selected target. It is not a numbered "
+                            "candidate. Match stable clothing and carried items; ignore pose and image "
+                            "position. If the target is absent or the evidence is ambiguous, reply 0. "
+                            "Do not choose the closest-looking person."
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{reference_b64}",
+                            "detail": "low",
+                        },
+                    },
+                    {"type": "text", "text": "Numbered current candidates follow:"},
+                ]
+            )
+        content.append({"type": "text", "text": text_prompt})
 
         if encode_image_b64 is not None:
             for i, crop in enumerate(person_crops):
@@ -197,6 +388,8 @@ class PersonTracker:
         description: str,
         person_crops: list[np.ndarray],
         llm_chat_fn: Callable,
+        *,
+        reference_crop_bgr: np.ndarray | None = None,
     ) -> int:
         """Return the best matching crop index without changing tracker state."""
         if not person_crops:
@@ -215,7 +408,11 @@ class PersonTracker:
         if clip_scores:
             text_prompt += f"\nCLIP similarity hints: {[f'{s:.2f}' for s in clip_scores]}"
 
-        messages = self._build_vlm_select_messages(text_prompt, person_crops)
+        messages = self._build_vlm_select_messages(
+            text_prompt,
+            person_crops,
+            reference_crop_bgr,
+        )
 
         try:
             response = await llm_chat_fn(messages)
@@ -300,6 +497,7 @@ class PersonTracker:
 
         appearance = None
         osnet_feat = None
+        dino_feat = self._provided_dino_feature(obj)
 
         if crop is not None:
             # Extract CLIP feature for secondary Re-ID signal
@@ -320,6 +518,8 @@ class PersonTracker:
                     osnet_feat = self._osnet_encoder.encode(crop)
                 except Exception as exc:
                     logger.debug("OSNet encode on lock_target failed: %s", exc)
+            if self._dino_encoder is not None and dino_feat is None:
+                dino_feat = self._dino_encoder.encode(crop)
 
         with self._lock:
             self._person = TrackedPerson(
@@ -330,11 +530,26 @@ class PersonTracker:
                 confidence=obj.get("confidence", 1.0),
                 appearance=appearance,
                 osnet_feat=osnet_feat,
+                dino_feat=dino_feat,
+                dino_reference=None if dino_feat is None else dino_feat.copy(),
                 bbox=obj.get("bbox"),
                 obj_id=obj.get("id"),
             )
             self._target_selected = True
+            self._observation_accepted = True
+            self._observation_reason = ""
+            self._reference_crop = None if crop is None else crop.copy()
+            self._verified_reference_crops.clear()
+            self._verified_reference_timestamps.clear()
+            self._verified_reference_features.clear()
+            self._pending_identity = None
+            self._verified_identity = None
+            self._identity_retry_until.clear()
+            self._identity_retry_state.clear()
             self._reset_reacquire()
+            self._frame_dino.clear()
+            self._dino_event = "locked" if dino_feat is not None else "disabled"
+            self._dino_similarity = 1.0 if dino_feat is not None else None
 
     def update(
         self,
@@ -342,25 +557,63 @@ class PersonTracker:
         rgb_frame: np.ndarray | None = None,
     ) -> bool:
         """Update."""
+        self._observation_accepted = False
+        self._observation_reason = ""
         persons = [
             o for o in scene_objects if o.get("label", "").lower() in ("person", "people", "human", "pedestrian")
         ]
         if not persons:
             with self._lock:
                 self._reset_reacquire()
+                self._pending_identity = None
+                self._verified_identity = None
+                self._identity_retry_until = {
+                    key: value for key, value in self._identity_retry_until.items()
+                    if self._person is not None and key == str(self._person.obj_id or "")
+                }
+                self._identity_retry_state = {
+                    key: value for key, value in self._identity_retry_state.items()
+                    if self._person is not None and key == str(self._person.obj_id or "")
+                }
+                self._dino_similarity = None
+                if self._dino_encoder is not None:
+                    self._dino_event = "target_absent"
             return False
 
         with self._lock:
+            self._frame_dino.clear()
+            visible_ids = {str(obj.get("id") or "") for obj in persons}
+            current_id = "" if self._person is None else str(self._person.obj_id or "")
+            self._identity_retry_until = {
+                key: value for key, value in self._identity_retry_until.items()
+                if key in visible_ids or key == current_id
+            }
+            self._identity_retry_state = {
+                key: value for key, value in self._identity_retry_state.items()
+                if key in visible_ids or key == current_id
+            }
+            if self._pending_identity is not None and str(self._pending_identity["object"].get("id")) not in visible_ids:
+                self._pending_identity = None
+                self._reset_reacquire()
+            if self._verified_identity is not None and str(self._verified_identity["object"].get("id")) not in visible_ids:
+                self._verified_identity = None
             if self._person is None:
                 best = max(persons, key=lambda p: p.get("confidence", 0))
                 self._init_person(best)
+                if self._dino_encoder is not None and rgb_frame is not None:
+                    self._person.dino_feat = self._dino_feature(rgb_frame, best)
+                    feature = self._person.dino_feat
+                    self._person.dino_reference = None if feature is None else feature.copy()
+                    self._reference_crop = self._crop_person(rgb_frame, best)
+                self._observation_accepted = True
                 return True
 
             matched = self._match_person(persons, rgb_frame)
             if matched is not None:
-                return self._update_tracked(matched, rgb_frame)
+                self._observation_accepted = self._update_tracked(matched, rgb_frame)
+                return self._observation_accepted
 
-            if not self._target_selected:
+            if not self._target_selected and not self.has_identity_reference:
                 nearest = min(
                     persons,
                     key=lambda p: math.hypot(
@@ -368,7 +621,8 @@ class PersonTracker:
                         self._get_pos(p)[1] - self._person.position[1],
                     ),
                 )
-                return self._update_tracked(nearest, rgb_frame)
+                self._observation_accepted = self._update_tracked(nearest, rgb_frame)
+                return self._observation_accepted
 
         return False
 
@@ -401,6 +655,8 @@ class PersonTracker:
             return None
 
         n_candidates = len(persons)
+        if self._dino_encoder is not None and self._person.dino_feat is not None:
+            return self._match_dino(persons, rgb_frame)
 
         # Strategy 1: obj_id exact match
         if self._person.obj_id:
@@ -503,6 +759,279 @@ class PersonTracker:
 
         return self._motion_reacquire(motion_candidates)
 
+    def _dino_feature(self, frame: np.ndarray, obj: dict) -> np.ndarray | None:
+        bbox = obj.get("bbox", [])
+        if isinstance(bbox, dict):
+            bbox = [bbox.get(name, 0) for name in ("x1", "y1", "x2", "y2")]
+        key = (str(obj.get("id", "")), tuple(np.asarray(bbox).reshape(-1)))
+        if key not in self._frame_dino:
+            feature = self._provided_dino_feature(obj)
+            if feature is None:
+                crop = self._crop_person(frame, obj)
+                if crop is None:
+                    return None
+                feature = np.asarray(self._dino_encoder.encode(crop), dtype=np.float32)
+            norm = float(np.linalg.norm(feature))
+            if not np.isfinite(feature).all() or norm <= 0:
+                raise ValueError("invalid DINO appearance feature")
+            self._frame_dino[key] = feature / norm
+        return self._frame_dino[key]
+
+    @staticmethod
+    def _provided_dino_feature(obj: dict) -> np.ndarray | None:
+        value = obj.get("dino_feature")
+        if value is None:
+            return None
+        feature = np.asarray(value, dtype=np.float32)
+        if feature.size == 0:
+            return None
+        if feature.shape != (384,):
+            raise ValueError("provided DINO appearance feature must have 384 values")
+        norm = float(np.linalg.norm(feature))
+        if not np.isfinite(feature).all() or norm <= 0:
+            raise ValueError("invalid provided DINO appearance feature")
+        return feature / norm
+
+    def _retry_evidence_improved(
+        self,
+        candidate_id: str,
+        score: float,
+    ) -> bool:
+        """Allow an early recheck only when the candidate evidence materially changed."""
+        state = self._identity_retry_state.get(candidate_id)
+        if state is None:
+            return False
+        previous_score = state.get("score")
+        if previous_score is None:
+            return False
+        return (
+            score >= previous_score + self.IDENTITY_SCORE_IMPROVEMENT
+            or (previous_score < self._dino_min_similarity <= score)
+        )
+
+    def _match_dino(self, persons: list[dict], frame: np.ndarray | None) -> dict | None:
+        """Keep the original identity and expand reachability with elapsed source time."""
+        self._dino_similarity = None
+        if frame is None:
+            self._pending_identity = None
+            self._verified_identity = None
+            self._reset_reacquire()
+            self._dino_event = "missing_image"
+            return None
+        if self._pending_identity is not None:
+            self._dino_event = "awaiting_identity_verification"
+            return None
+        candidates: list[tuple[float, dict]] = []
+        cooling_down = False
+        current_id = str(self._person.obj_id or "")
+        ordered = sorted(persons, key=lambda candidate: str(candidate.get("id") or "") != current_id)
+        eligible = []
+        for candidate in ordered:
+            candidate_id = str(candidate.get("id") or "")
+            timestamp = self._get_observation_ts(candidate)
+            previous = self._person.observation_ts
+            if timestamp is not None and previous is not None and timestamp <= previous:
+                continue
+            retry_until = self._identity_retry_until.get(candidate_id)
+            gap = 0.0 if timestamp is None or previous is None else max(0.0, timestamp - previous)
+            predicted = self._predict_position(min(gap, _MOTION_PREDICT_DT))
+            radius = self.MATCH_DIST_THRESHOLD + self.MAX_PERSON_SPEED * max(0.0, gap - _MOTION_PREDICT_DT)
+            position = self._get_pos(candidate)
+            if math.hypot(position[0] - predicted[0], position[1] - predicted[1]) >= radius:
+                continue
+            eligible.append((candidate, candidate_id, timestamp, retry_until, gap, position))
+
+        authorized = self._verified_identity
+        encode_batch = getattr(self._dino_encoder, "encode_batch", None)
+        if (
+            authorized is None
+            and len(eligible) > 1
+            and all(candidate_id != current_id for _, candidate_id, *_ in eligible)
+            and callable(encode_batch)
+        ):
+            batch_candidates = []
+            batch_crops = []
+            for candidate, *_ in eligible:
+                try:
+                    feature = self._provided_dino_feature(candidate)
+                except ValueError:
+                    continue
+                if feature is not None:
+                    bbox = candidate.get("bbox", [])
+                    if isinstance(bbox, dict):
+                        bbox = [bbox.get(name, 0) for name in ("x1", "y1", "x2", "y2")]
+                    key = (str(candidate.get("id", "")), tuple(np.asarray(bbox).reshape(-1)))
+                    self._frame_dino[key] = feature
+                    continue
+                crop = self._crop_person(frame, candidate)
+                if crop is not None:
+                    batch_candidates.append(candidate)
+                    batch_crops.append(crop)
+            if batch_crops:
+                try:
+                    features = encode_batch(batch_crops)
+                except Exception as exc:
+                    logger.debug("DINO person crop batch encode failed: %s", exc)
+                else:
+                    if len(features) == len(batch_candidates):
+                        for candidate, feature in zip(batch_candidates, features, strict=True):
+                            bbox = candidate.get("bbox", [])
+                            if isinstance(bbox, dict):
+                                bbox = [bbox.get(name, 0) for name in ("x1", "y1", "x2", "y2")]
+                            key = (str(candidate.get("id", "")), tuple(np.asarray(bbox).reshape(-1)))
+                            feature = np.asarray(feature, dtype=np.float32)
+                            norm = float(np.linalg.norm(feature))
+                            if np.isfinite(feature).all() and norm > 0:
+                                self._frame_dino[key] = feature / norm
+
+        for candidate, candidate_id, timestamp, retry_until, gap, position in eligible:
+            try:
+                feature = self._dino_feature(frame, candidate)
+            except Exception as exc:
+                logger.warning("DINO person crop encode failed: %s", exc)
+                self._dino_event = "encode_failed"
+                continue
+            if feature is not None:
+                reference = self._person.dino_reference
+                references = [reference if reference is not None else self._person.dino_feat, *self._person.dino_verified_views]
+                if authorized is not None and str(authorized["object"].get("id")) == candidate_id:
+                    references.append(authorized["feature"])
+                score = max(float(np.dot(view, feature)) for view in references)
+                if (
+                    timestamp is not None
+                    and retry_until is not None
+                    and timestamp < retry_until
+                    and not self._retry_evidence_improved(candidate_id, score)
+                ):
+                    cooling_down = True
+                    continue
+                if authorized is not None and str(authorized["object"].get("id")) == candidate_id:
+                    verified_ts = self._get_observation_ts(authorized["object"])
+                    if timestamp is not None and verified_ts is not None:
+                        dt = timestamp - verified_ts
+                        if dt <= 0:
+                            continue
+                        if math.dist(position, self._get_pos(authorized["object"])) > self.MAX_PERSON_SPEED * dt + self.POSITION_NOISE:
+                            self._verified_identity = None
+                            self._reset_reacquire()
+                            continue
+                    if score >= self._dino_min_similarity:
+                        self._dino_similarity = score
+                        self._dino_event = "matched"
+                        return candidate
+                if (
+                    str(candidate.get("id") or "") == current_id
+                    and gap <= self.REACQUIRE_GAP
+                    and retry_until is None
+                    and score >= self._dino_min_similarity
+                ):
+                    self._reset_reacquire()
+                    self._dino_similarity = score
+                    self._dino_event = "matched"
+                    self._reid_stats["dino_match"] += 1
+                    return candidate
+                candidates.append((score, candidate))
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        if not candidates:
+            self._reset_reacquire()
+            if self._dino_event != "encode_failed":
+                self._dino_event = "verification_backoff" if cooling_down else "no_candidate"
+            return None
+        score, best = candidates[0]
+        self._dino_similarity = score
+        previous = self._person.observation_ts
+        timestamps = [self._get_observation_ts(candidate) for _, candidate in candidates]
+        long_absence = previous is not None and any(value is not None and value - previous > self.REACQUIRE_GAP for value in timestamps)
+        text_ranked = False
+        if len(candidates) > 1 and long_absence and self._description and self.has_image_selector:
+            crops = [self._crop_person(frame, candidate) for _, candidate in candidates]
+            if all(crop is not None for crop in crops):
+                text_scores = self._clip_prescore(self._description, crops)
+                if text_scores and max(text_scores) > self._CLIP_SELECT_MIN_SIM:
+                    score, best = candidates[int(np.argmax(text_scores))]
+                    self._dino_similarity = score
+                    text_ranked = True
+        if not text_ranked and len(candidates) > 1 and score - candidates[1][0] < self._dino_margin:
+            self._reset_reacquire()
+            self._reid_stats["dino_rejected"] += 1
+            self._dino_event = "ambiguous"
+            return None
+        crop = self._crop_person(frame, best)
+        feature = self._dino_feature(frame, best)
+        if crop is None or feature is None or self._reference_crop is None:
+            self._dino_event = "missing_image"
+            return None
+        if not self._confirm_reacquire(best, force=True, crop=crop, feature=feature):
+            self._dino_event = "confirming"
+            return None
+        crops = [value.copy() for value in self._reacquire_crops[-self.IDENTITY_EVIDENCE_FRAMES:]]
+        crop_timestamps = list(self._reacquire_crop_timestamps[-self.IDENTITY_EVIDENCE_FRAMES:])
+        self._pending_identity = {
+            "object": deepcopy(best), "crop": crop,
+            "reference_crop": self._reference_crop,
+            "reference_crops": [value.copy() for value in self._verified_reference_crops],
+            "reference_timestamps": list(self._verified_reference_timestamps),
+            "crops": crops,
+            "crop_timestamps": crop_timestamps,
+            "feature": feature.copy(),
+            "score": score,
+        }
+        self._reset_reacquire()
+        self._dino_event = "awaiting_identity_verification"
+        return None
+
+    def identity_candidate(self) -> dict | None:
+        """Return the stable proposal; it has not changed target identity or position."""
+        with self._lock:
+            if self._pending_identity is None:
+                return None
+            return {
+                "object": deepcopy(self._pending_identity["object"]),
+                "crop": self._pending_identity["crop"].copy(),
+                "reference_crop": self._pending_identity["reference_crop"].copy(),
+                "reference_crops": [value.copy() for value in self._pending_identity["reference_crops"]],
+                "reference_timestamps": list(self._pending_identity["reference_timestamps"]),
+                "crops": [value.copy() for value in self._pending_identity["crops"]],
+                "crop_timestamps": list(self._pending_identity["crop_timestamps"]),
+            }
+
+    def invalidate_reacquisition(self) -> None:
+        """Discard in-flight evidence after a perception interruption, retaining identity."""
+        with self._lock:
+            self._pending_identity = None
+            self._verified_identity = None
+            self._reset_reacquire()
+
+    def resolve_identity(self, candidate_id: str, source_ts: float | None, verdict: str) -> bool:
+        """Queue one verified view; a fresh observation must still pass geometry."""
+        with self._lock:
+            pending = self._pending_identity
+            if pending is None or str(pending["object"].get("id")) != str(candidate_id) or self._get_observation_ts(pending["object"]) != source_ts:
+                return False
+            self._pending_identity = None
+            self._reset_reacquire()
+            if verdict == "MATCH":
+                self._identity_retry_until.pop(str(candidate_id), None)
+                self._identity_retry_state.pop(str(candidate_id), None)
+                self._verified_identity = pending
+                self._dino_event = "identity_verified"
+                return True
+            if source_ts is not None:
+                previous = self._identity_retry_state.get(str(candidate_id), {})
+                attempts = min(int(previous.get("attempts", 0)) + 1, 3)
+                interval = min(
+                    self.IDENTITY_RETRY_INTERVAL * (2 ** (attempts - 1)),
+                    self.IDENTITY_OTHER_RETRY_MAX,
+                )
+                self._identity_retry_until[str(candidate_id)] = source_ts + interval
+                self._identity_retry_state[str(candidate_id)] = {
+                    "attempts": attempts,
+                    "score": pending.get("score"),
+                    "verdict": verdict,
+                }
+            self._dino_event = "identity_rejected" if verdict == "OTHER" else "identity_unknown"
+            return False
+
     def _motion_reacquire(self, candidates: list[tuple[float, dict]]) -> dict | None:
         """Use motion only when one unambiguous new track stays consistent."""
         if len(candidates) != 1:
@@ -512,23 +1041,47 @@ class PersonTracker:
         candidate = candidates[0][1]
         if not self._confirm_reacquire(candidate):
             return None
+        self._reset_reacquire()
         self._reid_stats["motion_dominant"] += 1
         return candidate
 
-    def _confirm_reacquire(self, candidate: dict) -> bool:
+    def _confirm_reacquire(
+        self,
+        candidate: dict,
+        *,
+        force: bool = False,
+        crop: np.ndarray | None = None,
+        feature: np.ndarray | None = None,
+    ) -> bool:
         current_id = str(self._person.obj_id or "") if self._person is not None else ""
         candidate_id = str(candidate.get("id") or "")
-        if not current_id or candidate_id == current_id:
+        if not force and (not current_id or candidate_id == current_id):
             self._reset_reacquire()
             return True
         if not candidate_id:
             self._reset_reacquire()
             return False
         if candidate_id == self._reacquire_id:
+            timestamp = self._get_observation_ts(candidate)
+            if timestamp is not None and self._reacquire_ts is not None and timestamp <= self._reacquire_ts:
+                return False
+            if timestamp is not None and self._reacquire_ts is not None and self._reacquire_pos is not None:
+                dt = timestamp - self._reacquire_ts
+                if math.dist(self._get_pos(candidate), self._reacquire_pos) > self.MAX_PERSON_SPEED * dt + self.POSITION_NOISE:
+                    self._reset_reacquire()
+                    return False
             self._reacquire_count += 1
         else:
+            self._reset_reacquire()
             self._reacquire_id = candidate_id
             self._reacquire_count = 1
+        self._reacquire_ts = self._get_observation_ts(candidate)
+        self._reacquire_pos = self._get_pos(candidate)
+        if crop is not None and feature is not None:
+            self._reacquire_crops.append(crop.copy())
+            self._reacquire_crop_timestamps.append(self._reacquire_ts)
+            self._reacquire_crops = self._reacquire_crops[-self.IDENTITY_EVIDENCE_FRAMES:]
+            self._reacquire_crop_timestamps = self._reacquire_crop_timestamps[-self.IDENTITY_EVIDENCE_FRAMES:]
         if self._reacquire_count < self.REACQUIRE_CONFIRM_FRAMES:
             return False
         logger.info(
@@ -536,12 +1089,61 @@ class PersonTracker:
             candidate_id,
             self._reacquire_count,
         )
-        self._reset_reacquire()
         return True
 
     def _reset_reacquire(self) -> None:
         self._reacquire_id = None
         self._reacquire_count = 0
+        self._reacquire_ts = None
+        self._reacquire_pos = None
+        self._reacquire_crops.clear()
+        self._reacquire_crop_timestamps.clear()
+
+    def _retain_reference_crop(
+        self,
+        crop: np.ndarray,
+        feature: np.ndarray,
+        source_ts: float | None,
+    ) -> None:
+        """Keep the two trusted views that provide the widest appearance coverage."""
+        def similarity(left: np.ndarray, right: np.ndarray) -> float:
+            denominator = float(np.linalg.norm(left) * np.linalg.norm(right))
+            return float(np.dot(left, right) / denominator) if denominator > 0 else 1.0
+
+        original = self._person.dino_reference
+        known = [value for value in [original, *self._verified_reference_features] if value is not None]
+        if any(
+            similarity(feature, value) >= self.REFERENCE_CROP_DUPLICATE_SIMILARITY
+            for value in known
+        ):
+            return
+
+        records = list(zip(
+            self._verified_reference_crops,
+            self._verified_reference_timestamps,
+            self._verified_reference_features,
+            strict=True,
+        ))
+        records.append((crop.copy(), source_ts, feature.copy()))
+        if len(records) > self.MAX_REFERENCE_CROPS:
+            best_pair = (0, 1)
+            best_score = -math.inf
+            for left in range(len(records) - 1):
+                for right in range(left + 1, len(records)):
+                    left_feature = records[left][2]
+                    right_feature = records[right][2]
+                    score = 1.0 - similarity(left_feature, right_feature)
+                    if original is not None:
+                        score += 1.0 - similarity(original, left_feature)
+                        score += 1.0 - similarity(original, right_feature)
+                    if score > best_score:
+                        best_score = score
+                        best_pair = (left, right)
+            records = [records[index] for index in best_pair]
+
+        self._verified_reference_crops = [value[0] for value in records]
+        self._verified_reference_timestamps = [value[1] for value in records]
+        self._verified_reference_features = [value[2] for value in records]
 
     def _update_tracked(self, obj: dict, rgb_frame: np.ndarray | None) -> bool:
         """Update position, velocity, and appearance features for the matched target."""
@@ -553,20 +1155,29 @@ class PersonTracker:
         if previous_observation_ts is not None and (
             observation_ts is None or observation_ts <= previous_observation_ts
         ):
+            self._observation_reason = "stale_observation"
             return False
 
         old_smoothed = self._person.position
         old_raw = self._person.last_raw_pos or old_smoothed
+        after_gap = False
 
         if observation_ts is not None and previous_observation_ts is not None:
             dt = observation_ts - previous_observation_ts
-            self._person.velocity = [
+            displacement = math.dist(new_pos, old_raw)
+            if displacement > self.MAX_PERSON_SPEED * dt + self.POSITION_NOISE:
+                self._observation_reason = "position_rejected"
+                if self._dino_encoder is not None:
+                    self._dino_event = "position_rejected"
+                return False
+            after_gap = dt > self.REACQUIRE_GAP
+            self._person.velocity = [0.0, 0.0] if after_gap else [
                 (new_pos[0] - old_raw[0]) / dt * 0.3 + self._person.velocity[0] * 0.7,
                 (new_pos[1] - old_raw[1]) / dt * 0.3 + self._person.velocity[1] * 0.7,
             ]
 
         # Position EMA
-        a = self.EMA_ALPHA
+        a = 1.0 if after_gap else self.EMA_ALPHA
         self._person.position = [
             a * new_pos[0] + (1 - a) * old_smoothed[0],
             a * new_pos[1] + (1 - a) * old_smoothed[1],
@@ -578,42 +1189,64 @@ class PersonTracker:
         self._person.confidence = obj.get("confidence", 1.0)
         self._person.obj_id = obj.get("id", self._person.obj_id)
         self._person.bbox = obj.get("bbox", self._person.bbox)
+        verified = self._verified_identity
+        verified_commit = verified is not None and str(verified["object"].get("id")) == str(obj.get("id"))
+        if verified_commit:
+            self._person.dino_verified_views.append(verified["feature"].copy())
+            self._person.dino_verified_views = self._person.dino_verified_views[-self.MAX_VERIFIED_VIEWS:]
+            self._person.dino_feat = verified["feature"].copy()
 
         if rgb_frame is not None:
             crop = self._crop_person(rgb_frame, obj)
             if crop is not None:
-                # CLIP appearance EMA update (secondary Re-ID signal)
-                with self._encoder_lock:
-                    clip_encoder = self._clip_encoder
-                if clip_encoder is not None:
-                    try:
-                        feat = clip_encoder.encode_image(crop)
-                        if feat is not None and feat.size > 0:
-                            norm = np.linalg.norm(feat)
-                            if norm > 0:
-                                feat = feat / norm
-                            if self._person.appearance is not None:
-                                aa = self.APPEARANCE_ALPHA
-                                self._person.appearance = aa * feat + (1 - aa) * self._person.appearance
-                            else:
-                                self._person.appearance = feat
-                    except Exception:
-                        pass
+                if verified_commit:
+                    fresh_feature = self._dino_feature(rgb_frame, obj)
+                    if fresh_feature is not None:
+                        self._retain_reference_crop(crop, fresh_feature, observation_ts)
+                dino_active = self._dino_encoder is not None and self._person.dino_feat is not None
+                if not dino_active:
+                    # Maintain fallback appearance only while it owns association.
+                    with self._encoder_lock:
+                        clip_encoder = self._clip_encoder
+                    if clip_encoder is not None:
+                        try:
+                            feat = clip_encoder.encode_image(crop)
+                            if feat is not None and feat.size > 0:
+                                norm = np.linalg.norm(feat)
+                                if norm > 0:
+                                    feat = feat / norm
+                                if self._person.appearance is not None:
+                                    aa = self.APPEARANCE_ALPHA
+                                    self._person.appearance = aa * feat + (1 - aa) * self._person.appearance
+                                else:
+                                    self._person.appearance = feat
+                        except Exception:
+                            pass
 
-                # OSNet feature EMA update (primary Re-ID signal)
-                if self._osnet_encoder is not None:
-                    try:
-                        osnet_feat = self._osnet_encoder.encode(crop)
-                        if self._person.osnet_feat is not None:
-                            aa = self.APPEARANCE_ALPHA
-                            updated = aa * osnet_feat + (1 - aa) * self._person.osnet_feat
-                            # Re-normalise after EMA blend (features drift off unit sphere)
-                            norm = np.linalg.norm(updated)
-                            self._person.osnet_feat = updated / norm if norm > 1e-9 else updated
-                        else:
-                            self._person.osnet_feat = osnet_feat
-                    except Exception as exc:
-                        logger.debug("OSNet update_tracked encode failed: %s", exc)
+                    if self._osnet_encoder is not None:
+                        try:
+                            osnet_feat = self._osnet_encoder.encode(crop)
+                            if self._person.osnet_feat is not None:
+                                aa = self.APPEARANCE_ALPHA
+                                updated = aa * osnet_feat + (1 - aa) * self._person.osnet_feat
+                                norm = np.linalg.norm(updated)
+                                self._person.osnet_feat = updated / norm if norm > 1e-9 else updated
+                            else:
+                                self._person.osnet_feat = osnet_feat
+                        except Exception as exc:
+                            logger.debug("OSNet update_tracked encode failed: %s", exc)
+
+                if self._dino_encoder is not None:
+                    feature = self._dino_feature(rgb_frame, obj)
+                    if feature is not None:
+                        previous = self._person.dino_feat
+                        updated = feature if previous is None else (
+                            self.APPEARANCE_ALPHA * feature + (1 - self.APPEARANCE_ALPHA) * previous
+                        )
+                        self._person.dino_feat = updated / np.linalg.norm(updated)
+
+        if verified_commit:
+            self._verified_identity = None
 
         return True
 
@@ -713,15 +1346,34 @@ class PersonTracker:
                 return None
             return {
                 "id": self._person.obj_id,
+                "native_track_id": self._person.obj_id,
+                "identity_id": self._person.identity_id,
                 "position": [float(value) for value in self._person.position],
                 "velocity": [float(value) for value in self._person.velocity],
                 "last_seen": float(self._person.last_seen),
                 "confidence": float(self._person.confidence),
+                "observation_accepted": self._observation_accepted,
+                "observation_reason": self._observation_reason,
+                "raw_position": list(self._person.last_raw_pos or self._person.position),
+                "appearance_backend": "dino" if self._dino_encoder is not None else "clip_osnet",
+                "dino_similarity": self._dino_similarity,
+                "dino_event": self._dino_event,
+                "identity_retry_until": dict(self._identity_retry_until),
+                "reid_stats": dict(self._reid_stats),
             }
 
     @property
     def target_selected(self) -> bool:
         return self._target_selected
+
+    @property
+    def has_identity_reference(self) -> bool:
+        """Whether a lost target can be compared with its original DINO appearance."""
+        return bool(
+            self._dino_encoder is not None
+            and self._person is not None
+            and self._person.dino_reference is not None
+        )
 
     @property
     def description(self) -> str:
@@ -732,5 +1384,18 @@ class PersonTracker:
             self._person = None
             self._description = ""
             self._target_selected = False
+            self._observation_accepted = False
+            self._observation_reason = ""
             self._vlm_selecting = False
             self._reset_reacquire()
+            self._frame_dino.clear()
+            self._reference_crop = None
+            self._verified_reference_crops.clear()
+            self._verified_reference_timestamps.clear()
+            self._verified_reference_features.clear()
+            self._pending_identity = None
+            self._verified_identity = None
+            self._identity_retry_until.clear()
+            self._identity_retry_state.clear()
+            self._dino_similarity = None
+            self._dino_event = "ready" if self._dino_encoder is not None else "disabled"

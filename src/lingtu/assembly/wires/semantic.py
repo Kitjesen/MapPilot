@@ -90,12 +90,13 @@ def visual_servo_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
     specs = [
         WireSpec("PerceptionModule", "detections_3d", "VisualServoModule", "detections_3d"),
         WireSpec("PerceptionModule", "robot_pose", "VisualServoModule", "robot_pose"),
-        WireSpec(ctx.camera_src, ctx.color_out, "VisualServoModule", "color_image"),
+        WireSpec("PerceptionModule", "observation_image", "VisualServoModule", "color_image"),
         WireSpec("GatewayModule", "servo_target", "VisualServoModule", "servo_target"),
         WireSpec("SemanticPlannerModule", "servo_target", "VisualServoModule", "servo_target"),
         WireSpec("VisualServoModule", "goal_pose", "nav.goals", "visual_goal_request"),
         WireSpec("VisualServoModule", "goal_cancel", "nav.goals", "visual_cancel_request"),
         WireSpec("nav.goals", "goal_status", "VisualServoModule", "goal_status"),
+        WireSpec("nav.goals", "task_status", "VisualServoModule", "navigation_goal_status"),
         WireSpec("VisualServoModule", "servo_status", "GatewayModule", "visual_servo_status"),
     ]
     return tuple(specs)

@@ -248,7 +248,7 @@ def test_motion_aliases_use_the_same_owned_navigation(agent):
     agent.module.on_system_modules({"SemanticPlannerModule": agent.h.module,
                                    "nav.skills": NavSkills(), "VisualServoModule": VisualServoModule(),
                                    "VLAModule": VLAModule(), "TaggedLocationsModule": TaggedLocationsModule()})
-    for name in ("navigate_to_deg", "find_object", "follow_person", "stop_servo", "vla_navigate", "go_to_tag"):
+    for name in ("navigate_to_deg", "find_object", "follow_person", "stop_servo", "start_follow", "cancel_follow_task", "vla_navigate", "go_to_tag"):
         assert name not in agent.module._agent_tool_registry
     assert "get_vla_status" in agent.module._agent_tool_registry
     script(agent, tool("navigate_to_deg", x=1, y=2, z=0.3, yaw_deg=90))
@@ -263,15 +263,19 @@ def test_motion_aliases_use_the_same_owned_navigation(agent):
 
 
 def test_owned_follow_handoff_stops_on_agent_cancel(agent):
-    servo, sent = [], threading.Event()
-    agent.h.module.servo_target.subscribe(lambda command: (servo.append(command), sent.set()))
+    from decision.modules.visual_servo import VisualServoModule
+
+    servo, sent = VisualServoModule(), threading.Event()
+    agent.h.module.on_system_modules({**agent.h.modules, "VisualServoModule": servo})
+    servo.servo_status.subscribe(lambda status: sent.set())
     script(agent, tool("follow_person", description="person"))
     agent.module.run_agent_task("follow person")
     run = agent.module._active_run
     assert sent.wait(1)
-    assert servo[0].startswith("follow:")
+    ref = servo.get_servo_status()
+    assert ref["follow_task_id"]
     agent.module.cancel_agent_task(run.run_id)
-    assert servo[-1] == "stop"
+    assert servo.get_follow_task(ref["follow_task_id"], ref["product_session_id"])["state"] == "cancelled"
     assert "AGENT_DONE" not in agent.statuses
 
 

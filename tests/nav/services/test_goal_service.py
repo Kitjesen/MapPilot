@@ -17,6 +17,8 @@ from runtime.msgs.nav import (
     NavigationCommandReceipt,
     NavigationGoalState,
     NavigationGoalStatus,
+    VisualGoalCancel,
+    VisualGoalRequest,
 )
 
 
@@ -72,6 +74,15 @@ def _cmd(mod: GoalService, cmd: dict) -> dict:
     return mod._test_statuses[-1]
 
 
+def _visual_request(x: float, *, task_id: str, request_id: str, session: str = "") -> VisualGoalRequest:
+    return VisualGoalRequest(
+        goal=PoseStamped(pose=Pose(position=Vector3(x, 0.0, 0.0)), frame_id="map"),
+        task_id=task_id,
+        request_id=request_id,
+        product_session_id=session,
+    )
+
+
 class TestGoalService:
     def test_port_types(self, goal_service):
         summary = goal_service.port_summary()
@@ -79,8 +90,8 @@ class TestGoalService:
         assert summary["ports_in"]["goal_command"]["type"] == "str"
         assert summary["ports_in"]["goal_request"]["type"] == "PoseStamped"
         assert summary["ports_in"]["cancel_request"]["type"] == "str"
-        assert summary["ports_in"]["visual_goal_request"]["type"] == "PoseStamped"
-        assert summary["ports_in"]["visual_cancel_request"]["type"] == "str"
+        assert summary["ports_in"]["visual_goal_request"]["type"] == "VisualGoalRequest"
+        assert summary["ports_in"]["visual_cancel_request"]["type"] == "VisualGoalCancel"
         assert summary["ports_in"]["navigation_goal_status"]["type"] == "NavigationGoalStatus"
         assert set(summary["ports_out"]) == {"goal_status", "task_status"}
         assert summary["ports_out"]["goal_status"]["type"] == "dict"
@@ -102,26 +113,16 @@ class TestGoalService:
         assert result["target"]["yaw"] is None
 
     def test_visual_stop_cancels_accepted_visual_task(self, goal_service):
-        goal_service.visual_goal_request._deliver(
-            PoseStamped(
-                pose=Pose(position=Vector3(2.0, 0.0, 0.0)),
-                frame_id="map",
-            )
-        )
+        goal_service.visual_goal_request._deliver(_visual_request(2.0, task_id="follow-a", request_id="req-a"))
         visual_task_id = goal_service._test_commands.goals[-1][4]
 
-        goal_service.visual_cancel_request._deliver("visual_servo_stop")
+        goal_service.visual_cancel_request._deliver(VisualGoalCancel((visual_task_id,)))
 
         assert goal_service._test_commands.cancels[-1][0] == visual_task_id
         assert goal_service._test_commands.cancels[-1][1] == "visual_servo_stop"
 
     def test_visual_native_lifecycle_is_forwarded_to_the_servo(self, goal_service):
-        goal_service.visual_goal_request._deliver(
-            PoseStamped(
-                pose=Pose(position=Vector3(2.0, 0.0, 0.0)),
-                frame_id="map",
-            )
-        )
+        goal_service.visual_goal_request._deliver(_visual_request(2.0, task_id="follow-a", request_id="req-a"))
         task_id = goal_service._test_commands.goals[-1][4]
         request_id = goal_service._test_commands.goals[-1][5]
         goal_service._test_statuses.clear()
@@ -154,20 +155,10 @@ class TestGoalService:
         }
 
     def test_visual_stop_keeps_old_task_when_replacement_fails(self, goal_service):
-        goal_service.visual_goal_request._deliver(
-            PoseStamped(
-                pose=Pose(position=Vector3(2.0, 0.0, 0.0)),
-                frame_id="map",
-            )
-        )
+        goal_service.visual_goal_request._deliver(_visual_request(2.0, task_id="follow-old", request_id="req-old"))
         old_task_id = goal_service._test_commands.goals[-1][4]
 
-        goal_service.visual_goal_request._deliver(
-            PoseStamped(
-                pose=Pose(position=Vector3(3.0, 0.0, 0.0)),
-                frame_id="map",
-            )
-        )
+        goal_service.visual_goal_request._deliver(_visual_request(3.0, task_id="follow-new", request_id="req-new"))
         replacement_task_id = goal_service._test_commands.goals[-1][4]
         replacement_request_id = goal_service._test_commands.goals[-1][5]
 
@@ -184,7 +175,7 @@ class TestGoalService:
                 reason="planning_failed",
             )
         )
-        goal_service.visual_cancel_request._deliver("visual_servo_stop")
+        goal_service.visual_cancel_request._deliver(VisualGoalCancel((old_task_id,)))
 
         assert [cancel[0] for cancel in goal_service._test_commands.cancels] == [old_task_id]
 
@@ -226,12 +217,7 @@ class TestGoalService:
         )
         first.on_system_modules({"nav.commands": first_commands})
         first.setup()
-        first.visual_goal_request._deliver(
-            PoseStamped(
-                pose=Pose(position=Vector3(2.0, 0.0, 0.0)),
-                frame_id="map",
-            )
-        )
+        first.visual_goal_request._deliver(_visual_request(2.0, task_id="restore-a", request_id="restore-req-a", session="product-a"))
         current_task_id = first_commands.goals[-1][4]
         first.stop()
 
@@ -243,12 +229,7 @@ class TestGoalService:
         )
         foreign.on_system_modules({"nav.commands": foreign_commands})
         foreign.setup()
-        foreign.visual_goal_request._deliver(
-            PoseStamped(
-                pose=Pose(position=Vector3(3.0, 0.0, 0.0)),
-                frame_id="map",
-            )
-        )
+        foreign.visual_goal_request._deliver(_visual_request(3.0, task_id="foreign-a", request_id="foreign-req-a", session="product-b"))
         foreign_task_id = foreign_commands.goals[-1][4]
         foreign.stop()
 
@@ -260,11 +241,58 @@ class TestGoalService:
         )
         restarted.on_system_modules({"nav.commands": restarted_commands})
         restarted.setup()
-        restarted.visual_cancel_request._deliver("visual_servo_stop")
-
+        restarted.start()
         assert [cancel[0] for cancel in restarted_commands.cancels] == [current_task_id]
         assert foreign_task_id not in {cancel[0] for cancel in restarted_commands.cancels}
         restarted.stop()
+
+    def test_restored_visual_task_blocks_new_goal_until_native_terminal(self, tmp_path):
+        ledger_path = str(tmp_path / "navigation_tasks.sqlite3")
+        first = GoalService(command_module="nav.commands", task_ledger_path=ledger_path, product_session_id="product-a")
+        commands = type("Commands", (), {})()
+        commands.goals = []
+        commands.cancels = []
+        commands.send_goal = lambda x, y, z, yaw, *, task_id, request_id: (
+            commands.goals.append((task_id, request_id))
+            or NavigationCommandReceipt(True, int(NavigationCommandKind.GOAL), task_id, request_id, 100.0, "accepted")
+        )
+        commands.cancel_task = lambda task_id, reason, *, request_id: (
+            commands.cancels.append((task_id, reason, request_id))
+            or NavigationCommandReceipt(True, int(NavigationCommandKind.TASK_CANCEL), task_id, request_id, 101.0, "cancel_requested")
+        )
+        first.on_system_modules({"nav.commands": commands})
+        first.setup()
+        first.visual_goal_request._deliver(_visual_request(1.0, task_id="orphan", request_id="orphan-req", session="product-a"))
+        first.stop()
+
+        restarted = GoalService(command_module="nav.commands", task_ledger_path=ledger_path, product_session_id="product-a")
+        restarted.on_system_modules({"nav.commands": commands})
+        restarted.setup()
+        restarted.start()
+        from decision.modules.visual_servo import VisualServoModule
+
+        follow = VisualServoModule()
+        follow.on_system_modules({"nav.goals": restarted})
+        assert follow.start_follow(target_id="person")["reason"] == "recovering_visual_tasks"
+        restarted.visual_goal_request._deliver(_visual_request(2.0, task_id="new", request_id="new-req", session="product-a"))
+        assert [item[0] for item in commands.goals] == ["orphan"]
+
+        restarted.navigation_goal_status._deliver(NavigationGoalStatus(
+            ts=102.0, frame_id="map", boot_id="restart-boot", sequence=1,
+            task_id="orphan", request_id="orphan-req",
+            state=int(NavigationGoalState.CANCELLED), goal_epoch=1, reason="host_restart_orphan",
+        ))
+        restarted.visual_goal_request._deliver(_visual_request(2.0, task_id="new", request_id="new-req-2", session="product-a"))
+        assert [item[0] for item in commands.goals] == ["orphan", "new"]
+        assert follow.start_follow(target_id="person")["accepted"] is True
+        restarted.stop()
+
+    def test_visual_cancel_is_scoped_to_requested_task(self, goal_service):
+        goal_service.visual_goal_request._deliver(_visual_request(1.0, task_id="follow-a", request_id="req-a"))
+        goal_service.visual_goal_request._deliver(_visual_request(2.0, task_id="follow-b", request_id="req-b"))
+        goal_service.visual_cancel_request._deliver(VisualGoalCancel(("follow-a",)))
+        assert [cancel[0] for cancel in goal_service._test_commands.cancels] == ["follow-a"]
+        assert "follow-b" in goal_service._visual_task_ids
 
     def test_native_goal_status_updates_live_task_history(self, goal_service):
         goal_service.submit_goal(

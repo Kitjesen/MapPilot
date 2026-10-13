@@ -53,10 +53,19 @@ test('tracking task shows the selected person state', () => {
   assert.match(types, /person: VisualServoPersonStatus \| null/)
   assert.match(panel, /visualServo\?\.person\?\.id/)
   assert.match(panel, /visualServo\?\.target_visible/)
+  assert.match(panel, /'Last observed map position', '最后观测地图位置'/)
 })
 
 test('operator can follow an explicit person track from the current scene', () => {
   assert.match(types, /target_id\?: string \| null/)
   assert.match(panel, /sceneGraph\?\.objects/)
   assert.match(panel, /sendVisualServo\(mode, target \|\| null, selectedPersonId\)/)
+})
+
+test('Follow stop keeps the task reference that was displayed when clicked', () => {
+  assert.match(types, /follow_task_id\?: string \| null[\s\S]*?product_session_id\?: string \| null/)
+  assert.match(panel, /const followTaskAtClick = displayedFollowTask[\s\S]*?\{ \.\.\.displayedFollowTask \}/)
+  assert.match(panel, /mode === 'stop' && followTaskAtClick[\s\S]*?cancelFollowTask\(followTaskAtClick\)/)
+  assert.doesNotMatch(panel, /getFollowTask\(/)
+  assert.match(panel, /'Follow task', '跟随任务'/)
 })

@@ -36,6 +36,7 @@ class Detection3D:
     position: Vector3 = field(default_factory=Vector3)
     bbox_2d: list[float] = field(default_factory=list)  # [x1, y1, x2, y2]
     clip_feature: np.ndarray | None = None  # 512-dim
+    dino_feature: np.ndarray | None = None  # DINOv3 appearance feature
     ts: float = 0.0
 
     def __post_init__(self) -> None:
@@ -59,6 +60,7 @@ class Detection3D:
             "position": [self.position.x, self.position.y, self.position.z],
             "bbox_2d": self.bbox_2d,
             "has_clip_feature": self.clip_feature is not None,
+            "has_dino_feature": self.dino_feature is not None,
             "ts": self.ts,
         }
 
@@ -97,6 +99,10 @@ class Detection3D:
             clip_arr = np.asarray(self.clip_feature, dtype=np.float32)
             parts.append(struct.pack("<I", clip_arr.size))
             parts.append(clip_arr.tobytes())
+        if self.dino_feature is not None:
+            dino_arr = np.asarray(self.dino_feature, dtype=np.float32)
+            parts.append(struct.pack("<BI", 1, dino_arr.size))
+            parts.append(dino_arr.tobytes())
         return b"".join(parts)
 
     @classmethod
@@ -119,18 +125,31 @@ class Detection3D:
             clip_size = struct.unpack("<I", data[off: off + 4])[0]
             off += 4
             clip_feature = np.frombuffer(data[off: off + clip_size * 4], dtype=np.float32).copy()
+            off += clip_size * 4
+        dino_feature = None
+        if len(data) > off:
+            has_dino = struct.unpack("<B", data[off: off + 1])[0]
+            off += 1
+            if has_dino:
+                dino_size = struct.unpack("<I", data[off: off + 4])[0]
+                off += 4
+                dino_feature = np.frombuffer(
+                    data[off: off + dino_size * 4], dtype=np.float32
+                ).copy()
         return cls(
             id=det_id, label=label, confidence=conf,
             position=Vector3(px, py, pz),
-            bbox_2d=[b0, b1, b2, b3], clip_feature=clip_feature, ts=ts_val,
+            bbox_2d=[b0, b1, b2, b3], clip_feature=clip_feature,
+            dino_feature=dino_feature, ts=ts_val,
         )
 
     def __repr__(self) -> str:
         clip_str = f", clip={self.clip_feature.shape}" if self.clip_feature is not None else ""
+        dino_str = f", dino={self.dino_feature.shape}" if self.dino_feature is not None else ""
         return (
             f"Detection3D(id='{self.id}', label='{self.label}', "
             f"conf={self.confidence:.2f}, pos=[{self.position.x:.2f}, "
-            f"{self.position.y:.2f}, {self.position.z:.2f}]{clip_str})"
+            f"{self.position.y:.2f}, {self.position.z:.2f}]{clip_str}{dino_str})"
         )
 
 

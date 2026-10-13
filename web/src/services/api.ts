@@ -19,6 +19,9 @@ import type {
   DirectedExplorationTargetRequest,
   DynamicFilterResult,
   ExplorationStatusResponse,
+  FollowTaskCommandResponse,
+  FollowTaskRef,
+  FollowTaskStatusResponse,
   GatewayErrorResponse,
   GoalCandidateRequest,
   GoalCandidateResponse,
@@ -839,15 +842,50 @@ export async function sendVisualServo(
   mode: VisualServoMode,
   target?: string | null,
   targetId?: string | null,
-): Promise<ControlCommandResponse> {
+  followTask?: FollowTaskRef | null,
+): Promise<ControlCommandResponse | FollowTaskCommandResponse> {
   const body: VisualServoRequest = {
     mode,
     target: mode === 'stop' ? null : target,
     target_id: mode === 'follow' ? targetId : null,
+    ...(mode === 'stop' && followTask
+      ? {
+          follow_task_id: followTask.follow_task_id,
+          product_session_id: followTask.product_session_id,
+        }
+      : {}),
   }
-  return postJson<ControlCommandResponse>(
+  return postJson<ControlCommandResponse | FollowTaskCommandResponse>(
     apiPath('visual_servo', '/api/v1/visual_servo'),
     commandBody('visual_servo', body as unknown as Record<string, unknown>),
+  )
+}
+
+export async function getFollowTask(task: FollowTaskRef): Promise<FollowTaskStatusResponse> {
+  const followTaskId = task.follow_task_id.trim()
+  const productSessionId = task.product_session_id.trim()
+  if (!followTaskId) throw new Error('follow_task_id_required')
+  if (!productSessionId) throw new Error('product_session_id_required')
+  const query = new URLSearchParams({ product_session_id: productSessionId })
+  return fetchJson<FollowTaskStatusResponse>(
+    `/api/v1/follow/${encodeURIComponent(followTaskId)}?${query.toString()}`,
+  )
+}
+
+export async function cancelFollowTask(
+  task: FollowTaskRef,
+  reason = 'web_operator_cancel',
+): Promise<FollowTaskCommandResponse> {
+  const followTaskId = task.follow_task_id.trim()
+  const productSessionId = task.product_session_id.trim()
+  if (!followTaskId) throw new Error('follow_task_id_required')
+  if (!productSessionId) throw new Error('product_session_id_required')
+  return postJson<FollowTaskCommandResponse>(
+    `/api/v1/follow/${encodeURIComponent(followTaskId)}/cancel`,
+    commandBody('follow_cancel', {
+      product_session_id: productSessionId,
+      reason,
+    }),
   )
 }
 

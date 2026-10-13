@@ -207,6 +207,7 @@ class SemanticPlannerModule(Module, layer=4):
         self._navigation_goals: dict[str, GoalExecution] = {}
         self._active_goal: GoalExecution | None = None
         self._visual_handoff = False
+        self._follow_ref: dict | None = None
         self._pending_observation: ObservationRequest | None = None
         self._observation_retry_after = 0.0
         self._observation_image: Image | None = None
@@ -381,8 +382,14 @@ class SemanticPlannerModule(Module, layer=4):
         # Person-following intent ->VisualServo follow mode (bypass goal resolve).
         follow_target = self._detect_follow_intent(text)
         if follow_target is not None:
+            servo = self._backends.get("VisualServoModule") if self._backends else None
+            receipt = servo.start_follow(description=follow_target) if servo else {"accepted": False}
+            if receipt.get("accepted") is not True:
+                self._instruction_failure = str(receipt.get("reason") or "follow_unavailable")
+                self.planner_status.publish("FAILED")
+                return
+            self._follow_ref = receipt
             self._visual_handoff = True
-            self.servo_target.publish(f"follow:{follow_target}")
             self.planner_status.publish("FOLLOW")
             self._chat("assistant", f"Following target: {follow_target}", phase="follow")
             logger.info("Semantic planner: follow intent ->'%s'", follow_target)
@@ -2072,7 +2079,13 @@ class SemanticPlannerModule(Module, layer=4):
     def _stop_visual_handoff(self) -> None:
         if self._visual_handoff:
             self._visual_handoff = False
-            self.servo_target.publish("stop")
+            if self._follow_ref is not None:
+                ref, self._follow_ref = self._follow_ref, None
+                servo = self._backends.get("VisualServoModule") if self._backends else None
+                if servo is not None:
+                    servo.cancel_follow_task(ref["follow_task_id"], ref["product_session_id"])
+            else:
+                self.servo_target.publish("stop")
 
     # Health
 

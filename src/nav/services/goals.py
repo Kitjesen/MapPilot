@@ -20,6 +20,8 @@ from runtime.msgs import (
     NavigationCommandReceipt,
     NavigationGoalState,
     NavigationGoalStatus,
+    VisualGoalCancel,
+    VisualGoalRequest,
 )
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from runtime.registry import register
@@ -98,8 +100,8 @@ class GoalService(Module, layer=6):
     goal_command: In[str]
     goal_request: In[PoseStamped]
     cancel_request: In[str]
-    visual_goal_request: In[PoseStamped]
-    visual_cancel_request: In[str]
+    visual_goal_request: In[VisualGoalRequest]
+    visual_cancel_request: In[VisualGoalCancel]
     navigation_goal_status: In[NavigationGoalStatus]
     goal_status: Out[dict]
     task_status: Out[NavigationGoalStatus]
@@ -119,6 +121,7 @@ class GoalService(Module, layer=6):
         self._commands: Any | None = None
         self._request_sequence = itertools.count(1)
         self._visual_task_ids: set[str] = set()
+        self._restored_visual_tasks: set[str] = set()
         self._visual_task_lock = threading.Lock()
         self._product_session_id = (
             str(product_session_id or "").strip()
@@ -147,6 +150,10 @@ class GoalService(Module, layer=6):
 
         self._reconcile_task_history()
         self._restore_visual_tasks()
+
+    def start(self) -> None:
+        super().start()
+        self._cancel_restored_visual_tasks()
 
     def stop(self) -> None:
         """Close the task ledger and then release Module resources."""
@@ -187,6 +194,7 @@ class GoalService(Module, layer=6):
             if status.terminal:
                 with self._visual_task_lock:
                     self._visual_task_ids.discard(status.task_id)
+                    self._restored_visual_tasks.discard(status.task_id)
         except KeyError:
             logger.debug(
                 "Ignoring native goal status for untracked task %s",
@@ -202,26 +210,44 @@ class GoalService(Module, layer=6):
     def _on_goal_request(self, goal: PoseStamped) -> None:
         self.submit_goal(goal)
 
-    def _on_visual_goal_request(self, goal: PoseStamped) -> None:
-        status = self.submit_goal(goal, action="visual_servo")
-        if status.get("accepted") is True:
-            task_id = str(status.get("task_id") or "")
-            if task_id:
-                with self._visual_task_lock:
-                    self._visual_task_ids.add(task_id)
-
-    def _on_visual_cancel_request(self, reason: str) -> None:
+    def _on_visual_goal_request(self, goal: VisualGoalRequest) -> None:
+        if not isinstance(goal, VisualGoalRequest):
+            self._publish_status("visual_servo", False, "visual goal request must be VisualGoalRequest")
+            return
+        if goal.product_session_id != self._product_session_id:
+            self._publish_status("visual_servo", False, "visual goal belongs to another product session", task_id=goal.task_id, request_id=goal.request_id)
+            return
         with self._visual_task_lock:
-            task_ids = tuple(self._visual_task_ids)
+            restoring = bool(self._restored_visual_tasks)
+        if restoring:
+            self._publish_status("visual_servo", False, "restored visual tasks are still being cancelled", task_id=goal.task_id, request_id=goal.request_id, state="blocked")
+            return
+        # Register before dispatch: synchronous ACK/terminal callbacks can cancel it.
+        with self._visual_task_lock:
+            self._visual_task_ids.add(goal.task_id)
+        status = self.submit_goal(goal.goal, task_id=goal.task_id, request_id=goal.request_id, action="visual_servo")
+        if status.get("accepted") is not True and status.get("admission_unconfirmed") is not True:
+            with self._visual_task_lock:
+                self._visual_task_ids.discard(goal.task_id)
+
+    def _on_visual_cancel_request(self, request: VisualGoalCancel) -> None:
+        if not isinstance(request, VisualGoalCancel):
+            self._publish_status("visual_servo_stop", False, "visual cancel request must be VisualGoalCancel")
+            return
+        if request.product_session_id != self._product_session_id:
+            self._publish_status("visual_servo_stop", False, "visual cancel belongs to another product session")
+            return
+        with self._visual_task_lock:
+            task_ids = tuple(task_id for task_id in request.task_ids if task_id in self._visual_task_ids)
         if not task_ids:
             self._publish_status(
                 "visual_servo_stop",
                 False,
                 "visual servo has no accepted navigation task to cancel",
-                reason=str(reason or "visual_servo_stop"),
+                reason=request.reason,
             )
             return
-        resolved_reason = str(reason or "visual_servo_stop")
+        resolved_reason = request.reason
         for task_id in task_ids:
             self.submit_cancel(
                 resolved_reason,
@@ -239,6 +265,13 @@ class GoalService(Module, layer=6):
         }
         with self._visual_task_lock:
             self._visual_task_ids.update(task_ids)
+            self._restored_visual_tasks.update(task_ids)
+
+    def _cancel_restored_visual_tasks(self) -> None:
+        with self._visual_task_lock:
+            task_ids = tuple(self._restored_visual_tasks)
+        for task_id in task_ids:
+            self.submit_cancel("host_restart_orphan", task_id=task_id, action="visual_servo_stop")
 
     def lookup_goal_replay(
         self,
@@ -1110,6 +1143,18 @@ class GoalService(Module, layer=6):
     @property
     def _sink_name(self) -> str:
         return "native_dds"
+
+    @property
+    def product_session_id(self) -> str:
+        """Resolved Product session owning this GoalService instance."""
+
+        return self._product_session_id
+
+    @property
+    def visual_tasks_ready(self) -> bool:
+        """Whether restart recovery has settled the old visual children."""
+        with self._visual_task_lock:
+            return not self._restored_visual_tasks
 
     def _call_commands(self, method: str, **kwargs: Any) -> Any:
         if self._commands is None:

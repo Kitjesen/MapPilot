@@ -36,6 +36,8 @@ from .nav import (
     OperatorMotionAction,
     OperatorMotionReceipt,
     Path,
+    VisualGoalCancel,
+    VisualGoalRequest,
 )
 from .protocol import LingtuMsg, is_lingtu_msg, resolve_msg_type
 from .semantic import (
@@ -96,6 +98,8 @@ __all__ = [
     "Twist",
     "TwistStamped",
     "Vector3",
+    "VisualGoalCancel",
+    "VisualGoalRequest",
     "is_lingtu_msg",
     "resolve_msg_type",
 ]

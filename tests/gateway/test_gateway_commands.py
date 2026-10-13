@@ -1120,22 +1120,34 @@ def test_instruction_rejects_safety_stop_without_publishing():
     assert gateway.instruction.msg_count == 0
 
 
-def test_visual_servo_hot_command_publishes_servo_target():
+def test_visual_follow_starts_one_owner_task_and_returns_its_identity():
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import ControlCommandResponse, VisualServoRequest
 
     gateway = GatewayModule()
     gateway.setup()
+    starts = []
+
+    def start_follow(**kwargs):
+        starts.append(kwargs)
+        return {
+            "accepted": True,
+            "follow_task_id": "follow-1",
+            "product_session_id": "product-session-1",
+            "state": "running",
+            "terminal": False,
+            "reason": "",
+        }
+
     gateway._all_modules = {
         "VisualServoModule": SimpleNamespace(
             can_select_follow_target=lambda: True,
+            start_follow=start_follow,
         ),
         "PerceptionModule": SimpleNamespace(
             health=lambda: {"detector_ready": True},
         ),
     }
-    targets = []
-    gateway.servo_target._add_callback(targets.append)
     post_visual_servo = _endpoint(gateway, "/api/v1/visual_servo")
 
     result = asyncio.run(
@@ -1151,8 +1163,18 @@ def test_visual_servo_hot_command_publishes_servo_target():
 
     model = ControlCommandResponse.model_validate(result)
     assert model.command.name == "visual_servo"
-    assert targets == ["follow:person in red"]
-    assert gateway.servo_target.msg_count == 1
+    assert result["follow_task_id"] == "follow-1"
+    assert result["product_session_id"] == "product-session-1"
+    assert result["state"] == "running"
+    assert starts == [
+        {
+            "description": "person in red",
+            "target_id": "",
+            "request_id": "visual-servo-follow",
+            "client_id": "web",
+        }
+    ]
+    assert gateway.servo_target.msg_count == 0
 
 
 def test_visual_follow_accepts_an_explicit_person_track_without_a_description_selector():
@@ -1164,13 +1186,18 @@ def test_visual_follow_accepts_an_explicit_person_track_without_a_description_se
     gateway._all_modules = {
         "VisualServoModule": SimpleNamespace(
             can_select_follow_target=lambda: False,
+            start_follow=lambda **_kwargs: {
+                "accepted": True,
+                "follow_task_id": "follow-person-7",
+                "product_session_id": "product-session-1",
+                "state": "running",
+                "terminal": False,
+            },
         ),
         "PerceptionModule": SimpleNamespace(
             health=lambda: {"detector_ready": True},
         ),
     }
-    targets = []
-    gateway.servo_target._add_callback(targets.append)
     post_visual_servo = _endpoint(gateway, "/api/v1/visual_servo")
 
     result = asyncio.run(
@@ -1186,8 +1213,8 @@ def test_visual_follow_accepts_an_explicit_person_track_without_a_description_se
 
     model = ControlCommandResponse.model_validate(result)
     assert model.command.name == "visual_servo"
-    assert targets == ["follow_id:person-7"]
-    assert gateway.servo_target.msg_count == 1
+    assert result["follow_task_id"] == "follow-person-7"
+    assert gateway.servo_target.msg_count == 0
 
 
 def test_gateway_explicit_person_track_is_consumed_by_visual_servo():
@@ -1319,6 +1346,356 @@ def test_visual_servo_stop_allowed_under_safety_stop_but_find_rejected():
     assert gateway.servo_target.msg_count == 1
 
 
+def test_follow_task_query_is_scoped_to_the_product_session():
+    from gateway.gateway_module import GatewayModule
+
+    queries = []
+
+    def get_follow_task(follow_task_id, product_session_id):
+        queries.append((follow_task_id, product_session_id))
+        if product_session_id != "product-session-1":
+            return {
+                "found": False,
+                "follow_task_id": follow_task_id,
+                "product_session_id": product_session_id,
+                "reason": "product_session_mismatch",
+            }
+        return {
+            "found": True,
+            "follow_task_id": follow_task_id,
+            "product_session_id": product_session_id,
+            "state": "running",
+            "terminal": False,
+            "navigation_state": "path_active",
+        }
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._all_modules = {
+        "VisualServoModule": SimpleNamespace(get_follow_task=get_follow_task),
+    }
+    get_task = _endpoint(gateway, "/api/v1/follow/{follow_task_id}")
+
+    active = asyncio.run(get_task("follow-1", "product-session-1"))
+    stale_session = asyncio.run(get_task("follow-1", "product-session-2"))
+
+    assert active["found"] is True
+    assert active["state"] == "running"
+    assert stale_session["found"] is False
+    assert stale_session["reason"] == "product_session_mismatch"
+    assert queries == [
+        ("follow-1", "product-session-1"),
+        ("follow-1", "product-session-2"),
+    ]
+
+
+def test_follow_cancel_uses_exact_task_and_session_reference():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import FollowTaskCancelRequest
+
+    cancels = []
+
+    def cancel_follow_task(follow_task_id, product_session_id, **kwargs):
+        cancels.append((follow_task_id, product_session_id, kwargs))
+        return {
+            "accepted": True,
+            "follow_task_id": follow_task_id,
+            "product_session_id": product_session_id,
+            "state": "cancelling",
+            "terminal": False,
+            "reason": kwargs["reason"],
+        }
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._all_modules = {
+        "VisualServoModule": SimpleNamespace(cancel_follow_task=cancel_follow_task),
+    }
+    cancel = _endpoint(gateway, "/api/v1/follow/{follow_task_id}/cancel")
+
+    result = asyncio.run(
+        cancel(
+            "follow-1",
+            FollowTaskCancelRequest(
+                product_session_id="product-session-1",
+                reason="operator_cancel",
+                request_id="cancel-follow-1",
+                client_id="web",
+            ),
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["follow_task_id"] == "follow-1"
+    assert result["state"] == "cancelling"
+    assert result["command"]["name"] == "follow_cancel"
+    assert cancels == [
+        (
+            "follow-1",
+            "product-session-1",
+            {
+                "reason": "operator_cancel",
+                "request_id": "cancel-follow-1",
+                "client_id": "web",
+            },
+        )
+    ]
+
+
+def test_follow_cancel_request_id_cannot_replay_a_different_path_task():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import FollowTaskCancelRequest
+
+    cancels = []
+
+    def cancel_follow_task(follow_task_id, product_session_id, **_kwargs):
+        cancels.append((follow_task_id, product_session_id))
+        return {
+            "accepted": True,
+            "follow_task_id": follow_task_id,
+            "product_session_id": product_session_id,
+            "state": "cancelled",
+            "terminal": True,
+            "reason": "cancel_requested",
+        }
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._all_modules = {
+        "VisualServoModule": SimpleNamespace(cancel_follow_task=cancel_follow_task),
+    }
+    cancel = _endpoint(gateway, "/api/v1/follow/{follow_task_id}/cancel")
+    body = FollowTaskCancelRequest(
+        product_session_id="product-session-1",
+        request_id="same-cancel-request",
+        client_id="web",
+    )
+
+    first = asyncio.run(cancel("follow-1", body))
+    conflict = asyncio.run(cancel("follow-2", body))
+    payload = _payload(conflict)
+
+    assert first["follow_task_id"] == "follow-1"
+    assert conflict.status_code == 409
+    assert payload["error"] == "idempotency_conflict"
+    assert cancels == [("follow-1", "product-session-1")]
+
+
+def test_stale_follow_cancel_never_falls_back_to_stopping_the_new_follow():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import FollowTaskCancelRequest
+
+    current = {"follow_task_id": "follow-new"}
+
+    def cancel_follow_task(follow_task_id, product_session_id, **_kwargs):
+        return {
+            "accepted": False,
+            "follow_task_id": follow_task_id,
+            "product_session_id": product_session_id,
+            "state": "not_found",
+            "terminal": True,
+            "reason": "follow_task_not_found",
+        }
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._all_modules = {
+        "VisualServoModule": SimpleNamespace(cancel_follow_task=cancel_follow_task),
+    }
+    stops = []
+    gateway.servo_target._add_callback(stops.append)
+    cancel = _endpoint(gateway, "/api/v1/follow/{follow_task_id}/cancel")
+
+    response = asyncio.run(
+        cancel(
+            "follow-old",
+            FollowTaskCancelRequest(
+                product_session_id="product-session-1",
+                request_id="cancel-stale-follow",
+                client_id="web",
+            ),
+        )
+    )
+    payload = _payload(response)
+
+    assert response.status_code == 409
+    assert payload["reason"] == "follow_task_not_found"
+    assert payload["command"]["accepted"] is False
+    assert current["follow_task_id"] == "follow-new"
+    assert stops == []
+    assert gateway.servo_target.msg_count == 0
+
+
+def test_gateway_old_follow_cancel_does_not_change_the_new_real_owner_task():
+    from decision.modules.visual_servo import VisualServoModule
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import FollowTaskCancelRequest, VisualServoRequest
+
+    visual_servo = VisualServoModule(product_session_id="product-session-1")
+    visual_servo.setup()
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._all_modules = {
+        "VisualServoModule": visual_servo,
+        "PerceptionModule": SimpleNamespace(
+            health=lambda: {"detector_ready": True},
+        ),
+    }
+    start = _endpoint(gateway, "/api/v1/visual_servo")
+    cancel = _endpoint(gateway, "/api/v1/follow/{follow_task_id}/cancel")
+    get_task = _endpoint(gateway, "/api/v1/follow/{follow_task_id}")
+
+    first = asyncio.run(
+        start(
+            VisualServoRequest(
+                mode="follow",
+                target_id="person-1",
+                request_id="start-follow-1",
+                client_id="web",
+            )
+        )
+    )
+    asyncio.run(
+        cancel(
+            first["follow_task_id"],
+            FollowTaskCancelRequest(
+                product_session_id=first["product_session_id"],
+                request_id="cancel-follow-1",
+                client_id="web",
+            ),
+        )
+    )
+    second = asyncio.run(
+        start(
+            VisualServoRequest(
+                mode="follow",
+                target_id="person-2",
+                request_id="start-follow-2",
+                client_id="web",
+            )
+        )
+    )
+
+    old_cancel = asyncio.run(
+        cancel(
+            first["follow_task_id"],
+            FollowTaskCancelRequest(
+                product_session_id=first["product_session_id"],
+                request_id="cancel-old-follow-again",
+                client_id="web",
+            ),
+        )
+    )
+    current = asyncio.run(
+        get_task(second["follow_task_id"], second["product_session_id"])
+    )
+
+    assert old_cancel["ok"] is True
+    assert old_cancel["reason"] == "already_terminal"
+    assert current["found"] is True
+    assert current["state"] == "running"
+    assert current["terminal"] is False
+    assert visual_servo.get_servo_status()["follow_task_id"] == second["follow_task_id"]
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        {"mode": "follow"},
+        {
+            "mode": "idle",
+            "follow_task_id": "follow-1",
+            "task_state": "cancelling",
+            "task_terminal": False,
+        },
+    ],
+)
+def test_follow_stop_without_task_reference_is_rejected(status):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import VisualServoRequest
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._all_modules = {
+        "VisualServoModule": SimpleNamespace(
+            get_servo_status=lambda: status,
+        ),
+    }
+    post_visual_servo = _endpoint(gateway, "/api/v1/visual_servo")
+
+    response = asyncio.run(
+        post_visual_servo(
+            VisualServoRequest(
+                mode="stop",
+                request_id="missing-follow-ref",
+                client_id="web",
+            )
+        )
+    )
+    payload = _payload(response)
+
+    assert response.status_code == 409
+    assert payload["error"] == "follow_task_ref_required"
+    assert gateway.servo_target.msg_count == 0
+
+
+def test_visual_servo_follow_stop_cancels_only_the_explicit_task_reference():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import VisualServoRequest
+
+    cancels = []
+
+    def cancel_follow_task(follow_task_id, product_session_id, **kwargs):
+        cancels.append((follow_task_id, product_session_id, kwargs))
+        return {
+            "accepted": True,
+            "follow_task_id": follow_task_id,
+            "product_session_id": product_session_id,
+            "state": "cancelled",
+            "terminal": True,
+            "reason": "cancel_requested",
+        }
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._all_modules = {
+        "VisualServoModule": SimpleNamespace(
+            cancel_follow_task=cancel_follow_task,
+            get_servo_status=lambda: {"mode": "follow"},
+        ),
+    }
+    post_visual_servo = _endpoint(gateway, "/api/v1/visual_servo")
+
+    result = asyncio.run(
+        post_visual_servo(
+            VisualServoRequest(
+                mode="stop",
+                follow_task_id="follow-1",
+                product_session_id="product-session-1",
+                reason="operator_cancel",
+                request_id="stop-follow-1",
+                client_id="web",
+            )
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["follow_task_id"] == "follow-1"
+    assert result["terminal"] is True
+    assert cancels == [
+        (
+            "follow-1",
+            "product-session-1",
+            {
+                "reason": "operator_cancel",
+                "request_id": "stop-follow-1",
+                "client_id": "web",
+            },
+        )
+    ]
+    assert gateway.servo_target.msg_count == 0
+
+
 def test_visual_servo_hot_command_rejects_when_module_unavailable():
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import GatewayErrorResponse, VisualServoRequest
@@ -1357,13 +1734,17 @@ def test_visual_servo_status_is_forwarded_to_sse():
             "mode": "follow",
             "target": "person in red",
             "follow_available": True,
-            "state": "following",
-            "navigation_state": "path_active",
+            "state": "reacquiring",
+            "reason": "position_rejected",
+            "navigation_state": "cancel_requested",
+            "navigation_reason": "visual_servo_target_lost",
             "goal_rate_hz": 1.0,
         }
     )
 
     assert gateway._visual_servo_status["mode"] == "follow"
+    assert gateway._visual_servo_status["reason"] == "position_rejected"
+    assert gateway._visual_servo_status["navigation_reason"] == "visual_servo_target_lost"
     assert events == [
         {
             "type": "visual_servo_status",
