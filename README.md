@@ -34,368 +34,149 @@
 
 ## Overview
 
-LingTu is an autonomous navigation platform for quadruped robots. A compiled
-Product declares native field processes plus one Python Host; typed DDS joins
-the field processes, while Modules and wires organize Host-local behavior.
+LingTu is an autonomous-navigation system for quadruped robots. The shared
+product workflow is **mapping → save/reload → localization → navigation → safe
+stop**. Supported hardware is selected through `RobotConfig`; simulation and
+real robots use the declared Product interfaces.
 
-> [!IMPORTANT]
-> **The field runtime is ROS-free by default.** LiDAR, SLAM, maps, navigation,
-> final motion control, and the robot driver run as native C++ services over
-> typed CycloneDDS contracts. ROS 2 Humble is optional and limited to explicit
-> compatibility, replay, and algorithm-validation paths.
+The field hot path is ROS-free: native C++ services own LiDAR, SLAM, maps,
+planning and final motion arbitration over typed CycloneDDS. A Python Host owns
+semantic understanding, task coordination and external APIs.
 
-## At a Glance
+## Demos and test evidence
 
-| Item | Current contract |
+These are dated development recordings, not a claim that every capability has
+passed on a physical robot. Click a preview for its full MP4. The GIF excerpts
+play directly in the README; full-resolution MP4 files are also available to
+open or download.
+
+| **SIM · Native Follow in MuJoCo** | **REAL INPUT · Recorded RGB-D tracking replay** |
 | --- | --- |
-| Version | `2.3.0` (`VERSION` and `pyproject.toml`) |
-| Field target | S100P / RDK X5, `aarch64`, Ubuntu |
-| Development host | Windows x64 with native MSVC and Rust tooling; WSL is optional |
-| Runtime environments | Exactly `real` and `sim` |
-| Native data plane | CycloneDDS with IDL-generated typed messages |
-| Main implementation | C++17 services, Rust pose-graph kernel, Python 3.10+ Host and semantic/API layer |
-| Simulation | MuJoCo 3.10 physics; optional Unreal presentation workspace |
-| ROS status | Not required by the production field runtime; compatibility only |
-| Operating Products | `teleop`, `teleop_avoid`, `map`, `explore`, `nav`, `tracking`, `inspection` |
+| [![MuJoCo robot following a controlled target, with native planner overlays](docs/media/sim-follow.gif)](docs/media/sim-follow.mp4) | [![Real D435i recording: target occlusion, return and identity verification](docs/media/real-replay.gif)](docs/media/real-replay.mp4) |
+| **2026-10-09 · 34.75 s.** Controlled shirt-color detection → RGB-D projection → Follow → native navigation → simulated motion and stop. | **2026-10-12 · 45 s.** Go2/NX D435i recording → YOLO/CLIP/DINO/Qwen research-GPU replay. **The robot did not move during this capture.** |
+| 12 accepted goals; simulated travel **3.52 m**; zero recorded collision contacts; terminal zero applied in simulation. | **1,341 RGB-D pairs**, 617 accepted target observations; native ID changed from 1 to 9 after occlusion. Positions are camera-local, not qualified map coordinates. |
+| [Full SIM video](docs/media/sim-follow.mp4) · [Method and limits](docs/media/README.md#sim-native-follow) | [Full tracking replay](docs/media/real-replay.mp4) · [Original RGB-D preview](docs/media/real-rgbd.mp4) · [Method and limits](docs/media/README.md#real-recording-and-replay) |
 
-## Repository Model
+The SIM run uses a controlled visual detector and does not establish learned
+person recognition or field following. The REAL INPUT run contains one person
+and is offline inference, not an on-robot closed-loop navigation test. Original
+capture data and reports remain archived locally; the selected media and
+[public result summary](docs/media/results.json) are versioned here.
 
-The repository uses four independent axes; directory names do not duplicate
-them:
+### Operator interface
 
-| Path or value | Meaning |
-| --- | --- |
-| `src/` | Function-owned production source: localization, maps, navigation, perception, drivers, runtime, and Product control. |
-| `env=real` / `env=sim` | The two ProductControl runtime environments, resolved from `config/runtime_graph/envs/`. They are not source roots. |
-| `sim/` | The simulation workspace and `sim.*` Python namespace: packages, sessions, runtime, evaluation, tools, and tests. |
-| `build/` | Ignored developer compilation trees. Production paths must not point here. |
-| `install/` | Ignored staged installs at `install/<platform>-<arch>/<config>/{bin,lib,etc,share}`. |
-| `dist/` | Ignored final release archives and manifests. |
+**Navigation preview — actual Web components with a simulated Gateway,
+2026-10-09.** Picking a goal previews a route; only the separate **开始导航**
+action submits motion. This screenshot is a browser interaction test, not a
+field map or navigation result.
 
-There is intentionally no root `real/`, `environments/`, or tracked `bin/`.
-Python commands are generated from `pyproject.toml`; native release commands
-are installed into `bin/` under the selected install or release prefix.
+[![LingTu navigation interface: point-cloud view, goal preview and explicit start action](docs/media/navigation-ui.png)](docs/media/navigation-ui.png)
 
-## Key Capabilities
+<details>
+<summary>Inspection workbench: route, task state and evidence review</summary>
 
-- Native LiDAR, IMU, camera, GNSS, SLAM, map, navigation, and driver endpoints.
-- Fast-LIO2 keyframe mapping with background loop verification, pose-graph optimization, and cumulative-map publication.
-- Saved-map localization, 2D occupancy, 3D OctoMap, global planning, and local avoidance.
-- CMU and SCAN local-planning backends behind one Product-selected navigation runtime.
-- Assisted teleoperation, autonomous navigation, exploration, tracking, and inspection modes.
-- MuJoCo sensor/control simulation with the same typed command and data contracts used by field services.
-- Gateway, Web UI, MCP, semantic planning, perception, memory, and mission-level orchestration.
+![LingTu inspection workbench in dark theme](docs/media/inspection-ui.png)
 
-### Mapping and loop-closure status
+Actual `InspectionWorkbench` component, recorded with a mock Gateway on
+2026-10-09. Route, task and report values in this UI fixture are synthetic.
 
-Fast-LIO2 feeds a native background worker during mapping. Verified revisits
-trigger pose-graph optimization and reconstruction of historical geometry;
-current odometry remains continuous. The Web whole-map view receives cumulative
-snapshots, and corrected saving uses full-resolution keyframe patches.
+</details>
 
-The design references FAST_LIO_SLAM's frontend/backend separation. LingTu uses
-its own geometric verifier and Rust/C++ optimizer, rather than a full port of
-the upstream Scan Context and GTSAM backend.
+### What the tests actually do
 
-Windows native Fast-LIO2 flow and online-mapping tests passed on 2026-09-17.
-The recorded 278-frame offline replay produced 10 loop constraints and 6
-successful optimizations, but 43 frames failed graph registration. Real-time
-ARM performance, supervised closed-walk testing, and corrected-map save/reload
-and localization remain acceptance work. See the
-[implementation and evidence](src/localization/opt/MIGRATION.md) and
-[remaining work](src/localization/opt/NEXT_STEPS.md).
+| Step | Recorded procedure | Evidence |
+| --- | --- | --- |
+| Acquire | Record synchronized color/depth from the physical D435i while the robot remains stationary. | [Unlabelled RGB-D video](docs/media/real-rgbd.mp4); 1,341 paired frames. |
+| Observe and identify | Replay the same frames in source order; expose accepted targets, missing observations and identity-verification decisions. | [Annotated replay](docs/media/real-replay.mp4); rejected/unknown results remain visible. |
+| Plan and move | Use controlled RGB-D target observations to drive Follow and the native planner in MuJoCo. | [SIM video](docs/media/sim-follow.mp4); motion, contacts and final stop in [results](docs/media/results.json). |
+| Exercise the UI | Select a goal, preview, start, cancel, change the selection and reject delayed responses. | [Navigation screenshot](docs/media/navigation-ui.png) and [browser test record](docs/media/README.md#web-interface-checks). |
 
-## Runtime Pipeline
+**These are separate experiments, not one end-to-end field qualification.**
+See the [test process, input provenance, results and limitations](docs/media/README.md).
+The videos predate the 2026-10-14 observation-contract changes; publishing them
+does not rerun or qualify those changes.
+
+## System ownership
 
 ```text
-LiDAR / IMU / camera
-  -> SLAM and localization
-  -> map and cost layers
-  -> perception and semantic memory
-  -> decision and mission control
-  -> global planning and local control
-  -> safety arbitration
-  -> robot command boundary
+Camera → RGB-D perception → semantic observations / memory → task execution
+                                                           ↓ goals and cancel
+LiDAR / IMU → native SLAM → native 3D maps → native navigation → robot driver
+                                                           ↑ task feedback
 ```
 
-### Core Concepts
-
-The main runtime concepts are:
-
-| Concept | Meaning |
+| Responsibility | Owner |
 | --- | --- |
-| `env` | The outer runtime environment: exactly `real` or `sim`. A simulator backend is internal env configuration. |
-| `Product` | An env-independent declaration of one mode's Host graph, logical native roles, topics, and capabilities. |
-| `RunPlan` | The immutable result of resolving one Product inside one env. |
-| `ProductControl` | The only apply, switch, quiesce, restart, stop, readiness, and rollback transaction inside one fixed env. |
-| `Host` | The Python process containing Gateway, Agent, MCP, semantic logic, and selected adapters. |
-| `Module` | A Host-local runtime component with typed input and output ports. |
-| `Blueprint` | A declarative assembly of Modules and wires inside one Host process. |
-| Stack factory | A helper such as `driver()`, `slam()`, `planner()`, or `navigation()` that adds a coherent group of modules. |
-| Native service | A C++ process used for high-rate work such as LiDAR ingest, SLAM, and final robot navigation output. |
-| Compatibility adapter | A bridge for ROS 2, replay, simulation, or older algorithm paths. |
-| `RobotConfig` | Static physical robot/device/calibration data used internally by the real env, never a runtime selector. |
-| Endpoint | A concrete HTTP, DDS, or native-service communication access point, never a deployment identity. |
+| Product lifecycle, readiness and map activation | `ProductControl`, using one resolved `RunPlan` in `env=real` or `env=sim` |
+| Physical sensors and calibration | Selected `RobotConfig` and device adapters |
+| SLAM, live/saved map geometry, global/local planning | Native C++ services; 3D collision and ground-support checks remain authoritative |
+| Semantic intent, object memory and task coordination | Python Host Modules, using typed runtime messages and registered capabilities |
+| Final motion arbitration | Native navigation; only the selected robot driver forwards checked commands |
+| Operator access | Web UI, HTTP/SSE/WebSocket, SDK and MCP through Gateway |
 
-## Current Runtime Shape
+Products include `teleop`, `teleop_avoid`, `map`, `explore`, `nav`, `tracking`
+and `inspection`. A declaration or running process is not proof that a Product
+is ready to move. See [Architecture](docs/architecture.md) and
+[Runtime](docs/runtime.md) for ownership and execution boundaries.
 
-Status: current product contract for LingTu 2.3.0 as of 2026-08-31.
+## Getting started
 
-The runtime is split by responsibility:
+The development baseline is Python 3.10+, Node.js 24, C++17 and the native
+platform toolchain. Local Windows and Linux field builds have separate native
+dependencies; optional perception models and hardware SDKs require their own
+setup.
 
-| Layer | Owns |
-| --- | --- |
-| Hardware | Robot driver, LiDAR, camera, GNSS, IMU ingress. |
-| Localization | Fast-LIO2, saved-map localization, SLAM status. |
-| Maps | Native `mapd` live layers/scene and native saved-map records/artifacts; Python layers are development/simulation compatibility. |
-| Perception | Detection, embeddings, reconstruction, scene graph. |
-| Decision | Semantic planner, LLM/tool loop, goal grounding, visual servo intent. |
-| Navigation | Native `navd` owns field planning, local avoidance, tracking, task state, and final logical velocity; Python navigation is development/simulation compatibility. |
-| Safety | Native endpoint and driver gates own field command safety; Host Modules cover local/simulation policy. |
-| Interface | CLI, Gateway, MCP, teleop, status streams. |
+1. Follow [Getting started](docs/getting-started.md) for the supported host setup.
+2. Use [Simulation](docs/simulation.md) for MuJoCo packages and validation gates.
+3. Use [Operations](docs/operations.md) for target-side build/deploy, mapping,
+   saved-map loading and supervised robot operation.
 
-High layers communicate through ports, messages, and explicit wires. They should
-not import lower-level implementation details directly.
-
-## Local/Host Blueprint API
-
-This API is implemented and usable. Each stack factory lives in its own
-`lingtu.assembly.stacks.<name>` module, and `autoconnect()` builds a module
-graph by combining explicit wires with type/name-based port matching.
-
-Verified locally with:
-
-```powershell
-$env:PYTHONPATH="src"
-@'
-from runtime.blueprint import autoconnect
-from lingtu.assembly.stacks.driver import driver
-from lingtu.assembly.stacks.planner import planner
-
-system = autoconnect(
-    driver("stub"),
-    planner("mock"),
-).build()
-
-print(system.health())
-'@ | python -
-```
-
-Example API:
-
-```python
-from runtime.blueprint import autoconnect
-from lingtu.assembly.stacks.driver import driver
-from lingtu.assembly.stacks.planner import planner
-
-system = autoconnect(
-    driver("stub"),
-    planner("mock"),
-).build()
-
-system.start()
-system.stop()
-```
-
-Field Products are resolved inside `env=real` into RunPlans and applied by
-ProductControl through its internal systemd runner. Blueprint does not start LiDAR, SLAM, mapd,
-navd, traversability, or
-the driver; it only materializes the Host graph. The factories below remain
-useful for local development, simulation, and the Host portion of a Product.
-
-Common stack factories:
-
-| Factory | Purpose |
-| --- | --- |
-| `driver(robot)` | Robot or simulation driver. |
-| `lidar(enabled=True)` | Livox MID-360 module. |
-| `slam(profile)` | SLAM/localization module or adapter. |
-| `perception(detector)` | RGB-D detection, tracking, scene graph, and optional reconstruction. |
-| `memory()` | Semantic, episodic, tagged, vector, and temporal memory modules. |
-| `planner(llm)` | Semantic planner, LLM module, visual servo module. |
-| `navigation()` | Host navigation skills; native `navd` owns planning and motion. |
-| `exploration(backend)` | `none` or TARE; wavefront is enabled from the navigation stack, not this factory. |
-| `gateway(port)` | REST, SSE, WebSocket, MCP, teleop/status surface. |
-
-## Quick Start
-
-Use **native Windows** for local development, component tests, and simulation;
-WSL is not required. Start with PowerShell 7, Python/uv, Node.js 24, Visual
-Studio 2022 C++ Build Tools with the Windows SDK, CMake, and Rust stable/Cargo
-for the pose-graph kernel. PCL and CycloneDDS use the repository's Windows
-dependency preparation scripts.
-
-Follow [Windows setup](docs/getting-started.md#windows-native-development)
-and [native build commands](scripts/build/README.md#windows-native-development-and-simulation)
-before starting a Product. Windows binaries serve Windows development; robot
-deployments use Linux `aarch64` artifacts built on the target or a configured
-Linux build host. Build caches and binaries are not interchangeable between
-these platforms.
-
-Resolve a simulation Product without starting it:
+Product lifecycle is operated through `python -m lingtu.control`. For example,
+resolve a simulation Product without starting it:
 
 ```bash
 python -m lingtu.control switch teleop --robot doso/thunder_v4 --env sim --dry-run --json
 ```
 
-Common lifecycle commands:
+Physical deployments use the selected robot profile and target-platform
+artifacts. Do not use a simulation pass as permission for field motion.
 
-```bash
-python -m lingtu.control switch teleop --robot doso/thunder_v4 --env sim
-python -m lingtu.control status --robot doso/thunder_v4 --env sim --json
-python -m lingtu.control stop --robot doso/thunder_v4 --env sim
-```
+## Validation and source layout
 
-`python -m lingtu.control` is the local and robot-side Product lifecycle entry.
-
-Robot-side operations should be run on the target Linux controller:
-
-```bash
-bash scripts/lingtu --robot unitree/go2 --env real status --json
-bash scripts/lingtu --robot unitree/go2 --env real switch map
-bash scripts/lingtu --robot unitree/go2 --env real switch nav --map building_a
-bash scripts/lingtu --robot unitree/go2 --env real stop
-```
-
-## Runtime Selections
-
-`teleop`, `teleop_avoid`, `map`, `explore`, `nav`, `tracking`, and
-`inspection` are declared under
-`config/runtime_graph/products/` and operated through ProductControl. Each
-compiled Product includes native process roles and one Blueprint-owned Host
-graph.
-
-TARE remains an internal exploration policy; it is not a separate Product.
-
-MuJoCo component scripts are explicit developer tools. They do not introduce a
-second lifecycle or a third environment beyond `real` and `sim`.
-
-## Runtime Dataflow
-
-### Robot Navigation
-
-```text
-Web / CLI / MCP
-  -> Gateway and semantic planner
-  -> mission goal/status
-  -> native navigation service
-  -> logical /nav/cmd_vel (typed DDS wire topic rt/nav/cmd_vel)
-  -> lingtu-driver
-  -> remote Brainstem gRPC
-```
-
-In `env=real`, the native navigation service owns logical `/nav/cmd_vel`, encoded on DDS as
-`rt/nav/cmd_vel`, and the unique `lingtu-driver` service forwards checked
-commands to the remote Brainstem controller. Python modules
-keep mission state, semantic planning, maps, status, and safety policy, but
-they do not start a competing robot velocity writer in the field default path.
-The driver will not become ready unless Brainstem is remote, mutually
-authenticated when TLS is configured, lease-owned by `lingtu-driver`, motor
-output is enabled, and a checked zero command has been acknowledged.
-
-### Sensor, SLAM, And Maps
-
-```text
-Livox MID-360 / IMU / simulator
-  -> native SLAM service
-  -> odometry + registered cloud + map cloud + localization health
-  -> map layers
-  -> Gateway, navigation, safety, exploration, semantic consumers
-```
-
-`map_cloud`, costmaps, UI images, and saved-map artifacts are separate
-interfaces. Do not collapse them into one generic "map" concept.
-
-### Saved Map Flow
-
-```text
-SLAM scan/map output
-  -> keyframe patches + poses
-  -> native map cleanup
-  -> occupancy / octomap / cost artifact build
-  -> canonical <map_root>/<map_id>/ map package
-```
-
-Typical saved-map artifacts:
-
-| Artifact | Meaning |
+| Path | Contents |
 | --- | --- |
-| `map.pcd` | Cleaned navigation map and source for derived artifacts. |
-| `patches/*.pcd` | Keyframe/scan patches used by cleanup and artifact builders. |
-| `poses.txt` | Patch poses used for occupancy raycasting. |
-| `metadata.json` | Map package metadata and planner artifact status. |
-| `occupancy.npz` | 2D occupancy/cost artifact. |
-| `octomap.ot` | OctoPlanner3D 3D map artifact. |
+| `src/lingtu/`, `src/runtime/` | Product control, Host assembly, Modules and messages |
+| `src/drivers/`, `src/localization/`, `src/maps/`, `src/nav/` | Devices, SLAM/localization, 3D maps and native navigation |
+| `src/perception/`, `src/decision/`, `src/memory/` | Visual observations, semantic tasks and persistent knowledge |
+| `src/gateway/`, `web/` | External APIs and operator interface |
+| `sim/`, `tests/` | Simulation packages, native/component tests and acceptance tools |
+| `docs/media/` | Selected, versioned screenshots/videos and their evidence record |
+| `build/`, `artifacts/` | Local generated outputs and larger evidence bundles; not GitHub media links |
 
-## Source Layout
-
-```text
-src/lingtu/             ProductControl, RunPlan, real/sim lifecycle, assembly
-src/runtime/            Module, Blueprint, ports, registry, transports
-src/drivers/            Robot, simulation, LiDAR, camera, teleop backends
-src/localization/       SLAM modules and native localization adapters
-src/nav/                Host navigation surface and native C++ navigation
-src/maps/               Saved maps, map layers, artifacts, native map adapters
-src/explore/            Wavefront/TARE exploration algorithms and adapters
-src/perception/         Detection, encoding, reconstruction, scene perception
-src/decision/           Semantic planner, goal resolver, LLM, visual servo
-src/memory/             Semantic, episodic, tagged, vector, temporal memories
-src/gateway/            REST, SSE, WebSocket, MCP, teleop, runtime status
-sim/                    MuJoCo worlds, scripts, validation gates
-web/                    React/Vite dashboard
-config/                 Robot, device, DDS, DUFOMap, semantic configuration
-tools/calibration/      Offline camera, IMU, LiDAR-IMU, camera-LiDAR calibration
-scripts/                Build, deploy, diagnostics, robot-side operations
-docs/                   Architecture, deployment, testing, plans, and worklogs
-```
-
-## Build And Test
-
-Python framework and decision tests:
+Run the narrowest tests for the behavior being changed. Existing local Python
+entry points include:
 
 ```bash
 python -m pytest tests/runtime/ -q
 python -m pytest tests/decision/ -q
 ```
 
-Canonical C++ navigation core (path follower, local planner, FAR, and tests):
-
-```bash
-cmake -S src/nav/cpp -B build/nav-cpp -DCMAKE_BUILD_TYPE=Release \
-  -DLINGTU_NAV_CPP_BUILD_TESTS=ON \
-  -DLINGTU_NAV_CPP_BUILD_ENDPOINT=OFF
-cmake --build build/nav-cpp -j
-ctest --test-dir build/nav-cpp --output-on-failure
-```
-Robot builds should run on the target Linux environment with the required
-native dependencies and DDS services installed.
+Native changes also require the owning C++ build and tests. Validation levels
+are kept distinct: **local contract → native simulation → field no-motion →
+supervised field motion**. See [Testing and evidence](docs/testing.md) for
+commands, evidence requirements and current qualification rules.
 
 ## Documentation
 
-Start here:
-
 - [Documentation index](docs/README.md)
-- [Architecture](docs/architecture.md)
-- [Product runtime](docs/runtime.md)
-- [Simulation](docs/simulation.md)
-- [Operations](docs/operations.md)
-- [Testing and evidence](docs/testing.md)
-- [`sim/README.md`](sim/README.md)
-
-## Known Boundaries
-
-- Real robot readiness requires evidence from the target robot, not only local
-  simulation.
-- MuJoCo validates software flow, but not physical LiDAR timing, calibration,
-  network behavior, or gait stability.
-- The accepted MuJoCo native-DDS navigation gate proves a bounded simulated
-  navigation/control chain. It is not a substitute for field fault injection or
-  a hardware motion campaign.
-- ChromaDB, LLMs, WebRTC, Rerun, and heavy perception backends are optional.
-- TARE requires its external binary/submodule build when using the external
-  runtime.
+- [Screenshots, videos and test process](docs/media/README.md)
+- [Architecture](docs/architecture.md) · [Runtime](docs/runtime.md)
+- [Simulation](docs/simulation.md) · [Operations](docs/operations.md)
+- [Testing](docs/testing.md) · [Delivery roadmap](docs/roadmap.md)
+- [Development and contribution rules](docs/development.md) · [Repository instructions](AGENTS.md)
 
 ## Referenced Projects And Acknowledgements
+
 
 LingTu is an integration-heavy robotics runtime. The table below names the main
 external projects, algorithms, and systems that this checkout references,
@@ -418,17 +199,6 @@ the license files inside vendored subtrees.
 Thanks to the DimOS project in particular for setting a stronger standard for
 robotics evidence: claims should be backed by explicit runtime gates, dataflow
 proof, and reproducible artifacts instead of only code-path inspection.
-
-## Contributing
-
-1. Read [`AGENTS.md`](AGENTS.md) and the
-   [development guide](docs/development.md).
-2. Keep field hot paths native and ROS-free; add ROS only through an explicit
-   compatibility boundary.
-3. Run the narrowest affected tests first, then the relevant native, Python,
-   Web, or simulation gate.
-4. Do not claim real-robot readiness without target-side S100P evidence.
-5. Open changes from a focused branch and include known validation gaps.
 
 ## Project License
 
