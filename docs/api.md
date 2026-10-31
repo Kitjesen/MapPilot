@@ -83,10 +83,9 @@ and reloads after content-version, Product-session, or explicit refresh changes.
 Preview neither changes the saved data nor activates the selected map.
 The separate `/points` endpoint remains bound to the active live scene.
 
-`GET /api/v1/maps/{name}/octomap` uses the same native artifact stream and identity
-headers for the `global_planning_3d` capability. It returns the saved full-probability
-`octomap.ot` without modifying or activating it. The saved-map scene can display
-its occupied leaves; undrawn space in that view does not classify free versus unknown.
+`GET /api/v1/maps/{name}/octomap` streams the saved full-probability
+`octomap.ot` with the same artifact identity headers. Its occupied-voxel
+display does not classify undrawn space as free or unknown.
 
 ## Saved point-cloud subset editing
 
@@ -98,7 +97,7 @@ from the live-mapping save-operation API above. Its JSON body contains:
 | --- | --- |
 | `name` | New target map name, different from the source. |
 | `expected_source_content_epoch` | Positive integer from the source artifact. |
-| `operations` | Nonempty ordered list of subset edits. |
+| `operations` | Ordered list of subset edits, or empty to copy the source. |
 | `operations[].operation` | `delete_inside` or `keep_inside`. |
 | `operations[].bounds` | Finite map-frame `min_x`, `min_y`, `min_z`, `max_x`, `max_y`, `max_z`; each minimum must not exceed its maximum. Units: metres. |
 
@@ -137,15 +136,13 @@ Neither operation activates the map; activation remains ProductControl's
 responsibility. Deleting points does not establish observed free space,
 ground support, route feasibility, or permission to move.
 
-For a different navigation resolution, submit the same `save_as` request with
-`operations: []` to copy the complete source and measured-ray bundle under a new
-name. Build that target with the returned options and the requested `resolution`
-(the Web offers 0.05, 0.10 and 0.20 m). This rebuilds the real navigation OctoMap,
-not its drawing size. The build response includes native `resolution` and
-`frame_id`; target metadata retains `source_map_id` and `source_content_epoch`.
-The original map and current Product are unchanged. Load the new map through
-the existing ProductControl workflow to use it for saved-map global planning;
-the live local collision layer keeps its sensor-profile resolution.
+For a new navigation resolution, copy the source with `operations: []`
+and build the target with the returned options and requested `resolution`.
+The Web offers 0.05, 0.06, 0.10 and 0.20 m. The build uses the copied
+source and available measured rays to rebuild the navigation OctoMap.
+The response includes `resolution` and `frame_id`; metadata retains the
+source map identity. Activate the target through ProductControl to use it.
+The separate live local collision layer retains its sensor-profile resolution.
 
 ## Natural-language Agent task lifecycle
 
@@ -579,10 +576,10 @@ Each source file has one complete table; the rows are the route contract.
 | `POST /api/v1/maps/{name}/build_octomap` | Build OctoPlanner3D octomap.ot from saved map.pcd | `MapLifecycleResponse` | `build_saved_map_octomap` |
 | `POST /api/v1/maps/{name}/crop` | Crop a saved map point cloud and invalidate derived artifacts | `MapLifecycleResponse` | `crop_saved_map` |
 | `POST /api/v1/maps/{name}/mark_zone` | Mark occupied/free/preblocked/traversable zones in the saved OctoMap | `MapLifecycleResponse` | `mark_saved_map_zone` |
+| `GET /api/v1/maps/{name}/octomap` | Serve the native navigation OctoMap for inline preview | `—` | `get_map_octomap` |
 | `GET /api/v1/maps/{name}/pcd` | Serve raw PCD file for inline preview | `—` | `get_map_pcd` |
-| `GET /api/v1/maps/{name}/octomap` | Stream the native navigation `.ot` for the occupied-voxel view | `—` | `get_map_octomap` |
 | `GET /api/v1/maps/{name}/points` | Saved map point cloud as JSON | `MapPointsResponse` | `get_saved_map_points` |
-| `POST /api/v1/maps/{name}/save_as` | Save point-cloud subset edits as a new map without changing the source | `—` | `save_edited_map_as` |
+| `POST /api/v1/maps/{name}/save_as` | Copy a saved source, optionally applying point-cloud subset edits | `—` | `save_edited_map_as` |
 | `POST /api/v1/maps/{name}/validate_plan` | Preview a route on the active saved map without publishing a goal | `—` | `validate_saved_map_plan` |
 | `POST /api/v1/maps/{name}/voxels/edit` | Edit saved OctoMap voxels for OctoPlanner3D | `MapLifecycleResponse` | `edit_saved_map_voxels` |
 | `GET /api/v1/maps/{name}/voxels/edits` | Saved OctoMap voxel edit overlay | `—` | `get_saved_map_voxel_edits` |
