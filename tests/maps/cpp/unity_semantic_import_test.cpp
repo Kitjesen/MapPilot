@@ -1,7 +1,7 @@
-#include "lingtu/maps/json.hpp"
-#include "lingtu/maps/semantic_map_persistence.hpp"
-#include "lingtu/maps/semantic_taxonomy.hpp"
-#include "lingtu/maps/sources/unity_scene.hpp"
+#include "lingtu/maps/io/json.hpp"
+#include "lingtu/maps/semantic/store.hpp"
+#include "lingtu/maps/semantic/taxonomy.hpp"
+#include "lingtu/maps/semantic/unity.hpp"
 
 #include <cassert>
 #include <chrono>

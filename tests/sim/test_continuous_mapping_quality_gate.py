@@ -87,7 +87,7 @@ def _status_sample(
         "imu_input_hz": imu_hz,
         "processed_scan_hz": processed_hz,
         "localization_quality": quality,
-        "fastlio_velocity": {"x": velocity, "y": 0.0, "z": 0.0},
+        "ltlio_velocity": {"x": velocity, "y": 0.0, "z": 0.0},
         "odometry": {"pose": {"x": x, "y": y, "z": z}},
     }
 
@@ -285,7 +285,7 @@ def test_continuity_flags_scan_stall():
 def test_continuity_flags_divergence_and_velocity():
     samples = _healthy_samples()
     samples[150]["odometry"]["pose"]["z"] = 12.0
-    samples[151]["fastlio_velocity"]["x"] = 9.0
+    samples[151]["ltlio_velocity"]["x"] = 9.0
     report = analyze_status_continuity(samples, duration_s=180.0)
     joined = "\n".join(report["remaining_gaps"])
     assert "odometry_diverged_z" in joined

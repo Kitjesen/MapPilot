@@ -227,12 +227,13 @@ double UniformBspline::getLength(double resolution) const {
   double length = 0.0;
   const double duration = getTimeSum();
   Eigen::VectorXd previous = evaluateDeBoorT(0.0);
-  for (double time = resolution; time <= duration + 1e-4;
+  for (double time = resolution; time < duration;
        time += resolution) {
     const Eigen::VectorXd next = evaluateDeBoorT(time);
     length += (next - previous).norm();
     previous = next;
   }
+  length += (evaluateDeBoorT(duration) - previous).norm();
   return length;
 }
 

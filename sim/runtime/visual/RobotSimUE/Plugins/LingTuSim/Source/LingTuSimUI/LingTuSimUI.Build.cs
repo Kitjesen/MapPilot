@@ -18,6 +18,7 @@ public class LingTuSimUI : ModuleRules
         {
             "Json",
             "HTTP",
+            "RenderCore",
             "LingTuSimRuntime",
             "LingTuSimVisual",
             "PlatformCryptoContext",
@@ -26,6 +27,15 @@ public class LingTuSimUI : ModuleRules
             "SlateCore",
         });
 
+        RuntimeDependencies.Add(
+            Path.Combine(PluginDirectory, "Resources", "FrontEnd", "factory-corridor.png"),
+            StagedFileType.NonUFS);
+        RuntimeDependencies.Add(
+            Path.Combine(PluginDirectory, "Resources", "Selection", "*.png"),
+            StagedFileType.NonUFS);
+        RuntimeDependencies.Add(
+            Path.Combine(PluginDirectory, "Resources", "Sensors", "*.png"),
+            StagedFileType.NonUFS);
         RuntimeDependencies.Add(
             Path.Combine(PluginDirectory, "Resources", "FrontEnd", "lingtu-field-ops-hero-v1.png"),
             StagedFileType.NonUFS);

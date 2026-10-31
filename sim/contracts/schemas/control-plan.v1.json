@@ -41,8 +41,8 @@
     "session_id": {
       "type": "string",
       "minLength": 1,
-    "maxLength": 63,
-    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$"
+      "maxLength": 63,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$"
     }
   },
   "$defs": {
@@ -133,6 +133,48 @@
             "manifest": {
               "type": "string",
               "minLength": 1
+            },
+            "profiles": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "stairs_up": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "artifact",
+                    "manifest"
+                  ],
+                  "properties": {
+                    "artifact": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "manifest": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "stairs_down": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "artifact",
+                    "manifest"
+                  ],
+                  "properties": {
+                    "artifact": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "manifest": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              }
             }
           }
         },

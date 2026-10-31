@@ -1,8 +1,27 @@
 # Changelog
 
-All notable changes to MapPilot (灵途) navigation system.
+All notable changes to the LingTu (灵途) navigation system.
 
 Format: [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
+
+---
+
+## [Unreleased]
+
+### Development configuration
+
+- Keep Python dependency versions locked; align the Ruff pre-commit hook with
+  the existing lockfile and CI version.
+- Store pytest, Ruff, and mypy caches under `build/` and exclude local
+  environments, assistant state, and runtime evidence from Docker build context.
+- Update Clang configuration for the native source layout and repair the
+  Makefile's development-container and documentation entrypoints.
+- Document root metadata files, locked dependency maintenance, and the distinction
+  between disposable caches and retained field evidence.
+
+Earlier release entries describe the repository layout at the time of each
+release. See [README.md](README.md) and [docs/architecture.md](docs/architecture.md)
+for the current structure.
 
 ---
 

@@ -1,0 +1,46 @@
+{
+  "category": "equipment",
+  "category_label": "设备",
+  "description": "蓝色管段、红色手轮与支座，适合设备区巡检。手轮尚不能旋转。",
+  "geometry": {
+    "animations": 0,
+    "bytes": 12173920,
+    "embedded_images": 3,
+    "materials": 1,
+    "meshes": 1,
+    "normals": true,
+    "tangents": false,
+    "triangles": 57600,
+    "uv": true
+  },
+  "id": "pipe_valve",
+  "new_in_batch": true,
+  "notes": "单图生成；遮挡面和微小结构仍需检查。",
+  "preview": "preview.png",
+  "qualification": {
+    "collision_ready": false,
+    "license_reviewed": false,
+    "physics_ready": false,
+    "status": "quarantined",
+    "ue_imported": false
+  },
+  "reference": "reference.png",
+  "scale_note": "原始归一化模型，尚未标定真实尺寸",
+  "source": {
+    "credits_consumed": 60,
+    "local_edit": null,
+    "model": "v3.1-20260211",
+    "provider": "Tripo",
+    "reference_method": "built-in image generation",
+    "source_directory": "build/tripo/factory-valve-20261017/tripo-out/factory-valve-v1-9d3d3a6b",
+    "task_id": "9d3d3a6b-d871-43ce-ace0-f4bab49a33c8"
+  },
+  "title": "管道闸阀组件",
+  "variants": [
+    {
+      "file": "model.glb",
+      "label": "静态模型"
+    }
+  ],
+  "version": "1.0.0"
+}

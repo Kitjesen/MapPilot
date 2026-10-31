@@ -4,7 +4,8 @@
   "description": "MuJoCo sensors and ThunderV4 locomotion around the same C++ typed-DDS SLAM, native maps (mapd), traversability, and navigation processes used by the field runtime.",
   "product_contract": {
     "product": "nav",
-    "source": "config/runtime_graph/products/nav.yaml",
+    "route": "standard",
+    "source": "config/system/products/nav.yaml",
     "native_control_mode": "autonomy",
     "slam_mode": "localization",
     "requires_map": true
@@ -36,7 +37,7 @@
     "metadata": "metadata.json"
   },
   "paths": {
-    "slam_config": "src/localization/fastlio2/config/sim_mid360_slam.yaml",
+    "slam_config": "src/localization/ltlio/config/sim_mid360_slam.yaml",
     "path_library": "src/nav/cpp/planning/local/cmu/paths/thunder",
     "sensor_runner": "sim/scripts/mujoco/native_dds_sensors.py"
   },

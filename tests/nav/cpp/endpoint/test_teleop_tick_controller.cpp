@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "control/teleop.hpp"
-#include "runtime/loop.hpp"
+#include "app/loop.hpp"
 #include "tracking/smoother.cpp"
 
 namespace {
@@ -19,6 +19,8 @@ using lingtu::nav::endpoint::CommandSafetyConfig;
 using lingtu::nav::endpoint::ControlMode;
 using lingtu::nav::endpoint::FinalControl;
 using lingtu::nav::endpoint::FinalActions;
+using lingtu::nav::endpoint::FinalInput;
+using lingtu::nav::endpoint::FinalMode;
 using lingtu::nav::endpoint::InputGateState;
 using lingtu::nav::endpoint::enforcePostPlanningInputReadiness;
 using lingtu::nav::endpoint::TeleopDiagnostics;
@@ -58,6 +60,7 @@ struct Fixture {
   int stop_calls{0};
   int now_calls{0};
   int shape_calls{0};
+  int safety_calls{0};
   int commit_calls{0};
   int velocity_stop_calls{0};
   nav_kernel::Twist shaped_command{};
@@ -102,7 +105,12 @@ struct Fixture {
     actions.pause_linear_motion = [&] { ++pause_calls; };
     actions.replan_motion = [&] { ++replan_calls; };
     actions.stop_linear_motion = [&] { ++stop_calls; };
-    final_actions.command_safety = lingtu::nav::endpoint::evaluateCommandSafety;
+    final_actions.command_safety = [&](const CommandSafetyConfig &config,
+                                       const nav_kernel::Twist &command,
+                                       double age_s) {
+      ++safety_calls;
+      return lingtu::nav::endpoint::evaluateCommandSafety(config, command, age_s);
+    };
     final_actions.shape = [&](const nav_kernel::Twist &raw, double now_s) {
       ++shape_calls;
       shape_input = raw;
@@ -236,7 +244,25 @@ void testDirectCommandIsAcceptedOrLimitedWithoutPlannerSideEffects() {
             "direct command counter mismatch");
     require(fixture.compute_calls == 0 && fixture.planner_calls == 0 && fixture.stop_calls == 0,
             "direct command must not enter or stop an unused planner");
+    require(fixture.age_index == 2 && fixture.safety_calls == 1,
+            "direct command must sample publish age once and run final safety once");
   }
+}
+
+void testDirectCommandMeasuresFinalControlWithoutInventingPlannerTime() {
+  Fixture fixture;
+  fixture.config.publish_cmd_vel=true;
+  const auto safety=fixture.final_actions.command_safety;
+  fixture.final_actions.command_safety=[safety](const auto &config, const auto &command, double age) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    return safety(config,command,age);
+  };
+  TeleopTickController controller(fixture.actions,fixture.control());
+  const auto result=controller.tick(fixture.input());
+  require(result.timing.final_control_ms>=5,
+          "direct commands must retain final-control latency independently of planning");
+  require(!result.timing.nav_tick_measured && result.timing.nav_tick_ms==0,
+          "a direct command must not invent an Executor measurement");
 }
 
 void testPublishTimeStaleOverridesAnEarlierAcceptedDecision() {
@@ -258,6 +284,8 @@ void testPublishTimeStaleOverridesAnEarlierAcceptedDecision() {
           "stale transition must overwrite the accepted nonzero command");
   require(result.delta.teleop_stop_count == 1 && result.delta.teleop_limited_count == 1,
           "stale counters mismatch");
+  require(fixture.age_index == 2 && fixture.safety_calls == 1,
+          "publish-time expiry must be decided by one final safety evaluation");
 }
 
 void testTransportAgeSurvivesAdmissionAndExpiresOnSteadyTime() {
@@ -360,29 +388,80 @@ void testAssistedPathReturnsPlannerArtifactsAndFinalSafetyIntent() {
           "assisted teleop result mismatch");
 }
 
-void testManualModeBypassesUnavailablePlanningInputs() {
+void testAssistedDiagonalSurvivesAdmissionAndFinalCommand() {
   Fixture fixture;
   fixture.config.control_mode = ControlMode::TeleopAvoid;
   fixture.config.teleop_local_planner = true;
   fixture.config.publish_cmd_vel = true;
-  fixture.gate.ready = false;
-  fixture.gate.reason = "localization_health_stale";
-  fixture.map_body.reset();
-  fixture.obstacles = {0.10F, 0.0F, 0.30F, 0.30F};
+  fixture.safety.max_axis_speed_mps = 1.0;
+  fixture.safety.max_speed_mps = std::hypot(1.0, 1.0);
+  fixture.request = {1.0, 1.0, 0.0};
+  fixture.actions.tick_teleop_intent =
+      [&](const nav_kernel::Pose &, const nav_kernel::Twist &request,
+          const float *, int, double,
+          lingtu::nav::navigation::TraversabilityGridView) {
+        ++fixture.planner_calls;
+        require(request.vx == 1.0 && request.vy == 1.0,
+                "admission must pass both full axes into local planning");
+        auto &output = fixture.planner_output;
+        output.active = true;
+        output.path_found = true;
+        output.cmd_vel = request;
+        output.local_path_map = {{0.0, 0.0, 0.0}, {1.0, 1.0, 0.0}};
+        return output;
+      };
   TeleopTickController controller(fixture.actions, fixture.control());
-  auto input = fixture.input();
-  input.manual_mode = true;
+  const auto result = controller.tick(fixture.input());
+  require(fixture.planner_calls == 1 && result.publish.cmd_vel &&
+              result.publish.command.vx == 1.0 && result.publish.command.vy == 1.0 &&
+              fixture.committed_command.vx == 1.0 && fixture.committed_command.vy == 1.0,
+          "assisted final command must retain the unscaled diagonal");
+  fixture.request = {};
+  fixture.age_index = 0;
+  const auto held = controller.tick(fixture.input());
+  require(held.publish.cmd_vel && held.publish.command.vx == 0.0 &&
+              held.publish.command.vy == 0.0 && fixture.planner_calls == 1,
+          "released keys must stop without reusing the previous diagonal plan");
+}
 
-  const auto result = controller.tick(input);
+void testManualModeBypassesUnavailablePlanningInputs() {
+  for (const char* reason : {"localization_health_stale", "local_collision_missing",
+                             "local_collision_future", "collision_stale"}) {
+    Fixture fixture;
+    fixture.config.control_mode = ControlMode::TeleopAvoid;
+    fixture.config.teleop_local_planner = true;
+    fixture.config.publish_cmd_vel = true;
+    fixture.gate.ready = false;
+    fixture.gate.reason = reason;
+    fixture.map_body.reset();
+    fixture.obstacles = {0.10F, 0.0F, 0.30F, 0.30F};
+    TeleopTickController controller(fixture.actions, fixture.control());
+    auto input = fixture.input();
+    input.manual_mode = true;
 
-  require(result.handled && result.publish.cmd_vel,
-          "manual mode must keep the teleop command boundary active");
-  require(result.publish.command.vx > 0.0 && !result.teleop.stopped,
-          "manual mode must allow a bounded nonzero command without planning inputs");
-  require(result.teleop.manual_mode && result.teleop.reason == "manual_mode",
-          "manual mode must be explicit in native diagnostics");
-  require(fixture.compute_calls == 0 && fixture.planner_calls == 0,
-          "manual mode must not enter the local planner");
+    const auto result = controller.tick(input);
+
+    require(result.handled && result.publish.cmd_vel,
+            "manual mode must keep the teleop command boundary active");
+    require(result.publish.command.vx > 0.0 && !result.teleop.stopped,
+            "manual mode must allow a bounded nonzero command without planning inputs");
+    require(result.teleop.manual_mode && result.teleop.reason == "manual_mode",
+            "manual mode must be explicit in native diagnostics");
+    require(fixture.compute_calls == 0 && fixture.planner_calls == 0,
+            "manual mode must not enter the local planner");
+    bool stop_called = false;
+    const auto post_planning = enforcePostPlanningInputReadiness(
+        result.publish.command, fixture.gate,
+        [&](const std::string&) { stop_called = true; return true; }, true);
+    require(post_planning.allow_publish && !stop_called,
+            "manual planning-input bypass must survive the final input recheck");
+
+    const auto assisted = controller.tick(fixture.input());
+    require(assisted.teleop.stopped && assisted.publish.command.vx == 0.0 &&
+                assisted.publish.command.vy == 0.0 && assisted.publish.command.wz == 0.0 &&
+                assisted.teleop.reason == reason,
+            "assisted teleop must still reject unavailable planning inputs");
+  }
 }
 
 void testManualModeDoesNotBypassDriverReadiness() {
@@ -703,7 +782,7 @@ void testPendingAssistedPlanCanBecomeReadyAcrossTicks() {
   nav_kernel::LocalPlannerParams planner_params;
   planner_params.backend = nav_kernel::LocalPlannerBackend::Scan;
   planner_params.checkObstacle = false;
-  nav_kernel::local::Planner planner(planner_params);
+  nav_kernel::LocalPlanner planner(planner_params);
   require(planner.configure(), "native SCAN planner must configure without external resources");
   lingtu::nav::navigation::ExecutorConfig executor_config;
   executor_config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
@@ -1251,6 +1330,148 @@ void testPureRotationUsesFinalControlWithoutATranslationPlan() {
   }
 }
 
+void testDirectScanYawUsesOneAccelerationClockAndReversesContinuously() {
+  Fixture fixture;
+  fixture.config.control_mode = ControlMode::TeleopAvoid;
+  fixture.config.local_planner_backend = nav_kernel::LocalPlannerBackend::Scan;
+  fixture.config.teleop_local_planner = true;
+  fixture.config.publish_cmd_vel = true;
+  fixture.config.path_follower_max_yaw_accel_rad_s2 = 2.0;
+  fixture.request = {0.0, 0.0, 1.0};
+  fixture.now_values = {10.0, 10.0, 10.05, 11.0, 11.05, 11.10, 11.15,
+                        11.20, 11.20, 11.25};
+  TeleopTickController controller(fixture.actions, fixture.control());
+  const auto expect_yaw = [&](double expected) {
+    const auto result = controller.tick(fixture.input());
+    require(std::abs(result.publish.command.wz - expected) < 1e-9,
+            "direct Scan yaw must spend only elapsed angular acceleration");
+    require(result.publish.command.vx == 0.0 && result.publish.command.vy == 0.0,
+            "direct yaw acceleration must not create translation");
+    require(fixture.planner_calls == 0,
+            "direct yaw acceleration must not request a translation spline");
+  };
+  expect_yaw(0.1);
+  expect_yaw(0.1);
+  expect_yaw(0.2);
+  expect_yaw(0.2);
+  expect_yaw(0.3);
+  fixture.request.wz = -1.0;
+  expect_yaw(0.2);
+  expect_yaw(0.1);
+  expect_yaw(0.0);
+  expect_yaw(0.0);
+  expect_yaw(-0.1);
+  require(fixture.safety_calls == 10,
+          "every angular candidate, including a reversal zero, must reach final safety");
+}
+
+void testDirectYawContinuesFromTheFinalAppliedPathCommand() {
+  Fixture fixture;
+  std::vector<double> safety_candidates;
+  bool collision_blocked = false;
+  fixture.final_actions.command_safety = [&](const CommandSafetyConfig &config,
+                                              const nav_kernel::Twist &command, double age) {
+    safety_candidates.push_back(command.wz);
+    auto decision = lingtu::nav::endpoint::evaluateCommandSafety(config, command, age);
+    if (collision_blocked) {
+      decision.cmd = {};
+      decision.stopped = true;
+      decision.reason = "scan_actual_motion_blocked";
+      return decision;
+    }
+    decision.cmd.wz *= 0.5;
+    return decision;
+  };
+  auto &control = fixture.control();
+  auto result = control.finalize(FinalInput{FinalMode::kTeleopPath, fixture.safety,
+      {0.2, 0.0, 0.6}, 0.1, 0.35, false, true, 10.0});
+  require(std::abs(result.decision.cmd.wz - 0.3) < 1e-9,
+          "fixture must first commit the safety-limited path yaw");
+  result = control.finalize(FinalInput{FinalMode::kTeleopCommand, fixture.safety,
+      {0.0, 0.0, 1.0}, 0.1, 0.35, false, true, 10.05, 2.0, 0.05});
+  require(std::abs(safety_candidates.back() - 0.4) < 1e-9 &&
+              std::abs(result.decision.cmd.wz - 0.2) < 1e-9,
+          "pure yaw must continue from accepted path output before final safety");
+  result = control.finalize(FinalInput{FinalMode::kTeleopCommand, fixture.safety,
+      {0.0, 0.0, 1.0}, 0.1, 0.35, false, true, 10.10, 2.0, 0.05});
+  require(std::abs(safety_candidates.back() - 0.3) < 1e-9 &&
+              std::abs(fixture.committed_command.wz - 0.15) < 1e-9,
+          "the next yaw step must use actual safety output rather than its old candidate");
+  collision_blocked = true;
+  result = control.finalize(FinalInput{FinalMode::kTeleopCommand, fixture.safety,
+      {0.0, 0.0, 1.0}, 0.1, 0.35, false, true, 10.15, 2.0, 0.05});
+  require(std::abs(safety_candidates.back() - 0.25) < 1e-9 &&
+              result.decision.cmd.wz == 0.0 && result.decision.stopped &&
+              result.decision.reason == "scan_actual_motion_blocked",
+          "final collision safety must evaluate the limited yaw and retain its immediate veto");
+  collision_blocked = false;
+  result = control.finalize(FinalInput{FinalMode::kTeleopCommand, fixture.safety,
+      {0.0, 0.0, 1.0}, 0.1, 0.35, false, true, 10.20, 2.0, 0.05});
+  require(std::abs(safety_candidates.back() - 0.1) < 1e-9,
+          "motion after a collision stop must start from accepted zero");
+}
+
+void testDirectYawStopsResetTheAcceptedHistory() {
+  for (const int stop_kind : {0, 1, 2, 3, 4, 5}) {
+    Fixture fixture;
+    auto &control = fixture.control();
+    const auto finalize = [&](double now, double age = 0.1, double yaw = 1.0) {
+      return control.finalize(FinalInput{FinalMode::kTeleopCommand, fixture.safety,
+          {0.0, 0.0, yaw}, age, 0.35, false, true, now, 2.0, 0.05});
+    };
+    auto result = finalize(10.0);
+    require(std::abs(result.decision.cmd.wz - 0.1) < 1e-9,
+            "fixture must first establish a nonzero direct yaw");
+    if (stop_kind == 0) {
+      result = finalize(10.05, 0.1, 0.0);
+    } else if (stop_kind == 1) {
+      result = finalize(10.05, 0.5);
+    } else if (stop_kind == 2) {
+      fixture.shape_valid = false;
+      result = finalize(10.05);
+      fixture.shape_valid = true;
+    } else if (stop_kind == 3) {
+      fixture.commit_succeeds = false;
+      result = finalize(10.05);
+      fixture.commit_succeeds = true;
+    } else if (stop_kind == 4) {
+      control.stop(10.05, "operator_hold");
+      result.decision.cmd = {};
+    } else {
+      fixture.safety.cmd_max_age_s = 0.01;
+      result = finalize(10.05);
+      fixture.safety.cmd_max_age_s = 0.35;
+    }
+    require(result.decision.cmd.wz == 0.0,
+            "zero, stale, failed shape or commit must immediately clear rotation");
+    result = finalize(10.05);
+    require(result.decision.cmd.wz == 0.0,
+            "a second call at the stop timestamp must not spend another first step");
+    result = finalize(10.10);
+    require(std::abs(result.decision.cmd.wz - 0.1) < 1e-9,
+            "rotation after a stop must ramp again from zero");
+  }
+}
+
+void testDirectYawSlewIsScopedToUnsmoothAssistedScan() {
+  for (const int bypass : {0, 1, 2}) {
+    Fixture fixture;
+    fixture.config.control_mode = ControlMode::TeleopAvoid;
+    fixture.config.local_planner_backend = nav_kernel::LocalPlannerBackend::Scan;
+    fixture.config.teleop_local_planner = true;
+    fixture.config.publish_cmd_vel = true;
+    fixture.request = {0.0, 0.0, 0.8};
+    if (bypass == 1) fixture.config.velocity_smoother_enabled = true;
+    if (bypass == 2) fixture.config.local_planner_backend = nav_kernel::LocalPlannerBackend::Cmu;
+    TeleopTickController controller(fixture.actions, fixture.control());
+    auto input = fixture.input();
+    input.manual_mode = bypass == 0;
+    const auto result = controller.tick(input);
+    require(result.publish.command.wz == 0.8,
+            "manual, Cmu and generic-smoothed rotation must not get a second yaw limiter");
+  }
+}
+
 void testRawZeroStillHardStopsSmoother() {
   Fixture raw_zero;
   raw_zero.config.publish_cmd_vel = true;
@@ -1342,10 +1563,12 @@ int main() {
     testManualModeBypassesUnavailablePlanningInputs();
     testManualModeDoesNotBypassDriverReadiness();
     testDirectCommandIsAcceptedOrLimitedWithoutPlannerSideEffects();
+    testDirectCommandMeasuresFinalControlWithoutInventingPlannerTime();
     testPublishTimeStaleOverridesAnEarlierAcceptedDecision();
     testTransportAgeSurvivesAdmissionAndExpiresOnSteadyTime();
     testShortSampleBudgetIsRecheckedAfterPlanning();
     testAssistedPathReturnsPlannerArtifactsAndFinalSafetyIntent();
+    testAssistedDiagonalSurvivesAdmissionAndFinalCommand();
     testCmuDetourPublishesTranslationAndYawWithoutRecovery();
     testVerifiedTeleopRotationPublishesWithoutPath();
     testVerifiedRecoveryTranslationFlagIsScopedToTranslation();
@@ -1369,6 +1592,10 @@ int main() {
     testRealSmootherTransitionalZeroRetainsTargetAcrossTicks();
     testPureRotationUsesFinalControlWithoutATranslationPlan();
     testRotationClearsPreviousTranslationFailureAndPath();
+    testDirectScanYawUsesOneAccelerationClockAndReversesContinuously();
+    testDirectYawContinuesFromTheFinalAppliedPathCommand();
+    testDirectYawStopsResetTheAcceptedHistory();
+    testDirectYawSlewIsScopedToUnsmoothAssistedScan();
     testRawZeroStillHardStopsSmoother();
     testPostPlanningStaleInputStopsInsteadOfPublishingNonzeroCommand();
   } catch (const std::exception &error) {

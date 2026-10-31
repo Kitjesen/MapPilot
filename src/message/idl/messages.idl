@@ -76,6 +76,7 @@ module InspectionTaskState {
   const long ACTION_PENDING = 11;
   const long PAUSING = 12;
   const long CANCELLING = 13;
+  const long WAITING_NEXT_LOOP = 14;
 };
 
 module ExplorationRunEventKind {
@@ -135,6 +136,17 @@ module GeofenceAction {
   const long ENABLE = 4;
   const long DISABLE = 5;
   const long LIST = 6;
+};
+
+// Sensor owner operations; no physics or navigation command authority.
+module SensorControlKind {
+  const long QUERY = 1;
+  const long SET_ENABLED = 2;
+  const long SET_RATE = 3;
+  const long CONFIGURE_NOISE = 4;
+  const long SET_NOISE_ENABLED = 5;
+  const long SET_RECORDING = 6;
+  const long SET_GIMBAL = 7;
 };
 @final
 struct Time {
@@ -323,6 +335,93 @@ struct CameraInfo {
   double r[9];
   double p[12];
 };
+// Product identity is distinct from the compiled sensor session identity.
+// Source time/generation remain simulation truth, not receipt/epoch time.
+@final
+struct MeasurementIdentity {
+  string product_session_id;
+  string session_id;
+  string instance_id;
+  unsigned long long model_generation;
+  unsigned long long reset_generation;
+  unsigned long long sample_sequence;
+  unsigned long long sim_time_ns;
+};
+// Requests are applied by the source owner at a safe sampling boundary.
+// operation uses SensorControlKind. Irrelevant numeric fields remain zero.
+@final
+struct SensorControlRequest {
+  string request_id;
+  string product_session_id;
+  string session_id;
+  string sensor_id;
+  unsigned long long model_generation;
+  unsigned long long reset_generation;
+  double deadline_s;
+  long operation;
+  boolean enabled;
+  double rate_hz;
+  double noise_stddev;
+  unsigned long long noise_seed;
+  string noise_unit;
+  double pan_deg;
+  double tilt_deg;
+};
+// Applied means effective settings changed/read, not sensor quality or task success.
+@final
+struct SensorControlResult {
+  string request_id;
+  string product_session_id;
+  string session_id;
+  string sensor_id;
+  unsigned long long model_generation;
+  unsigned long long reset_generation;
+  unsigned long long applied_sim_time_ns;
+  boolean applied;
+  string reason;
+  string settings_json;
+};
+// Row-major Kelvin and a same-sized 0/1 validity mask; invalid values are NaN.
+// metadata_json retains temperature kind, calibration, pose and model assumptions.
+@final
+struct ThermalImage {
+  @key string sensor_id;
+  Header header;
+  MeasurementIdentity identity;
+  unsigned long width;
+  unsigned long height;
+  sequence<float> temperature_k;
+  sequence<octet> valid_mask;
+  string metadata_json;
+};
+// Channel-major pressure, not an Image or an audio playback command.
+// voltage_v is empty when no electrical sensitivity calibration was declared.
+@final
+struct AcousticBlock {
+  @key string sensor_id;
+  Header header;
+  MeasurementIdentity identity;
+  unsigned long sample_rate_hz;
+  unsigned long channels;
+  unsigned long samples;
+  sequence<float> pressure_pa;
+  sequence<octet> valid_mask;
+  sequence<float> voltage_v;
+  string metadata_json;
+};
+// Physical labels are simulation ground truth, never detector predictions.
+@final
+struct SemanticImage {
+  @key string sensor_id;
+  Header header;
+  MeasurementIdentity identity;
+  unsigned long width;
+  unsigned long height;
+  sequence<unsigned long> class_ids;
+  sequence<unsigned long> instance_ids;
+  sequence<octet> valid_mask;
+  string metadata_json;
+};
 @final
 struct GnssFix {
   Header header;
@@ -376,6 +475,43 @@ struct DriverControlState {
   string owner;
   string owner_id;
   string reason;
+};
+@final
+struct MotionProfileRequest {
+  Header header;
+  string task_id;
+  string requirement;
+};
+@final
+struct MotionProfileState {
+  Header header;
+  string task_id;
+  string requirement;
+  string phase;
+  string requested_profile;
+  string active_profile;
+  string reason;
+};
+// Frozen authoritative keyframe scans and corrected poses in one map gauge.
+// SLAM retains the latest confirmed directory for late/restarted mapd readers.
+@final
+struct SlamMapGeometrySnapshot {
+  unsigned long long reset_epoch;
+  unsigned long long graph_revision;
+  unsigned long long captured_sequence;
+  string frame_id;
+  string frozen_dir;
+  unsigned long long keyframe_count;
+  long long captured_stamp_ns;
+  Pose map_body;
+  double sensor_origin_z_m;
+};
+@final
+struct SlamMapGeometryApplied {
+  unsigned long long reset_epoch;
+  unsigned long long graph_revision;
+  boolean success;
+  string message;
 };
 // One accepted incremental scan and the exact map<-sensor transform evaluated
 // at that scan timestamp. Consumers must reject an old reset_epoch or a
@@ -518,6 +654,13 @@ struct MapCloudLayer {
   boolean live;
   PointCloud2 cloud;
 };
+// A conservative bound around actual endpoints within one occupancy cell.
+@final
+struct MapCollisionHitBounds {
+  unsigned long cell_index;
+  Point minimum;
+  Point maximum;
+};
 // Planner-ready inflated occupancy for one complete rolling-map AABB. Bits
 // use logical x-fastest order: ((z * size_y) + y) * size_x + x.
 @final
@@ -527,7 +670,7 @@ struct MapCollisionLayer {
   unsigned long long observation_sequence;
   unsigned long long generation;
   boolean live;
-  float resolution;
+  double resolution;
   unsigned long size_x;
   unsigned long size_y;
   unsigned long size_z;
@@ -538,6 +681,7 @@ struct MapCollisionLayer {
   // Same generation, geometry and bit order; neither bit is unknown.
   sequence<octet> measured_occupied_bits;
   sequence<octet> known_free_bits;
+  sequence<MapCollisionHitBounds> hit_bounds;
 };
 @final
 struct MapGrid {
@@ -964,19 +1108,17 @@ struct InspectionTaskAck {
   long kind;
   boolean accepted;
   string reason;
-  string run_id;
 };
 @final
 struct InspectionEvidenceRequest {
   Header header;
   string request_id;
-  string run_id;
+  string task_id;
   string route_id;
-  unsigned long long revision;
+  unsigned long long route_revision;
   string map_id;
   long long map_content_epoch;
   unsigned long point_index;
-  string point_id;
   string action;
   double deadline_s;
 };
@@ -992,7 +1134,7 @@ struct InspectionEvidenceResult {
 @final
 struct InspectionStatus {
   Header header;
-  string run_id;
+  string task_id;
   string route_id;
   unsigned long long route_revision;
   long state;
@@ -1000,7 +1142,6 @@ struct InspectionStatus {
   unsigned long point_count;
   unsigned long loop_index;
   unsigned long retry_count;
-  string point_id;
   string action;
   string action_request_id;
   string evidence_id;
@@ -1018,7 +1159,6 @@ struct InspectionTaskEvent {
   long kind;
   string task_id;
   string request_id;
-  string command_request_id;
   long state;
   string map_id;
   long long map_content_epoch;
@@ -1028,7 +1168,6 @@ struct InspectionTaskEvent {
   unsigned long point_count;
   unsigned long loop_index;
   unsigned long retry_count;
-  string point_id;
   string action;
   string action_request_id;
   string evidence_id;

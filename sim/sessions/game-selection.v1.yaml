@@ -12,12 +12,13 @@ entries:
     presentation:
       robot:
         id: thunderv4
-        version: 1.0.1
-        label: thunderv4
+        version: 1.0.3
+        label: 雷霆 V4
+        category: wheeled_legged
       world:
         id: factory_park_hf
         version: 1.2.1
-        label: factory_park_hf
+        label: 高保真工业园区
       scenario: null
       mode: unreal
     tags: [inspection, factory, robot]
@@ -33,15 +34,38 @@ entries:
     presentation:
       robot:
         id: thunderv4
-        version: 1.0.0
-        label: thunderv4
+        version: 1.0.3
+        label: 雷霆 V4
+        category: wheeled_legged
       world:
         id: open_field_hf
         version: 1.1.0
-        label: open_field_hf
+        label: 高保真开放场地
       scenario: null
       mode: unreal
     tags: [inspection, open_field, robot]
+
+  - id: omni_cart_factory_park
+    title: OmniCart 园区预览
+    description: 在高保真工业园区中预览 OmniCart 轮式小车；当前 Unreal 会话不提供可驾驶控制。
+    order: 25
+    session_spec: sim/sessions/examples/omni_cart_factory_park_hf/session.yaml
+    availability:
+      state: preview_only
+      reason: 仅预览：Unreal 会话未绑定控制器；OmniCart 可控模式目前仅支持 MuJoCo headless
+    presentation:
+      robot:
+        id: omni_cart
+        version: 1.0.0
+        label: OmniCart
+        category: wheeled
+      world:
+        id: factory_park_hf
+        version: 1.1.0
+        label: 高保真工业园区
+      scenario: null
+      mode: unreal
+    tags: [factory, preview, robot]
 
   - id: pedestrian_crossing_review
     title: 行人横穿验证
@@ -55,11 +79,12 @@ entries:
       robot:
         id: thunderv4
         version: 1.0.0
-        label: thunderv4
+        label: 雷霆 V4
+        category: wheeled_legged
       world:
         id: factory_park_hf
         version: 1.1.0
-        label: factory_park_hf
+        label: 高保真工业园区
       scenario:
         id: factory_park_pedestrian_crossing
         version: 1.1.0
@@ -79,11 +104,12 @@ entries:
       robot:
         id: thunderv4
         version: 1.0.3
-        label: Thunder V4
+        label: 雷霆 V4
+        category: wheeled_legged
       world:
         id: forest_hf
         version: 2.0.0
-        label: Forest HF 2 km
+        label: 高保真森林（2 公里）
       scenario: null
       mode: unreal
     tags: [forest, inspection, review]
@@ -100,11 +126,12 @@ entries:
       robot:
         id: thunderv4
         version: 1.0.3
-        label: thunderv4
+        label: 雷霆 V4
+        category: wheeled_legged
       world:
         id: open_field
         version: 1.0.0
-        label: open_field
+        label: 开放场地
       scenario: null
       mode: unreal
     tags: [payload, tripo, quarantined]

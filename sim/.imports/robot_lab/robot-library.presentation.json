@@ -1,0 +1,114 @@
+{
+  "robots": [
+    {
+      "id": "agibot_d1",
+      "version": "robot_lab_2.3.2",
+      "label": "Agibot D1"
+    },
+    {
+      "id": "booster_t1",
+      "version": "robot_lab_2.3.2",
+      "label": "Booster T1"
+    },
+    {
+      "id": "ddtrobot_tita",
+      "version": "robot_lab_2.3.2",
+      "label": "DDTRobot Tita"
+    },
+    {
+      "id": "deeprobotics_lite3",
+      "version": "robot_lab_2.3.2",
+      "label": "DeepRobotics Lite3"
+    },
+    {
+      "id": "deeprobotics_m20",
+      "version": "robot_lab_2.3.2",
+      "label": "DeepRobotics M20"
+    },
+    {
+      "id": "fftai_gr1t1",
+      "version": "robot_lab_2.3.2",
+      "label": "FFTAI GR1T1"
+    },
+    {
+      "id": "fftai_gr1t2",
+      "version": "robot_lab_2.3.2",
+      "label": "FFTAI GR1T2"
+    },
+    {
+      "id": "magiclab_magicbot_gen1",
+      "version": "robot_lab_2.3.2",
+      "label": "MagicLab MagicBot-Gen1"
+    },
+    {
+      "id": "magiclab_magicbot_z1",
+      "version": "robot_lab_2.3.2",
+      "label": "MagicLab MagicBot-Z1"
+    },
+    {
+      "id": "magiclab_magicdog",
+      "version": "robot_lab_2.3.2",
+      "label": "MagicLab MagicDog"
+    },
+    {
+      "id": "magiclab_magicdog_w",
+      "version": "robot_lab_2.3.2",
+      "label": "MagicLab MagicDog-W"
+    },
+    {
+      "id": "openloong_loong",
+      "version": "robot_lab_2.3.2",
+      "label": "OpenLoong Loong"
+    },
+    {
+      "id": "roboparty_atom01",
+      "version": "robot_lab_2.3.2",
+      "label": "RoboParty ATOM01"
+    },
+    {
+      "id": "robotera_xbot",
+      "version": "robot_lab_2.3.2",
+      "label": "RobotEra Xbot"
+    },
+    {
+      "id": "unitree_a1",
+      "version": "robot_lab_2.3.2",
+      "label": "Unitree A1"
+    },
+    {
+      "id": "unitree_b2",
+      "version": "robot_lab_2.3.2",
+      "label": "Unitree B2"
+    },
+    {
+      "id": "unitree_b2w",
+      "version": "robot_lab_2.3.2",
+      "label": "Unitree B2W"
+    },
+    {
+      "id": "unitree_g1",
+      "version": "robot_lab_2.3.2",
+      "label": "Unitree G1"
+    },
+    {
+      "id": "unitree_go2",
+      "version": "robot_lab_2.3.2",
+      "label": "Unitree Go2"
+    },
+    {
+      "id": "unitree_go2w",
+      "version": "robot_lab_2.3.2",
+      "label": "Unitree Go2W"
+    },
+    {
+      "id": "zsibot_zsl1",
+      "version": "robot_lab_2.3.2",
+      "label": "Zsibot ZSL1"
+    },
+    {
+      "id": "zsibot_zsl1w",
+      "version": "robot_lab_2.3.2",
+      "label": "Zsibot ZSL1W"
+    }
+  ]
+}

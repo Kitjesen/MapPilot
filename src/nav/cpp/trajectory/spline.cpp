@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace nav_kernel {
 namespace {
@@ -46,7 +47,9 @@ SplineView::SplineView(const SplineTarget &target) {
   position_.setUniformBspline(controls, target.order, interval_);
   position_.setKnot(knots);
   duration_ = position_.getTimeSum();
-  if (!(duration_ >= 0.0) || !std::isfinite(duration_))
+  if (!(duration_ >= 0.0) || !std::isfinite(duration_) ||
+      !std::isfinite(target.speedTransitionEndS) ||
+      target.speedTransitionEndS < 0.0 || target.speedTransitionEndS > duration_)
     return;
   velocity_ = position_.getDerivative();
   valid_ = true;
@@ -70,6 +73,14 @@ Vec3 SplineView::position(double timeFromStartS) const {
 
 Vec3 SplineView::velocity(double timeFromStartS) const {
   return valid_ ? point(velocity_.evaluateDeBoorT(timeFromStartS)) : Vec3{};
+}
+
+double SplineView::speedBound() const {
+  if (!valid_) return std::numeric_limits<double>::infinity();
+  const Eigen::MatrixXd controls = velocity_.getControlPoint();
+  if (!controls.allFinite()) return std::numeric_limits<double>::infinity();
+  // The derivative control hull bounds every time, including between samples.
+  return controls.colwise().norm().maxCoeff();
 }
 
 }  // namespace nav_kernel

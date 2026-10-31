@@ -46,6 +46,28 @@ void testClockIsMonotonic() {
   require(before > 0U && after >= before, "boot clock is not monotonic");
 }
 
+void testThreadCpuClockExcludesSleepAndCountsExecution() {
+  using lingtu::nav::platform::threadCpuNanoseconds;
+  const auto wall_start=std::chrono::steady_clock::now();
+  const auto before=threadCpuNanoseconds();
+  std::this_thread::sleep_for(std::chrono::milliseconds(40));
+  const auto after=threadCpuNanoseconds();
+  const auto wall_ns=std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::steady_clock::now()-wall_start).count();
+  require(after>=before,"thread CPU time must be monotonic");
+  require(after-before<static_cast<std::uint64_t>(wall_ns)/2,
+          "thread CPU time must not count sleeping as execution");
+  const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(1);
+  const auto busy_start=threadCpuNanoseconds();
+  auto busy_end=busy_start;
+  volatile std::uint64_t work=1;
+  do {
+    for (int i=0;i<100000;++i) work=work*1664525U+1013904223U;
+    busy_end=threadCpuNanoseconds();
+  } while(busy_end==busy_start && std::chrono::steady_clock::now()<deadline);
+  require(busy_end>busy_start,"thread CPU clock must count actual execution");
+}
+
 void testInvalidConfiguredIdentityFailsClosed() {
   setHostBootId("invalid host boot id");
   bool rejected = false;
@@ -89,6 +111,7 @@ void testDeadlineSleeperUsesSteadyClockDeadline() {
 int main() {
   testConfiguredIdentity();
   testClockIsMonotonic();
+  testThreadCpuClockExcludesSleepAndCountsExecution();
   testInvalidConfiguredIdentityFailsClosed();
   testOversizedProducerIdentityFailsClosed();
   testDeadlineSleeperUsesSteadyClockDeadline();

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from message.topics import TOPIC_SPECS, TOPICS, topic_spec
-from runtime.blueprint import Blueprint
+from runtime.host import HostBuilder
 from runtime.module import Module
 from runtime.route_contract import (
     RouteContract,
@@ -231,8 +231,8 @@ def test_external_diagnostics_flag_cannot_hide_consumerless_control_topic() -> N
     )
 
 
-def test_blueprint_records_route_metadata() -> None:
-    graph = Blueprint().add(RouteModule).route_contract(robot()).export_graph(profile="unit")
+def test_host_builder_records_route_metadata() -> None:
+    graph = HostBuilder().add(RouteModule).route_contract(robot()).export_graph(profile="unit")
 
     manifest = graph.to_manifest()
 
@@ -241,9 +241,9 @@ def test_blueprint_records_route_metadata() -> None:
     assert manifest["route_contract"] == "robot"
 
 
-def test_blueprint_route_contract_does_not_change_internal_delivery() -> None:
+def test_host_builder_route_contract_does_not_change_internal_delivery() -> None:
     graph = (
-        Blueprint()
+        HostBuilder()
         .add(CmdProducer, alias="producer")
         .add(CmdConsumer, alias="consumer")
         .wire("producer", "cmd_vel", "consumer", "cmd_vel", topic=TOPICS.cmd_vel)
@@ -257,9 +257,9 @@ def test_blueprint_route_contract_does_not_change_internal_delivery() -> None:
         "transport": "callback",
         "topic": TOPICS.cmd_vel,
     }
-def test_blueprint_merge_rejects_route_mismatch() -> None:
-    left = Blueprint().add(RouteModule, alias="left").route_contract(robot())
-    right = Blueprint().add(RouteModule, alias="right").route_contract(sim())
+def test_host_builder_merge_rejects_route_mismatch() -> None:
+    left = HostBuilder().add(RouteModule, alias="left").route_contract(robot())
+    right = HostBuilder().add(RouteModule, alias="right").route_contract(sim())
 
     try:
         left.merge(right)

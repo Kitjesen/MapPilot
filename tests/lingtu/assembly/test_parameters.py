@@ -2,13 +2,26 @@ from __future__ import annotations
 
 import pytest
 
-from lingtu.assembly.parameters import resolve_parameters
+from lingtu.assembly.config.native_parameters import resolve_parameters
 
 PRODUCT_PARAMETERS = {
     "segment.max_distance_m": 4.0,
     "risk.stop_threshold": 60.0,
     "risk.resume_threshold": 45.0,
 }
+
+
+def test_ordinary_scan_speed_defaults_are_one_meter_per_second() -> None:
+    resolved = resolve_parameters()
+    values = resolved.as_dict()
+    environment = resolved.environment()
+    for name, key in (
+        ("scan_planner.max_velocity_mps", "LINGTU_NAV_SCAN_PLANNER_MAX_VELOCITY_MPS"),
+        ("scan_follower.max_vx_mps", "LINGTU_NAV_SCAN_MAX_VX_MPS"),
+        ("scan_follower.max_vy_mps", "LINGTU_NAV_SCAN_MAX_VY_MPS"),
+    ):
+        assert values[name] == 1.0
+        assert float(environment[key]) == 1.0
 
 
 def test_parameter_precedence_is_session_then_product_then_environment() -> None:

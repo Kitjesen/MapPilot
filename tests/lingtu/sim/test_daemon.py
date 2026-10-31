@@ -23,6 +23,12 @@ from lingtu.sim.rpc import REQUEST_SCHEMA, SupervisorRequest, round_trip
 from lingtu.sim.supervisor import SimulationSupervisorClient
 
 
+@pytest.fixture
+def tmp_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Keep daemon Unix socket addresses independent of long test names."""
+    return tmp_path_factory.mktemp("daemon")
+
+
 def _wait_for_record(
     session_root: Path,
     timeout_s: float = 10,

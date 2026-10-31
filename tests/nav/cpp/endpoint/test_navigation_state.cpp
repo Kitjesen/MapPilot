@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "runtime/goal/plan.hpp"
+#include "app/goal/plan.hpp"
 #include "status/navigation_state.hpp"
 #include "nav/inspection/inspection.hpp"
 
@@ -245,7 +245,8 @@ void testInspectionOwnsWholeTaskLifecycle() {
   NavigationStateTracker tracker(NavigationControlState::kAutonomy);
   for (const auto phase : {RunState::kNavigating, RunState::kSettling,
                           RunState::kActionPending, RunState::kDwelling,
-                          RunState::kPausing, RunState::kCancelling}) {
+                          RunState::kPausing, RunState::kCancelling,
+                          RunState::kWaitingNextLoop}) {
     run.state = phase;
     tracker.observeInspection(run);
     GoalPlanStatus leg{run.task_id, run.request_id, 1U, NavigationGoalState::Reached, "arrived"};
@@ -288,7 +289,8 @@ void testRecoveryDoesNotReplaceWaitingTaskState() {
   run.task_id = "inspection-1";
   for (const auto phase : {RunState::kPaused, RunState::kPlanning, RunState::kSettling,
                           RunState::kActionPending, RunState::kDwelling,
-                          RunState::kPausing, RunState::kCancelling}) {
+                          RunState::kPausing, RunState::kCancelling,
+                          RunState::kWaitingNextLoop}) {
     run.state = phase;
     tracker.observeInspection(run);
     const auto expected = tracker.sample({});

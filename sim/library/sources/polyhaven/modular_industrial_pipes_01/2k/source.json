@@ -1,0 +1,57 @@
+{
+  "provider": "Poly Haven",
+  "id": "modular_industrial_pipes_01",
+  "name": "Modular Industrial Pipes 01",
+  "authors": {
+    "Jorge Camacho": "All"
+  },
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "source_url": "https://polyhaven.com/a/modular_industrial_pipes_01",
+  "resolution": "2k",
+  "model": "modular_industrial_pipes_01_2k.gltf",
+  "files": [
+    {
+      "path": "modular_industrial_pipes_01_2k.gltf",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/2k/modular_industrial_pipes_01/modular_industrial_pipes_01_2k.gltf",
+      "bytes": 15014
+    },
+    {
+      "path": "textures/modular_industrial_pipes_01_group01_nor_gl_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_industrial_pipes_01/modular_industrial_pipes_01_group01_nor_gl_2k.jpg",
+      "bytes": 2788490
+    },
+    {
+      "path": "textures/modular_industrial_pipes_01_group01_arm_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_industrial_pipes_01/modular_industrial_pipes_01_group01_arm_2k.jpg",
+      "bytes": 3197008
+    },
+    {
+      "path": "modular_industrial_pipes_01.bin",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/modular_industrial_pipes_01/modular_industrial_pipes_01.bin",
+      "bytes": 515160
+    },
+    {
+      "path": "textures/modular_industrial_pipes_01_group02_nor_gl_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_industrial_pipes_01/modular_industrial_pipes_01_group02_nor_gl_2k.jpg",
+      "bytes": 2840017
+    },
+    {
+      "path": "textures/modular_industrial_pipes_01_group02_arm_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_industrial_pipes_01/modular_industrial_pipes_01_group02_arm_2k.jpg",
+      "bytes": 3302784
+    },
+    {
+      "path": "textures/modular_industrial_pipes_01_group02_diff_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_industrial_pipes_01/modular_industrial_pipes_01_group02_diff_2k.jpg",
+      "bytes": 2024502
+    },
+    {
+      "path": "textures/modular_industrial_pipes_01_group01_diff_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_industrial_pipes_01/modular_industrial_pipes_01_group01_diff_2k.jpg",
+      "bytes": 1934173
+    }
+  ],
+  "ue_imported": false,
+  "physics_qualified": false
+}

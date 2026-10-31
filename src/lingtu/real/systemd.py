@@ -10,6 +10,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -196,10 +197,12 @@ class _ServiceInspector:
         systemd: Systemd | None = None,
         runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
         now: Callable[[], float] = time.time,
+        environment: Mapping[str, str] | None = None,
     ) -> None:
         self._systemd = systemd or Systemd(use_sudo=False)
         self._runner = runner
         self._now = now
+        self._environment = environment if environment is not None else os.environ
 
     def status_details(
         self,
@@ -211,6 +214,16 @@ class _ServiceInspector:
         spec = thunder_service_spec(service)
         if spec is None:
             return {service: {"ready": False, "blockers": ["readiness_catalog_missing"]}}
+        if service == "camera":
+            driver = self._environment.get("LINGTU_CAMERA_DRIVER", "orbbec_native")
+            if driver not in {"orbbec_native", "realsense_native"}:
+                raise ProcessError(f"unsupported camera driver in readiness: {driver}")
+            if driver == "realsense_native":
+                spec = replace(spec, binaries=tuple(
+                    ("realsense_capture", "LINGTU_REALSENSE_CAPTURE_BIN", "/opt/lingtu/current/bin/realsense_capture")
+                    if binary[0] == "orbbec_capture" else binary
+                    for binary in spec.binaries
+                ))
         target = (spec.start_units or spec.units)[0]
         blockers: list[str] = []
         observed: dict[str, Any] = {}
@@ -231,6 +244,10 @@ class _ServiceInspector:
             observed["dds"] = self._dds(spec, blockers) if dds_check else {"checked": False}
         if "http" in spec.checks:
             observed["http"] = self._http(service, blockers) if http_check else {"checked": False}
+        if "whep" in spec.checks:
+            status_files = observed.get("status_file", {}).get("files", [])
+            endpoint = status_files[0].get("endpoint") if status_files else None
+            observed["whep"] = self._whep(blockers, endpoint=endpoint) if http_check else {"checked": False}
 
         return {
             service: {
@@ -252,11 +269,10 @@ class _ServiceInspector:
             }
         }
 
-    @staticmethod
-    def _binaries(spec: ThunderServiceSpec, blockers: list[str]) -> dict[str, Any]:
+    def _binaries(self, spec: ThunderServiceSpec, blockers: list[str]) -> dict[str, Any]:
         rows = []
         for name, env, default_path in spec.binaries:
-            raw_path = os.environ.get(env, default_path)
+            raw_path = self._environment.get(env, default_path)
             path = Path(raw_path)
             executable = path.exists() and os.access(path, os.X_OK)
             rows.append(
@@ -299,10 +315,53 @@ class _ServiceInspector:
                         blockers.append(f"status_file_not_ready:{file_name}")
                 if status in {"error", "failed", "fatal"}:
                     blockers.append(f"status_file_error:{file_name}")
+                if spec.name == "video":
+                    row["source_fresh"] = payload.get("source_fresh")
+                    row["source_generation"] = payload.get("source_generation")
+                    row["source_sequence"] = payload.get("source_sequence")
+                    row["frame_age_ms"] = payload.get("frame_age_ms")
+                    row["endpoint"] = payload.get("endpoint")
+                    row["encoder"] = payload.get("encoder")
+                    required_fields = {
+                        "schema_version": "lingtu.camera_video.status.v1",
+                    }
+                    for field, expected in required_fields.items():
+                        if payload.get(field) != expected:
+                            blockers.append(f"video_{field}_invalid:{file_name}")
+                    for field in ("heartbeat_timestamp_s", "source_generation", "source_sequence"):
+                        value = payload.get(field)
+                        if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+                            blockers.append(f"video_{field}_invalid:{file_name}")
+                    if payload.get("source_fresh") is not True:
+                        blockers.append(f"video_source_not_fresh:{file_name}")
             if spec.status_max_age_s is not None and row["age_s"] > spec.status_max_age_s:
                 blockers.append(f"status_file_stale:{file_name}")
             rows.append(row)
         return {"ok": not any(item.startswith("status_file_") for item in blockers), "files": rows}
+
+    @staticmethod
+    def _whep(blockers: list[str], *, endpoint: str | None = None) -> dict[str, Any]:
+        url = endpoint or os.environ.get("LINGTU_WEBRTC_URL", "http://127.0.0.1:9090/whep/endpoint")
+        scheme = urllib.parse.urlparse(url).scheme.lower()
+        if scheme not in {"http", "https"}:
+            blockers.append(f"whep_url_invalid_scheme:{scheme or 'missing'}")
+            return {"ok": False, "checked": True, "url": url}
+        status_code: int | None = None
+        try:
+            request = urllib.request.Request(url, method="OPTIONS")
+            with urllib.request.urlopen(
+                request,
+                timeout=max(0.1, float(os.environ.get("LINGTU_VIDEO_WHEP_CHECK_TIMEOUT", "1.0"))),
+            ) as response:
+                status_code = int(getattr(response, "status", 0) or 0)
+        except urllib.error.HTTPError as exc:
+            status_code = int(exc.code)
+        except (OSError, ValueError) as exc:
+            blockers.append(f"whep_check_error:{type(exc).__name__}")
+        ok = status_code is not None and 200 <= status_code < 300
+        if status_code is not None and not ok:
+            blockers.append(f"whep_status:{status_code}")
+        return {"ok": ok, "checked": True, "url": url, "status": status_code}
 
     def _dds(self, spec: ThunderServiceSpec, blockers: list[str]) -> dict[str, Any]:
         topics = list(spec.dds_topics or spec.topics)
@@ -414,32 +473,64 @@ class ServiceReadiness:
         *,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
+        environment: Mapping[str, str] | None = None,
     ) -> None:
-        self._manager = manager or _ServiceInspector()
+        self._manager = manager or _ServiceInspector(environment=environment)
         self._sleep = sleep
         self._monotonic = monotonic
+
+    def _bind_plan(self, plan: RunPlan) -> None:
+        if isinstance(self._manager, _ServiceInspector):
+            self._manager._environment = {
+                **self._manager._environment, **plan.native_process_environment,
+            }
 
     def wait(self, process: ProcessSpec, timeout_s: float) -> Mapping[str, Any]:
         """Require every readiness check declared for *process*."""
 
+        service = self._validate_process(process)
+        deadline = self._monotonic() + timeout_s
+        last: Mapping[str, Any] = {}
+        while self._monotonic() < deadline:
+            last = self._inspect(service)
+            if bool(last.get("ready")):
+                return last
+            self._sleep(0.25)
+        raise self._not_ready(process, last)
+
+    def inspect(self, process: ProcessSpec) -> Mapping[str, Any]:
+        """Inspect readiness once without consuming a core-service timeout."""
+
+        service = self._validate_process(process)
+        detail = self._inspect(service)
+        if bool(detail.get("ready")):
+            return detail
+        raise self._not_ready(process, detail)
+
+    def validate(self, process: ProcessSpec) -> None:
+        """Validate the static process-to-readiness catalog binding."""
+
+        self._validate_process(process)
+
+    @staticmethod
+    def _not_ready(process: ProcessSpec, detail: Mapping[str, Any]) -> ProcessError:
+        blockers = ", ".join(str(item) for item in detail.get("blockers", []))
+        reason = blockers or "readiness contract did not become true"
+        return ProcessError(f"{process.name} is not ready: {reason}")
+
+    def _validate_process(self, process: ProcessSpec) -> str:
         service = process.name
         spec = thunder_service_spec(service)
         if spec is not None and process.target not in (spec.start_units or spec.units):
             raise ProcessError(f"Product target disagrees with readiness catalog for {service}: {process.target}")
-        deadline = self._monotonic() + timeout_s
-        last: Mapping[str, Any] = {}
-        while self._monotonic() < deadline:
-            last = self._manager.status_details(
-                service,
-                dds_check=True,
-                http_check=True,
-            )[service]
-            if bool(last.get("ready")):
-                return last
-            self._sleep(0.25)
-        blockers = ", ".join(str(item) for item in last.get("blockers", []))
-        detail = blockers or "readiness contract did not become true"
-        raise ProcessError(f"{process.name} is not ready: {detail}")
+        return service
+
+    def _inspect(self, service: str) -> Mapping[str, Any]:
+        return self._manager.status_details(
+            service,
+            dds_check=True,
+            http_check=True,
+        )[service]
 
 
 class SystemdRunner:
@@ -454,11 +545,67 @@ class SystemdRunner:
     ) -> None:
         self._environment = environment if environment is not None else os.environ
         self._manager = manager or Systemd()
-        self._readiness = readiness or ServiceReadiness()
+        self._readiness = readiness or ServiceReadiness(environment=self._environment)
         self._controller = "systemd"
         self._process_manager = "systemd"
         self._runner_name = "SystemdRunner"
         self._monotonic = time.monotonic
+
+    def inspect(self, process: ProcessSpec) -> Mapping[str, Any]:
+        """Return one non-mutating process snapshot for runtime status."""
+
+        try:
+            available = self._manager.available(process.target)
+        except (ProcessError, OSError) as exc:
+            return self._unready_snapshot("unit_probe_failed", exc)
+        if not available:
+            return {
+                "available": False,
+                "active": False,
+                "ready": False,
+                "blockers": ["unit_unavailable"],
+                "observed": {},
+            }
+
+        try:
+            active = self._manager.active(process.target)
+        except (ProcessError, OSError) as exc:
+            return self._unready_snapshot(
+                "active_probe_failed",
+                exc,
+                available=True,
+            )
+        if not active:
+            return {
+                "available": True,
+                "active": False,
+                "ready": False,
+                "blockers": ["unit_inactive"],
+                "observed": {},
+            }
+
+        inspect = getattr(self._readiness, "inspect", None)
+        if inspect is None:
+            return {
+                "available": True,
+                "active": True,
+                "ready": False,
+                "blockers": ["readiness_snapshot_unavailable"],
+                "observed": {},
+            }
+        try:
+            detail = dict(inspect(process))
+        except (ProcessError, OSError) as exc:
+            return self._unready_snapshot(
+                "readiness_probe_failed",
+                exc,
+                available=True,
+                active=True,
+            )
+        detail["available"] = True
+        detail["active"] = True
+        detail["ready"] = bool(detail.get("ready"))
+        return detail
 
     def apply(
         self,
@@ -479,6 +626,7 @@ class SystemdRunner:
             )
         )
         self._require_supported_managers(processes)
+        self._validate_readiness_contracts(processes, plan)
         report = ProcessReport(
             product=plan.product,
             env=plan.env,
@@ -532,12 +680,17 @@ class SystemdRunner:
                     else:
                         started.append(process)
                         report.started.append(process.target)
-                        self._manager.start(
-                            process.target,
-                            self._remaining_timeout(
-                                min(stage_deadline, process_deadline),
-                            ),
-                        )
+                        try:
+                            self._manager.start(
+                                process.target,
+                                self._remaining_timeout(
+                                    min(stage_deadline, process_deadline),
+                                ),
+                            )
+                        except ProcessError as exc:
+                            if process.required:
+                                raise
+                            self._record_degraded(report, process, "start", exc)
                 for process in sorted(
                     stage,
                     key=lambda item: (
@@ -545,15 +698,23 @@ class SystemdRunner:
                         item.name,
                     ),
                 ):
+                    if process.name in report.degraded:
+                        continue
                     process_deadline = self._process_deadline(stage_start, process)
                     if on_process_started is not None:
                         on_process_started(process)
-                    report.ready[process.name] = self._readiness.wait(
-                        process,
-                        self._remaining_timeout(
-                            min(stage_deadline, process_deadline),
-                        ),
-                    )
+                    try:
+                        report.ready[process.name] = self._wait_ready(
+                            process,
+                            self._remaining_timeout(
+                                min(stage_deadline, process_deadline),
+                            ),
+                        )
+                    except ProcessError as exc:
+                        if process.required:
+                            raise
+                        self._record_degraded(report, process, "readiness", exc)
+                        continue
                     identity = self._runtime_identity(
                         process.target,
                         required=False,
@@ -621,6 +782,7 @@ class SystemdRunner:
         self._require_supported_managers(
             tuple({process.target: process for process in (*previous_processes, *processes)}.values())
         )
+        self._validate_readiness_contracts(processes, plan)
         report = ProcessReport(
             product=plan.product,
             env=plan.env,
@@ -697,12 +859,17 @@ class SystemdRunner:
                         continue
                     started.append(process)
                     report.started.append(process.target)
-                    self._manager.start(
-                        process.target,
-                        self._remaining_timeout(
-                            min(stage_deadline, process_deadline),
-                        ),
-                    )
+                    try:
+                        self._manager.start(
+                            process.target,
+                            self._remaining_timeout(
+                                min(stage_deadline, process_deadline),
+                            ),
+                        )
+                    except ProcessError as exc:
+                        if process.required:
+                            raise
+                        self._record_degraded(report, process, "start", exc)
                 for process in sorted(
                     stage,
                     key=lambda item: (
@@ -710,15 +877,23 @@ class SystemdRunner:
                         item.name,
                     ),
                 ):
+                    if process.name in report.degraded:
+                        continue
                     process_deadline = self._process_deadline(stage_start, process)
                     if on_process_started is not None:
                         on_process_started(process)
-                    report.ready[process.name] = self._readiness.wait(
-                        process,
-                        self._remaining_timeout(
-                            min(stage_deadline, process_deadline),
-                        ),
-                    )
+                    try:
+                        report.ready[process.name] = self._wait_ready(
+                            process,
+                            self._remaining_timeout(
+                                min(stage_deadline, process_deadline),
+                            ),
+                        )
+                    except ProcessError as exc:
+                        if process.required:
+                            raise
+                        self._record_degraded(report, process, "readiness", exc)
+                        continue
                     identity = self._runtime_identity(process.target, required=False)
                     if identity is not None:
                         report.identities[process.name] = identity
@@ -850,6 +1025,7 @@ class SystemdRunner:
             )
         )
         self._require_supported_managers(processes)
+        self._validate_readiness_contracts(processes, previous)
         stopped_targets = set(transition.stopped)
         to_restore = tuple(
             process
@@ -878,15 +1054,30 @@ class SystemdRunner:
                             )
                         started.append(process)
                         report.started.append(process.target)
-                        self._manager.start(
-                            process.target,
-                            self._remaining_timeout(
-                                min(stage_deadline, process_deadline),
-                            ),
-                        )
+                        try:
+                            self._manager.start(
+                                process.target,
+                                self._remaining_timeout(
+                                    min(stage_deadline, process_deadline),
+                                ),
+                            )
+                        except ProcessError as exc:
+                            if process.required:
+                                raise
+                            self._record_degraded(report, process, "start", exc)
+                            continue
                     if not self._manager.active(process.target):
-                        raise ProcessError(
-                            f"previous process is inactive after restore: {process.target}"
+                        if process.required:
+                            raise ProcessError(
+                                f"previous process is inactive after restore: {process.target}"
+                            )
+                        self._record_degraded(
+                            report,
+                            process,
+                            "inactive",
+                            ProcessError(
+                                f"previous optional process is inactive after restore: {process.target}"
+                            ),
                         )
                 for process in sorted(
                     stage,
@@ -895,13 +1086,21 @@ class SystemdRunner:
                         item.name,
                     ),
                 ):
+                    if process.name in report.degraded:
+                        continue
                     process_deadline = self._process_deadline(stage_start, process)
-                    report.ready[process.name] = self._readiness.wait(
-                        process,
-                        self._remaining_timeout(
-                            min(stage_deadline, process_deadline),
-                        ),
-                    )
+                    try:
+                        report.ready[process.name] = self._wait_ready(
+                            process,
+                            self._remaining_timeout(
+                                min(stage_deadline, process_deadline),
+                            ),
+                        )
+                    except ProcessError as exc:
+                        if process.required:
+                            raise
+                        self._record_degraded(report, process, "readiness", exc)
+                        continue
                     identity = self._runtime_identity(process.target, required=False)
                     if identity is not None:
                         report.identities[process.name] = identity
@@ -1042,6 +1241,71 @@ class SystemdRunner:
         if type(value) is not dict or not value:
             raise ProcessError(f"process runtime identity is invalid: {target}")
         return dict(value)
+
+    def _validate_readiness_contracts(
+        self,
+        processes: tuple[ProcessSpec, ...],
+        plan: RunPlan,
+    ) -> None:
+        if isinstance(self._readiness, ServiceReadiness):
+            self._readiness._bind_plan(plan)
+        validate = getattr(self._readiness, "validate", None)
+        if validate is None:
+            return
+        for process in processes:
+            validate(process)
+
+    def _wait_ready(
+        self,
+        process: ProcessSpec,
+        timeout_s: float,
+    ) -> Mapping[str, Any]:
+        if process.required:
+            return self._readiness.wait(process, timeout_s)
+        detail = self._readiness.wait(process, timeout_s)
+        if detail.get("ready") is not True:
+            blockers = ", ".join(
+                str(item) for item in detail.get("blockers", [])
+            )
+            reason = blockers or "readiness snapshot is not ready"
+            raise ProcessError(f"{process.name} is not ready: {reason}")
+        return detail
+
+    @staticmethod
+    def _record_degraded(
+        report: ProcessReport,
+        process: ProcessSpec,
+        operation: str,
+        error: ProcessError,
+    ) -> None:
+        reason = f"{operation}_failed"
+        if operation == "start" and "not installed" in str(error):
+            reason = "unit_missing"
+        report.degraded[process.name] = {
+            "reason": reason,
+            "evidence": {
+                "target": process.target,
+                "error": str(error) or error.__class__.__name__,
+            },
+        }
+
+    @staticmethod
+    def _unready_snapshot(
+        blocker: str,
+        error: Exception,
+        *,
+        available: bool = False,
+        active: bool = False,
+    ) -> Mapping[str, Any]:
+        return {
+            "available": available,
+            "active": active,
+            "ready": False,
+            "blockers": [blocker],
+            "observed": {
+                "error": str(error) or error.__class__.__name__,
+            },
+        }
 
     def _rollback(
         self,

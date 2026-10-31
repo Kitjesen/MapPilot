@@ -4,7 +4,7 @@ Spatial memory (where), knowledge (what), storage (how to persist),
 scheduling (when to look), logging (what happened).
 
 Heavy memory implementations are imported lazily so importing the package does
-not load numerical runtimes during blueprint/plugin discovery.
+not load numerical runtimes during host_builder/plugin discovery.
 """
 
 from __future__ import annotations
@@ -14,11 +14,11 @@ from typing import Any
 
 _EXPORTS = {
     "EpisodicMemory": "memory.spatial.episodic",
-    "EpisodicMemoryModule": "memory.modules.episodic_module",
+    "EpisodicMemoryModule": "memory.modules.episodic",
     "TaggedLocationStore": "memory.spatial.tagged_locations",
-    "TaggedLocationsModule": "memory.modules.tagged_locations_module",
+    "TaggedLocationsModule": "memory.modules.locations",
     "TopologicalMemory": "memory.spatial.topological",
-    "TopologicalMemoryModule": "memory.modules.topological_module",
+    "TopologicalMemoryModule": "memory.modules.topology",
 }
 
 __all__ = sorted(_EXPORTS)

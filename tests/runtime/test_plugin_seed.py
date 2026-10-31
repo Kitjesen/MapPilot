@@ -34,7 +34,7 @@ def test_localization_profile_catalog_excludes_placeholder_backends():
 
 
 def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
-    from lingtu.assembly.plugins import BUILTIN_PLUGIN_MODULES, seed_builtin_plugins
+    from lingtu.assembly.host.plugin_catalog import BUILTIN_PLUGIN_MODULES, seed_builtin_plugins
     from runtime.plugin_seed import registered_plugin_catalog_names
 
     assert "lingtu_builtin" in registered_plugin_catalog_names()
@@ -98,7 +98,7 @@ def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
 
 
 def test_builtin_driver_seed_excludes_retired_python_thunder_motion() -> None:
-    from lingtu.assembly.plugins import BUILTIN_PLUGIN_MODULES, seed_builtin_plugins
+    from lingtu.assembly.host.plugin_catalog import BUILTIN_PLUGIN_MODULES, seed_builtin_plugins
 
     saved = snapshot()
     seed_modules = {
@@ -126,7 +126,7 @@ def test_builtin_driver_seed_excludes_retired_python_thunder_motion() -> None:
 
 
 def test_builtin_plugin_seed_can_seed_one_group_without_loading_unrelated_groups():
-    from lingtu.assembly.plugins import BUILTIN_PLUGIN_MODULES, seed_builtin_plugins
+    from lingtu.assembly.host.plugin_catalog import BUILTIN_PLUGIN_MODULES, seed_builtin_plugins
 
     saved = snapshot()
     seed_modules = {module for modules in BUILTIN_PLUGIN_MODULES.values() for module in modules}
@@ -145,7 +145,7 @@ def test_builtin_plugin_seed_can_seed_one_group_without_loading_unrelated_groups
 
 
 def test_builtin_plugin_seed_preserves_preexisting_plugin_registrations():
-    from lingtu.assembly.plugins import BUILTIN_PLUGIN_MODULES, seed_builtin_plugins
+    from lingtu.assembly.host.plugin_catalog import BUILTIN_PLUGIN_MODULES, seed_builtin_plugins
 
     saved = snapshot()
     seed_modules = {module for modules in BUILTIN_PLUGIN_MODULES.values() for module in modules}
@@ -167,7 +167,7 @@ def test_builtin_plugin_seed_preserves_preexisting_plugin_registrations():
 
 
 def test_driver_plugin_seed_does_not_mutate_sys_path():
-    from lingtu.assembly.plugins import BUILTIN_PLUGIN_MODULES, seed_builtin_plugins
+    from lingtu.assembly.host.plugin_catalog import BUILTIN_PLUGIN_MODULES, seed_builtin_plugins
 
     saved = snapshot()
     seed_modules = {module for modules in BUILTIN_PLUGIN_MODULES.values() for module in modules}
@@ -193,7 +193,7 @@ def test_driver_plugin_seed_does_not_mutate_sys_path():
 
 
 def test_slam_plugin_seed_stays_lightweight_for_registration_only():
-    from lingtu.assembly.plugins import BUILTIN_PLUGIN_MODULES, seed_builtin_plugins
+    from lingtu.assembly.host.plugin_catalog import BUILTIN_PLUGIN_MODULES, seed_builtin_plugins
 
     saved = snapshot()
     seed_modules = {module for modules in BUILTIN_PLUGIN_MODULES.values() for module in modules}
@@ -218,7 +218,7 @@ def test_slam_plugin_seed_stays_lightweight_for_registration_only():
 
 
 def test_builtin_plugin_seed_default_groups_skip_optional_runtime_surfaces():
-    from lingtu.assembly.plugins import (
+    from lingtu.assembly.host.plugin_catalog import (
         BUILTIN_PLUGIN_MODULES,
         DEFAULT_BUILTIN_PLUGIN_GROUPS,
         seed_builtin_plugins,
@@ -266,7 +266,7 @@ def test_builtin_plugin_seed_default_groups_skip_optional_runtime_surfaces():
 
 
 def test_legacy_ros2_environment_flags_do_not_restore_removed_plugins(monkeypatch):
-    import lingtu.assembly.plugins as plugin_seed
+    import lingtu.assembly.host.plugin_catalog as plugin_seed
 
     monkeypatch.delenv("LINGTU_ENABLE_ROS2_COMPAT", raising=False)
     monkeypatch.delenv("LINGTU_ENABLE_LEGACY_ROS2_SERVICES", raising=False)

@@ -22,7 +22,7 @@ class TestPortDeclarations:
         assert "cancel_request" in m.ports_in
         assert "goal_status" in m.ports_out
         assert m.ports_in["goal_command"].msg_type is str
-        assert set(m.ports_out) == {"goal_status"}
+        assert set(m.ports_out) == {"goal_status", "task_status"}
         assert m.ports_out["goal_status"].msg_type is dict
         assert m.layer == 6
 

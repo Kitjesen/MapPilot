@@ -293,6 +293,7 @@ class InstanceTracker(BeliefPropagationMixin):
 
         with self._lock:
             matched: list[TrackedObject] = []
+            claimed_object_ids: set[int] = set()
             observed_at = time.time() if source_ts is None else float(source_ts)
 
             # Stage 1a: optionally resolve all detection->object assignments
@@ -309,11 +310,15 @@ class InstanceTracker(BeliefPropagationMixin):
                 if hungarian_assign is not None:
                     best_obj = hungarian_assign.get(det_idx)
                 else:
-                    best_obj = self._find_match(det)
+                    best_obj = self._find_match(
+                        det,
+                        excluded_object_ids=claimed_object_ids,
+                    )
                 if best_obj is not None:
                     best_obj.update(det)
                     best_obj.last_observed_time = observed_at
                     matched.append(best_obj)
+                    claimed_object_ids.add(best_obj.object_id)
                 else:
                     # USS-Nav: 新实例含点云
                     init_points = np.empty((0, 3))
@@ -331,6 +336,7 @@ class InstanceTracker(BeliefPropagationMixin):
                     )
                     self._knowledge.enrich_from_kg(obj)
                     self._objects[self._next_id] = obj
+                    claimed_object_ids.add(obj.object_id)
                     self._next_id += 1
                     matched.append(obj)
 
@@ -359,7 +365,8 @@ class InstanceTracker(BeliefPropagationMixin):
                     key=lambda o: (o.credibility, o.detection_count),
                     reverse=True,
                 )
-                self._objects = {o.object_id: o for o in sorted_objs[: self.max_objects]}
+                for obj in sorted_objs[self.max_objects :]:
+                    del self._objects[obj.object_id]
 
             # Stage 1a: optional post-matching duplicate merge (gated OFF by
             # default). Rewrites `matched` so callers never see a dropped id.
@@ -457,7 +464,11 @@ class InstanceTracker(BeliefPropagationMixin):
                 break
         return labels
 
-    def _find_match(self, det: Detection3D) -> TrackedObject | None:
+    def _find_match(
+        self,
+        det: Detection3D,
+        excluded_object_ids: set[int] | None = None,
+    ) -> TrackedObject | None:
         """
         USS-Nav §IV-C: 双指标优先级融合匹配。
 
@@ -469,10 +480,13 @@ class InstanceTracker(BeliefPropagationMixin):
           同类别 + 空间距离 < merge_distance (无点云时的降级路径)
         """
         det_has_points = hasattr(det, "points") and det.points is not None and len(det.points) > 0
+        excluded_object_ids = excluded_object_ids or set()
 
         # 空间预过滤: 只考虑 CANDIDATE_RADIUS 内的候选 (USS-Nav 用 ikd-tree 2m 半径)
         candidates = []
         for obj in self._objects.values():
+            if obj.object_id in excluded_object_ids:
+                continue
             dist = float(np.linalg.norm(obj.position - det.position))
             if dist < self.CANDIDATE_RADIUS:
                 candidates.append((obj, dist))

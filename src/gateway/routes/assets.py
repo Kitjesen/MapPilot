@@ -50,11 +50,22 @@ def register_asset_routes(app) -> None:
 
 
 def mount_dashboard_assets(app) -> None:
-    """Serve the built React dashboard at the root path when available."""
-    web_dist = os.path.normpath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "..", "web", "dist")
+    """Serve an explicit Web release, or the local build when available."""
+    configured = os.environ.get("LINGTU_WEB_DIST")
+    if configured is not None and not configured.strip():
+        logger.error("LINGTU_WEB_DIST must name a Web distribution directory; dashboard not mounted")
+        return
+    web_dist = (
+        Path(configured).expanduser()
+        if configured is not None
+        else Path(__file__).resolve().parents[3] / "web" / "dist"
     )
-    if not os.path.isdir(web_dist):
+    if not web_dist.is_dir():
+        if configured is not None:
+            logger.error("LINGTU_WEB_DIST is not a directory: %s; dashboard not mounted", web_dist)
+        return
+    if configured is not None and not (web_dist / "index.html").is_file():
+        logger.error("LINGTU_WEB_DIST is missing index.html: %s; dashboard not mounted", web_dist)
         return
 
     from starlette.staticfiles import StaticFiles

@@ -12,11 +12,90 @@ YOLO-World检测器单元测试 (与实际 yolo_world_detector.py API 对齐)
 """
 
 import unittest
+from threading import Lock
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import numpy as np
 
 from perception.detection.yolo_world_detector import YOLOWorldDetector
+
+
+class _CpuArray:
+    def __init__(self, values):
+        self._values = np.asarray(values)
+
+    def numpy(self):
+        return self._values
+
+
+class _Boxes:
+    def __init__(self, xyxy, conf, cls):
+        self.xyxy = _CpuArray(xyxy)
+        self.conf = _CpuArray(conf)
+        self.cls = _CpuArray(cls)
+        self.cpu_calls = 0
+
+    def __len__(self):
+        return len(self.xyxy.numpy())
+
+    def cpu(self):
+        self.cpu_calls += 1
+        return self
+
+
+class _WarmPredictor:
+    def __init__(self, results):
+        self.done_warmup = True
+        self.args = SimpleNamespace(conf=None, iou=None, verbose=True)
+        self._lock = Lock()
+        self._results = results
+        self.calls = []
+        self.dataset = None
+        self.batch = None
+        self.results = None
+
+    def setup_source(self, source):
+        self.calls.append(("setup_source", source))
+        images = source if isinstance(source, list) else [source]
+        self.dataset = iter([([f"image{i}.jpg" for i in range(len(images))], images, [""] * len(images))])
+
+    def preprocess(self, images):
+        self.calls.append(("preprocess", images))
+        return "prepared"
+
+    def inference(self, prepared):
+        self.calls.append(("inference", prepared))
+        return "predictions"
+
+    def postprocess(self, predictions, prepared, images):
+        self.calls.append(("postprocess", predictions, prepared, images))
+        return self._results
+
+
+def test_registered_detector_loads_explicit_weights(monkeypatch, tmp_path):
+    import sys
+    from types import SimpleNamespace
+
+    from perception.backends import DetectorSpec
+    from runtime.registry import get
+
+    load = Mock(return_value=Mock())
+    monkeypatch.setitem(sys.modules, "ultralytics", SimpleNamespace(YOLO=load))
+    weights = str(tmp_path / "yolov8s-worldv2.pt")
+    detector = get("detector", "yolo_world").create(DetectorSpec(name="yolo_world", model_path=weights))
+    detector.load_model()
+    load.assert_called_once_with(weights)
+
+
+def test_default_detector_requests_pt_checkpoint(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    load = Mock(return_value=Mock())
+    monkeypatch.setitem(sys.modules, "ultralytics", SimpleNamespace(YOLO=load))
+    YOLOWorldDetector(model_size="s").load_model()
+    load.assert_called_once_with("yolov8s-worldv2.pt")
 
 
 class TestYOLOWorldDetectorInit(unittest.TestCase):
@@ -66,6 +145,7 @@ class TestYOLOWorldDetectorClassCache(unittest.TestCase):
         """第一次 detect() 应设置类别"""
         detector = YOLOWorldDetector()
         detector._model = Mock()
+        detector._model.predictor = None
 
         # Mock predict 返回空结果
         mock_result = Mock()
@@ -84,6 +164,7 @@ class TestYOLOWorldDetectorClassCache(unittest.TestCase):
         """相同类别不应重复调用 set_classes"""
         detector = YOLOWorldDetector(enable_cache=True)
         detector._model = Mock()
+        detector._model.predictor = None
         mock_result = Mock()
         mock_result.boxes = None
         detector._model.predict = Mock(return_value=[mock_result])
@@ -98,6 +179,7 @@ class TestYOLOWorldDetectorClassCache(unittest.TestCase):
         """不同类别应更新"""
         detector = YOLOWorldDetector(enable_cache=True)
         detector._model = Mock()
+        detector._model.predictor = None
         mock_result = Mock()
         mock_result.boxes = None
         detector._model.predict = Mock(return_value=[mock_result])
@@ -152,6 +234,7 @@ class TestYOLOWorldDetectorDetection(unittest.TestCase):
         """空类别返回空列表"""
         detector = YOLOWorldDetector()
         detector._model = Mock()
+        detector._model.predictor = None
         result = detector.detect(
             np.zeros((480, 640, 3), dtype=np.uint8),
             ""
@@ -160,28 +243,15 @@ class TestYOLOWorldDetectorDetection(unittest.TestCase):
 
     def test_detect_returns_detection2d_list(self):
         """detect() 应返回 Detection2D 列表"""
-        import pytest as _pytest
-        torch = _pytest.importorskip("torch", reason="torch not installed")
         detector = YOLOWorldDetector()
         detector._model = Mock()
-
-        import torch
-        # 创建完整的 mock
+        detector._model.predictor = None
         mock_result = Mock()
-        mock_boxes = Mock()
-        mock_boxes.__len__ = Mock(return_value=1)
-
-        box_mock = Mock()
-        box_mock.xyxy = [torch.tensor([[100.0, 100.0, 200.0, 200.0]])]
-        box_mock.conf = [torch.tensor([0.85])]
-        box_mock.cls = [torch.tensor([0])]
-
-        mock_boxes.__getitem__ = Mock(return_value=box_mock)
-
-        def box_range(n):
-            return range(1)
-
-        mock_result.boxes = mock_boxes
+        mock_result.boxes = _Boxes(
+            [[100.0, 100.0, 200.0, 200.0], [20.0, 30.0, 40.0, 50.0]],
+            [0.85, 0.625],
+            [0, 3],
+        )
         detector._model.predict = Mock(return_value=[mock_result])
 
         detections = detector.detect(
@@ -189,7 +259,12 @@ class TestYOLOWorldDetectorDetection(unittest.TestCase):
             "chair . table"
         )
 
-        self.assertIsInstance(detections, list)
+        self.assertEqual(mock_result.boxes.cpu_calls, 1)
+        self.assertEqual([item.label for item in detections], ["chair", "class_3"])
+        self.assertTrue(np.array_equal(detections[0].bbox, [100.0, 100.0, 200.0, 200.0]))
+        self.assertAlmostEqual(detections[0].score, 0.85, places=6)
+        self.assertTrue(np.array_equal(detections[1].bbox, [20.0, 30.0, 40.0, 50.0]))
+        self.assertAlmostEqual(detections[1].score, 0.625, places=6)
 
 
 class TestYOLOWorldDetectorBatchProcessing(unittest.TestCase):
@@ -208,8 +283,105 @@ class TestYOLOWorldDetectorBatchProcessing(unittest.TestCase):
         """空图像列表返回空"""
         detector = YOLOWorldDetector()
         detector._model = Mock()
+        detector._model.predictor = None
         result = detector.detect_batch([], "chair")
         self.assertEqual(len(result), 0)
+
+    def test_batch_transfers_each_result_once_and_preserves_empty_results(self):
+        detector = YOLOWorldDetector()
+        detector._model = Mock()
+        detector._model.predictor = None
+        first = _Boxes([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]], [0.9, 0.8], [1, 0])
+        empty = _Boxes([], [], [])
+        detector._model.predict.return_value = [
+            Mock(boxes=first),
+            Mock(boxes=empty),
+        ]
+
+        detections = detector.detect_batch(
+            [
+                np.zeros((10, 10, 3), dtype=np.uint8),
+                np.zeros((10, 10, 3), dtype=np.uint8),
+            ],
+            "chair . table",
+        )
+
+        self.assertEqual(first.cpu_calls, 1)
+        self.assertEqual(empty.cpu_calls, 0)
+        self.assertEqual([item.label for item in detections[0]], ["table", "chair"])
+        self.assertEqual(detections[1], [])
+
+
+class TestYOLOWorldDetectorPredictorStages(unittest.TestCase):
+    def test_first_prediction_uses_official_predict_then_reuses_warmed_predictor(self):
+        detector = YOLOWorldDetector(confidence=0.41, iou_threshold=0.62, device="cpu")
+        model = Mock()
+        model.predictor = None
+        initial = Mock(boxes=_Boxes([], [], []))
+        warmed = _WarmPredictor([Mock(boxes=_Boxes([], [], []))])
+
+        def initialize(source, **kwargs):
+            model.predictor = warmed
+            self.assertEqual(source.shape, (12, 13, 3))
+            self.assertEqual(
+                kwargs,
+                {"conf": 0.41, "iou": 0.62, "verbose": False, "device": "cpu"},
+            )
+            return [initial]
+
+        model.predict.side_effect = initialize
+        detector._model = model
+        image = np.zeros((12, 13, 3), dtype=np.uint8)
+
+        detector.detect(image, "person")
+        detector.detect(image, "person")
+
+        model.predict.assert_called_once()
+        self.assertEqual(
+            [call[0] for call in warmed.calls],
+            ["setup_source", "preprocess", "inference", "postprocess"],
+        )
+
+    def test_warmed_predictor_receives_batch_and_current_nms_knobs(self):
+        results = [
+            Mock(boxes=_Boxes([[1, 2, 3, 4]], [0.7], [0])),
+            Mock(boxes=_Boxes([[5, 6, 7, 8]], [0.8], [1])),
+        ]
+        predictor = _WarmPredictor(results)
+        model = Mock(predictor=predictor)
+        detector = YOLOWorldDetector(confidence=0.2, iou_threshold=0.3)
+        detector._model = model
+        detector.confidence = 0.44
+        detector.iou_threshold = 0.66
+        images = [
+            np.zeros((10, 11, 3), dtype=np.uint8),
+            np.zeros((12, 13, 3), dtype=np.uint8),
+        ]
+
+        detections = detector.detect_batch(images, "chair . table")
+
+        model.predict.assert_not_called()
+        self.assertIs(predictor.calls[0][1], images)
+        self.assertEqual(predictor.calls[1], ("preprocess", images))
+        self.assertEqual(predictor.args.conf, 0.44)
+        self.assertEqual(predictor.args.iou, 0.66)
+        self.assertFalse(predictor.args.verbose)
+        self.assertEqual([item.label for item in detections[0]], ["chair"])
+        self.assertEqual([item.label for item in detections[1]], ["table"])
+
+    def test_class_change_updates_model_without_reinitializing_predictor(self):
+        predictor = _WarmPredictor([Mock(boxes=_Boxes([], [], []))])
+        model = Mock(predictor=predictor)
+        detector = YOLOWorldDetector(enable_cache=True)
+        detector._model = model
+        image = np.zeros((10, 10, 3), dtype=np.uint8)
+
+        detector.detect(image, "chair")
+        detector.detect(image, "table")
+
+        self.assertEqual(model.set_classes.call_args_list[0].args[0], ["chair"])
+        self.assertEqual(model.set_classes.call_args_list[1].args[0], ["table"])
+        model.predict.assert_not_called()
 
 
 class TestYOLOWorldDetectorStatistics(unittest.TestCase):

@@ -6,6 +6,12 @@
 #include <limits>
 #include <stdexcept>
 #include <string_view>
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
 
 namespace lingtu::recording {
 
@@ -79,10 +85,17 @@ std::string canonical_topic(std::string topic) {
 
 std::filesystem::path recording_executable_path(const std::filesystem::path &invocation) {
   std::error_code error;
+#if defined(_WIN32)
+  wchar_t image[32768]{};
+  const auto length = ::GetModuleFileNameW(nullptr, image, 32768);
+  if (length > 0 && length < 32768) return std::filesystem::path(image);
+  std::filesystem::path executable;
+#else
   auto executable = std::filesystem::canonical("/proc/self/exe", error);
   if (!error) {
     return executable;
   }
+#endif
 
   error.clear();
   executable = std::filesystem::absolute(invocation, error);
@@ -139,7 +152,15 @@ DdsRecordingPlan dds_recording_plan(std::string_view preset,
     return plan;
   }
   plan.selected_topics = explicit_topics;
-  plan.required_topics = explicit_topics;
+  if (preset != "inspection-evidence-v1") {
+    plan.required_topics.erase(
+        std::remove_if(plan.required_topics.begin(), plan.required_topics.end(),
+                       [&](const auto &topic) {
+                         return std::find(explicit_topics.begin(), explicit_topics.end(), topic) ==
+                                explicit_topics.end();
+                       }),
+        plan.required_topics.end());
+  }
   return plan;
 }
 DdsRecordingPlan dds_recording_plan(std::string_view preset) {
@@ -191,6 +212,7 @@ bool is_sensor_replay_topic(const std::string &topic) {
       "/imu/raw",               "/driver/odometry", "/slam/odom_prior",
       "/slam/odometry",         "/slam/state_at_scan", "/slam/registered_cloud",
       "/slam/map_observation",  "/slam/map_cloud",  "/gnss/fix", "/gnss/odom",
+      "/robot/joint_states", "/camera/depth/image_raw", "/camera/color/camera_info",
   };
   const std::string normalized = canonical_topic(topic);
   return std::find(std::begin(kAllowed), std::end(kAllowed), normalized) != std::end(kAllowed);

@@ -1,6 +1,6 @@
 <mujoco model="thunderv4_stair_showcase">
   <compiler angle="radian" autolimits="true"/>
-  <option gravity="0 0 -9.81" timestep="0.002" integrator="RK4"/>
+  <option gravity="0 0 -9.81" timestep="0.005" integrator="RK4" solver="Newton" iterations="100"/>
 
   <visual>
     <global offwidth="1920" offheight="1080"/>
@@ -28,7 +28,7 @@
            directional="true" diffuse="0.34 0.39 0.44" specular="0.05 0.05 0.05"/>
 
     <geom name="floor" type="plane" size="30 10 0.1"
-          rgba="0.28 0.30 0.31 1" material="stairs_floor" conaffinity="1" condim="3" friction="1.0 0.5 0.5"/>
+          rgba="0.28 0.30 0.31 1" material="stairs_floor" conaffinity="1" condim="3" friction="1.0 0.03 0.0002"/>
 
     <geom name="start_marker" type="cylinder" size="0.14 0.012"
           pos="-1.00 -1.20 0.014" material="stairs_start"
@@ -42,29 +42,29 @@
 
     <geom name="lower_landing" type="box" size="0.70 2.20 0.015"
           pos="-0.85 0 0.015" rgba="0.34 0.38 0.40 1" material="stairs_landing"
-          conaffinity="1" condim="3" friction="1.0 0.5 0.5"/>
+          conaffinity="1" condim="3" friction="1.0 0.03 0.0002"/>
 
-    <geom name="step_01" type="box" size="0.18 2.20 0.030" pos="0.20 0 0.030" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.5 0.5"/>
-    <geom name="step_02" type="box" size="0.18 2.20 0.060" pos="0.56 0 0.060" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.5 0.5"/>
-    <geom name="step_03" type="box" size="0.18 2.20 0.090" pos="0.92 0 0.090" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.5 0.5"/>
-    <geom name="step_04" type="box" size="0.18 2.20 0.120" pos="1.28 0 0.120" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.5 0.5"/>
-    <geom name="step_05" type="box" size="0.18 2.20 0.150" pos="1.64 0 0.150" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.5 0.5"/>
-    <geom name="step_06" type="box" size="0.18 2.20 0.180" pos="2.00 0 0.180" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.5 0.5"/>
+    <geom name="step_01" type="box" size="0.18 2.20 0.030" pos="0.20 0 0.030" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.03 0.0002"/>
+    <geom name="step_02" type="box" size="0.18 2.20 0.060" pos="0.56 0 0.060" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.03 0.0002"/>
+    <geom name="step_03" type="box" size="0.18 2.20 0.090" pos="0.92 0 0.090" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.03 0.0002"/>
+    <geom name="step_04" type="box" size="0.18 2.20 0.120" pos="1.28 0 0.120" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.03 0.0002"/>
+    <geom name="step_05" type="box" size="0.18 2.20 0.150" pos="1.64 0 0.150" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.03 0.0002"/>
+    <geom name="step_06" type="box" size="0.18 2.20 0.180" pos="2.00 0 0.180" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.03 0.0002"/>
 
     <geom name="mid_landing" type="box" size="0.42 2.20 0.180"
           pos="2.60 0 0.180" rgba="0.34 0.38 0.40 1" material="stairs_landing"
-          conaffinity="1" condim="3" friction="1.0 0.5 0.5"/>
+          conaffinity="1" condim="3" friction="1.0 0.03 0.0002"/>
 
-    <geom name="step_07" type="box" size="0.18 2.20 0.210" pos="3.18 0 0.210" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.5 0.5"/>
-    <geom name="step_08" type="box" size="0.18 2.20 0.240" pos="3.54 0 0.240" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.5 0.5"/>
-    <geom name="step_09" type="box" size="0.18 2.20 0.270" pos="3.90 0 0.270" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.5 0.5"/>
-    <geom name="step_10" type="box" size="0.18 2.20 0.300" pos="4.26 0 0.300" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.5 0.5"/>
-    <geom name="step_11" type="box" size="0.18 2.20 0.330" pos="4.62 0 0.330" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.5 0.5"/>
-    <geom name="step_12" type="box" size="0.18 2.20 0.360" pos="4.98 0 0.360" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.5 0.5"/>
+    <geom name="step_07" type="box" size="0.18 2.20 0.210" pos="3.18 0 0.210" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.03 0.0002"/>
+    <geom name="step_08" type="box" size="0.18 2.20 0.240" pos="3.54 0 0.240" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.03 0.0002"/>
+    <geom name="step_09" type="box" size="0.18 2.20 0.270" pos="3.90 0 0.270" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.03 0.0002"/>
+    <geom name="step_10" type="box" size="0.18 2.20 0.300" pos="4.26 0 0.300" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.03 0.0002"/>
+    <geom name="step_11" type="box" size="0.18 2.20 0.330" pos="4.62 0 0.330" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.03 0.0002"/>
+    <geom name="step_12" type="box" size="0.18 2.20 0.360" pos="4.98 0 0.360" rgba="0.38 0.36 0.32 1" material="stairs_step" conaffinity="1" condim="3" friction="1.0 0.03 0.0002"/>
 
     <geom name="upper_landing" type="box" size="0.85 2.20 0.360"
           pos="5.85 0 0.360" rgba="0.34 0.38 0.40 1" material="stairs_landing"
-          conaffinity="1" condim="3" friction="1.0 0.5 0.5"/>
+          conaffinity="1" condim="3" friction="1.0 0.03 0.0002"/>
 
     <geom name="edge_01" type="box" size="0.012 2.22 0.006" pos="0.02 0 0.066" rgba="0.03 0.03 0.03 1" contype="0" conaffinity="0"/>
     <geom name="edge_02" type="box" size="0.012 2.22 0.006" pos="0.38 0 0.126" rgba="0.03 0.03 0.03 1" contype="0" conaffinity="0"/>

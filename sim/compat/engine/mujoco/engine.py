@@ -13,6 +13,8 @@ import math
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -30,10 +32,8 @@ from sim.compat.engine.core.sensor import CameraConfig, DiscreteRayConfig, IMUCo
 from sim.compat.engine.core.world import SimWorld, WorldConfig
 from sim.compat.engine.mujoco.camera import MuJoCoCamera
 from sim.compat.engine.mujoco.lidar import MuJoCoLidar
-from sim.compat.engine.mujoco.robot_controller import (
-    DART_TO_MJ,
-    load_policy_runner,
-)
+from sim.runtime.control.policy_loader import load_policy
+from sim.runtime.control.thunder.joints import DART_TO_MJ
 
 DEFAULT_LEG_JOINT_NAMES = THUNDER_V4_JOINT_NAMES
 
@@ -89,7 +89,7 @@ class MuJoCoEngine(SimEngine):
     Implements the SimEngine abstract interface, wrapping:
       - Scene loading (WorldConfig + RobotConfig)
       - Physics stepping (500Hz physics, 50Hz policy)
-      - ONNX gait policy (PolicyRunner)
+      - ONNX gait policy (HistoryPolicy)
       - LiDAR scanning (MuJoCoLidar)
       - Camera rendering (MuJoCoCamera)
     """
@@ -150,6 +150,11 @@ class MuJoCoEngine(SimEngine):
         self._policy_path: str = ""
         self._policy_idle_hold = False
         self._policy_idle_cmd_eps = 1e-4
+        self._cts_previous_physics_dt: float | None = None
+        self._policy_defaults = {
+            name: deepcopy(getattr(self._robot_cfg, name))
+            for name in ("standing_pose", "torque_kp", "torque_kd", "torque_limit", "obs_dim", "history_len", "policy_freq_hz")
+        }
 
         # Joint ID lists (populated after load())
         self._leg_joint_ids: list[int] = []
@@ -200,28 +205,36 @@ class MuJoCoEngine(SimEngine):
         robot_xml = self._robot_cfg.robot_xml
 
         if xml_path:
-            # Check whether XML contains a ground plane (geom in worldbody)
-            # If it is a bare robot.xml (no ground), auto-wrap with a scene
+            import xml.etree.ElementTree as ET
+
             _xml_content = Path(xml_path).read_text(encoding="utf-8", errors="ignore")
-            # Only consider it grounded if it explicitly contains a floor/plane
-            _has_floor = (
-                "floor" in _xml_content.lower() or 'name="ground"' in _xml_content or 'type="plane"' in _xml_content
-            )
-            _has_actuators = "<actuator>" in _xml_content
-            if _has_floor and _has_actuators:
+            scene_root = ET.fromstring(_xml_content)
+
+            def has_static_geometry(body: Any) -> bool:
+                # A joint or mocap body makes its entire subtree non-static;
+                # fixed robot children must not count as environment geometry.
+                if body.find("joint") is not None or body.find("freejoint") is not None:
+                    return False
+                if body.get("mocap", "false") == "true":
+                    return False
+                return body.find("geom") is not None or any(
+                    has_static_geometry(child) for child in body.findall("body")
+                )
+
+            scene_worldbody = scene_root.find("worldbody")
+            _has_environment = scene_worldbody is not None and has_static_geometry(scene_worldbody)
+            _has_actuators = scene_root.find("./actuator/*") is not None
+            if _has_environment and _has_actuators:
                 # Scene already has robot (actuators present) 鈥?use as-is
                 self._model = mujoco.MjModel.from_xml_path(xml_path)
-            elif _has_floor and not _has_actuators:
+            elif _has_environment and not _has_actuators:
                 # Scene has floor but no robot 鈥?merge robot into scene using
                 # structured XML editing so nested placeholder bodies are
                 # removed safely.
                 import copy
-                import xml.etree.ElementTree as ET
 
-                scene_root = ET.fromstring(_xml_content)
                 robot_root = ET.fromstring(Path(robot_xml).read_text(encoding="utf-8", errors="ignore"))
 
-                scene_worldbody = scene_root.find("worldbody")
                 robot_worldbody = robot_root.find("worldbody")
                 if scene_worldbody is None or robot_worldbody is None:
                     self._model = mujoco.MjModel.from_xml_path(xml_path)
@@ -363,24 +376,7 @@ class MuJoCoEngine(SimEngine):
             self._policy = None
         elif policy_path:
             if Path(policy_path).exists():
-                self._policy = load_policy_runner(
-                    policy_path,
-                    cpu_threads=self._robot_cfg.policy_cpu_threads,
-                )
-                from .robot_controller import ThunderV4FlatPolicyRunner
-
-                if isinstance(self._policy, ThunderV4FlatPolicyRunner):
-                    from sim.runtime.control import thunderv4_flat as flat
-
-                    self._velocity_feedback = flat.VelocityFeedback((
-                        self._robot_cfg.max_linear_vel, self._robot_cfg.max_linear_vel,
-                        self._robot_cfg.max_angular_vel,
-                    ))
-                    self._robot_cfg.standing_pose = flat.STANDING_POSE.tolist()
-                    self._robot_cfg.torque_kp = flat.KP.tolist()
-                    self._robot_cfg.torque_kd = flat.KD.tolist()
-                    self._robot_cfg.obs_dim = 53
-                    self._robot_cfg.history_len = 1
+                self._install_policy(policy_path, warm_up=False)
             else:
                 raise FileNotFoundError(f"MuJoCo policy is missing: {policy_path}")
         else:
@@ -395,6 +391,68 @@ class MuJoCoEngine(SimEngine):
             f"drive_mode={self._drive_mode}, "
             f"cameras={list(self._cameras.keys())}"
         )
+
+    @property
+    def active_policy_path(self) -> str:
+        """Return the actual loaded controller artifact, not its requested name."""
+        return self._policy_path if self._policy is not None else ""
+
+    def _install_policy(self, policy_path: str, *, warm_up: bool) -> None:
+        from sim.runtime.control.thunder.cts_policy import CtsPolicy
+        from sim.runtime.control.thunder.legacy_policy import FlatPolicy
+
+        resolved = str(Path(policy_path).resolve())
+        runner = load_policy(resolved, cpu_threads=self._robot_cfg.policy_cpu_threads)
+        if warm_up:
+            gyro, gravity = self._get_imu()
+            joint_position, joint_velocity = self._get_joint_state()
+            runner.reset()
+            runner.warm_up(gyro, gravity, joint_position, joint_velocity)
+        settings = deepcopy(self._policy_defaults)
+        feedback = None
+        if isinstance(runner, CtsPolicy):
+            settings.update(runner.control_settings)
+        elif isinstance(runner, FlatPolicy):
+            from sim.runtime.control.thunder import flat
+
+            feedback = flat.VelocityFeedback((
+                self._robot_cfg.max_linear_vel, self._robot_cfg.max_linear_vel,
+                self._robot_cfg.max_angular_vel,
+            ))
+            settings.update(
+                standing_pose=flat.STANDING_POSE.tolist(),
+                torque_kp=flat.KP.tolist(), torque_kd=flat.KD.tolist(),
+                obs_dim=53, history_len=1,
+            )
+        for name, value in settings.items():
+            setattr(self._robot_cfg, name, value)
+        if self._model is not None:
+            if isinstance(runner, CtsPolicy):
+                if self._cts_previous_physics_dt is None:
+                    self._cts_previous_physics_dt = self._physics_dt
+                self.set_physics_timestep(float(runner.contract["physics_dt"]))
+            elif self._cts_previous_physics_dt is not None:
+                self.set_physics_timestep(self._cts_previous_physics_dt)
+                self._cts_previous_physics_dt = None
+        self._policy = runner
+        self._policy_path = resolved
+        self._velocity_feedback = feedback
+        self._policy_idle_hold = False
+        self._control_dt = 1.0 / self._robot_cfg.policy_freq_hz
+
+    def switch_policy(self, policy_path: str) -> bool:
+        """Replace the controller at a stopped physics tick without resetting truth."""
+        if self._drive_mode != "policy":
+            raise RuntimeError("policy switching requires physical policy drive mode")
+        with self._data_lock:
+            with self._lock:
+                if np.linalg.norm(self._cmd_vel) > self._policy_idle_cmd_eps:
+                    raise RuntimeError("policy switching requires a zero velocity command")
+            if str(Path(policy_path).resolve()) == self.active_policy_path:
+                return False
+            self._install_policy(policy_path, warm_up=True)
+            self._last_policy_update_sim_time = -self._control_dt
+        return True
 
     def _resolve_ids(self) -> None:
         """Resolve body/joint IDs in MuJoCo.
@@ -611,7 +669,10 @@ class MuJoCoEngine(SimEngine):
         if self._drive_mode == "kinematic":
             self._kinematic_base_height = float(self._data.qpos[qadr + 2])
 
+        # Warmup is outside session time. Reset both clocks together so leased
+        # camera/measurement state uses the same epoch as physics snapshots.
         self._sim_time = 0.0
+        self._data.time = self._sim_time
         self._last_policy_update_sim_time = -self._control_dt
         self._sensor_tick_residual_s = 0.0
 
@@ -702,6 +763,8 @@ class MuJoCoEngine(SimEngine):
                     self._refresh_leg_torque_ctrl()
                     mujoco.mj_step(self._model, self._data)
             self._sim_time += self._control_dt
+            if self._drive_mode == "kinematic":
+                self._data.time = self._sim_time
 
         return self.get_robot_state()
 
@@ -738,6 +801,8 @@ class MuJoCoEngine(SimEngine):
                     self._refresh_leg_torque_ctrl()
                     mujoco.mj_step(self._model, self._data)
                 self._sim_time += self._physics_dt
+                if self._drive_mode == "kinematic":
+                    self._data.time = self._sim_time
 
         return self.get_robot_state()
 
@@ -959,6 +1024,11 @@ class MuJoCoEngine(SimEngine):
             - kd_mj[position_mask] * joint_vel_mj[position_mask]
         )
         torques[velocity_mask] = kd_mj[velocity_mask] * (targets_mj[velocity_mask] - joint_vel_mj[velocity_mask])
+        clip_torques = getattr(self._policy, "clip_torques", None)
+        if callable(clip_torques):
+            from sim.runtime.control.thunder.joints import MJ_TO_DART
+
+            return clip_torques(torques[MJ_TO_DART], joint_vel_mj[MJ_TO_DART])[DART_TO_MJ]
         return np.clip(torques, -limit_mj, limit_mj)
 
     # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -970,13 +1040,33 @@ class MuJoCoEngine(SimEngine):
         with self._data_lock:
             return self._get_robot_state_unlocked(robot_id)
 
+    def get_body_pose(self, body_name: str) -> tuple[np.ndarray, np.ndarray]:
+        """Read current integrated body position and wxyz quaternion without stepping."""
+        import mujoco
+
+        with self._data_lock:
+            # mj_step integrates qpos/time after its position-dependent work.
+            # Refresh only kinematics; do not advance time or recompute forces.
+            mujoco.mj_kinematics(self._model, self._data)
+            body = self._data.body(body_name)
+            return body.xpos.copy(), body.xquat.copy()
+
+    @contextmanager
+    def measurement_state(self):
+        """Lease current physical state for read-only sensor extraction.
+
+        Consumers may refresh derived geometry but must not integrate, change
+        qpos/qvel, or retain these mutable references after leaving this scope.
+        """
+        with self._data_lock:
+            yield self._model, self._data
+
     def get_support_clearance(self) -> float:
         """Vertical base clearance above physical terrain, for simulation evidence only."""
         import mujoco
 
         with self._data_lock:
             origin = self._data.xpos[self._base_body_id].copy()
-            base_z = float(origin[2])
             direction = np.array([0.0, 0.0, -1.0], dtype=np.float64)
             hit = np.array([-1], dtype=np.int32)
             robot_root = self._model.body_rootid[self._base_body_id]
@@ -985,25 +1075,35 @@ class MuJoCoEngine(SimEngine):
                 & ((self._model.geom_contype != 0) | (self._model.geom_conaffinity != 0))
             )
             # Skip entire visual/robot-only groups before native ray traversal.
-            # Mixed groups retain the exact per-hit exclusions below.
             geomgroup = np.zeros(6, dtype=np.uint8)
             geomgroup[np.clip(self._model.geom_group[support], 0, 5)] = 1
-            # A ray can enter and leave each excluded visual or robot geometry.
-            for _ in range(2 * self._model.ngeom + 1):
-                distance = float(mujoco.mj_ray(
-                    self._model, self._data, origin, direction, geomgroup, True,
-                    self._base_body_id, hit,
-                ))
-                if distance < 0.0:
-                    return math.nan
-                geom = int(hit[0])
-                origin[2] -= distance
-                is_robot = self._model.body_rootid[self._model.geom_bodyid[geom]] == robot_root
-                physical = self._model.geom_contype[geom] or self._model.geom_conaffinity[geom]
-                if not is_robot and physical:
-                    return base_z - float(origin[2])
-                origin[2] -= 1e-6
-            return math.nan
+            distance = float(mujoco.mj_ray(
+                self._model, self._data, origin, direction, geomgroup, True,
+                self._base_body_id, hit,
+            ))
+            if distance < 0.0:
+                return math.nan
+            if support[int(hit[0])]:
+                return distance
+
+            # A mixed group can contain decoration over a physical tread. Keep
+            # the original ray: advancing past decoration can enter the tread
+            # and miss its top. Query only actual support geometry in this case.
+            nearest = math.inf
+            for geom in np.flatnonzero(support):
+                geom_type = int(self._model.geom_type[geom])
+                if geom_type == mujoco.mjtGeom.mjGEOM_MESH:
+                    distance = mujoco.mj_rayMesh(self._model, self._data, geom, origin, direction)
+                elif geom_type == mujoco.mjtGeom.mjGEOM_HFIELD:
+                    distance = mujoco.mj_rayHfield(self._model, self._data, geom, origin, direction)
+                else:
+                    distance = mujoco.mju_rayGeom(
+                        self._data.geom_xpos[geom], self._data.geom_xmat[geom],
+                        self._model.geom_size[geom], origin, direction, geom_type,
+                    )
+                if 0.0 <= distance < nearest:
+                    nearest = float(distance)
+            return nearest if math.isfinite(nearest) else math.nan
 
     def _get_robot_state_unlocked(self, robot_id: str = "robot_0") -> RobotState:
         del robot_id

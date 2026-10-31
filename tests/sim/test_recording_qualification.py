@@ -310,6 +310,7 @@ def test_qualification_result_rejects_bundle_symlink_before_builder_resolve(
         write_qualification_result(bundle_dir, run_dir)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows junctions require cmd.exe")
 def test_qualification_result_rejects_run_junction_before_builder_resolve(
     tmp_path: Path,
 ) -> None:

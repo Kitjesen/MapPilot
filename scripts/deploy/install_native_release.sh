@@ -52,6 +52,16 @@ USAGE
   esac
 done
 
+source "${PACKAGE_DIR}/scripts/deploy/python-runtime.sh"
+if [[ -z "${LINGTU_PYTHON:-}" ]]; then
+  python_env="${LINGTU_PYTHON_ENV:-${LINGTU_CONFIG_DIR:-/opt/lingtu/config}/python.env}"
+  if [[ -r "${python_env}" ]]; then
+    source "${python_env}"
+  fi
+fi
+PYTHON_BIN="$(resolve_lingtu_python)"
+export LINGTU_PYTHON="${PYTHON_BIN}"
+
 METADATA="${PACKAGE_DIR}/metadata.json"
 CHECKSUMS="${PACKAGE_DIR}/config/native-release-sha256.txt"
 if [[ ! -s "${METADATA}" || ! -s "${CHECKSUMS}" ]]; then
@@ -59,7 +69,7 @@ if [[ ! -s "${METADATA}" || ! -s "${CHECKSUMS}" ]]; then
   exit 1
 fi
 
-VERSION="$(python3 - "${METADATA}" <<'PY'
+VERSION="$("${PYTHON_BIN}" - "${METADATA}" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -89,7 +99,7 @@ TARGET_DIR="${RELEASES_DIR}/${VERSION}"
 CURRENT_RECORD="${STATE_DIR}/current.json"
 RUN_PLAN_PATH=""
 if [[ -s "${CURRENT_RECORD}" ]]; then
-  RUN_PLAN_PATH="$(python3 - "${CURRENT_RECORD}" <<'PY'
+  RUN_PLAN_PATH="$("${PYTHON_BIN}" - "${CURRENT_RECORD}" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -112,7 +122,7 @@ ACTIVE_MAP=""
 if [[ -n "${RUN_PLAN_PATH}" ]]; then
   mapfile -d '' -t ACTIVE_PRODUCT_FACTS < <(
     PYTHONPATH="${PACKAGE_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}" \
-      python3 - "${RUN_PLAN_PATH}" "${CURRENT_RECORD}" <<'PY'
+      "${PYTHON_BIN}" - "${RUN_PLAN_PATH}" "${CURRENT_RECORD}" <<'PY'
 import json
 import sys
 
@@ -171,7 +181,7 @@ if [[ -n "${TEST_ROOT}" || -n "${TEST_CONTROL}" ]]; then
     echo "Installer test mode requires a root and executable fake control" >&2
     exit 1
   fi
-  python3 - \
+  "${PYTHON_BIN}" - \
     "${TEST_ROOT}" \
     "${PACKAGE_DIR}" \
     "${RELEASES_DIR}" \
@@ -247,7 +257,7 @@ product_control() {
   (
     cd "${repo}"
     control_command=(
-      python3 -m lingtu.control
+      "${PYTHON_BIN}" -m lingtu.control
       switch "${ACTIVE_PRODUCT}"
       --robot "${ACTIVE_ROBOT}"
       --env "${ACTIVE_ENV}"

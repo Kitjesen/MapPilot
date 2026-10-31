@@ -1,13 +1,12 @@
-"""Extract the browser's Go2 visual tree from the vendored, unchanged URDF."""
+"""Extract the browser's Go2 visual tree from the installed mount URDF."""
 
 import argparse
 import json
-from pathlib import Path
 import xml.etree.ElementTree as ET
-
+from pathlib import Path
 
 WEB = Path(__file__).resolve().parents[1]
-SOURCE = WEB / "public/assets/robots/go2/urdf/go2_description.urdf"
+SOURCE = WEB / "public/assets/robots/go2/urdf/go2_mid360_flatpack.urdf"
 TARGET = WEB / "src/components/scene3d/robot/go2UrdfSpec.ts"
 
 
@@ -39,7 +38,7 @@ def generate():
                "parent": joint.find("parent").get("link"), "child": joint.find("child").get("link"),
                "origin": origin(joint.find("origin")), "axis": vector(joint.find("axis"), "xyz", "1 0 0")}
               for joint in robot.findall("joint")]
-    rows = ["// Generated from public/assets/robots/go2/urdf/go2_description.urdf.",
+    rows = [f"// Generated from {SOURCE.relative_to(WEB).as_posix()}.",
             "// Regenerate with: python web/scripts/generate-go2-urdf.py", "export const GO2_URDF = {", "  links: ["]
     rows.extend("    " + json.dumps(value, separators=(",", ":")) + "," for value in links)
     rows.extend(["  ],", "  joints: ["])
@@ -56,7 +55,7 @@ if __name__ == "__main__":
     if args.check:
         if TARGET.read_text(encoding="utf-8") != generated:
             raise SystemExit("Go2 visual tree differs from its source URDF; regenerate it.")
-        print("Go2 visual tree matches the official URDF.")
+        print("Go2 visual tree matches the installed mount URDF.")
     else:
         TARGET.write_text(generated, encoding="utf-8", newline="\n")
         print(TARGET)

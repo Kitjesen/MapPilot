@@ -1,0 +1,122 @@
+{
+  "provider": "Poly Haven",
+  "source": {
+    "provider": "Poly Haven",
+    "id": "modular_industrial_pipes_01",
+    "name": "Modular Industrial Pipes 01",
+    "authors": {
+      "Jorge Camacho": "All"
+    },
+    "license": "CC0-1.0",
+    "license_url": "https://polyhaven.com/license",
+    "source_url": "https://polyhaven.com/a/modular_industrial_pipes_01",
+    "resolution": "2k",
+    "model": "modular_industrial_pipes_01_2k.gltf",
+    "files": [
+      {
+        "path": "modular_industrial_pipes_01_2k.gltf",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/2k/modular_industrial_pipes_01/modular_industrial_pipes_01_2k.gltf",
+        "bytes": 15014
+      },
+      {
+        "path": "textures/modular_industrial_pipes_01_group01_nor_gl_2k.jpg",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_industrial_pipes_01/modular_industrial_pipes_01_group01_nor_gl_2k.jpg",
+        "bytes": 2788490
+      },
+      {
+        "path": "textures/modular_industrial_pipes_01_group01_arm_2k.jpg",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_industrial_pipes_01/modular_industrial_pipes_01_group01_arm_2k.jpg",
+        "bytes": 3197008
+      },
+      {
+        "path": "modular_industrial_pipes_01.bin",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/modular_industrial_pipes_01/modular_industrial_pipes_01.bin",
+        "bytes": 515160
+      },
+      {
+        "path": "textures/modular_industrial_pipes_01_group02_nor_gl_2k.jpg",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_industrial_pipes_01/modular_industrial_pipes_01_group02_nor_gl_2k.jpg",
+        "bytes": 2840017
+      },
+      {
+        "path": "textures/modular_industrial_pipes_01_group02_arm_2k.jpg",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_industrial_pipes_01/modular_industrial_pipes_01_group02_arm_2k.jpg",
+        "bytes": 3302784
+      },
+      {
+        "path": "textures/modular_industrial_pipes_01_group02_diff_2k.jpg",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_industrial_pipes_01/modular_industrial_pipes_01_group02_diff_2k.jpg",
+        "bytes": 2024502
+      },
+      {
+        "path": "textures/modular_industrial_pipes_01_group01_diff_2k.jpg",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_industrial_pipes_01/modular_industrial_pipes_01_group01_diff_2k.jpg",
+        "bytes": 1934173
+      }
+    ],
+    "ue_imported": false,
+    "physics_qualified": false
+  },
+  "axes": "Blender Z-up metres; GLB Y-up metres",
+  "bounds_m": [
+    [
+      -0.7035520076751709,
+      -0.17943133413791656,
+      -1.002319574356079
+    ],
+    [
+      0.6992496252059937,
+      0.12816427648067474,
+      0.9523200392723083
+    ]
+  ],
+  "mesh_objects": [
+    "modular_industrial_pipes_01_pipe01",
+    "modular_industrial_pipes_01_pipe02",
+    "modular_industrial_pipes_01_pipe03",
+    "modular_industrial_pipes_01_pipe05",
+    "modular_industrial_pipes_01_pipe06",
+    "modular_industrial_pipes_01_pipe07",
+    "modular_industrial_pipes_01_pipe08",
+    "modular_industrial_pipes_01_pipe04"
+  ],
+  "materials": [
+    "modular_industrial_pipes_01_group01",
+    "modular_industrial_pipes_01_group02"
+  ],
+  "images": [
+    {
+      "name": "modular_industrial_pipes_01_group01_diff",
+      "width": 2048,
+      "height": 2048
+    },
+    {
+      "name": "modular_industrial_pipes_01_group01_metal-modular_industrial_pipes_01_group01_rough",
+      "width": 2048,
+      "height": 2048
+    },
+    {
+      "name": "modular_industrial_pipes_01_group01_nor_gl",
+      "width": 2048,
+      "height": 2048
+    },
+    {
+      "name": "modular_industrial_pipes_01_group02_diff",
+      "width": 2048,
+      "height": 2048
+    },
+    {
+      "name": "modular_industrial_pipes_01_group02_metal-modular_industrial_pipes_01_group02_rough",
+      "width": 2048,
+      "height": 2048
+    },
+    {
+      "name": "modular_industrial_pipes_01_group02_nor_gl",
+      "width": 2048,
+      "height": 2048
+    }
+  ],
+  "processing": "glTF import, embedded-texture GLB and FBX export; no decimation or geometry edits",
+  "ue_imported": false,
+  "physics_qualified": false
+}

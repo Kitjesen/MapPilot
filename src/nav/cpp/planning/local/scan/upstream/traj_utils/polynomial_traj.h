@@ -2,7 +2,7 @@
 #define _POLYNOMIAL_TRAJ_H
 
 // Ported from SCAN-Planner traj_utils/polynomial_traj.h at commit 348e8a5.
-// ROS-free namespace adaptation only; polynomial formulas are unchanged.
+// ROS-free adaptation with local trajectory-statistics correctness fixes.
 // SPDX-License-Identifier: Apache-2.0
 
 #include <Eigen/Eigen>
@@ -200,19 +200,27 @@ public:
 
   double getMeanVel()
   {
-    double mean_vel = length / time_sum;
+    return length / time_sum;
   }
 
   double getAccCost()
   {
     double cost = 0.0;
-    int order = cxs[0].size();
-
-    for (int s = 0; s < times.size(); ++s)
+    for (std::size_t s = 0; s < times.size(); ++s)
     {
-      Eigen::Vector3d um;
-      um(0) = 2 * cxs[s][order - 3], um(1) = 2 * cys[s][order - 3], um(2) = 2 * czs[s][order - 3];
-      cost += um.squaredNorm() * times[s];
+      const int order = static_cast<int>(cxs[s].size());
+      for (int i = 2; i < order; ++i)
+        for (int j = 2; j < order; ++j)
+        {
+          const int first = order - 1 - i;
+          const int second = order - 1 - j;
+          const double coefficient =
+              cxs[s][first] * cxs[s][second] +
+              cys[s][first] * cys[s][second] +
+              czs[s][first] * czs[s][second];
+          cost += coefficient * i * (i - 1) * j * (j - 1) *
+                  pow(times[s], i + j - 3) / (i + j - 3);
+        }
     }
 
     return cost;
@@ -275,7 +283,7 @@ public:
       {
         Eigen::VectorXd tv(order - 1);
         for (int i = 0; i < order - 1; ++i)
-          tv(i) = pow(ts, i);
+          tv(i) = pow(eval_t, i);
         Eigen::Vector3d vel;
         vel(0) = tv.dot(vx), vel(1) = tv.dot(vy), vel(2) = tv.dot(vz);
         double vn = vel.norm();
@@ -314,7 +322,7 @@ public:
       {
         Eigen::VectorXd tv(order - 2);
         for (int i = 0; i < order - 2; ++i)
-          tv(i) = pow(ts, i);
+          tv(i) = pow(eval_t, i);
         Eigen::Vector3d acc;
         acc(0) = tv.dot(ax), acc(1) = tv.dot(ay), acc(2) = tv.dot(az);
         double an = acc.norm();

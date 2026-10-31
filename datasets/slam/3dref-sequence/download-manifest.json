@@ -1,0 +1,419 @@
+{
+  "dataset": "3DRef Seq1",
+  "status": "complete",
+  "download_complete": true,
+  "date": "2026-10-20",
+  "source_url": "https://robotics.shanghaitech.edu.cn/static/datasets/3DRef/seq1.tar.bz2",
+  "files": [
+    {
+      "path": "raw/seq1.tar.bz2",
+      "bytes": 21734882202,
+      "expected_bytes": 21734882202,
+      "status": "downloaded_complete_bzip2_tar_verified",
+      "source_url": "https://robotics.shanghaitech.edu.cn/static/datasets/3DRef/seq1.tar.bz2"
+    },
+    {
+      "path": "extracted/raw/seq1/mesh/labeledfinal.obj",
+      "bytes": 229624717,
+      "expected_bytes": 229624717,
+      "status": "extracted_exact_member_bytes",
+      "archive_member": "raw/seq1/mesh/labeledfinal.obj"
+    },
+    {
+      "path": "extracted/raw/seq1/mesh/labeledfinalmodel.png",
+      "bytes": 22485738,
+      "expected_bytes": 22485738,
+      "status": "extracted_exact_member_bytes",
+      "archive_member": "raw/seq1/mesh/labeledfinalmodel.png"
+    },
+    {
+      "path": "extracted/raw/seq1/mesh/labeledfinal.mtl",
+      "bytes": 206,
+      "expected_bytes": 206,
+      "status": "extracted_exact_member_bytes",
+      "archive_member": "raw/seq1/mesh/labeledfinal.mtl"
+    },
+    {
+      "path": "extracted/raw/seq1/mesh/meshout.ply",
+      "bytes": 7602936,
+      "expected_bytes": 7602936,
+      "status": "extracted_exact_member_bytes",
+      "archive_member": "raw/seq1/mesh/meshout.ply"
+    },
+    {
+      "path": "extracted/raw/seq1/hesai_pose.txt",
+      "bytes": 417471,
+      "expected_bytes": 417471,
+      "status": "extracted_exact_member_bytes",
+      "archive_member": "raw/seq1/hesai_pose.txt"
+    },
+    {
+      "path": "extracted/raw/seq1/livox_pose.txt",
+      "bytes": 416189,
+      "expected_bytes": 416189,
+      "status": "extracted_exact_member_bytes",
+      "archive_member": "raw/seq1/livox_pose.txt"
+    },
+    {
+      "path": "extracted/raw/seq1/ouster_pose.txt",
+      "bytes": 416436,
+      "expected_bytes": 416436,
+      "status": "extracted_exact_member_bytes",
+      "archive_member": "raw/seq1/ouster_pose.txt"
+    },
+    {
+      "path": "extracted/raw/seq1/trajectory.txt",
+      "bytes": 688905,
+      "expected_bytes": 688905,
+      "status": "extracted_exact_member_bytes",
+      "archive_member": "raw/seq1/trajectory.txt"
+    },
+    {
+      "path": "extracted/raw/seq1/vo_kf.txt",
+      "bytes": 44986,
+      "expected_bytes": 44986,
+      "status": "extracted_exact_member_bytes",
+      "archive_member": "raw/seq1/vo_kf.txt"
+    },
+    {
+      "path": "extracted/raw/seq1/raycast/pointcloud.zip",
+      "bytes": 20465534960,
+      "expected_bytes": 20465534960,
+      "status": "extracted_exact_bytes_all_zip_member_crc_verified",
+      "archive_member": "raw/seq1/raycast/pointcloud.zip"
+    },
+    {
+      "path": "metadata/archive-inspection.json",
+      "bytes": 1885,
+      "status": "retained_report_or_provenance"
+    },
+    {
+      "path": "metadata/archive-members.jsonl",
+      "bytes": 45443,
+      "status": "retained_report_or_provenance"
+    },
+    {
+      "path": "metadata/cloud-files.jsonl",
+      "bytes": 7433213,
+      "status": "retained_report_or_provenance"
+    },
+    {
+      "path": "metadata/download-state.json",
+      "bytes": 10351,
+      "status": "retained_report_or_provenance"
+    },
+    {
+      "path": "metadata/large-member-header.json",
+      "bytes": 1268,
+      "status": "retained_report_or_provenance"
+    },
+    {
+      "path": "metadata/pose-inspection.json",
+      "bytes": 2419,
+      "status": "retained_report_or_provenance"
+    },
+    {
+      "path": "metadata/project-page.html",
+      "bytes": 12589,
+      "status": "retained_report_or_provenance"
+    },
+    {
+      "path": "metadata/sequence-audit.json",
+      "bytes": 6780,
+      "status": "retained_report_or_provenance"
+    },
+    {
+      "path": "metadata/validation-method.json",
+      "bytes": 1445,
+      "status": "retained_report_or_provenance"
+    },
+    {
+      "path": "metadata/zip-inspection.json",
+      "bytes": 7041,
+      "status": "retained_report_or_provenance"
+    },
+    {
+      "path": "metadata/zip-members.jsonl",
+      "bytes": 1210728,
+      "status": "retained_report_or_provenance"
+    }
+  ],
+  "validation_status": "all_zip_members_crc_verified_all_ply_headers_rows_checked_and_pose_paired",
+  "all_vertex_values_parsed": false,
+  "numeric_validation_scope": "Every PLY: complete ZIP decode/CRC, header/property validation, total point row count, exact file bytes. Numeric/label/return validation only for retained previously fully parsed frames and 12 time-uniform representative frames per sensor. No claim of every unsampled row column/numeric validation.",
+  "representative_sampling": "12 chronological quantiles including first/last per sensor; earlier 708 fully parsed frames retained without re-extraction.",
+  "pointcloud_inventory": {
+    "path": "metadata/cloud-files.jsonl",
+    "frames": 11196,
+    "points": 541971097,
+    "bytes": 59697522615,
+    "status": "all_files_extracted_crc_verified_and_ply_headers_rows_checked",
+    "sensors": {
+      "hesai": {
+        "frames": 3732,
+        "points": 128532365,
+        "bytes": 14307689813,
+        "formats": {
+          "ascii": 3732
+        },
+        "properties": [
+          "intensity",
+          "label",
+          "nx",
+          "ny",
+          "nz",
+          "return",
+          "ring",
+          "x",
+          "y",
+          "z"
+        ],
+        "point_time_fields": [],
+        "pose_rows": 3732,
+        "pose_without_cloud": 0,
+        "cloud_without_pose": 0,
+        "exact_source_timestamp_pairing": true,
+        "first_timestamp": "1689496219.652560",
+        "last_timestamp": "1689496594.934118",
+        "duration_s": "375.281558",
+        "dt_min_s": "0.097930",
+        "dt_median_s": "0.100018",
+        "dt_max_s": "2.000459",
+        "gaps_over_150ms": [
+          {
+            "from": "1689496393.345950",
+            "to": "1689496393.499811",
+            "gap_s": "0.153861"
+          },
+          {
+            "from": "1689496433.099645",
+            "to": "1689496433.252700",
+            "gap_s": "0.153055"
+          },
+          {
+            "from": "1689496517.538110",
+            "to": "1689496519.538569",
+            "gap_s": "2.000459"
+          },
+          {
+            "from": "1689496537.438081",
+            "to": "1689496537.599715",
+            "gap_s": "0.161634"
+          },
+          {
+            "from": "1689496548.999684",
+            "to": "1689496549.158285",
+            "gap_s": "0.158601"
+          }
+        ],
+        "numeric_validation": {
+          "fully_parsed_frames": 716,
+          "fully_parsed_points": 24640228,
+          "representative_sample_frames": 12,
+          "label_counts": [
+            416157,
+            18893844,
+            791984,
+            817255,
+            729006,
+            2618605,
+            373377
+          ],
+          "return_counts": {
+            "1": 22827482,
+            "2": 1812746
+          },
+          "nonfinite_xyz_points": 0,
+          "scope": "Counts cover only fully parsed frames, not the entire sensor sequence."
+        }
+      },
+      "livox": {
+        "frames": 3732,
+        "points": 91865754,
+        "bytes": 10066735038,
+        "formats": {
+          "ascii": 3732
+        },
+        "properties": [
+          "intensity",
+          "label",
+          "nx",
+          "ny",
+          "nz",
+          "return",
+          "ring",
+          "x",
+          "y",
+          "z"
+        ],
+        "point_time_fields": [],
+        "pose_rows": 3732,
+        "pose_without_cloud": 0,
+        "cloud_without_pose": 0,
+        "exact_source_timestamp_pairing": true,
+        "first_timestamp": "1689496219.652560",
+        "last_timestamp": "1689496594.934118",
+        "duration_s": "375.281558",
+        "dt_min_s": "0.097930",
+        "dt_median_s": "0.100018",
+        "dt_max_s": "2.000459",
+        "gaps_over_150ms": [
+          {
+            "from": "1689496393.345950",
+            "to": "1689496393.499811",
+            "gap_s": "0.153861"
+          },
+          {
+            "from": "1689496433.099645",
+            "to": "1689496433.252700",
+            "gap_s": "0.153055"
+          },
+          {
+            "from": "1689496517.538110",
+            "to": "1689496519.538569",
+            "gap_s": "2.000459"
+          },
+          {
+            "from": "1689496537.438081",
+            "to": "1689496537.599715",
+            "gap_s": "0.161634"
+          },
+          {
+            "from": "1689496548.999684",
+            "to": "1689496549.158285",
+            "gap_s": "0.158601"
+          }
+        ],
+        "numeric_validation": {
+          "fully_parsed_frames": 12,
+          "fully_parsed_points": 281751,
+          "representative_sample_frames": 12,
+          "label_counts": [
+            7100,
+            138277,
+            14853,
+            964,
+            8581,
+            89479,
+            22497
+          ],
+          "return_counts": {
+            "1": 244122,
+            "2": 31912,
+            "3": 5714,
+            "0": 3
+          },
+          "nonfinite_xyz_points": 0,
+          "scope": "Counts cover only fully parsed frames, not the entire sensor sequence."
+        }
+      },
+      "ouster": {
+        "frames": 3732,
+        "points": 321572978,
+        "bytes": 35323097764,
+        "formats": {
+          "ascii": 3732
+        },
+        "properties": [
+          "intensity",
+          "label",
+          "nx",
+          "ny",
+          "nz",
+          "return",
+          "ring",
+          "x",
+          "y",
+          "z"
+        ],
+        "point_time_fields": [],
+        "pose_rows": 3732,
+        "pose_without_cloud": 0,
+        "cloud_without_pose": 0,
+        "exact_source_timestamp_pairing": true,
+        "first_timestamp": "1689496219.652560",
+        "last_timestamp": "1689496594.934118",
+        "duration_s": "375.281558",
+        "dt_min_s": "0.097930",
+        "dt_median_s": "0.100018",
+        "dt_max_s": "2.000459",
+        "gaps_over_150ms": [
+          {
+            "from": "1689496393.345950",
+            "to": "1689496393.499811",
+            "gap_s": "0.153861"
+          },
+          {
+            "from": "1689496433.099645",
+            "to": "1689496433.252700",
+            "gap_s": "0.153055"
+          },
+          {
+            "from": "1689496517.538110",
+            "to": "1689496519.538569",
+            "gap_s": "2.000459"
+          },
+          {
+            "from": "1689496537.438081",
+            "to": "1689496537.599715",
+            "gap_s": "0.161634"
+          },
+          {
+            "from": "1689496548.999684",
+            "to": "1689496549.158285",
+            "gap_s": "0.158601"
+          }
+        ],
+        "numeric_validation": {
+          "fully_parsed_frames": 12,
+          "fully_parsed_points": 1027999,
+          "representative_sample_frames": 12,
+          "label_counts": [
+            17635,
+            864053,
+            11153,
+            6266,
+            27132,
+            93174,
+            8586
+          ],
+          "return_counts": {
+            "1": 1024540,
+            "2": 3459
+          },
+          "nonfinite_xyz_points": 0,
+          "scope": "Counts cover only fully parsed frames, not the entire sensor sequence."
+        }
+      }
+    }
+  },
+  "validation_reports": {
+    "archive": "metadata/archive-inspection.json",
+    "zip": "metadata/zip-inspection.json",
+    "pose": "metadata/pose-inspection.json",
+    "source_time_duplicate_and_schema_audit": "metadata/sequence-audit.json"
+  },
+  "pairing_policy": "Decimal source times audited; exact equality reported; one-to-one matching at pose six-decimal precision; no nearest-neighbor, dropping, or interpolation",
+  "pose_source": "MA-LIO estimated/aligned trajectory; not independent external trajectory ground truth",
+  "coordinate_convention": {
+    "pointcloud": "sensor local coordinates",
+    "pose_columns": "timestamp x y z qx qy qz qw",
+    "transform": "p_global = R(q) * p_lidar + t",
+    "reference": "https://github.com/STAR-Center/Reflection_detection/blob/3d4bb102f0c13486fb430f5ad01868b9232d0c0a/src/multiple_frame_3dref.cpp#L110-L142"
+  },
+  "labels": {
+    "0": "未标注（mesh范围之外）",
+    "1": "正常表面",
+    "2": "玻璃表面",
+    "3": "镜面表面",
+    "4": "其他反射材质表面",
+    "5": "虚拟反射点",
+    "6": "玻璃等透明物体后方的真实表面/障碍物"
+  },
+  "rgb_images": "not expanded; complete source archive retained",
+  "imu_or_rosbag_filename_matches": [],
+  "data_license": "not established; website footer CC BY-SA is not dataset license; commercial use and redistribution authorization not established",
+  "literature_index": "../../README.md",
+  "hashes_computed": false,
+  "algorithm_benchmark": "not_run"
+}

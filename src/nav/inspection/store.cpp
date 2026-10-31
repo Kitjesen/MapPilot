@@ -226,7 +226,6 @@ std::string SerializeCheckpointPayload(const TaskEvent& event) {
   AppendField(&payload, "event_request_id", HexEncode(event.request_id));
   AppendField(&payload, "state", std::to_string(static_cast<std::int32_t>(status.state)));
   AppendField(&payload, "task_id", HexEncode(status.task_id));
-  AppendField(&payload, "run_id", HexEncode(status.run_id));
   AppendField(&payload, "command_request_id", HexEncode(status.request_id));
   AppendField(&payload, "map_id", HexEncode(status.map_id));
   AppendField(&payload, "map_content_epoch", std::to_string(status.map_content_epoch));
@@ -236,7 +235,6 @@ std::string SerializeCheckpointPayload(const TaskEvent& event) {
   AppendField(&payload, "point_count", std::to_string(status.point_count));
   AppendField(&payload, "loop_index", std::to_string(status.loop_index));
   AppendField(&payload, "retry_count", std::to_string(status.retry_count));
-  AppendField(&payload, "point_id", HexEncode(status.point_id));
   AppendField(&payload, "action", HexEncode(status.action));
   AppendField(&payload, "action_request_id", HexEncode(status.action_request_id));
   AppendField(&payload, "evidence_id", HexEncode(status.evidence_id));
@@ -272,7 +270,16 @@ bool ParseCheckpointPayload(
     const std::string& payload,
     TaskEvent* event,
     std::string* error) {
-  static constexpr std::array<std::string_view, 24U> kFields{
+  static constexpr std::array<std::string_view, 22U> kFields{
+      "sequence",          "timestamp",       "kind",        "event_request_id",
+      "state",             "task_id",         "command_request_id",
+      "map_id",            "map_content_epoch",     "route_id",    "route_revision",
+      "point_index",       "point_count",     "loop_index",  "retry_count",
+      "action",            "action_request_id",
+      "evidence_id",       "phase_started_at", "stable_since", "deadline",
+      "reason",
+  };
+  static constexpr std::array<std::string_view, 24U> kLegacyFields{
       "sequence",          "timestamp",       "kind",        "event_request_id",
       "state",             "task_id",         "run_id",      "command_request_id",
       "map_id",            "map_content_epoch",     "route_id",    "route_revision",
@@ -287,10 +294,15 @@ bool ParseCheckpointPayload(
     return false;
   }
 
+  const std::size_t header_size = std::char_traits<char>::length(kCheckpointHeader);
+  const bool legacy = payload.find("\nrun_id\t", header_size) != std::string::npos;
+  const std::vector<std::string_view> fields = legacy
+      ? std::vector<std::string_view>(kLegacyFields.begin(), kLegacyFields.end())
+      : std::vector<std::string_view>(kFields.begin(), kFields.end());
   std::vector<std::string_view> values;
-  values.reserve(kFields.size());
-  std::size_t begin = std::char_traits<char>::length(kCheckpointHeader);
-  for (std::size_t index = 0U; index < kFields.size(); ++index) {
+  values.reserve(fields.size());
+  std::size_t begin = header_size;
+  for (std::size_t index = 0U; index < fields.size(); ++index) {
     const auto end = payload.find('\n', begin);
     if (end == std::string::npos) {
       if (error != nullptr) *error = "checkpoint_field_missing";
@@ -300,8 +312,8 @@ bool ParseCheckpointPayload(
     const auto separator = line.find('\t');
     if (separator == std::string_view::npos ||
         line.find('\t', separator + 1U) != std::string_view::npos ||
-        line.substr(0U, separator) != kFields[index]) {
-      if (error != nullptr) *error = "checkpoint_field_invalid:" + std::string(kFields[index]);
+        line.substr(0U, separator) != fields[index]) {
+      if (error != nullptr) *error = "checkpoint_field_invalid:" + std::string(fields[index]);
       return false;
     }
     values.push_back(line.substr(separator + 1U));
@@ -323,24 +335,38 @@ bool ParseCheckpointPayload(
       !HexDecode(values[3], &parsed.request_id) ||
       !ParseInteger(values[4], &state) ||
       !HexDecode(values[5], &parsed.status.task_id) ||
-      !HexDecode(values[6], &parsed.status.run_id) ||
-      !HexDecode(values[7], &parsed.status.request_id) ||
-      !HexDecode(values[8], &parsed.status.map_id) ||
-      !ParseInteger(values[9], &parsed.status.map_content_epoch) ||
-      !HexDecode(values[10], &parsed.status.route_id) ||
-      !ParseInteger(values[11], &parsed.status.route_revision) ||
-      !ParseInteger(values[12], &point_index) ||
-      !ParseInteger(values[13], &point_count) ||
-      !ParseInteger(values[14], &parsed.status.loop_index) ||
-      !ParseInteger(values[15], &parsed.status.retry_count) ||
-      !HexDecode(values[16], &parsed.status.point_id) ||
-      !HexDecode(values[17], &parsed.status.action) ||
-      !HexDecode(values[18], &parsed.status.action_request_id) ||
-      !HexDecode(values[19], &parsed.status.evidence_id) ||
-      !ParseDouble(values[20], &parsed.status.phase_started_at_s) ||
-      !ParseDouble(values[21], &parsed.status.stable_since_s) ||
-      !ParseDouble(values[22], &parsed.status.deadline_s) ||
-      !HexDecode(values[23], &parsed.status.reason) ||
+      !(legacy ? HexDecode(values[7], &parsed.status.request_id)
+               : HexDecode(values[6], &parsed.status.request_id)) ||
+      !(legacy ? HexDecode(values[8], &parsed.status.map_id)
+               : HexDecode(values[7], &parsed.status.map_id)) ||
+      !(legacy ? ParseInteger(values[9], &parsed.status.map_content_epoch)
+               : ParseInteger(values[8], &parsed.status.map_content_epoch)) ||
+      !(legacy ? HexDecode(values[10], &parsed.status.route_id)
+               : HexDecode(values[9], &parsed.status.route_id)) ||
+      !(legacy ? ParseInteger(values[11], &parsed.status.route_revision)
+               : ParseInteger(values[10], &parsed.status.route_revision)) ||
+      !(legacy ? ParseInteger(values[12], &point_index)
+               : ParseInteger(values[11], &point_index)) ||
+      !(legacy ? ParseInteger(values[13], &point_count)
+               : ParseInteger(values[12], &point_count)) ||
+      !(legacy ? ParseInteger(values[14], &parsed.status.loop_index)
+               : ParseInteger(values[13], &parsed.status.loop_index)) ||
+      !(legacy ? ParseInteger(values[15], &parsed.status.retry_count)
+               : ParseInteger(values[14], &parsed.status.retry_count)) ||
+      !(legacy ? HexDecode(values[17], &parsed.status.action)
+               : HexDecode(values[15], &parsed.status.action)) ||
+      !(legacy ? HexDecode(values[18], &parsed.status.action_request_id)
+               : HexDecode(values[16], &parsed.status.action_request_id)) ||
+      !(legacy ? HexDecode(values[19], &parsed.status.evidence_id)
+               : HexDecode(values[17], &parsed.status.evidence_id)) ||
+      !(legacy ? ParseDouble(values[20], &parsed.status.phase_started_at_s)
+               : ParseDouble(values[18], &parsed.status.phase_started_at_s)) ||
+      !(legacy ? ParseDouble(values[21], &parsed.status.stable_since_s)
+               : ParseDouble(values[19], &parsed.status.stable_since_s)) ||
+      !(legacy ? ParseDouble(values[22], &parsed.status.deadline_s)
+               : ParseDouble(values[20], &parsed.status.deadline_s)) ||
+      !(legacy ? HexDecode(values[23], &parsed.status.reason)
+               : HexDecode(values[21], &parsed.status.reason)) ||
       point_index > std::numeric_limits<std::size_t>::max() ||
       point_count > std::numeric_limits<std::size_t>::max()) {
     if (error != nullptr) *error = "checkpoint_value_invalid";
@@ -355,7 +381,7 @@ bool ParseCheckpointPayload(
     if (error != nullptr) *error = "checkpoint_event_invalid:" + validation.reason;
     return false;
   }
-  if (SerializeCheckpointPayload(parsed) != payload) {
+  if (!legacy && SerializeCheckpointPayload(parsed) != payload) {
     if (error != nullptr) *error = "checkpoint_not_canonical";
     return false;
   }
@@ -423,11 +449,12 @@ StoreResult Store::Put(const Route& route) {
 
   std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
   if (!out) return {false, "route_temporary_open_failed"};
+  out << std::setprecision(17);
   out << kHeader << "\n";
   out << "R\t" << route.id << "\t" << route.name << "\t" << route.map_id << "\t"
       << route.map_content_epoch << "\t" << route.revision << "\t" << route.loop_count << "\t"
-      << FailurePolicyName(route.failure_policy) << "\t" << route.max_retries << "\n";
-  out << std::setprecision(17);
+      << FailurePolicyName(route.failure_policy) << "\t" << route.max_retries << "\t"
+      << route.loop_interval_s << "\n";
   for (const auto& point : route.points) {
     out << "P\t" << point.id << "\t" << point.frame_id << "\t"
         << point.x_m << "\t" << point.y_m << "\t" << point.z_m << "\t"
@@ -458,7 +485,8 @@ std::optional<Route> Store::Get(
   if (!std::getline(in, line) || line != kHeader) return std::nullopt;
   if (!std::getline(in, line)) return std::nullopt;
   const auto route_fields = SplitTab(line);
-  if (route_fields.size() != 9U || route_fields[0] != "R") return std::nullopt;
+  if ((route_fields.size() != 9U && route_fields.size() != 10U) ||
+      route_fields[0] != "R") return std::nullopt;
   try {
     Route route;
     route.id = route_fields[1];
@@ -469,6 +497,9 @@ std::optional<Route> Store::Get(
     route.loop_count = ParseNumber<std::uint32_t>(route_fields[6]);
     route.failure_policy = ParsePolicy(route_fields[7]);
     route.max_retries = ParseNumber<std::uint32_t>(route_fields[8]);
+    if (route_fields.size() == 10U) {
+      route.loop_interval_s = ParseNumber<double>(route_fields[9]);
+    }
     while (std::getline(in, line)) {
       const auto fields = SplitTab(line);
       if (fields.size() != 13U || fields[0] != "P") return std::nullopt;
@@ -672,6 +703,7 @@ std::string RouteToJson(const Route& route) {
       << "\"map_content_epoch\":" << route.map_content_epoch << ","
       << "\"revision\":" << route.revision << ","
       << "\"loop_count\":" << route.loop_count << ","
+      << "\"loop_interval_s\":" << route.loop_interval_s << ","
       << "\"failure_policy\":\"" << FailurePolicyName(route.failure_policy) << "\","
       << "\"max_retries\":" << route.max_retries << ",\"points\":[";
   for (std::size_t i = 0; i < route.points.size(); ++i) {
@@ -714,7 +746,6 @@ std::string RunStatusToJson(const RunStatus& status) {
   out << std::setprecision(17)
       << "{\"schema_version\":\"nav.inspection.status.v1\","
       << "\"task_id\":\"" << EscapeJson(status.task_id) << "\","
-      << "\"run_id\":\"" << EscapeJson(status.run_id) << "\","
       << "\"request_id\":\"" << EscapeJson(status.request_id) << "\","
       << "\"map_id\":\"" << EscapeJson(status.map_id) << "\","
       << "\"map_content_epoch\":" << status.map_content_epoch << ','
@@ -726,7 +757,6 @@ std::string RunStatusToJson(const RunStatus& status) {
       << "\"point_count\":" << status.point_count << ','
       << "\"loop_index\":" << status.loop_index << ','
       << "\"retry_count\":" << status.retry_count << ','
-      << "\"point_id\":\"" << EscapeJson(status.point_id) << "\","
       << "\"action\":\"" << EscapeJson(status.action) << "\","
       << "\"action_request_id\":\"" << EscapeJson(status.action_request_id) << "\","
       << "\"evidence_id\":\"" << EscapeJson(status.evidence_id) << "\","
@@ -747,7 +777,6 @@ std::string TaskEventToJson(const TaskEvent& event) {
       << "\"kind\":\"" << TaskEventKindName(event.kind) << "\","
       << "\"task_id\":\"" << EscapeJson(status.task_id) << "\","
       << "\"request_id\":\"" << EscapeJson(event.request_id) << "\","
-      << "\"command_request_id\":\"" << EscapeJson(status.request_id) << "\","
       << "\"map_id\":\"" << EscapeJson(status.map_id) << "\","
       << "\"map_content_epoch\":" << status.map_content_epoch << ','
       << "\"route_id\":\"" << EscapeJson(status.route_id) << "\","
@@ -758,7 +787,6 @@ std::string TaskEventToJson(const TaskEvent& event) {
       << "\"point_count\":" << status.point_count << ','
       << "\"loop_index\":" << status.loop_index << ','
       << "\"retry_count\":" << status.retry_count << ','
-      << "\"point_id\":\"" << EscapeJson(status.point_id) << "\","
       << "\"action\":\"" << EscapeJson(status.action) << "\","
       << "\"action_request_id\":\"" << EscapeJson(status.action_request_id) << "\","
       << "\"evidence_id\":\"" << EscapeJson(status.evidence_id) << "\","

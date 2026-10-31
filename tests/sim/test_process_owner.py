@@ -89,6 +89,8 @@ while True:
 
         owner.terminate(process, timeout_s=3.0)
 
+        if os.name == "nt":
+            assert _process_has_exited(child_pid)
         deadline = time.monotonic() + 3.0
         while not _process_has_exited(child_pid) and time.monotonic() < deadline:
             time.sleep(0.01)

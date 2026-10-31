@@ -1,4 +1,5 @@
 #include "lingtu/recording/recording_manager.hpp"
+#include "lingtu/recording/camera_recording.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -320,7 +321,35 @@ void replace_file(const std::filesystem::path &source, const std::filesystem::pa
 #endif
 }
 
-void write_manifest(const RecordingStatus &status) {
+void write_manifest(RecordingStatus &status) {
+  if (status.state == RecordingState::kCompleted || status.state == RecordingState::kFailed) {
+    for (auto &child : status.children) {
+      if (status.state == RecordingState::kFailed) {
+        for (auto &artifact : child.artifacts) {
+          std::error_code error;
+          const auto final_artifact = status.session_directory / artifact;
+          auto partial = artifact;
+          partial += ".tmp";
+          if (!std::filesystem::is_regular_file(final_artifact, error) &&
+              std::filesystem::is_regular_file(status.session_directory / partial, error)) {
+            artifact = std::move(partial);
+          }
+        }
+        child.artifacts.erase(
+            std::remove_if(child.artifacts.begin(), child.artifacts.end(), [&](const auto &artifact) {
+              std::error_code error;
+              return !std::filesystem::is_regular_file(status.session_directory / artifact, error);
+            }), child.artifacts.end());
+      }
+      for (const auto &log : {child.stdout_log, child.stderr_log}) {
+        std::error_code error;
+        if (!log.empty() && std::filesystem::is_regular_file(status.session_directory / log, error) &&
+            std::find(child.artifacts.begin(), child.artifacts.end(), log) == child.artifacts.end()) {
+          child.artifacts.push_back(log);
+        }
+      }
+    }
+  }
   const auto final_path = status.session_directory / "session.json";
   const auto temporary_path = status.session_directory / "session.json.tmp";
   const auto content = manifest_json(status);
@@ -563,7 +592,29 @@ class RecordingManager::Impl {
         }
       }
     }
-    for (const auto &child : current.children) {
+    for (auto &child : current.children) {
+      // The camera index is the authoritative list of committed video segments.
+      // Export them with the index instead of silently producing an index-only download.
+      if (child.name == "camera_color" &&
+          std::filesystem::is_regular_file(current.session_directory / "camera_color.mcap")) {
+        try {
+          const auto index_path = current.session_directory / "camera_color.mcap";
+          for (const auto &segment : read_camera_segment_index(index_path)) {
+            const auto path = resolve_camera_segment_path(index_path, segment.relative_path);
+            const auto relative = path.lexically_relative(current.session_directory);
+            if (!relative_artifact_path(relative)) {
+              throw std::runtime_error("camera segment is outside its recording session");
+            }
+            if (std::find(child.artifacts.begin(), child.artifacts.end(), relative) ==
+                child.artifacts.end()) {
+              child.artifacts.push_back(relative);
+            }
+          }
+        } catch (const std::exception &index_error) {
+          required_failed = required_failed || child.required;
+          if (error.empty()) error = index_error.what();
+        }
+      }
       if (!child.required) {
         continue;
       }

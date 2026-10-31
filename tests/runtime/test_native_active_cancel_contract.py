@@ -3,20 +3,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 NAV_ENDPOINT = ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav"
-ENDPOINT_LOOP = NAV_ENDPOINT / "runtime" / "loop.cpp"
+ENDPOINT_LOOP = NAV_ENDPOINT / "app" / "loop.cpp"
 TASK_CANCEL_ROUTER_SOURCE = (
     NAV_ENDPOINT / "command" / "cancel.cpp"
 )
 NAVIGATION_RUNTIME_SOURCE = (
-    NAV_ENDPOINT / "runtime" / "navigation.cpp"
+    NAV_ENDPOINT / "app" / "navigation.cpp"
 )
 TERMINAL_TRANSACTION_SOURCE = (
     NAV_ENDPOINT / "status" / "goal_terminal_transaction.cpp"
 )
-RUNTIME_HEADER = NAV_ENDPOINT / "runtime" / "goal" / "runtime.hpp"
-RUNTIME_SOURCE = NAV_ENDPOINT / "runtime" / "goal" / "runtime.cpp"
-GOAL_PLAN_HEADER = NAV_ENDPOINT / "runtime" / "goal" / "plan.hpp"
-GOAL_PLAN_SOURCE = NAV_ENDPOINT / "runtime" / "goal" / "plan.cpp"
+RUNTIME_HEADER = NAV_ENDPOINT / "app" / "goal" / "runtime.hpp"
+RUNTIME_SOURCE = NAV_ENDPOINT / "app" / "goal" / "runtime.cpp"
+GOAL_PLAN_HEADER = NAV_ENDPOINT / "app" / "goal" / "plan.hpp"
+GOAL_PLAN_SOURCE = NAV_ENDPOINT / "app" / "goal" / "plan.cpp"
 
 
 def _read(path: Path) -> str:

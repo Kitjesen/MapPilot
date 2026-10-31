@@ -18,10 +18,28 @@ from .types import FREE_CELL, UNKNOWN_CELL, Frontier, angle_diff
 
 @dataclass(frozen=True)
 class Cue:
-    """Prompt-conditioned image evidence, in camera-relative radians."""
+    """Prompt-conditioned evidence: camera-relative radians, positive to the left."""
 
     bearing: float
     confidence: float
+
+
+def cue_from_box(
+    bbox: tuple[float, float, float, float], confidence: float, *, fx: float, cx: float,
+) -> Cue:
+    """Project a detector box center from rectified pixels to a horizontal bearing.
+
+    Pixels grow rightward; the planner's yaw grows leftward. This adapter is for
+    level cameras (as recorded by habitat_probe). A tilted camera needs its full
+    calibrated ray rotation before projecting into the navigation yaw plane.
+    The detector supplies confidence; no LLM estimates angles or scores here.
+    """
+    x1, y1, x2, y2 = bbox
+    if not all(math.isfinite(v) for v in (*bbox, confidence, fx, cx)) or fx <= 0:
+        raise ValueError("box, confidence and intrinsics must be finite; fx must be positive")
+    if x2 <= x1 or y2 <= y1 or not 0 <= confidence <= 1:
+        raise ValueError("box must have positive area and confidence must be in [0, 1]")
+    return Cue(bearing=math.atan2(cx - (x1 + x2) / 2, fx), confidence=confidence)
 
 
 def vl_score(offset: float, cues: list[Cue], hfov: float, sigma: float = 0.1) -> float:

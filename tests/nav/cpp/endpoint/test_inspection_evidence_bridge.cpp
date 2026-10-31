@@ -71,13 +71,12 @@ class BridgePeer {
     lingtu_dds_InspectionEvidenceRequest msg{};
     fillHeader(msg.header, 123.456);
     msg.request_id = const_cast<char *>(request_id.c_str());
-    msg.run_id = const_cast<char *>("run-a");
+    msg.task_id = const_cast<char *>("task-a");
     msg.route_id = const_cast<char *>("route-a");
-    msg.revision = 9;
+    msg.route_revision = 9;
     msg.map_id = const_cast<char *>("map-a");
     msg.map_content_epoch = 4;
     msg.point_index = 2;
-    msg.point_id = const_cast<char *>("point-a");
     msg.action = const_cast<char *>("capture:overview");
     msg.deadline_s = 130.0;
     checked(dds_write(request_writer_, &msg), "dds_write(request)");
@@ -153,13 +152,12 @@ void testBridgeRoundTrip() {
   require(request.requested_at_s > 123.455 && request.requested_at_s < 123.457,
           "request header time must be exposed");
   require(std::string(request.request_id) == "request-a", "request id");
-  require(std::string(request.run_id) == "run-a", "run id");
+  require(std::string(request.task_id) == "task-a", "task id");
   require(std::string(request.route_id) == "route-a", "route id");
   require(request.route_revision == 9, "route revision");
   require(std::string(request.map_id) == "map-a", "map id");
   require(request.map_content_epoch == 4, "map version");
   require(request.point_index == 2, "point index");
-  require(std::string(request.point_id) == "point-a", "point id");
   require(std::string(request.action) == "capture:overview", "action");
   require(request.deadline_s == 130.0, "deadline");
 
@@ -225,6 +223,8 @@ void testBridgeRejectsOverlongRequestFields() {
 
 int main() {
   try {
+    require(lingtu_inspection_evidence_bridge_abi_version() == LINGTU_INSPECTION_EVIDENCE_ABI_VERSION,
+            "native evidence ABI version mismatch");
     testBridgeRoundTrip();
     testBridgeRejectsTruncatedResultFields();
     testBridgeRejectsOverlongRequestFields();

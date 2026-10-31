@@ -35,7 +35,7 @@ OperatorMotionReceipt OperatorMotionAuthority::claim(const OperatorMotionClaim &
     return reject("zero_barrier_pending");
   }
   if (snapshot_.has_active_authority && !hasLiveAuthority(claim.now_monotonic_s)) {
-    enterZeroBarrier(ZeroBarrierDisposition::Expiry);
+    if (!releaseUnusedAuthority()) enterZeroBarrier(ZeroBarrierDisposition::Expiry);
     return reject("authority_lease_expired");
   }
   if (!snapshot_.has_active_authority && claim.epoch <= sourceHighWater(claim.source_id)) {
@@ -49,8 +49,10 @@ OperatorMotionReceipt OperatorMotionAuthority::claim(const OperatorMotionClaim &
       return reject("stale_epoch");
     }
     if (claim.epoch > snapshot_.active_epoch) {
-      enterZeroBarrier(ZeroBarrierDisposition::EpochTransition);
-      return reject("authority_change_requires_zero_barrier");
+      if (!releaseUnusedAuthority()) {
+        enterZeroBarrier(ZeroBarrierDisposition::EpochTransition);
+        return reject("authority_change_requires_zero_barrier");
+      }
     }
     if (claim.sequence <= snapshot_.last_sequence) {
       return reject("non_monotonic_sequence");
@@ -188,6 +190,10 @@ OperatorMotionReceipt OperatorMotionAuthority::completeZeroBarrier(bool zero_pub
 
 OperatorMotionSnapshot OperatorMotionAuthority::snapshot() const { return snapshot_; }
 
+void OperatorMotionAuthority::releaseAfterStop() {
+  clearAuthority();
+}
+
 OperatorMotionReceipt OperatorMotionAuthority::accept(std::string reason, bool authority_changed,
                                                       bool sample_changed) {
   ++snapshot_.accepted;
@@ -217,9 +223,22 @@ void OperatorMotionAuthority::enterZeroBarrier(ZeroBarrierDisposition dispositio
   zero_barrier_disposition_ = disposition;
 }
 
+bool OperatorMotionAuthority::releaseUnusedAuthority() {
+  if (snapshot_.has_active_sample || snapshot_.holding) return false;
+  clearAuthority();
+  return true;
+}
+
 OperatorMotionReceipt
 OperatorMotionAuthority::requireZeroBarrier(std::string reason,
                                             ZeroBarrierDisposition disposition) {
+  // A claim without any admitted input owns only permission, not robot motion.
+  if (releaseUnusedAuthority()) {
+    if (disposition == ZeroBarrierDisposition::Hold) reason = "hold_no_motion";
+    else if (disposition == ZeroBarrierDisposition::Release) reason = "release_no_motion";
+    else reason += "_no_motion";
+    return accept(std::move(reason), true, false);
+  }
   enterZeroBarrier(disposition);
   return accept(std::move(reason), false, true);
 }

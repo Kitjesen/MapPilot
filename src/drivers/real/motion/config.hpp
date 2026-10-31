@@ -36,6 +36,8 @@ struct Config {
   std::string host{"127.0.0.1"};
   std::uint16_t port{13145};
   BrainstemTlsConfig brainstem_tls;
+  std::string stairs_up_profile;
+  std::string stairs_down_profile;
   Limits limits;
   double tilt_limit_deg{30.0};
   double poll_hz{100.0};

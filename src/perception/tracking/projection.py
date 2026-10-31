@@ -28,6 +28,17 @@ POINTCLOUD_MIN_POINTS = 10  # 少于此数的点云视为无效
 # ── BBox depth fallback 参数 ──
 BBOX_MEDIAN_MIN_VALID_PIXELS = 20  # minimum valid depth pixels inside bbox
 
+# A person's box contains large gaps between limbs and often includes the wall
+# behind them. Use a local upper-torso patch and require a supported near depth
+# layer before projecting its depth through a stable box-relative anchor.
+PERSON_DEPTH_BIN_M = 0.12
+PERSON_DEPTH_MIN_PIXELS = 12
+PERSON_DEPTH_MIN_FRACTION = 0.04
+PERSON_DEPTH_ANCHOR_X = 0.50
+PERSON_DEPTH_ANCHOR_Y = 0.35
+PERSON_DEPTH_PATCH_HALF_WIDTH = 0.12
+PERSON_DEPTH_PATCH_HALF_HEIGHT = 0.12
+
 
 @dataclass
 class Detection3D:
@@ -100,6 +111,134 @@ def bbox_center_depth(
         return None
 
     return float(np.median(valid))
+
+
+def person_depth_sample(
+    depth_image: np.ndarray,
+    bbox: np.ndarray,
+    *,
+    mask: np.ndarray | None = None,
+    depth_scale: float = 0.001,
+    min_depth: float = 0.3,
+    max_depth: float = 6.0,
+) -> tuple[float, float, float] | None:
+    """Return a robust ``(u, v, depth_m)`` sample for a detected person.
+
+    When an instance mask is present, only its pixels are considered.  A box
+    without a mask uses a fixed upper-torso anchor and local patch so changing
+    valid-pixel distributions do not move the projected ray. In either case
+    the nearest depth band with enough pixel support is selected; isolated
+    near-depth noise and the usually larger background layer are ignored.
+    """
+    if depth_image is None or np.asarray(depth_image).ndim != 2:
+        return None
+
+    depth = np.asarray(depth_image)
+    h, w = depth.shape[:2]
+    box = np.asarray(bbox, dtype=np.float64).reshape(-1)
+    if box.size < 4 or not np.isfinite(box[:4]).all():
+        return None
+
+    x1 = int(np.clip(np.floor(box[0]), 0, w))
+    y1 = int(np.clip(np.floor(box[1]), 0, h))
+    x2 = int(np.clip(np.ceil(box[2]), 0, w))
+    y2 = int(np.clip(np.ceil(box[3]), 0, h))
+    if x2 <= x1 or y2 <= y1:
+        return None
+
+    anchor: tuple[float, float] | None = None
+    if mask is not None:
+        target = np.asarray(mask, dtype=bool)
+        if target.shape != (h, w):
+            return None
+        local_vs, local_us = np.where(target[y1:y2, x1:x2])
+        vs = local_vs + y1
+        us = local_us + x1
+    else:
+        box_w = x2 - x1
+        box_h = y2 - y1
+        anchor_u = float(x1 + PERSON_DEPTH_ANCHOR_X * box_w)
+        anchor_v = float(y1 + PERSON_DEPTH_ANCHOR_Y * box_h)
+        half_width = max(2, int(round(box_w * PERSON_DEPTH_PATCH_HALF_WIDTH)))
+        half_height = max(2, int(round(box_h * PERSON_DEPTH_PATCH_HALF_HEIGHT)))
+        centre_u = int(round(anchor_u))
+        centre_v = int(round(anchor_v))
+        patch_x1 = max(0, centre_u - half_width)
+        patch_x2 = min(w, centre_u + half_width + 1)
+        patch_y1 = max(0, centre_v - half_height)
+        patch_y2 = min(h, centre_v + half_height + 1)
+        if patch_x2 <= patch_x1 or patch_y2 <= patch_y1:
+            return None
+        vs, us = np.mgrid[patch_y1:patch_y2, patch_x1:patch_x2]
+        vs = vs.reshape(-1)
+        us = us.reshape(-1)
+        anchor = (anchor_u, anchor_v)
+    if len(vs) < PERSON_DEPTH_MIN_PIXELS:
+        return None
+
+    depths = depth[vs, us].astype(np.float64) * float(depth_scale)
+    valid = np.isfinite(depths) & (depths >= min_depth) & (depths <= max_depth)
+    us = us[valid]
+    vs = vs[valid]
+    depths = depths[valid]
+    if len(depths) < PERSON_DEPTH_MIN_PIXELS:
+        return None
+
+    bin_count = max(1, int(np.ceil((max_depth - min_depth) / PERSON_DEPTH_BIN_M)))
+    counts, edges = np.histogram(depths, bins=bin_count, range=(min_depth, max_depth))
+    required = max(
+        PERSON_DEPTH_MIN_PIXELS,
+        int(np.ceil(len(depths) * PERSON_DEPTH_MIN_FRACTION)),
+    )
+
+    # Three neighbouring bins tolerate normal RGB-D noise while still keeping
+    # the foreground person separate from a wall metres behind them.
+    support = np.convolve(counts, np.ones(3, dtype=np.int64), mode="same")
+    candidates = np.flatnonzero(support >= required)
+    if candidates.size == 0:
+        return None
+    seed = int(candidates[0])
+    lo = edges[max(0, seed - 1)]
+    hi = edges[min(len(edges) - 1, seed + 2)]
+    layer = (depths >= lo) & (depths <= hi)
+    if int(np.count_nonzero(layer)) < required:
+        return None
+
+    sample_u, sample_v = (
+        anchor if anchor is not None else (float(np.median(us[layer])), float(np.median(vs[layer])))
+    )
+    return sample_u, sample_v, float(np.median(depths[layer]))
+
+
+def person_depth_position(
+    depth_image: np.ndarray,
+    bbox: np.ndarray,
+    intrinsics: CameraIntrinsics,
+    *,
+    map_from_camera: np.ndarray | None = None,
+    mask: np.ndarray | None = None,
+    depth_scale: float = 0.001,
+    min_depth: float = 0.3,
+    max_depth: float = 6.0,
+    K: np.ndarray | None = None,
+    D: np.ndarray | None = None,
+) -> np.ndarray | None:
+    """Project one robust person-depth sample into camera or map coordinates."""
+    sample = person_depth_sample(
+        depth_image,
+        bbox,
+        mask=mask,
+        depth_scale=depth_scale,
+        min_depth=min_depth,
+        max_depth=max_depth,
+    )
+    if sample is None:
+        return None
+    u, v, depth_m = sample
+    camera_point = project_to_3d(u, v, depth_m, intrinsics, K=K, D=D)
+    if map_from_camera is None:
+        return camera_point
+    return transform_point(camera_point, np.asarray(map_from_camera, dtype=np.float64))
 
 
 def undistort_points(
@@ -216,6 +355,14 @@ def mask_to_pointcloud(
         # Mask/depth size mismatch — cannot safely resize without cv2
         return None
 
+    if (
+        not np.isfinite(intrinsics.fx)
+        or not np.isfinite(intrinsics.fy)
+        or intrinsics.fx <= 0.0
+        or intrinsics.fy <= 0.0
+    ):
+        raise ValueError("camera focal lengths must be finite and positive")
+
     vs, us = np.where(mask)
     if len(vs) < POINTCLOUD_MIN_POINTS:
         return None
@@ -242,10 +389,6 @@ def mask_to_pointcloud(
         indices = np.random.choice(len(depths), max_points * 4, replace=False)
         vs, us, depths = vs[indices], us[indices], depths[indices]
 
-    # Guard against zero focal lengths
-    fx = intrinsics.fx if intrinsics.fx != 0.0 else 1.0
-    fy = intrinsics.fy if intrinsics.fy != 0.0 else 1.0
-
     # Undistort pixel coordinates if distortion is available
     us_f = us.astype(np.float64)
     vs_f = vs.astype(np.float64)
@@ -253,8 +396,8 @@ def mask_to_pointcloud(
         us_f, vs_f = undistort_points(us_f, vs_f, K, D)
 
     # 批量反投影: pixel (u,v,d) → camera 3D (vectorized)
-    x_cam = (us_f - intrinsics.cx) * depths / fx
-    y_cam = (vs_f - intrinsics.cy) * depths / fy
+    x_cam = (us_f - intrinsics.cx) * depths / intrinsics.fx
+    y_cam = (vs_f - intrinsics.cy) * depths / intrinsics.fy
     z_cam = depths
 
     points_cam = np.stack([x_cam, y_cam, z_cam], axis=1)  # (N, 3)

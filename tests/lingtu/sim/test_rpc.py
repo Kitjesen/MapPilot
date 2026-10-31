@@ -28,6 +28,12 @@ from lingtu.sim.rpc import (
 )
 
 
+@pytest.fixture
+def tmp_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Keep Unix socket addresses below the platform path-length limit."""
+    return tmp_path_factory.mktemp("rpc")
+
+
 def _request(
     tmp_path: Path,
     **overrides: object,

@@ -1,0 +1,426 @@
+{
+  "schema_version": 1,
+  "checkpoint": "model_61128.pt",
+  "completed_updates": 61129,
+  "checkpoint_sha256": "ebda7dcfb008f1677840ba856bb45750f265a29ff21c721278eeb0fb0ee0eb9b",
+  "student": "student_61129.pt",
+  "student_sha256": "b3242aa84e4ec79c6fb9bcaa0e540720a88c653f8f235518ce203294355c2c5f",
+  "policy": "exported/policy_static_b1_arm64.onnx",
+  "policy_sha256": "d076b543e967e2f46bb80a4b52581252b76dd6e104f496cb6fe5398594f0050a",
+  "dynamic_policy": "exported/policy.onnx",
+  "dynamic_policy_sha256": "a1b7c92a904a121e3ea21a4471d57644defa606f54f8e353d8842a6177afd877",
+  "xml": "assets/thunder_v4_mixed_terrain.xml",
+  "joint_names": [
+    "fr_hip_joint",
+    "fr_thigh_joint",
+    "fr_calf_joint",
+    "fl_hip_joint",
+    "fl_thigh_joint",
+    "fl_calf_joint",
+    "rr_hip_joint",
+    "rr_thigh_joint",
+    "rr_calf_joint",
+    "rl_hip_joint",
+    "rl_thigh_joint",
+    "rl_calf_joint",
+    "fr_foot_joint",
+    "fl_foot_joint",
+    "rr_foot_joint",
+    "rl_foot_joint"
+  ],
+  "default_joint_pos": [
+    -0.12,
+    -0.93,
+    1.96,
+    0.12,
+    0.93,
+    -1.96,
+    0.12,
+    0.93,
+    -1.96,
+    -0.12,
+    -0.93,
+    1.96,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "hard_joint_limits": [
+    [
+      -0.41,
+      0.41
+    ],
+    [
+      -3.14,
+      0.0
+    ],
+    [
+      0.0,
+      3.14
+    ],
+    [
+      -0.41,
+      0.41
+    ],
+    [
+      0.0,
+      3.14
+    ],
+    [
+      -3.14,
+      0.0
+    ],
+    [
+      -0.41,
+      0.41
+    ],
+    [
+      0.0,
+      3.14
+    ],
+    [
+      -3.14,
+      3.14
+    ],
+    [
+      -0.41,
+      0.41
+    ],
+    [
+      -3.14,
+      0.0
+    ],
+    [
+      -3.14,
+      3.14
+    ]
+  ],
+  "soft_joint_limits": [
+    [
+      -0.369,
+      0.369
+    ],
+    [
+      -2.983,
+      -0.15700000000000003
+    ],
+    [
+      0.15700000000000003,
+      2.983
+    ],
+    [
+      -0.369,
+      0.369
+    ],
+    [
+      0.15700000000000003,
+      2.983
+    ],
+    [
+      -2.983,
+      -0.15700000000000003
+    ],
+    [
+      -0.369,
+      0.369
+    ],
+    [
+      0.15700000000000003,
+      2.983
+    ],
+    [
+      -2.826,
+      2.826
+    ],
+    [
+      -0.369,
+      0.369
+    ],
+    [
+      -2.983,
+      -0.15700000000000003
+    ],
+    [
+      -2.826,
+      2.826
+    ]
+  ],
+  "soft_joint_pos_limit_factor": 0.9,
+  "kp": [
+    120.0,
+    120.0,
+    120.0,
+    120.0,
+    120.0,
+    120.0,
+    120.0,
+    120.0,
+    120.0,
+    120.0,
+    120.0,
+    120.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "kd": [
+    8.0,
+    8.0,
+    8.0,
+    8.0,
+    8.0,
+    8.0,
+    8.0,
+    8.0,
+    8.0,
+    8.0,
+    8.0,
+    8.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+  ],
+  "torque_limits": [
+    120.0,
+    120.0,
+    120.0,
+    120.0,
+    120.0,
+    120.0,
+    120.0,
+    120.0,
+    120.0,
+    120.0,
+    120.0,
+    120.0,
+    17.0,
+    17.0,
+    17.0,
+    17.0
+  ],
+  "velocity_limits": [
+    15.0,
+    15.0,
+    15.0,
+    15.0,
+    15.0,
+    15.0,
+    15.0,
+    15.0,
+    15.0,
+    15.0,
+    15.0,
+    15.0,
+    30.0,
+    30.0,
+    30.0,
+    30.0
+  ],
+  "action_scales": [
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    5.0,
+    5.0,
+    5.0,
+    5.0
+  ],
+  "leg_target_rate_rad_s": 12.0,
+  "physics_dt": 0.005,
+  "decimation": 4,
+  "init_height": 0.46,
+  "history_length": 10,
+  "observations": {
+    "fields": [
+      "base_ang_vel",
+      "projected_gravity",
+      "velocity_commands",
+      "joint_pos",
+      "joint_vel",
+      "actions"
+    ],
+    "dimensions": [
+      3,
+      3,
+      3,
+      12,
+      16,
+      16
+    ],
+    "scales": [
+      0.25,
+      1,
+      1,
+      1,
+      0.05,
+      1
+    ],
+    "clip_before_scale": [
+      -100,
+      100
+    ],
+    "history": "term-major/field-major, oldest to newest per term",
+    "initial_history": "repeat first observation",
+    "single_obs": "current 53D observation"
+  },
+  "actuator_profile": "rs0402_transient_v4",
+  "actuator_limits": {
+    "leg_torque_nm": 120.0,
+    "wheel_torque_nm": 17.0,
+    "leg_speed_rad_s": 15.0,
+    "wheel_speed_rad_s": 30.0,
+    "leg_target_rate_rad_s": 12.0,
+    "speed_penalty_fraction": 0.9,
+    "speed_termination_fraction": 1.02,
+    "hard_position_termination_rad": 0.01,
+    "leg_load_reference_nm": 35.0,
+    "wheel_load_reference_nm": 6.0,
+    "speed_sustained_duration_s": 0.06,
+    "speed_extreme_termination_fraction": 1.5,
+    "load_penalty_weight": -0.1,
+    "speed_penalty_weight": -1.0,
+    "saturation_penalty_weight": -0.02,
+    "violation_penalty_weight": -25.0
+  },
+  "simulation": {
+    "leg_motor": "Isaac DCMotor torque-speed envelope",
+    "wheel_motor": "PD velocity",
+    "self_collision": false,
+    "delay_steps": 0,
+    "observation_noise": false,
+    "domain_randomization": false,
+    "velocity_state_clipping": false,
+    "training_delay_steps": [
+      0,
+      4
+    ],
+    "friction": [
+      1.8,
+      0.03,
+      0.0002
+    ]
+  },
+  "terrain": {
+    "source_builder": "source_snapshot/build_thunder_v4_mixed_terrain.py",
+    "step_heights_cm": [
+      10,
+      15,
+      20,
+      25
+    ],
+    "tread_m": 0.3,
+    "up_steps": 8,
+    "top_platform_m": 0.85,
+    "note": "User requested mixed terrain; tread differs from Isaac training stairs (0.31 m)."
+  },
+  "validation_scope": "V41 C +2000; local MuJoCo loading checks only; no hardware approval.",
+  "training_status": {
+    "state": "complete"
+  },
+  "model_interface": {
+    "history": [
+      "batch",
+      530
+    ],
+    "single_obs": [
+      "batch",
+      53
+    ],
+    "actions": [
+      "batch",
+      16
+    ]
+  },
+  "export_verification": "exported/export_verification.json",
+  "training_context": {
+    "hip_guard_profile": "hip_default012_v23",
+    "hip_contract": {
+      "profile": "hip_default012_v23",
+      "coordinate": "inward_sign * absolute_joint_angle",
+      "default_inward_rad": 0.12,
+      "inherited_soft_limit_rad": 0.369,
+      "physical_hard_limit_rad": 0.41,
+      "extra_inward_target_cap": false,
+      "motion_limits_changed": false,
+      "joints": {
+        "fr_hip_joint": {
+          "inward_sign": -1.0,
+          "default_rad": -0.12,
+          "lower_rad": -0.369,
+          "upper_rad": 0.369
+        },
+        "fl_hip_joint": {
+          "inward_sign": 1.0,
+          "default_rad": 0.12,
+          "lower_rad": -0.369,
+          "upper_rad": 0.369
+        },
+        "rr_hip_joint": {
+          "inward_sign": 1.0,
+          "default_rad": 0.12,
+          "lower_rad": -0.369,
+          "upper_rad": 0.369
+        },
+        "rl_hip_joint": {
+          "inward_sign": -1.0,
+          "default_rad": -0.12,
+          "lower_rad": -0.369,
+          "upper_rad": 0.369
+        }
+      },
+      "changes_observation_default_and_action_offset": true,
+      "physical_state_clamping": false,
+      "hardware_release": false
+    },
+    "hip_request_profile": "off",
+    "hip_ablation": {
+      "group": "C",
+      "profile": "flat_straight_actual_hip_v1",
+      "weight": -0.1,
+      "deadband_rad": 0.02,
+      "error_scale_rad": 0.05,
+      "ramp_s": 0.5,
+      "gate": "flat terrain; abs(command vy/yaw)<=threshold; vx unrestricted",
+      "command_threshold": 0.05,
+      "measured_velocity_gate": false,
+      "reference": "signed robot.data.default_joint_pos",
+      "request_excess_configured_separately": true,
+      "seed": 42,
+      "request_excess_weight": 0.0
+    },
+    "mixed_stair_profile": "mixed_stair_short_pulses_v1",
+    "mixed_stair_promotion_profile": "tracking_v1",
+    "stair_approach_profile": "front_hip_outward_v1",
+    "no_pit_profile": "omni_eight_v1",
+    "hip_margin_profile": "actual_prehard_v1",
+    "wave_reset_profile": "wave_surface_v1",
+    "slope_profile": "slope45_v1",
+    "pit_training_profile": "strict_v1",
+    "pit_course_profile": "global_v1",
+    "mixed_profile": "mixed9_v1"
+  },
+  "source_server": {
+    "host": "connect.weste.seetacloud.com",
+    "port": 35324,
+    "remote_dir": "/root/autodl-tmp/cts-omni-repair-v19-20260922/hip_ablation_v41_20261010/group_C_seed42_u2000",
+    "downloaded_on": "2026-10-11"
+  },
+  "context": "V39 curbs20 final 20260928; local test carrier reused from C after actuator/default/observation contract checks",
+  "mujoco_test_friction": [
+    1.8,
+    0.03,
+    0.0002
+  ]
+}

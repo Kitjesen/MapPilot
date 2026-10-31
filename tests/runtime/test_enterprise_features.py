@@ -90,8 +90,8 @@ class TestModulePreflight(unittest.TestCase):
 
     def test_preflight_integrated_in_system_start(self):
         """Failing preflight → module marked as failed, not started."""
-        from runtime.blueprint import Blueprint
-        bp = Blueprint()
+        from runtime.host import HostBuilder
+        bp = HostBuilder()
         bp.add(_FailingPreflight, name="Fail")
         bp.add(_PassingPreflight, name="Pass")
         system = bp.build()
@@ -118,8 +118,8 @@ class _HangingModule(Module, layer=0):
 class TestGracefulShutdown(unittest.TestCase):
 
     def test_hung_module_does_not_block_shutdown(self):
-        from runtime.blueprint import Blueprint
-        bp = Blueprint()
+        from runtime.host import HostBuilder
+        bp = HostBuilder()
         bp.add(_HangingModule, name="Hang")
         system = bp.build()
         system.start()

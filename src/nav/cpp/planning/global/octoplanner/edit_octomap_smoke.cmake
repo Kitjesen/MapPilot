@@ -48,3 +48,16 @@ file(SIZE "${OUT_PATH}" out_size)
 if(out_size LESS_EQUAL 0)
   message(FATAL_ERROR "editor wrote an empty output: ${OUT_PATH}")
 endif()
+
+# At 0.2 m resolution this box covers 11 keys along each axis. Floating
+# coordinate sampling previously skipped layers at these exact boundaries.
+execute_process(
+  COMMAND "${EDITOR}" --map "${BT_PATH}" --output "${WORK_DIR}/box.ot"
+    --state free --shape box --x 10 --y 0 --z 0.4 --radius 1
+  RESULT_VARIABLE box_result
+  OUTPUT_VARIABLE box_stdout
+  ERROR_VARIABLE box_stderr
+)
+if(NOT box_result EQUAL 0 OR NOT box_stdout MATCHES "\"edited_voxels\":1331")
+  message(FATAL_ERROR "box edit skipped voxel keys: ${box_stdout}\n${box_stderr}")
+endif()

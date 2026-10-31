@@ -32,8 +32,7 @@ export function CameraHud({ sseState }: CameraHudProps) {
     return () => clearInterval(t)
   }, [])
 
-  // Latency from last heartbeat
-  const latencyMs = sseState.lastHeartbeat && now > 0
+  const heartbeatAgeMs = sseState.lastHeartbeat && now > 0
     ? Math.max(0, now - sseState.lastHeartbeat)
     : null
 
@@ -43,7 +42,7 @@ export function CameraHud({ sseState }: CameraHudProps) {
     ? `${robot.battery.toFixed(0)}%`
     : '--'
   const temp = fmt(robot?.temperature, 1, '°C')
-  const latency = latencyMs != null ? `${latencyMs} ms` : '--'
+  const heartbeatAge = heartbeatAgeMs != null ? `${heartbeatAgeMs} ms` : '--'
   const speed = fmt(odom?.vx, 2, 'm/s')
 
   const batteryLow = typeof robot?.battery === 'number' && robot.battery < 20
@@ -68,8 +67,8 @@ export function CameraHud({ sseState }: CameraHudProps) {
         <span className={tempHigh ? styles.valWarn : styles.val}>{temp}</span>
       </div>
       <div className={styles.row}>
-        <span className={styles.key}>延迟</span>
-        <span className={styles.val}>{latency}</span>
+        <span className={styles.key}>心跳距今</span>
+        <span className={styles.val}>{heartbeatAge}</span>
       </div>
     </div>
   )

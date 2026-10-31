@@ -11,6 +11,185 @@ namespace global_planner {
 
 struct OctoPlannerGridQueryTest
 {
+  static void neighboringSupportInterpolatesHolesButNotFloorEdges() {
+    const auto supported = [](const std::vector<octomap::point3d> &floor,
+                              PointPose pose = {.05,.05,.45}) {
+      auto tree = std::make_shared<octomap::OcTree>(.1);
+      tree->updateNode(octomap::point3d(-1,-1,-1),false);
+      tree->updateNode(octomap::point3d(1,1,1),false);
+      for (const auto &point : floor) tree->updateNode(point,true);
+      PlannerConfig config;
+      config.support_height_m=.4;
+      config.support_height_tolerance_m=.05;
+      config.direct_support_only=false;
+      config.support_radius_cells=1;
+      OctoPlanner3D planner;
+      planner.setConfig(config);
+      planner.setOctomap(tree);
+      return planner.poseSupportFree(pose);
+    };
+    if (supported({{-.05,.05,.05},{-.05,-.05,.05},{-.05,.15,.05}}))
+      throw std::runtime_error("one-sided floor evidence expanded past its boundary");
+    if (supported({{-.05,.05,.05},{.05,-.05,.05}}))
+      throw std::runtime_error("corner support extrapolated beyond its convex boundary");
+    if (supported({{-.05,.15,.05},{.15,-.05,.05}}))
+      throw std::runtime_error("collinear floor edges were mistaken for an interior sampling hole");
+    if (!supported({{-.05,.05,.05},{.15,-.05,.05},{.15,.15,.05}}))
+      throw std::runtime_error("surrounding floor observations did not repair a sampling hole");
+    if (!supported({{.05,.05,.05}}))
+      throw std::runtime_error("direct observed surface unnecessarily required surrounding evidence");
+    if (supported({{-.05,.05,-.55},{.15,.05,-.55}}))
+      throw std::runtime_error("another floor was borrowed outside the configured height band");
+    const std::vector<octomap::point3d> edge{{-.05,-.05,.05},
+      {-.05,.15,.05},{.15,.05,.05}};
+    if (supported(edge,{.08,.09,.45}))
+      throw std::runtime_error("actual off-centre pose inherited the voxel centre's support");
+    if (!supported(edge,{.08,.07,.45}))
+      throw std::runtime_error("actual off-centre pose inside the observed surface was rejected");
+  }
+
+  static void supportedRouteTurnsInsideAnLShapedFloor() {
+    auto tree=std::make_shared<octomap::OcTree>(.1);
+    tree->updateNode(octomap::point3d(-1.2,-1.2,-1),false);
+    tree->updateNode(octomap::point3d(1.2,1.2,1),false);
+    for(int x=-10;x<=10;++x) for(int y=-10;y<=10;++y)
+      if(y<=0 || x<=-3)
+        tree->updateNode(octomap::point3d((x+.5)*.1,(y+.5)*.1,.05),true);
+    PlannerConfig config;
+    config.robot_radius=.01;
+    config.body_clearance_below_m=config.body_clearance_above_m=.05;
+    config.support_height_m=.4;
+    config.support_height_tolerance_m=.05;
+    config.direct_support_only=false;
+    config.support_radius_cells=1;
+    config.enable_preblocked_costmap=false;
+    config.obstacle_clearance_radius_cells=0;
+    config.snap_search_radius_cells=0;
+    OctoPlanner3D planner;
+    planner.setConfig(config);planner.setOctomap(tree);
+    planner.makePlan({.45,-.25,.45},{-.55,.65,.45});
+    std::vector<PointPose> path;
+    planner.getPlannerResults(path);
+    if(path.empty()) throw std::runtime_error("L-shaped supported floor lost its valid connection");
+    for(const auto &point:path) {
+      const auto *surface=tree->search(point.x,point.y,.05);
+      if(!surface || !tree->isNodeOccupied(surface))
+        throw std::runtime_error("route cut across the unsupported corner of an L-shaped floor: " +
+            std::to_string(point.x) + "," + std::to_string(point.y) + "," +
+            std::to_string(point.z) + " support=" + std::to_string(planner.poseSupportFree(point)));
+    }
+  }
+
+  static void supportHeightUsesActualPoseWithinVoxel() {
+    auto tree = std::make_shared<octomap::OcTree>(.1);
+    tree->updateNode(octomap::point3d(-.5,-.5,-.5), false);
+    tree->updateNode(octomap::point3d(.5,.5,.8), false);
+    tree->updateNode(octomap::point3d(.05,.05,.05), true);
+    PlannerConfig config;
+    config.support_height_m = .435;
+    config.support_height_tolerance_m = .1;
+    config.direct_support_only = true;
+    config.support_radius_cells = 0;
+    OctoPlanner3D planner;
+    planner.setConfig(config);
+    planner.setOctomap(tree);
+    if (!planner.poseSupportFree({.05,.05,.38861}))
+      throw std::runtime_error("actual pose-to-floor height within tolerance was quantized away");
+    // The surface is only known to be inside the occupied voxel [0, .1].
+    if (!planner.poseSupportFree({.05,.05,.61}) ||
+        planner.poseSupportFree({.05,.05,.30}) || planner.poseSupportFree({.05,.05,.66}))
+      throw std::runtime_error("out-of-tolerance floor was accepted as support");
+    auto drop = std::make_shared<octomap::OcTree>(.1);
+    drop->updateNode(octomap::point3d(-.5,-.5,-.5), false);
+    drop->updateNode(octomap::point3d(.5,.5,.8), false);
+    drop->updateNode(octomap::point3d(.05,.05,.05), false);
+    planner.setOctomap(drop);
+    if (planner.poseSupportFree({.05,.05,.38861}))
+      throw std::runtime_error("free ground voxel was accepted as support");
+  }
+
+  static void supportHeightUsesBothFacesOfTheOccupiedVoxel() {
+    auto tree = std::make_shared<octomap::OcTree>(.05);
+    tree->updateNode(octomap::point3d(-1,-1,-1),false);
+    tree->updateNode(octomap::point3d(1,1,1),false);
+    tree->updateNode(octomap::point3d(.025,.025,-.375),true);
+    PlannerConfig config;
+    config.support_height_m=.35;
+    config.support_height_tolerance_m=.05;
+    config.direct_support_only=true;
+    config.support_radius_cells=0;
+    OctoPlanner3D planner;
+    planner.setConfig(config); planner.setOctomap(tree);
+    if (!planner.poseSupportFree({.025,.025,-.0801478}))
+      throw std::runtime_error("support cell overlaps the stance band but its centre rejected the real-map start");
+    if (planner.poseSupportFree({.025,.025,-.12}) || planner.poseSupportFree({.025,.025,.10}))
+      throw std::runtime_error("support voxel wholly outside the stance band was accepted");
+  }
+
+  static void supportedRoutesDoNotRequireObservedCentreAir() {
+    const auto make_map = [](bool missing_floor, bool observed_drop, bool obstacle) {
+      auto tree = std::make_shared<octomap::OcTree>(.05);
+      tree->updateNode(octomap::point3d(-1, -1, -1), false);
+      tree->updateNode(octomap::point3d(1, 1, 1), false);
+      for (int x = -10; x <= 10; ++x) for (int y = -2; y <= 2; ++y) {
+        if (!missing_floor)
+          tree->updateNode(octomap::point3d((x+.5)*.05, (y+.5)*.05, -.325), true);
+        if (observed_drop)
+          tree->updateNode(octomap::point3d((x+.5)*.05, (y+.5)*.05, -.325), false);
+      }
+      if (obstacle) tree->updateNode(octomap::point3d(.025,.025,.025), true);
+      return tree;
+    };
+    PlannerConfig config;
+    config.robot_radius = .01;
+    config.body_clearance_below_m = config.body_clearance_above_m = .05;
+    config.support_height_m = .35;
+    config.support_height_tolerance_m = .05;
+    config.direct_support_only = true;
+    config.support_radius_cells = 0;
+    config.snap_search_radius_cells = 0;
+    config.enable_preblocked_costmap = false;
+    config.obstacle_clearance_radius_cells = 0;
+    OctoPlanner3D planner;
+    planner.setConfig(config);
+    planner.setOctomap(make_map(false, false, false));
+    const PointPose start{-.225,.025,.025}, goal{.225,.025,.025};
+    const octomap::point3d centre(.025,.025,.025);
+    if (!planner.poseSupportFree({centre.x(),centre.y(),centre.z()}) ||
+        planner.queryWorld(centre,.01,true) != OctoPlanner3D::TraversabilityFailure::None)
+      throw std::runtime_error("known floor rejected because body-centre air is unobserved");
+    if (!planner.isCellTraversableDetailed(planner.worldToGrid(centre.x(),centre.y(),centre.z()),
+                                          .01,true,true,0,2,nullptr))
+      throw std::runtime_error("supported XYZ vertex still requires observed centre air");
+    planner.makePlan(start,goal);
+    std::vector<PointPose> path;
+    planner.getPlannerResults(path);
+    if (path.empty())
+      throw std::runtime_error("observed floor with unobserved centre air failed to route");
+    // The older depth-based support mode must follow the same air policy.
+    config.support_height_m = 0;
+    config.support_depth_cells = 7;
+    planner.setConfig(config);
+    if (!planner.isCellTraversableDetailed(planner.worldToGrid(centre.x(),centre.y(),centre.z()),
+                                          .01,true,true,0,7,nullptr))
+      throw std::runtime_error("legacy supported vertex still requires observed centre air");
+    config.support_height_m = .35;
+    config.support_depth_cells = 2;
+    planner.setConfig(config);
+    for (const bool observed_drop : {false,true}) {
+      planner.setOctomap(make_map(true,observed_drop,false));
+      if (planner.poseSupportFree({centre.x(),centre.y(),centre.z()}) ||
+          planner.queryWorld(centre,.01,true) != OctoPlanner3D::TraversabilityFailure::GroundSupport)
+        throw std::runtime_error("unknown floor or observed drop became support");
+      planner.makePlan(start,goal);
+      planner.getPlannerResults(path);
+      if (!path.empty()) throw std::runtime_error("route crossed unknown floor or observed drop");
+    }
+    planner.setOctomap(make_map(false,false,true));
+    if (planner.queryWorld(centre,.01,true) != OctoPlanner3D::TraversabilityFailure::OccupiedBody)
+      throw std::runtime_error("known body obstacle was cleared with unknown air");
+  }
+
   static void startSnapUsesRouteHeightPreference() {
     auto tree = std::make_shared<octomap::OcTree>(.1);
     tree->updateNode(octomap::point3d(-.5,-.5,-.5), false);
@@ -22,7 +201,7 @@ struct OctoPlannerGridQueryTest
     config.robot_radius = .001;
     config.body_clearance_below_m = config.body_clearance_above_m = .01;
     config.support_height_m = .35;
-    config.require_ground_support = false;
+    config.ground_support = false;
     config.floor_change_penalty = 6;
     OctoPlanner3D planner;
     planner.setConfig(config);
@@ -54,7 +233,7 @@ struct OctoPlannerGridQueryTest
     tree->updateNode(octomap::point3d(.25, .05, .05), false);
     PlannerConfig config;
     config.robot_radius = .001;
-    config.require_ground_support = false;
+    config.ground_support = false;
     config.snap_search_radius_cells = 2;
     config.enable_preblocked_costmap = false;
     config.obstacle_clearance_radius_cells = 0;
@@ -70,14 +249,62 @@ struct OctoPlannerGridQueryTest
     planner.setConfig(config);
     planner.makePlan({.25, .05, .05}, {.09, .05, .05});
     planner.getPlannerResults(path);
-    if (!path.empty() || planner.searchInfo().basic_iterations != 0 ||
-        planner.searchInfo().extended_iterations != 0)
+    if (!path.empty() || planner.searchInfo().iterations != 0)
       throw std::runtime_error("out-of-tolerance snapped goal still ran A*");
     config.terminal_goal_tolerance_m = .07;
     planner.setConfig(config);
     planner.makePlan({.25, .05, .05}, {.09, .05, .05});
     planner.getPlannerResults(path);
     if (path.empty()) throw std::runtime_error("in-tolerance goal stopped planning");
+  }
+
+  static void exactGoalConnectionDoesNotSpendArrivalToleranceOnGridQuantization() {
+    auto tree=std::make_shared<octomap::OcTree>(.2);
+    for(int x=-6;x<=6;++x) for(int y=-6;y<=6;++y) {
+      tree->updateNode(octomap::point3d((x+.5)*.2,(y+.5)*.2,.1),true);
+      for(int z=1;z<=6;++z)
+        tree->updateNode(octomap::point3d((x+.5)*.2,(y+.5)*.2,(z+.5)*.2),false);
+    }
+    PlannerConfig cfg;
+    cfg.robot_radius=.02;
+    cfg.body_clearance_below_m=cfg.body_clearance_above_m=.01;
+    cfg.support_height_m=.45; cfg.support_height_tolerance_m=.11;
+    cfg.direct_support_only=true; cfg.support_radius_cells=0;
+    cfg.lowest_traversable_only=true;
+    cfg.enable_preblocked_costmap=false; cfg.obstacle_clearance_radius_cells=0;
+    cfg.terminal_goal_tolerance_m=.15;
+    cfg.terminal_goal_xy_tolerance_m=.15;
+    cfg.terminal_goal_z_tolerance_m=.11;
+    OctoPlanner3D planner;
+    planner.setConfig(cfg); planner.setOctomap(tree);
+    const PointPose start{-.5,-.5,.5}, goal{0,0,.435};
+    if(planner.queryWorld({0,0,.435},.02,true)!=OctoPlanner3D::TraversabilityFailure::None)
+      throw std::runtime_error("exact-goal fixture must be a supported, collision-free pose");
+    planner.makePlan(start,goal);
+    std::vector<PointPose> path; planner.getPlannerResults(path);
+    if(path.empty() || std::hypot(path.back().x-goal.x,path.back().y-goal.y,path.back().z-goal.z)>1e-6)
+      throw std::runtime_error("coarse grid spent the arrival tolerance before connecting the exact goal");
+    const auto &node=path[path.size()-2];
+    if(std::hypot(node.x-goal.x,node.y-goal.y,node.z-goal.z)<=cfg.terminal_goal_tolerance_m)
+      throw std::runtime_error("exact-goal fixture did not exercise an out-of-tolerance grid centre");
+
+    // Both endpoint bodies clear this observed slab; the connecting sweep does not.
+    planner.setObservedOccupiedCheck([](const auto &p,double radius,double below,double above,bool) {
+      return std::hypot(p.x,p.y)<=.2+radius && p.z+above>.46 && p.z-below<.475;
+    });
+    planner.makePlan(start,goal); planner.getPlannerResults(path);
+    if(!path.empty()) throw std::runtime_error("exact goal connector crossed an observed obstacle");
+    planner.setObservedOccupiedCheck([](const auto &p,double radius,double below,double above,bool) {
+      return std::hypot(p.x-.05,p.y-.05)<=.02+radius && p.z+above>.41 && p.z-below<.47;
+    });
+    planner.makePlan(start,{.05,.05,.435}); planner.getPlannerResults(path);
+    if(path.empty() || std::hypot(path.back().x-.05,path.back().y-.05,path.back().z-.435)>.15 ||
+        std::hypot(path.back().x-.05,path.back().y-.05,path.back().z-.435)<1e-6)
+      throw std::runtime_error("invalid exact goal lost the original in-tolerance snapped fallback");
+    planner.setObservedOccupiedCheck({});
+
+    planner.makePlan(start,{0,0,.3}); planner.getPlannerResults(path);
+    if(!path.empty()) throw std::runtime_error("exact goal connector bypassed unsupported goal height");
   }
 
   static void temporaryObstacleDoesNotCrossObservedFloor() {
@@ -107,12 +334,13 @@ struct OctoPlannerGridQueryTest
       throw std::runtime_error("temporary obstacle missed its level or crossed an observed floor");
   }
   static void stepTransitionsKeepObservedSupportAndBodyClearance() {
-    const auto map = [](bool gap = false, bool unknown_gap = false, bool wall = false) {
+    const auto map = [](bool gap = false, bool unknown_gap = false, bool wall = false,
+                        int rise_cells = 4) {
       auto tree = std::make_shared<octomap::OcTree>(.05);
       for (int x = -16; x <= 16; ++x) for (int y = -8; y <= 8; ++y) {
         const bool missing = x >= -1 && x <= 1;
         if (unknown_gap && missing) continue;
-        const int floor = gap && missing ? -15 : (x < 0 ? -7 : -3);
+        const int floor = gap && missing ? -15 : (x < 0 ? -7 : -7 + rise_cells);
         tree->updateNode(octomap::point3d((x+.5)*.05,(y+.5)*.05,(floor+.5)*.05), true);
         for (int z = floor+1; z <= 12; ++z)
           tree->updateNode(octomap::point3d((x+.5)*.05,(y+.5)*.05,(z+.5)*.05), false);
@@ -126,8 +354,8 @@ struct OctoPlannerGridQueryTest
     config.support_height_m = .35;
     config.support_height_tolerance_m = .05;
     config.body_clearance_below_m = config.body_clearance_above_m = .10;
-    config.strict_direct_ground_support = false;
-    config.ground_support_xy_radius_cells = 1;
+    config.direct_support_only = false;
+    config.support_radius_cells = 1;
     config.max_step_height = .25;
     config.max_slope = 0.0;
     config.snap_search_radius_cells = 0;
@@ -147,12 +375,37 @@ struct OctoPlannerGridQueryTest
       planner.makePlan({start.x(),start.y(),start.z()}, {goal.x(),goal.y(),goal.z()});
       std::vector<PointPose> path;
       planner.getPlannerResults(path);
-      if (path.empty()) throw std::runtime_error("step fallback failed at calibrated body height");
+      // The prepared surface graph connects this observed, permitted riser;
+      // the old body-height lattice could not represent that connection.
+      if (path.empty() || !planner.searchInfo().used_surface_graph)
+        throw std::runtime_error("prepared surface graph missed a permitted 20 cm step");
+      for (std::size_t i=1;i<path.size();++i)
+        if (!planner.metricConnectionWithinLimits(path[i-1],path[i]) ||
+            !planner.sweptRouteFree(octomap::point3d(path[i-1].x,path[i-1].y,path[i-1].z),
+                                   octomap::point3d(path[i].x,path[i].y,path[i].z)))
+          throw std::runtime_error("prepared step route violated its three-dimensional query");
     }
+    planner.setOctomap(map(false, false, false, 1));
+    config.max_slope = 0.57735;
+    planner.setConfig(config);
+    const octomap::point3d small_upper(.225,.025,.075);
+    for (bool reverse : {false,true}) {
+      const auto start = reverse ? small_upper : lower, goal = reverse ? lower : small_upper;
+      planner.makePlan({start.x(),start.y(),start.z()}, {goal.x(),goal.y(),goal.z()});
+      std::vector<PointPose> path;
+      planner.getPlannerResults(path);
+      if (path.empty()) throw std::runtime_error("5 cm floor change failed at Go2 body height");
+    }
+    config.max_slope = 0.0;
+    planner.setConfig(config);
     for (const auto &blocked : {map(true), map(false,true), map(false,false,true)}) {
       planner.setOctomap(blocked);
       if (planner.isMotionAllowed(a,b) || planner.isMotionAllowed(b,a))
         throw std::runtime_error("step transition crossed a drop, unknown gap or body obstacle");
+      planner.makePlan({lower.x(),lower.y(),lower.z()}, {upper.x(),upper.y(),upper.z()});
+      std::vector<PointPose> blocked_path;
+      planner.getPlannerResults(blocked_path);
+      if (!blocked_path.empty()) throw std::runtime_error("surface graph crossed a drop, unknown gap or wall");
     }
     planner.setOctomap(map());
     config.max_step_height = .15;
@@ -161,7 +414,9 @@ struct OctoPlannerGridQueryTest
     config.max_step_height = .25;
     config.max_slope = .30;
     planner.setConfig(config);
-    if (planner.isMotionAllowed(a,b)) throw std::runtime_error("slope limit was bypassed");
+    const auto slope_a = planner.worldToPlanningGrid(lower.x(), lower.y(), lower.z());
+    const auto slope_b = planner.worldToPlanningGrid(upper.x(), upper.y(), upper.z());
+    if (planner.isMotionAllowed(slope_a,slope_b)) throw std::runtime_error("slope limit was bypassed");
   }
   static void routeClearancePassesNarrowCorridor() {
     auto tree = std::make_shared<octomap::OcTree>(.05);
@@ -205,6 +460,78 @@ struct OctoPlannerGridQueryTest
     if (!path.empty())
       throw std::runtime_error("global route ignored wall across corridor");
   }
+  static void formalWidthGuidanceDoesNotRequireAnAllYawCircle() {
+    const auto corridor = [](int half_width_cells) {
+      auto tree = std::make_shared<octomap::OcTree>(.05);
+      for (int x = -12; x <= 24; ++x) {
+        for (int y = -12; y <= 12; ++y) {
+          tree->updateNode(octomap::point3d((x+.5)*.05, (y+.5)*.05, -.325), true);
+          for (int z = -6; z <= 7; ++z)
+            tree->updateNode(octomap::point3d((x+.5)*.05, (y+.5)*.05, (z+.5)*.05), false);
+        }
+        for (int z = -6; z <= 7; ++z) {
+          tree->updateNode(octomap::point3d((x+.5)*.05,
+              (-half_width_cells-.5)*.05, (z+.5)*.05), true);
+          tree->updateNode(octomap::point3d((x+.5)*.05,
+              (half_width_cells+.5)*.05, (z+.5)*.05), true);
+        }
+      }
+      return tree;
+    };
+    PlannerConfig config;
+    config.robot_radius = .25;
+    config.body_clearance_below_m = .10;
+    config.body_clearance_above_m = .25;
+    config.support_height_m = .35;
+    config.support_height_tolerance_m = .05;
+    config.max_step_height = .45;
+    config.max_slope = .57735;
+    config.snap_search_radius_cells = 0;
+    config.max_iterations = 1000;
+    OctoPlanner3D planner;
+    planner.setConfig(config);
+    planner.setOctomap(corridor(6));  // Observed free width: 0.60 m.
+    const octomap::point3d start(.025,.025,.025);
+    planner.makePlan({.025,.025,.025}, {.625,.025,.025});
+    std::vector<PointPose> path;
+    planner.getPlannerResults(path);
+    if (path.empty())
+      throw std::runtime_error("formal-width global guidance rejected the observed 60 cm corridor");
+    for (const auto& point : path) {
+      if (std::abs(point.z - .025) > 1e-6 ||
+          planner.queryWorld({static_cast<float>(point.x),
+                              static_cast<float>(point.y),
+                              static_cast<float>(point.z)}, .25, true) !=
+              OctoPlanner3D::TraversabilityFailure::None)
+        throw std::runtime_error("corridor guidance changed height or bypassed 3D clearance/support");
+    }
+    // The complete local body still owns its heading and swept motion. A
+    // global guidance circle need not cover both offset cylinders at all yaw.
+    config.robot_radius = .44;
+    planner.setConfig(config);
+    if (planner.queryWorld(start, .44, true) !=
+        OctoPlanner3D::TraversabilityFailure::OccupiedBody)
+      throw std::runtime_error("60 cm corridor no longer distinguishes the all-yaw circle");
+    planner.makePlan({.025,.025,.025}, {.625,.025,.025});
+    planner.getPlannerResults(path);
+    if (!path.empty())
+      throw std::runtime_error("legacy all-yaw circle unexpectedly fit the 60 cm corridor");
+
+    config.robot_radius = .25;
+    planner.setConfig(config);
+    planner.setOctomap(corridor(4));  // Observed free width: 0.40 m.
+    if (planner.queryWorld(start, 0.0, true) !=
+        OctoPlanner3D::TraversabilityFailure::None)
+      throw std::runtime_error("narrow corridor fixture lost its original height/support");
+    if (planner.queryWorld(start, .25, true) !=
+        OctoPlanner3D::TraversabilityFailure::OccupiedBody)
+      throw std::runtime_error("formal-width guidance ignored the 40 cm corridor walls");
+    planner.makePlan({.025,.025,.025}, {.625,.025,.025});
+    planner.getPlannerResults(path);
+    if (!path.empty())
+      throw std::runtime_error("formal-width guidance admitted the too-narrow 40 cm corridor");
+  }
+
   static void fineVoxelsResolveGo2ClearanceWithoutShrinkingBody() {
     for (double resolution : {0.20, 0.10, 0.05}) {
       auto tree = std::make_shared<octomap::OcTree>(resolution);
@@ -250,9 +577,9 @@ struct OctoPlannerGridQueryTest
     config.robot_radius = .01;
     config.snap_search_radius_cells = 0;
     // Isolate observed free space from ground support; support has its own tests.
-    config.require_ground_support = false;
-    config.ground_support_xy_radius_cells = 1;
-    config.ground_support_depth_cells = 1;
+    config.ground_support = false;
+    config.support_radius_cells = 1;
+    config.support_depth_cells = 1;
     config.enable_preblocked_costmap = false;
     config.obstacle_clearance_radius_cells = 0;
     OctoPlanner3D planner;
@@ -286,15 +613,15 @@ struct OctoPlannerGridQueryTest
         tree->updateNode(octomap::point3d(
           body.x() + x * .05, body.y() + y * .05, body.z() + z * .05), false);
     planner.setOctomap(std::make_shared<octomap::OcTree>(*tree));
-    c.strict_direct_ground_support=true;
-    c.ground_support_xy_radius_cells=1;
+    c.direct_support_only=true;
+    c.support_radius_cells=1;
     planner.setConfig(c);
     if (planner.queryWorld(body,.1,true)!=OctoPlanner3D::TraversabilityFailure::None)
       throw std::runtime_error("strict direct support rejected an occupied exposed floor");
     // Production mode accepts a saved-map sampling hole when neighbouring
     // occupied floor cells still prove support. The strict direct check above
     // remains available as a diagnostic for maps that must contain the centre.
-    c.strict_direct_ground_support=false;
+    c.direct_support_only=false;
     tree->deleteNode(octomap::point3d(.025,.025,-.325));
     planner.setConfig(c);
     if (planner.queryWorld(body,.1,true)!=OctoPlanner3D::TraversabilityFailure::None)
@@ -306,8 +633,13 @@ struct OctoPlannerGridQueryTest
       throw std::runtime_error("free ray just above neighbouring floor blocked sparse support");
     tree->updateNode(octomap::point3d(.025,.025,-.375),false);
     planner.setOctomap(std::make_shared<octomap::OcTree>(*tree));
+    if (planner.queryWorld(body,.1,true)!=OctoPlanner3D::TraversabilityFailure::None)
+      throw std::runtime_error("centre free ray vetoed an enclosed neighbouring floor patch");
+    for (int x=-1;x<=1;++x) for (int y=-1;y<=1;++y)
+      tree->deleteNode(octomap::point3d((x+.5)*.05,(y+.5)*.05,-.325));
+    planner.setOctomap(std::make_shared<octomap::OcTree>(*tree));
     if (planner.queryWorld(body,.1,true)!=OctoPlanner3D::TraversabilityFailure::GroundSupport)
-      throw std::runtime_error("explicit free/drop in the centre column was ignored");
+      throw std::runtime_error("a gap without direct or surrounding floor evidence was accepted");
   }
   static void adjacentSupportSnapUsesNearestCell() {
     auto tree = std::make_shared<octomap::OcTree>(.05);
@@ -323,9 +655,9 @@ struct OctoPlannerGridQueryTest
     c.support_height_m=.35;
     c.support_height_tolerance_m=.05;
     c.body_clearance_below_m=c.body_clearance_above_m=.10;
-    c.strict_direct_ground_support=false;
-    c.ground_support_xy_radius_cells=1;
-    c.ground_support_depth_cells=2;
+    c.direct_support_only=false;
+    c.support_radius_cells=1;
+    c.support_depth_cells=2;
     c.snap_search_radius_cells=1;
     OctoPlanner3D planner;
     planner.setConfig(c);
@@ -432,10 +764,10 @@ struct OctoPlannerGridQueryTest
       std::vector<PointPose> path;
       planner.getPlannerResults(path);
       const auto resolution_info = planner.endpointResolution();
-      if (path.empty() || !resolution_info.start_snapped ||
-          resolution_info.failure != OctoPlanner3D::EndpointResolutionInfo::Failure::None)
+      if (!path.empty() || resolution_info.failure !=
+          OctoPlanner3D::EndpointResolutionInfo::Failure::StartSnapExhausted)
         throw std::runtime_error(
-          "occupied raw start did not route from its nearest traversable cell");
+          "occupied raw start bypassed its required entry sweep");
 
       tree = std::make_shared<octomap::OcTree>(r);
       tree->updateNode(octomap::point3d(-2,-2,-1), false);
@@ -447,6 +779,47 @@ struct OctoPlannerGridQueryTest
           OctoPlanner3D::EndpointResolutionInfo::Failure::StartSnapExhausted)
         throw std::runtime_error("unobserved start support was not handled by the official snap search");
     }
+  }
+  static void freeUnanchoredStartKeepsSafeQuantizationEntry()
+  {
+    auto tree = std::make_shared<octomap::OcTree>(.1);
+    for (int x = -3; x <= 6; ++x)
+      for (int y = -3; y <= 3; ++y)
+        for (int z = -2; z <= 2; ++z)
+          tree->updateNode(octomap::point3d((x+.5)*.1, (y+.5)*.1, (z+.5)*.1), false);
+    tree->updateInnerOccupancy();
+    PlannerConfig config;
+    config.robot_radius = .01;
+    config.body_clearance_below_m = config.body_clearance_above_m = .01;
+    config.ground_support = false;
+    config.max_slope = .57735;
+    config.snap_search_radius_cells = 2;
+    config.enable_preblocked_costmap = false;
+    OctoPlanner3D planner;
+    planner.setConfig(config);
+    planner.setOctomap(tree);
+    const PointPose start{.071, .061, .05};
+    planner.makePlan(start, {.35, .05, .05});
+    std::vector<PointPose> path;
+    planner.getPlannerResults(path);
+    if (path.empty() || std::abs(path.front().x-.05)>1e-6 ||
+        std::abs(path.front().y-.05)>1e-6 ||
+        std::abs(path.front().z-start.z)>1e-6)
+      throw std::runtime_error("safe free-space quantization entry was rejected");
+
+    // The raw pose is clear while its containing cell centre overlaps a
+    // neighbouring obstacle. Reject nearer vertical snaps, then keep looking
+    // for the safe same-height quantization connection.
+    config.robot_radius = .06;
+    config.same_floor_preference = false;
+    planner.setConfig(config);
+    tree->updateNode(octomap::point3d(-.05, .05, .05), true);
+    tree->updateInnerOccupancy();
+    planner.setOctomap(tree);
+    planner.makePlan({.099, .05, .05}, {.45, .05, .05});
+    planner.getPlannerResults(path);
+    if (path.empty() || std::abs(path.front().z-.05)>1e-6)
+      throw std::runtime_error("entry filtering missed an available same-height candidate");
   }
   static void standingGo2CannotDuckByOneVoxel()
   {
@@ -655,7 +1028,7 @@ void checkResolution(double resolution)
 {
   global_planner::PlannerConfig config;
   config.robot_radius = 2.1 * resolution;
-  config.require_ground_support = false;
+  config.ground_support = false;
   config.snap_search_radius_cells = 0;
   config.enable_preblocked_costmap = false;
   config.obstacle_clearance_radius_cells = 0;
@@ -703,14 +1076,13 @@ void checkResolution(double resolution)
     blocked_start->updateNode(octomap::point3d(p.x, p.y, p.z), true);
   }
   planner.setOctomap(blocked_start);
-  expectPoint(planner, point(16, 16, 16, resolution), true,
-              "nearest-free endpoint search did not route from a traversable cell");
+  expectPoint(planner, point(16, 16, 16, resolution), false,
+              "occupied coincident start bypassed its required entry sweep");
   const auto endpoint_resolution = planner.endpointResolution();
-  if (!endpoint_resolution.start_snapped || !endpoint_resolution.goal_snapped ||
-      endpoint_resolution.failure !=
-        global_planner::OctoPlanner3D::EndpointResolutionInfo::Failure::None)
+  if (endpoint_resolution.failure !=
+        global_planner::OctoPlanner3D::EndpointResolutionInfo::Failure::StartSnapExhausted)
     throw std::runtime_error(
-      "occupied coincident endpoints did not preserve snap diagnostics");
+      "occupied coincident start did not report an unavailable executable entry");
 }
 
 }  // namespace
@@ -718,11 +1090,18 @@ void checkResolution(double resolution)
 int main()
 {
   try {
+    global_planner::OctoPlannerGridQueryTest::supportHeightUsesActualPoseWithinVoxel();
+    global_planner::OctoPlannerGridQueryTest::supportHeightUsesBothFacesOfTheOccupiedVoxel();
+    global_planner::OctoPlannerGridQueryTest::neighboringSupportInterpolatesHolesButNotFloorEdges();
+    global_planner::OctoPlannerGridQueryTest::supportedRouteTurnsInsideAnLShapedFloor();
+    global_planner::OctoPlannerGridQueryTest::supportedRoutesDoNotRequireObservedCentreAir();
     global_planner::OctoPlannerGridQueryTest::startSnapUsesRouteHeightPreference();
     global_planner::OctoPlannerGridQueryTest::goalSnapUsesRequestedPosition();
+    global_planner::OctoPlannerGridQueryTest::exactGoalConnectionDoesNotSpendArrivalToleranceOnGridQuantization();
     global_planner::OctoPlannerGridQueryTest::temporaryObstacleDoesNotCrossObservedFloor();
     global_planner::OctoPlannerGridQueryTest::stepTransitionsKeepObservedSupportAndBodyClearance();
     global_planner::OctoPlannerGridQueryTest::routeClearancePassesNarrowCorridor();
+    global_planner::OctoPlannerGridQueryTest::formalWidthGuidanceDoesNotRequireAnAllYawCircle();
     global_planner::OctoPlannerGridQueryTest::fineVoxelsResolveGo2ClearanceWithoutShrinkingBody();
     global_planner::OctoPlannerGridQueryTest::unknownCellsDoNotAuthorizeMotion();
     checkResolution(0.1);
@@ -737,6 +1116,7 @@ int main()
     global_planner::OctoPlannerGridQueryTest::bodyCylinderDoesNotReachTheNextVerticalCell();
     global_planner::OctoPlannerGridQueryTest::standingGo2CannotDuckByOneVoxel();
     global_planner::OctoPlannerGridQueryTest::measuredBodyHeightSurvivesVoxelBoundaries();
+    global_planner::OctoPlannerGridQueryTest::freeUnanchoredStartKeepsSafeQuantizationEntry();
     std::cout << "grid query boundaries, body envelopes and invalidation passed\n";
     return 0;
   } catch (const std::exception & error) {

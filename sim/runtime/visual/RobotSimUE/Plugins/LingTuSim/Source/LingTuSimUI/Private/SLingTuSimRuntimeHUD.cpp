@@ -1,7 +1,10 @@
 #include "SLingTuSimRuntimeHUD.h"
+#include "SLingTuSimRobotMapPicker.h"
+#include "LingTuSimMeasurementClient.h"
 
 #include "Brushes/SlateDynamicImageBrush.h"
 #include "Engine/World.h"
+#include "HAL/PlatformTime.h"
 #include "Framework/Application/SlateApplication.h"
 #include "HAL/FileManager.h"
 #include "Interfaces/IPluginManager.h"
@@ -24,9 +27,8 @@ namespace LingTuSim::UI {
 namespace {
 // The drive overlay stays quiet over the world; detailed readouts live in Tactical.
 const FLinearColor RuntimeGlass(0.012F, 0.025F, 0.030F, 0.78F);
-const FLinearColor RuntimeText(0.93F, 0.95F, 0.92F, 1.0F);
-const FLinearColor RuntimeMuted(0.65F, 0.72F, 0.70F, 1.0F);
-const FLinearColor RuntimeAccent(0.28F, 0.78F, 0.69F, 1.0F);
+const FLinearColor RuntimeText(0.96F, 0.95F, 0.91F, 1.0F);
+const FLinearColor RuntimeAccent(0.90F, 0.85F, 0.71F, 1.0F);
 // Front-end and diagnostic panels retain their lighter visual treatment.
 const FLinearColor WarmWhiteGlass(0.97F, 0.95F, 0.90F, 0.88F);
 const FLinearColor WarmWhitePanel(0.99F, 0.98F, 0.94F, 0.92F);
@@ -36,7 +38,6 @@ const FLinearColor AmberAccent(0.82F, 0.49F, 0.08F, 1.0F);
 const FLinearColor Ink(0.07F, 0.12F, 0.14F, 1.0F);
 const FLinearColor MutedInk(0.26F, 0.34F, 0.35F, 1.0F);
 const FLinearColor AlertInk(0.72F, 0.24F, 0.16F, 1.0F);
-const FLinearColor MenuBackdrop(0.012F, 0.024F, 0.030F, 1.0F);
 const FLinearColor DisabledButton(0.15F, 0.18F, 0.19F, 1.0F);
 const FLinearColor FrontEndVoid(0.006F, 0.012F, 0.012F, 1.0F);
 const FLinearColor FrontEndGlass(0.015F, 0.026F, 0.025F, 0.94F);
@@ -44,7 +45,6 @@ const FLinearColor FrontEndGlassSoft(0.025F, 0.042F, 0.039F, 0.86F);
 const FLinearColor FrontEndText(0.91F, 0.92F, 0.86F, 1.0F);
 const FLinearColor FrontEndMuted(0.53F, 0.59F, 0.55F, 1.0F);
 const FLinearColor FieldAmber(0.94F, 0.55F, 0.12F, 1.0F);
-const FLinearColor FieldAmberDim(0.32F, 0.19F, 0.07F, 1.0F);
 const FLinearColor FieldTeal(0.12F, 0.58F, 0.52F, 1.0F);
 
 const FSlateBrush *WhiteBrush() {
@@ -187,10 +187,13 @@ void SLingTuSimRuntimeHUD::Construct(const FArguments &InArgs) {
   World = InArgs._World;
   ModeController = InArgs._ModeController;
   LocalState = InArgs._LocalState;
+  PlayerSettings = InArgs._PlayerSettings.IsValid() ? InArgs._PlayerSettings : MakeShared<FPlayerSettings>();
+  ApplyPlayerAudioSettings(World.Get(), *PlayerSettings);
   LoginModel = InArgs._LoginModel;
   SelectionModel = InArgs._SelectionModel;
   AssetReviewModel = InArgs._AssetReviewModel;
   InspectionProjection = InArgs._InspectionProjection;
+  Measurements = InArgs._Measurements.IsValid() ? InArgs._Measurements : MakeShared<FMeasurementClient>();
   SelectionFeedback = InArgs._SelectionFeedback;
   bFrontEndLoginRequired = InArgs._FrontEndLoginRequired;
   bSelectionIntentConfigured = InArgs._SelectionIntentConfigured;
@@ -199,6 +202,14 @@ void SLingTuSimRuntimeHUD::Construct(const FArguments &InArgs) {
   OnSelectionConfirmed = InArgs._OnSelectionConfirmed;
   OnAssetReviewPrevious = InArgs._OnAssetReviewPrevious;
   OnAssetReviewNext = InArgs._OnAssetReviewNext;
+  OnCycleCamera = InArgs._OnCycleCamera;
+  OnToggleRecording = InArgs._OnToggleRecording;
+  OnRequestExit = InArgs._OnRequestExit;
+  OnRequestRestart = InArgs._OnRequestRestart;
+  OnRequestMainMenu = InArgs._OnRequestMainMenu;
+  OnInspectionPause = InArgs._OnInspectionPause;
+  OnInspectionResume = InArgs._OnInspectionResume;
+  OnInspectionCancel = InArgs._OnInspectionCancel;
   check(ModeController.IsValid());
   check(LocalState.IsValid());
   check(LoginModel.IsValid());
@@ -207,16 +218,14 @@ void SLingTuSimRuntimeHUD::Construct(const FArguments &InArgs) {
   check(InspectionProjection.IsValid());
   check(SelectionFeedback.IsValid());
   CachedStatus = FRuntimeUIStatusReader::Read(World.Get(), LocalState.Get());
+  GraphicsDraft = FPlayerGraphicsSettings::Capture(World.Get());
+  GraphicsResolutions = GraphicsResolutionOptions(World.Get());
   SetVisibility(EVisibility::SelfHitTestInvisible);
 
   if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("LingTuSim"))) {
-    const FString BackgroundPath = FPaths::Combine(
-        Plugin->GetBaseDir(), TEXT("Resources/FrontEnd/lingtu-field-ops-hero-v1.png"));
-    if (IFileManager::Get().FileExists(*BackgroundPath)) {
-      FrontEndBackgroundBrush =
-          MakeShared<FSlateDynamicImageBrush>(FName(*BackgroundPath), FVector2D(1920.0F, 1080.0F));
-    }
-
+    const FString FactoryPath = FPaths::Combine(Plugin->GetBaseDir(), TEXT("Resources/FrontEnd/factory-corridor.png"));
+    if (IFileManager::Get().FileExists(*FactoryPath))
+      FactoryBackgroundBrush = MakeShared<FSlateDynamicImageBrush>(FName(*FactoryPath), FVector2D(1920, 1080));
     struct FPreviewResource {
       const TCHAR *CardId;
       const TCHAR *FileName;
@@ -284,83 +293,13 @@ void SLingTuSimRuntimeHUD::Construct(const FArguments &InArgs) {
   ChildSlot
       [SNew(SOverlay)
 
-       + SOverlay::Slot()
-             .HAlign(HAlign_Left)
-             .VAlign(VAlign_Top)
-             .Padding(FMargin(28.0F, 24.0F, 0.0F, 0.0F))
-                 [SNew(SBox).WidthOverride(370.0F).Visibility(
-                     this, &SLingTuSimRuntimeHUD::GetDriveHudVisibility)
-                      [SNew(SBorder)
-                           .BorderImage(WhiteBrush())
-                           .BorderBackgroundColor(RuntimeGlass)
-                           .Padding(FMargin(18.0F, 13.0F))
-                               [SNew(SHorizontalBox) +
-                                SHorizontalBox::Slot().AutoWidth().Padding(0.0F, 1.0F, 12.0F,
-                                                                           1.0F)
-                                    [SNew(SBox).WidthOverride(3.0F)
-                                         [SNew(SBorder)
-                                              .BorderImage(WhiteBrush())
-                                              .BorderBackgroundColor(RuntimeAccent)]] +
-                                SHorizontalBox::Slot().FillWidth(1.0F)
-                                    [SNew(SVerticalBox) +
-                                     SVerticalBox::Slot().AutoHeight()
-                                         [StaticLabel(TEXT("LINGTU  /  FIELD OPERATIONS"), 9,
-                                                      RuntimeAccent)] +
-                                     SVerticalBox::Slot().AutoHeight().Padding(0.0F, 5.0F, 0.0F,
-                                                                              0.0F)
-                                         [SNew(STextBlock)
-                                              .Text(this,
-                                                    &SLingTuSimRuntimeHUD::GetDriveMissionText)
-                                              .Font(Font(16, true))
-                                              .ColorAndOpacity(RuntimeText)
-                                              .AutoWrapText(true)] +
-                                     SVerticalBox::Slot().AutoHeight().Padding(0.0F, 4.0F, 0.0F,
-                                                                              0.0F)
-                                         [SNew(STextBlock)
-                                              .Text(this, &SLingTuSimRuntimeHUD::GetInspectionProgressText)
-                                              .Font(Font(9, true))
-                                              .ColorAndOpacity(this,
-                                                               &SLingTuSimRuntimeHUD::GetInspectionStatusColor)
-                                              .AutoWrapText(true)] +
-                                     SVerticalBox::Slot().AutoHeight().Padding(0.0F, 3.0F, 0.0F,
-                                                                              0.0F)
-                                         [SNew(STextBlock)
-                                              .Text(this, &SLingTuSimRuntimeHUD::GetInspectionReportText)
-                                              .Font(Font(8))
-                                              .ColorAndOpacity(RuntimeMuted)
-                                              .AutoWrapText(true)]]]]]
+       + SOverlay::Slot().HAlign(HAlign_Fill).VAlign(VAlign_Fill)
+           [SNew(SBox).Visibility(this, &SLingTuSimRuntimeHUD::GetDriveHudVisibility)
+               [BuildDriveInterface()]]
 
-       + SOverlay::Slot()
-             .HAlign(HAlign_Right)
-             .VAlign(VAlign_Top)
-             .Padding(FMargin(0.0F, 24.0F, 28.0F, 0.0F))
-                 [SNew(SBox).WidthOverride(340.0F).Visibility(
-                     this, &SLingTuSimRuntimeHUD::GetDriveHudVisibility)
-                      [SNew(SBorder)
-                           .BorderImage(WhiteBrush())
-                           .BorderBackgroundColor(RuntimeGlass)
-                           .Padding(FMargin(16.0F, 11.0F))
-                               [SNew(SVerticalBox) +
-                                SVerticalBox::Slot().AutoHeight()
-                                    [SNew(STextBlock)
-                                         .Text(FText::FromString(TEXT("RUNTIME STATUS")))
-                                         .Font(Font(9, true))
-                                         .ColorAndOpacity(this,
-                                                          &SLingTuSimRuntimeHUD::GetDriveStatusColor)] +
-                                SVerticalBox::Slot().AutoHeight().Padding(0.0F, 5.0F, 0.0F,
-                                                                         0.0F)
-                                    [SNew(STextBlock)
-                                         .Text(this, &SLingTuSimRuntimeHUD::GetDriveSessionText)
-                                         .Font(Font(10, true))
-                                         .ColorAndOpacity(RuntimeText)
-                                         .AutoWrapText(true)] +
-                                SVerticalBox::Slot().AutoHeight().Padding(0.0F, 3.0F, 0.0F,
-                                                                         0.0F)
-                                    [SNew(STextBlock)
-                                         .Text(this, &SLingTuSimRuntimeHUD::GetDriveTelemetryText)
-                                         .Font(Font(9))
-                                         .ColorAndOpacity(RuntimeMuted)
-                                         .AutoWrapText(true)]]]]
+       + SOverlay::Slot().HAlign(HAlign_Fill).VAlign(VAlign_Fill)
+           [SNew(SBox).Visibility(this, &SLingTuSimRuntimeHUD::GetTacticalVisibility)
+               [BuildTacticalInterface()]]
 
        + SOverlay::Slot()
              .HAlign(HAlign_Fill)
@@ -517,69 +456,13 @@ void SLingTuSimRuntimeHUD::Construct(const FArguments &InArgs) {
                                                  TEXT("No selection, transform, or publish writes"),
                                                  9, MutedInk)]]]]
 
-       + SOverlay::Slot()
-             .HAlign(HAlign_Center)
-             .VAlign(VAlign_Center)
-             .Padding(FMargin(24.0F, 70.0F, 24.0F, 100.0F))
-                 [SNew(SBox).WidthOverride(390.0F).Visibility(
-                     this, &SLingTuSimRuntimeHUD::GetTacticalVisibility)
-                      [SNew(SBorder)
-                           .BorderImage(WhiteBrush())
-                           .BorderBackgroundColor(WarmWhiteGlass)
-                           .Padding(22.0F)
-                               [SNew(SVerticalBox) +
-                                SVerticalBox::Slot().AutoHeight().HAlign(
-                                    HAlign_Center)[StaticLabel(TEXT("TACTICAL"), 16, TealAccent)] +
-                                SVerticalBox::Slot()
-                                    .AutoHeight()
-                                    .HAlign(HAlign_Center)
-                                    .Padding(0.0F, 7.0F, 0.0F, 0.0F)[StaticLabel(
-                                        TEXT("READ-ONLY WORLD OVERVIEW"), 10, MutedInk)] +
-                                SVerticalBox::Slot()
-                                    .AutoHeight()
-                                    .HAlign(HAlign_Center)
-                                    .Padding(0.0F, 10.0F, 0.0F, 0.0F)
-                                        [SNew(STextBlock)
-                                             .Text(this, &SLingTuSimRuntimeHUD::GetTruthFrameText)
-                                             .Font(Font(10))
-                                             .ColorAndOpacity(Ink)]]]]
 
        + SOverlay::Slot()
              .HAlign(HAlign_Fill)
              .VAlign(VAlign_Fill)
-                 [SNew(SBorder)
-                      .Visibility(this, &SLingTuSimRuntimeHUD::GetFrontEndStaticBackdropVisibility)
-                      .BorderImage(WhiteBrush())
-                      .BorderBackgroundColor(MenuBackdrop)]
-
-       + SOverlay::Slot()
-             .HAlign(HAlign_Fill)
-             .VAlign(VAlign_Fill)
-                 [SNew(SImage)
-                      .Visibility(this, &SLingTuSimRuntimeHUD::GetFrontEndStaticBackdropVisibility)
-                      .Image(FrontEndBackgroundBrush.IsValid() ? FrontEndBackgroundBrush.Get()
-                                                               : WhiteBrush())
-                      .ColorAndOpacity(FrontEndBackgroundBrush.IsValid()
-                                           ? FLinearColor(0.48F, 0.55F, 0.48F, 1.0F)
-                                           : FrontEndVoid)]
-
-       + SOverlay::Slot()
-             .HAlign(HAlign_Fill)
-             .VAlign(VAlign_Fill)
-                 [SNew(SBorder)
-                      .Visibility(this, &SLingTuSimRuntimeHUD::GetFrontEndStaticBackdropVisibility)
-                      .BorderImage(WhiteBrush())
-                      .BorderBackgroundColor(FLinearColor(0.004F, 0.010F, 0.009F, 0.54F))]
-
-       + SOverlay::Slot()
-             .HAlign(HAlign_Fill)
-             .VAlign(VAlign_Fill)
-             .Padding(
-                 FMargin(64.0F, 54.0F, 64.0F,
-                         48.0F))[SNew(SBox)
+             .Padding(0)[SNew(SBox)
                                      .Visibility(this, &SLingTuSimRuntimeHUD::GetLoginVisibility)
-                                     .ToolTipText(FText::FromString(TEXT(
-                                         "开始本地任务  ·  A / ENTER 确认")))[BuildLoginScreen()]]
+                                         [BuildLoginScreen()]]
 
        + SOverlay::Slot()
              .HAlign(HAlign_Fill)
@@ -587,9 +470,11 @@ void SLingTuSimRuntimeHUD::Construct(const FArguments &InArgs) {
              .Padding(
                  FMargin(0.0F))[SNew(SBox)
                                     .Visibility(this, &SLingTuSimRuntimeHUD::GetWorkspaceVisibility)
-                                    .ToolTipText(FText::FromString(TEXT(
-                                        "A / ENTER 确认  ·  B / ESC 返回  ·  LB / RB 浏览素材")))
                                         [BuildWorkspaceScreen()]]
+
+       + SOverlay::Slot().HAlign(HAlign_Fill).VAlign(VAlign_Fill)
+           [SNew(SBox).Visibility(this, &SLingTuSimRuntimeHUD::GetRuntimeMenuVisibility)
+               [BuildRuntimeMenu()]]
 
        + SOverlay::Slot()
              .HAlign(HAlign_Center)
@@ -1025,7 +910,7 @@ void SLingTuSimRuntimeHUD::Construct(const FArguments &InArgs) {
              .VAlign(VAlign_Bottom)
              .Padding(FMargin(20.0F, 0.0F, 20.0F, 20.0F))
                  [SNew(SBorder)
-                      .Visibility(this, &SLingTuSimRuntimeHUD::GetNonPauseVisibility)
+                           .Visibility(this, &SLingTuSimRuntimeHUD::GetRuntimeHudChromeVisibility)
                       .BorderImage(WhiteBrush())
                       .BorderBackgroundColor(RuntimeGlass)
                       .Padding(FMargin(
@@ -1037,6 +922,12 @@ void SLingTuSimRuntimeHUD::Construct(const FArguments &InArgs) {
   if (bFrontEndLoginRequired && !LoginModel->IsLoggedIn() && LocalWorkspaceButton.IsValid()) {
     FocusFrontEndLoginCTA();
   }
+}
+
+SLingTuSimRuntimeHUD::~SLingTuSimRuntimeHUD() {
+  if (Measurements.IsValid()) Measurements->SetVisible(false);
+  FrontEndMusic.Stop();
+  RestoreUnsavedPlayerSettings();
 }
 
 void SLingTuSimRuntimeHUD::FocusFrontEndLoginCTA() {
@@ -1059,107 +950,8 @@ void SLingTuSimRuntimeHUD::FocusFrontEndLoginCTA() {
       }));
 }
 
-TSharedRef<SWidget> SLingTuSimRuntimeHUD::BuildLoginScreen() {
-  return SNew(SOverlay)
 
-         + SOverlay::Slot()
-               .HAlign(HAlign_Left)
-               .VAlign(VAlign_Top)[SNew(SVerticalBox) +
-                                   SVerticalBox::Slot().AutoHeight()[StaticLabel(
-                                       TEXT("LINGTU / FIELD OPERATIONS"), 13, FieldAmber)] +
-                                   SVerticalBox::Slot().AutoHeight().Padding(0.0F, 5.0F, 0.0F,
-                                                                             0.0F)[StaticLabel(
-                                       TEXT("森林巡检仿真系统  ·  本地离线"), 10, FrontEndMuted)]]
-
-         +
-         SOverlay::Slot()
-             .HAlign(HAlign_Left)
-             .VAlign(VAlign_Bottom)[SNew(SBox).WidthOverride(
-                 610.0F)[SNew(SVerticalBox) +
-                         SVerticalBox::Slot()
-                             .AutoHeight()[StaticLabel(TEXT("林地行动终端"), 34, FrontEndText)] +
-                         SVerticalBox::Slot().AutoHeight().Padding(0.0F, 10.0F, 0.0F, 0.0F)
-                             [SNew(STextBlock)
-                                  .Text(
-                                      FText::FromString(TEXT("部署机器狗进入森林巡检场景，选择已编"
-                                                             "译任务，并以只读方式核验场景素材。")))
-                                  .Font(Font(12))
-                                  .ColorAndOpacity(FrontEndMuted)
-                                  .AutoWrapText(true)] +
-                         SVerticalBox::Slot().AutoHeight().Padding(0.0F, 24.0F, 0.0F, 0.0F)
-                             [SNew(SBorder)
-                                  .BorderImage(WhiteBrush())
-                                  .BorderBackgroundColor(FrontEndGlass)
-                                  .Padding(FMargin(18.0F, 15.0F))
-                                      [SNew(SHorizontalBox) +
-                                       SHorizontalBox::Slot().FillWidth(1.0F).VAlign(VAlign_Center)
-                                           [SNew(SVerticalBox) +
-                                            SVerticalBox::Slot().AutoHeight()[StaticLabel(
-                                                TEXT("本地操作员档案"), 9, FrontEndMuted)] +
-                                            SVerticalBox::Slot().AutoHeight().Padding(0.0F, 5.0F,
-                                                                                      20.0F, 0.0F)
-                                                [SAssignNew(OperatorNameTextBox, SEditableTextBox)
-                                                     .Text(FText::FromString(PendingOperatorName))
-                                                     .HintText(FText::FromString(TEXT("操作员名"
-                                                                                      "称")))
-                                                     .ForegroundColor(FrontEndText)
-                                                     .BackgroundColor(
-                                                         FLinearColor(0.02F, 0.03F, 0.03F, 0.92F))
-                                                     .MaximumLength(64)
-                                                     .IsEnabled_Lambda(
-                                                         [this]() { return LoginModel->CanEdit(); })
-                                                     .OnTextChanged(
-                                                         this, &SLingTuSimRuntimeHUD::
-                                                                   HandleOperatorNameChanged)]] +
-                                       SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-                                           [SAssignNew(LocalWorkspaceButton, SButton)
-                                                .ButtonColorAndOpacity_Lambda([this]() {
-                                                  return CanEnterLocalWorkspace() ? FieldAmber
-                                                                                  : DisabledButton;
-                                                })
-                                                .ForegroundColor(FrontEndText)
-                                                .ContentPadding(FMargin(28.0F, 13.0F))
-                                                .IsEnabled(this, &SLingTuSimRuntimeHUD::
-                                                                     CanEnterLocalWorkspace)
-                                                .OnClicked(this, &SLingTuSimRuntimeHUD::
-                                                                     HandleEnterLocalWorkspace)
-                                                    [StaticLabel(TEXT("开始本地任务  ▶"), 12,
-                                                                 FrontEndText)]]]] +
-                         SVerticalBox::Slot().AutoHeight().Padding(
-                             0.0F, 12.0F, 0.0F,
-                             0.0F)[SNew(STextBlock)
-                                       .Text(this, &SLingTuSimRuntimeHUD::GetLoginCatalogStatusText)
-                                       .Font(Font(9, true))
-                                       .ColorAndOpacity(FieldTeal)
-                                       .AutoWrapText(true)] +
-                         SVerticalBox::Slot().AutoHeight().Padding(
-                             0.0F, 5.0F, 0.0F,
-                             0.0F)[SNew(STextBlock)
-                                       .Text(this, &SLingTuSimRuntimeHUD::GetLoginFeedbackText)
-                                       .Font(Font(10, true))
-                                       .ColorAndOpacity(AlertInk)
-                                       .AutoWrapText(true)] +
-                         SVerticalBox::Slot().AutoHeight().Padding(
-                             0.0F, 20.0F, 0.0F,
-                             0.0F)[StaticLabel(TEXT("A / ENTER  确认   ·   当前版本不执行在线认证"),
-                                               9, FrontEndMuted)]]]
-
-         + SOverlay::Slot()
-               .HAlign(HAlign_Right)
-               .VAlign(VAlign_Bottom)
-                   [SNew(SBorder)
-                        .BorderImage(WhiteBrush())
-                        .BorderBackgroundColor(FrontEndGlassSoft)
-                        .Padding(FMargin(15.0F, 11.0F))
-                            [SNew(SVerticalBox) +
-                             SVerticalBox::Slot()
-                                 .AutoHeight()[StaticLabel(TEXT("LOCAL SESSION"), 9, FieldAmber)] +
-                             SVerticalBox::Slot().AutoHeight().Padding(0.0F, 3.0F,
-                                                                       0.0F, 0.0F)[StaticLabel(
-                                 TEXT("本地数据  ·  无登录令牌  ·  未联网"), 9, FrontEndText)]]];
-}
-
-TSharedRef<SWidget> SLingTuSimRuntimeHUD::BuildWorkspaceScreen() {
+TSharedRef<SWidget> SLingTuSimRuntimeHUD::BuildAssetReviewWorkspace() {
   const TSharedRef<STextBlock> DeployButtonLabel = StaticLabel(TEXT("开始任务"), 12, FrontEndText);
   return SNew(SOverlay)
 
@@ -1391,12 +1183,60 @@ TSharedRef<SWidget> SLingTuSimRuntimeHUD::BuildAssetFilmstrip() {
 void SLingTuSimRuntimeHUD::Tick(const FGeometry &AllottedGeometry, const double InCurrentTime,
                                 const float InDeltaTime) {
   SCompoundWidget::Tick(AllottedGeometry, InCurrentTime, InDeltaTime);
-  CachedStatus = FRuntimeUIStatusReader::Read(World.Get(), LocalState.Get());
+  FrontEndMusic.Update(World.Get(), *PlayerSettings, bFrontEndLoginRequired && !CachedStatus.bSessionAvailable);
+  if (PendingDriveKey.IsSet() && KeyBindingErrorUntil > 0.0 && InCurrentTime >= KeyBindingErrorUntil) {
+    KeyBindingErrorUntil = 0.0;
+    MenuFeedback = FString::Printf(TEXT("为“%s”按一个新键 · Esc 取消"),
+        FDriveKeyBindings::ActionLabel(PendingDriveKey.GetValue()));
+  }
+  if (InDeltaTime > 0.F && FMath::IsFinite(InDeltaTime))
+    SmoothedFrameTimeSeconds = SmoothedFrameTimeSeconds > 0.F
+        ? FMath::Lerp(SmoothedFrameTimeSeconds, InDeltaTime, .1F) : InDeltaTime;
+  auto NextStatus = FRuntimeUIStatusReader::Read(World.Get(), LocalState.Get());
+  if (InspectionProjection.IsValid() &&
+      (CachedStatus.SessionId != NextStatus.SessionId ||
+       CachedStatus.ModelGeneration != NextStatus.ModelGeneration ||
+       CachedStatus.ResetGeneration != NextStatus.ResetGeneration)) {
+    InspectionProjection->Guidance = FInspectionGuidance();
+  }
+  CachedStatus = MoveTemp(NextStatus);
+  if (Measurements.IsValid()) Measurements->SetVisible(
+      GetRuntimeMenuVisibility() == EVisibility::Visible && MenuPage == EPlayerMenuPage::Measurements);
+  const bool bMenuVisible = GetRuntimeMenuVisibility() == EVisibility::Visible;
+  if (bMenuVisible && MenuPage == EPlayerMenuPage::Settings && SettingsAnimatedContent.IsValid()) {
+    SettingsAnimatedContent->SetRenderOpacity(MenuMotion.PageOpacity(InCurrentTime));
+    SettingsAnimatedContent->SetRenderTransform(FSlateRenderTransform(FVector2D(MenuMotion.PageOffset(InCurrentTime), 0)));
+  }
+  if (bMenuVisible && !bRuntimeMenuWasVisible) ShowMenuPage(EPlayerMenuPage::Root);
+  if (!bMenuVisible && bRuntimeMenuWasVisible) {
+    CancelKeyBindingCapture();
+    bSettingsExitDecision = false;
+    SettingsExitReturnFocus.Reset();
+    GraphicsPreview.Revert();
+    RestoreUnsavedPlayerSettings();
+    MenuPage = EPlayerMenuPage::Root;
+  }
+  bRuntimeMenuWasVisible = bMenuVisible;
+}
+
+void SLingTuSimRuntimeHUD::TickGraphicsPreview() {
+  if (GraphicsPreview.Tick(FPlatformTime::Seconds())) {
+    GraphicsDraft = FPlayerGraphicsSettings::Capture(World.Get());
+    GraphicsSettingsCheckpoint = GraphicsDraft;
+    MenuFeedback = TEXT("未确认画面设置，已自动还原");
+  }
 }
 
 bool SLingTuSimRuntimeHUD::IsOperatorNameEditing() const {
   return OperatorNameTextBox.IsValid() &&
          (OperatorNameTextBox->HasKeyboardFocus() || OperatorNameTextBox->HasFocusedDescendants());
+}
+
+bool SLingTuSimRuntimeHUD::IsTextEntryEditing() const {
+  // This page owns text, Tab navigation and shortcuts even between edit boxes.
+  return IsMeasurementPageOpen() || IsOperatorNameEditing() ||
+    (WorkspaceRobotMapPicker.IsValid() && WorkspaceRobotMapPicker->IsSearchEditing()) ||
+    (RuntimeRobotMapPicker.IsValid() && RuntimeRobotMapPicker->IsSearchEditing());
 }
 
 FText SLingTuSimRuntimeHUD::GetIdentityText() const {
@@ -1438,11 +1278,7 @@ FText SLingTuSimRuntimeHUD::GetDriveMissionText() const {
     return FText::FromString(
         FString::Printf(TEXT("机器狗巡检  ·  %s"), *InspectionProjection->RouteId));
   }
-  const FGameSelectionOption *Option =
-      SelectionModel->IsConfirmed() ? SelectionModel->GetSelectedOption() : nullptr;
-  return Option != nullptr && !Option->Title.IsEmpty()
-             ? FText::FromString(Option->Title)
-             : FText::FromString(TEXT("机器狗巡检"));
+  return FText::FromString(CachedStatus.bSessionAvailable ? TEXT("自由驾驶") : TEXT("模型预览"));
 }
 
 FText SLingTuSimRuntimeHUD::GetInspectionProgressText() const {
@@ -1495,9 +1331,18 @@ FText SLingTuSimRuntimeHUD::GetInspectionReportText() const {
     return FText::FromString(TEXT("验收报告等待刷新"));
   }
   if (InspectionProjection->bReportVerified) {
+    const auto Report = InspectionProjection->ReportStatus == TEXT("COMPLETE") ? TEXT("完整")
+        : InspectionProjection->ReportStatus == TEXT("PARTIAL") ? TEXT("部分完成")
+        : InspectionProjection->ReportStatus == TEXT("FAILED") ? TEXT("失败")
+        : InspectionProjection->ReportStatus == TEXT("CANCELLED") ? TEXT("已取消")
+        : InspectionProjection->ReportStatus == TEXT("IN_PROGRESS") ? TEXT("进行中") : TEXT("待确认");
+    const auto Acceptance = InspectionProjection->Acceptance == TEXT("ACCEPTABLE") ? TEXT("通过")
+        : InspectionProjection->Acceptance == TEXT("REVIEW_REQUIRED") ? TEXT("需要复核")
+        : InspectionProjection->Acceptance == TEXT("NOT_ACCEPTABLE") ? TEXT("不满足要求")
+        : TEXT("待确认");
     return FText::FromString(FString::Printf(
-        TEXT("报告 %s  ·  验收 %s  ·  证据 %d/%d"), *InspectionProjection->ReportStatus,
-        *InspectionProjection->Acceptance, InspectionProjection->VerifiedEvidence,
+        TEXT("报告：%s  ·  验收：%s  ·  证据 %d/%d"), Report,
+        Acceptance, InspectionProjection->VerifiedEvidence,
         InspectionProjection->RequiredEvidence));
   }
   if (InspectionProjection->bTaskAvailable && InspectionProjection->bExecutionConfirmed) {
@@ -1519,9 +1364,11 @@ FSlateColor SLingTuSimRuntimeHUD::GetInspectionStatusColor() const {
 }
 
 FText SLingTuSimRuntimeHUD::GetDriveSessionText() const {
+  if (CachedStatus.bSessionAvailable && CachedStatus.bControlBindingAvailable &&
+      !CachedStatus.bIdentityCoherent) return FText::FromString(TEXT("会话与控制身份不一致"));
   return FText::FromString(FString::Printf(
-      TEXT("SESSION  %s   ·   CONTROL  %s"), *CachedStatus.SessionState,
-      *CachedStatus.ControlState));
+      TEXT("%s   /   %s"), CachedStatus.bSessionAvailable ? TEXT("会话已绑定") : TEXT("会话未连接"),
+      CachedStatus.bControlBindingAvailable ? TEXT("控制已绑定") : TEXT("控制未连接")));
 }
 
 FText SLingTuSimRuntimeHUD::GetDriveTelemetryText() const {
@@ -1529,25 +1376,25 @@ FText SLingTuSimRuntimeHUD::GetDriveTelemetryText() const {
                                   CachedStatus.bFullStatusFresh &&
                                   CachedStatus.bFullStatusIdentityCoherent;
   const FString Truth =
-      CachedStatus.bLatestAppliedTruthAvailable
+      CachedStatus.bLatestAppliedTruthAvailable && CachedStatus.bIdentityCoherent
           ? FString::Printf(TEXT("#%llu"),
                             static_cast<unsigned long long>(CachedStatus.TruthSequence))
           : TEXT("不可用");
   const TCHAR *Recording =
       bTrustedFullStatus
           ? RecordingStateName(CachedStatus.FullStatus.Recording.State)
-          : TEXT("UNAVAILABLE");
+          : TEXT("不可用");
   return FText::FromString(FString::Printf(
-      TEXT("TRUTH  %s   ·   RECORD  %s%s"), *Truth, Recording,
-      bTrustedFullStatus ? TEXT("") : TEXT("   ·   STATUS UNVERIFIED")));
+      TEXT("真值 %s   ·   记录 %s%s"), *Truth, Recording,
+      bTrustedFullStatus ? TEXT("") : TEXT("   ·   状态未核验")));
 }
 
 FSlateColor SLingTuSimRuntimeHUD::GetDriveStatusColor() const {
-  return CachedStatus.bSessionAvailable && CachedStatus.bControlBindingAvailable &&
-                 CachedStatus.bIdentityCoherent && CachedStatus.bFullStatusFresh &&
-                 CachedStatus.bFullStatusIdentityCoherent
-             ? RuntimeAccent
-             : FieldAmber;
+  if (CachedStatus.bFullStatusAvailable && CachedStatus.bFullStatusFresh &&
+      CachedStatus.bFullStatusIdentityCoherent &&
+      CachedStatus.FullStatus.Runtime.RuntimeState == LingTuSim::EControlStatusRuntimeState::Failed)
+    return AlertInk;
+  return HasHealthyDriveLink(CachedStatus) ? RuntimeAccent : FieldAmber;
 }
 
 FText SLingTuSimRuntimeHUD::GetModeText() const {
@@ -1583,91 +1430,174 @@ FText SLingTuSimRuntimeHUD::GetInputText() const {
 }
 
 FText SLingTuSimRuntimeHUD::GetRequestedAxesText() const {
-  if (!CachedStatus.bFullStatusAvailable ||
-      !CachedStatus.FullStatus.Motion.RequestedAxes.bAvailable) {
-    return FText::FromString(TEXT("REQUESTED  F —  L —  YAW —"));
+  if (!CachedStatus.bFullStatusAvailable) {
+    return FText::FromString(TEXT("操作请求  不可用（控制状态未连接）"));
+  }
+  if (!CachedStatus.bFullStatusFresh) {
+    return FText::FromString(TEXT("操作请求  已陈旧（不用于当前判断）"));
+  }
+  if (!CachedStatus.bFullStatusIdentityCoherent) {
+    return FText::FromString(TEXT("操作请求  不可用（会话身份不一致）"));
+  }
+  if (!CachedStatus.FullStatus.Motion.RequestedAxes.bAvailable) {
+    return FText::FromString(TEXT("操作请求  当前状态未提供"));
   }
   const LingTuSim::FControlStatusRequestedAxes &Input =
       CachedStatus.FullStatus.Motion.RequestedAxes;
-  return FText::FromString(FString::Printf(TEXT("REQUESTED  F %+.2f  ·  L %+.2f  ·  YAW %+.2f"),
+  return FText::FromString(FString::Printf(TEXT("操作请求  前后 %+.2f  ·  横移 %+.2f  ·  转向 %+.2f"),
                                            Input.Forward, Input.Left, Input.YawLeft));
 }
 
 FText SLingTuSimRuntimeHUD::GetAckText() const {
   if (!CachedStatus.bFullStatusAvailable) {
-    return FText::FromString(TEXT("CONTROL STATUS  unavailable"));
+    return FText::FromString(TEXT("控制回执  不可用（控制状态未连接）"));
+  }
+  if (!CachedStatus.bFullStatusFresh) {
+    return FText::FromString(TEXT("控制回执  已陈旧（不代表当前受理）"));
+  }
+  if (!CachedStatus.bFullStatusIdentityCoherent) {
+    return FText::FromString(TEXT("控制回执  不可用（会话身份不一致）"));
+  }
+  const TCHAR *StatusName = TEXT("不可用");
+  switch (CachedStatus.FullStatus.Status) {
+    case LingTuSim::EControlAckStatus::Pending: StatusName = TEXT("等待中"); break;
+    case LingTuSim::EControlAckStatus::Accepted: StatusName = TEXT("已接受"); break;
+    case LingTuSim::EControlAckStatus::Rejected: StatusName = TEXT("已拒绝"); break;
+    case LingTuSim::EControlAckStatus::Released: StatusName = TEXT("已释放"); break;
+    case LingTuSim::EControlAckStatus::TimeoutZero: StatusName = TEXT("超时归零"); break;
+    case LingTuSim::EControlAckStatus::Confirmed: StatusName = TEXT("已确认"); break;
+    default: break;
   }
   const FString Reason = CachedStatus.FullStatus.Reason.IsEmpty()
                              ? FString()
                              : TEXT("  ·  ") + CachedStatus.FullStatus.Reason;
   return FText::FromString(FString::Printf(
-      TEXT("CONTROL STATUS  %s  ·  server #%llu%s"), AckStatusName(CachedStatus.FullStatus.Status),
+      TEXT("控制回执  %s  ·  服务端序列 #%llu%s"), StatusName,
       static_cast<unsigned long long>(CachedStatus.FullStatus.ServerStatusSequence), *Reason));
 }
 
 FText SLingTuSimRuntimeHUD::GetAcceptedMotionText() const {
-  if (!CachedStatus.bFullStatusAvailable ||
-      !CachedStatus.FullStatus.Motion.AdmittedTwist.bAvailable) {
-    return FText::FromString(TEXT("ADMITTED  VX —  VY —  WZ —"));
+  if (!CachedStatus.bFullStatusAvailable) {
+    return FText::FromString(TEXT("准入运动  不可用（控制状态未连接）"));
+  }
+  if (!CachedStatus.bFullStatusFresh) {
+    return FText::FromString(TEXT("准入运动  已陈旧（不代表当前输出）"));
+  }
+  if (!CachedStatus.bFullStatusIdentityCoherent) {
+    return FText::FromString(TEXT("准入运动  不可用（会话身份不一致）"));
+  }
+  if (!CachedStatus.FullStatus.Motion.AdmittedTwist.bAvailable) {
+    return FText::FromString(TEXT("准入运动  当前状态未提供"));
   }
   const LingTuSim::FControlStatusVelocity &Twist = CachedStatus.FullStatus.Motion.AdmittedTwist;
-  return FText::FromString(FString::Printf(TEXT("ADMITTED  VX %+.2f  ·  VY %+.2f  ·  WZ %+.2f"),
+  return FText::FromString(FString::Printf(TEXT("准入运动  VX %+.2f  ·  VY %+.2f  ·  WZ %+.2f"),
                                            Twist.LinearX, Twist.LinearY, Twist.AngularZ));
 }
 
 FText SLingTuSimRuntimeHUD::GetObservedVelocityText() const {
-  if (!CachedStatus.bFullStatusAvailable ||
-      !CachedStatus.FullStatus.Motion.ObservedBaseVelocity.bAvailable) {
-    return FText::FromString(TEXT("OBSERVED  VX —  VY —  WZ —"));
+  if (!CachedStatus.bFullStatusAvailable) {
+    return FText::FromString(TEXT("物理观测  不可用（控制状态未连接）"));
+  }
+  if (!CachedStatus.bFullStatusFresh) {
+    return FText::FromString(TEXT("物理观测  已陈旧（不代表当前运动）"));
+  }
+  if (!CachedStatus.bFullStatusIdentityCoherent) {
+    return FText::FromString(TEXT("物理观测  不可用（会话身份不一致）"));
+  }
+  if (!CachedStatus.FullStatus.Motion.ObservedBaseVelocity.bAvailable) {
+    return FText::FromString(TEXT("物理观测  当前状态未提供"));
   }
   const LingTuSim::FControlStatusVelocity &Velocity =
       CachedStatus.FullStatus.Motion.ObservedBaseVelocity;
-  return FText::FromString(FString::Printf(TEXT("OBSERVED  VX %+.2f  ·  VY %+.2f  ·  WZ %+.2f"),
+  return FText::FromString(FString::Printf(TEXT("物理观测  VX %+.2f  ·  VY %+.2f  ·  WZ %+.2f"),
                                            Velocity.LinearX, Velocity.LinearY, Velocity.AngularZ));
 }
 
 FText SLingTuSimRuntimeHUD::GetSensorsText() const {
   if (!CachedStatus.bFullStatusAvailable) {
-    return FText::FromString(TEXT("SENSORS  unavailable"));
+    return FText::FromString(TEXT("传感器  不可用（控制状态未连接）"));
   }
-  FString Summary = TEXT("SENSORS");
+  if (!CachedStatus.bFullStatusFresh) {
+    return FText::FromString(TEXT("传感器  状态已陈旧"));
+  }
+  if (!CachedStatus.bFullStatusIdentityCoherent) {
+    return FText::FromString(TEXT("传感器  不可用（会话身份不一致）"));
+  }
+  if (CachedStatus.FullStatus.Sensors.IsEmpty()) {
+    return FText::FromString(TEXT("传感器  当前状态未报告任何流"));
+  }
+  int32 ActiveCount = 0;
   for (const LingTuSim::FControlStatusSensor &Sensor : CachedStatus.FullStatus.Sensors) {
-    Summary += FString::Printf(TEXT("  ·  %s #%llu"), *Sensor.StreamId,
-                               static_cast<unsigned long long>(Sensor.SampleCount));
+    ActiveCount += Sensor.State == LingTuSim::EControlSensorState::Active ? 1 : 0;
   }
-  return FText::FromString(Summary);
+  return FText::FromString(FString::Printf(TEXT("传感器  %d / %d 活跃"), ActiveCount,
+                                           CachedStatus.FullStatus.Sensors.Num()));
 }
 
 FText SLingTuSimRuntimeHUD::GetRecordingText() const {
   if (!CachedStatus.bFullStatusAvailable) {
-    return FText::FromString(TEXT("RECORDING  unavailable  ·  R disabled"));
+    return FText::FromString(TEXT("记录  不可用（控制状态未连接） · R 已禁用"));
+  }
+  if (!CachedStatus.bFullStatusFresh) {
+    return FText::FromString(TEXT("记录  状态已陈旧 · R 已禁用"));
+  }
+  if (!CachedStatus.bFullStatusIdentityCoherent) {
+    return FText::FromString(TEXT("记录  不可用（会话身份不一致） · R 已禁用"));
   }
   const LingTuSim::FControlStatusRecording &Recording = CachedStatus.FullStatus.Recording;
-  const TCHAR *Action = CachedStatus.CanRequestRecordStart()        ? TEXT("R START")
-                        : CachedStatus.CanRequestRecordStopCommit() ? TEXT("R STOP + COMMIT")
-                                                                    : TEXT("R DISABLED");
+  const TCHAR *StateName = TEXT("不可用");
+  switch (Recording.State) {
+    case LingTuSim::EControlRecordingState::Idle: StateName = TEXT("空闲"); break;
+    case LingTuSim::EControlRecordingState::Requested: StateName = TEXT("已请求"); break;
+    case LingTuSim::EControlRecordingState::Recording: StateName = TEXT("记录中"); break;
+    case LingTuSim::EControlRecordingState::Committed: StateName = TEXT("已保存"); break;
+    case LingTuSim::EControlRecordingState::Rejected: StateName = TEXT("已拒绝"); break;
+    case LingTuSim::EControlRecordingState::Failed: StateName = TEXT("失败"); break;
+    default: break;
+  }
+  const TCHAR *Action = CachedStatus.CanRequestRecordStart()        ? TEXT("R 开始")
+                         : CachedStatus.CanRequestRecordStopCommit() ? TEXT("R 停止并保存")
+                                                                     : TEXT("R 已禁用");
   return FText::FromString(
-      FString::Printf(TEXT("RECORDING  %s  ·  %.2f s  ·  %s"), RecordingStateName(Recording.State),
+      FString::Printf(TEXT("记录  %s  ·  %.2f s  ·  %s"), StateName,
                       static_cast<double>(Recording.ElapsedSimTimeNs) / 1'000'000'000.0, Action));
 }
 
 FText SLingTuSimRuntimeHUD::GetCameraText() const {
-  const TCHAR *Echo = CachedStatus.bFullStatusAvailable
-                          ? CameraModeName(CachedStatus.FullStatus.UI.CameraMode)
-                          : TEXT("UNAVAILABLE");
-  return FText::FromString(FString::Printf(TEXT("CAMERA  UE %s  ·  RUNTIME ECHO %s"),
-                                           *CachedStatus.ActualCameraMode.ToUpper(), Echo));
+  const FString ActualMode = CachedStatus.ActualCameraMode.ToLower();
+  const TCHAR *ActualName = ActualMode == TEXT("follow")       ? TEXT("跟随")
+                            : ActualMode == TEXT("inspection") ? TEXT("巡检")
+                            : ActualMode == TEXT("free")       ? TEXT("自由")
+                                                               : TEXT("不可用");
+  if (!CachedStatus.bFullStatusAvailable) {
+    return FText::FromString(FString::Printf(TEXT("实际视角  %s · 运行端回显不可用"), ActualName));
+  }
+  if (!CachedStatus.bFullStatusFresh) {
+    return FText::FromString(FString::Printf(TEXT("实际视角  %s · 运行端回显已陈旧"), ActualName));
+  }
+  if (!CachedStatus.bFullStatusIdentityCoherent) {
+    return FText::FromString(FString::Printf(TEXT("实际视角  %s · 运行端身份不一致"), ActualName));
+  }
+  const TCHAR *EchoName = TEXT("不可用");
+  switch (CachedStatus.FullStatus.UI.CameraMode) {
+    case LingTuSim::EControlStatusCameraMode::Follow: EchoName = TEXT("跟随"); break;
+    case LingTuSim::EControlStatusCameraMode::Inspection: EchoName = TEXT("巡检"); break;
+    case LingTuSim::EControlStatusCameraMode::Free: EchoName = TEXT("自由"); break;
+    default: break;
+  }
+  return FText::FromString(
+      FString::Printf(TEXT("实际视角  %s · 运行端回显  %s"), ActualName, EchoName));
 }
 
 FText SLingTuSimRuntimeHUD::GetTruthFrameText() const {
-  if (!CachedStatus.bLatestAppliedTruthAvailable) {
-    return FText::FromString(TEXT("TRUTH FRAME  Unavailable"));
+  if (!CachedStatus.bLatestAppliedTruthAvailable || !CachedStatus.bIdentityCoherent) {
+    return FText::FromString(TEXT("真值帧  不可用（等待当前会话真值）"));
   }
   return FText::FromString(FString::Printf(
-      TEXT("SEQ %llu  ·  SIM %.3f s  ·  BASE %s"),
+      TEXT("序列 %llu  ·  仿真 %.3f s  ·  基座 %s"),
       static_cast<unsigned long long>(CachedStatus.TruthSequence),
       static_cast<double>(CachedStatus.SimTimeNs) / 1'000'000'000.0,
-      CachedStatus.ObservedBaseStableId.IsEmpty() ? TEXT("unavailable")
+      CachedStatus.ObservedBaseStableId.IsEmpty() ? TEXT("未报告")
                                                   : *CachedStatus.ObservedBaseStableId));
 }
 
@@ -1683,8 +1613,9 @@ FText SLingTuSimRuntimeHUD::GetModeHintText() const {
           TEXT("ESC  RESUME   ·   R  RECORD   ·   X  END SESSION   ·   MOTION RELEASED"));
     case ERuntimeUIMode::Drive:
     default:
-      return FText::FromString(
-          TEXT("按住 SHIFT + W/A/S/D/Q/E 移动   ·   C 视角   ·   R 录制   ·   B 预览   ·   TAB 信息   ·   ESC 菜单"));
+      return FText::FromString(FString::Printf(
+          TEXT("%s 移动 · %s 转向 · 松键停止   ·   C 视角   ·   R 录制   ·   B 预览   ·   TAB 信息   ·   ESC 菜单"),
+          *GetDriveKeysText(false).ToString(), *GetDriveKeysText(true).ToString()));
   }
 }
 
@@ -1708,14 +1639,12 @@ FText SLingTuSimRuntimeHUD::GetFrontEndIdentityText() const {
 
 FText SLingTuSimRuntimeHUD::GetLoginCatalogStatusText() const {
   const int32 SessionCount = SelectionModel->GetCatalog().Options.Num();
-  const FAssetReviewCatalog &Assets = AssetReviewModel->GetCatalog();
   if (SessionCount <= 0) {
-    return FText::FromString(TEXT("BLOCKED  ·  VERIFIED SESSION CATALOG UNAVAILABLE"));
+    return FText::FromString(TEXT("尚未载入场景配置，请检查本地目录。"));
   }
   return FText::FromString(
-      FString::Printf(TEXT("READY  ·  %d SESSION%s  ·  %d ASSET REVIEW CARD%s"), SessionCount,
-                      SessionCount == 1 ? TEXT("") : TEXT("S"), Assets.Cards.Num(),
-                      Assets.Cards.Num() == 1 ? TEXT("") : TEXT("S")));
+      FString::Printf(TEXT("已载入 %d 款机器人  /  %d 张地图"),
+                      SelectionModel->GetRobotChoices().Num(), SelectionModel->GetWorldChoices().Num()));
 }
 
 FText SLingTuSimRuntimeHUD::GetLoginFeedbackText() const {
@@ -1795,7 +1724,7 @@ FText SLingTuSimRuntimeHUD::GetSelectionStatusText() const {
   }
   FString Blocker;
   return FText::FromString(SelectionModel->CanConfirm(Blocker)
-                               ? TEXT("任务已就绪  ·  会话配置已校验")
+                               ? TEXT("配置已选定  ·  进入场景后启动仿真")
                                : TEXT("任务暂不可部署"));
 }
 
@@ -2001,8 +1930,9 @@ FReply SLingTuSimRuntimeHUD::HandleEnterLocalWorkspace() {
   }
   Invalidate(EInvalidateWidgetReason::Layout | EInvalidateWidgetReason::Paint);
   FReply Reply = FReply::Handled();
-  if (bEnteredWorkspace && ConfirmSelectionButton.IsValid()) {
-    Reply.SetUserFocus(ConfirmSelectionButton.ToSharedRef(), EFocusCause::SetDirectly);
+  if (bEnteredWorkspace && WorkspaceRobotMapPicker.IsValid()) {
+    SlatePrepass(1.F);
+    WorkspaceRobotMapPicker->FocusInitialControl();
   }
   return Reply;
 }
@@ -2016,8 +1946,8 @@ FReply SLingTuSimRuntimeHUD::HandleLogout() {
   }
   Invalidate(EInvalidateWidgetReason::Layout | EInvalidateWidgetReason::Paint);
   FReply Reply = FReply::Handled();
-  if (bLoggedOut && OperatorNameTextBox.IsValid()) {
-    Reply.SetUserFocus(OperatorNameTextBox.ToSharedRef(), EFocusCause::SetDirectly);
+  if (bLoggedOut && LocalWorkspaceButton.IsValid()) {
+    Reply.SetUserFocus(LocalWorkspaceButton.ToSharedRef(), EFocusCause::SetDirectly);
   }
   return Reply;
 }
@@ -2075,7 +2005,7 @@ EVisibility SLingTuSimRuntimeHUD::GetBuildVisibility() const {
 }
 
 EVisibility SLingTuSimRuntimeHUD::GetTacticalVisibility() const {
-  return ModeController->GetMode() == ERuntimeUIMode::Tactical ? EVisibility::Visible
+  return ModeController->GetMode() == ERuntimeUIMode::Tactical && !IsMeasurementPageOpen() ? EVisibility::Visible
                                                                : EVisibility::Collapsed;
 }
 
@@ -2092,8 +2022,7 @@ EVisibility SLingTuSimRuntimeHUD::GetLoginVisibility() const {
 }
 
 EVisibility SLingTuSimRuntimeHUD::GetWorkspaceVisibility() const {
-  return GetPauseVisibility() == EVisibility::Visible &&
-                 (!bFrontEndLoginRequired || LoginModel->IsLoggedIn())
+  return GetPauseVisibility() == EVisibility::Visible && bFrontEndLoginRequired && LoginModel->IsLoggedIn()
              ? EVisibility::Visible
              : EVisibility::Collapsed;
 }
@@ -2102,13 +2031,8 @@ EVisibility SLingTuSimRuntimeHUD::GetLogoutVisibility() const {
   return bFrontEndLoginRequired ? EVisibility::Visible : EVisibility::Collapsed;
 }
 
-EVisibility SLingTuSimRuntimeHUD::GetFrontEndStaticBackdropVisibility() const {
-  return GetLoginVisibility() == EVisibility::Visible ? EVisibility::HitTestInvisible
-                                                      : EVisibility::Collapsed;
-}
-
 EVisibility SLingTuSimRuntimeHUD::GetRuntimeHudChromeVisibility() const {
-  return !bFrontEndLoginRequired && ModeController->GetMode() != ERuntimeUIMode::Drive
+  return !bFrontEndLoginRequired && ModeController->GetMode() == ERuntimeUIMode::Build
              ? EVisibility::Visible
              : EVisibility::Collapsed;
 }

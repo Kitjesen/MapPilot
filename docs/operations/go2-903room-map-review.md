@@ -240,7 +240,7 @@ BBS 返回 level 在 map 中的粗位姿，再右乘 body→level 得到机身�
 
 二次审查发现两处会造成错误结论的差异，已改本地源码：
 
-- 离线 `localizer_cli --global` 原仍默认 1 m 最细层，和现场 0.2 m 不同，且未提供
+- 离线 `relocalization_cli --global` 原仍默认 1 m 最细层，和现场 0.2 m 不同，且未提供
   body 扫描倾斜量的输入；现复用 BBS 配置默认值，支持 `--scan-roll/--scan-pitch`
   重力对齐，并与现场全局精配准使用同样的 MSE 0.0144、重叠率 0.80 门槛。
 - DDS `RelocalizationResponse.engine` 原直接回显请求的 `bbs3d_gicp`。若保存地图的

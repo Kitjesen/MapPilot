@@ -288,6 +288,10 @@ Dds::Dds(int domain_id, DdsStatus *status, bool read_obstacle_cloud, bool read_s
                                    &lingtu_dds_MapCollisionLayer_desc, "local_collision");
   localization_health_reader_ = reader(lingtu::message::kSlamLocalizationHealth.dds_topic.data(),
                                        &lingtu_dds_Text_desc, "localization_health");
+  motion_profile_state_reader_ = reader(lingtu::message::kMotionProfileState.dds_topic.data(),
+      &lingtu_dds_MotionProfileState_desc, "motion_profile_state");
+  motion_profile_request_writer_ = writer(lingtu::message::kMotionProfileRequest.dds_topic.data(),
+      &lingtu_dds_MotionProfileRequest_desc, "motion_profile_request");
   driver_control_state_reader_ =
       reader(lingtu::message::kDriverControlState.dds_topic.data(),
              &lingtu_dds_DriverControlState_desc, "driver_control_state");
@@ -403,6 +407,16 @@ SensorBatch Dds::takeSensors(double now_steady_s) {
       driver_control_state_reader_, lingtu_dds_DriverControlState_desc,
       [&](const lingtu_dds_DriverControlState &message) {
         batch.driver_control = copyDriverControlSample(message);
+      },
+      DdsDrainProfile::kDefault, true);
+  drainReader<lingtu_dds_MotionProfileState>(
+      motion_profile_state_reader_, lingtu_dds_MotionProfileState_desc,
+      [&](const lingtu_dds_MotionProfileState &message) {
+        batch.motion_profile = MotionProfileSample{
+            toSeconds(message.header.stamp), stringValue(message.task_id),
+            stringValue(message.requirement), stringValue(message.phase),
+            stringValue(message.requested_profile), stringValue(message.active_profile),
+            stringValue(message.reason)};
       },
       DdsDrainProfile::kDefault, true);
   drainReader<lingtu_dds_ExplorationExecutionGrid>(
@@ -576,6 +590,8 @@ PublishReceipt Dds::publish(const OutputEvent &output) {
         } else if constexpr (std::is_same_v<Event, FinalVelocityOutput>) {
           receipt.final_velocity = writeCmdVelSequenced(event.command);
           receipt.published = receipt.final_velocity.has_value();
+        } else if constexpr (std::is_same_v<Event, MotionProfileRequestOutput>) {
+          receipt.published = writeMotionProfileRequest(event.task_id, event.requirement);
         } else if constexpr (std::is_same_v<Event, OperatorMotionAckSample>) {
           receipt.published = writeOperatorMotionAck(event);
         } else if constexpr (std::is_same_v<Event, OperatorMotionStatusSample>) {
@@ -604,7 +620,7 @@ PublishReceipt Dds::publish(const OutputEvent &output) {
         } else if constexpr (std::is_same_v<Event, InspectionTaskAckOutput>) {
           receipt.published = writeInspectionTaskAck(
               event.task_id.c_str(), event.request_id.c_str(), event.kind, event.accepted,
-              event.reason.c_str(), event.run_id.c_str());
+              event.reason.c_str());
         } else if constexpr (std::is_same_v<Event, InspectionStatusOutput>) {
           receipt.published = writeInspectionStatus(event.status);
         } else if constexpr (std::is_same_v<Event, InspectionTaskEventEnvelope>) {
@@ -616,6 +632,14 @@ PublishReceipt Dds::publish(const OutputEvent &output) {
       },
       output);
   return receipt;
+}
+
+bool Dds::writeMotionProfileRequest(const std::string &task_id, const std::string &requirement) {
+  lingtu_dds_MotionProfileRequest message{};
+  fillHeader(message.header, nowSeconds(), "base_link");
+  message.task_id = const_cast<char *>(task_id.c_str());
+  message.requirement = const_cast<char *>(requirement.c_str());
+  return dds_write(motion_profile_request_writer_, &message) == DDS_RETCODE_OK;
 }
 
 bool Dds::writeLocalPath(const std::vector<nav_kernel::Vec3> &path) {
@@ -930,7 +954,7 @@ bool Dds::writeExplorationSegmentStatus(const ExplorationSegmentStatus &status) 
 
 bool Dds::writeInspectionTaskAck(const char *task_id, const char *request_id,
                                         lingtu::nav::inspection::CommandKind kind, bool accepted,
-                                        const char *reason, const char *run_id) {
+                                        const char *reason) {
   lingtu_dds_InspectionTaskAck msg{};
   fillHeader(msg.header, nowSeconds(), "map");
   msg.task_id = const_cast<char *>(task_id == nullptr ? "" : task_id);
@@ -938,7 +962,6 @@ bool Dds::writeInspectionTaskAck(const char *task_id, const char *request_id,
   msg.kind = static_cast<std::int32_t>(kind);
   msg.accepted = accepted;
   msg.reason = const_cast<char *>(reason == nullptr ? "" : reason);
-  msg.run_id = const_cast<char *>(run_id == nullptr ? "" : run_id);
   const dds_return_t result = dds_write(inspection_task_ack_writer_, &msg);
   logDdsError(result, "dds_write(inspection_task_ack)");
   return result >= 0;
@@ -947,7 +970,7 @@ bool Dds::writeInspectionTaskAck(const char *task_id, const char *request_id,
 bool Dds::writeInspectionStatus(const lingtu::nav::inspection::RunStatus &status) {
   lingtu_dds_InspectionStatus msg{};
   fillHeader(msg.header, nowSeconds(), "map");
-  msg.run_id = const_cast<char *>(status.run_id.c_str());
+  msg.task_id = const_cast<char *>(status.task_id.c_str());
   msg.route_id = const_cast<char *>(status.route_id.c_str());
   msg.route_revision = status.route_revision;
   msg.state = static_cast<std::int32_t>(status.state);
@@ -955,7 +978,6 @@ bool Dds::writeInspectionStatus(const lingtu::nav::inspection::RunStatus &status
   msg.point_count = static_cast<std::uint32_t>(status.point_count);
   msg.loop_index = status.loop_index;
   msg.retry_count = status.retry_count;
-  msg.point_id = const_cast<char *>(status.point_id.c_str());
   msg.action = const_cast<char *>(status.action.c_str());
   msg.action_request_id = const_cast<char *>(status.action_request_id.c_str());
   msg.evidence_id = const_cast<char *>(status.evidence_id.c_str());
@@ -981,7 +1003,6 @@ bool Dds::writeInspectionTaskEvent(const InspectionTaskEventEnvelope &envelope) 
   msg.kind = static_cast<std::int32_t>(event.kind);
   msg.task_id = const_cast<char *>(status.task_id.c_str());
   msg.request_id = const_cast<char *>(event.request_id.c_str());
-  msg.command_request_id = const_cast<char *>(status.request_id.c_str());
   msg.state = static_cast<std::int32_t>(status.state);
   msg.map_id = const_cast<char *>(status.map_id.c_str());
   msg.map_content_epoch = status.map_content_epoch;
@@ -991,7 +1012,6 @@ bool Dds::writeInspectionTaskEvent(const InspectionTaskEventEnvelope &envelope) 
   msg.point_count = static_cast<std::uint32_t>(status.point_count);
   msg.loop_index = status.loop_index;
   msg.retry_count = status.retry_count;
-  msg.point_id = const_cast<char *>(status.point_id.c_str());
   msg.action = const_cast<char *>(status.action.c_str());
   msg.action_request_id = const_cast<char *>(status.action_request_id.c_str());
   msg.evidence_id = const_cast<char *>(status.evidence_id.c_str());
@@ -1019,21 +1039,20 @@ bool Dds::writeInspectionEvidenceRequest(
     const lingtu::nav::inspection::ActionRequest &request, const std::string &map_id,
     std::int64_t map_content_epoch, double deadline_s) {
   if (request.point_index > std::numeric_limits<std::uint32_t>::max() ||
-      request.request_id.empty() || request.run_id.empty() || request.route_id.empty() ||
-      request.point_id.empty() || request.action.empty() || map_id.empty() ||
+      request.request_id.empty() || request.task_id.empty() || request.route_id.empty() ||
+      request.action.empty() || map_id.empty() ||
       !std::isfinite(deadline_s) || deadline_s <= 0.0) {
     return false;
   }
   lingtu_dds_InspectionEvidenceRequest msg{};
   fillHeader(msg.header, nowSeconds(), "map");
   msg.request_id = const_cast<char *>(request.request_id.c_str());
-  msg.run_id = const_cast<char *>(request.run_id.c_str());
+  msg.task_id = const_cast<char *>(request.task_id.c_str());
   msg.route_id = const_cast<char *>(request.route_id.c_str());
-  msg.revision = request.route_revision;
+  msg.route_revision = request.route_revision;
   msg.map_id = const_cast<char *>(map_id.c_str());
   msg.map_content_epoch = map_content_epoch;
   msg.point_index = static_cast<std::uint32_t>(request.point_index);
-  msg.point_id = const_cast<char *>(request.point_id.c_str());
   msg.action = const_cast<char *>(request.action.c_str());
   msg.deadline_s = deadline_s;
   const dds_return_t result = dds_write(inspection_evidence_request_writer_, &msg);

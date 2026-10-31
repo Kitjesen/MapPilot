@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from runtime.transport.local import LocalTransport, Transport
 
 if TYPE_CHECKING:
-    from runtime.blueprint import Blueprint
+    from runtime.host import HostBuilder
 
 
 class WireDelivery(str, Enum):
@@ -42,7 +42,7 @@ class WireSpec:
             label = f"{label}@{self.topic}"
         return label
 
-    def apply(self, bp: Blueprint) -> None:
+    def apply(self, bp: HostBuilder) -> None:
         bp.wire(
             self.out_module,
             self.out_port,

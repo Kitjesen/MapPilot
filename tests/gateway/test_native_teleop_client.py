@@ -830,7 +830,8 @@ def test_failure_callback_exception_does_not_kill_publisher_worker():
         publisher.close()
 
 
-def test_operator_motion_hold_without_final_output_keeps_zero_barrier():
+@pytest.mark.parametrize("failure_reason", ["zero_not_published", "release_no_motion"])
+def test_operator_motion_hold_without_final_output_keeps_zero_barrier(failure_reason):
     class HoldWithoutFinalClient(_OperatorClient):
         def hold(self, source_id, source_epoch, sequence, *, reason="operator_hold", request_id=None):
             self.commands.append(("hold", source_id, source_epoch, sequence, reason, request_id))
@@ -841,7 +842,7 @@ def test_operator_motion_hold_without_final_output_keeps_zero_barrier():
                 sequence,
                 request_id,
                 final_output_sequence=0,
-                reason="zero_not_published",
+                reason=failure_reason,
             )
 
     publisher = teleop.LatestNativeTeleopPublisher(HoldWithoutFinalClient())
@@ -855,7 +856,7 @@ def test_operator_motion_hold_without_final_output_keeps_zero_barrier():
         assert isinstance(receipt, OperatorMotionReceipt)
         assert receipt.source_accepted is True
         assert receipt.final_output_published is False
-        assert publisher.last_error == "zero_not_published"
+        assert publisher.last_error == failure_reason
         assert (
             publisher.submit(
                 0.1,
@@ -869,6 +870,30 @@ def test_operator_motion_hold_without_final_output_keeps_zero_barrier():
         )
     finally:
         publisher.close()
+
+
+def test_session_source_only_release_does_not_confirm_motion_output():
+    gateway = SimpleNamespace(
+        _web_teleop_owner_lock=threading.Lock(),
+        _web_teleop_owner=None,
+        _teleop_claim=lambda **kwargs: _receipt(
+            OperatorMotionAction.CLAIM,
+            kwargs["source_id"], kwargs["source_epoch"], kwargs["sequence"], kwargs["request_id"],
+        ),
+        _teleop_on_velocity=lambda *_args, **_kwargs: False,
+        _teleop_release=lambda **kwargs: _receipt(
+            OperatorMotionAction.RELEASE,
+            kwargs["source_id"], kwargs["source_epoch"], kwargs["sequence"], kwargs["request_id"],
+            reason="release_no_motion",
+        ),
+    )
+    session = teleop.NativeTeleopSession(gateway, "web:claim-only")
+    assert session.open().accepted
+    assert not session.move(0.2, 0.0, 0.0, request_id="not-submitted").accepted
+    released = session.disconnect(request_id="release-source")
+    assert released.accepted is True
+    assert released.final_output_confirmed is False
+    assert gateway._web_teleop_owner is None
 
 
 @pytest.mark.parametrize(

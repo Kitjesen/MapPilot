@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 from sim.scripts.mujoco import native_navigation_acceptance as native
 
-from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan
 
 
 def assess(phase_dir, minimum_travel=25):

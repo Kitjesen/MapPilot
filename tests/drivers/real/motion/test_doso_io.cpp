@@ -61,6 +61,32 @@ std::uint64_t boottimeNanoseconds() {
 
 class WalkService final : public brainstem::api::v1::RobotControl::Service {
  public:
+  grpc::Status GetProfile(grpc::ServerContext *, const google::protobuf::Empty *,
+                          brainstem::api::v1::ProfileInfo *response) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    response->set_current(profile_);
+    response->add_available("ordinary");
+    response->add_available("stair-test");
+    return grpc::Status::OK;
+  }
+
+  grpc::Status GetCmsState(grpc::ServerContext *, const google::protobuf::Empty *,
+                           brainstem::api::v1::CmsState *response) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    response->set_kind(fsm_kind_);
+    return grpc::Status::OK;
+  }
+
+  grpc::Status SwitchProfile(grpc::ServerContext *, const brainstem::api::v1::ProfileRequest *request,
+                             brainstem::api::v1::ProfileInfo *response) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (fsm_kind_ != brainstem::api::v1::CMS_STATE_KIND_GROUNDED) {
+      return {grpc::StatusCode::FAILED_PRECONDITION, "must be Grounded"};
+    }
+    profile_ = request->name();
+    response->set_current(profile_);
+    return grpc::Status::OK;
+  }
   grpc::Status AcquireControl(grpc::ServerContext *,
                               const brainstem::api::v1::AcquireControlRequest *request,
                               brainstem::api::v1::ControlLease *response) override {
@@ -225,6 +251,7 @@ class WalkService final : public brainstem::api::v1::RobotControl::Service {
   bool reject_{false};
   bool mismatch_ack_{false};
   bool fail_release_{false};
+  std::string profile_{"ordinary"};
 };
 
 class LegacyWalkOnlyService final : public brainstem::api::v1::RobotControl::Service {
@@ -322,6 +349,68 @@ void testDriverSafetyStopUsesGlobalStopKind() {
     checked(dds_return_loan(reader, &raw_sample, 1), "dds_return_loan(test_safety_stop)");
   }
   check(observed, "driver safety stop was not observed on DDS");
+  dds_delete(participant);
+}
+
+void testProfileDdsFreshnessAndReadback() {
+  constexpr int domain = 95;
+  const auto participant = checked(dds_create_participant(domain, nullptr, nullptr),
+                                   "dds_create_participant(profile_test)");
+  const auto request_topic = checked(dds_create_topic(participant,
+      &lingtu_dds_MotionProfileRequest_desc, lingtu::message::kMotionProfileRequest.dds_topic.data(),
+      nullptr, nullptr), "dds_create_topic(profile_request_test)");
+  auto request_qos = lingtu::dds::make_qos(lingtu::dds::qos_for_topic(
+      lingtu::message::kMotionProfileRequest.dds_topic));
+  const auto writer = checked(dds_create_writer(participant, request_topic, request_qos.get(), nullptr),
+                              "dds_create_writer(profile_request_test)");
+  const auto state_topic = checked(dds_create_topic(participant,
+      &lingtu_dds_MotionProfileState_desc, lingtu::message::kMotionProfileState.dds_topic.data(),
+      nullptr, nullptr), "dds_create_topic(profile_state_test)");
+  auto state_qos = lingtu::dds::make_qos(lingtu::dds::qos_for_topic(
+      lingtu::message::kMotionProfileState.dds_topic));
+  const auto reader = checked(dds_create_reader(participant, state_topic, state_qos.get(), nullptr),
+                              "dds_create_reader(profile_state_test)");
+  lingtu::driver::DdsReader driver(domain);
+  const auto wall = [] { return std::chrono::duration<double>(
+      std::chrono::system_clock::now().time_since_epoch()).count(); };
+  const auto publish = [&](double stamp) {
+    lingtu_dds_MotionProfileRequest request{};
+    request.header.stamp.sec = static_cast<std::int32_t>(stamp);
+    request.header.stamp.nanosec = static_cast<std::uint32_t>((stamp - request.header.stamp.sec) * 1e9);
+    request.task_id = const_cast<char *>("existing-task");
+    request.requirement = const_cast<char *>("stairs_up");
+    checked(dds_write(writer, &request), "dds_write(profile_request_test)");
+  };
+  for (int i = 0; i < 10; ++i) {
+    publish(wall() - 5.0);
+    std::this_thread::sleep_for(10ms);
+    check(!driver.takeProfileRequest(wall()), "stale profile requests may not alter the body");
+  }
+  std::optional<lingtu::driver::ProfileRequest> request;
+  for (int i = 0; i < 100 && !request; ++i) {
+    publish(wall());
+    std::this_thread::sleep_for(10ms);
+    request = driver.takeProfileRequest(wall());
+  }
+  check(request && request->task_id == "existing-task" && request->requirement == "stairs_up",
+        "fresh request must reuse existing task identity");
+  bool observed = false;
+  for (int i = 0; i < 100 && !observed; ++i) {
+    driver.writeProfileState({"existing-task", "stairs_up", "ready", "stair-test", "stair-test", ""}, wall());
+    std::this_thread::sleep_for(10ms);
+    void *sample = nullptr;
+    dds_sample_info_t info{};
+    const auto count = dds_take(reader, &sample, &info, 1, 1);
+    if (count > 0) {
+      if (info.valid_data) {
+        const auto &state = *static_cast<lingtu_dds_MotionProfileState *>(sample);
+        observed = std::string(state.task_id) == "existing-task" &&
+                   std::string(state.active_profile) == "stair-test" && std::string(state.phase) == "ready";
+      }
+      dds_return_loan(reader, &sample, count);
+    }
+  }
+  check(observed, "profile DDS state must preserve actual vs requested model names");
   dds_delete(participant);
 }
 
@@ -490,6 +579,30 @@ void testDosoStandAndSitUseBrainstem() {
         "Brainstem Grounded must map to the common sitting posture");
   check(client.stop().confirmsStop(), "grounded test lease must stop cleanly");
 
+  server->Shutdown();
+  server->Wait();
+}
+
+void testDosoProfileUsesIndependentActualReadback() {
+  WalkService service;
+  grpc::ServerBuilder builder;
+  int port = 0;
+  builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+  builder.RegisterService(&service);
+  auto server = builder.BuildAndStart();
+  check(server != nullptr && port > 0, "profile mock Brainstem server must start");
+  lingtu::driver::Doso client(dosoConfig(port));
+  const auto initial = client.readProfile();
+  check(initial.supported && initial.fresh && initial.requires_grounded && !initial.grounded &&
+        initial.current == "ordinary" && initial.available.size() == 2,
+        "DOSO profile state must report actual controller and its Grounded prerequisite");
+  check(!client.switchProfile("stair-test").ok, "standing profile switch must preserve server rejection");
+  service.setFsm(brainstem::api::v1::CMS_STATE_KIND_GROUNDED);
+  check(client.readProfile().grounded, "Grounded must come from actual body query");
+  const auto accepted = client.switchProfile("stair-test");
+  check(accepted.ok && accepted.accepted && !accepted.state.ready,
+        "switch ACK must not claim motion readiness");
+  check(client.readProfile().current == "stair-test", "active profile must come from GetProfile");
   server->Shutdown();
   server->Wait();
 }
@@ -760,8 +873,10 @@ int main() {
   try {
     testFinalVelocityQosExpiresQueuedMotion();
     testDriverSafetyStopUsesGlobalStopKind();
+    testProfileDdsFreshnessAndReadback();
     testFreshnessRejectionsAreVisibleInDriverStatus();
     testDosoStandAndSitUseBrainstem();
+    testDosoProfileUsesIndependentActualReadback();
     testCurrentCommandRejectionIsTemporarilyCorrelatedInStatus();
     testDdsToBrainstemPath();
     testStopAndReleaseRequiresAnAcknowledgedZeroAndRelease();

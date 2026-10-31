@@ -1,7 +1,7 @@
 """Encoder protocol for CLIP-style image/text encoders.
 
 Decouples memory/ from perception/ by defining the encoder contract in runtime/.
-Both memory.modules.vector_memory_module and perception.* encoders
+Both memory.modules.vector and perception.* encoders
 adhere to this Protocol instead of importing each other's concrete classes.
 
 Usage:

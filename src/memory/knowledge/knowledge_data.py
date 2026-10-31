@@ -17,9 +17,6 @@ from .knowledge_graph import (
     SafetyLevel,
 )
 
-# ════════════════════════════════════════════════════════════════
-#  公共入口
-# ════════════════════════════════════════════════════════════════
 
 def build_all_knowledge(
     concepts: dict[str, ObjectConcept],
@@ -47,10 +44,6 @@ def build_all_knowledge(
     _build_relations(relations)
     _build_safety_constraints(safety_constraints)
 
-
-# ════════════════════════════════════════════════════════════════
-#  安全设备
-# ════════════════════════════════════════════════════════════════
 
 def _build_safety_equipment(concepts: dict[str, ObjectConcept]) -> None:
     concepts["fire_extinguisher"] = ObjectConcept(
@@ -178,10 +171,6 @@ def _build_safety_equipment(concepts: dict[str, ObjectConcept]) -> None:
     )
 
 
-# ════════════════════════════════════════════════════════════════
-#  家具
-# ════════════════════════════════════════════════════════════════
-
 def _build_furniture(concepts: dict[str, ObjectConcept]) -> None:
     concepts["chair"] = ObjectConcept(
         concept_id="chair",
@@ -301,10 +290,6 @@ def _build_furniture(concepts: dict[str, ObjectConcept]) -> None:
                       "whiteboard with markers"],
     )
 
-
-# ════════════════════════════════════════════════════════════════
-#  电子设备
-# ════════════════════════════════════════════════════════════════
 
 def _build_electronics(concepts: dict[str, ObjectConcept]) -> None:
     concepts["monitor"] = ObjectConcept(
@@ -452,10 +437,6 @@ def _build_electronics(concepts: dict[str, ObjectConcept]) -> None:
                       "wall mounted flat TV"],
     )
 
-
-# ════════════════════════════════════════════════════════════════
-#  建筑结构
-# ════════════════════════════════════════════════════════════════
 
 def _build_structure(concepts: dict[str, ObjectConcept]) -> None:
     concepts["door"] = ObjectConcept(
@@ -661,10 +642,6 @@ def _build_structure(concepts: dict[str, ObjectConcept]) -> None:
                       "fire door with push bar"],
     )
 
-
-# ════════════════════════════════════════════════════════════════
-#  日用品
-# ════════════════════════════════════════════════════════════════
 
 def _build_utility(concepts: dict[str, ObjectConcept]) -> None:
     concepts["trash_bin"] = ObjectConcept(
@@ -961,10 +938,6 @@ def _build_utility(concepts: dict[str, ObjectConcept]) -> None:
     )
 
 
-# ════════════════════════════════════════════════════════════════
-#  工业特有
-# ════════════════════════════════════════════════════════════════
-
 def _build_industrial_specific(concepts: dict[str, ObjectConcept]) -> None:
     concepts["forklift"] = ObjectConcept(
         concept_id="forklift",
@@ -1125,10 +1098,6 @@ def _build_industrial_specific(concepts: dict[str, ObjectConcept]) -> None:
     )
 
 
-# ════════════════════════════════════════════════════════════════
-#  医疗设备
-# ════════════════════════════════════════════════════════════════
-
 def _build_medical(concepts: dict[str, ObjectConcept]) -> None:
     concepts["wheelchair"] = ObjectConcept(
         concept_id="wheelchair",
@@ -1221,10 +1190,6 @@ def _build_medical(concepts: dict[str, ObjectConcept]) -> None:
                       "green oxygen cylinder on cart"],
     )
 
-
-# ════════════════════════════════════════════════════════════════
-#  户外 / 园区
-# ════════════════════════════════════════════════════════════════
 
 def _build_outdoor(concepts: dict[str, ObjectConcept]) -> None:
     concepts["tree"] = ObjectConcept(
@@ -1373,10 +1338,6 @@ def _build_outdoor(concepts: dict[str, ObjectConcept]) -> None:
     )
 
 
-# ════════════════════════════════════════════════════════════════
-#  居住环境
-# ════════════════════════════════════════════════════════════════
-
 def _build_residential(concepts: dict[str, ObjectConcept]) -> None:
     concepts["bed"] = ObjectConcept(
         concept_id="bed",
@@ -1399,10 +1360,6 @@ def _build_residential(concepts: dict[str, ObjectConcept]) -> None:
                       "wooden bed frame with sheets"],
     )
 
-
-# ════════════════════════════════════════════════════════════════
-#  更多工业设备
-# ════════════════════════════════════════════════════════════════
 
 def _build_industrial_extended(concepts: dict[str, ObjectConcept]) -> None:
     concepts["valve"] = ObjectConcept(
@@ -1634,14 +1591,9 @@ def _build_industrial_extended(concepts: dict[str, ObjectConcept]) -> None:
     )
 
 
-# ════════════════════════════════════════════════════════════════
-#  关系
-# ════════════════════════════════════════════════════════════════
-
 def _build_relations(relations: list[KGRelation]) -> None:
     R = RelationType
     relations.extend([
-        # IS_A — 分类层次
         KGRelation("fire_extinguisher", R.IS_A, "safety_equipment"),
         KGRelation("fire_alarm", R.IS_A, "safety_equipment"),
         KGRelation("emergency_exit", R.IS_A, "safety_equipment"),
@@ -1680,7 +1632,6 @@ def _build_relations(relations: list[KGRelation]) -> None:
         KGRelation("fire_door", R.IS_A, "structure"),
         KGRelation("umbrella_stand", R.IS_A, "container"),
 
-        # USED_FOR — 功能
         KGRelation("fire_extinguisher", R.USED_FOR, "灭火"),
         KGRelation("fire_alarm", R.USED_FOR, "火灾预警"),
         KGRelation("emergency_exit", R.USED_FOR, "紧急逃生"),
@@ -1701,7 +1652,6 @@ def _build_relations(relations: list[KGRelation]) -> None:
         KGRelation("generator", R.USED_FOR, "备用供电"),
         KGRelation("robot_charging_station", R.USED_FOR, "机器人充电"),
 
-        # LOCATED_IN — 典型位置
         KGRelation("fire_extinguisher", R.LOCATED_IN, "corridor"),
         KGRelation("fire_alarm", R.LOCATED_IN, "ceiling"),
         KGRelation("printer", R.LOCATED_IN, "office"),
@@ -1714,7 +1664,6 @@ def _build_relations(relations: list[KGRelation]) -> None:
         KGRelation("server_rack", R.LOCATED_IN, "server_room"),
         KGRelation("generator", R.LOCATED_IN, "utility_room"),
 
-        # DANGEROUS_IF — 危险条件
         KGRelation("electrical_panel", R.DANGEROUS_IF, "接触/打开"),
         KGRelation("gas_cylinder", R.DANGEROUS_IF, "碰撞/倾倒/靠近火源"),
         KGRelation("conveyor", R.DANGEROUS_IF, "靠近运行中的传送带"),
@@ -1726,7 +1675,6 @@ def _build_relations(relations: list[KGRelation]) -> None:
         KGRelation("valve", R.DANGEROUS_IF, "未经确认的开关操作"),
         KGRelation("manhole_cover", R.DANGEROUS_IF, "缺失或松动时踩踏"),
 
-        # REQUIRES — 操作前置条件
         KGRelation("fire_extinguisher", R.REQUIRES, "拔保险销"),
         KGRelation("elevator", R.REQUIRES, "按键/人工协助"),
         KGRelation("aed", R.REQUIRES, "培训认证"),
@@ -1735,7 +1683,6 @@ def _build_relations(relations: list[KGRelation]) -> None:
         KGRelation("crane", R.REQUIRES, "操作资质"),
         KGRelation("forklift", R.REQUIRES, "驾驶资质"),
 
-        # RELATED_TO — 空间/功能关联
         KGRelation("fire_extinguisher", R.RELATED_TO, "emergency_exit"),
         KGRelation("fire_alarm", R.RELATED_TO, "fire_extinguisher"),
         KGRelation("fire_hydrant", R.RELATED_TO, "fire_extinguisher"),
@@ -1753,20 +1700,14 @@ def _build_relations(relations: list[KGRelation]) -> None:
         KGRelation("valve", R.RELATED_TO, "pipe"),
         KGRelation("robot_charging_station", R.RELATED_TO, "corridor"),
 
-        # PART_OF — 组成关系
         KGRelation("railing", R.PART_OF, "stairs"),
         KGRelation("valve", R.PART_OF, "pipe"),
         KGRelation("mirror", R.PART_OF, "bathroom"),
     ])
 
 
-# ════════════════════════════════════════════════════════════════
-#  安全约束
-# ════════════════════════════════════════════════════════════════
-
 def _build_safety_constraints(safety_constraints: list[SafetyConstraint]) -> None:
     safety_constraints.extend([
-        # 配电箱 — 禁止所有操作
         SafetyConstraint(
             constraint_id="SC001",
             constraint_type="factual",
@@ -1781,7 +1722,6 @@ def _build_safety_constraints(safety_constraints: list[SafetyConstraint]) -> Non
             ),
             max_approach_distance=1.0,
         ),
-        # 气瓶 — 禁止抓取
         SafetyConstraint(
             constraint_id="SC002",
             constraint_type="factual",
@@ -1807,7 +1747,6 @@ def _build_safety_constraints(safety_constraints: list[SafetyConstraint]) -> Non
             message_en="⚠️ Approaching gas cylinder. Speed limited to 0.3 m/s. Avoid collision.",
             max_approach_distance=1.5,
         ),
-        # 传送带 — 禁止靠近运行中
         SafetyConstraint(
             constraint_id="SC004",
             constraint_type="causal",
@@ -1819,7 +1758,6 @@ def _build_safety_constraints(safety_constraints: list[SafetyConstraint]) -> Non
             message_en="⚠️ Conveyor in operation. Entanglement risk. Maintain 2m safety distance.",
             max_approach_distance=2.0,
         ),
-        # 叉车
         SafetyConstraint(
             constraint_id="SC005",
             constraint_type="causal",
@@ -1831,7 +1769,6 @@ def _build_safety_constraints(safety_constraints: list[SafetyConstraint]) -> Non
             message_en="⚠️ Forklift operating zone. Maintain 3m safety distance.",
             max_approach_distance=3.0,
         ),
-        # 楼梯
         SafetyConstraint(
             constraint_id="SC006",
             constraint_type="factual",
@@ -1842,7 +1779,6 @@ def _build_safety_constraints(safety_constraints: list[SafetyConstraint]) -> Non
             message_zh="⚠️ 检测到楼梯, 需切换上下楼梯步态模式。是否继续?",
             message_en="⚠️ Stairs detected. Requires stair-climbing gait mode. Continue?",
         ),
-        # 服务器机柜
         SafetyConstraint(
             constraint_id="SC007",
             constraint_type="factual",
@@ -1853,7 +1789,6 @@ def _build_safety_constraints(safety_constraints: list[SafetyConstraint]) -> Non
             message_zh="⚠️ 服务器机柜, 禁止抓取内部任何物品。需 IT 人员操作。",
             message_en="⚠️ Server rack. Robot MUST NOT interact with internal components. IT personnel required.",
         ),
-        # 灭火器检查
         SafetyConstraint(
             constraint_id="SC008",
             constraint_type="temporal",
@@ -1864,7 +1799,6 @@ def _build_safety_constraints(safety_constraints: list[SafetyConstraint]) -> Non
             message_zh="⚠️ 即将抓取灭火器 (安全设备)。确认这是计划任务?",
             message_en="⚠️ About to grasp fire extinguisher (safety equipment). Confirm this is a planned task?",
         ),
-        # 起重机 — 运行区域
         SafetyConstraint(
             constraint_id="SC009",
             constraint_type="causal",
@@ -1876,7 +1810,6 @@ def _build_safety_constraints(safety_constraints: list[SafetyConstraint]) -> Non
             message_en="⚠️ Crane operating zone. Maintain 5m distance. Never stand under suspended loads.",
             max_approach_distance=5.0,
         ),
-        # 发电机
         SafetyConstraint(
             constraint_id="SC010",
             constraint_type="causal",
@@ -1888,7 +1821,6 @@ def _build_safety_constraints(safety_constraints: list[SafetyConstraint]) -> Non
             message_en="⚠️ Generator running. High temperature/noise/exhaust. Maintain 3m distance.",
             max_approach_distance=3.0,
         ),
-        # 控制面板 — 禁止未授权操作
         SafetyConstraint(
             constraint_id="SC011",
             constraint_type="factual",
@@ -1899,7 +1831,6 @@ def _build_safety_constraints(safety_constraints: list[SafetyConstraint]) -> Non
             message_zh="⚠️ 控制面板, 禁止未授权操作, 可能导致设备失控。",
             message_en="⚠️ Control panel. Unauthorized operation forbidden. May cause equipment malfunction.",
         ),
-        # 药品柜 — 需授权
         SafetyConstraint(
             constraint_id="SC012",
             constraint_type="factual",
@@ -1910,7 +1841,6 @@ def _build_safety_constraints(safety_constraints: list[SafetyConstraint]) -> Non
             message_zh="⚠️ 药品柜受管控, 确认已获得授权?",
             message_en="⚠️ Medicine cabinet is access-controlled. Confirm authorization?",
         ),
-        # 井盖 — 绕行
         SafetyConstraint(
             constraint_id="SC013",
             constraint_type="causal",
@@ -1922,7 +1852,6 @@ def _build_safety_constraints(safety_constraints: list[SafetyConstraint]) -> Non
             message_en="⚠️ Manhole cover detected. May be missing or loose. Navigate around.",
             max_approach_distance=1.0,
         ),
-        # 担架 — 可能有人
         SafetyConstraint(
             constraint_id="SC014",
             constraint_type="causal",
@@ -1934,7 +1863,6 @@ def _build_safety_constraints(safety_constraints: list[SafetyConstraint]) -> Non
             message_en="⚠️ Approaching stretcher/bed. Speed limited to 0.3 m/s. Patient may be present.",
             max_approach_distance=1.5,
         ),
-        # 阀门 — 需确认
         SafetyConstraint(
             constraint_id="SC015",
             constraint_type="causal",

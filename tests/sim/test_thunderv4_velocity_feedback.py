@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from sim.runtime.control.thunderv4_flat import VelocityFeedback
+from sim.runtime.control.thunder.flat import VelocityFeedback
 
 
 @pytest.mark.parametrize("next_reference", [(0, 0, .25), (0, -.15, 0)])

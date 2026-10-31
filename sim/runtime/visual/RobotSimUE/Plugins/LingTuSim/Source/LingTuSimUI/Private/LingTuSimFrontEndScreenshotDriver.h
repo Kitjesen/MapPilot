@@ -16,6 +16,8 @@ struct FFrontEndScreenshotPaths final {
   FString RunDirectory;
   FString LoginScreenshot;
   FString AssetLibraryScreenshot;
+  FString CategoryScreenshot;
+  FString WorldScreenshot;
   FString SuccessSentinel;
   FString ErrorSentinel;
 };
@@ -46,6 +48,12 @@ class FFrontEndScreenshotDriver final {
     AwaitLoginFile,
     AwaitAssetLibraryStable,
     AwaitAssetLibraryFile,
+    AwaitCategoryStable,
+    AwaitCategoryFile,
+    AwaitInspectionStable,
+    AwaitInspectionFile,
+    AwaitWorldStable,
+    AwaitWorldFile,
     Complete,
     Failed,
   };
@@ -62,6 +70,7 @@ class FFrontEndScreenshotDriver final {
   FFrontEndScreenshotPaths Paths;
   FString RunId;
   FString SelectionIntentPath;
+  FString OriginalSelectionId;
   TWeakPtr<SWidget> HUDWidget;
   TWeakObjectPtr<UGameViewportClient> Viewport;
   TWeakPtr<FFrontEndLoginModel> LoginModel;
@@ -71,6 +80,8 @@ class FFrontEndScreenshotDriver final {
   int32 ConsecutiveStableFrames = 0;
   int64 LoginScreenshotBytes = 0;
   int64 AssetLibraryScreenshotBytes = 0;
+  int64 CategoryScreenshotBytes = 0;
+  int64 WorldScreenshotBytes = 0;
   bool bExitRequested = false;
 };
 }  // namespace LingTuSim::UI

@@ -10,6 +10,7 @@ from runtime.contracts.inspection_evidence import (
     InspectionEvidenceRequest,
     InspectionEvidenceResult,
     InspectionEvidenceStore,
+    InspectionFinding,
     TrustedParkingObservation,
 )
 
@@ -29,6 +30,7 @@ __all__ = [
     "InspectionEvidenceRequest",
     "InspectionEvidenceResult",
     "InspectionEvidenceStore",
+    "InspectionFinding",
     "NativeInspectionEvidenceBridge",
     "TrustedParkingObservation",
 ]

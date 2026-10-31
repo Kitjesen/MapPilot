@@ -84,7 +84,7 @@
       ],
       "conversion_adapter": "ros1_pointcloud2_to_normalized_jsonl",
       "download_hint": "iilabs3d download ~/slam_data loop livox_mid_360",
-      "notes": "Start with the loop and calibration sequences and preserve the supplied calibration YAML. Inspect the PointCloud2 fields before enabling deskew-dependent Fast-LIO frontend scoring."
+      "notes": "Start with the loop and calibration sequences and preserve the supplied calibration YAML. Inspect the PointCloud2 fields before enabling deskew-dependent LTLIO frontend scoring."
     },
     {
       "id": "rtk-slam-mid360",
@@ -221,7 +221,7 @@
       "imu": {
         "topic": "/livox/imu",
         "message_type": "sensor_msgs/Imu",
-        "acceleration_unit": "m/s^2",
+        "acceleration_unit": "g",
         "angular_velocity_unit": "rad/s"
       },
       "ground_truth": {
@@ -235,8 +235,8 @@
         "degeneracy_detection",
         "update_rejection_policy"
       ],
-      "conversion_adapter": "ros_bag_to_normalized_jsonl",
-      "notes": "This is an intentionally fully degenerate scene; use it to measure observability handling, not general accuracy."
+      "conversion_adapter": "aist_flatwall_to_ltu1",
+      "notes": "Raw Livox acceleration is in g; aist_flatwall_to_ltu1 preserves it and native replay applies acc_scale=9.80665 once. AprilTag reference poses describe the LiDAR; recording-specific IMU extrinsics remain unverified. This is a degeneracy stress test, not field acceptance."
     },
     {
       "id": "tiers-enhanced-livox",

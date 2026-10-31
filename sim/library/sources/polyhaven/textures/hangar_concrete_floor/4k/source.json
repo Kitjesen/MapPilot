@@ -1,0 +1,29 @@
+{
+  "provider": "Poly Haven",
+  "asset_id": "hangar_concrete_floor",
+  "name": "Hangar Concrete Floor",
+  "authors": {
+    "Dimitrios Savva": "All"
+  },
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "source_url": "https://polyhaven.com/a/hangar_concrete_floor",
+  "resolution": "4k",
+  "maps": {
+    "diff": {
+      "file": "hangar_concrete_floor_diff_4k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/hangar_concrete_floor/hangar_concrete_floor_diff_4k.jpg",
+      "bytes": 9845645
+    },
+    "nor_gl": {
+      "file": "hangar_concrete_floor_nor_gl_4k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/hangar_concrete_floor/hangar_concrete_floor_nor_gl_4k.jpg",
+      "bytes": 12557020
+    },
+    "rough": {
+      "file": "hangar_concrete_floor_rough_4k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/hangar_concrete_floor/hangar_concrete_floor_rough_4k.jpg",
+      "bytes": 9461846
+    }
+  }
+}

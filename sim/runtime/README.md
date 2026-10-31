@@ -54,7 +54,7 @@ Package manifest discovery has one root: `sim/packages/`. The compiler resolves
 that catalog into a SessionBundle; canonical runtimes consume the compiled
 plans and must not probe package manifests or `sim/compat/` directly.
 
-`runtime/control/thunderv4.py` is an isolated model-specific adapter selected
+`runtime/control/thunder/legacy_controller.py` is an isolated model-specific adapter selected
 by a compiled controller contract. Likewise, RobotSimUE
 `Scripts/build_thunderv4_preview.py` and `Scripts/build_open_field_hf.py` are
 model/world-specific Unreal Editor builders for fixture/preview asset

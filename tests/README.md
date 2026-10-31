@@ -21,7 +21,7 @@ operator to inspect `ros2 topic` output. The primary field-facing evidence is:
 - Gateway runtime dataflow over Module `In/Out` ports
 - Non-motion route preview and diagnostic pack
 - Saved-map metadata and required artifact formats
-- Real S100P runtime evidence before claiming real robot readiness
+- Real target-platform runtime evidence before claiming real robot readiness
 
 ## Fast Checks
 
@@ -62,7 +62,7 @@ localization, navigation status, and command whitelist. `simulation` mode uses
 the same Gateway and ModulePorts surface but requires a live simulation
 endpoint, live Module samples, motion readiness, goal acceptance, and routecheck
 evidence; it does not require real-runtime-evidence. `field` mode requires the
-real S100P runtime boundary plus fresh passing real-runtime-evidence through
+real target-platform runtime boundary plus fresh passing real-runtime-evidence through
 `/api/v1/diagnostics/real-runtime-evidence/latest`.
 
 `inspection-check` is the customer-facing patrol preflight. It runs
@@ -96,7 +96,7 @@ PYTHONPATH=src python -m diagnostics.field.runtime_evidence \
 ```
 
 The validators and saved-map gate are non-motion. Runtime evidence collection is also a
-read-only collector, but it must run during an operator-controlled real S100P
+read-only collector, but it must run during an operator-controlled real-robot
 session to prove real runtime readiness.
 
 ## Simulation Closure
@@ -109,14 +109,14 @@ python -m pytest tests/sim/test_sim_diagnostics.py -q
 ```
 
 Simulation closure is useful algorithm evidence. It is not a substitute for
-real S100P runtime evidence.
+real target-platform runtime evidence.
 
 ## Script Tests And Manual Smokes
 
 Script-related checks are split by how they should be run:
 
 - `tests/scripts/test_*.py` are pytest-collected script utility tests.
-- `tests/scripts/smoke/*.py` are manual S100P/ROS/Gateway smoke scripts migrated
+- `tests/scripts/smoke/*.py` are manual real-robot/ROS/Gateway smoke scripts migrated
   from the old `scripts/test_*.py` paths. They are not pytest tests.
 - `tests/scripts/*.sh` are legacy/manual shell integration helpers; read each
   script before running it on hardware.

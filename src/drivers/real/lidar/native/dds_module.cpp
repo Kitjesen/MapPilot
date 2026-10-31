@@ -29,13 +29,18 @@ class DdsModule::Impl {
       std::string imu_frame,
       bool navigation_fixture,
       DdsOutput output,
-      bool publish_raw_packets)
+      bool publish_raw_packets,
+      std::optional<NavigationFixtureMapIdentity> navigation_fixture_map_identity)
       : lidar_frame_(std::move(lidar_frame)),
         imu_frame_(std::move(imu_frame)),
         navigation_fixture_(navigation_fixture),
+        navigation_fixture_map_identity_(std::move(navigation_fixture_map_identity)),
         output_(output),
         publish_raw_packets_(publish_raw_packets),
-        diagnostics_enabled_(diagnostics_enabled_from_environment()) {
+        diagnostics_enabled_(diagnostics_enabled_from_environment()),
+        map_frame_(navigation_fixture_map_identity_.has_value()
+                       ? navigation_fixture_map_identity_->frame_id
+                       : "map") {
     if (navigation_fixture_ && output_ == DdsOutput::Imu) {
       throw std::runtime_error("navigation fixture requires lidar DDS output");
     }
@@ -283,6 +288,12 @@ class DdsModule::Impl {
 
     lingtu_dds_MapObservation map_observation{};
     fill_header(map_observation.header, timestamp_ns, map_frame_);
+    if (navigation_fixture_map_identity_.has_value()) {
+      map_observation.reference_map_id =
+          const_cast<char*>(navigation_fixture_map_identity_->map_id.c_str());
+      map_observation.reference_map_content_epoch =
+          navigation_fixture_map_identity_->content_epoch;
+    }
     map_observation.observation_sequence = observation.sequence;
     map_observation.reset_epoch = observation.reset_epoch;
     map_observation.sensor_frame = const_cast<char*>(body_frame_.c_str());
@@ -590,6 +601,7 @@ class DdsModule::Impl {
   std::string lidar_frame_;
   std::string imu_frame_;
   bool navigation_fixture_{false};
+  std::optional<NavigationFixtureMapIdentity> navigation_fixture_map_identity_;
   DdsOutput output_{DdsOutput::All};
   bool publish_raw_packets_{true};
   bool diagnostics_enabled_{false};
@@ -628,14 +640,16 @@ DdsModule::DdsModule(
     std::string imu_frame,
     bool navigation_fixture,
     DdsOutput output,
-    bool publish_raw_packets)
+    bool publish_raw_packets,
+    std::optional<NavigationFixtureMapIdentity> navigation_fixture_map_identity)
     : impl_(std::make_unique<Impl>(
           domain_id,
           std::move(lidar_frame),
           std::move(imu_frame),
           navigation_fixture,
           output,
-          publish_raw_packets)) {}
+          publish_raw_packets,
+          std::move(navigation_fixture_map_identity))) {}
 
 DdsModule::~DdsModule() = default;
 

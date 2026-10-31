@@ -33,7 +33,7 @@ bool ClosedLoopController::setTrajectory(const BsplineTrajectory &trajectory,
       trajectory.knots.size() !=
           trajectory.positionPoints.cols() + trajectory.order + 1 ||
       !trajectory.positionPoints.allFinite() || !trajectory.knots.allFinite() ||
-      !std::isfinite(nowS)) {
+      !std::isfinite(nowS) || !std::isfinite(trajectory.startTimeS)) {
     reset();
     return false;
   }
@@ -51,7 +51,7 @@ bool ClosedLoopController::setTrajectory(const BsplineTrajectory &trajectory,
   accelerationTrajectory_ = velocityTrajectory_.getDerivative();
   durationS_ = duration;
   trajectoryId_ = trajectory.trajectoryId;
-  executionTimeS_ = 0.0;
+  executionTimeS_ = clamp(nowS - trajectory.startTimeS, 0.0, durationS_);
   lastUpdateTimeS_ = nowS;
   receiveTrajectory_ = true;
   return true;
@@ -63,7 +63,8 @@ ClosedLoopControllerOutput ClosedLoopController::step(
   ClosedLoopControllerOutput output;
   if (!receiveTrajectory_ || !state.position.allFinite() ||
       !std::isfinite(state.yaw) || !std::isfinite(state.nowS) ||
-      (state.desiredHeading && !std::isfinite(*state.desiredHeading))) {
+      (state.desiredHeading && !std::isfinite(*state.desiredHeading)) ||
+      (state.desiredYawRate && !std::isfinite(*state.desiredYawRate))) {
     return output;
   }
 
@@ -80,11 +81,21 @@ ClosedLoopControllerOutput ClosedLoopController::step(
       ? *state.desiredHeading
       : desiredYaw(evaluationTime, desiredPosition, state.yaw,
                    std::max(0.0, params.timeForward));
-  const double yawError = normalizeAngle(desiredHeading - state.yaw);
+  const double yawError = state.desiredYawRate ? 0.0 : normalizeAngle(desiredHeading - state.yaw);
   const double yawLimit =
       std::min(kMaxYawRateLimit, std::max(0.0, params.maxYawRate));
+  const bool aligning = !state.desiredYawRate &&
+      std::abs(yawError) > std::max(0.0, params.headingErrorThreshold);
+  double yawFeedforward=0;
+  if(params.timeForward<=0 && !state.desiredHeading && !state.desiredYawRate &&
+     !aligning && desiredVelocity.head<2>().norm()>0.03) {
+    const Eigen::Vector3d acceleration=accelerationTrajectory_.evaluateDeBoorT(evaluationTime);
+    yawFeedforward=(desiredVelocity.x()*acceleration.y()-desiredVelocity.y()*acceleration.x())/
+        desiredVelocity.head<2>().squaredNorm();
+  }
   const double yawCommand = clamp(
-      std::max(0.0, params.yawGain) * yawError, -yawLimit, yawLimit);
+      state.desiredYawRate.value_or(std::max(0.0, params.yawGain) * yawError+yawFeedforward),
+      -yawLimit, yawLimit);
 
   output.yawError = yawError;
   output.durationS = durationS_;
@@ -95,8 +106,7 @@ ClosedLoopControllerOutput ClosedLoopController::step(
       positionTrajectory_.evaluateDeBoorT(durationS_);
   output.endDistance = (endpoint.head<2>() - state.position.head<2>()).norm();
 
-  if (std::abs(yawError) >
-      std::max(0.0, params.headingErrorThreshold)) {
+  if (aligning) {
     output.command.wz = yawCommand;
     output.executionFrozen = true;
     lastUpdateTimeS_ = state.nowS;
@@ -115,17 +125,21 @@ ClosedLoopControllerOutput ClosedLoopController::step(
   const Eigen::Vector2d feedForward = desiredVelocity.head<2>();
   const Eigen::Vector2d worldVelocity = clampNorm(
       feedForward + std::max(0.0, params.positionGain) * positionError,
-      std::max(std::max(0.0, params.maxVx),
-               std::max(0.0, params.maxVy)));
+      std::max(0.0, params.maxLinearSpeed));
 
   const double c = std::cos(state.yaw);
   const double s = std::sin(state.yaw);
-  output.command.vx =
-      clamp(c * worldVelocity.x() + s * worldVelocity.y(),
-            -std::max(0.0, params.maxVx), std::max(0.0, params.maxVx));
-  output.command.vy =
-      clamp(-s * worldVelocity.x() + c * worldVelocity.y(),
-            -std::max(0.0, params.maxVy), std::max(0.0, params.maxVy));
+  const double bodyVx = c * worldVelocity.x() + s * worldVelocity.y();
+  const double bodyVy = -s * worldVelocity.x() + c * worldVelocity.y();
+  const double maxVx = std::max(0.0, params.maxVx);
+  const double maxVy = std::max(0.0, params.maxVy);
+  double axisScale = 1.0;
+  if (std::abs(bodyVx) > maxVx) axisScale = std::min(axisScale, maxVx / std::abs(bodyVx));
+  if (std::abs(bodyVy) > maxVy) axisScale = std::min(axisScale, maxVy / std::abs(bodyVy));
+  // Keep the feedback-corrected travel direction when either body-axis limit
+  // is active. Independent clipping bends the command away from its spline.
+  output.command.vx = bodyVx * axisScale;
+  output.command.vy = bodyVy * axisScale;
   output.command.wz = yawCommand;
   output.executionTimeS = executionTimeS_;
 
@@ -159,6 +173,11 @@ std::int64_t ClosedLoopController::trajectoryId() const noexcept {
 double ClosedLoopController::desiredYaw(
     double time, const Eigen::Vector3d &desiredPosition, double currentYaw,
     double timeForward) const {
+  if(timeForward<=0) {
+    const Eigen::Vector3d velocity=velocityTrajectory_.evaluateDeBoorT(time);
+    // Tangent execution shares Grid::trajectoryOccupancy's quiet-speed rule.
+    return velocity.head<2>().norm()<=0.03 ? currentYaw : std::atan2(velocity.y(),velocity.x());
+  }
   const double lookaheadTime = std::min(durationS_, time + timeForward);
   Eigen::Vector3d direction =
       positionTrajectory_.evaluateDeBoorT(lookaheadTime) - desiredPosition;

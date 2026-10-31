@@ -304,7 +304,6 @@ class InspectionTaskEvent:
     kind: int = int(InspectionTaskEventKind.STATE_CHANGED)
     task_id: str = ""
     request_id: str = ""
-    command_request_id: str = ""
     state: int = int(InspectionTaskState.IDLE)
     map_id: str = ""
     map_content_epoch: int = 0
@@ -314,7 +313,6 @@ class InspectionTaskEvent:
     point_count: int = 0
     loop_index: int = 0
     retry_count: int = 0
-    point_id: str = ""
     action: str = ""
     action_request_id: str = ""
     evidence_id: str = ""
@@ -329,7 +327,6 @@ class InspectionTaskEvent:
             "boot_id": self.boot_id,
             "task_id": self.task_id,
             "request_id": self.request_id,
-            "command_request_id": self.command_request_id,
             "map_id": self.map_id,
             "route_id": self.route_id,
         }
@@ -378,7 +375,6 @@ class InspectionTaskEvent:
             "kind_name": self.kind_name,
             "task_id": self.task_id,
             "request_id": self.request_id,
-            "command_request_id": self.command_request_id,
             "state": int(self.state),
             "state_name": self.state_name,
             "terminal": self.terminal,
@@ -390,7 +386,6 @@ class InspectionTaskEvent:
             "point_count": int(self.point_count),
             "loop_index": int(self.loop_index),
             "retry_count": int(self.retry_count),
-            "point_id": self.point_id,
             "action": self.action,
             "action_request_id": self.action_request_id,
             "evidence_id": self.evidence_id,
@@ -675,6 +670,10 @@ class Odometry:
     ts: float = 0.0
     frame_id: str = NAV_ODOM_FRAME_ID
     child_frame_id: str = NAV_BODY_FRAME_ID
+    # Localization-process telemetry carried by the Host snapshot projection.
+    # The native DDS/ROS odometry wire format remains pose and twist only.
+    session_distance_m: float | None = None
+    session_distance_source: str | None = None
 
     def __post_init__(self) -> None:
         if self.ts == 0.0:
@@ -725,6 +724,8 @@ class Odometry:
             "ts": self.ts,
             "frame_id": self.frame_id,
             "child_frame_id": self.child_frame_id,
+            "session_distance_m": self.session_distance_m,
+            "session_distance_source": self.session_distance_source,
         }
 
     @classmethod
@@ -735,6 +736,8 @@ class Odometry:
             ts=float(d.get("ts", 0)),
             frame_id=str(d.get("frame_id", NAV_ODOM_FRAME_ID)),
             child_frame_id=str(d.get("child_frame_id", NAV_BODY_FRAME_ID)),
+            session_distance_m=d.get("session_distance_m"),
+            session_distance_source=d.get("session_distance_source"),
         )
 
     def to_ros_dict(self) -> dict[str, Any]:

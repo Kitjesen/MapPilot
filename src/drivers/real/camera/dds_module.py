@@ -305,6 +305,8 @@ class DdsCameraModule(Module, layer=1):  # type: ignore[call-arg]
                     dist_k3=frame.dist_k3,
                     ts=frame.timestamp_s,
                     frame_id=frame.frame_id,
+                    source_generation=frame.source_generation,
+                    source_sequence=frame.sequence,
                 )
             )
             self._last_info_ts = received_s
@@ -337,11 +339,16 @@ class DdsCameraModule(Module, layer=1):  # type: ignore[call-arg]
             if channels > 1
             else visible.reshape(frame.height, frame.width)
         )
+        if frame.encoding == "rgb8":
+            data = data[..., ::-1]
+            image_format = ImageFormat.BGR
         return Image(
             data=data.copy(),
             format=image_format,
             ts=frame.timestamp_s,
             frame_id=frame.frame_id,
+            source_generation=frame.source_generation,
+            source_sequence=frame.sequence,
         )
 
     @staticmethod

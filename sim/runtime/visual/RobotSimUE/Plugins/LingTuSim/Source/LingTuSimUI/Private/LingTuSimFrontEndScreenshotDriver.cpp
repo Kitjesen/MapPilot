@@ -15,13 +15,15 @@
 #include "Misc/Paths.h"
 #include "UnrealClient.h"
 #include "Widgets/SWidget.h"
+#include "SLingTuSimRuntimeHUD.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogLingTuSimFrontEndScreenshot, Log, All);
 
 namespace LingTuSim::UI {
 namespace {
 constexpr double ScreenshotTimeoutSeconds = 120.0;
-constexpr int32 StableFrameCount = 3;
+// Allow the presentation-only capture's temporal history to converge before QA capture.
+constexpr int32 StableFrameCount = 48;
 
 bool DecodeAssignmentValue(const FString &RawValue, FString &OutValue) {
   OutValue = RawValue;
@@ -107,6 +109,8 @@ FFrontEndScreenshotPaths FFrontEndScreenshotDriver::BuildOutputPaths(const FStri
   FPaths::NormalizeDirectoryName(Result.RunDirectory);
   Result.LoginScreenshot = FPaths::Combine(Result.RunDirectory, TEXT("login.png"));
   Result.AssetLibraryScreenshot = FPaths::Combine(Result.RunDirectory, TEXT("asset-library.png"));
+  Result.CategoryScreenshot = FPaths::Combine(Result.RunDirectory, TEXT("category-humanoid.png"));
+  Result.WorldScreenshot = FPaths::Combine(Result.RunDirectory, TEXT("map-selection.png"));
   Result.SuccessSentinel = FPaths::Combine(Result.RunDirectory, TEXT("success.json"));
   Result.ErrorSentinel = FPaths::Combine(Result.RunDirectory, TEXT("error.txt"));
   return Result;
@@ -252,6 +256,52 @@ void FFrontEndScreenshotDriver::Tick() {
       return;
     }
     AssetLibraryScreenshotBytes = Bytes;
+    const auto Selection = SelectionModel.Pin();
+    if (Selection.IsValid() && Selection->GetSelectedOption() &&
+        Selection->GetRobotChoices().ContainsByPredicate([](const auto& Robot) { return Robot.Category == TEXT("humanoid"); })) {
+      OriginalSelectionId = Selection->GetSelectedOption()->Id;
+      StaticCastSharedPtr<SLingTuSimRuntimeHUD>(HUDWidget.Pin())->PreviewRobotCategory(TEXT("humanoid"));
+      ConsecutiveStableFrames = 0;
+      State = EState::AwaitCategoryStable;
+      return;
+    }
+    StaticCastSharedPtr<SLingTuSimRuntimeHUD>(HUDWidget.Pin())->AdvanceFrontEndSelection();
+    ConsecutiveStableFrames = 0;
+    State = EState::AwaitWorldStable;
+    return;
+  }
+
+  if (State == EState::AwaitCategoryFile) {
+    if (IFileManager::Get().FileSize(*Paths.CategoryScreenshot) <= 0) return;
+    FString Error;
+    if (!ValidateScreenshot(Paths.CategoryScreenshot, CategoryScreenshotBytes, Error)) { Fail(*Error); return; }
+    StaticCastSharedPtr<SLingTuSimRuntimeHUD>(HUDWidget.Pin())->PreviewShowroomInspection();
+    ConsecutiveStableFrames = 0;
+    State = EState::AwaitInspectionStable;
+    return;
+  }
+  if (State == EState::AwaitInspectionFile) {
+    const FString Path = FPaths::Combine(Paths.RunDirectory, TEXT("robot-inspection.png"));
+    if (IFileManager::Get().FileSize(*Path) <= 0) return;
+    FString Error;
+    int64 Bytes = 0;
+    if (!ValidateScreenshot(Path, Bytes, Error)) { Fail(*Error); return; }
+    const auto HUD = StaticCastSharedPtr<SLingTuSimRuntimeHUD>(HUDWidget.Pin());
+    HUD->PreviewRobotCategory(TEXT("all"));
+    if (!SelectionModel.Pin()->SelectById(OriginalSelectionId)) { Fail(TEXT("category_qa_restore_failed")); return; }
+    HUD->AdvanceFrontEndSelection();
+    ConsecutiveStableFrames = 0;
+    State = EState::AwaitWorldStable;
+    return;
+  }
+
+  if (State == EState::AwaitWorldFile) {
+    const FString& Path = Paths.WorldScreenshot;
+    if (IFileManager::Get().FileSize(*Path) <= 0) return;
+    FString MediaError;
+    int64 Bytes = 0;
+    if (!ValidateScreenshot(Path, Bytes, MediaError)) { Fail(*MediaError); return; }
+    WorldScreenshotBytes = Bytes;
     if (!WriteSuccess(MediaError)) {
       Fail(*MediaError);
       return;
@@ -264,7 +314,10 @@ void FFrontEndScreenshotDriver::Tick() {
     return;
   }
 
-  if (!IsViewportReady() || FScreenshotRequest::IsScreenshotRequested()) {
+  const bool bAwaitShowroom = State == EState::AwaitLoginStable || State == EState::AwaitAssetLibraryStable || State == EState::AwaitCategoryStable || State == EState::AwaitInspectionStable;
+  const auto HUD = StaticCastSharedPtr<SLingTuSimRuntimeHUD>(HUDWidget.Pin());
+  if (!IsViewportReady() || FScreenshotRequest::IsScreenshotRequested() ||
+      (bAwaitShowroom && (!HUD.IsValid() || !HUD->IsFrontEndShowroomReady()))) {
     ConsecutiveStableFrames = 0;
     return;
   }
@@ -282,6 +335,12 @@ void FFrontEndScreenshotDriver::Tick() {
       return;
     }
     RequestCapture(Paths.AssetLibraryScreenshot, EState::AwaitAssetLibraryFile);
+  } else if (State == EState::AwaitCategoryStable) {
+    RequestCapture(Paths.CategoryScreenshot, EState::AwaitCategoryFile);
+  } else if (State == EState::AwaitInspectionStable) {
+    RequestCapture(FPaths::Combine(Paths.RunDirectory, TEXT("robot-inspection.png")), EState::AwaitInspectionFile);
+  } else if (State == EState::AwaitWorldStable) {
+    RequestCapture(Paths.WorldScreenshot, EState::AwaitWorldFile);
   }
 }
 
@@ -290,6 +349,8 @@ void FFrontEndScreenshotDriver::Detach() {
   Paths = {};
   RunId.Reset();
   SelectionIntentPath.Reset();
+  OriginalSelectionId.Reset();
+  CategoryScreenshotBytes = 0;
   HUDWidget.Reset();
   Viewport.Reset();
   LoginModel.Reset();
@@ -299,6 +360,7 @@ void FFrontEndScreenshotDriver::Detach() {
   ConsecutiveStableFrames = 0;
   LoginScreenshotBytes = 0;
   AssetLibraryScreenshotBytes = 0;
+  WorldScreenshotBytes = 0;
   bExitRequested = false;
 }
 
@@ -378,10 +440,15 @@ bool FFrontEndScreenshotDriver::WriteSuccess(FString &OutError) const {
   }
   int64 VerifiedLoginBytes = 0;
   int64 VerifiedAssetBytes = 0;
+  int64 VerifiedWorldBytes = 0;
+  int64 VerifiedCategoryBytes = 0;
+  if (CategoryScreenshotBytes > 0 &&
+      (!ValidateScreenshot(Paths.CategoryScreenshot, VerifiedCategoryBytes, OutError) || VerifiedCategoryBytes != CategoryScreenshotBytes)) return false;
   if (!ValidateScreenshot(Paths.LoginScreenshot, VerifiedLoginBytes, OutError) ||
       !ValidateScreenshot(Paths.AssetLibraryScreenshot, VerifiedAssetBytes, OutError) ||
+      !ValidateScreenshot(Paths.WorldScreenshot, VerifiedWorldBytes, OutError) ||
       VerifiedLoginBytes != LoginScreenshotBytes ||
-      VerifiedAssetBytes != AssetLibraryScreenshotBytes) {
+      VerifiedAssetBytes != AssetLibraryScreenshotBytes || VerifiedWorldBytes != WorldScreenshotBytes) {
     if (OutError.IsEmpty()) {
       OutError = TEXT("front_end_screenshot_changed_before_commit");
     }
@@ -394,12 +461,13 @@ bool FFrontEndScreenshotDriver::WriteSuccess(FString &OutError) const {
            "\"run_id\":\"%s\",\"operator\":{\"method\":\"local_operator\","
            "\"display_name\":\"Visual QA\"},\"session\":{\"confirmed\":false,"
            "\"intent_exists\":false},\"asset_catalog\":{\"available\":true,"
-           "\"card_count\":%d},\"screenshots\":[{\"basename\":\"login.png\","
+           "\"card_count\":%d},\"category_preview\":{\"basename\":\"category-humanoid.png\",\"bytes\":%lld},\"screenshots\":[{\"basename\":\"login.png\","
            "\"bytes\":%lld,\"width\":1920,\"height\":1080,\"show_ui\":true},"
            "{\"basename\":\"asset-library.png\",\"bytes\":%lld,\"width\":1920,"
-           "\"height\":1080,\"show_ui\":true}]}\n"),
-      *RunId, CardCount, static_cast<long long>(VerifiedLoginBytes),
-      static_cast<long long>(VerifiedAssetBytes));
+           "\"height\":1080,\"show_ui\":true},"
+           "{\"basename\":\"map-selection.png\",\"bytes\":%lld,\"width\":1920,\"height\":1080,\"show_ui\":true}]}\n"),
+      *RunId, CardCount, static_cast<long long>(VerifiedCategoryBytes), static_cast<long long>(VerifiedLoginBytes),
+      static_cast<long long>(VerifiedAssetBytes), static_cast<long long>(VerifiedWorldBytes));
   const FString Temporary = Paths.SuccessSentinel + TEXT(".tmp");
   if (!FileDoesNotExist(Paths.SuccessSentinel) || !FileDoesNotExist(Temporary) ||
       !FFileHelper::SaveStringToFile(Json, *Temporary,

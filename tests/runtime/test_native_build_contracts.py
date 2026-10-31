@@ -9,7 +9,7 @@ def _read_repo_file(path: str) -> str:
 
 def test_disabled_bbs3d_stub_never_advertises_map_available():
     source = _read_repo_file(
-        "src/localization/localizer/src/localizers/bbs3d_global_localizer.cpp"
+        "src/localization/relocalization/src/localizers/bbs3d_global_localizer.cpp"
     )
     disabled_branch = source.rsplit("#else", 1)[1].split("#endif", 1)[0]
 
@@ -19,7 +19,7 @@ def test_disabled_bbs3d_stub_never_advertises_map_available():
 
 
 def test_localizer_can_enable_bbs3d_from_local_prefix():
-    cmake = _read_repo_file("src/localization/localizer/CMakeLists.txt")
+    cmake = _read_repo_file("src/localization/relocalization/CMakeLists.txt")
 
     assert "CPU_BBS3D_ROOT" in cmake
     assert "$ENV{CPU_BBS3D_ROOT}" in cmake

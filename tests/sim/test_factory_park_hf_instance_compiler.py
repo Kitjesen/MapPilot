@@ -357,7 +357,7 @@ def test_batch_actor_exposes_strict_serialized_and_live_transform_validation() -
 
     assert "TArray<FTransform> InstanceTransforms" in header
     assert "bool ValidateVisualGroup(" in header
-    assert 'UFUNCTION(BlueprintCallable, Category="LingTuSim|FactoryPark")' in header
+    assert 'UFUNCTION(HostBuilderCallable, Category="LingTuSim|FactoryPark")' in header
     assert "Component.GetInstanceTransform(" in source
     assert "Component.GetMaterial(0) != ExpectedMaterial" in source
     assert "LingTuSim::Visual::HasPresentationPolicy(Component)" in source

@@ -2,7 +2,7 @@
   "FileVersion": 3,
   "EngineAssociation": "",
   "Category": "Simulation",
-  "Description": "LingTu UE5 host for digest-bound simulation bundles and dynamic robot/world visualization.",
+  "Description": "LingTu UE5 host for compiled simulation plans and dynamic robot/world visualization.",
   "Modules": [{"Name": "RobotSimUE", "Type": "Runtime", "LoadingPhase": "Default"}],
   "Plugins": [
     {"Name": "LingTuSim", "Enabled": true},
@@ -14,7 +14,7 @@
     {"Name": "Terminal", "Enabled": true},
     {
       "Name": "Tripo3DUEBridge",
-      "Enabled": true,
+      "Enabled": false,
       "SupportedTargetPlatforms": ["Win64"]
     }
   ]

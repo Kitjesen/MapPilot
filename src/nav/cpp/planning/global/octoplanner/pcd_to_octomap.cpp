@@ -1,6 +1,6 @@
 #include <octomap/OcTree.h>
-#include "lingtu/maps/build/sampled_octomap.hpp"
-#include "lingtu/maps/build/ray_octomap.hpp"
+#include "lingtu/maps/octomap/sampled.hpp"
+#include "lingtu/maps/octomap/rays.hpp"
 
 #include <algorithm>
 #include <cctype>

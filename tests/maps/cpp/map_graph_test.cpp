@@ -1,4 +1,4 @@
-#include "lingtu/maps/map_graph.hpp"
+#include "lingtu/maps/graph.hpp"
 
 #include <cassert>
 #include <chrono>

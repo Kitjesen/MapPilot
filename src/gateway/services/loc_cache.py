@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from runtime.msgs.numpy_compat import np
-
 
 class LocCache:
     """Owns last-known localization values for Gateway consumers."""
@@ -14,14 +12,12 @@ class LocCache:
         self._odom: dict | None = None
         self._last_invalid_odometry: dict | None = None
         self._odom_timestamps: list[float] = []
-        self._T_map_odom: np.ndarray | None = None
         self._has_map_odom_tf = False
 
     def clear(self) -> None:
         self._odom = None
         self._last_invalid_odometry = None
         self._odom_timestamps.clear()
-        self._T_map_odom = None
         self._has_map_odom_tf = False
 
     def record_odometry(

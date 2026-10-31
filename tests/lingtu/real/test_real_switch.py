@@ -590,7 +590,7 @@ def test_map_save_idle_accepts_product_without_host_map_service(monkeypatch) -> 
         "_http",
         lambda *_args, **_kwargs: {
             "_http_status": 503,
-            "detail": "maps.service is unavailable; ProductGraph/Blueprint must inject maps.service",
+            "detail": "maps.service is unavailable; ProductGraph/HostBuilder must inject maps.service",
         },
     )
 
@@ -807,6 +807,54 @@ def test_motion_stop_confirmation_blocks_process_mutation(tmp_path) -> None:
     assert failure.value.report.status == "stop_unconfirmed"
     assert runner.calls == []
     assert backend.events == ["stop_motion"]
+
+
+@pytest.mark.parametrize(("nav_active", "stop_fails"), [(False, False), (True, False), (True, True)])
+def test_first_start_slam_failure_stops_present_endpoints_without_requiring_unstarted_nav(
+    tmp_path, monkeypatch, nav_active, stop_fails,
+) -> None:
+    runner = FakeRunner()
+    backend = FakeBackend(fail_at="wait_slam")
+    active = {"nav": False}
+    commands = []
+    requested_products = []
+
+    def run_stop(command, **_kwargs):
+        commands.append(command)
+        if stop_fails:
+            raise RuntimeError("native navigation stop rejected")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    field_backend = FieldBackend(environment={}, runner=run_stop)
+    monkeypatch.setattr(field_backend, "_unit_active", lambda _unit: active["nav"])
+
+    def stop_motion(product=None):
+        requested_products.append(product)
+        field_backend.stop_motion(product)
+
+    monkeypatch.setattr(backend, "stop_motion", stop_motion)
+
+    def fail_at_slam(plan, *, on_process_ready, **_kwargs):
+        report = ProcessReport(
+            product=plan.product, env=plan.env, action="apply", status="failed",
+            started=[plan.process("slam").target],
+        )
+        active["nav"] = nav_active
+        try:
+            on_process_ready(plan.process("slam"))
+        except Exception as exc:
+            report.error = str(exc)
+            raise ProcessFailed(report) from exc
+        pytest.fail("SLAM startup failure was not reached")
+
+    monkeypatch.setattr(runner, "apply_deferred", fail_at_slam)
+    with pytest.raises(SwitchFailed, match="failed at wait_slam") as failure:
+        _control(runner)._switch(_request(), backend=backend, state_dir=tmp_path)
+
+    assert requested_products == [None, None]
+    assert len(commands) == int(nav_active)
+    assert failure.value.report.status == ("stop_unconfirmed" if stop_fails else "failed_stopped")
+    assert not (tmp_path / "current.json").exists()
 
 
 def test_failed_switch_restores_map_quiesces_processes_and_removes_session(tmp_path) -> None:

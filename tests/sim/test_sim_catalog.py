@@ -371,6 +371,28 @@ def _isolated_thunderv4_catalog(tmp_path: Path) -> tuple[Path, Path]:
     return root, package_dir
 
 
+@pytest.mark.parametrize("body_file", ["../outside.body2", "collision/missing.body2"])
+def test_robot_navigation_body_must_be_a_present_package_file(tmp_path: Path, body_file: str) -> None:
+    root, package_dir = _isolated_thunderv4_catalog(tmp_path)
+    manifest = package_dir / "robot.package.yaml"
+    source = manifest.read_text(encoding="utf-8")
+    source = source.replace("body_file: collision/thunderv4_nominal.body2", f"body_file: {body_file}")
+    manifest.write_text(source, encoding="utf-8")
+
+    with pytest.raises(CatalogError, match=r"navigation_geometry.body_file"):
+        CatalogResolver(root, [root / "sim" / "packages" / "robots"])
+
+
+def test_robot_navigation_body_resolves_with_the_selected_physics_model() -> None:
+    resolved = _resolver().resolve(THUNDER_CONTROLLED_HEADLESS_SESSION)
+    robot = resolved.physics_plan["robots"][0]
+    body_file = robot["navigation_geometry"]["body_file"]
+
+    assert body_file == "sim/packages/robots/doso/thunder_v4/collision/thunderv4_nominal.body2"
+    assert (REPO_ROOT / body_file).is_file()
+    assert robot["model"]["mjcf"] == "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml"
+
+
 @pytest.mark.parametrize("projection", [None, "../robot.visual-projection.json"])
 def test_robot_projection_path_is_required_safe_and_package_relative(
     tmp_path: Path,
@@ -410,15 +432,41 @@ def test_catalog_discovers_packages_in_their_domain_directories() -> None:
         REPO_ROOT / "sim/packages/robots/doso/thunder_v4/robot.package.yaml"
     )
     assert resolver.find_package(
-        "thunderv4_locomotion@1.0.0", kind="controller"
+        "thunderv4_cts_moe@1.0.0", kind="controller"
     ).manifest_path == (
-        REPO_ROOT / "sim/packages/controllers/doso/thunder_v4/locomotion/controller.package.yaml"
+        REPO_ROOT / "sim/packages/controllers/doso/thunder_v4/cts_moe/controller.package.yaml"
     )
     assert resolver.find_package(
         "thunderv4_navigation@1.0.0", kind="sensor_rig"
     ).manifest_path == (
         REPO_ROOT / "sim/packages/sensor_rigs/doso/thunder_v4/navigation/sensor-rig.package.yaml"
     )
+
+
+def test_ordinary_and_stair_sessions_inherit_the_single_thunder_controller_default(monkeypatch) -> None:
+    resolver = _resolver()
+    robot = resolver.find_package("thunderv4@1.0.3", kind="robot")
+    assert robot.data["defaults"]["controller"] == "thunderv4_cts_moe@1.0.0"
+    controller = resolver.find_package(robot.data["defaults"]["controller"], kind="controller")
+    assert list(controller.manifest_path.parent.parent.glob("*/controller.package.yaml")) == [controller.manifest_path]
+    sessions = [
+        THUNDER_CONTROLLED_HEADLESS_SESSION,
+        REPO_ROOT / "sim/sessions/examples/thunderv4_stairs/session.yaml",
+    ]
+    policies = []
+    for session in sessions:
+        resolved = resolver.resolve(session)
+        assert "controller" not in resolved.session["robots"][0]
+        binding = resolved.control_plan["controllers"][0]
+        assert binding["package"]["id"] == controller.id
+        assert binding["adapter"]["plugin"] == "thunderv4_cts_moe"
+        assert binding["policy"]["artifact"].endswith("policy_cts_moe_v39_61128.onnx")
+        policies.append(binding["policy"])
+    assert policies[0] == policies[1]
+
+    monkeypatch.setitem(robot.data["defaults"], "controller", None)
+    for session in sessions:
+        assert resolver.resolve(session).control_plan["controllers"] == []
 
 
 def test_legacy_controller_package_interface_does_not_require_new_command_contract(
@@ -763,7 +811,8 @@ def test_controlled_headless_session_compiles_the_navigation_sensor_rig() -> Non
     }
     rgb = resolved.sensor_plan["streams"]["rgb"][0]
     depth = resolved.sensor_plan["streams"]["depth"][0]
-    assert rgb["rate_hz"] == depth["rate_hz"] == 30.0
+    # The headless rig decouples slow MuJoCo camera rendering from physics/LiDAR.
+    assert rgb["rate_hz"] == depth["rate_hz"] == 1.0
     assert (rgb["width"], rgb["height"]) == (640, 480)
     assert (depth["width"], depth["height"]) == (640, 480)
     assert rgb["extrinsic"] == depth["extrinsic"] == {
@@ -831,6 +880,7 @@ def test_thunderv4_unreal_session_resolves_full_sensor_control_transport_slice()
     assert rgb["width"] == 640
     assert rgb["height"] == 480
     depth = resolved.sensor_plan["streams"]["depth"][0]
+    assert depth["rate_hz"] == 30
     assert depth["parent_frame_id"] == "thunder_01/base_link"
     assert depth["extrinsic"] == {
         "position_m": [0.423358800364963, -0.000496202974186816, 0.11370714960317],
@@ -863,12 +913,16 @@ def test_thunderv4_unreal_session_resolves_full_sensor_control_transport_slice()
     assert len(resolved.control_plan["controllers"]) == 1
     controller = resolved.control_plan["controllers"][0]
     assert controller["instance_id"] == "thunder_01"
-    assert controller["package"]["id"] == "thunderv4_locomotion"
-    assert controller["adapter"] == {"plugin": "thunderv4_flat53", "abi": "lingtu.sim.controller-adapter.v1"}
+    assert controller["package"]["id"] == "thunderv4_cts_moe"
+    assert controller["adapter"] == {"plugin": "thunderv4_cts_moe", "abi": "lingtu.sim.controller-adapter.v1"}
+    cts_policy = {
+        "artifact": "sim/packages/controllers/doso/thunder_v4/cts_moe/policy/policy_cts_moe_v39_61128.onnx",
+        "manifest": "sim/packages/controllers/doso/thunder_v4/cts_moe/policy/policy_v39_manifest.json",
+    }
     assert controller["policy"] == {
         "runtime": "onnxruntime",
-        "artifact": "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998.onnx",
-        "manifest": "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998_manifest.json",
+        **cts_policy,
+        "profiles": {"stairs_up": cts_policy, "stairs_down": cts_policy},
     }
     assert controller["timing"] == {"inference_hz": 50, "low_level_hz": 200}
     assert controller["command_channels"] == ["thunder_01.control.base_twist", "thunder_01.control.joint_torque"]
@@ -888,7 +942,7 @@ def test_thunderv4_unreal_session_resolves_full_sensor_control_transport_slice()
             "channel_id": "thunder_01.control.joint_torque",
             "direction": "publish",
             "owner": "physics",
-            "source": "thunder_01.thunderv4_locomotion",
+            "source": "thunder_01.thunderv4_cts_moe",
             "transport": "in_process",
             "message_type": "lingtu.sim.joint-torque.v1",
             "command_type": "joint_torque",
@@ -1031,13 +1085,13 @@ world: open_field@1.0.0
 robots:
   - instance_id: thunder_01
     package: thunderv4@1.0.3
-    controller: thunderv4_locomotion@1.0.0
+    controller: thunderv4_cts_moe@1.0.0
     spawn:
       position_m: [0.0, 0.0, 0.0]
       quaternion_wxyz: [1.0, 0.0, 0.0, 0.0]
   - instance_id: thunder_02
     package: thunderv4@1.0.3
-    controller: thunderv4_locomotion@1.0.0
+    controller: thunderv4_cts_moe@1.0.0
     spawn:
       position_m: [2.0, 0.0, 0.0]
       quaternion_wxyz: [1.0, 0.0, 0.0, 0.0]

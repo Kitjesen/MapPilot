@@ -713,7 +713,7 @@ def test_blender_command_uses_factory_startup_before_background_authoring(tmp_pa
     )
 
     assert command[:5] == [
-        "D:\\Development\\Blender\\5.2\\blender.exe",
+        str(Path("D:/Development/Blender/5.2/blender.exe")),
         "--factory-startup",
         "--background",
         "--python",

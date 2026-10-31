@@ -32,7 +32,8 @@ def sample_solids(model, data, spacing=0.05):
         size = model.geom_size[gid]
         name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, gid)
         faces = []
-        if model.geom_type[gid] == mujoco.mjtGeom.mjGEOM_BOX:
+        geom_type = int(model.geom_type[gid])
+        if geom_type == int(mujoco.mjtGeom.mjGEOM_BOX):
             for fixed in range(3):
                 if name == "fw_floor" and fixed != 2:
                     continue
@@ -46,12 +47,12 @@ def sample_solids(model, data, spacing=0.05):
                         p[:, fixed], p[:, u], p[:, v] = sign * size[fixed], uu.ravel(), vv.ravel()
                         yield (p @ data.geom_xmat[gid].reshape(3, 3).T + data.geom_xpos[gid]).astype("<f4")
             continue
-        elif model.geom_type[gid] in (mujoco.mjtGeom.mjGEOM_CYLINDER, mujoco.mjtGeom.mjGEOM_CAPSULE):
+        elif geom_type in (int(mujoco.mjtGeom.mjGEOM_CYLINDER), int(mujoco.mjtGeom.mjGEOM_CAPSULE)):
             radius, half_height = size[:2]
             angle = np.linspace(0, 2 * np.pi, max(12, math.ceil(2 * np.pi * radius / spacing)), endpoint=False)
             aa, zz = np.meshgrid(angle, axis_samples(half_height, spacing))
             faces.append(np.column_stack((radius * np.cos(aa.ravel()), radius * np.sin(aa.ravel()), zz.ravel())))
-            if model.geom_type[gid] == mujoco.mjtGeom.mjGEOM_CAPSULE:
+            if geom_type == int(mujoco.mjtGeom.mjGEOM_CAPSULE):
                 latitude = np.linspace(0, np.pi / 2, max(3, math.ceil(np.pi * radius / (2 * spacing)) + 1))
                 aa, pp = np.meshgrid(angle, latitude)
                 for sign in (-1, 1):

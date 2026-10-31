@@ -147,6 +147,18 @@ void test_generic_sensor_plan_preserves_explicit_required_sensor_selection() {
           "explicit selection cannot be completed when required /imu/raw is missing");
   require(contains_topic(plan.required_topics, "/lidar/raw_frame"),
           "explicit selection cannot be completed when required /lidar/raw_frame is missing");
+  const auto selected = lingtu::recording::dds_recording_plan(
+      "generic-sensors-v1", {"/imu/raw", "/robot/joint_states", "/nav/command/request"});
+  require(selected.required_topics == std::vector<std::string>{"/imu/raw"},
+          "quiet optional joint/event topics must not fail a valid capture");
+  const auto joints = lingtu::recording::dds_recording_plan(
+      "generic-sensors-v1", {"/robot/joint_states"});
+  require(joints.required_topics.empty(), "custom selection retained unselected sensor requirements");
+  const auto evidence = lingtu::recording::dds_recording_plan(
+      "inspection-evidence-v1", {"/nav/inspection/task/event"});
+  require(contains_topic(evidence.required_topics, "/slam/odometry") &&
+          contains_topic(evidence.required_topics, "/driver/control_state"),
+          "explicit selection weakened task evidence requirements");
 }
 
 void test_recording_idl_resolution_precedence() {
@@ -426,6 +438,17 @@ void test_mcap_rejects_conflicts_before_open_and_retains_uncommitted_temp() {
           "uncommitted MCAP session created a final file");
   require(std::filesystem::exists(uncommitted_path + ".tmp"),
           "uncommitted MCAP session did not preserve its temporary file");
+  mcap::McapReader reader;
+  require(reader.open(uncommitted_path + ".tmp").ok(),
+          "uncommitted MCAP session did not preserve a readable container");
+  std::size_t retained_messages = 0;
+  for (const auto &view : reader.readMessages()) {
+    ++retained_messages;
+    require(view.channel->topic == "rt/imu/raw" && view.message.dataSize == 4,
+            "uncommitted MCAP session changed its captured evidence");
+  }
+  require(retained_messages == 1, "uncommitted MCAP session discarded its buffered evidence");
+  reader.close();
   std::filesystem::remove(uncommitted_path + ".tmp");
 }
 

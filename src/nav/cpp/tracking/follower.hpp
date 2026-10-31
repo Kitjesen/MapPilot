@@ -28,8 +28,8 @@ struct SplineFollowerParams {
   double headingErrorThreshold = 0.8;
   double positionGain = 0.8;
   double yawGain = 1.5;
-  double maxVx = 0.75;
-  double maxVy = 0.35;
+  double maxVx = kDefaultLinearSpeedMps;
+  double maxVy = kDefaultLinearSpeedMps;
   double maxYawRateRadS = 1.0;
   double finishDistance = 0.15;
 };
@@ -44,9 +44,9 @@ struct FollowerParams {
   double maxYawRateRadS = 0.7853981633974483;
   double headingAlignEnterRad = 0.7853981633974483;
   double headingAlignExitRad = 0.35;
-  double maxSpeed = 1.0;
+  double maxSpeed = kDefaultLinearSpeedMps;
   double minSpeed = 0.0;
-  double maxAccel = 1.0;  // m/s^2
+  double maxAccel = 2.0;  // m/s^2
   double maxYawAccelRadS2 = 0.0;  // rad/s^2; <=0 disables rate limiting
   double linearStopThreshold = 1e-4;
   double nominalDt = 0.01;
@@ -86,8 +86,12 @@ struct FollowerState {
   FollowerParams params{};
   double goalDistance{-1.0};
   bool standardPathProfile{true};
-  // Teleoperation supplies body heading independently of the spline tangent.
+  // Callers can supply body heading independently of the spline tangent.
   std::optional<double> desiredHeading{};
+  // An absent observation must not be mistaken for measured standstill.
+  bool measuredBodyTwistValid{false};
+  // Explicit angular-velocity intent is distinct from a fixed heading target.
+  std::optional<double> desiredYawRate{};
 };
 
 struct FollowerTracking {
@@ -135,6 +139,8 @@ class Follower {
   Follower &operator=(const Follower &) = delete;
 
   FollowerOutput follow(const LocalPlan &plan, const FollowerState &state);
+  // Feed back the command accepted by final control, without advancing time.
+  void commitApplied(const Twist &command);
   void stopLinear();
   void resetTarget();
   void resetIntent();

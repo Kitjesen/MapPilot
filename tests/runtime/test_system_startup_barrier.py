@@ -1,10 +1,10 @@
-"""Fail-closed startup barrier tests for critical Blueprint modules."""
+"""Fail-closed startup barrier tests for critical HostBuilder modules."""
 
 from __future__ import annotations
 
 import pytest
 
-from runtime.blueprint import Blueprint, SystemStartupError
+from runtime.host import HostBuilder, SystemStartupError
 from runtime.module import Module
 
 
@@ -13,17 +13,17 @@ class _ReadyModule(Module):
 
 
 def test_build_rejects_missing_critical_alias() -> None:
-    blueprint = Blueprint().add(_ReadyModule, alias="present").require_modules("missing")
+    host_builder = HostBuilder().add(_ReadyModule, alias="present").require_modules("missing")
 
     with pytest.raises(ValueError, match="missing"):
-        blueprint.build()
+        host_builder.build()
 
 
 def test_namespace_and_merge_preserve_critical_aliases() -> None:
-    first = Blueprint().add(_ReadyModule, alias="core").require_modules("core").namespace("robot_a")
-    second = Blueprint().add(_ReadyModule, alias="core").require_modules("core").namespace("robot_b")
+    first = HostBuilder().add(_ReadyModule, alias="core").require_modules("core").namespace("robot_a")
+    second = HostBuilder().add(_ReadyModule, alias="core").require_modules("core").namespace("robot_b")
 
-    merged = Blueprint().merge(first).merge(second)
+    merged = HostBuilder().merge(first).merge(second)
 
     assert merged.required_module_names == ("robot_a/core", "robot_b/core")
     system = merged.build()
@@ -123,7 +123,7 @@ def test_critical_preflight_failure_fails_closed() -> None:
     critical = _LifecycleModule("critical", events, preflight_failure="sensor unavailable")
     later = _LifecycleModule("later", events)
     system = (
-        Blueprint()
+        HostBuilder()
         .add(critical, alias="critical")
         .add(later, alias="later")
         .require_modules("critical")
@@ -148,7 +148,7 @@ def test_critical_setup_failure_rolls_back_touched_modules_in_reverse_order() ->
     critical = _LifecycleModule("critical", events, setup_failure=True)
     later = _LifecycleModule("later", events)
     system = (
-        Blueprint()
+        HostBuilder()
         .add(first, alias="first")
         .add(critical, alias="critical")
         .add(later, alias="later")
@@ -173,7 +173,7 @@ def test_critical_start_failure_stops_all_setup_modules_in_reverse_topology() ->
     critical = _LifecycleModule("critical", events, start_failure=True)
     later = _LifecycleModule("later", events)
     system = (
-        Blueprint()
+        HostBuilder()
         .add(first, alias="first")
         .add(critical, alias="critical")
         .add(later, alias="later")
@@ -197,7 +197,7 @@ def test_critical_readiness_timeout_rolls_back_and_closes_transport() -> None:
     transport = _TrackingTransport()
     critical = _LifecycleModule("critical", events, readiness_result="warming_up")
     system = (
-        Blueprint()
+        HostBuilder()
         .add(critical, alias="critical")
         .require_modules("critical")
         .build(transport=transport)
@@ -219,7 +219,7 @@ def test_critical_readiness_exception_fails_closed() -> None:
         readiness_error=RuntimeError("probe crashed"),
     )
     system = (
-        Blueprint()
+        HostBuilder()
         .add(critical, alias="critical")
         .require_modules("critical")
         .build()
@@ -238,7 +238,7 @@ def test_optional_failure_is_cleaned_and_system_becomes_ready() -> None:
     optional = _LifecycleModule("optional", events, start_failure=True)
     critical = _LifecycleModule("critical", events)
     system = (
-        Blueprint()
+        HostBuilder()
         .add(optional, alias="optional")
         .add(critical, alias="critical")
         .require_modules("critical")
@@ -259,7 +259,7 @@ def test_optional_failure_is_cleaned_and_system_becomes_ready() -> None:
 def test_system_handle_is_injected_before_module_start() -> None:
     events: list[str] = []
     module = _HandleAwareModule(events)
-    system = Blueprint().add(module, alias="aware").require_modules("aware").build()
+    system = HostBuilder().add(module, alias="aware").require_modules("aware").build()
 
     assert module.system_handle is system
     system.start()
@@ -269,7 +269,7 @@ def test_system_handle_is_injected_before_module_start() -> None:
 
 
 def test_stopped_and_failed_handles_cannot_restart() -> None:
-    ready_system = Blueprint().add(_ReadyModule, alias="core").require_modules("core").build()
+    ready_system = HostBuilder().add(_ReadyModule, alias="core").require_modules("core").build()
     ready_system.start()
     ready_system.stop()
 
@@ -278,7 +278,7 @@ def test_stopped_and_failed_handles_cannot_restart() -> None:
         ready_system.start()
 
     failing = _LifecycleModule("critical", [], preflight_failure="no device")
-    failed_system = Blueprint().add(failing, alias="critical").require_modules("critical").build()
+    failed_system = HostBuilder().add(failing, alias="critical").require_modules("critical").build()
     with pytest.raises(SystemStartupError):
         failed_system.start()
 

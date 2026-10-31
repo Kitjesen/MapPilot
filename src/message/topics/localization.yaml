@@ -151,6 +151,39 @@ topics:
       port: map_snapshot_ack
       direction: in
       boundary: endpoint
+  map_geometry_snapshot:
+    topic: /slam/map_geometry_snapshot
+    transport: dds
+    dds_topic: rt/slam/map_geometry_snapshot
+    message_type: lingtu.dds.SlamMapGeometrySnapshot
+    qos_profile: SystemStatus
+    cpp_name: kSlamMapGeometrySnapshot
+    native_contract: true
+    role: corrected_keyframe_geometry
+    frame: map
+    producer: native_slam_runtime
+    consumers: [native_maps_runtime]
+    real_equivalent_required: true
+    semantics: frozen_raw_keyframes_corrected_poses_and_measured_scan_origin
+    port_bindings:
+    - {owner: native_slam_runtime, port: map_geometry_snapshot, direction: out, boundary: endpoint}
+    - {owner: native_maps_runtime, port: map_geometry_snapshot, direction: in, boundary: endpoint}
+  map_geometry_applied:
+    topic: /slam/map_geometry_applied
+    transport: dds
+    dds_topic: rt/slam/map_geometry_applied
+    message_type: lingtu.dds.SlamMapGeometryApplied
+    qos_profile: CommandAck
+    cpp_name: kSlamMapGeometryApplied
+    native_contract: true
+    role: corrected_keyframe_geometry_ack
+    producer: native_maps_runtime
+    consumers: [native_slam_runtime]
+    real_equivalent_required: true
+    semantics: epoch_revision_correlated_atomic_geometry_install_receipt
+    port_bindings:
+    - {owner: native_maps_runtime, port: map_geometry_applied, direction: out, boundary: endpoint}
+    - {owner: native_slam_runtime, port: map_geometry_applied, direction: in, boundary: endpoint}
   map_observation:
     topic: /slam/map_observation
     transport: dds

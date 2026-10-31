@@ -84,11 +84,11 @@ def test_simulation_contract_documents_switch_dataflow_and_frame_boundary():
     assert "`runtime.blockers`" in doc
     assert "`launcher` and `launcher_args`" in doc
     assert "`frame_links`" in doc
-    assert "mujoco_fastlio2_live -> field" in doc
+    assert "mujoco_ltlio_live -> field" in doc
     assert "sensor/log/simulator source" in doc
     assert "`runtime_data_flow`" in doc
     assert "`resolved_runtime_data_flow.<data_source>`" in doc
-    assert "`mujoco_fastlio2_live` resolves to `/lidar/raw_frame + /imu/raw" in doc
+    assert "`mujoco_ltlio_live` resolves to `/lidar/raw_frame + /imu/raw" in doc
     assert "map -> odom -> body -> lidar_link" in doc
     assert "`odom->body` must be observed from live odometry" in doc
 
@@ -127,8 +127,8 @@ def test_runtime_interface_is_single_source_for_frames_topics_formats_and_algori
     assert REAL_RUNTIME_TOPIC_ALLOWED_FRAME_IDS[TOPICS.global_path] == (FRAMES.map,)
     assert topic_formats(TOPICS.lidar_scan) == ("lingtu.dds.LivoxFrame",)
     assert topic_formats(TOPICS.cmd_vel) == ("lingtu.dds.FinalVelocityCommand",)
-    assert TOPICS.lidar_scan in ALGORITHM_INTERFACES["fastlio_mapping"].inputs
-    assert TOPICS.lidar_scan in ALGORITHM_INTERFACES["fastlio_raw_validation"].inputs
+    assert TOPICS.lidar_scan in ALGORITHM_INTERFACES["ltlio_mapping"].inputs
+    assert TOPICS.lidar_scan in ALGORITHM_INTERFACES["ltlio_raw_validation"].inputs
     assert TOPICS.lidar_scan in DATA_SOURCE_CONTRACTS["field"].normalized_outputs
     assert TOPICS.exploration_way_point in ALGORITHM_INTERFACES["exploration_strategy"].outputs
     assert DATA_SOURCE_CONTRACTS["field"].lidar_extrinsic_profile is None
@@ -182,7 +182,7 @@ def test_runtime_contract_manifest_exports_topics_formats_algorithms_sources_and
     assert flow[0]["outputs"] == ("source:data_source.normalized_outputs",)
     assert flow[-1]["inputs"] == (TOPICS.cmd_vel,)
     assert flow[-1]["outputs"] == ("sink:data_source.command_sink",)
-    resolved_flow = manifest["resolved_runtime_data_flow"]["mujoco_fastlio2_live"]
+    resolved_flow = manifest["resolved_runtime_data_flow"]["mujoco_ltlio_live"]
     assert resolved_flow[0]["inputs"] == (TOPICS.lidar_scan, TOPICS.imu)
     assert resolved_flow[0]["outputs"] == (TOPICS.lidar_scan, TOPICS.imu)
     assert resolved_flow[1]["inputs"] == (TOPICS.lidar_scan, TOPICS.imu)
@@ -200,10 +200,10 @@ def test_runtime_contract_manifest_exports_topics_formats_algorithms_sources_and
     assert tuple(manifest["runtime_data_flow_topics"][FIELD_DATA_SOURCE]) == (runtime_data_flow_topics(REAL_RUNTIME_CONTRACT))
     assert TOPICS.map_cloud in manifest["algorithm_interfaces"]["exploration_strategy"]["inputs"]
     assert TOPICS.lidar_scan in manifest["data_sources"][FIELD_DATA_SOURCE]["normalized_outputs"]
-    fastlio_aliases = {item["source"]: item["target"] for item in manifest["adapter_aliases"]["fastlio2"]}
-    assert fastlio_aliases["/cloud_registered"] == TOPICS.registered_cloud
-    assert fastlio_aliases["/cloud_map"] == TOPICS.map_cloud
-    assert fastlio_aliases["/Odometry"] == TOPICS.odometry
+    ltlio_aliases = {item["source"]: item["target"] for item in manifest["adapter_aliases"]["ltlio"]}
+    assert ltlio_aliases["/cloud_registered"] == TOPICS.registered_cloud
+    assert ltlio_aliases["/cloud_map"] == TOPICS.map_cloud
+    assert ltlio_aliases["/Odometry"] == TOPICS.odometry
     assert "cmu_unity" not in manifest["adapter_relays"]
     assert "cmu_unity_external" not in manifest["data_sources"]
 
@@ -291,10 +291,10 @@ def test_all_product_data_sources_reach_same_navigation_algorithm_entry_topics()
             assert source.algorithm_entry_outputs == CORE_ALGORITHM_ENTRY_TOPICS, name
 
     real = DATA_SOURCE_CONTRACTS[FIELD_DATA_SOURCE]
-    mujoco_fastlio = DATA_SOURCE_CONTRACTS["mujoco_fastlio2_live"]
+    mujoco_ltlio = DATA_SOURCE_CONTRACTS["mujoco_ltlio_live"]
 
     assert set(real.source_outputs) == {TOPICS.lidar_scan, TOPICS.imu}
-    assert set(mujoco_fastlio.source_outputs) == {TOPICS.lidar_scan, TOPICS.imu}
+    assert set(mujoco_ltlio.source_outputs) == {TOPICS.lidar_scan, TOPICS.imu}
     assert "gazebo_industrial" not in DATA_SOURCE_CONTRACTS
     assert "cmu_unity_external" not in DATA_SOURCE_CONTRACTS
 
@@ -319,7 +319,7 @@ def test_resolved_runtime_data_flow_expands_endpoint_boundaries_without_placehol
     )
     assert real["command_boundary"].outputs == ("driver",)
 
-    mujoco_live = {stage.name: stage for stage in resolved_runtime_data_flow("mujoco_fastlio2_live")}
+    mujoco_live = {stage.name: stage for stage in resolved_runtime_data_flow("mujoco_ltlio_live")}
     assert mujoco_live["endpoint_adapter"].inputs == (
         TOPICS.lidar_scan,
         TOPICS.imu,
@@ -373,9 +373,9 @@ def test_native_motion_driver_uses_the_body_frame_contract():
 
 def test_adapter_aliases_use_runtime_contract_topics():
     assert not (REPO_ROOT / "src/localization/native_factories.py").exists()
-    assert adapter_remappings("fastlio2")["/cloud_registered"] == TOPICS.registered_cloud
-    assert adapter_remappings("fastlio2")["/cloud_map"] == TOPICS.map_cloud
-    assert adapter_remappings("fastlio2")["/Odometry"] == TOPICS.odometry
+    assert adapter_remappings("ltlio")["/cloud_registered"] == TOPICS.registered_cloud
+    assert adapter_remappings("ltlio")["/cloud_map"] == TOPICS.map_cloud
+    assert adapter_remappings("ltlio")["/Odometry"] == TOPICS.odometry
     assert "localizer" not in ADAPTER_TOPIC_ALIASES
     assert ADAPTER_TOPIC_ALIASES["tare"][0].target == TOPICS.map_cloud
 

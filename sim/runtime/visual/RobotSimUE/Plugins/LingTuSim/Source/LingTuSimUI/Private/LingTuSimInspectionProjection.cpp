@@ -81,6 +81,7 @@ bool FInspectionProjectionParser::ParseTask(const FString &Json, const FString &
     return false;
   }
   Parsed.bTaskAvailable = bFound;
+  Root->TryGetStringField(TEXT("product_session_id"), Parsed.ProductSessionId);
   Root->TryGetStringField(TEXT("reason"), Parsed.Reason);
   if (!bFound) {
     OutProjection = MoveTemp(Parsed);
@@ -106,7 +107,9 @@ bool FInspectionProjectionParser::ParseTask(const FString &Json, const FString &
     OutError = TEXT("inspection task immutable identity is invalid");
     return false;
   }
-  if (!ExpectedBinding.bConfigured) {
+  if (!ExpectedBinding.ProductSessionId.IsEmpty() && ExpectedBinding.ProductSessionId != Parsed.ProductSessionId) {
+    Parsed.IdentityBlocker = TEXT("launcher_expected_product_session_mismatch");
+  } else if (!ExpectedBinding.bConfigured) {
     Parsed.IdentityBlocker = TEXT("launcher_expected_binding_missing");
   } else if (Parsed.MapId != ExpectedBinding.MapId) {
     Parsed.IdentityBlocker = TEXT("launcher_expected_map_id_mismatch");
@@ -119,6 +122,9 @@ bool FInspectionProjectionParser::ParseTask(const FString &Json, const FString &
   }
 
   Root->TryGetStringField(TEXT("current_state"), Parsed.State);
+  Root->TryGetBoolField(TEXT("can_pause"), Parsed.bCanPause);
+  Root->TryGetBoolField(TEXT("can_resume"), Parsed.bCanResume);
+  Root->TryGetBoolField(TEXT("can_cancel"), Parsed.bCanCancel);
   Root->TryGetStringField(TEXT("phase"), Parsed.Phase);
   if (!ReadRequiredString(Root, TEXT("state_source"), Parsed.StateSource, OutError)) {
     return false;
@@ -137,7 +143,7 @@ bool FInspectionProjectionParser::ParseTask(const FString &Json, const FString &
                             TEXT("DWELLING"), TEXT("PAUSED"), TEXT("RECOVERING"),
                             TEXT("SUCCEEDED"), TEXT("FAILED"), TEXT("CANCELLED"),
                             TEXT("SETTLING"), TEXT("ACTION_PENDING"), TEXT("PAUSING"),
-                            TEXT("CANCELLING")});
+                            TEXT("CANCELLING"), TEXT("WAITING_NEXT_LOOP")});
   const bool bNativeStateSource =
       Parsed.StateSource == TEXT("native_task_event") ||
       Parsed.StateSource == TEXT("persisted_native_task_event");

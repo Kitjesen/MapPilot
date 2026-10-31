@@ -753,6 +753,14 @@ class RuntimeCoordinator:
         return self._plan
 
     @property
+    def command_timeout_ns(self) -> int:
+        """Return the prepared controllers' command timeout."""
+
+        if self._control is None:
+            raise CoordinatorError("session does not have a prepared Controller Runtime")
+        return self._control.command_timeout_ns
+
+    @property
     def bundle_dir(self) -> Path:
         """Return the resolved immutable session bundle directory."""
 

@@ -527,7 +527,7 @@ def test_pump_routes_record_actions_and_blocks_exit_until_actual_commit(
     pump = PlayableControlPump(
         session_host=_PumpHost(),
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),

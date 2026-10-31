@@ -39,6 +39,7 @@ from .playable_recording import (
 
 MAX_TRANSLATION_MPS = 0.10
 MAX_YAW_RADPS = 0.35
+DEFAULT_DRIVE_SPEED_LIMITS = BaseTwist(MAX_TRANSLATION_MPS, MAX_TRANSLATION_MPS, MAX_YAW_RADPS)
 MAX_INTENT_AGE_NS = 100_000_000
 
 ControlCorrelation: TypeAlias = OperatorMotionIntent | OperatorRuntimeRequest
@@ -104,10 +105,16 @@ class PlayableControlPump:
         recording_controller: InteractiveRecordingController | None = None,
         motion_admission: MotionAdmission | None = None,
         runtime_request_admission: RuntimeRequestAdmission | None = None,
+        drive_speed_limits: BaseTwist = DEFAULT_DRIVE_SPEED_LIMITS,
         monotonic_ns: Callable[[], int] = time.monotonic_ns,
     ) -> None:
         if not isinstance(target, BaseTwistTarget):
             raise TypeError("target must be a BaseTwistTarget")
+        if not isinstance(drive_speed_limits, BaseTwist):
+            raise TypeError("drive_speed_limits must be a BaseTwist")
+        if min(drive_speed_limits.linear_x, drive_speed_limits.linear_y, drive_speed_limits.angular_z) <= 0:
+            raise ValueError("drive speed limits must be positive")
+        self._drive_speed_limits = drive_speed_limits
         self._session_host = session_host
         self._target = target
         self._motion_inbox = motion_inbox
@@ -158,6 +165,7 @@ class PlayableControlPump:
         recording_controller: InteractiveRecordingController | None = None,
         motion_admission: MotionAdmission | None = None,
         runtime_request_admission: RuntimeRequestAdmission | None = None,
+        drive_speed_limits: BaseTwist = DEFAULT_DRIVE_SPEED_LIMITS,
         monotonic_ns: Callable[[], int] = time.monotonic_ns,
     ) -> PlayableControlPump:
         """Resolve the bundle-declared base-twist target exactly once."""
@@ -172,6 +180,7 @@ class PlayableControlPump:
             recording_controller=recording_controller,
             motion_admission=motion_admission,
             runtime_request_admission=runtime_request_admission,
+            drive_speed_limits=drive_speed_limits,
             monotonic_ns=monotonic_ns,
         )
 
@@ -409,7 +418,7 @@ class PlayableControlPump:
             self._active_intent = None
             self._raise_if_zero_rejected(result, reason)
             return
-        twist = _scale_motion_intent(intent)
+        twist = _scale_motion_intent(intent, self._drive_speed_limits)
         command, result = self._submit_twist(
             twist,
             model_generation=model_generation,
@@ -856,7 +865,7 @@ class PlayableControlPump:
             )
             deadman = intent.deadman
             if status == "accepted":
-                scaled = _scale_motion_intent(intent)
+                scaled = _scale_motion_intent(intent, self._drive_speed_limits)
                 self._admitted_twist = (
                     scaled.linear_x,
                     scaled.linear_y,
@@ -954,7 +963,7 @@ def _control_status_projection(
     )
 
 
-def _scale_motion_intent(intent: OperatorMotionIntent) -> BaseTwist:
+def _scale_motion_intent(intent: OperatorMotionIntent, limits: BaseTwist) -> BaseTwist:
     forward = _finite_axis(intent.axes.forward, "forward")
     left = _finite_axis(intent.axes.left, "left")
     yaw_left = _finite_axis(intent.axes.yaw_left, "yaw_left")
@@ -964,9 +973,9 @@ def _scale_motion_intent(intent: OperatorMotionIntent) -> BaseTwist:
         left /= magnitude
     yaw_left = max(-1.0, min(1.0, yaw_left))
     return BaseTwist(
-        linear_x=forward * MAX_TRANSLATION_MPS,
-        linear_y=left * MAX_TRANSLATION_MPS,
-        angular_z=yaw_left * MAX_YAW_RADPS,
+        linear_x=forward * limits.linear_x,
+        linear_y=left * limits.linear_y,
+        angular_z=yaw_left * limits.angular_z,
     )
 
 

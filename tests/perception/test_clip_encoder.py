@@ -20,6 +20,35 @@ import pytest
 from perception.encoding.clip_encoder import CLIPEncoder
 
 
+def test_registry_loads_local_checkpoint_without_changing_default_pretrained(monkeypatch, tmp_path):
+    import sys
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    import perception.backends
+    from runtime.registry import get
+
+    calls = []
+    model = SimpleNamespace(eval=lambda: None, encode_image=lambda image: np.ones((1, 512)))
+
+    def create_model(name, *, pretrained, device):
+        calls.append((name, pretrained, device))
+        return model, None, object()
+
+    monkeypatch.setitem(sys.modules, "open_clip", SimpleNamespace(
+        create_model_and_transforms=create_model, get_tokenizer=lambda name: object()))
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(
+        no_grad=nullcontext, randn=lambda *shape: SimpleNamespace(to=lambda device: object())))
+    checkpoint = str(tmp_path / "ViT-B-32.pt")
+    local = get("encoder", "clip").create(model_path=checkpoint, device="cpu")
+    local.load_model()
+    default = get("encoder", "clip").create(device="cpu")
+    default.load_model()
+
+    assert calls == [("ViT-B-32", checkpoint, "cpu"), ("ViT-B-32", "openai", "cpu")]
+    assert local.feature_dim == default.feature_dim == 512
+
+
 class TestCLIPEncoderInit(unittest.TestCase):
     """CLIP编码器初始化测试"""
 

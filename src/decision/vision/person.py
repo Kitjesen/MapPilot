@@ -196,6 +196,7 @@ class PersonTracker:
         self._person: TrackedPerson | None = None
         self._description: str = ""  # user description e.g. "person in red"
         self._target_selected: bool = False  # whether VLM has selected a target
+        self._observation_context_valid = False
         self._observation_accepted = False
         self._observation_reason = ""
         self._vlm_selecting: bool = False  # VLM selection in progress (re-entry guard)
@@ -279,6 +280,131 @@ class PersonTracker:
             return False
 
     _CLIP_SELECT_MIN_SIM = 0.2  # below this, CLIP is not confident enough to lock
+
+    def prepare_observation(
+        self, scene_objects: list[dict], frame: np.ndarray | None,
+        *, description: str | None = None,
+    ) -> list[dict]:
+        """Compute frame-local features without holding tracking or caller state locks."""
+        prepared = [dict(obj, _appearance={}) for obj in scene_objects]
+        persons = [obj for obj in prepared if obj.get("label", "").lower() in ("person", "people", "human", "pedestrian")]
+        with self._encoder_lock:
+            clip, osnet, dino = self._clip_encoder, self._osnet_encoder, self._dino_encoder
+        with self._lock:
+            person = self._person
+            current_id = None if person is None else person.obj_id
+            dino_active = description is None and dino is not None and person is not None and person.dino_feat is not None
+            eligible = self._eligible_dino_candidates(persons) if dino_active else []
+            references = [] if not dino_active else [
+                person.dino_reference if person.dino_reference is not None else person.dino_feat,
+                *person.dino_verified_views,
+            ]
+            pending = self._pending_identity is not None
+            authorized = self._verified_identity
+            rank_description = description
+            if (
+                dino_active and len(eligible) > 1 and self._description
+                and any(gap > self.REACQUIRE_GAP for _, _, _, _, gap, _ in eligible)
+                and self.has_image_selector
+            ):
+                rank_description = self._description
+
+        if frame is None or not persons:
+            return prepared
+
+        def encode(obj: dict, name: str, encoder) -> None:
+            if encoder is None:
+                return
+            crop = self._crop_person(frame, obj)
+            if crop is None:
+                return
+            obj["_appearance"][name] = None
+            try:
+                feature = self._provided_dino_feature(obj) if name == "dino" else None
+                if feature is None:
+                    feature = encoder.encode_image(crop) if name == "clip" else encoder.encode(crop)
+                obj["_appearance"][name] = feature
+            except Exception as exc:
+                logger.debug("Person %s preparation failed: %s", name, exc)
+
+        if dino_active and not pending:
+            encode_batch = getattr(dino, "encode_batch", None)
+            if authorized is None and len(eligible) > 1 and all(item[1] != str(current_id or "") for item in eligible) and callable(encode_batch):
+                batch = [
+                    (obj, self._crop_person(frame, obj)) for obj, *_ in eligible
+                    if self._provided_dino_feature(obj) is None
+                ]
+                batch = [(obj, crop) for obj, crop in batch if crop is not None]
+                if batch:
+                    try:
+                        features = encode_batch([crop for _, crop in batch])
+                        if len(features) == len(batch):
+                            for (obj, _crop), feature in zip(batch, features, strict=True):
+                                obj["_appearance"]["dino"] = feature
+                    except Exception as exc:
+                        logger.debug("Person DINO batch preparation failed: %s", exc)
+            for obj, candidate_id, timestamp, retry_until, gap, position in eligible:
+                if "dino" not in obj["_appearance"]:
+                    encode(obj, "dino", dino)
+                feature = obj["_appearance"].get("dino")
+                if feature is None:
+                    continue
+                norm = float(np.linalg.norm(feature))
+                if norm <= 0 or not np.isfinite(feature).all():
+                    continue
+                if (
+                    authorized is None and candidate_id == str(current_id or "")
+                    and retry_until is None and gap <= self.REACQUIRE_GAP
+                    and max(float(np.dot(ref, feature / norm)) for ref in references) >= self._dino_min_similarity
+                ):
+                    break
+                if authorized is not None and candidate_id == str(authorized["object"].get("id")):
+                    verified_ts = self._get_observation_ts(authorized["object"])
+                    reachable = timestamp is None or verified_ts is None or (
+                        timestamp > verified_ts
+                        and math.dist(position, self._get_pos(authorized["object"]))
+                        <= self.MAX_PERSON_SPEED * (timestamp - verified_ts) + self.POSITION_NOISE
+                    )
+                    if reachable and max(
+                        float(np.dot(ref, feature / norm)) for ref in [*references, authorized["feature"]]
+                    ) >= self._dino_min_similarity:
+                        break
+        elif not dino_active:
+            exact = [obj for obj in persons if current_id and obj.get("id") == current_id]
+            candidates = persons if description is not None or not exact else exact
+            for obj in candidates:
+                encode(obj, "clip", clip)
+                encode(obj, "osnet", osnet)
+                encode(obj, "dino", dino)
+
+        if rank_description is not None:
+            for obj in persons if description is not None else [obj for obj, *_ in eligible]:
+                if "clip" not in obj["_appearance"]:
+                    encode(obj, "clip", clip)
+            text_feature = None
+            if clip is not None:
+                try:
+                    encoded = clip.encode_text([rank_description])
+                    if encoded is not None and len(encoded):
+                        text_feature = encoded[0]
+                except Exception as exc:
+                    logger.debug("Person description preparation failed: %s", exc)
+            for obj in persons:
+                feature = obj["_appearance"].get("clip")
+                obj["_description_score"] = 0.0 if text_feature is None or feature is None else float(
+                    np.dot(text_feature, feature)
+                    / (np.linalg.norm(text_feature) * np.linalg.norm(feature) + 1e-9)
+                )
+        return prepared
+
+    @staticmethod
+    def _appearance_feature(obj: dict, name: str, crop: np.ndarray | None, encoder):
+        """Use prepared features even when encoding failed; never retry under commit locks."""
+        if "_appearance" in obj:
+            return obj["_appearance"].get(name)
+        if encoder is None or crop is None:
+            return None
+        return encoder.encode_image(crop) if name == "clip" else encoder.encode(crop)
 
     def _clip_prescore(self, description: str, person_crops: list[np.ndarray]) -> list[float]:
         """Cosine similarity of each crop against the description via CLIP.
@@ -465,6 +591,7 @@ class PersonTracker:
         description: str,
         person_crops: list[np.ndarray],
         person_objects: list[dict],
+        *, scores: list[float] | None = None,
     ) -> int:
         """Select by clip."""
         with self._encoder_lock:
@@ -473,7 +600,8 @@ class PersonTracker:
             return -1
 
         self._description = description
-        scores = self._clip_prescore(description, person_crops)
+        if scores is None:
+            scores = self._clip_prescore(description, person_crops)
         if not scores:
             return -1
 
@@ -505,7 +633,7 @@ class PersonTracker:
                 clip_encoder = self._clip_encoder
             if clip_encoder is not None:
                 try:
-                    feat = clip_encoder.encode_image(crop)
+                    feat = self._appearance_feature(obj, "clip", crop, clip_encoder)
                     if feat is not None and feat.size > 0:
                         norm = np.linalg.norm(feat)
                         appearance = feat / norm if norm > 0 else feat
@@ -515,11 +643,11 @@ class PersonTracker:
             # Extract OSNet feature as primary Re-ID signal
             if self._osnet_encoder is not None:
                 try:
-                    osnet_feat = self._osnet_encoder.encode(crop)
+                    osnet_feat = self._appearance_feature(obj, "osnet", crop, self._osnet_encoder)
                 except Exception as exc:
                     logger.debug("OSNet encode on lock_target failed: %s", exc)
             if self._dino_encoder is not None and dino_feat is None:
-                dino_feat = self._dino_encoder.encode(crop)
+                dino_feat = self._appearance_feature(obj, "dino", crop, self._dino_encoder)
 
         with self._lock:
             self._person = TrackedPerson(
@@ -536,6 +664,7 @@ class PersonTracker:
                 obj_id=obj.get("id"),
             )
             self._target_selected = True
+            self._observation_context_valid = True
             self._observation_accepted = True
             self._observation_reason = ""
             self._reference_crop = None if crop is None else crop.copy()
@@ -712,15 +841,16 @@ class PersonTracker:
             # OSNet primary signal
             if self._osnet_encoder is not None and self._person.osnet_feat is not None:
                 try:
-                    osnet_feat = self._osnet_encoder.encode(crop)
-                    osnet_sim = float(np.dot(self._person.osnet_feat, osnet_feat))
-                    score = osnet_sim
+                    osnet_feat = self._appearance_feature(p, "osnet", crop, self._osnet_encoder)
+                    if osnet_feat is not None:
+                        osnet_sim = float(np.dot(self._person.osnet_feat, osnet_feat))
+                        score = osnet_sim
                 except Exception as exc:
                     logger.debug("OSNet encode failed: %s", exc)
 
             if clip_encoder is not None and self._person.appearance is not None:
                 try:
-                    clip_feat = clip_encoder.encode_image(crop)
+                    clip_feat = self._appearance_feature(p, "clip", crop, clip_encoder)
                     if clip_feat is not None and clip_feat.size > 0:
                         norm = np.linalg.norm(clip_feat)
                         if norm > 0:
@@ -770,7 +900,10 @@ class PersonTracker:
                 crop = self._crop_person(frame, obj)
                 if crop is None:
                     return None
-                feature = np.asarray(self._dino_encoder.encode(crop), dtype=np.float32)
+                feature = self._appearance_feature(obj, "dino", crop, self._dino_encoder)
+                if feature is None:
+                    return None
+                feature = np.asarray(feature, dtype=np.float32)
             norm = float(np.linalg.norm(feature))
             if not np.isfinite(feature).all() or norm <= 0:
                 raise ValueError("invalid DINO appearance feature")
@@ -809,6 +942,31 @@ class PersonTracker:
             or (previous_score < self._dino_min_similarity <= score)
         )
 
+    def _eligible_dino_candidates(self, persons: list[dict]) -> list[tuple]:
+        """Apply the same source-time and reachability bounds before encoding and matching."""
+        current_id = str(self._person.obj_id or "")
+        ordered = sorted(persons, key=lambda candidate: str(candidate.get("id") or "") != current_id)
+        eligible = []
+        for candidate in ordered:
+            candidate_id = str(candidate.get("id") or "")
+            timestamp = self._get_observation_ts(candidate)
+            previous = self._person.observation_ts
+            if timestamp is not None and previous is not None and timestamp <= previous:
+                continue
+            retry_until = self._identity_retry_until.get(candidate_id)
+            gap = 0.0 if timestamp is None or previous is None else max(0.0, timestamp - previous)
+            predicted = self._predict_position(min(gap, _MOTION_PREDICT_DT))
+            radius = self.MATCH_DIST_THRESHOLD + self.MAX_PERSON_SPEED * max(0.0, gap - _MOTION_PREDICT_DT)
+            position = self._get_pos(candidate)
+            if (
+                self._observation_context_valid
+                and math.hypot(position[0] - predicted[0], position[1] - predicted[1]) >= radius
+            ):
+                continue
+            eligible.append((candidate, candidate_id, timestamp, retry_until, gap, position))
+
+        return eligible
+
     def _match_dino(self, persons: list[dict], frame: np.ndarray | None) -> dict | None:
         """Keep the original identity and expand reachability with elapsed source time."""
         self._dino_similarity = None
@@ -824,22 +982,7 @@ class PersonTracker:
         candidates: list[tuple[float, dict]] = []
         cooling_down = False
         current_id = str(self._person.obj_id or "")
-        ordered = sorted(persons, key=lambda candidate: str(candidate.get("id") or "") != current_id)
-        eligible = []
-        for candidate in ordered:
-            candidate_id = str(candidate.get("id") or "")
-            timestamp = self._get_observation_ts(candidate)
-            previous = self._person.observation_ts
-            if timestamp is not None and previous is not None and timestamp <= previous:
-                continue
-            retry_until = self._identity_retry_until.get(candidate_id)
-            gap = 0.0 if timestamp is None or previous is None else max(0.0, timestamp - previous)
-            predicted = self._predict_position(min(gap, _MOTION_PREDICT_DT))
-            radius = self.MATCH_DIST_THRESHOLD + self.MAX_PERSON_SPEED * max(0.0, gap - _MOTION_PREDICT_DT)
-            position = self._get_pos(candidate)
-            if math.hypot(position[0] - predicted[0], position[1] - predicted[1]) >= radius:
-                continue
-            eligible.append((candidate, candidate_id, timestamp, retry_until, gap, position))
+        eligible = self._eligible_dino_candidates(persons)
 
         authorized = self._verified_identity
         encode_batch = getattr(self._dino_encoder, "encode_batch", None)
@@ -848,6 +991,7 @@ class PersonTracker:
             and len(eligible) > 1
             and all(candidate_id != current_id for _, candidate_id, *_ in eligible)
             and callable(encode_batch)
+            and not any("_appearance" in candidate for candidate, *_ in eligible)
         ):
             batch_candidates = []
             batch_crops = []
@@ -946,7 +1090,11 @@ class PersonTracker:
         if len(candidates) > 1 and long_absence and self._description and self.has_image_selector:
             crops = [self._crop_person(frame, candidate) for _, candidate in candidates]
             if all(crop is not None for crop in crops):
-                text_scores = self._clip_prescore(self._description, crops)
+                text_scores = (
+                    [candidate.get("_description_score", 0.0) for _, candidate in candidates]
+                    if all("_appearance" in candidate for _, candidate in candidates)
+                    else self._clip_prescore(self._description, crops)
+                )
                 if text_scores and max(text_scores) > self._CLIP_SELECT_MIN_SIM:
                     score, best = candidates[int(np.argmax(text_scores))]
                     self._dino_similarity = score
@@ -1176,8 +1324,8 @@ class PersonTracker:
                 (new_pos[1] - old_raw[1]) / dt * 0.3 + self._person.velocity[1] * 0.7,
             ]
 
-        # Position EMA
-        a = 1.0 if after_gap else self.EMA_ALPHA
+        # A new observation context has no previous spatial estimate to smooth.
+        a = 1.0 if after_gap or not self._observation_context_valid else self.EMA_ALPHA
         self._person.position = [
             a * new_pos[0] + (1 - a) * old_smoothed[0],
             a * new_pos[1] + (1 - a) * old_smoothed[1],
@@ -1210,7 +1358,7 @@ class PersonTracker:
                         clip_encoder = self._clip_encoder
                     if clip_encoder is not None:
                         try:
-                            feat = clip_encoder.encode_image(crop)
+                            feat = self._appearance_feature(obj, "clip", crop, clip_encoder)
                             if feat is not None and feat.size > 0:
                                 norm = np.linalg.norm(feat)
                                 if norm > 0:
@@ -1225,7 +1373,9 @@ class PersonTracker:
 
                     if self._osnet_encoder is not None:
                         try:
-                            osnet_feat = self._osnet_encoder.encode(crop)
+                            osnet_feat = self._appearance_feature(obj, "osnet", crop, self._osnet_encoder)
+                            if osnet_feat is None:
+                                raise ValueError("OSNet appearance unavailable")
                             if self._person.osnet_feat is not None:
                                 aa = self.APPEARANCE_ALPHA
                                 updated = aa * osnet_feat + (1 - aa) * self._person.osnet_feat
@@ -1248,6 +1398,7 @@ class PersonTracker:
         if verified_commit:
             self._verified_identity = None
 
+        self._observation_context_valid = True
         return True
 
     def _init_person(self, obj: dict) -> None:
@@ -1262,6 +1413,7 @@ class PersonTracker:
             obj_id=obj.get("id"),
             bbox=obj.get("bbox"),
         )
+        self._observation_context_valid = True
 
     @staticmethod
     def _get_pos(obj: dict) -> list[float]:
@@ -1303,7 +1455,11 @@ class PersonTracker:
     ) -> dict | None:
         """Get follow waypoint."""
         with self._lock:
-            if self._person is None or self.is_lost():
+            if (
+                self._person is None
+                or not self._observation_context_valid
+                or self.is_lost()
+            ):
                 return None
 
             px = self._person.position[0] + self._person.velocity[0] * predict_dt
@@ -1335,7 +1491,11 @@ class PersonTracker:
 
     def get_person_position(self) -> list[float] | None:
         with self._lock:
-            if self._person and not self.is_lost():
+            if (
+                self._person
+                and self._observation_context_valid
+                and not self.is_lost()
+            ):
                 return list(self._person.position)
         return None
 
@@ -1348,13 +1508,21 @@ class PersonTracker:
                 "id": self._person.obj_id,
                 "native_track_id": self._person.obj_id,
                 "identity_id": self._person.identity_id,
-                "position": [float(value) for value in self._person.position],
+                "position": (
+                    [float(value) for value in self._person.position]
+                    if self._observation_context_valid
+                    else None
+                ),
                 "velocity": [float(value) for value in self._person.velocity],
                 "last_seen": float(self._person.last_seen),
                 "confidence": float(self._person.confidence),
                 "observation_accepted": self._observation_accepted,
                 "observation_reason": self._observation_reason,
-                "raw_position": list(self._person.last_raw_pos or self._person.position),
+                "raw_position": (
+                    list(self._person.last_raw_pos or self._person.position)
+                    if self._observation_context_valid
+                    else None
+                ),
                 "appearance_backend": "dino" if self._dino_encoder is not None else "clip_osnet",
                 "dino_similarity": self._dino_similarity,
                 "dino_event": self._dino_event,
@@ -1384,6 +1552,7 @@ class PersonTracker:
             self._person = None
             self._description = ""
             self._target_selected = False
+            self._observation_context_valid = False
             self._observation_accepted = False
             self._observation_reason = ""
             self._vlm_selecting = False
@@ -1399,3 +1568,30 @@ class PersonTracker:
             self._identity_retry_state.clear()
             self._dino_similarity = None
             self._dino_event = "ready" if self._dino_encoder is not None else "disabled"
+
+    def reset_observation_context(self) -> bool:
+        """Discard spatial/track state while retaining a verified identity anchor."""
+        with self._lock:
+            person = self._person
+            if person is None or person.dino_reference is None:
+                return False
+            person.position = [0.0, 0.0, 0.0]
+            person.last_raw_pos = None
+            person.velocity = [0.0, 0.0]
+            person.last_seen = 0.0
+            person.observation_ts = None
+            person.confidence = 0.0
+            person.bbox = None
+            person.obj_id = None
+            self._observation_context_valid = False
+            self._observation_accepted = False
+            self._observation_reason = "observation_context_changed"
+            self._reset_reacquire()
+            self._frame_dino.clear()
+            self._pending_identity = None
+            self._verified_identity = None
+            self._identity_retry_until.clear()
+            self._identity_retry_state.clear()
+            self._dino_similarity = None
+            self._dino_event = "context_changed"
+            return True

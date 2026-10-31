@@ -1,0 +1,83 @@
+{
+  "category": "environment",
+  "category_label": "环境设施",
+  "description": "蓝色桶体与金属盖，2K PBR；附可推碰圆柱代理，桶盖未拆分。",
+  "geometry": {
+    "animations": 0,
+    "bytes": 1182156,
+    "embedded_images": 3,
+    "materials": 1,
+    "meshes": 1,
+    "normals": true,
+    "tangents": false,
+    "triangles": 2688,
+    "uv": true
+  },
+  "id": "ph_barrel",
+  "new_in_batch": true,
+  "notes": "CC0；保留来源。待 UE 导入与交互验收。圆柱代理已通过外力/接地/Reset 单体测试；20kg 等参数为设计假设。",
+  "physics": "physics.xml",
+  "preview": "preview.png",
+  "qualification": {
+    "collision_ready": false,
+    "license_reviewed": true,
+    "physics_model_tested": true,
+    "physics_ready": false,
+    "status": "quarantined",
+    "ue_imported": false
+  },
+  "reference": "preview.png",
+  "reference_label": "查看实际渲染",
+  "scale_note": "保留上游米制尺寸；未按实物校准",
+  "source": {
+    "authors": {
+      "Jorge Camacho": "All"
+    },
+    "files": [
+      {
+        "bytes": 2639,
+        "path": "Barrel_02_2k.gltf",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/2k/Barrel_02/Barrel_02_2k.gltf"
+      },
+      {
+        "bytes": 240072,
+        "path": "textures/Barrel_02_diff_2k.jpg",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/Barrel_02/Barrel_02_diff_2k.jpg"
+      },
+      {
+        "bytes": 503023,
+        "path": "textures/Barrel_02_arm_2k.jpg",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/Barrel_02/Barrel_02_arm_2k.jpg"
+      },
+      {
+        "bytes": 77440,
+        "path": "Barrel_02.bin",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/Barrel_02/Barrel_02.bin"
+      },
+      {
+        "bytes": 358609,
+        "path": "textures/Barrel_02_nor_gl_2k.jpg",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/Barrel_02/Barrel_02_nor_gl_2k.jpg"
+      }
+    ],
+    "id": "Barrel_02",
+    "license": "CC0-1.0",
+    "license_url": "https://polyhaven.com/license",
+    "model": "Barrel_02_2k.gltf",
+    "name": "Barrel 02",
+    "physics_qualified": false,
+    "provider": "Poly Haven",
+    "resolution": "2k",
+    "source_url": "https://polyhaven.com/a/Barrel_02",
+    "ue_imported": false,
+    "workbench_task_id": "99ea2fe5242747788b2e172e14f920bd"
+  },
+  "title": "工业储料桶",
+  "variants": [
+    {
+      "file": "model.glb",
+      "label": "带贴图结构"
+    }
+  ],
+  "version": "1.0.0"
+}

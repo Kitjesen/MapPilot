@@ -13,7 +13,7 @@
 
 namespace {
 
-constexpr std::uint32_t kInspectionStoreAbiVersion = 1U;
+constexpr std::uint32_t kInspectionStoreAbiVersion = 2U;
 
 struct Handle {
   explicit Handle(std::filesystem::path root) : store(std::move(root)) {}
@@ -73,6 +73,7 @@ lingtu::nav::inspection::Route ToRoute(const lingtu_inspection_route& input) {
   route.map_content_epoch = input.map_content_epoch;
   route.revision = input.revision;
   route.loop_count = input.loop_count;
+  route.loop_interval_s = input.loop_interval_s;
   route.failure_policy = input.failure_policy == 1
       ? FailurePolicy::kRetry
       : (input.failure_policy == 2 ? FailurePolicy::kSkip : FailurePolicy::kStop);

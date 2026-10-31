@@ -9,16 +9,16 @@ from types import SimpleNamespace
 import pytest
 
 import gateway.gateway_module as gateway_module
-import lingtu.assembly.host_bus as bus_module
+import lingtu.assembly.host.native_state_bridge as bus_module
 from gateway.gateway_module import GatewayModule
 from gateway.services.runtime_dataflow import build_runtime_dataflow_topic_detail
 from gateway.services.sse import subscribe, unsubscribe
 from gateway.services.subscriptions import setup_subscriptions
 from gateway.services.traffic import format_sse_message, prepare_sse_delivery, put_latest
-from lingtu.assembly.compiler import blueprint_from_run_plan, compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan, host_builder_from_run_plan
 from lingtu.assembly.graph import ProcessArtifact
-from lingtu.assembly.host_bus import HostBus
-from lingtu.assembly.wires.gateway import gateway_status_specs
+from lingtu.assembly.host.native_state_bridge import HostBus
+from lingtu.assembly.host.wiring.gateway import gateway_status_specs
 from message.topics import TOPICS
 from nav.adapters.native import abi
 from runtime.endpoints.dds.adapters import joint_state_from_dds
@@ -177,12 +177,12 @@ def test_joint_topic_subscription_is_optional_and_uses_product_host_bus(product,
         product, env, robot="unitree/go2" if env == "real" else "doso/thunder_v4",
         env_config={"backend": "mujoco"} if env == "sim" else None,
     )
-    blueprint = blueprint_from_run_plan(plan)
-    assert {"host.bus", "GatewayModule"} <= set(blueprint.module_names)
+    host_builder = host_builder_from_run_plan(plan)
+    assert {"host.bus", "GatewayModule"} <= set(host_builder.module_names)
     assert any(
         wire.out_module == "host.bus" and wire.out_port == "joint_state"
         and wire.in_module == "GatewayModule" and wire.in_port == "joint_state"
-        for wire in blueprint._wires
+        for wire in host_builder._wires
     )
     assert TOPICS.robot_joint_states not in plan.required_topics
     gateway = GatewayModule(run_plan=plan)

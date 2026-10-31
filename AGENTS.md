@@ -33,12 +33,42 @@ architecture live in the linked documentation.
 答不上来就别跑。
 对的就说对。不要为了交差硬找问题。
 
+## Code Simplicity
+
+User requirements recorded on 2026-10-29:
+
+- Do not speculate about rare races or edge cases and add complexity. Before
+  adding optional protection, explain the concrete failure, observed likelihood
+  (or state that it is unknown), and estimated code added. Get the user's
+  agreement before implementing it; do not expand the agreed scope.
+- Validate external data once at its owning entry boundary. Internal code uses
+  the established types and guarantees; do not repeat the same defensive checks.
+- Extract a function only when its logic is reused, it encapsulates substantial
+  detail, or it represents an independent concept. Do not extract trivial code
+  merely because the main function calls it once.
+- Keep the main function focused on the normal business flow. Put substantial
+  validation and implementation details in helpers under the preceding rule;
+  do not turn the flow into a chain of trivial one-use wrappers.
+- Comments explain non-obvious constraints and counterintuitive decisions.
+  Do not narrate code whose purpose is already clear.
+
+These rules do not remove the required trust-boundary, data-loss and motion-safety
+work below. Domain decisions are distinct from repeated input validation.
+
 ## Project Boundary
 
-LingTu is an autonomous-navigation system for quadruped robots. The field
-target is the S100P/RDK X5 (`aarch64`, Ubuntu, native CycloneDDS). Python owns
+LingTu is an autonomous-navigation system for quadruped robots. Field targets
+are selected through the supported RobotConfig and RunPlan for each real
+platform; do not hard-code one robot model as the product target. The native
+field runtime uses the declared Linux/CycloneDDS platform contract. Python owns
 the Host framework and semantic/API layer; C++ owns field LiDAR, SLAM, maps,
 terrain, navigation, and driver hot paths.
+
+Productization currently prioritizes the shared mapping -> map save/reload ->
+localization -> autonomous navigation workflow, including safe task termination.
+Do not narrow robot support during this simplification. Preserve existing
+RobotConfig, calibration, and adapter boundaries; judge changes against the
+delivery scope in [`docs/roadmap.md`](docs/roadmap.md).
 
 Use the following terms with exactly one meaning:
 
@@ -49,7 +79,6 @@ Use the following terms with exactly one meaning:
 | `RunPlan` | Resolved Product inside one env, including concrete processes and Host configuration. | User intent or mutable runtime state. |
 | `ProductControl` | The complete lifecycle transaction inside one fixed env. | Env switching or domain algorithms. |
 | `Host` | Managed Python application containing Gateway, Agent, adapters, and selected Modules. | Native process ownership. |
-| `Blueprint` | Construction and wiring of Modules inside one Host. | Product switching, systemd, or native endpoint lifecycle. |
 | `Module` | Typed in-process Host runtime unit. | Cross-process lifecycle management. |
 | `DDS` | Native typed cross-process data plane. | Product policy or process lifecycle. |
 | `RobotConfig` | Static physical robot, device, and calibration data used by `real`. | Runtime mode selection. |
@@ -76,9 +105,9 @@ Use the following terms with exactly one meaning:
 - Field lifecycle commands must call `python -m lingtu.control` directly or use
   the thin `scripts/lingtu` adapter. Do not put Product policy, ordering, map
   activation, or readiness loops in Bash or Gateway.
-- Blueprint is active inside every Host, but it is not the Product process
-  orchestrator. Do not add Product-specific Host lifecycle implementations
-  beside Blueprint.
+- Host constructs and connects its Modules through its internal assembly code.
+  This does not own Product switching or native process lifecycle. Do not add
+  a second Product-specific lifecycle implementation inside Host.
 
 ## Dependency Direction
 
@@ -103,16 +132,16 @@ imports. Machine-enforced ownership lives in
 
 | Change | Source of truth |
 | --- | --- |
-| Product capabilities, logical roles, topics | `config/runtime_graph/products/*.yaml` |
-| Real or sim implementation mapping | `config/runtime_graph/envs/*.yaml` |
-| Product resolution and immutable artifact | `src/lingtu/run_plan.py`, `src/lingtu/assembly/` |
+| Product capabilities, logical roles, topics | `config/system/products/*.yaml` |
+| Real or sim implementation mapping | `config/system/envs/*.yaml` |
+| Product resolution and immutable artifact | `src/lingtu/run_plan.py`, `src/lingtu/assembly/compile_plan.py`, `src/lingtu/assembly/config/` |
 | Public lifecycle routing and locking | `src/lingtu/control.py` |
 | Shared switch values | `src/lingtu/switch_contracts.py` |
 | Real/systemd transaction and rollback | `src/lingtu/real/switch.py` |
 | Sim/subprocess transaction and rollback | `src/lingtu/sim/switch.py`, `src/lingtu/sim/journal.py` |
 | systemd process execution/readiness | `src/lingtu/real/systemd.py` |
 | Sim direct-child execution | `src/lingtu/sim/process.py`, `src/lingtu/sim/identity.py` |
-| Host Module graph | `src/lingtu/assembly/`, `src/runtime/blueprint.py` |
+| Host Module graph | `src/lingtu/assembly/host/`, `src/runtime/host.py` |
 | Physical devices and calibration | `config/robots/<vendor>/<model>/robot.yaml`, `config/devices.yaml` |
 | Native algorithms/services | Their owning C++ tree under `src/` |
 
@@ -139,12 +168,14 @@ imports. Machine-enforced ownership lives in
   process and sensor ownership.
 - A local test does not prove simulation; simulation does not prove the field;
   a running process does not prove readiness for motion.
-- Preserve calibration and bounded tuning knobs at hardware boundaries. S100P
-  has no CUDA; keep `aarch64` performance and native-memory behavior in mind.
+- Preserve calibration and bounded tuning knobs at hardware boundaries. Keep
+  the selected platform's architecture, accelerator availability, and native
+  memory behavior in mind.
 
 ## Working Rules
 
 - Prefer deletion and existing utilities over new abstractions or dependencies.
+- For navigation behavior or threshold changes, compare against a pinned official upstream implementation and its parameters. Record the local difference, its reason, and matched before/after evidence; do not present local extensions as upstream defaults.
 - Keep diffs small, reversible, and behavior-preserving unless behavior change
   is explicitly requested.
 - Do not add dependencies without explicit approval.
@@ -153,7 +184,7 @@ imports. Machine-enforced ownership lives in
 - Treat trust-boundary validation, data-loss prevention, motion safety, and
   explicitly required migration/compatibility work as required work, not
   over-defense.
-- Critical shared surfaces require extra care: runtime Module/Blueprint/stream/
+- Critical shared surfaces require extra care: runtime Module/Host assembly/stream/
   registry, Product compilation and control, navigation safety, robot/device
   configuration, and explicit full-stack wiring.
 
@@ -163,8 +194,9 @@ imports. Machine-enforced ownership lives in
   would change if it fails.
 - Run the narrowest test that proves the modified behavior, then only the
   directly affected lint/type/build checks.
-- Do not claim hardware behavior without S100P evidence. Keep local contract,
-  native MuJoCo, field no-motion, and supervised field-motion evidence distinct.
+- Do not claim hardware behavior without evidence from the named target
+  platform. Keep local contract, native MuJoCo, field no-motion, and supervised
+  field-motion evidence distinct.
 - Known repository-wide baseline failures do not excuse new diagnostics on the
   touched surface; report both separately.
 
@@ -174,7 +206,7 @@ imports. Machine-enforced ownership lives in
   [`docs/architecture.md`](docs/architecture.md)
 - Current documentation and claim boundaries: [`docs/README.md`](docs/README.md)
 - Product/runtime-graph contract:
-  [`config/runtime_graph/README.md`](config/runtime_graph/README.md)
+  [`config/system/README.md`](config/system/README.md)
 - ProductControl package guide: [`src/lingtu/README.md`](src/lingtu/README.md)
 - Products, environments, lifecycle, and build: [`docs/getting-started.md`](docs/getting-started.md)
 - Robot-side operations: [`docs/operations.md`](docs/operations.md)
@@ -183,3 +215,10 @@ imports. Machine-enforced ownership lives in
 - Validation levels and gates: [`docs/testing.md`](docs/testing.md)
 - Simulation architecture: [`sim/ARCHITECTURE.md`](sim/ARCHITECTURE.md)
 - External/Gateway integration boundary: [`docs/api.md`](docs/api.md)
+
+
+<!-- harness2-native:start -->
+## Harness2 workflow improvement
+
+For an explicit `$harness2` request or recurring task-procedure failures that benefit from comparison, load `C:/Users/99563/.codex/skills/harness2/SKILL.md` and read `.harness2/profile.json`. Use a bounded offline comparison inside the current task workflow; retain its owner, acceptance criteria, budget, and continuation state. Refresh latest task facts before probing. Ordinary edits keep their existing domain workflow.
+<!-- harness2-native:end -->

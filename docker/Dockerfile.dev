@@ -7,6 +7,8 @@
 # =============================================================================
 
 ARG UBUNTU_VERSION=22.04
+ARG UV_VERSION=0.10.12
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 FROM ubuntu:${UBUNTU_VERSION}
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -16,7 +18,12 @@ ARG HOST_GID=1000
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    UV_PROJECT_ENVIRONMENT=/opt/lingtu-venv \
+    UV_PYTHON_DOWNLOADS=never \
+    PATH=/opt/lingtu-venv/bin:${PATH}
+
+COPY --from=uv /uv /usr/local/bin/uv
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash-completion \
@@ -62,8 +69,7 @@ RUN if ! getent group "${HOST_GID}" >/dev/null; then groupadd --gid "${HOST_GID}
 
 COPY . /tmp/lingtu
 RUN python3 -c "import sys; assert sys.version_info[:2] == (3, 10), sys.version" \
-    && python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel \
-    && python3 -m pip install --no-cache-dir '/tmp/lingtu[dev]' \
+    && uv sync --project /tmp/lingtu --locked --python /usr/bin/python3 --no-editable --extra dev --no-cache \
     && rm -rf /tmp/lingtu
 
 WORKDIR /ws

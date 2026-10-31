@@ -25,6 +25,7 @@ from sim.runtime.sensors import (
     SensorRuntime,
     SensorSampleStamp,
     SensorStreamPlan,
+    decode_mid360_frame_record,
     mid360_frame_from_raycast,
 )
 from sim.runtime.sensors.dds_adapter import (
@@ -164,6 +165,50 @@ def test_mid360_binary_encoder_carries_ltu1_points() -> None:
     assert struct.unpack_from("<4fIBBH", encoded, 28) == pytest.approx(
         (1.0, 0.0, -0.2, 15.0, 0, 0, 0, 0)
     )
+
+
+def test_mid360_ltu1_round_trip_uses_lingtu_stamp_and_point_contract() -> None:
+    encoded = encode_mid360_frame_sample(_frame())
+
+    decoded = decode_mid360_frame_record(
+        encoded,
+        stamp=_frame().stamp,
+        scan_time_profile="instantaneous_geometry/scheduled_offsets",
+    )
+
+    expected = _frame()
+    assert decoded.stamp == expected.stamp
+    assert decoded.scan_time_profile == expected.scan_time_profile
+    assert len(decoded.points) == len(expected.points)
+    for actual, reference in zip(decoded.points, expected.points):
+        assert (actual.x, actual.y, actual.z) == pytest.approx(
+            (reference.x, reference.y, reference.z), abs=1e-7
+        )
+        assert (actual.reflectivity, actual.offset_time_ns, actual.tag, actual.line) == (
+            reference.reflectivity,
+            reference.offset_time_ns,
+            reference.tag,
+            reference.line,
+        )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda value: value[:4].replace(b"LTU1", b"MTRX") + value[4:],
+        lambda value: value[:5] + b"\1\0\0" + value[8:],
+        lambda value: value[:20] + struct.pack("<I", 3) + value[24:],
+        lambda value: value[:24] + struct.pack("<I", 24) + value[28:],
+        lambda value: value[:-1],
+    ],
+)
+def test_mid360_ltu1_decoder_rejects_invalid_native_records(mutate) -> None:
+    with pytest.raises(ValueError, match=r"LTU1|point|count|payload|timestamp"):
+        decode_mid360_frame_record(
+            mutate(encode_mid360_frame_sample(_frame())),
+            stamp=_frame().stamp,
+            scan_time_profile="instantaneous_geometry/scheduled_offsets",
+        )
 
 def test_mid360_adapter_active_only_after_first_accepted_non_empty_frame(tmp_path) -> None:
     class Allocation:

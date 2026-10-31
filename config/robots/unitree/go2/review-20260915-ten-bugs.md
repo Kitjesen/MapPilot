@@ -20,7 +20,7 @@
   [SceneView.tsx](../../../../web/src/components/SceneView.tsx:764)。
 - 触发：同一 Product、同一 SLAM 进程内重置建图核心，`source_epoch` 改变。
 - 原因：`scenePoseEpoch` 只包含 session、runtime、map_frame_jump_sequence，遗漏 `source_epoch`。
-  原生 [fastlio.cpp](../../../../src/localization/slam/cpp/fastlio.cpp:1767) 的 resetCore 会增加 source_epoch。
+  原生 [ltlio.cpp](../../../../src/localization/slam/cpp/ltlio.cpp:2052)（原 `fastlio.cpp`）的 resetCore 会增加 source_epoch。
 - 复现：source_epoch 从 10 改成 11，网页 poseEpoch 和 sessionStorage 轨迹键均不变。
 - 影响：旧坐标时代的已走轨迹与新位置继续串联；旧建图查询点也可能继续被视为当前查询。
   这不是点云转换矩阵整体错误的证据。
@@ -42,7 +42,7 @@
   [cyclone_runtime.cpp](../../../../src/localization/slam/cpp/cyclone_runtime.cpp:752)。
 - 触发：网页经 native SLAM 状态快照获取里程计，机器人发生旋转。
 - 原因：快照没有转发已有 `odometry_twist_body`；Python 只生成线速度，Twist 的 angular 默认为零。
-  原生 [fastlio.cpp](../../../../src/localization/slam/cpp/fastlio.cpp:1928) 已计算同步、去偏置后的机身角速度。
+  原生 [ltlio.cpp](../../../../src/localization/slam/cpp/ltlio.cpp:2229)（原 `fastlio.cpp`）已计算同步、去偏置后的机身角速度。
 - 复现：真实状态适配函数在角速度缺失时返回数值 0；Gateway 随后把该值发布为 `wz`。
 - 影响：实测旋转遥测失真，无法据此判断 Q/E 的实际响应。不是“控制指令因此不能旋转”。
 - 修正：转发原生完整机身 Twist；缺失时明确表示不可用，不补成有效零。
@@ -108,9 +108,9 @@
 
 ## 证据与范围
 
-- [cloud-probes.test.ts](../../../../build/go2-audit-20260915-ten/cloud-probes.test.ts)：3 个真实 hook 受控复现，全部复现。
-- [ui-probes.test.ts](../../../../build/go2-audit-20260915-ten/ui-probes.test.ts)：3 个实际函数/回调/表达式复现，全部复现。
-- [python_probes.py](../../../../build/go2-audit-20260915-ten/python_probes.py)：量化、里程计、ASGI 订阅、旧 JPEG 4 组探针，全部复现。
+- cloud-probes.test.ts (`build/go2-audit-20260915-ten/cloud-probes.test.ts`)：3 个真实 hook 受控复现，全部复现。
+- ui-probes.test.ts (`build/go2-audit-20260915-ten/ui-probes.test.ts`)：3 个实际函数/回调/表达式复现，全部复现。
+- python_probes.py (`build/go2-audit-20260915-ten/python_probes.py`)：量化、里程计、ASGI 订阅、旧 JPEG 4 组探针，全部复现。
 - 探针通过表示“现有缺陷可重现”，不表示已经修复；没有把它们加入正常通过条件的生产回归套件。
 - 优先处理 1、2、4 的目标/坐标/遥测正确性，再处理 5–9 的断流与恢复，3 和 10 随对应路径一起修复。
 - 没有证据表明这 10 项足以解释全部实机运动卡顿、历史点重影或人员碰撞。动态避障与持续运动仍需独立验收。

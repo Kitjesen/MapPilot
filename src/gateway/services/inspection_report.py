@@ -68,6 +68,9 @@ def build_inspection_task_report(
     if not isinstance(route_points, list):
         route_points = []
     loop_count = max(1, int(route.get("loop_count", 1) or 1))
+    point_outcomes = _native_point_outcomes(
+        timeline, route, route_points, loop_count, history_complete=history_complete,
+    )
     points: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
     required_evidence = 0
@@ -95,8 +98,21 @@ def build_inspection_task_report(
             event = evidence_events.get(visit)
             evidence_id = str(event.get("evidence_id") or "") if event else ""
             evidence_status = "NOT_REQUIRED" if not action else "MISSING"
-            point_status = "COMPLETED" if not action else "MISSING_EVIDENCE"
-            reason = ""
+            native_status, native_reason = point_outcomes.get(visit, ("", ""))
+            if not native_status:
+                if visit == current_visit and execution_confirmed:
+                    native_status = (
+                        execution_state if execution_state in {"FAILED", "CANCELLED"}
+                        else "UNKNOWN" if terminal else "IN_PROGRESS"
+                    )
+                    native_reason = execution_reason if terminal else ""
+                elif current_visit is None or visit > current_visit:
+                    native_status = "NOT_VISITED" if terminal else "PENDING"
+                else:
+                    native_status = "UNKNOWN"
+                    native_reason = history_reason or "point_outcome_not_recorded"
+            point_status = native_status
+            reason = native_reason
 
             if action:
                 required_evidence += 1
@@ -110,17 +126,11 @@ def build_inspection_task_report(
                         point_index=point_index,
                         action=action,
                     )
-                elif not history_complete:
+                elif native_status == "UNKNOWN":
                     evidence_status = "UNKNOWN"
                     point_status = "UNKNOWN"
-                    reason = history_reason or "task_history_incomplete"
-                elif not terminal and (
-                    current_visit is None or visit >= current_visit
-                ):
+                elif native_status in {"PENDING", "IN_PROGRESS"}:
                     evidence_status = "PENDING"
-                    point_status = (
-                        "IN_PROGRESS" if visit == current_visit else "PENDING"
-                    )
                 if evidence_status == "VERIFIED":
                     verified_evidence += 1
                     point_status = "COMPLETED"
@@ -137,6 +147,9 @@ def build_inspection_task_report(
                 else:
                     missing_evidence += 1
                     point_status = "MISSING_EVIDENCE"
+                if native_status in {"SKIPPED", "FAILED", "CANCELLED", "NOT_VISITED"}:
+                    point_status = native_status
+                    reason = native_reason
                 if point_status in {
                     "MISSING_EVIDENCE",
                     "INVALID_EVIDENCE",
@@ -153,14 +166,19 @@ def build_inspection_task_report(
                             "reason": reason,
                         }
                     )
-            elif not history_complete:
-                point_status = "UNKNOWN"
-                reason = history_reason or "task_history_incomplete"
-            elif not terminal:
-                if current_visit is None or visit > current_visit:
-                    point_status = "PENDING"
-                elif visit == current_visit:
-                    point_status = "IN_PROGRESS"
+
+            if point_status == "SKIPPED" or (point_status == "UNKNOWN" and history_complete):
+                issues.append(
+                    {
+                        "code": "point_skipped" if point_status == "SKIPPED" else "point_outcome_unknown",
+                        "loop_index": loop_index,
+                        "point_index": point_index,
+                        "point_id": point_id,
+                        "action": action,
+                        "evidence_id": evidence_id,
+                        "reason": reason,
+                    }
+                )
 
             points.append(
                 {
@@ -172,6 +190,9 @@ def build_inspection_task_report(
                     "evidence_status": evidence_status,
                     "evidence_id": evidence_id,
                     "reason": reason,
+                    "inspection_result": _point_inspection_result(
+                        action, point_status, evidence_status, evidence_by_id.get(evidence_id)
+                    ),
                 }
             )
 
@@ -211,6 +232,11 @@ def build_inspection_task_report(
         "coverage": {
             "required_points": len(points),
             "completed_points": completed_points,
+            "skipped_points": sum(point["status"] == "SKIPPED" for point in points),
+            "failed_points": sum(point["status"] == "FAILED" for point in points),
+            "cancelled_points": sum(point["status"] == "CANCELLED" for point in points),
+            "not_visited_points": sum(point["status"] == "NOT_VISITED" for point in points),
+            "unknown_points": sum(point["status"] == "UNKNOWN" for point in points),
             "required_evidence": required_evidence,
             "verified_evidence": verified_evidence,
             "missing_evidence": missing_evidence,
@@ -218,9 +244,108 @@ def build_inspection_task_report(
             "unavailable_evidence": unavailable_evidence,
             "unknown_evidence": unknown_evidence,
         },
+        "inspection_result": _inspection_summary(points, terminal=terminal),
         "points": points,
         "issues": issues,
     }
+
+
+def _point_inspection_result(
+    action: str,
+    point_status: str,
+    evidence_status: str,
+    evidence: Mapping[str, Any] | None,
+) -> str:
+    """Capture completion and equipment condition are independent facts."""
+
+    if not action:
+        return "NOT_REQUIRED"
+    if point_status != "COMPLETED" or evidence_status != "VERIFIED" or evidence is None:
+        return "NOT_INSPECTED"
+    summary = evidence.get("summary")
+    if not isinstance(summary, Mapping):
+        return "NOT_INSPECTED"
+    review = summary.get("review")
+    if isinstance(review, Mapping):
+        verdict = review.get("verdict")
+    else:
+        analysis = summary.get("analysis")
+        if not isinstance(analysis, Mapping) or analysis.get("support") in {
+            "unavailable", "not_applicable"
+        }:
+            return "NEEDS_REVIEW"
+        verdict = analysis.get("verdict")
+    return {
+        "normal": "NORMAL", "clear": "NORMAL",
+        "anomaly": "ANOMALY", "violation": "ANOMALY",
+        "inconclusive": "INCONCLUSIVE",
+    }.get(verdict, "NEEDS_REVIEW")
+
+
+def _inspection_summary(points: list[dict[str, Any]], *, terminal: bool) -> dict[str, Any]:
+    states = [point["inspection_result"] for point in points if point["action"]]
+    counts = {
+        "normal_points": states.count("NORMAL"),
+        "anomaly_points": states.count("ANOMALY"),
+        "inconclusive_points": states.count("INCONCLUSIVE"),
+        "unreviewed_points": states.count("NEEDS_REVIEW"),
+        "not_inspected_points": states.count("NOT_INSPECTED"),
+    }
+    if not states:
+        status = "NOT_REQUIRED"
+    elif counts["anomaly_points"]:
+        status = "ANOMALY"
+    elif not terminal:
+        status = "IN_PROGRESS"
+    elif counts["not_inspected_points"] or counts["unreviewed_points"]:
+        status = "NEEDS_REVIEW"
+    elif counts["inconclusive_points"]:
+        status = "INCONCLUSIVE"
+    else:
+        status = "NORMAL"
+    return {"status": status, **counts}
+
+
+def _native_point_outcomes(
+    timeline: list[Any],
+    route: Mapping[str, Any],
+    route_points: list[Any],
+    loop_count: int,
+    *,
+    history_complete: bool,
+) -> dict[tuple[int, int], tuple[str, str]]:
+    """Read native point facts; moving a cursor alone does not prove a skipped point."""
+
+    outcomes: dict[tuple[int, int], tuple[str, str]] = {}
+    advanced_to: tuple[int, int] | None = None
+    for event in timeline:
+        if not isinstance(event, Mapping):
+            continue
+        visit = (
+            max(0, int(event.get("loop_index", 0) or 0)),
+            max(0, int(event.get("point_index", 0) or 0)),
+        )
+        kind = int(event.get("kind", 0) or 0)
+        reason = str(event.get("reason") or "")
+        if kind == 3 and reason == "point_completed":
+            outcomes[visit] = ("COMPLETED", "")
+        elif kind == 3 and reason.startswith("point_skipped:"):
+            outcomes[visit] = ("SKIPPED", reason.removeprefix("point_skipped:"))
+        elif kind == 5 and event.get("evidence_id"):
+            outcomes[visit] = ("COMPLETED", "")
+        elif kind == 2 and reason in {"next_point", "next_loop", "route_complete"}:
+            advanced_to = max(advanced_to or visit, visit)
+
+    # Existing non-skip routes advance only after a successful visit. A complete
+    # retained history therefore preserves their completion fact without
+    # deriving success from failed/cancelled snapshots or guessing skip outcomes.
+    if history_complete and route.get("failure_policy", "stop") != "skip" and advanced_to:
+        for loop_index in range(loop_count):
+            for point_index, point in enumerate(route_points):
+                visit = (loop_index, point_index)
+                if isinstance(point, Mapping) and point.get("enabled") is not False and visit < advanced_to:
+                    outcomes.setdefault(visit, ("COMPLETED", ""))
+    return outcomes
 
 
 def _verified_evidence_status(
@@ -244,12 +369,11 @@ def _verified_evidence_status(
     if not isinstance(request, Mapping):
         return "INVALID", "evidence_request_invalid"
     expected = {
-        "run_id": task_id,
+        "task_id": task_id,
         "route_id": str(route.get("id") or ""),
         "route_revision": int(route.get("revision") or 0),
         "map_id": str(route.get("map_id") or ""),
         "map_content_epoch": int(route.get("map_content_epoch") or 0),
-        "point_id": point_id,
         "point_index": point_index,
         "action": action,
     }

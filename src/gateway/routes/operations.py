@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from gateway.maps.transport import mapd_request, safe_map_name
+from gateway.routes.video import register_video_routes
 from gateway.schemas import (
     DirectedExplorationClearRequest,
     DirectedExplorationResponse,
@@ -28,7 +29,6 @@ from gateway.schemas import (
     ExplorationStartRequest,
     ExplorationStatusResponse,
     GatewayErrorResponse,
-    Go2RTCStatusResponse,
     LocalizationMapTrackingRequest,
     LocalizationOperationResponse,
     LocalizationRelocalizationRequest,
@@ -74,12 +74,6 @@ _EXPLORER_UNAVAILABLE_DETAIL = {
     "supported_products": ["explore"],
     "action": "switch LingTu to the explore Product before starting exploration",
 }
-
-try:
-    from fastapi import Request as FastAPIRequest
-except ImportError:  # FastAPI remains optional until routes are registered.
-    FastAPIRequest = Any
-
 
 def _parse_since(since: str) -> float:
     """Parse a human-readable duration into a Unix timestamp."""
@@ -320,7 +314,7 @@ def _service_status_snapshot(
     )
     backend_service = {
         "native_dds": "slam",
-        "fastlio2": "slam",
+        "ltlio": "slam",
     }.get(live_slam_profile)
     session_mode = str(getattr(gw, "_session_mode", "idle") or "idle").strip().lower()
     exploring = bool(getattr(gw, "_exploring", False))
@@ -451,61 +445,9 @@ def _field_product_map_guard_response(
 
 
 def register_operation_routes(app, gw) -> None:
-    from fastapi.responses import JSONResponse, Response
+    from fastapi.responses import JSONResponse
 
-    go2rtc_upstream = gw._go2rtc_upstream
-
-    @app.get(
-        "/api/v1/webrtc/go2rtc/status",
-        summary="Probe the go2rtc sidecar (image transmission fast path)",
-        response_model=Go2RTCStatusResponse,
-    )
-    async def get_go2rtc_status():
-        try:
-            import httpx
-        except ImportError:
-            return {"available": False, "reason": "httpx_missing"}
-        try:
-            async with httpx.AsyncClient(timeout=0.5) as client:
-                r = await client.get(f"{go2rtc_upstream}/api/streams")
-                if r.status_code != 200:
-                    return {"available": False, "status": r.status_code}
-                data = r.json()
-                streams = list(data.keys()) if isinstance(data, dict) else []
-                return {"available": True, "streams": streams}
-        except Exception as e:
-            return {"available": False, "reason": type(e).__name__}
-
-    @app.post(
-        "/api/v1/webrtc/whep",
-        summary="WHEP signalling proxy to go2rtc (image transmission path)",
-        responses={
-            200: {"content": {"application/sdp": {"schema": {"type": "string"}}}},
-            503: {"model": GatewayErrorResponse},
-        },
-    )
-    async def post_webrtc_whep(request: FastAPIRequest):
-        try:
-            import httpx
-        except ImportError:
-            return JSONResponse({"error": "httpx_missing"}, status_code=503)
-        src = request.query_params.get("src", "cam")
-        body = await request.body()
-        try:
-            async with httpx.AsyncClient(timeout=3.0) as client:
-                r = await client.post(
-                    f"{go2rtc_upstream}/api/webrtc?src={src}",
-                    content=body,
-                    headers={"content-type": "application/sdp"},
-                )
-        except Exception as e:
-            logger.info("go2rtc unreachable: %s", e)
-            return JSONResponse({"error": "go2rtc_unreachable"}, status_code=503)
-        return Response(
-            content=r.content,
-            status_code=r.status_code,
-            media_type=r.headers.get("content-type", "application/sdp"),
-        )
+    register_video_routes(app, gw)
 
     def _temporal_store():
         if gw._temporal_store is None:
@@ -988,7 +930,7 @@ def register_operation_routes(app, gw) -> None:
 
         if live_mode in {
             "native_dds",
-            "fastlio2",
+            "ltlio",
             "none",
         }:
             mode = live_mode
@@ -1178,9 +1120,14 @@ def register_operation_routes(app, gw) -> None:
             )
 
     def _recording_error_response(exc: NativeRecordingError):
+        detail = None
+        if exc.code == "native_recorder_stop_failed" and exc.detail.get("state") == "failed":
+            detail = {"state": "failed", "recording": False}
+            if isinstance(exc.detail.get("session_id"), str):
+                detail["session_id"] = exc.detail["session_id"]
         return JSONResponse(
             status_code=exc.status_code,
-            content={"error": exc.code, "detail": None},
+            content={"error": exc.code, "detail": detail},
         )
 
     @app.post(
@@ -1205,6 +1152,7 @@ def register_operation_routes(app, gw) -> None:
                 duration=duration,
                 prefix=prefix,
                 capture_profile=capture_profile,
+                topics=body.topics,
                 task_id=task_id,
                 camera=camera,
                 minimum_free_gib=minimum_free_gib,
@@ -1221,6 +1169,7 @@ def register_operation_routes(app, gw) -> None:
             "duration": duration,
             "prefix": prefix,
             "capture_profile": capture_profile,
+            "topics": body.topics,
             "task_id": task_id,
             "camera": camera,
             "minimum_free_gib": minimum_free_gib,

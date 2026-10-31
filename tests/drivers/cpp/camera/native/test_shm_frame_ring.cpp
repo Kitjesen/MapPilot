@@ -15,7 +15,8 @@ int main() {
       6, 7, 8, 9, 10, 11,
   };
   {
-    FrameWriter writer(WriterConfig{name, 2, 128, 0600, false});
+    FrameWriter writer(WriterConfig{name, 2, 128, 0600, false, 101});
+    assert(writer.sourceGeneration() == 101);
     FrameMetadata metadata;
     metadata.stream_kind = StreamKind::kColor;
     metadata.timestamp_ns = unixTimeNs();
@@ -37,6 +38,20 @@ int main() {
       rejected = true;
     }
     assert(rejected);
+  }
+  {
+    FrameWriter restarted(WriterConfig{name, 2, 128, 0600, false, 102});
+    assert(restarted.sourceGeneration() == 102);
+    assert(restarted.lastSequence() == 0);
+    FrameMetadata metadata;
+    metadata.stream_kind = StreamKind::kColor;
+    metadata.timestamp_ns = unixTimeNs();
+    metadata.width = 2;
+    metadata.height = 2;
+    metadata.stride = 6;
+    metadata.encoding = "rgb8";
+    metadata.frame_id = "camera_link";
+    assert(restarted.publish(metadata, payload, sizeof(payload)) == 1);
   }
   ::shm_unlink(name.c_str());
   return 0;

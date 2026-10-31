@@ -1,5 +1,7 @@
 import { isObservationMode } from './services/observationMode.ts'
-import { lazy, Suspense, useState, useEffect, useCallback } from 'react'
+import { initialMapEntry } from './services/mapEntry.ts'
+import { lazy, Suspense, useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react'
+import { createPortal } from 'react-dom'
 import { useSSE } from './hooks/useSSE'
 import { useToast } from './hooks/useToast'
 import { useProductControl } from './hooks/useProductControl'
@@ -16,6 +18,9 @@ import { RobotStatusPanel } from './components/RobotStatusPanel'
 const RuntimeDataflowView = lazy(() => import('./components/RuntimeDataflowView').then(m => ({ default: m.RuntimeDataflowView })))
 const InspectionWorkbench = lazy(() => import('./components/InspectionWorkbench').then(m => ({ default: m.InspectionWorkbench })))
 import { CurrentTaskCard } from './components/CurrentTaskCard'
+import { InstructionTaskBar } from './components/InstructionTaskBar'
+import { useInstructionTask } from './hooks/useInstructionTask'
+import { instructionTaskCanDismiss } from './services/instructionTask'
 import { useTheme } from './components/useTheme'
 import { readStoredLocale, text, writeStoredLocale, type Locale } from './i18n'
 
@@ -28,7 +33,7 @@ import {
   MotionGateReason,
   evaluateMotionAction,
 } from './services/motionTruth'
-import type { Tab } from './types'
+import type { InspectionRoute, Tab } from './types'
 import './App.css'
 
 const MOTION_TRUTH_MAX_AGE_MS = 7_000
@@ -57,6 +62,9 @@ function motionBlockedMessage(reason: string, locale: Locale): string {
 }
 
 function Dashboard() {
+  const [mapEntry] = useState(() => initialMapEntry(window.location.search))
+  const [taskPanelTarget, setTaskPanelTarget] = useState<HTMLDivElement | null>(null)
+  const [globalTaskPanelTarget, setGlobalTaskPanelTarget] = useState<HTMLDivElement | null>(null)
   const [elevationSubscription, setElevationSubscription] = useState(false)
   const sseState = useSSE(
     elevationSubscription ? '/api/v1/events?include_elevation=1' : '/api/v1/events',
@@ -68,18 +76,48 @@ function Dashboard() {
   const [nowMs, setNowMs] = useState(() => Date.now())
   const liveNavigation = liveNavigationStatus(sseState, nowMs / 1000)
   const activeTaskId = liveNavigation?.task.task_id
-  const [activeTab, setActiveTab] = useState<Tab>('scene')
-  const [selectedSavedMap, setSelectedSavedMap] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<Tab>(mapEntry.tab)
+  const currentTaskPanelTarget = activeTab === 'scene' ? taskPanelTarget : globalTaskPanelTarget
+  const [selectedSavedMap, setSelectedSavedMap] = useState<string | null>(mapEntry.map)
+  const [sceneRoute, setSceneRoute] = useState<InspectionRoute | null>(null)
+  const [selectedInspectionRouteId, setSelectedInspectionRouteId] = useState<string | null>(null)
+  const mapEditorExitGuard = useRef<((proceed: () => void) => void) | null>(null)
+  const handleMapEditorExitGuardChange = useCallback((guard: ((proceed: () => void) => void) | null) => {
+    mapEditorExitGuard.current = guard
+  }, [])
+  const leaveMapEditor = useCallback((proceed: () => void) => {
+    if (mapEditorExitGuard.current) mapEditorExitGuard.current(proceed)
+    else proceed()
+  }, [])
+  const handleShowRoute = useCallback((route: InspectionRoute) => {
+    leaveMapEditor(() => {
+      setSceneRoute(route)
+      setActiveTab('scene')
+    })
+  }, [leaveMapEditor])
   const handleProductChanged = useCallback(() => setActiveTab('scene'), [])
   const productControl = useProductControl(handleProductChanged)
   const handleOpenSavedMap = useCallback((name: string | null) => {
-    setSelectedSavedMap(name)
-    setActiveTab('map')
-  }, [])
+    leaveMapEditor(() => {
+      setSelectedSavedMap(name)
+      setActiveTab('map')
+    })
+  }, [leaveMapEditor])
   const handleTabChange = useCallback((tab: Tab) => {
-    setSelectedSavedMap(null)
-    setActiveTab(tab)
-  }, [])
+    const proceed = () => {
+      setSelectedSavedMap(null)
+      setActiveTab(tab)
+    }
+    if (tab === activeTab) proceed()
+    else leaveMapEditor(proceed)
+  }, [activeTab, leaveMapEditor])
+  const handleOpenInspection = useCallback((routeId: string | null) => {
+    leaveMapEditor(() => {
+      setSelectedInspectionRouteId(routeId)
+      setSelectedSavedMap(null)
+      setActiveTab('inspection')
+    })
+  }, [leaveMapEditor])
   const [estopResetIssuedAt, setEstopResetIssuedAt] = useState<number | null>(null)
   const estop = sseState.safetyState?.estop ?? false
   const motionTruth = {
@@ -113,6 +151,19 @@ function Dashboard() {
     ? ''
     : motionBlockedMessage(estopResetGate.reason, locale)
   const estopResetBusy = estopResetIssuedAt !== null && estop
+  const instructionTask = useInstructionTask({
+    motionStartAllowed: motionStartGate.allowed,
+    motionStartBlockedReason,
+  })
+  const nativeTaskIdentity = useSyncExternalStore(
+    currentNavigationTaskStore.subscribe,
+    currentNavigationTaskStore.getSnapshot,
+  )
+  const ownedNavigation = instructionTask.task?.status.navigation
+  const instructionOwnsNativeTask = ownedNavigation?.owned === true
+    && Boolean(nativeTaskIdentity?.task_id)
+    && ownedNavigation.task_id === nativeTaskIdentity?.task_id
+  const instructionActive = Boolean(instructionTask.task && !instructionTaskCanDismiss(instructionTask.task))
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -246,6 +297,7 @@ function Dashboard() {
               </section>
               <section className="console-chat" aria-label="assistant">
                 <ChatPanel
+                  controller={instructionTask}
                   sseState={sseState}
                   motionStartAllowed={motionStartGate.allowed}
                   motionStartBlockedReason={motionStartBlockedReason}
@@ -261,13 +313,21 @@ function Dashboard() {
             {!productControl.busy && <button onClick={productControl.dismiss}>关闭</button>}
           </div>}
           <SceneView
+            instructionStatus={instructionTask.task?.status ?? null}
+            onTaskPanelMount={setTaskPanelTarget}
             sseState={sseState}
             showToast={showToast}
             locale={locale}
-            motionStartAllowed={motionStartGate.allowed}
-            motionStartBlockedReason={motionStartBlockedReason}
+            motionStartAllowed={motionStartGate.allowed && !instructionActive}
+            motionStartBlockedReason={instructionActive
+              ? text(locale, 'End the current instruction before starting a map goal', '请先结束当前指令任务，再开始地图导航')
+              : motionStartBlockedReason}
             onElevationSubscriptionChange={setElevationSubscription}
             onOpenSavedMap={handleOpenSavedMap}
+            onMapEditorExitGuardChange={handleMapEditorExitGuardChange}
+            initialRoute={sceneRoute}
+            onRouteSaved={setSceneRoute}
+            onOpenInspection={handleOpenInspection}
             onStartMapping={() => void productControl.switchProduct('map')}
             productSwitchAllowed={productControl.allowed}
             productSwitchReason={productControl.reason}
@@ -283,7 +343,6 @@ function Dashboard() {
             productSwitchMessage={productControl.message}
             onReturnLive={() => handleTabChange('scene')}
             session={sseState.session}
-            navigationStatus={liveNavigationStatus(sseState, nowMs / 1000)}
             showToast={showToast}
             locale={locale}
           />
@@ -291,14 +350,27 @@ function Dashboard() {
         {activeTab === 'slam' && <SlamStatusPanel sseState={sseState} showToast={showToast} locale={locale} />}
         {activeTab === 'dataflow' && <RuntimeDataflowView sseState={sseState} />}
         {activeTab === 'inspection' && (
-          <InspectionWorkbench sseState={sseState} showToast={showToast} locale={locale} />
+          <InspectionWorkbench sseState={sseState} showToast={showToast} locale={locale}
+            onShowRoute={handleShowRoute} initialRouteId={selectedInspectionRouteId} />
         )}
         {activeTab === 'planner' && <PlannerTuning showToast={showToast} />}
 
         </Suspense>
       </main>
 
-      {!isObservationMode() && <CurrentTaskCard
+      <div className="global-task-slot" ref={setGlobalTaskPanelTarget} />
+      {!isObservationMode() && currentTaskPanelTarget && createPortal(
+        <InstructionTaskBar
+          controller={instructionTask}
+          locale={locale}
+          motionStartAllowed={motionStartGate.allowed}
+          motionStartBlockedReason={sseState.connected ? motionStartBlockedReason : ''}
+          hasNativeTask={Boolean(nativeTaskIdentity) && !instructionOwnsNativeTask}
+        />,
+        currentTaskPanelTarget,
+      )}
+      {!isObservationMode() && !instructionOwnsNativeTask && <CurrentTaskCard
+        container={currentTaskPanelTarget}
         locale={locale}
         showToast={showToast}
         resumeAllowed={motionResumeGate.allowed}

@@ -10,7 +10,7 @@ namespace {
 lingtu::nav::navigation::Executor makeConfiguredExecutor(
     lingtu::nav::navigation::ExecutorConfig config,
     nav_kernel::LocalPlannerParams planner_params, const char *path_library) {
-  nav_kernel::local::Planner planner(planner_params);
+  nav_kernel::LocalPlanner planner(planner_params);
   EXPECT_TRUE(planner.configure(path_library));
   return lingtu::nav::navigation::Executor(std::move(config), std::move(planner));
 }

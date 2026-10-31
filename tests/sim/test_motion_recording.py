@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,7 +11,22 @@ from typing import Any
 
 import pytest
 from sim.catalog import CatalogResolver
-from sim.runtime.control import CommandSubmitResult, create_production_components
+from sim.runtime.control import (
+    ActuatorLayout,
+    AdapterSpec,
+    CommandChannelSpec,
+    CommandSubmitResult,
+    ControllerCommand,
+    ControllerRuntime,
+    ControllerSpec,
+    ControllerState,
+    ControlPlan,
+    DeterministicFakeAdapter,
+    DeterministicFakePolicy,
+    GenerationStamp,
+    PolicySpec,
+    create_production_components,
+)
 from sim.runtime.coordinator import CoordinatorError, RuntimeState
 from sim.runtime.coordinator.controlled_run import BaseTwist, BaseTwistTarget
 from sim.runtime.coordinator.motion_recording import (
@@ -19,8 +35,11 @@ from sim.runtime.coordinator.motion_recording import (
     MotionRecordingConfig,
     MotionRecordingLaunch,
     MotionRecordingRuntimeConfig,
+    _advance_recording_command,
     _parser,
+    _prepare_capture_directory,
     _require_recording_bindings,
+    _valid_pngs,
     create_motion_recording_launch,
     evaluate_maneuver_evidence,
     evaluate_motion_evidence,
@@ -354,6 +373,8 @@ def test_maneuver_evidence_fails_closed_when_measured_yaw_is_missing() -> None:
 class _RecordingCoordinator:
     def __init__(self) -> None:
         self.state = RuntimeState.NEW
+        self.plan = SimpleNamespace(global_policy=SimpleNamespace(timestep_s=0.002))
+        self.command_timeout_ns = 100_000_000
         self.physics_step = 0
         self.sim_time_ns = 0
         self.x = 0.0
@@ -410,6 +431,99 @@ class _RecordingCoordinator:
         }
 
 
+@pytest.mark.parametrize("steps,expected_chunks", [(25, [4, 4, 4, 4, 4, 4, 1]), (8, [4, 4])])
+def test_recording_refresh_respects_controller_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    steps: int,
+    expected_chunks: list[int],
+) -> None:
+    coordinator = _RecordingCoordinator()
+    coordinator.plan.global_policy.timestep_s = 0.005
+    spec = ControllerSpec(
+        controller_id="controller",
+        instance_id="robot",
+        adapter=AdapterSpec("test", "test"),
+        policy=PolicySpec("analytic", "", ""),
+        inference_hz=50,
+        low_level_hz=200,
+        state_channels=(),
+        command_channels=("command", "output"),
+        actuators=ActuatorLayout(("joint",)),
+    )
+    plan = ControlPlan(
+        session_id="motion-session",
+        controllers=(spec,),
+        stale_timeout_ns=coordinator.command_timeout_ns,
+        command_channels=(
+            CommandChannelSpec(
+                "command", "subscribe", "simulation", "input", "typed_dds",
+                "base_twist", "base_twist", "base",
+            ),
+            CommandChannelSpec(
+                "output", "publish", "physics", "controller", "in_process",
+                "joint_torque", "joint_torque", "actuators",
+            ),
+        ),
+    )
+    generation = GenerationStamp(0, 0)
+    runtime = ControllerRuntime(
+        plan=plan,
+        controller_id=spec.controller_id,
+        generation=generation,
+        adapter=DeterministicFakeAdapter(),
+        policy=DeterministicFakePolicy((0.5,)),
+    )
+    chunks: list[int] = []
+    outputs = []
+
+    def submit(controller_id: str, command: ControllerCommand) -> CommandSubmitResult:
+        coordinator.commands.append((controller_id, command))
+        return runtime.submit_command(command)
+
+    def advance(chunk: int) -> dict[str, Any]:
+        chunks.append(chunk)
+        for _ in range(chunk):
+            result = runtime.step(ControllerState(
+                session_id=plan.session_id,
+                instance_id=spec.instance_id,
+                generation=generation,
+                sequence=coordinator.physics_step,
+                sim_time_ns=coordinator.sim_time_ns,
+                channels={},
+            ))
+            if result.actuator_command is not None:
+                outputs.append(result.actuator_command)
+            coordinator.physics_step += 1
+            coordinator.sim_time_ns += 5_000_000
+        return coordinator.snapshot()
+
+    monkeypatch.setattr(coordinator, "submit_controller_command", submit)
+    monkeypatch.setattr(coordinator, "advance", advance)
+    launch = SimpleNamespace(
+        coordinator=coordinator,
+        target=BaseTwistTarget(spec.controller_id, spec.instance_id, "command"),
+    )
+
+    snapshot, sequence = _advance_recording_command(
+        launch,
+        coordinator.prepare(),
+        BaseTwist(linear_x=0.2),
+        command_sequence=0,
+        steps=steps,
+        refresh_steps=25,
+    )
+
+    assert outputs and all(not output.safe_stop for output in outputs)
+    assert chunks == expected_chunks
+    assert sequence == len(expected_chunks)
+    assert snapshot["physics_step"] == steps
+    assert snapshot["sim_time_ns"] == steps * 5_000_000
+    assert [entry[1].apply_time_ns for entry in coordinator.commands] == [
+        index * 20_000_000 for index in range(len(expected_chunks))
+    ]
+    assert coordinator.command_timeout_ns == plan.stale_timeout_ns == 100_000_000
+
+
 class _RecordingHost:
     def __init__(
         self,
@@ -438,6 +552,18 @@ class _RecordingHost:
         if self.coordinator.state is RuntimeState.RUNNING:
             self.coordinator.pause()
         return self.coordinator.stop(failure_reason=failure_reason)
+
+
+def test_fresh_capture_does_not_require_nanosecond_filesystem_timestamps(tmp_path: Path) -> None:
+    frame_dir = tmp_path / "frames"
+    started = _prepare_capture_directory(frame_dir)
+    frame_dir.mkdir()
+    frame = frame_dir / "frame_000000.png"
+    frame.write_bytes(b"\x89PNG\r\n\x1a\nframe")
+    stamp = started - 10_000_000
+    os.utime(frame, ns=(stamp, stamp))
+
+    assert _valid_pngs(frame_dir) == (frame.resolve(),)
 
 
 class _LateFrameOnCloseHost(_RecordingHost):
@@ -929,7 +1055,6 @@ robots:
   - instance_id: thunder_01
     package: thunderv4@1.0.3
     sensor_rig: thunderv4_navigation@1.0.0
-    controller: thunderv4_locomotion@1.0.0
     spawn:
       position_m: [0.0, -76.0, 0.0]
       quaternion_wxyz: [1.0, 0.0, 0.0, 0.0]
@@ -980,7 +1105,13 @@ runtime:
     )
 
     assert launch.coordinator._controller_factory is create_production_components
-    assert launch.target.controller_id == "thunder_01.thunderv4_locomotion"
+    controllers = bundle.plans["control.plan.json"]["controllers"]
+    assert len(controllers) == 1
+    controller = controllers[0]
+    assert launch.target == BaseTwistTarget(
+        controller["controller_id"], controller["instance_id"], "thunder_01.control.base_twist"
+    )
+    assert launch.target.channel_id in controller["command_channels"]
     assert launch.base_body_id == "thunder_01/base_link"
     assert f"-LingTuFrameCaptureDir={capture.directory}" in command
     assert "-LingTuRunId=production-recording" in command
@@ -1004,7 +1135,6 @@ robots:
   - instance_id: thunder_01
     package: thunderv4@1.0.3
     sensor_rig: thunderv4_truth_telemetry@1.0.0
-    controller: thunderv4_locomotion@1.0.0
     spawn:
       position_m: [0.0, -76.0, 0.0]
       quaternion_wxyz: [1.0, 0.0, 0.0, 0.0]

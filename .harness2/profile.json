@@ -1,0 +1,19 @@
+{
+  "domains": [
+    "lingtu-lifecycle",
+    "lingtu-map-navigation"
+  ],
+  "read_first": [
+    "AGENTS.md",
+    "docs/testing.md"
+  ],
+  "probe": "Use the existing focused lifecycle tests or a fixed dataset/map/route replay in a task-owned output directory.",
+  "success": "Preserve Product/env/RunPlan ownership; verify the requested startup or native 3D map/save/reload/planner behavior against the original checks.",
+  "boundaries": "Keep local tests, simulation, field no-motion, and field motion evidence distinct. Do not deploy or issue motion as candidate probes. Follow the project anti-overdefense rules.",
+  "schema_version": 1,
+  "skill": "harness2",
+  "profile_type": "agent-readable-context-not-executable-policy",
+  "project_root": "D:\\inovxio\\brain\\lingtu",
+  "refresh": "Read the latest user request, task artifacts and applicable instructions before each experiment. This profile does not authorize live actions or replace the current task owner.",
+  "budget": "Normally one baseline and one candidate, using the active task budget; preserve existing Ralph/OMX state."
+}

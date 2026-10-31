@@ -20,6 +20,9 @@ log/
 .lingtu/
 .local/
 artifacts/
+!/artifacts/
+/artifacts/*
+!/artifacts/README.md
 logs/
 output/
 MUJOCO_LOG.TXT
@@ -66,7 +69,7 @@ src/nav/core/build/
 src/nav/core/build_nb*/
 src/nav/cpp/build_py/
 src/nav/cpp/build_nb*/
-src/localization/fastlio2/portable/build/
+src/localization/ltlio/portable/build/
 src/maps/build*/
 !src/maps/cpp/build/
 !src/maps/cpp/build/**
@@ -93,9 +96,6 @@ src/nav/services/plan/**/CMakeFiles/
 
 # Third-party calibration sample datasets and rendered paper assets. Keep the
 # calibration source/build files, but do not vendor hundreds of MiB of media.
-/tools/calibration/camera_lidar/mlcc/scene*/
-/tools/calibration/camera_lidar/mlcc/figure/
-/tools/calibration/camera_lidar/mlcc/paper/
 /tools/calibration/camera_lidar/livox_camera_calib/pics/
 /tools/calibration/camera_lidar/livox_camera_lidar_calibration/doc_resources/
 
@@ -123,6 +123,8 @@ src/nav/services/plan/**/CMakeFiles/
 !sim/packages/worlds/factory_park_hf/generated/heightfield_f32.bin
 !sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx
 !sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998.onnx
+!sim/packages/controllers/doso/thunder_v4/cts_moe/policy/policy_cts_moe_80708.onnx
+!sim/packages/controllers/doso/thunder_v4/cts_moe/policy/policy_cts_moe_v39_61128.onnx
 !sim/packages/worlds/factory_park_robot_yard_safety/1.0.0/artifacts/heightfield_f32.bin
 *.hbm
 mobileclip2_b.ts
@@ -209,6 +211,19 @@ sim/output/
 
 # 鈹€鈹€ Sim datasets (too large for git) 鈹€鈹€
 sim/evaluation/data/legkilo_all/
+
+# Downloaded public SLAM data stays local; keep the location/provenance index.
+/datasets/slam/**/raw/
+/datasets/slam/**/ground_truth/
+/datasets/slam/**/calibration/
+/datasets/slam/**/metadata/
+/datasets/slam/**/converted/
+/datasets/slam/**/results/
+/datasets/slam/**/demo_data/
+/datasets/slam/3dref-sequence/pointcloud/
+/sim/.imports/robot_lab/source/
+/sim/.imports/external_robots/
+/.codex_audit.txt
 
 # Optional unregistered semantic-map reference clone.
 /research/semantic/dimos/

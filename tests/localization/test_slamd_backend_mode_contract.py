@@ -4,14 +4,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SLAMD_SOURCE = ROOT / "src" / "localization" / "slam" / "cpp" / "cyclone_runtime.cpp"
-SIM_ENV = ROOT / "config" / "runtime_graph" / "envs" / "sim.yaml"
+SIM_ENV = ROOT / "config" / "system" / "envs" / "sim.yaml"
 
 
-def test_slamd_accepts_only_the_canonical_fastlio2_backend() -> None:
+def test_slamd_accepts_only_the_canonical_ltlio_backend() -> None:
     source = SLAMD_SOURCE.read_text(encoding="utf-8")
 
-    assert 'std::string backend = "fastlio2";' in source
-    assert 'if (backend == "fastlio2")' in source
+    assert 'std::string backend = "ltlio";' in source
+    assert 'if (backend == "ltlio")' in source
     assert "normalizedBackend" not in source
     assert 'backend == "localizer"' not in source
     assert 'backend == "fastlio"' not in source

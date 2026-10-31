@@ -7,7 +7,6 @@ robots:
   - instance_id: thunder_01
     package: thunderv4@1.0.3
     sensor_rig: thunderv4_headless_navigation@1.0.0
-    controller: thunderv4_locomotion@1.0.0
     spawn:
       position_m: [61.0, 16.5, 0.02]
       quaternion_wxyz: [0.7071067811865476, 0.0, 0.0, 0.7071067811865476]

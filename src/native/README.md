@@ -10,4 +10,4 @@ it is neither a portable compute kernel nor owned by one domain package.
 
 Domain algorithms stay under their owning `src/<domain>/` tree. Portable
 Rust/C ABI compute stays under `src/kernels/`. Product selection and lifecycle
-stay under `config/runtime_graph/products/` and `src/lingtu/`.
+stay under `config/system/products/` and `src/lingtu/`.

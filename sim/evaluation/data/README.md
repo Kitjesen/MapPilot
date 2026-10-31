@@ -87,7 +87,7 @@ python tools/datasets/normalized_lidar_imu_to_ltu1.py \
   --allow-undeskewed normalized.jsonl sensors.ltu
 ```
 
-An output with nonzero `undeskewed_points` is not valid evidence for Fast-LIO
+An output with nonzero `undeskewed_points` is not valid evidence for LTLIO
 frontend accuracy, time synchronization, or motion compensation.
 
 Validate and replay through the same native path used by MID-360 capture:

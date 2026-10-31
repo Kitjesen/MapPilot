@@ -5,6 +5,7 @@
 #include <cmath>
 #include <istream>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 
 namespace lingtu::sim::dds_adapter {
@@ -107,6 +108,12 @@ SensorRecordReadStatus read_sensor_record(std::istream &input, SensorRecord &rec
     case 7:
       record.header.type = SensorRecordType::RegisteredCloudWithOrigin;
       break;
+    case 8:
+      record.header.type = SensorRecordType::Gnss;
+      break;
+    case 9:
+      record.header.type = SensorRecordType::Measurement;
+      break;
     default:
       error = "unknown LTU1 record type: " + std::to_string(raw_type);
       return SensorRecordReadStatus::Error;
@@ -134,9 +141,17 @@ SensorRecordReadStatus read_sensor_record(std::istream &input, SensorRecord &rec
     }
   }
 
-  if (record.header.type == SensorRecordType::Camera) {
+  if (record.header.type == SensorRecordType::Camera ||
+      record.header.type == SensorRecordType::Gnss ||
+      record.header.type == SensorRecordType::Measurement) {
     try {
-      (void)decode_camera_payload(record);
+      if (record.header.type == SensorRecordType::Camera) {
+        (void)decode_camera_payload(record);
+      } else if (record.header.type == SensorRecordType::Gnss) {
+        (void)decode_gnss_payload(record);
+      } else {
+        (void)decode_measurement_payload(record);
+      }
     } catch (const std::runtime_error &exc) {
       error = exc.what();
       return SensorRecordReadStatus::Error;
@@ -174,6 +189,21 @@ bool validate_sensor_record_header(const SensorRecordHeader &header, std::string
   if (header.type == SensorRecordType::Imu) {
     if (header.count != 1 || header.payload_bytes != sizeof(ImuSample)) {
       error = "LTU1 imu payload must contain exactly one ImuSample";
+      return false;
+    }
+    return true;
+  }
+  if (header.type == SensorRecordType::Gnss) {
+    if (header.count != 1 || header.payload_bytes != kGnssHeaderBytes + kGnssPayloadBytes) {
+      error = "LTU1 gnss payload must contain exactly one 300-byte LTGN record";
+      return false;
+    }
+    return true;
+  }
+  if (header.type == SensorRecordType::Measurement) {
+    if (header.count == 0 || header.payload_bytes < kMeasurementHeaderBytes ||
+        header.payload_bytes > kMaxMeasurementPayloadBytes) {
+      error = "LTU1 measurement requires positive count and 76-byte..32 MiB payload";
       return false;
     }
     return true;
@@ -270,6 +300,37 @@ CameraRecord decode_camera_payload(const SensorRecord &record) {
   return camera;
 }
 
+GnssRecord decode_gnss_payload(const SensorRecord &record) {
+  require_record_type(record, SensorRecordType::Gnss);
+  if (record.header.count != 1 ||
+      record.header.payload_bytes != kGnssHeaderBytes + kGnssPayloadBytes ||
+      record.payload.size() != record.header.payload_bytes) {
+    throw std::runtime_error("LTU1 gnss requires one complete 300-byte LTGN record");
+  }
+  std::istringstream input(std::string(record.payload.begin(), record.payload.end()));
+  GnssRecord gnss;
+  std::string error;
+  if (read_gnss_record(input, gnss, error) != GnssReadStatus::Ok) {
+    throw std::runtime_error("LTU1 gnss: " + error);
+  }
+  if (gnss.timestamp_ns != record.header.timestamp_ns || gnss.sequence != record.header.sequence) {
+    throw std::runtime_error("LTU1 gnss outer/inner timestamp or sequence mismatch");
+  }
+  return gnss;
+}
+
+MeasurementRecord decode_measurement_payload(const SensorRecord &record) {
+  require_record_type(record, SensorRecordType::Measurement);
+  if (record.header.payload_bytes != record.payload.size())
+    throw std::runtime_error("LTU1 measurement payload byte count mismatch");
+  auto measurement = decode_measurement_payload(record.payload);
+  if (measurement.sim_time_ns != record.header.timestamp_ns ||
+      measurement.sequence != record.header.sequence ||
+      static_cast<std::uint64_t>(measurement.rows) * measurement.columns != record.header.count)
+    throw std::runtime_error("LTU1 measurement outer/inner time, sequence or count mismatch");
+  return measurement;
+}
+
 void accumulate_sensor_record_stats(const SensorRecord &record, SensorRecordStats &stats) {
   stats.bytes += kSensorRecordHeaderBytes + record.payload.size();
   switch (record.header.type) {
@@ -292,6 +353,12 @@ void accumulate_sensor_record_stats(const SensorRecord &record, SensorRecordStat
     case SensorRecordType::SimulationClock:
       ++stats.simulation_clocks;
       break;
+    case SensorRecordType::Gnss:
+      ++stats.gnss;
+      break;
+    case SensorRecordType::Measurement:
+      ++stats.measurements;
+      break;
   }
 }
 
@@ -311,6 +378,10 @@ const char *sensor_record_type_name(SensorRecordType type) noexcept {
       return "camera";
     case SensorRecordType::SimulationClock:
       return "simulation_clock";
+    case SensorRecordType::Gnss:
+      return "gnss";
+    case SensorRecordType::Measurement:
+      return "measurement";
   }
   return "unknown";
 }

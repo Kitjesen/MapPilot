@@ -52,6 +52,8 @@ class LINGTUSIMVISUAL_API ULingTuSimVisualWorldSubsystem : public UTickableWorld
   bool SetRuntimeCameraMode(ELingTuSimRuntimeCameraMode RequestedMode, FString &OutError);
   bool CycleRuntimeCameraMode(FString &OutModeName, FString &OutError);
   bool ApplyRuntimeFreeCameraLook(float CameraYaw, float CameraPitch, FString &OutError);
+  bool AdjustRuntimeCamera(float YawDeltaDegrees, float PitchDeltaDegrees, float ZoomSteps,
+                           FString &OutError);
   FString GetRuntimeCameraModeName() const;
 
   virtual void Tick(float DeltaTime) override;
@@ -147,6 +149,7 @@ class LINGTUSIMVISUAL_API ULingTuSimVisualWorldSubsystem : public UTickableWorld
   FString MotionCameraStableId;
   TWeakObjectPtr<ACameraActor> MotionCamera;
   TWeakObjectPtr<ACameraActor> FreeCamera;
+  FVector FollowCameraOffsetLocal = FVector(-300.0, 300.0, 180.0);
   ELingTuSimRuntimeCameraMode RuntimeCameraMode = ELingTuSimRuntimeCameraMode::Unavailable;
   int32 FrameCaptureEvery = 0;
   int32 FrameCaptureMax = 0;

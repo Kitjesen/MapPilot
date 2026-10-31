@@ -13,6 +13,7 @@ from sim.runtime.control import (
     DeterministicFakeAdapter,
     DeterministicFakePolicy,
     GenerationStamp,
+    load_control_plan,
 )
 from sim.runtime.coordinator import CoordinatorError, RuntimeCoordinator, RuntimeState
 from sim.runtime.sensors import (
@@ -454,7 +455,10 @@ def test_coordinator_runs_due_control_before_each_physics_advance(
         run_id="controlled-session",
     )
     ready = _prepare_headless(coordinator)
+    control_plan = load_control_plan(coordinator.bundle_dir / "control.plan.json")
+    controller, = control_plan.controllers
     assert coordinator.state is RuntimeState.READY
+    assert coordinator.command_timeout_ns == control_plan.stale_timeout_ns
     assert host.calls[1][0] == "bind"
     assert host.calls[1][1]["channels"] == ACTUATORS
 
@@ -462,7 +466,7 @@ def test_coordinator_runs_due_control_before_each_physics_advance(
     generation = GenerationStamp(ready["model_generation"], ready["reset_generation"])
     assert (
         coordinator.submit_controller_command(
-            "thunder_01.thunderv4_locomotion",
+            controller.controller_id,
             ControllerCommand(
                 channel_id="thunder_01.control.base_twist",
                 instance_id="thunder_01",
@@ -505,7 +509,7 @@ def test_coordinator_runs_due_control_before_each_physics_advance(
     assert coordinator.state is RuntimeState.READY
     assert (
         coordinator.submit_controller_command(
-            "thunder_01.thunderv4_locomotion",
+            controller.controller_id,
             ControllerCommand(
                 channel_id="thunder_01.control.base_twist",
                 instance_id="thunder_01",
@@ -534,10 +538,12 @@ def test_realtime_chunk_holds_one_control_output_across_physics_substeps(
         run_id="controlled-realtime-chunk",
     )
     ready = _prepare_headless(coordinator)
+    control_plan = load_control_plan(coordinator.bundle_dir / "control.plan.json")
+    controller, = control_plan.controllers
     coordinator.start()
     assert (
         coordinator.submit_controller_command(
-            "thunder_01.thunderv4_locomotion",
+            controller.controller_id,
             ControllerCommand(
                 channel_id="thunder_01.control.base_twist",
                 instance_id="thunder_01",
@@ -574,10 +580,12 @@ def test_realtime_sampled_chunk_preserves_every_strict_sensor_deadline(
         run_id="controlled-realtime-sampled-chunk",
     )
     ready = _prepare_headless(coordinator)
+    control_plan = load_control_plan(coordinator.bundle_dir / "control.plan.json")
+    controller, = control_plan.controllers
     coordinator.start()
     assert (
         coordinator.submit_controller_command(
-            "thunder_01.thunderv4_locomotion",
+            controller.controller_id,
             ControllerCommand(
                 channel_id="thunder_01.control.base_twist",
                 instance_id="thunder_01",
@@ -621,10 +629,12 @@ def test_realtime_sampled_chunk_fuses_one_actuator_command_with_physics_advance(
         run_id="controlled-realtime-fused-chunk",
     )
     ready = _prepare_headless(coordinator)
+    control_plan = load_control_plan(coordinator.bundle_dir / "control.plan.json")
+    controller, = control_plan.controllers
     coordinator.start()
     assert (
         coordinator.submit_controller_command(
-            "thunder_01.thunderv4_locomotion",
+            controller.controller_id,
             ControllerCommand(
                 channel_id="thunder_01.control.base_twist",
                 instance_id="thunder_01",
@@ -725,9 +735,11 @@ def test_controller_failure_stops_physics_and_marks_session_failed(
         run_id="controller-failure",
     )
     ready = _prepare_headless(coordinator)
+    control_plan = load_control_plan(coordinator.bundle_dir / "control.plan.json")
+    controller, = control_plan.controllers
     coordinator.start()
     coordinator.submit_controller_command(
-        "thunder_01.thunderv4_locomotion",
+        controller.controller_id,
         ControllerCommand(
             channel_id="thunder_01.control.base_twist",
             instance_id="thunder_01",

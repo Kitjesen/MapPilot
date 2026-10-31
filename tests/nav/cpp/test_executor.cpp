@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -10,6 +11,7 @@
 
 #include "collision_bitmap.hpp"
 #include "navigation/executor.hpp"
+#include "planning/local/scan/grid.hpp"
 #include "trajectory/spline.hpp"
 
 namespace {
@@ -17,7 +19,7 @@ namespace {
 lingtu::nav::navigation::Executor makeConfiguredExecutor(
     lingtu::nav::navigation::ExecutorConfig config,
     nav_kernel::LocalPlannerParams planner_params, const char *path_library) {
-  nav_kernel::local::Planner planner(planner_params);
+  nav_kernel::LocalPlanner planner(planner_params);
   EXPECT_TRUE(planner.configure(path_library));
   return lingtu::nav::navigation::Executor(std::move(config), std::move(planner));
 }
@@ -75,9 +77,11 @@ lingtu::nav::navigation::Executor makeCmuTeleopAvoidLoop(
 lingtu::nav::navigation::Executor makeScanExecutor(double corridor_lookahead_m = 3.0,
                                                    double vehicle_length_m = 0.6,
                                                    int recovery_max_attempts = 3,
-                                                   double recovery_blocked_interval_s = 2.0) {
+                                                   double recovery_blocked_interval_s = 2.0,
+                                                   lingtu::nav::navigation::PlanningFrame frame =
+                                                       lingtu::nav::navigation::PlanningFrame::Map) {
   lingtu::nav::navigation::ExecutorConfig config;
-  config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
+  config.planning_frame = frame;
   nav_kernel::LocalPlannerParams planner;
   config.corridor_lookahead_m = corridor_lookahead_m;
   config.max_speed = 0.5;
@@ -221,14 +225,6 @@ void setScanCollision(lingtu::nav::navigation::ExecutionObservation &observation
   observation.collision.live = previous.live;
 }
 
-void expectObservationWaitStopped(const lingtu::nav::navigation::ExecutionOutput &out) {
-  EXPECT_EQ(out.reason, "recovery_observation_wait");
-  EXPECT_EQ(out.recovery_reason, "recovery_observation_wait");
-  EXPECT_TRUE(out.near_field_stop);
-  EXPECT_DOUBLE_EQ(out.cmd_vel.vx, 0.0);
-  EXPECT_DOUBLE_EQ(out.cmd_vel.vy, 0.0);
-  EXPECT_DOUBLE_EQ(out.cmd_vel.wz, 0.0);
-}
 nav_kernel::Pose pose(double x, double y, double z, double yaw) {
   nav_kernel::Pose p;
   p.position = {x, y, z};
@@ -294,7 +290,9 @@ lingtu::nav::navigation::ExecutionOutput awaitScanOutput(Tick tick) {
           output.reason == "scan_trajectory_expired" ||
           output.reason == "scan_init" || output.reason == "scan_wait_target" ||
           output.reason == "scan_generate_trajectory" || output.reason == "scan_replan_trajectory" ||
-          output.reason == "teleop_assist_pending")) {
+          output.reason == "teleop_assist_pending" ||
+          (output.reason == "local_blocked" &&
+           output.local_planner_debug.searchReason == "scan_initialization_failed"))) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
     output = tick();
   }
@@ -364,6 +362,54 @@ TEST(Executor, SuspendAutonomyRetainsGoalAndResetsStallTiming) {
   EXPECT_EQ(resumed.recovery_state, 0)
       << "a pause must not carry stale stall/recovery timing into resume";
   EXPECT_FALSE(resumed.recovery_exhausted);
+}
+
+TEST(Executor, ExplicitResumeReconnectsEarlierThreeDimensionalRouteAfterManualMovement) {
+  auto loop = makeLoop(false, 1.0);
+  loop.setRoute(route({
+      {0.0, 0.0, 0.30},
+      {4.0, 0.0, 0.30},
+      {4.0, 1.0, 0.60},
+      {4.0, 0.0, 0.90},
+      {0.0, 0.0, 0.90},
+      {-1.0, 0.0, 0.90},
+  }));
+  (void)loop.tick(routeInput(pose(0.0, 0.0, 0.50, 0.0), nullptr, 0, 1.0));
+  const auto upper = loop.tick(routeInput(pose(2.0, 0.0, 1.10, 0.0), nullptr, 0, 1.1));
+  EXPECT_NEAR(upper.target.z, 1.10, 1e-6);
+
+  // Normal tracking remains monotonic until the operator explicitly resumes.
+  const auto old_progress =
+      loop.tick(routeInput(pose(0.5, 0.2, 0.65, 0.0), nullptr, 0, 1.2));
+  EXPECT_NEAR(old_progress.target.z, 1.10, 1e-6);
+  loop.resumeRoute();
+  ASSERT_TRUE(loop.hasRoute());
+  const auto resumed =
+      loop.tick(routeInput(pose(0.5, 0.2, 0.65, 0.0), nullptr, 0, 10.0));
+  EXPECT_NEAR(resumed.target.x, 1.5, 1e-6);
+  EXPECT_NEAR(resumed.target.y, 0.0, 1e-6);
+  EXPECT_NEAR(resumed.target.z, 0.65 + (0.50 - 0.65) / 3.5, 1e-6)
+      << "the measured-height connector must return toward the original planned body height";
+  EXPECT_FALSE(resumed.goal_reached);
+}
+
+TEST(Executor, ExplicitResumeRetainsGoalYawToleranceAndSpeed) {
+  auto loop = makeLoop(false, 1.0);
+  auto retained = route({{0.0, 0.0, 0.0}, {5.0, 0.0, 0.0}}, 1.0, 0.05, 0.03);
+  retained.maxSpeedMps = 0.2;
+  loop.setRoute(std::move(retained));
+  (void)loop.tick(routeInput(pose(3.0, 0.0, 0.0, 0.0), nullptr, 0, 1.0));
+  loop.resumeRoute();
+  EXPECT_DOUBLE_EQ(loop.activeMaxSpeedMps(), 0.2);
+  const auto near = loop.tick(routeInput(pose(4.8, 0.0, 0.0, 0.0), nullptr, 0, 2.0));
+  EXPECT_FALSE(near.goal_reached);
+  const auto at_wrong_yaw =
+      loop.tick(routeInput(pose(5.0, 0.0, 0.0, 0.0), nullptr, 0, 2.1));
+  EXPECT_EQ(at_wrong_yaw.reason, "aligning_goal_yaw");
+  EXPECT_FALSE(at_wrong_yaw.goal_reached);
+  const auto arrived = settledGoal(
+      loop, routeInput(pose(5.0, 0.0, 0.0, 1.0), nullptr, 0, 3.0));
+  EXPECT_TRUE(arrived.goal_reached);
 }
 
 TEST(Executor, StopsWhenGoalReached) {
@@ -462,6 +508,172 @@ TEST(Executor, TightGoalKeepsFollowerMovingOutsideArrivalRadius) {
       << " path_end=" << (out.local_path_body.empty() ? -1.0 : out.local_path_body.back().x);
 }
 
+TEST(Executor, RequestedGoalPreventsAdjustedEndpointAndArrivalToleranceFromAdding) {
+  auto loop = makeScanExecutor();
+  auto target = route({{0.0, 0.0, 0.0}, {0.85, 0.0, 0.0}}, std::nullopt, 0.15);
+  target.requestedGoal = nav_kernel::Vec3{1.0, 0.0, 0.0};
+  loop.setRoute(target);
+  auto input = routeInput(pose(0.70, 0.0, 0.0, 0.0), nullptr, 0, 1.0,
+                          {}, emptyScanObservation(1.0));
+  EXPECT_FALSE(settledGoal(loop, input).goal_reached);
+  input.mapBody.position.x = input.odomBody.position.x = 0.86;
+  input.timestampS = 2.0;
+  EXPECT_TRUE(settledGoal(loop, input).goal_reached);
+
+  target.points.back().x = 0.90;
+  loop.setRoute(target);
+  input.mapBody.position.x = input.odomBody.position.x = 0.76;
+  input.timestampS = 3.0;
+  EXPECT_FALSE(settledGoal(loop, input).goal_reached) << "replacement routes keep the requested goal";
+  input.mapBody.position.x = input.odomBody.position.x = 0.86;
+  input.timestampS = 4.0;
+  EXPECT_TRUE(settledGoal(loop, input).goal_reached);
+
+  loop.setRoute(route({{0.0, 0.0, 0.0}, {0.5, 0.0, 0.0}}, std::nullopt, 0.1));
+  input.mapBody.position.x = input.odomBody.position.x = 0.5;
+  input.timestampS = 5.0;
+  EXPECT_TRUE(settledGoal(loop, input).goal_reached) << "ordinary routes do not inherit a previous task goal";
+}
+
+TEST(Executor, RequestedGoalKeepsAbsoluteHeightAndFinalYaw) {
+  auto loop = makeScanExecutor();
+  auto target = route({{0.0, 0.0, 0.0}, {0.90, 0.0, 0.0}}, 0.6, 0.15);
+  target.requestedGoal = nav_kernel::Vec3{1.0, 0.0, 0.0};
+  loop.setRoute(target);
+  auto input = routeInput(pose(0.90, 0.0, 0.50, 0.6), nullptr, 0, 1.0,
+                          {}, emptyScanObservation(1.0));
+  EXPECT_FALSE(settledGoal(loop, input).goal_reached) << "route calibration must not move the absolute task goal";
+  loop.setRoute(target);
+  input.mapBody = input.odomBody = pose(0.90, 0.0, 0.0, 0.0);
+  input.timestampS = 2.0;
+  input.observation = emptyScanObservation(2.0);
+  const auto aligning = loop.tick(input);
+  EXPECT_FALSE(aligning.goal_reached);
+  EXPECT_EQ(aligning.reason, "aligning_goal_yaw");
+  EXPECT_GT(aligning.cmd_vel.wz, 0.0);
+  input.mapBody.yaw = input.odomBody.yaw = 0.6;
+  input.timestampS = 3.0;
+  EXPECT_TRUE(settledGoal(loop, input).goal_reached);
+}
+
+TEST(Executor, ScanFeedbackEntersRequestedGoalRegionWithAdjustedEndpoint) {
+  for (const double endpoint : {0.85, 0.90, 1.0}) {
+    SCOPED_TRACE(endpoint);
+    auto loop = makeScanExecutor();
+    auto target = route({{0.0, 0.0, 0.0}, {endpoint, 0.0, 0.0}}, std::nullopt, 0.15);
+    target.requestedGoal = nav_kernel::Vec3{1.0, 0.0, 0.0};
+    loop.setRoute(target);
+    double x = 0.70;
+    nav_kernel::Twist velocity{};
+    bool reached = false;
+    for (int tick = 0; tick < 600 && !reached; ++tick) {
+      const double time = 1.0 + tick * 0.05;
+      auto observed = emptyScanObservation(time);
+      observed.body_velocity_valid = true;
+      observed.body_linear_velocity = {velocity.vx, velocity.vy, 0.0};
+      auto input = routeInput(pose(x, 0.0, 0.0, 0.0), nullptr, 0, time, {}, observed);
+      const auto out = awaitScanOutput([&] { return loop.tick(input); });
+      if (out.goal_reached) {
+        EXPECT_LE(std::abs(1.0 - x), 0.15);
+        reached = true;
+      }
+      velocity = out.cmd_vel;
+      x += velocity.vx * 0.05;
+    }
+    EXPECT_TRUE(reached) << "software feedback stalled at x=" << x;
+  }
+}
+
+TEST(Executor, ScanArrivalDoesNotCutOffTheMovingTerminalSpline) {
+  using namespace lingtu::nav::navigation;
+  for (int mode = 0; mode < 3; ++mode)
+    for (const double tolerance : {.15, .6}) {
+    SCOPED_TRACE(tolerance);
+    SCOPED_TRACE(mode);
+    const auto final_yaw = mode ? std::optional<double>{.4} : std::nullopt;
+    ExecutorConfig config;
+    config.max_speed = config.follower.maxSpeed = 1.0;
+    config.follower.maxAccel = 2.0;
+    config.follower.nominalDt = .02;
+    config.recovery.max_attempts = 0;
+    nav_kernel::LocalPlannerParams params;
+    params.backend = nav_kernel::LocalPlannerBackend::Scan;
+    params.scan.voxelResolution = .1;
+    auto executor = makeConfiguredExecutor(config, params, "");
+    auto guide = route({{0, 0, .5}, {2, 0, .5}}, final_yaw, tolerance);
+    if (mode == 2) {
+      auto model = std::make_shared<lingtu::nav::collision::Body>();
+      model->margin_m = 0;
+      lingtu::nav::collision::Part part;
+      part.half_size = {.2, .1, .1};
+      model->parts.push_back(part);
+      guide.body = model;
+      guide.posePoints = {{{0, 0, .5}, 0}, {{2, 0, .5}, 0}, {{2, 0, .5}, .4}};
+    }
+    executor.setRoute(guide);
+    nav_kernel::Pose body = pose(0, 0, .5, 0);
+    nav_kernel::Twist applied;
+    bool crossed_moving = false;
+    bool arrived = false;
+    for (int tick = 0; tick < 600; ++tick) {
+      const double time = 1 + .02 * tick;
+      auto observed = emptyScanObservation(time);
+      observed.collision.measuredOccupiedStorage =
+          std::make_shared<const std::vector<std::uint8_t>>(observed.collision.inflatedBytes, 0U);
+      observed.collision.knownFreeStorage =
+          std::make_shared<const std::vector<std::uint8_t>>(observed.collision.inflatedBytes, 255U);
+      observed.clock_mode = nav_kernel::PlanClockMode::External;
+      observed.body_velocity_valid = true;
+      observed.body_linear_velocity = {applied.vx, applied.vy, 0};
+      observed.body_yaw_rate = applied.wz;
+      const auto output = awaitScanOutput([&] {
+        return executor.tick(routeInput(body, nullptr, 0, time, {}, observed));
+      });
+      const double distance = std::abs(2 - body.position.x);
+      if (distance <= tolerance && std::hypot(applied.vx, applied.vy) >
+                                       config.follower.maxAccel * .02) {
+        crossed_moving = true;
+        EXPECT_TRUE(output.tracking.active) << output.reason;
+        EXPECT_NE(output.reason, "settling_at_goal");
+        EXPECT_GE(output.cmd_vel.vx, applied.vx - config.follower.maxAccel * .02 - 1e-8)
+            << output.reason;
+      }
+      applied = output.cmd_vel;
+      executor.commitAppliedCommand(applied);
+      body.position.x += applied.vx * .02;
+      body.position.y += applied.vy * .02;
+      body.yaw += applied.wz * .02;
+      if (output.goal_reached) {
+        arrived = true;
+        EXPECT_LE(std::hypot(2 - body.position.x, body.position.y), tolerance);
+        if (final_yaw) EXPECT_NEAR(body.yaw, *final_yaw, config.goal_yaw_tolerance_rad);
+        break;
+      }
+    }
+    EXPECT_TRUE(crossed_moving);
+    EXPECT_TRUE(arrived) << "final x=" << body.position.x;
+  }
+}
+
+TEST(Executor, SharedSupportReachesTheAsynchronousScanWorker) {
+  auto loop=makeScanExecutor();
+  auto calls=std::make_shared<std::atomic<int>>(0);
+  auto target=route({{0,0,.35},{2,0,.35}},std::nullopt,.15);
+  target.requestedGoal=nav_kernel::Vec3{2,0,.35};
+  target.supportHeightM=.35;
+  target.supportHeightToleranceM=.05;
+  target.supportSurface=[calls](const lingtu::nav::collision::Vec3 &ground,
+                                double tolerance) -> std::optional<double> {
+    ++*calls;
+    return std::abs(ground.z)<=tolerance ? std::optional<double>{0.0} : std::nullopt;
+  };
+  loop.setRoute(std::move(target));
+  auto input=routeInput(pose(0,0,.35,0),nullptr,0,1.0,{},emptyScanObservation(1.0));
+  const auto output=awaitScanOutput([&] { return loop.tick(input); });
+  EXPECT_TRUE(output.path_found)<<output.reason;
+  EXPECT_GT(calls->load(),0) << "the async request lost the shared support query";
+}
+
 TEST(Executor, ScanUsesSeparatePlanarAndHeightGoalTolerances) {
   auto loop = makeScanExecutor();
   loop.setRoute(route(
@@ -479,7 +691,7 @@ TEST(Executor, ScanUsesSeparatePlanarAndHeightGoalTolerances) {
   EXPECT_EQ(reached.reason, "goal_reached");
 }
 
-TEST(Executor, FreshDynamicPredictionLetsScanPlanWithoutExecutorWait) {
+TEST(Executor, ScanHandlesFreshDynamicPrediction) {
   auto executor = makeScanExecutor(3.0, .6, 3, .1);
   executor.setRoute({{{0, 0, .5}, {3, 0, .5}}});
   const nav_kernel::PredictedObstacle crossing{{1.0, -.2, .5},
@@ -607,6 +819,36 @@ TEST(Executor, TeleopIntentPlansWithoutGlobalPathAndHonorsRequestedSpeed) {
   EXPECT_GT(out.cmd_vel.vx, 0.0);
   EXPECT_LE(std::hypot(out.cmd_vel.vx, out.cmd_vel.vy), 0.25 + 1e-6);
   EXPECT_EQ(out.recovery_state, 0);
+}
+
+TEST(Executor, ScanTeleopDiagonalUsesAxisCapacityWithinFiniteTotalSpeed) {
+  for (const double total_limit : {std::sqrt(2.0), 1.2, 0.6}) {
+    for (const nav_kernel::Twist intent :
+         {nav_kernel::Twist{1, 1, 0}, nav_kernel::Twist{1, 0, 0}}) {
+      SCOPED_TRACE("total=" + std::to_string(total_limit) +
+                   " vy=" + std::to_string(intent.vy));
+      lingtu::nav::navigation::ExecutorConfig config;
+      config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
+      config.max_speed = total_limit;
+      config.follower.spline.maxVx = 1.0;
+      config.follower.spline.maxVy = 1.0;
+      nav_kernel::LocalPlannerParams planner;
+      planner.backend = nav_kernel::LocalPlannerBackend::Scan;
+      planner.scan.maxVelocity = std::sqrt(2.0);
+      planner.scan.voxelResolution = 0.1;
+      auto executor = makeConfiguredExecutor(config, planner, "");
+      auto observation = emptyScanObservation(100.0);
+      observation.clock_mode = nav_kernel::PlanClockMode::External;
+      const auto output = awaitScanOutput([&] {
+        return executor.tick(intentInput(pose(0, 0, 0.4, 0), intent, nullptr, 0,
+                                         100.0, {}, observation));
+      });
+      ASSERT_TRUE(output.tracking.active) << output.reason;
+      const double expected = std::min(total_limit, std::hypot(intent.vx, intent.vy));
+      EXPECT_NEAR(output.tracking.speedLimitMps, expected, 1e-9);
+      EXPECT_LE(output.tracking.speedLimitMps, total_limit + 1e-9);
+    }
+  }
 }
 
 TEST(Executor, ScanTeleopIntentPublishesTelemetryAndTracksSpline) {
@@ -774,6 +1016,352 @@ void checkScanHeldLowSpeedIntent(double requested_speed) {
   EXPECT_DOUBLE_EQ(stopped.cmd_vel.vy, 0.0);
 }
 
+TEST(Executor, ScanOneMeterPerSecondIntentResponseWithIdealFeedback) {
+  struct ResponseCase {
+    nav_kernel::Twist intent;
+    double commandAcceleration;
+    double plannerAcceleration;
+    const char *name;
+  };
+  for (const auto &scenario_case : std::vector<ResponseCase>{
+           {{1, 0, 0}, 1.0, 1.0, "baseline_forward_a1"},
+           {{1, 1, 0}, 1.0, 1.0, "baseline_diagonal_a1"},
+           {{1, 0, 0}, 2.0, 2.0, "current_forward_a2"},
+           {{1, 1, 0}, 2.0, 2.0, "current_diagonal_a2"}}) {
+    const auto intent = scenario_case.intent;
+    const char *scenario = scenario_case.name;
+    SCOPED_TRACE(scenario);
+    const double requested_norm = std::hypot(intent.vx, intent.vy);
+    lingtu::nav::navigation::ExecutorConfig config;
+    config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
+    config.max_speed = std::sqrt(2.0);
+    config.teleop_intent_horizon_m = 3.5;
+    config.follower.maxAccel = scenario_case.commandAcceleration;
+    config.follower.maxYawAccelRadS2 = 2.0;
+    config.follower.nominalDt = 0.01;
+    config.follower.spline.maxVx = 1.0;
+    config.follower.spline.maxVy = 1.0;
+    nav_kernel::LocalPlannerParams params;
+    params.backend = nav_kernel::LocalPlannerBackend::Scan;
+    params.scan.maxVelocity = std::sqrt(2.0);
+    params.scan.maxAcceleration = scenario_case.plannerAcceleration;
+    params.scan.planningHorizon = 3.5;
+    params.scan.voxelResolution = 0.1;
+    auto executor = makeConfiguredExecutor(config, params, "");
+    auto body = pose(0, 0, 0.4, 0);
+    nav_kernel::Twist measured;
+    double now = 100.0;
+    const auto tick = [&](nav_kernel::Twist request) {
+      auto observation = emptyScanObservation(now);
+      observation.clock_mode = nav_kernel::PlanClockMode::External;
+      observation.body_velocity_valid = true;
+      observation.body_linear_velocity = {measured.vx, measured.vy, 0};
+      observation.body_yaw_rate = measured.wz;
+      return executor.tick(intentInput(body, request, nullptr, 0, now, {}, observation));
+    };
+    const auto initializing = std::chrono::steady_clock::now();
+    auto output = awaitScanOutput([&] { return tick(intent); });
+    const double initialization_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - initializing).count();
+    ASSERT_TRUE(output.tracking.active) << output.reason;
+    std::printf("SCAN_RESPONSE scenario=%s requested_norm=%.9f command_acceleration=%.3f "
+                "planner_acceleration=%.3f initialization_ms=%.3f "
+                "initial_duration_s=%.6f\n", scenario, requested_norm,
+                config.follower.maxAccel, params.scan.maxAcceleration,
+                initialization_ms, output.tracking.durationS);
+    double first_ninety_s = -1.0;
+    double first_ninety_distance_m = -1.0;
+    double distance = 0.0;
+    double max_speed = 0.0;
+    double max_lateral_speed = 0.0;
+    double max_lateral_distance = 0.0;
+    double min_post_cruise_progress_speed = std::numeric_limits<double>::infinity();
+    int frozen_frames = 0;
+    int no_trajectory_frames = 0;
+    auto previous_trajectory_id = output.tracking.trajectoryId;
+    const auto started = std::chrono::steady_clock::now();
+    for (int step = 1; step <= 300; ++step) {
+      constexpr double dt = 0.01;
+      measured = output.cmd_vel;
+      const double c = std::cos(body.yaw);
+      const double s = std::sin(body.yaw);
+      body.position.x += (c * measured.vx - s * measured.vy) * dt;
+      body.position.y += (s * measured.vx + c * measured.vy) * dt;
+      body.yaw += measured.wz * dt;
+      distance += std::hypot(measured.vx, measured.vy) * dt;
+      now = 100.0 + step * dt;
+      std::this_thread::sleep_until(started + std::chrono::milliseconds(step * 10));
+      output = tick(intent);
+      const double speed = std::hypot(output.cmd_vel.vx, output.cmd_vel.vy);
+      max_speed = std::max(max_speed, speed);
+      const double lateral_speed = std::abs(
+          output.cmd_vel.vx * intent.vy - output.cmd_vel.vy * intent.vx) / requested_norm;
+      max_lateral_speed = std::max(max_lateral_speed, lateral_speed);
+      max_lateral_distance = std::max(max_lateral_distance, std::abs(
+          body.position.x * intent.vy - body.position.y * intent.vx) / requested_norm);
+      if (first_ninety_s < 0.0 && speed >= 0.9 * requested_norm) {
+        first_ninety_s = step * dt;
+        first_ninety_distance_m = distance;
+      }
+      frozen_frames += output.trajectory_frozen ? 1 : 0;
+      no_trajectory_frames += output.tracking.active ? 0 : 1;
+      if (output.tracking.trajectoryId != previous_trajectory_id) {
+        previous_trajectory_id = output.tracking.trajectoryId;
+        const auto &points = output.local_path_map;
+        std::printf("SCAN_RESPONSE_REPLAN scenario=%s elapsed_s=%.2f trajectory_id=%lld "
+                    "body_x=%.9f body_y=%.9f duration_s=%.9f execution_s=%.9f position_error=%.9f "
+                    "first_x=%.9f first_y=%.9f next_x=%.9f next_y=%.9f last_x=%.9f last_y=%.9f\n",
+                    scenario, step * dt, static_cast<long long>(output.tracking.trajectoryId),
+                    body.position.x, body.position.y, output.tracking.durationS,
+                    output.tracking.executionTimeS, output.tracking.positionErrorM,
+                    points.empty() ? 0.0 : points.front().x,
+                    points.empty() ? 0.0 : points.front().y,
+                    points.size() < 2 ? 0.0 : points[1].x,
+                    points.size() < 2 ? 0.0 : points[1].y,
+                    points.empty() ? 0.0 : points.back().x,
+                    points.empty() ? 0.0 : points.back().y);
+      }
+      const double progress_speed =
+          (output.cmd_vel.vx * intent.vx + output.cmd_vel.vy * intent.vy) / requested_norm;
+      EXPECT_GE(progress_speed, -1e-6) << "empty-world held input reversed at step=" << step;
+      if (first_ninety_s >= 0.0) {
+        min_post_cruise_progress_speed = std::min(min_post_cruise_progress_speed, progress_speed);
+        EXPECT_GE(progress_speed, 0.5 * requested_norm)
+            << "empty-world held input collapsed after reaching cruise at step=" << step;
+      }
+      EXPECT_LE(speed, requested_norm + 1e-6) << "step=" << step;
+      EXPECT_LE(std::abs(output.cmd_vel.vx), 1.0 + 1e-6);
+      EXPECT_LE(std::abs(output.cmd_vel.vy), 1.0 + 1e-6);
+      if (step == 50 || step == 100 || step == 150 || step == 200 || step == 300) {
+        std::printf("SCAN_RESPONSE scenario=%s elapsed_s=%.2f vx=%.9f vy=%.9f "
+                    "speed=%.9f distance_m=%.9f trajectory_id=%lld frozen=%d active=%d reason=%s\n",
+                    scenario, step * dt, output.cmd_vel.vx, output.cmd_vel.vy,
+                    speed, distance, static_cast<long long>(output.tracking.trajectoryId),
+                    output.trajectory_frozen ? 1 : 0, output.tracking.active ? 1 : 0,
+                    output.reason.c_str());
+      }
+    }
+    std::printf("SCAN_RESPONSE_SUMMARY scenario=%s first_90pct_s=%.3f first_90pct_distance_m=%.9f max_speed=%.9f "
+                "distance_m=%.9f min_post_cruise_progress_speed=%.9f max_lateral_speed=%.9f "
+                "max_lateral_distance=%.9f frozen_frames=%d no_trajectory_frames=%d\n",
+                scenario, first_ninety_s, first_ninety_distance_m, max_speed, distance,
+                min_post_cruise_progress_speed, max_lateral_speed, max_lateral_distance,
+                frozen_frames, no_trajectory_frames);
+    const std::string prefix = std::string(scenario) + "_";
+    testing::Test::RecordProperty(prefix + "first_90pct_s", std::to_string(first_ninety_s));
+    testing::Test::RecordProperty(prefix + "first_90pct_distance_m", std::to_string(first_ninety_distance_m));
+    testing::Test::RecordProperty(prefix + "distance_m", std::to_string(distance));
+    testing::Test::RecordProperty(prefix + "min_post_cruise_progress_speed",
+                                  std::to_string(min_post_cruise_progress_speed));
+    testing::Test::RecordProperty(prefix + "max_lateral_speed", std::to_string(max_lateral_speed));
+    testing::Test::RecordProperty(prefix + "max_lateral_distance", std::to_string(max_lateral_distance));
+    testing::Test::RecordProperty(prefix + "frozen_frames", frozen_frames);
+    testing::Test::RecordProperty(prefix + "no_trajectory_frames", no_trajectory_frames);
+    EXPECT_GE(first_ninety_s, 0.0) << "did not reach 90% within the observed three seconds";
+    EXPECT_LE(first_ninety_s, 3.0);
+    EXPECT_LE(max_lateral_speed, 1e-6)
+        << "a straight empty-world request must retain its direction after replanning";
+    EXPECT_LE(max_lateral_distance, 1e-6);
+    now += 0.01;
+    measured = output.cmd_vel;
+    const auto stopped = tick({});
+    std::printf("SCAN_RESPONSE_RELEASE scenario=%s vx=%.9f vy=%.9f wz=%.9f active=%d reason=%s\n",
+                scenario, stopped.cmd_vel.vx, stopped.cmd_vel.vy, stopped.cmd_vel.wz,
+                stopped.tracking.active ? 1 : 0, stopped.reason.c_str());
+    EXPECT_DOUBLE_EQ(stopped.cmd_vel.vx, 0.0);
+    EXPECT_DOUBLE_EQ(stopped.cmd_vel.vy, 0.0);
+    EXPECT_DOUBLE_EQ(stopped.cmd_vel.wz, 0.0);
+    EXPECT_FALSE(stopped.tracking.active);
+  }
+}
+
+namespace {
+
+struct PreviewMotionEstimate {
+  nav_kernel::Vec3 position{}, velocity{}, acceleration{};
+};
+
+// Public Executor previews are uniform-time samples. These finite differences
+// aid handoff diagnosis; exact spline derivative checks live in planner tests.
+PreviewMotionEstimate previewMotionEstimate(
+    const lingtu::nav::navigation::ExecutionOutput &output, double time) {
+  PreviewMotionEstimate estimate;
+  const auto &points = output.local_path_map;
+  if (points.size() < 3U || output.tracking.durationS <= 0.0) return estimate;
+  const double dt = output.tracking.durationS / (points.size() - 1U);
+  const double sample = std::clamp(time / dt, 0.0, static_cast<double>(points.size() - 1U));
+  const std::size_t index = std::clamp(static_cast<std::size_t>(sample),
+                                     std::size_t{1}, points.size() - 2U);
+  const double offset = sample - static_cast<double>(index);
+  const auto component = [&](double before, double center, double after,
+                             double &position, double &velocity, double &acceleration) {
+    const double first = (after - before) * 0.5;
+    const double second = after - 2.0 * center + before;
+    position = center + offset * first + 0.5 * offset * offset * second;
+    velocity = (first + offset * second) / dt;
+    acceleration = second / (dt * dt);
+  };
+  component(points[index - 1U].x, points[index].x, points[index + 1U].x,
+            estimate.position.x, estimate.velocity.x, estimate.acceleration.x);
+  component(points[index - 1U].y, points[index].y, points[index + 1U].y,
+            estimate.position.y, estimate.velocity.y, estimate.acceleration.y);
+  component(points[index - 1U].z, points[index].z, points[index + 1U].z,
+            estimate.position.z, estimate.velocity.z, estimate.acceleration.z);
+  return estimate;
+}
+
+void checkScanSustainedIntentContinuity(const char *scenario, nav_kernel::Twist initial,
+                                      nav_kernel::Twist next, bool change_direction) {
+  SCOPED_TRACE(scenario);
+  lingtu::nav::navigation::ExecutorConfig config;
+  config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
+  config.max_speed = std::sqrt(2.0);
+  config.teleop_intent_horizon_m = 3.5;
+  config.follower.maxAccel = 2.0;
+  config.follower.maxYawAccelRadS2 = 2.0;
+  config.follower.nominalDt = 0.01;
+  config.follower.spline.maxVx = 1.0;
+  config.follower.spline.maxVy = 1.0;
+  nav_kernel::LocalPlannerParams params;
+  params.backend = nav_kernel::LocalPlannerBackend::Scan;
+  params.scan.maxVelocity = std::sqrt(2.0);
+  params.scan.maxAcceleration = 2.0;
+  params.scan.planningHorizon = 3.5;
+  params.scan.voxelResolution = 0.1;
+  auto executor = makeConfiguredExecutor(config, params, "");
+  // Ten seconds of diagonal travel plus the moving intent horizon stays inside
+  // this fixture's observed collision volume.
+  lingtu::nav::tests::CollisionBitmap empty_world({-30, -30, -2}, {30, 30, 3}, 0.1);
+  auto body = pose(0, 0, 0.4, 0);
+  nav_kernel::Twist measured;
+  double now = 100.0;
+  const auto tick = [&](nav_kernel::Twist request) {
+    auto observation = emptyScanObservation(now);
+    observation.collision = empty_world.view(now);
+    observation.clock_mode = nav_kernel::PlanClockMode::External;
+    observation.body_velocity_valid = true;
+    observation.body_linear_velocity = {measured.vx, measured.vy, 0};
+    observation.body_yaw_rate = measured.wz;
+    return executor.tick(intentInput(body, request, nullptr, 0, now, {}, observation));
+  };
+  auto output = awaitScanOutput([&] { return tick(initial); });
+  ASSERT_TRUE(output.tracking.active) << output.reason;
+  constexpr double dt = 0.01;
+  double first_ninety = -1.0, distance = 0.0;
+  double steady_min = std::numeric_limits<double>::infinity(), steady_max = 0.0;
+  double steady_error_squared = 0.0, max_handoff_command_delta = 0.0;
+  double max_steady_lateral = 0.0;
+  int steady_frames = 0, frozen_frames = 0, inactive_frames = 0, handoffs = 0;
+  int below_ninetyfive_frames = 0;
+  const auto started = std::chrono::steady_clock::now();
+  for (int step = 1; step <= 1000; ++step) {
+    const double elapsed = step * dt;
+    const auto request = change_direction && step >= 500 ? next : initial;
+    const double requested_norm = std::hypot(request.vx, request.vy);
+    const auto previous = std::move(output);
+    measured = previous.cmd_vel;
+    const double c = std::cos(body.yaw), s = std::sin(body.yaw);
+    body.position.x += (c * measured.vx - s * measured.vy) * dt;
+    body.position.y += (s * measured.vx + c * measured.vy) * dt;
+    body.yaw += measured.wz * dt;
+    distance += std::hypot(measured.vx, measured.vy) * dt;
+    now = 100.0 + elapsed;
+    std::this_thread::sleep_until(started + std::chrono::milliseconds(step * 10));
+    output = tick(request);
+    const double speed = std::hypot(output.cmd_vel.vx, output.cmd_vel.vy);
+    const double progress = (output.cmd_vel.vx * request.vx + output.cmd_vel.vy * request.vy) /
+                            requested_norm;
+    if (first_ninety < 0.0 && progress >= 0.9 * requested_norm) first_ninety = elapsed;
+    frozen_frames += output.trajectory_frozen ? 1 : 0;
+    inactive_frames += output.tracking.active ? 0 : 1;
+    if (output.tracking.active && previous.tracking.active &&
+        output.tracking.trajectoryId != previous.tracking.trajectoryId) {
+      ++handoffs;
+      const auto outgoing = previewMotionEstimate(previous, previous.tracking.executionTimeS + dt);
+      const auto incoming = previewMotionEstimate(output, output.tracking.executionTimeS);
+      const auto boundary = previewMotionEstimate(output, 0.0);
+      const double command_delta = std::hypot(output.cmd_vel.vx - measured.vx,
+                                               output.cmd_vel.vy - measured.vy);
+      max_handoff_command_delta = std::max(max_handoff_command_delta, command_delta);
+      std::printf("SCAN_CONTINUITY_HANDOFF scenario=%s elapsed_s=%.3f old_id=%lld new_id=%lld "
+                  "old_time=%.6f new_time=%.6f duration=%.6f body_p=(%.9f,%.9f) "
+                  "old_cmd=(%.9f,%.9f) new_cmd=(%.9f,%.9f) command_delta=%.9f "
+                  "preview_estimated_old_p=(%.9f,%.9f) old_v=(%.9f,%.9f) old_a=(%.9f,%.9f) "
+                  "preview_estimated_new_p=(%.9f,%.9f) new_v=(%.9f,%.9f) new_a=(%.9f,%.9f) "
+                  "preview_estimated_boundary_p=(%.9f,%.9f) boundary_v=(%.9f,%.9f) boundary_a=(%.9f,%.9f)\n",
+                  scenario, elapsed, static_cast<long long>(previous.tracking.trajectoryId),
+                  static_cast<long long>(output.tracking.trajectoryId), previous.tracking.executionTimeS,
+                  output.tracking.executionTimeS, output.tracking.durationS, body.position.x, body.position.y,
+                  measured.vx, measured.vy, output.cmd_vel.vx, output.cmd_vel.vy, command_delta,
+                  outgoing.position.x, outgoing.position.y, outgoing.velocity.x, outgoing.velocity.y,
+                  outgoing.acceleration.x, outgoing.acceleration.y, incoming.position.x, incoming.position.y,
+                  incoming.velocity.x, incoming.velocity.y, incoming.acceleration.x, incoming.acceleration.y,
+                  boundary.position.x, boundary.position.y, boundary.velocity.x, boundary.velocity.y,
+                  boundary.acceleration.x, boundary.acceleration.y);
+    }
+    const bool steady = elapsed >= 3.0 && (!change_direction || elapsed < 5.0 || elapsed >= 7.0);
+    if (steady) {
+      const double ratio = progress / requested_norm;
+      steady_min = std::min(steady_min, ratio);
+      steady_max = std::max(steady_max, ratio);
+      steady_error_squared += (ratio - 1.0) * (ratio - 1.0);
+      max_steady_lateral = std::max(max_steady_lateral,
+          std::abs(output.cmd_vel.vx * request.vy - output.cmd_vel.vy * request.vx) / requested_norm);
+      ++steady_frames;
+      below_ninetyfive_frames += ratio < 0.95 ? 1 : 0;
+    }
+    EXPECT_LE(speed, requested_norm + 1e-6) << "elapsed=" << elapsed;
+    EXPECT_LE(std::abs(output.cmd_vel.vx), 1.0 + 1e-6);
+    EXPECT_LE(std::abs(output.cmd_vel.vy), 1.0 + 1e-6);
+    if (step % 10 == 0 || step == 499 || step == 500 || step == 501) {
+      std::printf("SCAN_CONTINUITY_SAMPLE scenario=%s elapsed_s=%.3f request=(%.6f,%.6f) "
+                  "cmd=(%.9f,%.9f) progress=%.9f speed=%.9f trajectory_id=%lld "
+                  "execution_s=%.6f frozen=%d active=%d reason=%s\n", scenario, elapsed,
+                  request.vx, request.vy, output.cmd_vel.vx, output.cmd_vel.vy, progress, speed,
+                  static_cast<long long>(output.tracking.trajectoryId), output.tracking.executionTimeS,
+                  output.trajectory_frozen ? 1 : 0, output.tracking.active ? 1 : 0, output.reason.c_str());
+    }
+  }
+  const double rms = std::sqrt(steady_error_squared / std::max(1, steady_frames));
+  std::printf("SCAN_CONTINUITY_SUMMARY scenario=%s duration_s=10.000 first_90pct_s=%.3f "
+              "distance_m=%.9f steady_min_ratio=%.9f steady_max_ratio=%.9f "
+              "steady_peak_to_peak_ratio=%.9f steady_rms_error_ratio=%.9f "
+              "below_95pct_frames=%d steady_frames=%d max_steady_lateral=%.9f "
+              "handoffs=%d max_handoff_command_delta=%.9f frozen_frames=%d inactive_frames=%d\n",
+              scenario, first_ninety, distance, steady_min, steady_max, steady_max - steady_min, rms,
+              below_ninetyfive_frames, steady_frames, max_steady_lateral, handoffs,
+              max_handoff_command_delta, frozen_frames, inactive_frames);
+  EXPECT_GE(first_ninety, 0.0);
+  EXPECT_LE(first_ninety, 3.0);
+  EXPECT_GT(handoffs, 1) << "the fixture must exercise repeated trajectory replacement";
+  EXPECT_GE(steady_min, 0.95) << "held empty-world intent must not brake periodically after settling";
+  EXPECT_EQ(frozen_frames, 0);
+  if (!change_direction) {
+    EXPECT_EQ(inactive_frames, 0);
+    EXPECT_LE(max_steady_lateral, 1e-6);
+  }
+  now += dt;
+  measured = output.cmd_vel;
+  const auto stopped = tick({});
+  EXPECT_DOUBLE_EQ(stopped.cmd_vel.vx, 0.0);
+  EXPECT_DOUBLE_EQ(stopped.cmd_vel.vy, 0.0);
+  EXPECT_DOUBLE_EQ(stopped.cmd_vel.wz, 0.0);
+  EXPECT_FALSE(stopped.tracking.active);
+}
+
+}  // namespace
+
+TEST(Executor, ScanSustainedIntentDoesNotBrakeAtReplansWithIdealFeedback) {
+  checkScanSustainedIntentContinuity("forward", {1, 0, 0}, {}, false);
+  checkScanSustainedIntentContinuity("diagonal", {1, 1, 0}, {}, false);
+}
+
+TEST(Executor, ScanDirectionChangeRecoversCruiseAcrossReplansWithIdealFeedback) {
+  const double diagonal = std::sqrt(0.5);
+  checkScanSustainedIntentContinuity("turn_left", {1, 0, 0}, {diagonal, diagonal, 0}, true);
+  checkScanSustainedIntentContinuity("turn_right", {1, 0, 0}, {diagonal, -diagonal, 0}, true);
+}
+
 TEST(Executor, ScanHeldLowSpeedIntentAcceleratesWithoutRepeatedRestart) {
   checkScanHeldLowSpeedIntent(0.2);
 }
@@ -801,7 +1389,7 @@ TEST(Executor, ScanMotionIntentPublishedSplineHonorsExactDerivativeLimits) {
     params.scan.maxAcceleration = 0.5;
     params.scan.planningHorizon = 3.5;
     params.scan.voxelResolution = 0.10;
-    nav_kernel::local::Planner planner(params);
+    nav_kernel::LocalPlanner planner(params);
     ASSERT_TRUE(planner.configure(""));
     const std::vector<nav_kernel::Vec3> route{
         {0.0, 0.0, 0.4},
@@ -1187,6 +1775,201 @@ TEST(Executor, ScanTeleopHonorsExplicitYawWhileTranslating) {
   EXPECT_NEAR(out.cmd_vel.wz, -0.3, 1e-6);
 }
 
+TEST(Executor, ScanExplicitYawRateResumesTranslationAfterHeadingHold) {
+  auto executor = makeScanExecutor();
+  auto body = pose(0, 0, 0.4, 0);
+  nav_kernel::Twist request{0.25, 0, 0};
+  nav_kernel::Twist measured;
+  double now = 100.0;
+  const auto tick = [&] {
+    auto observation = emptyScanObservation(now);
+    observation.clock_mode = nav_kernel::PlanClockMode::External;
+    observation.body_velocity_valid = true;
+    observation.body_linear_velocity = {measured.vx, measured.vy, 0};
+    observation.body_yaw_rate = measured.wz;
+    return executor.tick(intentInput(body, request, nullptr, 0, now, {}, observation));
+  };
+  auto output = awaitScanOutput(tick);
+  ASSERT_TRUE(output.tracking.active) << output.reason;
+
+  // Keep the same forward intent/reference, but observe a real heading error.
+  body.yaw = -1.0;
+  now += 0.05;
+  output = tick();
+  ASSERT_TRUE(output.trajectory_frozen) << output.reason;
+  ASSERT_GT(std::abs(output.tracking.headingErrorRad), 0.8);
+  ASSERT_DOUBLE_EQ(output.cmd_vel.vx, 0.0);
+  ASSERT_DOUBLE_EQ(output.cmd_vel.vy, 0.0);
+
+  // W+Q is an angular-rate request, not a perpetually moving yaw target.
+  // The former yaw+wz/yawGain target kept its error at 2/3 rad, so an
+  // alignment latch requiring <0.35 rad could never release translation.
+  request.wz = 1.0;
+  int translating_frames = 0;
+  const auto started = std::chrono::steady_clock::now();
+  for (int step = 1; step <= 100; ++step) {
+    constexpr double dt = 0.01;
+    measured = output.cmd_vel;
+    const double c = std::cos(body.yaw);
+    const double s = std::sin(body.yaw);
+    body.position.x += (c * measured.vx - s * measured.vy) * dt;
+    body.position.y += (s * measured.vx + c * measured.vy) * dt;
+    body.yaw += measured.wz * dt;
+    now = 100.05 + step * dt;
+    std::this_thread::sleep_until(started + std::chrono::milliseconds(step * 10));
+    output = tick();
+    if (std::hypot(output.cmd_vel.vx, output.cmd_vel.vy) > 1e-4)
+      ++translating_frames;
+    EXPECT_LE(std::hypot(output.cmd_vel.vx, output.cmd_vel.vy), 0.25 + 1e-6);
+    EXPECT_LE(std::abs(output.cmd_vel.wz), 1.0 + 1e-6);
+  }
+  EXPECT_GT(translating_frames, 50);
+  ASSERT_TRUE(output.tracking.active) << output.reason;
+  EXPECT_FALSE(output.trajectory_frozen) << output.reason;
+  EXPECT_GT(output.cmd_vel.vx, 0.0);
+  EXPECT_GT(output.cmd_vel.wz, 0.0);
+}
+
+TEST(Executor, ScanCruiseHeadingIgnoresMeasuredProjectionConnector) {
+  using namespace lingtu::nav::navigation;
+  for (const auto frame : {PlanningFrame::Map, PlanningFrame::Odom}) {
+    SCOPED_TRACE(static_cast<int>(frame));
+    ExecutorConfig config;
+    config.planning_frame = frame;
+    auto model = std::make_shared<lingtu::nav::collision::Body>();
+    model->margin_m = 0;
+    lingtu::nav::collision::Part part;
+    part.half_size = {.3,.1,.1};
+    model->parts.push_back(part);
+    config.body = model;
+    nav_kernel::LocalPlannerParams params;
+    params.backend = nav_kernel::LocalPlannerBackend::Scan;
+    params.checkObstacle = false;
+    params.scan.voxelResolution = .1;
+    auto executor = makeConfiguredExecutor(config,params,"");
+    executor.setRoute(route({{0,0,.5},{.1,0,.5},{1,0,.5},{3,0,.5}}));
+    auto input = routeInput(pose(0,-.00016368,.5,0),nullptr,0,1,{},emptyScanObservation(1));
+    input.observation.collision.measuredOccupiedStorage =
+        std::make_shared<const std::vector<std::uint8_t>>(
+            input.observation.collision.inflatedBytes,0U);
+    input.observation.collision.knownFreeStorage =
+        std::make_shared<const std::vector<std::uint8_t>>(
+            input.observation.collision.inflatedBytes,255U);
+    input.mapFromOdom = {{1,-2,.15},-.7};
+    input.odomBody.position = input.mapFromOdom.odomPointFromMap(input.mapBody.position);
+    input.odomBody.yaw = -input.mapFromOdom.yaw;
+    const auto output = awaitScanOutput([&] { return executor.tick(input); });
+    ASSERT_TRUE(output.path_found) << output.reason << ":" << output.local_planner_debug.searchReason;
+    ASSERT_TRUE(output.tracking.active) << output.reason;
+    EXPECT_LT(std::abs(output.tracking.headingErrorRad),.4);
+    EXPECT_FALSE(output.tracking.executionFrozen);
+  }
+}
+
+TEST(Executor, ScanOrdinaryBodyGuideUsesSplineHeadingAcrossGridCorners) {
+  using namespace lingtu::nav::navigation;
+  ExecutorConfig config;
+  config.planning_frame = PlanningFrame::Map;
+  auto model = std::make_shared<lingtu::nav::collision::Body>();
+  model->margin_m = 0;
+  lingtu::nav::collision::Part part;
+  part.half_size = {.3,.1,.1};
+  model->parts.push_back(part);
+  nav_kernel::LocalPlannerParams params;
+  params.backend = nav_kernel::LocalPlannerBackend::Scan;
+  params.checkObstacle = false;
+  params.scan.voxelResolution = .1;
+  auto tangent = makeConfiguredExecutor(config,params,"");
+  config.body = model;
+  auto compound = makeConfiguredExecutor(config,params,"");
+  std::vector<nav_kernel::Vec3> points{{0,0,.5}};
+  for (int i = 0; i < 15; ++i) {
+    points.push_back({.2*i+.1,.1*i+.1,.5});
+    points.push_back({.2*i+.2,.1*i+.1,.5});
+  }
+  tangent.setRoute(route(points));
+  compound.setRoute(route(points));
+  auto input = routeInput(pose(0,0,.5,.45),nullptr,0,1,{},emptyScanObservation(1));
+  input.observation.clock_mode = nav_kernel::PlanClockMode::External;
+  input.observation.collision.measuredOccupiedStorage =
+      std::make_shared<const std::vector<std::uint8_t>>(input.observation.collision.inflatedBytes,0U);
+  input.observation.collision.knownFreeStorage =
+      std::make_shared<const std::vector<std::uint8_t>>(input.observation.collision.inflatedBytes,255U);
+  auto ordinary = awaitScanOutput([&] {return compound.tick(input);});
+  auto control = awaitScanOutput([&] {return tangent.tick(input);});
+  ASSERT_TRUE(ordinary.tracking.active) << ordinary.reason;
+  ASSERT_TRUE(control.tracking.active) << control.reason;
+  const auto initialId = ordinary.tracking.trajectoryId;
+  const std::vector<nav_kernel::Vec3> observations{{.05,.05,.5},{.15,.1,.5},{.25,.15,.5},{.35,.2,.5}};
+  for (std::size_t i = 0; i < observations.size(); ++i) {
+    input.timestampS = 1.05+.05*i;
+    input.mapBody.position = observations[i];
+    input.odomBody = input.mapBody;
+    ordinary = compound.tick(input);
+    control = tangent.tick(input);
+    SCOPED_TRACE(i);
+    ASSERT_TRUE(ordinary.tracking.active) << ordinary.reason;
+    ASSERT_TRUE(control.tracking.active) << control.reason;
+    EXPECT_EQ(ordinary.tracking.trajectoryId,initialId);
+    EXPECT_FALSE(ordinary.tracking.executionFrozen);
+    EXPECT_NEAR(ordinary.tracking.headingErrorRad,control.tracking.headingErrorRad,.02);
+  }
+}
+
+TEST(Executor, ScanGoalHeadingSurvivesPositionCorrectionUntilRouteReconnect) {
+  using namespace lingtu::nav::navigation;
+  for (const auto frame : {PlanningFrame::Map,PlanningFrame::Odom})
+    for (const double arrivalYaw : {0.0,.3})
+      for (const bool resume : {false,true}) {
+        SCOPED_TRACE(static_cast<int>(frame));
+        SCOPED_TRACE(arrivalYaw);
+        SCOPED_TRACE(resume);
+        ExecutorConfig config;
+        config.planning_frame=frame;
+        auto model=std::make_shared<lingtu::nav::collision::Body>();
+        model->margin_m=0;
+        lingtu::nav::collision::Part part;
+        part.half_size={.3,.1,.1};
+        model->parts.push_back(part);
+        config.body=model;
+        nav_kernel::LocalPlannerParams params;
+        params.backend=nav_kernel::LocalPlannerBackend::Scan;
+        params.checkObstacle=false;
+        params.scan.voxelResolution=.1;
+        auto executor=makeConfiguredExecutor(config,params,"");
+        const auto guide=route({{0,0,.5},{1,1,.5}},0.0,.15,.05);
+        executor.setRoute(guide);
+        auto input=routeInput(pose(.9,.92,.5,arrivalYaw),nullptr,0,1,{},emptyScanObservation(1));
+        input.observation.collision.measuredOccupiedStorage=
+            std::make_shared<const std::vector<std::uint8_t>>(input.observation.collision.inflatedBytes,0U);
+        input.observation.collision.knownFreeStorage=
+            std::make_shared<const std::vector<std::uint8_t>>(input.observation.collision.inflatedBytes,255U);
+        input.mapFromOdom={{1,-2,.15},-.7};
+        input.odomBody.position=input.mapFromOdom.odomPointFromMap(input.mapBody.position);
+        input.odomBody.yaw=nav_kernel::normalizeAngle(input.mapBody.yaw-input.mapFromOdom.yaw);
+        const auto arrived=executor.tick(input);
+        ASSERT_EQ(arrived.reason,arrivalYaw==0 ? "settling_at_goal" : "aligning_goal_yaw");
+        input.mapBody=pose(.875,.9,.5,.3);
+        input.odomBody.position=input.mapFromOdom.odomPointFromMap(input.mapBody.position);
+        input.odomBody.yaw=nav_kernel::normalizeAngle(input.mapBody.yaw-input.mapFromOdom.yaw);
+        input.timestampS=1.05;
+        const auto correcting=awaitScanOutput([&] {return executor.tick(input);});
+        ASSERT_TRUE(correcting.tracking.active)<<correcting.reason;
+        EXPECT_FALSE(correcting.goal_reached);
+        EXPECT_GT(std::hypot(1-input.mapBody.position.x,1-input.mapBody.position.y),.15);
+        EXPECT_NEAR(correcting.tracking.headingErrorRad,-.3,1e-6);
+        EXPECT_LT(correcting.cmd_vel.wz,0);
+        if (resume) executor.resumeRoute();
+        else executor.setRoute(guide);
+        input.timestampS=1.1;
+        const auto reconnected=awaitScanOutput([&] {return executor.tick(input);});
+        ASSERT_TRUE(reconnected.tracking.active)<<reconnected.reason;
+        // A new route/resume releases the terminal override back to spline yaw.
+        EXPECT_GT(reconnected.tracking.headingErrorRad,.1);
+        EXPECT_GT(reconnected.cmd_vel.wz,0);
+      }
+}
+
 TEST(Executor, ScanOfficialControllerFreezesTrajectoryClockWhileAligningHeading) {
   auto executor = makeScanExecutor();
   executor.setRoute(route({
@@ -1242,8 +2025,7 @@ TEST(Executor, ScanTeleopIntentReceivesCollisionSnapshot) {
     return executor.tick(intentInput(pose(0.0, 0.0, 0.0, 0.0), intent, nullptr, 0, 1.0, {}, observation));
   });
 
-  EXPECT_FALSE(out.path_found);
-  EXPECT_EQ(out.reason, "collision_map_incomplete");
+  EXPECT_NE(out.local_planner_debug.searchReason, "collision_map_incomplete");
 }
 
 TEST(Executor, ScanOccupiedStartDepartsOnlyInTheFreshRequestedDirection) {
@@ -1351,7 +2133,8 @@ TEST(Executor, ScanFreeStartPlannerFailureDoesNotBecomeDepartureRecovery) {
                                      {0.25, 0.0, 0.0}, nullptr, 0,
                                      1.0, {}, observation));
   });
-  EXPECT_EQ(output.reason, "scan_local_target_blocked");
+  EXPECT_EQ(output.reason, "local_blocked");
+  EXPECT_EQ(output.local_planner_debug.searchReason, "scan_local_target_blocked");
   EXPECT_FALSE(output.recovery_verified);
   EXPECT_EQ(output.recovery_action,
             static_cast<int>(nav_kernel::RecoveryAction::None));
@@ -1679,8 +2462,7 @@ TEST(Executor, CmuRotatesWhenNoPath) {
   const auto completed = loop.tick(intentInput(
       pose(0.0, 0.0, 0.0, selected_yaw), intent, obstacle_xyzh.data(),
       static_cast<int>(obstacle_xyzh.size() / 4), 1.1));
-  EXPECT_TRUE(completed.recovery_observation_refresh_required)
-      << completed.recovery_reason;
+  EXPECT_EQ(completed.recovery_reason, "recovery_rotation_complete");
   EXPECT_DOUBLE_EQ(completed.cmd_vel.vx, 0.0);
   EXPECT_DOUBLE_EQ(completed.cmd_vel.vy, 0.0);
   EXPECT_DOUBLE_EQ(completed.cmd_vel.wz, 0.0);
@@ -1866,7 +2648,7 @@ TEST(Executor, FinalBrakingRejectionSurvivesSuccessfulReplanAndTriggersRecovery)
   executor.reportFinalMotionBlocked(true, 1.05);
   executor.stopLinearMotion();
   const auto recovery = tick(1.11);
-  EXPECT_EQ(recovery.recovery_trigger, "blocked") << recovery.reason;
+  EXPECT_EQ(recovery.recovery_trigger, "local_blocked") << recovery.reason;
   EXPECT_TRUE(recovery.recovery_verified) << recovery.recovery_reason;
   EXPECT_GT(recovery.recovery_state, 0);
 }
@@ -1889,7 +2671,7 @@ TEST(Executor, AcceptedMotionAndNewRouteClearFinalBrakingRejection) {
   EXPECT_EQ(replacement.recovery_trigger, "inactive") << replacement.reason;
 }
 
-TEST(Executor, NoSafeRecoveryCandidateConsumesOnlyFreshObservationAttempts) {
+TEST(Executor, NoSafeRecoveryCandidateRetriesCurrentGeometryUntilExhausted) {
   auto loop = makeRecoverySafetyLoop();
   loop.setRoute(route({{0.0, 0.0, 0.0}, {3.0, 0.0, 0.0}}));
   std::vector<float> blocked(41 * 41, 95.0f);
@@ -1901,35 +2683,15 @@ TEST(Executor, NoSafeRecoveryCandidateConsumesOnlyFreshObservationAttempts) {
         observation(1, cloud, terrain, now, now, now)));
   };
 
-  const auto first = tick(1.0, 10, 20);
-  ASSERT_EQ(first.recovery_attempt, 1) << first.recovery_reason;
-  ASSERT_TRUE(first.recovery_observation_refresh_required);
-  EXPECT_FALSE(first.recovery_exhausted);
-  EXPECT_FALSE(first.recovery_verified);
-  for (int index = 1; index <= 9; ++index) {
-    const auto unchanged = tick(1.0 + 0.01 * index, 10, 20);
-    expectObservationWaitStopped(unchanged);
-    EXPECT_FALSE(unchanged.recovery_exhausted);
+  for (int attempt = 1; attempt <= 3; ++attempt) {
+    const auto blocked = tick(1.0 + .01 * attempt, 10, 20);
+    EXPECT_EQ(blocked.recovery_attempt, attempt) << blocked.recovery_reason;
+    EXPECT_FALSE(blocked.recovery_verified);
+    EXPECT_EQ(blocked.recovery_exhausted, attempt == 3);
+    EXPECT_DOUBLE_EQ(blocked.cmd_vel.vx, 0.0);
+    EXPECT_DOUBLE_EQ(blocked.cmd_vel.vy, 0.0);
+    EXPECT_DOUBLE_EQ(blocked.cmd_vel.wz, 0.0);
   }
-  expectObservationWaitStopped(tick(1.10, 11, 20));
-  expectObservationWaitStopped(tick(1.11, 10, 21));
-
-  const auto second = tick(1.12, 11, 21);
-  ASSERT_EQ(second.recovery_attempt, 2) << second.recovery_reason;
-  ASSERT_TRUE(second.recovery_observation_refresh_required);
-  EXPECT_FALSE(second.recovery_exhausted);
-  for (int index = 1; index <= 9; ++index) {
-    expectObservationWaitStopped(tick(1.12 + 0.01 * index, 11, 21));
-  }
-
-  const auto third = tick(1.22, 12, 22);
-  EXPECT_EQ(third.recovery_attempt, 3);
-  EXPECT_TRUE(third.recovery_exhausted);
-  EXPECT_FALSE(third.recovery_observation_refresh_required);
-  EXPECT_EQ(third.reason, "local_recovery_exhausted");
-  EXPECT_DOUBLE_EQ(third.cmd_vel.vx, 0.0);
-  EXPECT_DOUBLE_EQ(third.cmd_vel.vy, 0.0);
-  EXPECT_DOUBLE_EQ(third.cmd_vel.wz, 0.0);
 }
 
 TEST(Executor, RecoverySelectsOnlyReachableLateralExit) {
@@ -2017,7 +2779,7 @@ TEST(Executor, RecoveryProgressRequiresOdometryMovement) {
   EXPECT_DOUBLE_EQ(stalled.cmd_vel.wz, 0.0);
 }
 
-TEST(Executor, RecoveryWaitsForFreshCloudAndTraversabilityAfterRotationCompletes) {
+TEST(Executor, RecoveryRetriesOnCurrentGeometryAfterRotationCompletes) {
   auto loop = makeRecoverySafetyLoop(2.0, 3, 0.2);
   loop.setRoute(route({
       {0.0, 0.0, 0.0},
@@ -2045,14 +2807,12 @@ TEST(Executor, RecoveryWaitsForFreshCloudAndTraversabilityAfterRotationCompletes
       << " candidates=" << rotating.recovery_candidate_count;
   ASSERT_TRUE(rotating.recovery_verified);
   ASSERT_NE(rotating.cmd_vel.wz, 0.0);
-  EXPECT_FALSE(rotating.recovery_observation_refresh_required);
 
   const double completed_yaw = rotating.cmd_vel.wz > 0.0 ? 0.35 : -0.35;
   const auto completed = loop.tick(routeInput(pose(0.0, 0.0, 0.0, completed_yaw), obstacle_xyzh.data(),
                                    obstacleCount(obstacle_xyzh), 1.20, traversability,
                                    observation(1, 10, 20, 1.20, 0.95, 0.96)));
 
-  EXPECT_TRUE(completed.recovery_observation_refresh_required);
   EXPECT_EQ(completed.reason, "recovery_rotation_complete");
   EXPECT_DOUBLE_EQ(completed.cmd_vel.vx, 0.0);
   EXPECT_DOUBLE_EQ(completed.cmd_vel.vy, 0.0);
@@ -2061,84 +2821,49 @@ TEST(Executor, RecoveryWaitsForFreshCloudAndTraversabilityAfterRotationCompletes
   const auto unchanged = loop.tick(routeInput(pose(0.0, 0.0, 0.0, completed_yaw), obstacle_xyzh.data(),
                                    obstacleCount(obstacle_xyzh), 1.25, traversability,
                                    observation(1, 10, 20, 1.25, 0.95, 0.96)));
-  expectObservationWaitStopped(unchanged);
+  EXPECT_EQ(unchanged.recovery_state, 1) << unchanged.reason;
+  EXPECT_TRUE(unchanged.recovery_verified) << unchanged.recovery_reason;
+  EXPECT_NE(unchanged.cmd_vel.wz, 0.0);
 
-  const auto cloud_only = loop.tick(routeInput(pose(0.0, 0.0, 0.0, completed_yaw), obstacle_xyzh.data(),
-                                    obstacleCount(obstacle_xyzh), 1.30, traversability,
-                                    observation(1, 11, 20, 1.30, 1.30, 0.96)));
-  expectObservationWaitStopped(cloud_only);
-
-  const auto advanced_generation_stale_stamp = loop.tick(routeInput(
-      pose(0.0, 0.0, 0.0, completed_yaw), obstacle_xyzh.data(), obstacleCount(obstacle_xyzh), 1.35,
-      traversability, observation(1, 12, 21, 1.35, 1.20, 1.20)));
-  expectObservationWaitStopped(advanced_generation_stale_stamp);
-
-  const auto released = loop.tick(routeInput(pose(0.0, 0.0, 0.0, completed_yaw), obstacle_xyzh.data(),
-                                  obstacleCount(obstacle_xyzh), 1.40, traversability,
-                                  observation(1, 12, 21, 1.40, 1.31, 1.32)));
-
-  EXPECT_NE(released.reason, "recovery_observation_wait");
-  EXPECT_FALSE(released.near_field_stop);
-  EXPECT_FALSE(released.recovery_observation_refresh_required);
-  EXPECT_EQ(released.recovery_state, 1)
-      << "reason=" << released.reason << " recovery_reason=" << released.recovery_reason;
-  EXPECT_NE(released.cmd_vel.wz, 0.0);
 }
 
-TEST(Executor, RecoveryObservationWaitRebasesOnFrameEpochChange) {
+TEST(Executor, NewRouteResetsCompletedRecoveryAttempts) {
   auto loop = makeRecoverySafetyLoop(2.0, 3, 0.2);
-  loop.setRoute(route({
-      {0.0, 0.0, 0.0},
-      {1.0, 0.0, 0.0},
-      {2.0, 0.0, 0.0},
-      {3.0, 0.0, 0.0},
-  }));
+  const auto guide = route({{0, 0, 0}, {1, 0, 0}, {2, 0, 0}, {3, 0, 0}});
+  loop.setRoute(guide);
 
-  constexpr int kRows = 201;
-  constexpr int kCols = 201;
+  constexpr int kSize = 201;
   constexpr double kResolution = 0.02;
   constexpr double kOrigin = -2.01;
-  std::vector<float> grid = makeRotationOnlyObservedGrid(kRows, kCols, kResolution, kOrigin);
+  std::vector<float> grid = makeRotationOnlyObservedGrid(kSize, kSize, kResolution, kOrigin);
   const lingtu::nav::navigation::TraversabilityGridView traversability{
-      grid.data(), kRows, kCols, kResolution, kOrigin, kOrigin, 11,
+      grid.data(), kSize, kSize, kResolution, kOrigin, kOrigin, 10,
   };
-  const std::vector<float> obstacle_xyzh = makeRotationOnlyObstacleRing();
-
-  const auto rotating =
-      loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), obstacle_xyzh.data(), obstacleCount(obstacle_xyzh), 1.00,
-                traversability, observation(1, 10, 20, 1.00, 0.95, 0.96)));
-
-  ASSERT_EQ(rotating.recovery_state, 1)
-      << "reason=" << rotating.reason << " recovery_reason=" << rotating.recovery_reason;
+  const auto obstacles = makeRotationOnlyObstacleRing();
+  const auto rotating = loop.tick(routeInput(
+      pose(0, 0, 0, 0), obstacles.data(), obstacleCount(obstacles), 1.0,
+      traversability, observation(1, 10, 20, 1.0, 0.95, 0.96)));
+  ASSERT_EQ(rotating.recovery_state, 1);
+  ASSERT_TRUE(rotating.recovery_verified);
   ASSERT_NE(rotating.cmd_vel.wz, 0.0);
+  const double yaw = rotating.cmd_vel.wz > 0.0 ? 0.35 : -0.35;
+  const auto completed = loop.tick(routeInput(
+      pose(0, 0, 0, yaw), obstacles.data(), obstacleCount(obstacles), 1.2,
+      traversability, observation(1, 10, 20, 1.2, 0.95, 0.96)));
+  ASSERT_EQ(completed.recovery_reason, "recovery_rotation_complete");
+  const auto next = routeInput(
+      pose(0, 0, 0, yaw), obstacles.data(), obstacleCount(obstacles), 1.25,
+      traversability, observation(1, 10, 20, 1.25, 0.95, 0.96));
+  const auto resumed = loop.tick(next);
+  ASSERT_TRUE(resumed.recovery_verified) << resumed.recovery_reason;
+  ASSERT_EQ(resumed.recovery_attempt, 2);
 
-  const double completed_yaw = rotating.cmd_vel.wz > 0.0 ? 0.35 : -0.35;
-  const auto completed = loop.tick(routeInput(pose(0.0, 0.0, 0.0, completed_yaw), obstacle_xyzh.data(),
-                                   obstacleCount(obstacle_xyzh), 1.20, traversability,
-                                   observation(1, 10, 20, 1.20, 0.95, 0.96)));
-  ASSERT_TRUE(completed.recovery_observation_refresh_required);
-
-  const auto rebased = loop.tick(routeInput(pose(0.0, 0.0, 0.0, completed_yaw), obstacle_xyzh.data(),
-                                 obstacleCount(obstacle_xyzh), 1.25, traversability,
-                                 observation(2, 1, 1, 1.25, 1.25, 1.25)));
-  expectObservationWaitStopped(rebased);
-
-  const auto same_epoch_same_generation = loop.tick(routeInput(
-      pose(0.0, 0.0, 0.0, completed_yaw), obstacle_xyzh.data(), obstacleCount(obstacle_xyzh), 1.30,
-      traversability, observation(2, 1, 1, 1.30, 1.30, 1.30)));
-  expectObservationWaitStopped(same_epoch_same_generation);
-
-  const auto released = loop.tick(routeInput(pose(0.0, 0.0, 0.0, completed_yaw), obstacle_xyzh.data(),
-                                  obstacleCount(obstacle_xyzh), 1.35, traversability,
-                                  observation(2, 2, 2, 1.35, 1.31, 1.32)));
-
-  EXPECT_NE(released.reason, "recovery_observation_wait");
-  EXPECT_FALSE(released.near_field_stop);
-  EXPECT_FALSE(released.recovery_observation_refresh_required);
-  EXPECT_EQ(released.recovery_state, 1)
-      << "reason=" << released.reason << " recovery_reason=" << released.recovery_reason;
-  EXPECT_NE(released.cmd_vel.wz, 0.0);
+  loop.setRoute(guide);
+  const auto replaced = loop.tick(next);
+  EXPECT_TRUE(replaced.active);
+  EXPECT_EQ(replaced.recovery_attempt, 1) << replaced.recovery_reason;
 }
+
 TEST(Executor, AlignsRequestedYawBeforeReportingGoalReached) {
   auto loop = makeLoop();
   loop.setRoute(route(
@@ -2176,6 +2901,53 @@ TEST(Executor, GoalYawAlignmentUsesShortestWrappedError) {
   EXPECT_EQ(out.reason, "aligning_goal_yaw");
   EXPECT_GT(out.cmd_vel.wz, 0.0);
   EXPECT_LT(std::abs(out.cmd_vel.wz), 0.25);
+}
+
+TEST(Executor, GoalYawAlignmentUsesMinimumRateUntilTaskToleranceThenStops) {
+  for (const double direction : {-1.0, 1.0}) {
+    SCOPED_TRACE(direction);
+    auto loop = makeLoop();
+    loop.setRoute(route({{0, 0, 0}, {0.2, 0, 0}}, direction * 0.06, {}, 0.05));
+    const auto aligning = loop.tick(routeInput(pose(0.2, 0, 0, 0), nullptr, 0, 1.0));
+    EXPECT_EQ(aligning.reason, "aligning_goal_yaw");
+    EXPECT_DOUBLE_EQ(aligning.cmd_vel.vx, 0.0);
+    EXPECT_DOUBLE_EQ(aligning.cmd_vel.vy, 0.0);
+    EXPECT_DOUBLE_EQ(aligning.cmd_vel.wz, direction * 0.2);
+
+    const auto settling = loop.tick(
+        routeInput(pose(0.2, 0, 0, direction * 0.02), nullptr, 0, 1.1));
+    EXPECT_EQ(settling.reason, "settling_at_goal");
+    EXPECT_FALSE(settling.goal_reached);
+    EXPECT_DOUBLE_EQ(settling.cmd_vel.wz, 0.0);
+
+    loop.clear();
+    const auto cancelled = loop.tick(routeInput(pose(0.2, 0, 0, 0), nullptr, 0, 1.2));
+    EXPECT_FALSE(cancelled.active);
+    EXPECT_DOUBLE_EQ(cancelled.cmd_vel.wz, 0.0);
+  }
+}
+
+TEST(Executor, GoalYawMinimumRateRespectsConfiguredBounds) {
+  struct Rates { double minimum; double maximum; double expected; };
+  for (const auto rates : {Rates{0.2, 0.1, 0.1}, Rates{0.3, 0.6, 0.3},
+                           Rates{-0.2, 0.6, 0.09}, Rates{0.2, 0.0, 0.0}}) {
+    for (const double direction : {-1.0, 1.0}) {
+      SCOPED_TRACE(rates.minimum);
+      SCOPED_TRACE(rates.maximum);
+      SCOPED_TRACE(direction);
+      lingtu::nav::navigation::ExecutorConfig config;
+      config.goal_yaw_min_rate = rates.minimum;
+      config.goal_yaw_max_rate = rates.maximum;
+      auto loop = makeConfiguredExecutor(config, {}, LINGTU_TEST_PATH_LIBRARY);
+      for (const double error : {0.06, 1.0}) {
+        loop.setRoute(route({{0, 0, 0}, {0.2, 0, 0}}, direction * error, {}, 0.05));
+        const auto output = loop.tick(routeInput(pose(0.2, 0, 0, 0), nullptr, 0, 1.0));
+        EXPECT_EQ(output.reason, "aligning_goal_yaw");
+        EXPECT_NEAR(output.cmd_vel.wz,
+                    direction * (error == 0.06 ? rates.expected : rates.maximum), 1e-12);
+      }
+    }
+  }
 }
 
 TEST(Executor, RelocalizationJumpSelectsPathAheadOfRobot) {
@@ -2407,7 +3179,7 @@ TEST(Executor, TraversabilityGridBlocksCmdVel) {
   EXPECT_EQ(out.cmd_vel.wz, 0.0);
 }
 
-TEST(Executor, ScanBlockedBoundaryWaitsForFreshObservationThenUsesOnlyRearExit) {
+TEST(Executor, ScanBlockedBoundaryRetriesCurrentMapThenUsesOnlyRearExit) {
   auto executor = makeScanExecutor(3.0, 0.6, 3, 0.1);
   const auto body = pose(0.0, 0.05, 0.435, 0.0);
   executor.setRoute(route({body.position, {3.0, 0.05, 0.435}}));
@@ -2433,17 +3205,20 @@ TEST(Executor, ScanBlockedBoundaryWaitsForFreshObservationThenUsesOnlyRearExit) 
   EXPECT_EQ(before_interval.recovery_attempt, 0);
 
   const auto first_attempt = awaitScanOutput([&] { return tick(1.11); });
-  ASSERT_EQ(first_attempt.recovery_trigger, "blocked");
+  ASSERT_EQ(first_attempt.recovery_trigger, "local_blocked");
   ASSERT_EQ(first_attempt.recovery_attempt, 1) << first_attempt.recovery_reason;
-  ASSERT_TRUE(first_attempt.recovery_observation_refresh_required);
   EXPECT_FALSE(first_attempt.recovery_verified);
   EXPECT_FALSE(first_attempt.recovery_exhausted);
   EXPECT_DOUBLE_EQ(first_attempt.cmd_vel.vx, 0.0);
   EXPECT_DOUBLE_EQ(first_attempt.cmd_vel.vy, 0.0);
   EXPECT_DOUBLE_EQ(first_attempt.cmd_vel.wz, 0.0);
-  for (int index = 1; index <= 9; ++index) {
-    expectObservationWaitStopped(tick(1.11 + 0.01 * index));
-  }
+  const auto second_attempt = tick(1.12);
+  ASSERT_EQ(second_attempt.recovery_attempt, 2) << second_attempt.recovery_reason;
+  EXPECT_FALSE(second_attempt.recovery_verified);
+  EXPECT_FALSE(second_attempt.recovery_exhausted);
+  EXPECT_DOUBLE_EQ(second_attempt.cmd_vel.vx, 0.0);
+  EXPECT_DOUBLE_EQ(second_attempt.cmd_vel.vy, 0.0);
+  EXPECT_DOUBLE_EQ(second_attempt.cmd_vel.wz, 0.0);
 
   collision.clear();
   for (int x = -10; x < 10; ++x) {
@@ -2454,15 +3229,14 @@ TEST(Executor, ScanBlockedBoundaryWaitsForFreshObservationThenUsesOnlyRearExit) 
       collision.occupy({(x + 0.5) * 0.1, (y + 0.5) * 0.1, body.position.z});
     }
   }
-  observed = emptyScanObservation(1.21, 2);
-  observed.collision = collision.view(1.21, 2);
+  observed.collision = collision.view(1.0, 1);
   ASSERT_TRUE(observed.collision.occupied({0.18, 0.05, body.position.z}));
   ASSERT_FALSE(observed.collision.occupied({-0.18, 0.05, body.position.z}));
 
-  const auto reversing = awaitScanOutput([&] { return tick(1.21); });
+  const auto reversing = tick(1.13);
   ASSERT_TRUE(reversing.recovery_verified) << reversing.recovery_reason;
   EXPECT_EQ(reversing.recovery_state, 2);
-  EXPECT_EQ(reversing.recovery_attempt, 2);
+  EXPECT_EQ(reversing.recovery_attempt, 3);
   EXPECT_EQ(reversing.recovery_candidate_count, 1);
   EXPECT_EQ(reversing.recovery_action,
             static_cast<int>(nav_kernel::RecoveryAction::Translate));
@@ -2473,6 +3247,54 @@ TEST(Executor, ScanBlockedBoundaryWaitsForFreshObservationThenUsesOnlyRearExit) 
   EXPECT_LE(std::hypot(reversing.cmd_vel.vx, reversing.cmd_vel.vy), 0.15 + 1e-9);
   EXPECT_NEAR(reversing.cmd_vel.vy, 0.0, 1e-9);
   EXPECT_DOUBLE_EQ(reversing.cmd_vel.wz, 0.0);
+}
+
+TEST(Executor, ScanBodyRecoveryRechecksCurrentCollisionWhenPointSamplingIsDisabled) {
+  lingtu::nav::navigation::ExecutorConfig config;
+  auto model = std::make_shared<lingtu::nav::collision::Body>();
+  model->margin_m = 0;
+  lingtu::nav::collision::Part part;
+  part.half_size = {.3, .1, .1};
+  model->parts.push_back(part);
+  config.body = model;
+  config.recovery.blocked_interval_s = 0;
+  nav_kernel::LocalPlannerParams params;
+  params.backend = nav_kernel::LocalPlannerBackend::Scan;
+  params.checkObstacle = false;
+  params.scan.voxelResolution = .1;
+  auto executor = makeConfiguredExecutor(config, params, "");
+  const auto body = pose(0, .05, .5, 0);
+  executor.setRoute(route({body.position, {3, .05, .5}}));
+  lingtu::nav::tests::CollisionBitmap bitmap({-4, -4, -1}, {4, 4, 2}, .1);
+  for (int x = -10; x < 10; ++x) for (int y = -5; y < 5; ++y)
+    bitmap.occupy({(x + .5) * .1, (y + .5) * .1, .55});
+  auto observed = emptyScanObservation(1);
+  observed.collision = bitmap.view(1, 1);
+  observed.collision.measuredOccupiedStorage =
+      std::make_shared<const std::vector<std::uint8_t>>(
+          observed.collision.inflatedBits,
+          observed.collision.inflatedBits + observed.collision.inflatedBytes);
+  observed.collision.knownFreeStorage =
+      std::make_shared<const std::vector<std::uint8_t>>(observed.collision.inflatedBytes, 255U);
+  const auto tick = [&](double now) {
+    observed.odom_stamp_s = now;
+    return executor.tick(routeInput(body, nullptr, 0, now, {}, observed));
+  };
+  const auto first = awaitScanOutput([&] { return tick(1); });
+  ASSERT_EQ(first.recovery_attempt, 1);
+  EXPECT_FALSE(first.recovery_verified);
+  const auto retried = tick(1.01);
+  EXPECT_EQ(retried.recovery_attempt, 2) << retried.reason;
+  EXPECT_FALSE(retried.recovery_verified);
+  EXPECT_DOUBLE_EQ(retried.cmd_vel.vx, 0);
+  EXPECT_DOUBLE_EQ(retried.cmd_vel.vy, 0);
+  EXPECT_DOUBLE_EQ(retried.cmd_vel.wz, 0);
+  const auto exhausted = tick(1.02);
+  EXPECT_TRUE(exhausted.recovery_exhausted);
+  EXPECT_FALSE(exhausted.recovery_verified);
+  EXPECT_DOUBLE_EQ(exhausted.cmd_vel.vx, 0);
+  EXPECT_DOUBLE_EQ(exhausted.cmd_vel.vy, 0);
+  EXPECT_DOUBLE_EQ(exhausted.cmd_vel.wz, 0);
 }
 
 TEST(Executor, ScanRecoveryDoesNotRequireCmuPathLibrary) {
@@ -2533,6 +3355,24 @@ TEST(Executor, ScanRecoveryDoesNotRequireCmuPathLibrary) {
   });
   EXPECT_TRUE(restarted.tracking.active) << restarted.reason;
   EXPECT_EQ(restarted.recovery_state, 0);
+}
+
+TEST(Executor, ScanIgnoresTwoDimensionalTraversabilityInput) {
+  auto executor = makeScanExecutor();
+  executor.setRoute(route({{0.0, 0.0, 0.0}, {3.0, 0.0, 0.0}}));
+
+  std::vector<float> risk_grid(9 * 9, 100.0f);
+  const lingtu::nav::navigation::TraversabilityGridView traversability{
+      risk_grid.data(), 9, 9, 0.5, -2.0, -2.0, 99,
+  };
+  const auto output = awaitScanOutput([&]() {
+    return executor.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 1.0,
+                                    traversability, emptyScanObservation(1.0)));
+  });
+
+  EXPECT_TRUE(output.path_found) << output.reason;
+  EXPECT_FALSE(output.local_path_body.empty());
+  EXPECT_GT(std::hypot(output.cmd_vel.vx, output.cmd_vel.vy), 0.0);
 }
 
 TEST(Executor, ScanKeepsSafeTrajectoryWhileNewCollisionGenerationPlans) {
@@ -2742,7 +3582,8 @@ TEST(Executor, ScanInitializationFailureReportsCauseAndStops) {
     return executor.tick(routeInput(pose(0.05, 0.05, 0.55, 0.0), nullptr, 0,
                                     1.0, {}, observation));
   });
-  EXPECT_EQ(output.reason, "scan_initialization_failed");
+  EXPECT_EQ(output.reason, "local_blocked");
+  EXPECT_EQ(output.local_planner_debug.searchReason, "scan_initialization_failed");
   EXPECT_FALSE(output.path_found);
   EXPECT_DOUBLE_EQ(output.cmd_vel.vx, 0.0);
   EXPECT_DOUBLE_EQ(output.cmd_vel.vy, 0.0);
@@ -2770,13 +3611,14 @@ TEST(Executor, ScanStallStopsWhenRecoveryDisabledUntilRouteReplacement) {
   for (int tick = 1; tick <= 40; ++tick) {
     output = run(1.0 + tick * .05);
     moving = moving || output.cmd_vel.vx > 0.0;
-    if (output.reason == "autonomy_motion_stalled") break;
+    if (output.reason == "execution_stalled") break;
   }
   ASSERT_TRUE(moving);
-  ASSERT_EQ(output.reason, "autonomy_motion_stalled");
+  ASSERT_EQ(output.reason, "execution_stalled");
+  EXPECT_FALSE(output.near_field_stop);
   for (int tick = 1; tick <= 10; ++tick) {
     output = run(3.0 + tick * .05);
-    EXPECT_EQ(output.reason, "autonomy_motion_stalled");
+    EXPECT_EQ(output.reason, "execution_stalled");
     EXPECT_DOUBLE_EQ(output.cmd_vel.vx, 0.0);
     EXPECT_DOUBLE_EQ(output.cmd_vel.vy, 0.0);
     EXPECT_DOUBLE_EQ(output.cmd_vel.wz, 0.0);
@@ -2784,12 +3626,250 @@ TEST(Executor, ScanStallStopsWhenRecoveryDisabledUntilRouteReplacement) {
   executor.setRoute(guide);
   output = awaitScanOutput([&]() { return run(4.0); });
   EXPECT_TRUE(output.path_found) << output.reason;
-  EXPECT_NE(output.reason, "autonomy_motion_stalled");
+  EXPECT_NE(output.reason, "execution_stalled");
+}
+
+TEST(Executor, StairHeadingFollowsFlightInBothPlanningFramesAndDirections) {
+  using namespace lingtu::nav::navigation;
+  constexpr double axis_yaw = .6;
+  constexpr double body_error = .08;
+  for (const auto frame : {PlanningFrame::Map, PlanningFrame::Odom}) {
+    for (const bool descending : {false, true}) {
+      SCOPED_TRACE(static_cast<int>(frame));
+      SCOPED_TRACE(descending);
+      auto executor = makeScanExecutor(3, .6, 3, 2, frame);
+      StairFlight flight;
+      flight.id = "diagonal-stairs";
+      flight.axis = {std::cos(axis_yaw), std::sin(axis_yaw), 0};
+      flight.lateralMin = -1;
+      flight.lateralMax = 1;
+      flight.treads = {{-2, 0, 0}, {0, .3, .15}, {.3, .6, .3},
+                       {.6, .9, .45}, {.9, 3, .6}};
+      auto guide = route({{-.4, 0, .4}, {-.01, 0, .4}, {.01, 0, .55},
+                          {.29, 0, .55}, {.31, 0, .7}, {.59, 0, .7},
+                          {.61, 0, .85}, {.89, 0, .85}, {.91, 0, 1}, {2, 0, 1}});
+      for (auto& point : guide.points) {
+        point.y = point.x * std::sin(axis_yaw);
+        point.x *= std::cos(axis_yaw);
+      }
+      if (descending) std::reverse(guide.points.begin(), guide.points.end());
+      guide.stairs = resolveStairSegments(guide.points, {flight}, .4);
+      ASSERT_EQ(guide.stairs.size(), 1u);
+      executor.setRoute(guide);
+      const double heading = nav_kernel::normalizeAngle(axis_yaw + (descending ? M_PI : 0));
+      const double entry = descending ? 1.3 : -.4;
+      auto body = pose(entry * std::cos(axis_yaw), entry * std::sin(axis_yaw),
+                       descending ? 1 : .4, heading);
+      auto input = routeInput(body, nullptr, 0, 1, {}, emptyScanObservation(1));
+      input.mapFromOdom = {{1, -2, .15}, -.7};
+      const auto update_body = [&] {
+        input.odomBody.position = input.mapFromOdom.odomPointFromMap(input.mapBody.position);
+        input.odomBody.yaw = nav_kernel::normalizeAngle(input.mapBody.yaw - input.mapFromOdom.yaw);
+      };
+      update_body();
+      input.observation.body_velocity_valid = true;
+      const auto requirement = descending ? StairProfile::Descent : StairProfile::Ascent;
+      ASSERT_EQ(executor.tick(input).stairs.request, requirement);
+      input.mapBody.yaw = nav_kernel::normalizeAngle(heading + body_error);
+      update_body();
+      input.timestampS = 1.05;
+      input.observation = emptyScanObservation(1.05);
+      input.observation.body_velocity_valid = true;
+      input.observation.body_linear_velocity = {0, .06, 0};
+      input.stairProfile = {requirement, true, false, "stairs-model", "", 1.05};
+      const auto output = awaitScanOutput([&] { return executor.tick(input); });
+      ASSERT_TRUE(output.path_found) << output.reason;
+      ASSERT_TRUE(output.tracking.active) << output.reason;
+      EXPECT_NEAR(output.tracking.headingErrorRad, -body_error, 1e-6);
+      EXPECT_NEAR(output.cmd_vel.wz, -body_error * 1.5, 1e-6);
+      EXPECT_FALSE(output.tracking.executionFrozen);
+
+      const double exit = descending ? -.45 : 1.35;
+      input.mapBody.position = {exit * std::cos(axis_yaw), exit * std::sin(axis_yaw),
+                                descending ? .4 : 1};
+      update_body();
+      input.timestampS = 1.1;
+      input.observation = emptyScanObservation(1.1);
+      input.observation.body_velocity_valid = true;
+      input.stairProfile.stampS = 1.1;
+      EXPECT_EQ(executor.tick(input).stairs.request, StairProfile::Restore);
+      input.timestampS = 1.15;
+      input.stairProfile = {StairProfile::Restore, true, false, "ordinary-model", "", 1.15};
+      const auto restored = executor.tick(input);
+      EXPECT_EQ(restored.stairs.phase, StairPhase::Ordinary);
+      EXPECT_FALSE(restored.stairs.bodyYaw);
+    }
+  }
+}
+
+TEST(Executor, StairStallReplansWithinFlightWithoutLatchingOrOrdinaryRecovery) {
+  using namespace lingtu::nav::navigation;
+  for (const bool descending : {false, true}) {
+    SCOPED_TRACE(descending);
+    auto executor = makeScanExecutor(3.0, .6, 3, .5);
+    StairFlight flight;
+    flight.id = "stairs";
+    flight.lateralMin = -1.0;
+    flight.lateralMax = 1.0;
+    flight.treads = {{-2, 0, 0}, {0, .3, .15}, {.3, .6, .3},
+                     {.6, .9, .45}, {.9, 3, .6}};
+    auto guide = route({{-.4, 0, .4}, {-.01, 0, .4}, {.01, 0, .55},
+                        {.29, 0, .55}, {.31, 0, .7}, {.59, 0, .7},
+                        {.61, 0, .85}, {.89, 0, .85}, {.91, 0, 1}, {2, 0, 1}});
+    if (descending) std::reverse(guide.points.begin(), guide.points.end());
+    guide.stairs = resolveStairSegments(guide.points, {flight}, .4);
+    ASSERT_EQ(guide.stairs.size(), 1u);
+    executor.setRoute(guide);
+    const auto body = descending ? pose(1.3, 0, 1, 3.141592653589793)
+                                 : pose(-.4, 0, .4, 0);
+    const auto requirement = descending ? StairProfile::Descent : StairProfile::Ascent;
+    auto input = routeInput(body, nullptr, 0, 1, {}, emptyScanObservation(1));
+    input.observation.body_velocity_valid = true;
+    ASSERT_EQ(executor.tick(input).stairs.request, requirement);
+    const auto tick = [&](double now, bool confirmed = true) {
+      input.timestampS = now;
+      input.observation = emptyScanObservation(now, static_cast<std::uint64_t>(now * 100));
+      input.observation.body_velocity_valid = true;
+      input.stairProfile = {requirement, confirmed, false, "actual-stair-model", "", now};
+      return executor.tick(input);
+    };
+    auto output = awaitScanOutput([&] { return tick(1.05); });
+    ASSERT_TRUE(output.path_found) << output.reason;
+    double now = 1.05;
+    bool issued_motion = false;
+    for (int i = 0; i < 60; ++i) {
+      now += .05;
+      output = tick(now);
+      issued_motion |= std::hypot(output.cmd_vel.vx, output.cmd_vel.vy) > 1e-6;
+      if (output.reason == "stair_replanning") break;
+    }
+    ASSERT_TRUE(issued_motion);
+    ASSERT_EQ(output.reason, "stair_replanning");
+    EXPECT_EQ(output.recovery_trigger, "execution_stalled");
+    EXPECT_FALSE(output.near_field_stop);
+    EXPECT_EQ(output.stairs.phase, StairPhase::Traversing);
+    EXPECT_EQ(output.stairs.request, requirement);
+    EXPECT_EQ(output.recovery_action, 0);
+    EXPECT_DOUBLE_EQ(output.cmd_vel.vx, 0);
+    EXPECT_DOUBLE_EQ(output.cmd_vel.vy, 0);
+    EXPECT_DOUBLE_EQ(output.cmd_vel.wz, 0);
+
+    now += .05;
+    output = tick(now, false);
+    EXPECT_EQ(output.reason, "stair_profile_wait");
+    EXPECT_DOUBLE_EQ(output.cmd_vel.vx, 0);
+    now += .05;
+    output = awaitScanOutput([&] { return tick(now); });
+    ASSERT_TRUE(output.path_found) << output.reason;
+    bool resumed = false;
+    for (int i = 0; i < 8; ++i) {
+      now += .05;
+      output = tick(now);
+      resumed |= std::hypot(output.cmd_vel.vx, output.cmd_vel.vy) > 1e-6;
+      EXPECT_NE(output.reason, "execution_stalled");
+      EXPECT_EQ(output.stairs.request, requirement);
+      EXPECT_EQ(output.recovery_action, 0);
+    }
+    ASSERT_TRUE(resumed);
+
+    for (int i = 0; i < 30 && output.reason != "stair_replanning"; ++i) {
+      now += .05;
+      output = tick(now);
+    }
+    ASSERT_EQ(output.reason, "stair_replanning");
+    // The discarded trajectory cannot authorize the next attempt through a
+    // newly observed collision at the current body position.
+    input.timestampS = now += .05;
+    input.observation = emptyScanObservation(now, 10000);
+    input.observation.body_velocity_valid = true;
+    input.stairProfile.stampS = now;
+    setScanCollision(input.observation,
+                     {static_cast<float>(body.position.x), 0, static_cast<float>(body.position.z)});
+    output = awaitScanOutput([&] { return executor.tick(input); });
+    EXPECT_DOUBLE_EQ(output.cmd_vel.vx, 0) << output.reason;
+    EXPECT_DOUBLE_EQ(output.cmd_vel.vy, 0);
+    EXPECT_DOUBLE_EQ(output.cmd_vel.wz, 0);
+    EXPECT_EQ(output.stairs.request, requirement);
+    EXPECT_EQ(output.recovery_action, 0);
+
+    executor.clear();
+    output = executor.tick(input);
+    EXPECT_FALSE(output.active);
+    EXPECT_EQ(output.stairs.request, StairProfile::Restore);
+    EXPECT_DOUBLE_EQ(output.cmd_vel.vx, 0);
+  }
+}
+
+TEST(Executor, StairRejectedLocalRouteReplansAfterMeasuredVelocitySettles) {
+  using namespace lingtu::nav::navigation;
+  auto executor = makeScanExecutor();
+  StairFlight flight;
+  flight.id = "narrow-stairs";
+  // Leave the center route feasible, but make the measured lateral entrance
+  // excursion leave the flight on both ARM and x64 optimizer implementations.
+  flight.lateralMin = -.30;
+  flight.lateralMax = .30;
+  flight.treads = {{-2, 0, 0}, {0, .3, .15}, {.3, .6, .3},
+                   {.6, .9, .45}, {.9, 3, .6}};
+  auto guide = route({{-.4, 0, .4}, {-.01, 0, .4}, {.01, 0, .55},
+                      {.29, 0, .55}, {.31, 0, .7}, {.59, 0, .7},
+                      {.61, 0, .85}, {.89, 0, .85}, {.91, 0, 1}, {2, 0, 1}});
+  guide.stairs = resolveStairSegments(guide.points, {flight}, .4);
+  ASSERT_EQ(guide.stairs.size(), 1U);
+  executor.setRoute(guide);
+  auto input = routeInput(pose(-.4, 0, .4, 0), nullptr, 0, 1, {}, emptyScanObservation(1));
+  input.observation.body_velocity_valid = true;
+  StairTraversal flight_gate;
+  flight_gate.setSegments(guide.stairs);
+  flight_gate.step(input.mapBody, {}, true, input.timestampS, {});
+  ASSERT_EQ(executor.tick(input).stairs.request, StairProfile::Ascent);
+  input.timestampS = 1.05;
+  input.observation = emptyScanObservation(1.05);
+  input.observation.body_velocity_valid = true;
+  input.observation.body_linear_velocity = {0, .35, 0};
+  input.stairProfile = {StairProfile::Ascent, true, false, "actual-stair-model", "", 1.05};
+  auto output = awaitScanOutput([&] { return executor.tick(input); });
+  ASSERT_EQ(flight_gate.step(input.mapBody, {0, .35, 0}, true,
+                            input.timestampS, input.stairProfile).phase,
+            StairPhase::Traversing);
+  ASSERT_FALSE(flight_gate.localPathAllowed(output.local_path_map, input.mapBody.yaw))
+      << "The fixture must produce an actually rejected stair trajectory";
+  ASSERT_EQ(output.reason, "stair_route_wait");
+  EXPECT_TRUE(output.near_field_stop);
+  EXPECT_EQ(output.stairs.phase, StairPhase::Traversing);
+  EXPECT_DOUBLE_EQ(output.cmd_vel.vx, 0);
+  EXPECT_DOUBLE_EQ(output.cmd_vel.vy, 0);
+  EXPECT_DOUBLE_EQ(output.cmd_vel.wz, 0);
+
+  // A stopped robot can have a new feasible entrance trajectory. Retaining
+  // the rejected spline would freeze this request forever, as in MuJoCo v12.
+  input.timestampS += .05;
+  input.observation = emptyScanObservation(input.timestampS, 2);
+  input.observation.body_velocity_valid = true;
+  input.stairProfile.stampS = input.timestampS;
+  output = awaitScanOutput([&] { return executor.tick(input); });
+  ASSERT_TRUE(output.path_found) << output.reason;
+  ASSERT_TRUE(flight_gate.localPathAllowed(output.local_path_map, input.mapBody.yaw));
+  ASSERT_NE(output.reason, "stair_route_wait");
+  bool resumed = false;
+  for (int tick = 0; tick < 8; ++tick) {
+    input.timestampS += .05;
+    input.observation = emptyScanObservation(input.timestampS, 3 + tick);
+    input.observation.body_velocity_valid = true;
+    input.stairProfile.stampS = input.timestampS;
+    output = executor.tick(input);
+    resumed |= output.cmd_vel.vx > 0;
+    EXPECT_EQ(output.stairs.request, StairProfile::Ascent);
+    EXPECT_EQ(output.recovery_action, 0);
+    EXPECT_NE(output.reason, "stair_route_wait");
+  }
+  EXPECT_TRUE(resumed);
 }
 
 namespace {
 lingtu::nav::navigation::Executor makeProgressLoop(bool recovery_enabled = false,
-                                                   double speed = 0.15) {
+                                                   double speed = 0.15,
+                                                   bool check_obstacle = false) {
   lingtu::nav::navigation::ExecutorConfig config;
   config.max_speed = speed;
   config.recovery.max_attempts = recovery_enabled ? 3 : 0;
@@ -2798,7 +3878,7 @@ lingtu::nav::navigation::Executor makeProgressLoop(bool recovery_enabled = false
   config.follower.linearStopThreshold = 0.0;
   config.follower.slowDwnDisThre = 0.0;
   nav_kernel::LocalPlannerParams planner;
-  planner.checkObstacle = false;
+  planner.checkObstacle = check_obstacle;
   planner.useTerrainAnalysis = false;
   planner.useTraversabilityCost = false;
   return makeConfiguredExecutor(config, planner, LINGTU_TEST_PATH_LIBRARY);
@@ -2822,9 +3902,9 @@ TEST(Executor, StallDoesNotCountWrongDirectionDriftHeaveOrYawAsTranslation) {
       if (scenario == 2) { body.position.z = .08 * std::sin(8 * t); }
       if (scenario == 3) { body.yaw = -.15 * t; obs.body_yaw_rate = -.15; }
       output = executor.tick(routeInput(body, nullptr, 0, 1.0 + t, {}, obs));
-      if (output.reason == "autonomy_motion_stalled") break;
+      if (output.reason == "execution_stalled") break;
     }
-    EXPECT_EQ(output.reason, "autonomy_motion_stalled");
+    EXPECT_EQ(output.reason, "execution_stalled");
     EXPECT_DOUBLE_EQ(output.cmd_vel.vx, 0.0);
     EXPECT_DOUBLE_EQ(output.cmd_vel.vy, 0.0);
     EXPECT_DOUBLE_EQ(output.cmd_vel.wz, 0.0);
@@ -2846,10 +3926,10 @@ TEST(Executor, StallUsesSidewaysCommandInPlanningFrame) {
     output = executor.tick(routeInput(pose(0, .03 * t, 0, yaw), nullptr, 0,
                                       1.0 + t, {}, obs));
     sideways_commanded = sideways_commanded || output.cmd_vel.vy < -.01;
-    if (output.reason == "autonomy_motion_stalled") break;
+    if (output.reason == "execution_stalled") break;
   }
   EXPECT_TRUE(sideways_commanded);
-  EXPECT_EQ(output.reason, "autonomy_motion_stalled");
+  EXPECT_EQ(output.reason, "execution_stalled");
 }
 
 TEST(Executor, StallStartsExistingRecoveryWhenDriftingAwayFromPath) {
@@ -2859,11 +3939,110 @@ TEST(Executor, StallStartsExistingRecoveryWhenDriftingAwayFromPath) {
   for (int tick = 0; tick <= 16; ++tick) {
     const double t = tick * 0.05;
     output = executor.tick(routeInput(pose(-.15 * t, 0, 0, 0), nullptr, 0, 1.0 + t));
-    if (output.recovery_trigger == "stalled") break;
+    if (output.recovery_trigger == "execution_stalled") break;
   }
-  EXPECT_EQ(output.recovery_trigger, "stalled");
+  EXPECT_EQ(output.recovery_trigger, "execution_stalled");
   EXPECT_TRUE(output.recovery_verified) << output.recovery_reason;
   EXPECT_GT(output.recovery_state, 0);
+}
+
+TEST(Executor, StallProgressSurvivesIntermittentNearFieldStops) {
+  auto executor = makeProgressLoop(true, .15, true);
+  executor.setRoute(route({{0, 0, 0}, {10, 0, 0}}));
+  const std::vector<float> obstacle_xyzh = {.45f, 0.0f, 0.0f, 1.0f};
+  lingtu::nav::navigation::ExecutionOutput output;
+  bool ready_seen = false;
+  bool hold_seen = false;
+  for (int tick = 0; tick <= 12; ++tick) {
+    const bool held = tick % 2 == 1;
+    output = executor.tick(routeInput(
+        pose(0, 0, 0, 0), held ? obstacle_xyzh.data() : nullptr,
+        held ? obstacleCount(obstacle_xyzh) : 0, 1.0 + tick * .1));
+    ready_seen = ready_seen || output.cmd_vel.vx > 0.0;
+    hold_seen = hold_seen || output.near_field_stop;
+    if (output.recovery_trigger == "execution_stalled") break;
+  }
+  EXPECT_TRUE(ready_seen);
+  EXPECT_TRUE(hold_seen);
+  EXPECT_EQ(output.recovery_trigger, "execution_stalled");
+  EXPECT_TRUE(output.recovery_verified) << output.recovery_reason;
+}
+
+TEST(Executor, ScanPlanningWaitDoesNotConsumeMotionProgressWindow) {
+  auto executor = makeScanExecutor(3.0, .6, 0, 2.0);
+  executor.setRoute(route({{0, 0, .5}, {5, 0, .5}}));
+  auto body = pose(0, 0, .5, 0);
+  double now = 1.0;
+  auto tick = [&] {
+    auto observation = emptyScanObservation(now);
+    observation.clock_mode = nav_kernel::PlanClockMode::External;
+    return executor.tick(routeInput(body, nullptr, 0, now, {}, observation));
+  };
+  auto output = awaitScanOutput(tick);
+  ASSERT_GT(output.cmd_vel.vx, 0) << output.reason;
+  for (int i = 0; i < 15; ++i) {
+    now += .02;
+    body.position.x += output.cmd_vel.vx * .02;
+    output = tick();
+    ASSERT_TRUE(output.tracking.active) << output.reason;
+  }
+  ASSERT_GT(output.cmd_vel.vx, .1);
+
+  // Discarding the local reference leaves no executable trajectory, while
+  // retaining the same route and progress observation window.
+  for (int i = 0; i < 87; ++i) {
+    now += .02;
+    executor.stopLinearMotion();
+    output = tick();
+    ASSERT_EQ(output.reason, "local_plan_pending");
+    ASSERT_DOUBLE_EQ(output.cmd_vel.vx, 0);
+    ASSERT_DOUBLE_EQ(output.cmd_vel.vy, 0);
+  }
+
+  output = awaitScanOutput(tick);
+  ASSERT_TRUE(output.tracking.active) << output.reason;
+  for (int i = 0; i < 19; ++i) {
+    now += .02;
+    body.position.x += .08 * .02;
+    output = tick();
+    ASSERT_NE(output.reason, "execution_stalled");
+    ASSERT_EQ(output.recovery_trigger, "inactive");
+  }
+
+  // Waiting does not disable detection once commands genuinely fail to move
+  // the robot for a full observation interval after planning has resumed.
+  for (int i = 0; i < 120 && output.reason != "execution_stalled"; ++i) {
+    now += .02;
+    output = tick();
+  }
+  EXPECT_EQ(output.reason, "execution_stalled");
+}
+
+TEST(Executor, IntermittentNearFieldStopsRespectProgressAndGatePause) {
+  auto executor = makeProgressLoop(true, .15, true);
+  executor.setRoute(route({{0, 0, 0}, {10, 0, 0}}));
+  lingtu::nav::navigation::ExecutionOutput output;
+  bool ready_seen = false;
+  bool hold_seen = false;
+  for (int tick = 0; tick <= 20; ++tick) {
+    const bool held = tick % 2 == 1;
+    const double x = tick * .02;
+    const std::vector<float> obstacle_xyzh = {
+        static_cast<float>(x + .45), 0.0f, 0.0f, 1.0f};
+    output = executor.tick(routeInput(
+        pose(x, 0, 0, 0), held ? obstacle_xyzh.data() : nullptr,
+        held ? obstacleCount(obstacle_xyzh) : 0, 1.0 + tick * .1));
+    ready_seen = ready_seen || output.cmd_vel.vx > 0.0;
+    hold_seen = hold_seen || output.near_field_stop;
+    EXPECT_NE(output.recovery_trigger, "execution_stalled");
+  }
+  EXPECT_TRUE(ready_seen);
+  EXPECT_TRUE(hold_seen);
+
+  executor.pauseLinearMotion();
+  output = executor.tick(routeInput(pose(.4, 0, 0, 0), nullptr, 0, 100.0));
+  EXPECT_NE(output.recovery_trigger, "execution_stalled")
+      << "an input-gate pause must discard stale execution intent";
 }
 
 TEST(Executor, StallAllowsSlowProgressAtDifferentBodyHeadings) {
@@ -2879,7 +4058,7 @@ TEST(Executor, StallAllowsSlowProgressAtDifferentBodyHeadings) {
                                                    nullptr, 0, 1.0 + t));
       translation_commanded = translation_commanded || output.cmd_vel.vx > .02;
       ASSERT_TRUE(output.path_found) << output.reason;
-      ASSERT_NE(output.reason, "autonomy_motion_stalled");
+      ASSERT_NE(output.reason, "execution_stalled");
       ASSERT_EQ(output.recovery_trigger, "inactive");
     }
     EXPECT_TRUE(translation_commanded);
@@ -2909,13 +4088,13 @@ TEST(Executor, StallDuringHeadingAlignmentRequiresRotationInRequestedDirection) 
       }
       output = executor.tick(routeInput(body, nullptr, 0, 1.0 + t));
       requested_rotation = requested_rotation || output.cmd_vel.wz > 0.0;
-      if (output.reason == "autonomy_motion_stalled") break;
+      if (output.reason == "execution_stalled") break;
     }
     EXPECT_TRUE(requested_rotation);
     if (correct_direction) {
-      EXPECT_NE(output.reason, "autonomy_motion_stalled");
+      EXPECT_NE(output.reason, "execution_stalled");
     } else {
-      EXPECT_EQ(output.reason, "autonomy_motion_stalled");
+      EXPECT_EQ(output.reason, "execution_stalled");
       EXPECT_DOUBLE_EQ(output.cmd_vel.wz, 0.0);
     }
   }
@@ -2932,9 +4111,9 @@ TEST(Executor, StallDoesNotCountOscillationOrInstantaneousSpeedAsProgress) {
     obs.body_linear_velocity.x = .4 * std::cos(40 * t);
     output = executor.tick(routeInput(pose(.01 * std::sin(40 * t), 0, 0, 0),
                                       nullptr, 0, 1.0 + t, {}, obs));
-    if (output.reason == "autonomy_motion_stalled") break;
+    if (output.reason == "execution_stalled") break;
   }
-  EXPECT_EQ(output.reason, "autonomy_motion_stalled");
+  EXPECT_EQ(output.reason, "execution_stalled");
 }
 
 TEST(Executor, StallAllowsFiftyHertzPoseUpdatesAtHundredHertzControl) {
@@ -2945,7 +4124,7 @@ TEST(Executor, StallAllowsFiftyHertzPoseUpdatesAtHundredHertzControl) {
     const double pose_time = (tick / 2) * .02;
     const auto output = executor.tick(routeInput(pose(.03 * pose_time, 0, 0, 0),
                                                  nullptr, 0, 1.0 + t));
-    ASSERT_NE(output.reason, "autonomy_motion_stalled");
+    ASSERT_NE(output.reason, "execution_stalled");
     ASSERT_EQ(output.recovery_trigger, "inactive");
   }
 }
@@ -3066,7 +4245,7 @@ TEST(Executor, OdomLocalFrameTransformsMapObstaclesIntoPlannerFrame) {
 
   EXPECT_TRUE(out.active);
   EXPECT_TRUE(out.near_field_stop) << "the map-frame obstacle is 0.45 m ahead in odom";
-  EXPECT_EQ(out.reason, "near_field_stop");
+  EXPECT_EQ(out.reason, "local_near_field_stop");
   EXPECT_DOUBLE_EQ(out.cmd_vel.vx, 0.0);
   EXPECT_DOUBLE_EQ(out.cmd_vel.vy, 0.0);
   EXPECT_DOUBLE_EQ(out.cmd_vel.wz, 0.0);
@@ -3131,7 +4310,8 @@ TEST(Executor, OdomLocalFrameTransformsCompleteCollisionLayerAndAabb) {
   // The first polynomial seed may be blocked; this test verifies the eventual
   // detour and frame transform, including SCAN's bounded initialization retries.
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while (out.reason == "scan_initialization_failed" &&
+  while (out.reason == "local_blocked" &&
+         out.local_planner_debug.searchReason == "scan_initialization_failed" &&
          std::chrono::steady_clock::now() < deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
     out = awaitScanOutput(tick);
@@ -3304,5 +4484,163 @@ TEST(Executor, HorizontalAcceptanceDoesNotWidenTaskHeightTolerance) {
     const auto inHeight = settledGoal(executor,
         routeInput(pose(1,0,.35,0),nullptr,0,3));
     EXPECT_TRUE(inHeight.goal_reached) << inHeight.reason;
+  }
+}
+
+TEST(Executor, ConfiguredBodyGuardsBothXYZRouteAndMotionIntentWithRawGeometry) {
+  namespace c = lingtu::nav::collision;
+  for (bool assisted : {false,true}) {
+    SCOPED_TRACE(assisted ? "MotionIntent" : "XYZ route");
+    auto body = std::make_shared<c::Body>();
+    body->margin_m = 0;
+    c::Part part;
+    part.link = "base";
+    part.half_size = {.3,.1,.1};
+    body->parts.push_back(part);
+    lingtu::nav::navigation::ExecutorConfig config;
+    config.body = body;
+    config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
+    config.recovery.max_attempts = 0;
+    nav_kernel::LocalPlannerParams params;
+    params.backend = nav_kernel::LocalPlannerBackend::Scan;
+    params.scan.voxelResolution = .1;
+    auto executor = makeConfiguredExecutor(config,params,"");
+    EXPECT_EQ(executor.body(),body);
+    executor.setRoute({{{0,0,.5},{2,0,.5}}});
+    lingtu::nav::tests::CollisionBitmap raw({-3,-3,-1},{3,3,2},.1);
+    lingtu::nav::tests::CollisionBitmap inflated({-3,-3,-1},{3,3,2},.1);
+    raw.occupy({.25,.05,.55});
+    auto obs = emptyScanObservation(1);
+    obs.clock_mode = nav_kernel::PlanClockMode::External;
+    obs.collision = inflated.view(1);
+    const auto measured = raw.view(1);
+    obs.collision.measuredOccupiedStorage =
+        std::make_shared<const std::vector<std::uint8_t>>(
+            measured.inflatedBits,measured.inflatedBits+measured.inflatedBytes);
+    obs.collision.knownFreeStorage =
+        std::make_shared<const std::vector<std::uint8_t>>(measured.inflatedBytes,255U);
+    const auto tick = [&] {
+      return executor.tick(assisted
+          ? intentInput({{0,0,.5},0},{.4,0,0},nullptr,0,1,{},obs)
+          : routeInput({{0,0,.5},0},nullptr,0,1,{},obs));
+    };
+    const auto output = awaitScanOutput(tick);
+    EXPECT_FALSE(output.path_found) << output.reason;
+    EXPECT_DOUBLE_EQ(output.cmd_vel.vx,0);
+    EXPECT_DOUBLE_EQ(output.cmd_vel.vy,0);
+    EXPECT_DOUBLE_EQ(output.cmd_vel.wz,0);
+  }
+}
+
+TEST(Executor, ExplicitXYZRouteBodyOverridesTheConfiguredEnvelope) {
+  namespace c = lingtu::nav::collision;
+  const auto makeBody = [](double halfWidth) {
+    auto body = std::make_shared<c::Body>();
+    body->margin_m = 0;
+    c::Part part;
+    part.link = "base";
+    part.half_size = {.1,halfWidth,.1};
+    body->parts.push_back(part);
+    return body;
+  };
+  lingtu::nav::navigation::ExecutorConfig config;
+  config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
+  config.body = makeBody(.4);
+  nav_kernel::LocalPlannerParams params;
+  params.backend = nav_kernel::LocalPlannerBackend::Scan;
+  params.scan.voxelResolution = .1;
+  auto executor = makeConfiguredExecutor(config,params,"");
+  auto active = route({{0,0,.5},{2,0,.5}});
+  active.body = makeBody(.05);
+  executor.setRoute(std::move(active));
+  lingtu::nav::tests::CollisionBitmap raw({-3,-3,-1},{3,3,2},.1);
+  lingtu::nav::tests::CollisionBitmap inflated({-3,-3,-1},{3,3,2},.1);
+  raw.occupy({.05,.25,.55});
+  auto obs = emptyScanObservation(1);
+  obs.clock_mode = nav_kernel::PlanClockMode::External;
+  obs.collision = inflated.view(1);
+  const auto measured = raw.view(1);
+  obs.collision.measuredOccupiedStorage =
+      std::make_shared<const std::vector<std::uint8_t>>(
+          measured.inflatedBits,measured.inflatedBits+measured.inflatedBytes);
+  obs.collision.knownFreeStorage =
+      std::make_shared<const std::vector<std::uint8_t>>(measured.inflatedBytes,255U);
+  auto output = awaitScanOutput([&] {
+    return executor.tick(routeInput({{0,0,.5},0},nullptr,0,1,{},obs));
+  });
+  EXPECT_TRUE(output.path_found) << output.reason << ':' << output.local_planner_debug.searchReason;
+  // The initial spline starts at rest. Advance its external clock while the
+  // same static-world observation remains fresh; readiness alone is not motion.
+  for (int tick = 1; tick <= 10 && std::hypot(output.cmd_vel.vx,output.cmd_vel.vy) <= 1e-4;
+       ++tick) {
+    const double stamp = 1.0 + tick * .02;
+    obs.odom_stamp_s = stamp;
+    output = awaitScanOutput([&] {
+      return executor.tick(routeInput({{0,0,.5},0},nullptr,0,stamp,{},obs));
+    });
+  }
+  EXPECT_TRUE(output.path_found) << output.reason << ':' << output.local_planner_debug.searchReason;
+  EXPECT_GT(std::hypot(output.cmd_vel.vx,output.cmd_vel.vy),1e-4)
+      << output.reason << " execution_time=" << output.tracking.executionTimeS;
+}
+
+TEST(Executor, ConfiguredBodyXYZGuideCannotTurnThroughAnOccupiedCorner) {
+  namespace c = lingtu::nav::collision;
+  auto body = std::make_shared<c::Body>();
+  body->margin_m = 0;
+  c::Part part;
+  part.link = "base";
+  part.half_size = {.3,.1,.1};
+  body->parts.push_back(part);
+  lingtu::nav::navigation::ExecutorConfig config;
+  config.body = body;
+  config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
+  config.recovery.max_attempts = 0;
+  nav_kernel::LocalPlannerParams params;
+  params.backend = nav_kernel::LocalPlannerBackend::Scan;
+  params.scan.voxelResolution = .1;
+  auto executor = makeConfiguredExecutor(config,params,"");
+  executor.setRoute({{{0,0,.5},{0,2,.5}}});
+  lingtu::nav::tests::CollisionBitmap raw({-3,-3,-1},{3,3,2},.1);
+  lingtu::nav::tests::CollisionBitmap inflated({-3,-3,-1},{3,3,2},.1);
+  raw.occupy({.25,.25,.55});
+  auto obs = emptyScanObservation(1);
+  obs.clock_mode = nav_kernel::PlanClockMode::External;
+  obs.collision = inflated.view(1);
+  const auto measured = raw.view(1);
+  obs.collision.measuredOccupiedStorage =
+      std::make_shared<const std::vector<std::uint8_t>>(
+          measured.inflatedBits,measured.inflatedBits+measured.inflatedBytes);
+  obs.collision.knownFreeStorage =
+      std::make_shared<const std::vector<std::uint8_t>>(measured.inflatedBytes,255U);
+  const auto output = awaitScanOutput([&] {
+    return executor.tick(routeInput({{0,0,.5},0},nullptr,0,1,{},obs));
+  });
+  nav_kernel::LocalPlanRequest request;
+  request.body = body;
+  request.robot.pose = {{0,0,.5},0};
+  request.environment.collision = obs.collision;
+  const nav_kernel::local::scan::Grid grid(params,request);
+  ASSERT_EQ(grid.segmentInflatedOccupancy({0,0,.5},0,{0,0,.5},M_PI/2),1);
+  if (!output.path_found) {
+    EXPECT_DOUBLE_EQ(output.cmd_vel.vx,0);
+    EXPECT_DOUBLE_EQ(output.cmd_vel.vy,0);
+    EXPECT_DOUBLE_EQ(output.cmd_vel.wz,0);
+    return;
+  }
+  const auto &curve = output.local_path_map;
+  ASSERT_GE(curve.size(),2U);
+  const double dt = output.tracking.durationS / (curve.size()-1U);
+  ASSERT_GT(dt,0);
+  double previousYaw = request.robot.pose.yaw;
+  for (std::size_t i = 1; i < curve.size(); ++i) {
+    const nav_kernel::Vec3 velocity{(curve[i].x-curve[i-1].x)/dt,
+                                    (curve[i].y-curve[i-1].y)/dt,
+                                    (curve[i].z-curve[i-1].z)/dt};
+    const double nextYaw = std::hypot(velocity.x,velocity.y) > .03
+        ? std::atan2(velocity.y,velocity.x) : previousYaw;
+    EXPECT_EQ(grid.segmentInflatedOccupancy(curve[i-1],previousYaw,curve[i],nextYaw),0)
+        << "segment=" << i;
+    previousYaw = nextYaw;
   }
 }

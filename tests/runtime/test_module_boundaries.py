@@ -153,7 +153,7 @@ def test_product_assembly_uses_registered_plugin_catalog_boundary() -> None:
         tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
         for module in _all_absolute_imports(tree):
             if module in {
-                "lingtu.assembly.plugins",
+                "lingtu.assembly.host.plugin_catalog",
                 "lingtu.ros2_plugin_seed",
                 "lingtu.ros2_shutdown",
             }:
@@ -180,7 +180,9 @@ def test_runtime_does_not_import_product_assembly() -> None:
 def test_stack_factories_do_not_import_service_manager_directly() -> None:
     violations: list[str] = []
 
-    for path in (SRC / "lingtu" / "assembly" / "stacks").glob("*.py"):
+    stack_sources = list((SRC / "lingtu" / "assembly" / "host" / "stacks").glob("*.py"))
+    assert stack_sources
+    for path in stack_sources:
         if path.name == "__init__.py" or "__pycache__" in path.parts:
             continue
         rel = path.relative_to(ROOT).as_posix()
@@ -204,7 +206,7 @@ def test_navigation_split_stack_modules_keep_adapter_imports_lazy_and_isolated()
                 modules.add(node.module)
         return modules
 
-    stack_dir = SRC / "lingtu" / "assembly" / "stacks"
+    stack_dir = SRC / "lingtu" / "assembly" / "host" / "stacks"
     forbidden_core_import_roots = {
         "adapters",
         "compat",
@@ -217,7 +219,7 @@ def test_navigation_split_stack_modules_keep_adapter_imports_lazy_and_isolated()
     navigation_import_roots = {_top_level(module) for module in direct_module_imports(navigation)}
     assert navigation_import_roots.isdisjoint(forbidden_core_import_roots)
 
-def test_thunder_driver_blueprints_compatibility_file_is_removed() -> None:
+def test_thunder_driver_host_builders_compatibility_file_is_removed() -> None:
     assert not (SRC / "drivers" / "real" / "thunder" / "blueprints.py").exists()
 
 
@@ -396,7 +398,7 @@ def test_product_runtime_paths_do_not_import_ros_modules() -> None:
     from tools.validate.validate_architecture_boundaries import _is_ros_import, _iter_imports
 
     product_paths = (
-        SRC / "lingtu" / "assembly" / "products",
+        SRC / "lingtu" / "assembly",
         SRC / "runtime" / "profiles",
     )
     violations: list[str] = []

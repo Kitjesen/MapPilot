@@ -114,8 +114,11 @@ def test_failed_official_lidar_init_restores_robot_geom_groups(
     np.testing.assert_array_equal(model.geom_group, original_groups)
 
 
-def test_lidar_self_exclusion_keeps_robot_visual_and_collision_groups_distinct() -> None:
+def test_lidar_self_geometry_preparation_preserves_physical_collision_flags() -> None:
     mujoco = pytest.importorskip("mujoco")
+    pytest.importorskip("mujoco_lidar")
+    from sim.compat.engine.core.sensor import LidarConfig
+
     model = mujoco.MjModel.from_xml_string(
         """
         <mujoco>
@@ -125,25 +128,243 @@ def test_lidar_self_exclusion_keeps_robot_visual_and_collision_groups_distinct()
                     group="1" contype="0" conaffinity="0"/>
               <geom name="collision" type="box" size="0.2 0.1 0.1"
                     group="3" contype="1" conaffinity="1"/>
+              <body name="lidar_link"><site name="lidar_site"/></body>
             </body>
           </worldbody>
         </mujoco>
         """
     )
-    lidar = MuJoCoLidar.__new__(MuJoCoLidar)
-    lidar._model = model
-    lidar._exclude_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
-    lidar._geomgroup = np.ones(6, dtype=np.uint8)
-    lidar._self_geom_count = 0
+    original_contype = model.geom_contype.copy()
+    original_conaffinity = model.geom_conaffinity.copy()
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    MuJoCoLidar(model, data, LidarConfig(
+        body_name="lidar_link",
+        exclude_body_name="base_link",
+        site_name="lidar_site",
+        backend="mujoco_lidar",
+        mujoco_lidar_backend="cpu",
+        mid360_npy_path=str(MID360_PATTERN),
+        add_noise=False,
+    ))
 
-    lidar._exclude_robot_geoms()
+    np.testing.assert_array_equal(model.geom_contype, original_contype)
+    np.testing.assert_array_equal(model.geom_conaffinity, original_conaffinity)
 
-    visual_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "visual")
-    collision_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "collision")
-    assert int(model.geom_group[visual_id]) == 5
-    assert int(model.geom_group[collision_id]) == 3
-    assert int(lidar._geomgroup[5]) == 0
-    assert int(lidar._geomgroup[3]) == 0
+
+def _occlusion_lidar(
+    monkeypatch: pytest.MonkeyPatch, *, blocker: str = "", assets: str = "",
+    legacy_root_site: bool = False,
+) -> MuJoCoLidar:
+    mujoco = pytest.importorskip("mujoco")
+    pytest.importorskip("mujoco_lidar")
+    from sim.compat.engine.core.sensor import LidarConfig
+
+    site = '<site name="lidar_site" size="0.001"/>'
+    model = mujoco.MjModel.from_xml_string(
+        f"""
+        <mujoco>
+          <asset>{assets}</asset>
+          <worldbody>
+            <geom name="front_target" type="sphere" pos="3 0 0" size="0.25"/>
+            <geom name="side_target" type="sphere" pos="0 3 0" size="0.25"/>
+            <geom name="rear_target" type="sphere" pos="-3 0 0" size="0.25"/>
+            <body name="base_link">
+              <geom name="torso" type="box" pos="-0.5 0 0" size="0.1 0.1 0.1"/>
+              {site if legacy_root_site else ""}
+              <body name="lidar_link">
+                <geom name="sensor_housing" type="sphere" size="0.03"
+                      contype="0" conaffinity="0"/>
+                {"" if legacy_root_site else site}
+              </body>
+              {blocker}
+            </body>
+          </worldbody>
+        </mujoco>
+        """
+    )
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    lidar = MuJoCoLidar(model, data, LidarConfig(
+        body_name="base_link" if legacy_root_site else "lidar_link",
+        exclude_body_name="base_link",
+        site_name="lidar_site",
+        backend="mujoco_lidar",
+        mujoco_lidar_backend="cpu",
+        mid360_npy_path=str(MID360_PATTERN),
+        add_noise=False,
+    ))
+    monkeypatch.setattr(
+        lidar,
+        "_next_pattern_angles",
+        lambda *_args, **_kwargs: (
+            np.array([0.0, np.pi / 2], dtype=np.float32),
+            np.zeros(2, dtype=np.float32),
+        ),
+    )
+    return lidar
+
+
+def test_mid360_sensor_housing_does_not_hide_visible_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lidar = _occlusion_lidar(monkeypatch)
+
+    points = lidar.scan_xyz()
+
+    np.testing.assert_allclose(points, [[2.75, 0, 0], [0, 2.75, 0]], atol=1e-5)
+
+
+def test_mid360_legacy_root_site_ignores_only_its_colocated_sensor_housing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lidar = _occlusion_lidar(
+        monkeypatch,
+        legacy_root_site=True,
+        blocker='<body name="front_bracket"><geom type="box" pos="1 0 0" '
+        'size="0.15 0.35 0.35"/></body>',
+    )
+
+    points = lidar.scan_xyz()
+
+    np.testing.assert_allclose(points, [[0, 2.75, 0]], atol=1e-5)
+
+
+def test_mid360_legacy_root_site_does_not_ignore_a_colocated_mounting_bracket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lidar = _occlusion_lidar(
+        monkeypatch,
+        legacy_root_site=True,
+        blocker='<body name="mounting_bracket"><geom type="box" '
+        'size="0.05 0.05 0.05"/></body>',
+    )
+
+    points = lidar.scan_xyz()
+
+    assert points.shape == (0, 3)
+
+
+@pytest.mark.parametrize("collidable", [True, False], ids=["collision", "visual"])
+def test_mid360_robot_geometry_blocks_environment_without_returning_self_points(
+    monkeypatch: pytest.MonkeyPatch,
+    collidable: bool,
+) -> None:
+    blocker = (
+        '<body name="front_bracket"><geom name="blocker" type="box" '
+        f'pos="1 0 0" size="0.15 0.35 0.35" contype="{int(collidable)}" '
+        f'conaffinity="{int(collidable)}"/></body>'
+    )
+    lidar = _occlusion_lidar(monkeypatch, blocker=blocker)
+
+    points = lidar.scan_xyz()
+
+    np.testing.assert_allclose(points, [[0, 2.75, 0]], atol=1e-5)
+
+
+def test_mid360_robot_torso_blocks_a_rear_ray(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lidar = _occlusion_lidar(monkeypatch)
+    monkeypatch.setattr(
+        lidar,
+        "_next_pattern_angles",
+        lambda *_args, **_kwargs: (
+            np.array([np.pi], dtype=np.float32),
+            np.zeros(1, dtype=np.float32),
+        ),
+    )
+
+    points = lidar.scan_xyz()
+
+    assert points.shape == (0, 3)
+
+
+def test_plugin_returns_are_filtered_by_robot_occlusion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lidar = _occlusion_lidar(
+        monkeypatch,
+        blocker='<body name="front_bracket"><geom type="box" pos="1 0 0" '
+        'size="0.15 0.35 0.35"/></body>',
+    )
+    lidar._plugin_reader = lambda *_args: np.array([[2.75, 0, 0], [0, 2.75, 0]])
+    np.testing.assert_allclose(lidar._scan_plugin(), [[0, 2.75, 0]], atol=1e-5)
+
+
+def test_mid360_self_geometry_inside_minimum_range_still_blocks_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lidar = _occlusion_lidar(
+        monkeypatch,
+        blocker='<body name="close_bracket"><geom type="box" pos="0.05 0 0" '
+        'size="0.02 0.03 0.03"/></body>',
+    )
+
+    points = lidar.scan_xyz()
+
+    np.testing.assert_allclose(points, [[0, 2.75, 0]], atol=1e-5)
+
+
+def test_mid360_moving_robot_part_updates_the_occluded_direction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mujoco = pytest.importorskip("mujoco")
+    lidar = _occlusion_lidar(
+        monkeypatch,
+        blocker='<body name="moving_bracket" pos="1 0 0">'
+        '<joint name="bracket_slide" type="slide" axis="0 1 0"/>'
+        '<geom type="box" size="0.15 0.35 0.35"/></body>',
+    )
+    np.testing.assert_allclose(lidar.scan_xyz(), [[0, 2.75, 0]], atol=1e-5)
+    lidar._data.qpos[0] = 1.0
+    mujoco.mj_forward(lidar._model, lidar._data)
+
+    points = lidar.scan_xyz()
+
+    np.testing.assert_allclose(points, [[2.75, 0, 0], [0, 2.75, 0]], atol=1e-5)
+
+
+def test_mid360_self_occlusion_uses_the_rotated_sensor_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mujoco = pytest.importorskip("mujoco")
+    lidar = _occlusion_lidar(
+        monkeypatch,
+        blocker='<body name="side_bracket"><geom type="box" pos="0 1 0" '
+        'size="0.35 0.15 0.35"/></body>',
+    )
+    lidar._model.body_quat[lidar._body_id] = [math.sqrt(.5), 0, 0, math.sqrt(.5)]
+    mujoco.mj_forward(lidar._model, lidar._data)
+    monkeypatch.setattr(
+        lidar,
+        "_next_pattern_angles",
+        lambda *_args, **_kwargs: (np.zeros(1, dtype=np.float32), np.zeros(1, dtype=np.float32)),
+    )
+
+    points = lidar.scan_xyz()
+
+    assert points.shape == (0, 3)
+
+
+@pytest.mark.parametrize("mesh_x", [-1.0, 1.0], ids=["clear", "blocked"])
+def test_mid360_visual_mesh_controls_occlusion_instead_of_coarse_contact_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+    mesh_x: float,
+) -> None:
+    lidar = _occlusion_lidar(
+        monkeypatch,
+        assets='<mesh name="shell" vertex="-.1 -.2 -.2  -.1 -.2 .2  -.1 .2 -.2 '
+        '-.1 .2 .2  .1 -.2 -.2  .1 -.2 .2  .1 .2 -.2  .1 .2 .2"/>',
+        blocker='<body name="body_shell"><geom name="contact_proxy" type="box" '
+        'size="1 .5 .5"/><geom name="optical_shell" type="mesh" mesh="shell" '
+        f'pos="{mesh_x} 0 0" contype="0" conaffinity="0"/></body>',
+    )
+
+    points = lidar.scan_xyz()
+
+    expected = [[0, 2.75, 0]] if mesh_x > 0 else [[2.75, 0, 0], [0, 2.75, 0]]
+    np.testing.assert_allclose(points, expected, atol=1e-5)
 
 
 def test_formal_mid360_uses_declared_site_and_excludes_the_robot_root() -> None:
@@ -242,9 +463,10 @@ def test_load_mid360_csv_pattern_converts_zenith_to_elevation(tmp_path) -> None:
     np.testing.assert_allclose(angles[:, 1], [0.0, np.pi / 2, -np.pi / 2], atol=1e-6)
 
 
-def test_mid360_pattern_sampler_advances_and_wraps() -> None:
+def test_mid360_pattern_sampler_advances_with_snapshot_clock_and_wraps() -> None:
     lidar = MuJoCoLidar.__new__(MuJoCoLidar)
-    lidar._config = SimpleNamespace(samples_per_frame=3)
+    lidar._config = SimpleNamespace(samples_per_frame=3, fps=200_000 / 3)
+    lidar._data = SimpleNamespace(time=3 / 200_000)
     lidar._ray_angles = np.array(
         [
             [0.0, 0.0],
@@ -258,13 +480,16 @@ def test_mid360_pattern_sampler_advances_and_wraps() -> None:
     lidar._ray_cursor = 0
 
     first = lidar._next_pattern_angles()
+    lidar._data.time = 6 / 200_000
     second = lidar._next_pattern_angles()
 
     np.testing.assert_allclose(first[0], [0.0, np.pi / 2, np.pi], atol=1e-6)
     np.testing.assert_allclose(first[1], 0.0, atol=0.0)
     np.testing.assert_allclose(second[0], [3 * np.pi / 2, 0.0, 0.0], atol=1e-6)
     np.testing.assert_allclose(second[1], [0.0, np.pi / 2, 0.0], atol=1e-6)
-    assert lidar._ray_cursor == 1
+    # Repeating a snapshot preserves its scan interval instead of advancing it.
+    repeated = lidar._next_pattern_angles()
+    np.testing.assert_array_equal(repeated, second)
 
 
 def test_lidar_return_model_uses_distance_weighted_intensity() -> None:
@@ -404,10 +629,12 @@ def test_mid360_pattern_angle_noise_keeps_theta_wrapped() -> None:
     lidar = MuJoCoLidar.__new__(MuJoCoLidar)
     lidar._config = SimpleNamespace(
         samples_per_frame=4,
+        fps=200_000 / 4,
         add_noise=True,
         angle_noise_std_rad=0.01,
     )
     lidar._ray_angles = np.array([[0.0, 0.1], [6.2, 0.2]], dtype=np.float32)
+    lidar._data = SimpleNamespace(time=4 / 200_000)
     lidar._ray_cursor = 0
     lidar._rng = np.random.default_rng(0)
 

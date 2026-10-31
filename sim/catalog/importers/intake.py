@@ -301,9 +301,16 @@ class SourceIntake:
         total_size = 0
         kinds: dict[str, bool] = {}
         descendant_parents: set[str] = set()
+        pending_long_name: str | None = None
         while True:
             header = self._read_tar_exact(stream, _TAR_BLOCK_SIZE, remaining_budget, source)
             if header == bytes(_TAR_BLOCK_SIZE):
+                if pending_long_name is not None:
+                    raise ImportFailure(
+                        "TAR archive ends before its GNU long-name member",
+                        code=ImportCode.UNSAFE_ARCHIVE,
+                        context=str(source),
+                    )
                 second = self._read_tar_exact(stream, _TAR_BLOCK_SIZE, remaining_budget, source)
                 if second != bytes(_TAR_BLOCK_SIZE):
                     raise ImportFailure(
@@ -316,12 +323,41 @@ class SourceIntake:
             name, size, typeflag = self._parse_tar_header(header, source)
             member_count += 1
             self._enforce_archive_metadata_limits(member_count, (name,))
-            if typeflag in {b"x", b"g", b"L", b"K", b"S"}:
+            if typeflag == b"L":
+                if pending_long_name is not None or not 0 < size <= _TAR_METADATA_BUDGET_PER_MEMBER:
+                    raise ImportFailure(
+                        f"TAR archive contains an unbounded or chained name extension: {name}",
+                        code=ImportCode.UNSAFE_ARCHIVE,
+                        context=name,
+                    )
+                raw_name = self._read_tar_exact(stream, size, remaining_budget, source)
+                padding = (-size) % _TAR_BLOCK_SIZE
+                if padding:
+                    self._read_tar_exact(stream, padding, remaining_budget, source)
+                if not raw_name.endswith(b"\0") or b"\0" in raw_name[:-1]:
+                    raise ImportFailure(
+                        "TAR archive contains an invalid GNU long name",
+                        code=ImportCode.UNSAFE_ARCHIVE,
+                        context=name,
+                    )
+                try:
+                    pending_long_name = raw_name[:-1].decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise ImportFailure(
+                        "TAR archive contains a non-UTF-8 GNU long name",
+                        code=ImportCode.UNSAFE_ARCHIVE,
+                        context=name,
+                    ) from exc
+                self._enforce_archive_metadata_limits(member_count, (pending_long_name,))
+                continue
+            if typeflag in {b"x", b"g", b"K", b"S"}:
                 raise ImportFailure(
                     f"TAR archive contains an unbounded metadata extension: {name}",
                     code=ImportCode.UNSAFE_ARCHIVE,
                     context=name,
                 )
+            if pending_long_name is not None:
+                name, pending_long_name = pending_long_name, None
             is_directory = typeflag == b"5"
             if typeflag not in {b"\0", b"0", b"5"}:
                 raise ImportFailure(

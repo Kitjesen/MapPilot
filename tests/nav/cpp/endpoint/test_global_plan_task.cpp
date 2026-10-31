@@ -1,8 +1,9 @@
 #include <chrono>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 
-#include "runtime/goal/task.hpp"
+#include "app/goal/task.hpp"
 
 namespace {
 
@@ -60,6 +61,9 @@ int main() {
 
   GlobalPlanTask task(waitAndPlan);
   GlobalPlanContext first;
+  require(first.timeout == lingtu::nav::endpoint::kDefaultGlobalPlanTimeout &&
+              first.timeout == 10s,
+          "normal goals lost the bounded default planning timeout");
   first.request_id = "goal-1";
   first.goal_epoch = 11;
   first.frame_epoch = 4;
@@ -108,6 +112,20 @@ int main() {
   require(start_only_path.size() == 1U && start_only_path.front().x == 1.0,
           "start-only plan appended an unplanned goal segment");
 
+  auto body_context = first;
+  body_context.request.body = std::make_shared<lingtu::nav::collision::Body>();
+  body_context.request.start.yaw = 0.7;
+  body_context.request.goal.yaw = -0.4;
+  require(task.start(body_context), "body plan did not start");
+  const auto body_result = waitForResult(task);
+  require(body_result && body_result->context.request.body == body_context.request.body,
+          "asynchronous plan lost its immutable body snapshot");
+  auto xyz_result = *body_result;
+  for (auto &point : xyz_result.result.path) point.yaw.reset();
+  const auto xyz_path = lingtu::nav::endpoint::globalPlanPath(xyz_result);
+  require(xyz_path.size() == 2U && xyz_path.back().x == 4.0,
+          "XYZ result needs positions, not intermediate body headings");
+
   auto overlay_completion = *first_result;
   auto &requested_overlay = overlay_completion.context.request.temporary_overlay;
   requested_overlay.revision = 17U;
@@ -153,6 +171,50 @@ int main() {
   const auto timed_result = waitForResult(task);
   require(timed_result.has_value() && timed_result->result.cancelled && timed_result->timed_out,
           "timed preview did not release the planner with a timeout result");
+  require(!timed_result->result.ok && timed_result->result.path.empty() &&
+              timed_result->result.failure_reason == lingtu::nav::endpoint::kGlobalPlanTimeoutReason,
+          "timeout was reported as a geometric no-path result or retained a route");
   require(!task.busy(), "timed preview left the planner busy");
+
+  auto unlimited = first;
+  unlimited.timeout = 0ms;
+  require(task.start(unlimited), "explicit unlimited diagnostic plan did not start");
+  const auto unlimited_result = waitForResult(task);
+  require(unlimited_result && unlimited_result->result.ok && !unlimited_result->timed_out &&
+              unlimited_result->context.timeout == 0ms,
+          "explicit zero timeout no longer preserves the unlimited contract");
+
+  std::atomic_bool worker_done{false};
+  GlobalPlanTask instant([&](const auto &request, const auto &) {
+    lingtu::nav::plan::GlobalPlanResult result;
+    result.ok = result.reached_goal = true;
+    result.path = {request.start,request.goal};
+    worker_done.store(true);
+    return result;
+  });
+  auto late_poll = first;
+  late_poll.timeout = 100ms;
+  require(instant.start(late_poll), "late-poll fixture did not start");
+  for (int i=0;i<100 && !worker_done.load();++i) std::this_thread::sleep_for(1ms);
+  require(worker_done.load(), "instant planner did not finish");
+  std::this_thread::sleep_for(150ms);
+  const auto ready_before_deadline = instant.poll();
+  require(ready_before_deadline && ready_before_deadline->result.ok &&
+              !ready_before_deadline->timed_out,
+          "poll delay retroactively timed out a planner that had already completed");
+
+  GlobalPlanTask late_success([](const auto &request, const auto &) {
+    std::this_thread::sleep_for(15ms);
+    lingtu::nav::plan::GlobalPlanResult result;
+    result.ok = result.reached_goal = true;
+    result.path = {request.start,request.goal};
+    return result;
+  });
+  require(late_success.start(timed), "unchecked late-result fixture did not start");
+  const auto rejected_late_path = waitForResult(late_success);
+  require(rejected_late_path && rejected_late_path->timed_out &&
+              !rejected_late_path->result.ok && rejected_late_path->result.path.empty() &&
+              rejected_late_path->result.failure_reason == lingtu::nav::endpoint::kGlobalPlanTimeoutReason,
+          "a planner ignoring cancellation published an expired path");
   return 0;
 }

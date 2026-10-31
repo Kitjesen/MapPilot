@@ -69,6 +69,26 @@ export function SlamStatusPanel({ sseState, showToast, locale }: SlamStatusPanel
   const slamHz = metric(diagnostics, 'processed_scan_hz') ?? sseState.slamStatus?.slam_hz ?? null
   const mapPoints = metric(diagnostics, 'map_points') ?? sseState.slamStatus?.map_points ?? null
   const backend = session?.localization_backend ?? session?.slam_profile ?? sseState.slamStatus?.mode ?? '--'
+  const ltlioDegeneracy = diagnostics?.ltlio_degeneracy as Record<string, unknown> | undefined
+  const degeneracyAvailable = ltlioDegeneracy?.available
+  const categories = Array.isArray(ltlioDegeneracy?.categories) ? ltlioDegeneracy.categories : []
+  const principalDirections = Array.isArray(ltlioDegeneracy?.principal_directions)
+    ? ltlioDegeneracy.principal_directions
+    : []
+  const weakModes = categories
+    .map((category, index) => ({ category: String(category), index }))
+    .filter(({ category }) => category === 'PARTIAL' || category === 'UNOBSERVABLE')
+    .map(({ category, index }) => {
+      const row = Array.isArray(principalDirections[index]) ? principalDirections[index] : []
+      const values = row.slice(0, 6).map((value) => typeof value === 'number' && Number.isFinite(value) ? value : null)
+      return { category, index, values }
+    })
+  const guidance = ltlioDegeneracy?.guidance
+  const guidanceText = guidance === 'turn_or_retrace_for_features'
+    ? text(locale, 'Turn or retrace for features', '转向或回退以获取特征')
+    : guidance === 'awaiting_lidar_geometry'
+      ? text(locale, 'Awaiting LiDAR geometry', '等待 LiDAR 几何')
+      : text(locale, 'No guidance', '无提示')
 
   return (
     <section className={styles.panel} role="tabpanel" id="panel-slam">
@@ -104,6 +124,28 @@ export function SlamStatusPanel({ sseState, showToast, locale }: SlamStatusPanel
 
       {!activeMap && (
         <p className={styles.hint}>{text(locale, 'No active saved map.', '当前没有激活的保存地图。')}</p>
+      )}
+      {degeneracyAvailable === false && (
+        <p className={styles.hint}>{text(locale, 'Degeneracy diagnostics unavailable', '退化诊断不可用')} · {guidanceText}</p>
+      )}
+      {degeneracyAvailable === true && (
+        <div className={styles.hint}>
+          {weakModes.length === 0
+            ? <div>{text(locale, 'No weak modes', '无弱方向')}</div>
+            : <>
+              <div>{text(locale, 'Weak modes (IMU frame)', '弱方向（IMU系）')}</div>
+              {weakModes.map(({ category, index, values }) => (
+                <div key={`${category}-${index}`}>
+                  {category} · [{values.slice(0, 3).map((value) => value === null ? '--' : value.toFixed(2)).join(' ')}]
+                  {' '}[{values.slice(3).map((value) => value === null ? '--' : value.toFixed(2)).join(' ')}]
+                  <small> Rx Ry Rz / Tx Ty Tz</small>
+                </div>
+              ))}
+            </>}
+          <div>{guidanceText} · {ltlioDegeneracy?.update_applied === true
+            ? text(locale, 'update applied', '已应用更新')
+            : text(locale, 'diagnostic only', '仅诊断，未抑制')}</div>
+        </div>
       )}
     </section>
   )

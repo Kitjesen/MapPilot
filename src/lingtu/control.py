@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import Any
 
 import lingtu.sim.switch as sim_switch
-from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan
+from lingtu.assembly.config.native_navigation import local_planner_name
 from lingtu.assembly.graph import ProcessSpec
-from lingtu.assembly.native_nav import local_planner_name
 from lingtu.product_lock import (
     CURRENT_RUN_FILE_NAME,
     ProductControlLock,
@@ -189,6 +189,7 @@ class ProductControl:
             "product_session_id": report.product_session_id,
             "phases": list(report.phases),
             "cleanup": list(report.cleanup),
+            "degraded": dict(report.degraded),
             "readiness": (
                 dict(report.readiness) if report.readiness is not None else None
             ),
@@ -334,6 +335,20 @@ class ProductControl:
                     "local_planner": plan.native_nav.get("local_planner"),
                     "error": report.error,
                 }
+        optional_processes: dict[str, Mapping[str, Any]] = {}
+        degraded: dict[str, Mapping[str, Any]] = {}
+        if plan.process_control == "systemd":
+            runner = self._systemd_runner()
+            for process in plan.processes:
+                if process.required:
+                    continue
+                detail = runner.inspect(process)
+                optional_processes[process.name] = detail
+                if detail.get("ready") is not True:
+                    degraded[process.name] = {
+                        "reason": ", ".join(detail.get("blockers", ())) or "not_ready",
+                        "evidence": detail,
+                    }
         return {
             "ok": True,
             "status": "active",
@@ -342,6 +357,8 @@ class ProductControl:
             "env": plan.env,
             "product": plan.product,
             "local_planner": plan.native_nav.get("local_planner"),
+            "processes": optional_processes,
+            "degraded": degraded,
             "error": None,
         }
 
@@ -673,6 +690,7 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Open the MuJoCo viewer for a simulation Product",
     )
+    parser.add_argument("--sim-session", help="Repository-relative simulation session YAML")
     parser.add_argument(
         "--local-planner",
         choices=("cmu", "scan"),
@@ -738,6 +756,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.viewer and (args.action != "switch" or args.env != "sim"):
             raise ValueError("--viewer is only valid with switch --env sim")
         env_config: dict[str, Any] = {}
+        if args.sim_session:
+            if args.action not in {"switch", "serve"} or args.env != "sim":
+                raise ValueError("--sim-session is only valid with switch/serve --env sim")
+            env_config["session"] = args.sim_session
         if args.backend:
             env_config["backend"] = args.backend
         if args.viewer:

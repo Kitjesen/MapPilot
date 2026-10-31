@@ -33,7 +33,6 @@ TaskEvent event(std::uint64_t sequence, std::string task_id, std::string request
   value.kind = kind;
   value.request_id = std::move(request_id);
   value.status.task_id = std::move(task_id);
-  value.status.run_id = value.status.task_id;
   value.status.request_id = value.request_id;
   value.status.map_id = "factory";
   value.status.map_content_epoch = 7;

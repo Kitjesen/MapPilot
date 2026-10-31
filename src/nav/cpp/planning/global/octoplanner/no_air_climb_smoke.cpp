@@ -209,9 +209,9 @@ octoplanner3d::runtime::PlannerOptions testOptions()
   octoplanner3d::runtime::PlannerOptions options;
   options.robot_radius = 0.1;
   options.snap_search_radius_cells = 2;
-  options.strict_direct_ground_support = true;
-  options.ground_support_xy_radius_cells = 1;
-  options.ground_support_depth_cells = 2;
+  options.direct_support_only = true;
+  options.support_radius_cells = 1;
+  options.support_depth_cells = 2;
   options.max_step_height = 0.45;
   options.max_slope = 0.0;
   options.max_iterations = 20000;
@@ -247,10 +247,14 @@ int main()
                 << " goal_error=" << ground_result.goal_error_m << "\n";
       return 1;
     }
-    if (ground_result.path.size() > 6U) {
-      std::cerr << "safe route retained raw voxel zigzags; points="
-                << ground_result.path.size() << "\n";
-      return 26;
+    for (std::size_t i = 1; i < ground_result.path.size(); ++i) {
+      const auto &a = ground_result.path[i-1];
+      const auto &b = ground_result.path[i];
+      if (std::max({std::abs(a.x-b.x), std::abs(a.y-b.y), std::abs(a.z-b.z)}) >
+          kResolution + 1e-6) {
+        std::cerr << "global route contains a non-adjacent shortcut\n";
+        return 26;
+      }
     }
 
     // Each terminal bound is independent. A nearby voxel must not bypass a
@@ -279,10 +283,22 @@ int main()
     auto support_footprint_options = testOptions();
     support_footprint_options.snap_search_radius_cells = 4;
     support_footprint_options.robot_radius = 0.1;
-    support_footprint_options.ground_support_xy_radius_cells = 2;
-    const auto support_footprint_result = plan(
+    support_footprint_options.support_radius_cells = 2;
+    const auto unsupported_edge_start = plan(
       map_path.string(),
       {center(-18), center(7), center(1)},
+      {center(18), center(7), center(1)},
+      support_footprint_options);
+    if (unsupported_edge_start.ok || !unsupported_edge_start.path.empty() ||
+        unsupported_edge_start.failure_reason != "start_unsupported") {
+      std::cerr << "unsupported floor-edge start escaped through snapping\n";
+      return 27;
+    }
+    // The floor ends at iy=8; a two-cell support footprint is supported at
+    // iy=6, whereas the original iy=7 start requires unobserved ground at iy=9.
+    const auto support_footprint_result = plan(
+      map_path.string(),
+      {center(-18), center(6), center(1)},
       {center(18), center(7), center(1)},
       support_footprint_options);
     if (!support_footprint_result.ok || !support_footprint_result.reached_goal) {
@@ -304,6 +320,12 @@ int main()
     lingtu::nav::plan::MapIdentity map_identity{
       "smoke-map", 1, "map"};
     octoplanner3d::runtime::PlannerSession session;
+    session.prepare(map_path, map_identity, cached_request.options);
+    session.prepare(map_path, map_identity, cached_request.options);
+    if (session.mapLoadCount() != 1 || session.prepareCount() != 1) {
+      std::cerr << "activation preparation did not reuse the same map/options\n";
+      return 34;
+    }
     const auto cached_first = session.run(map_path, map_identity, cached_request);
     const auto cached_second = session.run(map_path, map_identity, cached_request);
     if (!cached_first.ok || !cached_second.ok || session.mapLoadCount() != 1 ||
@@ -317,6 +339,13 @@ int main()
       std::cerr << "changed map identity did not rebuild prepared planner state\n";
       return 12;
     }
+    auto changed_options = cached_request;
+    ++changed_options.options.max_iterations;
+    const auto retuned = session.run(map_path, map_identity, changed_options);
+    if (!retuned.ok || session.mapLoadCount() != 2 || session.prepareCount() != 3) {
+      std::cerr << "changed options did not rebuild only prepared planner state\n";
+      return 35;
+    }
 
     const auto overlay_map_path = writeOverlayMap();
     lingtu::nav::plan::MapIdentity overlay_map_identity{
@@ -326,6 +355,7 @@ int main()
     overlay_request.start = start;
     overlay_request.goal = {center(18), center(0), center(1)};
     overlay_request.options = testOptions();
+    overlay_session.prepare(overlay_map_path, overlay_map_identity, overlay_request.options);
     const auto unobstructed =
       overlay_session.run(overlay_map_path, overlay_map_identity, overlay_request);
     lingtu::nav::plan::GlobalPlanBlockedRegion blocked_region;
@@ -353,7 +383,7 @@ int main()
         detoured.overlay_frame_epoch != overlay_request.temporary_overlay.frame_epoch ||
         detoured.overlay_obstacle_generation !=
           overlay_request.temporary_overlay.obstacle_generation ||
-        overlay_session.mapLoadCount() != 1U) {
+        overlay_session.mapLoadCount() != 1U || overlay_session.prepareCount() != 1U) {
       std::cerr << "temporary overlay identity was not echoed or reloaded the immutable map\n";
       return 19;
     }
@@ -424,7 +454,7 @@ int main()
       overlay_session.run(overlay_map_path, overlay_map_identity, cleared_overlay_request);
     if (!cleared_overlay.ok || !cleared_overlay.reached_goal ||
         !pathIntersects(cleared_overlay.path, blocked_region) ||
-        overlay_session.mapLoadCount() != 1U) {
+        overlay_session.mapLoadCount() != 1U || overlay_session.prepareCount() != 1U) {
       std::cerr << "temporary overlay leaked into a later request or reloaded the saved map\n";
       return 21;
     }
@@ -455,7 +485,7 @@ int main()
     octoplanner3d::runtime::PlannerOptions wall_options;
     wall_options.robot_radius = 0.1;
     wall_options.snap_search_radius_cells = 2;
-    wall_options.ground_support_depth_cells = 2;
+    wall_options.support_depth_cells = 2;
     wall_options.enable_preblocked_costmap = false;
     wall_options.obstacle_clearance_radius_cells = 0;
     wall_options.max_iterations = 20000;
@@ -514,7 +544,7 @@ int main()
         {center(18), center(0), center(10)},
         {center(18), center(0), center(1)});
     if (start_snap_result.ok ||
-        start_snap_result.failure_reason != "start_snap_exhausted") {
+        start_snap_result.failure_reason != "start_unsupported") {
       std::cerr << "in-map unsupported start did not use the official snap failure; reason="
                 << start_snap_result.failure_reason << "\n";
       return 16;
@@ -527,21 +557,19 @@ int main()
       {center(-18), center(0), center(4)},
       {center(18), center(0), center(1)},
       displaced_start_options);
-    // The global route starts at the nearest traversable voxel. It is only a
-    // proposal for SCAN and does not claim a physically safe descent from the
-    // measured high pose to that snapped start.
-    if (!displaced_start_result.ok || !displaced_start_result.reached_goal ||
-        displaced_start_result.path.empty() ||
-        displaced_start_result.path.front().z >= center(4) - 1e-6) {
-      std::cerr << "high raw start did not produce a route-only proposal "
-                << "from the snapped start; reason="
+    // A free lower route does not authorize an unsupported vertical entry
+    // from the actual high start.
+    if (displaced_start_result.ok || displaced_start_result.reached_goal ||
+        !displaced_start_result.path.empty() ||
+        displaced_start_result.failure_reason != "start_unsupported") {
+      std::cerr << "high raw start bypassed executable entry qualification; reason="
                 << displaced_start_result.failure_reason << "\n";
       return 30;
     }
 
     auto supported_layer_options = testOptions();
     supported_layer_options.snap_search_radius_cells = 6;
-    supported_layer_options.ground_support_depth_cells = 5;
+    supported_layer_options.support_depth_cells = 5;
     supported_layer_options.support_height_m = 0.6;
     supported_layer_options.support_height_tolerance_m = 0.05;
     supported_layer_options.lowest_traversable_only = true;
@@ -603,7 +631,7 @@ int main()
     auto hump_options = testOptions();
     hump_options.robot_radius = 0.05;
     hump_options.snap_search_radius_cells = 1;
-    hump_options.ground_support_xy_radius_cells = 0;
+    hump_options.support_radius_cells = 0;
     hump_options.enable_preblocked_costmap = false;
     hump_options.obstacle_clearance_radius_cells = 0;
     const auto hump_result = plan(

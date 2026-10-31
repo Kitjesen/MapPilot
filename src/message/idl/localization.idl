@@ -1,3 +1,24 @@
+// Frozen authoritative keyframe scans and corrected poses in one map gauge.
+// SLAM retains the latest confirmed directory for late/restarted mapd readers.
+@final
+struct SlamMapGeometrySnapshot {
+  unsigned long long reset_epoch;
+  unsigned long long graph_revision;
+  unsigned long long captured_sequence;
+  string frame_id;
+  string frozen_dir;
+  unsigned long long keyframe_count;
+  long long captured_stamp_ns;
+  Pose map_body;
+  double sensor_origin_z_m;
+};
+@final
+struct SlamMapGeometryApplied {
+  unsigned long long reset_epoch;
+  unsigned long long graph_revision;
+  boolean success;
+  string message;
+};
 // One accepted incremental scan and the exact map<-sensor transform evaluated
 // at that scan timestamp. Consumers must reject an old reset_epoch or a
 // non-increasing sequence within the same epoch.

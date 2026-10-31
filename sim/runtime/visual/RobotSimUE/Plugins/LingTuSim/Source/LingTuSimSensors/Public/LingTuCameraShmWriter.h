@@ -11,6 +11,7 @@ namespace LingTuSim::Sensors::CameraShm
     inline constexpr uint16 SlotHeaderSize = 256;
     inline constexpr uint16 DefaultSlotCount = 2;
     inline constexpr uint32 DefaultSlotCapacity = 8U * 1024U * 1024U;
+    inline constexpr uint32 HasSimulationTruth = 1U << 0;
 
     enum class EStreamKind : uint16
     {
@@ -33,7 +34,7 @@ namespace LingTuSim::Sensors::CameraShm
         uint64 published_sequence;
         uint64 created_timestamp_ns;
         uint64 writer_heartbeat_ns;
-        uint64 reserved1;
+        uint64 reserved1; // Model generation; fixed for the lifetime of this mapping.
     };
 
     struct alignas(64) FSlotHeader
@@ -65,15 +66,18 @@ namespace LingTuSim::Sensors::CameraShm
         double dist_p1;
         double dist_p2;
         double dist_k3;
-        uint8 reserved1[24];
+        uint8 reserved1[24]; // With HasSimulationTruth: little-endian <QQq> truth/reset/sim time.
         uint64 guard_end;
     };
 
     static_assert(sizeof(FSharedHeader) == SuperblockSize, "camera SHM superblock must be 64 bytes");
     static_assert(sizeof(FSlotHeader) == SlotHeaderSize, "camera SHM slot header must be 256 bytes");
     static_assert(offsetof(FSharedHeader, published_sequence) == 32, "camera SHM sequence offset drifted");
+    static_assert(offsetof(FSharedHeader, reserved1) == 56, "camera SHM model generation offset drifted");
+    static_assert(offsetof(FSlotHeader, flags) == 48, "camera SHM flags offset drifted");
     static_assert(offsetof(FSlotHeader, encoding) == 64, "camera SHM encoding offset drifted");
     static_assert(offsetof(FSlotHeader, frame_id) == 80, "camera SHM frame_id offset drifted");
+    static_assert(offsetof(FSlotHeader, reserved1) == 224, "camera SHM truth extension offset drifted");
     static_assert(offsetof(FSlotHeader, guard_end) == 248, "camera SHM guard_end offset drifted");
 
     struct LINGTUSIMSENSORS_API FWriterConfig
@@ -104,6 +108,10 @@ namespace LingTuSim::Sensors::CameraShm
         double DistP1 = 0.0;
         double DistP2 = 0.0;
         double DistK3 = 0.0;
+        bool bHasSimulationTruth = false;
+        uint64 TruthSequence = 0;
+        uint64 ResetGeneration = 0;
+        int64 SimTimeNs = 0;
     };
 
     LINGTUSIMSENSORS_API uint32 Crc32(const void* Data, uint64 Size);

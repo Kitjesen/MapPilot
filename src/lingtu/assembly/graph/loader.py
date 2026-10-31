@@ -10,7 +10,7 @@ from typing import Any
 from message.catalog import load_topics
 from runtime.yaml_helpers import load_yaml
 
-RUNTIME_GRAPH_DIR = Path(__file__).resolve().parents[4] / "config" / "runtime_graph"
+SYSTEM_CONFIG_DIR = Path(__file__).resolve().parents[4] / "config" / "system"
 PRODUCT_HOST_CAPABILITIES = frozenset(
     {
         "gateway",
@@ -27,8 +27,21 @@ PRODUCT_HOST_FIELDS = frozenset(
     {
         "capabilities",
         "run_startup_checks",
+        "detector",
         "encoder",
         "llm",
+        "llm_model",
+        "llm_base_url",
+        "llm_api_key_env",
+        "llm_timeout_sec",
+        "default_classes",
+        "person_text_model_path",
+        "person_text_device",
+        "person_appearance_model",
+        "person_appearance_device",
+        "person_appearance_cpu_threads",
+        "person_appearance_min_similarity",
+        "person_appearance_margin",
         "inspection_evidence_max_rgb_odom_skew_s",
         "map_artifact_gate_required",
     }
@@ -60,7 +73,7 @@ class RuntimeGraph:
 def load_runtime_graph(root: str | Path | None = None) -> RuntimeGraph:
     """Load Runtime Graph YAML files from *root* or the repo default."""
 
-    graph_root = Path(root) if root is not None else RUNTIME_GRAPH_DIR
+    graph_root = Path(root) if root is not None else SYSTEM_CONFIG_DIR
     entries = load_topics()
     topics = {
         "schema_version": "lingtu.runtime_graph.topics.v2",

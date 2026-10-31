@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from lingtu.assembly.compiler import blueprint_from_run_plan, compile_run_plan
-from lingtu.assembly.graph.processes import ProcessArtifact
-from lingtu.assembly.products import (
+from lingtu.assembly.compile_plan import compile_run_plan, host_builder_from_run_plan
+from lingtu.assembly.config.product import (
     resolve_product_host_config,
     resolve_product_host_runtime,
 )
+from lingtu.assembly.graph.processes import ProcessArtifact
 
 
 @pytest.fixture(autouse=True)
@@ -42,7 +42,7 @@ def _product_graph(
         robot=robot,
         product_variant=resolved.product_variant,
     )
-    return blueprint_from_run_plan(plan).export_graph(profile=product)
+    return host_builder_from_run_plan(plan).export_graph(profile=product)
 
 
 def test_exploration_package_has_one_canonical_import_surface():

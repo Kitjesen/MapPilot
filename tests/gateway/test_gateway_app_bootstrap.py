@@ -52,7 +52,7 @@ def test_app_bootstrap_exposes_read_only_product_session_identity():
 def test_app_bootstrap_uses_run_plan_teleop_limits(monkeypatch):
     from gateway.gateway_module import GatewayModule
     from gateway.services.app_bootstrap import build_app_bootstrap
-    from lingtu.assembly.compiler import compile_run_plan
+    from lingtu.assembly.compile_plan import compile_run_plan
 
     monkeypatch.setenv("LINGTU_TELEOP_MAX_SPEED_MPS", "0.2")
     monkeypatch.setenv("LINGTU_TELEOP_MAX_YAW_RATE", "0.3")
@@ -1255,8 +1255,8 @@ def test_app_web_events_stream_flushes_live_event_before_heartbeat_delay():
 
 def test_app_web_events_stream_filters_runtime_dataflow_topic():
     from gateway.gateway_module import GatewayModule
-    from lingtu.assembly.compiler import compile_run_plan
-    from lingtu.assembly.products import resolve_product_host_runtime
+    from lingtu.assembly.compile_plan import compile_run_plan
+    from lingtu.assembly.config.product import resolve_product_host_runtime
     from runtime.msgs.nav import Odometry
 
     def decode_payload(chunk):

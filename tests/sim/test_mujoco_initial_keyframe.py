@@ -6,9 +6,33 @@ from pathlib import Path
 import numpy as np
 import pytest
 from sim.compat.engine.core.engine import VelocityCommand
-from sim.runtime.control.thunderv4 import DART_ACTUATOR_ORDER
+from sim.runtime.control.thunder.legacy_controller import DART_ACTUATOR_ORDER
 
 from drivers.sim.mujoco.runtime import build_engine
+
+
+@pytest.mark.parametrize("drive_mode", ["policy", "kinematic"])
+def test_reset_keeps_leased_measurement_time_on_the_public_engine_clock(drive_mode: str) -> None:
+    pytest.importorskip("mujoco")
+    from sim.compat.engine.core.robot import RobotConfig
+    from sim.compat.engine.mujoco.engine import MuJoCoEngine
+
+    root = Path(__file__).resolve().parents[2]
+    config = RobotConfig.default_thunder_v4()
+    config.robot_xml = str(root / "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml")
+    engine = MuJoCoEngine(robot_config=config, drive_mode=drive_mode, initial_keyframe="v4_nominal_stand")
+    try:
+        engine.load(config.robot_xml)
+        for _ in range(2):
+            engine.reset()
+            assert engine.sim_time == 0.0
+            with engine.measurement_state() as (_, data):
+                assert round(float(data.time) * 1e9) == round(engine.sim_time * 1e9)
+            engine.step_sensor_tick(VelocityCommand(), 0.006)
+            with engine.measurement_state() as (_, data):
+                assert round(float(data.time) * 1e9) == round(engine.sim_time * 1e9)
+    finally:
+        engine.close()
 
 
 @pytest.mark.parametrize(
@@ -109,7 +133,7 @@ def test_policy_mode_requires_the_declared_thunderv4_baseline(
     from drivers.sim.mujoco import driver as driver_module
 
     missing = tmp_path / "policy_1119.onnx"
-    monkeypatch.setattr(driver_module, "_THUNDERV4_POLICY", missing)
+    monkeypatch.setattr(driver_module, "resolve_robot_default_policy", lambda _root: {"artifact": missing})
 
     with pytest.raises(FileNotFoundError, match="ThunderV4 policy is missing"):
         driver_module.MujocoDriverModule(drive_mode="policy")
@@ -123,7 +147,8 @@ def test_keyboard_entrypoint_loads_policy_4998_as_onnx() -> None:
     pytest.importorskip("onnxruntime")
     from sim.packages.controllers.doso.thunder_v4.locomotion import keyboard
 
-    policy = keyboard._load_policy(str(keyboard.DEFAULT_POLICY_PATH))
+    model = Path(__file__).resolve().parents[2] / "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998.onnx"
+    policy = keyboard._load_policy(str(model))
     action = policy(torch.zeros((1, 53), dtype=torch.float32))
 
     assert tuple(action.shape) == (1, 16)

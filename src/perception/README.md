@@ -8,7 +8,7 @@ and a scene graph. Navigation and Product lifecycle policy do not belong here.
 
 | Path | Responsibility |
 | --- | --- |
-| `module.py` | Blueprint-facing ports, one-slot worker lifecycle, publication, health, and startup readiness |
+| `module.py` | HostBuilder-facing ports, one-slot worker lifecycle, publication, health, and startup readiness |
 | `frames.py` | Bounded RGB-D, CameraInfo, odometry, and map-to-odom synchronization |
 | `pipeline.py` | The deep detect → project → track → scene-graph implementation |
 | `backends.py` | Canonical detector/encoder provider registration and backend construction |
@@ -26,13 +26,11 @@ second service pipeline are deliberately not maintained.
 ## Data flow
 
 ```text
-color_image ─┐
-depth_image ─┤
-camera_info ─┼─> FrameSynchronizer ─> latest-frame worker ─> PerceptionPipeline
-odometry ────┤                                      ├─> observation_image
-map_odom_tf ─┘                                      ├─> robot_pose
-                                                    ├─> detections_3d
-                                                    └─> scene_graph
+RGB-D + camera_info ─┐
+odometry + map TF ───┼─> FrameSynchronizer → latest-frame worker → PerceptionPipeline
+navigation_state ───┘                                                |
+                                observation → Follow <───────────────┤
+                                image / pose / detections / graph <──┘
 ```
 
 The port Adapter caches inputs and submits matched samples; detector work does
@@ -73,15 +71,31 @@ not be duplicated in Product YAML.
 - CameraInfo may update while the Module is running.
 - Only a successfully processed frame with a confirmed zero detections advances
   the tracker as a negative observation.
-- Blur, stale inputs, unsupported image formats, projection failure, and
-  backend failure update health without fabricating an empty observation.
+- Blur, unsupported image formats, projection failure and backend failure
+  report unavailable evidence without fabricating a negative observation.
 - A tracker failure may emit current-frame untracked detections and a fallback
   graph, but never republishes old tracker state with a new timestamp.
-- Successful publication order is `observation_image`, `robot_pose`, `detections_3d`, then
-  `scene_graph`, all anchored to the source color timestamp and the `map`
-  frame for geometric outputs. The image retains its camera frame. This is the
-  color frame actually processed by the worker, not a newer camera sample;
-  downstream visual verification can match image, boxes and pose by timestamp.
+- `observation` publishes one Host-local `SemanticObservation`: Product session,
+  publication sequence, camera generation, source times, fixed map identity,
+  image/depth/intrinsics references, robot pose, detections and scene graph.
+  Follow consumes this bundle directly. The separate `observation_image`,
+  `robot_pose`, `detections_3d` and `scene_graph` ports remain for other consumers;
+  they are projections of the same computation, not another perception pipeline.
+- A camera restart or map change immediately publishes `unavailable` and
+  discards pending/in-flight work from the old context. Spatial tracking resets
+  on the worker; detector models are not reloaded. Normal pending newer frames
+  do not invalidate every in-flight result and starve the output.
+- Repeated/late source frames and routine support-buffer eviction are health
+  diagnostics; they must not invalidate a newer healthy Follow observation.
+- RGB, depth and CameraInfo share a producer generation but keep independent
+  source sequences. Sequence equality is not RGB-D registration or pairing.
+  Generation zero means undeclared provenance, as on older producers; restart
+  isolation requires the updated producer and reader. These fields are preserved
+  along the SHM/Host path, not the existing legacy binary Image wire format.
+- Map identity comes from native `NavigationState`, fixed before inference.
+  Unbound observations may be displayed, but Follow does not issue map goals
+  from them. This does not prove calibration, hardware time synchronization,
+  detector accuracy or readiness of the native motion chain.
 
 ## Lifecycle and readiness
 
@@ -107,4 +121,5 @@ diagnostic state; downstream behavior continues to use typed output ports.
 - Perception does not import navigation, decision, drivers, or Gateway code.
 - Perception never selects missions, plans paths, arbitrates safety, or emits
   velocity commands.
-- Local and MuJoCo validation do not constitute S100P field evidence.
+- Local and MuJoCo validation do not constitute evidence on a claimed physical
+  target.

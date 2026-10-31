@@ -7,11 +7,11 @@ description: >
 layers:
   - id: L0_core_contract
     title: Runtime Contract
-    intent: Module, Blueprint, typed ports, registry, runtime messages, and local transport contracts.
+    intent: Module, internal Host assembly, typed ports, registry, runtime messages, and local transport contracts.
     owns:
       - src/runtime/
       - src/runtime/module.py
-      - src/runtime/blueprint.py
+      - src/runtime/host.py
       - src/runtime/stream.py
       - src/runtime/registry.py
       - src/runtime/msgs/
@@ -48,7 +48,7 @@ layers:
       - src/lingtu/assembly/graph/
       - src/lingtu/run_plan.py
       - src/lingtu/products.py
-      - src/lingtu/assembly/parameters.py
+      - src/lingtu/assembly/config/native_parameters.py
 
   - id: L3_adapter_layer
     title: Adapter Layer
@@ -59,7 +59,7 @@ layers:
       - src/runtime/adapters/
       - src/nav/adapters/
       - src/localization/adapters/
-      - src/lingtu/assembly/host_bus.py
+      - src/lingtu/assembly/host/native_state_bridge.py
 
   - id: L4_capability_modules
     title: Capability Modules
@@ -95,7 +95,7 @@ layers:
       - scripts/
       - tools/
       - pyproject.toml
-      - src/lingtu/assembly/plugins.py
+      - src/lingtu/assembly/host/plugin_catalog.py
       - src/lingtu/control.py
       - src/lingtu/control_server.py
       - src/lingtu/operator_drive.py
@@ -151,7 +151,7 @@ import_boundaries:
       - memory
   composition_exceptions:
     - lingtu/assembly/
-    - lingtu/assembly/host_bus.py
+    - lingtu/assembly/host/native_state_bridge.py
     - diagnostics/field/gateway_acceptance.py
     - runtime/msgs/scene.py
     - diagnostics/field/field_check.py

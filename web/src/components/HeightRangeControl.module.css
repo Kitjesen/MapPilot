@@ -1,0 +1,18 @@
+.control { display: flex; gap: 18px; padding: 18px 4px 16px; min-width: 0; color: var(--text); }
+.track { position: relative; height: 164px; flex: 0 0 88px; margin: 10px 0; border-left: 1px solid var(--bg-layer-3); background: repeating-linear-gradient(to bottom, transparent 0, transparent 15px, var(--bg-layer-3) 15px, var(--bg-layer-3) 16px); }
+.track button { position: absolute; left: 0; width: 32px; padding: 0; margin: 0; touch-action: none; border: 1px solid var(--text); color: var(--text); background: var(--bg-layer-1); cursor: ns-resize; box-shadow: var(--shadow-sm); }
+.track button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 3px; }
+.handle { height: 22px; transform: translateY(-50%); z-index: 2; border-radius: var(--r-full); }
+.selection { position: absolute; left: 0; width: 32px; border-radius: var(--r-full); background: color-mix(in srgb, var(--text) 14%, transparent); pointer-events: none; }
+.track .band { left: 36px; width: 22px; height: 30px; transform: translateY(-50%); border: 0; border-radius: var(--r-full); background: var(--text); z-index: 3; box-shadow: var(--shadow-sm); }
+.marker { position: absolute; left: 62px; transform: translateY(-50%); font-size: 13px; color: var(--text-dim); white-space: nowrap; pointer-events: none; }
+.goal { color: var(--text); font-weight: 600; }
+.fields { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 10px; }
+.fields label { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 40px; font-size: 14px; }
+.fields label span { display: flex; align-items: center; gap: 4px; color: var(--text-dim); }
+.fields input { width: 82px; min-width: 0; box-sizing: border-box; padding: 8px 10px; border: 0; border-radius: var(--r-full); background: var(--bg-layer-2); color: var(--text); font: inherit; font-variant-numeric: tabular-nums; }
+.fields input:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.fields button { align-self: flex-start; min-height: 34px; padding: 7px 11px; border: 0; border-radius: var(--r-full); background: var(--bg-layer-2); color: var(--text); cursor: pointer; font: inherit; font-size: 13px; font-weight: 500; }
+.fields button:hover:not(:disabled) { background: var(--text); color: var(--bg-layer-1); }
+.fields small { font-size: 13px; line-height: 1.45; color: var(--text-dim); }
+.fields button:disabled { opacity: .4; cursor: default; }

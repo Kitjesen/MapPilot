@@ -29,7 +29,7 @@
       "every visible physical step is checked for entity contact, with final arrival and exact driver stop"
     ],
     "excluded_claims": [
-      "Fast-LIO2 localization quality",
+      "LTLIO localization quality",
       "full ProductControl navigation acceptance",
       "Go2 hardware motion or field safety clearance",
       "predictive pedestrian tracking or a dynamic-obstacle benchmark campaign"

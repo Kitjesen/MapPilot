@@ -7,14 +7,33 @@ never upgrades an unimplemented SensorPlan declaration into a working stream.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
-from typing import Any, Protocol
+from copy import deepcopy
+from dataclasses import dataclass, replace
+from functools import wraps
+from threading import RLock
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 
 from .contracts import ScheduledSensorSample, SensorStreamPlan
 from .evidence import sensor_stream_binding_identity
 from .extractors import imu_from_snapshot, truth_odometry_from_snapshot
-from .runtime import SensorRuntime
+from .gnss import GnssSample
+from .noise import RangeNoiseConfig
+from .runtime import _LATEST_SOURCE_STREAM_KINDS, SensorRuntime, _rate
 from .samples import Mid360FrameSample, SensorSampleStamp
+
+if TYPE_CHECKING:
+    from .measurement_control import MeasurementNoise
+
+_Method = TypeVar("_Method", bound=Callable[..., Any])
+
+
+def _serialized(method: _Method) -> _Method:
+    @wraps(method)
+    def invoke(self: SessionSensorRuntime, *args: Any, **kwargs: Any) -> Any:
+        with self._operation_lock:
+            return method(self, *args, **kwargs)
+
+    return cast(_Method, invoke)
 
 
 class SensorSessionError(RuntimeError):
@@ -114,12 +133,18 @@ class SessionSensorRuntime:
         self._scheduler: SensorRuntime | None = None
         self._prepared = False
         self._closed = False
+        self._noise: dict[str, MeasurementNoise] = {}
+        self._noise_enabled: dict[str, bool] = {}
+        self._recording: dict[str, bool] = {}
+        self._operation_lock = RLock()
 
     @property
     def active_sensor_ids(self) -> tuple[str, ...]:
         """Return streams backed by started endpoints."""
 
-        return tuple(sorted(self._endpoints)) if self._prepared and not self._closed else ()
+        if not self._prepared or self._closed or self._scheduler is None:
+            return ()
+        return tuple(sensor_id for sensor_id in sorted(self._endpoints) if self._scheduler.status(sensor_id)["enabled"])
 
     @property
     def unbound_sensor_ids(self) -> tuple[str, ...]:
@@ -134,6 +159,7 @@ class SessionSensorRuntime:
 
         return {sensor_id: endpoint.source_id for sensor_id, endpoint in sorted(self._endpoints.items())}
 
+    @_serialized
     def binding_identity(self, sensor_id: str) -> str:
         """Return the canonical identity of one bound stream generation."""
 
@@ -159,10 +185,11 @@ class SessionSensorRuntime:
             runtime_source_id=endpoint.source_id,
         )
 
+    @_serialized
     def evidence_observations(self) -> tuple[dict[str, Any], ...]:
         """Return strict observations for the most recently published generation."""
 
-        if not self._prepared:
+        if not self._prepared or self._scheduler is None:
             raise SensorSessionError("sensor session is not prepared")
         generation = self._evidence_generation
         if generation is None:
@@ -173,7 +200,13 @@ class SessionSensorRuntime:
             failure_reason = self._failure_reasons.get(sensor_id)
             observation: dict[str, Any] = {
                 "sensor_id": sensor_id,
-                "state": "FAILED" if failure_reason is not None else "ACTIVE",
+                "state": (
+                    "FAILED"
+                    if failure_reason is not None
+                    else "ACTIVE"
+                    if self._scheduler.status(sensor_id)["enabled"]
+                    else "DISABLED"
+                ),
                 "session_id": self._plan.session_id,
                 "model_generation": generation[0],
                 "reset_generation": generation[1],
@@ -200,6 +233,8 @@ class SessionSensorRuntime:
                 observation["last_sample_truth_sequence"] = stamp.sequence
             if failure_reason is not None:
                 observation["failure_reason"] = failure_reason
+            if stream.stream_kind == "gnss" and isinstance(sample, GnssSample):
+                observation["fidelity"] = sample.fidelity()
             if stream.stream_kind == "mid360":
                 if isinstance(sample, Mid360FrameSample):
                     observation["fidelity"] = {
@@ -207,7 +242,9 @@ class SessionSensorRuntime:
                         "scan_time_profile": sample.scan_time_profile,
                         "unknown_line_representation": sample.unknown_line_representation,
                     }
-                elif observation["sample_count"] > 0 or failure_reason is None:
+                    if sample.range_noise != RangeNoiseConfig() or stream.range_noise != RangeNoiseConfig():
+                        observation["fidelity"]["range_noise"] = sample.range_noise.to_dict()
+                elif observation["sample_count"] > 0 or observation["state"] == "ACTIVE":
                     raise SensorSessionError(
                         f"sensor stream {sensor_id!r} has no typed Mid360 frame evidence",
                         sensor_id=sensor_id,
@@ -215,6 +252,7 @@ class SessionSensorRuntime:
             observations.append(observation)
         return tuple(observations)
 
+    @_serialized
     def prepare(self) -> SensorPreparation:
         """Create and start every endpoint supported by the supplied factory."""
 
@@ -268,6 +306,7 @@ class SessionSensorRuntime:
             sources=self.sources,
         )
 
+    @_serialized
     def process_snapshot(self, snapshot: Mapping[str, Any]) -> None:
         """Extract and publish every bound sample due at this physics snapshot."""
 
@@ -283,15 +322,13 @@ class SessionSensorRuntime:
             )
             generation = (batch.model_generation, batch.reset_generation)
             if generation != self._evidence_generation:
-                self._published_counts = {
-                    sensor_id: 0 for sensor_id in self._endpoints
-                }
+                self._published_counts = {sensor_id: 0 for sensor_id in self._endpoints}
                 self._last_samples.clear()
                 self._evidence_generation = generation
             for scheduled in batch.samples:
                 endpoint = self._endpoints[scheduled.sensor_id]
                 sample = endpoint.extractor(scheduled, snapshot)
-                _validate_sample_identity(sample, scheduled)
+                _validate_sample_identity(sample, scheduled, snapshot)
                 endpoint.sink.publish(sample)
                 self._published_counts[scheduled.sensor_id] += 1
                 self._last_samples[scheduled.sensor_id] = sample
@@ -306,6 +343,121 @@ class SessionSensorRuntime:
                 sensor_id=(sensor_id if sensor_id != "sensor-runtime" else None),
             ) from exc
 
+    @_serialized
+    def set_enabled(self, sensor_id: str, enabled: bool) -> None:
+        """Stop/resume extraction and publishing while retaining the endpoint."""
+        self._control_endpoint(sensor_id)
+        cast(SensorRuntime, self._scheduler).set_enabled(sensor_id, enabled)
+
+    @_serialized
+    def set_rate_hz(self, sensor_id: str, rate_hz: float) -> None:
+        """Validate/reconfigure the producer before changing effective scheduling.
+
+        An on-demand extractor may only validate; a clocked producer must reject
+        rates it cannot produce. Unsupported controls never close endpoints.
+        """
+        endpoint = self._control_endpoint(sensor_id)
+        rate = float(_rate(rate_hz, "rate_hz"))
+        control = getattr(endpoint.extractor, "set_rate_hz", None)
+        if not callable(control):
+            control = getattr(endpoint.sink, "set_rate_hz", None)
+        if not callable(control):
+            raise SensorSessionError(f"sensor {sensor_id!r} does not support set_rate_hz", sensor_id=sensor_id)
+        control(rate)
+        cast(SensorRuntime, self._scheduler).set_rate_hz(sensor_id, rate)
+
+    @_serialized
+    def status(self, sensor_id: str | None = None) -> dict[str, Any]:
+        """Query effective controls on a prepared, open session."""
+        if sensor_id is None:
+            if not self._prepared or self._closed:
+                raise SensorSessionError("sensor control requires a prepared, open session")
+            return {key: self.status(key) for key in sorted(self._endpoints)}
+        endpoint = self._control_endpoint(sensor_id)
+        result = cast(SensorRuntime, self._scheduler).status(sensor_id)
+        result["state"] = (
+            "FAILED" if sensor_id in self._failure_reasons else "ACTIVE" if result["enabled"] else "DISABLED"
+        )
+        noise = self._noise.get(sensor_id)
+        result["noise"] = None if noise is None else noise.to_dict()
+        result["noise_enabled"] = self._noise_enabled.get(sensor_id)
+        settings_query = getattr(endpoint.extractor, "measurement_settings", None)
+        result["measurement_settings"] = None
+        if callable(settings_query):
+            settings = deepcopy(settings_query())
+            result["measurement_settings"] = settings
+            result["noise"] = settings["noise"]
+            result["noise_enabled"] = settings["noise"]["enabled"]
+        result["recording"] = getattr(endpoint.sink, "recording", self._recording.get(sensor_id))
+        return result
+
+    def _control_endpoint(self, sensor_id: str) -> SensorEndpoint:
+        if not self._prepared or self._closed:
+            raise SensorSessionError("sensor control requires a prepared, open session")
+        endpoint = self._endpoints.get(sensor_id)
+        if endpoint is None:
+            raise SensorSessionError(f"sensor {sensor_id!r} is not bound", sensor_id=sensor_id)
+        return endpoint
+
+    @_serialized
+    def configure_noise(self, sensor_id: str, noise: MeasurementNoise) -> None:
+        """Dispatch an explicit unit-labelled model to a supported extractor."""
+        from .measurement_control import MeasurementNoise
+
+        endpoint = self._control_endpoint(sensor_id)
+        if not isinstance(noise, MeasurementNoise):
+            raise ValueError("noise must be a MeasurementNoise")
+        control = getattr(endpoint.extractor, "configure_noise", None)
+        if not callable(control):
+            raise SensorSessionError(f"sensor {sensor_id!r} does not support configure_noise", sensor_id=sensor_id)
+        control(noise)
+        self._noise[sensor_id] = noise
+        self._noise_enabled[sensor_id] = noise.enabled
+
+    @_serialized
+    def set_recording(self, sensor_id: str, enabled: bool) -> None:
+        """Toggle a sink's recorder without changing transport publication."""
+        endpoint = self._control_endpoint(sensor_id)
+        if type(enabled) is not bool:
+            raise ValueError("recording switch requires a boolean")
+        control = getattr(endpoint.sink, "set_recording", None)
+        if not callable(control):
+            raise SensorSessionError(f"sensor {sensor_id!r} does not support set_recording", sensor_id=sensor_id)
+        control(enabled)
+        self._recording[sensor_id] = enabled
+
+    @_serialized
+    def set_gimbal(self, sensor_id: str, pan_deg: float, tilt_deg: float) -> None:
+        """Request angles without overriding the installed mount's limits."""
+        endpoint = self._control_endpoint(sensor_id)
+        control = getattr(endpoint.extractor, "set_gimbal_angles", None)
+        if not callable(control):
+            raise SensorSessionError(f"sensor {sensor_id!r} does not support a gimbal", sensor_id=sensor_id)
+        control(pan_deg, tilt_deg)
+
+    @_serialized
+    def set_noise_enabled(self, sensor_id: str, enabled: bool) -> None:
+        """Toggle a supported measurement model on the session owner thread."""
+        self._set_measurement_option(sensor_id, "set_noise_enabled", enabled)
+        self._noise_enabled[sensor_id] = enabled
+        if sensor_id in self._noise:
+            self._noise[sensor_id] = replace(self._noise[sensor_id], enabled=enabled)
+
+    @_serialized
+    def set_gnss_fix_available(self, sensor_id: str, available: bool) -> None:
+        """Apply an explicit GNSS scenario outage/recovery before the next sample."""
+        self._set_measurement_option(sensor_id, "set_fix_available", available)
+
+    def _set_measurement_option(self, sensor_id: str, operation: str, value: bool) -> None:
+        endpoint = self._control_endpoint(sensor_id)
+        if type(value) is not bool:
+            raise ValueError("sensor measurement switches require a boolean")
+        control = getattr(endpoint.extractor, operation, None)
+        if not callable(control):
+            raise SensorSessionError(f"sensor {sensor_id!r} does not support {operation}", sensor_id=sensor_id)
+        control(value)
+
+    @_serialized
     def close(self) -> None:
         """Quiesce every endpoint; repeated calls are harmless."""
 
@@ -343,8 +495,10 @@ def _snapshot_generation(snapshot: Mapping[str, Any], field: str) -> int:
 def _validate_sample_identity(
     sample: Any,
     scheduled: ScheduledSensorSample,
+    snapshot: Mapping[str, Any],
 ) -> None:
-    if scheduled.stream.route.transport != "typed_dds":
+    live_source = scheduled.stream.stream_kind in _LATEST_SOURCE_STREAM_KINDS
+    if scheduled.stream.route.transport not in {"typed_dds", "in_process"} and not live_source:
         return
     stamp = getattr(sample, "stamp", None)
     if not isinstance(stamp, SensorSampleStamp):
@@ -360,8 +514,15 @@ def _validate_sample_identity(
         "model_generation": scheduled.model_generation,
         "reset_generation": scheduled.reset_generation,
         "sequence": scheduled.sequence,
-        "sim_time_ns": scheduled.deadline_ns,
+        "sim_time_ns": _snapshot_generation(snapshot, "sim_time_ns") if live_source else scheduled.deadline_ns,
     }
+    if live_source:
+        for field in ("session_id", "model_generation", "reset_generation"):
+            if snapshot.get(field) != expected[field]:
+                raise SensorSessionError(
+                    f"sensor {scheduled.sensor_id!r} snapshot {field} does not match schedule",
+                    sensor_id=scheduled.sensor_id,
+                )
     for field, expected_value in expected.items():
         if getattr(stamp, field) != expected_value:
             raise SensorSessionError(

@@ -48,7 +48,7 @@ def test_prune_is_clean_room_product_path() -> None:
     assert '#include "erasor2/' not in combined
     assert "#include <pcl/" not in combined
     assert "cleanStaticMap" in combined
-    assert "prune.visibility_v2" in combined
+    assert "prune.visibility_surface_v4" in combined
     assert "lingtu_field_v2" in combined
     assert "S100P/MID-360 field maps" in combined
     assert "prune" in combined

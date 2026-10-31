@@ -858,6 +858,7 @@ def test_adopted_run_directory_rolls_back_if_it_changes_during_materialization(
     log_dir = run_dir / "logs"
     foreign = run_dir / "foreign-entry.txt"
     original_mkdir = Path.mkdir
+    original_os_mkdir = os.mkdir
 
     def mkdir_with_foreign_entry(
         path: Path,
@@ -869,6 +870,13 @@ def test_adopted_run_directory_rolls_back_if_it_changes_during_materialization(
             foreign.write_text("preserve me\n", encoding="utf-8")
 
     monkeypatch.setattr(Path, "mkdir", mkdir_with_foreign_entry)
+
+    def os_mkdir_with_foreign_entry(path, *args, **kwargs):
+        original_os_mkdir(path, *args, **kwargs)
+        if path == "logs" and kwargs.get("dir_fd") is not None:
+            foreign.write_text("preserve me\n", encoding="utf-8")
+
+    monkeypatch.setattr(os, "mkdir", os_mkdir_with_foreign_entry)
 
     with pytest.raises(RunAllocationError) as captured:
         create_run_allocation(

@@ -90,6 +90,8 @@ struct ExternalBlockedRegion
 
 struct PlannerConfig
 {
+  double surface_closing_radius_m{0.0};
+  double search_resolution_m{0.0};
   double robot_radius{0.20};
   double body_clearance_below_m{0.0};
   double body_clearance_above_m{0.0};
@@ -98,10 +100,12 @@ struct PlannerConfig
   double terminal_goal_tolerance_m{std::numeric_limits<double>::infinity()};
   double terminal_goal_xy_tolerance_m{std::numeric_limits<double>::infinity()};
   double terminal_goal_z_tolerance_m{std::numeric_limits<double>::infinity()};
-  bool require_ground_support{true};
-  bool strict_direct_ground_support{true};
-  int ground_support_xy_radius_cells{0};
-  int ground_support_depth_cells{2};
+  bool ground_support{true};
+  // Normal navigation interpolates holes enclosed by neighbouring support.
+  // Direct-only support is an explicit diagnostic mode, not the default.
+  bool direct_support_only{false};
+  int support_radius_cells{1};
+  int support_depth_cells{2};
   double support_height_m{0.0};
   double support_height_tolerance_m{0.0};
   int support_patch_radius_cells{0};
@@ -119,9 +123,23 @@ struct PlannerConfig
   double obstacle_clearance_weight{2.0};
 };
 
+class SurfaceIndex;
+class SurfaceGraph;
+
 class OctoPlanner3D
 {
 public:
+  enum class TraversabilityFailure
+  {
+    None,
+    OutsideBounds,
+    UnknownSpace,
+    GroundSupport,
+    ExternalPreblockedBelow,
+    ExternalPreblockedBody,
+    OccupiedBody,
+  };
+
   struct EndpointResolutionInfo
   {
     enum class Failure
@@ -136,15 +154,15 @@ public:
     bool goal_raw_outside_bounds{false};
     bool start_snapped{false};
     bool goal_snapped{false};
+    TraversabilityFailure start_failure{TraversabilityFailure::None};
   };
 
   struct SearchInfo
   {
     enum class Outcome { NotStarted, Found, Exhausted, IterationLimit, Cancelled };
     Outcome outcome{Outcome::NotStarted};
-    bool used_stair_connections{false};
-    int basic_iterations{0};
-    int extended_iterations{0};
+    int iterations{0};
+    bool used_surface_graph{false};
   };
 
   OctoPlanner3D();
@@ -154,6 +172,12 @@ public:
   void setConfig(const PlannerConfig & config);
 
   void setCancelCheck(std::function<bool()> cancel_check);
+  void setObservedFreeCheck(std::function<bool(const PointPose &, double)> check) {
+    observed_free_ = std::move(check);
+  }
+  void setObservedOccupiedCheck(std::function<bool(const PointPose &, double, double, double, bool)> check) {
+    observed_occupied_ = std::move(check);
+  }
 
   void setExternalPreblockedRegions(std::vector<ExternalBlockedRegion> regions);
 
@@ -165,6 +189,7 @@ public:
 
   EndpointResolutionInfo endpointResolution() const noexcept;
   SearchInfo searchInfo() const noexcept;
+  std::shared_ptr<const SurfaceIndex> supportSurface() const { return surface_index_; }
 
   struct PlanningSlice {
     bool available{false};
@@ -179,6 +204,27 @@ public:
   };
   PlanningSlice projectPlanningSlice(double reference_z, std::size_t max_cells = 250000) const;
 
+  struct PoseQueryInfo {
+    bool ready{false};
+    double xy_resolution{0.0};
+    double z_resolution{0.0};
+    PointPose minimum{};
+    PointPose maximum{};
+    int max_iterations{0};
+    int snap_search_radius_cells{0};
+    double goal_tolerance_m{0.0};
+    double goal_xy_tolerance_m{0.0};
+    double goal_z_tolerance_m{0.0};
+  };
+
+  // Pose search supplies its own body shape, while keeping these map/support
+  // and metric-motion rules identical to the XYZ planner.
+  PoseQueryInfo preparePoseQueries(const PointPose & anchor);
+  bool poseSupportFree(const PointPose & point) const;
+  bool supportConnectionFree(const PointPose & from, const PointPose & to) const;
+  // Metric translation limits only; callers establish bounds, support and collision.
+  bool metricConnectionWithinLimits(const PointPose & from, const PointPose & to) const;
+
 private:
   friend struct OctoPlannerGridQueryTest;
 
@@ -191,36 +237,37 @@ private:
     OccupiedLeafCenter,
   };
 
-  enum class TraversabilityFailure
-  {
-    None,
-    OutsideBounds,
-    UnknownSpace,
-    GroundSupport,
-    ExternalPreblockedBelow,
-    ExternalPreblockedBody,
-    OccupiedBody,
-  };
-
   void tryPlan();
 
   GridIndex worldToGrid(double x, double y, double z) const;
 
   octomap::point3d gridToWorld(const GridIndex & idx) const;
+  double planningXYResolution() const;
+  double planningZResolution() const;
+  GridIndex worldToPlanningGrid(double x, double y, double z) const;
+  void anchorPlanningLattice(const PointPose & point);
   octomap::point3d planningPoint(const GridIndex & idx) const;
+  bool liveBodyOccupied(const octomap::point3d &point, double radius, bool legacy) const;
   TraversabilityFailure queryWorld(const octomap::point3d &point, double radius,
-                                   bool require_support) const;
-  bool sweptRouteFree(const octomap::point3d &from, const octomap::point3d &to) const;
+                                   bool require_support, bool check_body = true) const;
+  bool sweptRouteFree(
+    const octomap::point3d &from, const octomap::point3d &to,
+    TraversabilityFailure *failure = nullptr,
+    octomap::point3d *failed_point = nullptr, bool check_body = true,
+    bool endpoints_validated = false) const;
   PointPose planning_offset_{};
 
   bool isInsideMetricBounds(const GridIndex & idx) const;
 
   bool hasGroundSupport(
     const GridIndex & idx,
-    bool strict_direct_ground_support,
+    bool direct_support_only,
     int support_xy_radius_cells,
-    int support_depth_cells) const;
-  std::pair<int, int> supportDepthRange(int support_depth_cells) const;
+    int support_depth_cells,
+    double centre_offset = 0.0,
+    double centre_offset_x = 0.0,
+    double centre_offset_y = 0.0) const;
+  std::pair<int, int> supportDepthRange(int support_depth_cells, double centre_offset = 0.0) const;
   bool isSupportPatch(const GridIndex & support) const;
   bool isSupportCell(const GridIndex & support) const;
   bool hasOccupiedNearZ(const GridIndex & index, int z_tolerance_cells) const;
@@ -250,23 +297,29 @@ private:
   double getObstacleClearanceCost(const GridIndex & idx) const;
 
   bool isStepWithinLimits(const GridIndex & step) const;
+  bool isStepWithinLimits(double dx, double dy, double dz) const;
   bool isMotionAllowed(const GridIndex & from, const GridIndex & to) const;
+  bool isStartConnectionAllowed(
+    const octomap::point3d & from, const octomap::point3d & to,
+    TraversabilityFailure *failure = nullptr) const;
 
+  void rebuildSurfaceIndex();
+  void rebuildSurfaceGraph();
   void rebuildDerivedLayers();
 
   bool isCellTraversable(
     const GridIndex & idx,
     double robot_radius,
-    bool require_ground_support,
-    bool strict_direct_ground_support,
+    bool ground_support,
+    bool direct_support_only,
     int support_xy_radius_cells,
     int support_depth_cells) const;
 
   bool isCellTraversableDetailed(
     const GridIndex & idx,
     double robot_radius,
-    bool require_ground_support,
-    bool strict_direct_ground_support,
+    bool ground_support,
+    bool direct_support_only,
     int support_xy_radius_cells,
     int support_depth_cells,
     TraversabilityFailure * failure) const;
@@ -274,8 +327,8 @@ private:
   bool isPlanningCellTraversableDetailed(
     const GridIndex & idx,
     double robot_radius,
-    bool require_ground_support,
-    bool strict_direct_ground_support,
+    bool ground_support,
+    bool direct_support_only,
     int support_xy_radius_cells,
     int support_depth_cells,
     TraversabilityFailure * failure) const;
@@ -284,24 +337,22 @@ private:
     const GridIndex & seed,
     double robot_radius,
     int radius_cells,
-    bool require_ground_support,
-    bool strict_direct_ground_support,
+    bool ground_support,
+    bool direct_support_only,
     int support_xy_radius_cells,
     int support_depth_cells,
     GridIndex & out,
-    const PointPose * reference = nullptr) const;
+    const PointPose * reference = nullptr,
+    const PointPose * connection_start = nullptr,
+    TraversabilityFailure *start_failure = nullptr) const;
 
   bool resolvePlanEndpoints(GridIndex & start, GridIndex & goal);
 
-  std::vector<GridIndex> makeSearchDirections(bool include_stair_connections) const;
+  std::vector<GridIndex> make26Directions() const;
 
   std::vector<GridIndex> reconstructPath(
     const std::unordered_map<GridIndex, GridIndex, GridIndexHash> & came_from,
     GridIndex current) const;
-
-  bool hasTraversableLine(const GridIndex & from, const GridIndex & to) const;
-
-  std::vector<GridIndex> simplifyPath(const std::vector<GridIndex> & path) const;
 
   bool startPlan();
 
@@ -309,10 +360,13 @@ private:
   {
     const double dx = static_cast<double>(a.x - b.x);
     const double dy = static_cast<double>(a.y - b.y);
-    const double dz = static_cast<double>(a.z - b.z);
+    const double dz = static_cast<double>(a.z - b.z) *
+      planningZResolution() / planningXYResolution();
     return std::sqrt(dx * dx + dy * dy + dz * dz);
   }
 
+  double surface_closing_radius_m_ = 0.0;
+  double search_resolution_m_ = 0.0;
   double robot_radius_ = 0.20;
   double body_clearance_below_m_ = 0.0;
   double body_clearance_above_m_ = 0.0;
@@ -321,10 +375,10 @@ private:
   double terminal_goal_tolerance_m_ = std::numeric_limits<double>::infinity();
   double terminal_goal_xy_tolerance_m_ = std::numeric_limits<double>::infinity();
   double terminal_goal_z_tolerance_m_ = std::numeric_limits<double>::infinity();
-  bool require_ground_support_ = true;
-  bool strict_direct_ground_support_ = true;
-  int ground_support_xy_radius_cells_ = 0;
-  int ground_support_depth_cells_ = 2;
+  bool ground_support_ = true;
+  bool direct_support_only_ = false;
+  int support_radius_cells_ = 1;
+  int support_depth_cells_ = 2;
   double support_height_m_ = 0.0;
   double support_height_tolerance_m_ = 0.0;
   int support_patch_radius_cells_ = 0;
@@ -348,14 +402,20 @@ private:
 
   PointPose start_point_;
   PointPose goal_point_;
+  bool goal_connected_{false};
 
   EndpointResolutionInfo endpoint_resolution_{};
   SearchInfo search_info_{};
   std::vector<PointPose> planner_results_;
 
   std::function<bool()> cancel_check_;
+  std::function<bool(const PointPose &, double)> observed_free_;
+  std::function<bool(const PointPose &, double, double, double, bool)> observed_occupied_;
 
   std::shared_ptr<octomap::OcTree> octree_;
+  std::shared_ptr<const SurfaceIndex> surface_index_;
+  std::shared_ptr<const SurfaceGraph> surface_graph_;
+  PlannerConfig graph_config_;
 
   std::unordered_set<GridIndex, GridIndexHash> traversable_cells_;
   std::vector<GridIndex> body_offsets_;

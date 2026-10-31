@@ -1,0 +1,26 @@
+cmake_minimum_required(VERSION 3.16)
+project(lingtu_leg_odometry LANGUAGES CXX)
+
+find_package(Eigen3 REQUIRED CONFIG)
+include(CTest)
+get_filename_component(_LINGTU_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+
+add_library(lingtu_leg_kinematics STATIC kinematics.cpp)
+target_compile_features(lingtu_leg_kinematics PUBLIC cxx_std_17)
+target_include_directories(lingtu_leg_kinematics PUBLIC "${_LINGTU_ROOT}/src")
+target_link_libraries(lingtu_leg_kinematics PUBLIC Eigen3::Eigen)
+if(MSVC)
+  target_compile_options(lingtu_leg_kinematics PRIVATE /W4)
+else()
+  target_compile_options(lingtu_leg_kinematics PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(BUILD_TESTING)
+  add_executable(test_leg_kinematics "${_LINGTU_ROOT}/tests/localization/cpp/leg_odometry/test_kinematics.cpp")
+  target_link_libraries(test_leg_kinematics PRIVATE lingtu_leg_kinematics)
+  add_test(NAME leg_kinematics COMMAND test_leg_kinematics)
+
+  add_executable(leg_kinematics_probe "${_LINGTU_ROOT}/tests/localization/cpp/leg_odometry/kinematics_probe.cpp")
+  target_include_directories(leg_kinematics_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(leg_kinematics_probe PRIVATE lingtu_leg_kinematics)
+endif()

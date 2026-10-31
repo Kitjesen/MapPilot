@@ -14,6 +14,8 @@ struct Update {
 
 // Serialized SCAN timer runtime. One worker owns the mutable upstream FSM and
 // runs its 100 Hz state callback and independent 20 Hz collision callback.
+// Lower speed limits enqueue a latest-only input event ahead of the timers;
+// the currently executing curve remains available until its replacement arrives.
 class Task {
  public:
   explicit Task(const LocalPlannerParams &params);

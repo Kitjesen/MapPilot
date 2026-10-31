@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan
 from runtime.config import load_config
 from runtime.utils.calibration_check import run_calibration_check
 
@@ -54,7 +54,7 @@ def test_real_run_plan_owns_driver_backend_configuration() -> None:
 
 def test_generic_deployment_entrypoints_are_target_parameterized() -> None:
     deploy = _read("scripts/deploy/deploy_robot.sh")
-    sync = _read("tools/deploy/sync_robot.ps1")
+    sync = _read("scripts/deploy/sync_robot.ps1")
 
     assert "LINGTU_DRIVER_BACKEND" in deploy
     assert 'scripts/lingtu" --robot "${ROBOT}" --env real switch' in deploy
@@ -202,7 +202,7 @@ def test_driver_readiness_contract_is_backend_neutral() -> None:
 def test_active_deployment_files_have_no_sunrise_account_or_home() -> None:
     active_files = (
         "scripts/deploy/deploy_robot.sh",
-        "tools/deploy/sync_robot.ps1",
+        "scripts/deploy/sync_robot.ps1",
         "scripts/deploy/thunder/configure_gateway_api_key.sh",
         "scripts/deploy/thunder/lt-driver.service",
         "scripts/deploy/thunder/lt-nav.service",
@@ -219,7 +219,7 @@ def test_active_deployment_files_have_no_sunrise_account_or_home() -> None:
 
 
 def test_products_do_not_own_robot_backend_or_deployment_host() -> None:
-    for path in sorted((ROOT / "config" / "runtime_graph" / "products").glob("*.yaml")):
+    for path in sorted((ROOT / "config" / "system" / "products").glob("*.yaml")):
         product = yaml.safe_load(path.read_text(encoding="utf-8"))
         text = str(product)
         assert "go2" not in text

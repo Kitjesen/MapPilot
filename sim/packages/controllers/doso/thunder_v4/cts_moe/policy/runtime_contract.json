@@ -1,0 +1,329 @@
+{
+  "policy_leg_order": [
+    "fr_hip_joint",
+    "fr_thigh_joint",
+    "fr_calf_joint",
+    "fl_hip_joint",
+    "fl_thigh_joint",
+    "fl_calf_joint",
+    "rr_hip_joint",
+    "rr_thigh_joint",
+    "rr_calf_joint",
+    "rl_hip_joint",
+    "rl_thigh_joint",
+    "rl_calf_joint"
+  ],
+  "policy_wheel_order": [
+    "fr_foot_joint",
+    "fl_foot_joint",
+    "rr_foot_joint",
+    "rl_foot_joint"
+  ],
+  "policy_all_order": [
+    "fr_hip_joint",
+    "fr_thigh_joint",
+    "fr_calf_joint",
+    "fl_hip_joint",
+    "fl_thigh_joint",
+    "fl_calf_joint",
+    "rr_hip_joint",
+    "rr_thigh_joint",
+    "rr_calf_joint",
+    "rl_hip_joint",
+    "rl_thigh_joint",
+    "rl_calf_joint",
+    "fr_foot_joint",
+    "fl_foot_joint",
+    "rr_foot_joint",
+    "rl_foot_joint"
+  ],
+  "physics_order": [
+    "fl_hip_joint",
+    "fr_hip_joint",
+    "rl_hip_joint",
+    "rr_hip_joint",
+    "fl_thigh_joint",
+    "fr_thigh_joint",
+    "rl_thigh_joint",
+    "rr_thigh_joint",
+    "fl_calf_joint",
+    "fr_calf_joint",
+    "rl_calf_joint",
+    "rr_calf_joint",
+    "fl_foot_joint",
+    "fr_foot_joint",
+    "rl_foot_joint",
+    "rr_foot_joint"
+  ],
+  "dt": 0.02,
+  "physics_dt": 0.005,
+  "default_q": [
+    0.12,
+    -0.12,
+    -0.12,
+    0.12,
+    0.93,
+    -0.93,
+    -0.93,
+    0.93,
+    -1.96,
+    1.96,
+    1.96,
+    -1.96,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "soft_joint_pos_limits": [
+    [
+      -0.3689999580383301,
+      0.3689999580383301
+    ],
+    [
+      -0.3689999580383301,
+      0.3689999580383301
+    ],
+    [
+      -0.3689999580383301,
+      0.3689999580383301
+    ],
+    [
+      -0.3689999580383301,
+      0.3689999580383301
+    ],
+    [
+      0.15700006484985352,
+      2.982999801635742
+    ],
+    [
+      -2.982999801635742,
+      -0.15700006484985352
+    ],
+    [
+      -2.982999801635742,
+      -0.15700006484985352
+    ],
+    [
+      0.15700006484985352,
+      2.982999801635742
+    ],
+    [
+      -2.982999801635742,
+      -0.15700006484985352
+    ],
+    [
+      0.15700006484985352,
+      2.982999801635742
+    ],
+    [
+      -2.8259997367858887,
+      2.8259997367858887
+    ],
+    [
+      -2.8259997367858887,
+      2.8259997367858887
+    ],
+    [
+      -Infinity,
+      Infinity
+    ],
+    [
+      -Infinity,
+      Infinity
+    ],
+    [
+      -Infinity,
+      Infinity
+    ],
+    [
+      -Infinity,
+      Infinity
+    ]
+  ],
+  "hard_joint_pos_limits": [
+    [
+      -0.4099999666213989,
+      0.4099999666213989
+    ],
+    [
+      -0.4099999666213989,
+      0.4099999666213989
+    ],
+    [
+      -0.4099999666213989,
+      0.4099999666213989
+    ],
+    [
+      -0.4099999666213989,
+      0.4099999666213989
+    ],
+    [
+      0.0,
+      3.1399998664855957
+    ],
+    [
+      -3.1399998664855957,
+      0.0
+    ],
+    [
+      -3.1399998664855957,
+      0.0
+    ],
+    [
+      0.0,
+      3.1399998664855957
+    ],
+    [
+      -3.1399998664855957,
+      0.0
+    ],
+    [
+      0.0,
+      3.1399998664855957
+    ],
+    [
+      -3.1399998664855957,
+      3.1399998664855957
+    ],
+    [
+      -3.1399998664855957,
+      3.1399998664855957
+    ],
+    [
+      -3.4028234663852886e+38,
+      3.4028234663852886e+38
+    ],
+    [
+      -3.4028234663852886e+38,
+      3.4028234663852886e+38
+    ],
+    [
+      -3.4028234663852886e+38,
+      3.4028234663852886e+38
+    ],
+    [
+      -3.4028234663852886e+38,
+      3.4028234663852886e+38
+    ]
+  ],
+  "position_scale": [
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.25,
+    0.25
+  ],
+  "position_clip": [
+    -100.0,
+    100.0
+  ],
+  "velocity_scale": 5.0,
+  "clip_actions": null,
+  "actuator_limits": {
+    "leg_torque_nm": 120.0,
+    "wheel_torque_nm": 17.0,
+    "leg_speed_rad_s": 15.0,
+    "wheel_speed_rad_s": 30.0,
+    "leg_target_rate_rad_s": 12.0,
+    "speed_penalty_fraction": 0.9,
+    "speed_termination_fraction": 1.02,
+    "hard_position_termination_rad": 0.01,
+    "leg_load_reference_nm": 35.0,
+    "wheel_load_reference_nm": 6.0,
+    "speed_sustained_duration_s": 0.06,
+    "speed_extreme_termination_fraction": 1.5,
+    "load_penalty_weight": -0.1,
+    "speed_penalty_weight": -1.0,
+    "saturation_penalty_weight": -0.02,
+    "violation_penalty_weight": -25.0
+  },
+  "actuator_gains": {
+    "hip": {
+      "stiffness": 120.0,
+      "damping": 8.0
+    },
+    "thigh": {
+      "stiffness": 120.0,
+      "damping": 8.0
+    },
+    "calf": {
+      "stiffness": 120.0,
+      "damping": 8.0
+    },
+    "wheel": {
+      "stiffness": 0.0,
+      "damping": 1.0
+    }
+  },
+  "actuator_velocity_limit": {
+    "hip": 15.0,
+    "thigh": 15.0,
+    "calf": 15.0,
+    "wheel": 30.0
+  },
+  "actuator_saturation_effort": {
+    "hip": 120.0,
+    "thigh": 120.0,
+    "calf": 120.0,
+    "wheel": 17.0
+  },
+  "actuator_delay_steps": {
+    "hip": [
+      0,
+      4
+    ],
+    "thigh": [
+      0,
+      4
+    ],
+    "calf": [
+      0,
+      4
+    ],
+    "wheel": [
+      0,
+      4
+    ]
+  },
+  "observation_terms": [
+    "base_ang_vel",
+    "projected_gravity",
+    "velocity_commands",
+    "joint_pos",
+    "joint_vel",
+    "actions"
+  ],
+  "observation_term_dims": [
+    3,
+    3,
+    3,
+    12,
+    16,
+    16
+  ],
+  "observation_scales": [
+    0.25,
+    1.0,
+    1.0,
+    1.0,
+    0.05,
+    1.0
+  ],
+  "history_len": 10,
+  "history_layout": "term-major, oldest-first, first-observation padding",
+  "provenance": {
+    "checkpoint": "/root/autodl-tmp/cts-omni-repair-v19-20260922/idle_request_validation_20261011/candidate_u4000/student_80708.pt",
+    "settings": "candidate_u4000/env.yaml + agent.yaml",
+    "joint_order": "eval_candidate_u4000/manifest.json",
+    "actuator_gains": "candidate_u4000/env.yaml; simulator joint gains in initial.npz are zero because PD is computed by explicit actuator models",
+    "physical_joint_bounds": "prior measured results_verified/nominal/RUNTIME_CONTRACT.json; same Thunder URDF hard limits and 0.9 soft factor"
+  }
+}

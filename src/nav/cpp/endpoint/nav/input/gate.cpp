@@ -114,8 +114,8 @@ bool isCatastrophicLocalizationReason(std::string_view reason) {
   std::string normalized(reason);
   std::transform(normalized.begin(), normalized.end(), normalized.begin(),
                  [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return normalized == "fastlio_state_nonfinite" ||
-         normalized == "fastlio_velocity_out_of_bounds" ||
+  return normalized == "ltlio_state_nonfinite" ||
+         normalized == "ltlio_velocity_out_of_bounds" ||
          normalized.find("catastrophic") != std::string::npos;
 }
 
@@ -242,7 +242,6 @@ InputGate::InputGate(InputGateConfig config) : config_(config) {
   config_.localization_health_max_age_s = std::max(0.0, config_.localization_health_max_age_s);
   config_.driver_control_max_age_s = std::max(0.0, config_.driver_control_max_age_s);
   config_.odom_max_speed_mps = std::max(0.0, config_.odom_max_speed_mps);
-  config_.recovery_frames = std::max<std::uint32_t>(1, config_.recovery_frames);
   config_.future_tolerance_s = std::max(0.0, config_.future_tolerance_s);
 }
 
@@ -286,6 +285,14 @@ InputGateState InputGate::evaluate(const InputSnapshot &inputs) {
   state.driver_control_ready = inputs.driver_control_ready;
   state.driver_control_reason = inputs.driver_control_reason;
   state.odom_linear_speed_mps = inputs.odom_linear_speed_mps;
+  const bool current_localization_health = config_.require_localization_health &&
+      inputs.localization_health_stamp_s > 0.0 &&
+      state.localization_health_age_s >= -config_.future_tolerance_s &&
+      (config_.localization_health_max_age_s <= 0.0 ||
+       state.localization_health_age_s <= config_.localization_health_max_age_s);
+  std::string localization_state = inputs.localization_state;
+  std::transform(localization_state.begin(), localization_state.end(), localization_state.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
 
   const char *stop_reason = nullptr;
   if (!std::isfinite(inputs.now_s) || inputs.now_s <= 0.0) {
@@ -336,22 +343,11 @@ InputGateState InputGate::evaluate(const InputSnapshot &inputs) {
   } else if (config_.require_traversability && config_.traversability_max_age_s > 0.0 &&
              state.traversability_age_s > config_.traversability_max_age_s) {
     stop_reason = "traversability_stale";
-  } else if (config_.require_localization_health && inputs.localization_health_stamp_s <= 0.0) {
-    stop_reason = "localization_health_missing";
-  } else if (config_.require_localization_health &&
-             state.localization_health_age_s < -config_.future_tolerance_s) {
-    stop_reason = "localization_health_future";
-  } else if (config_.require_localization_health && config_.localization_health_max_age_s > 0.0 &&
-             state.localization_health_age_s > config_.localization_health_max_age_s) {
-    stop_reason = "localization_health_stale";
-  } else if (config_.require_localization_health &&
+  } else if (current_localization_health &&
              isCatastrophicLocalizationReason(inputs.localization_reason)) {
     stop_reason = "localization_catastrophic";
-  } else if (config_.require_localization_health && !inputs.localization_state.empty() &&
-             !isHealthyLocalizationState(inputs.localization_state)) {
+  } else if (current_localization_health && localization_state == "LOST") {
     stop_reason = "localization_not_tracking";
-  } else if (config_.require_localization_health && !inputs.localization_healthy) {
-    stop_reason = "localization_unhealthy";
   } else if (config_.require_local_collision && inputs.local_collision_stamp_s <= 0.0) {
     stop_reason = "local_collision_missing";
   } else if (config_.require_local_collision &&
@@ -363,73 +359,14 @@ InputGateState InputGate::evaluate(const InputSnapshot &inputs) {
   }
 
   if (stop_reason != nullptr) {
-    fresh_frames_ = 0;
-    recovery_generations_ = generations(inputs);
     state.reason = stop_reason;
     return state;
   }
 
-  if (fresh_frames_ < config_.recovery_frames && allRequiredInputsAdvanced(inputs)) {
-    fresh_frames_ = std::min<std::uint32_t>(config_.recovery_frames, fresh_frames_ + 1);
-    recovery_generations_ = generations(inputs);
-  }
-  state.fresh_frames = fresh_frames_;
-  state.ready = fresh_frames_ >= config_.recovery_frames;
-  state.recovering = !state.ready;
-  state.reason = state.ready ? "ready" : "recovering";
+  state.fresh_frames = 1;
+  state.ready = true;
+  state.reason = "ready";
   return state;
-}
-
-void InputGate::reset() {
-  fresh_frames_ = 0;
-  recovery_generations_ = {};
-}
-
-void InputGate::beginRecoveryFrom(const InputSnapshot &inputs) {
-  fresh_frames_ = 0;
-  recovery_generations_ = generations(inputs);
-}
-
-InputGate::InputGenerations InputGate::generations(const InputSnapshot &inputs) {
-  return {
-      inputs.odom_generation,
-      inputs.tf_generation,
-      inputs.cloud_generation,
-      inputs.traversability_generation,
-      inputs.local_collision_sequence,
-      inputs.localization_health_generation,
-      inputs.driver_control_generation,
-  };
-}
-
-bool InputGate::allRequiredInputsAdvanced(const InputSnapshot &inputs) const {
-  if (config_.require_odom && inputs.odom_generation <= recovery_generations_.odom) {
-    return false;
-  }
-  if (config_.require_odom && inputs.odom_requires_tf &&
-      inputs.tf_generation <= recovery_generations_.tf) {
-    return false;
-  }
-  if (config_.require_cloud && inputs.cloud_generation <= recovery_generations_.cloud) {
-    return false;
-  }
-  if (config_.require_traversability &&
-      inputs.traversability_generation <= recovery_generations_.traversability) {
-    return false;
-  }
-  if (config_.require_local_collision &&
-      inputs.local_collision_sequence <= recovery_generations_.local_collision) {
-    return false;
-  }
-  if (config_.require_localization_health &&
-      inputs.localization_health_generation <= recovery_generations_.localization_health) {
-    return false;
-  }
-  if (config_.require_driver_control &&
-      inputs.driver_control_generation <= recovery_generations_.driver_control) {
-    return false;
-  }
-  return true;
 }
 
 double InputGate::age(double now_s, double last_s) {

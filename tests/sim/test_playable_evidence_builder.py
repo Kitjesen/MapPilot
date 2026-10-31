@@ -54,7 +54,7 @@ def test_playable_evidence_product_uses_the_active_thunderv4_package() -> None:
         "robot_package": "thunderv4@1.0.3",
         "robot_instance_id": "thunder_01",
         "robot_color": "black_graphite",
-        "controller_package": "thunderv4_locomotion@1.0.0",
+        "controller_package": "thunderv4_cts_moe@1.0.0",
     }
 
 
@@ -758,6 +758,9 @@ def test_controller_calibration_records_first_probe_without_self_qualification()
     document = _controller_calibration_document(_identity())
 
     assert document["controller_manifest_path"].endswith("controller.package.yaml")
+    assert document["controller_package_id"] == "thunderv4_cts_moe"
+    assert document["command_calibration"]["policy_yaw_observation_gain"] == 1.0
+    assert document["command_calibration"]["affected_axes"] == []
     assert document["command_calibration"]["provenance"][
         "qualification_claim"
     ] is False

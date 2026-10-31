@@ -1,0 +1,40 @@
+{
+  "provider": "Poly Haven",
+  "asset_id": "plastic_crate_02",
+  "name": "Plastic Crate 02",
+  "authors": {
+    "Fabi_G": "All"
+  },
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "source_url": "https://polyhaven.com/a/plastic_crate_02",
+  "resolution": "2k",
+  "model": "plastic_crate_02_2k.gltf",
+  "files": [
+    {
+      "path": "plastic_crate_02_2k.gltf",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/2k/plastic_crate_02/plastic_crate_02_2k.gltf",
+      "bytes": 2947
+    },
+    {
+      "path": "textures/plastic_crate_02_nor_gl_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/plastic_crate_02/plastic_crate_02_nor_gl_2k.jpg",
+      "bytes": 1643651
+    },
+    {
+      "path": "textures/plastic_crate_02_diff_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/plastic_crate_02/plastic_crate_02_diff_2k.jpg",
+      "bytes": 1536549
+    },
+    {
+      "path": "textures/plastic_crate_02_arm_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/plastic_crate_02/plastic_crate_02_arm_2k.jpg",
+      "bytes": 1919789
+    },
+    {
+      "path": "plastic_crate_02.bin",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/4k/plastic_crate_02/plastic_crate_02.bin",
+      "bytes": 186848
+    }
+  ]
+}

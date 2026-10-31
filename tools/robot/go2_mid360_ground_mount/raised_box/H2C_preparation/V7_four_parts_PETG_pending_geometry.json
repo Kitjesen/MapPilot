@@ -1,0 +1,66 @@
+[
+  {
+    "name": "box",
+    "size_mm": [
+      124.24391174316406,
+      127.33649444580078,
+      101.999755859375
+    ],
+    "watertight": true,
+    "winding_consistent": true,
+    "volume_mm3": 250457.3065435882,
+    "center_xy": [
+      95,
+      120
+    ],
+    "orientation": "source print orientation preserved; XY translation and bed drop only"
+  },
+  {
+    "name": "lid",
+    "size_mm": [
+      110.0,
+      100.0,
+      8.0
+    ],
+    "watertight": true,
+    "winding_consistent": true,
+    "volume_mm3": 83900.06222660521,
+    "center_xy": [
+      240,
+      115
+    ],
+    "orientation": "source print orientation preserved; XY translation and bed drop only"
+  },
+  {
+    "name": "left_pad",
+    "size_mm": [
+      110.0,
+      16.0,
+      13.830163955688477
+    ],
+    "watertight": true,
+    "winding_consistent": true,
+    "volume_mm3": 2603.671090292261,
+    "center_xy": [
+      110,
+      235
+    ],
+    "orientation": "source print orientation preserved; XY translation and bed drop only"
+  },
+  {
+    "name": "right_pad",
+    "size_mm": [
+      110.0,
+      16.0,
+      13.52413272857666
+    ],
+    "watertight": true,
+    "winding_consistent": true,
+    "volume_mm3": 2603.6710834650535,
+    "center_xy": [
+      240,
+      235
+    ],
+    "orientation": "source print orientation preserved; XY translation and bed drop only"
+  }
+]

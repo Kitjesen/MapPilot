@@ -1,4 +1,4 @@
-// Generated from public/assets/robots/go2/urdf/go2_description.urdf.
+// Generated from public/assets/robots/go2/urdf/go2_mid360_flatpack.urdf.
 // Regenerate with: python web/scripts/generate-go2-urdf.py
 export const GO2_URDF = {
   links: [
@@ -44,6 +44,14 @@ export const GO2_URDF = {
     {"name":"imu","visuals":[]},
     {"name":"radar","visuals":[]},
     {"name":"front_camera","visuals":[]},
+    {"name":"mid360_base","visuals":[{"mesh":"meshes/mid360_flatpack/base.dae","origin":{"xyz":[0.0,0.0,0.0],"rpy":[0.0,0.0,0.0]},"scale":[1.0,1.0,1.0]}]},
+    {"name":"mid360_left_side","visuals":[{"mesh":"meshes/mid360_flatpack/left_side.dae","origin":{"xyz":[0.0,0.0,0.0],"rpy":[0.0,0.0,0.0]},"scale":[1.0,1.0,1.0]}]},
+    {"name":"mid360_right_side","visuals":[{"mesh":"meshes/mid360_flatpack/right_side.dae","origin":{"xyz":[0.0,0.0,0.0],"rpy":[0.0,0.0,0.0]},"scale":[1.0,1.0,1.0]}]},
+    {"name":"mid360_lid","visuals":[{"mesh":"meshes/mid360_flatpack/lid.dae","origin":{"xyz":[0.0,0.0,0.0],"rpy":[0.0,0.0,0.0]},"scale":[1.0,1.0,1.0]}]},
+    {"name":"mid360_left_foot","visuals":[{"mesh":"meshes/mid360_flatpack/left_foot.dae","origin":{"xyz":[0.0,0.0,0.0],"rpy":[0.0,0.0,0.0]},"scale":[1.0,1.0,1.0]}]},
+    {"name":"mid360_right_foot","visuals":[{"mesh":"meshes/mid360_flatpack/right_foot.dae","origin":{"xyz":[0.0,0.0,0.0],"rpy":[0.0,0.0,0.0]},"scale":[1.0,1.0,1.0]}]},
+    {"name":"livox_frame","visuals":[{"mesh":"meshes/mid360_ground_mount/mid360_official.dae","origin":{"xyz":[0.0,0.0,0.0],"rpy":[0.0,0.0,0.0]},"scale":[1.0,1.0,1.0]}]},
+    {"name":"livox_imu","visuals":[]},
   ],
   joints: [
     {"name":"Head_upper_joint","type":"fixed","parent":"base","child":"Head_upper","origin":{"xyz":[0.285,0.0,0.01],"rpy":[0.0,0.0,0.0]},"axis":[0.0,0.0,0.0]},
@@ -87,5 +95,13 @@ export const GO2_URDF = {
     {"name":"imu_joint","type":"fixed","parent":"base","child":"imu","origin":{"xyz":[-0.02557,0.0,0.04232],"rpy":[0.0,0.0,0.0]},"axis":[0.0,0.0,0.0]},
     {"name":"radar_joint","type":"fixed","parent":"base","child":"radar","origin":{"xyz":[0.28945,0.0,-0.046825],"rpy":[0.0,2.8782,0.0]},"axis":[0.0,0.0,0.0]},
     {"name":"front_camera_joint","type":"fixed","parent":"base","child":"front_camera","origin":{"xyz":[0.32715,-3e-05,0.04297],"rpy":[0.0,0.0,0.0]},"axis":[1.0,0.0,0.0]},
+    {"name":"mid360_base_joint","type":"fixed","parent":"base","child":"mid360_base","origin":{"xyz":[0.19,0.0,0.101],"rpy":[0.0,0.0,0.0]},"axis":[1.0,0.0,0.0]},
+    {"name":"mid360_left_side_joint","type":"fixed","parent":"base","child":"mid360_left_side","origin":{"xyz":[0.19,0.0,0.101],"rpy":[0.0,0.0,0.0]},"axis":[1.0,0.0,0.0]},
+    {"name":"mid360_right_side_joint","type":"fixed","parent":"base","child":"mid360_right_side","origin":{"xyz":[0.19,0.0,0.101],"rpy":[0.0,0.0,0.0]},"axis":[1.0,0.0,0.0]},
+    {"name":"mid360_lid_joint","type":"fixed","parent":"base","child":"mid360_lid","origin":{"xyz":[0.19,0.0,0.101],"rpy":[0.0,0.0,0.0]},"axis":[1.0,0.0,0.0]},
+    {"name":"mid360_left_foot_joint","type":"fixed","parent":"base","child":"mid360_left_foot","origin":{"xyz":[0.19,0.0,0.101],"rpy":[0.0,0.0,0.0]},"axis":[1.0,0.0,0.0]},
+    {"name":"mid360_right_foot_joint","type":"fixed","parent":"base","child":"mid360_right_foot","origin":{"xyz":[0.19,0.0,0.101],"rpy":[0.0,0.0,0.0]},"axis":[1.0,0.0,0.0]},
+    {"name":"livox_frame_joint","type":"fixed","parent":"base","child":"livox_frame","origin":{"xyz":[0.24,0.0,0.20262],"rpy":[0.0,0.610865238198,0.0]},"axis":[1.0,0.0,0.0]},
+    {"name":"livox_imu_joint","type":"fixed","parent":"livox_frame","child":"livox_imu","origin":{"xyz":[0.011,0.02329,-0.04412],"rpy":[0.0,0.0,0.0]},"axis":[1.0,0.0,0.0]},
   ],
 } as const

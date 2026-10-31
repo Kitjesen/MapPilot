@@ -56,6 +56,18 @@ struct SensorState {
   std::vector<double> values;
 };
 
+struct ContactState {
+  std::int32_t geom1_id{-1};
+  std::int32_t geom2_id{-1};
+  std::string geom1_name;
+  std::string geom2_name;
+  std::string body1_stable_id;
+  std::string body2_stable_id;
+  double distance_m{0.0};
+  bool normal_force_available{false};
+  double normal_force_n{0.0};
+};
+
 struct MujocoRayDirection {
   std::array<double, 3> direction_sensor{};
   std::uint32_t offset_time_ns{0};
@@ -109,6 +121,13 @@ struct SimulationSnapshot {
   std::vector<JointState> joints;
   std::vector<ActuatorState> actuators;
   std::vector<SensorState> sensors;
+  // Contacts preserve mjData::contact[0:ncon] order after the latest mj_forward
+  // (initial/reset) or the final mj_step in advance(N). normal_force_n comes
+  // from mj_contactForce on that same mjData solver result; it is not accumulated
+  // across intermediate steps. Contacts absent from the solver report set
+  // normal_force_available=false.
+  std::size_t contact_count{0};
+  std::vector<ContactState> contacts;
 };
 
 struct KinematicEntityPose {
@@ -181,7 +200,8 @@ struct MujocoRuntimeConfig {
 };
 
 // Single-owner MuJoCo runtime. All calls must be made from one owning thread.
-// Snapshot storage is allocated while loading the model and reused thereafter.
+// Persistent snapshot storage is reused. Contact storage grows only when a new
+// peak contact count exceeds its retained capacity.
 class MujocoRuntime final {
  public:
   explicit MujocoRuntime(MujocoRuntimeConfig config);

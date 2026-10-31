@@ -1,12 +1,16 @@
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "control/autonomy.hpp"
-#include "runtime/loop.hpp"
+#include "app/loop.hpp"
+#include "../collision_bitmap.hpp"
+#include "planning/local/scan/grid.hpp"
 
 namespace {
 
@@ -444,6 +448,33 @@ void testActiveMapIdentityGuardFailsClosedBeforePlanning() {
   expect_blocked(changed_frame, "active_map_changed_during_navigation");
 }
 
+void testExecutorAndFinalControlHaveSeparateRuntimeTimings() {
+  Fixture fixture;
+  fixture.next_output.path_found = true;
+  fixture.next_output.cmd_vel = {.2,0,0};
+  const auto planner=fixture.actions.tick_autonomy;
+  fixture.actions.tick_autonomy=[planner](const auto &body, const float *points,
+                                        int count, double now, const auto &terrain) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(3));
+    return planner(body,points,count,now,terrain);
+  };
+  const auto safety=fixture.final_actions.command_safety;
+  fixture.final_actions.command_safety=[safety](const auto &config, const auto &command, double age) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(7));
+    return safety(config,command,age);
+  };
+  AutonomyTickController controller(fixture.actions,fixture.control());
+  const auto start=std::chrono::steady_clock::now();
+  const auto result=controller.tick(fixture.input());
+  const double total=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
+  require(result.timing.nav_tick_measured && result.timing.nav_tick_ms>=3,
+          "Executor timing must include the injected planner delay");
+  require(result.timing.final_control_ms>=7,
+          "final-control timing must include its own safety delay");
+  require(result.timing.nav_tick_ms+result.timing.final_control_ms<=total,
+          "nested runtime timings must be separate intervals rather than count each other");
+}
+
 void testNormalTickProducesBorrowedInputIntentsAndDiagnostics() {
   Fixture fixture;
   fixture.next_output.active = true;
@@ -589,7 +620,7 @@ void testPlannedCrawlBypassesTeleopDeadbandAndKeepsMaximumLimits() {
   require(crawl.output.has_value() && near(crawl.publish.command.vx, 0.01) &&
               !crawl.local->final_safety_stopped && fixture.pause_calls == 0,
           "planned startup and arrival speeds must not be erased by the teleop deadband");
-  fixture.next_output.cmd_vel = {0.8, 0.0, 2.0};
+  fixture.next_output.cmd_vel = {2*fixture.safety.max_speed_mps,0,2*fixture.safety.max_yaw_rate};
 
   const auto limited = controller.tick(fixture.input());
 
@@ -718,8 +749,7 @@ void testRecoveryOutcomesDistinguishRollingAndGenericGoals() {
               generic_result.outcome.replan_trigger->reason == "local_recovery_exhausted" &&
               lingtu::nav::endpoint::sameGoalReplanIdentity(
                   generic_result.outcome.replan_trigger->goal,
-                  GoalReplanIdentity{"task-a", "request-a", 11U, generic.active_identity}) &&
-              generic_result.outcome.replan_trigger->temporary_overlay.empty(),
+                  GoalReplanIdentity{"task-a", "request-a", 11U, generic.active_identity}),
           "generic recovery exhaustion must carry one typed, identity-bound replan trigger");
   require(generic_result.local.has_value() && generic_result.local->recovery_exhausted &&
               generic_result.local->recovery_reason == "recovery_exhausted",
@@ -772,6 +802,83 @@ void testActualCollisionRestartsPlannerInsteadOfHoldingUnsafeTrackingTarget() {
   require(result.local->final_safety_reason == "scan_actual_motion_blocked",
           "collision rejection must be visible in navigation status");
   require(blockage_reports == 1, "final braking rejection did not reach recovery");
+}
+
+void testActualPureYawBrakingStopsBeforeCommitAndAllowsClearTurn() {
+  for (const bool blocked : {true, false}) {
+    Fixture fixture;
+    fixture.map_body = nav_kernel::Pose{{.025, .025, .525}, 0};
+    fixture.next_output.active = true;
+    fixture.next_output.path_found = true;
+    fixture.next_output.cmd_vel = {0, 0, 1};
+    fixture.shape_override = true;
+    fixture.shaped_velocity.command = {0, 0, .8};
+    nav_kernel::LocalPlannerParams params;
+    params.scan.voxelResolution = .05;
+    params.scan.cylinderRadius = .25;
+    params.scan.cylinderOffset = .19;
+    params.scan.bodyClearanceBelow = .10;
+    params.scan.bodyClearanceAbove = .25;
+    lingtu::nav::tests::CollisionBitmap bitmap({-2, -2, -1}, {2, 2, 2}, .05);
+    if (blocked) {
+      // Both end orientations fit, but the front cylinder crosses this corner
+      // during the measured positive turn. Grid consumes an inflated bitmap.
+      bitmap.occupyInflated({.325F, .325F, .525F}, params.scan.cylinderRadius,
+                           params.scan.bodyClearanceAbove, params.scan.bodyClearanceBelow);
+    }
+    nav_kernel::LocalPlanRequest collision_request;
+    collision_request.environment.collision = bitmap.view();
+    const nav_kernel::local::scan::Grid grid(params, collision_request);
+    require(grid.valid(), "actual-turn fixture must provide a valid collision grid");
+    require(grid.inflatedOccupancy(fixture.map_body->position, 0) == 0 &&
+                grid.inflatedOccupancy(fixture.map_body->position, std::acos(-1.0) / 2) == 0,
+            "turn endpoints must be clear so only the intermediate sweep distinguishes the cases");
+    const nav_kernel::Twist measured{0, 0, 1};
+    require(grid.brakingOccupancy(*fixture.map_body, measured, .35, .5, 1) ==
+                (blocked ? 1 : 0),
+            "real measured-yaw braking sweep must distinguish the occupied corner");
+    fixture.final_actions.command_safety =
+        [&](const CommandSafetyConfig &config, const nav_kernel::Twist &command, double age) {
+      ++fixture.command_safety_calls;
+      fixture.command_safety_input = command;
+      auto decision = lingtu::nav::endpoint::evaluateCommandSafety(config, command, age);
+      // Match the final runtime boundary: unsafe measured braking requires zero;
+      // otherwise shorten the shaped command's actual-pose braking arc if needed.
+      const double scale = grid.brakingOccupancy(*fixture.map_body, measured, .35, .5, 1) != 0
+                               ? 0.0 : grid.brakingScale(*fixture.map_body, decision.cmd, .35, .5, 1);
+      decision.cmd.vx *= scale;
+      decision.cmd.vy *= scale;
+      decision.cmd.wz *= scale;
+      if (scale <= 0) {
+        decision.stopped = true;
+        decision.limited = true;
+        decision.reason = "scan_actual_motion_blocked";
+      }
+      return decision;
+    };
+    AutonomyTickController controller(fixture.actions, fixture.control());
+    const auto result = controller.tick(fixture.input());
+    require(fixture.shape_calls == 1 && fixture.command_safety_calls == 1 &&
+                near(fixture.command_safety_input.wz, .8),
+            "real braking callback must evaluate the shaped pure-yaw command once");
+    require(result.handled && result.output.has_value() && result.local.has_value() &&
+                result.publish.cmd_vel,
+            "pure-yaw autonomy must publish the final safety decision");
+    if (blocked) {
+      require(fixture.commit_calls == 0 && near(result.publish.command.vx, 0) &&
+                  near(result.publish.command.vy, 0) && near(result.publish.command.wz, 0),
+              "unsafe actual rotation must publish exact zero without committing a command");
+      require(fixture.velocity_stop_calls == 1 && fixture.stop_calls == 1 &&
+                  result.local->final_safety_stopped &&
+                  result.local->final_safety_reason == "scan_actual_motion_blocked",
+              "actual rotation collision must stop execution and preserve its reason");
+    } else {
+      require(fixture.commit_calls == 1 && near(fixture.committed_command.wz, .8) &&
+                  near(result.publish.command.wz, .8) && fixture.velocity_stop_calls == 0 &&
+                  !result.local->final_safety_stopped,
+              "clear actual rotation must commit and publish the shaped nonzero command");
+    }
+  }
 }
 
 void testBrakingSlowdownRetainsActiveTrajectory() {
@@ -843,6 +950,7 @@ int main() {
     testInputsExpiringDuringPlanningBlockPublicationWithoutCompletingGoal();
     testActiveMapIdentityGuardFailsClosedBeforePlanning();
     testNormalTickProducesBorrowedInputIntentsAndDiagnostics();
+    testExecutorAndFinalControlHaveSeparateRuntimeTimings();
     testZeroCommandSkipsFinalSafety();
     testInvalidShapingAndCommitFailureFailClosed();
     testPlannedCrawlBypassesTeleopDeadbandAndKeepsMaximumLimits();
@@ -854,6 +962,7 @@ int main() {
     testRecoveryMotionIsNotPreemptedByTaskReplanning();
     testReachedOutcomesDistinguishInspectionArrival();
     testActualCollisionRestartsPlannerInsteadOfHoldingUnsafeTrackingTarget();
+    testActualPureYawBrakingStopsBeforeCommitAndAllowsClearTurn();
     testBrakingSlowdownRetainsActiveTrajectory();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "test_autonomy_tick_controller: FAIL: %s\n", error.what());

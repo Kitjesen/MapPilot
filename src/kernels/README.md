@@ -3,7 +3,7 @@
 `src/kernels/` is the home for portable algorithm kernels and their stable ABI
 contracts.
 
-This folder is not a runtime layer. It does not own Module lifecycle, Blueprint
+This folder is not a runtime layer. It does not own Module lifecycle, HostBuilder
 wiring, Gateway routes, ROS adapters, or deployment scripts. Owning runtime
 domains call kernels when they need fast or portable compute.
 

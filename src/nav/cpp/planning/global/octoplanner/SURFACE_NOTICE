@@ -1,0 +1,16 @@
+Native surface repair derives the per-height closing/evidence algorithm from:
+DimOS, Copyright 2025 Dimensional Inc., Apache License 2.0.
+https://github.com/dimensionalOS/dimos/blob/26144f7fd8424bdc33ab97dcd58e9497f2d413ee/dimos/navigation/global_planner/mls_planner/rust/src/surfaces.rs
+
+LingTu changes (2026-10-30/31): C++ implementation over immutable OctoMap
+columns, per-height bit-grid closing, separate inferred support storage,
+occupied-height acceleration blocks and integration with native XYZ A*.
+surface_graph.cpp and route_smoothing.cpp also adapt the fixed revision's
+multi-source Voronoi corridors, string pulling and elastic-path update ideas
+from nodes.rs, edges.rs, planner.rs and smoother.rs. The C++ adaptation uses
+LingTu's 3D support, step/slope and cylinder checks, and retains native XYZ
+search when a cached static corridor cannot serve current observations.
+The Python/Rust bindings and Rust runtime dependencies are not included.
+
+The existing OctoPlanner3D source remains under its accompanying MIT LICENSE.
+The applicable Apache 2.0 terms for this adaptation are in LICENSE-Apache-2.0.

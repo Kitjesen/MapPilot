@@ -576,8 +576,10 @@ class WindowsDistribution:
         work_manifest = work_dir / "distribution.manifest.json"
         work_manifest.write_bytes(self._canonical_json(packaged_manifest))
         release_dir.parent.mkdir(parents=True, exist_ok=True)
+        from sim.runtime.coordinator.atomic_file import replace_file_with_retry
+
         try:
-            work_dir.replace(release_dir)
+            replace_file_with_retry(work_dir, release_dir)
         except OSError as exc:
             raise DistributionError(f"could not atomically publish Windows distribution: {exc}") from exc
         public_release_dir = self._public_release_path(release_dir, artifacts)

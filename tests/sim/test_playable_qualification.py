@@ -429,7 +429,7 @@ def _write_valid_run(root: Path) -> Path:
                 "source_monotonic_ns": source_sequence * 1_000_000,
                 "arrival_monotonic_ns": source_sequence * 1_000_000 + 1_000,
                 "datagram_sha256": datagram_sha256,
-                "controller_id": "thunder_01.thunderv4_locomotion",
+                "controller_id": "thunder_01.thunderv4_cts_moe",
                 "channel_id": "thunder_01.control.base_twist",
                 "controller_sequence": 100 + source_sequence,
                 "apply_time_ns": segment_start_ns + periodic_index * 100_000_000,
@@ -772,25 +772,22 @@ def _write_valid_run(root: Path) -> Path:
         {
             "schema": "lingtu.sim.playable-controller-calibration.v1",
             **_identity_fields(),
-            "controller_package_id": "thunderv4_locomotion",
+            "controller_package_id": "thunderv4_cts_moe",
             "controller_package_version": "1.0.0",
-            "controller_manifest_path": "sim/packages/controllers/doso/thunder_v4/locomotion/controller.package.yaml",
+            "controller_manifest_path": "sim/packages/controllers/doso/thunder_v4/cts_moe/controller.package.yaml",
             "command_calibration": {
                 "schema": "lingtu.sim.controller-command-calibration.v1",
-                "scope": "quadruped_him_observation_only",
+                "scope": "thunder_cts_moe_si_commands",
                 "provenance": {
-                    "source_id": "factory_park_turn_truth_qa_20260809",
-                    "audit_note": (
-                        "Source identifier records the calibration rationale only; no warehouse artifact is "
-                        "claimed as yaw-turn qualification proof."
-                    ),
+                    "source_id": "cts_moe_v39_runtime_contract",
+                    "audit_note": ("CTS v39 receives SI base twist without a separate yaw gain; this is not motion qualification."),
                     "qualification_claim": False,
                 },
                 "external_yaw_cap_radps": 0.35,
-                "policy_yaw_observation_gain": 1.2857142857142858,
-                "policy_yaw_observation_limit_radps": 0.45,
+                "policy_yaw_observation_gain": 1.0,
+                "policy_yaw_observation_limit_radps": 0.35,
                 "leaves_base_twist_unchanged": True,
-                "affected_axes": ["angular_z"],
+                "affected_axes": [],
             },
             "qualification_schedule": [
                 {"maneuver": "turn_left", "key": "Q", "hold_s": 5.3},
@@ -901,7 +898,7 @@ def _write_valid_run(root: Path) -> Path:
                 "robot_package": "thunderv4@1.0.3",
                 "robot_instance_id": "thunder_01",
                 "robot_color": "black_graphite",
-                "controller_package": "thunderv4_locomotion@1.0.0",
+                "controller_package": "thunderv4_cts_moe@1.0.0",
             },
             "clock": {
                 "authority": "mujoco",
@@ -1331,7 +1328,7 @@ def test_ue_origin_receiver_acceptance_and_truth_join_fail_closed_for_empty_spoo
             "source_monotonic_ns": next_sequence * 1_000_000,
             "arrival_monotonic_ns": next_sequence * 1_000_000 + 1_000,
             "datagram_sha256": extra_hash,
-            "controller_id": "thunder_01.thunderv4_locomotion",
+            "controller_id": "thunder_01.thunderv4_cts_moe",
             "channel_id": "thunder_01.control.base_twist",
             "controller_sequence": 300 + next_sequence,
             "apply_time_ns": 12_500_000_000,

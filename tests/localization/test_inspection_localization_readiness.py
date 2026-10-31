@@ -52,7 +52,7 @@ def _sample(stamp_s: float, sequence: int, *, yaw_deg: float = 0.0, **overrides)
         "imu_rollback_count": 0,
         "lidar_rollback_count": 0,
         "pose": _pose(yaw_deg),
-        "fastlio_degeneracy": {"detected": False},
+        "ltlio_degeneracy": {"detected": False},
         "relocalization_state": "TRACKING",
     }
     sample.update(overrides)

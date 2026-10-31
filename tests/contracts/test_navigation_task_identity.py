@@ -33,6 +33,8 @@ def test_navigation_task_identity_is_distinct_from_command_attempt_identity() ->
             "request_id",
             "kind",
             "goal",
+            "max_speed_mps",
+            "acceptance_radius_m",
             "reason",
         ],
         "NavigationCommandAck": [

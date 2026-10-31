@@ -10,7 +10,7 @@ we can compare SLAM backends without changing robot behavior.
 - Timestamp association and translation error metrics.
 - Declarative evaluation case manifests.
 - License-aware public dataset catalog and native LTU1 replay manifests.
-- A NOVA Dog + Fast-LIO2 baseline case manifest.
+- A NOVA Dog + LTLIO baseline case manifest.
 
 Public data is development and regression evidence, not a replacement for the
 sealed Thunder V4 field corpus. In particular, sparse surveyed checkpoints,
@@ -20,31 +20,35 @@ misleading score.
 
 ## Public MID-360 Replay
 
-Convert ROS 2 bags in an offline ROS 2 environment; the robot runtime remains
-ROS-free. For an extracted AIST hard-localization sequence:
+Local public degeneracy datasets and their actual download/input status are
+listed in [the dataset index](../../../datasets/README.md), rooted at
+`D:\inovxio\brain\lingtu\datasets\slam`. A downloaded file is not a completed
+conversion, algorithm replay, or accuracy evaluation. Current ROS1 conversion
+does not require ROS or rosbags. None/bz2 uses the standard library; LZ4 uses an
+already installed system liblz4. Dataset IMU units, extrinsics, point times and
+GT reference points must stay explicit.
 
 ```bash
-python3 tools/datasets/public_slam_dataset.py manifest \
-  aist-hard-localization-mid360 \
-  /data/raw/outdoor_hard_01a \
-  /data/ltu \
-  --sequence outdoor_hard_01a \
-  --write /data/ltu/outdoor_hard_01a.replay.json
+python3 -m tools.datasets.aist_flatwall_to_ltu1 \
+  datasets/slam/aist-flatwall-avia/raw/flatwall_01.bag /tmp/ltu/aist
 
-python3 scripts/compat/ros2/datasets/ros2_bag_to_normalized_jsonl.py \
-  /data/ltu/outdoor_hard_01a.replay.json \
-  /data/ltu/outdoor_hard_01a.normalized.jsonl \
-  --storage-id sqlite3
+python3 -m tools.datasets.biketunnel_to_ltu1 \
+  datasets/slam/trail-odom-biketunnel2 /tmp/ltu/tunnel
 
-python3 tools/datasets/normalized_lidar_imu_to_ltu1.py \
-  /data/ltu/outdoor_hard_01a.normalized.jsonl \
-  /data/ltu/outdoor_hard_01a.ltu
-
-build/livox_sdk2_stream/livox_sdk2_stream \
-  --validate-records < /data/ltu/outdoor_hard_01a.ltu
+python3 -m tools.datasets.superloc_corridor_to_ltu1 \
+  datasets/slam/superloc-corridor02/raw/corridor02.bag /tmp/ltu/corridor02.ltu
 ```
 
-Run the native Fast-LIO2 runtime and the LTU1 publisher in two terminals on an
+The direct offline runner is `ltlio_replay INPUT.ltu CONFIG.yaml OUTPUT_PREFIX`.
+It exercises the native backend and writes TUM trajectories, JSON status with
+geometry diagnostics, and a summary. Public replay must use the dataset's own
+configuration: AIST raw acceleration is g, BikeTunnel2 selects its SI IMU, and
+Corridor02 is an explicitly documented offline Velodyne carrier. Do not use a
+real robot's calibration for a different public sensor rig. Recorded results
+and input conditions are linked from the dataset index.
+
+For transport integration, set `PUBLIC_REPLAY_CONFIG` to the dataset-specific
+YAML, then run the native LTLIO runtime and LTU1 publisher in two terminals on an
 isolated DDS domain. This keeps replay traffic away from the robot's live domain
 and does not start navigation, the driver, or any motion endpoint.
 
@@ -53,7 +57,7 @@ Terminal 1:
 ```bash
 LINGTU_SLAM_BIN="$PWD/build/slam_core/slamd" \
 LINGTU_SLAM_MODE=mapping \
-LINGTU_SLAM_CONFIG="$PWD/config/robots/unitree/go2/sensors/mid360_fastlio2.yaml" \
+LINGTU_SLAM_CONFIG="$PUBLIC_REPLAY_CONFIG" \
 LINGTU_DDS_DOMAIN_ID=83 \
 LINGTU_SLAM_STATUS_JSON=/tmp/messages_status.json \
 bash scripts/deploy/thunder/run_slam_dds.sh
@@ -67,23 +71,17 @@ build/livox_sdk2_stream/livox_sdk2_stream \
   --dds \
   --domain-id 83 \
   --replay-rate 1.0 \
-  < /data/ltu/outdoor_hard_01a.ltu
+  < /tmp/ltu/tunnel/biketunnel2.ltu
 ```
 
-The end-to-end path is therefore `rosbag2 -> normalized JSONL -> LTU1 -> native
-CycloneDDS -> Fast-LIO2 -> /tmp/messages_status.json`. Use the readiness
+The end-to-end path is therefore `ROS1 bag -> dataset conversion -> LTU1 -> native
+CycloneDDS -> LTLIO -> /tmp/messages_status.json`. Use the readiness
 commands below to capture unique status observations and evaluate the result.
 
-The ROS adapter lazily imports `rosbag2_py`, `rclpy.serialization`, and the
-message packages, so normal LingTu startup has no ROS dependency. PointCloud2
-fields are decoded from their declared offsets, datatypes, row stride, and
-endianness; Livox `CustomMsg` uses `timebase` plus manifest-declared
-`offset_time` units.
-
-Datasets without verified per-point timing require `--allow-undeskewed` on
-both conversion commands. Those records retain `transport_only=true` and are
-rejected by the LTU1 converter unless that downgrade is explicitly repeated;
-they may test transport stability, not Fast-LIO deskew or accuracy.
+The catalog also describes other sources; a declared conversion adapter does
+not prove that it exists or has been run. The old ROS2 conversion script is not
+present in this worktree, so it is not a supported command in this runbook.
+Data without verified per-point timing cannot establish deskew accuracy.
 
 ## External Reference Notes
 

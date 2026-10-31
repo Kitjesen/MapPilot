@@ -381,7 +381,7 @@ def test_p0_field_runbook_matches_script_contracts():
     assert "session_start" not in p0_all
     assert "session_end" not in p0_all
     assert "profile switch" not in p0_all
-    assert "fastlio2" not in p0_all
+    assert "ltlio" not in p0_all
     assert "localizer" not in p0_all
 
     fail_return_index = p0_all.index('return "$code"')

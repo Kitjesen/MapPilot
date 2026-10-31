@@ -36,15 +36,18 @@ NATIVE_COMMAND_CAP_EXPLORATION_RUN_EVENTS = 1 << 13
 NATIVE_COMMAND_CAP_TRAVERSABILITY_GRID = 1 << 14
 NATIVE_COMMAND_CAP_PLAN_PREVIEW = 1 << 15
 NATIVE_COMMAND_CAP_JOINT_STATE = 1 << 16
+NATIVE_COMMAND_CAP_SEMANTIC_VIEW_QUERY = 1 << 17
 NATIVE_JOINT_STATE_ABI_VERSION = 1
 
 NATIVE_OPERATOR_MOTION_RECEIPT_ABI_VERSION = 1
 NATIVE_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION = 1
 NATIVE_NAVIGATION_GOAL_STATUS_ABI_VERSION = 1
-NATIVE_INSPECTION_TASK_EVENT_ABI_VERSION = 1
+NATIVE_INSPECTION_TASK_EVENT_ABI_VERSION = 3
 NATIVE_EXPLORATION_COMMAND_RECEIPT_ABI_VERSION = 1
 NATIVE_EXPLORATION_RUN_EVENT_ABI_VERSION = 2
 NATIVE_PLAN_RESULT_ABI_VERSION = 1
+NATIVE_SEMANTIC_VIEW_ABI_VERSION = 1
+NATIVE_SEMANTIC_VIEW_MAX_CANDIDATES = 16
 
 NATIVE_MAP_SCENE_ABI_VERSION = 3
 NATIVE_MAP_SCENE_MAX_POINTS_PER_LAYER = 300_000
@@ -147,7 +150,6 @@ class _NativeInspectionTaskEventV1(ctypes.Structure):
         ("kind", ctypes.c_int32),
         ("task_id", ctypes.c_char * 128),
         ("request_id", ctypes.c_char * 128),
-        ("command_request_id", ctypes.c_char * 128),
         ("state", ctypes.c_int32),
         ("map_id", ctypes.c_char * 128),
         ("map_content_epoch", ctypes.c_int64),
@@ -157,7 +159,6 @@ class _NativeInspectionTaskEventV1(ctypes.Structure):
         ("point_count", ctypes.c_uint32),
         ("loop_index", ctypes.c_uint32),
         ("retry_count", ctypes.c_uint32),
-        ("point_id", ctypes.c_char * 128),
         ("action", ctypes.c_char * 128),
         ("action_request_id", ctypes.c_char * 128),
         ("evidence_id", ctypes.c_char * 128),
@@ -223,6 +224,51 @@ class _NativePlanResultV1(ctypes.Structure):
         ("start", _NativePathPoint),
         ("goal", _NativePathPoint),
         ("point_count", ctypes.c_ulonglong),
+    ]
+
+
+class _NativeSemanticCameraViewV1(ctypes.Structure):
+    _fields_ = [
+        ("x", ctypes.c_double),
+        ("y", ctypes.c_double),
+        ("yaw", ctypes.c_double),
+        ("range_m", ctypes.c_double),
+        ("horizontal_fov_rad", ctypes.c_double),
+    ]
+
+
+class _NativeSemanticViewCandidateV1(ctypes.Structure):
+    _fields_ = [
+        ("x", ctypes.c_double),
+        ("y", ctypes.c_double),
+        ("z", ctypes.c_double),
+        ("yaw", ctypes.c_double),
+        ("score", ctypes.c_double),
+        ("route_cost_m", ctypes.c_double),
+        ("visible_cells", ctypes.c_uint32),
+    ]
+
+
+class _NativeSemanticViewResultV1(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("struct_size", ctypes.c_uint32),
+        ("timestamp_s", ctypes.c_double),
+        ("frame_id", ctypes.c_char * 32),
+        ("request_id", ctypes.c_char * 128),
+        ("boot_id", ctypes.c_char * 128),
+        ("map_id", ctypes.c_char * 128),
+        ("map_content_epoch", ctypes.c_int64),
+        ("frame_epoch", ctypes.c_ulonglong),
+        ("reference_z", ctypes.c_double),
+        ("available", ctypes.c_int32),
+        ("geometry_exhausted", ctypes.c_int32),
+        ("reason", ctypes.c_char * 256),
+        ("candidate_count", ctypes.c_uint32),
+        (
+            "candidates",
+            _NativeSemanticViewCandidateV1 * NATIVE_SEMANTIC_VIEW_MAX_CANDIDATES,
+        ),
     ]
 
 
@@ -451,6 +497,7 @@ class NativeCommandSession:
         self._goal_status_configured = False
         self._path_telemetry_configured = False
         self._plan_preview_configured = False
+        self._semantic_view_configured = False
         self._map_scene_configured = False
         self._traversability_configured = False
         self._joint_state_configured = False
@@ -997,6 +1044,40 @@ class NativeCommandSession:
                 ) from exc
             self._plan_preview_configured = True
 
+    def ensure_semantic_view_abi(self) -> None:
+        """Validate the read-only native semantic view query symbol lazily."""
+
+        with self.lock:
+            if self._semantic_view_configured:
+                return
+            self._require_capability(
+                NATIVE_COMMAND_CAP_SEMANTIC_VIEW_QUERY,
+                "semantic view query",
+            )
+            try:
+                query = self.library.lingtu_nav_client_query_semantic_views_v1
+                query.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_int64,
+                    ctypes.c_char_p,
+                    ctypes.c_ulonglong,
+                    ctypes.c_double,
+                    ctypes.c_double,
+                    ctypes.c_double,
+                    ctypes.POINTER(_NativeSemanticCameraViewV1),
+                    ctypes.c_uint32,
+                    ctypes.c_int,
+                    ctypes.POINTER(_NativeSemanticViewResultV1),
+                ]
+                query.restype = ctypes.c_int
+            except AttributeError as exc:
+                raise NativeCommandClientError(
+                    "native semantic view query ABI is incomplete; rebuild liblingtu_nav_client.so"
+                ) from exc
+            self._semantic_view_configured = True
+
     def ensure_map_scene_abi(self) -> None:
         """Validate bounded latest-only MapScene telemetry symbols lazily."""
 
@@ -1111,6 +1192,109 @@ class NativeCommandSession:
             result = function(handle, *args)
             if int(result) != 0:
                 raise NativeCommandClientError(self.last_error(handle))
+        finally:
+            with self.lock:
+                self._active_calls -= 1
+                if self._active_calls == 0:
+                    self._state_changed.notify_all()
+
+    def query_semantic_views(
+        self,
+        *,
+        boot_id: str,
+        map_id: str,
+        map_content_epoch: int,
+        frame_id: str,
+        frame_epoch: int,
+        reference_z: float,
+        camera_range_m: float,
+        camera_horizontal_fov_rad: float,
+        views: list[dict[str, object]],
+        timeout_ms: int,
+    ) -> dict[str, object]:
+        """Query native 3D observation candidates without issuing motion."""
+
+        self.ensure_semantic_view_abi()
+        if len(views) > 256:
+            raise ValueError("semantic view history exceeds 256 views")
+        view_buffer = (_NativeSemanticCameraViewV1 * len(views))()
+        for index, view in enumerate(views):
+            view_buffer[index] = _NativeSemanticCameraViewV1(
+                float(view["x"]),
+                float(view["y"]),
+                float(view["yaw"]),
+                float(view.get("range_m", camera_range_m)),
+                float(view.get("horizontal_fov_rad", camera_horizontal_fov_rad)),
+            )
+        result = _NativeSemanticViewResultV1()
+        result.abi_version = NATIVE_SEMANTIC_VIEW_ABI_VERSION
+        result.struct_size = ctypes.sizeof(_NativeSemanticViewResultV1)
+        function = self.library.lingtu_nav_client_query_semantic_views_v1
+        with self.lock:
+            self.require_open()
+            handle = self.handle
+            self._active_calls += 1
+        try:
+            status = int(
+                function(
+                    handle,
+                    str(boot_id).encode("utf-8"),
+                    str(map_id).encode("utf-8"),
+                    int(map_content_epoch),
+                    str(frame_id).encode("utf-8"),
+                    int(frame_epoch),
+                    float(reference_z),
+                    float(camera_range_m),
+                    float(camera_horizontal_fov_rad),
+                    view_buffer if views else None,
+                    len(views),
+                    max(1, int(timeout_ms)),
+                    ctypes.byref(result),
+                )
+            )
+            if status < 0:
+                raise NativeCommandClientError(self.last_error(handle))
+            if status != 0:
+                raise NativeCommandClientError(
+                    f"native semantic view query returned unexpected status {status}"
+                )
+            if (
+                int(result.abi_version) != NATIVE_SEMANTIC_VIEW_ABI_VERSION
+                or int(result.struct_size) < ctypes.sizeof(_NativeSemanticViewResultV1)
+            ):
+                raise NativeCommandClientError(
+                    "native semantic view query returned an incompatible result ABI"
+                )
+            count = int(result.candidate_count)
+            if count > NATIVE_SEMANTIC_VIEW_MAX_CANDIDATES:
+                raise NativeCommandClientError(
+                    "native semantic view query exceeded candidate capacity"
+                )
+            return {
+                "timestamp_s": float(result.timestamp_s),
+                "frame_id": self._decode_fixed_text(result.frame_id),
+                "request_id": self._decode_fixed_text(result.request_id),
+                "boot_id": self._decode_fixed_text(result.boot_id),
+                "map_id": self._decode_fixed_text(result.map_id),
+                "map_content_epoch": int(result.map_content_epoch),
+                "frame_epoch": int(result.frame_epoch),
+                "reference_z": float(result.reference_z),
+                "available": bool(result.available),
+                "geometry_exhausted": bool(result.geometry_exhausted),
+                "reason": self._decode_fixed_text(result.reason),
+                "candidates": [
+                    {
+                        "x": float(candidate.x),
+                        "y": float(candidate.y),
+                        "z": float(candidate.z),
+                        "yaw": float(candidate.yaw),
+                        "score": float(candidate.score),
+                        "route_cost_m": float(candidate.route_cost_m),
+                        "visible_cells": int(candidate.visible_cells),
+                    }
+                    for candidate in result.candidates[:count]
+                ],
+            }
         finally:
             with self.lock:
                 self._active_calls -= 1
@@ -1263,9 +1447,6 @@ class NativeCommandSession:
                 "kind": int(event.kind),
                 "task_id": self._decode_fixed_text(event.task_id),
                 "request_id": self._decode_fixed_text(event.request_id),
-                "command_request_id": self._decode_fixed_text(
-                    event.command_request_id
-                ),
                 "state": int(event.state),
                 "map_id": self._decode_fixed_text(event.map_id),
                 "map_content_epoch": int(event.map_content_epoch),
@@ -1275,7 +1456,6 @@ class NativeCommandSession:
                 "point_count": int(event.point_count),
                 "loop_index": int(event.loop_index),
                 "retry_count": int(event.retry_count),
-                "point_id": self._decode_fixed_text(event.point_id),
                 "action": self._decode_fixed_text(event.action),
                 "action_request_id": self._decode_fixed_text(
                     event.action_request_id

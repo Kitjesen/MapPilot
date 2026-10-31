@@ -1,0 +1,113 @@
+{
+  "license_url": "https://polyhaven.com/license",
+  "textures": [
+    {
+      "asset": "asphalt_02",
+      "channel": "base",
+      "file": "asphalt_02_base.jpg",
+      "bytes": 3075676,
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/asphalt_02/asphalt_02_diff_2k.jpg",
+      "source": "https://polyhaven.com/a/asphalt_02",
+      "license": "CC0-1.0"
+    },
+    {
+      "asset": "asphalt_02",
+      "channel": "rough",
+      "file": "asphalt_02_rough.jpg",
+      "bytes": 2230457,
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/asphalt_02/asphalt_02_rough_2k.jpg",
+      "source": "https://polyhaven.com/a/asphalt_02",
+      "license": "CC0-1.0"
+    },
+    {
+      "asset": "asphalt_02",
+      "channel": "normal",
+      "file": "asphalt_02_normal.png",
+      "bytes": 9117875,
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/asphalt_02/asphalt_02_nor_dx_2k.png",
+      "source": "https://polyhaven.com/a/asphalt_02",
+      "license": "CC0-1.0"
+    },
+    {
+      "asset": "concrete_floor_worn_001",
+      "channel": "base",
+      "file": "concrete_floor_worn_001_base.jpg",
+      "bytes": 482906,
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/concrete_floor_worn_001/concrete_floor_worn_001_diff_2k.jpg",
+      "source": "https://polyhaven.com/a/concrete_floor_worn_001",
+      "license": "CC0-1.0"
+    },
+    {
+      "asset": "concrete_floor_worn_001",
+      "channel": "rough",
+      "file": "concrete_floor_worn_001_rough.jpg",
+      "bytes": 735249,
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/concrete_floor_worn_001/concrete_floor_worn_001_rough_2k.jpg",
+      "source": "https://polyhaven.com/a/concrete_floor_worn_001",
+      "license": "CC0-1.0"
+    },
+    {
+      "asset": "concrete_floor_worn_001",
+      "channel": "normal",
+      "file": "concrete_floor_worn_001_normal.png",
+      "bytes": 22874193,
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/concrete_floor_worn_001/concrete_floor_worn_001_nor_dx_2k.png",
+      "source": "https://polyhaven.com/a/concrete_floor_worn_001",
+      "license": "CC0-1.0"
+    },
+    {
+      "asset": "box_profile_metal_sheet",
+      "channel": "base",
+      "file": "box_profile_metal_sheet_base.jpg",
+      "bytes": 1473974,
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/box_profile_metal_sheet/box_profile_metal_sheet_diff_2k.jpg",
+      "source": "https://polyhaven.com/a/box_profile_metal_sheet",
+      "license": "CC0-1.0"
+    },
+    {
+      "asset": "box_profile_metal_sheet",
+      "channel": "rough",
+      "file": "box_profile_metal_sheet_rough.jpg",
+      "bytes": 2560698,
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/box_profile_metal_sheet/box_profile_metal_sheet_rough_2k.jpg",
+      "source": "https://polyhaven.com/a/box_profile_metal_sheet",
+      "license": "CC0-1.0"
+    },
+    {
+      "asset": "box_profile_metal_sheet",
+      "channel": "normal",
+      "file": "box_profile_metal_sheet_normal.png",
+      "bytes": 21088804,
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/box_profile_metal_sheet/box_profile_metal_sheet_nor_dx_2k.png",
+      "source": "https://polyhaven.com/a/box_profile_metal_sheet",
+      "license": "CC0-1.0"
+    },
+    {
+      "asset": "aerial_grass_rock",
+      "channel": "base",
+      "file": "aerial_grass_rock_base.jpg",
+      "bytes": 2624635,
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/aerial_grass_rock/aerial_grass_rock_diff_2k.jpg",
+      "source": "https://polyhaven.com/a/aerial_grass_rock",
+      "license": "CC0-1.0"
+    },
+    {
+      "asset": "aerial_grass_rock",
+      "channel": "rough",
+      "file": "aerial_grass_rock_rough.jpg",
+      "bytes": 1495844,
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/aerial_grass_rock/aerial_grass_rock_rough_2k.jpg",
+      "source": "https://polyhaven.com/a/aerial_grass_rock",
+      "license": "CC0-1.0"
+    },
+    {
+      "asset": "aerial_grass_rock",
+      "channel": "normal",
+      "file": "aerial_grass_rock_normal.png",
+      "bytes": 25610944,
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/aerial_grass_rock/aerial_grass_rock_nor_dx_2k.png",
+      "source": "https://polyhaven.com/a/aerial_grass_rock",
+      "license": "CC0-1.0"
+    }
+  ]
+}

@@ -33,7 +33,7 @@ Drivers expose typed runtime ports such as `cmd_vel`, `stop_signal`,
 `imu`, and `map_cloud`. Cross-process product topics use the typed DDS registry
 in `src/message/topics.py`; high-bandwidth camera images use SHM by default.
 
-Upper layers select drivers through `runtime.registry` and Blueprint factories.
+Upper layers select drivers through `runtime.registry` and HostBuilder factories.
 They should not import concrete driver classes for behavior.
 
 ## Boundary

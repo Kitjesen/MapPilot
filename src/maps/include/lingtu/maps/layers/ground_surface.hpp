@@ -11,6 +11,8 @@
 
 namespace lingtu::maps::layers {
 
+inline constexpr double kPi = 3.141592653589793238462643383279502884;
+
 // Geometric surface evidence, not a declaration of traversability. Callers own
 // robot-relative ground seeding, connectivity and collision policy.
 struct GroundSurfaceConfig {
@@ -152,7 +154,7 @@ inline std::vector<Point> LowestSupportedCluster(
       for (auto& covariance : columns[i].covariance) covariance /= counts[i];
     const auto plane = Fit(columns);
     if (plane.valid && plane.rms <= config.max_residual_m &&
-        std::hypot(plane.x,plane.y) <= std::tan(config.max_slope_deg*M_PI/180.0)) return columns;
+        std::hypot(plane.x,plane.y) <= std::tan(config.max_slope_deg*kPi/180.0)) return columns;
   }
   return {};
 }
@@ -190,7 +192,7 @@ inline GroundSurfaceResult EstimateGroundSurface(
         static_cast<int>(std::floor((y-geometry.originY)/config.sample_resolution_m))});
   }
   std::vector<Plane> initial(cells.size());
-  const double slope_limit = std::tan(config.max_slope_deg*M_PI/180.0);
+  const double slope_limit = std::tan(config.max_slope_deg*kPi/180.0);
   for (std::size_t i = 0; i < cells.size(); ++i) {
     cells[i] = ground_detail::LowestSupportedCluster(std::move(cells[i]), config);
     initial[i] = ground_detail::Fit(cells[i]);
@@ -242,7 +244,7 @@ inline GroundSurfaceResult EstimateGroundSurface(
     result.height.data[index] = static_cast<float>(plane.z);
     result.gradient_x.data[index] = static_cast<float>(plane.x);
     result.gradient_y.data[index] = static_cast<float>(plane.y);
-    result.slope_deg.data[index] = static_cast<float>(std::atan(std::hypot(plane.x,plane.y))*180/M_PI);
+    result.slope_deg.data[index] = static_cast<float>(std::atan(std::hypot(plane.x,plane.y))*180/kPi);
     result.variance_m2.data[index] = static_cast<float>(sum_residual/support);
     result.roughness_m.data[index] = std::sqrt(result.variance_m2.data[index]);
     result.support_count.data[index] = static_cast<float>(support);

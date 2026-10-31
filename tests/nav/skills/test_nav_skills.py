@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from lingtu.assembly.stacks.navigation import navigation
-from lingtu.assembly.wires.navigation import navigation_support_specs
+from lingtu.assembly.host.stacks.navigation import navigation
+from lingtu.assembly.host.wiring.navigation import navigation_support_specs
 from nav.services.goals import GoalService
 from nav.skills import NavSkills
 from runtime.msgs.nav import (
@@ -334,8 +334,8 @@ def test_mcp_discovers_nav_skills_as_navigation_tool_owner() -> None:
 
 
 def test_only_compiled_inspection_product_mounts_inspection_service() -> None:
-    from lingtu.assembly.compiler import blueprint_from_run_plan, compile_run_plan
-    from lingtu.assembly.products import resolve_product_host_runtime
+    from lingtu.assembly.compile_plan import compile_run_plan, host_builder_from_run_plan
+    from lingtu.assembly.config.product import resolve_product_host_runtime
 
     products = {}
     for name in ("nav", "inspection"):
@@ -348,9 +348,9 @@ def test_only_compiled_inspection_product_mounts_inspection_service() -> None:
 
     assert "nav.inspection" not in products["nav"].modules
     assert "nav.inspection" in products["inspection"].modules
-    nav_entries = {entry.name: entry.config for entry in blueprint_from_run_plan(products["nav"])._entries}
+    nav_entries = {entry.name: entry.config for entry in host_builder_from_run_plan(products["nav"])._entries}
     inspection_entries = {
-        entry.name: entry.config for entry in blueprint_from_run_plan(products["inspection"])._entries
+        entry.name: entry.config for entry in host_builder_from_run_plan(products["inspection"])._entries
     }
     assert nav_entries["nav.commands"]["require_inspection_task_commands"] is False
     assert inspection_entries["nav.commands"]["require_inspection_task_commands"] is True
@@ -402,23 +402,21 @@ def test_omitted_goal_height_uses_fresh_map_odometry(monkeypatch) -> None:
 
 
 def test_navigation_skills_receives_product_odometry() -> None:
-    from lingtu.assembly.compiler import compile_run_plan
-    from lingtu.assembly.products import resolve_product_host_runtime
+    from lingtu.assembly.compile_plan import compile_run_plan
+    from lingtu.assembly.config.product import resolve_product_host_runtime
 
     resolved = resolve_product_host_runtime("nav", "real", robot="unitree/go2")
     plan = compile_run_plan(resolved.product, resolved.env, robot="unitree/go2")
-    from lingtu.assembly.compiler import blueprint_from_run_plan
+    from lingtu.assembly.compile_plan import host_builder_from_run_plan
 
-    wires = blueprint_from_run_plan(plan)._wires
+    wires = host_builder_from_run_plan(plan)._wires
     assert any(w.in_module == "nav.skills" and w.in_port == "odometry" for w in wires)
-    assert any(w.out_module == "SlamAdapterModule" and w.in_module == "nav.skills"
+    assert not any(w.out_module == "SlamAdapterModule" and w.in_module == "nav.skills"
                and w.in_port == "map_odom_tf" for w in wires)
 
 
 
-def test_goal_height_applies_existing_map_transform_once(monkeypatch) -> None:
-    import math
-
+def test_goal_height_uses_native_map_pose_only(monkeypatch) -> None:
     from runtime.msgs.geometry import Pose, Vector3
     from runtime.msgs.nav import Odometry
 
@@ -427,20 +425,10 @@ def test_goal_height_applies_existing_map_transform_once(monkeypatch) -> None:
     skills = NavSkills()
     skills.setup()
     monkeypatch.setattr(skills, "_submit", json.dumps)
-    odometry = Odometry(frame_id="odom", pose=Pose(position=Vector3(1, 0, 0.3)))
-    skills.odometry._deliver(odometry)
-    transform = {"valid": True, "frame_id": "map", "child_frame_id": "odom",
-                 "tx": 0, "ty": 0, "tz": 2, "qx": 0, "qy": math.sin(math.pi / 4),
-                 "qz": 0, "qw": math.cos(math.pi / 4), "ts": 42.0}
-    skills.map_odom_tf._deliver(transform)
-    assert json.loads(skills.navigate_to(1, 2))["z"] == pytest.approx(1.0)
+    skills.odometry._deliver(Odometry(frame_id="odom", pose=Pose(position=Vector3(1, 0, 0.3))))
+    assert json.loads(skills.navigate_to(1, 2))["accepted"] is False
     skills.odometry._deliver(Odometry(frame_id="map", pose=Pose(position=Vector3(0, 0, 1.25))))
     assert json.loads(skills.navigate_to(1, 2))["z"] == 1.25
     now[0] += 2.1
-    skills.odometry._deliver(odometry)
-    assert json.loads(skills.navigate_to(1, 2))["accepted"] is False
-    skills.map_odom_tf._deliver(transform)
-    assert json.loads(skills.navigate_to(1, 2))["z"] == pytest.approx(1.0)
-    skills.map_odom_tf._deliver({"valid": False})
     assert json.loads(skills.navigate_to(1, 2))["accepted"] is False
     assert json.loads(skills.navigate_to(1, 2, z=0.7))["z"] == 0.7

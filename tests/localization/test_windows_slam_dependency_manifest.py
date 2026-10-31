@@ -13,6 +13,8 @@ pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows-only runtime st
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "scripts" / "build" / "vcpkg" / "slam-windows" / "vcpkg.json"
+GTSAM_LOCK = ROOT / "scripts" / "build" / "locks" / "gtsam.json"
+GTSAM_OVERLAY = MANIFEST.parent / "overlay-ports" / "gtsam"
 STAGE_SCRIPT = ROOT / "scripts" / "build" / "cmake" / "stage_windows_runtime.cmake"
 CMAKE = shutil.which("cmake")
 
@@ -68,13 +70,43 @@ def _compile_native_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
 
 def test_windows_slam_manifest_pins_baseline_and_minimal_direct_dependencies() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    gtsam_lock = json.loads(GTSAM_LOCK.read_text(encoding="utf-8"))
 
     assert manifest["builtin-baseline"] == "9e593bb18ea69cc5095e012465dcd675a822ed0d"
     assert manifest["dependencies"] == [
         "eigen3",
+        {"name": "gtsam", "version>=": gtsam_lock["version"]},
         {"name": "pcl", "default-features": False},
         "yaml-cpp",
     ]
+
+
+def test_windows_gtsam_overlay_matches_release_lock_and_uses_shared_dependencies() -> None:
+    gtsam_lock = json.loads(GTSAM_LOCK.read_text(encoding="utf-8"))
+    configuration = json.loads(
+        (MANIFEST.parent / "vcpkg-configuration.json").read_text(encoding="utf-8")
+    )
+    overlay = json.loads((GTSAM_OVERLAY / "vcpkg.json").read_text(encoding="utf-8"))
+    portfile = (GTSAM_OVERLAY / "portfile.cmake").read_text(encoding="utf-8")
+
+    assert overlay["name"] == "gtsam"
+    assert configuration == {"overlay-ports": ["overlay-ports"]}
+    assert overlay["version"] == gtsam_lock["version"]
+    assert overlay["dependencies"] == [
+        "eigen3",
+        "metis",
+        {"name": "vcpkg-cmake", "host": True},
+        {"name": "vcpkg-cmake-config", "host": True},
+    ]
+    assert "-DGTSAM_USE_SYSTEM_EIGEN=ON" in portfile
+    assert "-DGTSAM_USE_SYSTEM_METIS=ON" in portfile
+    assert 'REF "${VERSION}"' in portfile
+    for patch in ("build-fixes.patch", "path-fixes.patch"):
+        assert (GTSAM_OVERLAY / patch).is_file()
+        assert patch in portfile
+    upstream = (GTSAM_OVERLAY / "UPSTREAM.md").read_text(encoding="utf-8")
+    assert "8948160a6f307241436b11c2a305c3760651222b" in upstream
+    assert "https://github.com/microsoft/vcpkg" in upstream
 
 
 def test_windows_runtime_stage_has_no_recursive_delete_surface() -> None:

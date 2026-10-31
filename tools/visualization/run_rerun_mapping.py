@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.WARNING)
 
 import rerun as rr
 
-from lingtu.assembly.stacks.slam import slam as external_slam
+from lingtu.assembly.host.stacks.localization import slam as external_slam
 
 rr.init("lingtu_mapping")
 server_uri = rr.serve_grpc(grpc_port=9877)

@@ -319,7 +319,7 @@ def test_lidar_host_apis_do_not_expose_process_start_switch() -> None:
 
     from drivers.real.lidar import LidarModule
     from drivers.real.lidar.native.sdk import create_lidar_source
-    from lingtu.assembly.stacks.lidar import lidar
+    from lingtu.assembly.host.stacks.lidar import lidar
 
     assert "start_driver" not in inspect.signature(LidarModule.__init__).parameters
     assert "start_driver" not in inspect.signature(create_lidar_source).parameters
@@ -330,7 +330,7 @@ def test_lidar_host_apis_do_not_expose_process_start_switch() -> None:
 
 def test_lidar_ros2_process_factory_is_removed() -> None:
     root = Path(__file__).resolve().parents[2]
-    stack_source = (root / "src" / "lingtu" / "assembly" / "stacks" / "lidar.py").read_text(encoding="utf-8")
+    stack_source = (root / "src" / "lingtu" / "assembly" / "host" / "stacks" / "lidar.py").read_text(encoding="utf-8")
     module_source = (root / "src" / "drivers" / "real" / "lidar" / "module.py").read_text(encoding="utf-8")
 
     assert not (root / "src/drivers/real/lidar/impl/livox/native_factory.py").exists()

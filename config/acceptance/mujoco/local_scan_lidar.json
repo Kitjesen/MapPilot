@@ -1,0 +1,8 @@
+{
+  "extends": "local_scan.json",
+  "name": "mujoco_local_scan_lidar",
+  "description": "SCAN component diagnostic with truth pose and live MuJoCo LiDAR returns only; use a saved ray map of the same scene for a sensor-derived map.",
+  "sensor_runtime": {
+    "navigation_fixture_synthetic_ground": false
+  }
+}

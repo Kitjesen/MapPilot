@@ -1,0 +1,42 @@
+{
+  "provider": "Poly Haven",
+  "id": "industrial_storage_cart",
+  "name": "Industrial Storage Cart",
+  "authors": {
+    "Jule Bielitz": "All"
+  },
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "source_url": "https://polyhaven.com/a/industrial_storage_cart",
+  "resolution": "2k",
+  "model": "industrial_storage_cart_2k.gltf",
+  "files": [
+    {
+      "path": "industrial_storage_cart_2k.gltf",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/2k/industrial_storage_cart/industrial_storage_cart_2k.gltf",
+      "bytes": 2878
+    },
+    {
+      "path": "textures/industrial_storage_cart_nor_gl_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/industrial_storage_cart/industrial_storage_cart_nor_gl_2k.jpg",
+      "bytes": 2344898
+    },
+    {
+      "path": "textures/industrial_storage_cart_diff_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/industrial_storage_cart/industrial_storage_cart_diff_2k.jpg",
+      "bytes": 2116931
+    },
+    {
+      "path": "textures/industrial_storage_cart_arm_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/industrial_storage_cart/industrial_storage_cart_arm_2k.jpg",
+      "bytes": 3001625
+    },
+    {
+      "path": "industrial_storage_cart.bin",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/industrial_storage_cart/industrial_storage_cart.bin",
+      "bytes": 664580
+    }
+  ],
+  "ue_imported": false,
+  "physics_qualified": false
+}

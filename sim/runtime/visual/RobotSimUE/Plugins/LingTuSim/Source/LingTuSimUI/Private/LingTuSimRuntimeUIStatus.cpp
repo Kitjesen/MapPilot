@@ -159,6 +159,9 @@ namespace LingTuSim::UI
                 return;
             }
             Status.bObservedBaseVelocityAvailable = true;
+            Status.bObservedBasePoseAvailable = true;
+            Status.ObservedBasePositionMeters = BaseEntity->PositionMeters;
+            Status.ObservedBaseRotation = BaseEntity->Rotation;
             Status.ObservedBaseStableId = BaseEntity->Id.StableId;
             Status.ObservedBaseVelocityState = TEXT("Observed truth");
             Status.ObservedBaseLinearVelocityMps = BaseEntity->LinearVelocityMetersPerSecond;
@@ -334,17 +337,9 @@ namespace LingTuSim::UI
             return Status;
         }
 
-        if (Status.bFullStatusAvailable
-            && Status.bFullStatusIdentityCoherent
-            && (Status.FullStatus.TruthSequence != Status.TruthSequence
-                || Status.FullStatus.SimTimeNs != static_cast<uint64>(Status.SimTimeNs)))
-        {
-            Status.bFullStatusIdentityCoherent = false;
-            Status.FullStatusState = TEXT("Blocked: truth mismatch");
-            Status.FullStatusBlocker = TEXT("Full status and latest applied Visual truth disagree");
-            Status.Blocker = Status.FullStatusBlocker;
-            return Status;
-        }
+        // Control status and Visual consume independent asynchronous streams.
+        // Same-session/generation samples may have different sequences. Exact
+        // temporal alignment belongs to screenshot qualification, not identity.
 
         if (!Status.bFullStatusAvailable
             || !Status.bFullStatusFresh
@@ -395,6 +390,8 @@ namespace LingTuSim::UI
             || !bFullStatusAvailable
             || !bFullStatusFresh
             || !bFullStatusIdentityCoherent
+            || FullStatus.TruthSequence != TruthSequence
+            || FullStatus.SimTimeNs != static_cast<uint64>(SimTimeNs)
             || (FullStatus.Status != LingTuSim::EControlAckStatus::Accepted
                 && FullStatus.Status != LingTuSim::EControlAckStatus::Confirmed)
             || !FullStatus.Motion.AdmittedTwist.bAvailable
@@ -517,5 +514,28 @@ namespace LingTuSim::UI
             return false;
         }
         return true;
+    }
+
+    bool FRuntimeUIExitPolicy::ShouldEndPendingRequest(
+        const FString& EventId,
+        const double ElapsedSeconds,
+        const FRuntimeUIStatusSnapshot& Status,
+        FString& OutReason)
+    {
+        OutReason.Reset();
+        if (EventId.IsEmpty()) return false;
+        if (Status.bFullStatusAvailable && Status.bFullStatusFresh
+            && Status.bFullStatusIdentityCoherent && Status.FullStatus.EventId == EventId
+            && Status.FullStatus.Status == LingTuSim::EControlAckStatus::Rejected)
+        {
+            OutReason = TEXT("runtime_exit_rejected");
+            return true;
+        }
+        if (ElapsedSeconds >= 10.0)
+        {
+            OutReason = TEXT("runtime_exit_confirmation_timeout");
+            return true;
+        }
+        return false;
     }
 }

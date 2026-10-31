@@ -1,10 +1,20 @@
 #pragma once
 
 #include <memory>
+#include <functional>
 
 #include "planning/local/planner.hpp"
 
 namespace nav_kernel::local::scan {
+
+namespace upstream { struct TrajectoryHandoff; }
+
+struct ExecutionFeedback {
+  double nowS{0.0};
+  std::int64_t trajectoryId{0};
+  double startTimeS{0.0};
+  bool frozen{false};
+};
 
 class Backend {
  public:
@@ -23,6 +33,8 @@ class Backend {
                  const LocalPlanCancel &cancel = {});
   LocalPlan checkCollision(const LocalPlanRequest &request,
                            const LocalPlanCancel &cancel = {});
+  void setExecutionFeedback(std::function<ExecutionFeedback()> feedback);
+  std::shared_ptr<upstream::TrajectoryHandoff> handoff() const;
   void reset();
   LocalPlannerDebugSnapshot debugSnapshot() const;
 

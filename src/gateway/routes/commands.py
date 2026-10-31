@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from typing import Any
 
@@ -12,6 +13,7 @@ from gateway.navigation.commands import (
     CommandBoundaryError,
 )
 from gateway.schemas import (
+    AgentTaskCancelRequest,
     CancelRequest,
     ControlCommandResponse,
     FollowTaskCancelRequest,
@@ -24,6 +26,7 @@ from gateway.schemas import (
     VisualServoRequest,
 )
 from gateway.services.control_commands import ControlCommandService
+from gateway.services.instructions import instruction_control, submit_instruction
 from gateway.services.native_control import (
     clear_estop as native_clear_estop,
 )
@@ -102,20 +105,56 @@ def register_command_routes(app, gw) -> None:
     )
     async def post_instruction(body: InstructionRequest):
         def _publish() -> dict[str, Any]:
-            gw.instruction.publish(body.text)
-            return {
-                "accepted": True,
-                "status": "ok",
-                "stage": "submitted",
-                "execution_confirmed": False,
-                "instruction": body.text,
-            }
+            return submit_instruction(gw, body.text, body.run_id or "", body.control_only)
 
-        return command_service.run_motion_guarded_command(
+        if body.control_only or instruction_control(gw, body.text):
+            return await asyncio.to_thread(gw._run_control_command, "instruction", body, _publish)
+        return await asyncio.to_thread(
+            command_service.run_motion_guarded_command,
             "instruction",
             body,
             _publish,
         )
+
+    @app.get("/api/v1/agent/runs/{run_id}", summary="Read the current Agent run by identity")
+    async def get_agent_run(run_id: str):
+        agent = (getattr(gw, "_all_modules", {}) or {}).get("AgentPlannerModule")
+        if agent is None:
+            return {"found": False, "run_id": run_id, "reason": "agent_unavailable"}
+        result = await asyncio.to_thread(agent.get_agent_status)
+        result = json.loads(result) if isinstance(result, str) else result
+        if result.get("run_id") != run_id:
+            return {"found": False, "run_id": run_id, "reason": "not_current"}
+        return {**result, "found": True, "retention": "current_host_run"}
+
+    @app.post(
+        "/api/v1/agent/runs/{run_id}/cancel",
+        summary="Cancel only the referenced Agent run",
+        response_model=ControlCommandResponse,
+        responses=CONTROL_COMMAND_ERROR_RESPONSES,
+    )
+    async def cancel_agent_run(run_id: str, body: AgentTaskCancelRequest):
+        agent = (getattr(gw, "_all_modules", {}) or {}).get("AgentPlannerModule")
+        if agent is None:
+            return command_service.rejected_response(
+                "agent_cancel", body, error="agent_unavailable",
+                message="The current Host does not provide Agent tasks.",
+                detail=command_service.command_error_detail(reason_code="agent_unavailable", source="gateway_modules"),
+            )
+
+        def _cancel() -> dict[str, Any]:
+            result = agent.cancel_agent_task(run_id)
+            result = json.loads(result) if isinstance(result, str) else result
+            accepted = result.get("cancel_requested") is True
+            return {
+                **result, "accepted": accepted, "run_id": run_id,
+                "status": "cancelling" if accepted else "rejected",
+                "stage": "submitted" if accepted else "rejected",
+                "execution_confirmed": False,
+            }
+
+        journal_body = CancelRequest(task_id=run_id, request_id=body.request_id, client_id=body.client_id)
+        return await asyncio.to_thread(gw._run_control_command, "agent_cancel", journal_body, _cancel)
 
     @app.post(
         "/api/v1/visual_servo",

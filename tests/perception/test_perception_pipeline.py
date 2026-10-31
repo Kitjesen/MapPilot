@@ -136,7 +136,7 @@ def test_positive_observation_returns_one_coherent_emission() -> None:
     pipeline = PerceptionPipeline(_settings(), source)
     pipeline.setup()
 
-    outcome = pipeline.process(_frame())
+    outcome = pipeline.process(replace(_frame(), map_id="building", content_epoch=7))
 
     assert outcome.status == "positive"
     assert outcome.reason == ""
@@ -149,9 +149,25 @@ def test_positive_observation_returns_one_coherent_emission() -> None:
     assert outcome.scene_graph is not None
     assert outcome.scene_graph.ts == 10.0
     assert outcome.scene_graph.frame_id == "map"
+    assert outcome.scene_graph.map_id == "building"
+    assert outcome.scene_graph.content_epoch == 7
 
     pipeline.close()
     assert source.closed is True
+
+
+def test_reset_spatial_context_clears_tracker_without_reloading_detector() -> None:
+    source = _ObservationSource([_detection()])
+    pipeline = PerceptionPipeline(_settings(), source)
+    pipeline.setup()
+    pipeline.process(_frame())
+    assert pipeline.health()["tracked_objects"] == 1
+
+    pipeline.reset_spatial_context()
+
+    assert pipeline.health()["tracked_objects"] == 0
+    assert source.observe_calls == 1
+    assert source.loaded is True
 
 
 def test_scene_objects_keep_tracker_identity_and_actual_observation_time() -> None:

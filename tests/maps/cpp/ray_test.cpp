@@ -1,5 +1,5 @@
-#include "lingtu/maps/build/pcd.hpp"
-#include "lingtu/maps/build/ray_octomap.hpp"
+#include "lingtu/maps/io/pcd.hpp"
+#include "lingtu/maps/octomap/rays.hpp"
 
 #include <octomap/OcTree.h>
 
@@ -201,6 +201,74 @@ void TestNoRetainedEndpointFails() {
   assert(threw);
 }
 
+void TestLongGrazingMissUsesMeasuredSurface() {
+  TempDirectory directory("long_grazing_floor");
+  const PointXyz floor{2.45F,-.75F,-.489F};
+  const PointXyz end{6.05F,-.75F,-.489F};
+  std::vector<PointXyz> retained{floor,end};
+  // Reduced measured Corridor geometry: normal approximately
+  // [0.002985, 0.007853, 0.999965], with the surface inside a 10 cm voxel.
+  for (int x=-6;x<=6;++x) for (int y=-6;y<=6;++y) {
+    if(x==3 && y==2)continue;
+    const float px=floor.x+.05F*x,py=floor.y+.05F*y;
+    retained.push_back({px,py,static_cast<float>(floor.z-.002985*(px-floor.x)-.007853*(py-floor.y))});
+  }
+  retained.push_back({floor.x+.15F,floor.y+.10F,floor.z-.12F});
+  std::vector<std::vector<PointXyz>> scans{{floor}};
+  for(int i=0;i<6;++i) scans.push_back({end});
+  WriteBundle(directory.path(),retained,scans);
+  WriteText(directory.path()/"scan_origin.txt","lidar_origin_in_patch -24 -0.75 0.05\n");
+  octomap::OcTree tree(.1);
+  const auto stats=lingtu::maps::PopulateSavedRayOctomap(tree,directory.path());
+  const auto* node=NodeAt(tree,floor);
+  assert(node!=nullptr && tree.isNodeOccupied(node));
+  assert(std::abs(node->getLogOdds()-tree.getProbHitLog())<1e-6F);
+  assert(stats.surface_guarded_miss_suppressions>=6U);
+  // A retained PCD sample with no scan hit is never promoted to occupancy.
+  const auto* unhit=tree.search(2.25,-.75,-.489);
+  assert(unhit!=nullptr && !tree.isNodeOccupied(unhit));
+  assert(tree.search(2.25,-.95,-.489)==nullptr);
+}
+
+void TestCrossingRayStillClearsStableSurface(bool other_level) {
+  TempDirectory directory(other_level?"other_level_crossing":"stable_surface_crossing");
+  const float height=other_level?-.289F:-.489F;
+  const PointXyz hit{2.45F,-.75F,height};
+  // Arrange a genuine plane crossing at the centre of the measured voxel.
+  const float origin_z=height+.30F;
+  const PointXyz end{6.05F,-.75F,origin_z+(height-origin_z)*30.05F/26.45F};
+  std::vector<PointXyz> retained{hit,end};
+  for(int x=-6;x<=6;++x) for(int y=-6;y<=6;++y) {
+    retained.push_back({hit.x+.05F*x,hit.y+.05F*y,height});
+    if(other_level)retained.push_back({hit.x+.05F*x,hit.y+.05F*y,height-.20F});
+  }
+  std::vector<std::vector<PointXyz>> scans{{hit}};
+  for(int i=0;i<6;++i)scans.push_back({end});
+  WriteBundle(directory.path(),retained,scans);
+  WriteText(directory.path()/"scan_origin.txt",
+    "lidar_origin_in_patch -24 -0.75 "+std::to_string(origin_z)+"\n");
+  octomap::OcTree tree(.1);
+  lingtu::maps::PopulateSavedRayOctomap(tree,directory.path());
+  const auto* node=NodeAt(tree,hit);
+  assert(node!=nullptr && !tree.isNodeOccupied(node));
+}
+
+void TestLineDoesNotEstablishProtectedSurface() {
+  TempDirectory directory("line_is_not_surface");
+  const PointXyz hit{2.45F,-.75F,-.489F},end{6.05F,-.75F,-.489F};
+  std::vector<PointXyz> retained{hit,end};
+  for(int x=-6;x<=6;++x)retained.push_back({hit.x+.05F*x,hit.y,hit.z});
+  std::vector<std::vector<PointXyz>> scans{{hit}};
+  for(int i=0;i<6;++i)scans.push_back({end});
+  WriteBundle(directory.path(),retained,scans);
+  WriteText(directory.path()/"scan_origin.txt","lidar_origin_in_patch -24 -0.75 0.05\n");
+  octomap::OcTree tree(.1);
+  const auto stats=lingtu::maps::PopulateSavedRayOctomap(tree,directory.path());
+  const auto* node=NodeAt(tree,hit);
+  assert(node!=nullptr && !tree.isNodeOccupied(node));
+  assert(stats.surface_guarded_miss_suppressions==0U);
+}
+
 }  // namespace
 
 int main() {
@@ -212,5 +280,9 @@ int main() {
   TestPerFrameDedupAndCrossFrameAccumulation();
   TestDiagonalGuardUsesMetricDistance();
   TestNoRetainedEndpointFails();
+  TestLongGrazingMissUsesMeasuredSurface();
+  TestCrossingRayStillClearsStableSurface(false);
+  TestCrossingRayStillClearsStableSurface(true);
+  TestLineDoesNotEstablishProtectedSurface();
   return 0;
 }

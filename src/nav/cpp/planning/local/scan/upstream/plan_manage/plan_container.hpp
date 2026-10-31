@@ -5,8 +5,11 @@
 // ROS time is represented as seconds supplied by the caller.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <cmath>
+#include <atomic>
 #include <iostream>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -16,6 +19,23 @@
 #include "planning/local/scan/upstream/traj_utils/polynomial_traj.h"
 
 namespace nav_kernel::local::scan::upstream {
+
+// Reception and withdrawal race across the planner/control thread boundary.
+// Exactly one may claim an offered trajectory.
+struct TrajectoryHandoff {
+  enum class State { Offered, Received, Withdrawn };
+  explicit TrajectoryHandoff(double deadline) : deadlineS(deadline) {}
+  bool receive() {
+    State expected = State::Offered;
+    return state.compare_exchange_strong(expected, State::Received);
+  }
+  void withdraw() {
+    State expected = State::Offered;
+    state.compare_exchange_strong(expected, State::Withdrawn);
+  }
+  std::atomic<State> state{State::Offered};
+  double deadlineS;
+};
 
 class GlobalTrajData {
  public:
@@ -166,10 +186,29 @@ struct PlanParameters {
   double feasibility_tolerance_{0.0};
   double planning_horizon_{5.0};
   bool motion_intent_{false};
+  // Pose-route segments must stop at their collision-checked turn centres.
+  bool preserve_boundary_{false};
 
   double time_search_{0.0};
   double time_optimize_{0.0};
   double time_adjust_{0.0};
+
+  double max_body_vx_{0.0};
+  double max_body_vy_{0.0};
+  std::optional<double> body_yaw_{};
+
+  [[nodiscard]] double speedRatio(const Eigen::Vector3d &velocity) const {
+    double ratio = velocity.norm() / max_vel_;
+    if (body_yaw_ && max_body_vx_ > 0.0 && max_body_vy_ > 0.0) {
+      const double c = std::cos(*body_yaw_), s = std::sin(*body_yaw_);
+      const double bodyVx = c * velocity.x() + s * velocity.y();
+      const double bodyVy = -s * velocity.x() + c * velocity.y();
+      ratio = std::max({ratio, std::abs(bodyVx) / max_body_vx_,
+                        std::abs(bodyVy) / max_body_vy_});
+    }
+    return ratio;
+  }
+
 };
 
 struct LocalTrajData {

@@ -43,7 +43,7 @@ int main() {
     check(rejected_mode, "unsupported_mode_was_accepted");
   }
 
-  auto backend = makeContractBackend("fastlio2");
+  auto backend = makeContractBackend("ltlio");
   check(backend != nullptr, "missing_backend");
   check(backend->configure(SlamConfig{}).ok, "configure_failed");
   check(backend->setMode(SlamMode::Mapping, "").ok, "set_mode_failed");

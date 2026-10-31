@@ -3,8 +3,8 @@
 // Ported from SCAN-Planner plan_manage/closed_loop_controller.cpp at
 // commit 348e8a590a50a5a6bbab8d8c6dcfd171f009be26.
 // ROS messages, timers and publishers are replaced by value inputs/outputs;
-// The autonomous controller equations and execution clock are retained.
-// LingTu teleoperation may supply body heading independently of travel direction.
+// Teleoperation may supply body heading independently of travel direction.
+// Follower bounds command changes.
 // SPDX-License-Identifier: Apache-2.0
 
 #include <cstdint>
@@ -30,8 +30,9 @@ struct ClosedLoopControllerParams {
   double headingErrorThreshold{0.8};
   double positionGain{0.8};
   double yawGain{1.5};
-  double maxVx{0.75};
-  double maxVy{0.35};
+  double maxLinearSpeed{kDefaultLinearSpeedMps};
+  double maxVx{kDefaultLinearSpeedMps};
+  double maxVy{kDefaultLinearSpeedMps};
   double maxYawRate{1.0};
   double finishDistance{0.15};
 };
@@ -41,6 +42,7 @@ struct ClosedLoopControllerState {
   double yaw{0.0};
   double nowS{0.0};
   std::optional<double> desiredHeading{};
+  std::optional<double> desiredYawRate{};
 };
 
 struct ClosedLoopControllerOutput {

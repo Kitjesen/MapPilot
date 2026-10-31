@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <optional>
 #include <vector>
 
 namespace lingtu::recording {
@@ -78,6 +79,9 @@ struct CameraSegment {
   double dist_p2{0.0};
   double dist_k3{0.0};
 
+  double nominal_fps{0.0};
+  std::vector<std::uint64_t> frame_timestamps_ns;
+
   bool operator==(const CameraSegment &other) const noexcept;
 };
 
@@ -131,6 +135,7 @@ std::filesystem::path resolve_camera_segment_path(const std::filesystem::path &i
                                                   const std::string &relative_path);
 
 std::vector<CameraSegment> read_camera_segment_index(const std::filesystem::path &index_path);
+std::string camera_segment_index_json(const std::filesystem::path &index_path, std::optional<std::size_t> segment = std::nullopt);
 
 std::vector<CameraVerificationIssue>
 verify_camera_segments(const std::filesystem::path &index_path);

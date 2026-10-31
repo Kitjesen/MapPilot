@@ -7,7 +7,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from gateway.mcp_server import MCPServerModule
+from gateway.mcp_server import MCPServerModule, _text
+from runtime.module import Module, skill
 from runtime.msgs.geometry import Pose, Vector3
 from runtime.msgs.nav import Odometry
 from runtime.msgs.semantic import SceneGraph
@@ -86,6 +87,27 @@ def _fake_nav_skills():
     return _FakeNav()
 
 
+class _MetadataSkills(Module):
+    @skill(
+        description="Read one retained task without changing runtime state.",
+        parameters={"task_id": "Task identity returned by the start call."},
+        output_schema={
+            "type": "object",
+            "properties": {"found": {"type": "boolean"}},
+            "required": ["found"],
+        },
+        read_only=True,
+    )
+    def inspect_task(self, task_id: str) -> dict:
+        return {"found": bool(task_id)}
+
+
+class _InstructionOwner(Module):
+    @skill
+    def send_instruction(self, text: str) -> str:
+        return f"external:{text}"
+
+
 # ===========================================================================
 # 1. Port declarations
 # ===========================================================================
@@ -138,6 +160,28 @@ class TestMCPTelemetry(unittest.TestCase):
         self.mod._on_sg(_scene_graph())
         parsed = json.loads(self.mod._sg_json)
         self.assertIn("objects", parsed)
+
+    def test_hierarchical_scene_graph_cache_keeps_context(self):
+        graph = _scene_graph()
+        graph.graph_level = "hierarchical"
+        graph.graph_version = "3.0"
+        graph.map_id = "building"
+        graph.content_epoch = 7
+        graph.floors = [{"floor_id": 0, "room_ids": [1]}]
+        graph.rooms = [{"room_id": 1, "name": "office", "object_ids": ["1", "2"]}]
+        graph.hierarchy_edges = [{
+            "parent_type": "floor", "parent_id": 0,
+            "child_type": "room", "child_id": 1,
+        }]
+
+        self.mod._on_sg(graph)
+        parsed = json.loads(self.mod.get_scene_graph())
+
+        self.assertEqual(parsed["graph_level"], "hierarchical")
+        self.assertEqual(parsed["map_id"], "building")
+        self.assertEqual(parsed["content_epoch"], 7)
+        self.assertEqual(parsed["rooms"][0]["name"], "office")
+        self.assertEqual(parsed["hierarchy_edges"][0]["child_id"], 1)
 
 # ===========================================================================
 # 3. Dynamic @skill discovery via on_system_modules
@@ -206,6 +250,63 @@ class TestMCPSkillDiscovery(unittest.TestCase):
         m.on_system_modules({"MCPServerModule": m, "nav.skills": nav})
         names = [t["name"] for t in m._tool_list]
         self.assertEqual(len(names), len(set(names)), "Duplicate tool names in _tool_list")
+
+    def test_shared_discovery_preserves_metadata(self):
+        m = _make_mcp()
+        m.on_system_modules({"metadata": _MetadataSkills()})
+
+        tool = next(item for item in m._tool_list if item["name"] == "inspect_task")
+        self.assertEqual(
+            tool["inputSchema"]["properties"]["task_id"]["description"],
+            "Task identity returned by the start call.",
+        )
+        self.assertEqual(tool["outputSchema"]["type"], "object")
+        self.assertTrue(tool["annotations"]["readOnlyHint"])
+
+    def test_same_module_instance_alias_is_discovered_once(self):
+        m = _make_mcp()
+        skills = _MetadataSkills()
+        m.on_system_modules({"metadata.primary": skills, "metadata.alias": skills})
+
+        self.assertEqual(
+            [item["name"] for item in m._tool_list].count("inspect_task"),
+            1,
+        )
+
+    def test_distinct_skill_owners_are_not_silently_overwritten(self):
+        m = _make_mcp()
+        with self.assertRaisesRegex(ValueError, "duplicate skill 'inspect_task'"):
+            m.on_system_modules({"metadata.a": _MetadataSkills(), "metadata.b": _MetadataSkills()})
+
+    def test_gateway_fallback_yields_to_real_skill_owner(self):
+        m = _make_mcp()
+        owner = _InstructionOwner()
+        m.on_system_modules({"MCPServerModule": m, "semantic.instructions": owner})
+
+        self.assertIs(m._tool_registry["send_instruction"].__self__, owner)
+
+
+class TestMCPStructuredToolResults(unittest.TestCase):
+    def test_dict_result_includes_text_and_structured_content(self):
+        response = _text(7, {"found": True, "label": "水瓶"})
+
+        result = response["result"]
+        self.assertEqual(result["structuredContent"], {"found": True, "label": "水瓶"})
+        self.assertEqual(json.loads(result["content"][0]["text"]), result["structuredContent"])
+
+    def test_declared_object_output_parses_json_string(self):
+        response = _text(8, '{"found": true}', output_schema={"type": "object"})
+
+        self.assertEqual(response["result"]["structuredContent"], {"found": True})
+
+    def test_ordinary_json_text_is_not_claimed_as_structured(self):
+        response = _text(9, '{"found": true}')
+
+        self.assertNotIn("structuredContent", response["result"])
+
+    def test_declared_object_output_rejects_non_object_json(self):
+        with self.assertRaisesRegex(TypeError, "non-object JSON"):
+            _text(10, '[1, 2]', output_schema={"type": "object"})
 
 
 # ===========================================================================

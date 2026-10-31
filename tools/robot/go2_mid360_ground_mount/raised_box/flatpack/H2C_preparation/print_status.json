@@ -1,0 +1,28 @@
+{
+  "updated_at": "2026-09-29T07:31:15+08:00",
+  "status": "SENT AND ACCEPTED. Printer 3DP-31B-011 executing toolhead homing; 0/57 layers, first-layer extrusion not yet confirmed.",
+  "parts": [
+    "left_side",
+    "right_side",
+    "lid",
+    "base",
+    "left_foot",
+    "right_foot"
+  ],
+  "material": "blue PLA B3",
+  "layer_height": 0.28,
+  "walls": 4,
+  "infill": "20%",
+  "supports": false,
+  "requested_target_hours": "3-5 target, not guaranteed",
+  "estimated_time": "5h27m",
+  "estimated_model_time": "5h22m",
+  "estimated_mass_g": 156.01,
+  "estimated_filament_m": 51.48,
+  "support_mass_g": 0,
+  "layers": 57,
+  "printer": "3DP-31B-011 (LAN), Bambu Lab H2C",
+  "nozzle": "Left, standard 0.4 mm",
+  "observed_finish_local": "2026-09-29 12:57 Asia/Shanghai (printer estimate)",
+  "bed_empty_verified": true
+}

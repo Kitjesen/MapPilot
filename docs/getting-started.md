@@ -1,192 +1,164 @@
 # Getting Started
 
 **Status:** Current setup and first-run guide
-**Audience:** New contributors, simulation users, and field operators
+**Audience:** New contributors and first-time simulation or robot installers
 **Runs on:** Local development, `env=sim`, and `env=real`
 
-This page takes a clean checkout to a resolved Product. It separates local
-setup, simulation, and robot-side work so that one result is not mistaken for
-another.
+Use this page once to prepare the software, select a robot and operating mode,
+and reach the first startup. For daily mapping, navigation, and recovery, use
+[Operations](operations.md). [Product scope](product.md) describes what the
+system is intended to deliver and what still needs qualification.
 
 ## Prerequisites
 
-- Git and Python 3.10 or newer.
-- [uv](https://docs.astral.sh/uv/) for the locked Python environment.
-- CMake and a supported compiler for native components.
-- Rust stable with Cargo for the native pose-graph optimization kernel.
-- Node.js 24 and npm for the Web application and its tests.
-- MuJoCo for native simulation work.
-- The target-specific SDK and CycloneDDS toolchain only when that target needs
-  them.
+- Git, Python 3.10 or newer, and [uv](https://docs.astral.sh/uv/).
+- CMake and the platform's C++ toolchain when building native components.
+- Node.js 24 and npm when building the Web application.
+- MuJoCo and the simulation extras when running simulation.
+- CycloneDDS and the selected robot/device SDKs on the hosts that need them.
 
-Install the portable development environment:
+The current native SLAM backend uses GTSAM and PCL. Preparing the current video
+runtime also builds its WebRTC plugin with Rust/Cargo; the preparation scripts
+select the pinned tools. Native prerequisites are maintained in
+[Build](../scripts/build/README.md).
+
+From the repository root, install the locked development environment and
+inspect the lifecycle CLI:
 
 ```bash
 uv sync --locked --extra dev
 uv run --locked python -m lingtu.control --help
 ```
 
-No hardware connection or motion occurs during these commands.
+These commands do not connect to hardware or request motion.
 
 ## Windows native development
 
-Windows x64 is the primary local development workflow. WSL is optional.
-Use PowerShell 7 and Visual Studio 2022 C++ Build Tools with the Windows SDK;
-the native build scripts require CMake 3.27 or newer. Rust/Cargo must be
-installed for Windows, with the MSVC target, to build the pose-graph kernel.
-
-From a new checkout:
+For Windows x64 development, use PowerShell 7,
+Visual Studio 2022 C++ Build Tools, Windows SDK, and CMake 3.27 or newer.
+A new checkout needs:
 
 ```powershell
-git clone --branch main https://github.com/Kitjesen/MapPilot.git lingtu
-cd lingtu
 git lfs install
 git lfs pull
 git submodule update --init --recursive
-uv sync --locked --extra dev
-uv run --locked python -m lingtu.control --help
 npm --prefix web ci
 npm --prefix web run build
 ```
 
-Then prepare PCL and CycloneDDS and build the native components using
-[the Windows build instructions](../scripts/build/README.md#windows-native-development-and-simulation).
+Then follow the [native build instructions](../scripts/build/README.md#windows-native-development-and-simulation).
 Python and Web setup alone does not build `slamd`, `mapd`, or `navd`.
-The Product preview command below can also be entered on one PowerShell line:
+Robot releases use the declared Linux target platform and architecture.
+Windows is a development and simulation target, not an implicit cross-compile host.
 
-```powershell
-uv run --locked python -m lingtu.control switch teleop --robot doso/thunder_v4 --env sim --dry-run --json
-```
+## Select the robot and mode
 
-Cargo builds LingTu's Rust pose-graph library; it is not required to run an
-already-built SLAM executable. Windows Cargo does not supply a Linux toolchain
-inside WSL. If choosing Linux development, install its tools separately;
-otherwise use the Windows entrypoints throughout.
+The shared delivery workflow uses two Products:
 
-Robot releases still target Linux `aarch64`. Build them on the robot or a
-configured Linux build host; Windows can edit the same sources and operate
-the robot through SSH and the Web interface without WSL.
-
-## Choose Product and environment
-
-The current Product declarations are:
-
-| Product | Intent | Saved map |
+| Product | Role | Saved map required |
 | --- | --- | --- |
-| `teleop` | Operator motion through native limits and final gates | No |
-| `teleop_avoid` | Operator intent with live local avoidance | No |
-| `map` | Build and save a map | No |
-| `explore` | Explore while mapping, or cover a selected saved map | Optional |
-| `nav` | Navigate on a validated saved map | Yes |
-| `tracking` | Follow a selected person through navigation goals | Yes |
-| `inspection` | Execute a persisted inspection route | Yes |
+| `map` | Build the live map and expose durable save | No |
+| `nav` | Reload a selected map, localize, plan, and navigate | Yes |
 
-Public environment values are exactly `real` and `sim`. Local development is a
-verification context, not a third env.
+Other declared Products are `teleop`, `teleop_avoid`, `explore`, `tracking`, and
+`inspection`. A declared mode is not a field acceptance claim. Their
+capabilities and process roles live in
+[`config/system/`](../config/system/README.md); delivery boundaries live in
+[Product scope](product.md).
+
+Public environment values are exactly `real` and `sim`. A Product is
+independent of the environment; ProductControl is the single entry that
+resolves the selected mode, robot, and environment before starting anything.
+Select the actual profile under `config/robots/<vendor>/<model>/robot.yaml`.
+That profile supplies geometry, devices, network interfaces, and calibration.
+The examples use `doso/thunder_v4` in simulation and `unitree/go2` on a robot;
+they do not establish qualification for every profile or narrow support to Go2.
+Internal assembly and the execution snapshot need no separate operator action.
 
 ## Preview a Product
 
-Start with a side-effect-free resolution:
+Resolve both workflow Products before starting processes:
 
 ```bash
-uv run --locked python -m lingtu.control switch teleop \
+uv run --locked python -m lingtu.control switch map \
   --robot doso/thunder_v4 --env sim --dry-run --json
+uv run --locked python -m lingtu.control switch nav \
+  --robot doso/thunder_v4 --env sim --map MAP_NAME --dry-run --json
 ```
 
-The output is a resolved RunPlan. A successful dry run proves that Product,
-RobotConfig, and environment resolution agree; it does not prove that any
-process can start.
+A dry run validates the selected declarations and request parameters without
+starting processes. In simulation, map loading is deferred to the actual
+switch. It does not prove that the saved map can be loaded, that a process can
+start, that localization is valid, or that motion is safe.
 
 ## Run in simulation
 
-Use ProductControl for the full lifecycle:
+Follow [Simulation](simulation.md) to install its extras and build the required
+native roles before starting. Its first interactive mapping command is:
 
 ```bash
-uv run --locked python -m lingtu.control switch teleop \
-  --robot doso/thunder_v4 --env sim
-uv run --locked python -m lingtu.control status \
-  --robot doso/thunder_v4 --env sim --json
-uv run --locked python -m lingtu.control stop \
-  --robot doso/thunder_v4 --env sim
+uv run --locked python -m lingtu.control switch map \
+  --robot doso/thunder_v4 --env sim --backend mujoco --viewer
 ```
 
-The `sim` runner owns direct child processes. Follow
-[Simulation](./simulation.md) for package, session, MuJoCo, and RobotSimUE
-workflows.
-
-## Inspect a field target without motion
-
-On the robot or target compute:
-
-```bash
-python -m lingtu.control status --robot unitree/go2 --env real --json
-PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --json --strict
-```
-
-Only proceed to a switch after the correct release, RobotConfig, network,
-devices, map, and operator authority are known. A typical saved-map start is:
-
-```bash
-python -m lingtu.control switch nav \
-  --robot unitree/go2 --env real --map MAP_NAME
-python -m lingtu.control stop --robot unitree/go2 --env real
-```
-
-These commands can affect a physical system. Follow
-[Operations](./operations.md) and [Testing](./testing.md); do not treat them as
-a generic copy-and-paste local example.
+Use the simulation guide for save/reload, goal submission, stop, and the
+headless workflow. Simulation evidence and physical robot evidence stay
+separate.
 
 ## Build and output layout
 
-The source tree and generated artifacts have different jobs:
+Native prerequisites, commands, and the `build/` to `install/` layout are
+maintained in [Build](../scripts/build/README.md). Linux release assembly into
+`dist/`, target installation, the layout transition, and rollback are maintained
+in [Deployment](../scripts/deploy/README.md).
 
-```text
-source/CMake -> build/<component>/...
-cmake --install -> install/<platform>-<arch>/<config>/
-release assembly -> dist/
+## First robot installation
+
+Build or obtain a release for the selected Linux target, then follow the
+[deployment instructions](../scripts/deploy/README.md) to install its versioned
+files, Python runtime, machine configuration, and service catalog. Production
+services run from `/opt/lingtu/current`, not from a developer `build/` tree.
+Installing or replacing a release can restart an existing Product; save any
+needed mapping session and keep the robot stationary before installation.
+
+Do not reproduce release activation as an independent `systemctl start`
+sequence. The installer and ProductControl handle the declared lifecycle.
+
+### Enable Web mode switching
+
+Gateway serves the operator Web application; its default port is `5050`.
+Open the configured target address from the operator computer. The optional
+`lt-control` loopback service lets Web requests use the same ProductControl
+entry as the CLI. On a deployment that includes it, set the actual robot in
+`/etc/lingtu/control.env`:
+
+```ini
+LINGTU_ROBOT=unitree/go2
+# Use only when this deployment includes the camera Product variant:
+# LINGTU_CONTROL_VARIANT=camera
 ```
 
-A standard install prefix contains:
-
-```text
-bin/                 executables
-lib/                 runtime libraries
-etc/lingtu/          immutable defaults
-share/lingtu/        schemas and runtime assets
-```
-
-The repository does not commit root `bin/` or `lib/` directories. Production
-services must not run from a developer `build/` tree.
-
-Build the complete Linux native release input set and package it with:
+After the release and Python runtime are installed:
 
 ```bash
-LINGTU_DRIVER_BACKEND=go2 make build BUILD_TYPE=Release
-bash scripts/deploy/package_native_release.sh vX.Y.Z dist
+sudo bash /opt/lingtu/current/scripts/deploy/thunder/install_catalog_service.sh control
+sudo systemctl enable --now lt-control.service
+curl http://127.0.0.1:5051/status
 ```
 
-Use `LINGTU_DRIVER_BACKEND=doso` for Thunder. This does not turn the build into
-a cross-compile; the selected build host still determines the architecture.
+This starts the loopback control transport, not a mapping or navigation Product.
+The deployed machine configuration owns addresses, ports, and credentials.
+For operational Web controls, continue with
+[Web mapping and navigation switches](operations.md#web-mapping-and-navigation-switches).
 
-Windows uses its CMake install prefix, such as
-`install/windows-x64/Release`. It is not passed through the Linux OTA script.
+## Continue with the first session
 
-Component commands and platform prerequisites live in
-[`scripts/build/README.md`](../scripts/build/README.md). Native planner kernels
-are the Product default; ROS 2 Humble Desktop is optional for explicit
-compatibility work.
+On the installed target, follow [the session preflight](operations.md#before-each-session)
+for read-only release, device, and readiness checks, then the mapping workflow
+in [Operations](operations.md#build-save-and-reload-a-map). Use the configured
+absolute `LINGTU_PYTHON` path for that release. Resolve reported issues before
+switching modes; installation success is not motion readiness.
 
-## Repository orientation
-
-| Path | What belongs there |
-| --- | --- |
-| `src/` | Runtime framework and functional owners |
-| `sim/` | Simulation packages, sessions, runtime, adapters, and evaluation |
-| `config/` | Products, env mappings, robots, devices, and architecture rules |
-| `scripts/` | Stable build, deploy, and field entrypoints |
-| `tools/` | Offline authoring, calibration, visualization, and validation |
-| `tests/` | Cross-module and repository contracts |
-| `web/` | Operator and documentation Web application |
-
-Continue with [Architecture](./architecture.md) before changing ownership, or
-[Development](./development.md) before editing code.
+For the evidence required before physical motion, use [Testing](testing.md).
+For source ownership and repository layout, use [Architecture](architecture.md);
+for code changes, use [Development](development.md).

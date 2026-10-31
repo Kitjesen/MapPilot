@@ -182,36 +182,6 @@ def _component_scene(*, ts: float, reset_epoch: int = 7) -> dict:
     }
 
 
-def _component_dynamic_residual(
-    *,
-    ts: float,
-    product_session_id: str = "inspection-component-session",
-    reset_epoch: int = 7,
-    ready: bool = True,
-) -> dict:
-    return {
-        "ts": ts,
-        "product_session_id": product_session_id,
-        "reset_epoch": reset_epoch,
-        "ready": ready,
-    }
-
-
-def _configure_component_environment_admission(gateway, monkeypatch) -> None:
-    from gateway.maps.status import EnvironmentMapFeedback
-
-    now = time.time()
-    product_session_id = "inspection-component-session"
-    feedback = EnvironmentMapFeedback(freshness_limit_s=60.0)
-    feedback.observe_scene(_component_scene(ts=now))
-    feedback.observe_dynamic_residual(
-        _component_dynamic_residual(ts=now, product_session_id=product_session_id)
-    )
-    gateway._environment_map_feedback = feedback
-    gateway._all_modules["host.bus"] = _MapReadiness()
-    monkeypatch.setenv("LINGTU_PRODUCT_SESSION_ID", product_session_id)
-
-
 def _client(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -237,8 +207,11 @@ def _client(monkeypatch):
         _inspection=service,
         _recording=_Recording(),
         _all_modules={"nav.inspection": service},
+        _compiled_env="sim",
+        _compiled_product="inspection",
+        _compiled_run_plan=object(),
+        _compiled_product_session_id="inspection-component-session",
     )
-    _configure_component_environment_admission(gateway, monkeypatch)
     inspection.register_inspection_routes(app, gateway)
     test_client = TestClient(app)
     test_client.app.state.gateway = gateway
@@ -276,7 +249,7 @@ def _persist_evidence(
     *,
     request_id: str = "evidence-001",
     action: str = "capture:overview",
-    run_id: str = "run-001",
+    task_id: str = "task-001",
     route_revision: int = 2,
 ):
     from perception.inspection import InspectionEvidenceRequest, InspectionEvidenceStore
@@ -284,12 +257,11 @@ def _persist_evidence(
     now = time.time()
     return InspectionEvidenceStore(root).persist(
         InspectionEvidenceRequest(
-            run_id=run_id,
+            task_id=task_id,
             route_id="route-a",
             route_revision=route_revision,
             map_id="field-map",
             map_content_epoch=3,
-            point_id="dock",
             point_index=0,
             request_id=request_id,
             action=action,
@@ -311,7 +283,6 @@ def _task_event(
     kind: int = 2,
     point_index: int = 0,
     point_count: int = 1,
-    point_id: str = "dock",
     action: str = "capture:overview",
     evidence_id: str = "",
     reason: str = "",
@@ -324,7 +295,6 @@ def _task_event(
         "kind": kind,
         "task_id": task_id,
         "request_id": f"native-report-{sequence}",
-        "command_request_id": "inspection-report-start",
         "state": state,
         "map_id": "field-map",
         "map_content_epoch": 3,
@@ -334,7 +304,6 @@ def _task_event(
         "point_count": point_count,
         "loop_index": 0,
         "retry_count": 0,
-        "point_id": point_id,
         "action": action,
         "action_request_id": "",
         "evidence_id": evidence_id,
@@ -387,7 +356,7 @@ def test_task_report_accepts_native_success_only_with_verified_required_evidence
     _persist_evidence(
         evidence_root,
         request_id="evidence-report-001",
-        run_id=task_id,
+        task_id=task_id,
         route_revision=7,
     )
 
@@ -408,7 +377,6 @@ def test_task_report_accepts_native_success_only_with_verified_required_evidence
             sequence=2,
             state=7,
             point_index=1,
-            point_id="",
             action="",
             reason="route_complete",
         )
@@ -432,6 +400,11 @@ def test_task_report_accepts_native_success_only_with_verified_required_evidence
     assert report["coverage"] == {
         "required_points": 1,
         "completed_points": 1,
+        "skipped_points": 0,
+        "failed_points": 0,
+        "cancelled_points": 0,
+        "not_visited_points": 0,
+        "unknown_points": 0,
         "required_evidence": 1,
         "verified_evidence": 1,
         "missing_evidence": 0,
@@ -449,8 +422,11 @@ def test_task_report_accepts_native_success_only_with_verified_required_evidence
             "evidence_status": "VERIFIED",
             "evidence_id": "evidence-report-001",
             "reason": "",
+            "inspection_result": "NEEDS_REVIEW",
         }
     ]
+    assert report["inspection_result"]["status"] == "NEEDS_REVIEW"
+    assert report["inspection_result"]["normal_points"] == 0
     assert report["issues"] == []
 
 
@@ -485,7 +461,6 @@ def test_task_report_keeps_the_route_requirements_that_were_started(
             sequence=1,
             state=7,
             point_index=1,
-            point_id="",
             action="",
             reason="route_complete",
         )
@@ -615,7 +590,6 @@ def test_task_report_exposes_missing_required_evidence_after_native_success(
             sequence=1,
             state=7,
             point_index=1,
-            point_id="",
             action="",
             reason="route_complete",
         )
@@ -668,7 +642,6 @@ def test_task_report_keeps_failed_and_cancelled_execution_not_acceptable(
             task_id=task_id,
             sequence=1,
             state=native_state,
-            point_id="dock",
             action="",
             reason="native_terminal",
         )
@@ -683,6 +656,8 @@ def test_task_report_keeps_failed_and_cancelled_execution_not_acceptable(
     assert report["execution"]["state"] == (
         "FAILED" if native_state == 8 else "CANCELLED"
     )
+    assert report["coverage"]["completed_points"] == 0
+    assert report["points"][0]["status"] == expected_report_status
 
 
 def test_task_report_refuses_acceptance_when_native_event_history_is_incomplete(
@@ -733,7 +708,6 @@ def test_task_report_refuses_acceptance_when_native_event_history_is_incomplete(
             sequence=2,
             state=7,
             point_index=1,
-            point_id="",
             action="",
             reason="route_complete",
         )
@@ -829,6 +803,7 @@ def test_inspection_routes_use_native_store_and_client(monkeypatch):
         "map_content_epoch": 3,
         "revision": 7,
         "loop_count": 2,
+        "loop_interval_s": 42.5,
         "failure_policy": "retry",
         "max_retries": 1,
         "points": [
@@ -861,11 +836,13 @@ def test_inspection_routes_use_native_store_and_client(monkeypatch):
     status = client.get("/api/v1/inspection/status")
 
     assert saved.status_code == 200
+    assert saved.json()["route"]["loop_interval_s"] == 42.5
     assert saved.json()["route"]["points"][0]["tolerance"] == 0.4
     assert listed.status_code == 200
     assert listed.json()["count"] == 1
     assert detail.status_code == 200
     assert detail.json()["route"]["revision"] == 7
+    assert detail.json()["route"]["loop_interval_s"] == 42.5
     assert start.status_code == 202
     assert pause.status_code == 202
     assert status.status_code == 200
@@ -912,6 +889,7 @@ def test_inspection_task_routes_generate_one_task_id_and_never_claim_execution(m
     snapshot = status.json()
     assert snapshot["found"] is True
     assert snapshot["task_id"] == task_id
+    assert snapshot["product_session_id"] == "inspection-component-session"
     assert snapshot["current_state"] is None
     assert snapshot["state_available"] is False
     assert snapshot["phase"] is None
@@ -1141,195 +1119,33 @@ def test_inspection_bind_failure_reports_orphan_cleanup_failure(monkeypatch):
     assert native_client.calls == []
 
 
-def test_inspection_start_admits_current_map_and_matching_dynamic_residual(monkeypatch):
+@pytest.mark.parametrize("scene_state", ["unavailable", "missing", "stale"])
+@pytest.mark.parametrize("map_reason", [None, "mapd_capacity_limited", "map_scene_stale"])
+def test_inspection_start_leaves_motion_admission_to_native_navigation(
+    monkeypatch, scene_state, map_reason,
+):
+    from gateway.maps.status import EnvironmentMapFeedback
+
     client, native_client = _client(monkeypatch)
+    gateway = client.app.state.gateway
+    feedback = None
+    if scene_state != "unavailable":
+        feedback = EnvironmentMapFeedback()
+        if scene_state == "stale":
+            feedback.observe_scene(_component_scene(ts=time.time() - 61.0))
+    gateway._environment_map_feedback = feedback
+    gateway._all_modules["host.bus"] = _MapReadiness(map_reason)
     assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
 
     response = client.post(
         "/api/v1/inspection/tasks",
-        json={
-            "route_id": "route-a",
-            "map_id": "field-map",
-            "revision": 1,
-            "request_id": "inspection-environment-ready",
-        },
+        json={"route_id": "route-a", "map_id": "field-map", "revision": 1,
+              "request_id": f"inspection-native-admission-{scene_state}"},
     )
 
     assert response.status_code == 202
     assert native_client.calls[-1][0] == "task_start"
-
-
-def test_inspection_start_rejects_stale_gateway_scene_before_native(monkeypatch):
-    client, native_client = _client(monkeypatch)
-    gateway = client.app.state.gateway
-    gateway._environment_map_feedback.observe_scene(
-        _component_scene(ts=time.time() - 61.0)
-    )
-    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
-
-    response = client.post(
-        "/api/v1/inspection/tasks",
-        json={
-            "route_id": "route-a",
-            "map_id": "field-map",
-            "revision": 1,
-            "request_id": "inspection-stale-gateway-scene",
-        },
-    )
-
-    assert response.status_code == 503
-    assert "map_scene_stale" in response.json()["detail"]["blockers"]
-    assert native_client.calls == []
-
-
-def test_inspection_start_without_explicit_environment_evidence_fails_closed(
-    monkeypatch,
-):
-    client, native_client = _client(monkeypatch)
-    client.app.state.gateway._environment_map_feedback = None
-    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
-
-    response = client.post(
-        "/api/v1/inspection/tasks",
-        json={
-            "route_id": "route-a",
-            "map_id": "field-map",
-            "revision": 1,
-            "request_id": "inspection-environment-evidence-missing",
-        },
-    )
-
-    assert response.status_code == 503
-    assert response.json()["detail"]["blockers"] == [
-        "environment_map_feedback_unavailable"
-    ]
-    assert native_client.calls == []
-
-
-@pytest.mark.parametrize("reason", ["mapd_state_stale", "map_scene_stale"])
-def test_inspection_start_rejects_stale_mapd_or_scene_before_native(
-    monkeypatch,
-    reason,
-):
-    client, native_client = _client(monkeypatch)
-    gateway = client.app.state.gateway
-    gateway._all_modules["host.bus"].reason = reason
-    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
-
-    response = client.post(
-        "/api/v1/inspection/tasks",
-        json={
-            "route_id": "route-a",
-            "map_id": "field-map",
-            "revision": 1,
-            "request_id": f"inspection-{reason}",
-        },
-    )
-
-    assert response.status_code == 503
-    assert response.json()["error"] == "inspection_environment_not_ready"
-    assert reason in response.json()["detail"]["blockers"]
-    assert native_client.calls == []
-
-
-def test_inspection_start_rejects_mapd_capacity_limit_before_native(monkeypatch):
-    client, native_client = _client(monkeypatch)
-    gateway = client.app.state.gateway
-    gateway._all_modules["host.bus"].reason = "mapd_capacity_limited"
-    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
-
-    response = client.post(
-        "/api/v1/inspection/tasks",
-        json={
-            "route_id": "route-a",
-            "map_id": "field-map",
-            "revision": 1,
-            "request_id": "inspection-mapd-capacity-limited",
-        },
-    )
-
-    assert response.status_code == 503
-    assert "mapd_capacity_limited" in response.json()["detail"]["blockers"]
-    assert native_client.calls == []
-
-
-@pytest.mark.parametrize(
-    ("product_session_id", "reset_epoch", "expected_blocker"),
-    [
-        ("other-product-session", 7, "dynamic_residual_session_mismatch"),
-        ("inspection-component-session", 8, "dynamic_residual_reset_mismatch"),
-    ],
-)
-def test_inspection_start_rejects_dynamic_residual_identity_mismatch(
-    monkeypatch,
-    product_session_id,
-    reset_epoch,
-    expected_blocker,
-):
-    client, native_client = _client(monkeypatch)
-    gateway = client.app.state.gateway
-    gateway._environment_map_feedback.observe_dynamic_residual(
-        _component_dynamic_residual(
-            ts=time.time(),
-            product_session_id=product_session_id,
-            reset_epoch=reset_epoch,
-        )
-    )
-    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
-
-    response = client.post(
-        "/api/v1/inspection/tasks",
-        json={
-            "route_id": "route-a",
-            "map_id": "field-map",
-            "revision": 1,
-            "request_id": f"inspection-{expected_blocker}",
-        },
-    )
-
-    assert response.status_code == 503
-    assert expected_blocker in response.json()["detail"]["blockers"]
-    assert native_client.calls == []
-
-
-@pytest.mark.parametrize(
-    ("evidence", "expected_blocker"),
-    [
-        (None, "dynamic_residual_evidence_missing"),
-        (
-            _component_dynamic_residual(ts=1.0, ready=False),
-            "dynamic_residual_not_ready",
-        ),
-    ],
-)
-def test_inspection_start_rejects_missing_or_unready_dynamic_residual(
-    monkeypatch,
-    evidence,
-    expected_blocker,
-):
-    client, native_client = _client(monkeypatch)
-    gateway = client.app.state.gateway
-    if evidence is None:
-        gateway._environment_map_feedback.observe_dynamic_residual(None)
-    else:
-        gateway._environment_map_feedback.observe_dynamic_residual(
-            {**evidence, "ts": time.time()}
-        )
-    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
-
-    response = client.post(
-        "/api/v1/inspection/tasks",
-        json={
-            "route_id": "route-a",
-            "map_id": "field-map",
-            "revision": 1,
-            "request_id": f"inspection-{expected_blocker}",
-        },
-    )
-
-    assert response.status_code == 503
-    assert expected_blocker in response.json()["detail"]["blockers"]
-    assert native_client.calls == []
+    assert len(gateway._recording.starts) == 1
 
 
 def test_inspection_start_retry_cannot_change_the_started_route_snapshot(monkeypatch):
@@ -1398,6 +1214,194 @@ def test_inspection_control_request_id_cannot_be_redefined_before_native(
     assert changed_reason.status_code == 409
     assert changed_reason.json()["error"] == "inspection_request_id_conflict"
     assert native_client.calls == calls_after_first
+
+
+@pytest.mark.parametrize(
+    ("runtime_changes", "expected_error"),
+    [
+        (
+            {"_compiled_product_session_id": "inspection-session-b"},
+            "inspection_product_session_mismatch",
+        ),
+        (
+            {"_compiled_env": "real"},
+            "inspection_expected_env_mismatch",
+        ),
+    ],
+)
+def test_inspection_controls_reject_runtime_mutation_before_native_call(
+    monkeypatch,
+    runtime_changes,
+    expected_error,
+):
+    client, native_client = _client(monkeypatch)
+    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
+    started = client.post(
+        "/api/v1/inspection/tasks",
+        json={
+            "route_id": "route-a",
+            "map_id": "field-map",
+            "revision": 1,
+            "request_id": "inspection-session-a-start",
+            "expected_env": "sim",
+            "expected_product_session_id": "inspection-component-session",
+        },
+    )
+    assert started.status_code == 202
+    task_id = started.json()["task_id"]
+    gateway = client.app.state.gateway
+    for name, value in runtime_changes.items():
+        setattr(gateway, name, value)
+    calls_after_start = list(native_client.calls)
+
+    for action in ("pause", "resume", "cancel"):
+        response = client.post(
+            f"/api/v1/inspection/tasks/{task_id}/{action}",
+            json={
+                "reason": "operator",
+                "request_id": f"ue-{action}",
+                "expected_env": "sim",
+                "expected_product_session_id": "inspection-component-session",
+            },
+        )
+        assert response.status_code == 409
+        assert response.json()["error"] == expected_error
+
+    assert native_client.calls == calls_after_start
+
+
+def test_inspection_controls_accept_matching_task_and_runtime_session(monkeypatch):
+    client, native_client = _client(monkeypatch)
+    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
+    started = client.post(
+        "/api/v1/inspection/tasks",
+        json={
+            "route_id": "route-a",
+            "map_id": "field-map",
+            "revision": 1,
+            "request_id": "inspection-matching-session-start",
+            "expected_env": "sim",
+            "expected_product_session_id": "inspection-component-session",
+        },
+    )
+    task_id = started.json()["task_id"]
+
+    for action in ("pause", "resume", "cancel"):
+        response = client.post(
+            f"/api/v1/inspection/tasks/{task_id}/{action}",
+            json={
+                "reason": "operator",
+                "request_id": f"ue-matching-{action}",
+                "expected_env": "sim",
+                "expected_product_session_id": "inspection-component-session",
+            },
+        )
+        assert response.status_code == 202
+
+    assert [call[0] for call in native_client.calls] == [
+        "task_start",
+        "task_pause",
+        "task_resume",
+        "task_cancel",
+    ]
+
+
+def test_inspection_control_rechecks_session_after_reservation(monkeypatch):
+    from gateway.services.inspection_task_lifecycle import (
+        ensure_inspection_task_timeline,
+    )
+
+    client, native_client = _client(monkeypatch)
+    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
+    started = client.post(
+        "/api/v1/inspection/tasks",
+        json={
+            "route_id": "route-a",
+            "map_id": "field-map",
+            "revision": 1,
+            "request_id": "inspection-final-session-check-start",
+        },
+    )
+    task_id = started.json()["task_id"]
+    gateway = client.app.state.gateway
+    timeline = ensure_inspection_task_timeline(gateway)
+    reserve_submission = timeline.reserve_submission
+
+    def reserve_then_switch(**kwargs):
+        reserve_submission(**kwargs)
+        gateway._compiled_product_session_id = "inspection-session-b"
+
+    timeline.reserve_submission = reserve_then_switch
+    calls_after_start = list(native_client.calls)
+
+    response = client.post(
+        f"/api/v1/inspection/tasks/{task_id}/pause",
+        json={
+            "reason": "operator",
+            "request_id": "ue-final-session-check",
+            "expected_env": "sim",
+            "expected_product_session_id": "inspection-component-session",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"] == "inspection_product_session_mismatch"
+    assert native_client.calls == calls_after_start
+
+
+def test_legacy_unbound_task_is_readable_but_all_controls_are_unavailable(monkeypatch):
+    from gateway.services.inspection_task_lifecycle import (
+        ensure_inspection_task_timeline,
+    )
+
+    client, native_client = _client(monkeypatch)
+    timeline = ensure_inspection_task_timeline(client.app.state.gateway)
+    timeline.record_submission(
+        task_id="legacy-task",
+        action="start",
+        request_id="legacy-start",
+    )
+
+    status = client.get("/api/v1/inspection/tasks/legacy-task")
+    assert status.status_code == 200
+    assert status.json()["product_session_id"] is None
+    before = list(native_client.calls)
+    for action in ("pause", "resume", "cancel"):
+        response = client.post(
+            f"/api/v1/inspection/tasks/legacy-task/{action}",
+            json={
+                "reason": "operator",
+                "request_id": f"ue-legacy-{action}",
+                "expected_env": "sim",
+                "expected_product_session_id": "inspection-component-session",
+            },
+        )
+        assert response.status_code == 409
+        assert response.json()["error"] == "inspection_task_product_session_unbound"
+    assert native_client.calls == before
+
+
+def test_inspection_start_requires_active_compiled_product_session(monkeypatch):
+    client, native_client = _client(monkeypatch)
+    assert client.post("/api/v1/inspection/routes", json=_route()).status_code == 200
+    gateway = client.app.state.gateway
+    gateway._compiled_run_plan = None
+    gateway._compiled_product_session_id = None
+    before = list(native_client.calls)
+
+    response = client.post(
+        "/api/v1/inspection/tasks",
+        json={
+            "route_id": "route-a",
+            "map_id": "field-map",
+            "revision": 1,
+            "request_id": "inspection-unbound-start",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"] == "inspection_product_session_unavailable"
+    assert native_client.calls == before
 
 
 def test_inspection_task_collection_rehydrates_the_current_task_by_map(monkeypatch):
@@ -1761,8 +1765,11 @@ def test_inspection_client_acquisition_and_ack_do_not_block_event_loop(monkeypat
         _inspection=service,
         _recording=_Recording(),
         _all_modules={"nav.inspection": service},
+        _compiled_env="sim",
+        _compiled_product="inspection",
+        _compiled_run_plan=object(),
+        _compiled_product_session_id="inspection-component-session",
     )
-    _configure_component_environment_admission(gateway, monkeypatch)
     inspection.register_inspection_routes(app, gateway)
     endpoint = next(
         route.endpoint
@@ -2018,9 +2025,17 @@ def test_inspection_start_rejects_unsupported_evidence_action(monkeypatch, tmp_p
     assert native_client.calls == []
 
 
-def test_inspection_evidence_list_detail_and_artifact_are_verified(monkeypatch, tmp_path):
+@pytest.mark.parametrize("legacy_manifest", [False, True])
+def test_inspection_evidence_list_detail_and_artifact_are_verified(
+    monkeypatch, tmp_path, legacy_manifest,
+):
     root = tmp_path / "evidence"
-    _persist_evidence(root)
+    saved = _persist_evidence(root)
+    if legacy_manifest:
+        manifest = json.loads(saved.manifest_path.read_text(encoding="utf-8"))
+        manifest["request"]["run_id"] = manifest["request"].pop("task_id")
+        manifest["request"]["point_id"] = "point-01"
+        saved.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     monkeypatch.setenv("LINGTU_INSPECTION_EVIDENCE_DIR", str(root))
     client, _native_client = _client(monkeypatch)
 
@@ -2032,7 +2047,9 @@ def test_inspection_evidence_list_detail_and_artifact_are_verified(monkeypatch, 
     item = payload["evidence"][0]
     assert item["evidence_id"] == "evidence-001"
     assert item["request"]["route_id"] == "route-a"
-    assert item["request"]["point_id"] == "dock"
+    assert item["request"]["task_id"] == saved.request.task_id
+    assert "run_id" not in item["request"]
+    assert "point_id" not in item["request"]
     assert item["analysis"]["verdict"] == "not_evaluated"
     assert {artifact["kind"] for artifact in item["artifacts"]} == {"rgb", "pose", "detections"}
     assert "evidence_dir" not in item

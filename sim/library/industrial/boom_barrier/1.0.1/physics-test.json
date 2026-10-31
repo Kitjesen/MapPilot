@@ -1,0 +1,10 @@
+{
+  "engine": "3.10.0",
+  "open_rad": 1.338073360165057,
+  "passed": true,
+  "reset_passed": true,
+  "rest_rad": -0.00020702589881882357,
+  "returned_rad": -0.0002070258988188241,
+  "scope": "standalone_headless_design_model",
+  "ue_validated": false
+}

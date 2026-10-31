@@ -374,17 +374,17 @@ def test_all_exploration_modules_have_alive_port():
 
 
 def test_supervisor_tare_explorer_wiring():
-    """ExplorationSupervisorModule wires to TAREExplorerModule via Blueprint.
+    """ExplorationSupervisorModule wires to TAREExplorerModule via HostBuilder.
 
-    Verifies that both modules coexist in a single Blueprint and their
+    Verifies that both modules coexist in a single HostBuilder and their
     shared exploration ports (tare_stats, supervisor_state) are declared
     for wiring.
     """
     from explore.tare.module import TAREExplorerModule
     from explore.tare.supervisor import ExplorationSupervisorModule
-    from runtime.blueprint import Blueprint
+    from runtime.host import HostBuilder
 
-    bp = Blueprint()
+    bp = HostBuilder()
     bp.add(TAREExplorerModule)
     bp.add(ExplorationSupervisorModule)
 

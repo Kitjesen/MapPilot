@@ -18,19 +18,17 @@ struct InspectionTaskAck {
   long kind;
   boolean accepted;
   string reason;
-  string run_id;
 };
 @final
 struct InspectionEvidenceRequest {
   Header header;
   string request_id;
-  string run_id;
+  string task_id;
   string route_id;
-  unsigned long long revision;
+  unsigned long long route_revision;
   string map_id;
   long long map_content_epoch;
   unsigned long point_index;
-  string point_id;
   string action;
   double deadline_s;
 };
@@ -46,7 +44,7 @@ struct InspectionEvidenceResult {
 @final
 struct InspectionStatus {
   Header header;
-  string run_id;
+  string task_id;
   string route_id;
   unsigned long long route_revision;
   long state;
@@ -54,7 +52,6 @@ struct InspectionStatus {
   unsigned long point_count;
   unsigned long loop_index;
   unsigned long retry_count;
-  string point_id;
   string action;
   string action_request_id;
   string evidence_id;
@@ -72,7 +69,6 @@ struct InspectionTaskEvent {
   long kind;
   string task_id;
   string request_id;
-  string command_request_id;
   long state;
   string map_id;
   long long map_content_epoch;
@@ -82,7 +78,6 @@ struct InspectionTaskEvent {
   unsigned long point_count;
   unsigned long loop_index;
   unsigned long retry_count;
-  string point_id;
   string action;
   string action_request_id;
   string evidence_id;

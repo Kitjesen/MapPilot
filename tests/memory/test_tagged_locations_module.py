@@ -31,7 +31,7 @@ class TestTaggedLocationsInstantiation(unittest.TestCase):
     """Test TaggedLocationsModule creation and configuration."""
 
     def _make(self, **kw):
-        from memory.modules.tagged_locations_module import TaggedLocationsModule
+        from memory.modules.locations import TaggedLocationsModule
         return TaggedLocationsModule(**kw)
 
     def test_default_creation(self):
@@ -60,7 +60,7 @@ class TestTaggedLocationsPorts(unittest.TestCase):
     """Test that In/Out ports exist with correct types."""
 
     def _make(self, **kw):
-        from memory.modules.tagged_locations_module import TaggedLocationsModule
+        from memory.modules.locations import TaggedLocationsModule
         return TaggedLocationsModule(**kw)
 
     def test_input_ports_exist(self):
@@ -91,7 +91,7 @@ class TestTaggedLocationsSetup(unittest.TestCase):
     """Test setup and initial state."""
 
     def _make(self, **kw):
-        from memory.modules.tagged_locations_module import TaggedLocationsModule
+        from memory.modules.locations import TaggedLocationsModule
         return TaggedLocationsModule(**kw)
 
     def test_setup_runs_without_error(self):
@@ -121,7 +121,7 @@ class TestTaggedLocationsCRUD(unittest.TestCase):
     """Test save/goto/remove/list operations."""
 
     def _make(self, **kw):
-        from memory.modules.tagged_locations_module import TaggedLocationsModule
+        from memory.modules.locations import TaggedLocationsModule
         m = TaggedLocationsModule(**kw)
         m.setup()
         return m
@@ -234,7 +234,7 @@ class TestTaggedLocationsSkills(unittest.TestCase):
     """Test @skill-exposed methods."""
 
     def _make(self, **kw):
-        from memory.modules.tagged_locations_module import TaggedLocationsModule
+        from memory.modules.locations import TaggedLocationsModule
         m = TaggedLocationsModule(**kw)
         m.setup()
         return m
@@ -291,7 +291,7 @@ class TestTaggedLocationsPersistence(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
             path = f.name
         try:
-            from memory.modules.tagged_locations_module import TaggedLocationsModule
+            from memory.modules.locations import TaggedLocationsModule
             m = TaggedLocationsModule(json_path=path)
             m.setup()
             m._on_odom(_odom(7.0, 8.0, 0.0))
@@ -311,7 +311,7 @@ class TestTaggedLocationsPersistence(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
             path = f.name
         try:
-            from memory.modules.tagged_locations_module import TaggedLocationsModule
+            from memory.modules.locations import TaggedLocationsModule
             m = TaggedLocationsModule(json_path=path)
             m.setup()
             m._store.tag("a", x=1.0, y=0.0)
@@ -335,7 +335,7 @@ if __name__ == "__main__":
     ("remove:dock", "error:remove_failed"),
 ])
 def test_failed_write_is_reported_on_status_port(tmp_path, monkeypatch, command, expected):
-    from memory.modules.tagged_locations_module import TaggedLocationsModule
+    from memory.modules.locations import TaggedLocationsModule
 
     module = TaggedLocationsModule(json_path=str(tmp_path / "tags.json"))
     module.setup()

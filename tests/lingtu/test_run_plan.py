@@ -12,6 +12,34 @@ from lingtu.run_plan import RunPlan
 pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
 
 
+@pytest.mark.parametrize("product", ["nav", "teleop_avoid"])
+def test_scan_run_plan_keeps_one_meter_per_second_body_axis_limits(product: str) -> None:
+    plan = ProductControl(robot="unitree/go2", env="real", process_env={})._resolve(product)
+    environment = plan.native_process_environment
+    assert float(environment["LINGTU_NAV_SCAN_MAX_VX_MPS"]) == 1.0
+    assert float(environment["LINGTU_NAV_SCAN_MAX_VY_MPS"]) == 1.0
+    assert float(environment["LINGTU_NAV_SCAN_PLANNER_MAX_VELOCITY_MPS"]) == pytest.approx(2.0**0.5)
+    assert float(environment["LINGTU_DRIVER_MAX_LINEAR_MPS"]) == 1.0
+
+
+@pytest.mark.parametrize("product", ["nav", "teleop_avoid"])
+def test_scan_explicit_lower_speed_survives_run_plan_round_trip(product, tmp_path) -> None:
+    plan = ProductControl(robot="unitree/go2", env="real", process_env={})._resolve(
+        product,
+        parameter_overrides={
+            "scan_planner.max_velocity_mps": 0.4,
+            "scan_follower.max_vx_mps": 0.35,
+            "scan_follower.max_vy_mps": 0.25,
+        },
+    )
+    loaded = RunPlan.load(plan.write(tmp_path / "run-plan.json"))
+    assert loaded.parameters == plan.parameters
+    environment = loaded.native_process_environment
+    assert float(environment["LINGTU_NAV_SCAN_PLANNER_MAX_VELOCITY_MPS"]) == 0.4
+    assert float(environment["LINGTU_NAV_SCAN_MAX_VX_MPS"]) == 0.35
+    assert float(environment["LINGTU_NAV_SCAN_MAX_VY_MPS"]) == 0.25
+
+
 def test_run_plan_round_trips_without_re_resolving_runtime_graph(tmp_path) -> None:
     plan = ProductControl(robot="unitree/go2", env="real", process_env={})._resolve("nav")
 

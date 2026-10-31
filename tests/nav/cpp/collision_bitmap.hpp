@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "planning/local/planner.hpp"
+#include "planning/local/grid_axis.hpp"
 
 namespace lingtu::nav::tests {
 
@@ -91,11 +92,7 @@ class CollisionBitmap {
   }
 
   [[nodiscard]] int index(double value, double minimum, int size) const {
-    const auto global = static_cast<std::int64_t>(
-        std::floor(value / resolution_));
-    const auto minimum_index = static_cast<std::int64_t>(
-        std::llround(minimum / resolution_));
-    const auto result = global - minimum_index;
+    const auto result = nav_kernel::local::GridAxis(minimum, resolution_).index(value);
     return result >= 0 && result < size ? static_cast<int>(result) : -1;
   }
 

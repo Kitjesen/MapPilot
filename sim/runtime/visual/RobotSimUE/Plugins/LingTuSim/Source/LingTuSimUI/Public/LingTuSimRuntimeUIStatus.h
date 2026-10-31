@@ -19,6 +19,8 @@ namespace LingTuSim::UI
         FString LatestRuntimeRequestEventId;
         FString LatestRuntimeRequestError;
         bool bLatestRuntimeRequestPublished = false;
+        bool bExitRequestPending = false;
+        FString ExitRequestError;
     };
 
     /**
@@ -48,6 +50,9 @@ namespace LingTuSim::UI
         uint64 TruthSequence = 0;
         int64 SimTimeNs = 0;
         bool bObservedBaseVelocityAvailable = false;
+        bool bObservedBasePoseAvailable = false;
+        FVector ObservedBasePositionMeters = FVector::ZeroVector;
+        FQuat ObservedBaseRotation = FQuat::Identity;
         FString ObservedBaseStableId;
         FString ObservedBaseVelocityState = TEXT("Unavailable");
         FVector ObservedBaseLinearVelocityMps = FVector::ZeroVector;
@@ -129,6 +134,11 @@ namespace LingTuSim::UI
             bool bEngineExitAlreadyRequested,
             const FRuntimeUIStatusSnapshot& Status,
             FString& OutBlocker);
+        static bool ShouldEndPendingRequest(
+            const FString& EventId,
+            double ElapsedSeconds,
+            const FRuntimeUIStatusSnapshot& Status,
+            FString& OutReason);
 
     private:
         FRuntimeUIExitPolicy() = delete;

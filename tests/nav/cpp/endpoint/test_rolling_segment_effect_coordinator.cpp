@@ -6,7 +6,7 @@
 #include <variant>
 #include <vector>
 
-#include "runtime/rolling/effects.hpp"
+#include "app/rolling/effects.hpp"
 
 namespace {
 

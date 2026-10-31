@@ -203,6 +203,9 @@ class Image:
     ts: float = field(default_factory=time.time)
     frame_id: str = field(default=SENSOR_CAMERA_FRAME_ID)
     is_bigendian: bool = False
+    # Host-local source metadata; zero means the producer did not declare it.
+    source_generation: int = 0
+    source_sequence: int = 0
 
     def __post_init__(self) -> None:
         if not is_numpy_array(self.data):
@@ -299,6 +302,8 @@ class Image:
                 ts=self.ts,
                 frame_id=self.frame_id,
                 is_bigendian=self.is_bigendian,
+                source_generation=self.source_generation,
+                source_sequence=self.source_sequence,
             )
         if self.format is ImageFormat.RGBA:
             return Image(
@@ -307,6 +312,8 @@ class Image:
                 ts=self.ts,
                 frame_id=self.frame_id,
                 is_bigendian=self.is_bigendian,
+                source_generation=self.source_generation,
+                source_sequence=self.source_sequence,
             )
         if self.format is ImageFormat.GRAY:
             return Image(
@@ -315,6 +322,8 @@ class Image:
                 ts=self.ts,
                 frame_id=self.frame_id,
                 is_bigendian=self.is_bigendian,
+                source_generation=self.source_generation,
+                source_sequence=self.source_sequence,
             )
         raise ValueError(f"Cannot convert {self.format} to RGB")
 
@@ -329,6 +338,8 @@ class Image:
                 ts=self.ts,
                 frame_id=self.frame_id,
                 is_bigendian=self.is_bigendian,
+                source_generation=self.source_generation,
+                source_sequence=self.source_sequence,
             )
         if self.format is ImageFormat.RGBA:
             return Image(
@@ -337,6 +348,8 @@ class Image:
                 ts=self.ts,
                 frame_id=self.frame_id,
                 is_bigendian=self.is_bigendian,
+                source_generation=self.source_generation,
+                source_sequence=self.source_sequence,
             )
         if self.format is ImageFormat.GRAY:
             return Image(
@@ -345,6 +358,8 @@ class Image:
                 ts=self.ts,
                 frame_id=self.frame_id,
                 is_bigendian=self.is_bigendian,
+                source_generation=self.source_generation,
+                source_sequence=self.source_sequence,
             )
         raise ValueError(f"Cannot convert {self.format} to BGR")
 
@@ -365,6 +380,8 @@ class Image:
                 ts=self.ts,
                 frame_id=self.frame_id,
                 is_bigendian=self.is_bigendian,
+                source_generation=self.source_generation,
+                source_sequence=self.source_sequence,
             )
         if self.format is ImageFormat.RGBA:
             r, g, b = self.data[..., 0], self.data[..., 1], self.data[..., 2]
@@ -375,6 +392,8 @@ class Image:
                 ts=self.ts,
                 frame_id=self.frame_id,
                 is_bigendian=self.is_bigendian,
+                source_generation=self.source_generation,
+                source_sequence=self.source_sequence,
             )
         raise ValueError(f"Cannot convert {self.format} to grayscale")
 
@@ -397,6 +416,8 @@ class Image:
             ts=self.ts,
             frame_id=self.frame_id,
             is_bigendian=self.is_bigendian,
+            source_generation=self.source_generation,
+            source_sequence=self.source_sequence,
         )
 
     def crop(self, x: int, y: int, w: int, h: int) -> Image:
@@ -408,6 +429,8 @@ class Image:
             ts=self.ts,
             frame_id=self.frame_id,
             is_bigendian=self.is_bigendian,
+            source_generation=self.source_generation,
+            source_sequence=self.source_sequence,
         )
 
     # -- serialisation -------------------------------------------------------
@@ -475,6 +498,8 @@ class Image:
             "dtype": self.data.dtype.str,
             "ts": self.ts,
             "frame_id": self.frame_id,
+            "source_generation": self.source_generation,
+            "source_sequence": self.source_sequence,
         }
 
     def to_ros_dict(self) -> dict[str, Any]:
@@ -534,6 +559,8 @@ class CameraIntrinsics:
     dist_k3: float = 0.0
     ts: float = field(default_factory=time.time)
     frame_id: str = field(default=SENSOR_CAMERA_FRAME_ID)
+    source_generation: int = 0
+    source_sequence: int = 0
 
     # -- properties ----------------------------------------------------------
 
@@ -638,6 +665,8 @@ class CameraIntrinsics:
             dist_k3=d.get("dist_k3", 0.0),
             ts=float(d.get("ts", time.time())),
             frame_id=str(d.get("frame_id", SENSOR_CAMERA_FRAME_ID)),
+            source_generation=int(d.get("source_generation", 0)),
+            source_sequence=int(d.get("source_sequence", 0)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -651,6 +680,8 @@ class CameraIntrinsics:
             "dist_k3": self.dist_k3,
             "ts": self.ts,
             "frame_id": self.frame_id,
+            "source_generation": self.source_generation,
+            "source_sequence": self.source_sequence,
         }
 
     def to_ros_dict(self) -> dict[str, Any]:

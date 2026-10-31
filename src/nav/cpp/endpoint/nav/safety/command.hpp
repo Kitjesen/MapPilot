@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -30,10 +31,12 @@ struct TraversabilityGrid {
 
 struct CommandSafetyConfig {
   double cmd_max_age_s{0.35};
-  double max_speed_mps{0.4};
+  double max_speed_mps{nav_kernel::kDefaultLinearSpeedMps};
   double max_yaw_rate{1.0};
   double min_motion_speed_mps{0.03};
   bool verified_recovery_translation{false};
+  // Body-axis bound, independent of the total planar speed above.
+  double max_axis_speed_mps{std::numeric_limits<double>::infinity()};
 };
 
 struct CommandSafetyDecision {

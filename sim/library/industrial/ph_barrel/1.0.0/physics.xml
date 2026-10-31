@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="cc0_barrel_contact_draft">
+  <option timestep=".002" integrator="implicitfast" />
+  <worldbody>
+    <geom name="ground" type="plane" size="10 10 .1" />
+    <body name="ph_barrel" pos="0 0 .02">
+      <freejoint name="ph_barrel/free" />
+      <geom name="ph_barrel/collision" type="cylinder" mass="20" friction=".6 .01 .001" pos="1.4901161193847656e-08 9.685754776000977e-08 0.444637359585613" size="0.24408778548240662 0.43999999621883035" />
+    </body>
+  </worldbody>
+</mujoco>

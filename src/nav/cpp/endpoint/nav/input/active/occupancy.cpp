@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <system_error>
 
-#include "lingtu/maps/build/grid_artifacts.hpp"
+#include "lingtu/maps/build/grids.hpp"
 #include "nav/cpp/platform/runtime.hpp"
 
 namespace lingtu::nav::endpoint {

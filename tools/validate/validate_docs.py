@@ -41,6 +41,7 @@ EXCLUDED_MARKDOWN_PREFIXES = (
 )
 DOCS_MARKDOWN = {
     "README.md",
+    "product.md",
     "getting-started.md",
     "architecture.md",
     "runtime.md",
@@ -51,6 +52,8 @@ DOCS_MARKDOWN = {
     "testing.md",
     "roadmap.md",
 }
+DOCS_RESEARCH_PREFIX = "research/"
+DOCS_RESEARCH_PAPERS_PREFIX = "research/papers/"
 METADATA_RE = {
     "Status": re.compile(r"^\*\*Status:\*\*\s+\S", re.IGNORECASE),
     "Audience": re.compile(r"^\*\*Audience:\*\*\s+\S", re.IGNORECASE),
@@ -158,13 +161,24 @@ def validate_repository(root: Path = ROOT) -> tuple[list[str], int]:
         if path.is_file()
     }
     missing_docs = sorted(DOCS_MARKDOWN - docs_markdown)
-    unexpected_docs = sorted(docs_markdown - DOCS_MARKDOWN)
+    unexpected_docs = sorted(
+        path for path in docs_markdown - DOCS_MARKDOWN
+        if not path.startswith(("operations/", "design/", "media/", DOCS_RESEARCH_PREFIX))
+    )
     if missing_docs:
         errors.append("missing maintained docs: " + ", ".join(missing_docs))
     if unexpected_docs:
         errors.append("unexpected docs Markdown: " + ", ".join(unexpected_docs))
 
-    binary_docs = sorted(path for suffix in ("*.pdf", "*.docx") for path in (root / "docs").rglob(suffix))
+    binary_docs = sorted(
+        path
+        for suffix in ("*.pdf", "*.docx")
+        for path in (root / "docs").rglob(suffix)
+        if not (
+            path.suffix.lower() == ".pdf"
+            and path.relative_to(docs_root).as_posix().startswith(DOCS_RESEARCH_PAPERS_PREFIX)
+        )
+    )
     for path in binary_docs:
         errors.append(f"binary snapshot belongs outside docs or in generated artifacts: {_repo_rel(path)}")
 
@@ -206,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.verbose:
-        print("Checks: flat ten-page docs set, metadata, titles, and local links")
+        print("Checks: maintained handbook, operations records, metadata, titles, and local links")
     print(f"PASSED: {scanned} first-party Markdown files")
     return 0
 

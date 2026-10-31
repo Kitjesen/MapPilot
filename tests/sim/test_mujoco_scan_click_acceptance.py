@@ -9,7 +9,7 @@ import pytest
 from sim.scripts.mujoco import native_navigation_acceptance as nav
 from sim.scripts.mujoco import product_acceptance as product
 
-from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "config/acceptance/mujoco/scan_click.json"
@@ -20,7 +20,30 @@ pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
 @pytest.fixture
 def plan(allow_unbuilt_process_artifacts):
     return compile_run_plan("nav", "sim", robot="doso/thunder_v4", local_planner="scan",
-                            env_config={"backend": "mujoco", "localization": "fastlio2"})
+                            env_config={"backend": "mujoco", "localization": "ltlio"})
+
+
+def test_truth_sequence_uses_native_provider_and_cpu_ray_budget():
+    truth = compile_run_plan("nav", "sim", robot="doso/thunder_v4", local_planner="scan",
+                             env_config={"backend": "mujoco", "localization": "truth"})
+    assert product._uses_mujoco_truth_localization(truth)
+    assert "slam_runtime" not in [process.name for process in truth.processes]
+    assert "--navigation-fixture" in truth.process("lidar").command.argv
+    feeder = next(process for process in truth.processes if process.name == "mujoco_feeder")
+    argv = feeder.command.argv
+    assert argv[argv.index("--mid360-samples-per-frame") + 1] == "1000"
+
+
+def test_truth_runtime_sample_does_not_require_absent_slam_status(tmp_path):
+    stamp = time.time()
+    (tmp_path / "nav.status.json").write_text(json.dumps({
+        "native_product": {"product_session_id": SESSION}, "stamp_s": stamp,
+        "has_odom": True, "has_map_odom_tf": True,
+        "input_gate": {"ready": True, "localization_state": "TRACKING"},
+        "control_loop_health": {"ready": True, "healthy": True}}))
+    result = nav._product_runtime_sample(tmp_path, SESSION, 1.0, "mujoco_truth")
+    assert result["ready"] is True
+    assert not (tmp_path / "slam.status.json").exists()
 
 
 @pytest.fixture
@@ -125,7 +148,7 @@ def test_attached_click_cannot_pass_without_current_localization_and_completion(
 def test_actual_slam_case_rejects_truth_fixture_before_http(tmp_path):
     truth = compile_run_plan("nav", "sim", robot="doso/thunder_v4", local_planner="scan",
                              env_config={"backend": "mujoco", "localization": "truth"})
-    with pytest.raises(ValueError, match="Fast-LIO2"):
+    with pytest.raises(ValueError, match="LTLIO"):
         nav.run_attached_goal(truth, tmp_path / "plan.json", SESSION,
                               nav._load_manifest(MANIFEST), tmp_path / "goal")
 
@@ -195,6 +218,44 @@ def test_product_map_selection_is_retained_for_rollback(plan, tmp_path, monkeypa
     assert calls[0][1]["initial_pose"] == rollback[0][1]["initial_pose"] == tuple(nav._load_manifest(MANIFEST)["initial_pose"])
 
 
+@pytest.mark.parametrize("failure", [None, "missing_leg", "middle_error", "middle_identity"])
+def test_sequence_post_stop_checks_every_leg_and_final_world_goal(plan, tmp_path, monkeypatch, failure):
+    criteria = nav._load_manifest(MANIFEST)
+    criteria["goals"] = [
+        {"goal": [101, 201, 0], "goal_world": [1, 1, 0]},
+        {"goal": [102, 202, 0], "goal_world": [2, 2, 0]},
+        {"goal": [105, 204, 0], "goal_world": [5, 4, 0]},
+    ]
+    legs = [
+        {"goal": goal["goal"], "task_id": f"task-{index}",
+         "terminal": {"state": 4, "task_id": f"task-{index}"},
+         "evidence": {"physical_goal_error_m": [0.1]}}
+        for index, goal in enumerate(criteria["goals"])
+    ]
+    if failure == "missing_leg":
+        legs.pop()
+    elif failure == "middle_error":
+        legs[1]["evidence"]["physical_goal_error_m"] = [2.0]
+    elif failure == "middle_identity":
+        legs[1]["terminal"]["task_id"] = "another-task"
+    scenario = {"criteria": criteria, "legs": legs,
+                "goal_status": {"state": 4}, "ready_fraction": 1.0}
+    motion = {"end_position_m": [5, 4, .5], "path_length_xy_m": 6,
+              "net_displacement_xy_m": 2}
+    monkeypatch.setattr(product, "_check_motion", lambda *_args: motion)
+    (tmp_path / "mujoco_feeder.contacts.json").write_text(json.dumps({
+        "product_session_id": SESSION, "complete": True, "entity_contact_steps": 0}))
+    (tmp_path / "mujoco_feeder.stop.json").write_text(json.dumps({
+        "product_session_id": SESSION, "terminal_ack": True, "outcome": "zero_applied"}))
+    if failure:
+        with pytest.raises(RuntimeError, match="nav (leg|sequence)"):
+            product._check_nav_goal(tmp_path, plan, (), scenario, SESSION)
+    else:
+        result = product._check_nav_goal(tmp_path, plan, (), scenario, SESSION)
+        assert result["goal_error_m"] == 0
+        assert len(result["legs"]) == 3
+
+
 def test_product_map_cli_defaults_to_actual_slam_click_manifest(tmp_path, monkeypatch):
     seen = []
     monkeypatch.setattr(nav, "run_product_goal", lambda args: seen.append(args) or {"ok": True})
@@ -222,7 +283,7 @@ def test_saved_map_entry_uses_shared_lifecycle_and_preserves_failure(tmp_path, m
     (map_dir / "metadata.json").write_text(json.dumps({"source_profile": "factory_workshop_v2"}))
     assert nav.main(["--product-map", str(map_dir),
                      "--out-dir", str(tmp_path / "evidence")]) == 1
-    assert all(item["env_config"]["localization"] == "fastlio2" for item in controls)
+    assert all(item["env_config"]["localization"] == "ltlio" for item in controls)
     assert calls[0][1]["map_name"] == "factory_workshop_v2"
     assert calls[0][1]["check"] is product._check_nav_goal
     assert calls[0][1]["rollback_control"] is not None

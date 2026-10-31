@@ -251,8 +251,6 @@ def _build_octomap_native(
             if lidar_map_source
             else f"mujoco_{scene_preset}_saved_map_plan_gate"
         ),
-        "--timeout-s",
-        str(float(args.build_timeout)),
     ]
     result = _run_json_process(command, timeout_s=float(args.build_timeout) + 5.0)
     result["ok"] = result.get("success") is True
@@ -1695,12 +1693,16 @@ def collect_mujoco_lidar_points(
     mid360_pattern: Path | None,
     mid360_samples_per_frame: int,
     lidar_backend: str,
+    lidar_body_name: str,
+    lidar_site_name: str,
     mujoco_lidar_backend: str,
     allow_legacy_lidar_fallback: bool,
     mujoco_memory: str,
     trajectory_support_radius_m: float = 0.0,
     trajectory_support_spacing_m: float = 0.1,
     mapping_trajectory: list[list[float]] | None = None,
+    saved_scan_dir: Path | None = None,
+    scene_clip: dict[str, float] | None = None,
 ) -> tuple[list[tuple[float, float, float]], dict[str, Any]]:
     from sim.compat.engine.core.engine import VelocityCommand
 
@@ -1711,8 +1713,17 @@ def collect_mujoco_lidar_points(
 
     engine = None
     clouds: list[Any] = []
+    saved_frames: list[tuple[np.ndarray, np.ndarray]] = []
     odoms: list[Any] = []
     backend_report: dict[str, Any] = {}
+    if saved_scan_dir is not None:
+        manifest = saved_scan_dir / "patch_bundle.manifest"
+        if manifest.exists():
+            manifest.write_text(
+                "LINGTU_PATCH_BUNDLE_V1\ncomplete 0\ndropped_count 0\n"
+                "first_sequence 0\nlast_sequence 0\npatch_count 0\n",
+                encoding="ascii",
+            )
     try:
         engine = build_engine(
             world=scene_xml.resolve(),
@@ -1722,6 +1733,8 @@ def collect_mujoco_lidar_points(
             mid360_pattern=mid360_pattern or DEFAULT_MID360_PATTERN,
             mid360_samples_per_frame=int(mid360_samples_per_frame),
             lidar_backend=lidar_backend,
+            lidar_body_name=lidar_body_name,
+            lidar_site_name=lidar_site_name,
             mujoco_lidar_backend=mujoco_lidar_backend,
             require_product_lidar_backend=not bool(allow_legacy_lidar_fallback),
         )
@@ -1748,6 +1761,24 @@ def collect_mujoco_lidar_points(
     deadline = started + max(0.1, timeout_s)
     trajectory = list(mapping_trajectory or [])
     trajectory_complete = False
+    capture_complete = False
+
+    def retain_cloud(cloud: Any) -> None:
+        if cloud is None or len(cloud) == 0:
+            return
+        clouds.append(cloud)
+        if saved_scan_dir is None:
+            return
+        import mujoco
+
+        with engine.measurement_state() as (model, data):
+            mujoco.mj_kinematics(model, data)
+            site = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, lidar_site_name)
+            if site < 0:
+                raise RuntimeError(f"LiDAR site not found: {lidar_site_name}")
+            origin = np.asarray(data.site_xpos[site], dtype=np.float64).copy()
+        saved_frames.append((origin, np.asarray(cloud, dtype=np.float64).copy()))
+
     try:
         if trajectory:
             for pose in trajectory:
@@ -1762,9 +1793,9 @@ def collect_mujoco_lidar_points(
                 odoms.append(state)
                 cloud = engine.get_lidar_points()
                 scan_attempts += 1
-                if cloud is not None and len(cloud) > 0:
-                    clouds.append(cloud)
+                retain_cloud(cloud)
             trajectory_complete = scan_attempts == len(trajectory)
+            capture_complete = trajectory_complete
         else:
             while time.time() < deadline and (
                 scan_attempts < max(1, scans) or float(engine.sim_time) < max(0.0, duration_s)
@@ -1776,11 +1807,17 @@ def collect_mujoco_lidar_points(
                 cloud = engine.get_lidar_points()
                 scan_attempts += 1
                 next_scan_s += scan_period_s
-                if cloud is not None and len(cloud) > 0:
-                    clouds.append(cloud)
+                retain_cloud(cloud)
+            capture_complete = (
+                scan_attempts >= max(1, scans)
+                and float(engine.sim_time) >= max(0.0, duration_s)
+            )
     finally:
-        engine.step(VelocityCommand())
-        engine.close()
+        try:
+            engine.step(VelocityCommand())
+            backend_report = engine.get_lidar_backend_report()
+        finally:
+            engine.close()
 
     points: list[tuple[float, float, float]] = []
     for cloud in clouds:
@@ -1814,6 +1851,38 @@ def collect_mujoco_lidar_points(
                 seen_support.add(key)
                 support_points.append((px, py, pz))
         points.extend(support_points)
+    saved_ray_frames = 0
+    saved_ray_points = 0
+    saved_ray_complete = False
+    if saved_scan_dir is not None and support_radius == 0.0 and saved_frames:
+        patches = saved_scan_dir / "patches"
+        patches.mkdir(parents=True, exist_ok=True)
+        poses = []
+        for origin, cloud in saved_frames:
+            world = cloud[:, :3]
+            if scene_clip:
+                world = np.asarray(filter_points_to_scene(world.tolist(), **scene_clip), dtype=np.float64)
+            if world.size == 0:
+                continue
+            local = world - origin
+            name = f"{len(poses)}.pcd"
+            write_ascii_pcd(patches / name, [tuple(point) for point in local])
+            poses.append(f"{name} {origin[0]:.12g} {origin[1]:.12g} {origin[2]:.12g} 1 0 0 0")
+            saved_ray_points += len(local)
+        saved_ray_frames = len(poses)
+        if poses:
+            (saved_scan_dir / "poses.txt").write_text("\n".join(poses) + "\n", encoding="ascii")
+            (saved_scan_dir / "scan_origin.txt").write_text("lidar_origin_in_patch 0 0 0\n", encoding="ascii")
+            dropped = scan_attempts - len(poses)
+            expected = {line.split()[0] for line in poses}
+            existing = {path.name for path in patches.glob("*.pcd")}
+            saved_ray_complete = capture_complete and dropped == 0 and existing == expected
+            (saved_scan_dir / "patch_bundle.manifest").write_text(
+                "LINGTU_PATCH_BUNDLE_V1\n"
+                f"complete {int(saved_ray_complete)}\ndropped_count {dropped}\n"
+                f"first_sequence 0\nlast_sequence {len(poses) - 1}\npatch_count {len(poses)}\n",
+                encoding="ascii",
+            )
     last_odom = odoms[-1] if odoms else None
     return points, {
         "ok": bool(points),
@@ -1824,6 +1893,9 @@ def collect_mujoco_lidar_points(
         "trajectory_support_point_count": len(support_points),
         "trajectory_support_radius_m": support_radius,
         "trajectory_support_spacing_m": support_spacing,
+        "saved_ray_frame_count": saved_ray_frames,
+        "saved_ray_endpoint_count": saved_ray_points,
+        "saved_ray_complete": saved_ray_complete,
         "mapping_trajectory_mode": "ground_truth_stair_centerline" if trajectory else "velocity_command",
         "mapping_trajectory_pose_count": len(trajectory),
         "mapping_trajectory_completed": trajectory_complete if trajectory else True,
@@ -1902,7 +1974,7 @@ def _finite_triplet(values: list[float], name: str) -> list[float]:
 def planner_constraint_overrides(args: argparse.Namespace) -> dict[str, Any]:
     overrides: dict[str, Any] = {}
     if args.planner_no_ground_support:
-        overrides["require_ground_support"] = False
+        overrides["ground_support"] = False
     if args.planner_clearance_cells >= 0:
         overrides["obstacle_clearance_radius_cells"] = args.planner_clearance_cells
         if args.planner_clearance_cells == 0:
@@ -1930,10 +2002,10 @@ def planner_constraint_overrides(args: argparse.Namespace) -> dict[str, Any]:
         # A route point represents the robot body above a real support surface.
         # Nearby walls and floor edges must never substitute for support in the
         # same XY column.
-        overrides["strict_direct_ground_support"] = True
-        overrides["ground_support_xy_radius_cells"] = 0
+        overrides["direct_support_only"] = True
+        overrides["support_radius_cells"] = 0
         resolution = float(getattr(args, "resolution", 0.18))
-        overrides["ground_support_depth_cells"] = max(
+        overrides["support_depth_cells"] = max(
             1,
             int(math.ceil(STAIRS3D_BODY_SUPPORT_DEPTH_M / max(1e-6, resolution))),
         )
@@ -2009,6 +2081,11 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
     scan_report: dict[str, Any] = {"source": args.map_source, "scene_preset": scene_preset}
     if args.map_source == "mujoco_lidar":
         map_start, _ = effective_start_goal(args)
+        clip: dict[str, Any] = {"length": args.length, "width": args.width}
+        if scene_preset == "building":
+            clip.update(building_scene_clip())
+        elif scene_preset in MULTILEVEL_SCENE_PRESETS:
+            clip.update(stairs3d_scene_clip(scene_preset=scene_preset))
         mapping_trajectory = (
             multifloor_mapping_trajectory(scene_preset) if scene_preset == "multifloor_stack_3" else None
         )
@@ -2024,19 +2101,18 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             mid360_pattern=getattr(args, "mid360_pattern", None),
             mid360_samples_per_frame=getattr(args, "mid360_samples_per_frame", 15000),
             lidar_backend=getattr(args, "lidar_backend", "mujoco_lidar"),
+            lidar_body_name=getattr(args, "lidar_body_name", "lidar_link"),
+            lidar_site_name=getattr(args, "lidar_site_name", "lidar_site"),
             mujoco_lidar_backend=getattr(args, "mujoco_lidar_backend", "cpu"),
             allow_legacy_lidar_fallback=getattr(args, "allow_legacy_lidar_fallback", False),
             mujoco_memory=getattr(args, "mujoco_memory", "64M"),
             trajectory_support_radius_m=getattr(args, "trajectory_support_radius_m", 0.0),
             trajectory_support_spacing_m=getattr(args, "trajectory_support_spacing_m", 0.1),
             mapping_trajectory=mapping_trajectory,
+            saved_scan_dir=map_dir,
+            scene_clip=clip,
         )
         raw_point_count = len(points)
-        clip: dict[str, Any] = {"length": args.length, "width": args.width}
-        if scene_preset == "building":
-            clip.update(building_scene_clip())
-        elif scene_preset in MULTILEVEL_SCENE_PRESETS:
-            clip.update(stairs3d_scene_clip(scene_preset=scene_preset))
         points = filter_points_to_scene(points, **clip)
         scan_report["raw_point_count"] = raw_point_count
         scan_report["clipped_point_count"] = len(points)
@@ -2158,6 +2234,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mid360-pattern", type=Path, default=DEFAULT_MID360_PATTERN)
     parser.add_argument("--mid360-samples-per-frame", type=int, default=DEFAULT_MID360_SAMPLES_PER_FRAME)
     parser.add_argument("--lidar-backend", choices=("mujoco_lidar", "ray_caster_lidar"), default="mujoco_lidar")
+    parser.add_argument("--lidar-body-name", default="lidar_link")
+    parser.add_argument("--lidar-site-name", default="lidar_site")
     parser.add_argument("--mujoco-lidar-backend", choices=("cpu", "taichi", "warp", "jax"), default="cpu")
     parser.add_argument("--allow-legacy-lidar-fallback", action="store_true")
     parser.add_argument("--resolution", type=float, default=0.2)

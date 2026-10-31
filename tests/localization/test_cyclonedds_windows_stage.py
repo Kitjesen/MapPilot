@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -12,6 +13,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 STAGE_SCRIPT = ROOT / "scripts" / "build" / "cmake" / "stage_cyclonedds_windows_sdk.cmake"
 VERIFY_SCRIPT = ROOT / "scripts" / "build" / "verify_cyclonedds_windows_sdk.ps1"
+PATCH = ROOT / "scripts/build/patches/cyclonedds-cdr-geometric-growth.patch"
 LOCK = ROOT / "scripts" / "build" / "locks" / "cyclonedds-windows-x64.json"
 CMAKE = shutil.which("cmake")
 POWERSHELL = shutil.which("pwsh")
@@ -59,6 +61,7 @@ def _write_fake_tree(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
                 "detached": True,
                 "clean": True,
                 "checkout_eol_policy": "core.autocrlf=false;core.eol=lf;core.safecrlf=true",
+                "local_patches": [{"name": PATCH.name, "diff": PATCH.read_text(encoding="utf-8")}],
             }
         ),
         encoding="utf-8",
@@ -111,6 +114,7 @@ def _stage(install: Path, source: Path, receipts: Path, final: Path) -> subproce
         capture_output=True,
         check=False,
         text=True,
+        encoding="utf-8",
     )
 
 
@@ -135,6 +139,7 @@ def _verify(quarantine: Path, *, create_receipt: bool = True) -> subprocess.Comp
         capture_output=True,
         check=False,
         text=True,
+        encoding="utf-8",
     )
 
 
@@ -236,7 +241,7 @@ def test_standalone_stage_rejects_overlapping_input_and_output_roots(tmp_path: P
     assert not Path(f"{final}.incoming").exists()
 
 
-@pytest.mark.skipif(CMAKE is None or POWERSHELL is None, reason="cmake or pwsh unavailable")
+@pytest.mark.skipif(os.name != "nt" or CMAKE is None or POWERSHELL is None, reason="Windows cmake and pwsh required")
 def test_invalid_spdx_fails_in_quarantine_without_publishing_final_sdk(tmp_path: Path) -> None:
     install, source, receipts, final = _write_fake_tree(tmp_path)
     staged = _stage(install, source, receipts, final)
@@ -255,7 +260,7 @@ def test_invalid_spdx_fails_in_quarantine_without_publishing_final_sdk(tmp_path:
     assert not final.exists()
 
 
-@pytest.mark.skipif(CMAKE is None or POWERSHELL is None, reason="cmake or pwsh unavailable")
+@pytest.mark.skipif(os.name != "nt" or CMAKE is None or POWERSHELL is None, reason="Windows cmake and pwsh required")
 def test_realistic_spdx_iso_timestamp_remains_a_string_in_pwsh(tmp_path: Path) -> None:
     install, source, receipts, final = _write_fake_tree(tmp_path)
     staged = _stage(install, source, receipts, final)
@@ -274,7 +279,7 @@ def test_realistic_spdx_iso_timestamp_remains_a_string_in_pwsh(tmp_path: Path) -
     assert not final.exists()
 
 
-@pytest.mark.skipif(CMAKE is None or POWERSHELL is None, reason="cmake or pwsh unavailable")
+@pytest.mark.skipif(os.name != "nt" or CMAKE is None or POWERSHELL is None, reason="Windows cmake and pwsh required")
 def test_missing_dll_and_payload_tamper_are_rejected_before_publish(tmp_path: Path) -> None:
     install, source, receipts, final = _write_fake_tree(tmp_path)
     staged = _stage(install, source, receipts, final)
@@ -302,7 +307,7 @@ def test_missing_dll_and_payload_tamper_are_rejected_before_publish(tmp_path: Pa
     assert not final.exists()
 
 
-@pytest.mark.skipif(CMAKE is None or POWERSHELL is None, reason="cmake or pwsh unavailable")
+@pytest.mark.skipif(os.name != "nt" or CMAKE is None or POWERSHELL is None, reason="Windows cmake and pwsh required")
 def test_tampered_sdk_receipt_is_rejected(tmp_path: Path) -> None:
     install, source, receipts, final = _write_fake_tree(tmp_path)
     staged = _stage(install, source, receipts, final)
@@ -347,4 +352,19 @@ def test_tampered_sdk_receipt_is_rejected(tmp_path: Path) -> None:
 
     assert completed.returncode != 0
     assert "verification receipt" in completed.stdout + completed.stderr
+    assert not final.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows SDK verification")
+def test_unpatched_sdk_is_rejected_even_at_the_same_upstream_commit(tmp_path: Path) -> None:
+    install, source, receipts, final = _write_fake_tree(tmp_path)
+    receipt_path = receipts / "source.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    del receipt["local_patches"]
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    staged = _stage(install, source, receipts, final)
+    assert staged.returncode == 0, staged.stdout + staged.stderr
+    completed = _verify(Path(f"{final}.incoming"))
+    assert completed.returncode != 0
+    assert "lacks the current CDR growth patch" in completed.stdout + completed.stderr
     assert not final.exists()

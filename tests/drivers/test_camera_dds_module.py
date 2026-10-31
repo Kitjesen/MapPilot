@@ -5,7 +5,7 @@ from importlib import reload
 from pathlib import Path
 
 from drivers.real.camera.dds_module import DdsCameraModule
-from drivers.real.camera.shm import ShmFrameWriter, StreamKind
+from drivers.real.camera.shm import FrameSnapshot, ShmFrameWriter, StreamKind
 from runtime.contracts import CAMERA_BACKEND_DDS, CAMERA_BACKEND_ORBBEC, CAMERA_ROLE
 from runtime.registry import clear, get, register, restore, snapshot
 from tests.drivers.test_camera_shm import write_committed_frame
@@ -26,7 +26,7 @@ def _write_rgbd_set(tmp_path: Path) -> dict[str, Path]:
         "depth": tmp_path / "camera_depth.shm",
         "info": tmp_path / "camera_info.shm",
     }
-    write_committed_frame(paths["color"])
+    write_committed_frame(paths["color"], source_generation=42)
     write_committed_frame(
         paths["depth"],
         stream_kind=StreamKind.DEPTH,
@@ -36,6 +36,7 @@ def _write_rgbd_set(tmp_path: Path) -> dict[str, Path]:
         + (2000).to_bytes(2, "little")
         + (3000).to_bytes(2, "little")
         + (4000).to_bytes(2, "little"),
+        source_generation=42,
     )
     write_committed_frame(
         paths["info"],
@@ -43,6 +44,7 @@ def _write_rgbd_set(tmp_path: Path) -> dict[str, Path]:
         encoding="camera_info",
         stride=0,
         payload=b"",
+        source_generation=42,
         calibration=(500.0, 501.0, 1.0, 1.5, 0.001, 0.1, 0.2, 0.3, 0.4, 0.5),
     )
     return paths
@@ -71,13 +73,20 @@ def test_camera_module_reads_rgbd_frames_from_shm_without_python_dds(tmp_path):
     try:
         _wait_until(lambda: bool(colors and depths and infos))
         assert colors[-1].data.shape == (2, 2, 3)
-        assert colors[-1].format.value == "RGB"
+        assert colors[-1].format.value == "BGR"
+        assert colors[-1].data[0, 0].tolist() == [2, 1, 0]
+        assert colors[-1].to_bgr() is colors[-1]
+        assert colors[-1].to_rgb().data[0, 0].tolist() == [0, 1, 2]
+        assert colors[-1].source_generation == 42
+        assert colors[-1].source_sequence == 7
         assert depths[-1].data.shape == (2, 2)
         assert int(depths[-1].data[0, 0]) == 1000
         assert infos[-1].fx == 500.0
         assert infos[-1].fy == 501.0
         assert infos[-1].depth_scale == 0.001
         assert infos[-1].frame_id == "camera_link"
+        assert infos[-1].source_generation == 42
+        assert infos[-1].source_sequence == 7
 
         health = module.health()
         assert alive[0] is True
@@ -92,6 +101,32 @@ def test_camera_module_reads_rgbd_frames_from_shm_without_python_dds(tmp_path):
         assert health["shm_paths"] == {name: str(path) for name, path in paths.items()}
     finally:
         module.stop()
+
+
+def test_camera_module_decodes_padded_rgb8_as_bgr() -> None:
+    frame = FrameSnapshot(
+        schema_version=1,
+        sequence=7,
+        timestamp_ns=1_234_567_890,
+        stream_kind=StreamKind.COLOR,
+        width=2,
+        height=1,
+        stride=8,
+        encoding="rgb8",
+        frame_id="camera_link",
+        payload=bytes([10, 20, 30, 40, 50, 60, 99, 98]),
+        source_generation=42,
+    )
+
+    image = DdsCameraModule._decode_image(frame)
+
+    assert image.format.value == "BGR"
+    assert image.data.shape == (1, 2, 3)
+    assert image.data.tolist() == [[[30, 20, 10], [60, 50, 40]]]
+    assert image.ts == frame.timestamp_s
+    assert image.frame_id == "camera_link"
+    assert image.source_generation == 42
+    assert image.source_sequence == 7
 
 
 def test_camera_module_uses_session_root_file_rings_in_sim(monkeypatch, tmp_path):

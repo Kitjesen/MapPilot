@@ -541,7 +541,9 @@ def _write_mapd_runtime_evidence(
     product_session_id: str = OLD_PRODUCT_SESSION_ID,
 ) -> Path:
     identity = ProcessIdentity.current(os.getpid())
-    started_wall_ns = time.time_ns()
+    # The fixture represents a child already running before this publication.
+    # Leave room for filesystems whose mtime precision is coarser than time_ns.
+    started_wall_ns = time.time_ns() - 1_000_000_000
     SimChildLedger(state_dir).replace(
         SimChildSnapshot.create(
             product_session_id=product_session_id,
@@ -779,6 +781,148 @@ def test_mapctl_verify_receipt_cannot_claim_changed() -> None:
         )
 
 
+def test_mapctl_verify_retries_read_lock_with_fresh_request_and_remaining_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _mapctl_payload(
+        "verify", target=_native_identity("yard"), previous=_native_identity(None),
+    )
+    now = 0.0
+    calls: list[tuple[list[str], float]] = []
+    replies: dict[str, Any] = {}
+
+    def sleep(delay: float) -> None:
+        nonlocal now
+        now += delay
+
+    def run(command: list[str], **kwargs: Any) -> Any:
+        nonlocal now
+        calls.append((command.copy(), kwargs["timeout"]))
+        request_id = command[command.index("--request-id") + 1]
+        if request_id not in replies:
+            reply = copy.deepcopy(payload)
+            reply["request_id"] = request_id
+            if not replies:
+                reply.update(
+                    accepted=False,
+                    message="artifact_gate_failed:map write in progress: yard",
+                )
+            replies[request_id] = type(
+                "Completed", (),
+                {"returncode": 0 if reply["accepted"] else 2,
+                 "stdout": json.dumps(reply), "stderr": ""},
+            )()
+        now += 0.2
+        return replies[request_id]
+
+    monkeypatch.setattr(sim_switch_module.time, "monotonic", lambda: now)
+    monkeypatch.setattr(sim_switch_module.time, "sleep", sleep)
+    monkeypatch.setattr(sim_switch_module.subprocess, "run", run)
+
+    result = sim_switch_module._mapctl(
+        {"LINGTU_MAPCTL_BIN": "mapctl", "LINGTU_DDS_DOMAIN_ID": "17"},
+        "verify", "opaque-token", timeout_s=1.0,
+    )
+
+    assert result["accepted"] is True
+    assert len(calls) == 2
+    assert len(replies) == 2
+    first, second = (call[0] for call in calls)
+    assert first[first.index("--timeout-ms") + 1] == "1000"
+    assert 0 < int(second[second.index("--timeout-ms") + 1]) < 800
+    assert calls[1][1] < calls[0][1]
+
+
+def test_mapctl_verify_read_lock_retry_stops_at_original_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = 0.0
+    calls: list[list[str]] = []
+    payload = _mapctl_payload(
+        "verify", target=_native_identity("yard"), previous=_native_identity(None),
+    )
+    payload.update(accepted=False, message="artifact_gate_failed:map write in progress: yard")
+
+    def sleep(delay: float) -> None:
+        nonlocal now
+        now += delay
+
+    def run(command: list[str], **_kwargs: Any) -> Any:
+        nonlocal now
+        calls.append(command.copy())
+        remaining = int(command[command.index("--timeout-ms") + 1]) / 1000
+        now += min(0.6, remaining)
+        return type("Completed", (),
+                    {"returncode": 2, "stdout": json.dumps(payload), "stderr": ""})()
+
+    monkeypatch.setattr(sim_switch_module.time, "monotonic", lambda: now)
+    monkeypatch.setattr(sim_switch_module.time, "sleep", sleep)
+    monkeypatch.setattr(sim_switch_module.subprocess, "run", run)
+
+    with pytest.raises(RuntimeError, match="map write in progress"):
+        sim_switch_module._mapctl(
+            {"LINGTU_MAPCTL_BIN": "mapctl", "LINGTU_DDS_DOMAIN_ID": "17"},
+            "verify", "opaque-token", timeout_s=1.0,
+        )
+    assert len(calls) == 2
+    assert now == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    ("operation", "message"),
+    (("verify", "active_identity_mismatch"),
+     ("verify", "artifact_gate_failed:map.pcd is invalid"),
+     ("stage", "artifact_gate_failed:map write in progress: yard"),
+     ("restore", "artifact_gate_failed:map write in progress: yard")),
+)
+def test_mapctl_only_retries_verify_map_lock_busy(
+    operation: str, message: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _mapctl_payload(
+        operation, target=_native_identity("yard"), previous=_native_identity(None),
+    )
+    payload.update(accepted=False, message=message)
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: Any) -> Any:
+        calls.append(command)
+        return type("Completed", (),
+                    {"returncode": 2, "stdout": json.dumps(payload), "stderr": ""})()
+
+    monkeypatch.setattr(sim_switch_module.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match=message):
+        sim_switch_module._mapctl(
+            {"LINGTU_MAPCTL_BIN": "mapctl", "LINGTU_DDS_DOMAIN_ID": "17"},
+            operation, "opaque-token", timeout_s=1.0,
+        )
+    assert len(calls) == 1
+
+
+def test_mapctl_retry_still_rejects_foreign_map_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, previous = _native_identity("yard"), _native_identity(None)
+    prepared = _mapctl_payload("prepare", target=target, previous=previous)
+    busy = _mapctl_payload("verify", target=target, previous=previous)
+    busy.update(accepted=False, message="artifact_gate_failed:map write in progress: yard")
+    foreign = _mapctl_payload("verify", target=_native_identity("other"), previous=previous)
+    replies = iter((busy, foreign))
+
+    def run(_command: list[str], **_kwargs: Any) -> Any:
+        reply = next(replies)
+        return type("Completed", (),
+                    {"returncode": 0 if reply["accepted"] else 2,
+                     "stdout": json.dumps(reply), "stderr": ""})()
+
+    monkeypatch.setattr(sim_switch_module.subprocess, "run", run)
+    result = sim_switch_module._mapctl(
+        {"LINGTU_MAPCTL_BIN": "mapctl", "LINGTU_DDS_DOMAIN_ID": "17"},
+        "verify", "opaque-token", timeout_s=1.0,
+    )
+    with pytest.raises(RuntimeError, match="target identity drifted"):
+        sim_switch_module._require_mapctl_transition(result, prepared=prepared, operation="verify")
+
+
 @pytest.mark.parametrize("operation", ("stage", "restore"))
 def test_mapctl_mutations_use_mapd_dds_domain(
     operation: str,
@@ -985,7 +1129,7 @@ def test_saved_map_switch_rejects_untrusted_mapd_readiness_before_prepare(
     if failure == "absent":
         readiness.unlink()
     elif failure == "stale":
-        stale_ns = previous_path.stat().st_mtime_ns - 1
+        stale_ns = time.time_ns() - 5_000_000_000
         os.utime(readiness, ns=(stale_ns, stale_ns))
     elif failure == "foreign":
         payload = json.loads(readiness.read_text(encoding="utf-8"))

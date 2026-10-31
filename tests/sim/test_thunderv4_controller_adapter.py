@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import sim.runtime.control.thunderv4 as thunderv4_module
+import sim.runtime.control.thunder.legacy_controller as thunderv4_module
 from sim.runtime.control import create_thunderv4_components
 from sim.runtime.control.contracts import (
     ControllerCommand,
@@ -20,7 +20,7 @@ from sim.runtime.control.plan import (
     ControllerSpec,
     PolicySpec,
 )
-from sim.runtime.control.thunderv4 import (
+from sim.runtime.control.thunder.legacy_controller import (
     ThunderV4ControllerAdapter,
     ThunderV4OnnxPolicy,
     ThunderV4TorchScriptPolicy,
@@ -310,11 +310,12 @@ def test_adapter_rejects_non_finite_policy_yaw_observation_inputs(yaw: float) ->
 
 
 def test_thunderv4_controller_package_does_not_rewrite_base_twist() -> None:
-    manifest = Path("sim/packages/controllers/doso/thunder_v4/locomotion/controller.package.yaml").read_text(
-        encoding="utf-8"
-    )
+    from sim.catalog import CatalogResolver
 
-    assert "command_calibration:" not in manifest
+    resolver = CatalogResolver.from_repository(Path(__file__).resolve().parents[2])
+    robot = resolver.find_package("thunderv4@1.0.3", kind="robot")
+    controller = resolver.find_package(robot.data["defaults"]["controller"], kind="controller")
+    assert "command_calibration" not in controller.data
 
 
 def test_policy_infers_float32_batch_and_holds_standing_pose_at_startup(
@@ -443,8 +444,8 @@ def test_adapter_converts_dart_action_to_plan_ordered_named_pd_torques() -> None
 
 def test_flat53_contract_observation_raw_action_memory_and_pd_gains() -> None:
     pytest.importorskip("onnxruntime")
-    from sim.runtime.control import thunderv4_flat as flat
     from sim.runtime.control.factory import create_production_components
+    from sim.runtime.control.thunder import flat
 
     spec = replace(
         _controller_spec(),
@@ -482,11 +483,12 @@ def test_flat53_contract_observation_raw_action_memory_and_pd_gains() -> None:
 
 def test_flat53_compat_runner_matches_formal_policy() -> None:
     pytest.importorskip("onnxruntime")
-    from sim.compat.engine.mujoco.robot_controller import DART_TO_MJ, load_policy_runner
-    from sim.runtime.control import thunderv4_flat as flat
+    from sim.runtime.control.policy_loader import load_policy
+    from sim.runtime.control.thunder import flat
+    from sim.runtime.control.thunder.joints import DART_TO_MJ
 
     path = Path(__file__).resolve().parents[2] / "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998.onnx"
-    runner = load_policy_runner(str(path))
+    runner = load_policy(str(path))
     position = flat.STANDING_POSE + np.arange(16) * 0.01
     velocity = np.arange(16, dtype=np.float64)
     obs = runner.build_obs(np.array([4, 8, 12]), np.array([0, 0, -1]), np.array([0, 0.2, 0]), position[DART_TO_MJ], velocity[DART_TO_MJ])

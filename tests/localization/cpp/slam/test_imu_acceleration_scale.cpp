@@ -1,472 +1,186 @@
-#include "imu_processor.h"
+#include "ltlio/frontend.hpp"
 
+#include <Eigen/Cholesky>
 #include <cmath>
-#include <cstdlib>
 #include <iostream>
-#include <memory>
+#include <stdexcept>
 
 namespace {
+namespace lio = lingtu::ltlio;
+constexpr double gravity = 9.80665;
+constexpr double dt = 0.005;
 
-void require(bool condition, const char* message) {
-  if (!condition) {
-    std::cerr << message << '\n';
-    std::exit(1);
+void require(bool condition, const char* reason) {
+  if (!condition) throw std::runtime_error(reason);
+}
+
+lio::Config settings() {
+  lio::Config value;
+  value.elevator_enabled = false;
+  value.imu_init_samples = 200;
+  value.point_filter_num = 1;
+  value.blind_m = 0.1;
+  value.scan_resolution = 0.1;
+  value.imu_static_acc_thresh = 0.22;
+  value.imu_static_gyro_thresh = 0.022;
+  value.zupt_min_static_frames = 6;
+  value.zupt_sigma_v = 0.015;
+  return value;
+}
+
+lio::ImuSample imu(double stamp, const Eigen::Vector3d& acc,
+                   const Eigen::Vector3d& gyro = Eigen::Vector3d::Zero()) {
+  lio::ImuSample value;
+  value.stamp_s = stamp;
+  value.acceleration = acc;
+  value.angular_velocity_rps = gyro;
+  return value;
+}
+
+lio::TimedCloud scan(double stamp) {
+  lio::TimedCloud cloud;
+  cloud.stamp_s = stamp;
+  cloud.end_stamp_s = stamp + 0.02;
+  for (int surface = 0; surface < 3; ++surface)
+    for (int a = -8; a <= 8; ++a)
+      for (int b = -8; b <= 8; ++b) {
+        lio::TimedPoint p;
+        if (surface == 0) { p.x = 3; p.y = a * 0.1F; p.z = b * 0.1F; }
+        else if (surface == 1) { p.x = a * 0.1F; p.y = 4; p.z = b * 0.1F; }
+        else { p.x = a * 0.1F; p.y = b * 0.1F; p.z = -2; }
+        cloud.points.push_back(p);
+      }
+  for (std::size_t i = 0; i < cloud.points.size(); ++i) {
+    cloud.points[i].offset_ns = i * 20'000'000ULL / (cloud.points.size() - 1);
+    cloud.points[i].line = static_cast<std::uint8_t>(i % 4);
+  }
+  return cloud;
+}
+
+void checkStartupImpactAndStationaryRetry() {
+  lio::Frontend frontend(settings());
+  for (int i = 0; i < 200; ++i)
+    frontend.feedImu(imu(i * dt, {0.0, 0.0, i < 8 ? 60.0 : gravity}));
+  require(!frontend.initialized() && !frontend.initialState(),
+          "MuJoCo startup contact calibrated the IMU before settling");
+  for (int i = 200; i < 400; ++i)
+    frontend.feedImu(imu(i * dt, {0.0, 0.0, gravity}));
+  const auto initial = frontend.initialState();
+  require(frontend.initialized() && initial,
+          "a stable window did not recover from the rejected impact window");
+  require(std::abs(initial->gravity.norm() - gravity) < 1e-10 &&
+              initial->velocity.norm() < 1e-12,
+          "startup impact contaminated the replacement stable initialization");
+
+  int next_imu = 400;
+  lio::Result last;
+  for (int frame = 0; frame < 100; ++frame) {
+    const auto cloud = scan(2.10 + frame * 0.025);
+    while (next_imu * dt <= cloud.end_stamp_s + dt)
+      frontend.feedImu(imu(next_imu++ * dt, {0.0, 0.0, gravity}));
+    frontend.feedCloud(cloud);
+    const auto result = frontend.processNext();
+    require(result.has_value(), "stationary native frontend stalled");
+    last = *result;
+    require(last.state.covariance.allFinite() &&
+                last.state.covariance.llt().info() == Eigen::Success,
+            "stationary constraints destroyed positive-definite covariance");
+  }
+  require(last.accepted && last.world_position.norm() < 1e-5 &&
+              last.world_velocity.norm() < 1e-5,
+          "stationary real LiDAR/IMU accumulated position or velocity drift");
+}
+
+void checkVaryingWindowIsRejected() {
+  for (const bool gyro_motion : {false, true}) {
+    lio::Frontend frontend(settings());
+    for (int i = 0; i < 200; ++i) {
+      const double sign = i % 2 == 0 ? 1.0 : -1.0;
+      frontend.feedImu(imu(i * dt,
+          {gyro_motion ? 0.0 : sign * 0.3, 0.0, gravity},
+          {gyro_motion ? sign * 0.03 : 0.0, 0.0, 0.0}));
+    }
+    require(!frontend.initialized(),
+            "moving IMU window passed its configured stationary RMS threshold");
+    for (int i = 200; i < 400; ++i)
+      frontend.feedImu(imu(i * dt, {0.0, 0.0, gravity}));
+    require(frontend.initialized(), "stationary retry retained the rejected motion samples");
   }
 }
 
-}  // namespace
+void checkExplicitSensorUnits() {
+  auto si_config = settings();
+  auto g_config = si_config;
+  g_config.acc_scale = gravity;
+  lio::Frontend si(si_config), raw_g(g_config);
+  const Eigen::Vector3d measured(0.02, -0.01, 10.005);
+  const Eigen::Vector3d bias(0.002, -0.001, 0.003);
+  // Check units before voxel/nearest-neighbor choices: a 0.1 m regular room
+  // grid lies on voxel boundaries, so sub-ulp IMU rounding can change selected
+  // centroids without indicating an acceleration-unit error.
+  for (int index = 0; index <= 200; ++index) {
+    si.feedImu(imu(index * dt, measured, bias));
+    raw_g.feedImu(imu(index * dt, measured / gravity, bias));
+  }
+  const auto si_initial = si.initialState();
+  const auto g_initial = raw_g.initialState();
+  require(si_initial && g_initial, "unit fixtures did not initialize");
+  for (const auto& initial : {*si_initial, *g_initial}) {
+    require(std::abs(initial.gravity.norm() - measured.norm()) < 1e-10 &&
+                (initial.orientation * measured + initial.gravity).norm() < 1e-10 &&
+                (initial.gyro_bias - bias).norm() < 1e-12,
+            "input units changed initialized gravity, tilt or gyro bias");
+  }
+  constexpr double acceleration = 0.4;
+  const Eigen::Vector3d body_acceleration =
+      si_initial->orientation.conjugate() * Eigen::Vector3d(acceleration, 0.0, 0.0);
+  int next_imu = 201;
+  for (int frame = 0; frame < 4; ++frame) {
+    const double end = 1.25 + frame * 0.25;
+    const auto cloud = scan(end - 0.02);
+    while (next_imu * dt <= cloud.end_stamp_s + dt) {
+      const double stamp = next_imu++ * dt;
+      si.feedImu(imu(stamp, measured + body_acceleration, bias));
+      raw_g.feedImu(imu(stamp, (measured + body_acceleration) / gravity, bias));
+    }
+    si.feedCloud(cloud);
+    raw_g.feedCloud(cloud);
+    const auto si_result = si.processNext();
+    const auto g_result = raw_g.processNext();
+    require(si_result && g_result && !si_result->attempted && !g_result->attempted,
+            "unit fixture unexpectedly applied LiDAR or stationary observations");
+    const double duration = cloud.end_stamp_s - 1.0;
+    // The first 5 ms interval averages the initial zero-acceleration sample
+    // with the new acceleration. All remaining intervals have constant a.
+    const Eigen::Vector3d expected_velocity(acceleration * (duration - 0.5 * dt), 0.0, 0.0);
+    const Eigen::Vector3d expected_position(
+        acceleration * (0.5 * duration * duration - 0.5 * duration * dt + 0.25 * dt * dt),
+        0.0, 0.0);
+    for (const auto* result : {&*si_result, &*g_result}) {
+      require((result->world_position - expected_position).norm() < 1e-10 &&
+                  (result->world_velocity - expected_velocity).norm() < 1e-10,
+              "acc_scale was omitted or applied more than once during propagation");
+    }
+    require((si_result->world_position - g_result->world_position).norm() < 1e-10 &&
+                (si_result->world_velocity - g_result->world_velocity).norm() < 1e-10 &&
+                si_result->state.orientation.angularDistance(g_result->state.orientation) < 1e-10,
+            "SI and scaled-g propagation disagree");
+    require(si_result->state.covariance.llt().info() == Eigen::Success &&
+                g_result->state.covariance.llt().info() == Eigen::Success,
+            "scaled stationary IMU produced an invalid covariance");
+  }
+}
+} // namespace
 
 int main() {
-  IESKF bounded_covariance;
-  bounded_covariance.P() = M21D::Identity() * 1e-5;
-  bounded_covariance.P()(3, 3) = 1.0;
-  bounded_covariance.P()(12, 12) = 400.0;
-  bounded_covariance.P()(3, 12) = bounded_covariance.P()(12, 3) = 18.0;
-  require(bounded_covariance.P().llt().info() == Eigen::Success,
-          "prediction covariance fixture must start positive definite");
-  bounded_covariance.clampCovariance();
-  require(bounded_covariance.P().llt().info() == Eigen::Success,
-          "prediction variance upper bounds must preserve positive-definite covariance");
-  require(std::abs(bounded_covariance.P()(12, 12) - IESKF::P_MAX[12]) < 1e-10,
-          "prediction variance upper bound changed");
-  require(std::abs(bounded_covariance.P()(3, 12) - 9.0) < 1e-10,
-          "variance cap must preserve position-velocity correlation");
-
-  Config settling_config;
-  settling_config.imu_init_num = 200;
-  settling_config.imu_static_acc_thresh = 0.22;
-  settling_config.imu_static_gyro_thresh = 0.022;
-  settling_config.zupt_min_static_frames = 6;
-  settling_config.zupt_sigma_v = 0.015;
-  settling_config.zupt_sigma_pos = 0.08;
-  settling_config.vertical_velocity_constraint_enabled = true;
-  auto settling_filter = std::make_shared<IESKF>();
-  IMUProcessor settling_processor(settling_config, settling_filter);
-  SyncPackage settling_package;
-  settling_package.cloud_end_time = 1.2;
-  for (int i = 0; i < 240; ++i) {
-    IMUData sample;
-    // A MuJoCo startup contact produced 59--76 m/s^2 before settling at 1 g.
-    sample.acc = V3D(0.0, 0.0, i < 8 ? 60.0 : State::gravity);
-    sample.gyro = V3D::Zero();
-    sample.time = static_cast<double>(i) * 0.005;
-    settling_package.imus.push_back(sample);
+  try {
+    checkStartupImpactAndStationaryRetry();
+    checkVaryingWindowIsRejected();
+    checkExplicitSensorUnits();
+    std::cout << "LTLIO IMU units, startup-impact rejection, stationary retry and covariance passed\n";
+    return 0;
+  } catch (const std::exception& error) {
+    std::cerr << error.what() << '\n';
+    return 1;
   }
-  require(!settling_processor.initialize(settling_package),
-          "startup impact must not calibrate the accelerometer scale");
-  require(std::abs(settling_processor.accelerationScale() - 1.0) < 1e-12,
-          "rejected startup window changed the accelerometer scale");
-  settling_package.imus.clear();
-  settling_package.cloud_end_time = 2.2;
-  for (int i = 0; i < settling_config.imu_init_num; ++i) {
-    IMUData sample;
-    sample.acc = V3D(0.0, 0.0, State::gravity);
-    sample.gyro = V3D::Zero();
-    sample.time = 1.2 + static_cast<double>(i) * 0.005;
-    settling_package.imus.push_back(sample);
-  }
-  require(settling_processor.initialize(settling_package),
-          "a settled window did not recover from startup impact");
-  require(std::abs(settling_processor.accelerationScale() - 1.0) < 1e-12,
-          "startup impact contaminated the settled calibration window");
-
-  for (int frame = 0; frame < 20; ++frame) {
-    SyncPackage next;
-    next.cloud_start_time = 2.2 + frame * 0.1;
-    next.cloud_end_time = next.cloud_start_time + 0.1;
-    next.cloud.reset(new CloudType);
-    PointType point;
-    point.curvature = 0.0F;
-    next.cloud->push_back(point);
-    for (int i = 0; i < 20; ++i) {
-      IMUData sample;
-      sample.acc = V3D(0.0, 0.0, State::gravity);
-      sample.gyro = V3D::Zero();
-      sample.time = next.cloud_start_time + static_cast<double>(i) * 0.005;
-      next.imus.push_back(sample);
-    }
-    settling_processor.undistort(next);
-    const double min_eigenvalue =
-        Eigen::SelfAdjointEigenSolver<M21D>(settling_filter->P()).eigenvalues().minCoeff();
-    if (min_eigenvalue <= 0.0) {
-      std::cerr << "sim stationary covariance failed at frame " << frame
-                << " min_eigenvalue=" << min_eigenvalue << '\n';
-    }
-    require(min_eigenvalue > 0.0 && settling_filter->P().llt().info() == Eigen::Success,
-            "simulation stationary constraints must preserve positive-definite covariance");
-  }
-
-  for (const bool gyro_motion : {false, true}) {
-    auto varying_filter = std::make_shared<IESKF>();
-    IMUProcessor varying_processor(settling_config, varying_filter);
-    SyncPackage varying_package;
-    varying_package.cloud_end_time = 1.0;
-    for (int i = 0; i < settling_config.imu_init_num; ++i) {
-      const double sign = i % 2 == 0 ? 1.0 : -1.0;
-      IMUData sample;
-      sample.acc = V3D(gyro_motion ? 0.0 : sign * 0.3, 0.0, State::gravity);
-      sample.gyro = V3D(gyro_motion ? sign * 0.03 : 0.0, 0.0, 0.0);
-      sample.time = static_cast<double>(i) * 0.005;
-      varying_package.imus.push_back(sample);
-    }
-    require(!varying_processor.initialize(varying_package),
-            gyro_motion ? "gyro RMS above the stationary threshold was accepted"
-                        : "acceleration RMS above the stationary threshold was accepted");
-  }
-
-  Config config;
-  config.imu_init_num = 200;
-  auto filter = std::make_shared<IESKF>();
-  IMUProcessor processor(config, filter);
-  SyncPackage package;
-  package.cloud_end_time = 1.0;
-  for (int i = 0; i < config.imu_init_num; ++i) {
-    IMUData sample;
-    sample.acc = V3D(0.02, -0.01, 10.005);
-    sample.gyro = V3D::Zero();
-    sample.time = static_cast<double>(i) * 0.005;
-    package.imus.push_back(sample);
-  }
-
-  require(processor.initialize(package), "stationary IMU initialization failed");
-  const double normalized_gravity =
-      package.imus.front().acc.norm() * processor.accelerationScale();
-  require(
-      std::abs(normalized_gravity - State::gravity) < 1e-9,
-      "accelerometer magnitude was not normalized to gravity");
-  require(
-      processor.accelerationScale() > 0.97 && processor.accelerationScale() < 1.0,
-      "unexpected accelerometer initialization scale");
-
-  double package_start_s = 1.0;
-  for (int frame = 0; frame < 100; ++frame) {
-    SyncPackage next;
-    next.cloud_start_time = package_start_s;
-    next.cloud_end_time = package_start_s + 0.1;
-    next.cloud.reset(new CloudType);
-    PointType first;
-    first.curvature = 0.0F;
-    PointType last;
-    last.curvature = 100.0F;
-    next.cloud->push_back(first);
-    next.cloud->push_back(last);
-    for (int i = 0; i <= 20; ++i) {
-      IMUData sample;
-      sample.acc = V3D(0.02, -0.01, 10.005);
-      sample.gyro = V3D::Zero();
-      sample.time = package_start_s + static_cast<double>(i) * 0.005;
-      next.imus.push_back(sample);
-    }
-    processor.undistort(next);
-    if (filter->P().llt().info() != Eigen::Success) {
-      std::cerr << "stationary covariance became indefinite at frame " << frame
-                << " position_variance=" << filter->P().diagonal().segment<3>(3).transpose()
-                << '\n';
-    }
-    require(filter->P().llt().info() == Eigen::Success,
-            "stationary IMU constraints must preserve positive-definite covariance");
-    package_start_s += 0.1;
-  }
-  require(
-      filter->x().v.norm() < 1e-6,
-      "normalized stationary IMU accumulated velocity");
-  require(
-      filter->x().t_wi.norm() < 1e-6,
-      "normalized stationary IMU accumulated position drift");
-
-  Config biased_config;
-  biased_config.imu_init_num = 400;
-  biased_config.imu_static_acc_thresh = 0.25;
-  biased_config.imu_static_gyro_thresh = 0.02;
-  biased_config.zupt_min_static_frames = 3;
-  biased_config.zupt_sigma_v = 0.01;
-  biased_config.zupt_sigma_pos = 0.08;
-  auto biased_filter = std::make_shared<IESKF>();
-  IMUProcessor biased_processor(biased_config, biased_filter);
-  SyncPackage biased_init;
-  biased_init.cloud_end_time = 2.0;
-  const V3D live_gyro_bias(-0.03521, -0.00226, -0.00204);
-  for (int i = 0; i < biased_config.imu_init_num; ++i) {
-    IMUData sample;
-    sample.acc = V3D(6.79172, -0.14845, -7.21200);
-    sample.gyro = live_gyro_bias;
-    sample.time = static_cast<double>(i) * 0.005;
-    biased_init.imus.push_back(sample);
-  }
-  require(
-      biased_processor.initialize(biased_init),
-      "biased stationary IMU initialization failed");
-  biased_filter->x().v = V3D(0.2, -0.1, 0.05);
-
-  double biased_package_start_s = 2.0;
-  for (int frame = 0; frame < 8; ++frame) {
-    SyncPackage next;
-    next.cloud_start_time = biased_package_start_s;
-    next.cloud_end_time = biased_package_start_s + 0.1;
-    next.cloud.reset(new CloudType);
-    PointType first;
-    first.curvature = 0.0F;
-    PointType last;
-    last.curvature = 100.0F;
-    next.cloud->push_back(first);
-    next.cloud->push_back(last);
-    for (int i = 0; i <= 20; ++i) {
-      IMUData sample;
-      sample.acc = V3D(6.79172, -0.14845, -7.21200);
-      sample.gyro = live_gyro_bias;
-      sample.time = biased_package_start_s + static_cast<double>(i) * 0.005;
-      next.imus.push_back(sample);
-    }
-    biased_processor.undistort(next);
-    biased_package_start_s += 0.1;
-  }
-  require(
-      biased_filter->x().v.norm() < 1e-3,
-      "gyro-bias-compensated stationary detection did not inject ZUPT");
-
-  Config thermal_config = biased_config;
-  auto thermal_filter = std::make_shared<IESKF>();
-  IMUProcessor thermal_processor(thermal_config, thermal_filter);
-  SyncPackage thermal_init;
-  thermal_init.cloud_end_time = 2.0;
-  for (int i = 0; i < thermal_config.imu_init_num; ++i) {
-    IMUData sample;
-    sample.acc = V3D(0.0, 0.0, State::gravity);
-    sample.gyro = live_gyro_bias;
-    sample.time = static_cast<double>(i) * 0.005;
-    thermal_init.imus.push_back(sample);
-  }
-  require(
-      thermal_processor.initialize(thermal_init),
-      "thermal-drift IMU initialization failed");
-  const M3D rotation_before_thermal_drift = thermal_filter->x().r_wi;
-  // The field failure was about 0.72 deg/min, i.e. roughly 2e-4 rad/s.
-  // Keep the replay slightly above that while staying below deliberate motion.
-  const V3D thermal_bias_step(0.0, 0.0, 0.0003);
-  const V3D warmed_gyro_bias = live_gyro_bias + thermal_bias_step;
-
-  double thermal_package_start_s = 2.0;
-  constexpr int thermal_frame_count = 600;
-  constexpr double thermal_frame_duration_s = 0.1;
-  for (int frame = 0; frame < thermal_frame_count; ++frame) {
-    SyncPackage next;
-    next.cloud_start_time = thermal_package_start_s;
-    next.cloud_end_time = thermal_package_start_s + thermal_frame_duration_s;
-    next.cloud.reset(new CloudType);
-    PointType first;
-    first.curvature = 0.0F;
-    PointType last;
-    last.curvature = 100.0F;
-    next.cloud->push_back(first);
-    next.cloud->push_back(last);
-    for (int i = 0; i <= 20; ++i) {
-      IMUData sample;
-      sample.acc = V3D(0.0, 0.0, State::gravity);
-      sample.gyro = warmed_gyro_bias;
-      sample.time =
-          thermal_package_start_s + static_cast<double>(i) * 0.005;
-      next.imus.push_back(sample);
-    }
-    thermal_processor.undistort(next);
-    thermal_package_start_s += thermal_frame_duration_s;
-  }
-
-  const double thermal_duration_s =
-      thermal_frame_count * thermal_frame_duration_s;
-  const double uncompensated_yaw_rad = thermal_bias_step.z() * thermal_duration_s;
-  const double gyro_bias_error =
-      (thermal_filter->x().bg - warmed_gyro_bias).norm();
-  const M3D relative_rotation =
-      rotation_before_thermal_drift.transpose() * thermal_filter->x().r_wi;
-  const double yaw_drift_rad =
-      std::abs(std::atan2(relative_rotation(1, 0), relative_rotation(0, 0)));
-  const double max_bias_error = thermal_bias_step.norm() * 0.2;
-  const double max_yaw_drift_rad = uncompensated_yaw_rad * 0.25;
-  if (gyro_bias_error >= max_bias_error || yaw_drift_rad >= max_yaw_drift_rad) {
-    std::cerr << "stationary thermal gyro-bias adaptation: bias_error="
-              << gyro_bias_error << " max_bias_error=" << max_bias_error
-              << " yaw_drift_rad=" << yaw_drift_rad
-              << " max_yaw_drift_rad=" << max_yaw_drift_rad
-              << " uncompensated_yaw_rad=" << uncompensated_yaw_rad << '\n';
-  }
-  require(
-      gyro_bias_error < max_bias_error && yaw_drift_rad < max_yaw_drift_rad,
-      "stationary thermal drift did not adapt gyro bias and suppress yaw integration");
-
-  Config gap_config = biased_config;
-  auto gap_filter = std::make_shared<IESKF>();
-  IMUProcessor gap_processor(gap_config, gap_filter);
-  SyncPackage gap_init;
-  gap_init.cloud_end_time = 2.0;
-  for (int i = 0; i < gap_config.imu_init_num; ++i) {
-    IMUData sample;
-    sample.acc = V3D(0.0, 0.0, State::gravity);
-    sample.gyro = live_gyro_bias;
-    sample.time = static_cast<double>(i) * 0.005;
-    gap_init.imus.push_back(sample);
-  }
-  require(gap_processor.initialize(gap_init), "gap-reset IMU initialization failed");
-  const V3D gap_initial_bias = gap_filter->x().bg;
-  double gap_package_start_s = 2.0;
-  auto feed_gap_frame = [&](double start_s) {
-    SyncPackage next;
-    next.cloud_start_time = start_s;
-    next.cloud_end_time = start_s + 0.1;
-    next.cloud.reset(new CloudType);
-    PointType first;
-    first.curvature = 0.0F;
-    PointType last;
-    last.curvature = 100.0F;
-    next.cloud->push_back(first);
-    next.cloud->push_back(last);
-    for (int i = 0; i <= 20; ++i) {
-      IMUData sample;
-      sample.acc = V3D(0.0, 0.0, State::gravity);
-      sample.gyro = live_gyro_bias + thermal_bias_step;
-      sample.time = start_s + static_cast<double>(i) * 0.005;
-      next.imus.push_back(sample);
-    }
-    gap_processor.undistort(next);
-  };
-  for (int frame = 0; frame < 49; ++frame) {
-    feed_gap_frame(gap_package_start_s);
-    gap_package_start_s += 0.1;
-  }
-  require(
-      (gap_filter->x().bg - gap_initial_bias).norm() < 1e-12,
-      "gyro bias adapted before the 50-frame stationary gate");
-  gap_package_start_s += 5.0;
-  feed_gap_frame(gap_package_start_s);
-  require(
-      (gap_filter->x().bg - gap_initial_bias).norm() < 1e-12,
-      "gyro bias stationary gate survived a long input gap");
-
-  Config rotating_config = biased_config;
-  auto rotating_filter = std::make_shared<IESKF>();
-  IMUProcessor rotating_processor(rotating_config, rotating_filter);
-  SyncPackage rotating_init;
-  rotating_init.cloud_end_time = 2.0;
-  for (int i = 0; i < rotating_config.imu_init_num; ++i) {
-    IMUData sample;
-    sample.acc = V3D(0.0, 0.0, State::gravity);
-    sample.gyro = live_gyro_bias;
-    sample.time = static_cast<double>(i) * 0.005;
-    rotating_init.imus.push_back(sample);
-  }
-  require(
-      rotating_processor.initialize(rotating_init),
-      "real-yaw-rate IMU initialization failed");
-  const V3D gyro_bias_before_rotation = rotating_filter->x().bg;
-  const M3D rotation_before_real_yaw = rotating_filter->x().r_wi;
-  constexpr double real_yaw_rate_rad_s = 0.004;
-  const V3D rotating_gyro =
-      live_gyro_bias + V3D(0.0, 0.0, real_yaw_rate_rad_s);
-
-  double rotating_package_start_s = 2.0;
-  constexpr int rotating_frame_count = 600;
-  constexpr double rotating_frame_duration_s = 0.1;
-  for (int frame = 0; frame < rotating_frame_count; ++frame) {
-    SyncPackage next;
-    next.cloud_start_time = rotating_package_start_s;
-    next.cloud_end_time =
-        rotating_package_start_s + rotating_frame_duration_s;
-    next.cloud.reset(new CloudType);
-    PointType first;
-    first.curvature = 0.0F;
-    PointType last;
-    last.curvature = 100.0F;
-    next.cloud->push_back(first);
-    next.cloud->push_back(last);
-    for (int i = 0; i <= 20; ++i) {
-      IMUData sample;
-      sample.acc = V3D(0.0, 0.0, State::gravity);
-      sample.gyro = rotating_gyro;
-      sample.time =
-          rotating_package_start_s + static_cast<double>(i) * 0.005;
-      next.imus.push_back(sample);
-    }
-    rotating_processor.undistort(next);
-    rotating_package_start_s += rotating_frame_duration_s;
-  }
-
-  const double rotating_duration_s =
-      rotating_frame_count * rotating_frame_duration_s;
-  const double theoretical_yaw_rad =
-      real_yaw_rate_rad_s * rotating_duration_s;
-  const double learned_rotation_bias_rad_s =
-      (rotating_filter->x().bg - gyro_bias_before_rotation).norm();
-  const M3D relative_real_yaw =
-      rotation_before_real_yaw.transpose() * rotating_filter->x().r_wi;
-  const double integrated_real_yaw_rad =
-      std::abs(std::atan2(relative_real_yaw(1, 0), relative_real_yaw(0, 0)));
-  std::cout << "real yaw rotation guard: learned_bias_rad_s="
-            << learned_rotation_bias_rad_s
-            << " integrated_yaw_rad=" << integrated_real_yaw_rad
-            << " theoretical_yaw_rad=" << theoretical_yaw_rad << '\n';
-  require(
-      learned_rotation_bias_rad_s < 1e-4,
-      "ZARU learned a constant real yaw rate into gyro bias");
-  require(
-      integrated_real_yaw_rad > theoretical_yaw_rad * 0.8,
-      "ZARU suppressed too much constant real yaw rotation");
-
-  auto correlated_filter = std::make_shared<IESKF>();
-  correlated_filter->x().t_wi = V3D(1.0, -2.0, 0.5);
-  correlated_filter->x().v = V3D(0.3, -0.2, 0.1);
-  correlated_filter->P().setIdentity();
-  correlated_filter->P().block<3, 3>(3, 12) = M3D::Identity() * 0.8;
-  correlated_filter->P().block<3, 3>(12, 3) = M3D::Identity() * 0.8;
-  const V3D position_before_zupt = correlated_filter->x().t_wi;
-  correlated_filter->injectZUPT(0.01, 0.08);
-  require(
-      (correlated_filter->x().t_wi - position_before_zupt).norm() < 1e-12,
-      "zero-velocity update changed absolute position");
-  require(
-      correlated_filter->x().v.norm() < 1e-3,
-      "zero-velocity update did not constrain velocity");
-
-  auto configure_bounded_update = [](IESKF& candidate, bool reject_nonconverged) {
-    candidate.P().setIdentity();
-    candidate.setMaxIter(1);
-    candidate.setDegeneracyGuard(
-        2, 50000.0, 0.5, 0.35, 3.0, 1.0,
-        reject_nonconverged, reject_nonconverged);
-    candidate.setLossFunction([](State&, SharedState& shared) {
-      shared.H.setIdentity();
-      shared.b.setZero();
-      shared.valid = true;
-    });
-    candidate.setStopFunction([](const V21D&) { return false; });
-  };
-
-  Config field_defaults;
-  require(
-      !field_defaults.reject_nonconverged_update,
-      "field default rejects every bounded LiDAR update that reaches the iteration limit");
-  require(
-      field_defaults.reject_degenerate_nonconverged_update,
-      "field default must still reject non-converged updates in degenerate geometry");
-
-  IESKF strict_update;
-  configure_bounded_update(strict_update, true);
-  require(
-      !strict_update.update(),
-      "non-converged rejected update was reported as map-integrable");
-
-  IESKF bounded_update;
-  configure_bounded_update(bounded_update, false);
-  require(
-      bounded_update.update(),
-      "bounded non-converged update was not reported as accepted");
-
-  IESKF invalid_update;
-  invalid_update.P().setIdentity();
-  invalid_update.setLossFunction([](State&, SharedState& shared) {
-    shared.valid = false;
-  });
-  invalid_update.setStopFunction([](const V21D&) { return true; });
-  require(
-      !invalid_update.update(),
-      "update without a valid LiDAR residual was reported as map-integrable");
-  return 0;
 }

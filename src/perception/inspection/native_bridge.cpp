@@ -128,13 +128,12 @@ class EvidenceBridge {
     LingtuInspectionEvidenceRequest next{};
     const bool ok =
         copyBounded(next.request_id, sizeof(next.request_id), wire->request_id) &&
-        copyBounded(next.run_id, sizeof(next.run_id), wire->run_id) &&
+        copyBounded(next.task_id, sizeof(next.task_id), wire->task_id) &&
         copyBounded(next.route_id, sizeof(next.route_id), wire->route_id) &&
         copyBounded(next.map_id, sizeof(next.map_id), wire->map_id) &&
-        copyBounded(next.point_id, sizeof(next.point_id), wire->point_id) &&
         copyBounded(next.action, sizeof(next.action), wire->action);
     next.requested_at_s = headerStampSeconds(wire->header);
-    next.route_revision = wire->revision;
+    next.route_revision = wire->route_revision;
     next.map_content_epoch = wire->map_content_epoch;
     next.point_index = wire->point_index;
     next.deadline_s = wire->deadline_s;
@@ -234,6 +233,11 @@ EvidenceBridge* asBridge(void* handle) {
 }
 
 }  // namespace
+
+extern "C" LINGTU_INSPECTION_EVIDENCE_BRIDGE_API uint32_t
+lingtu_inspection_evidence_bridge_abi_version(void) {
+  return LINGTU_INSPECTION_EVIDENCE_ABI_VERSION;
+}
 
 extern "C" LINGTU_INSPECTION_EVIDENCE_BRIDGE_API void*
 lingtu_inspection_evidence_bridge_create(int32_t domain_id) {

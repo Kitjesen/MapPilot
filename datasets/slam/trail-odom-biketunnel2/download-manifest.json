@@ -1,0 +1,46 @@
+{
+  "dataset": "TRaIL-Odom BikeTunnel2 MID-360 subset",
+  "source": "https://chiyunnoh.github.io/TRaIL-Odom/",
+  "local_root": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\trail-odom-biketunnel2",
+  "updated_at": "2026-10-19T16:12:17+08:00",
+  "expected_files": 5,
+  "downloaded_files": [
+    {
+      "path": "ground_truth/2026-02-06-12-22-39_jetson_ap20_robot.bag",
+      "bytes": 184150,
+      "url": "https://drive.usercontent.google.com/download?id=12kER74CbcdJ_4P2UmJOeVykU9mhvEFuK&export=download&confirm=t",
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\trail-odom-biketunnel2\\ground_truth\\2026-02-06-12-22-39_jetson_ap20_robot.bag",
+      "status": "downloaded"
+    },
+    {
+      "path": "raw/2026-02-06-12-22-39_cpt7_raw_imu.bag",
+      "bytes": 2086435,
+      "url": "https://drive.usercontent.google.com/download?id=1I3m9vJbYU7pnDDWGtpxjW7yAr_sFQV8F&export=download&confirm=t",
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\trail-odom-biketunnel2\\raw\\2026-02-06-12-22-39_cpt7_raw_imu.bag",
+      "status": "downloaded"
+    },
+    {
+      "path": "calibration/tf_static/metadata.yaml",
+      "bytes": 779,
+      "url": "https://drive.usercontent.google.com/download?id=1sVr29kNM0AJ8J4x0-WM6Z7ng6I-155Db&export=download&confirm=t",
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\trail-odom-biketunnel2\\calibration\\tf_static\\metadata.yaml",
+      "status": "downloaded"
+    },
+    {
+      "path": "calibration/tf_static/tf_static.db3",
+      "bytes": 1060864,
+      "url": "https://drive.usercontent.google.com/download?id=19YrgLtphSNWQLoxo7U1HXeVh2EG-EVNe&export=download&confirm=t",
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\trail-odom-biketunnel2\\calibration\\tf_static\\tf_static.db3",
+      "status": "downloaded"
+    },
+    {
+      "path": "raw/2026-02-06-12-22-39_nuc_livox_ready.bag",
+      "bytes": 673997681,
+      "url": "https://drive.usercontent.google.com/download?id=1aav54E5TETtntiib42YPjlkEVR6GIeTg&export=download&confirm=t",
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\trail-odom-biketunnel2\\raw\\2026-02-06-12-22-39_nuc_livox_ready.bag",
+      "status": "downloaded"
+    }
+  ],
+  "errors": [],
+  "replay_status": "not_run"
+}

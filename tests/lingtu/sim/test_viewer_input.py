@@ -5,7 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from lingtu.assembly.compiler import compile_run_plan
+pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
+
+from lingtu.assembly.compile_plan import compile_run_plan
 from lingtu.sim import viewer_input as viewer_input_module
 from lingtu.sim.viewer_input import (
     ViewerInput,
@@ -159,7 +161,7 @@ def test_viewer_input_requires_neutral_keys_before_first_motion() -> None:
 def test_viewer_keyboard_follows_resolved_operator_capability(monkeypatch, product) -> None:
     plan = compile_run_plan(
         product, "sim", robot="doso/thunder_v4",
-        env_config={"backend": "mujoco", "localization": "fastlio2"},
+        env_config={"backend": "mujoco", "localization": "ltlio"},
     )
     keys = ViewerKeys(key_state=lambda _code: 0, foreground_title=lambda: "MuJoCo")
     monkeypatch.setattr(viewer_input_module, "os", SimpleNamespace(name="nt"))

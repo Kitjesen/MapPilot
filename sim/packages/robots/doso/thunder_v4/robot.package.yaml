@@ -19,6 +19,7 @@ visual:
 semantic:
   class: quadruped
 navigation_geometry:
+  body_file: collision/thunderv4_nominal.body2
   # base_link is near the torso bottom, not at half the standing robot height.
   # Fixed collision geoms span Z [-0.00209, 0.224772]. One 5 cm cell below
   # base_link leaves 4.79 cm below the rigid torso; the legs own ground contact.
@@ -74,7 +75,7 @@ interfaces:
   command:
     - lingtu.sim.joint-torque.v1
 defaults:
-  controller: thunderv4_locomotion@1.0.0
+  controller: thunderv4_cts_moe@1.0.0
   sensor_rig: thunderv4_navigation@1.0.0
 declared_capabilities:
   locomotion:

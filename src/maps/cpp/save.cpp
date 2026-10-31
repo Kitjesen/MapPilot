@@ -25,10 +25,10 @@
 #include <vector>
 
 #include "lingtu/maps/build/process.hpp"
-#include "lingtu/maps/json.hpp"
-#include "lingtu/maps/lock.hpp"
-#include "lingtu/maps/patch_bundle.hpp"
-#include "lingtu/maps/semantic_map_persistence.hpp"
+#include "lingtu/maps/io/json.hpp"
+#include "lingtu/maps/storage/lock.hpp"
+#include "lingtu/maps/io/patch_bundle.hpp"
+#include "lingtu/maps/semantic/store.hpp"
 
 #if defined(_WIN32)
 #define NOMINMAX
@@ -254,9 +254,9 @@ std::string ResolvePgoExecutable(const PgoOptions &options) {
   }
   const auto cwd = std::filesystem::current_path();
   for (const auto &candidate : {
-           cwd / "build" / "map_opt" / "Release" / "lt_pgo.exe",
-           cwd / "build" / "map_opt" / "lt_pgo.exe",
-           cwd / "build" / "map_opt" / "lt_pgo",
+           cwd / "build" / "map_optimization" / "Release" / "lt_pgo.exe",
+           cwd / "build" / "map_optimization" / "lt_pgo.exe",
+           cwd / "build" / "map_optimization" / "lt_pgo",
            std::filesystem::path("/opt/lingtu/current/bin/lt_pgo"),
        }) {
     std::error_code error;

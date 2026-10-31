@@ -73,6 +73,7 @@ class InspectionTaskState(IntEnum):
     ACTION_PENDING = 11
     PAUSING = 12
     CANCELLING = 13
+    WAITING_NEXT_LOOP = 14
 
 
 class ExplorationRunEventKind(IntEnum):
@@ -132,3 +133,13 @@ class GeofenceAction(IntEnum):
     ENABLE = 4
     DISABLE = 5
     LIST = 6
+
+
+class SensorControlKind(IntEnum):
+    QUERY = 1
+    SET_ENABLED = 2
+    SET_RATE = 3
+    CONFIGURE_NOISE = 4
+    SET_NOISE_ENABLED = 5
+    SET_RECORDING = 6
+    SET_GIMBAL = 7

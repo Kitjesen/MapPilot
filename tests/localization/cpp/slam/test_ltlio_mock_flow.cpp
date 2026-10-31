@@ -1,0 +1,1723 @@
+#include "slam.hpp"
+#include "ltlio_geometry_json.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <stdexcept>
+#include <thread>
+#include <pcl/io/pcd_io.h>
+
+using namespace lingtu::slam;
+
+namespace {
+
+ImuSample imu(double stamp_s) {
+  ImuSample sample;
+  sample.stamp_s = stamp_s;
+  sample.qw = 1.0;
+  sample.az = 9.80665;
+  return sample;
+}
+
+ImuSample acceleratedImu(double stamp_s) {
+  ImuSample sample = imu(stamp_s);
+  sample.ax = 100.0;
+  return sample;
+}
+
+LidarFrame lidar(double stamp_s, float dx) {
+  LidarFrame frame;
+  frame.stamp_s = stamp_s;
+  frame.frame_id = "lidar";
+  for (int i = 0; i < 240; ++i) {
+    const int sample = i / 3;
+    const float a = static_cast<float>((sample % 10) - 5) * 0.20F;
+    const float b = static_cast<float>((sample / 10) - 4) * 0.20F;
+    PointXYZIT point;
+    if (i % 3 == 0) {
+      point.x = 3.0F + dx;
+      point.y = a;
+      point.z = b;
+    } else if (i % 3 == 1) {
+      point.x = 2.0F + dx + a;
+      point.y = 2.0F;
+      point.z = b;
+    } else {
+      point.x = 2.0F + dx + a;
+      point.y = b;
+      point.z = 1.5F;
+    }
+    point.intensity = 20.0F;
+    point.offset_time_ns = static_cast<std::int64_t>((i % 10) * 5'000'000);
+    point.line = static_cast<std::uint8_t>(i % 4);
+    point.tag = 0;
+    frame.points.push_back(point);
+  }
+  return frame;
+}
+
+void check(bool ok, const char* message) {
+  if (!ok) {
+    std::cerr << message << '\n';
+    throw std::runtime_error(message);
+  }
+}
+
+void writePcd(const std::filesystem::path& path, const Cloud& cloud) {
+  std::filesystem::create_directories(path.parent_path());
+  std::ofstream output(path);
+  check(output.is_open(), "bypass_seed_pcd_open_failed");
+  output << "# .PCD v0.7\n"
+         << "VERSION 0.7\n"
+         << "FIELDS x y z intensity normal_x normal_y normal_z curvature\n"
+         << "SIZE 4 4 4 4 4 4 4 4\n"
+         << "TYPE F F F F F F F F\n"
+         << "COUNT 1 1 1 1 1 1 1 1\n"
+         << "WIDTH " << cloud.points.size() << '\n'
+         << "HEIGHT 1\n"
+         << "VIEWPOINT 0 0 0 1 0 0 0\n"
+         << "POINTS " << cloud.points.size() << '\n'
+         << "DATA ascii\n";
+  for (const auto& point : cloud.points) {
+    output << point.x << ' ' << point.y << ' ' << point.z << ' '
+           << point.intensity << " 0 0 0 0\n";
+  }
+  check(static_cast<bool>(output), "bypass_seed_pcd_write_failed");
+}
+
+Pose3d poseFromRpy(
+    double x,
+    double y,
+    double z,
+    double roll,
+    double pitch,
+    double yaw) {
+  const double cr = std::cos(roll * 0.5);
+  const double sr = std::sin(roll * 0.5);
+  const double cp = std::cos(pitch * 0.5);
+  const double sp = std::sin(pitch * 0.5);
+  const double cy = std::cos(yaw * 0.5);
+  const double sy = std::sin(yaw * 0.5);
+  Pose3d pose;
+  pose.x = x;
+  pose.y = y;
+  pose.z = z;
+  pose.qx = sr * cp * cy - cr * sp * sy;
+  pose.qy = cr * sp * cy + sr * cp * sy;
+  pose.qz = cr * cp * sy - sr * sp * cy;
+  pose.qw = cr * cp * cy + sr * sp * sy;
+  return pose;
+}
+
+void checkPoseRpy(
+    const Pose3d& pose,
+    double expected_roll,
+    double expected_pitch,
+    double expected_yaw) {
+  const double roll = std::atan2(
+      2.0 * (pose.qw * pose.qx + pose.qy * pose.qz),
+      1.0 - 2.0 * (pose.qx * pose.qx + pose.qy * pose.qy));
+  const double pitch = std::asin(std::clamp(
+      2.0 * (pose.qw * pose.qy - pose.qz * pose.qx), -1.0, 1.0));
+  const double yaw = std::atan2(
+      2.0 * (pose.qw * pose.qz + pose.qx * pose.qy),
+      1.0 - 2.0 * (pose.qy * pose.qy + pose.qz * pose.qz));
+  check(std::abs(roll - expected_roll) < 0.03, "bypass_seed_roll_not_from_odom");
+  check(std::abs(pitch - expected_pitch) < 0.03, "bypass_seed_pitch_not_from_odom");
+  check(std::abs(yaw - expected_yaw) < 0.03, "bypass_seed_yaw_not_preserved");
+}
+
+void processScan(
+    ISlamBackend& backend,
+    double scan_stamp_s,
+    float dx,
+    double& next_imu_stamp_s) {
+  while (next_imu_stamp_s <= scan_stamp_s + 0.06) {
+    check(backend.feedImu(imu(next_imu_stamp_s)).ok, "feed_health_imu_failed");
+    next_imu_stamp_s += 0.005;
+  }
+  check(backend.feedLidar(lidar(scan_stamp_s, dx)).ok, "feed_health_lidar_failed");
+  for (int tick_index = 0; tick_index < 4; ++tick_index) {
+    check(backend.tick().ok, "health_tick_failed");
+  }
+}
+
+void processAcceleratedScan(
+    ISlamBackend& backend,
+    double scan_stamp_s,
+    double& next_imu_stamp_s) {
+  while (next_imu_stamp_s <= scan_stamp_s + 0.06) {
+    check(
+        backend.feedImu(acceleratedImu(next_imu_stamp_s)).ok,
+        "feed_accelerated_imu_failed");
+    next_imu_stamp_s += 0.005;
+  }
+  check(backend.feedLidar(lidar(scan_stamp_s, 0.0F)).ok, "feed_accelerated_lidar_failed");
+  for (int tick_index = 0; tick_index < 4; ++tick_index) {
+    check(backend.tick().ok, "accelerated_tick_failed");
+  }
+}
+
+std::unique_ptr<ISlamBackend> initializedMappingBackend(
+    const std::filesystem::path& config_path,
+    double& next_imu_stamp_s,
+    const std::optional<OdomSample>& initialization_prior = std::nullopt,
+    bool expect_tracking = true) {
+  auto backend = makeLtlioBackend();
+  check(backend != nullptr, "health_backend_missing");
+
+  SlamConfig config;
+  config.backend = "ltlio";
+  config.config_path = config_path.string();
+  check(backend->configure(config).ok, "health_configure_failed");
+  check(backend->setMode(SlamMode::Mapping, "").ok, "health_set_mode_failed");
+
+  for (int i = 0; i <= 60; ++i) {
+    check(backend->feedImu(imu(static_cast<double>(i) * 0.01)).ok, "health_init_imu_failed");
+  }
+  for (int frame = 0; frame < 6; ++frame)
+    check(backend->feedLidar(lidar(0.20 + frame * 0.02, 0.0F)).ok,
+          "health_init_lidar_failed");
+  for (int frame = 0; frame < 5; ++frame)
+    check(backend->tick().ok, "health_initial_map_tick_failed");
+  if (initialization_prior.has_value()) {
+    const auto accepted = backend->feedVisualOdom(*initialization_prior);
+    check(accepted.ok || (!expect_tracking && accepted.message == "ltlio_velocity_out_of_bounds"),
+          "health_initialization_prior_failed");
+  }
+  for (int tick_index = 0; tick_index < 8; ++tick_index) {
+    check(backend->tick().ok, "health_init_tick_failed");
+  }
+  if (expect_tracking) {
+    check(
+        backend->outputs().state == SlamState::Tracking,
+        "health_baseline_not_tracking");
+  }
+  next_imu_stamp_s = 0.61;
+  return backend;
+}
+
+void checkGeometryDiagnostics(const std::filesystem::path& config_path) {
+  double next_imu_stamp_s = 0.0;
+  auto backend = initializedMappingBackend(config_path, next_imu_stamp_s);
+  processScan(*backend, 0.70, 0.0F, next_imu_stamp_s);
+  auto out = backend->outputs();
+  check(out.ltlio_geometry_available && out.ltlio_max_eigenvalue > 0.0,
+        "matched_geometry_not_exported_to_slam_outputs");
+  std::cout << "native_geometry_status=" << ltlioGeometryJson(out) << '\n';
+  auto sparse = lidar(0.80, 0.0F);
+  sparse.points.resize(3);
+  while (next_imu_stamp_s <= 0.86) {
+    check(backend->feedImu(imu(next_imu_stamp_s)).ok, "geometry_sparse_imu_failed");
+    next_imu_stamp_s += 0.005;
+  }
+  check(backend->feedLidar(sparse).ok && backend->tick().ok, "geometry_sparse_scan_failed");
+  out = backend->outputs();
+  check(!out.ltlio_geometry_available &&
+            out.ltlio_geometry_guidance == "awaiting_lidar_geometry",
+        "sparse_geometry_retained_previous_backend_diagnostics");
+  processScan(*backend, 0.90, 0.0F, next_imu_stamp_s);
+  check(backend->outputs().ltlio_geometry_available,
+        "backend_geometry_did_not_recover_after_sparse_scan");
+}
+
+void checkMapReloadTransaction(
+    const std::filesystem::path& config_path,
+    const std::filesystem::path& map_dir,
+    bool reject_candidate) {
+  double next_imu_stamp_s = 0.0;
+  auto backend = initializedMappingBackend(config_path, next_imu_stamp_s);
+  const auto mapping = backend->outputs();
+  check(mapping.odometry_odom_body && mapping.map_cloud_map,
+        "map_reload_fixture_missing_observation");
+  const auto directory = map_dir / (reject_candidate ? "reload_failure" : "reload_success");
+  const auto original = directory / "original" / "map.pcd";
+  writePcd(original, *mapping.map_cloud_map);
+  check(backend->loadMap(original.string()).ok, "mapping_map_load_failed");
+  const auto loaded_in_mapping = backend->outputs();
+  check(loaded_in_mapping.state == mapping.state && loaded_in_mapping.map_odom_tf &&
+            loaded_in_mapping.odometry_odom_body,
+        "map_load_interrupted_online_mapping");
+  check(backend->setMode(SlamMode::Localization, original.string()).ok,
+        "map_reload_localization_mode_failed");
+  const Pose3d seed = *mapping.odometry_odom_body;
+  check(backend->relocalize(seed).ok, "map_reload_initial_alignment_failed");
+  const auto aligned = backend->outputs();
+  check(aligned.state == SlamState::Tracking && aligned.map_odom_tf &&
+            aligned.saved_map_relocalization_supported,
+        "map_reload_fixture_not_aligned");
+
+  Cloud shifted = *mapping.map_cloud_map;
+  for (auto& point : shifted.points) point.x += 25.0F;
+  const auto candidate = directory / "candidate" / "map.pcd";
+  writePcd(candidate, shifted);
+  if (reject_candidate) {
+    std::ofstream corrupt(candidate.parent_path() / "semantic_map.bin", std::ios::binary);
+    corrupt << "broken";
+    corrupt.close();
+    const auto failed = backend->loadMap(candidate.string());
+    check(!failed.ok && failed.message.find("native_relocalizer_semantic_map_load_failed:") == 0U,
+          "map_reload_invalid_candidate_was_accepted");
+    const auto retained = backend->outputs();
+    check(retained.saved_map_relocalization_supported,
+          "failed_map_reload_discarded_current_matcher");
+    check(retained.state == aligned.state && retained.map_odom_tf &&
+              retained.map_odom_tf->pose.x == aligned.map_odom_tf->pose.x &&
+              retained.reason == aligned.reason &&
+              retained.relocalization_state == aligned.relocalization_state &&
+              retained.source_epoch == aligned.source_epoch &&
+              retained.saved_map_revision == aligned.saved_map_revision,
+          "failed_map_reload_changed_current_alignment");
+    check(backend->relocalize(seed).ok,
+          "failed_map_reload_changed_current_map_or_bounds");
+    return;
+  }
+
+  check(backend->loadMap(candidate.string()).ok, "map_reload_valid_candidate_failed");
+  const auto replaced = backend->outputs();
+  check(!replaced.map_odom_tf && !replaced.relocalization_map_body,
+        "successful_map_reload_retained_old_alignment");
+  check(replaced.source_epoch > aligned.source_epoch,
+        "successful_map_reload_retained_old_observation_source");
+  check(replaced.state == SlamState::Localizing && replaced.odometry_odom_body &&
+            replaced.odometry_odom_body->x == aligned.odometry_odom_body->x &&
+            replaced.odometry_odom_body->z == aligned.odometry_odom_body->z,
+        "successful_map_reload_reset_odometry_or_skipped_localizing");
+  processScan(*backend, 0.40, 0.0F, next_imu_stamp_s);
+  const auto pending = backend->outputs();
+  check(pending.state == SlamState::Localizing && !pending.map_odom_tf &&
+            pending.odometry_odom_body,
+        "new_scan_claimed_tracking_before_replacement_map_alignment");
+  Pose3d new_seed = seed;
+  new_seed.x += 25.0;
+  const auto relocalized = backend->relocalize(new_seed);
+  check(relocalized.ok, "replacement_map_explicit_alignment_failed");
+  const auto restored = backend->outputs();
+  check(restored.state == SlamState::Tracking && restored.map_odom_tf &&
+            std::abs(restored.map_odom_tf->pose.x - 25.0) < 0.05,
+        "replacement_map_alignment_not_published");
+}
+
+void checkRejectedUpdateHealthGate(const std::filesystem::path& config_path) {
+  double next_imu_stamp_s = 0.0;
+  auto backend = initializedMappingBackend(config_path, next_imu_stamp_s);
+
+  processScan(*backend, 0.40, 10.0F, next_imu_stamp_s);
+  const auto one_rejection = backend->outputs();
+  check(one_rejection.state == SlamState::Degraded, "single_rejection_not_degraded");
+  check(
+      one_rejection.reason == "ltlio_lidar_update_rejected",
+      "single_rejection_reason_mismatch");
+  check(one_rejection.confidence == 0.0, "single_rejection_confidence_not_zero");
+  check(!one_rejection.odometry_odom_body.has_value(), "single_rejection_published_odom");
+  check(!(one_rejection.registered_cloud_body != nullptr), "single_rejection_published_cloud");
+  check(!(one_rejection.map_cloud_map != nullptr), "single_rejection_published_map_cloud");
+  check(one_rejection.ltlio_lidar_update.attempted, "single_rejection_attempt_missing");
+  check(!one_rejection.ltlio_lidar_update.accepted, "single_rejection_marked_accepted");
+  check(
+      one_rejection.ltlio_lidar_update.rejection_reason != "none",
+      "single_rejection_detail_missing");
+  check(
+      one_rejection.ltlio_lidar_update.consecutive_rejections == 1U,
+      "single_rejection_detail_streak_mismatch");
+  check(
+      one_rejection.ltlio_lidar_update.downsampled_points > 0U,
+      "single_rejection_downsampled_points_missing");
+  const std::uint64_t rejected_attempt_sequence =
+      one_rejection.ltlio_lidar_update.attempt_sequence;
+  const std::string rejected_detail_reason =
+      one_rejection.ltlio_lidar_update.rejection_reason;
+
+  processScan(*backend, 0.50, 0.0F, next_imu_stamp_s);
+  const auto recovered = backend->outputs();
+  check(recovered.state == SlamState::Tracking, "single_rejection_did_not_recover");
+  check(recovered.odometry_odom_body.has_value(), "recovery_odometry_missing");
+  check((recovered.registered_cloud_body != nullptr), "recovery_cloud_missing");
+  check(recovered.ltlio_lidar_update.accepted, "recovery_update_not_marked_accepted");
+  check(
+      recovered.ltlio_lidar_update.rejection_reason == "none",
+      "recovery_retained_current_rejection_detail");
+  check(
+      recovered.ltlio_lidar_update.previous_rejection_reason ==
+          rejected_detail_reason,
+      "recovery_lost_previous_rejection_detail");
+  check(
+      recovered.ltlio_lidar_update.attempt_sequence ==
+          rejected_attempt_sequence + 1U,
+      "recovery_attempt_sequence_mismatch");
+  check(
+      recovered.ltlio_lidar_update.consecutive_rejections == 0U,
+      "recovery_did_not_clear_detail_streak");
+
+  processScan(*backend, 0.60, 10.0F, next_imu_stamp_s);
+  processScan(*backend, 0.70, 10.0F, next_imu_stamp_s);
+  const auto repeated_rejection = backend->outputs();
+  check(repeated_rejection.state == SlamState::Lost, "repeated_rejection_not_lost");
+  check(
+      repeated_rejection.reason == "ltlio_lidar_update_rejected_streak",
+      "repeated_rejection_reason_mismatch");
+  check(repeated_rejection.confidence == 0.0, "repeated_rejection_confidence_not_zero");
+  check(!repeated_rejection.odometry_odom_body.has_value(), "repeated_rejection_published_odom");
+  check(!(repeated_rejection.registered_cloud_body != nullptr), "repeated_rejection_published_cloud");
+  check(!(repeated_rejection.map_cloud_map != nullptr), "repeated_rejection_published_map_cloud");
+  check(
+      repeated_rejection.ltlio_lidar_update.consecutive_rejections == 2U,
+      "repeated_rejection_detail_streak_mismatch");
+  check(
+      repeated_rejection.ltlio_lidar_update.rejection_reason != "none",
+      "repeated_rejection_detail_missing");
+  check(
+      repeated_rejection.ltlio_lidar_update.previous_rejection_reason != "none",
+      "repeated_rejection_previous_detail_missing");
+}
+
+void checkPositionCovarianceHealthGate(const std::filesystem::path& config_path) {
+  double next_imu_stamp_s = 0.0;
+  auto backend = initializedMappingBackend(config_path, next_imu_stamp_s, std::nullopt, false);
+  const auto outputs = backend->outputs();
+  check(outputs.state == SlamState::Lost, "unsafe_position_covariance_not_lost");
+  check(
+      outputs.reason == "ltlio_position_covariance_out_of_bounds",
+      "unsafe_position_covariance_reason_mismatch");
+  check(outputs.confidence == 0.0, "unsafe_position_covariance_confidence_not_zero");
+  check(!outputs.odometry_odom_body.has_value(), "unsafe_position_covariance_published_odom");
+  check(!(outputs.map_cloud_map != nullptr), "unsafe_position_covariance_published_map_cloud");
+}
+
+void checkVelocityHealthGate(const std::filesystem::path& config_path) {
+  OdomSample unsafe_prior;
+  unsafe_prior.stamp_s = 0.30;
+  unsafe_prior.has_velocity = true;
+  unsafe_prior.vx = 3.5;
+  double unsafe_imu_stamp_s = 0.0;
+  auto backend = initializedMappingBackend(
+      config_path, unsafe_imu_stamp_s, unsafe_prior, false);
+
+  const auto unsafe = backend->outputs();
+  check(unsafe.state == SlamState::Lost, "unsafe_velocity_not_lost");
+  check(
+      unsafe.reason == "ltlio_velocity_out_of_bounds",
+      "unsafe_velocity_reason_mismatch");
+  check(unsafe.confidence == 0.0, "unsafe_velocity_confidence_not_zero");
+  check(!unsafe.odometry_odom_body.has_value(), "unsafe_velocity_published_odom");
+  check(!(unsafe.registered_cloud_body != nullptr), "unsafe_velocity_published_cloud");
+  check(!(unsafe.map_cloud_map != nullptr), "unsafe_velocity_published_map_cloud");
+
+  OdomSample safe_prior;
+  safe_prior.stamp_s = 0.40;
+  safe_prior.has_velocity = true;
+  check(backend->feedVisualOdom(safe_prior).ok, "safe_prior_after_fault_rejected");
+  processScan(*backend, 0.40, 0.0F, unsafe_imu_stamp_s);
+  const auto mapping_fault_latched = backend->outputs();
+  check(
+      mapping_fault_latched.state == SlamState::Lost,
+      "mapping_catastrophic_fault_recovered_without_reset");
+  check(
+      mapping_fault_latched.reason == "ltlio_velocity_out_of_bounds",
+      "mapping_catastrophic_fault_reason_not_latched");
+  check(
+      !mapping_fault_latched.odometry_odom_body.has_value(),
+      "mapping_catastrophic_fault_republished_odom");
+  check(
+      !(mapping_fault_latched.map_cloud_map != nullptr),
+      "mapping_catastrophic_fault_republished_map_cloud");
+
+  check(backend->reset().ok, "mapping_catastrophic_reset_failed");
+  check(backend->setMode(SlamMode::Mapping, "").ok, "mapping_mode_after_reset_failed");
+  for (int i = 0; i <= 60; ++i) {
+    check(
+        backend->feedImu(imu(static_cast<double>(i) * 0.01)).ok,
+        "mapping_reset_imu_failed");
+  }
+  for (int frame = 0; frame < 6; ++frame)
+    check(backend->feedLidar(lidar(0.20 + frame * 0.02, 0.0F)).ok,
+          "mapping_reset_lidar_failed");
+  for (int tick_index = 0; tick_index < 8; ++tick_index) {
+    check(backend->tick().ok, "mapping_reset_tick_failed");
+  }
+  const auto mapping_after_reset = backend->outputs();
+  check(mapping_after_reset.state == SlamState::Tracking, "mapping_reset_did_not_clear_fault");
+  check(mapping_after_reset.odometry_odom_body.has_value(), "mapping_reset_odometry_missing");
+
+  OdomSample large_origin_prior;
+  large_origin_prior.stamp_s = 0.30;
+  large_origin_prior.odom_body.x = 1000.0;
+  large_origin_prior.odom_body.y = -1000.0;
+  large_origin_prior.has_velocity = true;
+  double large_origin_imu_stamp_s = 0.0;
+  auto large_origin_backend =
+      initializedMappingBackend(config_path, large_origin_imu_stamp_s, large_origin_prior);
+
+  const auto safe_large_origin = large_origin_backend->outputs();
+  check(
+      safe_large_origin.state == SlamState::Tracking,
+      "large_origin_zero_velocity_misclassified");
+  check(safe_large_origin.odometry_odom_body.has_value(), "large_origin_odometry_missing");
+  check((safe_large_origin.map_cloud_map != nullptr), "large_origin_map_cloud_missing");
+
+  double localization_imu_stamp_s = 0.0;
+  auto localization_backend =
+      initializedMappingBackend(config_path, localization_imu_stamp_s);
+  const auto localization_map_path = config_path.parent_path() / "catastrophic_latch_map.pcd";
+  check(
+      localization_backend->saveMap(localization_map_path.string()).ok,
+      "catastrophic_latch_map_save_failed");
+  check(
+      localization_backend->setMode(
+          SlamMode::Localization, localization_map_path.string()).ok,
+      "catastrophic_latch_localization_mode_failed");
+
+  OdomSample localization_unsafe_prior;
+  localization_unsafe_prior.stamp_s = 0.40;
+  localization_unsafe_prior.has_velocity = true;
+  localization_unsafe_prior.vx = 3.5;
+  check(
+      !localization_backend->feedVisualOdom(localization_unsafe_prior).ok,
+      "localization_unsafe_prior_was_accepted");
+  processScan(*localization_backend, 0.40, 0.0F, localization_imu_stamp_s);
+  check(
+      localization_backend->outputs().state == SlamState::Lost,
+      "localization_unsafe_velocity_not_lost");
+
+  OdomSample localization_safe_prior;
+  localization_safe_prior.stamp_s = 0.50;
+  localization_safe_prior.has_velocity = true;
+  check(
+      localization_backend->feedVisualOdom(localization_safe_prior).ok,
+      "localization_safe_prior_rejected");
+  processScan(*localization_backend, 0.50, 0.0F, localization_imu_stamp_s);
+  const auto localization_fault_latched = localization_backend->outputs();
+  check(
+      localization_fault_latched.state == SlamState::Lost,
+      "localization_catastrophic_fault_recovered_without_relocalization");
+  check(
+      !localization_fault_latched.odometry_odom_body.has_value(),
+      "localization_catastrophic_fault_republished_odom");
+  check(
+      localization_backend->relocalize(Pose3d{}).ok,
+      "localization_catastrophic_relocalization_failed");
+  const auto localization_after_relocalization = localization_backend->outputs();
+  check(
+      localization_after_relocalization.state == SlamState::Tracking,
+      "successful_relocalization_did_not_clear_catastrophic_fault");
+  check(
+      localization_after_relocalization.odometry_odom_body.has_value(),
+      "relocalized_odometry_missing_after_catastrophic_fault");
+}
+
+void checkRelocalizationCannotClearUnhealthyNumericState(
+    const std::filesystem::path& config_path) {
+  double next_imu_stamp_s = 0.0;
+  auto backend = initializedMappingBackend(config_path, next_imu_stamp_s);
+  const auto map_path = config_path.parent_path() / "unhealthy_numeric_state_map.pcd";
+  check(backend->saveMap(map_path.string()).ok, "unhealthy_numeric_map_save_failed");
+  check(
+      backend->setMode(SlamMode::Localization, map_path.string()).ok,
+      "unhealthy_numeric_localization_mode_failed");
+
+  processAcceleratedScan(*backend, 0.80, next_imu_stamp_s);
+  const auto fault = backend->outputs();
+  check(fault.state == SlamState::Lost, "accelerated_ltlio_state_not_lost");
+  check(
+      fault.reason == "ltlio_velocity_out_of_bounds",
+      "accelerated_ltlio_fault_reason_mismatch");
+
+  const Status sync_relocalization = backend->relocalize(Pose3d{});
+  check(
+      !sync_relocalization.ok,
+      "sync_relocalization_cleared_unhealthy_numeric_state");
+  check(
+      sync_relocalization.message == "ltlio_numeric_health_unrecovered",
+      "sync_unhealthy_numeric_relocalization_reason_mismatch");
+  const auto after_sync = backend->outputs();
+  check(after_sync.state == SlamState::Lost, "sync_relocalization_cleared_fault_latch");
+  check(
+      after_sync.reason == "ltlio_velocity_out_of_bounds",
+      "sync_relocalization_overwrote_fault_reason");
+  check(!after_sync.odometry_odom_body.has_value(), "sync_relocalization_republished_bad_odom");
+
+  check(
+      backend->startRelocalizeAsync(Pose3d{}).ok,
+      "async_unhealthy_numeric_relocalization_start_failed");
+  std::optional<Status> async_completion;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < deadline) {
+    async_completion = backend->pollRelocalizeAsync();
+    if (async_completion.has_value()) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  check(async_completion.has_value(), "async_unhealthy_numeric_relocalization_timeout");
+  check(
+      !async_completion->ok,
+      "async_relocalization_cleared_unhealthy_numeric_state");
+  check(
+      async_completion->message == "ltlio_numeric_health_unrecovered",
+      "async_unhealthy_numeric_relocalization_reason_mismatch");
+  const auto after_async = backend->outputs();
+  check(after_async.state == SlamState::Lost, "async_relocalization_cleared_fault_latch");
+  check(
+      after_async.reason == "ltlio_velocity_out_of_bounds",
+      "async_relocalization_overwrote_fault_reason");
+  check(!after_async.odometry_odom_body.has_value(), "async_relocalization_republished_bad_odom");
+}
+
+void checkFailedRelocalizationPreservesCatastrophicFault(
+    const std::filesystem::path& config_path,
+    const Pose3d& guess,
+    const std::string& expected_failure_message,
+    const std::string& expected_relocalization_state,
+    const std::string& case_name) {
+  for (const bool async : {true, false}) {
+    const std::string invocation = async ? "async" : "sync";
+    const std::string prefix = case_name + "_" + invocation;
+    double next_imu_stamp_s = 0.0;
+    auto backend = initializedMappingBackend(config_path, next_imu_stamp_s);
+    const auto map_path =
+        config_path.parent_path() / (prefix + "_catastrophic_latch_map.pcd");
+    check(
+        backend->saveMap(map_path.string()).ok,
+        (prefix + "_map_save_failed").c_str());
+    check(
+        backend->setMode(SlamMode::Localization, map_path.string()).ok,
+        (prefix + "_localization_mode_failed").c_str());
+
+    processAcceleratedScan(*backend, 0.80, next_imu_stamp_s);
+    const auto fault = backend->outputs();
+    check(fault.state == SlamState::Lost, (prefix + "_fault_not_lost").c_str());
+    check(
+        fault.reason == "ltlio_velocity_out_of_bounds",
+        (prefix + "_fault_reason_mismatch").c_str());
+
+    Status relocalization;
+    if (async) {
+      check(
+          backend->startRelocalizeAsync(guess).ok,
+          (prefix + "_start_failed").c_str());
+      std::optional<Status> completion;
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+      while (std::chrono::steady_clock::now() < deadline) {
+        completion = backend->pollRelocalizeAsync();
+        if (completion.has_value()) {
+          break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      check(completion.has_value(), (prefix + "_timeout").c_str());
+      relocalization = *completion;
+    } else {
+      relocalization = backend->relocalize(guess);
+    }
+
+    if (relocalization.message != expected_failure_message) {
+      std::cerr << prefix << "_unexpected_failure=" << relocalization.message << "\n";
+    }
+    check(!relocalization.ok, (prefix + "_unexpected_success").c_str());
+    check(
+        relocalization.message == expected_failure_message,
+        (prefix + "_failure_message_mismatch").c_str());
+    const auto after_failure = backend->outputs();
+    check(
+        after_failure.state == SlamState::Lost,
+        (prefix + "_cleared_fault_latch").c_str());
+    check(
+        after_failure.reason == "ltlio_velocity_out_of_bounds",
+        (prefix + "_overwrote_fault_reason").c_str());
+    check(
+        after_failure.relocalization_state == expected_relocalization_state,
+        (prefix + "_relocalization_state_mismatch").c_str());
+    check(
+        after_failure.last_relocalization_message == expected_failure_message,
+        (prefix + "_last_message_mismatch").c_str());
+  }
+}
+
+void checkSensorTimeJumpGate(const std::filesystem::path& config_path) {
+  double next_imu_stamp_s = 0.0;
+  auto mapping_backend = initializedMappingBackend(config_path, next_imu_stamp_s);
+  const auto mapping_before_jump = mapping_backend->outputs();
+  check(mapping_backend->feedImu(imu(100.0)).ok, "mapping_time_jump_imu_rejected");
+  const auto mapping_jump = mapping_backend->outputs();
+  check(
+      mapping_jump.source_epoch == mapping_before_jump.source_epoch + 1U,
+      "mapping_time_jump_source_epoch_not_advanced");
+  check(
+      mapping_jump.state == SlamState::Initializing,
+      "mapping_time_jump_did_not_reinitialize");
+  check(
+      mapping_jump.reason == "sensor_time_jump_reset_mapping",
+      "mapping_time_jump_reason_mismatch");
+  check(mapping_jump.confidence == 0.0, "mapping_time_jump_confidence_not_zero");
+  check(!mapping_jump.odometry_odom_body.has_value(), "mapping_time_jump_retained_odom");
+  check(!(mapping_jump.registered_cloud_body != nullptr), "mapping_time_jump_retained_cloud");
+  check(!(mapping_jump.map_cloud_map != nullptr), "mapping_time_jump_retained_map_cloud");
+
+  auto localization_backend = initializedMappingBackend(config_path, next_imu_stamp_s);
+  const auto recovery_map = config_path.parent_path() / "time-jump-recovery.pcd";
+  writePcd(recovery_map, *localization_backend->outputs().map_cloud_map);
+  check(
+      localization_backend->setMode(SlamMode::Localization, recovery_map.string()).ok,
+      "time_jump_localization_mode_failed");
+  const auto localization_before_jump = localization_backend->outputs();
+  check(
+      localization_backend->feedLidar(lidar(100.0, 0.0F)).ok,
+      "localization_time_jump_lidar_rejected");
+  const auto localization_jump = localization_backend->outputs();
+  check(
+      localization_jump.source_epoch == localization_before_jump.source_epoch + 1U,
+      "localization_time_jump_source_epoch_not_advanced");
+  check(
+      localization_jump.state == SlamState::Lost,
+      "localization_time_jump_not_lost");
+  check(
+      localization_jump.reason == "sensor_time_jump_relocalization_required",
+      "localization_time_jump_reason_mismatch");
+  check(
+      localization_jump.confidence == 0.0,
+      "localization_time_jump_confidence_not_zero");
+  check(
+      !localization_jump.odometry_odom_body.has_value(),
+      "localization_time_jump_retained_odom");
+  check(
+      !(localization_jump.registered_cloud_body != nullptr),
+      "localization_time_jump_retained_cloud");
+  check(
+      !(localization_jump.map_cloud_map != nullptr),
+      "localization_time_jump_retained_map_cloud");
+
+  for (int i = 0; i <= 60; ++i) {
+    check(
+        localization_backend->feedImu(imu(100.0 + static_cast<double>(i) * 0.01)).ok,
+        "localization_new_epoch_imu_failed");
+  }
+  for (int tick_index = 0; tick_index < 4; ++tick_index) {
+    check(localization_backend->tick().ok, "localization_new_epoch_tick_failed");
+  }
+  const auto localization_reinitializing = localization_backend->outputs();
+  check(
+      localization_reinitializing.state == SlamState::Lost,
+      "localization_time_jump_left_lost_before_relocalization");
+  check(
+      localization_reinitializing.reason == "sensor_time_jump_relocalization_required",
+      "localization_reinitializing_reason_mismatch");
+  check(
+      !localization_reinitializing.odometry_odom_body.has_value(),
+      "localization_reinitializing_published_odom");
+  check(
+      !(localization_reinitializing.map_cloud_map != nullptr),
+      "localization_reinitializing_published_map_cloud");
+
+  for (const double scan_stamp : {100.10, 100.16, 100.22, 100.28, 100.34, 100.40}) {
+    check(localization_backend->feedLidar(lidar(scan_stamp, 0.02F)).ok,
+          "localization_recovery_lidar_failed");
+    check(localization_backend->tick().ok, "localization_recovery_tick_failed");
+  }
+  const auto recovery_ready = localization_backend->outputs();
+  check(recovery_ready.observation_sequence > 0 && recovery_ready.stamp_s > 100.0,
+        "localization_recovery_has_no_private_scan_progress");
+  check(!recovery_ready.registered_cloud_body && !recovery_ready.odometry_odom_body,
+        "localization_recovery_exposed_unaligned_navigation_input");
+  check(localization_backend->startRelocalizeAsync(Pose3d{}).ok,
+        "localization_recovery_private_scan_unavailable");
+  std::optional<Status> recovered;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < deadline && !recovered) {
+    recovered = localization_backend->pollRelocalizeAsync();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  check(recovered && recovered->ok, "localization_time_jump_recovery_failed");
+  check(localization_backend->outputs().state == SlamState::Tracking,
+        "localization_time_jump_recovery_did_not_restore_tracking");
+  std::filesystem::remove(recovery_map);
+}
+
+void checkOdomPriorBypass(const std::filesystem::path& config_path) {
+  auto backend = makeLtlioBackend();
+  check(backend != nullptr, "bypass_backend_missing");
+  SlamConfig config;
+  config.backend = "ltlio";
+  config.config_path = config_path.string();
+  check(backend->configure(config).ok, "bypass_configure_failed");
+  check(backend->setMode(SlamMode::Mapping, "").ok, "bypass_set_mode_failed");
+
+  OdomSample prior;
+  prior.stamp_s = 0.30;
+  prior.odom_body.x = 5.0;
+  prior.odom_body.y = -2.0;
+  prior.has_velocity = true;
+  prior.vx = 0.2;
+  check(backend->feedVisualOdom(prior).ok, "bypass_prior_rejected");
+  for (int i = 0; i <= 50; ++i) {
+    check(
+        backend->feedImu(imu(static_cast<double>(i) * 0.01)).ok,
+        "bypass_imu_rejected");
+  }
+  check(backend->feedLidar(lidar(0.30, 0.0F)).ok, "bypass_lidar_rejected");
+  for (int tick_index = 0; tick_index < 4; ++tick_index) {
+    check(backend->tick().ok, "bypass_tick_failed");
+  }
+
+  const auto outputs = backend->outputs();
+  check(outputs.state == SlamState::Tracking, "bypass_not_tracking");
+  check(
+      outputs.reason == "tracking_with_odom_prior_bypass",
+      "bypass_reason_mismatch");
+  check(outputs.odom_prior_active, "bypass_prior_not_active");
+  check(outputs.odometry_odom_body.has_value(), "bypass_odometry_missing");
+  check(
+      std::abs(outputs.odometry_odom_body->x - 5.0) < 1e-9 &&
+          std::abs(outputs.odometry_odom_body->y + 2.0) < 1e-9,
+      "bypass_odometry_mismatch");
+  check((outputs.registered_cloud_body != nullptr), "bypass_registered_cloud_missing");
+  check((outputs.map_cloud_map != nullptr), "bypass_map_cloud_missing");
+}
+
+void checkOdomPriorHistoryBypass(const std::filesystem::path& config_path) {
+  auto backend = makeLtlioBackend();
+  check(backend != nullptr, "bypass_history_backend_missing");
+  SlamConfig config;
+  config.backend = "ltlio";
+  config.config_path = config_path.string();
+  check(backend->configure(config).ok, "bypass_history_configure_failed");
+  check(backend->setMode(SlamMode::Mapping, "").ok, "bypass_history_set_mode_failed");
+
+  OdomSample scan_prior;
+  scan_prior.stamp_s = 0.34;
+  scan_prior.odom_body.x = 5.0;
+  scan_prior.odom_body.y = -2.0;
+  scan_prior.has_velocity = true;
+  scan_prior.vx = 0.2;
+  check(backend->feedVisualOdom(scan_prior).ok, "bypass_history_scan_prior_rejected");
+
+  OdomSample future_prior = scan_prior;
+  future_prior.stamp_s = 1.00;
+  future_prior.odom_body.x = 9.0;
+  check(backend->feedVisualOdom(future_prior).ok, "bypass_history_future_prior_rejected");
+  for (int i = 0; i <= 110; ++i) {
+    check(
+        backend->feedImu(imu(static_cast<double>(i) * 0.01)).ok,
+        "bypass_history_imu_rejected");
+  }
+  check(backend->feedLidar(lidar(0.30, 0.0F)).ok, "bypass_history_lidar_rejected");
+  for (int tick_index = 0; tick_index < 4; ++tick_index) {
+    check(backend->tick().ok, "bypass_history_tick_failed");
+  }
+
+  const auto outputs = backend->outputs();
+  check(outputs.state == SlamState::Tracking, "bypass_history_not_tracking");
+  check(
+      outputs.reason == "tracking_with_odom_prior_bypass",
+      "bypass_history_reason_mismatch");
+  check(outputs.odom_prior_active, "bypass_history_prior_not_active");
+  check(outputs.odometry_odom_body.has_value(), "bypass_history_odometry_missing");
+  check(
+      std::abs(outputs.odometry_odom_body->x - 5.0) < 1e-9,
+      "bypass_history_selected_latest_instead_of_scan_prior");
+
+  const std::uint64_t observation_sequence = outputs.observation_sequence;
+  for (int i = 111; i <= 150; ++i) {
+    check(
+        backend->feedImu(imu(static_cast<double>(i) * 0.01)).ok,
+        "bypass_history_late_imu_rejected");
+  }
+  check(backend->feedLidar(lidar(1.20, 0.0F)).ok, "bypass_history_gap_lidar_rejected");
+  check(backend->tick().ok, "bypass_history_gap_tick_failed");
+  const auto waiting = backend->outputs();
+  check(waiting.state == SlamState::Tracking, "bypass_history_gap_lost_tracking");
+  check(
+      waiting.reason == "waiting_for_time_aligned_odom_prior",
+      "bypass_history_gap_fell_back_to_ltlio");
+  check(
+      waiting.observation_sequence == observation_sequence,
+      "bypass_history_gap_published_observation");
+
+  OdomSample recovery_prior = scan_prior;
+  recovery_prior.stamp_s = 1.34;
+  recovery_prior.odom_body.x = 11.0;
+  check(
+      backend->feedVisualOdom(recovery_prior).ok,
+      "bypass_history_recovery_prior_rejected");
+  check(
+      backend->feedLidar(lidar(1.30, 0.0F)).ok,
+      "bypass_history_recovery_lidar_rejected");
+  check(backend->tick().ok, "bypass_history_recovery_tick_failed");
+  const auto recovered = backend->outputs();
+  check(recovered.state == SlamState::Tracking, "bypass_history_did_not_recover");
+  check(
+      recovered.reason == "tracking_with_odom_prior_bypass",
+      "bypass_history_recovery_reason_mismatch");
+  check(
+      recovered.observation_sequence == observation_sequence + 1U,
+      "bypass_history_recovery_observation_missing");
+  check(
+      recovered.odometry_odom_body.has_value() &&
+          std::abs(recovered.odometry_odom_body->x - 11.0) < 1e-9,
+      "bypass_history_recovery_pose_mismatch");
+}
+
+void checkOdomPriorBypassDoesNotFallback(const std::filesystem::path& config_path) {
+  auto backend = makeLtlioBackend();
+  check(backend != nullptr, "bypass_no_fallback_backend_missing");
+  SlamConfig config;
+  config.backend = "ltlio";
+  config.config_path = config_path.string();
+  check(backend->configure(config).ok, "bypass_no_fallback_configure_failed");
+  check(backend->setMode(SlamMode::Mapping, "").ok, "bypass_no_fallback_set_mode_failed");
+  for (int i = 0; i <= 50; ++i) {
+    check(
+        backend->feedImu(imu(static_cast<double>(i) * 0.01)).ok,
+        "bypass_no_fallback_imu_rejected");
+  }
+  check(backend->feedLidar(lidar(0.30, 0.0F)).ok, "bypass_no_fallback_lidar_rejected");
+  check(backend->tick().ok, "bypass_no_fallback_tick_failed");
+
+  const auto outputs = backend->outputs();
+  check(
+      outputs.reason == "waiting_for_time_aligned_odom_prior",
+      "bypass_missing_prior_fell_back_to_ltlio");
+  check(!outputs.odometry_odom_body.has_value(), "bypass_missing_prior_published_odometry");
+  check(!(outputs.registered_cloud_body != nullptr), "bypass_missing_prior_published_cloud");
+}
+
+void checkBypassAsyncRelocalizationUsesOdomHeightAndTilt(
+    const std::filesystem::path& config_path,
+    const std::filesystem::path& map_dir,
+    double seed_yaw) {
+  SlamConfig config;
+  config.backend = "ltlio";
+  config.config_path = config_path.string();
+
+  constexpr double kRoll = 0.12;
+  constexpr double kPitch = -0.08;
+  OdomSample map_prior;
+  map_prior.stamp_s = 0.30;
+  map_prior.odom_body =
+      poseFromRpy(2.0, -1.0, 0.55, kRoll, kPitch, seed_yaw);
+
+  auto map_backend = makeLtlioBackend();
+  check(map_backend != nullptr, "bypass_seed_map_backend_missing");
+  check(map_backend->configure(config).ok, "bypass_seed_map_configure_failed");
+  check(
+      map_backend->setMode(SlamMode::Mapping, "").ok,
+      "bypass_seed_mapping_mode_failed");
+  check(
+      map_backend->feedVisualOdom(map_prior).ok,
+      "bypass_seed_map_prior_rejected");
+  for (int i = 0; i <= 50; ++i) {
+    check(
+        map_backend->feedImu(imu(static_cast<double>(i) * 0.01)).ok,
+        "bypass_seed_map_imu_rejected");
+  }
+  check(
+      map_backend->feedLidar(lidar(0.30, 0.0F)).ok,
+      "bypass_seed_map_lidar_rejected");
+  for (int tick_index = 0; tick_index < 4; ++tick_index) {
+    check(map_backend->tick().ok, "bypass_seed_map_tick_failed");
+  }
+
+  const auto map_path = map_dir /
+      (seed_yaw < 0.0 ? "bypass_negative_seed_map" : "bypass_seed_map") / "map.pcd";
+  const auto map_outputs = map_backend->outputs();
+  check((map_outputs.map_cloud_map != nullptr), "bypass_seed_map_cloud_missing");
+  writePcd(map_path, *map_outputs.map_cloud_map);
+
+  auto backend = makeLtlioBackend();
+  check(backend != nullptr, "bypass_seed_backend_missing");
+  check(backend->configure(config).ok, "bypass_seed_configure_failed");
+  check(
+      backend->setMode(SlamMode::Localization, map_path.string()).ok,
+      "bypass_seed_localization_mode_failed");
+
+  OdomSample current_prior;
+  current_prior.stamp_s = 0.30;
+  current_prior.odom_body =
+      poseFromRpy(8.0, 4.0, 0.55, kRoll, kPitch, -0.70);
+  check(
+      backend->feedVisualOdom(current_prior).ok,
+      "bypass_seed_current_prior_rejected");
+  for (int i = 0; i <= 50; ++i) {
+    check(
+        backend->feedImu(imu(static_cast<double>(i) * 0.01)).ok,
+        "bypass_seed_current_imu_rejected");
+  }
+  check(
+      backend->feedLidar(lidar(0.30, 0.0F)).ok,
+      "bypass_seed_current_lidar_rejected");
+  for (int tick_index = 0; tick_index < 4; ++tick_index) {
+    check(backend->tick().ok, "bypass_seed_current_tick_failed");
+  }
+
+  const Pose3d planar_seed =
+      poseFromRpy(2.0, -1.0, 0.0, 0.0, 0.0, seed_yaw);
+  check(
+      backend->startRelocalizeAsync(planar_seed).ok,
+      "bypass_seed_async_start_failed");
+  std::optional<Status> completion;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < deadline) {
+    completion = backend->pollRelocalizeAsync();
+    if (completion.has_value()) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  check(completion.has_value(), "bypass_seed_async_timeout");
+  check(completion->ok, "bypass_seed_async_relocalization_failed");
+
+  const auto outputs = backend->outputs();
+  check(outputs.relocalization_map_body.has_value(), "bypass_seed_map_body_missing");
+  const Pose3d& map_body = *outputs.relocalization_map_body;
+  check(std::abs(map_body.x - 2.0) < 0.05, "bypass_seed_x_not_preserved");
+  check(std::abs(map_body.y + 1.0) < 0.05, "bypass_seed_y_not_preserved");
+  check(std::abs(map_body.z - 0.55) < 0.03, "bypass_seed_z_not_from_odom");
+  checkPoseRpy(map_body, kRoll, kPitch, seed_yaw);
+}
+
+void checkPatchSamplingMotion(
+    const std::filesystem::path& config_path,
+    const std::filesystem::path& map_dir,
+    bool interval_limited = true) {
+  double next_imu_stamp_s = 0.0;
+  OdomSample prior;
+  prior.stamp_s = 0.345;
+  prior.has_velocity = true;
+  prior.odom_body = poseFromRpy(0.0, 0.0, 0.0, -0.019, 0.037, -0.001);
+  auto backend = initializedMappingBackend(config_path, next_imu_stamp_s, prior);
+  const auto check_patch_count = [&](
+      const char* directory, std::size_t expected,
+      const char* failure = "patch_sampling_count_wrong") {
+    const auto map_path = map_dir / directory / "map.pcd";
+    const auto saved = backend->saveMap(map_path.string());
+    check(saved.ok, saved.message.c_str());
+    std::ifstream poses(map_path.parent_path() / "poses.txt");
+    check(poses.is_open(), "patch_sampling_poses_missing");
+    std::size_t count = 0;
+    std::string line;
+    while (std::getline(poses, line)) {
+      if (!line.empty()) ++count;
+    }
+    check(count == expected, failure);
+  };
+  const auto scan_at_pose = [&](double stamp_s, const Pose3d& pose) {
+    prior.stamp_s = stamp_s + 0.045;
+    prior.odom_body = pose;
+    check(backend->feedVisualOdom(prior).ok, "patch_sampling_prior_rejected");
+    processScan(*backend, stamp_s, 0.0F, next_imu_stamp_s);
+    const auto outputs = backend->outputs();
+    check(outputs.state == SlamState::Tracking && outputs.odom_prior_active,
+          "patch_sampling_prior_not_tracking");
+  };
+  const auto scan_at_yaw = [&](double stamp_s, double yaw) {
+    scan_at_pose(stamp_s, poseFromRpy(0.0, 0.0, 0.0, -0.019, 0.037, yaw));
+  };
+
+  // Static poses cross zero with sub-degree noise. Spatial thresholds remain
+  // 0.2 m translation or 5 degrees rotation, including opt-in spatial sampling.
+  for (int i = 0; i < 4; ++i) {
+    scan_at_yaw(1.40 + static_cast<double>(i) * 1.10, i % 2 == 0 ? 0.001 : -0.001);
+  }
+  check_patch_count("yaw_zero_crossing", 1);
+  scan_at_yaw(5.80, 0.12);
+  check_patch_count("yaw_real_turn", 2);
+  scan_at_yaw(6.00, 0.24);
+  check_patch_count("yaw_before_interval", interval_limited ? 2 : 3);
+  scan_at_yaw(6.90, 0.24);
+  check_patch_count("yaw_after_interval", 3);
+  constexpr double kPi = 3.14159265358979323846;
+  scan_at_yaw(8.00, kPi - 0.001);
+  scan_at_yaw(9.10, -kPi + 0.001);
+  check_patch_count("yaw_wrap_crossing", 4);
+
+  scan_at_pose(10.20, poseFromRpy(0.0, 0.0, 0.0, 0.0, 0.0, 0.0));
+  check_patch_count("spatial_sampling_anchor", 5);
+  scan_at_pose(11.30, poseFromRpy(0.0, 0.0, 0.0, 0.0, 0.12, 0.0));
+  check_patch_count("pitch_sampling", 6, "pitch_sampling_patch_missing");
+  scan_at_pose(12.40, poseFromRpy(0.0, 0.0, 0.21, 0.0, 0.12, 0.0));
+  check_patch_count("vertical_sampling", 7, "vertical_sampling_patch_missing");
+  auto tilted_pose = poseFromRpy(0.0, 0.0, 0.21, 0.12, 0.12, 0.0);
+  scan_at_pose(13.50, tilted_pose);
+  check_patch_count("roll_sampling", 8, "roll_sampling_patch_missing");
+  tilted_pose.qw = -tilted_pose.qw;
+  tilted_pose.qx = -tilted_pose.qx;
+  tilted_pose.qy = -tilted_pose.qy;
+  tilted_pose.qz = -tilted_pose.qz;
+  scan_at_pose(14.60, tilted_pose);
+  check_patch_count("quaternion_sign_equivalence", 8);
+  scan_at_pose(15.70, poseFromRpy(0.21, 0.0, 0.21, 0.12, 0.12, 0.0));
+  check_patch_count("planar_translation_sampling", 9);
+
+  // Each component and the XY distance are below 0.2 m, but XYZ is above it.
+  scan_at_pose(16.80, poseFromRpy(0.33, 0.12, 0.33, 0.12, 0.12, 0.0));
+  check_patch_count("combined_xyz_sampling", 10);
+  scan_at_pose(17.00, poseFromRpy(0.33, 0.12, 0.54, 0.12, 0.12, 0.0));
+  check_patch_count("vertical_before_interval", interval_limited ? 10 : 11);
+  scan_at_pose(17.90, poseFromRpy(0.33, 0.12, 0.54, 0.12, 0.12, 0.0));
+  check_patch_count("vertical_after_interval", 11);
+  scan_at_pose(18.00, poseFromRpy(0.54, 0.12, 0.54, 0.12, 0.12, 0.0));
+  check_patch_count("planar_before_interval", interval_limited ? 11 : 12);
+  scan_at_pose(19.10, poseFromRpy(0.54, 0.12, 0.54, 0.12, 0.12, 0.0));
+  check_patch_count("planar_after_interval", 12);
+}
+
+void checkPatchBundleRetentionManifest(
+    const std::filesystem::path& config_path,
+    const std::filesystem::path& map_dir) {
+  double next_imu_stamp_s = 0.0;
+  // Patch retention needs accepted observations, independently of the mock
+  // cloud's degeneracy. Use the supported time-aligned pose-prior input.
+  OdomSample prior;
+  prior.stamp_s = 0.345;
+  prior.has_velocity = true;
+  auto backend = initializedMappingBackend(config_path, next_imu_stamp_s, prior);
+  const auto initial_sequence = backend->outputs().observation_sequence;
+  check(initial_sequence == 1, "patch_bundle_initial_observation_count_wrong");
+  const auto check_manifest = [&](const char* directory, bool expected_complete,
+                                  std::uint64_t expected_dropped,
+                                  std::uint64_t expected_count) {
+    const auto map_path = map_dir / directory / "map.pcd";
+    const auto saved = backend->saveMap(map_path.string());
+    if (!saved.ok) {
+      std::cerr << "patch_bundle_save_failed: " << saved.message << '\n';
+    }
+    check(saved.ok, "patch_bundle_save_failed");
+    std::ifstream manifest(map_path.parent_path() / "patch_bundle.manifest");
+    check(manifest.is_open(), "patch_bundle_manifest_missing");
+    std::string schema;
+    std::string key;
+    std::uint64_t complete = 1;
+    std::uint64_t dropped_count = 0;
+    std::uint64_t first_sequence = 0;
+    std::uint64_t last_sequence = 0;
+    std::uint64_t patch_count = 0;
+    manifest >> schema >> key >> complete >> key >> dropped_count >> key >> first_sequence >>
+        key >> last_sequence >> key >> patch_count;
+    check(static_cast<bool>(manifest), "patch_bundle_manifest_parse_failed");
+    check(schema == "LINGTU_PATCH_BUNDLE_V1", "patch_bundle_manifest_schema_wrong");
+    check(complete == static_cast<std::uint64_t>(expected_complete),
+          "patch_bundle_completeness_wrong");
+    check(dropped_count == expected_dropped, "patch_bundle_drop_count_wrong");
+    check(patch_count == expected_count, "patch_bundle_retained_count_wrong");
+    check(first_sequence == dropped_count, "patch_bundle_first_sequence_wrong");
+    check(last_sequence + 1 == dropped_count + patch_count,
+          "patch_bundle_sequence_accounting_wrong");
+    std::ifstream calibration(map_path.parent_path() / "scan_origin.txt");
+    double ox = 0, oy = 0, oz = 0;
+    calibration >> key >> ox >> oy >> oz;
+    check(static_cast<bool>(calibration) && key == "lidar_origin_in_patch",
+          "scan_origin_missing_or_invalid");
+    check(std::abs(ox - 0.16) < 1e-6 && std::abs(oy - 0.02) < 1e-6 &&
+              std::abs(oz - 0.12) < 1e-6,
+          "scan_origin_not_in_exported_body_frame");
+  };
+  check_manifest("complete_patch_bundle", true, 0, 1);
+  prior.stamp_s = 0.445;
+  check(backend->feedVisualOdom(prior).ok, "patch_bundle_pose_prior_rejected");
+  processScan(*backend, 0.40, 0.0F, next_imu_stamp_s);
+  const auto full = backend->outputs();
+  check(full.state == SlamState::Degraded &&
+            full.reason == "mapping_keyframe_capacity_reached" &&
+            full.observation_sequence == initial_sequence + 1,
+        "patch_bundle_did_not_stop_at_capacity");
+  for (int i = 0; i < 4; ++i) {
+    const double scan_stamp_s = 0.50 + static_cast<double>(i) * 0.10;
+    prior.stamp_s = scan_stamp_s + 0.045;
+    check(backend->feedVisualOdom(prior).ok, "patch_bundle_pose_prior_rejected");
+    processScan(*backend, scan_stamp_s, 0.0F, next_imu_stamp_s);
+    const auto outputs = backend->outputs();
+    check(outputs.state == SlamState::Degraded &&
+              outputs.observation_sequence == full.observation_sequence &&
+              outputs.stamp_s == full.stamp_s,
+          "patch_bundle_processed_scan_after_capacity");
+  }
+  check(backend->feedImu(imu(100.0)).ok &&
+            backend->feedLidar(lidar(100.0, 0.0F)).ok &&
+            backend->tick().ok,
+        "patch_bundle_capacity_did_not_hold_input");
+  check(backend->outputs().source_epoch == full.source_epoch &&
+            backend->outputs().observation_sequence == full.observation_sequence,
+        "patch_bundle_capacity_lost_map_on_sensor_time_jump");
+  check_manifest("capacity_preserved_patch_bundle", true, 0, 2);
+}
+
+void checkMissingImuDoesNotRefreshOdometry(const std::filesystem::path& config_path) {
+  double next_imu_stamp_s = 0.0;
+  auto backend = initializedMappingBackend(config_path, next_imu_stamp_s);
+  const auto before = backend->outputs();
+  check(before.state == SlamState::Tracking && before.odometry_odom_body.has_value(),
+        "imu_gap_fixture_not_tracking");
+  for (int i = 0; i < 10; ++i) {
+    check(backend->feedLidar(lidar(0.7 + i * 0.1, 0.0F)).ok,
+          "imu_gap_lidar_rejected");
+    check(backend->tick().ok, "imu_gap_tick_failed");
+  }
+  const auto waiting = backend->outputs();
+  check(waiting.stamp_s == before.stamp_s,
+        "imu_gap_retimestamped_old_odometry");
+  check(waiting.observation_sequence == before.observation_sequence,
+        "imu_gap_published_new_observation");
+  check(waiting.state == SlamState::Degraded && waiting.confidence == 0.0 &&
+            waiting.reason == "imu_gap_waiting_for_scan",
+        "imu_gap_reported_healthy_tracking");
+
+  for (int i = 61; i <= 190; ++i) {
+    check(backend->feedImu(imu(i * 0.01)).ok,
+          "imu_gap_recovery_imu_rejected");
+  }
+  check(backend->feedLidar(lidar(1.7, 0.0F)).ok,
+        "imu_gap_recovery_lidar_rejected");
+  for (int i = 0; i < 4; ++i)
+    check(backend->tick().ok, "imu_gap_recovery_tick_failed");
+  const auto recovered = backend->outputs();
+  check(recovered.state == SlamState::Tracking &&
+            recovered.stamp_s > before.stamp_s &&
+            recovered.observation_sequence > before.observation_sequence,
+        "imu_gap_did_not_recover_on_new_scan");
+}
+
+void checkAsyncSnapshotKeepsProcessingScans(
+    const std::filesystem::path& config_path,
+    const std::filesystem::path& map_dir) {
+  const auto snapshot_config = map_dir / "async_snapshot_test.yaml";
+  {
+    std::ifstream input(config_path);
+    std::ofstream output(snapshot_config);
+    output << input.rdbuf();
+    output << "patch_min_interval_s: 0.0\npatch_min_translation_m: 0.0\n"
+              "patch_min_rotation_rad: 0.0\n";
+  }
+  double next_imu_stamp_s = 0.0;
+  auto backend = initializedMappingBackend(snapshot_config, next_imu_stamp_s);
+  std::size_t recorded_points = 0;
+  auto previous_observation = backend->outputs().observation_sequence;
+  for (int i = 0; i < 128 && recorded_points * 32 <= 65536; ++i) {
+    processScan(*backend, 0.65 + i * 0.05, 0.0F, next_imu_stamp_s);
+    const auto scan = backend->outputs();
+    check(scan.observation_sequence > previous_observation && scan.registered_cloud_body &&
+              !scan.registered_cloud_body->points.empty(),
+          "snapshot_buffer_fixture_did_not_record_new_scan");
+    previous_observation = scan.observation_sequence;
+    recorded_points += scan.registered_cloud_body->points.size();
+  }
+  check(recorded_points * 32 > 65536, "snapshot_buffer_fixture_recorded_too_few_points");
+  const auto captured = backend->outputs();
+  const auto repeated = backend->outputs();
+  check(captured.registered_cloud_body == repeated.registered_cloud_body &&
+            captured.map_cloud_map == repeated.map_cloud_map,
+        "unchanged_scan_clouds_were_copied");
+  const auto pcd_path = map_dir / "async_snapshot" / "map.pcd";
+  const auto start_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+  auto started = backend->startSaveMapAsync(pcd_path.string());
+  while (!started.ok && started.message == "online_mapping_busy_retry_save") {
+    check(!backend->saveMapAsyncInFlight(), "busy_graph_started_snapshot");
+    check(std::chrono::steady_clock::now() < start_deadline, "snapshot_graph_wait_timed_out");
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    started = backend->startSaveMapAsync(pcd_path.string());
+  }
+  check(started.ok, "async_snapshot_start_failed");
+  const auto preview = backend->outputs().global_map_cloud;
+  check(preview && !preview->points.empty(), "completed_graph_has_no_preview");
+  check(preview->frame_id == "map" && preview->stamp_s == captured.stamp_s,
+        "preview_frame_or_capture_timestamp_changed");
+  check(preview == backend->outputs().global_map_cloud,
+        "unchanged_global_preview_was_copied");
+  for (const auto& point : preview->points) {
+    check(std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z),
+          "preview_coordinate_nonfinite");
+    check(point.intensity == 20.0F && point.offset_time_ns == 0 &&
+              point.line == 0 && point.tag == 0,
+          "preview_point_attributes_changed");
+  }
+  check(backend->saveMapAsyncInFlight(), "async_snapshot_not_in_flight");
+  processScan(*backend, captured.stamp_s + 0.10, 0.0F, next_imu_stamp_s);
+  check(backend->outputs().observation_sequence > captured.observation_sequence,
+        "async_snapshot_blocked_new_scan");
+
+  std::optional<Status> completed;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+  while (!(completed = backend->pollSaveMapAsync())) {
+    check(std::chrono::steady_clock::now() < deadline,
+          "async_snapshot_timed_out");
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  check(completed->ok && std::filesystem::is_regular_file(pcd_path),
+        "async_snapshot_write_failed");
+  const auto saved = backend->outputs();
+  check(saved.saved_map_cloud_map &&
+            saved.saved_map_cloud_map->stamp_s == captured.stamp_s,
+        "async_snapshot_used_newer_scan_timestamp");
+  check(saved.saved_map_cloud_map == backend->outputs().saved_map_cloud_map,
+        "unchanged_saved_map_was_copied");
+  std::size_t patch_points = 0;
+  for (const auto& patch : std::filesystem::directory_iterator(pcd_path.parent_path() / "patches")) {
+    std::ifstream input(patch.path(), std::ios::binary);
+    std::string line;
+    while (std::getline(input, line) && line.rfind("DATA ", 0) != 0) {
+      if (line.rfind("POINTS ", 0) == 0) patch_points += std::stoull(line.substr(7));
+    }
+  }
+  check(patch_points > 0 && saved.saved_map_cloud_map->points.size() >= patch_points,
+        "uncorrected_snapshot_discarded_recorded_surface_returns");
+  for (const auto* filename : {"poses.raw.txt", "trajectory.raw.txt", "keyframes.timestamps.txt", "sam_loops.json"})
+    check(std::filesystem::file_size(pcd_path.parent_path() / filename) > 0,
+          "snapshot_lost_original_odometry");
+  std::ifstream report_input(pcd_path.parent_path() / "map_optimization.json");
+  const std::string report((std::istreambuf_iterator<char>(report_input)),
+                           std::istreambuf_iterator<char>());
+  report_input.close();
+  check(report.find("\"evidence_complete\":true") != std::string::npos,
+        "snapshot_saved_before_first_graph_prefix_completed");
+
+  pcl::PointCloud<pcl::PointXYZINormal> disk;
+  check(pcl::io::loadPCDFile(pcd_path.string(), disk) == 0,
+        "snapshot_pcl_reader_rejected_streamed_pcd");
+  check(disk.size() == saved.saved_map_cloud_map->points.size(),
+        "snapshot_disk_and_published_point_count_differ");
+  check(disk.size() * 32 > 65536, "snapshot_fixture_did_not_cross_write_buffer_boundary");
+  for (std::size_t i = 0; i < disk.size(); ++i) {
+    const auto& a = disk.points[i];
+    const auto& b = saved.saved_map_cloud_map->points[i];
+    check(a.x == b.x && a.y == b.y && a.z == b.z && a.intensity == b.intensity &&
+              static_cast<std::int64_t>(std::llround(a.curvature * 1e6)) == b.offset_time_ns &&
+              b.line == 0 && b.tag == 0,
+          "snapshot_disk_and_published_point_order_or_attributes_differ");
+  }
+  const auto read_bytes = [](const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(input), {});
+  };
+  const auto original_pcd = read_bytes(pcd_path);
+  const auto reference_pcd = map_dir / "pcl_reference.pcd";
+  check(pcl::io::savePCDFileBinary(reference_pcd.string(), disk) == 0,
+        "snapshot_pcl_reference_write_failed");
+  check(original_pcd == read_bytes(reference_pcd),
+        "snapshot_streamed_pcd_bytes_differ_from_pcl_writer");
+  const auto original_poses = read_bytes(pcd_path.parent_path() / "poses.txt");
+  const auto old_cloud = saved.saved_map_cloud_map;
+  const auto old_revision = saved.saved_map_revision;
+  check(saved.saved_map_relocalization_supported,
+        "snapshot_compact_target_did_not_enable_relocalization");
+  auto staging = pcd_path;
+  staging += ".tmp";
+  check(std::filesystem::create_directory(staging), "snapshot_staging_fixture_failed");
+  const auto failed = backend->saveMap(pcd_path.string());
+  check(!failed.ok, "snapshot_staging_conflict_was_reported_successful");
+  check(backend->outputs().saved_map_cloud_map == old_cloud &&
+            backend->outputs().saved_map_revision == old_revision &&
+            backend->outputs().saved_map_relocalization_supported &&
+            original_pcd == read_bytes(pcd_path) &&
+            original_poses == read_bytes(pcd_path.parent_path() / "poses.txt"),
+        "snapshot_failure_replaced_previous_map");
+  std::filesystem::remove(staging);
+#ifdef _WIN32
+  {
+    // A file being read on Windows cannot be renamed. Exercise commit failure
+    // after staged output and the replacement localization target are ready.
+    std::ifstream held_open(pcd_path, std::ios::binary);
+    check(held_open.is_open(), "snapshot_commit_failure_fixture_failed");
+    const auto commit_failed = backend->saveMap(pcd_path.string());
+    check(!commit_failed.ok && commit_failed.message.find("map_save_commit_failed:") == 0,
+          "snapshot_commit_failure_was_reported_successful");
+    check(backend->outputs().saved_map_cloud_map == old_cloud &&
+              backend->outputs().saved_map_revision == old_revision &&
+              original_pcd == read_bytes(pcd_path) &&
+              original_poses == read_bytes(pcd_path.parent_path() / "poses.txt"),
+          "snapshot_commit_failure_damaged_previous_map");
+  }
+#endif
+  const auto source_epoch = backend->outputs().source_epoch;
+  auto stale_started = backend->startSaveMapAsync(pcd_path.string());
+  const auto stale_start_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+  while (!stale_started.ok && stale_started.message == "online_mapping_busy_retry_save") {
+    check(std::chrono::steady_clock::now() < stale_start_deadline,
+          "snapshot_stale_source_graph_wait_timed_out");
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    stale_started = backend->startSaveMapAsync(pcd_path.string());
+  }
+  check(stale_started.ok, stale_started.message.c_str());
+  // Reset before polling, regardless of whether the worker has finished. A
+  // stale capture must never reach the disk or replace the reset runtime.
+  check(backend->reset().ok, "snapshot_source_reset_failed");
+  const auto reset_output = backend->outputs();
+  check(reset_output.source_epoch != source_epoch, "snapshot_reset_did_not_advance_epoch");
+  std::optional<Status> stale_completed;
+  const auto stale_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+  while (!(stale_completed = backend->pollSaveMapAsync())) {
+    check(std::chrono::steady_clock::now() < stale_deadline,
+          "snapshot_stale_source_timed_out");
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  check(!stale_completed->ok && stale_completed->message == "map_snapshot_source_changed",
+        "snapshot_stale_source_was_reported_successful");
+  const auto after_stale = backend->outputs();
+  check(original_pcd == read_bytes(pcd_path) &&
+            original_poses == read_bytes(pcd_path.parent_path() / "poses.txt") &&
+            after_stale.saved_map_cloud_map == reset_output.saved_map_cloud_map &&
+            after_stale.saved_map_revision == reset_output.saved_map_revision &&
+            after_stale.saved_map_relocalization_supported == reset_output.saved_map_relocalization_supported,
+        "snapshot_stale_source_changed_original_disk_or_reset_runtime");
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  const auto map_dir =
+      std::filesystem::temp_directory_path() / "lingtu_ltlio_mock_flow_map";
+  std::filesystem::remove_all(map_dir);
+  std::filesystem::create_directories(map_dir);
+  const auto config_path = map_dir / "ltlio_test.yaml";
+  {
+    std::ofstream config_out(config_path);
+    config_out << "imu_init_num: 20\nelevator_mode: off\n";
+    // The fixture interleaves three planes; stride three retains only one.
+    config_out << "lidar_filter_num: 1\n";
+    config_out << "relocalization_map_bounds_margin_m: 10.0\n";
+    config_out << "relocalization_min_inliers: 10\n";
+    config_out << "relocalization_max_pos_cov_trace: 100.0\n";
+    config_out << "track_against_map_require_degeneracy_metrics: false\n";
+    config_out << "odom_prior_enabled: true\n";
+    config_out << "max_update_velocity_mps: 3.0\n";
+    config_out << "max_sensor_time_jump_s: 1.0\n";
+    config_out << "reject_nonconverged_update: false\n";
+    config_out << "reject_degenerate_nonconverged_update: false\n";
+    config_out << "degeneracy_max_update_dof: 5\n";
+    config_out << "degeneracy_max_condition: 1000000000000.0\n";
+    config_out << "max_update_translation_m: 10.0\n";
+    config_out << "max_update_rotation_rad: 3.14\n";
+    config_out << "max_update_velocity_delta_mps: 100.0\n";
+  }
+
+  const auto bypass_config_path = map_dir / "ltlio_bypass_test.yaml";
+  {
+    std::ofstream config_out(bypass_config_path);
+    config_out << "imu_init_num: 20\nelevator_mode: off\n";
+    config_out << "odom_prior_enabled: true\n";
+    config_out << "odom_prior_bypass_ltlio: true\n";
+    config_out << "odom_prior_max_age_s: 0.20\n";
+    config_out << "relocalization_map_bounds_margin_m: 10.0\n";
+    config_out << "max_update_velocity_mps: 3.0\n";
+  }
+
+  const auto covariance_gate_config_path = map_dir / "ltlio_covariance_gate_test.yaml";
+  {
+    std::ofstream config_out(covariance_gate_config_path);
+    config_out << "imu_init_num: 20\nlidar_filter_num: 1\nelevator_mode: off\n";
+    config_out << "ltlio_max_pos_cov_trace: 0.000000001\n";
+    config_out << "odom_prior_enabled: false\n";
+    config_out << "max_update_velocity_mps: 3.0\n";
+    config_out << "reject_nonconverged_update: false\n";
+    config_out << "reject_degenerate_nonconverged_update: false\n";
+    config_out << "degeneracy_max_update_dof: 5\n";
+    config_out << "degeneracy_max_condition: 1000000000000.0\n";
+    config_out << "max_update_translation_m: 10.0\n";
+    config_out << "max_update_rotation_rad: 3.14\n";
+    config_out << "max_update_velocity_delta_mps: 100.0\n";
+  }
+
+  const auto relocalization_gate_failure_config_path =
+      map_dir / "ltlio_relocalization_gate_failure_test.yaml";
+  {
+    std::ofstream config_out(relocalization_gate_failure_config_path);
+    config_out << "imu_init_num: 20\nlidar_filter_num: 1\nelevator_mode: off\n";
+    config_out << "relocalization_map_bounds_margin_m: 10.0\n";
+    config_out << "relocalization_min_inliers: 1000000\n";
+    config_out << "relocalization_max_pos_cov_trace: 100.0\n";
+    config_out << "track_against_map_require_degeneracy_metrics: false\n";
+    config_out << "odom_prior_enabled: true\n";
+    config_out << "max_update_velocity_mps: 3.0\n";
+    config_out << "reject_nonconverged_update: false\n";
+    config_out << "reject_degenerate_nonconverged_update: false\n";
+    config_out << "degeneracy_max_update_dof: 5\n";
+    config_out << "degeneracy_max_condition: 1000000000000.0\n";
+    config_out << "max_update_translation_m: 10.0\n";
+    config_out << "max_update_rotation_rad: 3.14\n";
+    config_out << "max_update_velocity_delta_mps: 100.0\n";
+  }
+
+  const auto patch_bundle_config_path = map_dir / "ltlio_patch_bundle_test.yaml";
+  {
+    std::ofstream config_out(patch_bundle_config_path);
+    config_out << "imu_init_num: 20\nlidar_filter_num: 1\nelevator_mode: off\n";
+    config_out << "max_patch_snapshots: 2\n";
+    config_out << "t_il: [0.02, -0.06, 0.04]\n";
+    config_out << "navigation_body_from_imu_rotation: [0, -1, 0, 1, 0, 0, 0, 0, 1]\n";
+    config_out << "navigation_body_from_imu_translation: [0.10, 0, 0.08]\n";
+    config_out << "patch_min_interval_s: 0.0\n";
+    config_out << "patch_min_translation_m: 0.0\n";
+    config_out << "patch_min_rotation_rad: 0.0\n";
+    config_out << "odom_prior_enabled: true\n";
+    config_out << "odom_prior_max_age_s: 0.20\n";
+  }
+
+  const auto patch_sampling_config_path = map_dir / "ltlio_patch_sampling_test.yaml";
+  {
+    std::ofstream config_out(patch_sampling_config_path);
+    config_out << "imu_init_num: 20\nlidar_filter_num: 1\nelevator_mode: off\n";
+    config_out << "odom_prior_enabled: true\n";
+    config_out << "odom_prior_max_age_s: 0.20\n";
+  }
+  const auto patch_rate_limit_config_path = map_dir / "ltlio_patch_rate_limit_test.yaml";
+  {
+    std::ifstream sampling_config(patch_sampling_config_path);
+    std::ofstream config_out(patch_rate_limit_config_path);
+    config_out << sampling_config.rdbuf();
+    config_out << "patch_min_interval_s: 1.0\n";
+  }
+  const auto patch_spatial_sampling_config_path = map_dir / "ltlio_patch_spatial_sampling_test.yaml";
+  {
+    std::ifstream sampling_config(patch_sampling_config_path);
+    std::ofstream config_out(patch_spatial_sampling_config_path);
+    config_out << sampling_config.rdbuf();
+    config_out << "patch_min_interval_s: 0.0\n";
+  }
+
+  if (argc == 2 && std::string(argv[1]) == "--map-reload-failure") {
+    checkMapReloadTransaction(config_path, map_dir, true);
+    return 0;
+  }
+  if (argc == 2 && std::string(argv[1]) == "--map-reload-success") {
+    checkMapReloadTransaction(config_path, map_dir, false);
+    return 0;
+  }
+  checkGeometryDiagnostics(config_path);
+  checkMapReloadTransaction(config_path, map_dir, true);
+  checkMapReloadTransaction(config_path, map_dir, false);
+  checkPatchBundleRetentionManifest(patch_bundle_config_path, map_dir);
+  checkPatchSamplingMotion(patch_sampling_config_path, map_dir);
+  checkPatchSamplingMotion(patch_rate_limit_config_path, map_dir / "rate_limited_sampling", true);
+  checkPatchSamplingMotion(patch_spatial_sampling_config_path, map_dir / "spatial_sampling", false);
+  checkOdomPriorBypass(bypass_config_path);
+  checkOdomPriorHistoryBypass(bypass_config_path);
+  checkOdomPriorBypassDoesNotFallback(bypass_config_path);
+  checkBypassAsyncRelocalizationUsesOdomHeightAndTilt(
+      bypass_config_path, map_dir, 0.35);
+  checkBypassAsyncRelocalizationUsesOdomHeightAndTilt(
+      bypass_config_path, map_dir, -0.35);
+  checkPositionCovarianceHealthGate(covariance_gate_config_path);
+  checkSensorTimeJumpGate(config_path);
+  checkMissingImuDoesNotRefreshOdometry(config_path);
+  checkAsyncSnapshotKeepsProcessingScans(config_path, map_dir);
+  checkRejectedUpdateHealthGate(config_path);
+  checkVelocityHealthGate(config_path);
+  checkRelocalizationCannotClearUnhealthyNumericState(config_path);
+  Pose3d result_failure_guess;
+  result_failure_guess.x = 1000.0;
+  result_failure_guess.y = 1000.0;
+  result_failure_guess.z = 1000.0;
+  checkFailedRelocalizationPreservesCatastrophicFault(
+      config_path,
+      result_failure_guess,
+      "native_relocalizer_icp_failed",
+      "failed",
+      "result_failure");
+  checkFailedRelocalizationPreservesCatastrophicFault(
+      relocalization_gate_failure_config_path,
+      Pose3d{},
+      "relocalization_inliers_rejected",
+      "rejected",
+      "gate_failure");
+
+  auto backend = makeLtlioBackend();
+  check(backend != nullptr, "missing_backend");
+
+  SlamConfig config;
+  config.backend = "ltlio";
+  config.config_path = config_path.string();
+  check(backend->configure(config).ok, "configure_failed");
+  check(backend->setMode(SlamMode::Mapping, "").ok, "set_mode_failed");
+
+  for (int i = 0; i <= 60; ++i) {
+    check(backend->feedImu(imu(static_cast<double>(i) * 0.01)).ok, "feed_imu_failed");
+  }
+  for (int frame = 0; frame < 6; ++frame)
+    check(backend->feedLidar(lidar(0.20 + frame * 0.02, 0.0F)).ok,
+          "feed_initial_lidar_failed");
+
+  for (int i = 0; i < 8; ++i) {
+    check(backend->tick().ok, "tick_failed");
+  }
+
+  const auto outputs = backend->outputs();
+  if (!outputs.odometry_odom_body.has_value()) {
+    std::cerr << "missing_odometry state=" << toString(outputs.state)
+              << " reason=" << outputs.reason
+              << " imu_batch=" << outputs.imu_batch
+              << " waits=" << outputs.sync_wait_count << "\n";
+    return 1;
+  }
+  if (!(outputs.registered_cloud_body != nullptr) || !(outputs.map_cloud_map != nullptr)) {
+    std::cerr << "missing_cloud_outputs\n";
+    return 1;
+  }
+  double imu_stamp_s = 0.61;
+  for (int frame_index = 0; frame_index < 100; ++frame_index) {
+    const double scan_stamp_s = 0.40 + static_cast<double>(frame_index) * 0.10;
+    while (imu_stamp_s <= scan_stamp_s + 0.06) {
+      check(backend->feedImu(imu(imu_stamp_s)).ok, "feed_static_imu_failed");
+      imu_stamp_s += 0.005;
+    }
+    check(
+        backend->feedLidar(lidar(scan_stamp_s, 0.0F)).ok,
+        "feed_static_lidar_failed");
+    for (int tick_index = 0; tick_index < 4; ++tick_index) {
+      check(backend->tick().ok, "static_tick_failed");
+    }
+  }
+  const auto static_outputs = backend->outputs();
+  if (!static_outputs.odometry_odom_body.has_value()) {
+    std::cerr << "static_missing state=" << toString(static_outputs.state)
+              << " reason=" << static_outputs.reason << "\n";
+  }
+  check(static_outputs.odometry_odom_body.has_value(), "static_odometry_missing");
+  const auto& static_pose = *static_outputs.odometry_odom_body;
+  const double static_position_norm =
+      std::sqrt(static_pose.x * static_pose.x + static_pose.y * static_pose.y +
+                static_pose.z * static_pose.z);
+  check(std::isfinite(static_position_norm), "static_odometry_non_finite");
+  if (static_position_norm > 0.25) {
+    std::cerr << "static_scan_drift=" << static_position_norm << " pose="
+              << static_pose.x << "," << static_pose.y << "," << static_pose.z
+              << "\n";
+    return 1;
+  }
+
+  const auto save_status = backend->saveMap((map_dir / "map.pcd").string());
+  check(save_status.ok, "save_map_failed");
+  check(std::filesystem::exists(map_dir / "map.pcd"), "map_pcd_missing");
+  check(std::filesystem::exists(map_dir / "poses.txt"), "poses_txt_missing");
+  check(std::filesystem::exists(map_dir / "patches"), "patches_dir_missing");
+  check(!std::filesystem::exists(map_dir / "map.raw.pcd"), "raw_map_pcd_must_not_exist");
+  {
+    std::ifstream report(map_dir / "map_optimization.json");
+    const std::string text((std::istreambuf_iterator<char>(report)), {});
+    check(text.find("\"backend\":\"lio_sam_isam2\"") != std::string::npos,
+          "saved_snapshot_did_not_identify_sam_backend");
+    check(text.find("\"performed\":false") != std::string::npos,
+          "no_loop_fixture_claimed_loop_correction");
+  }
+
+  check(
+      backend->setMode(SlamMode::Localization, (map_dir / "map.pcd").string()).ok,
+      "localization_mode_failed");
+  check(
+      !backend->outputs().map_odom_tf.has_value(),
+      "localization_must_not_publish_map_odom_before_relocalization");
+  const std::uint64_t source_epoch_before_relocalization =
+      backend->outputs().source_epoch;
+
+  const auto async_start_time = std::chrono::steady_clock::now();
+  check(
+      backend->startRelocalizeAsync(static_pose).ok,
+      "async_relocalization_start_failed");
+  const double async_start_elapsed_s = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - async_start_time).count();
+  check(async_start_elapsed_s < 0.20, "async_relocalization_start_blocked");
+  check(backend->relocalizeAsyncInFlight(), "async_relocalization_not_in_flight");
+
+  const double async_scan_stamp_s = 10.40;
+  while (imu_stamp_s <= async_scan_stamp_s + 0.06) {
+    check(backend->feedImu(imu(imu_stamp_s)).ok, "feed_async_imu_failed");
+    imu_stamp_s += 0.005;
+  }
+  check(
+      backend->feedLidar(lidar(async_scan_stamp_s, 0.0F)).ok,
+      "feed_async_lidar_failed");
+  const auto async_tick_start = std::chrono::steady_clock::now();
+  check(backend->tick().ok, "async_tick_failed");
+  const double async_tick_elapsed_s = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - async_tick_start).count();
+  check(async_tick_elapsed_s < 0.50, "async_relocalization_blocked_tick");
+
+  std::optional<Status> async_completion;
+  const auto async_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < async_deadline) {
+    async_completion = backend->pollRelocalizeAsync();
+    if (async_completion.has_value()) {
+      break;
+    }
+    check(backend->tick().ok, "tick_while_async_relocalizing_failed");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  check(async_completion.has_value(), "async_relocalization_timeout");
+  if (!async_completion->ok) {
+    std::cerr << "async_relocalization_failed=" << async_completion->message << "\n";
+    return 1;
+  }
+  const auto localized_outputs = backend->outputs();
+  check(localized_outputs.map_odom_tf.has_value(), "async_map_odom_missing");
+  check(localized_outputs.map_frame_jump, "async_map_frame_jump_missing");
+  check(
+      localized_outputs.map_frame_jump_sequence > 0U,
+      "async_map_frame_jump_sequence_missing");
+  check(
+      localized_outputs.source_epoch == source_epoch_before_relocalization + 1U,
+      "relocalization_map_frame_jump_did_not_advance_source_epoch");
+
+  check(backend->relocalize(static_pose).ok, "manual_relocalization_regressed");
+
+  // An accepted alignment supplies a prediction for drift correction, not a
+  // new explicit seed subject to the fixed-transform 80% overlap precheck.
+  check(backend->relocalize(std::nullopt).ok, "periodic_local_refinement_failed");
+  check(backend->outputs().relocalization_refine_backend != "fixed_transform_seed_check" &&
+            backend->outputs().relocalization_refine_backend != "fixed_seed_planar_icp",
+        "periodic_prediction_was_treated_as_an_explicit_seed");
+  check(backend->startRelocalizeAsync(std::nullopt).ok,
+        "async_periodic_local_refinement_start_failed");
+  async_completion.reset();
+  const auto periodic_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < periodic_deadline) {
+    async_completion = backend->pollRelocalizeAsync();
+    if (async_completion.has_value()) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  check(async_completion.has_value() && async_completion->ok,
+        "async_periodic_local_refinement_failed");
+  check(backend->outputs().relocalization_refine_backend != "fixed_transform_seed_check" &&
+            backend->outputs().relocalization_refine_backend != "fixed_seed_planar_icp",
+        "async_periodic_prediction_was_treated_as_an_explicit_seed");
+
+  // A true global request must not silently reuse the existing map<-odom.
+  // A saved-map endpoint is an independent, strictly verified candidate.
+  const auto global_start = backend->startRelocalizeAsync(
+      std::nullopt, RelocalizationSearch::Global);
+  if (!global_start.ok) {
+    check(global_start.message == "global_relocalization_unavailable",
+          "global_search_did_not_report_missing_bbs3d");
+    check(backend->outputs().map_odom_tf.has_value(),
+          "unavailable_global_search_discarded_alignment");
+    const auto sync_global = backend->relocalize(std::nullopt, RelocalizationSearch::Global);
+    check(!sync_global.ok && sync_global.message == "global_relocalization_unavailable",
+          "sync_global_request_reused_existing_alignment_as_seed");
+  } else {
+    async_completion.reset();
+    const auto global_deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(40);
+    while (std::chrono::steady_clock::now() < global_deadline) {
+      async_completion = backend->pollRelocalizeAsync();
+      if (async_completion.has_value()) break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    check(async_completion.has_value(), "explicit_global_search_timeout");
+    const auto global_outputs = backend->outputs();
+    if (async_completion->ok) {
+      check(global_outputs.last_relocalization_message == "native_global_relocalized" ||
+                global_outputs.last_relocalization_message ==
+                    "native_relocalized_saved_pose_verified",
+            "global_request_succeeded_through_local_seed_refinement");
+    } else {
+      check(global_outputs.last_relocalization_message.find("native_global_") == 0U ||
+                global_outputs.last_relocalization_message.find("relocalization_") == 0U,
+            "global_request_failed_through_local_seed_verification");
+    }
+  }
+
+  std::cout << "ltlio_mock_flow odometry stamp=" << outputs.stamp_s
+            << " points=" << outputs.registered_cloud_body->points.size() << "\n";
+  return 0;
+}

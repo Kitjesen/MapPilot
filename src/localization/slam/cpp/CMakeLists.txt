@@ -3,10 +3,12 @@ cmake_minimum_required(VERSION 3.16)
 foreach(DEPRECATED_OPTION IN ITEMS
     LINGTU_SLAM_BUILD_CPP_DDS_RUNTIME
     LINGTU_SLAM_BUILD_CYCLONE_DDS_RUNTIME
-    LINGTU_SLAM_WITH_FASTLIO2)
+    LINGTU_SLAM_WITH_FASTLIO2
+    LINGTU_SLAM_FASTLIO2_BACKEND)
   if(DEFINED ${DEPRECATED_OPTION})
-    if(DEPRECATED_OPTION STREQUAL "LINGTU_SLAM_WITH_FASTLIO2")
-      set(REPLACEMENT_OPTION LINGTU_SLAM_FASTLIO2_BACKEND)
+    if(DEPRECATED_OPTION STREQUAL "LINGTU_SLAM_WITH_FASTLIO2" OR
+       DEPRECATED_OPTION STREQUAL "LINGTU_SLAM_FASTLIO2_BACKEND")
+      set(REPLACEMENT_OPTION LINGTU_SLAM_LTLIO_BACKEND)
     else()
       set(REPLACEMENT_OPTION LINGTU_SLAM_BUILD_DDS_RUNTIME)
     endif()
@@ -16,29 +18,33 @@ foreach(DEPRECATED_OPTION IN ITEMS
 endforeach()
 
 option(LINGTU_SLAM_BUILD_TESTS "Build native SLAM contract tests" ON)
-option(LINGTU_SLAM_FASTLIO2_BACKEND "Build the real Fast-LIO2 algorithm backend" OFF)
+option(LINGTU_SLAM_LTLIO_BACKEND "Build the native LTLIO algorithm backend" OFF)
 option(LINGTU_SLAM_BUILD_DDS_RUNTIME "Build ROS-free CycloneDDS C++ sensor-to-SLAM runtime" OFF)
-if(LINGTU_SLAM_BUILD_DDS_RUNTIME AND NOT LINGTU_SLAM_FASTLIO2_BACKEND)
+if(LINGTU_SLAM_BUILD_DDS_RUNTIME AND NOT LINGTU_SLAM_LTLIO_BACKEND)
   message(FATAL_ERROR
     "LINGTU_SLAM_BUILD_DDS_RUNTIME=ON requires "
-    "LINGTU_SLAM_FASTLIO2_BACKEND=ON; refusing to build production slamd "
+    "LINGTU_SLAM_LTLIO_BACKEND=ON; refusing to build production slamd "
     "against the contract-only backend.")
 endif()
 
 project(messages_contract LANGUAGES C CXX)
+if(MSVC)
+  add_compile_options(/utf-8)
+endif()
 include(GNUInstallDirs)
 
 add_library(messages_contract STATIC
   slam.cpp
-  fastlio.cpp
+  ltlio.cpp
 )
 target_compile_features(messages_contract PUBLIC cxx_std_17)
 target_include_directories(messages_contract PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(messages_contract PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-if(LINGTU_SLAM_FASTLIO2_BACKEND)
-  set(FASTLIO2_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../fastlio2")
-  set(LOCALIZER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../localizer")
+if(LINGTU_SLAM_LTLIO_BACKEND)
+  set(LTLIO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../ltlio")
+  set(RELOCALIZATION_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../relocalization")
+  find_package(PCL REQUIRED COMPONENTS common io filters kdtree registration)
   find_package(yaml-cpp REQUIRED)
   if(TARGET yaml-cpp::yaml-cpp)
     set(LINGTU_YAML_CPP_TARGET yaml-cpp::yaml-cpp)
@@ -48,27 +54,30 @@ if(LINGTU_SLAM_FASTLIO2_BACKEND)
     message(FATAL_ERROR "yaml-cpp package did not export a supported CMake target")
   endif()
   if(LINGTU_SLAM_BUILD_TESTS)
-    set(FASTLIO2_ENABLE_INTERNAL_TEST_HOOKS ON)
+    set(LTLIO_ENABLE_INTERNAL_TEST_HOOKS ON)
   endif()
-  add_subdirectory("${FASTLIO2_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/fastlio2")
-  add_subdirectory("${LOCALIZER_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/localizer")
+  add_subdirectory("${LTLIO_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/ltlio")
+  add_subdirectory("${RELOCALIZATION_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/relocalization")
   if(NOT TARGET lingtu_online_mapping)
-    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../opt/online" "${CMAKE_CURRENT_BINARY_DIR}/online_mapping")
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../map_optimization/online" "${CMAKE_CURRENT_BINARY_DIR}/online_mapping")
   endif()
 
   target_sources(messages_contract PRIVATE
     map_icp.cpp
     semantic_map_client.cpp
     native_relocalizer.cpp
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../../maps/cpp/semantic_map_persistence.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../maps/cpp/semantic/store.cpp"
   )
   target_compile_definitions(messages_contract PRIVATE
-    LINGTU_HAS_FASTLIO2_BACKEND=1)
+    LINGTU_HAS_LTLIO_BACKEND=1)
   target_include_directories(messages_contract PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../maps/include")
   target_link_libraries(messages_contract
-    PRIVATE localizer lingtu_online_mapping
-    PUBLIC fastlio2_core ${LINGTU_YAML_CPP_TARGET})
+    PRIVATE relocalization lingtu_online_mapping
+    PUBLIC ltlio_core ${LINGTU_YAML_CPP_TARGET})
+
+  add_executable(ltlio_replay "${CMAKE_CURRENT_SOURCE_DIR}/../../../../tools/diagnostics/ltlio_replay.cpp")
+  target_link_libraries(ltlio_replay PRIVATE messages_contract)
 endif()
 
 if(MSVC)
@@ -81,6 +90,12 @@ if(LINGTU_SLAM_BUILD_TESTS)
   enable_testing()
   set(LINGTU_SLAM_TESTS_DIR
       "${CMAKE_CURRENT_SOURCE_DIR}/../../../../tests/localization/cpp/slam")
+  add_executable(test_map_frames "${LINGTU_SLAM_TESTS_DIR}/test_map_frames.cpp")
+  target_link_libraries(test_map_frames PRIVATE messages_contract)
+  add_test(NAME messages_map_frames COMMAND test_map_frames)
+  add_executable(test_travel_distance "${LINGTU_SLAM_TESTS_DIR}/test_distance.cpp")
+  target_link_libraries(test_travel_distance PRIVATE messages_contract)
+  add_test(NAME messages_travel_distance COMMAND test_travel_distance)
   add_executable(test_slam_contract "${LINGTU_SLAM_TESTS_DIR}/test_slam.cpp")
   target_link_libraries(test_slam_contract PRIVATE messages_contract)
   add_test(NAME messages_contract COMMAND test_slam_contract)
@@ -102,54 +117,109 @@ if(LINGTU_SLAM_BUILD_TESTS)
     "${LINGTU_SLAM_TESTS_DIR}/test_imu_frame_contract.cpp")
   target_link_libraries(test_imu_frame_contract PRIVATE messages_contract)
   add_test(NAME messages_imu_frame_contract COMMAND test_imu_frame_contract)
-  if(LINGTU_SLAM_FASTLIO2_BACKEND)
+  if(LINGTU_SLAM_LTLIO_BACKEND)
+    add_executable(test_elevator_native
+      "${LINGTU_SLAM_TESTS_DIR}/test_elevator_native.cpp")
+    target_link_libraries(test_elevator_native PRIVATE messages_contract)
+    add_test(NAME messages_elevator_native COMMAND test_elevator_native)
+    set_tests_properties(messages_elevator_native PROPERTIES TIMEOUT 60)
+    add_executable(test_ltlio_elevator_transitions
+      "${LINGTU_SLAM_TESTS_DIR}/test_ltlio_elevator_transitions.cpp")
+    target_link_libraries(test_ltlio_elevator_transitions PRIVATE ltlio_core)
+    add_test(NAME messages_ltlio_elevator_transitions COMMAND test_ltlio_elevator_transitions)
+    add_executable(test_ltlio_imu_time
+      "${LINGTU_SLAM_TESTS_DIR}/test_ltlio_imu_time.cpp")
+    target_link_libraries(test_ltlio_imu_time PRIVATE ltlio_core)
+    add_test(NAME messages_ltlio_imu_time COMMAND test_ltlio_imu_time)
+    add_executable(test_ltlio_stair_detection
+      "${LINGTU_SLAM_TESTS_DIR}/test_ltlio_stair_detection.cpp")
+    target_link_libraries(test_ltlio_stair_detection PRIVATE ltlio_core)
+    add_test(NAME messages_ltlio_stair_detection COMMAND test_ltlio_stair_detection)
+    add_executable(test_ltlio_stop_causality
+      "${LINGTU_SLAM_TESTS_DIR}/test_ltlio_stop_causality.cpp")
+    target_link_libraries(test_ltlio_stop_causality PRIVATE ltlio_core)
+    add_test(NAME messages_ltlio_stop_causality COMMAND test_ltlio_stop_causality)
+    add_executable(test_ltlio_frontend_recovery
+      "${LINGTU_SLAM_TESTS_DIR}/test_ltlio_frontend_recovery.cpp")
+    target_link_libraries(test_ltlio_frontend_recovery PRIVATE ltlio_core)
+    add_test(NAME messages_ltlio_frontend_recovery COMMAND test_ltlio_frontend_recovery)
+    add_executable(test_ltlio_geometry "${LINGTU_SLAM_TESTS_DIR}/test_ltlio_geometry.cpp")
+    target_include_directories(test_ltlio_geometry PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(test_ltlio_geometry PRIVATE ltlio_core)
+    add_test(NAME messages_ltlio_geometry COMMAND test_ltlio_geometry)
+    add_executable(test_ltlio_probability "${LINGTU_SLAM_TESTS_DIR}/test_ltlio_probability.cpp")
+    target_link_libraries(test_ltlio_probability PRIVATE ltlio_core)
+    target_compile_definitions(test_ltlio_probability PRIVATE
+      $<TARGET_PROPERTY:ltlio_core,COMPILE_DEFINITIONS>)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+      target_compile_options(test_ltlio_probability PRIVATE -O1)
+    endif()
+    add_test(NAME messages_ltlio_probability COMMAND test_ltlio_probability)
+    add_executable(test_ltlio_isotropic_calibration "${LINGTU_SLAM_TESTS_DIR}/test_ltlio_isotropic_calibration.cpp")
+    target_link_libraries(test_ltlio_isotropic_calibration PRIVATE ltlio_core)
+    target_compile_definitions(test_ltlio_isotropic_calibration PRIVATE
+      $<TARGET_PROPERTY:ltlio_core,COMPILE_DEFINITIONS>)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+      target_compile_options(test_ltlio_isotropic_calibration PRIVATE -O1)
+    endif()
+    add_test(NAME messages_ltlio_isotropic_calibration COMMAND test_ltlio_isotropic_calibration)
+    foreach(suite hybrid scale_sampling)
+      add_executable(test_ltlio_${suite} "${LINGTU_SLAM_TESTS_DIR}/test_ltlio_${suite}.cpp")
+      target_link_libraries(test_ltlio_${suite} PRIVATE ltlio_core)
+      target_compile_definitions(test_ltlio_${suite} PRIVATE
+        $<TARGET_PROPERTY:ltlio_core,COMPILE_DEFINITIONS>)
+      if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(test_ltlio_${suite} PRIVATE -O1)
+      endif()
+      add_test(NAME messages_ltlio_${suite} COMMAND test_ltlio_${suite})
+    endforeach()
+    set_tests_properties(messages_ltlio_elevator_transitions PROPERTIES TIMEOUT 60)
+    add_executable(test_ltlio_transport_motion
+      "${LINGTU_SLAM_TESTS_DIR}/test_ltlio_transport_motion.cpp")
+    target_link_libraries(test_ltlio_transport_motion PRIVATE messages_contract)
+    add_test(NAME messages_ltlio_transport_motion COMMAND test_ltlio_transport_motion)
+    set_tests_properties(messages_ltlio_transport_motion PROPERTIES TIMEOUT 60)
+    add_executable(test_ltlio_resources "${LINGTU_SLAM_TESTS_DIR}/test_ltlio_resources.cpp")
+    target_link_libraries(test_ltlio_resources PRIVATE ltlio_core)
+    add_test(NAME messages_ltlio_resources COMMAND test_ltlio_resources)
+    add_executable(test_ltlio_profiles "${LINGTU_SLAM_TESTS_DIR}/test_ltlio_profiles.cpp")
+    target_link_libraries(test_ltlio_profiles PRIVATE messages_contract)
+    add_test(NAME messages_ltlio_profiles COMMAND test_ltlio_profiles)
     add_executable(test_semantic_map_loading
       "${LINGTU_SLAM_TESTS_DIR}/test_semantic_map_loading.cpp")
     target_include_directories(test_semantic_map_loading PRIVATE
       "${CMAKE_CURRENT_SOURCE_DIR}/../../../maps/include")
     target_link_libraries(test_semantic_map_loading PRIVATE messages_contract)
     add_test(NAME messages_semantic_map_loading COMMAND test_semantic_map_loading)
-    add_executable(test_ikd_tree_concurrency
-      "${LINGTU_SLAM_TESTS_DIR}/test_ikd_tree_concurrency.cpp")
-    target_link_libraries(test_ikd_tree_concurrency PRIVATE fastlio2_core)
     add_test(NAME messages_ikd_tree_concurrency COMMAND test_ikd_tree_concurrency)
     set_tests_properties(messages_ikd_tree_concurrency PROPERTIES TIMEOUT 30)
-    add_executable(test_ieskf_initialization
-      "${LINGTU_SLAM_TESTS_DIR}/test_ieskf_initialization.cpp")
-    target_include_directories(test_ieskf_initialization PRIVATE
-      "${FASTLIO2_DIR}/src"
-      "${FASTLIO2_DIR}/src/map_builder")
-    target_link_libraries(test_ieskf_initialization PRIVATE messages_contract)
-    add_test(NAME messages_ieskf_initialization COMMAND test_ieskf_initialization)
-    add_executable(test_ieskf_update_diagnostics
-      "${LINGTU_SLAM_TESTS_DIR}/test_ieskf_update_diagnostics.cpp")
-    target_include_directories(test_ieskf_update_diagnostics PRIVATE
-      "${FASTLIO2_DIR}/src"
-      "${FASTLIO2_DIR}/src/map_builder")
-    target_link_libraries(test_ieskf_update_diagnostics PRIVATE messages_contract)
-    add_test(
-      NAME messages_ieskf_update_diagnostics
-      COMMAND test_ieskf_update_diagnostics)
-    add_executable(test_fastlio2_mock_flow
-      "${LINGTU_SLAM_TESTS_DIR}/test_fastlio2_mock_flow.cpp")
-    target_link_libraries(test_fastlio2_mock_flow PRIVATE messages_contract)
-    add_test(NAME messages_fastlio2_mock_flow COMMAND test_fastlio2_mock_flow)
+    add_executable(test_ltlio_mock_flow
+      "${LINGTU_SLAM_TESTS_DIR}/test_ltlio_mock_flow.cpp")
+    target_link_libraries(test_ltlio_mock_flow PRIVATE messages_contract)
+    add_test(NAME messages_ltlio_mock_flow COMMAND test_ltlio_mock_flow)
+    add_executable(test_map_geometry_handoff "${LINGTU_SLAM_TESTS_DIR}/test_map_geometry_handoff.cpp")
+    target_link_libraries(test_map_geometry_handoff PRIVATE messages_contract)
+    add_test(NAME messages_map_geometry_handoff COMMAND test_map_geometry_handoff)
+    set_tests_properties(messages_map_geometry_handoff PROPERTIES TIMEOUT 120)
+    add_executable(test_elevator_persistence "${LINGTU_SLAM_TESTS_DIR}/test_elevator_persistence.cpp")
+    target_link_libraries(test_elevator_persistence PRIVATE messages_contract)
+    add_test(NAME messages_elevator_persistence COMMAND test_elevator_persistence)
     add_executable(test_initial_body_origin
       "${LINGTU_SLAM_TESTS_DIR}/test_initial_body_origin.cpp")
     target_link_libraries(test_initial_body_origin PRIVATE messages_contract)
     add_test(NAME messages_initial_body_origin COMMAND test_initial_body_origin)
     add_executable(test_icp_diagnostics
       "${LINGTU_SLAM_TESTS_DIR}/test_icp_diagnostics.cpp")
-    target_link_libraries(test_icp_diagnostics PRIVATE localizer)
+    target_link_libraries(test_icp_diagnostics PRIVATE relocalization)
     add_test(NAME messages_icp_diagnostics COMMAND test_icp_diagnostics)
     add_executable(test_map_icp_seed
       "${LINGTU_SLAM_TESTS_DIR}/test_map_icp_seed.cpp")
-    target_link_libraries(test_map_icp_seed PRIVATE messages_contract localizer)
+    target_link_libraries(test_map_icp_seed PRIVATE messages_contract relocalization)
     add_test(NAME messages_map_icp_seed COMMAND test_map_icp_seed)
     add_executable(test_imu_acceleration_scale
       "${LINGTU_SLAM_TESTS_DIR}/test_imu_acceleration_scale.cpp")
     target_link_libraries(test_imu_acceleration_scale PRIVATE
-      fastlio2_core
+      ltlio_core
       ${LINGTU_YAML_CPP_TARGET})
     add_test(
       NAME messages_imu_acceleration_scale
@@ -189,6 +259,11 @@ if(LINGTU_SLAM_BUILD_DDS_RUNTIME)
       CycloneDDS::ddsc)
     add_test(NAME messages_tf_publication COMMAND test_tf_publication)
     set_tests_properties(messages_tf_publication PROPERTIES TIMEOUT 15)
+    add_executable(test_frame_export "${LINGTU_SLAM_TESTS_DIR}/test_frame_export.cpp")
+    target_include_directories(test_frame_export PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(test_frame_export PRIVATE
+      messages_contract messages_cyclone_idl lingtu_dds_contracts CycloneDDS::ddsc)
+    add_test(NAME messages_frame_export COMMAND test_frame_export)
     add_executable(test_odometry_publication
       "${LINGTU_SLAM_TESTS_DIR}/test_odometry_publication.cpp")
     target_compile_features(test_odometry_publication PRIVATE cxx_std_17)
@@ -226,11 +301,37 @@ if(LINGTU_SLAM_BUILD_DDS_RUNTIME)
   install(TARGETS slamd slamctl
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
       COMPONENT lingtu_runtime)
+  set_target_properties(slamd PROPERTIES
+    INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
   if(CPU_BBS3D_LIBRARY)
-    set_target_properties(slamd PROPERTIES
-      INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
     install(FILES "${CPU_BBS3D_LIBRARY}"
       DESTINATION ${CMAKE_INSTALL_LIBDIR}
+      COMPONENT lingtu_runtime)
+  endif()
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    foreach(_pcl_runtime IN LISTS PCL_LIBRARIES)
+      if(_pcl_runtime MATCHES "^pcl_" AND TARGET ${_pcl_runtime})
+        get_target_property(_pcl_runtime_type ${_pcl_runtime} TYPE)
+        if(_pcl_runtime_type STREQUAL "SHARED_LIBRARY")
+          install(CODE
+            "file(INSTALL DESTINATION \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}\"
+              TYPE SHARED_LIBRARY FOLLOW_SYMLINK_CHAIN
+              FILES \"$<TARGET_FILE:${_pcl_runtime}>\")"
+            COMPONENT lingtu_runtime)
+        endif()
+      endif()
+    endforeach()
+    # PCL's IO dependency is not exported as a standalone imported target.
+    unset(_pcl_io_ply_runtime CACHE)
+    find_library(_pcl_io_ply_runtime NAMES pcl_io_ply
+      PATHS ${PCL_LIBRARY_DIRS} NO_DEFAULT_PATH)
+    if(NOT _pcl_io_ply_runtime)
+      message(FATAL_ERROR "PCL IO runtime is missing pcl_io_ply")
+    endif()
+    install(CODE
+      "file(INSTALL DESTINATION \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}\"
+        TYPE SHARED_LIBRARY FOLLOW_SYMLINK_CHAIN
+        FILES \"${_pcl_io_ply_runtime}\")"
       COMPONENT lingtu_runtime)
   endif()
 endif()

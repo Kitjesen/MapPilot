@@ -26,7 +26,6 @@ from runtime.registry import register
 from runtime.stream import In, Out
 from runtime.tf.conversions import map_from_odom_transform_from_mapping, map_from_odom_transform_to_dict
 from runtime.tf.frames import body_frame_id, map_frame_id, odom_frame_id, topic_default_frame_id
-from runtime.tf.tree import FrameTree
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +152,6 @@ class CppSlamStatusAdapterModule(Module, layer=1):
         self._last_source_observation_stamp_s = 0.0
         self._last_source_progress_monotonic = 0.0
         self._source_data_stale = False
-        self._frame_tree = kw.get("frame_tree") or FrameTree.from_robot_config()
         self._backend_status = BackendStatus.configured_as("cpp_slam_status")
 
     def setup(self) -> None:
@@ -256,18 +254,18 @@ class CppSlamStatusAdapterModule(Module, layer=1):
         stamp_s = _float(payload.get("stamp_s"), time.time())
         source_data_age_s, source_boundary_reason = self._update_source_progress(payload)
         quality = _float(payload.get("localization_quality", payload.get("confidence")), 0.0)
-        fastlio_velocity = payload.get("fastlio_velocity")
-        fastlio_speed_mps: float | None = None
+        ltlio_velocity = payload.get("ltlio_velocity")
+        ltlio_speed_mps: float | None = None
         runaway_velocity = False
-        if isinstance(fastlio_velocity, Mapping):
+        if isinstance(ltlio_velocity, Mapping):
             components = (
-                _float(fastlio_velocity.get("x"), math.nan),
-                _float(fastlio_velocity.get("y"), math.nan),
-                _float(fastlio_velocity.get("z"), math.nan),
+                _float(ltlio_velocity.get("x"), math.nan),
+                _float(ltlio_velocity.get("y"), math.nan),
+                _float(ltlio_velocity.get("z"), math.nan),
             )
             if all(math.isfinite(value) for value in components):
-                fastlio_speed_mps = math.sqrt(sum(value * value for value in components))
-                runaway_velocity = fastlio_speed_mps > self._max_reasonable_speed_mps
+                ltlio_speed_mps = math.sqrt(sum(value * value for value in components))
+                runaway_velocity = ltlio_speed_mps > self._max_reasonable_speed_mps
             else:
                 runaway_velocity = True
         source_stalled = (
@@ -282,18 +280,18 @@ class CppSlamStatusAdapterModule(Module, layer=1):
             reason = "slam_runtime_source_stale"
         if runaway_velocity:
             state = "DIVERGED"
-            reason = "fastlio_velocity_out_of_bounds"
+            reason = "ltlio_velocity_out_of_bounds"
         if runaway_velocity or source_stalled:
             quality = 0.0
         alive = bool(payload.get("alive", False)) and state not in {"LOST", "FAILED", "DIVERGED", "STALE"}
-        reported_fastlio_velocity = dict(fastlio_velocity) if isinstance(fastlio_velocity, Mapping) else None
+        reported_ltlio_velocity = dict(ltlio_velocity) if isinstance(ltlio_velocity, Mapping) else None
         if source_stalled:
-            reported_fastlio_velocity = None
-        fastlio_degeneracy = _fastlio_degeneracy(payload.get("fastlio_degeneracy"))
-        fastlio_lidar_update = payload.get("fastlio_lidar_update")
-        reported_fastlio_lidar_update = (
-            dict(fastlio_lidar_update)
-            if isinstance(fastlio_lidar_update, Mapping)
+            reported_ltlio_velocity = None
+        ltlio_degeneracy = _ltlio_degeneracy(payload.get("ltlio_degeneracy"))
+        ltlio_lidar_update = payload.get("ltlio_lidar_update")
+        reported_ltlio_lidar_update = (
+            dict(ltlio_lidar_update)
+            if isinstance(ltlio_lidar_update, Mapping)
             else None
         )
         status = {
@@ -314,13 +312,13 @@ class CppSlamStatusAdapterModule(Module, layer=1):
             "has_odom": bool(payload.get("has_odom", False)) and not (runaway_velocity or source_stalled),
             "source_data_age_s": source_data_age_s,
             "source_data_stale": source_stalled,
-            "fastlio_velocity": reported_fastlio_velocity,
-            "fastlio_speed_mps": None if source_stalled else fastlio_speed_mps,
-            "fastlio_degeneracy": fastlio_degeneracy,
+            "ltlio_velocity": reported_ltlio_velocity,
+            "ltlio_speed_mps": None if source_stalled else ltlio_speed_mps,
+            "ltlio_degeneracy": ltlio_degeneracy,
             "degeneracy": degeneracy_level(
-                {"fastlio_degeneracy": fastlio_degeneracy}
+                {"ltlio_degeneracy": ltlio_degeneracy}
             ),
-            "fastlio_lidar_update": reported_fastlio_lidar_update,
+            "ltlio_lidar_update": reported_ltlio_lidar_update,
             "max_reasonable_speed_mps": self._max_reasonable_speed_mps,
             "status_target_hz": _float(payload.get("status_target_hz"), 0.0),
             "imu_input_hz": 0.0 if source_stalled else _float(payload.get("imu_input_hz"), 0.0),
@@ -389,18 +387,18 @@ class CppSlamStatusAdapterModule(Module, layer=1):
             "map_save_supported": True,
             "map_save_source": "native_slam_dds_control",
         }
-        if fastlio_degeneracy is not None:
+        if ltlio_degeneracy is not None:
             status.update(
                 {
-                    "degeneracy_detected": fastlio_degeneracy["detected"],
-                    "degenerate_dof_count": fastlio_degeneracy["degenerate_dof_count"],
-                    "condition_number": fastlio_degeneracy["condition_number"],
-                    "min_eigenvalue": fastlio_degeneracy["min_eigenvalue"],
-                    "max_eigenvalue": fastlio_degeneracy["max_eigenvalue"],
-                    "effective_ratio": fastlio_degeneracy["effective_ratio"],
-                    "pos_cov_trace": fastlio_degeneracy["pos_cov_trace"],
-                    "ieskf_iter_num": fastlio_degeneracy["iter_num"],
-                    "ieskf_converged": fastlio_degeneracy["converged"],
+                    "degeneracy_detected": ltlio_degeneracy["detected"],
+                    "degenerate_dof_count": ltlio_degeneracy["degenerate_dof_count"],
+                    "condition_number": ltlio_degeneracy["condition_number"],
+                    "min_eigenvalue": ltlio_degeneracy["min_eigenvalue"],
+                    "max_eigenvalue": ltlio_degeneracy["max_eigenvalue"],
+                    "effective_ratio": ltlio_degeneracy["effective_ratio"],
+                    "pos_cov_trace": ltlio_degeneracy["pos_cov_trace"],
+                    "ieskf_iter_num": ltlio_degeneracy["iter_num"],
+                    "ieskf_converged": ltlio_degeneracy["converged"],
                 }
             )
         runtime_id = str(status.get("runtime_instance_id") or "").strip()
@@ -455,6 +453,8 @@ class CppSlamStatusAdapterModule(Module, layer=1):
             status["map_odom_tf"] = dict(invalidation)
         if isinstance(payload.get("gnss_fusion_health"), Mapping):
             status["gnss_fusion_health"] = dict(payload["gnss_fusion_health"])
+        if isinstance(payload.get("elevator"), Mapping):
+            status["elevator"] = dict(payload["elevator"])
         if status["map_frame_jump"]:
             jump_event = self._map_frame_jump_event(status, stamp_s)
             if jump_event:
@@ -463,7 +463,6 @@ class CppSlamStatusAdapterModule(Module, layer=1):
         self._status_snapshot_diverged = runaway_velocity
         odom = None if runaway_velocity or source_stalled else _odometry_from_status_snapshot(payload)
         if odom is not None:
-            self._frame_tree.update_odometry(odom)
             self.odometry.publish(odom)
             self._record_message(TOPICS.odometry)
         self.localization_status.publish(status)
@@ -471,7 +470,6 @@ class CppSlamStatusAdapterModule(Module, layer=1):
         self.alive.publish(alive)
         if map_from_odom_transform is not None:
             canonical_tf = dict(status["map_odom_tf"])
-            self._frame_tree.set_transform(map_from_odom_transform, authority="cpp_slam_status")
             self._last_map_odom_tf = canonical_tf
             self.map_odom_tf.publish(canonical_tf)
         if isinstance(status.get("gnss_fusion_health"), dict):
@@ -574,11 +572,6 @@ class CppSlamStatusAdapterModule(Module, layer=1):
     ) -> dict[str, Any]:
         """Clear cached ``T_map_from_odom`` and notify downstream consumers."""
 
-        self._frame_tree.remove_transform(
-            map_frame_id(),
-            odom_frame_id(),
-            dynamic_only=True,
-        )
         self._last_map_odom_tf = None
         invalidation = {
             "valid": False,
@@ -713,9 +706,8 @@ class CppSlamStatusAdapterModule(Module, layer=1):
             )
         ):
             return
-        scan_state = status.get("state_estimation_at_scan")
-        map_odom_raw = status.get("map_odom_tf")
-        if not isinstance(scan_state, Mapping) or not isinstance(map_odom_raw, Mapping):
+        scan_state = status.get("map_scan_pose")
+        if not isinstance(scan_state, Mapping):
             return
         scan_stamp = _float(scan_state.get("stamp_s"), 0.0)
         if scan_stamp <= 0.0 or not math.isfinite(scan_stamp):
@@ -731,21 +723,18 @@ class CppSlamStatusAdapterModule(Module, layer=1):
         if not isinstance(scan_pose, Mapping):
             self._record_decode_error("map_observation")
             return
-        odom_frame = str(scan_state.get("frame_id") or "")
+        map_frame = str(scan_state.get("frame_id") or "")
         sensor_frame = str(scan_state.get("child_frame_id") or "")
-        if not odom_frame or not sensor_frame:
+        if not map_frame or not sensor_frame:
             self._record_decode_error("map_observation")
             return
         if str(cloud.frame_id) != sensor_frame:
             return
-        map_odom = map_from_odom_transform_from_mapping(map_odom_raw)
-        if map_odom is None or map_odom.child_frame_id != odom_frame:
+        if map_frame != map_frame_id():
             self._record_decode_error("map_observation")
             return
-        if (
-            abs(map_odom.ts - scan_stamp) > 1e-4
-            or abs(map_odom.ts - cloud_stamp) > 1e-4
-        ):
+        origin = scan_state.get("sensor_origin")
+        if not isinstance(origin, Mapping):
             self._record_decode_error("map_observation")
             return
         pose_fields = ("x", "y", "z", "qx", "qy", "qz", "qw")
@@ -756,22 +745,21 @@ class CppSlamStatusAdapterModule(Module, layer=1):
             pose_values = tuple(float(scan_pose[field]) for field in pose_fields)
             if not all(math.isfinite(value) for value in pose_values):
                 raise ValueError("scan pose contains non-finite values")
-            odom_sensor = Transform(
+            map_sensor = Transform(
                 translation=Vector3(*pose_values[:3]),
                 rotation=Quaternion(*pose_values[3:]).normalize(),
-                frame_id=odom_frame,
+                frame_id=map_frame,
                 child_frame_id=sensor_frame,
                 ts=scan_stamp,
             )
-            map_sensor = map_odom + odom_sensor
             observation = MapObservationFrame(
                 points=cloud.points,
                 sequence=sequence,
                 reset_epoch=source_epoch,
                 ts=scan_stamp,
-                frame_id=map_odom.frame_id,
+                frame_id=map_sensor.frame_id,
                 sensor_frame_id=sensor_frame,
-                sensor_origin=map_sensor.translation,
+                sensor_origin=Vector3(*(float(origin[axis]) for axis in ("x", "y", "z"))),
                 map_sensor_pose=Pose(map_sensor.translation, map_sensor.rotation),
                 map_sensor_transform=map_sensor,
                 pose_quality={
@@ -835,32 +823,70 @@ def _source_reset_reason(payload: Mapping[str, Any]) -> bool:
     return reason in SOURCE_RESET_REASONS
 
 
-def _fastlio_degeneracy(raw: Any) -> dict[str, Any] | None:
+def _ltlio_degeneracy(raw: Any) -> dict[str, Any] | None:
     if not isinstance(raw, Mapping):
         return None
 
-    detected = bool(raw.get("detected", False))
+    available_value = raw.get("available")
+    available = None if available_value is None else bool(available_value)
+    detected = bool(raw.get("detected", False)) if available is not False else False
     dof_count = max(0, _int(raw.get("degenerate_dof_count")))
-    condition_number = _float(raw.get("condition_number"), 0.0)
+    condition_number = (
+        None
+        if available is False or raw.get("condition_number") is None
+        else _float(raw.get("condition_number"), 0.0)
+    )
     converged = bool(raw.get("converged", False))
 
+    def _finite_vector(value: Any, length: int) -> list[float] | None:
+        if not isinstance(value, (list, tuple)) or len(value) != length:
+            return None
+        parsed = [_float(item, math.nan) for item in value]
+        return parsed if all(math.isfinite(item) for item in parsed) else None
+
+    principal = raw.get("principal_directions")
+    principal_directions = None
+    if isinstance(principal, (list, tuple)) and len(principal) == 6:
+        rows = [_finite_vector(row, 6) for row in principal]
+        if all(row is not None for row in rows):
+            principal_directions = rows
+    categories = raw.get("categories")
+    categories = (
+        list(categories)
+        if isinstance(categories, (list, tuple))
+        and len(categories) == 6
+        and all(item in {"OBSERVABLE", "PARTIAL", "UNOBSERVABLE"} for item in categories)
+        else None
+    )
+    support_ratios = _finite_vector(raw.get("support_ratios"), 6)
+    if support_ratios is not None and any(value < 0.0 or value > 1.0 for value in support_ratios):
+        support_ratios = None
     return {
+        "available": available,
         "detected": detected,
         "degenerate_dof_count": dof_count,
         "condition_number": condition_number,
-        "min_eigenvalue": _float(raw.get("min_eigenvalue"), 0.0),
-        "max_eigenvalue": _float(raw.get("max_eigenvalue"), 0.0),
+        "min_eigenvalue": None if available is False else _float(raw.get("min_eigenvalue"), 0.0),
+        "max_eigenvalue": None if available is False else _float(raw.get("max_eigenvalue"), 0.0),
         "effective_ratio": _float(raw.get("effective_ratio"), 0.0),
         "pos_cov_trace": _float(raw.get("pos_cov_trace"), 0.0),
         "iter_num": _int(raw.get("iter_num")),
         "converged": converged,
+        "direction_frame": str(raw.get("direction_frame") or "") or None,
+        "rotation_scale_m": None if available is False else _float(raw.get("rotation_scale_m"), 0.0),
+        "eigenvalues": None if available is False else _finite_vector(raw.get("eigenvalues"), 6),
+        "principal_directions": principal_directions,
+        "categories": categories,
+        "support_ratios": support_ratios,
+        "update_applied": bool(raw.get("update_applied", False)),
+        "guidance": str(raw.get("guidance") or "none"),
     }
 
 
 def _odometry_from_status_snapshot(payload: Mapping[str, Any]) -> Odometry | None:
     if not bool(payload.get("has_odom", False)):
         return None
-    raw_odom = payload.get("odometry")
+    raw_odom = payload.get("map_odometry")
     raw_pose = raw_odom.get("pose") if isinstance(raw_odom, Mapping) else None
     if not isinstance(raw_odom, Mapping) or not isinstance(raw_pose, Mapping):
         return None
@@ -870,14 +896,12 @@ def _odometry_from_status_snapshot(payload: Mapping[str, Any]) -> Odometry | Non
         _float(raw_pose.get("qz"), 0.0),
         _float(raw_pose.get("qw"), 1.0),
     )
-    linear = Vector3()
-    velocity = payload.get("fastlio_velocity")
-    if isinstance(velocity, Mapping):
-        # Fast-LIO reports odom-frame linear velocity; Twist uses child/body axes.
-        # Use the matching odom pose, before applying map alignment.
-        linear = orientation.normalize().conjugate().rotate_vector(
-            Vector3(*(float(velocity[axis]) for axis in ("x", "y", "z")))
-        )
+    raw_twist = raw_odom.get("twist")
+    if raw_odom.get("frame_id") != "map" or not isinstance(raw_twist, Mapping):
+        return None
+    # Native SLAM resolves map pose and body twist from the same source snapshot.
+    linear = Vector3(*(float(raw_twist[axis]) for axis in ("vx", "vy", "vz")))
+    angular = Vector3(*(float(raw_twist[axis]) for axis in ("wx", "wy", "wz")))
     return Odometry(
         pose=Pose(
             position=Vector3(
@@ -887,10 +911,12 @@ def _odometry_from_status_snapshot(payload: Mapping[str, Any]) -> Odometry | Non
             ),
             orientation=orientation,
         ),
-        twist=Twist(linear=linear),
+        twist=Twist(linear=linear, angular=angular),
         ts=_float(payload.get("stamp_s"), 0.0),
         frame_id=str(raw_odom.get("frame_id") or topic_default_frame_id(TOPICS.odometry)),
         child_frame_id=str(raw_odom.get("child_frame_id") or body_frame_id()),
+        session_distance_m=raw_odom.get("session_distance_m"),
+        session_distance_source=raw_odom.get("session_distance_source"),
     )
 
 

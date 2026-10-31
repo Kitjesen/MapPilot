@@ -115,6 +115,28 @@ inline std::uint64_t bootTimeNanoseconds() {
 #endif
 }
 
+inline std::uint64_t threadCpuNanoseconds() {
+#if defined(_WIN32)
+  FILETIME created{}, exited{}, kernel{}, user{};
+  if (::GetThreadTimes(::GetCurrentThread(), &created, &exited, &kernel, &user) == 0)
+    throw std::runtime_error("GetThreadTimes failed");
+  ULARGE_INTEGER kernel_ticks{}, user_ticks{};
+  kernel_ticks.LowPart = kernel.dwLowDateTime;
+  kernel_ticks.HighPart = kernel.dwHighDateTime;
+  user_ticks.LowPart = user.dwLowDateTime;
+  user_ticks.HighPart = user.dwHighDateTime;
+  return (kernel_ticks.QuadPart + user_ticks.QuadPart) * 100ULL;
+#elif defined(__linux__)
+  timespec value{};
+  if (::clock_gettime(CLOCK_THREAD_CPUTIME_ID, &value) != 0)
+    throw std::runtime_error("clock_gettime(CLOCK_THREAD_CPUTIME_ID) failed");
+  return static_cast<std::uint64_t>(value.tv_sec) * 1'000'000'000ULL +
+         static_cast<std::uint64_t>(value.tv_nsec);
+#else
+  throw std::runtime_error("thread CPU clock is unavailable on this platform");
+#endif
+}
+
 inline bool validBootId(const std::string &value) {
   if (value.empty() || value.size() > 128U) {
     return false;

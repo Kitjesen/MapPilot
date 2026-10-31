@@ -23,6 +23,7 @@ import concurrent.futures
 import json as _json
 import logging
 import math
+import re
 import threading
 import time
 import uuid
@@ -38,6 +39,7 @@ from runtime.msgs.numpy_compat import np
 from runtime.msgs.semantic import SceneGraph
 from runtime.msgs.sensor import Image
 from runtime.registry import register
+from runtime.skills import discover_skills
 from runtime.stream import In, Out
 from runtime.tf.frames import map_frame_id
 
@@ -76,7 +78,14 @@ class AgentRun:
     motion_attempted: bool = False
     motion_submitted: bool = False
     motion_success: bool = False
+    follow_submitted: bool = False
+    requires_execution_evidence: bool = True
+    requires_object_confirmation: bool = False
+    object_confirmed: bool = False
+    object_query_instruction: str = ""
     state: str = "running"
+    failure_reason: str = ""
+    summary: str = ""
 
 
 @register("agent_planner", "default", description="Multi-turn agent loop module")
@@ -110,6 +119,9 @@ class AgentPlannerModule(Module, layer=4):
         self,
         llm_backend: str = "kimi",
         llm_model: str = "",
+        llm_base_url: str = "",
+        llm_api_key_env: str = "",
+        llm_timeout_sec: float = 10.0,
         max_steps: int = 10,
         timeout: float = 120.0,
         approach_distance: float = 0.5,
@@ -118,6 +130,9 @@ class AgentPlannerModule(Module, layer=4):
         super().__init__(**kw)
         self._llm_backend = llm_backend
         self._llm_model = llm_model
+        self._llm_base_url = llm_base_url
+        self._llm_api_key_env = llm_api_key_env
+        self._llm_timeout_sec = float(llm_timeout_sec)
         self._max_steps = max_steps
         self._timeout = timeout
         self._approach_dist = approach_distance
@@ -164,41 +179,11 @@ class AgentPlannerModule(Module, layer=4):
         self._refresh_agent_tools(modules)
 
     def _refresh_agent_tools(self, modules: dict[str, Any]) -> None:
-        """Mirror MCP skill discovery for the internal agent loop."""
-        self._agent_tool_registry = {}
-        tool_list: list[dict[str, Any]] = []
-
-        for mod_name, mod in modules.items():
-            if not hasattr(mod, "get_skill_infos"):
-                continue
-            try:
-                infos = mod.get_skill_infos()
-            except Exception as exc:
-                logger.debug("agent planner: skill discovery failed for %s: %s", mod_name, exc)
-                continue
-
-            for info in infos:
-                if info.func_name in _AGENT_SKILL_BLOCKLIST:
-                    continue
-                method = getattr(mod, info.func_name, None)
-                if method is None:
-                    continue
-                self._agent_tool_registry[info.func_name] = method
-                schema = _json.loads(info.args_schema)
-                desc = schema.pop("description", "")
-                tool_list.append(
-                    {
-                        "name": info.func_name,
-                        "description": f"[{info.class_name}] {desc}".strip(),
-                        "inputSchema": schema,
-                    }
-                )
-
-        # Last discovered tool wins, matching MCPServerModule's behavior.
-        seen: dict[str, dict[str, Any]] = {}
-        for tool in tool_list:
-            seen[tool["name"]] = tool
-        self._agent_tool_list = list(seen.values())
+        """Discover the Agent-allowed subset through the shared skill catalog."""
+        self._agent_tool_registry, self._agent_tool_list = discover_skills(
+            modules,
+            exclude=_AGENT_SKILL_BLOCKLIST,
+        )
         logger.info(
             "Agent planner tools: %d discovered (%d blocked)",
             len(self._agent_tool_list),
@@ -221,7 +206,13 @@ class AgentPlannerModule(Module, layer=4):
         try:
             from decision.llm.client import LLMConfig, create_llm_client
 
-            llm_cfg = LLMConfig(backend=self._llm_backend, model=self._llm_model)
+            llm_cfg = LLMConfig(
+                backend=self._llm_backend,
+                model=self._llm_model,
+                base_url=self._llm_base_url,
+                api_key_env=self._llm_api_key_env,
+                timeout_sec=self._llm_timeout_sec,
+            )
             self._llm_client = create_llm_client(llm_cfg)
             logger.info(
                 "AgentPlanner LLM client initialized (backend=%s)",
@@ -302,7 +293,7 @@ class AgentPlannerModule(Module, layer=4):
     # Chat helper
     # ------------------------------------------------------------------
 
-    def _chat(self, role: str, text: str, phase: str | None = None) -> None:
+    def _chat(self, role: str, text: str, phase: str | None = None, *, run_id: str = "") -> None:
         """Publish a chat message for the Web ChatPanel.
 
         role: 'thinking' | 'assistant' | 'tool'
@@ -315,6 +306,7 @@ class AgentPlannerModule(Module, layer=4):
                     "text": text,
                     "ts": time.time(),
                     "phase": phase or "",
+                    "run_id": run_id,
                 }
             )
         except Exception:
@@ -335,13 +327,40 @@ class AgentPlannerModule(Module, layer=4):
                 self._loop_thread = threading.Thread(target=self._loop.run_forever, name="agent_loop", daemon=True)
                 self._loop_thread.start()
             self.planner_status.publish("AGENT_RUNNING")
-            self._chat("thinking", f"Agent loop started: {instruction[:60]}", phase="agent_start")
+            self._chat("thinking", "正在理解指令。", phase="agent_start", run_id=run.run_id)
             run.future = asyncio.run_coroutine_threadsafe(self._execute_run(run), self._loop)
 
     def _new_run(self, instruction: str) -> AgentRun:
         with self._run_lock:
             self._cancel_active_run("agent_instruction_replaced")
             self._active_run = AgentRun(instruction)
+            # Reuse the typed task vocabulary for the completion contract. Only
+            # an explicit, pure STATUS plan is informational; unknown or
+            # unparsed instructions remain execution-gated.
+            try:
+                from decision.tasks.decomposition import SubGoalAction, TaskDecomposer
+
+                plan = TaskDecomposer().decompose(instruction)
+                actions = [goal.action for goal in plan.subgoals] if plan is not None else []
+                self._active_run.requires_execution_evidence = not (
+                    plan is not None
+                    and bool(plan.subgoals)
+                    and all(goal.action is SubGoalAction.STATUS for goal in plan.subgoals)
+                )
+                # Follow's rule plan may contain a symbolic FIND step for
+                # person selection. That selection belongs to Follow's own
+                # identity gate; it is not object-search confirmation.
+                if (
+                    plan is not None
+                    and SubGoalAction.FIND in actions
+                    and SubGoalAction.FOLLOW not in actions
+                ):
+                    self._active_run.requires_object_confirmation = True
+                    targets = {goal.target.strip() for goal in plan.subgoals if goal.target.strip()}
+                    if len(targets) == 1:
+                        self._active_run.object_query_instruction = instruction
+            except Exception:
+                self._active_run.requires_execution_evidence = True
             planner = self._backends.get("SemanticPlannerModule") if self._backends else None
             if planner is not None:
                 self._active_run.planner = planner
@@ -366,6 +385,7 @@ class AgentPlannerModule(Module, layer=4):
             if run is None or run.cancelled:
                 return False
             run.cancelled, run.state = True, "cancelled"
+            run.failure_reason = reason
             if run.future is not None:
                 run.future.cancel()
             if run.planner is not None:
@@ -380,20 +400,33 @@ class AgentPlannerModule(Module, layer=4):
                     return state
                 if self._motion_was_superseded(run):
                     raise asyncio.CancelledError
-                success = state is not None and state.completed and not state.failure_reason
-                success = success and (not run.motion_attempted or run.motion_success)
+                refusal = self._completion_refusal(run)
+                success = state is not None and state.completed and not state.failure_reason and refusal is None
                 run.state = "done" if success else "failed"
+                run.failure_reason = "" if success else str(
+                    refusal or (state.failure_reason if state is not None else "") or "llm_unavailable"
+                )
+                run.summary = str(state.summary if state is not None else "")
                 if not success and run.planner is not None:
                     run.planner.cancel_owned_instruction(run.run_id, "agent_failed")
                 self.planner_status.publish("AGENT_DONE" if success else "AGENT_FAILED")
-                self._chat("assistant", state.summary if state else "LLM unavailable",
-                           phase="agent_done" if success else "agent_error")
+                if success and run.requires_object_confirmation and run.object_confirmed:
+                    message = "已找到与指令相符的候选目标，并完成视觉确认。"
+                elif success and run.motion_success:
+                    message = "任务已按执行反馈完成。"
+                elif success:
+                    message = run.summary
+                else:
+                    message = f"任务未完成：{run.failure_reason}"
+                self._chat("assistant", message, phase="agent_done" if success else "agent_error",
+                           run_id=run.run_id)
                 return state
         except asyncio.CancelledError:
             if run.planner is not None:
                 run.planner.cancel_owned_instruction(run.run_id, "agent_cancelled")
             if self._run_is_current(run):
                 run.cancelled, run.state = True, "cancelled"
+                run.failure_reason = "cancelled"
                 self.planner_status.publish("AGENT_CANCELLED")
         except Exception:
             logger.exception("Agent loop failed")
@@ -401,7 +434,10 @@ class AgentPlannerModule(Module, layer=4):
                 run.planner.cancel_owned_instruction(run.run_id, "agent_error")
             if self._run_is_current(run):
                 run.state = "failed"
+                run.failure_reason = "agent_error"
                 self.planner_status.publish("AGENT_FAILED")
+                self._chat("assistant", "任务未完成，内部执行异常。", phase="agent_error",
+                           run_id=run.run_id)
 
     def _run_agent_loop_sync(self, instruction: str) -> None:
         """Use the same managed loop for synchronous local callers."""
@@ -428,7 +464,7 @@ class AgentPlannerModule(Module, layer=4):
             "stop_servo": partial(self._tool_stop_servo, run=run),
             "detect_object": self._tool_detect_object,
             "query_memory": self._tool_query_memory,
-            "say": self._tool_say,
+            "say": partial(self._tool_say, run=run),
         }
 
         agent = AgentLoop(
@@ -439,11 +475,24 @@ class AgentPlannerModule(Module, layer=4):
             context_fn=self._agent_context,
             max_steps=self._max_steps,
             timeout=self._timeout,
+            llm_timeout=self._llm_timeout_sec,
             cancelled=lambda: not self._run_is_current(run) or self._motion_was_superseded(run),
-            completion_check=lambda: "The requested motion has not completed successfully."
-            if run.motion_attempted and not run.motion_success else None,
+            completion_check=lambda: self._completion_refusal(run),
         )
         return await agent.run(instruction)
+
+    @staticmethod
+    def _completion_refusal(run: AgentRun) -> str | None:
+        """Reject a claimed success without evidence for execution tasks."""
+        if not run.requires_execution_evidence:
+            return None
+        if not run.motion_attempted:
+            return "The task requires execution evidence, but no execution tool was called."
+        if not run.motion_success:
+            return "The requested motion has not completed successfully."
+        if run.requires_object_confirmation and not run.object_confirmed:
+            return "The requested object has not been visually confirmed."
+        return None
 
     def stop(self) -> None:
         self._cancel_active_run("agent_stopped")
@@ -472,12 +521,74 @@ class AgentPlannerModule(Module, layer=4):
 
     @skill
     def run_agent_task(self, instruction: str) -> str:
-        """Replace the current Agent task and return its cancellation identity."""
-        if not instruction.strip() or self._closed:
-            return _json.dumps({"run_id": "", "state": "unavailable"})
-        self._on_agent_instruction(instruction)
-        return _json.dumps({"run_id": self._active_run.run_id if self._active_run else "",
-                            "state": self._active_run.state if self._active_run else "unavailable"})
+        """Admit one task only after the previous task has relinquished motion."""
+        with self._run_lock:
+            if not instruction.strip() or self._closed:
+                return _json.dumps({"run_id": "", "state": "unavailable", "accepted": False})
+            current = _json.loads(self.get_agent_status())
+            run = self._active_run
+            reason = ""
+            if run is not None:
+                if run.state == "running":
+                    reason = "task_active"
+                elif run.state in {"cancelled", "failed"} and not current["stop_confirmed"]:
+                    reason = "stop_unconfirmed"
+            if reason:
+                return _json.dumps({"accepted": False, "reason": reason,
+                                    "run_id": run.run_id, "state": run.state, "task_status": current})
+            self._on_agent_instruction(instruction)
+            return _json.dumps({"accepted": True, "run_id": self._active_run.run_id,
+                                "state": self._active_run.state})
+
+    @staticmethod
+    def classify_instruction_control(text: str) -> str | None:
+        """Recognize complete control utterances without interpreting arbitrary tasks."""
+        normalized = re.sub(r"\s+", " ", str(text).strip().lower()).strip("。！？!?.,，；;")
+        controls = {
+            "query": {"现在在干什么", "你现在在干什么", "现在在做什么", "现在什么状态", "当前任务", "任务状态",
+                      "当前状态", "为什么不走", "为什么停止",
+                      "进展如何", "找到没有", "找到没", "current status", "task status", "what are you doing"},
+            "cancel": {"停", "停下", "停止", "停下来", "不用跟了", "别跟了", "取消", "取消任务", "停止任务",
+                       "结束当前任务", "取消当前任务", "停止当前任务",
+                       "结束任务", "不用找了", "stop", "cancel", "cancel task"},
+            "keep": {"继续跟着他", "继续跟着我", "继续跟随", "继续找", "保持当前任务", "保持跟随",
+                     "keep following", "keep searching"},
+            "pause": {"暂停", "暂停一下", "暂停任务", "等我一下", "pause", "pause task"},
+            "resume": {"继续", "继续任务", "恢复", "恢复任务", "resume", "resume task"},
+        }
+        return next((operation for operation, phrases in controls.items() if normalized in phrases), None)
+
+    def handle_instruction_control(self, text: str, expected_run_id: str = "") -> dict:
+        """Handle current-task controls without waiting for a model response."""
+        operation = self.classify_instruction_control(text)
+        with self._run_lock:
+            status = _json.loads(self.get_agent_status())
+            status["found"] = bool(status.get("run_id"))
+            result = {"operation": operation, "accepted": False, "ok": False, "executor": "agent",
+                      "run_id": status.get("run_id", ""), "state": status["state"],
+                      "instruction": status.get("instruction", ""), "task_status": status,
+                      "execution_confirmed": False, "motor_confirmed": False}
+            if expected_run_id and expected_run_id != status.get("run_id"):
+                return {**result, "reason": "not_current"}
+            if operation in {"pause", "resume"}:
+                return {**result, "reason": "unsupported_control"}
+            if operation is None:
+                return {**result, "reason": "unsupported_control"}
+            if operation == "query":
+                return {**result, "accepted": True, "ok": True}
+            if not status.get("run_id"):
+                return {**result, "reason": "no_current_task"}
+            if operation == "keep" and status["state"] != "running":
+                return {**result, "reason": "task_not_running"}
+            if operation == "cancel":
+                cancelled = _json.loads(self.cancel_agent_task(status["run_id"]))
+                result.update(cancelled)
+                status = _json.loads(self.get_agent_status())
+                status["found"] = bool(status.get("run_id"))
+                result.update(state=status["state"], task_status=status)
+                accepted = cancelled.get("cancel_requested") is True
+                return {**result, "accepted": accepted, "ok": accepted}
+            return {**result, "accepted": True, "ok": True}
 
     @skill
     def cancel_agent_task(self, run_id: str) -> str:
@@ -485,9 +596,24 @@ class AgentPlannerModule(Module, layer=4):
         with self._run_lock:
             if self._active_run is None or self._active_run.run_id != run_id:
                 return _json.dumps({"cancel_requested": False, "reason": "not_current"})
+            if self._active_run.state == "done":
+                return _json.dumps({"cancel_requested": False, "reason": "task_not_running"})
             self._cancel_active_run("agent_user_cancel")
             self.planner_status.publish("AGENT_CANCELLED")
-            return _json.dumps({"cancel_requested": True, "stop_confirmed": False})
+            run = self._active_run
+            navigation = (
+                run.planner.owned_instruction_status(run.run_id)
+                if run.planner and run.motion_submitted else None
+            )
+            stop_confirmed = (
+                not run.motion_submitted
+                or (navigation is not None and navigation.get("stop_confirmed") is True)
+            )
+            return _json.dumps({
+                "cancel_requested": True,
+                "stop_confirmed": stop_confirmed,
+                "navigation": navigation,
+            })
 
     @skill
     def get_agent_status(self) -> str:
@@ -496,10 +622,26 @@ class AgentPlannerModule(Module, layer=4):
             run = self._active_run
             if run is None:
                 return _json.dumps({"state": "idle"})
+            navigation = (
+                run.planner.owned_instruction_status(run.run_id)
+                if run.planner and run.motion_submitted else None
+            )
+            stop_confirmed = (
+                run.state in {"cancelled", "failed"}
+                and (
+                    not run.motion_submitted
+                    or (navigation is not None and navigation.get("stop_confirmed") is True)
+                )
+            )
             return _json.dumps({
-                "run_id": run.run_id, "state": run.state, "motion_attempted": run.motion_attempted,
+                "run_id": run.run_id, "instruction": run.instruction,
+                "state": run.state, "motion_attempted": run.motion_attempted,
                 "motion_success": run.motion_success,
-                "navigation": run.planner.owned_instruction_status(run.run_id) if run.planner else None,
+                "requires_execution_evidence": run.requires_execution_evidence,
+                "failure_reason": run.failure_reason,
+                "summary": run.summary,
+                "stop_confirmed": stop_confirmed,
+                "navigation": navigation,
             })
 
     def _agent_context(self) -> dict:
@@ -571,7 +713,11 @@ class AgentPlannerModule(Module, layer=4):
         if run is None or not self._run_is_current(run):
             raise asyncio.CancelledError
         run.motion_attempted, run.motion_success = True, False
-        return await self._submit_motion(run, instruction=f"find {label}")
+        instruction = run.object_query_instruction or f"find {label}"
+        result = await self._submit_motion(run, instruction=instruction)
+        if run.motion_success:
+            run.object_confirmed = True
+        return result
 
     async def _submit_motion(self, run: AgentRun, *, pose: PoseStamped | None = None,
                              instruction: str = "") -> str:
@@ -596,6 +742,8 @@ class AgentPlannerModule(Module, layer=4):
                 raise asyncio.CancelledError
             if result.get("terminal") is True:
                 run.motion_success = result.get("success") is True
+                if run.follow_submitted and str(result.get("state") or "").lower() == "cancelled":
+                    raise asyncio.CancelledError
                 return _json.dumps(result)
             await asyncio.sleep(0.05)
             result = planner.owned_instruction_status(run.run_id)
@@ -609,6 +757,7 @@ class AgentPlannerModule(Module, layer=4):
 
     async def _tool_follow_person(self, description: str, *, run: AgentRun) -> str:
         run.motion_attempted, run.motion_success = True, False
+        run.follow_submitted = True
         return await self._submit_motion(run, instruction=f"follow {description}")
 
     def _tool_stop_servo(self, *, run: AgentRun) -> str:
@@ -656,10 +805,13 @@ class AgentPlannerModule(Module, layer=4):
             f"labels={best.get('labels', '')}"
         )
 
-    def _tool_say(self, text: str) -> str:
+    def _tool_say(self, text: str, *, run: AgentRun | None = None) -> str:
         """Emit a short message for the operator."""
+        if run is not None and not self._run_is_current(run):
+            raise asyncio.CancelledError
+        owner = run or self._active_run
         logger.info("Agent says: %s", text)
-        self._chat("assistant", text, phase="agent_say")
+        self._chat("assistant", text, phase="agent_say", run_id=owner.run_id if owner is not None else "")
         return f"Said: {text}"
 
     # ------------------------------------------------------------------

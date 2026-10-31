@@ -92,8 +92,12 @@ bool FLingTuCameraShmAbiConstantsTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("Superblock is 64 bytes"), static_cast<int32>(sizeof(FSharedHeader)), 64);
     TestEqual(TEXT("Slot header is 256 bytes"), static_cast<int32>(sizeof(FSlotHeader)), 256);
     TestEqual(TEXT("Published sequence offset is 32"), static_cast<int32>(offsetof(FSharedHeader, published_sequence)), 32);
+    TestEqual(TEXT("Model generation offset is 56"), static_cast<int32>(offsetof(FSharedHeader, reserved1)), 56);
+    TestEqual(TEXT("Slot flags offset is 48"), static_cast<int32>(offsetof(FSlotHeader, flags)), 48);
     TestEqual(TEXT("Slot encoding offset is 64"), static_cast<int32>(offsetof(FSlotHeader, encoding)), 64);
     TestEqual(TEXT("Slot frame_id offset is 80"), static_cast<int32>(offsetof(FSlotHeader, frame_id)), 80);
+    TestEqual(TEXT("Truth extension offset is 224"), static_cast<int32>(offsetof(FSlotHeader, reserved1)), 224);
+    TestEqual(TEXT("Truth flag is bit zero"), HasSimulationTruth, uint32{1});
     TestEqual(TEXT("Slot guard_end offset is 248"), static_cast<int32>(offsetof(FSlotHeader, guard_end)), 248);
     TestEqual(TEXT("Mapping size follows the canonical ring formula"), MappingSize(2, 32), uint64{640});
     return true;
@@ -132,8 +136,13 @@ bool FLingTuCameraShmWriteReadValidationTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("Published sequence is one"), Header->published_sequence, 1ULL);
     TestTrue(TEXT("Created timestamp is present"), Header->created_timestamp_ns > 0);
     TestTrue(TEXT("Heartbeat timestamp is present"), Header->writer_heartbeat_ns > 0);
+    TestEqual(TEXT("Mapping records the model generation"), Header->reserved1, TestGeneration);
 
     const FSlotHeader* Slot = SlotHeader(Writer.MappedBytes(), 0, Config.SlotCapacity);
+    const uint8 ZeroExtension[24] = {};
+    TestEqual(TEXT("Legacy metadata defaults to no truth flag"), Slot->flags, uint32{0});
+    TestTrue(TEXT("Legacy truth extension is all zero"),
+        FMemory::Memcmp(Slot->reserved1, ZeroExtension, sizeof(ZeroExtension)) == 0);
     TestEqual(TEXT("Seqlock begin token committed"), Slot->guard_begin, 2ULL);
     TestEqual(TEXT("Seqlock end token committed"), Slot->guard_end, 2ULL);
     TestEqual(TEXT("Slot sequence is one"), Slot->sequence, 1ULL);
@@ -203,6 +212,158 @@ bool FLingTuCameraShmCrcAndTwoSlotSequencingTest::RunTest(const FString& Paramet
     TestEqual(TEXT("Previous slot seqlock token is 4"), PreviousSlot->guard_begin, 4ULL);
     TestTrue(TEXT("Wrapped payload is the third frame"), FMemory::Memcmp(SlotPayload(Writer.MappedBytes(), 0, Config.SlotCapacity), Third, 12) == 0);
     TestEqual(TEXT("CRC32 helper matches canonical vector"), Crc32(First, 12), uint32{0xF6781B24});
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FLingTuCameraShmSimulationTruthTest,
+    "LingTuSim.Sensors.CameraShm.SimulationTruth",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FLingTuCameraShmSimulationTruthTest::RunTest(const FString& Parameters)
+{
+    (void)Parameters;
+    using namespace LingTuSim::Sensors::CameraShm;
+
+    FFrameWriter Writer;
+    FString Error;
+    const FWriterConfig Config = MakeConfig(MakeMappingName());
+    if (!TestTrue(TEXT("Truth mapping opens"), Writer.TryOpen(Config, Error)))
+    {
+        return false;
+    }
+    const ANSICHAR Payload[] = "abcdefghijkl";
+    FFrameMetadata Metadata = MakeMetadata();
+    TestFalse(TEXT("Truth metadata is opt-in"), Metadata.bHasSimulationTruth);
+    TestEqual(TEXT("Default truth sequence is zero"), Metadata.TruthSequence, uint64{0});
+    TestEqual(TEXT("Default reset generation is zero"), Metadata.ResetGeneration, uint64{0});
+    TestEqual(TEXT("Default simulation time is zero"), Metadata.SimTimeNs, int64{0});
+    Metadata.bHasSimulationTruth = true;
+    Metadata.TruthSequence = 0xFEDCBA9876543210ULL;
+    Metadata.ResetGeneration = 0x8877665544332211ULL;
+    Metadata.SimTimeNs = 0x0123456789ABCDEFLL;
+    if (!TestTrue(TEXT("Stamped frame publishes"), Writer.TryPublish(Metadata, Payload, 12, Error)))
+    {
+        return false;
+    }
+
+    // Inspect fixed wire offsets independently of the writer's serialization helper.
+    const uint8* RawSlot = Writer.MappedBytes() + 64;
+    const uint8 ExpectedFlags[] = {1, 0, 0, 0};
+    const uint8 ExpectedExtension[] = {
+        0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE,
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01};
+    TestTrue(TEXT("Raw slot flags contain only HasSimulationTruth"),
+        FMemory::Memcmp(RawSlot + 48, ExpectedFlags, sizeof(ExpectedFlags)) == 0);
+    TestTrue(TEXT("Raw truth extension is exactly little-endian <QQq>"),
+        FMemory::Memcmp(RawSlot + 224, ExpectedExtension, sizeof(ExpectedExtension)) == 0);
+    const FSlotHeader* StampedSlot = SlotHeader(Writer.MappedBytes(), 0, Config.SlotCapacity);
+    TestEqual(TEXT("Transport timestamp stays Unix realtime, not simulation time"),
+        StampedSlot->timestamp_ns, Metadata.TimestampNs);
+    TestEqual(TEXT("Truth frame retains the committed seqlock"), StampedSlot->guard_end, uint64{2});
+    TestEqual(TEXT("Truth metadata leaves payload CRC unchanged"), StampedSlot->payload_crc32, Crc32(Payload, 12));
+
+    Metadata.TruthSequence = 0;
+    Metadata.ResetGeneration = 0;
+    Metadata.SimTimeNs = 0;
+    TestTrue(TEXT("Zero truth/reset/time are valid stamped values"), Writer.TryPublish(Metadata, Payload, 12, Error));
+    const FSlotHeader* ZeroSlot = SlotHeader(Writer.MappedBytes(), 1, Config.SlotCapacity);
+    const uint8 ZeroExtension[24] = {};
+    TestEqual(TEXT("Zero truth still carries the explicit flag"), ZeroSlot->flags, uint32{1});
+    TestTrue(TEXT("Zero truth is encoded exactly"),
+        FMemory::Memcmp(ZeroSlot->reserved1, ZeroExtension, sizeof(ZeroExtension)) == 0);
+
+    Metadata.bHasSimulationTruth = false;
+    Metadata.TruthSequence = 99;
+    Metadata.ResetGeneration = 88;
+    Metadata.SimTimeNs = 77;
+    TestTrue(TEXT("Legacy publication reuses the previously stamped slot"), Writer.TryPublish(Metadata, Payload, 12, Error));
+    TestEqual(TEXT("Slot reuse clears the old truth flag"), StampedSlot->flags, uint32{0});
+    TestTrue(TEXT("Slot reuse zeroes all 24 bytes even with nonzero unflagged metadata"),
+        FMemory::Memcmp(StampedSlot->reserved1, ZeroExtension, sizeof(ZeroExtension)) == 0);
+
+    const uint64 SequenceBeforeRejection = Writer.LastSequence();
+    TArray<uint8> BeforeRejection;
+    BeforeRejection.Append(Writer.MappedBytes(), static_cast<int32>(Writer.MappedSize()));
+    Metadata.bHasSimulationTruth = true;
+    Metadata.SimTimeNs = -1;
+    TestFalse(TEXT("Negative simulation time is rejected"), Writer.TryPublish(Metadata, Payload, 12, Error));
+    TestTrue(TEXT("Negative time rejection explains the error"), Error.Contains(TEXT("non-negative")));
+    Metadata.bHasSimulationTruth = false;
+    TestFalse(TEXT("Negative simulation time is not hidden by an unset truth flag"), Writer.TryPublish(Metadata, Payload, 12, Error));
+    TestEqual(TEXT("Rejected frames do not advance sequence"), Writer.LastSequence(), SequenceBeforeRejection);
+    TestTrue(TEXT("Rejected frames do not mutate the mapping"),
+        FMemory::Memcmp(Writer.MappedBytes(), BeforeRejection.GetData(), BeforeRejection.Num()) == 0);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FLingTuCameraShmMappingGenerationTest,
+    "LingTuSim.Sensors.CameraShm.MappingGeneration",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FLingTuCameraShmMappingGenerationTest::RunTest(const FString& Parameters)
+{
+    (void)Parameters;
+    using namespace LingTuSim::Sensors::CameraShm;
+
+    FString Error;
+    FFrameWriter Writer;
+    FWriterConfig Config = MakeConfig(MakeMappingName());
+    Config.Generation = 0x8877665544332211ULL;
+    if (!TestTrue(TEXT("Model generation mapping opens"), Writer.TryOpen(Config, Error)))
+    {
+        return false;
+    }
+    const uint8 ExpectedGeneration[] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
+    TestTrue(TEXT("Header model generation uses fixed little-endian wire bytes"),
+        FMemory::Memcmp(Writer.MappedBytes() + 56, ExpectedGeneration, sizeof(ExpectedGeneration)) == 0);
+    FFrameMetadata Metadata = MakeMetadata();
+    Metadata.Generation = Config.Generation;
+    const ANSICHAR Payload[] = "abcdefghijkl";
+    TestTrue(TEXT("Original writer publishes"), Writer.TryPublish(Metadata, Payload, 12, Error));
+
+    FFrameWriter SameGenerationWriter;
+    TestTrue(TEXT("Same-generation existing mapping opens"), SameGenerationWriter.TryOpen(Config, Error));
+    TestEqual(TEXT("Reopen preserves published sequence"), SameGenerationWriter.LastSequence(), uint64{1});
+    TestTrue(TEXT("Reopen preserves the committed payload"),
+        FMemory::Memcmp(SlotPayload(Writer.MappedBytes(), 0, Config.SlotCapacity), Payload, 12) == 0);
+
+    TArray<uint8> BeforeRejection;
+    BeforeRejection.Append(Writer.MappedBytes(), static_cast<int32>(Writer.MappedSize()));
+    FFrameWriter WrongGenerationWriter;
+    FWriterConfig WrongConfig = Config;
+    WrongConfig.Generation = 0;
+    TestFalse(TEXT("Existing mapping rejects a different generation"), WrongGenerationWriter.TryOpen(WrongConfig, Error));
+    TestTrue(TEXT("Mapping mismatch explains the model generation"), Error.Contains(TEXT("model generation")));
+    TestNull(TEXT("Rejected writer releases its view"), WrongGenerationWriter.MappedBytes());
+    TestTrue(TEXT("Wrong-generation open does not overwrite header, heartbeat or frames"),
+        FMemory::Memcmp(Writer.MappedBytes(), BeforeRejection.GetData(), BeforeRejection.Num()) == 0);
+
+    FFrameWriter ZeroWriter;
+    FWriterConfig ZeroConfig = MakeConfig(MakeMappingName());
+    ZeroConfig.Generation = 0;
+    if (!TestTrue(TEXT("Zero model generation mapping opens"), ZeroWriter.TryOpen(ZeroConfig, Error)))
+    {
+        return false;
+    }
+    Metadata.Generation = 0;
+    Metadata.bHasSimulationTruth = true;
+    TestTrue(TEXT("Zero model/reset/truth/time publishes with truth flag"), ZeroWriter.TryPublish(Metadata, Payload, 12, Error));
+    const FSharedHeader* ZeroHeader = reinterpret_cast<const FSharedHeader*>(ZeroWriter.MappedBytes());
+    TestEqual(TEXT("Header preserves legal generation zero"), ZeroHeader->reserved1, uint64{0});
+    TestEqual(TEXT("Zero-generation truth frame is flagged"),
+        SlotHeader(ZeroWriter.MappedBytes(), 0, ZeroConfig.SlotCapacity)->flags, uint32{1});
+    FFrameWriter ZeroReopener;
+    TestTrue(TEXT("Existing generation-zero mapping reopens"), ZeroReopener.TryOpen(ZeroConfig, Error));
+    BeforeRejection.Reset();
+    BeforeRejection.Append(ZeroWriter.MappedBytes(), static_cast<int32>(ZeroWriter.MappedSize()));
+    WrongConfig = ZeroConfig;
+    WrongConfig.Generation = TestGeneration;
+    TestFalse(TEXT("Existing zero generation is not a wildcard"), WrongGenerationWriter.TryOpen(WrongConfig, Error));
+    TestTrue(TEXT("Generation-zero mapping is not adopted or overwritten"),
+        FMemory::Memcmp(ZeroWriter.MappedBytes(), BeforeRejection.GetData(), BeforeRejection.Num()) == 0);
     return true;
 }
 

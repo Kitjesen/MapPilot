@@ -1,0 +1,239 @@
+{
+  "robots": [
+    {
+      "id": "thunderv4",
+      "filename": "robot-thunderv4.png",
+      "source_path": "build/selector-isolated-20261016/robot-thunderv4.png",
+      "source_xml": "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml",
+      "source_projection": "sim/packages/robots/doso/thunder_v4/visual/robot.visual-projection.json",
+      "kind": "blender_geometry_render",
+      "note": "Isolated geometry preview from the package MJCF after mj_forward; no physics step or runtime validation."
+    },
+    {
+      "id": "omni_cart",
+      "filename": "robot-omni_cart.png",
+      "source_path": "build/selector-isolated-20261016/robot-omni_cart.png",
+      "source_xml": "sim/packages/robots/omni_cart/omni_cart.xml",
+      "source_projection": "sim/packages/robots/omni_cart/visual/robot.visual-projection.json",
+      "kind": "blender_geometry_render",
+      "note": "Isolated geometry preview from the package MJCF after mj_forward; no physics step or runtime validation."
+    },
+    {
+      "id": "agibot_d1",
+      "filename": "robot-agibot_d1.png",
+      "source_path": "build/robot-library-previews-20261016/robot-agibot_d1.png",
+      "source_urdf": "source/robot_lab/data/Robots/agibot/d1/urdf/edu.urdf",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Visual-only URDF geometry at declared zero joint pose; no collision or runtime claim."
+    },
+    {
+      "id": "booster_t1",
+      "filename": "robot-booster_t1.png",
+      "source_path": "build/robot-library-previews-20261016/robot-booster_t1.png",
+      "source_urdf": "source/robot_lab/data/Robots/booster/t1_description/urdf/robot.urdf",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Visual-only URDF geometry at declared zero joint pose; no collision or runtime claim."
+    },
+    {
+      "id": "ddtrobot_tita",
+      "filename": "robot-ddtrobot_tita.png",
+      "source_path": "build/robot-library-previews-20261016/robot-ddtrobot_tita.png",
+      "source_urdf": "source/robot_lab/data/Robots/ddt/tita_description/urdf/tita.urdf",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Visual-only URDF geometry at declared zero joint pose; no collision or runtime claim."
+    },
+    {
+      "id": "deeprobotics_lite3",
+      "filename": "robot-deeprobotics_lite3.png",
+      "source_path": "build/robot-library-previews-20261016/robot-deeprobotics_lite3.png",
+      "source_urdf": "source/robot_lab/data/Robots/deeprobotics/lite3_description/urdf/lite3.urdf",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Visual-only URDF geometry at declared zero joint pose; no collision or runtime claim."
+    },
+    {
+      "id": "deeprobotics_m20",
+      "filename": "robot-deeprobotics_m20.png",
+      "source_path": "build/robot-library-previews-20261016/robot-deeprobotics_m20.png",
+      "source_urdf": "source/robot_lab/data/Robots/deeprobotics/m20_description/urdf/m20.urdf",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Visual-only URDF geometry at declared zero joint pose; no collision or runtime claim."
+    },
+    {
+      "id": "fftai_gr1t1",
+      "filename": "robot-fftai_gr1t1.png",
+      "source_path": "build/robot-library-previews-20261016/robot-fftai_gr1t1.png",
+      "source_urdf": "source/robot_lab/data/Robots/fftai/gr1t1_description/urdf/GR1T1.urdf",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Visual-only URDF geometry at declared zero joint pose; no collision or runtime claim."
+    },
+    {
+      "id": "fftai_gr1t2",
+      "filename": "robot-fftai_gr1t2.png",
+      "source_path": "build/robot-library-previews-20261016/robot-fftai_gr1t2.png",
+      "source_urdf": "source/robot_lab/data/Robots/fftai/gr1t2_description/urdf/GR1T2.urdf",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Visual-only URDF geometry at declared zero joint pose; no collision or runtime claim."
+    },
+    {
+      "id": "magiclab_magicbot_gen1",
+      "filename": "robot-magiclab_magicbot_gen1.png",
+      "source_path": "build/robot-library-previews-20261016/robot-magiclab_magicbot_gen1.png",
+      "source_urdf": "source/robot_lab/data/Robots/magiclab/magicbot-Gen1/urdf/MAGICBOT.urdf",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Visual-only URDF geometry at declared zero joint pose; no collision or runtime claim."
+    },
+    {
+      "id": "magiclab_magicbot_z1",
+      "filename": "robot-magiclab_magicbot_z1.png",
+      "source_path": "build/robot-library-previews-20261016/robot-magiclab_magicbot_z1.png",
+      "source_urdf": "source/robot_lab/data/Robots/magiclab/magicbot-Z1/urdf/MagicBotZ1.urdf",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Visual-only URDF geometry at declared zero joint pose; no collision or runtime claim."
+    },
+    {
+      "id": "magiclab_magicdog",
+      "filename": "robot-magiclab_magicdog.png",
+      "source_path": "build/robot-library-previews-20261016/robot-magiclab_magicdog.png",
+      "source_urdf": "source/robot_lab/data/Robots/magiclab/magicdog/urdf/magicdog.urdf",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Visual-only URDF geometry at declared zero joint pose; no collision or runtime claim."
+    },
+    {
+      "id": "magiclab_magicdog_w",
+      "filename": "robot-magiclab_magicdog_w.png",
+      "source_path": "build/robot-library-previews-20261016/robot-magiclab_magicdog_w.png",
+      "source_urdf": "source/robot_lab/data/Robots/magiclab/magicdog_w/urdf/magicdog_w.urdf",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Visual-only URDF geometry at declared zero joint pose; no collision or runtime claim."
+    },
+    {
+      "id": "openloong_loong",
+      "filename": "robot-openloong_loong.png",
+      "source_path": "build/robot-library-previews-20261016/robot-openloong_loong.png",
+      "source_urdf": "source/robot_lab/data/Robots/openloong/loong_description/urdf/loong.urdf",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Visual-only URDF geometry at declared zero joint pose; no collision or runtime claim."
+    },
+    {
+      "id": "roboparty_atom01",
+      "filename": "robot-roboparty_atom01.png",
+      "source_path": "build/robot-library-previews-20261016/robot-roboparty_atom01.png",
+      "source_urdf": "source/robot_lab/data/Robots/roboparty/atom01_description/urdf/atom01.urdf",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Visual-only URDF geometry at declared zero joint pose; no collision or runtime claim."
+    },
+    {
+      "id": "robotera_xbot",
+      "filename": "robot-robotera_xbot.png",
+      "source_path": "build/robot-library-previews-20261016/robot-robotera_xbot.png",
+      "source_urdf": "source/robot_lab/data/Robots/robotera/xbot_description/urdf/robot.urdf",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Visual-only URDF geometry at declared zero joint pose; no collision or runtime claim."
+    },
+    {
+      "id": "unitree_g1",
+      "filename": "robot-unitree_g1.png",
+      "source_path": "build/robot-library-previews-20261016/robot-unitree_g1.png",
+      "source_urdf": "source/robot_lab/data/Robots/unitree/g1_description/urdf/g1_29dof_rev_1_0.urdf",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Visual-only URDF geometry at declared zero joint pose; no collision or runtime claim."
+    },
+    {
+      "id": "zsibot_zsl1",
+      "filename": "robot-zsibot_zsl1.png",
+      "source_path": "build/robot-library-previews-20261016/robot-zsibot_zsl1.png",
+      "source_urdf": "source/robot_lab/data/Robots/zsibot/zsl1_description/urdf/zsl1.urdf",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Visual-only URDF geometry at declared zero joint pose; no collision or runtime claim."
+    },
+    {
+      "id": "zsibot_zsl1w",
+      "filename": "robot-zsibot_zsl1w.png",
+      "source_path": "build/robot-library-previews-20261016/robot-zsibot_zsl1w.png",
+      "source_urdf": "source/robot_lab/data/Robots/zsibot/zsl1w_description/urdf/zsl1w.urdf",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Visual-only URDF geometry at declared zero joint pose; no collision or runtime claim."
+    },
+    {
+      "id": "unitree_h1",
+      "filename": "robot-unitree_h1.png",
+      "source_path": "build/robot-library-previews-20261016/robot-unitree_h1.png",
+      "source_xml": "sim/.imports/external_robots/mujoco_menagerie/unitree_h1/h1.xml",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Isolated visual geometry from the source MJCF home keyframe after mj_forward; no physics step or runtime validation."
+    },
+    {
+      "id": "franka_emika_panda",
+      "filename": "robot-franka_emika_panda.png",
+      "source_path": "build/robot-library-previews-20261016/robot-franka_emika_panda.png",
+      "source_xml": "sim/.imports/external_robots/mujoco_menagerie/franka_emika_panda/panda.xml",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Isolated visual geometry from the source MJCF home keyframe after mj_forward; no physics step or runtime validation."
+    },
+    {
+      "id": "universal_robots_ur5e",
+      "filename": "robot-universal_robots_ur5e.png",
+      "source_path": "build/robot-library-previews-20261016/robot-universal_robots_ur5e.png",
+      "source_xml": "sim/.imports/external_robots/mujoco_menagerie/universal_robots_ur5e/ur5e.xml",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Isolated visual geometry from the source MJCF home keyframe after mj_forward; no physics step or runtime validation."
+    },
+    {
+      "id": "boston_dynamics_spot",
+      "filename": "robot-boston_dynamics_spot.png",
+      "source_path": "build/robot-library-previews-20261016/robot-boston_dynamics_spot.png",
+      "source_xml": "sim/.imports/external_robots/mujoco_menagerie/boston_dynamics_spot/spot.xml",
+      "source_plan": "build/robot-library-previews-20261016/available-render-plan.json",
+      "kind": "blender_geometry_render",
+      "note": "Isolated visual geometry from the source MJCF home keyframe after mj_forward; no physics step or runtime validation."
+    }
+  ],
+  "worlds": [
+    {
+      "id": "factory_park_hf",
+      "filename": "world-factory_park_hf.png",
+      "source_path": "build/factory-park-hf/blender-v2/site-aerial-v2.png",
+      "kind": "blender_render"
+    },
+    {
+      "id": "open_field_hf",
+      "filename": "world-open_field_hf.png",
+      "source_path": "build/unreal-open-field-hf/final-hf8/OpenField_HF_1920x1080.png",
+      "kind": "ue_capture"
+    },
+    {
+      "id": "forest_hf",
+      "filename": "world-forest_hf.png",
+      "source_path": "build/forest-hf/blender-v2-513-r4-final/forest_hf.establishing.png",
+      "kind": "blender_render"
+    },
+    {
+      "id": "open_field",
+      "filename": "world-open_field.png",
+      "source_path": "build/selector-previews-20261016/world-open_field.png",
+      "source_xml": "sim/packages/worlds/open_field/physics/open_field.xml",
+      "kind": "mujoco_render",
+      "note": "Geometry-only preview rendered from the package MJCF; not a runtime or physics validation."
+    }
+  ]
+}

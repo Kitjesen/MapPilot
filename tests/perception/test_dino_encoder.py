@@ -2,6 +2,8 @@
 
 import ctypes
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import numpy as np
@@ -45,6 +47,134 @@ class FakeTensorRTLibrary:
 
     def _destroy(self, handle):
         self.destroyed.append(handle)
+
+
+@pytest.fixture
+def trt_encoder(monkeypatch, tmp_path):
+    engine = tmp_path / "dinov3.engine"
+    engine.write_bytes(b"engine")
+    (tmp_path / "liblingtu_dino_trt.so").write_bytes(b"library")
+    library = FakeTensorRTLibrary()
+    monkeypatch.setattr(ctypes, "CDLL", lambda path: library)
+    return DinoEncoder(str(engine)), library
+
+
+def test_concurrent_tensorrt_encodes_do_not_reenter_one_execution_context(trt_encoder):
+    encoder, library = trt_encoder
+    first_entered = threading.Event()
+    second_started = threading.Event()
+    second_entered = threading.Event()
+    release = threading.Event()
+    entries = []
+    crop = np.full((16, 16, 3), [0, 0, 255], dtype=np.uint8)
+
+    def encode(handle, pixels, descriptor):
+        entries.append(handle)
+        if len(entries) == 1:
+            first_entered.set()
+            assert release.wait(5.0)
+        else:
+            second_entered.set()
+        return library._encode(handle, pixels, descriptor)
+
+    def encode_second():
+        second_started.set()
+        return encoder.encode(crop)
+
+    library.dino_encode = FakeFunction(encode)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(encoder.encode, crop)
+        try:
+            assert first_entered.wait(5.0)
+            second = pool.submit(encode_second)
+            assert second_started.wait(5.0)
+            assert not second_entered.wait(0.2)
+        finally:
+            release.set()
+        assert first.result(timeout=5.0)[0] == pytest.approx(1.0)
+        assert second.result(timeout=5.0)[1] == pytest.approx(1.0)
+    assert entries == [41, 41]
+    assert len(library.created) == 1
+    encoder.shutdown()
+
+
+def test_tensorrt_shutdown_waits_for_inflight_encode(trt_encoder):
+    encoder, library = trt_encoder
+    entered = threading.Event()
+    release = threading.Event()
+    shutdown_started = threading.Event()
+    destroyed = threading.Event()
+    crop = np.full((16, 16, 3), [0, 0, 255], dtype=np.uint8)
+
+    def encode(handle, pixels, descriptor):
+        entered.set()
+        assert release.wait(5.0)
+        assert not library.destroyed
+        return library._encode(handle, pixels, descriptor)
+
+    def destroy(handle):
+        library._destroy(handle)
+        destroyed.set()
+
+    def shutdown():
+        shutdown_started.set()
+        encoder.shutdown()
+
+    library.dino_encode = FakeFunction(encode)
+    library.dino_destroy = FakeFunction(destroy)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        inference = pool.submit(encoder.encode, crop)
+        try:
+            assert entered.wait(5.0)
+            cleanup = pool.submit(shutdown)
+            assert shutdown_started.wait(5.0)
+            assert not destroyed.wait(0.2)
+        finally:
+            release.set()
+        assert inference.result(timeout=5.0)[0] == pytest.approx(1.0)
+        cleanup.result(timeout=5.0)
+    assert library.destroyed == [41]
+    assert encoder._trt_handle is None
+    encoder.shutdown()
+    assert library.destroyed == [41]
+
+
+def test_concurrent_tensorrt_loading_creates_one_handle(trt_encoder):
+    encoder, library = trt_encoder
+    first_entered = threading.Event()
+    second_started = threading.Event()
+    second_entered = threading.Event()
+    release = threading.Event()
+    entries = []
+
+    def create(path):
+        entries.append(path)
+        if len(entries) == 1:
+            first_entered.set()
+            assert release.wait(5.0)
+        else:
+            second_entered.set()
+        return library._create(path)
+
+    def load_second():
+        second_started.set()
+        encoder.load_model()
+
+    library.dino_create = FakeFunction(create)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(encoder.load_model)
+        try:
+            assert first_entered.wait(5.0)
+            second = pool.submit(load_second)
+            assert second_started.wait(5.0)
+            assert not second_entered.wait(0.2)
+        finally:
+            release.set()
+        first.result(timeout=5.0)
+        second.result(timeout=5.0)
+    assert len(library.created) == 1
+    encoder.shutdown()
+    assert library.destroyed == [41]
 
 
 class Session:

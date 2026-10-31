@@ -37,7 +37,8 @@ The immutable policy fixes:
 
 - Unreal Engine 5.8.1 and changelist 56057345;
 - RobotSimUE, Win64, Shipping;
-- the four checked-in RobotSimUE maps;
+- the new product front end and three explicit runtime maps; the retired
+  `ThunderV4_RuntimePreview` exhibit is no longer an explicit Shipping map;
 - Build, Cook, Stage, Pak, IoStore, Package, Archive, and prerequisites;
 - MSVC 14.44.35207, Windows SDK 10.0.26100.0, and the Unreal AutoSDK
   .NET Framework header used by this workstation.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import signal
 import struct
@@ -129,6 +130,9 @@ def _process_environment(session_root: Path, product_session_id: str) -> dict[st
             "LINGTU_PRODUCT": "teleop_avoid",
             "LINGTU_ENV": "sim",
             "LINGTU_ENV_BACKEND": "mujoco",
+            "LINGTU_MAP_CONTENT_EPOCH": "1",
+            "LINGTU_MAP_FRAME": "map",
+            "LINGTU_MAP_ID": "fixture-map",
             "LINGTU_SESSION_ROOT": str(session_root),
         }
     )
@@ -326,6 +330,65 @@ def _verify_unexpected_eof_fails(
             )
         if readiness.exists() or (session_root / "lidar.auth").exists():
             raise RuntimeError("failed sensor endpoint left readiness/auth artifacts")
+    finally:
+        if client is not None:
+            client.close()
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5.0)
+
+
+def _verify_truth_snapshot_recovers(publisher: Path, root: Path, domain_id: int, client_type: object) -> None:
+    if os.name != "nt":
+        return
+    product_session_id = "b" * 32
+    process = _start_publisher(publisher, root, product_session_id, domain_id)
+    client = None
+    snapshot = root / "slam.status.json"
+    temporary = root / "slam.status.json.tmp"
+
+    def odom(stamp: int) -> bytes:
+        return _record(3, stamp, 1, struct.pack("<10dB7x", 1.0, 2.0, 0.4, 0.0, 0.0, 0.0, 1.0, 0.1, 0.0, 0.0, 1))
+
+    try:
+        _wait_until(
+            lambda: (root / "lidar.ready.json").exists() or process.poll() is not None,
+            timeout_s=8.0,
+            message="snapshot publisher readiness timed out",
+        )
+        client = client_type.connect(root / "lidar.ready.json", product_session_id=product_session_id, timeout_s=2.0)
+        client.write(odom(2_000_000_000))
+        _wait_until(snapshot.exists, timeout_s=3.0, message="initial truth snapshot missing")
+        original = snapshot.read_bytes()
+        original_mtime = snapshot.stat().st_mtime_ns
+        # A normal Windows reader prevents atomic target replacement.
+        with snapshot.open("rb"):
+            client.write(odom(2_050_000_000))
+            _wait_until(temporary.exists, timeout_s=3.0, message="blocked snapshot attempt missing")
+            time.sleep(0.25)
+            if process.poll() is not None:
+                raise RuntimeError(f"snapshot conflict terminated publisher: {_failure_text(process)}")
+            if snapshot.read_bytes() != original or snapshot.stat().st_mtime_ns != original_mtime:
+                raise RuntimeError("failed snapshot changed the stable contents or timestamp")
+            attempted = temporary.read_bytes()
+            client.write(odom(2_055_000_000) + odom(2_060_000_000))
+            time.sleep(0.15)
+            if temporary.read_bytes() != attempted:
+                raise RuntimeError("snapshot failure bypassed the 50 ms attempt cadence")
+        cloud = _record(1, 2_100_000_000, 1, struct.pack("<4fIBBH", 1.0, 2.0, 3.0, 42.0, 0, 0, 0, 0))
+        client.write(cloud + odom(2_100_000_000))
+        _wait_until(
+            lambda: json.loads(snapshot.read_text())["observation_sequence"] == 3,
+            timeout_s=3.0,
+            message="truth snapshot did not recover after reader release",
+        )
+        if json.loads(snapshot.read_text())["stamp_s"] != 2.1:
+            raise RuntimeError("recovered snapshot timestamp did not advance")
+        stdout, stderr = _stop_publisher(process)
+        if process.returncode != 0 or b"clouds=1 imu=0 odom=5" not in stderr:
+            raise RuntimeError(f"sensor records did not continue: {stdout!r} {stderr!r}")
+        if b"truth status snapshot publish failed" not in stderr or b"error=" not in stderr:
+            raise RuntimeError(f"snapshot conflict did not report its system error: {stderr!r}")
     finally:
         if client is not None:
             client.close()
@@ -552,6 +615,9 @@ def main() -> int:
             "lidar_publisher",
             "ltu1-v1",
         )
+        snapshot_recovery = root / "snapshot-recovery"
+        snapshot_recovery.mkdir()
+        _verify_truth_snapshot_recovers(publisher, snapshot_recovery, domain_id, LidarClient)
         unexpected_eof = root / "unexpected-eof"
         unexpected_eof.mkdir()
         _verify_unexpected_eof_fails(

@@ -49,8 +49,8 @@ async def _stream_body(response) -> bytes:
 
 
 def _field_run_plan(profile: str):
-    from lingtu.assembly.compiler import compile_run_plan
-    from lingtu.assembly.products import resolve_product_host_runtime
+    from lingtu.assembly.compile_plan import compile_run_plan
+    from lingtu.assembly.config.product import resolve_product_host_runtime
 
     resolved = resolve_product_host_runtime(profile, "real", robot="unitree/go2")
     return compile_run_plan(
@@ -131,9 +131,9 @@ def _seed_map_artifacts(map_dir: Path) -> None:
                 "schema_version": "lingtu.saved_map_artifacts.v1",
                 "source_profile": "thunder",
                 "data_source": "field",
-                "slam_source": "fastlio2",
-                "localization_source": "fastlio2",
-                "mapping_source": "fastlio2",
+                "slam_source": "ltlio",
+                "localization_source": "ltlio",
+                "mapping_source": "ltlio",
                 "frame_id": "map",
                 "created_at": "2026-05-25T00:00:00Z",
                 "artifacts": {
@@ -141,7 +141,7 @@ def _seed_map_artifacts(map_dir: Path) -> None:
                         "path": "map.pcd",
                         "source_profile": "thunder",
                         "data_source": "field",
-                        "slam_source": "fastlio2",
+                        "slam_source": "ltlio",
                         "frame_id": "map",
                         "point_count": 1,
                     },
@@ -181,9 +181,9 @@ def _seed_octomap_only_artifacts(map_dir: Path) -> None:
                 "schema_version": "lingtu.saved_map_artifacts.v1",
                 "source_profile": "thunder",
                 "data_source": "field",
-                "slam_source": "fastlio2",
-                "localization_source": "fastlio2",
-                "mapping_source": "fastlio2",
+                "slam_source": "ltlio",
+                "localization_source": "ltlio",
+                "mapping_source": "ltlio",
                 "frame_id": "map",
                 "created_at": "2026-05-25T00:00:00Z",
                 "artifacts": {
@@ -191,7 +191,7 @@ def _seed_octomap_only_artifacts(map_dir: Path) -> None:
                         "path": "map.pcd",
                         "source_profile": "thunder",
                         "data_source": "field",
-                        "slam_source": "fastlio2",
+                        "slam_source": "ltlio",
                         "frame_id": "map",
                         "point_count": 1,
                     },
@@ -229,9 +229,9 @@ def _seed_pcd_only_metadata(map_dir: Path) -> None:
                 "schema_version": "lingtu.saved_map_artifacts.v1",
                 "source_profile": "thunder",
                 "data_source": "field",
-                "slam_source": "fastlio2",
-                "localization_source": "fastlio2",
-                "mapping_source": "fastlio2",
+                "slam_source": "ltlio",
+                "localization_source": "ltlio",
+                "mapping_source": "ltlio",
                 "frame_id": "map",
                 "created_at": "2026-05-25T00:00:00Z",
                 "artifacts": {
@@ -239,7 +239,7 @@ def _seed_pcd_only_metadata(map_dir: Path) -> None:
                         "path": "map.pcd",
                         "source_profile": "thunder",
                         "data_source": "field",
-                        "slam_source": "fastlio2",
+                        "slam_source": "ltlio",
                         "frame_id": "map",
                         "point_count": 1,
                     },
@@ -1260,7 +1260,7 @@ def test_operational_routes_validate_idle_json_contracts():
     assert explore_start.error == "Exploration backend not running"
     assert explore_start.detail["reason"] == "explorer_backend_not_running"
     assert slam_status.mode in {
-        "fastlio2",
+        "ltlio",
         "localizer",
         "slam_only",
         "stopped",
@@ -1277,7 +1277,7 @@ def test_slam_status_uses_run_plan_and_native_telemetry():
     endpoint = _endpoint(gateway, "/api/v1/slam/status")
 
     gateway._localization_status = {
-        "backend": "fastlio2",
+        "backend": "ltlio",
         "health_source": "slam_runtime",
         "mode": "localization",
         "state": "TRACKING",
@@ -1444,7 +1444,7 @@ def test_seeded_relocalization_passes_map_id_to_service(monkeypatch, tmp_path, h
     gateway.setup()
     _attach_test_map_client(gateway, map_dir)
     gateway._localization_status = {
-        "backend": "fastlio2",
+        "backend": "ltlio",
         "health_source": "slam_runtime",
         "saved_map_relocalization_supported": True,
     }
@@ -1484,7 +1484,7 @@ def test_localization_wait_keeps_gateway_event_loop_responsive(monkeypatch, tmp_
 
     gateway = GatewayModule()
     gateway.setup()
-    gateway._localization_status = {"backend": "fastlio2", "saved_map_relocalization_supported": True}
+    gateway._localization_status = {"backend": "ltlio", "saved_map_relocalization_supported": True}
     map_dir = tmp_path / "maps"
     (map_dir / "demo").mkdir(parents=True)
     (map_dir / "demo" / "map.pcd").write_text("pcd", encoding="utf-8")
@@ -1549,7 +1549,7 @@ def test_field_seeded_relocalization_rejects_map_outside_active_product(tmp_path
     gateway._compiled_run_plan = _field_guard_plan_stub("nav")
     _attach_test_map_client(gateway, map_root)
     gateway._localization_status = {
-        "backend": "fastlio2",
+        "backend": "ltlio",
         "health_source": "slam_runtime",
         "saved_map_relocalization_supported": True,
     }
@@ -1590,7 +1590,7 @@ def test_field_tracking_rejects_map_outside_active_product(tmp_path):
     gateway._compiled_run_plan = _field_guard_plan_stub("nav")
     _attach_test_map_client(gateway, map_root)
     gateway._localization_status = {
-        "backend": "fastlio2",
+        "backend": "ltlio",
         "health_source": "slam_runtime",
         "saved_map_relocalization_supported": True,
     }
@@ -1625,7 +1625,7 @@ def test_global_relocalization_delegates_to_service_and_preserves_success_payloa
     gateway = GatewayModule()
     gateway.setup()
     gateway._localization_status = {
-        "backend": "fastlio2",
+        "backend": "ltlio",
         "saved_map_relocalization_supported": True,
     }
     gateway._get_slam_profile = lambda: "native_dds"
@@ -1676,7 +1676,7 @@ def test_seeded_relocalization_delegates_validated_request(
     gateway.setup()
     _attach_test_map_client(gateway, map_dir)
     gateway._localization_status = {
-        "backend": "fastlio2",
+        "backend": "ltlio",
         "saved_map_relocalization_supported": True,
     }
     gateway._get_slam_profile = lambda: "native_dds"
@@ -1727,7 +1727,7 @@ def test_map_tracking_delegates_without_public_pose_seed(
     gateway.setup()
     _attach_test_map_client(gateway, map_dir)
     gateway._localization_status = {
-        "backend": "fastlio2",
+        "backend": "ltlio",
         "saved_map_relocalization_supported": True,
     }
     gateway._get_slam_profile = lambda: "native_dds"
@@ -1771,7 +1771,7 @@ def test_seeded_relocalization_reports_service_failure(
     gateway.setup()
     _attach_test_map_client(gateway, map_dir)
     gateway._localization_status = {
-        "backend": "fastlio2",
+        "backend": "ltlio",
         "health_source": "slam_runtime",
         "saved_map_relocalization_supported": True,
     }
@@ -1812,7 +1812,7 @@ def test_seeded_relocalization_service_timeout_maps_to_504_payload(monkeypatch, 
     gateway.setup()
     _attach_test_map_client(gateway, map_dir)
     gateway._localization_status = {
-        "backend": "fastlio2",
+        "backend": "ltlio",
         "health_source": "slam_runtime",
         "saved_map_relocalization_supported": True,
     }
@@ -1850,7 +1850,7 @@ def test_seeded_relocalization_rejects_unsafe_map_name(monkeypatch, tmp_path):
     gateway = GatewayModule()
     gateway.setup()
     gateway._localization_status = {
-        "backend": "fastlio2",
+        "backend": "ltlio",
         "health_source": "slam_runtime",
         "saved_map_relocalization_supported": True,
     }

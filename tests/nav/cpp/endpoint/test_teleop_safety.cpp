@@ -12,6 +12,19 @@ void require(bool condition, const char *message) {
   }
 }
 
+void testOrdinaryDefaultAllowsOneMeterPerSecondAndStillLimitsExcess() {
+  using namespace lingtu::nav::endpoint;
+  const CommandSafetyConfig cfg;
+  for (const auto request : {nav_kernel::Twist{1,0,0}, nav_kernel::Twist{0,1,0}}) {
+    const auto decision=evaluateCommandSafety(cfg,request,0);
+    require(!decision.stopped && !decision.limited && linearSpeed(decision.cmd) == 1.0,
+            "ordinary command default must permit one meter per second on either axis");
+  }
+  const auto limited=evaluateCommandSafety(cfg,{2,0,0},0);
+  require(limited.limited && linearSpeed(limited.cmd) == 1.0,
+          "ordinary command default must still enforce its speed limit");
+}
+
 void testDirectTeleopLimitsVelocityWithoutPoseOrMap() {
   lingtu::nav::endpoint::CommandSafetyConfig cfg;
   cfg.max_speed_mps = 0.4;
@@ -40,6 +53,44 @@ void testStaleCommandStops() {
           "stale command must publish zero translation");
 }
 
+void testIndependentAxesPreserveDiagonalAndRespectTotalOverride() {
+  using namespace lingtu::nav::endpoint;
+  CommandSafetyConfig cfg;
+  cfg.max_axis_speed_mps = 1.0;
+  cfg.max_speed_mps = std::hypot(1.0, 1.0);
+  for (const auto request : {nav_kernel::Twist{1.0, 1.0, 0.0},
+                             nav_kernel::Twist{-1.0, -1.0, 0.0}}) {
+    const auto decision = evaluateCommandSafety(cfg, request, 0.0);
+    require(!decision.limited && !decision.stopped,
+            "in-range diagonal must not be reduced to a single-axis speed");
+    require(decision.cmd.vx == request.vx && decision.cmd.vy == request.vy,
+            "both independent axes must survive the command boundary");
+  }
+  for (const auto request : {nav_kernel::Twist{2.0, 0.0, 0.0},
+                             nav_kernel::Twist{0.0, -2.0, 0.0},
+                             nav_kernel::Twist{2.0, -2.0, 0.0}}) {
+    const auto decision = evaluateCommandSafety(cfg, request, 0.0);
+    require(decision.limited && std::abs(decision.cmd.vx) <= 1.0 &&
+                std::abs(decision.cmd.vy) <= 1.0,
+            "higher diagonal budget must not raise either body-axis bound");
+  }
+  cfg.max_speed_mps = 0.6;
+  const auto reduced = evaluateCommandSafety(cfg, {1.0, 1.0, 0.0}, 0.0);
+  require(std::abs(linearSpeed(reduced.cmd) - 0.6) < 1e-9,
+          "explicit smaller total speed must remain binding");
+  const auto held = evaluateCommandSafety(cfg, {}, 0.0);
+  require(linearSpeed(held.cmd) == 0.0, "zero input must remain zero");
+}
+
+void testDefaultScalarLimitStillBoundsDiagonal() {
+  lingtu::nav::endpoint::CommandSafetyConfig cfg;
+  cfg.max_speed_mps = 0.6;
+  const auto decision =
+      lingtu::nav::endpoint::evaluateCommandSafety(cfg, {1.0, 1.0, 0.0}, 0.0);
+  require(std::abs(lingtu::nav::endpoint::linearSpeed(decision.cmd) - 0.6) < 1e-9,
+          "existing scalar speed limits must still bound the vector norm");
+}
+
 void testSubthresholdTranslationBecomesZero() {
   lingtu::nav::endpoint::CommandSafetyConfig cfg;
   cfg.min_motion_speed_mps = 0.03;
@@ -58,6 +109,9 @@ void testSubthresholdTranslationBecomesZero() {
 int main() {
   try {
     testDirectTeleopLimitsVelocityWithoutPoseOrMap();
+    testOrdinaryDefaultAllowsOneMeterPerSecondAndStillLimitsExcess();
+    testIndependentAxesPreserveDiagonalAndRespectTotalOverride();
+    testDefaultScalarLimitStillBoundsDiagonal();
     testStaleCommandStops();
     testSubthresholdTranslationBecomesZero();
   } catch (const std::exception &error) {

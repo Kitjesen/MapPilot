@@ -151,6 +151,37 @@ def test_delayed_ready_does_not_block_physics_heartbeats() -> None:
     assert transport.sent[-1].endswith("\t6")
 
 
+def _profile_request(transport: ScriptedTransport, requirement: str = "stairs_up") -> str:
+    controller = transport.sent[0].split("\t")[2]
+    return f"LT_DRIVER_PROFILE_REQUEST_V1\t{BRIDGE_BOOT_ID}\t{controller}\tnav-task-1\t{requirement}"
+
+
+def test_profile_requests_share_stream_without_changing_motion_ack():
+    session, transport = _active_session(_profile_request, _nav_command)
+    command = session.receive_command()
+    assert session.take_profile_request() == {"task_id": "nav-task-1", "requirement": "stairs_up"}
+    assert session.take_profile_request() is None
+    assert command.output_sequence == 91
+    session.publish_profile_state(task_id="nav-task-1", requirement="stairs_up", phase="waiting",
+                                  requested_profile="policies/up.onnx", active_profile="policies/flat.onnx",
+                                  reason="waiting_for_stop")
+    assert transport.sent[-1].endswith("\tnav-task-1\tstairs_up\twaiting\tpolicies/up.onnx\tpolicies/flat.onnx\twaiting_for_stop")
+    session.complete_step(command, step_seq=3)
+    assert "\t91\t1\t-0.5\t0.25\t3" in transport.sent[-1]
+
+
+def test_profile_request_during_ready_poll_does_not_block_physics():
+    session, transport = _active_session(_nav_command)
+    command = session.receive_command()
+    session.complete_step(command, step_seq=3)
+    session.heartbeat(step_seq=4)
+    transport.incoming.append(lambda peer: _profile_request(peer, "hold"))
+    assert not session.confirm_ready(input_available=lambda: bool(transport.incoming))
+    assert session.take_profile_request()["requirement"] == "hold"
+    transport.incoming.append(_ready_for_last_sent_command)
+    assert session.confirm_ready(input_available=lambda: bool(transport.incoming))
+
+
 def test_command_before_delayed_ready_stays_queued_without_blocking() -> None:
     session, transport = _active_session(_nav_command)
     command = session.receive_command()

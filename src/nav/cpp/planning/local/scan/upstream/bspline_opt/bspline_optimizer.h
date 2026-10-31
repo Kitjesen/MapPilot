@@ -12,9 +12,9 @@
 
 // Gradient and elastic band optimization
 
-// Input: a signed distance field and a sequence of points
+// Input: occupancy queries and a sequence of control points
 // Output: the optimized sequence of points
-// The format of points: N x 3 matrix, each row is a point
+// The format of points: 3 x N matrix, each column is a point
 namespace nav_kernel::local::scan::upstream {
 
 struct BsplineOptimizerParams {
@@ -76,25 +76,12 @@ class BsplineOptimizer {
   /* main API */
   void setEnvironment(const GridMap::Ptr &env);
   void setParam(const BsplineOptimizerParams &params);
-  Eigen::MatrixXd BsplineOptimizeTraj(const Eigen::MatrixXd &points, const double &ts,
-                                      const int &cost_function, int max_num_id, int max_time_id);
 
   /* helper function */
 
   // required inputs
   void setControlPoints(const Eigen::MatrixXd &points);
   void setBsplineInterval(const double &ts);
-  void setCostFunction(const int &cost_function);
-  void setTerminateCond(const int &max_num_id, const int &max_time_id);
-
-  // optional inputs
-  void setGuidePath(const std::vector<Eigen::Vector3d> &guide_pt);
-  void setWaypoints(const std::vector<Eigen::Vector3d> &waypts,
-                    const std::vector<int> &waypt_idx);  // N-2 constraints at most
-
-  void optimize();
-
-  Eigen::MatrixXd getControlPoints();
 
   std::shared_ptr<AStar> a_star_;
   std::vector<Eigen::Vector3d> ref_pts_;
@@ -105,7 +92,7 @@ class BsplineOptimizer {
                                   double ts);  // must be called after initControlPoints()
   bool BsplineOptimizeTrajRefine(const Eigen::MatrixXd &init_points, const double ts,
                                  Eigen::MatrixXd &optimal_points);
-  // Use the existing refined-trajectory segment/yaw checks over the closest 2/3.
+  // Check the complete refined trajectory, including its final approach.
   bool checkTrajectoryCollisionFree(const UniformBspline &trajectory);
 
   inline int getOrder(void) { return order_; }
@@ -153,10 +140,6 @@ class BsplineOptimizer {
 
   /* cost function */
   /* calculate each part of cost function with control points q as input */
-
-  static double costFunction(const std::vector<double> &x, std::vector<double> &grad,
-                             void *func_data);
-  void combineCost(const std::vector<double> &x, std::vector<double> &grad, double &cost);
 
   // q contains all control points
   void calcSmoothnessCost(const Eigen::MatrixXd &q, double &cost, Eigen::MatrixXd &gradient,

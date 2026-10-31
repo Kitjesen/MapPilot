@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from lingtu.assembly.compiler import blueprint_from_run_plan, compile_run_plan
-from lingtu.assembly.products import resolve_product_host_runtime
+from lingtu.assembly.compile_plan import compile_run_plan, host_builder_from_run_plan
+from lingtu.assembly.config.product import resolve_product_host_runtime
 
 
 def test_real_map_uses_native_mapd_without_python_map_module() -> None:
     resolved = resolve_product_host_runtime("map", "real", robot="unitree/go2")
     plan = compile_run_plan(resolved.product, resolved.env, robot="unitree/go2")
-    blueprint = blueprint_from_run_plan(plan)
+    host_builder = host_builder_from_run_plan(plan)
 
     assert plan.has_process("maps")
     assert not plan.has_process("camera")
     assert "camera" not in plan.critical_modules
     assert "maps.service" not in plan.modules
     assert "maps.service" not in plan.critical_modules
-    assert blueprint.required_module_names == plan.critical_modules
+    assert host_builder.required_module_names == plan.critical_modules

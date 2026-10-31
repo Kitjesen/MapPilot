@@ -972,11 +972,22 @@ if (
     $successJson.native_pbr_materials.master_graph.roughness_path -ne
         'clamped_parameter' -or
     $successJson.native_pbr_materials.master_graph.world_position_noise_used -ne $false -or
-    $successJson.native_pbr_materials.master_graph.expression_connection_count -ne 1 -or
-    $successJson.native_pbr_materials.master_graph.material_output_count -ne 4 -or
     $successJson.native_pbr_materials.master_graph.compiled -ne $true
 ) {
     throw 'FactoryPark_HF success sentinel does not prove the native PBR master graph'
+}
+$masterGraph = $successJson.native_pbr_materials.master_graph
+if ('surface_detail_mapping' -in $masterGraph.PSObject.Properties.Name -and
+    $masterGraph.surface_detail_mapping -eq 'world_aligned_triplanar_cm') {
+    if ($masterGraph.expression_connection_count -lt 12 -or
+        $masterGraph.material_output_count -ne 5 -or
+        'normal' -notin @($masterGraph.material_outputs) -or
+        $successJson.native_pbr_materials.surface_detail_textures.imported_texture_count -ne 4 -or
+        $successJson.native_pbr_materials.surface_detail_textures.all_import_settings_verified -ne $true) {
+        throw 'FactoryPark_HF textured PBR graph is missing normal output or imported texture bindings'
+    }
+} elseif ($masterGraph.expression_connection_count -ne 1 -or $masterGraph.material_output_count -ne 4) {
+    throw 'FactoryPark_HF legacy flat PBR graph does not match its declared structure'
 }
 if (
     $successJson.native_pbr_materials.master_graph.material_usages.InstancedStaticMeshes -ne

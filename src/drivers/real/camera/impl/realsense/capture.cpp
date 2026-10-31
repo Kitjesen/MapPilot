@@ -8,6 +8,7 @@
 #include <vector>
 #include "../../native/camera_record.hpp"
 #include "intrinsics.hpp"
+#include "frame_sequence.hpp"
 
 namespace record = lingtu::drivers::camera::record;
 
@@ -102,6 +103,7 @@ int main(int argc, char** argv) try {
   rs2::align align(RS2_STREAM_COLOR);
   std::vector<std::uint8_t> rgb;
   std::vector<std::uint16_t> mm;
+  lingtu::drivers::realsense::FrameSequence color_sequence, depth_sequence;
   for (int count = 0; o.max_frames == 0 || count < o.max_frames; ++count) {
     auto frames = pipeline.wait_for_frames(count == 0 ? o.startup_timeout_ms : o.timeout_ms);
     // Host reception time in Unix seconds; never relabel the device uptime as UTC.
@@ -111,6 +113,8 @@ int main(int argc, char** argv) try {
     const auto color = frames.get_color_frame();
     const auto depth = frames.get_depth_frame();
     if (!color || !depth) throw std::runtime_error("incomplete RGB-D frameset");
+    const bool new_color = color_sequence.isNew(color.get_frame_number());
+    const bool new_depth = depth_sequence.isNew(depth.get_frame_number());
     const auto intr = color.get_profile().as<rs2::video_stream_profile>().get_intrinsics();
     if (!lingtu::drivers::realsense::recordCompatibleIntrinsics(intr)) {
       std::cerr << "color distortion model=" << rs2_distortion_to_string(intr.model)
@@ -130,21 +134,24 @@ int main(int argc, char** argv) try {
     const double scale = depth.get_units();
     if (!record::isValidSourceDepthScale(scale)) throw std::runtime_error("invalid depth units");
     for (int y = 0; y < intr.height; ++y) {
-      std::memcpy(rgb.data() + y * intr.width * 3,
-          static_cast<const std::uint8_t*>(color.get_data()) + y * color.get_stride_in_bytes(), intr.width * 3);
-      const auto* row = static_cast<const std::uint8_t*>(depth.get_data()) + y * depth.get_stride_in_bytes();
-      for (int x = 0; x < intr.width; ++x)
-        mm[y * intr.width + x] = record::normalizeDepthSampleMillimeters(row + x * 2, scale);
+      if (new_color)
+        std::memcpy(rgb.data() + y * intr.width * 3,
+            static_cast<const std::uint8_t*>(color.get_data()) + y * color.get_stride_in_bytes(), intr.width * 3);
+      if (new_depth) {
+        const auto* row = static_cast<const std::uint8_t*>(depth.get_data()) + y * depth.get_stride_in_bytes();
+        for (int x = 0; x < intr.width; ++x)
+          mm[y * intr.width + x] = record::normalizeDepthSampleMillimeters(row + x * 2, scale);
+      }
     }
-    emit(info);
+    if (new_color) emit(info);
     auto image = record::makeRecordHeader(record::kKindColor);
     image.width = intr.width; image.height = intr.height; image.timestamp_s = stamp;
     image.channels = 3; image.format = record::kFormatRgb8; image.payload_size = rgb.size();
-    emit(image, rgb.data());
+    if (new_color) emit(image, rgb.data());
     image = record::makeRecordHeader(record::kKindDepth);
     image.width = intr.width; image.height = intr.height; image.timestamp_s = stamp;
     image.channels = 1; image.format = record::kFormatDepthU16; image.payload_size = mm.size() * 2;
-    emit(image, mm.data());
+    if (new_depth) emit(image, mm.data());
     std::cout.flush();
     if (!std::cout) throw std::runtime_error("camera_record_output_failed");
   }

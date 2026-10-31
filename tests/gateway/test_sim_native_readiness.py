@@ -1,9 +1,13 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from gateway.navigation.status import _native_endpoint_readiness
 from gateway.services.native_status import read_navigation_status, read_traversability_status
-from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan
+
+pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
 
 
 def test_sim_nav_requires_native_role_even_when_process_is_named_nav_runtime(monkeypatch, tmp_path):

@@ -117,6 +117,16 @@ struct Result {
   }
 };
 
+struct ProfileState {
+  bool supported{false};
+  bool fresh{false};
+  bool grounded{false};
+  bool requires_grounded{false};
+  std::string current;
+  std::vector<std::string> available;
+  std::string reason{"profile_unsupported"};
+};
+
 class Body {
  public:
   virtual ~Body() = default;
@@ -133,6 +143,14 @@ class Body {
   virtual std::optional<JointState> jointState() const { return std::nullopt; }
   virtual HealthState health() const = 0;
   virtual AdapterDiagnostics diagnostics() const = 0;
+  virtual ProfileState readProfile() { return {}; }
+  virtual Result switchProfile(const std::string &) {
+    Result result;
+    result.calls = 0;
+    result.error = "profile_unsupported";
+    result.state.reason = result.error;
+    return result;
+  }
 };
 
 inline const char *bodyActionName(BodyAction action) noexcept {

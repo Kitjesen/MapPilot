@@ -20,6 +20,7 @@ from .processes import (
     _parse_conflict_targets,
     _parse_process_platform_variants,
     _support_process_names,
+    optional_process_roles,
     resolve_stop_before_start,
 )
 
@@ -202,11 +203,11 @@ def _resolve_products_for_validation(
                 )
                 continue
             variant_spec = variants[raw_variant]
-            if not isinstance(variant_spec, Mapping) or "host" not in variant_spec:
+            if not isinstance(variant_spec, Mapping):
                 issues.append(
                     _issue(
-                        "product_variant_host_missing",
-                        f"Product {name} variant {variant!r} must declare host",
+                        "product_variant_invalid",
+                        f"Product {name} variant {variant!r} must be a mapping",
                         scope=_product_variant_scope(name, variant),
                     )
                 )
@@ -344,6 +345,10 @@ def _validate_product(
                 scope=f"product:{name}",
             )
         )
+    try:
+        optional_process_roles(product, product=name)
+    except ValueError as exc:
+        issues.append(_issue("product_optional_processes_invalid", str(exc), scope=f"product:{name}"))
     for topic in required:
         if topic not in topics:
             issues.append(

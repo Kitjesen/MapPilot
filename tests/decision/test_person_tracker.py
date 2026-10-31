@@ -396,4 +396,6 @@ class TestPersonTrackerReID:
             "clip_fallback": 0,
             "motion_dominant": 0,
             "lost": 0,
+            "dino_match": 0,
+            "dino_rejected": 0,
         }

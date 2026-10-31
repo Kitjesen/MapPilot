@@ -1,9 +1,13 @@
-// Exercise the actual DDS conversion and Fast-LIO backend without a participant.
+// Exercise the actual DDS conversion and LTLIO backend without a participant.
 #define main lingtu_slam_runtime_entry
 #include "cyclone_runtime.cpp"
 #undef main
 
+#include <Eigen/Geometry>
+
 namespace {
+
+using lingtu::slam::SlamState;
 
 void require(bool condition, const char* reason) {
   if (!condition) throw std::runtime_error(reason);
@@ -20,13 +24,14 @@ std::unique_ptr<ISlamBackend> makeBackend(bool bypass, bool prior_enabled = fals
   const auto path = std::filesystem::temp_directory_path() / "lingtu_odometry_twist.yaml";
   {
     std::ofstream config(path);
-    config << "lidar_filter_num: 1\nimu_init_num: 20\n"
+    config << "lidar_filter_num: 1\nimu_init_num: 20\nelevator_mode: off\n"
+              "max_update_velocity_mps: 3.0\n"
               "navigation_body_from_imu_translation: [0.38, -0.02, 0.10]\n"
               "navigation_body_from_imu_rotation: [-1, 0, 0, 0, 1, 0, 0, 0, -1]\n";
     if (bypass || prior_enabled) config << "odom_prior_enabled: true\n";
-    if (bypass) config << "odom_prior_bypass_fastlio: true\n";
+    if (bypass) config << "odom_prior_bypass_ltlio: true\n";
   }
-  auto backend = makeFastLioBackend();
+  auto backend = makeLtlioBackend();
   SlamConfig config;
   config.config_path = path.string();
   require(backend && backend->configure(config).ok, "backend configure failed");
@@ -35,7 +40,7 @@ std::unique_ptr<ISlamBackend> makeBackend(bool bypass, bool prior_enabled = fals
   return backend;
 }
 
-LidarFrame scan(double stamp_s) {
+LidarFrame scan(double stamp_s, double imu_rotation_z = 0.0) {
   LidarFrame frame;
   frame.stamp_s = stamp_s;
   frame.frame_id = "lidar";
@@ -46,6 +51,10 @@ LidarFrame scan(double stamp_s) {
     if (i % 3 == 0) { point.x = 3.0F; point.y = a; point.z = b; }
     else if (i % 3 == 1) { point.x = 2.0F + a; point.y = 2.0F; point.z = b; }
     else { point.x = 2.0F + a; point.y = b; point.z = 1.5F; }
+    // A stationary world observed by an IMU rotating about its own origin.
+    const double x = point.x, y = point.y;
+    point.x = static_cast<float>(std::cos(imu_rotation_z) * x + std::sin(imu_rotation_z) * y);
+    point.y = static_cast<float>(-std::sin(imu_rotation_z) * x + std::cos(imu_rotation_z) * y);
     frame.points.push_back(point);
   }
   return frame;
@@ -54,7 +63,7 @@ LidarFrame scan(double stamp_s) {
 void feedImu(ISlamBackend& backend, double stamp_s, double gz) {
   ImuSample imu;
   imu.stamp_s = stamp_s;
-  imu.az = -9.81;
+  imu.az = -9.80665;
   imu.gz = gz;
   require(backend.feedImu(imu).ok, "IMU feed failed");
 }
@@ -76,6 +85,18 @@ lingtu_dds_Odometry messageFrom(const SlamOutputs& out) {
   return *message;
 }
 
+void initializeStationary(ISlamBackend& backend, double gyro_bias) {
+  for (int i = 0; i <= 31; ++i) feedImu(backend, i * 0.01, gyro_bias);
+  for (int frame = 0; frame < 6; ++frame) {
+    const auto out = tickScan(backend, 0.20 + frame * 0.02);
+    if (frame == 0)
+      require(!out.odometry_twist_body, "initializing filter fabricated twist");
+  }
+  const auto out = backend.outputs();
+  require(out.ltlio_lidar_update.accepted && out.odometry_odom_body,
+          "stationary fixture did not establish real LiDAR matching");
+}
+
 void testWorldVelocityMustNotBePublishedAsBodyVelocity() {
   auto backend = makeBackend(true);
   OdomSample prior;
@@ -92,7 +113,7 @@ void testWorldVelocityMustNotBePublishedAsBodyVelocity() {
               "yaw90 forward velocity was published as body lateral velocity");
   requireNear(message.twist.twist.linear.y, 0.0, "body lateral velocity changed");
   requireNear(message.twist.twist.angular.z, 0.2, "synchronized angular velocity missing");
-  requireNear(out.fastlio_velocity_y, 0.5, "filter diagnostic velocity changed frame");
+  requireNear(out.ltlio_velocity_y, 0.5, "filter diagnostic velocity changed frame");
 
   prior.stamp_s = 0.16;
   require(backend->feedVisualOdom(prior).ok, "second prior rejected");
@@ -144,50 +165,62 @@ void testFullAttitudeConversionAndLegacyPriorContract() {
   requireNear(decoded.vy, prior.vy, "legacy prior world velocity rotated twice");
 }
 
-void testNormalFastLioBiasMountingAndBodyOrigin() {
+void testNormalLtlioBiasMountingAndBodyOrigin() {
   auto backend = makeBackend(false);
-  for (int i = 0; i < 20; ++i) feedImu(*backend, i * 0.01, -0.035);
-  feedImu(*backend, 0.20, -0.235);
-  const auto initializing = tickScan(*backend, 0.20);
-  require(!initializing.odometry_twist_body, "initializing filter fabricated twist");
-  for (int i = 21; i <= 31; ++i) feedImu(*backend, i * 0.01, -0.235);
-  const auto out = tickScan(*backend, 0.30);
+  initializeStationary(*backend, -0.035);
+  for (int i = 63; i <= 81; ++i) feedImu(*backend, i * 0.005, -0.235);
+  // Trapezoidal IMU integration starts the -0.2 rad/s turn halfway between
+  // the last stationary sample at .310 and the first turning one at .315.
+  const double angle = -0.2 * (0.40 - 0.3125);
+  require(backend->feedLidar(scan(0.40, angle)).ok, "rotating scan rejected");
+  require(backend->tick().ok, "rotating scan tick failed");
+  const auto out = backend->outputs();
   const auto message = messageFrom(out);
-  require(!out.odom_prior_active, "normal Fast-LIO test used odometry bypass");
-  requireNear(message.twist.twist.angular.z, 0.2, "gyro bias or mounting rotation omitted", 1e-6);
+  require(!out.odom_prior_active, "normal LTLIO test used odometry bypass");
+  require(out.ltlio_lidar_update.accepted, "rotating scan did not pass real matching");
+  requireNear(message.twist.twist.angular.z, 0.2, "gyro bias or mounting rotation omitted", 0.002);
   // The IMU rotates about its own fixed origin: the body origin therefore has
   // velocity -omega x [0.38,-0.02,0.10], not zero.
-  requireNear(out.fastlio_velocity_x, 0.0, "test IMU origin unexpectedly moved", 1e-6);
-  requireNear(out.fastlio_velocity_y, 0.0, "test IMU origin unexpectedly moved", 1e-6);
-  requireNear(message.twist.twist.linear.x, -0.004, "IMU lever arm x omitted", 1e-6);
-  requireNear(message.twist.twist.linear.y, -0.076, "IMU lever arm y omitted", 1e-6);
-  requireNear(message.twist.twist.linear.z, 0.0, "body vertical velocity changed", 1e-6);
+  const Eigen::Vector3d imu_world_velocity(out.ltlio_velocity_x,
+      out.ltlio_velocity_y, out.ltlio_velocity_z);
+  require(imu_world_velocity.norm() < 0.005, "fixed IMU origin acquired spurious motion");
+  const auto& pose = *out.odometry_odom_body;
+  const Eigen::Quaterniond orientation(pose.qw, pose.qx, pose.qy, pose.qz);
+  const Eigen::Vector3d angular(message.twist.twist.angular.x,
+      message.twist.twist.angular.y, message.twist.twist.angular.z);
+  const Eigen::Vector3d expected = orientation.conjugate() * imu_world_velocity -
+      angular.cross(Eigen::Vector3d(0.38, -0.02, 0.10));
+  requireNear(message.twist.twist.linear.x, expected.x(), "IMU lever arm x omitted");
+  requireNear(message.twist.twist.linear.y, expected.y(), "IMU lever arm y omitted");
+  requireNear(message.twist.twist.linear.z, expected.z(), "IMU lever arm z omitted");
+  require(message.twist.twist.linear.y < -0.07,
+          "body-origin motion was replaced by stationary IMU-origin velocity");
 }
 
 void testPriorWithoutVelocityDoesNotPromoteSanitizedZero() {
   for (const bool invalid_velocity : {false, true}) {
     auto backend = makeBackend(false, true);
-    for (int i = 0; i < 20; ++i) feedImu(*backend, i * 0.01, 0.0);
-    feedImu(*backend, 0.20, 0.0);
-    (void)tickScan(*backend, 0.20);
-    for (int i = 21; i <= 31; ++i) {
+    initializeStationary(*backend, 0.0);
+    const double scan_stamp = invalid_velocity ? 0.80 : 0.40;
+    for (int i = 32; i <= (invalid_velocity ? 81 : 41); ++i) {
       ImuSample imu;
       imu.stamp_s = i * 0.01;
-      imu.az = -9.81;
+      imu.az = -9.80665;
       imu.ax = invalid_velocity ? 100.0 : 0.0;
       require(backend->feedImu(imu).ok, "fallback IMU rejected");
     }
     OdomSample prior;
-    prior.stamp_s = 0.3;
+    prior.stamp_s = scan_stamp;
     prior.has_velocity = false;
     require(backend->feedVisualOdom(prior).ok, "pose-only prior rejected");
-    const auto out = tickScan(*backend, 0.30);
-    require(out.odometry_odom_body.has_value(), "pose-only prior removed diagnostic pose");
-    require(out.odom_prior_active, "pose-only prior fixture did not activate");
+    const auto out = tickScan(*backend, scan_stamp);
     if (invalid_velocity) {
-      requireNear(out.fastlio_velocity_x, 0.0, "existing invalid-state sanitization changed");
       require(!out.odometry_twist_body, "sanitized invalid velocity became an observed zero twist");
+      require(out.state == SlamState::Lost || out.state == SlamState::Degraded,
+              "invalid estimated velocity was published as healthy tracking");
     } else {
+      require(out.odometry_odom_body.has_value(), "pose-only prior removed valid diagnostic pose");
+      require(out.odom_prior_active, "pose-only prior fixture did not activate");
       requireNear(messageFrom(out).twist.twist.linear.x, 0.0,
                   "valid filter velocity lost during pose-only prior fallback", 1e-6);
     }
@@ -233,7 +266,7 @@ int main() {
   try {
     testWorldVelocityMustNotBePublishedAsBodyVelocity();
     testFullAttitudeConversionAndLegacyPriorContract();
-    testNormalFastLioBiasMountingAndBodyOrigin();
+    testNormalLtlioBiasMountingAndBodyOrigin();
     testPriorWithoutVelocityDoesNotPromoteSanitizedZero();
     testOnlineMappingUsesAcceptedBodyScan();
     return 0;

@@ -28,6 +28,14 @@
 DEFINE_LOG_CATEGORY_STATIC(LogLingTuSimVisual, Log, All);
 
 namespace {
+const FVector DefaultFollowCameraOffsetLocal(-300.0, 300.0, 180.0);
+const FVector FollowCameraLookAtLocal(100.0, 0.0, 20.0);
+constexpr double MinFollowCameraDistanceCm = 100.0;
+constexpr double MaxFollowCameraDistanceCm = 2000.0;
+constexpr double MinFollowCameraElevationDegrees = -80.0;
+constexpr double MaxFollowCameraElevationDegrees = 80.0;
+constexpr double RuntimeCameraDollyCmPerStep = 50.0;
+
 struct FPreparedBindingTransform {
   ULingTuSimBodyBindingComponent *Binding = nullptr;
   FTransform Transform;
@@ -959,12 +967,11 @@ bool ULingTuSimVisualWorldSubsystem::EnsureMotionCameraForAppliedSnapshot(
   }
 
   const FTransform RootTransform = Binding->GetComponentTransform();
-  const FVector CameraLocation =
-      RootTransform.GetLocation() +
-      RootTransform.GetRotation().RotateVector(FVector(-300.0, 300.0, 180.0));
+  const FVector CameraLocation = RootTransform.GetLocation() +
+                                 RootTransform.GetRotation().RotateVector(FollowCameraOffsetLocal);
   const FVector LookAtLocation =
       RootTransform.GetLocation() +
-      RootTransform.GetRotation().RotateVector(FVector(100.0, 0.0, 20.0));
+      RootTransform.GetRotation().RotateVector(FollowCameraLookAtLocal);
   const FRotator CameraRotation = (LookAtLocation - CameraLocation).Rotation();
 
   FActorSpawnParameters SpawnParameters;
@@ -1018,6 +1025,7 @@ void ULingTuSimVisualWorldSubsystem::DestroyMotionCamera() {
     Camera->Destroy();
   }
   MotionCamera.Reset();
+  FollowCameraOffsetLocal = DefaultFollowCameraOffsetLocal;
   bMotionCameraReady = false;
   bLoggedMotionCameraBindingMissing = false;
   bLoggedMotionCameraCaptureBlocked = false;
@@ -1060,12 +1068,11 @@ bool ULingTuSimVisualWorldSubsystem::UpdateMotionCameraTransform() {
     return false;
   }
   const FTransform RootTransform = Binding->GetComponentTransform();
-  const FVector CameraLocation =
-      RootTransform.GetLocation() +
-      RootTransform.GetRotation().RotateVector(FVector(-300.0, 300.0, 180.0));
+  const FVector CameraLocation = RootTransform.GetLocation() +
+                                 RootTransform.GetRotation().RotateVector(FollowCameraOffsetLocal);
   const FVector LookAtLocation =
       RootTransform.GetLocation() +
-      RootTransform.GetRotation().RotateVector(FVector(100.0, 0.0, 20.0));
+      RootTransform.GetRotation().RotateVector(FollowCameraLookAtLocal);
   Camera->SetActorLocationAndRotation(CameraLocation, (LookAtLocation - CameraLocation).Rotation(),
                                       false, nullptr, ETeleportType::TeleportPhysics);
   return Camera->GetActorLocation().Equals(CameraLocation, 0.01);
@@ -1236,6 +1243,113 @@ bool ULingTuSimVisualWorldSubsystem::ApplyRuntimeFreeCameraLook(const float Came
     return false;
   }
   return true;
+}
+
+bool ULingTuSimVisualWorldSubsystem::AdjustRuntimeCamera(const float YawDeltaDegrees,
+                                                         const float PitchDeltaDegrees,
+                                                         const float ZoomSteps,
+                                                         FString &OutError) {
+  check(IsInGameThread());
+  OutError.Reset();
+  if (!FMath::IsFinite(YawDeltaDegrees) || !FMath::IsFinite(PitchDeltaDegrees) ||
+      !FMath::IsFinite(ZoomSteps)) {
+    OutError = TEXT("camera_adjustment_nonfinite");
+    return false;
+  }
+  if (FMath::IsNearlyZero(YawDeltaDegrees) && FMath::IsNearlyZero(PitchDeltaDegrees) &&
+      FMath::IsNearlyZero(ZoomSteps)) {
+    return true;
+  }
+
+  APlayerController *PlayerController = FindPlayerController0();
+  AActor *CurrentViewTarget =
+      IsValid(PlayerController) ? PlayerController->GetViewTarget() : nullptr;
+  if (!IsValid(CurrentViewTarget)) {
+    OutError = TEXT("camera_view_target_not_confirmed");
+    return false;
+  }
+
+  if (RuntimeCameraMode == ELingTuSimRuntimeCameraMode::Inspection) {
+    FString InspectionError;
+    ACameraActor *InspectionCamera = FindUniqueInspectionCamera(InspectionError);
+    if (!IsValid(InspectionCamera) || CurrentViewTarget != InspectionCamera) {
+      if (InspectionError.IsEmpty()) {
+        OutError = TEXT("inspection_camera_view_target_not_confirmed");
+      } else {
+        OutError = InspectionError;
+      }
+      return false;
+    }
+    if (ACameraActor *ExistingFreeCamera = FreeCamera.Get()) {
+      ExistingFreeCamera->Destroy();
+      FreeCamera.Reset();
+    }
+    if (!SetRuntimeCameraMode(ELingTuSimRuntimeCameraMode::Free, OutError)) {
+      return false;
+    }
+    CurrentViewTarget = PlayerController->GetViewTarget();
+  }
+
+  if (RuntimeCameraMode == ELingTuSimRuntimeCameraMode::Follow) {
+    ACameraActor *Camera = MotionCamera.Get();
+    if (!IsValid(Camera) || CurrentViewTarget != Camera) {
+      OutError = TEXT("follow_camera_view_target_not_confirmed");
+      return false;
+    }
+
+    const FVector Orbit = FollowCameraOffsetLocal - FollowCameraLookAtLocal;
+    const double CurrentDistance = Orbit.Size();
+    if (CurrentDistance <= UE_DOUBLE_SMALL_NUMBER) {
+      OutError = TEXT("follow_camera_orbit_invalid");
+      return false;
+    }
+    const double CurrentYaw = FMath::Atan2(Orbit.Y, Orbit.X);
+    const double HorizontalDistance = FMath::Sqrt(Orbit.X * Orbit.X + Orbit.Y * Orbit.Y);
+    const double CurrentElevation = FMath::Atan2(Orbit.Z, HorizontalDistance);
+    const double AdjustedYaw = CurrentYaw + FMath::DegreesToRadians(YawDeltaDegrees);
+    const double AdjustedElevation = FMath::DegreesToRadians(FMath::Clamp(
+        FMath::RadiansToDegrees(CurrentElevation) + static_cast<double>(PitchDeltaDegrees),
+        MinFollowCameraElevationDegrees, MaxFollowCameraElevationDegrees));
+    const double AdjustedDistance =
+        FMath::Clamp(CurrentDistance - static_cast<double>(ZoomSteps) * RuntimeCameraDollyCmPerStep,
+                     MinFollowCameraDistanceCm, MaxFollowCameraDistanceCm);
+    const double AdjustedHorizontalDistance = AdjustedDistance * FMath::Cos(AdjustedElevation);
+    FollowCameraOffsetLocal =
+        FollowCameraLookAtLocal +
+        FVector(AdjustedHorizontalDistance * FMath::Cos(AdjustedYaw),
+                AdjustedHorizontalDistance * FMath::Sin(AdjustedYaw),
+                AdjustedDistance * FMath::Sin(AdjustedElevation));
+    if (!UpdateMotionCameraTransform()) {
+      OutError = TEXT("follow_camera_transform_readback_failed");
+      return false;
+    }
+    return true;
+  }
+
+  if (RuntimeCameraMode == ELingTuSimRuntimeCameraMode::Free) {
+    ACameraActor *Camera = FreeCamera.Get();
+    if (!IsValid(Camera) || CurrentViewTarget != Camera) {
+      OutError = TEXT("free_camera_view_target_not_confirmed");
+      return false;
+    }
+    FRotator Rotation = Camera->GetActorRotation();
+    Rotation.Yaw += YawDeltaDegrees;
+    Rotation.Pitch = FMath::Clamp(Rotation.Pitch + PitchDeltaDegrees, -85.0, 85.0);
+    const FVector Location = Camera->GetActorLocation() +
+                             Rotation.Vector() * (static_cast<double>(ZoomSteps) *
+                                                  RuntimeCameraDollyCmPerStep);
+    Camera->SetActorLocationAndRotation(Location, Rotation, false, nullptr,
+                                        ETeleportType::TeleportPhysics);
+    if (!Camera->GetActorLocation().Equals(Location, 0.01) ||
+        !Camera->GetActorRotation().Equals(Rotation, 0.01F)) {
+      OutError = TEXT("free_camera_transform_readback_failed");
+      return false;
+    }
+    return true;
+  }
+
+  OutError = TEXT("runtime_camera_mode_unavailable");
+  return false;
 }
 
 bool ULingTuSimVisualWorldSubsystem::SetSessionCameraViewTargetForPlayer0() {

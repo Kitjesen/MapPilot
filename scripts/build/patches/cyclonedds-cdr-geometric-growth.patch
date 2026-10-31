@@ -1,0 +1,12 @@
+--- a/src/core/cdr/src/dds_cdrstream.c
++++ b/src/core/cdr/src/dds_cdrstream.c
+@@ -249,6 +249,9 @@
+   /* Reallocate on 4k boundry */
+ 
+   uint32_t new_size = (needed & ~(uint32_t)0xfff) + 0x1000;
++  /* Amortize appending many structured members after a large sequence. */
++  if (new_size != 0 && os->m_size <= UINT32_MAX / 2 && new_size < 2 * os->m_size)
++    new_size = (2 * os->m_size) & ~(uint32_t)0xfff;
+   uint8_t *old = os->m_buffer;
+ 
+   os->m_buffer = allocator->realloc (old, new_size);

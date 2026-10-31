@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/lingtu/current
 Environment=LINGTU_REPO=/opt/lingtu/current
-Environment=LINGTU_SLAM_BACKEND=fastlio2
+Environment=LINGTU_SLAM_BACKEND=ltlio
 Environment=LINGTU_SLAM_MODE=localization
 Environment=LINGTU_SLAM_TICK_HZ=50
 Environment=LINGTU_DDS_DOMAIN_ID=0

@@ -1,0 +1,159 @@
+{
+  "asset": {
+    "generator": "Khronos glTF Blender I/O v5.1.19",
+    "version": "2.0"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Scene",
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "industrial_storage_cart"
+    }
+  ],
+  "materials": [
+    {
+      "doubleSided": true,
+      "name": "industrial_storage_cart",
+      "normalTexture": {
+        "index": 0
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 1
+        },
+        "metallicRoughnessTexture": {
+          "index": 2
+        }
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Cube.001",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          },
+          "indices": 3,
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "sampler": 0,
+      "source": 0
+    },
+    {
+      "sampler": 0,
+      "source": 1
+    },
+    {
+      "sampler": 0,
+      "source": 2
+    }
+  ],
+  "images": [
+    {
+      "mimeType": "image/jpeg",
+      "name": "industrial_storage_cart_nor_gl",
+      "uri": "textures/industrial_storage_cart_nor_gl_2k.jpg"
+    },
+    {
+      "mimeType": "image/jpeg",
+      "name": "industrial_storage_cart_diff",
+      "uri": "textures/industrial_storage_cart_diff_2k.jpg"
+    },
+    {
+      "mimeType": "image/jpeg",
+      "name": "industrial_storage_cart_metal-industrial_storage_cart_rough",
+      "uri": "textures/industrial_storage_cart_arm_2k.jpg"
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 17224,
+      "max": [
+        0.8016743659973145,
+        1.3797049522399902,
+        0.551372766494751
+      ],
+      "min": [
+        -0.8016743063926697,
+        0.0023205429315567017,
+        -0.5513727068901062
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 17224,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 17224,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5123,
+      "count": 56706,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 206688,
+      "byteOffset": 0,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 206688,
+      "byteOffset": 206688,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 137792,
+      "byteOffset": 413376,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 113412,
+      "byteOffset": 551168,
+      "target": 34963
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 664580,
+      "uri": "industrial_storage_cart.bin"
+    }
+  ]
+}

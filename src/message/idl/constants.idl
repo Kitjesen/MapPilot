@@ -72,6 +72,7 @@ module InspectionTaskState {
   const long ACTION_PENDING = 11;
   const long PAUSING = 12;
   const long CANCELLING = 13;
+  const long WAITING_NEXT_LOOP = 14;
 };
 
 module ExplorationRunEventKind {
@@ -131,4 +132,15 @@ module GeofenceAction {
   const long ENABLE = 4;
   const long DISABLE = 5;
   const long LIST = 6;
+};
+
+// Sensor owner operations; no physics or navigation command authority.
+module SensorControlKind {
+  const long QUERY = 1;
+  const long SET_ENABLED = 2;
+  const long SET_RATE = 3;
+  const long CONFIGURE_NOISE = 4;
+  const long SET_NOISE_ENABLED = 5;
+  const long SET_RECORDING = 6;
+  const long SET_GIMBAL = 7;
 };

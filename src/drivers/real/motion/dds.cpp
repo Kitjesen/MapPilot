@@ -95,6 +95,23 @@ struct DdsReader::Impl {
             publisher, control_state_topic, control_qos.get(), nullptr),
         "dds_create_writer(driver_control_state)");
 
+    const auto profile_request_topic = checked(dds_create_topic(participant,
+        &lingtu_dds_MotionProfileRequest_desc,
+        lingtu::message::kMotionProfileRequest.dds_topic.data(), nullptr, nullptr),
+        "dds_create_topic(profile_request)");
+    auto profile_request_qos = lingtu::dds::make_qos(lingtu::dds::qos_for_topic(
+        lingtu::message::kMotionProfileRequest.dds_topic));
+    profile_reader = checked(dds_create_reader(subscriber, profile_request_topic,
+        profile_request_qos.get(), nullptr), "dds_create_reader(profile_request)");
+    const auto profile_state_topic = checked(dds_create_topic(participant,
+        &lingtu_dds_MotionProfileState_desc,
+        lingtu::message::kMotionProfileState.dds_topic.data(), nullptr, nullptr),
+        "dds_create_topic(profile_state)");
+    auto profile_state_qos = lingtu::dds::make_qos(lingtu::dds::qos_for_topic(
+        lingtu::message::kMotionProfileState.dds_topic));
+    profile_writer = checked(dds_create_writer(publisher, profile_state_topic,
+        profile_state_qos.get(), nullptr), "dds_create_writer(profile_state)");
+
     joint_state_topic = checked(
         dds_create_topic(participant, &lingtu_dds_JointState_desc,
                          lingtu::message::kRobotJointStates.dds_topic.data(), nullptr, nullptr),
@@ -135,6 +152,8 @@ struct DdsReader::Impl {
   dds_entity_t reader{0};
   dds_entity_t control_state_topic{0};
   dds_entity_t control_state_writer{0};
+  dds_entity_t profile_reader{0};
+  dds_entity_t profile_writer{0};
   dds_entity_t joint_state_topic{0};
   dds_entity_t joint_state_writer{0};
   dds_entity_t safety_stop_topic{0};
@@ -144,6 +163,38 @@ struct DdsReader::Impl {
 
 DdsReader::DdsReader(int domain_id) : impl_(std::make_unique<Impl>(domain_id)) {}
 DdsReader::~DdsReader() = default;
+
+std::optional<ProfileRequest> DdsReader::takeProfileRequest(double wall_s) {
+  void *samples[8]{};
+  dds_sample_info_t infos[8]{};
+  const auto count = dds_take(impl_->profile_reader, samples, infos, 8, 8);
+  if (count < 0) throw std::runtime_error("dds_take(profile_request) failed");
+  std::optional<ProfileRequest> latest;
+  const bool one_writer = dds_get_matched_publications(impl_->profile_reader, nullptr, 0) == 1;
+  for (dds_return_t i = 0; i < count; ++i) {
+    if (!infos[i].valid_data || !one_writer) continue;
+    const auto &msg = *static_cast<lingtu_dds_MotionProfileRequest *>(samples[i]);
+    const double stamp = static_cast<double>(msg.header.stamp.sec) +
+                         static_cast<double>(msg.header.stamp.nanosec) * 1e-9;
+    if (wall_s - stamp < -0.5 || wall_s - stamp > 1.0) continue;
+    latest = ProfileRequest{msg.task_id ? msg.task_id : "",
+                            msg.requirement ? msg.requirement : ""};
+  }
+  if (count > 0) dds_return_loan(impl_->profile_reader, samples, count);
+  return latest;
+}
+
+bool DdsReader::writeProfileState(const ProfileStatus &state, double stamp_s) {
+  lingtu_dds_MotionProfileState msg{};
+  fillHeader(msg.header, stamp_s, "body");
+  msg.task_id = const_cast<char *>(state.task_id.c_str());
+  msg.requirement = const_cast<char *>(state.requirement.c_str());
+  msg.phase = const_cast<char *>(state.phase.c_str());
+  msg.requested_profile = const_cast<char *>(state.requested_profile.c_str());
+  msg.active_profile = const_cast<char *>(state.active_profile.c_str());
+  msg.reason = const_cast<char *>(state.reason.c_str());
+  return dds_write(impl_->profile_writer, &msg) == DDS_RETCODE_OK;
+}
 
 const std::string& DdsReader::hostBootId() const noexcept {
   return impl_->host_boot_id;

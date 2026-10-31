@@ -1,13 +1,13 @@
-"""Tests for lingtu.core — Module / Stream / Transport / Blueprint 框架。
+"""Tests for lingtu.core — Module / Stream / Transport / HostBuilder 框架。
 
 覆盖:
 - Module 端口扫描 (In/Out from annotations)
 - Out.publish → In._deliver 通过 _add_callback
 - LocalTransport pub/sub
-- Blueprint auto_wire 按 (name, type) 匹配
+- HostBuilder auto_wire 按 (name, type) 匹配
 - 端到端: Source.Out → Sink.In 数据流
-- autoconnect 合并多个 Blueprint
-- Module.blueprint() 工厂方法
+- autoconnect 合并多个 HostBuilder
+- Module.compose() 工厂方法
 - 层级依赖校验
 - SystemHandle 生命周期
 - 消息统计 (msg_count, last_ts, latest)
@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 
 from message.topics import TOPICS
-from runtime.blueprint import Blueprint, autoconnect
+from runtime.host import HostBuilder, autoconnect
 from runtime.module import Module, rpc, skill
 from runtime.msgs.geometry import PoseStamped, Vector3
 from runtime.msgs.semantic import Detection3D, GoalResult, SceneGraph
@@ -484,31 +484,31 @@ class TestModule:
         assert "SourceModule" in r
         assert "scene_graph" in r
 
-    def test_blueprint_factory(self):
-        """Module.blueprint() 返回 Blueprint。"""
-        bp = SourceModule.blueprint(camera_id=0)
-        assert isinstance(bp, Blueprint)
+    def test_host_builder_factory(self):
+        """Module.compose() 返回 HostBuilder。"""
+        bp = SourceModule.compose(camera_id=0)
+        assert isinstance(bp, HostBuilder)
 
 
 # ============================================================================
-# TestBlueprint — 蓝图编排
+# TestHostBuilder — 蓝图编排
 # ============================================================================
 
-class TestBlueprint:
+class TestHostBuilder:
     def test_add_and_build(self):
         """add + build 创建模块实例。"""
-        system = Blueprint().add(SourceModule).build()
+        system = HostBuilder().add(SourceModule).build()
         assert "SourceModule" in system.modules
 
     def test_duplicate_module_name_raises(self):
         """重复模块名报错。"""
         with pytest.raises(ValueError, match="already contains"):
-            Blueprint().add(SourceModule).add(SourceModule)
+            HostBuilder().add(SourceModule).add(SourceModule)
 
     def test_alias(self):
         """alias 允许同类型多实例。"""
         system = (
-            Blueprint()
+            HostBuilder()
             .add(SourceModule, alias="source_1")
             .add(SourceModule, alias="source_2")
             .build()
@@ -519,7 +519,7 @@ class TestBlueprint:
     def test_explicit_wire(self):
         """wire 显式连接 Out → In。"""
         system = (
-            Blueprint()
+            HostBuilder()
             .add(SourceModule)
             .add(SinkModule)
             .wire("SourceModule", "scene_graph", "SinkModule", "scene_graph")
@@ -536,26 +536,26 @@ class TestBlueprint:
 
     def test_wire_unknown_module_raises(self):
         """wire 引用不存在的模块报错。"""
-        bp = Blueprint().add(SourceModule)
+        bp = HostBuilder().add(SourceModule)
         with pytest.raises(ValueError, match="unknown"):
             bp.wire("SourceModule", "scene_graph", "NonExistent", "scene_graph").build()
 
     def test_wire_unknown_port_raises(self):
         """wire 引用不存在的端口报错。"""
-        bp = Blueprint().add(SourceModule).add(SinkModule)
+        bp = HostBuilder().add(SourceModule).add(SinkModule)
         with pytest.raises(ValueError, match="no Out port"):
             bp.wire("SourceModule", "nonexistent", "SinkModule", "scene_graph").build()
 
     def test_wire_type_mismatch_raises(self):
         """wire 类型不匹配报错。"""
-        bp = Blueprint().add(SourceModule).add(SinkModule)
+        bp = HostBuilder().add(SourceModule).add(SinkModule)
         with pytest.raises(TypeError, match="type mismatch"):
             bp.wire("SourceModule", "scene_graph", "SinkModule", "pose").build()
 
     def test_auto_wire_by_name_and_type(self):
         """auto_wire 按 (name, msg_type) 自动匹配。"""
         system = (
-            Blueprint()
+            HostBuilder()
             .add(SourceModule)
             .add(SinkModule)
             .auto_wire()
@@ -585,7 +585,7 @@ class TestBlueprint:
             data: In[Any]
 
         system = (
-            Blueprint()
+            HostBuilder()
             .add(TypedSource)
             .add(AnySink)
             .auto_wire()
@@ -606,7 +606,7 @@ class TestBlueprint:
             data: In[Vector3]
 
         system = (
-            Blueprint()
+            HostBuilder()
             .add(AnySource)
             .add(TypedSink)
             .auto_wire()
@@ -630,7 +630,7 @@ class TestBlueprint:
             data: In[Vector3]
 
         system = (
-            Blueprint()
+            HostBuilder()
             .add(TypedSource, alias="typed")
             .add(AnySource, alias="any_source")
             .add(TypedSink)
@@ -651,7 +651,7 @@ class TestBlueprint:
     def test_auto_wire_no_self_connect(self):
         """auto_wire 不会自连接 (同一模块的 Out→In)。"""
         system = (
-            Blueprint()
+            HostBuilder()
             .add(DetectorModule)
             .auto_wire()
             .build()
@@ -666,7 +666,7 @@ class TestBlueprint:
         """auto_wire 跳过已有显式连接的 In。"""
 
         system = (
-            Blueprint()
+            HostBuilder()
             .add(SourceModule, alias="src1")
             .add(SourceModule, alias="src2")
             .add(SinkModule)
@@ -687,7 +687,7 @@ class TestBlueprint:
     def test_build_with_custom_transport(self):
         """build 接受自定义 Transport。"""
         transport = LocalTransport()
-        system = Blueprint().add(SourceModule).build(transport=transport)
+        system = HostBuilder().add(SourceModule).build(transport=transport)
 
         src = system.get_module("SourceModule")
         # Transport 应被绑定到 Out 端口
@@ -696,7 +696,7 @@ class TestBlueprint:
     def test_connections_recorded(self):
         """build 后 connections 记录所有连接。"""
         system = (
-            Blueprint()
+            HostBuilder()
             .add(SourceModule)
             .add(SinkModule)
             .wire("SourceModule", "scene_graph", "SinkModule", "scene_graph")
@@ -707,9 +707,9 @@ class TestBlueprint:
         assert ("SourceModule", "scene_graph", "SinkModule", "scene_graph") in conns
 
     def test_merge(self):
-        """merge 合并两个 Blueprint。"""
-        bp1 = Blueprint().add(SourceModule)
-        bp2 = Blueprint().add(SinkModule)
+        """merge 合并两个 HostBuilder。"""
+        bp1 = HostBuilder().add(SourceModule)
+        bp2 = HostBuilder().add(SinkModule)
         bp1.merge(bp2)
 
         system = bp1.auto_wire().build()
@@ -718,8 +718,8 @@ class TestBlueprint:
 
     def test_merge_conflict_raises(self):
         """merge 名称冲突报错。"""
-        bp1 = Blueprint().add(SourceModule)
-        bp2 = Blueprint().add(SourceModule)
+        bp1 = HostBuilder().add(SourceModule)
+        bp2 = HostBuilder().add(SourceModule)
         with pytest.raises(ValueError, match="exists in both"):
             bp1.merge(bp2)
 
@@ -732,8 +732,8 @@ class TestAutoconnect:
     def test_basic_autoconnect(self):
         """autoconnect 合并并自动连接。"""
         bp = autoconnect(
-            SourceModule.blueprint(),
-            SinkModule.blueprint(),
+            SourceModule.compose(),
+            SinkModule.compose(),
         )
         system = bp.build()
 
@@ -747,9 +747,9 @@ class TestAutoconnect:
     def test_autoconnect_three_modules(self):
         """autoconnect 三个模块的链路。"""
         bp = autoconnect(
-            SourceModule.blueprint(),
-            DetectorModule.blueprint(),
-            PlannerModule.blueprint(),
+            SourceModule.compose(),
+            DetectorModule.compose(),
+            PlannerModule.compose(),
         )
         system = bp.build()
 
@@ -771,7 +771,7 @@ class TestSystemHandle:
     def test_start_stop(self):
         """start/stop 调用所有模块的生命周期方法。"""
         system = (
-            Blueprint()
+            HostBuilder()
             .add(SetupTrackModule, alias="tracker")
             .build()
         )
@@ -791,32 +791,32 @@ class TestSystemHandle:
 
     def test_double_start_no_error(self):
         """重复 start 不报错。"""
-        system = Blueprint().add(SourceModule).build()
+        system = HostBuilder().add(SourceModule).build()
         system.start()
         system.start()  # 不应报错
         system.stop()
 
     def test_stop_without_start(self):
         """未 start 直接 stop 不报错。"""
-        system = Blueprint().add(SourceModule).build()
+        system = HostBuilder().add(SourceModule).build()
         system.stop()  # 不应报错
 
     def test_get_module(self):
         """get_module 按名称获取。"""
-        system = Blueprint().add(SourceModule).build()
+        system = HostBuilder().add(SourceModule).build()
         mod = system.get_module("SourceModule")
         assert isinstance(mod, SourceModule)
 
     def test_get_module_unknown_raises(self):
         """get_module 未知名称报错。"""
-        system = Blueprint().add(SourceModule).build()
+        system = HostBuilder().add(SourceModule).build()
         with pytest.raises(KeyError, match="Unknown module"):
             system.get_module("NonExistent")
 
     def test_health(self):
         """health 返回系统健康信息。"""
         system = (
-            Blueprint()
+            HostBuilder()
             .add(SourceModule)
             .add(SinkModule)
             .auto_wire()
@@ -839,7 +839,7 @@ class TestSystemHandle:
     def test_startup_order_respects_deps(self):
         """启动顺序: 上游模块 (低层) 先于下游模块 (高层)。"""
         system = (
-            Blueprint()
+            HostBuilder()
             .add(SinkModule)     # L4
             .add(SourceModule)   # L1
             .auto_wire()
@@ -852,7 +852,7 @@ class TestSystemHandle:
 
     def test_repr(self):
         """SystemHandle repr。"""
-        system = Blueprint().add(SourceModule).build()
+        system = HostBuilder().add(SourceModule).build()
         r = repr(system)
         assert "stopped" in r
         system.start()
@@ -869,7 +869,7 @@ class TestEndToEnd:
     def test_source_to_sink_full_pipeline(self):
         """完整流水线: Source → Sink，使用真实消息类型。"""
         system = (
-            Blueprint()
+            HostBuilder()
             .add(SourceModule)
             .add(SinkModule)
             .auto_wire()
@@ -913,7 +913,7 @@ class TestEndToEnd:
             input_port: In[Vector3]
 
         system = (
-            Blueprint()
+            HostBuilder()
             .add(VecSource, alias="src")
             .add(SetupTrackModule, alias="echo")
             .add(VecSink, alias="sink")
@@ -941,7 +941,7 @@ class TestEndToEnd:
         auto_wire 会因歧义跳过 PlannerModule.scene_graph，因此需要显式连接。
         """
         system = (
-            Blueprint()
+            HostBuilder()
             .add(SourceModule)
             .add(DetectorModule)
             .add(PlannerModule)
@@ -972,7 +972,7 @@ class TestEndToEnd:
     def test_msg_counts_accumulate(self):
         """消息计数在整个流水线中正确累积。"""
         system = (
-            Blueprint()
+            HostBuilder()
             .add(SourceModule)
             .add(SinkModule)
             .auto_wire()
@@ -1000,7 +1000,7 @@ class TestLayerDeps:
     def test_no_layer_module_no_violation(self):
         """无层级标签模块不触发校验。"""
         system = (
-            Blueprint()
+            HostBuilder()
             .add(NoLayerModule)
             .add(SinkModule)
             .auto_wire()
@@ -1020,7 +1020,7 @@ class TestLayerDeps:
 
         with caplog.at_level(logging.WARNING):
             system = (
-                Blueprint()
+                HostBuilder()
                 .add(ControllerModule)
                 .add(PlantModule)
                 .wire("PlantModule", "state", "ControllerModule", "state")
@@ -1039,7 +1039,7 @@ class TestLayerDeps:
     def test_normal_layer_flow(self):
         """正常层级流 (L1 → L4) 无违规。"""
         system = (
-            Blueprint()
+            HostBuilder()
             .add(SourceModule)    # L1
             .add(SinkModule)      # L4
             .auto_wire()
@@ -1054,7 +1054,7 @@ class TestLayerDeps:
 # ============================================================================
 
 class TestOnSystemModules:
-    """on_system_modules is called by Blueprint.build() after all modules
+    """on_system_modules is called by HostBuilder.build() after all modules
     are instantiated and wired, allowing cross-module discovery."""
 
     def test_hook_called_during_build(self):
@@ -1067,7 +1067,7 @@ class TestOnSystemModules:
             def on_system_modules(self, modules):
                 received.update(modules)
 
-        system = Blueprint().add(ObserverModule).build()
+        system = HostBuilder().add(ObserverModule).build()
         assert "ObserverModule" in received
         assert received["ObserverModule"] is system.get_module("ObserverModule")
 
@@ -1087,7 +1087,7 @@ class TestOnSystemModules:
             def on_system_modules(self, modules):
                 snapshots.append(set(modules.keys()))
 
-        Blueprint().add(ModA).add(ModB).auto_wire().build()
+        HostBuilder().add(ModA).add(ModB).auto_wire().build()
 
         assert len(snapshots) == 2
         for snap in snapshots:
@@ -1114,7 +1114,7 @@ class TestOnSystemModules:
                 if svc is not None:
                     found_rpcs.extend(svc.rpcs.keys())
 
-        Blueprint().add(ServiceModule).add(ClientModule).auto_wire().build()
+        HostBuilder().add(ServiceModule).add(ClientModule).auto_wire().build()
         assert "ping" in found_rpcs
 
     def test_hook_called_before_system_handle_returned(self):
@@ -1132,7 +1132,7 @@ class TestOnSystemModules:
             def setup(self):
                 call_order.append("setup")
 
-        system = Blueprint().add(WatchModule).build()
+        system = HostBuilder().add(WatchModule).build()
         system.start()
         # hook is called during build(), before setup() during start()
         assert call_order.index("hook") < call_order.index("setup")
@@ -1141,7 +1141,7 @@ class TestOnSystemModules:
     def test_default_hook_is_noop(self):
         """Default on_system_modules does nothing — no exception raised."""
         system = (
-            Blueprint()
+            HostBuilder()
             .add(SourceModule)
             .add(SinkModule)
             .auto_wire()
@@ -1157,7 +1157,7 @@ class TestOnSystemModules:
 
 class TestIoDynamicPorts:
     """io() creates In/Out ports at runtime and registers them in
-    _ports_in / _ports_out so Blueprint wiring and cleanup both work."""
+    _ports_in / _ports_out so HostBuilder wiring and cleanup both work."""
 
     def test_io_creates_out_port(self):
         """io(..., Out, T) creates an Out port registered in ports_out."""
@@ -1223,9 +1223,9 @@ class TestIoDynamicPorts:
         assert port.latest is v
 
     def test_io_dynamic_port_wirable(self):
-        """Dynamic ports created in __init__ can be wired via Blueprint.
+        """Dynamic ports created in __init__ can be wired via HostBuilder.
 
-        Ports must exist at build() time so Blueprint can resolve them.
+        Ports must exist at build() time so HostBuilder can resolve them.
         io() is called from __init__ (or before build()) for this use case.
         """
 
@@ -1240,7 +1240,7 @@ class TestIoDynamicPorts:
                 self.io("dyn_vec", In, Vector3)
 
         system = (
-            Blueprint()
+            HostBuilder()
             .add(DynSource)
             .add(DynSink)
             .wire("DynSource", "dyn_vec", "DynSink", "dyn_vec")

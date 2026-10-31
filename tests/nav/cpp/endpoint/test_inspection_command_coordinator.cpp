@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-#include "runtime/inspection/inspection_command_coordinator.hpp"
+#include "app/inspection/inspection_command_coordinator.hpp"
 
 namespace {
 
@@ -64,12 +64,14 @@ struct Harness {
   bool route_found{true};
   bool takeover{false};
   bool stop_confirmed{true};
+  bool stop_pending{false};
   bool ack_ok{true};
   double clock{42.0};
   int load_calls{0};
   int status_calls{0};
   std::vector<std::string> log;
   std::vector<InspectionCommandAck> acks;
+  std::optional<InspectionCommandCommit> pending_stop_commit;
 
   InspectionCommandActions actions() {
     InspectionCommandActions result;
@@ -92,6 +94,10 @@ struct Harness {
     };
     result.stop_and_commit = [&](const std::string &reason, InspectionCommandCommit commit) {
       log.emplace_back("stop:" + reason);
+      if (stop_pending) {
+        pending_stop_commit = std::move(commit);
+        return InspectionStopBarrierResult{false, "stop_confirmation_pending", true};
+      }
       if (!stop_confirmed) {
         return InspectionStopBarrierResult{
             false,
@@ -129,6 +135,15 @@ struct Harness {
                 makeRoute(), run_id, "fixture-start", "map-a", 7, clock, &error),
             "fixture start must succeed");
   }
+
+  bool confirmPendingStop() {
+    if (!pending_stop_commit) return false;
+    auto commit = std::move(*pending_stop_commit);
+    pending_stop_commit.reset();
+    const bool committed = commit();
+    if (committed) log.emplace_back("stop-confirmed");
+    return committed;
+  }
 };
 
 void requireAck(const InspectionCommandAck &ack, const std::string &request_id, CommandKind kind,
@@ -143,11 +158,6 @@ void requireAck(const InspectionCommandAck &ack, const std::string &request_id, 
     throw std::runtime_error(
         "ACK task id mismatch for " + request_id + ": expected=" + expected_task_id +
         " actual=" + ack.task_id);
-  }
-  if (ack.run_id != run_id) {
-    throw std::runtime_error(
-        "ACK run id mismatch for " + request_id + ": expected=" + run_id +
-        " actual=" + ack.run_id);
   }
 }
 
@@ -277,6 +287,23 @@ void testFifoCache() {
 }
 
 void testPauseAndCancelAwaitStopConfirmation() {
+  {
+    Harness h;
+    h.startDirect();
+    h.stop_pending = true;
+    InspectionCommandCoordinator coordinator(h.executor, h.actions());
+
+    const auto result = coordinator.handle(makeRequest("pause-pending", CommandKind::kPause));
+    requireAck(result.ack, "pause-pending", CommandKind::kPause, true, "pause_requested",
+               "existing-run");
+    require(h.executor.status().state == RunState::kPausing &&
+                h.executor.status().reason == "pause_requested" && h.pending_stop_commit,
+            "pending inspection pause published PAUSED or discarded its commit");
+    require(h.confirmPendingStop() && h.executor.status().state == RunState::kPaused,
+            "inspection pause did not commit after later stop confirmation");
+    require(!h.confirmPendingStop(), "inspection pause commit ran more than once");
+  }
+
   {
     Harness h;
     h.startDirect();

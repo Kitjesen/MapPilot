@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from fractions import Fraction
+from typing import TYPE_CHECKING
+
+from .noise import RangeNoiseConfig
+
+if TYPE_CHECKING:
+    from .gnss import GnssConfig
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -35,6 +41,8 @@ class SensorStreamPlan:
     rate_hz: Fraction
     route: SensorRoute
     raycast_frame_stable_id: str | None = None
+    range_noise: RangeNoiseConfig = field(default_factory=RangeNoiseConfig)
+    gnss: GnssConfig | None = None
 
     def deadline_ns(self, sequence: int) -> int:
         """Return the drift-free integer deadline for a generation sequence."""

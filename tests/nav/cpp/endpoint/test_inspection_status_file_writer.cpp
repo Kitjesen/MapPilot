@@ -32,7 +32,6 @@ void testEmptyDataDirectoryDisablesPersistence() {
   });
 
   inspection::RunStatus status;
-  status.run_id = "disabled-run";
   writer.submit(status);
   writer.flush();
 
@@ -66,7 +65,6 @@ void testSubmitIsNonBlockingAndPendingStatusIsLatestWins() {
   });
 
   inspection::RunStatus first;
-  first.run_id = "first";
   writer.submit(first);
   {
     std::unique_lock<std::mutex> lock(mutex);
@@ -75,9 +73,7 @@ void testSubmitIsNonBlockingAndPendingStatusIsLatestWins() {
   }
 
   inspection::RunStatus second;
-  second.run_id = "second";
   inspection::RunStatus third;
-  third.run_id = "third";
   const auto submit_start = std::chrono::steady_clock::now();
   writer.submit(second);
   writer.submit(third);
@@ -117,7 +113,6 @@ void testFlushPublishesExactStatusSnapshot() {
 
   inspection::RunStatus status;
   status.state = inspection::RunState::kNavigating;
-  status.run_id = "run-exact";
   status.route_id = "route-exact";
   status.point_index = 4;
   status.reason = "persist this snapshot";
@@ -140,7 +135,6 @@ void testFlushPublishesExactStatusSnapshot() {
 
 void testSinkFailuresAreReported() {
   inspection::RunStatus status;
-  status.run_id = "failed-run";
 
   {
     Writer writer("inspection-data",

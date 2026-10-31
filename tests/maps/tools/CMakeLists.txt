@@ -13,9 +13,9 @@ set(LINGTU_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
 add_executable(
   lingtu_maps_evidence_tool
   evidence_tool.cpp
-  "${LINGTU_ROOT}/src/maps/cpp/build/pcd.cpp"
-  "${LINGTU_ROOT}/src/maps/cpp/build/saved_scans.cpp"
-  "${LINGTU_ROOT}/src/maps/cpp/json.cpp"
+  "${LINGTU_ROOT}/src/maps/cpp/io/pcd.cpp"
+  "${LINGTU_ROOT}/src/maps/cpp/io/scans.cpp"
+  "${LINGTU_ROOT}/src/maps/cpp/io/json.cpp"
 )
 target_compile_features(lingtu_maps_evidence_tool PRIVATE cxx_std_17)
 target_include_directories(

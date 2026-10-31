@@ -34,12 +34,12 @@ interface TuningState {
   same_floor_z_tolerance: number
   max_same_floor_z_excursion: number
   snap_search_radius_cells: number
-  ground_support_xy_radius_cells: number
-  ground_support_depth_cells: number
+  support_radius_cells: number
+  support_depth_cells: number
   preblocked_costmap_radius_cells: number
   preblocked_costmap_weight: number
-  require_ground_support: boolean
-  strict_direct_ground_support: boolean
+  ground_support: boolean
+  direct_support_only: boolean
   enable_preblocked_costmap: boolean
   same_floor_preference: boolean
   lowest_traversable_only: boolean
@@ -102,12 +102,12 @@ const PRODUCT_DEFAULTS: TuningState = {
   same_floor_z_tolerance: 0.75,
   max_same_floor_z_excursion: 2,
   snap_search_radius_cells: 12,
-  ground_support_xy_radius_cells: 2,
-  ground_support_depth_cells: 6,
+  support_radius_cells: 2,
+  support_depth_cells: 6,
   preblocked_costmap_radius_cells: 2,
   preblocked_costmap_weight: 1.5,
-  require_ground_support: true,
-  strict_direct_ground_support: false,
+  ground_support: true,
+  direct_support_only: false,
   enable_preblocked_costmap: true,
   same_floor_preference: true,
   lowest_traversable_only: false,
@@ -154,7 +154,7 @@ const PRESETS: Record<string, { label: string; description: string; values: Tuni
       floor_change_penalty: 1,
       max_step_height: 0.6,
       max_same_floor_z_excursion: 4,
-      require_ground_support: false,
+      ground_support: false,
       enable_preblocked_costmap: false,
     },
   },
@@ -261,7 +261,7 @@ const NUMERIC_PARAMS: NumericParam[] = [
     hint: '点击点不在可行体素上时，允许向附近搜索可走点。',
   },
   {
-    key: 'ground_support_xy_radius_cells',
+    key: 'support_radius_cells',
     label: '地面支撑横向半径',
     group: '地图适配',
     unit: 'cell',
@@ -272,7 +272,7 @@ const NUMERIC_PARAMS: NumericParam[] = [
     hint: '检查脚下附近是否有可支撑结构，减少悬空路径。',
   },
   {
-    key: 'ground_support_depth_cells',
+    key: 'support_depth_cells',
     label: '地面支撑向下深度',
     group: '地图适配',
     unit: 'cell',
@@ -308,12 +308,12 @@ const NUMERIC_PARAMS: NumericParam[] = [
 
 const TOGGLE_PARAMS: ToggleParam[] = [
   {
-    key: 'require_ground_support',
+    key: 'ground_support',
     label: '要求地面支撑',
     hint: '实机建议开启；点云楼梯过稀疏时可在仿真样例里临时关闭。',
   },
   {
-    key: 'strict_direct_ground_support',
+    key: 'direct_support_only',
     label: '严格支撑检查',
     hint: '开启后更保守，适合地图质量稳定后的验收。',
   },
@@ -391,12 +391,12 @@ function makeProfileOverrides(values: TuningState): Record<string, number | bool
     octoplanner3d_same_floor_z_tolerance: values.same_floor_z_tolerance,
     octoplanner3d_max_same_floor_z_excursion: values.max_same_floor_z_excursion,
     octoplanner3d_snap_search_radius_cells: values.snap_search_radius_cells,
-    octoplanner3d_ground_support_xy_radius_cells: values.ground_support_xy_radius_cells,
-    octoplanner3d_ground_support_depth_cells: values.ground_support_depth_cells,
+    octoplanner3d_support_radius_cells: values.support_radius_cells,
+    octoplanner3d_support_depth_cells: values.support_depth_cells,
     octoplanner3d_preblocked_costmap_radius_cells: values.preblocked_costmap_radius_cells,
     octoplanner3d_preblocked_costmap_weight: values.preblocked_costmap_weight,
-    octoplanner3d_require_ground_support: values.require_ground_support,
-    octoplanner3d_strict_direct_ground_support: values.strict_direct_ground_support,
+    octoplanner3d_ground_support: values.ground_support,
+    octoplanner3d_direct_support_only: values.direct_support_only,
     octoplanner3d_enable_preblocked_costmap: values.enable_preblocked_costmap,
     octoplanner3d_same_floor_preference: values.same_floor_preference,
     octoplanner3d_lowest_traversable_only: values.lowest_traversable_only,
@@ -417,7 +417,7 @@ function buildRiskItems(values: TuningState): Array<{ kind: 'ok' | 'warn'; text:
   if (values.max_slope > 0) {
     risks.push({ kind: 'warn', text: '坡度约束已启用，但 OctoMap 原始体素还不是稳定坡度来源。' })
   }
-  if (!values.require_ground_support) {
+  if (!values.ground_support) {
     risks.push({ kind: 'warn', text: '关闭地面支撑只适合排查连通性，不适合直接实机运动。' })
   }
   if (risks.length === 0) {

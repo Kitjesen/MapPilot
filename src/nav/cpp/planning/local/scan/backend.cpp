@@ -9,10 +9,12 @@
 
 #include <Eigen/Geometry>
 
+#include "collision/body.hpp"
 #include "planning/local/scan/grid.hpp"
 #include "planning/local/scan/reference.hpp"
 #include "planning/local/scan/upstream/plan_manage/planner_manager.h"
-#include "planning/local/scan/upstream/plan_manage/scan_replan_fsm.h"
+#include "planning/local/scan/upstream/plan_manage/planner_fsm.h"
+#include "trajectory/spline.hpp"
 
 namespace nav_kernel::local::scan {
 namespace {
@@ -25,7 +27,7 @@ using upstream::FsmOutput;
 using upstream::GridMap;
 using upstream::PlanParameters;
 using upstream::SCANPlannerManager;
-using upstream::SCANReplanFSM;
+using upstream::PlannerFsm;
 using upstream::ScanNavigationMode;
 using upstream::ScanReplanParams;
 using upstream::ScanReplanState;
@@ -101,6 +103,8 @@ const char *stateName(ScanReplanState state) {
 PlanParameters planParameters(const LocalPlannerParams &params) {
   PlanParameters output;
   output.max_vel_ = std::max(0.05, params.scan.maxVelocity);
+  output.max_body_vx_ = params.scan.maxBodyVx;
+  output.max_body_vy_ = params.scan.maxBodyVy;
   output.max_acc_ = std::max(0.05, params.scan.maxAcceleration);
   output.max_jerk_ = 4.0;
   output.vel_tolerance_ = std::max(0.0, params.scan.velocityTolerance);
@@ -183,10 +187,21 @@ std::optional<LocalCollisionEvidence> measuredCollisionEvidence(
     return std::nullopt;
   }
 
-  const double radius = std::max(0.0, params.cylinderRadius) +
-                        std::max(0.0, params.cylinderOffset);
-  const double below = std::max(0.0, params.bodyClearanceBelow);
-  const double above = std::max(0.0, params.bodyClearanceAbove);
+  const auto &body = input.observedBody ? input.observedBody : input.body;
+  double radius = std::max(0.0, params.cylinderRadius) +
+                  std::max(0.0, params.cylinderOffset);
+  double below = std::max(0.0, params.bodyClearanceBelow);
+  double above = std::max(0.0, params.bodyClearanceAbove);
+  if (body) {
+    namespace collision_geometry = lingtu::nav::collision;
+    // One radian of pure yaw yields the expanded parts' maximum XY radius.
+    // This bounds evidence collection at every heading; Grid still decides
+    // the actual pose/sweep collision against the same observed body.
+    radius = collision_geometry::sweepBound(*body, {{}, 0.0}, {{}, 1.0});
+    const auto extent = collision_geometry::bounds(*body, {});
+    below = std::max(0.0, extent.half_size.z - extent.center.z);
+    above = std::max(0.0, extent.center.z + extent.half_size.z);
+  }
   if (!collision.coversCylinder(attempt.collisionPosition, radius, below, above)) {
     return std::nullopt;
   }
@@ -225,8 +240,8 @@ std::optional<LocalCollisionEvidence> measuredCollisionEvidence(
           continue;
         }
         const Vec3 point = collision.planningCellCenter(linear);
-        if (std::hypot(point.x - rejected.x, point.y - rejected.y) <=
-                radius + 0.5 * collision.resolution &&
+        if ((body || std::hypot(point.x - rejected.x, point.y - rejected.y) <=
+                         radius + 0.5 * collision.resolution) &&
             point.z >= rejected.z - below - 0.5 * collision.resolution &&
             point.z <= rejected.z + above + 0.5 * collision.resolution) {
           points->push_back(point);
@@ -268,8 +283,11 @@ class Backend::Impl {
 
   LocalPlan run(const LocalPlanRequest &input, bool collisionTick,
                 const LocalPlanCancel &cancel) {
+    handoff_.reset();
     const auto started = std::chrono::steady_clock::now();
-    manager_->setTimeSource([clock = input.clock, started] {
+    const double startedS = executionFeedback_ ? executionFeedback_().nowS : input.clock.timestampS;
+    manager_->setTimeSource([this, clock = input.clock, started] {
+      if (executionFeedback_) return executionFeedback_().nowS;
       return clock.afterElapsed(std::chrono::duration<double>(
           std::chrono::steady_clock::now() - started).count());
     });
@@ -291,6 +309,8 @@ class Backend::Impl {
 
     if (!std::isfinite(input.maxLinearSpeedMps) || input.maxLinearSpeedMps < 0.0)
       return stop(LocalPlanStatus::InvalidInput, "linear_speed_limit_invalid");
+    if (input.bodyHeading && !std::isfinite(*input.bodyHeading))
+      return stop(LocalPlanStatus::InvalidInput, "body_heading_invalid");
 
     const LocalRouteView *route = input.referenceRoute();
     if (route == nullptr || !route->valid() ||
@@ -331,30 +351,102 @@ class Backend::Impl {
 
     PlanParameters plan = planParameters(params_);
     plan.motion_intent_ = input.intent() != nullptr;
+    plan.preserve_boundary_ = input.body != nullptr &&
+        (input.bodyHeading.has_value() || (input.intent()==nullptr &&
+         input.supportHeightM.has_value() && input.supportHeightToleranceM.has_value()));
+    plan.body_yaw_ = input.bodyHeading;
+    // Intent keeps its independent collision/yaw policy. Use the observed
+    // body frame only for velocity capacity; this is not a prediction of
+    // future operator rotation during the trajectory.
+    if (!plan.body_yaw_ && input.intent() != nullptr)
+      plan.body_yaw_ = input.robot.pose.yaw;
     if (input.maxLinearSpeedMps > 0.0)
       plan.max_vel_ = std::min(plan.max_vel_, input.maxLinearSpeedMps);
     if (plan.max_vel_ != manager_->pp_.max_vel_ ||
-        plan.motion_intent_ != manager_->pp_.motion_intent_)
+        plan.max_body_vx_ != manager_->pp_.max_body_vx_ ||
+        plan.max_body_vy_ != manager_->pp_.max_body_vy_ ||
+        plan.body_yaw_ != manager_->pp_.body_yaw_ ||
+        plan.motion_intent_ != manager_->pp_.motion_intent_ ||
+        plan.preserve_boundary_ != manager_->pp_.preserve_boundary_)
       manager_->updatePlanParameters(plan, optimizerParameters(params_, plan));
 
     const auto *activeSpline =
         active_ ? std::get_if<SplineTarget>(&active_->target()) : nullptr;
-    if (activeSpline != nullptr && !referenceRejected_ && !speedReductionPending_ &&
-        plan.max_vel_ < activeSpline->maxLinearSpeedMps) {
-      // Executor holds the old trajectory during a speed reduction. Its
+    // The generation cap can exceed the entire curve's actual speed.
+    const bool retainedLowerLimit = activeSpline != nullptr &&
+        plan.max_vel_ < activeSpline->maxLinearSpeedMps &&
+        activeSpeedBound_ <= plan.max_vel_ + 1e-9 &&
+        // Base heave does not consume the commanded planar-speed limit.
+        (!input.robot.kinematics.valid ||
+         std::hypot(input.robot.kinematics.linearVelocity.x,
+                    input.robot.kinematics.linearVelocity.y) <= plan.max_vel_ + 1e-9);
+    const bool headingChanged = referenceInitialized_ &&
+        (lastBodyHeading_ != input.bodyHeading || lastBody_ != input.body ||
+         lastSupportHeightM_.has_value()!=input.supportHeightM.has_value() ||
+         lastSupportHeightToleranceM_.has_value()!=input.supportHeightToleranceM.has_value());
+    const bool speedReduction = activeSpline != nullptr && !referenceRejected_ &&
+        plan.max_vel_ < activeSpline->maxLinearSpeedMps && !retainedLowerLimit;
+    GridBinding binding(*gridMap_, grid);
+    if (speedReduction && !headingChanged && input.robot.kinematics.valid &&
+        std::hypot(input.robot.kinematics.linearVelocity.x,
+                   input.robot.kinematics.linearVelocity.y) > 1e-6) {
+      Eigen::Vector3d velocity = eigenPoint(input.robot.kinematics.linearVelocity);
+      const auto &previous = manager_->local_data_;
+      const double elapsed = std::clamp(input.clock.timestampS - previous.start_time_,
+                                        0.0, previous.duration_);
+      Eigen::Vector3d acceleration = Eigen::Vector3d::Zero();
+      if (previous.duration_ > 0.0) {
+        velocity.z() = previous.velocity_traj_.evaluateDeBoorT(elapsed).z();
+        acceleration = previous.acceleration_traj_.evaluateDeBoorT(elapsed);
+        if (acceleration.norm() > plan.max_acc_) acceleration.setZero();
+      } else {
+        velocity.z() = 0.0;
+      }
+      double transitionEndS = 0.0;
+      if (manager_->decelerate(eigenPoint(input.robot.pose.position), velocity, acceleration,
+              2.0 * handoffLeadTimeS_ + 3.0 * PlannerFsm::kTickPeriodS,
+              input.clock.timestampS, transitionEndS)) {
+        fsm_->adoptSpeedTransition(transitionEndS);
+        BsplineTrajectory trajectory;
+        trajectory.positionPoints = manager_->local_data_.position_traj_.getControlPoint();
+        trajectory.knots = manager_->local_data_.position_traj_.getKnot();
+        trajectory.order = 3;
+        trajectory.trajectoryId = manager_->local_data_.traj_id_;
+        trajectory.startTimeS = manager_->local_data_.start_time_;
+        SplineTarget transition = splineTarget(trajectory, plan.max_vel_);
+        transition.speedTransitionEndS = transitionEndS;
+        active_ = LocalPlan::spline(std::move(transition));
+        activeSpeedBound_ = SplineView(std::get<SplineTarget>(active_->target())).speedBound();
+        speedReductionPending_ = false;
+        emergencyStopped_ = false;
+        debug_.valid = true;
+        debug_.searchReason = "scan_speed_transition";
+        debug_.trajectoryPointCount = static_cast<int>(trajectory.positionPoints.cols());
+        finishDebug(started);
+        return *active_;
+      }
+      // A blocked deceleration is a real motion constraint. Do not publish
+      // unchecked geometry or resume the superseded fast trajectory.
+      fsm_->abandonTrajectory();
+      active_.reset();
+      emergencyStopped_ = true;
+      return stop(LocalPlanStatus::NearFieldStop, "scan_speed_transition_blocked");
+    }
+    if (headingChanged || (speedReduction && !speedReductionPending_)) {
+      // A new body heading invalidates the previous collision footprint.
+      // Executor also holds the old trajectory during a speed reduction. Its
       // derivatives are no longer the robot's motion state, so start a fresh
       // FSM from odometry while retaining the manager's allocation and IDs.
       const int trajectoryId = manager_->local_data_.traj_id_;
       manager_->local_data_ = {};
       manager_->local_data_.traj_id_ = trajectoryId;
-      fsm_ = std::make_unique<SCANReplanFSM>(*manager_, fsmParameters(params_, plan));
+      fsm_ = std::make_unique<PlannerFsm>(*manager_, fsmParameters(params_, plan));
       referenceInitialized_ = false;
       speedReductionPending_ = true;
       active_.reset();
       activeSpline = nullptr;
     }
 
-    GridBinding binding(*gridMap_, grid);
     FsmInput fsmInput;
     fsmInput.nowS = input.clock.timestampS;
     FsmOdometry odometry;
@@ -366,6 +458,15 @@ class Backend::Impl {
         Eigen::AngleAxisd(input.robot.pose.yaw, Eigen::Vector3d::UnitZ());
     fsmInput.odometry = odometry;
     fsmInput.executionFrozen = input.clock.executionFrozen;
+    if (executionFeedback_) {
+      const ExecutionFeedback execution = executionFeedback_();
+      fsmInput.executingTrajectoryId = execution.trajectoryId;
+      fsmInput.executionStartTimeS = execution.startTimeS;
+      fsmInput.executionFrozen = execution.frozen || execution.trajectoryId == 0;
+      if (execution.trajectoryId == manager_->local_data_.traj_id_ &&
+          execution.trajectoryId > 0 && !execution.frozen)
+        fsmInput.handoffLeadTimeS = handoffLeadTimeS_;
+    }
     if (const auto *intent = input.intent()) {
       fsmInput.motionIntentMaxDeviationRad =
           std::clamp(intent->maxDirectionDeviationDeg, 0.0, 90.0) * M_PI / 180.0;
@@ -381,6 +482,7 @@ class Backend::Impl {
       const bool speedReplan = activeSpline != nullptr &&
                                !referenceRejected_ &&
                                activeSpline->maxLinearSpeedMps != plan.max_vel_ &&
+                               !retainedLowerLimit &&
                                fsm_->state() == ScanReplanState::EXEC_TRAJ;
       if (referenceIdentityChanged(input, *route) || speedReplan) {
         // LingTu routes use body-centre Z; upstream REFERENCE_PATH uses the
@@ -400,6 +502,13 @@ class Backend::Impl {
     if (debug_.localTargetValid)
       debug_.localTarget = localTarget;
     debug_.searchReason = stateName(output.state);
+    if (output.handoffPending) debug_.searchReason = "scan_handoff_pending";
+    if (output.handoffMissed) debug_.searchReason = "scan_handoff_missed";
+    if (executionFeedback_ && manager_->reboundDebug().attemptId != lastTimedAttemptId_) {
+      lastTimedAttemptId_ = manager_->reboundDebug().attemptId;
+      const double elapsedS = std::max(0.0, executionFeedback_().nowS - startedS);
+      handoffLeadTimeS_ = std::max(0.05, 1.5 * elapsedS + 2.0 * PlannerFsm::kTickPeriodS);
+    }
 
     if (cancel && cancel()) {
       // Consume this discarded tick's attempt so a later tick without a new
@@ -420,9 +529,20 @@ class Backend::Impl {
       return stop(LocalPlanStatus::NearFieldStop, "scan_emergency_stop");
     }
     if (output.trajectory) {
-      LocalPlan next = LocalPlan::spline(splineTarget(*output.trajectory, plan.max_vel_));
+      SplineTarget target = splineTarget(*output.trajectory, plan.max_vel_);
+      if (activeSpline && activeSpline->trajectoryId == target.trajectoryId)
+        target.speedTransitionEndS = activeSpline->speedTransitionEndS;
+      LocalPlan next = LocalPlan::spline(std::move(target));
       if (next.ready()) {
+        if (output.handoff) {
+          handoff_ = output.handoff;
+          debug_.valid = true;
+          debug_.trajectoryPointCount = static_cast<int>(output.trajectory->positionPoints.cols());
+          finishDebug(started);
+          return next;
+        }
         active_ = next;
+        activeSpeedBound_ = SplineView(std::get<SplineTarget>(next.target())).speedBound();
         emergencyStopped_ = false;
         speedReductionPending_ = false;
         debug_.valid = true;
@@ -456,6 +576,10 @@ class Backend::Impl {
     gridMap_->setGrid(nullptr);
     active_.reset();
     lastIntent_.reset();
+    lastBodyHeading_.reset();
+    lastBody_.reset();
+    lastSupportHeightM_.reset();
+    lastSupportHeightToleranceM_.reset();
     referenceInitialized_ = false;
     referenceRejected_ = false;
     speedReductionPending_ = false;
@@ -469,11 +593,19 @@ class Backend::Impl {
     debug_.collisionEvidence = lastCollisionEvidence_;
     debug_.lastScanFailure = lastFailure_;
     lastObservedAttemptId_ = 0;
+    lastTimedAttemptId_ = 0;
+    handoffLeadTimeS_ = 0.05;
     failureEpisodeActive_ = false;
     initializeOfficialCore();
   }
 
   LocalPlannerDebugSnapshot debugSnapshot() const { return debug_; }
+
+  void setExecutionFeedback(std::function<ExecutionFeedback()> feedback) {
+    executionFeedback_ = std::move(feedback);
+  }
+
+  std::shared_ptr<upstream::TrajectoryHandoff> handoff() const { return handoff_; }
 
  private:
 
@@ -509,6 +641,11 @@ class Backend::Impl {
     failure->params = params_.scan;
     failure->checkObstacle = params_.checkObstacle;
     failure->maxLinearSpeedMps = input.maxLinearSpeedMps;
+    failure->bodyHeading = input.bodyHeading;
+    failure->body = input.body;
+    failure->observedBody = input.observedBody;
+    failure->supportHeightM = input.supportHeightM;
+    failure->supportHeightToleranceM = input.supportHeightToleranceM;
     if (const auto *intent = input.intent())
       failure->intent = *intent;
     failure->reference.assign(route.points, route.points + route.count);
@@ -519,6 +656,7 @@ class Backend::Impl {
       failure->predictions.assign(predictions.obstacles, predictions.obstacles + predictions.count);
     failure->predictionsObservedAtS = predictions.observedAtS;
     failure->predictionsHorizonS = predictions.horizonS;
+    failure->predictionsExpiresAtS = predictions.expiresAtS;
     auto &collision = failure->collision;
     if (collision.inflatedBits != nullptr && collision.inflatedBytes > 0U &&
         (!collision.inflatedStorage ||
@@ -549,7 +687,7 @@ class Backend::Impl {
     const PlanParameters plan = planParameters(params_);
     manager_ = std::make_unique<SCANPlannerManager>();
     manager_->initPlanModules(plan, optimizerParameters(params_, plan), gridMap_);
-    fsm_ = std::make_unique<SCANReplanFSM>(*manager_,
+    fsm_ = std::make_unique<PlannerFsm>(*manager_,
                                            fsmParameters(params_, plan));
   }
 
@@ -558,6 +696,10 @@ class Backend::Impl {
     return !referenceInitialized_ ||
            lastFrameEpoch_ != input.identity.frameEpoch ||
            lastRouteGeneration_ != route.generation ||
+           lastBodyHeading_ != input.bodyHeading ||
+           lastBody_ != input.body ||
+           lastSupportHeightM_.has_value() != input.supportHeightM.has_value() ||
+           lastSupportHeightToleranceM_.has_value() != input.supportHeightToleranceM.has_value() ||
            !sameIntent(lastIntent_, input.intent());
   }
 
@@ -566,6 +708,10 @@ class Backend::Impl {
     referenceInitialized_ = true;
     lastFrameEpoch_ = input.identity.frameEpoch;
     lastRouteGeneration_ = route.generation;
+    lastBodyHeading_ = input.bodyHeading;
+    lastBody_ = input.body;
+    lastSupportHeightM_=input.supportHeightM;
+    lastSupportHeightToleranceM_=input.supportHeightToleranceM;
     lastIntent_ = input.intent() == nullptr
                       ? std::nullopt
                       : std::optional<LocalMotionIntent>{*input.intent()};
@@ -582,11 +728,20 @@ class Backend::Impl {
   }
 
   LocalPlannerParams params_;
+  std::function<ExecutionFeedback()> executionFeedback_;
+  std::shared_ptr<upstream::TrajectoryHandoff> handoff_;
+  double handoffLeadTimeS_{0.05};
+  std::uint64_t lastTimedAttemptId_{0};
   GridMap::Ptr gridMap_;
   std::unique_ptr<SCANPlannerManager> manager_;
-  std::unique_ptr<SCANReplanFSM> fsm_;
+  std::unique_ptr<PlannerFsm> fsm_;
   std::optional<LocalPlan> active_;
+  double activeSpeedBound_{0.0};
   std::optional<LocalMotionIntent> lastIntent_;
+  std::optional<double> lastBodyHeading_;
+  std::shared_ptr<const lingtu::nav::collision::Body> lastBody_;
+  std::optional<double> lastSupportHeightM_;
+  std::optional<double> lastSupportHeightToleranceM_;
   bool referenceInitialized_{false};
   bool referenceRejected_{false};
   bool speedReductionPending_{false};
@@ -610,11 +765,11 @@ Backend::Backend(Backend &&) noexcept = default;
 Backend &Backend::operator=(Backend &&) noexcept = default;
 
 double Backend::fsmPeriodS() noexcept {
-  return SCANReplanFSM::kTickPeriodS;
+  return PlannerFsm::kTickPeriodS;
 }
 
 double Backend::collisionPeriodS() noexcept {
-  return SCANReplanFSM::kFutureCollisionPeriodS;
+  return PlannerFsm::kFutureCollisionPeriodS;
 }
 
 LocalPlan Backend::tick(const LocalPlanRequest &input,
@@ -625,6 +780,14 @@ LocalPlan Backend::tick(const LocalPlanRequest &input,
 LocalPlan Backend::checkCollision(const LocalPlanRequest &input,
                                   const LocalPlanCancel &cancel) {
   return impl_->checkCollision(input, cancel);
+}
+
+void Backend::setExecutionFeedback(std::function<ExecutionFeedback()> feedback) {
+  impl_->setExecutionFeedback(std::move(feedback));
+}
+
+std::shared_ptr<upstream::TrajectoryHandoff> Backend::handoff() const {
+  return impl_->handoff();
 }
 
 void Backend::reset() {

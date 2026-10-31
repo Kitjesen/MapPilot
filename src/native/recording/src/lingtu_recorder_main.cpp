@@ -7,7 +7,6 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
-#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -20,20 +19,29 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <sys/file.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
 #include <thread>
-#include <unistd.h>
 #include <utility>
 #include <vector>
 
 #include "lingtu/recording/recording_catalog.hpp"
 #include "lingtu/recording/recording_core.hpp"
+#if defined(_WIN32)
+#include "lingtu/recording/recording_windows.hpp"
+using pid_t = std::int64_t;
+#else
+#include <fcntl.h>
+#include <sys/file.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include "lingtu/recording/recording_linux.hpp"
+#endif
 
 #ifndef LINGTU_RECORDING_HAS_DDS
 #define LINGTU_RECORDING_HAS_DDS 0
+#endif
+#if LINGTU_RECORDING_HAS_DDS
+#include "lingtu/recording/topic_catalog.hpp"
 #endif
 
 namespace {
@@ -110,6 +118,7 @@ struct StartOptions {
 void print_help(std::ostream &output, const char *program) {
   output << "Usage:\n"
          << "  " << program << " record --output-dir DIR [options]\n"
+         << "  " << program << " topics --json\n"
          << "  " << program << " start --root RECORDING_ROOT [--prefix NAME] [options]\n"
          << "  " << program << " status SESSION_DIR\n"
          << "  " << program << " status --root RECORDING_ROOT\n"
@@ -137,8 +146,8 @@ void print_help(std::ostream &output, const char *program) {
          << "DDS options:\n"
          << "  --dds-domain N               Live observation domain (default: 0)\n"
          << "  --dds-preset NAME            generic-sensors-v1 or inspection-evidence-v1\n"
-         << "  --dds-topic TOPIC            Repeatable explicit topic; requested topics must be "
-            "captured\n"
+         << "  --dds-topic TOPIC            Repeatable selected topic; optional streams may be "
+            "silent\n"
          << "  --dds-queue-mib N            Default: 256\n"
          << "  --dds-chunk-mib N            Default: 4\n"
          << "  --dds-idl FILE               LingTu self-contained OMG IDL\n\n"
@@ -162,7 +171,12 @@ std::string environment_or(const char *name, std::string fallback = {}) {
 
 std::string hostname() {
   std::vector<char> buffer(256, '\0');
+#if defined(_WIN32)
+  DWORD length = static_cast<DWORD>(buffer.size());
+  if (::GetComputerNameA(buffer.data(), &length) == 0) {
+#else
   if (::gethostname(buffer.data(), buffer.size()) != 0) {
+#endif
     return "unknown";
   }
   buffer.back() = '\0';
@@ -513,7 +527,11 @@ StartOptions parse_start_options(int argc, char **argv) {
 }
 
 std::filesystem::path sibling_executable(const char *self, const char *name) {
+#if defined(_WIN32)
+  return recording::recording_executable_path(self).parent_path() / (std::string(name) + ".exe");
+#else
   return recording::recording_executable_path(self).parent_path() / name;
+#endif
 }
 
 std::string number(double value) {
@@ -524,6 +542,12 @@ std::string number(double value) {
 }
 
 recording::RecordingSpec build_spec(const Options &options, const char *self) {
+#if defined(_WIN32)
+  if (options.camera) {
+    throw std::invalid_argument("native camera recording requires Linux POSIX shared memory; "
+                                "use --camera off on Windows");
+  }
+#endif
   const bool dds_enabled = options.dds == Selection::kOn ||
                            (options.dds == Selection::kAuto && LINGTU_RECORDING_HAS_DDS != 0);
   if (options.dds == Selection::kOn && LINGTU_RECORDING_HAS_DDS == 0) {
@@ -667,6 +691,95 @@ std::string json_string(std::string_view value) {
   return output.str();
 }
 
+int print_supported_topics() {
+#if LINGTU_RECORDING_HAS_DDS
+  struct Presentation { std::string_view topic; const char *label; };
+  static constexpr Presentation labels[]{
+      {"/imu/raw", u8"原始 IMU"}, {"/lidar/raw_frame", u8"原始雷达帧"},
+      {"/tf", u8"动态坐标变换"}, {"/tf_static", u8"静态坐标变换"},
+      {"/robot/joint_states", u8"电机关节 · 位置 / 速度 / 估计扭矩"},
+      {"/camera/depth/image_raw", u8"相机深度图"},
+      {"/camera/color/camera_info", u8"相机内参"},
+      {"/driver/odometry", u8"驱动里程计"}, {"/driver/control_state", u8"驱动控制状态"},
+      {"/driver/profile/request", u8"运动模式切换请求"},
+      {"/driver/profile/state", u8"运动模式切换状态"},
+      {"/slam/odom_prior", u8"定位先验"}, {"/slam/odometry", u8"定位位置与姿态"},
+      {"/slam/state_at_scan", u8"扫描时刻位姿"},
+      {"/slam/registered_cloud", u8"配准点云"},
+      {"/slam/map_observation", u8"地图观测"}, {"/slam/map_cloud", u8"局部地图点云"},
+      {"/slam/localization_health", u8"定位健康状态"},
+      {"/slam/localization_quality", u8"定位质量"},
+      {"/slam/relocalization/request", u8"重定位请求"},
+      {"/slam/relocalization/response", u8"重定位结果"},
+      {"/gnss/fix", u8"GNSS 原始定位"}, {"/gnss/odom", u8"GNSS 里程计"},
+      {"/gnss/status", u8"GNSS 状态"},
+      {"/nav/goal/status", u8"导航目标状态"}, {"/nav/state", u8"导航运行状态"},
+      {"/nav/global_path", u8"全局路径"}, {"/nav/local_path", u8"局部轨迹"},
+      {"/nav/cmd_vel", u8"最终速度指令"}, {"/nav/command/request", u8"导航操作请求"},
+      {"/nav/command/ack", u8"导航操作回执"},
+      {"/nav/operator_motion/control", u8"人工接管请求"},
+      {"/nav/operator_motion/sample", u8"人工速度输入"},
+      {"/nav/operator_motion/ack", u8"人工接管回执"},
+      {"/nav/operator_motion/status", u8"人工接管状态"},
+      {"/nav/inspection/task/request", u8"巡检任务请求"},
+      {"/nav/inspection/task/ack", u8"巡检任务回执"},
+      {"/nav/inspection/status", u8"巡检进度"},
+      {"/nav/inspection/task/event", u8"巡检任务事件"},
+      {"/nav/inspection/evidence/request", u8"巡检取证请求"},
+      {"/nav/inspection/evidence/result", u8"巡检取证结果"},
+  };
+  const auto defaults = recording::dds_recording_plan("generic-sensors-v1");
+  std::cout << "{\"control_version\":1,\"version\":1,\"ok\":true,\"topics\":[";
+  bool first = true;
+  for (const auto &binding : recording::recording_topic_catalog()) {
+    const auto topic = binding.contract->topic;
+    const auto found = std::find_if(std::begin(labels), std::end(labels),
+                                  [topic](const auto &entry) { return entry.topic == topic; });
+    const auto label = found == std::end(labels) ? std::string(topic) : found->label;
+    const char *group = "sensors";
+    if (topic.rfind("/driver/", 0) == 0 || topic.rfind("/robot/", 0) == 0) group = "robot";
+    else if (topic.rfind("/slam/", 0) == 0 || topic.rfind("/gnss/", 0) == 0 ||
+             topic == "/tf" || topic == "/tf_static") group = "localization";
+    else if (topic.rfind("/nav/inspection/", 0) == 0) group = "inspection";
+    else if (topic.rfind("/nav/", 0) == 0) group = "navigation";
+    if (!first) std::cout << ',';
+    first = false;
+    std::cout << "{\"topic\":" << json_string(topic)
+              << ",\"type_name\":" << json_string(binding.contract->idl_type)
+              << ",\"group\":" << json_string(group) << ",\"label\":" << json_string(label)
+              << ",\"replayable\":"
+              << (binding.replay_policy == recording::ReplayPolicy::Replayable ? "true" : "false")
+              << ",\"default_selected\":"
+              << (std::find(defaults.selected_topics.begin(), defaults.selected_topics.end(), topic) !=
+                          defaults.selected_topics.end() ? "true" : "false") << '}';
+  }
+  std::cout << "],\"presets\":[";
+  first = true;
+  for (const auto *name : {"generic-sensors-v1", "inspection-evidence-v1"}) {
+    if (!first) std::cout << ',';
+    first = false;
+    const auto plan = recording::dds_recording_plan(name);
+    std::cout << "{\"name\":" << json_string(name);
+    for (const auto &entry : {std::pair{"selected_topics", &plan.selected_topics},
+                              std::pair{"required_topics", &plan.required_topics}}) {
+      std::cout << ',' << json_string(entry.first) << ":[";
+      bool first_topic = true;
+      for (const auto &topic : *entry.second) {
+        if (!first_topic) std::cout << ',';
+        first_topic = false;
+        std::cout << json_string(topic);
+      }
+      std::cout << ']';
+    }
+    std::cout << '}';
+  }
+  std::cout << "]}\n";
+  return 0;
+#else
+  throw std::invalid_argument("topics requires a DDS-enabled native recording build");
+#endif
+}
+
 bool manifest_has_inspection_identity(const recording::RecordingManifestSnapshot &manifest,
                                       const recording::RecordingSpec &spec) {
   const auto &product = spec.context.product;
@@ -694,6 +807,9 @@ bool active_state(std::string_view state) {
 }
 
 bool process_alive(pid_t process_id) {
+#if defined(_WIN32)
+  return recording::windows_recording_process_alive(process_id);
+#else
   if (::kill(process_id, 0) == 0) {
     return true;
   }
@@ -705,8 +821,10 @@ bool process_alive(pid_t process_id) {
   }
   throw std::runtime_error("failed to inspect recording manager process: " +
                            std::string(std::strerror(errno)));
+#endif
 }
 
+#if !defined(_WIN32)
 std::vector<std::string> process_arguments(pid_t process_id) {
   const auto path = std::filesystem::path("/proc") / std::to_string(process_id) / "cmdline";
   std::ifstream input(path, std::ios::binary);
@@ -730,9 +848,13 @@ std::vector<std::string> process_arguments(pid_t process_id) {
   }
   return arguments;
 }
+#endif
 
 std::optional<std::string> manager_identity_error(pid_t process_id,
                                                   const std::filesystem::path &session_directory) {
+#if defined(_WIN32)
+  return recording::windows_recording_manager_identity_error(process_id, session_directory);
+#else
   try {
     if (!process_alive(process_id)) {
       return "recording manager process is no longer running";
@@ -782,6 +904,7 @@ std::optional<std::string> manager_identity_error(pid_t process_id,
     return error.what();
   }
   return std::nullopt;
+#endif
 }
 
 int print_catalog_status(const recording::RecordingCatalogSnapshot &catalog) {
@@ -899,6 +1022,23 @@ class RootControlLock {
       throw recording::RecordingCatalogError("recording_catalog_unsafe",
                                              "recording root is not a safe directory");
     }
+#if defined(_WIN32)
+    descriptor_ = ::CreateFileW((root / ".control.lock").c_str(), GENERIC_READ | GENERIC_WRITE,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+                                FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (descriptor_ == INVALID_HANDLE_VALUE) {
+      throw recording::RecordingCatalogError("recording_catalog_unreadable",
+                                             "recording control lock cannot be opened");
+    }
+    OVERLAPPED overlap{};
+    if (::LockFileEx(descriptor_, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                     0, 1, 0, &overlap) == 0) {
+      ::CloseHandle(descriptor_);
+      descriptor_ = INVALID_HANDLE_VALUE;
+      throw recording::RecordingCatalogError("recording_control_busy",
+                                             "recording control lock cannot be acquired");
+    }
+#else
     const int root_fd = ::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (root_fd < 0) {
       throw recording::RecordingCatalogError("recording_catalog_unreadable",
@@ -922,20 +1062,33 @@ class RootControlLock {
                                              "recording control lock cannot be acquired: " +
                                                  std::string(std::strerror(lock_error)));
     }
+#endif
   }
 
   ~RootControlLock() {
+#if defined(_WIN32)
+    if (descriptor_ != INVALID_HANDLE_VALUE) {
+      OVERLAPPED overlap{};
+      static_cast<void>(::UnlockFileEx(descriptor_, 0, 1, 0, &overlap));
+      ::CloseHandle(descriptor_);
+    }
+#else
     if (descriptor_ >= 0) {
       static_cast<void>(::flock(descriptor_, LOCK_UN));
       ::close(descriptor_);
     }
+#endif
   }
 
   RootControlLock(const RootControlLock &) = delete;
   RootControlLock &operator=(const RootControlLock &) = delete;
 
  private:
+#if defined(_WIN32)
+  HANDLE descriptor_{INVALID_HANDLE_VALUE};
+#else
   int descriptor_{-1};
+#endif
 };
 
 int remove_root_session(const RootSessionOptions &options) {
@@ -979,14 +1132,24 @@ std::string generated_session_id(std::string_view prefix) {
   const auto now = std::chrono::system_clock::now();
   const auto time = std::chrono::system_clock::to_time_t(now);
   std::tm utc{};
+#if defined(_WIN32)
+  if (::gmtime_s(&utc, &time) != 0) {
+#else
   if (::gmtime_r(&time, &utc) == nullptr) {
+#endif
     throw recording::RecordingCatalogError("native_recorder_start_failed",
                                            "UTC session timestamp cannot be generated");
   }
   const auto nanoseconds =
       std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
   std::ostringstream output;
-  output << prefix << '_' << std::put_time(&utc, "%Y%m%dT%H%M%SZ") << '_' << ::getpid() << '_'
+  output << prefix << '_' << std::put_time(&utc, "%Y%m%dT%H%M%SZ") << '_'
+#if defined(_WIN32)
+         << ::GetCurrentProcessId()
+#else
+         << ::getpid()
+#endif
+         << '_'
          << std::hex << (static_cast<std::uint64_t>(nanoseconds) & 0xffffffffU);
   return output.str();
 }
@@ -1016,6 +1179,7 @@ std::vector<std::string> record_command(const StartOptions &options, const char 
   return command;
 }
 
+#if !defined(_WIN32)
 pid_t launch_detached_recording(const std::vector<std::string> &command,
                                 const std::filesystem::path &manager_log) {
   const int log_fd =
@@ -1076,6 +1240,7 @@ void terminate_starting_manager(pid_t process_id) {
   static_cast<void>(::kill(process_id, SIGKILL));
   while (::waitpid(process_id, &status, 0) < 0 && errno == EINTR) {}
 }
+#endif
 
 int start_root_recording(const StartOptions &options, const char *self) {
   RootControlLock lock(options.root);
@@ -1098,7 +1263,17 @@ int start_root_recording(const StartOptions &options, const char *self) {
                                            "generated recording session already exists");
   }
   const auto temporary_log = options.root / ("." + session_id + ".manager.log");
+#if defined(_WIN32)
+  auto manager = recording::start_windows_recording_manager(
+      command, temporary_log, std::filesystem::weakly_canonical(session_directory).generic_string());
+  const pid_t child = manager->snapshot().process_id;
+  const auto terminate_starting_manager = [&](pid_t) {
+    manager->request_stop();
+    static_cast<void>(manager->wait(std::chrono::seconds(2)));
+  };
+#else
   const pid_t child = launch_detached_recording(command, temporary_log);
+#endif
   bool log_promoted = false;
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::milliseconds(options.startup_timeout_ms);
@@ -1132,6 +1307,13 @@ int start_root_recording(const StartOptions &options, const char *self) {
                                              "another recording session won the startup race");
     }
 
+#if defined(_WIN32)
+    if (!manager->snapshot().running) {
+      throw recording::RecordingCatalogError(
+          "native_recorder_start_failed",
+          "recording manager exited before publishing an active session");
+    }
+#else
     int child_status = 0;
     const pid_t wait_result = ::waitpid(child, &child_status, WNOHANG);
     if (wait_result == child) {
@@ -1145,6 +1327,7 @@ int start_root_recording(const StartOptions &options, const char *self) {
                                              "recording manager cannot be observed: " +
                                                  std::string(std::strerror(errno)));
     }
+#endif
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   terminate_starting_manager(child);
@@ -1153,6 +1336,12 @@ int start_root_recording(const StartOptions &options, const char *self) {
 }
 
 void install_signal_handlers() {
+#if defined(_WIN32)
+  if (std::signal(SIGINT, request_stop) == SIG_ERR ||
+      std::signal(SIGTERM, request_stop) == SIG_ERR) {
+    throw std::runtime_error("failed to install recording signal handlers");
+  }
+#else
   struct sigaction action{};
   action.sa_handler = request_stop;
   sigemptyset(&action.sa_mask);
@@ -1160,6 +1349,7 @@ void install_signal_handlers() {
   if (::sigaction(SIGINT, &action, nullptr) != 0 || ::sigaction(SIGTERM, &action, nullptr) != 0) {
     throw std::runtime_error("failed to install recording signal handlers");
   }
+#endif
 }
 
 int record(const Options &options, const char *self) {
@@ -1169,7 +1359,13 @@ int record(const Options &options, const char *self) {
     return 0;
   }
   install_signal_handlers();
+#if defined(_WIN32)
+  recording::WindowsRecordingStopEvent stop_event(
+      std::filesystem::weakly_canonical(spec.session_directory).generic_string());
+  recording::WindowsRecordingProcessFactory process_factory;
+#else
   recording::PosixRecordingProcessFactory process_factory;
+#endif
   recording::RecordingManager manager(process_factory);
   const auto started = manager.start(spec);
   std::cout << "session=" << started.session_id
@@ -1183,6 +1379,9 @@ int record(const Options &options, const char *self) {
                    std::chrono::duration<double>(options.seconds));
   }
   while (stop_signal_count == 0 && std::chrono::steady_clock::now() < deadline) {
+#if defined(_WIN32)
+    if (stop_event.stop_requested()) break;
+#endif
     const auto current = manager.status();
     if (current.state == recording::RecordingState::kFailed) {
       std::cerr << "lingtu_recorder: " << current.error << '\n';
@@ -1247,6 +1446,13 @@ int stop_recording(const StopOptions &options, bool print_manifest = true) {
     return 4;
   }
 
+#if defined(_WIN32)
+  if (snapshot.state != "stopping") {
+    recording::request_windows_recording_stop(
+        snapshot.manager_process_id,
+        std::filesystem::weakly_canonical(options.session_directory).generic_string());
+  }
+#else
   if (snapshot.state != "stopping" &&
       ::kill(static_cast<pid_t>(snapshot.manager_process_id), SIGTERM) != 0) {
     if (errno == ESRCH) {
@@ -1256,6 +1462,7 @@ int stop_recording(const StopOptions &options, bool print_manifest = true) {
     throw std::runtime_error("failed to signal recording manager: " +
                              std::string(std::strerror(errno)));
   }
+#endif
 
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::milliseconds(options.timeout_ms);
@@ -1326,6 +1533,12 @@ int main(int argc, char **argv) {
       return argc < 2 ? 2 : 0;
     }
     const std::string_view command(argv[1]);
+    if (command == "topics") {
+      if (argc != 3 || std::string_view(argv[2]) != "--json") {
+        throw std::invalid_argument("topics requires --json");
+      }
+      return print_supported_topics();
+    }
     if (command == "start") {
       return start_root_recording(parse_start_options(argc, argv), argv[0]);
     }

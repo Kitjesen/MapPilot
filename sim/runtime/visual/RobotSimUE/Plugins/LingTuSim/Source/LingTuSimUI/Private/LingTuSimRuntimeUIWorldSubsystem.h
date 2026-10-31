@@ -19,7 +19,10 @@ class UGameViewportClient;
 
 namespace LingTuSim::UI {
 class FRuntimeUIModeController;
+class FMeasurementClient;
 class SLingTuSimRuntimeHUD;
+struct FRuntimeCameraInput;
+struct FPlayerSettings;
 }  // namespace LingTuSim::UI
 
 struct FLingTuSimHudScreenshotRuntimeState final {
@@ -45,6 +48,10 @@ class ULingTuSimRuntimeUIWorldSubsystem final : public UTickableWorldSubsystem {
 
   /** Copies the centralized read-only status together with this world's local UI state. */
   LingTuSim::UI::FRuntimeUIStatusSnapshot ReadStatusSnapshot() const;
+#if WITH_DEV_AUTOMATION_TESTS && !UE_BUILD_SHIPPING
+  /** Unbound presentation capture only; never overrides a live simulation. */
+  void PreviewRuntimeInterface(const FString& Mode);
+#endif
 
  private:
   void DetachRuntimeUI();
@@ -53,6 +60,9 @@ class ULingTuSimRuntimeUIWorldSubsystem final : public UTickableWorldSubsystem {
   void TickInspectionProjection(float DeltaTime);
   void RequestInspectionTask();
   void RequestInspectionReport();
+  void RequestInspectionGuidance();
+  void RequestInspectionControl(const FString& Action);
+  void HandleInspectionGuidanceResponse(bool bTransportOk, int32 ResponseCode, FString Body);
   void HandleInspectionTaskResponse(bool bTransportOk, int32 ResponseCode, FString Body);
   void HandleInspectionReportResponse(bool bTransportOk, int32 ResponseCode, FString Body);
   void HandlePreviousGameSelection();
@@ -62,6 +72,7 @@ class ULingTuSimRuntimeUIWorldSubsystem final : public UTickableWorldSubsystem {
   void HandleNextAssetReview();
   void SynchronizePlayerInputMode(bool bForce = false);
   void HandleUIAction(LingTuSim::UI::ERuntimeUIAction Action);
+  void HandleMouseCameraInput(const LingTuSim::UI::FRuntimeCameraInput& Input);
   void TickPendingExit();
   bool PublishRuntimeRequest(LingTuSim::EOperatorRuntimeRequestType RequestType,
                              const TCHAR *RequestName, FString &OutError);
@@ -74,10 +85,14 @@ class ULingTuSimRuntimeUIWorldSubsystem final : public UTickableWorldSubsystem {
 
   TSharedPtr<LingTuSim::UI::FRuntimeUIModeController> ModeController;
   TSharedPtr<LingTuSim::UI::FRuntimeUILocalState> LocalState;
+  TSharedPtr<LingTuSim::UI::FPlayerSettings> PlayerSettings;
   TSharedPtr<LingTuSim::UI::FFrontEndLoginModel> FrontEndLoginModel;
   TSharedPtr<LingTuSim::UI::FGameSelectionModel> GameSelectionModel;
   TSharedPtr<LingTuSim::UI::FAssetReviewModel> AssetReviewModel;
   TSharedPtr<LingTuSim::UI::FInspectionProjection> InspectionProjection;
+  TSharedPtr<LingTuSim::UI::FMeasurementClient> Measurements;
+  FString MeasurementProductSessionId;
+  FString MeasurementGatewayUrl;
   TSharedPtr<FString> GameSelectionFeedback;
   TSharedPtr<LingTuSim::UI::SLingTuSimRuntimeHUD> RuntimeHUDWidget;
   TSharedPtr<SWidget> HUDWidget;
@@ -102,6 +117,7 @@ class ULingTuSimRuntimeUIWorldSubsystem final : public UTickableWorldSubsystem {
   int32 ActiveHudScreenshotIndex = INDEX_NONE;
   FString HudScreenshotControlLogDirectory;
   FString PendingExitEventId;
+  double PendingExitStartedSeconds = 0.0;
   FString GameSelectionCatalogPath;
   FString GameSelectionIntentPath;
   FString InspectionGatewayUrl;

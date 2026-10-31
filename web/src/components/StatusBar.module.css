@@ -31,7 +31,6 @@
   font-size: var(--t-overline-size);
   font-weight: var(--t-overline-weight);
   color: var(--t-overline-color);
-  text-transform: uppercase;
   letter-spacing: var(--t-overline-track);
 }
 
@@ -87,6 +86,12 @@
   margin-left: auto;
   display: flex;
   align-items: center;
+}
+
+/* Pose, yaw and speed remain available to the browser title for diagnosis,
+   but the operator strip only shows decisions that require an action. */
+.technicalMetrics {
+  display: none;
 }
 
 .hbDot {

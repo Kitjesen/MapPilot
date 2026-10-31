@@ -1,7 +1,7 @@
 """Small decision-domain service wrappers.
 
 These classes are not runtime Modules. They keep strategy objects easy to test
-without pulling in Blueprint, ROS, or Gateway code.
+without pulling in HostBuilder, ROS, or Gateway code.
 """
 
 from __future__ import annotations

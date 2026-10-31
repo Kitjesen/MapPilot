@@ -17,6 +17,9 @@
 #include <vector>
 
 #include "nav_kernel/types.hpp"
+#include "collision/terrain.hpp"
+
+namespace lingtu::nav::collision { struct Body; class Terrain; }
 
 namespace nav_kernel {
 
@@ -36,8 +39,8 @@ struct ScanPlannerParams {
   double controlPointSpacing = 0.20;
   double replanDistance = 1.0;
   double noReplanDistance = 0.10;
-  double maxVelocity = 0.75;
-  double maxAcceleration = 0.50;
+  double maxVelocity = kDefaultLinearSpeedMps;
+  double maxAcceleration = 2.0;
   double planningHorizon = 3.5;
   double smoothWeight = 1.0;
   double collisionWeight = 1.0;
@@ -47,6 +50,10 @@ struct ScanPlannerParams {
   double velocityTolerance = 1.0;
   double accelerationTolerance = 1.0;
   double collisionDistance = 0.20;
+  // Existing executor body-axis capabilities; zero leaves legacy callers
+  // governed by the vector speed limit alone.
+  double maxBodyVx = 0.0;
+  double maxBodyVy = 0.0;
 };
 
 struct LocalPlannerParams {
@@ -81,8 +88,8 @@ struct LocalPlannerParams {
   double pathRangeStep = 0.5;
   bool pathRangeBySpeed = true;
   bool pathCropByGoal = true;
-  double maxSpeed = 1.0;
-  double autonomySpeed = 1.0;
+  double maxSpeed = kDefaultLinearSpeedMps;
+  double autonomySpeed = kDefaultLinearSpeedMps;
   double slopeWeight = 0.0;
   double goalClearRange = 0.5;
   double goalBehindRange = 0.8;
@@ -164,6 +171,8 @@ struct LocalCollisionMapView {
   // Immutable measured 3D evidence from the same DDS snapshot as inflation.
   std::shared_ptr<const std::vector<std::uint8_t>> measuredOccupiedStorage{};
   std::shared_ptr<const std::vector<std::uint8_t>> knownFreeStorage{};
+  // Original hits in the collision grid frame from the same map observations.
+  std::shared_ptr<const lingtu::nav::collision::Terrain> terrain{};
 
   [[nodiscard]] bool present() const noexcept;
   [[nodiscard]] bool valid() const noexcept;
@@ -172,12 +181,26 @@ struct LocalCollisionMapView {
   [[nodiscard]] bool covers(const Vec3 &planningPoint, double tolerance = 0.0) const noexcept;
   [[nodiscard]] bool coversCylinder(const Vec3 &planningCenter, double radius,
                                     double below, double above) const noexcept;
+  // Bounds use the stored grid frame; touching a cell face adds no volume.
+  [[nodiscard]] bool observedFreeBox(const Vec3 &minimum, const Vec3 &maximum) const noexcept;
+  // Partial observations can confirm the current stance without clearing unknown cells.
+  [[nodiscard]] bool observedClearBox(const Vec3 &minimum, const Vec3 &maximum) const noexcept;
+  // Grid-frame geometry against raw hits; unknown/outside cells add no obstacle.
+  // The owning endpoint validates the immutable bitmap snapshot before use.
+  [[nodiscard]] bool measuredOccupiedCylinder(const Vec3 &center, double radius,
+      double below, double above, bool upperHemisphere = false) const noexcept;
   [[nodiscard]] bool occupied(const Vec3 &planningPoint) const noexcept;
   [[nodiscard]] bool occupiedLinear(std::size_t linear) const noexcept;
   [[nodiscard]] Vec3 planningCellCenter(std::size_t linear) const noexcept;
+
+ private:
+  [[nodiscard]] bool observedBox(const Vec3 &minimum, const Vec3 &maximum,
+                                 bool requireAllFree) const noexcept;
 };
 
 struct LocalTraversabilityView {
+  // Optional 2D risk input for the CMU backend. SCAN consumes the 3D
+  // LocalCollisionMapView instead and must never receive this view.
   const float *values{nullptr};
   int rows{0};
   int cols{0};
@@ -215,6 +238,9 @@ struct LocalKinematicState {
 struct LocalPlanIdentity {
   std::uint64_t frameEpoch{0};
   std::uint64_t obstacleGeneration{0};
+  // Used only by a backend that consumes LocalTraversabilityView (currently
+  // CMU). SCAN keeps this at zero and keys replanning from its 3D collision
+  // generation instead.
   std::uint64_t traversabilityGeneration{0};
 };
 
@@ -237,6 +263,9 @@ enum class LocalPlanStatus {
   Expired,
 };
 
+// Stable diagnostics vocabulary for the local planner boundary. The C++ enum
+// names stay compact for the native API; callers should use this function for
+// serialized status text.
 const char *localPlanStatusName(LocalPlanStatus status);
 
 struct RobotState {
@@ -288,6 +317,19 @@ struct LocalPlanRequest {
   PlanClock clock{};
   // Resolved runtime linear-speed ceiling; zero uses configured planner limits.
   double maxLinearSpeedMps{0.0};
+  // Optional body heading in the planning frame, independent of route tangent.
+  // Candidate collision checks retain the turn from the measured robot yaw.
+  std::optional<double> bodyHeading{};
+  // Immutable fixed-joint collision geometry shared with global planning.
+  std::shared_ptr<const lingtu::nav::collision::Body> body{};
+  // Measured body attitude applied to nominal joint geometry in the yaw-only
+  // frame. This does not reconstruct geometry from live joint angles.
+  std::shared_ptr<const lingtu::nav::collision::Body> observedBody{};
+  // Global base-to-support height metadata for trajectory initialization.
+  // Local collision queries do not require whole-body floor observation.
+  std::optional<double> supportHeightM;
+  std::optional<double> supportHeightToleranceM;
+  lingtu::nav::collision::SupportQuery supportSurface;
 
   [[nodiscard]] const LocalRouteView *route() const noexcept;
   [[nodiscard]] const LocalRouteView *referenceRoute() const noexcept;
@@ -415,12 +457,18 @@ struct ScanFailureSnapshot {
   ScanPlannerParams params;
   bool checkObstacle{true};
   double maxLinearSpeedMps{0.0};
+  std::optional<double> bodyHeading{};
+  std::shared_ptr<const lingtu::nav::collision::Body> body{};
+  std::shared_ptr<const lingtu::nav::collision::Body> observedBody{};
+  std::optional<double> supportHeightM;
+  std::optional<double> supportHeightToleranceM;
   std::optional<LocalMotionIntent> intent;
   std::vector<Vec3> reference;
   std::uint64_t referenceGeneration{0};
   LocalCollisionMapView collision;
   std::vector<PredictedObstacle> predictions;
   double predictionsObservedAtS{0.0}, predictionsHorizonS{1.0};
+  double predictionsExpiresAtS{0.0};
   Vec3 startPosition{}, startVelocity{}, startAcceleration{};
   Vec3 targetPosition{}, targetVelocity{};
   bool polyInit{false}, randomPolyInit{false};
@@ -464,25 +512,43 @@ struct LocalPlannerDebugSnapshot {
   std::vector<LocalPlanCandidate> candidates;
 };
 
+// Capabilities exposed by the selected local planner backend.  Navigation
+// execution depends on this contract instead of inspecting the backend enum.
+// SCAN owns the complete reference and consumes the 3D collision/prediction
+// inputs; CMU is the only backend that consumes the optional 2D risk grid.
+struct LocalPlannerCapabilities {
+  bool ownsReferencePath{false};
+  bool consumesTraversability{false};
+  bool consumesPredictions{false};
+  bool supportsBoundaryDeparture{false};
+  bool consumesCollisionMap{false};
+};
+
+// Keep backend-specific capability derivation in the local-planner boundary.
+// Navigation and recovery consume this contract instead of branching on the
+// selected backend enum themselves.
+[[nodiscard]] LocalPlannerCapabilities plannerCapabilities(
+    const LocalPlannerParams &params) noexcept;
+
 inline constexpr int kPathNum = 343;
 inline constexpr int kGroupNum = 7;
 inline constexpr int kRotDirs = 36;
 
-namespace local {
-
-class Planner {
+// Public local-planning module, independent of the selected algorithm.
+class LocalPlanner {
  public:
-  explicit Planner(const LocalPlannerParams &params = LocalPlannerParams());
-  ~Planner();
+  explicit LocalPlanner(const LocalPlannerParams &params = LocalPlannerParams());
+  ~LocalPlanner();
 
-  Planner(Planner &&) noexcept;
-  Planner &operator=(Planner &&) noexcept;
-  Planner(const Planner &) = delete;
-  Planner &operator=(const Planner &) = delete;
+  LocalPlanner(LocalPlanner &&) noexcept;
+  LocalPlanner &operator=(LocalPlanner &&) noexcept;
+  LocalPlanner(const LocalPlanner &) = delete;
+  LocalPlanner &operator=(const LocalPlanner &) = delete;
 
   // CMU loads its fixed path library; SCAN needs no external resource.
   bool configure(const std::string &pathLibraryDir = {});
   bool configured() const;
+  [[nodiscard]] LocalPlannerCapabilities capabilities() const noexcept;
   LocalPlannerDebugSnapshot debugSnapshot() const;
 
   LocalPlan plan(const LocalPlanRequest &request);
@@ -496,7 +562,5 @@ class Planner {
   class Impl;
   std::unique_ptr<Impl> impl_;
 };
-
-}  // namespace local
 
 }  // namespace nav_kernel

@@ -1,10 +1,10 @@
 {
   "schema_version": "lingtu.mujoco.teleop_avoid_native_acceptance.v1",
   "name": "mujoco_teleop_avoid_native",
-  "description": "MuJoCo component acceptance for saved-map-free SCAN teleop_avoid using rolling LiDAR and IMU, native Fast-LIO2, Mapd, navigation, and the physical simulation driver.",
+  "description": "MuJoCo component acceptance for saved-map-free SCAN teleop_avoid using rolling LiDAR and IMU, native LTLIO, Mapd, navigation, and the physical simulation driver.",
   "product_contract": {
     "product": "teleop_avoid",
-    "source": "config/runtime_graph/products/teleop_avoid.yaml",
+    "source": "config/system/products/teleop_avoid.yaml",
     "native_control_mode": "teleop_avoid",
     "slam_mode": "mapping",
     "requires_map": false
@@ -23,7 +23,7 @@
     "width": 3.6
   },
   "slam_runtime": {
-    "provider": "fastlio2",
+    "provider": "ltlio",
     "mode": "mapping"
   },
   "sensor_runtime": {
@@ -94,7 +94,7 @@
     "obstacle_stop": 3.0
   },
   "paths": {
-    "slam_config": "src/localization/fastlio2/config/sim_mid360_slam.yaml",
+    "slam_config": "src/localization/ltlio/config/sim_mid360_slam.yaml",
     "sensor_runner": "sim/scripts/mujoco/native_dds_sensors.py"
   },
   "binaries": {
@@ -220,7 +220,7 @@
     "coverage": "component",
     "claims": [
       "native typed operator-motion admission",
-      "native Fast-LIO2 estimation from simulated rolling LiDAR and IMU without truth pose input",
+      "native LTLIO estimation from simulated rolling LiDAR and IMU without truth pose input",
       "native SCAN local detour planning",
       "embedded SCAN spline follower output",
       "final cmd_vel freshness and velocity limits without duplicate path collision arbitration",

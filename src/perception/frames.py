@@ -11,7 +11,7 @@ from typing import Any, TypeAlias, cast
 import numpy as np
 
 from runtime.msgs.geometry import Transform
-from runtime.msgs.nav import Odometry
+from runtime.msgs.nav import NavigationState, Odometry
 from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat
 from runtime.tf.conversions import map_from_odom_transform_from_mapping
 from runtime.tf.frames import map_frame_id, odom_frame_id
@@ -30,12 +30,30 @@ class SynchronizedFrame:
     frame_id: str
     map_from_body: np.ndarray
     map_from_camera: np.ndarray
+    source_generation: int = 0
+    map_id: str = ""
+    content_epoch: int = 0
+    context_revision: int = 0
 
     @property
     def color_ts(self) -> float:
         """Compatibility spelling for code that names the source stream."""
 
         return self.timestamp
+
+    @property
+    def context_token(self) -> tuple[int, str, int]:
+        """Return the camera/map context frozen with this observation."""
+
+        return self.source_generation, self.map_id, self.content_epoch
+
+    @property
+    def odometry_ts(self) -> float:
+        return float(self.odometry.ts)
+
+    @property
+    def map_odom_ts(self) -> float:
+        return float(self.map_odom.ts) if self.map_odom is not None else 0.0
 
 
 @dataclass(frozen=True)
@@ -92,7 +110,15 @@ class FrameSynchronizer:
         self._odometry: list[Odometry] = []
         self._map_odom: list[Transform] = []
         self._intrinsics: CameraIntrinsics | None = None
+        self._source_generation: int | None = None
+        self._navigation_state: NavigationState | None = None
+        self._navigation_boot_id = ""
+        self._navigation_sequence = 0
+        self._retired_navigation_boot_ids: set[str] = set()
+        self._context_min_timestamp = 0.0
+        self._context_revision = 0
         self._depth_watermark = -math.inf
+        self._color_watermark = -math.inf
         self._odometry_watermark = -math.inf
         self._map_odom_watermark = -math.inf
         self._color_frames = 0
@@ -103,33 +129,107 @@ class FrameSynchronizer:
 
     def push_color(self, color: Image) -> tuple[FrameResult, ...]:
         with self._lock:
+            context_results = self._accept_source_generation(color)
+            if context_results and context_results[-1].reason == "stale_camera_generation":
+                return context_results
+            if self._sample_precedes_context(color.ts):
+                return (
+                    *context_results,
+                    self._drop("stale_context_sample", float(color.ts)),
+                )
+            if _timestamp_is_valid(color.ts) and float(color.ts) <= self._color_watermark:
+                return (
+                    *context_results,
+                    self._drop("stale_camera_sample", float(color.ts)),
+                )
             self._color_frames += 1
             if self._color_frames % self._skip_frames:
-                return ()
+                return context_results
             if not _timestamp_is_valid(color.ts):
-                return (self._drop("invalid_sample_timestamp", 0.0),)
+                return (*context_results, self._drop("invalid_sample_timestamp", 0.0))
             if not _color_image_is_valid(color):
-                return (self._drop("invalid_color_image", float(color.ts)),)
+                return (
+                    *context_results,
+                    self._drop("invalid_color_image", float(color.ts)),
+                )
+            self._color_watermark = float(color.ts)
             self._colors.append(color)
-            return self._drain_ready() + self._prune_buffers()
+            return context_results + self._drain_ready() + self._prune_buffers()
 
     def push_depth(self, depth: Image) -> tuple[FrameResult, ...]:
         with self._lock:
+            context_results = self._accept_source_generation(depth)
+            if context_results and context_results[-1].reason == "stale_camera_generation":
+                return context_results
+            if self._sample_precedes_context(depth.ts):
+                return (
+                    *context_results,
+                    self._drop("stale_context_sample", float(depth.ts)),
+                )
             if not _timestamp_is_valid(depth.ts):
-                return (self._drop("invalid_sample_timestamp", 0.0),)
+                return (*context_results, self._drop("invalid_sample_timestamp", 0.0))
             if not _depth_image_is_valid(depth):
-                return (self._drop("invalid_depth_image", float(depth.ts)),)
+                return (
+                    *context_results,
+                    self._drop("invalid_depth_image", float(depth.ts)),
+                )
             self._depths.append(depth)
             self._depth_watermark = max(self._depth_watermark, float(depth.ts))
-            return self._drain_ready() + self._prune_buffers()
+            return context_results + self._drain_ready() + self._prune_buffers()
 
     def push_camera_info(self, intrinsics: CameraIntrinsics) -> tuple[FrameResult, ...]:
         with self._lock:
+            context_results = self._accept_source_generation(intrinsics)
+            if context_results and context_results[-1].reason == "stale_camera_generation":
+                return context_results
+            if self._sample_precedes_context(intrinsics.ts):
+                return (
+                    *context_results,
+                    self._drop("stale_context_sample", float(intrinsics.ts)),
+                )
             self._intrinsics = intrinsics
-            return self._drain_ready()
+            return context_results + self._drain_ready()
+
+    def push_navigation_state(self, state: NavigationState) -> tuple[FrameResult, ...]:
+        """Freeze native map identity into subsequently completed RGB-D frames."""
+
+        with self._lock:
+            if state.boot_id in self._retired_navigation_boot_ids:
+                return (self._drop("stale_navigation_state", float(state.ts)),)
+            if state.boot_id == self._navigation_boot_id:
+                if int(state.sequence) <= self._navigation_sequence:
+                    return (self._drop("stale_navigation_state", float(state.ts)),)
+            elif self._navigation_boot_id:
+                self._retired_navigation_boot_ids.add(self._navigation_boot_id)
+            self._navigation_boot_id = state.boot_id
+            self._navigation_sequence = int(state.sequence)
+            previous = self._map_token()
+            self._navigation_state = state
+            current = self._map_token()
+            if current == previous:
+                return ()
+            if previous is None and current == ("", 0):
+                return ()
+            self._context_revision += 1
+            self._context_min_timestamp = float(state.ts)
+            self._clear_context_buffers(clear_intrinsics=False, clear_odometry=True)
+            return (self._drop("map_changed", float(state.ts)),)
+
+    def context_token(self) -> tuple[int, str, int]:
+        """Return the source and map identity currently accepting samples."""
+
+        with self._lock:
+            map_token = self._map_token() or ("", 0)
+            return int(self._source_generation or 0), map_token[0], map_token[1]
+
+    def context_revision(self) -> int:
+        with self._lock:
+            return self._context_revision
 
     def push_odometry(self, odometry: Odometry) -> tuple[FrameResult, ...]:
         with self._lock:
+            if self._sample_precedes_context(odometry.ts):
+                return (self._drop("stale_context_sample", float(odometry.ts)),)
             if not _timestamp_is_valid(odometry.ts):
                 return (self._drop("invalid_odometry_timestamp", 0.0),)
             self._odometry.append(odometry)
@@ -138,6 +238,9 @@ class FrameSynchronizer:
 
     def push_map_odom(self, value: Mapping[str, Any]) -> tuple[FrameResult, ...]:
         with self._lock:
+            timestamp = _mapping_timestamp(value)
+            if self._sample_precedes_context(timestamp):
+                return (self._drop("stale_context_sample", timestamp),)
             transform = map_from_odom_transform_from_mapping(value)
             if transform is None:
                 return (self._drop("invalid_map_odom_transform", _mapping_timestamp(value)),)
@@ -153,6 +256,11 @@ class FrameSynchronizer:
                 "dropped_frames": self._dropped_frames,
                 "last_drop_reason": self._last_drop_reason,
                 "drop_reasons": dict(self._drop_reasons),
+                "source_generation": int(self._source_generation or 0),
+                "map_id": self._map_token()[0] if self._map_token() is not None else "",
+                "content_epoch": (
+                    self._map_token()[1] if self._map_token() is not None else 0
+                ),
                 "buffer_sizes": {
                     "color": len(self._colors),
                     "depth": len(self._depths),
@@ -242,6 +350,7 @@ class FrameSynchronizer:
         self._last_drop_reason = ""
         map_from_body = _readonly_matrix(map_from_body)
         map_from_camera = _readonly_matrix(map_from_body @ self._camera_to_body)
+        map_token = self._map_token() or ("", 0)
         return SynchronizedFrame(
             color=color,
             depth=depth,
@@ -252,7 +361,61 @@ class FrameSynchronizer:
             frame_id=self._output_frame_id,
             map_from_body=map_from_body,
             map_from_camera=map_from_camera,
+            source_generation=int(self._source_generation or 0),
+            map_id=map_token[0],
+            content_epoch=map_token[1],
+            context_revision=self._context_revision,
         )
+
+    def _accept_source_generation(self, sample: Any) -> tuple[FrameDrop, ...]:
+        generation = int(getattr(sample, "source_generation", 0) or 0)
+        current = self._source_generation
+        if current is None:
+            self._source_generation = generation
+            return ()
+        if generation == current:
+            return ()
+        if (current > 0 and generation == 0) or (
+            current > 0 and generation > 0 and generation < current
+        ):
+            return (self._drop("stale_camera_generation", float(sample.ts)),)
+        self._source_generation = generation
+        self._context_revision += 1
+        self._clear_context_buffers(clear_intrinsics=True, clear_odometry=False)
+        return (self._drop("camera_restarted", float(sample.ts)),)
+
+    def _map_token(self) -> tuple[str, int] | None:
+        if self._navigation_state is None:
+            return None
+        return (
+            str(self._navigation_state.map_id or ""),
+            int(self._navigation_state.map_content_epoch),
+        )
+
+    def _sample_precedes_context(self, timestamp: Any) -> bool:
+        return bool(
+            self._context_min_timestamp > 0.0
+            and _timestamp_is_valid(timestamp)
+            and float(timestamp) < self._context_min_timestamp
+        )
+
+    def _clear_context_buffers(
+        self,
+        *,
+        clear_intrinsics: bool,
+        clear_odometry: bool,
+    ) -> None:
+        self._colors.clear()
+        self._depths.clear()
+        self._map_odom.clear()
+        if clear_intrinsics:
+            self._intrinsics = None
+        self._depth_watermark = -math.inf
+        self._color_watermark = -math.inf
+        self._map_odom_watermark = -math.inf
+        if clear_odometry:
+            self._odometry.clear()
+            self._odometry_watermark = -math.inf
 
     def _select_pose(self, timestamp: float) -> _PoseSelection | FrameDrop | None:
         if not self._odometry:

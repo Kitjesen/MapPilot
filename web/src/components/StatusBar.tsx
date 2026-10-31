@@ -67,6 +67,7 @@ export function StatusBar({ sseState, uptimeSeconds, locale }: StatusBarProps) {
   const estopActive = navigationView.motion.permission.state === 'ESTOPPED' || (safety?.estop ?? false)
   const navStateText = navigationView.task.label
   const goalReady = navigationView.goalAdmission.state === 'ACCEPTING'
+  const stopNeedsAttention = !['NOT_REQUESTED', 'CONFIRMED'].includes(navigationView.motion.stopConfirmation.state)
   const goalReadinessTitle = goalReady
     ? text(locale, 'Ready to accept navigation goals', '可以接收导航目标')
     : text(locale, 'Navigation is not accepting goals', '导航暂不接收目标')
@@ -84,29 +85,8 @@ export function StatusBar({ sseState, uptimeSeconds, locale }: StatusBarProps) {
   ].filter(Boolean).join(' · ')
 
   return (
-    <div className={styles.statusBar} title={statusTitle}>
+    <div className={styles.statusBar} title={statusTitle} aria-label={text(locale, 'Operator status', '操作状态')}>
       <Activity size={13} className={styles.icon} />
-
-      <span className={styles.item}>
-        <span className={styles.label}>{text(locale, 'Pose', '位置')}</span>
-        <span className={`${styles.value} ${styles.poseValue}`}>({x}, {y})</span>
-      </span>
-
-      <span className={styles.sep}>·</span>
-
-      <span className={styles.item}>
-        <span className={styles.label}>{text(locale, 'Yaw', '航向')}</span>
-        <span className={`${styles.value} ${styles.yawValue}`}>{yaw}</span>
-      </span>
-
-      <span className={styles.sep}>·</span>
-
-      <span className={styles.item}>
-        <span className={styles.label}>{text(locale, 'Speed', '速度')}</span>
-        <span className={`${styles.value} ${styles.speedValue}`}>{vx}</span>
-      </span>
-
-      <span className={styles.sep}>·</span>
 
       <span className={styles.item}>
         <span className={styles.label}>{text(locale, 'Nav', '导航')}</span>
@@ -147,14 +127,15 @@ export function StatusBar({ sseState, uptimeSeconds, locale }: StatusBarProps) {
         </span>
       </span>
 
-      <span className={styles.sep}>·</span>
-
-      <span className={styles.item} title={navigationView.motion.stopConfirmation.label}>
-        <span className={styles.label}>{text(locale, 'Stop', '停稳')}</span>
-        <span className={`${styles.value} ${navigationView.motion.stopConfirmation.state === 'CONFIRMED' ? styles.ready : navigationView.motion.stopConfirmation.state === 'FAILED' ? styles.navFail : styles.warn}`}>
-          {navigationView.motion.stopConfirmation.label}
+      {stopNeedsAttention && <>
+        <span className={styles.sep}>·</span>
+        <span className={styles.item} title={navigationView.motion.stopConfirmation.label}>
+          <span className={styles.label}>{text(locale, 'Stop', '停稳')}</span>
+          <span className={`${styles.value} ${navigationView.motion.stopConfirmation.state === 'FAILED' ? styles.navFail : styles.warn}`}>
+            {navigationView.motion.stopConfirmation.label}
+          </span>
         </span>
-      </span>
+      </>}
 
       {estopActive && (
         <>
@@ -165,6 +146,12 @@ export function StatusBar({ sseState, uptimeSeconds, locale }: StatusBarProps) {
 
       <span className={styles.right}>
         <span className={heartbeatAlive ? styles.hbDotAlive : styles.hbDot} title={heartbeatAlive ? text(locale, 'Data online', '数据在线') : text(locale, 'Waiting for data', '等待数据')} />
+      </span>
+
+      <span className={styles.technicalMetrics} aria-hidden="true">
+        <span className={`${styles.value} ${styles.poseValue}`}>({x}, {y})</span>
+        <span className={`${styles.value} ${styles.yawValue}`}>{yaw}</span>
+        <span className={`${styles.value} ${styles.speedValue}`}>{vx}</span>
       </span>
     </div>
   )

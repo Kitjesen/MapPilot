@@ -5,6 +5,7 @@
 #include <memory>
 #include <shared_mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "lingtu/maps/cloud.hpp"
@@ -81,6 +82,12 @@ struct RollingOccupancySnapshot {
   void Validate() const;
 };
 
+struct CollisionHitBounds {
+  std::uint32_t cell_index{0U};
+  double min_x{0.0}, min_y{0.0}, min_z{0.0};
+  double max_x{0.0}, max_y{0.0}, max_z{0.0};
+};
+
 struct RollingInflatedSnapshot {
   std::string frame_id{"map"};
   std::int64_t stamp_ns{0};
@@ -97,6 +104,8 @@ struct RollingInflatedSnapshot {
   // Measured 3D evidence, before inflation. Neither bit means unknown.
   std::vector<std::uint8_t> measured_occupied_bits;
   std::vector<std::uint8_t> known_free_bits;
+  // Bounds of actual endpoints retained by the same rolling occupancy cells.
+  std::vector<CollisionHitBounds> hit_bounds;
 
   std::size_t CellCount() const noexcept;
   bool Occupied(std::int32_t x, std::int32_t y, std::int32_t z) const;
@@ -158,9 +167,9 @@ class RollingOccupancyGrid final {
  private:
   struct Cell {
     double log_odds{0.0};
+    std::int64_t last_observed_ns{0};
     std::uint16_t hits{0U};
     std::uint16_t misses{0U};
-    std::int64_t last_observed_ns{0};
     bool observed{false};
     bool unresolved_hit{false};
   };
@@ -231,6 +240,7 @@ class RollingOccupancyGrid final {
   RollingOccupancyConfig config_;
   double occupied_log_odds_threshold_{0.0};
   std::vector<Cell> cells_;
+  std::unordered_map<std::size_t, CollisionHitBounds> hit_bounds_;
   std::vector<std::uint32_t> ray_total_counts_;
   std::vector<std::uint32_t> ray_hit_counts_;
   std::vector<std::uint64_t> observed_bits_;

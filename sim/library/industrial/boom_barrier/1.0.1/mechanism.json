@@ -1,0 +1,31 @@
+{
+  "asset_id": "boom_barrier",
+  "title": "电动道闸",
+  "units": "m",
+  "source_axes": "RH Z-up",
+  "joints": [
+    {
+      "body": "barrier/boom",
+      "joint": "barrier/lift",
+      "axis": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "range_rad": [
+        0.0,
+        1.570796
+      ],
+      "pivot_m": [
+        0.0,
+        -0.30000001192092896,
+        1.0499999523162842
+      ],
+      "mass_source": "physics.xml"
+    }
+  ],
+  "physics": "physics.xml",
+  "ue_qualified": false,
+  "parameters": "design_assumptions",
+  "materials": "procedural PBR; no bitmap texture atlas"
+}

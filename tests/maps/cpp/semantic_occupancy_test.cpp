@@ -1,4 +1,4 @@
-#include "lingtu/maps/layers/semantic_occupancy.hpp"
+#include "lingtu/maps/semantic/occupancy.hpp"
 
 #include <cassert>
 #include <cmath>

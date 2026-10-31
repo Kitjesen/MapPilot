@@ -1,0 +1,155 @@
+{
+  "asset": {
+    "generator": "Khronos glTF Blender I/O v1.6.16",
+    "version": "2.0"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Scene",
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "Barrel_02"
+    }
+  ],
+  "materials": [
+    {
+      "doubleSided": true,
+      "name": "Barrel_02",
+      "normalTexture": {
+        "index": 0
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 1
+        },
+        "metallicRoughnessTexture": {
+          "index": 2
+        }
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Mesh",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          },
+          "indices": 3,
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "sampler": 0,
+      "source": 0
+    },
+    {
+      "sampler": 0,
+      "source": 1
+    },
+    {
+      "sampler": 0,
+      "source": 2
+    }
+  ],
+  "images": [
+    {
+      "mimeType": "image/jpeg",
+      "name": "Barrel_02_nor_gl",
+      "uri": "textures/Barrel_02_nor_gl_2k.jpg"
+    },
+    {
+      "mimeType": "image/jpeg",
+      "name": "Barrel_02_diff",
+      "uri": "textures/Barrel_02_diff_2k.jpg"
+    },
+    {
+      "mimeType": "image/jpeg",
+      "name": "Barrel_02_metallic-Barrel_02_roughness",
+      "uri": "textures/Barrel_02_arm_2k.jpg"
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 1916,
+      "max": [
+        0.2440878003835678,
+        0.8846373558044434,
+        0.2423081248998642
+      ],
+      "min": [
+        -0.24408777058124542,
+        0.004637363366782665,
+        -0.24230831861495972
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 1916,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 1916,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5123,
+      "count": 8064,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 22992,
+      "byteOffset": 0
+    },
+    {
+      "buffer": 0,
+      "byteLength": 22992,
+      "byteOffset": 22992
+    },
+    {
+      "buffer": 0,
+      "byteLength": 15328,
+      "byteOffset": 45984
+    },
+    {
+      "buffer": 0,
+      "byteLength": 16128,
+      "byteOffset": 61312
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 77440,
+      "uri": "Barrel_02.bin"
+    }
+  ]
+}

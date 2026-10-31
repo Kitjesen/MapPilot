@@ -13,16 +13,36 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from sim.compat.engine.core.engine import VelocityCommand
-from sim.compat.engine.mujoco import robot_controller
 from sim.compat.engine.mujoco.engine import MuJoCoEngine
+from sim.runtime.control import policy_loader
+from sim.runtime.control.thunder import legacy_policy as thunder_legacy
 from sim.scripts.mujoco import native_dds_sensors as sensors
 from sim.scripts.mujoco import native_navigation_acceptance as acceptance
 from sim.scripts.mujoco import native_navigation_video as navigation_video
 from sim.scripts.mujoco import saved_map_plan_gate
 
-from lingtu.assembly.native_nav import mapd_environment
+from lingtu.assembly.config.native_navigation import mapd_environment
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_stair_evidence_requires_floor_and_real_model_restore():
+    leg = {"goal": [5.9, 0.0, 1.15], "profile_sequence": ["stairs_up", "restore"]}
+    limits = {"max_goal_height_error_m": 0.15}
+    def event(requirement, profile):
+        return {"task_id": "t", "requirement": requirement, "phase": "ready",
+                "requested_profile": profile, "active_profile": profile}
+    report = {"events": [event("stairs_up", "stairs.onnx"), event("restore", "flat.onnx")]}
+    samples = [{"live": {"position_m": [5.9, 0.0, 1.15]}}]
+    def evaluate():
+        return acceptance._stair_leg_evidence(leg, samples, report, "t", "flat.onnx", limits)
+    assert not evaluate()["blockers"]
+    samples[0]["live"]["position_m"][2] = 0.4
+    assert "goal_height_error" in evaluate()["blockers"]
+    report["events"].pop()
+    assert "profile_sequence_incomplete" in evaluate()["blockers"]
+    report["events"] = [event("stairs_up", "flat.onnx"), event("restore", "flat.onnx")]
+    assert "stair_model_did_not_change" in evaluate()["blockers"]
 
 
 def test_dynamic_pedestrian_is_physical_visible_and_moves_in_sim_time(tmp_path):
@@ -73,6 +93,212 @@ def test_dynamic_pedestrian_is_physical_visible_and_moves_in_sim_time(tmp_path):
     np.testing.assert_allclose(data.xpos[actor_id], [2, 1, 0])
 
 
+@pytest.mark.parametrize(("surface", "body", "geom"), [
+    ("step_03", "FR_foot", "FR_wheel"),
+    ("upper_landing", "left_wheel_link", "left_drive_wheel"),
+    ("ground", "RL_foot", "RL_wheel"),
+    ("floor_level_2", "FR_foot", "FR_wheel"),
+    ("fw_r2_site_paving_1", "FR_foot", "FR_wheel"),
+    ("road_spine", "FR_foot", "FR_wheel"),
+    ("ground", "base_link", "front_support"),
+    ("ground", "base_link", "rear_support"),
+])
+def test_physical_contact_allows_foot_and_wheel_tread_support(surface, body, geom):
+    import mujoco
+    from sim.scripts.mujoco.formal_feeder import _PhysicalMotionEvidence
+
+    support = f'<geom name="{geom}" type="sphere" size=".1" pos="0 0 .195"/>'
+    if body != "base_link":
+        support = f'<body name="{body}">{support}</body>'
+    surface_shape = 'type="plane" size="1 1 .05" pos="0 0 .1"' if surface == "ground" else (
+        'type="box" size="1 1 .05" pos="0 0 .05"'
+    )
+    model = mujoco.MjModel.from_xml_string(f'''<mujoco><worldbody>
+      <geom name="{surface}" {surface_shape}/>
+      <body name="base_link"><freejoint/>
+        <geom name="robot_body" type="sphere" size=".1" pos="0 0 1"/>
+        {support}
+      </body></worldbody></mujoco>''')
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    assert data.ncon > 0
+    evidence = _PhysicalMotionEvidence()
+    evidence.observe_contacts(model, data)
+    assert evidence.entity_contact_steps == 0
+    assert evidence.first_contact is None
+
+
+@pytest.mark.parametrize("roll", [0.0, 0.1, 0.3])
+def test_physical_contact_allows_cylinder_wheel_on_landing(roll):
+    import mujoco
+    from sim.scripts.mujoco.formal_feeder import _PhysicalMotionEvidence
+
+    wheel_z = .72 + .093 * math.cos(roll) + .025585 * math.sin(roll) - .001
+    model = mujoco.MjModel.from_xml_string(f'''<mujoco><compiler angle="radian"/>
+      <worldbody><geom name="upper_landing" type="box" size=".85 2.2 .36" pos="5.85 0 .36"/>
+        <body name="base_link"><freejoint/>
+          <geom name="robot_body" type="sphere" size=".1" pos="5.57 0 1.18"/>
+          <body name="RL_foot"><geom name="RL_wheel" type="cylinder" size=".093 .025585"
+            pos="5.92 -.166 {wheel_z}" euler="{math.pi / 2 - roll} 0 0"/></body>
+        </body></worldbody></mujoco>''')
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    assert data.ncon > 0
+    evidence = _PhysicalMotionEvidence()
+    evidence.observe_contacts(model, data)
+    assert evidence.entity_contact_steps == 0
+
+
+def _recorded_box_contact(monkeypatch, *, point, robot_center, normal=(0, 0, -1),
+                          surface="floor", body="RL_foot", rotation=None, size=(4, 1.5, .025), shape="box"):
+    import mujoco
+
+    part = '<geom name="recorded_wheel" type="cylinder" size=".093 .025585"/>'
+    if body != "base_link":
+        part = f'<body name="{body}">{part}</body>'
+    model = mujoco.MjModel.from_xml_string(f'''<mujoco><compiler angle="radian"/>
+      <worldbody><geom name="{surface}" type="{shape}" size="{' '.join(map(str, size))}" pos="3 0 -.025"/>
+        <body name="base_link"><freejoint/>
+          <geom name="robot_body" type="sphere" size=".1" pos="0 0 2"/>
+          {part}
+        </body></worldbody></mujoco>''')
+    actual = mujoco.MjData(model)
+    mujoco.mj_kinematics(model, actual)
+    robot = model.geom("recorded_wheel").id
+    env = model.geom(surface).id
+    positions, rotations = actual.geom_xpos.copy(), actual.geom_xmat.copy()
+    positions[robot] = robot_center
+    if rotation is not None:
+        rotations[env] = np.asarray(rotation).reshape(9)
+    contact = SimpleNamespace(geom1=robot, geom2=env, dist=-.00010158559723795527,
+                              pos=np.array(point), frame=np.r_[-np.array(normal), np.zeros(6)],
+                              efc_address=58)
+    data = SimpleNamespace(ncon=1, contact=[contact], time=11.24,
+                           geom_xpos=positions, geom_xmat=rotations,
+                           xpos=actual.xpos.copy(), qpos=actual.qpos.copy())
+    force = np.array([62.53919222680619, -3.773571652451386, 12.698275453512396,
+                      -.0017216891205928597, 0, 0])
+    monkeypatch.setattr(mujoco, "mj_contactForce", lambda model, data, index, output: output.__setitem__(slice(None), force))
+    return model, data, robot, env
+
+
+def test_recorded_wheel_on_box_top_keeps_reverse_solver_normal_as_diagnostic(monkeypatch):
+    from sim.scripts.mujoco.formal_feeder import _PhysicalMotionEvidence
+
+    # r5-point-clean: the floor top is z=0; side faces are over a metre away.
+    model, data, robot, env = _recorded_box_contact(
+        monkeypatch, point=(1.8837205873817573, .40041903573161797, .00004850691669992445),
+        robot_center=(1.883640456770352, .39478082550722077, .09623083750485223),
+        normal=(-.001003162299815205, .00017502682984687094, -.9999994815153702))
+    evidence = _PhysicalMotionEvidence()
+    evidence.observe_contacts(model, data)
+    assert evidence.entity_contact_steps == 0
+    assert evidence.support_normal_disagreements == 1
+    first = evidence.first_support_normal_disagreement
+    assert first["robot_geom"] == "recorded_wheel"
+    assert first["normal_to_robot_xyz"][2] < 0
+    assert first["raw_contact"]["normal_force_n"] == pytest.approx(62.53919222680619)
+    assert first["raw_contact"]["qpos"] == data.qpos.tolist()
+    assert first["raw_contact"]["geom1"]["position_m"] == data.geom_xpos[robot].tolist()
+    assert first["raw_contact"]["geom2"]["rotation"] == data.geom_xmat[env].tolist()
+    data.time += .1
+    data.qpos[0] = .7
+    evidence.observe_contacts(model, data)
+    assert evidence.support_normal_disagreements == 2
+    assert evidence.first_support_normal_disagreement is first
+    assert first["sim_time_s"] == 11.24
+    assert first["raw_contact"]["qpos"][0] == 0
+
+
+@pytest.mark.parametrize(("point", "center", "body", "surface"), [
+    ((7, 0, -.025), (7.1, 0, -.025), "RL_foot", "floor"),
+    ((3, 0, -.05), (3, 0, -.15), "RL_foot", "floor"),
+    ((3, 0, 0), (3, 0, -.01), "RL_foot", "floor"),
+    ((3, 0, 0), (3, 0, .1), "base_link", "floor"),
+    ((3, 0, 0), (3, 0, .1), "FR_calf", "floor"),
+    ((3, 0, 0), (3, 0, .1), "RL_foot", "obstacle_box"),
+])
+def test_box_support_never_clears_side_bottom_body_or_unknown_surface(monkeypatch, point, center, body, surface):
+    from sim.scripts.mujoco.formal_feeder import _PhysicalMotionEvidence
+
+    model, data, _, _ = _recorded_box_contact(
+        monkeypatch, point=point, robot_center=center, normal=(0, 0, 1), body=body, surface=surface)
+    evidence = _PhysicalMotionEvidence()
+    evidence.observe_contacts(model, data)
+    assert evidence.entity_contact_steps == 1
+    assert evidence.first_contact["raw_contact"]["normal_force_n"] > 0
+
+
+@pytest.mark.parametrize("normal_z", [-1, 1])
+@pytest.mark.parametrize("shape", ["corner", "plane"])
+def test_ambiguous_box_edges_and_other_geometries_keep_original_normal_rule(monkeypatch, normal_z, shape):
+    from sim.scripts.mujoco.formal_feeder import _PhysicalMotionEvidence
+
+    model, data, _, _ = _recorded_box_contact(
+        monkeypatch, point=(7, 0, 0) if shape == "corner" else (3, 0, -.025),
+        robot_center=(7.1, 0, .1), normal=(0, 0, normal_z),
+        shape="box" if shape == "corner" else "plane")
+    evidence = _PhysicalMotionEvidence()
+    evidence.observe_contacts(model, data)
+    assert evidence.entity_contact_steps == (normal_z < 0)
+    assert evidence.support_normal_disagreements == 0
+
+
+@pytest.mark.parametrize("pitch", [.3, math.pi / 2])
+def test_box_support_uses_world_faces_and_equivalent_asset_axes(monkeypatch, pitch):
+    from sim.scripts.mujoco.formal_feeder import _PhysicalMotionEvidence
+
+    c, s = math.cos(pitch), math.sin(pitch)
+    rotation = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
+    # At 90 degrees, exchanging local X/Z extents preserves the exact world box.
+    swapped = pitch == math.pi / 2
+    normal = np.array([0, 0, 1]) if swapped else rotation[:, 2]
+    point = np.array([3, 0, -.025]) + .025 * normal
+    model, data, _, _ = _recorded_box_contact(
+        monkeypatch, point=point, robot_center=point + .1 * normal,
+        rotation=rotation, size=(.025, 1.5, 4) if swapped else (4, 1.5, .025))
+    evidence = _PhysicalMotionEvidence()
+    evidence.observe_contacts(model, data)
+    assert evidence.entity_contact_steps == 0
+    assert evidence.support_normal_disagreements == 1
+
+
+@pytest.mark.parametrize(("surface", "body", "position"), [
+    ("ground", "base_link", "0 0 .195"),
+    ("step_03", "FR_calf", "0 0 .195"),
+    ("step_03", "FR_foot", "-1.095 0 .05"),
+    ("obstacle_box", "FR_foot", "0 0 .195"),
+])
+def test_physical_contact_detects_body_ground_and_foot_riser(surface, body, position):
+    import mujoco
+    from sim.scripts.mujoco.formal_feeder import _PhysicalMotionEvidence
+
+    part = f'<geom name="contact_part" type="sphere" size=".1" pos="{position}"/>'
+    if body != "base_link":
+        part = f'<body name="{body}">{part}</body>'
+    surface_shape = 'type="plane" size="1 1 .05" pos="0 0 .1"' if surface == "ground" else (
+        'type="box" size="1 1 .05" pos="0 0 .05"'
+    )
+    model = mujoco.MjModel.from_xml_string(f'''<mujoco><worldbody>
+      <geom name="{surface}" {surface_shape}/>
+      <body name="base_link"><freejoint/>
+        <geom name="robot_body" type="sphere" size=".1" pos="0 0 1"/>
+        {part}
+      </body></worldbody></mujoco>''')
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    assert data.ncon > 0
+    evidence = _PhysicalMotionEvidence()
+    evidence.observe_contacts(model, data)
+    assert evidence.entity_contact_steps == 1
+    assert evidence.first_contact_geom == surface
+    assert evidence.first_contact["robot_geom"] == "contact_part"
+    assert evidence.first_contact["robot_body"] == body
+    assert evidence.first_contact["normal_to_robot_xyz"][2] == pytest.approx(
+        0.0 if position.startswith("-1.095") else 1.0,
+    )
+
+
 def test_dynamic_acceptance_requires_actual_sensed_encounter_and_resumed_motion(tmp_path):
     manifest = {"dynamic_obstacle": {"enabled": True}, "start": [0, 0], "goal": [0, 4]}
     report = {"mocap_motion": {"motion_started": True, "motion_completed": True}}
@@ -115,7 +341,7 @@ def test_dynamic_acceptance_requires_actual_sensed_encounter_and_resumed_motion(
 
 
 def test_product_goal_requires_physical_arrival_and_stop():
-    manifest = acceptance._load_manifest(ROOT / "config/runtime_graph/acceptance/mujoco_scan_goal.json")
+    manifest = acceptance._load_manifest(ROOT / "config/acceptance/mujoco/scan_goal.json")
     motion = {"end_position_m": [56, 32, 0.5], "path_length_xy_m": 61,
               "net_displacement_xy_m": 59.9}
     live = {"complete": True, "entity_contact_steps": 0}
@@ -175,7 +401,8 @@ def test_attached_goal_polls_gateway_and_records_terminal_evidence(monkeypatch, 
     common = {"native_product": {"product_session_id": session}}
     snapshots = {
         "nav.status.json": {**common, "stamp_s": 1000, "input_gate": {"ready": True},
-                            "control_loop_health": {"ready": True, "healthy": True}},
+                            "control_loop_health": {"ready": True, "healthy": True},
+                            "motion_stop_evidence": {"state": "CONFIRMED", "confirmation_state": "confirmed"}},
         "slam.status.json": {**common, "snapshot_written_at_s": 1000, "stamp_s": 1000,
                              "has_odom": True, "state": "TRACKING", "odom_prior_enabled": False,
                              "map_odom_tf": {"valid": True}},
@@ -183,7 +410,7 @@ def test_attached_goal_polls_gateway_and_records_terminal_evidence(monkeypatch, 
     }
     plan = SimpleNamespace(
         env="sim", product="nav", native_nav={"local_planner": "scan"},
-        process=lambda _: SimpleNamespace(command=SimpleNamespace(argv=["fastlio2"], env=[])),
+        process=lambda _: SimpleNamespace(command=SimpleNamespace(argv=["ltlio"], env=[])),
     )
     monkeypatch.setattr(acceptance, "ViewerGoal", Client)
     monkeypatch.setattr(acceptance, "_load_json", lambda path: snapshots[path.name])
@@ -201,6 +428,132 @@ def test_attached_goal_polls_gateway_and_records_terminal_evidence(monkeypatch, 
     samples = json.loads((out / "samples.json").read_text())
     assert [sample["goal"]["native_state"] for sample in samples] == ["planning", "path_active", terminal]
     assert json.loads((out / "scenario.json").read_text())["ok"] is (terminal == "reached")
+
+
+def test_attached_goal_sequence_stops_after_middle_terminal_and_keeps_leg_identity(
+    monkeypatch, tmp_path
+):
+    from gateway.navigation.tasks import project_navigation_goal_status
+
+    sent = []
+    states = {"a": iter(["planning", "reached"]), "b": iter(["planning", "failed"])}
+    task_ids = iter(["task-a", "task-b"])
+
+    class Client:
+        def __init__(self, *_):
+            pass
+
+        def send_map_goal(self, goal):
+            sent.append(goal)
+            return {"task_id": next(task_ids)}
+
+        def _request(self, path):
+            task_id = path.rsplit("/", 1)[-1]
+            state = next(states[task_id[-1]])
+            status = project_navigation_goal_status({
+                "task_id": task_id, "state": state, "phase": state.upper(),
+            })
+            return {"found": True, "task_id": task_id, "status": status}
+
+        def close(self):
+            pass
+
+    common = {"native_product": {"product_session_id": "session"}}
+    snapshots = {
+        "nav.status.json": {**common, "stamp_s": 1000, "input_gate": {"ready": True},
+                            "control_loop_health": {"ready": True, "healthy": True},
+                            "motion_stop_evidence": {"state": "CONFIRMED", "confirmation_state": "confirmed"}},
+        "slam.status.json": {**common, "snapshot_written_at_s": 1000, "stamp_s": 1000,
+                             "has_odom": True, "state": "TRACKING", "odom_prior_enabled": False,
+                             "map_odom_tf": {"valid": True}},
+        "mujoco_feeder.live.json": {"position_m": [61.0, 18.5, 0.0]},
+    }
+    plan = SimpleNamespace(
+        env="sim", product="nav", native_nav={"local_planner": "scan"},
+        process=lambda _: SimpleNamespace(command=SimpleNamespace(argv=["ltlio"], env=[])),
+    )
+    monkeypatch.setattr(acceptance, "ViewerGoal", Client)
+    monkeypatch.setattr(acceptance, "_load_json", lambda path: snapshots[path.name])
+    monkeypatch.setattr(acceptance.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(acceptance.time, "sleep", lambda _: None)
+    manifest = {
+        "goal": [61, 18.5, 0.45, 0], "goal_world": [61, 18.5, 0, 0], "motion_duration_s": 5,
+        "goals": [
+            {"id": "a", "goal": [61, 18.5, 0.45, 0], "goal_world": [61, 18.5, 0, 0]},
+            {"id": "b", "goal": [61, 20.5, 0.45, 0], "goal_world": [61, 20.5, 0, 0]},
+            {"id": "c", "goal": [61, 18.5, 0.45, 0], "goal_world": [61, 18.5, 0, 0]},
+        ],
+        "thresholds": {"min_input_gate_ready_fraction": 1.0},
+    }
+    report = acceptance.run_attached_goal(plan, tmp_path / "plan.json", "session", manifest, tmp_path / "out")
+    assert sent == [[61, 18.5, 0.45, 0], [61, 20.5, 0.45, 0]]
+    assert [leg["task_id"] for leg in report["legs"]] == ["task-a", "task-b"]
+    assert report["legs"][1]["terminal"]["native_state"] == "failed"
+    assert "leg_1_not_reached" in report["blockers"]
+
+
+def test_attached_goal_sequence_all_reached_and_world_error_is_gated(monkeypatch, tmp_path):
+    from gateway.navigation.tasks import project_navigation_goal_status
+
+    current = [0]
+    goals = [[61, 18.5, 0, 0], [61, 20.5, 0, 0], [61, 18.5, 0, 0]]
+
+    class Client:
+        def __init__(self, *_):
+            pass
+
+        def send_map_goal(self, _goal):
+            task_id = f"task-{current[0]}"
+            current[0] += 1
+            return {"task_id": task_id}
+
+        def _request(self, path):
+            task_id = path.rsplit("/", 1)[-1]
+            status = project_navigation_goal_status({
+                "task_id": task_id, "state": "reached", "phase": "REACHED",
+            })
+            return {"found": True, "task_id": task_id, "status": status}
+
+        def close(self):
+            pass
+
+    common = {"native_product": {"product_session_id": "session"}}
+    snapshots = {
+        "nav.status.json": {**common, "stamp_s": 1000, "input_gate": {"ready": True},
+                            "control_loop_health": {"ready": True, "healthy": True},
+                            "motion_stop_evidence": {"state": "CONFIRMED", "confirmation_state": "confirmed"}},
+        "slam.status.json": {**common, "snapshot_written_at_s": 1000, "stamp_s": 1000,
+                             "has_odom": True, "state": "TRACKING", "odom_prior_enabled": False,
+                             "map_odom_tf": {"valid": True}},
+        "mujoco_feeder.live.json": {},
+    }
+    def sample(*_args):
+        target = goals[min(max(current[0] - 1, 0), 2)]
+        return {"wall_s": 1000.0, "ready": True, "nav": snapshots["nav.status.json"],
+                "slam": snapshots["slam.status.json"], "live": {"position_m": target[:3]}}
+
+    plan = SimpleNamespace(
+        env="sim", product="nav", native_nav={"local_planner": "scan"},
+        process=lambda _: SimpleNamespace(command=SimpleNamespace(argv=["ltlio"], env=[])),
+    )
+    monkeypatch.setattr(acceptance, "ViewerGoal", Client)
+    monkeypatch.setattr(acceptance, "_product_runtime_sample", sample)
+    monkeypatch.setattr(acceptance.time, "sleep", lambda _: None)
+    manifest = {"goal": goals[0], "goal_world": goals[0], "motion_duration_s": 5,
+                "goals": [{"id": str(i), "goal": goal, "goal_world": goal} for i, goal in enumerate(goals)],
+                "thresholds": {"min_input_gate_ready_fraction": 1.0, "max_goal_error_m": 0.1}}
+    report = acceptance.run_attached_goal(plan, tmp_path / "plan.json", "session", manifest, tmp_path / "ok")
+    assert report["ok"] is True
+    assert len(report["legs"]) == 3
+    assert all(leg["terminal"]["native_state"] == "reached" for leg in report["legs"])
+
+    bad_manifest = {**manifest, "goals": [
+        *manifest["goals"][:2],
+        {"id": "bad", "goal": goals[2], "goal_world": [61, 99.0, 0, 0]},
+    ]}
+    current[0] = 0
+    bad = acceptance.run_attached_goal(plan, tmp_path / "plan.json", "session", bad_manifest, tmp_path / "bad")
+    assert "leg_2_goal_error_above_threshold" in bad["blockers"]
 
 
 @pytest.mark.parametrize("mode", ["dropout", "never_ready", "rejected"])
@@ -235,7 +588,7 @@ def test_attached_goal_waits_for_stable_input_once_and_preserves_failures(monkey
 
     plan = SimpleNamespace(
         env="sim", product="nav", native_nav={"local_planner": "scan"},
-        process=lambda _: SimpleNamespace(command=SimpleNamespace(argv=["fastlio2"], env=[])),
+        process=lambda _: SimpleNamespace(command=SimpleNamespace(argv=["ltlio"], env=[])),
     )
     monkeypatch.setattr(acceptance, "ViewerGoal", Client)
     monkeypatch.setattr(acceptance, "_product_runtime_sample", sample)
@@ -338,13 +691,18 @@ def test_saved_map_build_does_not_activate(monkeypatch, tmp_path):
     assert "--activate" not in commands[0]
     assert "--build-mode" not in commands[0]
     assert "--converter" not in commands[0]
+    assert "--timeout-s" not in commands[0]
 
 
 def test_asset_builder_locks_support_dilation(monkeypatch, tmp_path):
     monkeypatch.setattr(
         saved_map_plan_gate,
         "run_gate",
-        lambda args: {"support_dilation_cells": args.support_dilation_cells},
+        lambda args: {
+            "support_dilation_cells": args.support_dilation_cells,
+            "lidar_body_name": args.lidar_body_name,
+            "lidar_site_name": args.lidar_site_name,
+        },
     )
 
     result = acceptance._run_saved_map_asset_builder(
@@ -357,6 +715,8 @@ def test_asset_builder_locks_support_dilation(monkeypatch, tmp_path):
     )
 
     assert result["support_dilation_cells"] == 2
+    assert result["lidar_body_name"] == "lidar1_link"
+    assert result["lidar_site_name"] == "lidar1_link_site"
 
 
 def test_multifloor_global_guide_uses_stair_compatible_support_model():
@@ -367,7 +727,7 @@ def test_multifloor_global_guide_uses_stair_compatible_support_model():
 
     assert manifest["start"] == [7.0, -0.8, 0.55, 3.141592653589793]
     assert constraints["robot_radius_m"] == 0.35
-    assert constraints["strict_ground_support"] is False
+    assert constraints["direct_support_only"] is False
     assert constraints["obstacle_clearance_radius_cells"] == 4
 
 
@@ -391,6 +751,8 @@ def test_multifloor_perimeter_rails_are_not_step_over_support():
 
 
 def test_saved_map_lidar_collector_uses_current_engine_interface(monkeypatch, tmp_path):
+    selected_mount = {}
+
     class Engine:
         sim_time = 0.0
 
@@ -427,9 +789,12 @@ def test_saved_map_lidar_collector_uses_current_engine_interface(monkeypatch, tm
         mid360_pattern,
         mid360_samples_per_frame,
         lidar_backend,
+        lidar_body_name,
+        lidar_site_name,
         mujoco_lidar_backend,
         require_product_lidar_backend,
     ):
+        selected_mount.update(body=lidar_body_name, site=lidar_site_name)
         return Engine()
 
     monkeypatch.setattr("drivers.sim.mujoco.runtime.build_engine", build_engine)
@@ -445,6 +810,8 @@ def test_saved_map_lidar_collector_uses_current_engine_interface(monkeypatch, tm
         mid360_pattern=tmp_path / "pattern.csv",
         mid360_samples_per_frame=100,
         lidar_backend="mujoco_lidar",
+        lidar_body_name="lidar1_link",
+        lidar_site_name="lidar1_link_site",
         mujoco_lidar_backend="cpu",
         allow_legacy_lidar_fallback=False,
         mujoco_memory="64M",
@@ -453,12 +820,108 @@ def test_saved_map_lidar_collector_uses_current_engine_interface(monkeypatch, tm
 
     assert report["ok"] is True
     assert points == [(1.0, 0.0, 0.5)]
+    assert selected_mount == {"body": "lidar1_link", "site": "lidar1_link_site"}
+
+
+@pytest.mark.parametrize(
+    ("missing_second", "synthetic_support", "stale_patch", "timeout_early"),
+    [(False, False, False, False), (True, False, False, False),
+     (False, True, False, False), (False, False, True, False),
+     (False, False, False, True)],
+)
+def test_saved_map_lidar_rays_keep_measured_origin_and_bundle_completeness(
+    monkeypatch, tmp_path, missing_second, synthetic_support, stale_patch, timeout_early
+):
+    from contextlib import contextmanager
+
+    import mujoco
+
+    model = mujoco.MjModel.from_xml_string(
+        '<mujoco><worldbody><site name="lidar_site" pos="0.2 -0.1 0.5"/>'
+        '</worldbody></mujoco>'
+    )
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+
+    class Engine:
+        sim_time = 0.0
+        calls = 0
+
+        def get_lidar_backend_report(self):
+            return {"active": "mujoco_lidar"}
+
+        def set_robot_pose(self, _position, _orientation):
+            pass
+
+        def get_robot_state(self):
+            return SimpleNamespace(position=[0.0, 0.0, 0.5])
+
+        def get_lidar_points(self):
+            self.calls += 1
+            if missing_second and self.calls == 2:
+                return np.empty((0, 4))
+            return np.asarray([[1.0, 0.0, 0.5, 1.0], [9.0, 0.0, 0.5, 1.0]])
+
+        @contextmanager
+        def measurement_state(self):
+            yield model, data
+
+        def step(self, _command):
+            return self.get_robot_state()
+
+        def close(self):
+            pass
+
+    if synthetic_support or stale_patch:
+        (tmp_path / "patch_bundle.manifest").write_text("LINGTU_PATCH_BUNDLE_V1\ncomplete 1\n")
+    if stale_patch:
+        (tmp_path / "patches").mkdir()
+        (tmp_path / "patches" / "9.pcd").write_text("old scan")
+    if timeout_early:
+        times = iter([0.0, 0.0, 2.0])
+        monkeypatch.setattr(saved_map_plan_gate, "time", SimpleNamespace(time=lambda: next(times, 2.0)))
+    monkeypatch.setattr("drivers.sim.mujoco.runtime.build_engine", lambda **_kwargs: Engine())
+    points, report = saved_map_plan_gate.collect_mujoco_lidar_points(
+        tmp_path / "scene.xml", scans=2, duration_s=0.0, timeout_s=1.0,
+        vx=0.0, wz=0.0, publish_hz=10.0, mid360_pattern=tmp_path / "pattern.npy",
+        mid360_samples_per_frame=100, lidar_backend="mujoco_lidar", lidar_body_name="base_link",
+        lidar_site_name="lidar_site", mujoco_lidar_backend="cpu",
+        allow_legacy_lidar_fallback=False, mujoco_memory="64M",
+        mapping_trajectory=[[0, 0, .5, 0], [1, 0, .5, 0]], saved_scan_dir=tmp_path,
+        trajectory_support_radius_m=0.1 if synthetic_support else 0.0,
+        scene_clip={"length": 3.0, "width": 1.8},
+    )
+
+    assert points
+    if synthetic_support:
+        assert report["trajectory_support_point_count"] > 0
+        assert report["saved_ray_frame_count"] == 0
+        assert report["saved_ray_complete"] is False
+        assert "complete 0\n" in (tmp_path / "patch_bundle.manifest").read_text()
+        return
+
+    expected_frames = 1 if missing_second or timeout_early else 2
+    assert report["saved_ray_frame_count"] == expected_frames
+    assert report["saved_ray_complete"] is (not missing_second and not stale_patch and not timeout_early)
+    assert report["saved_ray_endpoint_count"] == expected_frames
+    pose = (tmp_path / "poses.txt").read_text().splitlines()[0].split()
+    assert pose[0] == "0.pcd"
+    assert [float(value) for value in pose[1:4]] == pytest.approx([.2, -.1, .5])
+    point = (tmp_path / "patches" / "0.pcd").read_text().split("DATA ascii\n")[1].splitlines()
+    assert len(point) == 1
+    assert [float(value) for value in point[0].split()] == pytest.approx([.8, .1, 0])
+    manifest = (tmp_path / "patch_bundle.manifest").read_text()
+    assert f"complete {int(not missing_second and not stale_patch and not timeout_early)}\n" in manifest
+    assert f"dropped_count {int(missing_second)}\n" in manifest
 
 
 class _FakeOnnxSession:
     def __init__(self, input_dim: int) -> None:
         self._input = SimpleNamespace(name="obs", shape=[1, input_dim])
         self._output = SimpleNamespace(name="actions", shape=[1, 16])
+
+    def get_modelmeta(self):
+        return SimpleNamespace(custom_metadata_map={})
 
     def get_inputs(self):
         return [self._input]
@@ -526,18 +989,18 @@ def test_onnx_policy_runner_is_selected_from_input_contract_not_directory(monkey
     policy_dir = tmp_path / "thunderv4" / "policy"
     policy_dir.mkdir(parents=True)
 
-    history_runner = robot_controller.load_policy_runner(
+    history_runner = policy_loader.load_policy(
         str(policy_dir / "history.onnx"), cpu_threads=2
     )
-    frame_runner = robot_controller.load_policy_runner(
+    frame_runner = policy_loader.load_policy(
         str(policy_dir / "frame.onnx"), cpu_threads=2
     )
 
-    assert isinstance(history_runner, robot_controller.PolicyRunner)
-    assert history_runner._history_len == 5
+    assert isinstance(history_runner, thunder_legacy.HistoryPolicy)
+    assert history_runner.history.maxlen == 5
     assert history_runner.run_at_idle is False
     assert history_runner.zero_wheels_at_idle is True
-    assert isinstance(frame_runner, robot_controller.ThunderV4OnnxPolicyRunner)
+    assert isinstance(frame_runner, thunder_legacy.OnnxPolicy)
     assert len(created_options) == 2
     assert all(options.intra_op_num_threads == 2 for options in created_options)
     assert all(options.inter_op_num_threads == 1 for options in created_options)
@@ -578,7 +1041,7 @@ def test_cpp_driver_bridge_timestamps_command_after_dds_take():
 
 
 def test_nav_runtime_preserves_goal_during_transient_driver_blocker():
-    source = (ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "runtime" / "loop.cpp").read_text(
+    source = (ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "app" / "loop.cpp").read_text(
         encoding="utf-8"
     )
 
@@ -693,7 +1156,7 @@ def test_local_planner_manifests_share_one_truth_lidar_baseline() -> None:
     assert scan["driver_runtime"]["apply_timeout_ms"] == 30000
     assert scan["paths"]["slam_config"] == cmu["paths"]["slam_config"]
     assert scan["paths"]["slam_config"] == (
-        "src/localization/fastlio2/config/sim_mid360.yaml"
+        "src/localization/ltlio/config/sim_mid360.yaml"
     )
     for field in (
         "publish_hz",
@@ -933,6 +1396,8 @@ def test_scan_mapd_launch_uses_run_plan_collision_profile(tmp_path: Path) -> Non
     )
 
     assert "--max-collision-snapshot-points" not in command
+    if command[0] == "env":
+        process_environment = dict(item.split("=", 1) for item in command[1:] if "=" in item)
     assert process_environment["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.05"
     assert process_environment["LINGTU_MAPD_OCCUPANCY_SIZE_X"] == "200"
     assert process_environment["LINGTU_MAPD_OCCUPANCY_SIZE_Y"] == "200"
@@ -972,6 +1437,30 @@ def test_standalone_navigation_without_geometry_uses_collision_only_mapd() -> No
     assert acceptance._component_native_environment({}) == {
         "LINGTU_MAPD_EXTENDED_LAYERS": "0"
     }
+
+
+def test_standalone_navigation_preserves_compiled_obb_geometry_without_control_tuning() -> None:
+    geometry = {
+        "vehicle_length_m": 1.1,
+        "vehicle_width_m": 0.62,
+        "collision_hard_margin_m": 0.06,
+        "collision_clearance_below_m": 0.25,
+        "collision_clearance_above_m": 0.35,
+    }
+    compiled = acceptance.compile_native_nav_config(
+        "nav", {**geometry, "native_control_mode": "autonomy"}
+    ).environment
+    environment = acceptance._component_native_environment({"collision_geometry": geometry})
+    for key in (
+        "LINGTU_NAV_VEHICLE_LENGTH_M",
+        "LINGTU_NAV_VEHICLE_WIDTH_M",
+        "LINGTU_TELEOP_OBSTACLE_MARGIN_M",
+        "LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M",
+        "LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M",
+    ):
+        assert environment.get(key) == compiled[key]
+    assert "LINGTU_TELEOP_MAX_SPEED_MPS" not in environment
+    assert "LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS" not in environment
 
 
 def test_isolated_navigation_rejects_real_scene_contact_and_missing_evidence():
@@ -1496,6 +1985,26 @@ def test_native_environment_uses_popen_env_for_windows_exe(monkeypatch):
     assert env == {"LINGTU_EXPLORE_ROUTE": "live"}
 
 
+def test_saved_map_traversability_launch_adds_map_route_without_mutating_common_env(
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
+    common_env = {
+        "LINGTU_PRODUCT_SESSION_ID": "mujoco-native-no-motion-220-1",
+        "LINGTU_MAP_ID": "same_source_map",
+        "LINGTU_MAP_CONTENT_EPOCH": "1792309202333",
+    }
+
+    command, env = acceptance._with_saved_map_traversability_env(
+        ["D:\\build\\lingtu_traversability_dds.exe", "--domain-id", "220"],
+        common_env,
+    )
+
+    assert "LINGTU_EXPLORE_ROUTE" not in common_env
+    assert command == ["D:\\build\\lingtu_traversability_dds.exe", "--domain-id", "220"]
+    assert env == {**common_env, "LINGTU_EXPLORE_ROUTE": "map"}
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows UNC path contract")
 def test_wsl_ext4_unc_paths_convert_to_linux_paths_without_resolving_share(monkeypatch):
     def unavailable_share(*_args, **_kwargs):
@@ -1511,6 +2020,7 @@ def test_wsl_ext4_unc_paths_convert_to_linux_paths_without_resolving_share(monke
 
 
 def test_wsl_runtime_probe_is_bounded_and_reports_unavailable(monkeypatch):
+    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
     monkeypatch.setattr(acceptance.shutil, "which", lambda _name: "wsl.exe")
 
     def timeout_run(*_args, **kwargs):
@@ -1534,7 +2044,8 @@ def test_native_probe_decodes_windows_wsl_utf16_diagnostics():
     assert acceptance._decode_native_probe_output(mixed) == "wsl: ready\r\nstdin records: clouds=0"
 
 
-def test_native_acceptance_artifacts_require_wsl_ext4_for_windows_motion():
+def test_native_acceptance_artifacts_require_wsl_ext4_for_windows_motion(monkeypatch):
+    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
     ok, detail = acceptance._artifact_storage_probe(Path(r"D:\tmp\lingtu-native"))
     assert ok is False
     assert detail == "windows_9p_mount"
@@ -1670,6 +2181,7 @@ def test_native_acceptance_rejects_windows_9p_motion_artifacts(monkeypatch, tmp_
 
 
 def test_native_windows_chain_skips_wsl_and_ext4_gates(monkeypatch, tmp_path):
+    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
     manifest = tmp_path / "manifest.json"
     manifest.write_text('{"name": "test"}\n', encoding="utf-8")
     monkeypatch.setattr(acceptance, "_requires_wsl_runtime", lambda _manifest: False)
@@ -2082,7 +2594,7 @@ def test_mujoco_sensor_record_clock_contract_separates_navigation_fixture_from_r
         ROOT / "sim" / "scripts" / "mujoco" / "native_dds_sensors.py"
     ).read_text(encoding="utf-8")
     endpoint_loop = (
-        ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "runtime" / "loop.cpp"
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "app" / "loop.cpp"
     ).read_text(encoding="utf-8")
     pose_input = (
         ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "input" / "pose.cpp"
@@ -2130,7 +2642,12 @@ def test_mujoco_sensor_record_clock_contract_separates_navigation_fixture_from_r
     assert "return False" in restamp_policy
     assert "if _should_restamp_native_records(args):" in publisher_start
     assert 'publisher_args.append("--restamp-stdin-records")' in publisher_start
-    assert "inputs.apply(dds.takeSensors(steadySeconds()), timing);" in endpoint_loop
+    drain_sensors = endpoint_loop.split("auto drain_sensors", 1)[1].split("CommandBatch", 1)[0]
+    assert "auto batch = dds.takeSensors(steadySeconds());" in drain_sensors
+    assert "inputs.apply(std::move(batch), timing);" in drain_sensors
+    assert drain_sensors.index("takeSensors(steadySeconds())") < drain_sensors.index(
+        "inputs.apply(std::move(batch), timing)"
+    )
     assert "projectTf(sample, batch.receive_steady_s);" in pose_input
     assert "projectOdometry(sample, batch.receive_steady_s);" in pose_input
     assert "classifySourceOrder(state_.last_tf_s" in pose_input
@@ -2424,6 +2941,31 @@ def test_native_navigation_video_preserves_source_timeline_with_cfr_holds():
     assert timeline["encoded_duration_s"] == pytest.approx(1.2)
     assert timeline["max_source_gap_s"] == pytest.approx(1.0)
     assert timeline["timeline_preserved"] is True
+
+
+def test_native_navigation_video_uses_every_on_time_sample_at_epoch_precision():
+    epoch_s = 1_793_431_380.36375
+    source_rows = [
+        {
+            "t": epoch_s + (6.1 + index * 0.1),
+            "qpos": [index],
+            "planner_debug_join": "exact_id",
+            "planner_debug_motion_stamp_s": epoch_s + (6.1 + index * 0.1),
+        }
+        for index in range(81)
+    ]
+
+    rows, timeline = navigation_video._resample_rows_for_cfr(source_rows, 10.0)
+
+    assert [row["qpos"] for row in rows] == [row["qpos"] for row in source_rows]
+    assert timeline["held_frames"] == 0
+    assert timeline["source_rows_used"] == 81
+    assert timeline["encoded_duration_s"] == pytest.approx(8.1)
+    assert all(
+        (age := navigation_video._nav_status_age_s(row)) is not None
+        and 0.0 <= age <= math.ulp(row["t"])
+        for row in rows
+    )
 
 
 def test_native_navigation_video_hides_stale_and_overhead_lidar_only_from_presentation():
@@ -2906,6 +3448,20 @@ def test_native_navigation_runner_has_no_diagnostic_tap_in_formal_path():
     assert '"ack_source": "physical_mujoco_step"' in source
 
 
+@pytest.mark.parametrize("start", [[-1.0, 0.0, 0.65, 0.0], [1.0, -2.0, 0.65, math.pi]])
+def test_sensor_start_args_accept_negative_coordinates(start):
+    parsed = sensors._build_parser().parse_args(acceptance._sensor_start_args(start))
+    assert [float(value) for value in parsed.start.split(",")] == start[:3]
+    assert parsed.start_yaw_deg == pytest.approx(math.degrees(start[3]))
+
+
+def test_sensor_runtime_can_use_only_observed_lidar():
+    manifest = acceptance._load_manifest(ROOT / "config/acceptance/mujoco/local_scan_lidar.json")
+    args = acceptance._sensor_runtime_args(manifest)
+    parsed = sensors._build_parser().parse_args(args)
+    assert parsed.navigation_fixture_synthetic_ground is False
+
+
 def test_multifloor_merged_manifest_locks_runtime_octoplanner3d_constraints():
     manifest = acceptance._load_manifest(
         ROOT / "config" / "acceptance" / "mujoco" / "multifloor.json"
@@ -2973,7 +3529,7 @@ def test_industrial_park_navigation_matches_global_and_local_clearance_contracts
     assert manifest["sensor_runtime"]["physical_rolling_sample_mode"] == "subscan"
     assert manifest["telemetry_log"]["hz"] == 10.0
     assert manifest["telemetry_log"]["lidar_points"] == 640
-    assert manifest["slam_runtime"]["provider"] == "fastlio2"
+    assert manifest["slam_runtime"]["provider"] == "ltlio"
     assert manifest["navigation_runtime"]["status_period_s"] == 0.5
     assert "debug_candidate_limit" not in manifest["navigation_runtime"]
     assert "debug_local_map_points" not in manifest["navigation_runtime"]
@@ -3012,7 +3568,7 @@ def test_industrial_park_navigation_matches_global_and_local_clearance_contracts
         ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "main.cpp"
     ).read_text(encoding="utf-8")
     config_source = (
-        ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "runtime" / "config" / "build.cpp"
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "app" / "config" / "build.cpp"
     ).read_text(encoding="utf-8")
     assert "buildExecutorConfig(cfg)" in endpoint_source
     assert "out.footprintPadding = planner_obstacle_margin_m;" in config_source
@@ -3039,6 +3595,34 @@ def test_video_only_capture_defaults_to_ten_hz_live_sampling():
     )
 
     assert settings == (10.0, 512)
+
+
+def test_no_motion_truth_capture_defaults_to_telemetry_rate_without_lidar_points():
+    settings = acceptance._motion_capture_settings(
+        record_video=False,
+        record_telemetry=False,
+        record_truth=True,
+        video_cfg={},
+        telemetry_cfg={},
+    )
+
+    assert settings == (10.0, 0)
+
+
+def test_sensor_runner_accepts_explicit_lidar_mount_and_static_truth_sampling():
+    args = sensors._build_parser().parse_args(
+        [
+            "--lidar-body-name",
+            "lidar1_link",
+            "--lidar-site-name",
+            "lidar1_link_site",
+            "--sample-static-truth",
+        ]
+    )
+
+    assert args.lidar_body_name == "lidar1_link"
+    assert args.lidar_site_name == "lidar1_link_site"
+    assert args.sample_static_truth is True
 
 
 def test_mujoco_engine_exposes_explicit_integrator_override(monkeypatch):
@@ -3438,7 +4022,7 @@ def test_native_endpoint_keeps_lidar_extrinsic_out_of_body_pose_local_planning()
         ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "input" / "map.cpp"
     ).read_text(encoding="utf-8")
     config_source = (
-        ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "runtime" / "config" / "build.cpp"
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "app" / "config" / "build.cpp"
     ).read_text(encoding="utf-8")
 
     assert "sensorOriginFromBody" in input_source
@@ -3687,7 +4271,7 @@ def test_preflight_validates_map_formats_and_metadata(tmp_path, monkeypatch):
     fake_bin = tmp_path / "native"
     fake_bin.write_bytes(b"native")
     fake_config = tmp_path / "slam.yaml"
-    fake_config.write_text("backend: fastlio2\n", encoding="utf-8")
+    fake_config.write_text("backend: ltlio\n", encoding="utf-8")
     fake_paths = tmp_path / "paths"
     fake_paths.mkdir()
     fake_sensor = tmp_path / "sensor.py"
@@ -4358,7 +4942,9 @@ def test_loop_history_recovers_spike_between_polls_and_deduplicates():
         }}
     evidence._collect_loop_history(nav(1, [800, 0]), False)
     batch = nav(1, [800, 0, 0, 189, 0], [
-        {"sequence": 4, "work_ms": 199, "runtime_ms": 194},
+        {"sequence": 4, "work_ms": 199, "runtime_ms": 194,
+         "nav_tick_ms": 123, "final_control_ms": 67,
+         "sensor_take_ms": .75, "sensor_apply_ms": 1.25, "thread_cpu_ms": 84},
     ])
     evidence._collect_loop_history(batch, True)
     evidence._collect_loop_history(batch, True)
@@ -4369,7 +4955,9 @@ def test_loop_history_recovers_spike_between_polls_and_deduplicates():
     assert evidence.navigation_loop_missing_samples == 0
     assert evidence.max_navigation_loop_overrun_context == {
         "cycle_sequence": 4, "overrun_ms": 189,
-        "cycle_timing": {"sequence": 4, "work_ms": 199, "runtime_ms": 194},
+        "cycle_timing": {"sequence": 4, "work_ms": 199, "runtime_ms": 194,
+                         "nav_tick_ms": 123, "final_control_ms": 67,
+                         "sensor_take_ms": .75, "sensor_apply_ms": 1.25, "thread_cpu_ms": 84},
     }
     evidence._collect_loop_history(nav(10, [0, 0]), True)
     assert evidence.navigation_loop_missing_samples == 2
@@ -4882,6 +5470,7 @@ def test_no_motion_rejects_stale_map_tracking_and_static_pose_drift():
         command_last_accepted=True,
         last_slam={
             "state": "TRACKING",
+            "has_odom": True,
             "track_against_map": {
                 "successes": 2,
                 "last_success_age_s": 12.0,
@@ -4894,6 +5483,7 @@ def test_no_motion_rejects_stale_map_tracking_and_static_pose_drift():
         "policy_loaded": True,
         "cmd_vel": {"nonzero_samples": 0},
         "motion": {
+            "available": True,
             "slam_map_xy_error_m": 4.5,
             "slam_odom_xy_m": 4.2,
         },
@@ -4920,6 +5510,98 @@ def test_no_motion_rejects_stale_map_tracking_and_static_pose_drift():
     assert "continuous_map_tracking_degraded" in blockers
     assert "no_motion_slam_map_pose_drift" in blockers
     assert "no_motion_slam_odom_drift" in blockers
+
+
+def test_no_motion_reports_missing_slam_measurements_without_claiming_drift():
+    evidence = acceptance.NativeEvidence(
+        plan_accepted=True,
+        local_path_found=True,
+        max_global_path_points=2,
+        max_local_path_points=2,
+        pre_safety_command_samples=1,
+        local_path_role="dds_telemetry_and_preview",
+        path_follower_role="embedded_before_cmd_vel_gate",
+        command_transport="typed_dds_request_ack",
+        max_command_requests=1,
+        max_command_acks=1,
+        command_last_accepted=True,
+        last_slam={
+            "state": "LOCALIZING",
+            "has_odom": False,
+            "track_against_map": {"successes": 0},
+        },
+    )
+    sensor_report = {
+        "command_source": "dds",
+        "policy_loaded": True,
+        "cmd_vel": {"nonzero_samples": 0},
+        "motion": {
+            "available": True,
+            "slam_map_pose": None,
+            "slam_map_xy_error_m": None,
+            "slam_odom_xy_m": 0.0,
+        },
+    }
+
+    ok, blockers, _ = acceptance._evaluate_phase(
+        phase="no_motion",
+        phase_cfg={"publish_cmd_vel": False},
+        thresholds={
+            "require_traversability": False,
+            "max_no_motion_slam_map_xy_error_m": 0.35,
+            "max_no_motion_slam_odom_xy_m": 0.35,
+        },
+        evidence=evidence,
+        sensor_report=sensor_report,
+        goal=[1.0, 0.0, 0.3, 0.0],
+    )
+
+    assert not ok
+    assert "no_motion_slam_map_pose_unavailable" in blockers
+    assert "no_motion_slam_odom_unavailable" in blockers
+    assert "no_motion_slam_map_pose_drift" not in blockers
+    assert "no_motion_slam_odom_drift" not in blockers
+
+
+def test_no_motion_reports_missing_mujoco_truth_without_claiming_pose_drift():
+    evidence = acceptance.NativeEvidence(
+        plan_accepted=True,
+        local_path_found=True,
+        max_global_path_points=2,
+        max_local_path_points=2,
+        pre_safety_command_samples=1,
+        local_path_role="dds_telemetry_and_preview",
+        path_follower_role="embedded_before_cmd_vel_gate",
+        command_transport="typed_dds_request_ack",
+        max_command_requests=1,
+        max_command_acks=1,
+        command_last_accepted=True,
+        last_slam={"state": "TRACKING", "track_against_map": {"successes": 1}},
+    )
+    sensor_report = {
+        "command_source": "dds",
+        "policy_loaded": True,
+        "cmd_vel": {"nonzero_samples": 0},
+        "motion": {"available": False, "reason": "mujoco_state_not_sampled"},
+    }
+
+    ok, blockers, _ = acceptance._evaluate_phase(
+        phase="no_motion",
+        phase_cfg={"publish_cmd_vel": False},
+        thresholds={
+            "require_traversability": False,
+            "max_no_motion_slam_map_xy_error_m": 0.35,
+            "max_no_motion_slam_odom_xy_m": 0.35,
+        },
+        evidence=evidence,
+        sensor_report=sensor_report,
+        goal=[1.0, 0.0, 0.3, 0.0],
+    )
+
+    assert not ok
+    assert "no_motion_mujoco_truth_unavailable" in blockers
+    assert "no_motion_slam_map_pose_drift" not in blockers
+    assert "no_motion_slam_odom_drift" not in blockers
 
 
 def test_motion_rejects_non_identity_map_odom_with_mislabeled_traversability():
@@ -5004,7 +5686,7 @@ def test_evidence_treats_small_future_tf_age_as_fresh(tmp_path):
 def test_native_control_waits_for_business_ack_and_local_path_is_telemetry_only():
     client = (ROOT / "src" / "nav" / "cpp" / "client" / "client.cpp").read_text(encoding="utf-8")
     endpoint_loop = (
-        ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "runtime" / "loop.cpp"
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "app" / "loop.cpp"
     ).read_text(encoding="utf-8")
     executor = (ROOT / "src" / "nav" / "cpp" / "navigation" / "executor.cpp").read_text(encoding="utf-8")
 

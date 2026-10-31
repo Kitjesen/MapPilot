@@ -34,7 +34,9 @@ Product session：`product-3e881b1157b34649aac68126c08ff6ec`。
 - 随后通过 ProductControl 停止全部本次子进程。终态 `zero_applied`、
   `terminal_ack=true`，本次未强杀机器人进程，当前未继续留着机器人漂移。
 
-原始证据位于仓库 `artifacts/factory_workshop/v2-main-upgrade/`：
+原始证据原位于仓库 `artifacts/factory_workshop/v2-main-upgrade/`，
+已于 2026-09-29 整包移入仓库外归档；位置与恢复方法见
+[历史产物说明](../../../../artifacts/README.md#本机历史归档)。文件包括：
 `product-start-cold-budget.log`、`run-plan.json`、`ready-nav-status.json`、
 `ready-mapd-status.json`、`final-motion.json`、`final-sensors.json`、
 `final-feeder-live.json`、`product-stop.json`、`final-stop.json`。

@@ -43,6 +43,10 @@ bash scripts/build/build_nav_endpoint.sh
 bash scripts/deploy/deploy_robot.sh teleop_avoid
 bash scripts/deploy/thunder/install_services.sh field-cpp
 
+# Synchronize release metadata or update a robot checkout
+bash scripts/deploy/sync_versions.sh --check
+pwsh scripts/deploy/sync_robot.ps1 -TargetHost <host> -TargetUser <user>
+
 # Run explicit diagnostics and gates
 PYTHONPATH=src python -m diagnostics.field.doctor
 PYTHONPATH=src python -m diagnostics.field.soak --help

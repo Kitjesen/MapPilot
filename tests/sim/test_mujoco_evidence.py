@@ -9,12 +9,28 @@ import pytest
 from sim.scripts.mujoco.evidence import (
     FEEDER_STATUS_FILENAME,
     FEEDER_STATUS_SCHEMA,
+    MAX_MOTION_EVIDENCE_BYTES,
+    MOTION_EVIDENCE_FILENAME,
     SimFeederStatusError,
+    SimMotionEvidenceError,
     load_feeder_status,
+    load_motion_evidence,
     publish_feeder_status,
 )
 
 from lingtu.sim.stop import PROCESS_LAUNCH_ID_ENV
+
+
+def test_motion_evidence_rejects_oversized_file(tmp_path: Path) -> None:
+    (tmp_path / MOTION_EVIDENCE_FILENAME).write_bytes(b" " * (MAX_MOTION_EVIDENCE_BYTES + 1))
+    with pytest.raises(SimMotionEvidenceError, match=f"exceeds {MAX_MOTION_EVIDENCE_BYTES} bytes"):
+        load_motion_evidence(
+            session_root=tmp_path,
+            product_session_id="a" * 32,
+            product="nav",
+            process="mujoco_feeder",
+            launch_id="launch-1",
+        )
 
 
 def test_feeder_status_accepts_normal_json_and_binds_the_launch(tmp_path: Path) -> None:

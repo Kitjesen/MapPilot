@@ -16,6 +16,7 @@ endif()
 
 set(LINGTU_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
 set(LINGTU_RECORDING_TESTS_DIR "${LINGTU_ROOT}/tests/native/recording")
+find_package(Threads REQUIRED)
 
 add_library(lingtu_recording_core STATIC
   src/camera_recording.cpp
@@ -27,6 +28,7 @@ add_library(lingtu_recording_core STATIC
   src/recording_core.cpp)
 target_include_directories(lingtu_recording_core PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}/include"
+  "${LINGTU_ROOT}/src"
   "${CMAKE_CURRENT_SOURCE_DIR}/vendor/mcap/include")
 target_compile_definitions(lingtu_recording_core PUBLIC
   MCAP_COMPRESSION_NO_LZ4
@@ -41,7 +43,6 @@ add_executable(lingtu_camera_player src/camera_player_main.cpp)
 target_link_libraries(lingtu_camera_player PRIVATE lingtu_recording_core)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  find_package(Threads REQUIRED)
   add_library(lingtu_recording_process_linux STATIC src/recording_linux.cpp)
   target_link_libraries(lingtu_recording_process_linux PUBLIC
     lingtu_recording_core
@@ -60,6 +61,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     lingtu_recording_camera_linux)
 endif()
 
+if(WIN32)
+  add_library(lingtu_recording_process_windows STATIC src/recording_windows.cpp)
+  target_link_libraries(lingtu_recording_process_windows PUBLIC
+    lingtu_recording_core Threads::Threads)
+endif()
+
 if(LINGTU_RECORDING_BUILD_DDS)
   find_package(CycloneDDS REQUIRED)
   include("${LINGTU_ROOT}/cmake/LingTuDDS.cmake")
@@ -69,6 +76,10 @@ if(LINGTU_RECORDING_BUILD_DDS)
 
   add_library(lingtu_recording_dds STATIC
     src/cyclone_cdr.cpp
+    src/live_observer.cpp
+    src/message_preview.cpp
+    src/history_series.cpp
+    src/recorded_scene.cpp
     src/inspection_timeline_cdr.cpp
     src/topic_catalog.cpp)
   target_include_directories(lingtu_recording_dds PUBLIC
@@ -86,11 +97,22 @@ if(LINGTU_RECORDING_BUILD_DDS)
     Threads::Threads)
   target_compile_definitions(lingtu_dds_recorder PRIVATE
     LINGTU_RECORDING_DEFAULT_IDL="${LINGTU_ROOT}/src/message/idl/messages.idl")
+  if(WIN32)
+    target_link_libraries(lingtu_dds_recorder PRIVATE lingtu_recording_process_windows)
+  endif()
 
   add_executable(lingtu_dds_player src/player_main.cpp)
   target_link_libraries(lingtu_dds_player PRIVATE lingtu_recording_dds)
   target_compile_definitions(lingtu_dds_player PRIVATE
     LINGTU_RECORDING_DEFAULT_IDL="${LINGTU_ROOT}/src/message/idl/messages.idl")
+
+  add_executable(ltplay src/player_main.cpp)
+  target_link_libraries(ltplay PRIVATE lingtu_recording_dds)
+  target_compile_definitions(ltplay PRIVATE
+    LINGTU_RECORDING_DEFAULT_IDL="${LINGTU_ROOT}/src/message/idl/messages.idl")
+
+  add_executable(lingtu_dds_observer src/observer_main.cpp)
+  target_link_libraries(lingtu_dds_observer PRIVATE lingtu_recording_dds Threads::Threads)
 
   if(LINGTU_RECORDING_BUILD_TESTS)
     add_executable(test_cyclone_cdr "${LINGTU_RECORDING_TESTS_DIR}/test_cyclone_cdr.cpp")
@@ -108,6 +130,24 @@ if(LINGTU_RECORDING_BUILD_DDS)
 
     add_executable(test_imu_subscriber "${LINGTU_RECORDING_TESTS_DIR}/test_imu_subscriber.cpp")
     target_link_libraries(test_imu_subscriber PRIVATE lingtu_recording_dds)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      add_executable(test_recorded_scene_import "${LINGTU_RECORDING_TESTS_DIR}/test_recorded_scene_import.cpp")
+      target_link_libraries(test_recorded_scene_import PRIVATE lingtu_recording_dds lingtu_recording_camera_linux)
+    endif()
+    add_executable(test_recorded_scene "${LINGTU_RECORDING_TESTS_DIR}/test_recorded_scene.cpp")
+    target_link_libraries(test_recorded_scene PRIVATE lingtu_recording_dds)
+    target_compile_definitions(test_recorded_scene PRIVATE
+      LINGTU_RECORDING_DEFAULT_IDL="${LINGTU_ROOT}/src/message/idl/messages.idl")
+    add_test(NAME native_recorded_scene COMMAND test_recorded_scene)
+    add_executable(test_history_series "${LINGTU_RECORDING_TESTS_DIR}/test_history_series.cpp")
+    target_link_libraries(test_history_series PRIVATE lingtu_recording_dds)
+    target_compile_definitions(test_history_series PRIVATE
+      LINGTU_RECORDING_DEFAULT_IDL="${LINGTU_ROOT}/src/message/idl/messages.idl")
+    add_test(NAME native_history_series COMMAND test_history_series)
+    add_executable(test_live_observer "${LINGTU_RECORDING_TESTS_DIR}/test_live_observer.cpp")
+    target_link_libraries(test_live_observer PRIVATE lingtu_recording_dds)
+    add_test(NAME native_live_observer COMMAND test_live_observer)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_test(
       NAME native_recording_cli_flow
       COMMAND bash "${LINGTU_RECORDING_TESTS_DIR}/test_cli_flow.sh"
@@ -116,25 +156,34 @@ if(LINGTU_RECORDING_BUILD_DDS)
         "$<TARGET_FILE:test_imu_publisher>"
         "$<TARGET_FILE:test_imu_subscriber>"
         "${LINGTU_ROOT}/src/message/idl/messages.idl")
+    endif()
   endif()
 endif()
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR WIN32)
   add_executable(lingtu_recorder src/lingtu_recorder_main.cpp)
-  target_link_libraries(lingtu_recorder PRIVATE
-    lingtu_recording_process_linux)
+  target_compile_options(lingtu_recorder PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+  if(WIN32)
+    target_link_libraries(lingtu_recorder PRIVATE lingtu_recording_process_windows)
+  else()
+    target_link_libraries(lingtu_recorder PRIVATE lingtu_recording_process_linux)
+  endif()
   target_compile_definitions(lingtu_recorder PRIVATE
     LINGTU_RECORDING_DEFAULT_IDL="${LINGTU_ROOT}/src/message/idl/messages.idl")
   if(LINGTU_RECORDING_BUILD_DDS)
     target_compile_definitions(lingtu_recorder PRIVATE LINGTU_RECORDING_HAS_DDS=1)
+    target_link_libraries(lingtu_recorder PRIVATE lingtu_recording_dds)
     add_dependencies(lingtu_recorder lingtu_dds_recorder)
   else()
     target_compile_definitions(lingtu_recorder PRIVATE LINGTU_RECORDING_HAS_DDS=0)
   endif()
-  add_dependencies(lingtu_recorder lingtu_camera_recorder)
+  if(TARGET lingtu_camera_recorder)
+    add_dependencies(lingtu_recorder lingtu_camera_recorder)
+  endif()
 
   if(LINGTU_RECORDING_BUILD_TESTS)
     add_test(NAME native_recorder_help COMMAND lingtu_recorder --help)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_test(
       NAME native_recorder_dry_run
       COMMAND lingtu_recorder record
@@ -145,12 +194,37 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
     add_executable(test_recording_worker
       "${LINGTU_RECORDING_TESTS_DIR}/test_recording_worker.cpp")
+    target_link_libraries(test_recording_worker PRIVATE lingtu_recording_core)
     add_test(
       NAME native_recorder_control_flow
       COMMAND bash "${LINGTU_RECORDING_TESTS_DIR}/test_recorder_control.sh"
         "$<TARGET_FILE:lingtu_recorder>"
         "$<TARGET_FILE:test_recording_worker>")
     set_tests_properties(native_recorder_control_flow PROPERTIES TIMEOUT 20)
+    elseif(WIN32)
+      add_executable(test_recording_process_windows
+        "${LINGTU_RECORDING_TESTS_DIR}/test_recording_process_windows.cpp")
+      target_link_libraries(test_recording_process_windows PRIVATE lingtu_recording_process_windows)
+      add_test(NAME native_recording_process_windows COMMAND test_recording_process_windows)
+      if(LINGTU_RECORDING_BUILD_DDS)
+        find_program(LINGTU_RECORDING_POWERSHELL NAMES pwsh powershell REQUIRED)
+        add_test(NAME native_recorder_control_flow
+          COMMAND "${LINGTU_RECORDING_POWERSHELL}" -NoProfile -File
+            "${LINGTU_RECORDING_TESTS_DIR}/test_recorder_control_windows.ps1"
+            -Recorder "$<TARGET_FILE:lingtu_recorder>"
+            -Publisher "$<TARGET_FILE:test_imu_publisher>"
+            -Player "$<TARGET_FILE:lingtu_dds_player>")
+        set_tests_properties(native_recorder_control_flow PROPERTIES TIMEOUT 25)
+        add_test(NAME native_ltplay
+          COMMAND "${LINGTU_RECORDING_POWERSHELL}" -NoProfile -File
+            "${LINGTU_RECORDING_TESTS_DIR}/test_ltplay.ps1"
+            -Recorder "$<TARGET_FILE:lingtu_recorder>"
+            -Publisher "$<TARGET_FILE:test_imu_publisher>"
+            -Player "$<TARGET_FILE:lingtu_dds_player>"
+            -Ltplay "$<TARGET_FILE:ltplay>")
+        set_tests_properties(native_ltplay PROPERTIES TIMEOUT 25)
+      endif()
+    endif()
   endif()
 endif()
 
@@ -199,6 +273,11 @@ if(LINGTU_RECORDING_BUILD_TESTS)
   target_link_libraries(test_recording_core PRIVATE lingtu_recording_core)
   add_test(NAME native_recording_core COMMAND test_recording_core)
 
+  add_executable(test_inspection_timeline
+    "${LINGTU_RECORDING_TESTS_DIR}/test_inspection_timeline.cpp")
+  target_link_libraries(test_inspection_timeline PRIVATE lingtu_recording_core)
+  add_test(NAME native_inspection_timeline COMMAND test_inspection_timeline)
+
   add_executable(test_recording_manager
     "${LINGTU_RECORDING_TESTS_DIR}/test_recording_manager.cpp")
   target_link_libraries(test_recording_manager PRIVATE lingtu_recording_core)
@@ -218,6 +297,8 @@ foreach(recording_target IN ITEMS
     lingtu_recorder
     lingtu_dds_recorder
     lingtu_dds_player
+    ltplay
+    lingtu_dds_observer
     lingtu_camera_recorder)
   if(TARGET ${recording_target})
     list(APPEND LINGTU_RECORDING_EXECUTABLES ${recording_target})

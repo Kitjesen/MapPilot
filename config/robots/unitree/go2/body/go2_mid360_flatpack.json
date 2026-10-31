@@ -1,0 +1,1866 @@
+{
+  "urdf": "D:\\inovxio\\brain\\lingtu\\web\\public\\assets\\robots\\go2\\urdf\\go2_mid360_flatpack.urdf",
+  "model_name": "go2_mid360_flatpack",
+  "primitive_count": 34,
+  "representation": "source primitive with conservative per-part OBB broad phase",
+  "support_contact_links": [
+    "FL_foot",
+    "FR_foot",
+    "RL_foot",
+    "RR_foot"
+  ],
+  "frame": "URDF root, metres; center and rotation at the recorded joint pose",
+  "rotation_layout": "row-major local part axes to URDF root",
+  "sphere_obb_axes": "URDF-root identity; source_rotation retained for traceability",
+  "geometry_margin_m": 0.0,
+  "pose_scope": "fixed joint-pose snapshot; runtime forward kinematics and gait are not included",
+  "joint_angles": {
+    "FR_hip_joint": 0.0,
+    "FR_thigh_joint": 0.8,
+    "FR_calf_joint": -1.6,
+    "FL_hip_joint": 0.0,
+    "FL_thigh_joint": 0.8,
+    "FL_calf_joint": -1.6,
+    "RR_hip_joint": 0.0,
+    "RR_thigh_joint": 0.8,
+    "RR_calf_joint": -1.6,
+    "RL_hip_joint": 0.0,
+    "RL_thigh_joint": 0.8,
+    "RL_calf_joint": -1.6
+  },
+  "model_report": {
+    "urdf": "D:\\inovxio\\brain\\lingtu\\web\\public\\assets\\robots\\go2\\urdf\\go2_mid360_flatpack.urdf",
+    "source_collision_count": 34,
+    "imported_collision_count": 34,
+    "collision_links": [
+      "base",
+      "Head_upper",
+      "Head_lower",
+      "FL_hip",
+      "FL_thigh",
+      "FL_calf",
+      "FL_calflower",
+      "FL_calflower1",
+      "FL_foot",
+      "FR_hip",
+      "FR_thigh",
+      "FR_calf",
+      "FR_calflower",
+      "FR_calflower1",
+      "FR_foot",
+      "RL_hip",
+      "RL_thigh",
+      "RL_calf",
+      "RL_calflower",
+      "RL_calflower1",
+      "RL_foot",
+      "RR_hip",
+      "RR_thigh",
+      "RR_calf",
+      "RR_calflower",
+      "RR_calflower1",
+      "RR_foot",
+      "mid360_base",
+      "mid360_left_side",
+      "mid360_right_side",
+      "mid360_lid",
+      "mid360_left_foot",
+      "mid360_right_foot",
+      "livox_frame"
+    ],
+    "visual_elements_removed": 24,
+    "joint_angles": {
+      "FR_hip_joint": 0.0,
+      "FR_thigh_joint": 0.8,
+      "FR_calf_joint": -1.6,
+      "FL_hip_joint": 0.0,
+      "FL_thigh_joint": 0.8,
+      "FL_calf_joint": -1.6,
+      "RR_hip_joint": 0.0,
+      "RR_thigh_joint": 0.8,
+      "RR_calf_joint": -1.6,
+      "RL_hip_joint": 0.0,
+      "RL_thigh_joint": 0.8,
+      "RL_calf_joint": -1.6
+    },
+    "joint_state_source": "nominal Go2 stance",
+    "distance_solver": "exact primitive AABB separation bound; MuJoCo native CCD for overlapping bounds",
+    "positive_clearance_semantics": "conservative lower bound, not universally exact surface distance",
+    "obstacles": [],
+    "gait_or_ground_support_validated": false
+  },
+  "known_missing_geometry": [
+    "external D435i and its bracket"
+  ],
+  "installation_qualified": false,
+  "parts": [
+    {
+      "link": "base",
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.1881,
+        0.04675,
+        0.057
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "Head_upper",
+      "center": [
+        0.285,
+        0.0,
+        0.01
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.05,
+        0.05,
+        0.045
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.05,
+      "half_length_m": 0.045,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "Head_lower",
+      "center": [
+        0.293,
+        0.0,
+        -0.060000000000000005
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.047,
+        0.047,
+        0.047
+      ],
+      "source_type": "sphere",
+      "radius_m": 0.047,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "axes_policy": "URDF-root identity axes; sphere orientation is immaterial"
+    },
+    {
+      "link": "FL_hip",
+      "center": [
+        0.1934,
+        0.1265,
+        0.0
+      ],
+      "rotation": [
+        [
+          1.0000000000000002,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          -1.0000000000000002
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ]
+      ],
+      "half_size": [
+        0.046,
+        0.046,
+        0.02
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.046,
+      "half_length_m": 0.02,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0000000000000002,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          -1.0000000000000002
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "FL_thigh",
+      "center": [
+        0.11700157631920081,
+        0.14200000000000002,
+        -0.07419926454547313
+      ],
+      "rotation": [
+        [
+          -0.7173560908995227,
+          0.0,
+          0.6967067093471654
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -0.6967067093471654,
+          0.0,
+          -0.7173560908995227
+        ]
+      ],
+      "half_size": [
+        0.1065,
+        0.01225,
+        0.017
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          -0.7173560908995227,
+          0.0,
+          0.6967067093471654
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -0.6967067093471654,
+          0.0,
+          -0.7173560908995227
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "FL_calf",
+      "center": [
+        0.08921817176715033,
+        0.14200000000000002,
+        -0.18446208292458
+      ],
+      "rotation": [
+        [
+          0.5318607213743554,
+          -0.0,
+          -0.8468318446180152
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.8468318446180152,
+          0.0,
+          0.5318607213743554
+        ]
+      ],
+      "half_size": [
+        0.012,
+        0.012,
+        0.06
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.012,
+      "half_length_m": 0.06,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          0.5318607213743554,
+          -0.0,
+          -0.8468318446180152
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.8468318446180152,
+          0.0,
+          0.5318607213743554
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "FL_calflower",
+      "center": [
+        0.16070598827847432,
+        0.14200000000000002,
+        -0.23716400025633627
+      ],
+      "rotation": [
+        [
+          0.7316888688738208,
+          -0.0,
+          -0.6816387600233342
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.6816387600233342,
+          0.0,
+          0.7316888688738208
+        ]
+      ],
+      "half_size": [
+        0.011,
+        0.011,
+        0.0325
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.011,
+      "half_length_m": 0.0325,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          0.7316888688738208,
+          -0.0,
+          -0.6816387600233342
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.6816387600233342,
+          0.0,
+          0.7316888688738208
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "FL_calflower1",
+      "center": [
+        0.1806546499906695,
+        0.14200000000000002,
+        -0.27324794261152247
+      ],
+      "rotation": [
+        [
+          0.9637708963658904,
+          -0.0,
+          -0.26673143668883115
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.26673143668883115,
+          0.0,
+          0.9637708963658904
+        ]
+      ],
+      "half_size": [
+        0.0155,
+        0.0155,
+        0.015
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.0155,
+      "half_length_m": 0.015,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          0.9637708963658904,
+          -0.0,
+          -0.26673143668883115
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.26673143668883115,
+          0.0,
+          0.9637708963658904
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "FL_foot",
+      "center": [
+        0.19200658658130565,
+        0.14200000000000002,
+        -0.29823177036369153
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.022,
+        0.022,
+        0.022
+      ],
+      "source_type": "sphere",
+      "radius_m": 0.022,
+      "half_length_m": 0.0,
+      "support_contact": true,
+      "source_rotation": [
+        [
+          0.6967067093471655,
+          -0.0,
+          -0.7173560908995228
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.7173560908995228,
+          0.0,
+          0.6967067093471655
+        ]
+      ],
+      "axes_policy": "URDF-root identity axes; sphere orientation is immaterial"
+    },
+    {
+      "link": "FR_hip",
+      "center": [
+        0.1934,
+        -0.1265,
+        0.0
+      ],
+      "rotation": [
+        [
+          1.0000000000000002,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          -1.0000000000000002
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ]
+      ],
+      "half_size": [
+        0.046,
+        0.046,
+        0.02
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.046,
+      "half_length_m": 0.02,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0000000000000002,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          -1.0000000000000002
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "FR_thigh",
+      "center": [
+        0.11700157631920081,
+        -0.14200000000000002,
+        -0.07419926454547313
+      ],
+      "rotation": [
+        [
+          -0.7173560908995227,
+          0.0,
+          0.6967067093471654
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -0.6967067093471654,
+          0.0,
+          -0.7173560908995227
+        ]
+      ],
+      "half_size": [
+        0.1065,
+        0.01225,
+        0.017
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          -0.7173560908995227,
+          0.0,
+          0.6967067093471654
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -0.6967067093471654,
+          0.0,
+          -0.7173560908995227
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "FR_calf",
+      "center": [
+        0.09061158518584467,
+        -0.14200000000000002,
+        -0.18302737074278094
+      ],
+      "rotation": [
+        [
+          0.5403023058681399,
+          -0.0,
+          -0.8414709848078967
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          -0.0
+        ],
+        [
+          0.8414709848078967,
+          0.0,
+          0.5403023058681399
+        ]
+      ],
+      "half_size": [
+        0.013,
+        0.013,
+        0.06
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.013,
+      "half_length_m": 0.06,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          0.5403023058681399,
+          -0.0,
+          -0.8414709848078967
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          -0.0
+        ],
+        [
+          0.8414709848078967,
+          0.0,
+          0.5403023058681399
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "FR_calflower",
+      "center": [
+        0.16070598827847432,
+        -0.14200000000000002,
+        -0.23716400025633627
+      ],
+      "rotation": [
+        [
+          0.7316888688738208,
+          -0.0,
+          -0.6816387600233342
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.6816387600233342,
+          0.0,
+          0.7316888688738208
+        ]
+      ],
+      "half_size": [
+        0.011,
+        0.011,
+        0.0325
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.011,
+      "half_length_m": 0.0325,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          0.7316888688738208,
+          -0.0,
+          -0.6816387600233342
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.6816387600233342,
+          0.0,
+          0.7316888688738208
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "FR_calflower1",
+      "center": [
+        0.1806546499906695,
+        -0.14200000000000002,
+        -0.27324794261152247
+      ],
+      "rotation": [
+        [
+          0.9637708963658904,
+          -0.0,
+          -0.26673143668883115
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.26673143668883115,
+          0.0,
+          0.9637708963658904
+        ]
+      ],
+      "half_size": [
+        0.0155,
+        0.0155,
+        0.015
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.0155,
+      "half_length_m": 0.015,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          0.9637708963658904,
+          -0.0,
+          -0.26673143668883115
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.26673143668883115,
+          0.0,
+          0.9637708963658904
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "FR_foot",
+      "center": [
+        0.19200658658130565,
+        -0.14200000000000002,
+        -0.29823177036369153
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.022,
+        0.022,
+        0.022
+      ],
+      "source_type": "sphere",
+      "radius_m": 0.022,
+      "half_length_m": 0.0,
+      "support_contact": true,
+      "source_rotation": [
+        [
+          0.6967067093471655,
+          -0.0,
+          -0.7173560908995228
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.7173560908995228,
+          0.0,
+          0.6967067093471655
+        ]
+      ],
+      "axes_policy": "URDF-root identity axes; sphere orientation is immaterial"
+    },
+    {
+      "link": "RL_hip",
+      "center": [
+        -0.1934,
+        0.1265,
+        0.0
+      ],
+      "rotation": [
+        [
+          1.0000000000000002,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          -1.0000000000000002
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ]
+      ],
+      "half_size": [
+        0.046,
+        0.046,
+        0.02
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.046,
+      "half_length_m": 0.02,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0000000000000002,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          -1.0000000000000002
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "RL_thigh",
+      "center": [
+        -0.26979842368079915,
+        0.14200000000000002,
+        -0.07419926454547313
+      ],
+      "rotation": [
+        [
+          -0.7173560908995227,
+          0.0,
+          0.6967067093471654
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -0.6967067093471654,
+          0.0,
+          -0.7173560908995227
+        ]
+      ],
+      "half_size": [
+        0.1065,
+        0.01225,
+        0.017
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          -0.7173560908995227,
+          0.0,
+          0.6967067093471654
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -0.6967067093471654,
+          0.0,
+          -0.7173560908995227
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "RL_calf",
+      "center": [
+        -0.2961884148141553,
+        0.14200000000000002,
+        -0.18302737074278094
+      ],
+      "rotation": [
+        [
+          0.5403023058681399,
+          -0.0,
+          -0.8414709848078967
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          -0.0
+        ],
+        [
+          0.8414709848078967,
+          0.0,
+          0.5403023058681399
+        ]
+      ],
+      "half_size": [
+        0.013,
+        0.013,
+        0.06
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.013,
+      "half_length_m": 0.06,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          0.5403023058681399,
+          -0.0,
+          -0.8414709848078967
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          -0.0
+        ],
+        [
+          0.8414709848078967,
+          0.0,
+          0.5403023058681399
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "RL_calflower",
+      "center": [
+        -0.22609401172152566,
+        0.14200000000000002,
+        -0.23716400025633627
+      ],
+      "rotation": [
+        [
+          0.7316888688738208,
+          -0.0,
+          -0.6816387600233342
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.6816387600233342,
+          0.0,
+          0.7316888688738208
+        ]
+      ],
+      "half_size": [
+        0.011,
+        0.011,
+        0.0325
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.011,
+      "half_length_m": 0.0325,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          0.7316888688738208,
+          -0.0,
+          -0.6816387600233342
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.6816387600233342,
+          0.0,
+          0.7316888688738208
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "RL_calflower1",
+      "center": [
+        -0.20614535000933049,
+        0.14200000000000002,
+        -0.27324794261152247
+      ],
+      "rotation": [
+        [
+          0.9637708963658904,
+          -0.0,
+          -0.26673143668883115
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.26673143668883115,
+          0.0,
+          0.9637708963658904
+        ]
+      ],
+      "half_size": [
+        0.0155,
+        0.0155,
+        0.015
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.0155,
+      "half_length_m": 0.015,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          0.9637708963658904,
+          -0.0,
+          -0.26673143668883115
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.26673143668883115,
+          0.0,
+          0.9637708963658904
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "RL_foot",
+      "center": [
+        -0.19479341341869433,
+        0.14200000000000002,
+        -0.29823177036369153
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.022,
+        0.022,
+        0.022
+      ],
+      "source_type": "sphere",
+      "radius_m": 0.022,
+      "half_length_m": 0.0,
+      "support_contact": true,
+      "source_rotation": [
+        [
+          0.6967067093471655,
+          -0.0,
+          -0.7173560908995228
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.7173560908995228,
+          0.0,
+          0.6967067093471655
+        ]
+      ],
+      "axes_policy": "URDF-root identity axes; sphere orientation is immaterial"
+    },
+    {
+      "link": "RR_hip",
+      "center": [
+        -0.1934,
+        -0.1265,
+        0.0
+      ],
+      "rotation": [
+        [
+          1.0000000000000002,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          -1.0000000000000002
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ]
+      ],
+      "half_size": [
+        0.046,
+        0.046,
+        0.02
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.046,
+      "half_length_m": 0.02,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0000000000000002,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          -1.0000000000000002
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "RR_thigh",
+      "center": [
+        -0.26979842368079915,
+        -0.14200000000000002,
+        -0.07419926454547313
+      ],
+      "rotation": [
+        [
+          -0.7173560908995227,
+          0.0,
+          0.6967067093471654
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -0.6967067093471654,
+          0.0,
+          -0.7173560908995227
+        ]
+      ],
+      "half_size": [
+        0.1065,
+        0.01225,
+        0.017
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          -0.7173560908995227,
+          0.0,
+          0.6967067093471654
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -0.6967067093471654,
+          0.0,
+          -0.7173560908995227
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "RR_calf",
+      "center": [
+        -0.2961884148141553,
+        -0.14200000000000002,
+        -0.18302737074278094
+      ],
+      "rotation": [
+        [
+          0.5403023058681399,
+          -0.0,
+          -0.8414709848078967
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          -0.0
+        ],
+        [
+          0.8414709848078967,
+          0.0,
+          0.5403023058681399
+        ]
+      ],
+      "half_size": [
+        0.013,
+        0.013,
+        0.06
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.013,
+      "half_length_m": 0.06,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          0.5403023058681399,
+          -0.0,
+          -0.8414709848078967
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          -0.0
+        ],
+        [
+          0.8414709848078967,
+          0.0,
+          0.5403023058681399
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "RR_calflower",
+      "center": [
+        -0.22609401172152566,
+        -0.14200000000000002,
+        -0.23716400025633627
+      ],
+      "rotation": [
+        [
+          0.7316888688738208,
+          -0.0,
+          -0.6816387600233342
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.6816387600233342,
+          0.0,
+          0.7316888688738208
+        ]
+      ],
+      "half_size": [
+        0.011,
+        0.011,
+        0.0325
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.011,
+      "half_length_m": 0.0325,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          0.7316888688738208,
+          -0.0,
+          -0.6816387600233342
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.6816387600233342,
+          0.0,
+          0.7316888688738208
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "RR_calflower1",
+      "center": [
+        -0.20614535000933049,
+        -0.14200000000000002,
+        -0.27324794261152247
+      ],
+      "rotation": [
+        [
+          0.9637708963658904,
+          -0.0,
+          -0.26673143668883115
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.26673143668883115,
+          0.0,
+          0.9637708963658904
+        ]
+      ],
+      "half_size": [
+        0.0155,
+        0.0155,
+        0.015
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.0155,
+      "half_length_m": 0.015,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          0.9637708963658904,
+          -0.0,
+          -0.26673143668883115
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.26673143668883115,
+          0.0,
+          0.9637708963658904
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "RR_foot",
+      "center": [
+        -0.19479341341869433,
+        -0.14200000000000002,
+        -0.29823177036369153
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.022,
+        0.022,
+        0.022
+      ],
+      "source_type": "sphere",
+      "radius_m": 0.022,
+      "half_length_m": 0.0,
+      "support_contact": true,
+      "source_rotation": [
+        [
+          0.6967067093471655,
+          -0.0,
+          -0.7173560908995228
+        ],
+        [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.7173560908995228,
+          0.0,
+          0.6967067093471655
+        ]
+      ],
+      "axes_policy": "URDF-root identity axes; sphere orientation is immaterial"
+    },
+    {
+      "link": "mid360_base",
+      "center": [
+        0.18999999809265136,
+        -1.90734863281e-09,
+        0.094
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.0549999980925,
+        0.0504999980925,
+        0.002
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "mid360_left_side",
+      "center": [
+        0.19511962509155,
+        0.042,
+        0.1427271652222
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.060107761383,
+        0.008,
+        0.04872716522215
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "mid360_right_side",
+      "center": [
+        0.19511962509155,
+        -0.042,
+        0.1427271652222
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.060107761383,
+        0.008,
+        0.04872716522215
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "mid360_lid",
+      "center": [
+        0.2116079664006,
+        0.0,
+        0.1620719738077
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.04648730352675,
+        0.05,
+        0.03359458411005
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "mid360_left_foot",
+      "center": [
+        0.19,
+        0.02925,
+        0.08399780988620001
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.035,
+        0.007,
+        0.0080021901138
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "mid360_right_foot",
+      "center": [
+        0.19,
+        -0.02925,
+        0.0841497906068
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.035,
+        0.007,
+        0.00785020939315
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "livox_frame",
+      "center": [
+        0.2302492005820324,
+        0.0,
+        0.188694415247087
+      ],
+      "rotation": [
+        [
+          0.8191520442890007,
+          0.0,
+          0.5735764363510335
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -0.5735764363510335,
+          0.0,
+          0.8191520442890007
+        ]
+      ],
+      "half_size": [
+        0.0325,
+        0.0325,
+        0.03
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          0.8191520442890007,
+          0.0,
+          0.5735764363510335
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -0.5735764363510335,
+          0.0,
+          0.8191520442890007
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    }
+  ]
+}

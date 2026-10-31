@@ -23,6 +23,7 @@ import yaml
 from sim.contracts import physics_sensor_timebase_violation
 
 from .diagnostics import CatalogDiagnostic, DiagnosticCode
+from .measurement import camera_projection_preset, validate_configuration, validate_scene
 
 _IDENTITY_EXTRINSIC = {
     "position_m": [0.0, 0.0, 0.0],
@@ -36,6 +37,11 @@ _MJCF_INTEGRATORS = {
     "implicitfast": "implicitfast",
 }
 _MJCF_SOLVERS = {"PGS": "pgs", "CG": "cg", "Newton": "newton"}
+_MEASUREMENT_MESSAGES = {
+    "thermal": "lingtu.dds.ThermalImage",
+    "acoustic": "lingtu.dds.AcousticBlock",
+    "semantic": "lingtu.dds.SemanticImage",
+}
 
 
 class CatalogError(ValueError):
@@ -343,11 +349,78 @@ def _configuration_value(value: Any, context: str) -> Any:
     raise CatalogError(f"{context} must be finite configuration data")
 
 
+def _body_mount_extrinsic(
+    body_frame: str,
+    parent_frame: str,
+    resolved_parent_frame: str,
+    robot_frames: Mapping[str, Any],
+    extrinsic: dict[str, list[float]],
+    context: str,
+) -> dict[str, list[float]]:
+    """Express the existing rig transform relative to its declared body ancestor."""
+    body_extrinsic = extrinsic
+    current_frame = resolved_parent_frame
+    if body_frame == parent_frame:
+        frame_extrinsic = robot_frames[parent_frame].get("extrinsic", _IDENTITY_EXTRINSIC)
+        w, x, y, z = frame_extrinsic["quaternion_wxyz"]
+        inverse_quaternion = [w, -x, -y, -z]
+        body_extrinsic = _compose_extrinsics({
+            "position_m": _rotate_vector(inverse_quaternion, [-p for p in frame_extrinsic["position_m"]]),
+            "quaternion_wxyz": inverse_quaternion,
+        }, extrinsic)
+        current_frame = body_frame
+    while current_frame != body_frame:
+        frame = robot_frames[current_frame]
+        if "parent_frame" not in frame:
+            raise CatalogError(f"{context}.body_frame_id must be an ancestor of the sensor mount")
+        body_extrinsic = _compose_extrinsics(frame.get("extrinsic", _IDENTITY_EXTRINSIC), body_extrinsic)
+        current_frame = frame["parent_frame"]
+    return body_extrinsic
+
+
 def _configuration(value: Any, context: str) -> dict[str, Any]:
     return {
         _string(key, f"{context} key"): _configuration_value(item, f"{context}.{key}")
         for key, item in sorted(_mapping(value, context).items())
     }
+
+
+def _gnss_configuration(value: Any) -> dict[str, Any]:
+    """Validate the build-time view of the explicit WGS84 measurement model."""
+    context = "gnss"
+    config = _mapping(value, context)
+    _keys(
+        config,
+        ("origin_latitude_deg", "origin_longitude_deg", "origin_altitude_m", "body_frame_id"),
+        ("antenna_offset_m", "world_origin_m", "world_to_enu_yaw_deg", "noise_enabled",
+         "horizontal_std_m", "vertical_std_m", "seed", "fix_available"),
+        context,
+    )
+    for name in (
+        "origin_latitude_deg", "origin_longitude_deg", "origin_altitude_m",
+        "world_to_enu_yaw_deg", "horizontal_std_m", "vertical_std_m",
+    ):
+        if name in config:
+            config[name] = _finite_vector([config[name]], 1, f"gnss.{name}")[0]
+    for name, limit in (("origin_latitude_deg", 90), ("origin_longitude_deg", 180)):
+        if not -limit <= config[name] <= limit:
+            raise CatalogError(f"gnss.{name} must be in [-{limit}, {limit}]")
+    for name in ("horizontal_std_m", "vertical_std_m"):
+        if config.get(name, 0) < 0:
+            raise CatalogError(f"gnss.{name} must be non-negative")
+    body = _string(config["body_frame_id"], "gnss.body_frame_id")
+    if body != config["body_frame_id"]:
+        raise CatalogError("gnss.body_frame_id must be trimmed")
+    for name in ("antenna_offset_m", "world_origin_m"):
+        if name in config:
+            config[name] = _finite_vector(config[name], 3, f"gnss.{name}")
+    for name in ("noise_enabled", "fix_available"):
+        if name in config and type(config[name]) is not bool:
+            raise CatalogError(f"gnss.{name} must be a boolean")
+    if "seed" in config and (type(config["seed"]) is not int or not 0 <= config["seed"] < 1 << 64):
+        raise CatalogError("gnss.seed must be a uint64 integer")
+    config.setdefault("fix_available", False)
+    return config
 
 
 def _finite_behavior_value(value: Any, context: str) -> Any:
@@ -444,6 +517,19 @@ class ResolvedSession:
         return bundle_dir
 
 
+def resolve_robot_default_policy(repo_root: Path, robot_ref: str = "thunderv4@1.0.3") -> dict[str, Path]:
+    """Resolve development defaults; running Products consume their compiled plan."""
+    root = Path(repo_root).resolve()
+    packages = root / "sim" / "packages"
+    resolver = CatalogResolver(root, (packages / "robots", packages / "controllers"))
+    robot = resolver.find_package(robot_ref, kind="robot")
+    controller = resolver.find_package(robot.data["defaults"]["controller"], kind="controller")
+    return {
+        key: resolver._asset_path(controller, controller.data["policy"][key], f"policy.{key}")
+        for key in ("artifact", "manifest")
+    }
+
+
 class CatalogResolver:
     """Discover and resolve exact-version local simulation packages."""
 
@@ -535,10 +621,13 @@ class CatalogResolver:
                     geometry,
                     ("collision_clearance_below_m", "collision_clearance_above_m",
                      "support_height_m", "support_height_tolerance_m"),
-                    (),
+                    ("body_file",),
                     f"{context}.navigation_geometry",
                 )
                 for name, value in geometry.items():
+                    if name == "body_file":
+                        self._package_relative_file(record, value, "navigation_geometry.body_file")
+                        continue
                     if (isinstance(value, bool) or not isinstance(value, (int, float))
                             or not math.isfinite(value) or value <= 0):
                         raise CatalogError(f"{context}.navigation_geometry.{name} must be positive and finite")
@@ -824,9 +913,17 @@ class CatalogResolver:
             adapter = _mapping(data["adapter"], f"{context}.adapter")
             _keys(adapter, ("plugin", "abi"), (), f"{context}.adapter")
             policy = _mapping(data["policy"], f"{context}.policy")
-            _keys(policy, ("runtime", "artifact", "manifest"), (), f"{context}.policy")
+            _keys(policy, ("runtime", "artifact", "manifest"), ("profiles",), f"{context}.policy")
             self._asset_path(record, policy["artifact"], "policy.artifact")
             self._asset_path(record, policy["manifest"], "policy.manifest")
+            profiles = _mapping(policy.get("profiles", {}), f"{context}.policy.profiles")
+            for requirement, raw_profile in profiles.items():
+                if requirement not in {"stairs_up", "stairs_down"}:
+                    raise CatalogError(f"{context}.policy.profiles: unsupported requirement {requirement!r}")
+                profile = _mapping(raw_profile, f"{context}.policy.profiles.{requirement}")
+                _keys(profile, ("artifact", "manifest"), (), f"{context}.policy.profiles.{requirement}")
+                for key in ("artifact", "manifest"):
+                    self._asset_path(record, profile[key], f"policy.profiles.{requirement}.{key}")
             timing = _mapping(data["timing"], f"{context}.timing")
             _keys(timing, ("inference_hz", "low_level_hz"), (), f"{context}.timing")
             robot_interface = _mapping(data["robot_interface"], f"{context}.robot_interface")
@@ -838,22 +935,23 @@ class CatalogResolver:
             )
             for value in _list(robot_interface["requires_state"], f"{context}.robot_interface.requires_state"):
                 _string(value, f"{context}.robot_interface.requires_state item")
+            produces = _mapping(robot_interface["produces_command"], f"{context}.robot_interface.produces_command")
+            _keys(produces, ("type",), ("message_type",), f"{context}.robot_interface.produces_command")
+            _string(produces["type"], f"{context}.robot_interface.produces_command.type")
+            if "message_type" in produces:
+                _string(produces["message_type"], f"{context}.robot_interface.produces_command.message_type")
+            torque_controller = produces["type"] == "joint_torque" or adapter["plugin"] == "quadruped_him"
             if "accepts_command" in robot_interface:
                 accepts = _mapping(robot_interface["accepts_command"], f"{context}.robot_interface.accepts_command")
                 _keys(accepts, ("type",), ("message_type",), f"{context}.robot_interface.accepts_command")
                 _string(accepts["type"], f"{context}.robot_interface.accepts_command.type")
                 if "message_type" in accepts:
                     _string(accepts["message_type"], f"{context}.robot_interface.accepts_command.message_type")
-            elif adapter["plugin"] in {"quadruped_him", "thunderv4_flat53"}:
+            elif torque_controller:
                 raise CatalogError(
                     f"{context}.robot_interface.accepts_command is required for quadruped_him"
                 )
-            produces = _mapping(robot_interface["produces_command"], f"{context}.robot_interface.produces_command")
-            _keys(produces, ("type",), ("message_type",), f"{context}.robot_interface.produces_command")
-            _string(produces["type"], f"{context}.robot_interface.produces_command.type")
-            if "message_type" in produces:
-                _string(produces["message_type"], f"{context}.robot_interface.produces_command.message_type")
-            if adapter["plugin"] in {"quadruped_him", "thunderv4_flat53"}:
+            if torque_controller:
                 accepts = _mapping(robot_interface["accepts_command"], f"{context}.robot_interface.accepts_command")
                 if accepts["type"] != "base_twist":
                     raise CatalogError(
@@ -944,7 +1042,10 @@ class CatalogResolver:
                 if "extrinsic" in sensor:
                     _extrinsic(sensor["extrinsic"], f"{context}.sensors[{index}].extrinsic")
                 if "configuration" in sensor:
-                    _configuration(sensor["configuration"], f"{context}.sensors[{index}].configuration")
+                    configuration = _mapping(sensor["configuration"], f"{context}.sensors[{index}].configuration")
+                    if "measurement" in configuration:
+                        _mapping(configuration.pop("measurement"), "measurement")
+                    _configuration(configuration, f"{context}.sensors[{index}].configuration")
             return
 
         if record.kind == "world":
@@ -961,7 +1062,7 @@ class CatalogResolver:
                     "entities",
                     *(("provenance", "content") if canonical else ()),
                 ),
-                ("description",),
+                ("description", "measurements"),
                 context,
             )
             if canonical and _REF_RE.fullmatch(f"{record.id}@{record.version}") is None:
@@ -971,6 +1072,8 @@ class CatalogResolver:
             self._reject_colon_in_path(physics["mjcf"], f"{context}.physics.mjcf")
             mjcf = self._asset_path(record, physics["mjcf"], "physics.mjcf")
             _xml_symbols(mjcf)
+            if "measurements" in data:
+                self._world_measurements(record)
             data["physics"]["global_policy"] = _world_global_policy(
                 physics["global_policy"],
                 mjcf,
@@ -2017,6 +2120,52 @@ class CatalogResolver:
                 sensor_records = self._validate_rig_against_robot(rig, robot)
                 for sensor in sensor_records:
                     self._remember_package(package_records, sensor)
+                overrides = _mapping(robot_spec.get("sensor_overrides", {}), "sensor_overrides")
+                known_ids = {item["id"] for item in rig.data["sensors"]}
+                if set(overrides) - known_ids:
+                    raise CatalogError("sensor_overrides names a sensor outside the declared rig")
+                rig_sensors = []
+                for item, sensor in zip(rig.data["sensors"], sensor_records, strict=True):
+                    override = _mapping(overrides.get(item["id"], {}), "sensor override")
+                    _keys(override, (), ("enabled", "frequency_hz", "camera_preset", "pan_deg", "tilt_deg",
+                                         "gnss_fix_available"), "sensor override")
+                    enabled = override.get("enabled", True)
+                    if type(enabled) is not bool:
+                        raise CatalogError("sensor override enabled must be boolean")
+                    rate = override.get("frequency_hz")
+                    if "frequency_hz" in override and (isinstance(rate, bool) or not isinstance(rate, (int, float)) or not math.isfinite(rate) or rate <= 0):
+                        raise CatalogError("sensor override frequency_hz must be positive and finite")
+                    selected = copy.deepcopy(item)
+                    if rate is not None:
+                        selected["frequency_hz"] = rate
+                    modality = sensor.data["outputs"][0]
+                    camera_fields = {"camera_preset", "pan_deg", "tilt_deg"} & override.keys()
+                    if camera_fields or "gnss_fix_available" in override:
+                        configuration = copy.deepcopy({**sensor.data["configuration"], **item.get("configuration", {})})
+                        if camera_fields:
+                            if modality not in {"thermal", "semantic"}:
+                                raise CatalogError("camera controls require a thermal or semantic measurement camera")
+                            measurement = configuration["measurement"]
+                            if "camera_preset" in override:
+                                try:
+                                    measurement["camera"] = camera_projection_preset(measurement["camera"], override["camera_preset"])
+                                except (ValueError, TypeError) as exc:
+                                    raise CatalogError(str(exc)) from exc
+                            gimbal = measurement.setdefault("gimbal", {})
+                            for key in ("pan_deg", "tilt_deg"):
+                                if key in override:
+                                    gimbal[key] = override[key]
+                            try:
+                                validate_configuration(measurement, modality, selected.get("frequency_hz", sensor.data["timing"]["rate_hz"]))
+                            except ValueError as exc:
+                                raise CatalogError(str(exc)) from exc
+                        if "gnss_fix_available" in override:
+                            if modality != "gnss" or type(override["gnss_fix_available"]) is not bool:
+                                raise CatalogError("gnss_fix_available requires a GNSS sensor and boolean value")
+                            configuration["gnss"]["fix_available"] = override["gnss_fix_available"]
+                        selected["configuration"] = configuration
+                    if enabled:
+                        rig_sensors.append((selected, sensor))
                 resolved_sensor_bindings.extend(
                     {
                         "instance_id": instance_id,
@@ -2026,10 +2175,10 @@ class CatalogResolver:
                         "sensor": sensor,
                         "robot_frames": self._robot_frame_map(robot),
                     }
-                    for rig_sensor, sensor in zip(
-                        rig.data["sensors"], sensor_records, strict=True
-                    )
+                    for rig_sensor, sensor in rig_sensors
                 )
+            elif robot_spec.get("sensor_overrides"):
+                raise CatalogError("sensor_overrides requires a declared rig")
             spawn = _mapping(robot_spec["spawn"], f"{session_path}.robots[{index}].spawn")
             _keys(spawn, ("position_m", "quaternion_wxyz"), (), f"{session_path}.robots[{index}].spawn")
             position = _finite_vector(spawn["position_m"], 3, f"{session_path}.robots[{index}].spawn.position_m")
@@ -2055,7 +2204,12 @@ class CatalogResolver:
             if resolved_physics_payloads:
                 resolved_robot["payloads"] = resolved_physics_payloads
             if "navigation_geometry" in robot_data:
-                resolved_robot["navigation_geometry"] = dict(robot_data["navigation_geometry"])
+                geometry = dict(robot_data["navigation_geometry"])
+                if "body_file" in geometry:
+                    geometry["body_file"] = _relative_path(self._package_relative_file(
+                        robot, geometry["body_file"], "navigation_geometry.body_file"
+                    ), self.repo_root)
+                resolved_robot["navigation_geometry"] = geometry
             resolved_robots.append(resolved_robot)
             resolved_visual_robot: dict[str, Any] = {
                 "instance_id": instance_id,
@@ -2139,6 +2293,10 @@ class CatalogResolver:
         sensor_plan = self._build_sensor_plan(
             session_id, backends, resolved_sensor_bindings, "sensors" in required_bindings
         )
+        if any(sensor_plan["streams"].get(kind) for kind in _MEASUREMENT_MESSAGES):
+            if "measurements" not in world.data:
+                raise CatalogError("measurement streams require explicit world measurements (empty object is allowed)")
+            sensor_plan["scene_measurements"] = copy.deepcopy(self._world_measurements(world))
         _validate_physics_sensor_timebase(world, global_policy, sensor_plan)
         control_plan = self._build_control_plan(
             session_id, backends, resolved_control_bindings, "control" in required_bindings
@@ -2197,6 +2355,7 @@ class CatalogResolver:
                 (
                     "controller",
                     "sensor_rig",
+                    "sensor_overrides",
                     *(("payloads",) if payload_aware else ()),
                 ),
                 f"{context}.robots[{index}]",
@@ -2695,6 +2854,18 @@ class CatalogResolver:
             }
         return result
 
+    def _world_measurements(self, world: PackageRecord) -> dict[str, Any]:
+        mjcf = self._asset_path(world, world.data["physics"]["mjcf"], "physics.mjcf")
+        root = ET.parse(mjcf).getroot()
+        try:
+            return validate_scene(
+                world.data["measurements"],
+                geom_names={element.attrib["name"] for element in root.iter("geom") if "name" in element.attrib},
+                body_names={element.attrib["name"] for element in root.iter("body") if "name" in element.attrib},
+            )
+        except ValueError as exc:
+            raise CatalogError(str(exc)) from exc
+
     def _build_sensor_plan(
         self,
         session_id: str,
@@ -2713,6 +2884,8 @@ class CatalogResolver:
             for binding in bindings:
                 stream = self._sensor_stream(binding)
                 stream_class = stream.pop("_stream_class")
+                if stream_class == "gnss" or stream_class in _MEASUREMENT_MESSAGES:
+                    streams.setdefault(stream_class, [])
                 if stream_class not in streams:
                     raise CatalogError(f"unsupported sensor stream class: {stream_class}")
                 streams[stream_class].append(stream)
@@ -2729,17 +2902,28 @@ class CatalogResolver:
         rig_sensor = _mapping(binding["rig_sensor"], "sensor binding rig_sensor")
         sensor = binding["sensor"]
         sensor_data = sensor.data
-        base_configuration = _configuration(sensor_data["configuration"], f"{sensor.manifest_path}.configuration")
-        rig_configuration = _configuration(rig_sensor.get("configuration", {}), "rig sensor configuration")
+        stream_class = _string(
+            _list(sensor_data["outputs"], f"{sensor.manifest_path}.outputs")[0], f"{sensor.manifest_path}.outputs[0]"
+        )
+        config_reader = _mapping if stream_class in _MEASUREMENT_MESSAGES else _configuration
+        base_configuration = config_reader(sensor_data["configuration"], f"{sensor.manifest_path}.configuration")
+        rig_configuration = config_reader(rig_sensor.get("configuration", {}), "rig sensor configuration")
         if "raycast_frame" in base_configuration:
             raise CatalogError(
                 "sensor package configuration must not own raycast_frame; declare it on the SensorRig instance"
             )
         raycast_frame = rig_configuration.pop("raycast_frame", None)
         configuration = {**base_configuration, **rig_configuration}
-        stream_class = _string(
-            _list(sensor_data["outputs"], f"{sensor.manifest_path}.outputs")[0], f"{sensor.manifest_path}.outputs[0]"
-        )
+        if stream_class in _MEASUREMENT_MESSAGES:
+            measurement: dict[str, Any] = {}
+            for declaration in (base_configuration, rig_configuration):
+                if "measurement" in declaration:
+                    values = _mapping(declaration["measurement"], "measurement")
+                    if "mount_pose" in values:
+                        raise CatalogError("measurement.mount_pose is catalog-owned; use the rig extrinsic")
+                    measurement.update(values)
+            if "measurement" in configuration:
+                configuration["measurement"] = measurement
         if stream_class == "mid360" and raycast_frame is None:
             raise CatalogError("Mid360 rig sensor requires configuration.raycast_frame")
         if stream_class != "mid360" and raycast_frame is not None:
@@ -2806,6 +2990,56 @@ class CatalogResolver:
             raise CatalogError("sensor stream rate_hz must be positive finite numeric data")
         extrinsic_source = rig_sensor.get("extrinsic", robot_frame.get("extrinsic", _IDENTITY_EXTRINSIC))
         extrinsic = _extrinsic(extrinsic_source, "sensor stream extrinsic")
+        if stream_class == "gnss":
+            _keys(configuration, ("gnss",), (), "GNSS sensor configuration")
+            if (
+                runtime != {"owner": "physics", "source": "mujoco_gnss"}
+                or interface != {"transport": "typed_dds", "message_type": "lingtu.dds.GnssFix"}
+            ):
+                raise CatalogError("GNSS requires physics/mujoco_gnss/typed_dds and lingtu.dds.GnssFix")
+            gnss = _gnss_configuration(configuration["gnss"])
+            body_frame = gnss["body_frame_id"].removeprefix(f"{instance_id}/")
+            robot = binding["robot"]
+            body_names = _xml_body_names(self._asset_path(robot, robot.data["physics"]["mjcf"], "physics.mjcf"))
+            if body_frame not in robot_frames or body_frame not in body_names:
+                raise CatalogError(f"gnss.body_frame_id {body_frame!r} is not a declared robot body frame")
+            body_extrinsic = _body_mount_extrinsic(
+                body_frame, parent_frame, resolved_parent_frame, robot_frames, extrinsic, "gnss",
+            )
+            antenna = _rotate_vector(body_extrinsic["quaternion_wxyz"], gnss.get("antenna_offset_m", [0, 0, 0]))
+            gnss["antenna_offset_m"] = [a + p for a, p in zip(antenna, body_extrinsic["position_m"], strict=True)]
+            gnss["body_frame_id"] = f"{instance_id}/{body_frame}"
+            configuration = {"gnss": gnss}
+        elif "gnss" in configuration:
+            raise CatalogError("gnss configuration is only valid for GNSS streams")
+        if stream_class in _MEASUREMENT_MESSAGES:
+            _keys(configuration, ("measurement",), (), "measurement sensor configuration")
+            message_type = _MEASUREMENT_MESSAGES[stream_class]
+            if (
+                runtime != {"owner": "physics", "source": "mujoco_measurement"}
+                or interface != {"transport": "typed_dds", "message_type": message_type}
+            ):
+                raise CatalogError(f"{stream_class} requires physics/mujoco_measurement/typed_dds and {message_type}")
+            measurement = _mapping(configuration["measurement"], "measurement")
+            try:
+                measurement = validate_configuration(measurement, stream_class, rate_hz)
+            except ValueError as exc:
+                raise CatalogError(str(exc)) from exc
+            body_frame = measurement["body_frame_id"].removeprefix(f"{instance_id}/")
+            robot = binding["robot"]
+            body_names = _xml_body_names(self._asset_path(robot, robot.data["physics"]["mjcf"], "physics.mjcf"))
+            if body_frame not in robot_frames or body_frame not in body_names:
+                raise CatalogError(f"measurement.body_frame_id {body_frame!r} is not a declared robot body frame")
+            mount = _body_mount_extrinsic(
+                body_frame, parent_frame, resolved_parent_frame, robot_frames, extrinsic, "measurement",
+            )
+            measurement["body_frame_id"] = f"{instance_id}/{body_frame}"
+            measurement["mount_pose"] = {
+                "position_m": mount["position_m"], "orientation_wxyz": mount["quaternion_wxyz"],
+            }
+            configuration = {"measurement": measurement}
+        elif "measurement" in configuration:
+            raise CatalogError("measurement configuration is only valid for measurement streams")
         stream: dict[str, Any] = {
             "_stream_class": stream_class,
             "instance_id": instance_id,
@@ -2866,6 +3100,15 @@ class CatalogResolver:
                             "manifest": _relative_path(
                                 self._asset_path(controller, policy["manifest"], "policy.manifest"), self.repo_root
                             ),
+                            **({"profiles": {
+                                requirement: {
+                                    key: _relative_path(self._asset_path(
+                                        controller, profile[key], f"policy.profiles.{requirement}.{key}"
+                                    ), self.repo_root)
+                                    for key in ("artifact", "manifest")
+                                }
+                                for requirement, profile in policy["profiles"].items()
+                            }} if policy.get("profiles") else {}),
                         },
                         "timing": timing,
                         "state_channels": list(robot_interface["requires_state"]),
@@ -2935,8 +3178,8 @@ class CatalogResolver:
                     "frame_policy": "sim_time",
                 }
             )
-        for stream_class in ("rgb", "depth", "imu", "mid360", "truth_odom"):
-            for stream in sensor_plan["streams"][stream_class]:
+        for stream_class in ("rgb", "depth", "imu", "mid360", "truth_odom", "gnss", *_MEASUREMENT_MESSAGES):
+            for stream in sensor_plan["streams"].get(stream_class, []):
                 channels.append(
                     {
                         "channel_id": stream["sensor_id"],

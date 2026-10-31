@@ -8,6 +8,8 @@
 #include <functional>
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Eigen>
@@ -53,13 +55,20 @@ class SCANPlannerManager {
   void updatePlanParameters(const PlanParameters &planParams,
                             const BsplineOptimizerParams &optimizerParams);
   void setTimeSource(std::function<double()> timeSource);
+  double currentTimeS(double fallback) const;
 
   bool reboundReplan(Eigen::Vector3d start_pt, Eigen::Vector3d start_vel,
                      Eigen::Vector3d start_acc,
                      Eigen::Vector3d local_target_pt,
                      Eigen::Vector3d local_target_vel, bool flag_polyInit,
-                     bool flag_randomPolyTraj, double nowS);
+                     bool flag_randomPolyTraj, double nowS,
+                     std::optional<std::pair<double,double>> referenceInterval = std::nullopt);
   bool EmergencyStop(Eigen::Vector3d stop_pos, double nowS);
+  // Explicit cubic deceleration, followed by a short constant-speed handoff tail.
+  // Returns only after its complete, timed 3D swept path has been checked.
+  bool decelerate(const Eigen::Vector3d &position, const Eigen::Vector3d &velocity,
+                  const Eigen::Vector3d &acceleration, double cruiseTimeS,
+                  double nowS, double &transitionEndS);
   // One reboundReplan call, retained until the next call, including success.
   const ReboundPlanDebug &reboundDebug() const noexcept { return rebound_debug_; }
   bool planGlobalTraj(const Eigen::Vector3d &start_pos,
@@ -87,8 +96,9 @@ class SCANPlannerManager {
   std::function<double()> timeSource_;
   int continuous_failures_count_{0};
   ReboundPlanDebug rebound_debug_;
+  std::vector<Eigen::Vector3d> reference_waypoints_;
+  double reference_progress_{0.0};
 
-  double currentTimeS(double fallback) const;
   void updateTrajInfo(const UniformBspline &position_traj, double nowS);
   bool checkDynamicFeasibility(UniformBspline position_traj);
   void reparamBspline(UniformBspline &bspline,

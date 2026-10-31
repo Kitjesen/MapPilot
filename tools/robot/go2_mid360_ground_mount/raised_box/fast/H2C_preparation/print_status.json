@@ -1,0 +1,18 @@
+{
+  "updated_at": "2026-09-29T06:40:02",
+  "status": "Sliced. NOT SENT. User reports old time too long; asking whether target 3-5h with bolted flat panels or accept 10.5h lightweight frame.",
+  "baseline_time": "23h17m",
+  "baseline_g": 416.54,
+  "project": "H2C_V7_FAST_blue_PLA_028_4walls_20pct_待切片.3mf",
+  "material": "blue PLA B3; user confirms ready",
+  "layer_height_mm": 0.28,
+  "walls": 4,
+  "infill": "20%",
+  "actual_time": "10h32m approximately (10h27m model +5m7s preparation)",
+  "actual_mass_g": 251.21,
+  "model_mass_g": 207.07,
+  "support_mass_g": 44.14,
+  "support_body_time": "2h4m",
+  "support_interface_time": "19m5s",
+  "layers": 365
+}

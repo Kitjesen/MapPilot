@@ -1,0 +1,83 @@
+{
+  "status": "fit_prototype_not_load_or_field_qualified",
+  "sensor_optical_mount_mm": [
+    50.0,
+    0.0,
+    101.62
+  ],
+  "sensor_bottom_mount_mm": [
+    23.041907491500837,
+    0.0,
+    63.11985391841739
+  ],
+  "sensor_pitch_deg": 35,
+  "base_bottom_z_mm": -9.0,
+  "base_top_z_mm": -5.0,
+  "head_hole_pitch_mm": 58.5,
+  "parts": {
+    "left_side": {
+      "print_size_mm": [
+        120.216,
+        97.454,
+        16.0
+      ],
+      "solid_mass_g": 39.05,
+      "watertight": true,
+      "components": 1
+    },
+    "right_side": {
+      "print_size_mm": [
+        120.216,
+        97.454,
+        16.0
+      ],
+      "solid_mass_g": 39.05,
+      "watertight": true,
+      "components": 1
+    },
+    "base": {
+      "print_size_mm": [
+        110.0,
+        101.0,
+        4.0
+      ],
+      "solid_mass_g": 45.19,
+      "watertight": true,
+      "components": 1
+    },
+    "lid": {
+      "print_size_mm": [
+        110.0,
+        100.0,
+        5.0
+      ],
+      "solid_mass_g": 62.22,
+      "watertight": true,
+      "components": 1
+    },
+    "left_foot": {
+      "print_size_mm": [
+        70.0,
+        14.0,
+        16.004
+      ],
+      "solid_mass_g": 14.04,
+      "watertight": true,
+      "components": 1
+    },
+    "right_foot": {
+      "print_size_mm": [
+        70.0,
+        14.0,
+        15.7
+      ],
+      "solid_mass_g": 14.0,
+      "watertight": true,
+      "components": 1
+    }
+  },
+  "nominal_head_clearance_mm": 3.166,
+  "minimum_nominal_scan_cone_clearance_mm": 38.17817823112789,
+  "checked_screw_paths": "four lid M4 and four base M4 channels sampled clear",
+  "note": "Physical Go2 interface, stiffness and thermal performance remain unverified"
+}

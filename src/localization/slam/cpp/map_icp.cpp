@@ -33,6 +33,28 @@ bool MapIcp::loadMap(const std::string &pcd_path) {
   return true;
 }
 
+bool MapIcp::setMap(
+    std::size_t count, const std::function<PointType(std::size_t)> &point_at) {
+  auto staged = std::make_unique<ICPLocalizer>(config_);
+  if (!staged->setMap(count, point_at)) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    last_error_ = "map_icp_pcd_load_failed";
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (map_generation_ == std::numeric_limits<std::uint64_t>::max()) {
+    last_error_ = "map_icp_generation_exhausted";
+    return false;
+  }
+  icp_.swap(staged);
+  map_loaded_ = true;
+  ++map_generation_;
+  artifact_generation_ = 0U;
+  map_source_ = "pcd";
+  last_error_.clear();
+  return true;
+}
+
 bool MapIcp::loadSemanticMap(const std::string &semantic_map_path) {
   SemanticMapClient client;
   SemanticMapSnapshot snapshot;

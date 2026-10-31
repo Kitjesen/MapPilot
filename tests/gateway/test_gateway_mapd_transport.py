@@ -143,7 +143,7 @@ def test_mapd_request_uses_native_save_map_entrypoint() -> None:
             "action": "save_map",
             "map_id": "yard",
             "request_id": "request-1",
-            "slam_profile": "fastlio2",
+            "slam_profile": "ltlio",
         },
     )
 
@@ -230,3 +230,19 @@ def test_mapd_transport_has_no_local_artifact_path_resolver() -> None:
     from gateway.maps import transport as mapd_transport
 
     assert not hasattr(mapd_transport, "artifact_path")
+
+
+def test_edited_source_and_octomap_build_keep_structured_contract():
+    from gateway.maps.transport import mapd_request
+    client = RecordingMapClient()
+    gw = SimpleNamespace(_map_client=client)
+    operations = [{"operation": "keep_inside", "bounds": {"min_x": 0, "max_x": 2}}]
+    mapd_request(gw, {"action": "save_edited_source", "map_id": "source", "new_map_id": "new",
+                      "expected_source_content_epoch": 21, "operations": operations})
+    mapd_request(gw, {"action": "build_octomap_artifact", "map_id": "new",
+                      "frame_id": "floor_903", "resolution": 0.1, "source_profile": "ltlio"})
+    assert client.calls == [
+        ("save_edited_source", {"map_id": "source", "new_map_id": "new",
+          "expected_source_content_epoch": 21, "operations": operations}),
+        ("build_octomap_artifact", {"map_id": "new", "octomap_frame_id": "floor_903",
+          "octomap_resolution": 0.1, "octomap_source_profile": "ltlio"})]

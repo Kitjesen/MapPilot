@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 import threading
 from functools import lru_cache
@@ -156,6 +157,18 @@ class _NativeHarness:
     def run(self, arguments, **_kwargs):
         argv = list(arguments)
         self.commands.append(argv)
+        if argv[1] == "topics":
+            return subprocess.CompletedProcess(
+                argv, 0, stdout=json.dumps({
+                    "control_version": 1,
+                    "ok": True,
+                    "topics": [
+                        {"topic": "/imu/raw", "label": "IMU", "default_selected": True},
+                        {"topic": "/robot/joint_states", "label": "关节状态", "default_selected": False},
+                    ],
+                    "presets": [],
+                }), stderr="",
+            )
         if argv[1] == "start":
             if self.session is not None and self.state in {"preparing", "recording", "stopping"}:
                 context = self.session.get("context")
@@ -262,9 +275,13 @@ def _service(tmp_path: Path, harness: _NativeHarness) -> NativeRecordingService:
     return service
 
 
-def test_native_start_status_recovery_and_stop_use_root_control(tmp_path: Path) -> None:
+@pytest.mark.parametrize("domain_id", (0, 219))
+def test_native_start_status_recovery_and_stop_use_root_control(
+    tmp_path: Path, domain_id: int,
+) -> None:
     harness = _NativeHarness(tmp_path / "recordings")
     service = _service(tmp_path, harness)
+    service._environ["LINGTU_DDS_DOMAIN_ID"] = str(domain_id)
 
     started = service.start(
         duration=60,
@@ -283,6 +300,7 @@ def test_native_start_status_recovery_and_stop_use_root_control(tmp_path: Path) 
     assert argv[argv.index("--prefix") + 1] == "field"
     assert argv[argv.index("--dds") + 1] == "on"
     assert argv[argv.index("--dds-preset") + 1] == "inspection-evidence-v1"
+    assert argv[argv.index("--dds-domain") + 1] == str(domain_id)
     assert argv[argv.index("--inspection-task-id") + 1] == "inspection-task-001"
     assert argv[argv.index("--camera") + 1] == "on"
     assert argv[argv.index("--min-free-gib") + 1] == "12"
@@ -440,6 +458,27 @@ def test_exact_native_binary_override_has_highest_precedence(tmp_path: Path) -> 
     )
 
     assert service._binary_candidates()[0] == exact
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows recorder build layout")
+def test_windows_recorder_build_and_configured_directory_are_discoverable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gateway.services.recording.shutil.which", lambda _name: None)
+    binary = tmp_path / "build/native-recording/windows-x64/Release/lingtu_recorder.exe"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"fixture")
+    service = NativeRecordingService(repository_root=tmp_path, environ={})
+    assert service._binary() == binary.resolve()
+
+    configured = tmp_path / "custom/lingtu_recorder.exe"
+    configured.parent.mkdir()
+    configured.write_bytes(b"fixture")
+    service = NativeRecordingService(
+        repository_root=tmp_path,
+        environ={"LINGTU_RECORDING_BIN_DIR": str(configured.parent)},
+    )
+    assert service._binary() == configured.resolve()
 
 
 @pytest.mark.parametrize("prefix", ["", "has space", "../escape", "中文", "x" * 41])
@@ -713,6 +752,29 @@ def _endpoint(app: FastAPI, path: str, method: str):
     raise AssertionError(f"route not found: {method} {path}")
 
 
+@pytest.mark.parametrize("state", ["failed", "stopping"])
+def test_gateway_stop_error_exposes_terminal_state_without_host_details(state: str) -> None:
+    class _Recording:
+        def stop(self):
+            raise NativeRecordingError(
+                "native_recorder_stop_failed",
+                "private worker error",
+                status_code=503,
+                detail={"state": state, "session_id": "field-001", "path": "/private/recordings", "pid": 123},
+            )
+
+    app = FastAPI()
+    register_operation_routes(app, SimpleNamespace(_go2rtc_upstream="", _recording=_Recording()))
+    response = asyncio.run(_endpoint(app, "/api/v1/recordings/stop", "POST")())
+    payload = json.loads(response.body)
+    assert response.status_code == 503
+    assert payload["detail"] == (
+        {"state": "failed", "recording": False, "session_id": "field-001"}
+        if state == "failed" else None
+    )
+    assert "/private" not in response.body.decode()
+
+
 def test_gateway_recording_api_uses_native_state() -> None:
     snapshot = RecordingSnapshot(
         available=True,
@@ -779,6 +841,7 @@ def test_gateway_recording_api_uses_native_state() -> None:
         "duration": 60,
         "prefix": "field",
         "capture_profile": "evidence",
+        "topics": None,
         "task_id": "inspection-task-001",
         "camera": True,
         "minimum_free_gib": 12,
@@ -789,6 +852,193 @@ def test_gateway_recording_api_uses_native_state() -> None:
         getattr(route, "path", "").startswith("/api/v1/bag/")
         for route in app.routes
     )
+
+
+def test_custom_recording_topics_reach_native_and_bind_current_product(tmp_path: Path) -> None:
+    harness = _NativeHarness(tmp_path / "recordings")
+    service = _service(tmp_path, harness)
+
+    service.start(duration=60, prefix="field", topics=["/imu/raw", "/robot/joint_states"])
+
+    argv = next(command for command in harness.commands if command[1] == "start")
+    selected = [argv[index + 1] for index, value in enumerate(argv) if value == "--dds-topic"]
+    assert selected == ["/imu/raw", "/robot/joint_states"]
+    assert argv[argv.index("--product-session-id") + 1] == PRODUCT_SESSION_ID
+    assert argv[argv.index("--product") + 1] == "inspection"
+    assert "--robot-id" not in argv
+
+
+@pytest.mark.parametrize("topics", [[], ["/not/a/topic"], [123]])
+def test_custom_recording_selection_rejects_unsupported_topics(tmp_path: Path, topics) -> None:
+    harness = _NativeHarness(tmp_path / "recordings")
+    service = _service(tmp_path, harness)
+
+    with pytest.raises(NativeRecordingError) as caught:
+        service.start(duration=60, prefix="field", topics=topics)
+
+    assert caught.value.code == "invalid_recording_topics"
+    assert not any(command[1] == "start" for command in harness.commands)
+
+
+def test_recording_request_cannot_silently_use_default_for_empty_selection() -> None:
+    with pytest.raises(ValueError):
+        RecordingStartRequest(topics=[])
+
+
+def test_camera_only_selection_disables_dds_without_falling_back_to_preset(tmp_path: Path) -> None:
+    request = RecordingStartRequest(topics=[], camera=True)
+    harness = _NativeHarness(tmp_path / "recordings")
+    service = _service(tmp_path, harness)
+
+    service.start(duration=60, prefix="camera", topics=request.topics, camera=request.camera)
+
+    argv = next(command for command in harness.commands if command[1] == "start")
+    assert argv[argv.index("--dds") + 1] == "off"
+    assert argv[argv.index("--camera") + 1] == "on"
+    assert "--dds-preset" not in argv
+    assert "--dds-topic" not in argv
+    assert "--dds-domain" not in argv
+
+
+def test_evidence_cannot_disable_dds_even_with_camera(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        RecordingStartRequest(topics=[], camera=True, capture_profile="evidence", task_id="task")
+    harness = _NativeHarness(tmp_path / "recordings")
+    service = _service(tmp_path, harness)
+
+    with pytest.raises(NativeRecordingError) as caught:
+        service.start(duration=60, prefix="camera", topics=[], camera=True, capture_profile="evidence", task_id="task")
+
+    assert caught.value.code == "invalid_recording_topics"
+    assert harness.commands == []
+
+
+def test_unbound_development_recording_remains_available(tmp_path: Path) -> None:
+    harness = _NativeHarness(tmp_path / "recordings")
+    service = _service(tmp_path, harness)
+    service._environ = {"LINGTU_RECORDING_ROOT": str(harness.root), "LINGTU_SESSION_ROOT": str(tmp_path / "dev")}
+
+    service.start(duration=60, prefix="dev")
+
+    argv = next(command for command in harness.commands if command[1] == "start")
+    assert "--product-session-id" not in argv
+
+
+def test_recording_keeps_configured_physical_robot_identity(tmp_path: Path) -> None:
+    harness = _NativeHarness(tmp_path / "recordings")
+    service = _service(tmp_path, harness)
+    service._environ["LINGTU_ROBOT_ID"] = "inspection-robot-002"
+
+    service.start(duration=60, prefix="field")
+
+    argv = next(command for command in harness.commands if command[1] == "start")
+    assert argv[argv.index("--robot-id") + 1] == "inspection-robot-002"
+
+
+def test_native_artifact_validation_never_publishes_messages(tmp_path: Path) -> None:
+    player = tmp_path / ("lingtu_dds_player.exe" if os.name == "nt" else "lingtu_dds_player")
+    player.write_bytes(b"fixture")
+    player.chmod(0o755)
+    harness = _NativeHarness(tmp_path / "recordings")
+    service = _service(tmp_path, harness)
+    calls = []
+
+    def run(arguments, **_kwargs):
+        calls.append(list(arguments))
+        return subprocess.CompletedProcess(arguments, 0, stdout=json.dumps({
+            "version": 1, "ok": True, "mode": "validate", "validated_messages": 42,
+        }), stderr="")
+
+    service._run = run
+    result = service.inspect_artifact(tmp_path / "dds/sensors.mcap", validate=True)
+
+    assert result["validated_messages"] == 42
+    assert calls == [[str(player), str(tmp_path / "dds/sensors.mcap"), "--dry-run", "--json"]]
+
+
+def test_native_series_forwards_bounded_query_without_replay(tmp_path: Path) -> None:
+    player = tmp_path / ("lingtu_dds_player.exe" if os.name == "nt" else "lingtu_dds_player")
+    player.write_bytes(b"fixture")
+    player.chmod(0o755)
+    service = _service(tmp_path, _NativeHarness(tmp_path / "recordings"))
+    calls = []
+    payload = {
+        "version": 1, "ok": True, "mode": "series", "field": "positions[0]",
+        "start_time_ns": "1700000000000000000", "samples": [{"t": 7.0, "value": 0.4}],
+    }
+
+    def run(arguments, **kwargs):
+        calls.append((list(arguments), kwargs))
+        return subprocess.CompletedProcess(arguments, 0, stdout=json.dumps(payload), stderr="")
+
+    service._run = run
+    artifact = tmp_path / "dds/sensors.mcap.tmp"
+    result = service.series_artifact(
+        artifact, topic="/robot/joint_states", field="positions[0]", start=5.0, end=10.0, max_points=64,
+    )
+    assert result == payload
+    assert calls[0][0] == [
+        str(player), "--series", str(artifact), "--topic", "/robot/joint_states", "--start", "5.0",
+        "--max-points", "64", "--json", "--field", "positions[0]", "--end", "10.0",
+    ]
+    assert calls[0][1]["timeout"] == 60.0
+    assert calls[0][1]["stdin"] == subprocess.DEVNULL
+
+
+@pytest.mark.parametrize("query", [
+    {"start": -1}, {"start": float("nan")}, {"end": float("inf")},
+    {"start": 3, "end": 2}, {"max_points": 15}, {"max_points": 10001}, {"topic": ""},
+])
+def test_native_series_rejects_invalid_query_before_launch(tmp_path: Path, query: dict) -> None:
+    harness = _NativeHarness(tmp_path / "recordings")
+    service = _service(tmp_path, harness)
+    with pytest.raises(NativeRecordingError) as caught:
+        service.series_artifact(tmp_path / "sensors.mcap", **{"topic": "/imu/raw", **query})
+    assert caught.value.status_code == 422
+    assert harness.commands == []
+
+
+def test_native_series_decodes_structured_query_error(tmp_path: Path) -> None:
+    player = tmp_path / ("lingtu_dds_player.exe" if os.name == "nt" else "lingtu_dds_player")
+    player.write_bytes(b"fixture")
+    player.chmod(0o755)
+    service = _service(tmp_path, _NativeHarness(tmp_path / "recordings"))
+
+    def run(arguments, **_kwargs):
+        return subprocess.CompletedProcess(arguments, 1, stdout=json.dumps({
+            "version": 1, "ok": False,
+            "error": {"code": "recording_series_unsupported_field", "message": "field is not numeric or does not exist"},
+        }), stderr="/private/recording/path")
+
+    service._run = run
+    with pytest.raises(NativeRecordingError) as caught:
+        service.series_artifact(tmp_path / "sensors.mcap", topic="/imu/raw", field="wrong")
+    assert caught.value.code == "recording_series_unsupported_field"
+    assert caught.value.status_code == 422
+    assert str(caught.value) == "field is not numeric or does not exist"
+
+
+def test_native_series_discovery_keeps_native_default_field(tmp_path: Path) -> None:
+    player = tmp_path / ("lingtu_dds_player.exe" if os.name == "nt" else "lingtu_dds_player")
+    player.write_bytes(b"fixture")
+    player.chmod(0o755)
+    service = _service(tmp_path, _NativeHarness(tmp_path / "recordings"))
+    calls = []
+
+    def run(arguments, **_kwargs):
+        calls.append(list(arguments))
+        return subprocess.CompletedProcess(arguments, 0, stdout=json.dumps({
+            "version": 1, "ok": True, "mode": "series", "field": None, "fields": [], "samples": [],
+        }), stderr="")
+
+    service._run = run
+    result = service.series_artifact(tmp_path / "sensors.mcap", topic="/lidar/raw_frame")
+    assert result["field"] is None
+    assert result["samples"] == []
+    assert calls == [[
+        str(player), "--series", str(tmp_path / "sensors.mcap"), "--topic", "/lidar/raw_frame",
+        "--start", "0.0", "--max-points", "2000", "--json",
+    ]]
 
 
 def test_gateway_recording_error_does_not_expose_native_details() -> None:

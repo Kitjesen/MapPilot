@@ -18,7 +18,7 @@ def test_product_source_tree_has_no_owned_ros2_adapter_packages() -> None:
         "src/perception/adapters/ros2",
         "src/runtime/adapters/ros2",
         "src/runtime/adapters/navigation_io.py",
-        "src/lingtu/assembly/stacks/navigation_io.py",
+        "src/lingtu/assembly/host/stacks/navigation_io.py",
         "src/nav/adapters/dds/nav",
         "src/lingtu/ros2_plugin_seed.py",
         "src/lingtu/ros2_shutdown.py",
@@ -39,7 +39,7 @@ def test_retired_ros2_tare_adapter_stays_removed() -> None:
 
 
 def test_product_plugin_catalog_has_no_ros2_compat_loader() -> None:
-    source = (ROOT / "src/lingtu/assembly/plugins.py").read_text(encoding="utf-8")
+    source = (ROOT / "src/lingtu/assembly/host/plugin_catalog.py").read_text(encoding="utf-8")
 
     assert "ros2_plugin_seed" not in source
     assert "LINGTU_ENABLE_ROS2_COMPAT" not in source

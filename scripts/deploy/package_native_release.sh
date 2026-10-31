@@ -8,6 +8,8 @@ set -euo pipefail
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ROOT="${LINGTU_NATIVE_RELEASE_SOURCE_ROOT:-${SCRIPT_ROOT}}"
 INSTALLER_SOURCE="${SCRIPT_ROOT}/scripts/deploy/install_native_release.sh"
+GTSAM_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' \
+  "${SCRIPT_ROOT}/scripts/build/locks/gtsam.json")"
 
 NATIVE_EXECUTABLES=(
   build/livox_sdk2_stream/livox_sdk2_stream
@@ -16,7 +18,7 @@ NATIVE_EXECUTABLES=(
   build/dds_probe/lingtu_dds_probe
   build/driver/lingtu_driver
   build/camera_dds/lingtu_camera_dds
-  build/orbbec_native/orbbec_capture
+  build/camera_video/lingtu_camera_webrtc
   build/gnss_dds/lingtu_gnss_dds
 )
 
@@ -43,6 +45,8 @@ RECORDING_EXECUTABLES=(
   lingtu_recorder
   lingtu_dds_recorder
   lingtu_dds_player
+  ltplay
+  lingtu_dds_observer
   lingtu_camera_recorder
   lingtu_camera_player
 )
@@ -57,7 +61,7 @@ MAPD_EXECUTABLES=(
   build/prune/prune
 )
 MAP_OPT_EXECUTABLES=(
-  build/map_opt/lt_pgo
+  build/map_optimization/lt_pgo
 )
 
 write_run_fixture() {
@@ -156,6 +160,7 @@ list_checkout_files() {
 
 run_self_test() {
   local PYTHONPATH="${SCRIPT_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
+  local LINGTU_CAMERA_DRIVER=orbbec_native
   local test_root
   local output_dir
   local install_prefix
@@ -168,8 +173,8 @@ run_self_test() {
   local tar_listing
   local mapd_tar_listing
   local mapd_missing_output
-  local map_opt_missing_output
-  local dashboard_missing_output
+  local map_optimization_missing_output
+  local gtsam_missing_output
   local preflight_output
   local unexpected_root_output
   local fake_control
@@ -183,8 +188,11 @@ run_self_test() {
   local real_mv
   local link_failure_output
   local header_output
+  local realsense_missing_output
+  local realsense_tarball
+  local realsense_listing
 
-  export PYTHONPATH
+  export PYTHONPATH LINGTU_CAMERA_DRIVER
 
   test_root="$(mktemp -d "${TMPDIR:-/tmp}/lingtu-native-release-test.XXXXXX")"
   output_dir="${test_root}/output"
@@ -201,19 +209,23 @@ run_self_test() {
     "${test_root}/source/config" \
     "${test_root}/source/sim/runtime/qualification" \
     "${test_root}/source/src/diagnostics/field" \
-    "${test_root}/source/src/localization/fastlio2/config" \
+    "${test_root}/source/src/localization/ltlio/config" \
     "${test_root}/source/src/nav/cpp" \
     "${test_root}/source/src/nav/inspection" \
+    "${test_root}/source/scripts/deploy" \
     "${test_root}/source/web/dist/assets" \
     "${install_prefix}/bin" \
     "${install_prefix}/etc/lingtu" \
     "${install_prefix}/lib/extensions/depthengine" \
+    "${install_prefix}/lib/lingtu/video/bin" \
+    "${install_prefix}/lib/lingtu/video/lib/aarch64-linux-gnu/gstreamer-1.0" \
+    "${install_prefix}/lib/lingtu/video/libexec/gstreamer-1.0" \
     "${install_prefix}/share/lingtu/cmu_paths" \
     "${install_prefix}/share/lingtu/schemas"
   printf '0.0.0\n' > "${test_root}/source/VERSION"
   printf 'native release self-test\n' > "${test_root}/source/config/self-test.txt"
   printf 'native: true\n' \
-    > "${test_root}/source/src/localization/fastlio2/config/self-test.yaml"
+    > "${test_root}/source/src/localization/ltlio/config/self-test.yaml"
   printf 'runtime_evidence = True\n' \
     > "${test_root}/source/src/diagnostics/field/runtime_evidence.py"
   : > "${test_root}/source/sim/__init__.py"
@@ -221,6 +233,9 @@ run_self_test() {
   install -m 0644 \
     "${SCRIPT_ROOT}/sim/runtime/qualification/visual_acceptance.py" \
     "${test_root}/source/sim/runtime/qualification/visual_acceptance.py"
+  install -m 0644 \
+    "${SCRIPT_ROOT}/scripts/deploy/python-runtime.sh" \
+    "${test_root}/source/scripts/deploy/python-runtime.sh"
   printf 'internal only\n' > "${test_root}/source/src/nav/cpp/internal.hpp"
   : > "${test_root}/source/src/nav/inspection/__init__.py"
   printf 'runtime = True\n' > "${test_root}/source/src/nav/inspection/service.py"
@@ -232,7 +247,7 @@ run_self_test() {
   printf 'console.log("dashboard self-test");\n' \
     > "${test_root}/source/web/dist/assets/self-test.js"
   git -C "${test_root}/source" init -q
-  git -C "${test_root}/source" add VERSION config sim src .gitignore
+  git -C "${test_root}/source" add VERSION config sim src scripts .gitignore
   rm "${test_root}/source/config/deleted.txt"
   mkdir -p "${test_root}/source/src/message"
   printf 'CURRENT_CONTRACT = True\n' \
@@ -244,6 +259,8 @@ run_self_test() {
     install -m 0755 /dev/null "${install_prefix}/bin/$(basename "${relative}")"
   done
   mkdir -p "${test_root}/source/build/orbbec_native/lib/extensions/depthengine"
+  install -m 0755 /dev/null "${test_root}/source/build/orbbec_native/orbbec_capture"
+  install -m 0755 /dev/null "${install_prefix}/bin/orbbec_capture"
   install -m 0644 /dev/null \
     "${test_root}/source/build/orbbec_native/lib/libOrbbecSDK.so.2"
   ln -s libOrbbecSDK.so.2 \
@@ -259,6 +276,24 @@ run_self_test() {
   for relative in "${NAV_LIBRARIES[@]}"; do
     install -m 0644 /dev/null "${install_prefix}/lib/${relative}"
   done
+  install -m 0644 /dev/null "${install_prefix}/lib/libgtsam.so.${GTSAM_VERSION}"
+  ln -s "libgtsam.so.${GTSAM_VERSION}" "${install_prefix}/lib/libgtsam.so.${GTSAM_VERSION%%.*}"
+  install -m 0644 /dev/null "${install_prefix}/lib/libmetis-gtsam.so"
+  install -m 0644 /dev/null "${install_prefix}/lib/libcephes-gtsam.so.1"
+  printf '%s\n' aarch64 > "${install_prefix}/lib/lingtu/video/runtime-arch"
+  cat > "${install_prefix}/lib/lingtu/video/env.sh" <<'EOF'
+_lingtu_video_prefix="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="${_lingtu_video_prefix}/bin:${PATH}"
+export GST_PLUGIN_PATH="${_lingtu_video_prefix}/lib/aarch64-linux-gnu/gstreamer-1.0"
+export GST_PLUGIN_SCANNER="${_lingtu_video_prefix}/libexec/gstreamer-1.0/gst-plugin-scanner"
+unset _lingtu_video_prefix
+EOF
+  install -m 0644 /dev/null \
+    "${install_prefix}/lib/lingtu/video/lib/aarch64-linux-gnu/gstreamer-1.0/libgstwebrtcsink.so"
+  install -m 0755 /dev/null \
+    "${install_prefix}/lib/lingtu/video/libexec/gstreamer-1.0/gst-plugin-scanner"
+  install -m 0755 /dev/null \
+    "${install_prefix}/lib/lingtu/video/bin/gst-inspect-1.0"
   for profile in "${CMU_PATH_PROFILES[@]}"; do
     mkdir -p "${install_prefix}/share/lingtu/cmu_paths/${profile}"
     for relative in "${CMU_PATH_FILES[@]}"; do
@@ -275,8 +310,9 @@ run_self_test() {
   # A map-optimizer build entrypoint makes lt_pgo a required release artifact.
   # Prove that omission fails before supplying the fixture binary.
   mkdir -p "${test_root}/source/scripts/build"
-  install -m 0755 /dev/null "${test_root}/source/scripts/build/build_map_opt.sh"
-  if map_opt_missing_output="$(
+  install -m 0755 "${SCRIPT_ROOT}/scripts/build/build_map_opt.sh" \
+    "${test_root}/source/scripts/build/build_map_opt.sh"
+  if map_optimization_missing_output="$(
     LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
       LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
       LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
@@ -288,8 +324,10 @@ run_self_test() {
   fi
   grep -Fq \
     "Standard install prefix is missing executable: ${install_prefix}/bin/lt_pgo" \
-    <<<"${map_opt_missing_output}"
-  install -m 0755 /dev/null "${install_prefix}/bin/lt_pgo"
+    <<<"${map_optimization_missing_output}"
+  printf '#!/usr/bin/env bash\nprintf "map optimizer fixture\\n"\n' \
+    > "${install_prefix}/bin/lt_pgo"
+  chmod 0755 "${install_prefix}/bin/lt_pgo"
 
   key_file=""
   if python3 -c 'import cryptography' >/dev/null 2>&1; then
@@ -340,24 +378,24 @@ PY
     <<<"${unexpected_root_output}"
   rmdir "${install_prefix}/debug"
 
-  mv \
-    "${test_root}/source/web/dist/index.html" \
-    "${test_root}/source/web/dist/index.html.missing"
-  if dashboard_missing_output="$(
+  mv "${install_prefix}/lib/libgtsam.so.${GTSAM_VERSION}" "${test_root}/gtsam-library"
+  if gtsam_missing_output="$(
     LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
       LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
       LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
       SOURCE_DATE_EPOCH=1704067200 \
-      bash "${BASH_SOURCE[0]}" v0.0.0 "${test_root}/output-dashboard-missing" 2>&1
+      bash "${BASH_SOURCE[0]}" v0.0.0 "${test_root}/output-gtsam-missing" 2>&1
   )"; then
-    echo "packager accepted a release without a built dashboard" >&2
+    echo "packager accepted a release without its locked GTSAM runtime" >&2
     return 1
   fi
-  grep -Fq 'Native release dashboard is missing' \
-    <<<"${dashboard_missing_output}"
-  mv \
-    "${test_root}/source/web/dist/index.html.missing" \
-    "${test_root}/source/web/dist/index.html"
+  grep -Fq "Standard install prefix is missing library: ${install_prefix}/lib/libgtsam.so.${GTSAM_VERSION}" \
+    <<<"${gtsam_missing_output}"
+  mv "${test_root}/gtsam-library" "${install_prefix}/lib/libgtsam.so.${GTSAM_VERSION}"
+
+  # A robot release must work without any Web build; later packaging also
+  # checks that an existing Web build is not silently bundled.
+  mv "${test_root}/source/web" "${test_root}/web"
 
   LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
     LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
@@ -391,14 +429,15 @@ PY
   grep -Fq 'lingtu-0.0.0-aarch64-native-release/metadata.json' \
     <<<"${tar_listing}"
   grep -Fq \
-    'lingtu-0.0.0-aarch64-native-release/src/localization/fastlio2/config/self-test.yaml' \
+    'lingtu-0.0.0-aarch64-native-release/src/localization/ltlio/config/self-test.yaml' \
     <<<"${tar_listing}"
   grep -Fq 'lingtu-0.0.0-aarch64-native-release/install_nav.sh' \
     <<<"${tar_listing}"
-  grep -Fq 'lingtu-0.0.0-aarch64-native-release/web/dist/index.html' \
-    <<<"${tar_listing}"
-  grep -Fq 'lingtu-0.0.0-aarch64-native-release/web/dist/assets/self-test.js' \
-    <<<"${tar_listing}"
+  if grep -Fq 'lingtu-0.0.0-aarch64-native-release/web/' <<<"${tar_listing}"; then
+    echo "native release unexpectedly contains the Web application" >&2
+    return 1
+  fi
+  mv "${test_root}/web" "${test_root}/source/web"
   grep -Fq \
     'lingtu-0.0.0-aarch64-native-release/src/nav/inspection/service.py' \
     <<<"${tar_listing}"
@@ -435,6 +474,21 @@ PY
     'lingtu-0.0.0-aarch64-native-release/build/camera_dds/lingtu_camera_dds' \
     <<<"${tar_listing}"
   grep -Fq \
+    'lingtu-0.0.0-aarch64-native-release/lib/lingtu/video/env.sh' \
+    <<<"${tar_listing}"
+  grep -Fq \
+    'lingtu-0.0.0-aarch64-native-release/lib/lingtu/video/runtime-arch' \
+    <<<"${tar_listing}"
+  grep -Fq \
+    'lingtu-0.0.0-aarch64-native-release/lib/lingtu/video/lib/aarch64-linux-gnu/gstreamer-1.0/libgstwebrtcsink.so' \
+    <<<"${tar_listing}"
+  grep -Fq \
+    'lingtu-0.0.0-aarch64-native-release/lib/lingtu/video/libexec/gstreamer-1.0/gst-plugin-scanner' \
+    <<<"${tar_listing}"
+  grep -Fq \
+    'lingtu-0.0.0-aarch64-native-release/lib/lingtu/video/bin/gst-inspect-1.0' \
+    <<<"${tar_listing}"
+  grep -Fq \
     'lingtu-0.0.0-aarch64-native-release/build/orbbec_native/orbbec_capture' \
     <<<"${tar_listing}"
   grep -Fq \
@@ -444,7 +498,7 @@ PY
     'lingtu-0.0.0-aarch64-native-release/build/orbbec_native/lib/extensions/depthengine/libdepthengine.so' \
     <<<"${tar_listing}"
   grep -Fq \
-    'lingtu-0.0.0-aarch64-native-release/build/map_opt/lt_pgo' \
+    'lingtu-0.0.0-aarch64-native-release/build/map_optimization/lt_pgo' \
     <<<"${tar_listing}"
   if grep -Fq 'lingtu-0.0.0-aarch64-native-release/build/maps/mapd' \
       <<<"${tar_listing}"; then
@@ -475,7 +529,11 @@ PY
   test -f "${extracted_package}/build/orbbec_native/lib/libOrbbecSDK.so"
   test -f \
     "${extracted_package}/build/orbbec_native/lib/extensions/depthengine/libdepthengine.so"
-  test -x "${extracted_package}/build/map_opt/lt_pgo"
+  test -x "${extracted_package}/build/map_optimization/lt_pgo"
+  test -x "${extracted_package}/bin/lt_pgo"
+  cmp "${install_prefix}/bin/lt_pgo" "${extracted_package}/bin/lt_pgo"
+  cmp "${install_prefix}/bin/lt_pgo" \
+    "${extracted_package}/build/map_optimization/lt_pgo"
   bash "${extracted_package}/install_nav.sh" \
     --dry-run \
     --package-dir "${extracted_package}" \
@@ -552,10 +610,10 @@ PY
     <<<"${mapd_tar_listing}"
   grep -Fq 'lingtu-0.0.1-aarch64-native-release/build/prune/prune' \
     <<<"${mapd_tar_listing}"
-  grep -Fq 'lingtu-0.0.1-aarch64-native-release/web/dist/index.html' \
-    <<<"${mapd_tar_listing}"
-  grep -Fq 'lingtu-0.0.1-aarch64-native-release/web/dist/assets/self-test.js' \
-    <<<"${mapd_tar_listing}"
+  if grep -Fq 'lingtu-0.0.1-aarch64-native-release/web/' <<<"${mapd_tar_listing}"; then
+    echo "native release unexpectedly bundles a separately built Web application" >&2
+    return 1
+  fi
 
   # Exercise the real installer transaction with a fake ProductControl. The
   # active Product and map must switch from the new tree, or from the restored
@@ -763,6 +821,44 @@ FAKE_MV
   test -e "${stopped_failure_root}/mv-failed"
   test ! -e "${stopped_failure_root}/control.log"
   test ! -e "${stopped_failure_root}/state/current.json"
+
+  # RealSense packages require their selected capture executable, not Orbbec.
+  rm -f "${install_prefix}/bin/orbbec_capture" \
+    "${install_prefix}/lib/libOrbbecSDK.so" \
+    "${install_prefix}/lib/extensions/depthengine/libdepthengine.so"
+  rmdir "${install_prefix}/lib/extensions/depthengine" \
+    "${install_prefix}/lib/extensions"
+  if realsense_missing_output="$(
+    LINGTU_CAMERA_DRIVER=realsense_native \
+      LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
+      LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
+      LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
+      SOURCE_DATE_EPOCH=1704067200 \
+      bash "${BASH_SOURCE[0]}" v0.0.2 "${test_root}/output-realsense-missing" 2>&1
+  )"; then
+    echo "packager accepted a RealSense release without realsense_capture" >&2
+    return 1
+  fi
+  grep -Fq \
+    "Standard install prefix is missing executable: ${install_prefix}/bin/realsense_capture" \
+    <<<"${realsense_missing_output}"
+  install -m 0755 /dev/null "${install_prefix}/bin/realsense_capture"
+  LINGTU_CAMERA_DRIVER=realsense_native \
+    LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
+    LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
+    LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
+    SOURCE_DATE_EPOCH=1704067200 \
+    bash "${BASH_SOURCE[0]}" v0.0.2 "${test_root}/output-realsense"
+  realsense_tarball="${test_root}/output-realsense/lingtu-0.0.2-aarch64-native-release.tar.gz"
+  realsense_listing="$(tar -tzf "${realsense_tarball}")"
+  grep -Fq 'lingtu-0.0.2-aarch64-native-release/bin/realsense_capture' <<<"${realsense_listing}"
+  grep -Fq 'lingtu-0.0.2-aarch64-native-release/build/realsense_native/realsense_capture' \
+    <<<"${realsense_listing}"
+  if grep -Eq '(orbbec_capture|libOrbbecSDK|depthengine)' <<<"${realsense_listing}"; then
+    echo "RealSense release unexpectedly requires Orbbec runtime artifacts" >&2
+    return 1
+  fi
+  echo "RealSense capture selection and missing-capture checks passed"
   echo "package_native_release self-test passed"
 }
 
@@ -770,6 +866,14 @@ if [[ "${1:-}" == "--self-test" ]]; then
   run_self_test
   exit 0
 fi
+
+CAMERA_DRIVER="${LINGTU_CAMERA_DRIVER:-orbbec_native}"
+case "${CAMERA_DRIVER}" in
+  orbbec_native) CAMERA_CAPTURE=build/orbbec_native/orbbec_capture ;;
+  realsense_native) CAMERA_CAPTURE=build/realsense_native/realsense_capture ;;
+  *) echo "Unsupported camera driver: ${CAMERA_DRIVER}" >&2; exit 2 ;;
+esac
+NATIVE_EXECUTABLES+=("${CAMERA_CAPTURE}")
 
 VERSION="${1:-}"
 OUTPUT_DIR="${2:-${ROOT}/dist}"
@@ -825,18 +929,8 @@ trap cleanup EXIT
 PACKAGE_ROOT="${STAGING_DIR}/${PACKAGE_NAME}"
 mkdir -p "${PACKAGE_ROOT}"
 
-if [[ ! -s "${ROOT}/web/dist/index.html" ]]; then
-  echo "Native release dashboard is missing: build web/dist before packaging" >&2
-  exit 1
-fi
-if [[ ! -d "${ROOT}/web/dist/assets" ]] \
-    || [[ -z "$(find "${ROOT}/web/dist/assets" -type f -print -quit)" ]]; then
-  echo "Native release dashboard assets are missing: build web/dist before packaging" >&2
-  exit 1
-fi
-
 # Mirror the deployable Host tree while omitting development-only and explicit
-# compatibility surfaces. Native Fast-LIO2 only needs its runtime config here;
+# compatibility surfaces. Native LTLIO only needs its runtime config here;
 # the algorithm implementation is already linked into the packaged binary.
 list_checkout_files "${ROOT}" \
   | rsync -a \
@@ -847,6 +941,7 @@ list_checkout_files "${ROOT}" \
   --exclude='/.github/' \
   --exclude='/build/' \
   --exclude='/dist/' \
+  --exclude='/web/' \
   --exclude='/log/' \
   --exclude='/logs/' \
   --exclude='/.lingtu/' \
@@ -872,10 +967,10 @@ list_checkout_files "${ROOT}" \
   --exclude='/docker-compose.dev.yml' \
   --include='/src/' \
   --include='/src/localization/' \
-  --include='/src/localization/fastlio2/' \
-  --include='/src/localization/fastlio2/config/***' \
-  --exclude='/src/localization/fastlio2/***' \
-  --exclude='/src/localization/localizer/***' \
+  --include='/src/localization/ltlio/' \
+  --include='/src/localization/ltlio/config/***' \
+  --exclude='/src/localization/ltlio/***' \
+  --exclude='/src/localization/relocalization/***' \
   --exclude='/src/nav/cpp/***' \
   --exclude='/src/nav/inspection/*.c' \
   --exclude='/src/nav/inspection/*.cc' \
@@ -887,10 +982,6 @@ list_checkout_files "${ROOT}" \
   --exclude='/src/nav/inspection/README.md' \
   --exclude='/scripts/deploy/s100p/***' \
   "${ROOT}/" "${PACKAGE_ROOT}/"
-
-# The Gateway serves this built dashboard, which is ignored by Git.
-mkdir -p "${PACKAGE_ROOT}/web/dist"
-rsync -a "${ROOT}/web/dist/" "${PACKAGE_ROOT}/web/dist/"
 
 if [[ -e "${PACKAGE_ROOT}/src/nav/cpp" ]]; then
   echo "Native release must not contain internal source: src/nav/cpp" >&2
@@ -934,6 +1025,7 @@ prepare_default_install_prefix() {
     livox_sdk2_stream \
     slam_core \
     camera_dds \
+    camera_video \
     gnss_dds \
     nav_endpoint \
     driver \
@@ -947,24 +1039,24 @@ prepare_default_install_prefix() {
       scripts/build/build_mapd.sh >/dev/null 2>&1; then
     install_cmake_tree "${ROOT}/build/maps"
     install_cmake_tree "${ROOT}/build/prune"
-    install_cmake_tree "${ROOT}/build/octoplanner3d_headless"
   fi
   if [[ -f "${ROOT}/scripts/build/build_map_opt.sh" ]]; then
-    install_cmake_tree "${ROOT}/build/map_opt"
+    install_cmake_tree "${ROOT}/build/map_optimization"
   fi
 
   install -m 0755 \
     "${ROOT}/build/dds_probe/lingtu_dds_probe" \
     "${INSTALL_PREFIX}/bin/lingtu_dds_probe"
-  install -m 0755 \
-    "${ROOT}/build/orbbec_native/orbbec_capture" \
-    "${INSTALL_PREFIX}/bin/orbbec_capture"
-  rsync -aL \
-    "${ROOT}/build/orbbec_native/lib/" \
-    "${INSTALL_PREFIX}/lib/"
-  if [[ -x "${ROOT}/build/realsense_native/realsense_capture" ]]; then
-    install -m 0755 "${ROOT}/build/realsense_native/realsense_capture" \
-      "${INSTALL_PREFIX}/bin/realsense_capture"
+  if [[ "${CAMERA_DRIVER}" == realsense_native ]]; then
+    install_cmake_tree "${ROOT}/build/realsense_native"
+  else
+    install -m 0755 "${ROOT}/${CAMERA_CAPTURE}" \
+      "${INSTALL_PREFIX}/bin/$(basename "${CAMERA_CAPTURE}")"
+  fi
+  if [[ "${CAMERA_DRIVER}" == orbbec_native ]]; then
+    rsync -aL \
+      "${ROOT}/build/orbbec_native/lib/" \
+      "${INSTALL_PREFIX}/lib/"
   fi
   rsync -a --delete "${ROOT}/config/" "${INSTALL_PREFIX}/etc/lingtu/"
   mkdir -p "${INSTALL_PREFIX}/share/lingtu/schemas"
@@ -1007,6 +1099,30 @@ require_install_library() {
   fi
 }
 
+VIDEO_RUNTIME_DIR="${INSTALL_PREFIX}/lib/lingtu/video"
+if [[ ! -r "${VIDEO_RUNTIME_DIR}/env.sh" || ! -r "${VIDEO_RUNTIME_DIR}/runtime-arch" ]]; then
+  echo "Standard install prefix is missing the prepared camera-video runtime: ${VIDEO_RUNTIME_DIR}" >&2
+  exit 1
+fi
+VIDEO_RUNTIME_ARCH="$(tr -d '[:space:]' < "${VIDEO_RUNTIME_DIR}/runtime-arch")"
+if [[ "${VIDEO_RUNTIME_ARCH}" != "${ARCH}" ]]; then
+  echo "Camera-video runtime architecture ${VIDEO_RUNTIME_ARCH} does not match release ${ARCH}" >&2
+  exit 1
+fi
+if [[ ! -d "${VIDEO_RUNTIME_DIR}/lib" ]] \
+    || [[ -z "$(find "${VIDEO_RUNTIME_DIR}/lib" -type f -name 'libgst*.so' -print -quit)" ]]; then
+  echo "Standard install prefix is missing camera-video GStreamer plugins: ${VIDEO_RUNTIME_DIR}/lib" >&2
+  exit 1
+fi
+if [[ ! -x "${VIDEO_RUNTIME_DIR}/libexec/gstreamer-1.0/gst-plugin-scanner" ]]; then
+  echo "Standard install prefix is missing the camera-video plugin scanner" >&2
+  exit 1
+fi
+if [[ ! -x "${VIDEO_RUNTIME_DIR}/bin/gst-inspect-1.0" ]]; then
+  echo "Standard install prefix is missing camera-video runtime tools" >&2
+  exit 1
+fi
+
 for relative in "${NATIVE_EXECUTABLES[@]}"; do
   require_install_executable "$(basename "${relative}")"
 done
@@ -1016,15 +1132,21 @@ done
 for relative in "${NAV_LIBRARIES[@]}"; do
   require_install_library "${relative}"
 done
-require_install_library libOrbbecSDK.so
+require_install_library "libgtsam.so.${GTSAM_VERSION}"
+require_install_library "libgtsam.so.${GTSAM_VERSION%%.*}"
+require_install_library "libmetis-gtsam.so"
+require_install_library "libcephes-gtsam.so.1"
 if [[ ! -s "${INSTALL_PREFIX}/share/lingtu/schemas/messages.idl" ]]; then
   echo "Standard install prefix is missing the native DDS schema" >&2
   exit 1
 fi
-if [[ ! -d "${INSTALL_PREFIX}/lib/extensions/depthengine" ]] \
-    || [[ -z "$(find "${INSTALL_PREFIX}/lib/extensions/depthengine" -type f -print -quit)" ]]; then
-  echo "Standard install prefix is missing Orbbec depthengine" >&2
-  exit 1
+if [[ "${CAMERA_DRIVER}" == orbbec_native ]]; then
+  require_install_library libOrbbecSDK.so
+  if [[ ! -d "${INSTALL_PREFIX}/lib/extensions/depthengine" ]] \
+      || [[ -z "$(find "${INSTALL_PREFIX}/lib/extensions/depthengine" -type f -print -quit)" ]]; then
+    echo "Standard install prefix is missing Orbbec depthengine" >&2
+    exit 1
+  fi
 fi
 for profile in "${CMU_PATH_PROFILES[@]}"; do
   for relative in "${CMU_PATH_FILES[@]}"; do
@@ -1108,12 +1230,14 @@ stage_legacy_build_layout() {
         "${relative}" 0755
     done
   fi
-  mkdir -p "${PACKAGE_ROOT}/build/orbbec_native/lib"
-  cp -aL "${INSTALL_PREFIX}/lib"/libOrbbecSDK.so* \
-    "${PACKAGE_ROOT}/build/orbbec_native/lib/"
-  rsync -aL \
-    "${INSTALL_PREFIX}/lib/extensions/" \
-    "${PACKAGE_ROOT}/build/orbbec_native/lib/extensions/"
+  if [[ "${CAMERA_DRIVER}" == orbbec_native ]]; then
+    mkdir -p "${PACKAGE_ROOT}/build/orbbec_native/lib"
+    cp -aL "${INSTALL_PREFIX}/lib"/libOrbbecSDK.so* \
+      "${PACKAGE_ROOT}/build/orbbec_native/lib/"
+    rsync -aL \
+      "${INSTALL_PREFIX}/lib/extensions/" \
+      "${PACKAGE_ROOT}/build/orbbec_native/lib/extensions/"
+  fi
 }
 
 # Phase 1 rollback compatibility. Remove this legacy copy after the rollback

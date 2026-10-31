@@ -59,6 +59,8 @@ class RuntimeTopics:
     localization_quality: str = "/slam/localization_quality"
     map_clearing: str = "/nav/map_clearing"
     map_cloud: str = "/slam/map_cloud"
+    map_geometry_applied: str = "/slam/map_geometry_applied"
+    map_geometry_snapshot: str = "/slam/map_geometry_snapshot"
     map_observation: str = "/slam/map_observation"
     maps_accumulated_cloud: str = "/maps/accumulated_cloud"
     maps_activation_ack: str = "/maps/activation/ack"
@@ -71,6 +73,8 @@ class RuntimeTopics:
     maps_scene: str = "/maps/scene"
     maps_state: str = "/maps/state"
     maps_voxel_cloud: str = "/maps/voxel_cloud"
+    motion_profile_request: str = "/driver/profile/request"
+    motion_profile_state: str = "/driver/profile/state"
     nav_command_ack: str = "/nav/command/ack"
     nav_command_request: str = "/nav/command/request"
     nav_goal_status: str = "/nav/goal/status"
@@ -94,6 +98,11 @@ class RuntimeTopics:
     semantic_scene_graph: str = "/nav/semantic/scene_graph"
     semantic_view_request: str = "/nav/semantic/views/request"
     semantic_view_result: str = "/nav/semantic/views/result"
+    sensor_acoustic: str = "/sensors/acoustic"
+    sensor_control_request: str = "/sensors/control/request"
+    sensor_control_result: str = "/sensors/control/result"
+    sensor_semantic: str = "/sensors/semantic"
+    sensor_thermal: str = "/sensors/thermal"
     sim_clock: str = "/sim/clock"
     sim_imu: str = "/sim/imu"
     sim_lidar_raw_frame: str = "/sim/lidar/raw_frame"
@@ -389,6 +398,18 @@ TOPIC_SPECS = {
         "lingtu.dds.PointCloud2",
         "LidarPointcloud",
     ),
+    "/slam/map_geometry_applied": TopicSpec(
+        "/slam/map_geometry_applied",
+        "rt/slam/map_geometry_applied",
+        "lingtu.dds.SlamMapGeometryApplied",
+        "CommandAck",
+    ),
+    "/slam/map_geometry_snapshot": TopicSpec(
+        "/slam/map_geometry_snapshot",
+        "rt/slam/map_geometry_snapshot",
+        "lingtu.dds.SlamMapGeometrySnapshot",
+        "SystemStatus",
+    ),
     "/slam/map_observation": TopicSpec(
         "/slam/map_observation",
         "rt/slam/map_observation",
@@ -460,6 +481,18 @@ TOPIC_SPECS = {
         "rt/maps/voxel_cloud",
         "lingtu.dds.MapCloudLayer",
         "MapCloud",
+    ),
+    "/driver/profile/request": TopicSpec(
+        "/driver/profile/request",
+        "rt/driver/profile/request",
+        "lingtu.dds.MotionProfileRequest",
+        "ControlCommand",
+    ),
+    "/driver/profile/state": TopicSpec(
+        "/driver/profile/state",
+        "rt/driver/profile/state",
+        "lingtu.dds.MotionProfileState",
+        "SystemStatus",
     ),
     "/nav/command/ack": TopicSpec(
         "/nav/command/ack",
@@ -580,6 +613,36 @@ TOPIC_SPECS = {
         "rt/nav/semantic/views/result",
         "lingtu.dds.SemanticViewResult",
         "CommandRequest",
+    ),
+    "/sensors/acoustic": TopicSpec(
+        "/sensors/acoustic",
+        "rt/sensors/acoustic",
+        "lingtu.dds.AcousticBlock",
+        "SensorStream",
+    ),
+    "/sensors/control/request": TopicSpec(
+        "/sensors/control/request",
+        "rt/sensors/control/request",
+        "lingtu.dds.SensorControlRequest",
+        "CommandRequest",
+    ),
+    "/sensors/control/result": TopicSpec(
+        "/sensors/control/result",
+        "rt/sensors/control/result",
+        "lingtu.dds.SensorControlResult",
+        "CommandAck",
+    ),
+    "/sensors/semantic": TopicSpec(
+        "/sensors/semantic",
+        "rt/sensors/semantic",
+        "lingtu.dds.SemanticImage",
+        "CameraStream",
+    ),
+    "/sensors/thermal": TopicSpec(
+        "/sensors/thermal",
+        "rt/sensors/thermal",
+        "lingtu.dds.ThermalImage",
+        "CameraStream",
     ),
     "/sim/clock": TopicSpec(
         "/sim/clock",

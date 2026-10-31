@@ -5,12 +5,14 @@ on:
     branches: [main]
     paths:
       - 'web/**'
+      - 'docs/**'
       - 'tools/simstudio/ui/**'
       - '.github/workflows/frontend-tests.yml'
   pull_request:
     branches: [main]
     paths:
       - 'web/**'
+      - 'docs/**'
       - 'tools/simstudio/ui/**'
       - '.github/workflows/frontend-tests.yml'
 
@@ -46,3 +48,10 @@ jobs:
         working-directory: ${{ matrix.directory }}
       - run: npm run build
         working-directory: ${{ matrix.directory }}
+      - name: Preserve the independently deployable Web build
+        if: matrix.directory == 'web'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lingtu-web-${{ github.sha }}
+          path: web/dist/
+          if-no-files-found: error

@@ -14,10 +14,10 @@ import time
 import numpy as np
 
 from decision.modules.semantic_planner import SemanticPlannerModule
-from decision.modules.visual_servo import VisualServoModule
+from decision.modules.visual_servo import VISUAL_SERVO_MAP_FRAME_ID, VisualServoModule
 from decision.vision.person import PersonTracker, verify_candidate
-from runtime.msgs.geometry import Vector3
-from runtime.msgs.semantic import Detection3D
+from runtime.msgs.geometry import Pose, PoseStamped, Vector3
+from runtime.msgs.semantic import Detection3D, SemanticObservation
 from runtime.msgs.sensor import Image, ImageFormat
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -26,6 +26,38 @@ from runtime.msgs.sensor import Image, ImageFormat
 def _marker_crop(marker: int, size: int = 16) -> np.ndarray:
     """A crop whose every pixel equals `marker`, so a fake encoder can identify it."""
     return np.full((size, size, 3), marker, dtype=np.uint8)
+
+
+def _semantic_observation(
+    sequence: int,
+    source_ts: float,
+    detections: list[Detection3D] | tuple[Detection3D, ...] = (),
+    *,
+    image: Image | None = None,
+    source_generation: int = 1,
+    map_id: str = "test-map",
+    content_epoch: int = 1,
+    status: str = "positive",
+    reason: str = "",
+    product_session_id: str = "",
+) -> SemanticObservation:
+    return SemanticObservation(
+        product_session_id=product_session_id,
+        sequence=sequence,
+        source_ts=source_ts,
+        completed_ts=time.time(),
+        source_generation=source_generation,
+        map_id=map_id,
+        content_epoch=content_epoch,
+        status=status,
+        reason=reason,
+        image=image,
+        robot_pose=PoseStamped(
+            pose=Pose(position=Vector3()),
+            frame_id=VISUAL_SERVO_MAP_FRAME_ID,
+        ),
+        detections=tuple(detections),
+    )
 
 
 class _FakeClip:
@@ -127,6 +159,7 @@ def _offer_returning_identity(
         ]
         vs._latest_bgr_ts = 5.0
         vs._latest_detection_ts = 5.0
+        vs._motion_observation_ready = True
         vs._tick_follow()
 
 
@@ -427,6 +460,296 @@ def test_vs_rejects_descriptive_follow_without_clip_or_vlm():
     assert vs._person_tracker.target_selected is False
 
 
+def test_single_person_confirmation_does_not_override_a_description():
+    for clip in (None, _FakeClip([1.0, 0.0], {2: [0.0, 1.0]})):
+        vs = VisualServoModule()
+        if clip is not None:
+            vs._person_tracker.set_clip_encoder(clip)
+        vs._target_label = "person in red"
+        vs._follow_select_pending = True
+        vs._latest_bgr = _marker_crop(2, 32)
+        vs._latest_bgr_ts = vs._latest_detection_ts = 1.0
+
+        vs._try_select_follow_target(
+            [_person("blue", "person", 4.0, [0, 0, 16, 16])],
+            single_person_confirmed=True,
+        )
+
+        assert not vs._person_tracker.target_selected
+        assert vs._follow_reference_crop is None
+
+
+def test_slow_follow_encoding_does_not_delay_cancel_or_restore_old_intent():
+    started, release, cancelled = (threading.Event() for _ in range(3))
+
+    class BlockingClip:
+        @staticmethod
+        def encode_text(_texts):
+            started.set()
+            assert release.wait(timeout=2.0)
+            return np.array([[1.0, 0.0]])
+
+        @staticmethod
+        def encode_image(_crop):
+            return np.array([1.0, 0.0])
+
+    vs = VisualServoModule()
+    vs._person_tracker.set_clip_encoder(BlockingClip())
+    first = vs.start_follow(description="person in red")
+    goals = []
+    vs.goal_pose.subscribe(goals.append)
+    observation = _semantic_observation(
+        1, time.time(),
+        [Detection3D(id="old", label="person", position=Vector3(4, 0, 0), bbox_2d=[0, 0, 16, 16])],
+        image=Image(data=_marker_crop(1, 32), format=ImageFormat.BGR),
+    )
+    worker = threading.Thread(target=vs._on_observation, args=(observation,))
+
+    def cancel():
+        vs.cancel_follow_task(first["follow_task_id"], first["product_session_id"])
+        cancelled.set()
+
+    stopper = threading.Thread(target=cancel)
+    worker.start()
+    try:
+        assert started.wait(timeout=1.0)
+        stopper.start()
+        assert cancelled.wait(timeout=0.3), "Cancellation waited for the encoder"
+        assert vs.start_follow(description="person in blue")["accepted"]
+    finally:
+        release.set()
+        worker.join(timeout=2.0)
+        if stopper.ident is not None:
+            stopper.join(timeout=2.0)
+
+    assert not worker.is_alive() and not stopper.is_alive()
+    assert vs._target_label == "person in blue"
+    assert not vs._person_tracker.target_selected
+    assert goals == []
+
+
+def test_slow_dino_update_does_not_delay_perception_watchdog():
+    started, release, cancelled = (threading.Event() for _ in range(3))
+
+    class BlockingDino:
+        block = False
+
+        def encode(self, _crop):
+            if self.block:
+                started.set()
+                assert release.wait(timeout=2.0)
+            return np.array([1.0, 0.0])
+
+    encoder = BlockingDino()
+    vs = VisualServoModule(lost_timeout=0.1)
+    vs._person_tracker.set_dino_encoder(encoder)
+    vs.start_follow(target_id="target")
+    source_ts = time.time()
+    vs._person_tracker.lock_target(
+        _person("target", "person", 4.0, [0, 0, 16, 16]) | {"ts": source_ts - 0.1},
+        _marker_crop(1),
+    )
+    vs._follow_select_pending = False
+    vs._follow_select_method = "id"
+    vs._navigation_tasks.add("old-nav")
+    vs._goal_published = True
+    vs.goal_cancel.subscribe(lambda _event: cancelled.set())
+    observation = _semantic_observation(
+        1, source_ts,
+        [Detection3D(id="target", label="person", position=Vector3(4.1, 0, 0), bbox_2d=[0, 0, 16, 16])],
+        image=Image(data=_marker_crop(1, 32), format=ImageFormat.BGR),
+    )
+    encoder.block = True
+    worker = threading.Thread(target=vs._on_observation, args=(observation,))
+    watchdog = threading.Thread(target=vs._watch_perception)
+    worker.start()
+    try:
+        assert started.wait(timeout=1.0)
+        watchdog.start()
+        assert cancelled.wait(timeout=0.4), "Watchdog waited for DINO encoding"
+    finally:
+        vs._watchdog_stop.set()
+        release.set()
+        worker.join(timeout=2.0)
+        if watchdog.ident is not None:
+            watchdog.join(timeout=2.0)
+
+    assert not worker.is_alive() and not watchdog.is_alive()
+    assert not vs._goal_published
+    assert not vs._target_visible
+    assert vs._person_tracker.has_identity_reference
+
+
+def test_old_encoding_cannot_overwrite_a_newer_observation():
+    started, release = threading.Event(), threading.Event()
+
+    class Clip:
+        @staticmethod
+        def encode_text(_texts):
+            return np.array([[1.0, 0.0]])
+
+        @staticmethod
+        def encode_image(crop):
+            if crop[0, 0, 0] == 1:
+                started.set()
+                assert release.wait(timeout=2.0)
+            return np.array([1.0, 0.0])
+
+    vs = VisualServoModule()
+    vs._person_tracker.set_clip_encoder(Clip())
+    vs.start_follow(description="person in red")
+    source_ts = time.time()
+
+    def observation(sequence, marker, x):
+        return _semantic_observation(
+            sequence, source_ts + sequence * 0.001,
+            [Detection3D(id=f"person-{sequence}", label="person", position=Vector3(x, 0, 0), bbox_2d=[0, 0, 16, 16])],
+            image=Image(data=_marker_crop(marker, 32), format=ImageFormat.BGR),
+        )
+
+    worker = threading.Thread(target=vs._on_observation, args=(observation(1, 1, 4.0),))
+    worker.start()
+    try:
+        assert started.wait(timeout=1.0)
+        vs._on_observation(observation(2, 2, 7.0))
+        assert vs._person_tracker.status()["id"] == "person-2"
+    finally:
+        release.set()
+        worker.join(timeout=2.0)
+
+    assert not worker.is_alive()
+    assert vs._person_tracker.status()["id"] == "person-2"
+    assert vs._person_tracker.status()["position"] == [7.0, 0.0, 0.0]
+
+
+def test_waiting_for_vlm_selection_does_not_repeat_unused_encoding():
+    calls = []
+
+    class Clip:
+        @staticmethod
+        def encode_text(_texts):
+            calls.append("text")
+            return np.array([[1.0, 0.0]])
+
+        @staticmethod
+        def encode_image(_crop):
+            calls.append("image")
+            return np.array([1.0, 0.0])
+
+    vs = VisualServoModule()
+    vs._person_tracker.set_clip_encoder(Clip())
+    vs.start_follow(description="person in red")
+    vs._follow_select_running = True
+    vs._on_observation(_semantic_observation(
+        1, time.time(),
+        [Detection3D(id="candidate", label="person", position=Vector3(4, 0, 0), bbox_2d=[0, 0, 16, 16])],
+        image=Image(data=_marker_crop(1, 32), format=ImageFormat.BGR),
+    ))
+
+    assert calls == []
+    assert not vs._person_tracker.target_selected
+
+
+def test_vlm_target_feature_preparation_does_not_delay_cancel():
+    started, release, cancelled = (threading.Event() for _ in range(3))
+    vs, client, _started, loop, loop_thread = _vision_follow("MATCH")
+    calls = 0
+
+    async def choose_and_verify(_messages, temperature=None):
+        nonlocal calls
+        calls += 1
+        return "1" if calls == 1 else "MATCH"
+
+    class BlockingDino:
+        @staticmethod
+        def encode(_crop):
+            started.set()
+            assert release.wait(timeout=2.0)
+            return np.array([1.0, 0.0])
+
+    client.chat = choose_and_verify
+    vs._mode = "idle"
+    receipt = vs.start_follow(description="person in red")
+    vs._person_tracker.set_dino_encoder(BlockingDino())
+    worker = threading.Thread(
+        target=vs._run_vlm_select_sync,
+        args=("person in red", [_marker_crop(1)], [_person("red", "person", 4, [0, 0, 16, 16])], vs._intent_generation),
+    )
+
+    def cancel():
+        vs.cancel_follow_task(receipt["follow_task_id"], receipt["product_session_id"])
+        cancelled.set()
+
+    stopper = threading.Thread(target=cancel)
+    worker.start()
+    try:
+        assert started.wait(timeout=1.0)
+        stopper.start()
+        assert cancelled.wait(timeout=0.3), "VLM target installation held the cancellation lock"
+    finally:
+        release.set()
+        worker.join(timeout=2.0)
+        if stopper.ident is not None:
+            stopper.join(timeout=2.0)
+        _close_vision_loop(loop, loop_thread)
+
+    assert not worker.is_alive() and not stopper.is_alive()
+    assert vs._mode == "idle"
+    assert not vs._person_tracker.target_selected
+
+
+def test_long_absence_description_ranking_does_not_delay_cancel():
+    started, release, cancelled = (threading.Event() for _ in range(3))
+
+    class BlockingClip:
+        @staticmethod
+        def encode_text(_texts):
+            started.set()
+            assert release.wait(timeout=2.0)
+            return np.array([[1.0, 0.0]])
+
+        @staticmethod
+        def encode_image(_crop):
+            return np.array([1.0, 0.0])
+
+    vs = VisualServoModule()
+    receipt = vs.start_follow(description="person in red")
+    vs._person_tracker.set_dino_encoder(_FakeDino())
+    source_ts = time.time()
+    vs._person_tracker.lock_target(
+        _person("old", "person", 4.0, [0, 0, 16, 16]) | {"ts": source_ts - 2.0},
+        _marker_crop(1),
+    )
+    vs._person_tracker.set_clip_encoder(BlockingClip())
+    vs._follow_select_pending = False
+    vs._follow_select_method = "clip"
+    observation = _semantic_observation(
+        1, source_ts,
+        [Detection3D(id=identity, label="person", position=Vector3(4.1, 0, 0), bbox_2d=[0, 0, 16, 16]) for identity in ("a", "b")],
+        image=Image(data=_marker_crop(1, 32), format=ImageFormat.BGR),
+    )
+    worker = threading.Thread(target=vs._on_observation, args=(observation,))
+
+    def cancel():
+        vs.cancel_follow_task(receipt["follow_task_id"], receipt["product_session_id"])
+        cancelled.set()
+
+    stopper = threading.Thread(target=cancel)
+    worker.start()
+    try:
+        assert started.wait(timeout=1.0)
+        stopper.start()
+        assert cancelled.wait(timeout=0.3), "Recovery ranking held the cancellation lock"
+    finally:
+        release.set()
+        worker.join(timeout=2.0)
+        if stopper.ident is not None:
+            stopper.join(timeout=2.0)
+
+    assert not worker.is_alive() and not stopper.is_alive()
+    assert not vs._person_tracker.target_selected
+
+
 def test_vs_follow_command_arms_selection():
     vs = VisualServoModule()
     vs._follow_reference_crop = np.ones((4, 4, 3), dtype=np.uint8)
@@ -464,6 +787,227 @@ def test_stop_and_changed_target_clear_the_identity_reference():
     assert vs._person_tracker.has_identity_reference is True
     vs.cancel_follow_task(second["follow_task_id"], second["product_session_id"])
     assert vs._person_tracker.has_identity_reference is False
+
+
+def test_person_tracker_context_reset_keeps_identity_views_but_clears_spatial_track():
+    tracker = PersonTracker()
+    tracker.set_dino_encoder(_FakeDino())
+    crop = _marker_crop(1)
+    tracker.lock_target(
+        _person("old-track", "person", 3.0, [0, 0, 16, 16]) | {"ts": 4.0},
+        crop,
+    )
+    tracker._verified_reference_crops = [_marker_crop(2)]
+    tracker._verified_reference_timestamps = [4.1]
+    tracker._verified_reference_features = [np.array([0.0, 1.0])]
+    identity_id = tracker.status()["identity_id"]
+
+    assert tracker.reset_observation_context() is True
+
+    status = tracker.status()
+    assert status["identity_id"] == identity_id
+    assert status["id"] is None
+    assert status["position"] is None
+    assert status["velocity"] == [0.0, 0.0]
+    assert tracker.has_identity_reference is True
+    assert tracker.get_follow_waypoint([0.0, 0.0, 0.0]) is None
+    assert len(tracker._verified_reference_crops) == 1
+
+
+def test_follow_rejects_duplicate_and_out_of_order_observations():
+    vs = VisualServoModule()
+    vs._mode = "follow"
+    ticks = []
+    vs._tick_follow = lambda **_kwargs: ticks.append(vs._latest_observation_sequence)
+    now = time.time()
+    current = _semantic_observation(2, now)
+
+    vs._on_observation(current)
+    vs._on_observation(current)
+    vs._on_observation(_semantic_observation(1, now - 0.1))
+
+    assert ticks == [2]
+    assert vs._latest_observation_sequence == 2
+
+
+def test_follow_rejects_a_late_completed_old_source_frame():
+    vs = VisualServoModule(lost_timeout=1.0)
+    vs._mode = "follow"
+    ticks = []
+    vs._tick_follow = lambda **_kwargs: ticks.append(vs._latest_observation_sequence)
+    now = time.time()
+
+    vs._on_observation(_semantic_observation(1, now))
+    vs._on_observation(_semantic_observation(2, now - 5.0))
+
+    assert ticks == [1]
+    assert vs._latest_observation_sequence == 2
+    assert vs._latest_observation_source_ts == now
+
+
+def test_follow_rejects_empty_and_wrong_product_sessions():
+    vs = VisualServoModule(product_session_id="session-current")
+    vs._mode = "follow"
+    ticks = []
+    vs._tick_follow = lambda **_kwargs: ticks.append(True)
+    now = time.time()
+
+    vs._on_observation(_semantic_observation(1, now))
+    vs._on_observation(
+        _semantic_observation(2, now + 0.1, product_session_id="session-old")
+    )
+    vs._on_observation(
+        _semantic_observation(3, now + 0.2, product_session_id="session-current")
+    )
+
+    assert ticks == [True]
+    assert vs._latest_observation_sequence == 3
+
+
+def test_camera_restart_keeps_identity_but_requires_three_new_observations():
+    vs = VisualServoModule()
+    vs._person_tracker.set_dino_encoder(_FakeDino())
+    ref = vs.start_follow(description="person in red")
+    vs._follow_select_pending = False
+    vs._follow_select_method = "clip"
+    vs._person_tracker.lock_target(
+        _person("source-track", "person", 3.0, [0, 0, 16, 16]) | {"ts": 1.0},
+        _marker_crop(1),
+    )
+    vs._observation_boundary = (1, "map-a", 1)
+    vs._latest_observation_sequence = 1
+    vs._navigation_tasks.add("old-nav")
+    vs._goal_published = True
+    cancels = []
+    vs.goal_cancel.subscribe(cancels.append)
+
+    now = time.time()
+    vs._on_observation(
+        _semantic_observation(
+            2,
+            0.0,
+            source_generation=2,
+            status="unavailable",
+            reason="camera_restarted",
+        )
+    )
+
+    status = vs._person_tracker.status()
+    assert vs.get_follow_task(ref["follow_task_id"], ref["product_session_id"])["terminal"] is False
+    assert status["id"] is None
+    assert status["position"] is None
+    assert vs._person_tracker.has_identity_reference is True
+    assert cancels[-1].task_ids == ("old-nav",)
+
+    candidate = Detection3D(
+        id="source-track",
+        label="person",
+        confidence=0.9,
+        position=Vector3(3.1, 0.0, 0.0),
+        bbox_2d=[0, 0, 16, 16],
+        ts=3.0,
+    )
+    for sequence in (3, 4):
+        timestamp = now + (sequence - 3) * 0.1
+        vs._on_observation(
+            _semantic_observation(
+                sequence,
+                timestamp,
+                [candidate],
+                image=Image(_marker_crop(1), ImageFormat.BGR, ts=timestamp),
+                source_generation=2,
+            )
+        )
+        assert vs._person_tracker.identity_candidate() is None
+        assert vs._target_visible is False
+
+    vs._on_observation(
+        _semantic_observation(
+            5,
+            now + 0.2,
+            [candidate],
+            image=Image(_marker_crop(1), ImageFormat.BGR, ts=now + 0.2),
+            source_generation=2,
+        )
+    )
+    assert vs._person_tracker.identity_candidate() is not None
+    assert vs._target_visible is False
+
+
+def test_context_change_ends_explicit_id_follow_without_identity_reference():
+    vs = VisualServoModule()
+    goals = []
+    vs.goal_pose.subscribe(goals.append)
+    ref = vs.start_follow(target_id="reused-track")
+    now = time.time()
+    vs._on_observation(
+        _semantic_observation(1, now, status="negative", map_id="map-a")
+    )
+
+    vs._on_observation(
+        _semantic_observation(
+            2,
+            0.0,
+            map_id="map-b",
+            content_epoch=2,
+            status="unavailable",
+            reason="map_changed",
+        )
+    )
+    vs._on_observation(
+        _semantic_observation(
+            3,
+            now + 0.1,
+            [Detection3D(
+                id="reused-track",
+                label="person",
+                confidence=0.9,
+                position=Vector3(3.0, 0.0, 0.0),
+                bbox_2d=[0, 0, 16, 16],
+                ts=now + 0.1,
+            )],
+            image=Image(_marker_crop(1), ImageFormat.BGR, ts=now + 0.1),
+            map_id="map-b",
+            content_epoch=2,
+        )
+    )
+
+    task = vs.get_follow_task(ref["follow_task_id"], ref["product_session_id"])
+    assert task["state"] == "cancelled"
+    assert task["terminal"] is True
+    assert task["reason"] == "identity_reference_unavailable"
+    assert vs._mode == "idle"
+    assert vs._target_id is None
+    assert goals == []
+
+
+def test_map_switch_can_return_to_a_previous_map_identity_in_sequence():
+    vs = VisualServoModule()
+    now = time.time()
+    vs._on_observation(_semantic_observation(1, now, map_id="map-a", content_epoch=4))
+    vs._on_observation(
+        _semantic_observation(
+            2,
+            0.0,
+            map_id="map-b",
+            content_epoch=1,
+            status="unavailable",
+            reason="map_changed",
+        )
+    )
+    vs._on_observation(
+        _semantic_observation(
+            3,
+            0.0,
+            map_id="map-a",
+            content_epoch=4,
+            status="unavailable",
+            reason="map_changed",
+        )
+    )
+
+    assert vs._observation_boundary == (1, "map-a", 4)
+    assert vs._latest_observation_sequence == 3
 
 
 def test_vlm_match_authorizes_return_then_next_frame_resumes_native_goal():
@@ -700,6 +1244,55 @@ def test_late_identity_match_after_stop_cannot_authorize_motion():
         _close_vision_loop(loop, loop_thread)
 
 
+def test_late_identity_match_after_map_switch_cannot_change_the_target():
+    release = threading.Event()
+    vs, _client, started, loop, loop_thread = _vision_follow("MATCH", release)
+    completed = threading.Event()
+    resolve_calls = []
+    original_worker = vs._run_identity_verification_sync
+    vs._person_tracker.resolve_identity = lambda *args: resolve_calls.append(args)
+    vs._observation_boundary = (1, "map-a", 1)
+    vs._latest_observation_sequence = 1
+
+    def worker(*args):
+        try:
+            original_worker(*args)
+        finally:
+            completed.set()
+
+    vs._run_identity_verification_sync = worker
+    candidate = {
+        "object": {"id": "returned", "ts": time.time()},
+        "crop": _marker_crop(4),
+        "reference_crop": _marker_crop(1),
+        "reference_crops": [_marker_crop(2)],
+        "crops": [_marker_crop(4), _marker_crop(4), _marker_crop(4)],
+    }
+    try:
+        vs._start_identity_verification(candidate)
+        assert started.wait(timeout=1.0)
+
+        vs._on_observation(
+            _semantic_observation(
+                2,
+                0.0,
+                map_id="map-b",
+                content_epoch=2,
+                status="unavailable",
+                reason="map_changed",
+            )
+        )
+        release.set()
+        assert completed.wait(timeout=1.0)
+
+        assert resolve_calls == []
+        assert vs._observation_boundary == (1, "map-b", 2)
+        assert vs._person_tracker.status()["id"] is None
+    finally:
+        release.set()
+        _close_vision_loop(loop, loop_thread)
+
+
 def test_late_vlm_verification_cannot_lock_a_previous_follow_intent():
     verification_started = threading.Event()
     release = threading.Event()
@@ -890,61 +1483,69 @@ def test_tracking_does_not_pair_a_stale_rgb_frame_with_new_detections():
     assert frames == [None]
 
 
-def test_matching_rgb_arrival_resumes_unconfirmed_follow_once():
+def test_atomic_observation_resumes_unconfirmed_follow_once():
     vs = VisualServoModule()
     vs._mode = "follow"
     vs._follow_select_method = "clip"
     vs._target_visible = False
     vs._person_tracker.lock_target(_person("target", "person", 1.0, [0, 0, 10, 10]))
-    vs._latest_detection_ts = 10.0
     calls = []
 
-    def tick():
+    def tick(**_kwargs):
         calls.append(True)
         vs._target_visible = True
 
     vs._tick_follow = tick
-    image = Image(
+    now = time.time()
+    frame = Image(
         data=np.zeros((16, 16, 3), dtype=np.uint8),
         format=ImageFormat.BGR,
-        ts=10.0,
+        ts=now,
     )
+    detection = Detection3D(
+        id="target",
+        label="person",
+        confidence=0.9,
+        position=Vector3(1.0, 0.0, 0.0),
+        bbox_2d=[0, 0, 10, 10],
+        ts=now,
+    )
+    observation = _semantic_observation(1, now, [detection], image=frame)
 
-    vs._on_color(image)
-    vs._on_color(image)
+    vs._on_observation(observation)
+    vs._on_observation(observation)
 
     assert calls == [True]
 
 
-def test_explicit_id_with_dino_waits_for_matching_rgb_reference():
+def test_explicit_id_with_dino_waits_for_atomic_rgb_reference():
     vs = VisualServoModule()
     vs._mode = "follow"
     vs._target_id = "target"
     vs._person_tracker.set_dino_encoder(_FakeDino())
-    vs._last_perception_time = time.monotonic()
-    vs._latest_detections = [
-        Detection3D(
-            id="target",
-            label="person",
-            confidence=0.9,
-            position=Vector3(1.0, 0.0, 0.0),
-            bbox_2d=[0, 0, 10, 10],
-            ts=10.0,
-        )
-    ]
-    vs._latest_detection_ts = 10.0
-    vs._latest_bgr = _marker_crop(9)
-    vs._latest_bgr_ts = 9.0
-
-    vs._tick_follow()
+    now = time.time()
+    detection = Detection3D(
+        id="target",
+        label="person",
+        confidence=0.9,
+        position=Vector3(1.0, 0.0, 0.0),
+        bbox_2d=[0, 0, 10, 10],
+        ts=now,
+    )
+    vs._on_observation(_semantic_observation(1, now, [detection]))
     assert vs._person_tracker.target_selected is False
     assert vs._person_tracker.has_identity_reference is False
 
-    vs._on_color(
-        Image(
+    vs._on_observation(
+        _semantic_observation(
+            2,
+            now + 0.1,
+            [detection],
+            image=Image(
             data=np.ones((16, 16, 3), dtype=np.uint8),
             format=ImageFormat.BGR,
-            ts=10.0,
+                ts=now + 0.1,
+            ),
         )
     )
 

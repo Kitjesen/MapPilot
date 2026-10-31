@@ -1,5 +1,5 @@
 #include "lingtu/maps/build/pipeline.hpp"
-#include "lingtu/maps/patch_bundle.hpp"
+#include "lingtu/maps/io/patch_bundle.hpp"
 
 #include <algorithm>
 #include <array>
@@ -20,12 +20,12 @@
 #include <unordered_set>
 #include <vector>
 
-#include "lingtu/maps/build/grid_artifacts.hpp"
+#include "lingtu/maps/build/grids.hpp"
 #include "lingtu/maps/build/occupancy_snapshot.hpp"
 #include "lingtu/maps/build/process.hpp"
-#include "lingtu/maps/json.hpp"
-#include "lingtu/maps/lock.hpp"
-#include "lingtu/maps/semantic_map_persistence.hpp"
+#include "lingtu/maps/io/json.hpp"
+#include "lingtu/maps/storage/lock.hpp"
+#include "lingtu/maps/semantic/store.hpp"
 
 #if defined(_WIN32)
 #define NOMINMAX
@@ -36,9 +36,9 @@
 #endif
 
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)
-#include "lingtu/maps/build/octomap_io.hpp"
-#include "lingtu/maps/build/sampled_octomap.hpp"
-#include "lingtu/maps/build/ray_octomap.hpp"
+#include "lingtu/maps/octomap/io.hpp"
+#include "lingtu/maps/octomap/sampled.hpp"
+#include "lingtu/maps/octomap/rays.hpp"
 #endif
 
 namespace lingtu::maps {
@@ -46,7 +46,7 @@ namespace {
 
 // Map artifacts are built only by the embedded OctoMap implementation.
 constexpr char kOctomapBuildMode[] = "native_octomap";
-constexpr char kBuilderVersion[] = "0.3.1";
+constexpr char kBuilderVersion[] = "0.3.2";
 
 std::uint64_t CurrentProcessIdValue() {
 #if defined(_WIN32)
@@ -190,6 +190,12 @@ std::string SavedRayStatsJson(const std::string& metadata) {
     first = false;
     result << JsonString(name) << ":" << std::fixed << std::setprecision(0) << *value;
   }
+  if (JsonObjectHasPath(metadata,{"artifacts","octomap","stats","surface_guarded_miss_suppressions"})) {
+    const auto value=JsonObjectNumberAtPath(metadata,
+      {"artifacts","octomap","stats","surface_guarded_miss_suppressions"});
+    if (!value || *value<0.0 || std::floor(*value)!=*value) return {};
+    result << ",\"surface_guarded_miss_suppressions\":" << std::fixed << std::setprecision(0) << *value;
+  }
   result << "}";
   return result.str();
 }
@@ -202,23 +208,22 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
                          const std::string &last_edit_json = "null",
                          std::string saved_ray_stats = {}) {
   std::string builder_version = kBuilderVersion;
+  std::ifstream previous_file(map_dir / "metadata.json");
+  const std::string previous{std::istreambuf_iterator<char>(previous_file), {}};
   bool saved_rays = HasSavedRays(map_dir);
-  // navigation_ready is provenance, not operator intent: only a native
-  // replay of saved sensor rays may set it. Point-cloud approval is recorded
-  // separately and is validated by MapStore at the motion boundary.
+  // navigation_ready records build provenance for diagnostics. It is not an
+  // activation or motion gate; MapStore validates the OctoMap artifact while
+  // OctoPlanner3D and SCAN decide whether the current geometry is usable.
   bool navigation_ready = saved_rays;
   if (manual_voxel_edit) {
-    std::ifstream previous_file(map_dir / "metadata.json");
-    std::ostringstream previous;
-    previous << previous_file.rdbuf();
-    saved_rays = JsonObjectStringAtPath(previous.str(),
+    saved_rays = JsonObjectStringAtPath(previous,
         {"artifacts", "octomap", "evidence_source"}) == "saved_rays";
     navigation_ready = saved_rays &&
-        JsonObjectBoolAtPath(previous.str(),
+        JsonObjectBoolAtPath(previous,
             {"artifacts", "octomap", "navigation_ready"}).value_or(false);
-    saved_ray_stats = SavedRayStatsJson(previous.str());
+    saved_ray_stats = SavedRayStatsJson(previous);
     // Editing voxels is not a new replay. Do not relabel an old build as current.
-    builder_version = JsonObjectStringAtPath(previous.str(), {"builder_version"}).value_or("");
+    builder_version = JsonObjectStringAtPath(previous, {"builder_version"}).value_or("");
     // A voxel edit changes the navigation artifact. Drop any point-cloud
     // approval so the operator must confirm the edited map again.
   }
@@ -282,9 +287,16 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
       ? "\"manual_voxel_edits\":{\"count\":" + std::to_string(manual_edit_count) +
             ",\"journal\":\"voxel_edits.jsonl\",\"last_edit\":" + last_edit_json + "},"
       : std::string{};
+  const auto source_map = JsonObjectStringAtPath(previous, {"source_map_id"});
+  const auto source_epoch = JsonObjectNumberAtPath(previous, {"source_content_epoch"});
+  const std::string source_provenance = source_map && source_epoch
+      ? "\"source_map_id\":" + JsonString(*source_map) + ",\"source_content_epoch\":" +
+          std::to_string(static_cast<std::int64_t>(*source_epoch)) + ","
+      : std::string{};
 
   return "{"
          "\"schema_version\":\"lingtu.saved_map_artifacts.v1\","
+         + source_provenance +
          "\"source_profile\":" +
          JsonString(source_profile) +
          ","
@@ -1107,7 +1119,8 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
             << ",\"dropped_endpoints\":" << saved_ray_stats.dropped_endpoints
             << ",\"free_updates\":" << saved_ray_stats.free_updates
             << ",\"hit_updates\":" << saved_ray_stats.hit_updates
-            << ",\"guarded_miss_suppressions\":" << saved_ray_stats.guarded_miss_suppressions << "}";
+            << ",\"guarded_miss_suppressions\":" << saved_ray_stats.guarded_miss_suppressions
+            << ",\"surface_guarded_miss_suppressions\":" << saved_ray_stats.surface_guarded_miss_suppressions << "}";
       saved_ray_stats_json = stats.str();
     } catch (const std::exception& error) {
       return "{\"success\":false,\"reason_code\":\"saved_ray_build_failed\",\"message\":" +
@@ -1658,6 +1671,58 @@ std::string RunSavedSourceCleanerJson(const std::filesystem::path &source_dir,
          ","
          "\"stderr_truncated\":" +
          std::string(process.stderr_truncated ? "true" : "false") + "}";
+}
+
+std::string SourceEditsJson(const std::vector<SourceEditOperation> &operations) {
+  std::ostringstream out;
+  out << std::setprecision(std::numeric_limits<double>::max_digits10) << "[";
+  for (std::size_t i = 0; i < operations.size(); ++i) {
+    if (i != 0U) out << ",";
+    const auto &edit = operations[i];
+    const auto &b = edit.bounds;
+    out << "{\"operation\":" << JsonString(edit.operation)
+        << ",\"bounds\":{\"min_x\":" << b.min_x << ",\"min_y\":" << b.min_y
+        << ",\"min_z\":" << b.min_z << ",\"max_x\":" << b.max_x
+        << ",\"max_y\":" << b.max_y << ",\"max_z\":" << b.max_z << "}}";
+  }
+  return out.str() + "]";
+}
+
+bool SourceEditsMatch(const std::string &metadata,
+                     const std::vector<SourceEditOperation> &operations) {
+  try {
+    const auto doc = ParseJson(metadata);
+    const auto &saved = doc.AsObject("metadata").at("edit_operations").AsArray("edit_operations");
+    if (saved.size() != operations.size()) return false;
+    const std::array<const char *, 6> keys{"min_x", "min_y", "min_z", "max_x", "max_y", "max_z"};
+    for (std::size_t i = 0; i < saved.size(); ++i) {
+      const auto &item = saved[i].AsObject("operation");
+      if (item.at("operation").AsString("operation") != operations[i].operation) return false;
+      const auto &bounds = item.at("bounds").AsObject("bounds");
+      const auto &b = operations[i].bounds;
+      const std::array<double, 6> values{b.min_x, b.min_y, b.min_z, b.max_x, b.max_y, b.max_z};
+      for (std::size_t j = 0; j < keys.size(); ++j) {
+        const auto *number = std::get_if<double>(&bounds.at(keys[j]).value);
+        if (number == nullptr || *number != values[j]) return false;
+      }
+    }
+    return true;
+  } catch (const std::exception &) {
+    return false;
+  }
+}
+
+std::string SourceBuildOptionsJson(const OctomapBuildOptions &options) {
+  std::ostringstream out;
+  out << std::setprecision(std::numeric_limits<double>::max_digits10)
+      << "{\"frame_id\":" << JsonString(options.frame_id)
+      << ",\"resolution\":" << options.resolution
+      << ",\"source_profile\":" << JsonString(options.source_profile)
+      << ",\"data_source\":" << JsonString(options.data_source)
+      << ",\"slam_source\":" << JsonString(options.slam_source)
+      << ",\"localization_source\":" << JsonString(options.localization_source)
+      << ",\"mapping_source\":" << JsonString(options.mapping_source) << "}";
+  return out.str();
 }
 
 void CopySavedSourceAuxiliaryArtifacts(const std::filesystem::path &source_dir,
@@ -2305,6 +2370,147 @@ std::string MapPipelineCore::CropPcdJson(const std::string &map_id, const PcdBou
   }
 }
 
+std::string MapPipelineCore::SaveEditedSourceJson(
+    const std::string &source_map_id, const std::string &target_map_id,
+    std::uint64_t expected_source_content_epoch,
+    const std::vector<SourceEditOperation> &operations) {
+  constexpr const char *action = "save_edited_source";
+  std::string target;
+  bool created_target = false;
+  bool committed = false;
+  try {
+    const auto source = MapStore::NormalizeMapId(source_map_id);
+    target = MapStore::NormalizeMapId(target_map_id);
+    if (source == target)
+      return FailureJson(action, "edited map requires a new name", "target_exists");
+    // An empty edit list copies the measured source and rays for a new-resolution map.
+    for (const auto &edit : operations) {
+      const auto &b = edit.bounds;
+      if ((edit.operation != "delete_inside" && edit.operation != "keep_inside") || !b.enabled ||
+          !std::isfinite(b.min_x) || !std::isfinite(b.min_y) || !std::isfinite(b.min_z) ||
+          !std::isfinite(b.max_x) || !std::isfinite(b.max_y) || !std::isfinite(b.max_z) ||
+          b.min_x > b.max_x || b.min_y > b.max_y || b.min_z > b.max_z)
+        return FailureJson(action, "invalid edit operation or bounds", "invalid_operations");
+    }
+    auto target_lock = MapLock::TryAcquire(store_.RootDir(), target, "map-edit-target");
+    if (!target_lock)
+      return FailureJson(action, "target map is busy", "build_in_progress");
+    const auto target_dir = store_.MapPath(target);
+    const auto result_json = [&](std::int64_t source_epoch, std::size_t point_count,
+                                 std::size_t removed, bool saved_rays,
+                                 const OctomapBuildOptions &options, bool replayed) {
+      return "{\"action\":\"save_edited_source\",\"success\":true,\"map_id\":" + JsonString(target) +
+          ",\"source_map_id\":" + JsonString(source) + ",\"content_epoch\":" +
+          std::to_string(store_.ContentEpoch(target)) + ",\"source_content_epoch\":" +
+          std::to_string(source_epoch) + ",\"frame_id\":" + JsonString(options.frame_id) +
+          ",\"point_count\":" + std::to_string(point_count) + ",\"removed_points\":" +
+          std::to_string(removed) + ",\"saved_rays_preserved\":" + (saved_rays ? "true" : "false") +
+          ",\"replayed\":" + (replayed ? "true" : "false") +
+          ",\"activation_ready\":false,\"build_options\":" + SourceBuildOptionsJson(options) + "}";
+    };
+    if (std::filesystem::exists(target_dir)) {
+      const auto metadata_path = target_dir / "metadata.json";
+      const auto metadata = std::filesystem::is_regular_file(metadata_path)
+          ? ReadText(metadata_path) : std::string{};
+      if (JsonObjectStringAtPath(metadata, {"metadata_state"}) == "invalidated" &&
+          JsonObjectBoolAtPath(metadata, {"invalidated"}) == true &&
+          JsonObjectStringAtPath(metadata, {"invalidation_reason"}) == "edited_source" &&
+          JsonObjectStringAtPath(metadata, {"map_name"}) == target &&
+          JsonObjectStringAtPath(metadata, {"source_map_id"}) == source &&
+          expected_source_content_epoch > 0U &&
+          JsonObjectNumberAtPath(metadata, {"source_content_epoch"}) ==
+              static_cast<double>(expected_source_content_epoch) &&
+          SourceEditsMatch(metadata, operations) &&
+          std::filesystem::is_regular_file(target_dir / "map.pcd")) {
+        return result_json(static_cast<std::int64_t>(expected_source_content_epoch),
+            static_cast<std::size_t>(JsonIntegerField(metadata, "point_count", 0)),
+            static_cast<std::size_t>(JsonIntegerField(metadata, "removed_points", 0)),
+            JsonObjectBoolAtPath(metadata, {"saved_rays_preserved"}) == true,
+            MetadataOptions(target_dir / "metadata.json"), true);
+      }
+      return FailureJson(action, "target map already exists", "target_exists");
+    }
+    auto source_lock = MapLock::TryAcquire(store_.RootDir(), source, "map-edit-source");
+    if (!source_lock)
+      return FailureJson(action, "source map is busy", "build_in_progress");
+    const auto source_dir = store_.MapPath(source);
+    if (!std::filesystem::is_regular_file(source_dir / "map.pcd"))
+      return FailureJson(action, "source map not found", "map_not_found");
+    const auto source_epoch = store_.ContentEpoch(source);
+    if (expected_source_content_epoch == 0U ||
+        expected_source_content_epoch != static_cast<std::uint64_t>(source_epoch))
+      return FailureJson(action, "source map changed; reload before editing", "source_epoch_mismatch");
+    auto loaded = LoadPcdXyz(source_dir / "map.pcd");
+    if (!loaded.ok || loaded.points.empty())
+      return FailureJson(action, "source point cloud is unreadable", "map_pcd_unreadable");
+    const auto original_count = loaded.points.size();
+    auto kept = std::move(loaded.points);
+    for (const auto &edit : operations) {
+      PcdFilterOptions filter;
+      filter.bounds = edit.bounds;
+      filter.invert_bounds = edit.operation == "delete_inside";
+      kept = FilterPcdPoints(kept, filter);
+    }
+    if (kept.empty())
+      return FailureJson(action, "edits would remove every map point", "empty_after_crop");
+    const auto build_id = MakeBuildId("SOURCE_MAP_EDIT");
+    const auto lock = TryCreateBuildLock(target, build_id + "\nSOURCE_MAP_EDIT\n", &*target_lock);
+    if (!lock.ok)
+      return FailureJson(action, lock.message, lock.reason_code);
+    created_target = true;
+    WriteStatus(target, build_id, "SOURCE_MAP_EDIT", "RUNNING", 0.0, "saving edited source");
+    const auto transaction_dir = BuildDir(target) / (build_id + "_source_transaction");
+    const auto staged = transaction_dir / "staging_map";
+    std::filesystem::create_directories(staged);
+    std::string error;
+    if (!WriteBinaryXyzPcd(staged / "map.pcd", kept, &error))
+      throw std::runtime_error(error);
+    // Subset edits keep point coordinates unchanged. Preserve original measured
+    // rays only as a complete bundle, never fabricate evidence from edited points.
+    const bool saved_rays = HasSavedRays(source_dir);
+    std::vector<std::string> names{"map.pcd", "metadata.json"};
+    if (saved_rays) {
+      for (const auto *name : {"poses.txt", "patches", "patch_bundle.manifest", "scan_origin.txt"}) {
+        if (!CopyPathRecursive(source_dir / name, staged / name, &error))
+          throw std::runtime_error(error);
+        names.emplace_back(name);
+      }
+    }
+    const auto options = MetadataOptions(source_dir / "metadata.json");
+    const auto provenance = SourceBuildOptionsJson(options);
+    WriteText(staged / "metadata.json",
+        "{\"schema_version\":\"lingtu.saved_map_artifacts.v1\",\"metadata_state\":\"invalidated\","
+        "\"invalidated\":true,\"activation_ready\":false,\"invalidation_reason\":\"edited_source\","
+        "\"map_name\":" + JsonString(target) + ",\"source_map_id\":" + JsonString(source) +
+        ",\"source_content_epoch\":" + std::to_string(source_epoch) +
+        ",\"edit_operations\":" + SourceEditsJson(operations) +
+        ",\"point_count\":" + std::to_string(kept.size()) +
+        ",\"removed_points\":" + std::to_string(original_count - kept.size()) +
+        ",\"saved_rays_preserved\":" + (saved_rays ? "true" : "false") + "," +
+        provenance.substr(1, provenance.size() - 2) +
+        ",\"artifacts\":{\"map_pcd\":{\"path\":\"map.pcd\",\"frame_id\":" +
+        JsonString(options.frame_id) + "}}}");
+    const auto backups = BackupNamedArtifacts(store_, target, target_dir, transaction_dir, names);
+    if (!PublishTransactionArtifacts(store_, target, staged, backups, &error)) {
+      if (TransactionNeedsRecovery(error)) {
+        created_target = false;
+        return FailureJson(action, error, "source_map_commit_failed");
+      }
+      throw std::runtime_error(error);
+    }
+    committed = true;
+    WriteStatus(target, build_id, "SOURCE_MAP_EDIT", "SUCCEEDED", 1.0, "edited source saved");
+    std::filesystem::remove_all(LockPath(target));
+    std::filesystem::remove_all(transaction_dir);
+    return result_json(source_epoch, kept.size(), original_count - kept.size(), saved_rays,
+                       options, false);
+  } catch (const std::exception &exc) {
+    if (created_target && !committed)
+      std::filesystem::remove_all(store_.MapPath(target));
+    return FailureJson(action, exc.what(), "source_map_commit_failed");
+  }
+}
+
 std::string MapPipelineCore::BuildOccupancySnapshotJson(const std::string &map_id) {
   std::filesystem::path transaction_dir;
   std::vector<TransactionArtifactBackup> backups;
@@ -2486,7 +2692,9 @@ std::string MapPipelineCore::BuildOccupancySnapshotJson(const std::string &map_i
 }
 
 std::string MapPipelineCore::BuildOctomapArtifactJson(const std::string &map_id,
-                                                       const OctomapBuildOptions &options) {
+                                                       const OctomapBuildOptions &requested_options) {
+  auto options = requested_options.inherit_saved_metadata
+      ? MetadataOptions(store_.MapPath(map_id) / "metadata.json") : requested_options;
   std::filesystem::path transaction_dir;
   std::vector<TransactionArtifactBackup> backups;
   std::string id;
@@ -3666,8 +3874,10 @@ std::filesystem::path MapPipelineCore::LockInfoPath(const std::string &map_id) c
 
 MapPipelineCore::BuildLockResult MapPipelineCore::TryCreateBuildLock(
     const std::string &map_id,
-    const std::string &metadata) const {
-  const auto preflight = store_.CheckMapMutationAllowed(map_id);
+    const std::string &metadata, const MapLock *existing_lock) const {
+  const auto preflight = existing_lock != nullptr
+      ? store_.CheckMapMutationAllowedWhileLocked(map_id, *existing_lock)
+      : store_.CheckMapMutationAllowed(map_id);
   if (!preflight.ok) {
     return {
         false,
@@ -3676,13 +3886,15 @@ MapPipelineCore::BuildLockResult MapPipelineCore::TryCreateBuildLock(
             ? "active_map_conflict"
             : "active_map_state_invalid"};
   }
-  static_cast<void>(RecoverInterruptedBuild(map_id));
-  auto coordination_lock =
-      MapLock::TryAcquire(store_.RootDir(), map_id, "map-pipeline-build-lock");
-  if (!coordination_lock.has_value()) {
-    return {false, "map build already running", "build_in_progress"};
+  std::optional<MapLock> coordination_lock;
+  if (existing_lock == nullptr) {
+    static_cast<void>(RecoverInterruptedBuild(map_id));
+    coordination_lock = MapLock::TryAcquire(store_.RootDir(), map_id, "map-pipeline-build-lock");
+    if (!coordination_lock.has_value())
+      return {false, "map build already running", "build_in_progress"};
+    existing_lock = &*coordination_lock;
   }
-  const auto allowed = store_.CheckMapMutationAllowedWhileLocked(map_id, *coordination_lock);
+  const auto allowed = store_.CheckMapMutationAllowedWhileLocked(map_id, *existing_lock);
   if (!allowed.ok) {
     return {
         false,

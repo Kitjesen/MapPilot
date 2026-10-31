@@ -1,7 +1,9 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "Dom/JsonObject.h"
+#include "Engine/World.h"
 #include "HAL/FileManager.h"
+#include "LingTuSimBodyBindingComponent.h"
 #include "LingTuSimBlueprintStatusSubsystem.h"
 #include "LingTuSimFrontEndLogin.h"
 #if WITH_DEV_AUTOMATION_TESTS && !UE_BUILD_SHIPPING
@@ -15,17 +17,18 @@
 #include "LingTuSimRuntimeUIPolicy.h"
 #include "LingTuSimRuntimeUIStatus.h"
 #include "LingTuSimSessionService.h"
+#include "LingTuSimVisualWorldSubsystem.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeExit.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 
 #if PLATFORM_WINDOWS
-#include <Windows.h>
-
 #include "Windows/AllowWindowsPlatformTypes.h"
+#include "Windows/WindowsHWrapper.h"
 #include "Windows/HideWindowsPlatformTypes.h"
 #endif
 
@@ -195,6 +198,22 @@ bool FLingTuRuntimeUIInteractiveGameEnablesByDefaultTest::RunTest(const FString 
   return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRuntimeUIFrontEndEntryTest, "LingTuSim.UI.Runtime.FrontEndEntry",
+  EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FRuntimeUIFrontEndEntryTest::RunTest(const FString&) {
+  using namespace LingTuSim::UI;
+  TestTrue(TEXT("bare game opens the base welcome, not the obsolete offline driving screen"), FRuntimeUIPolicy::ShouldStartFrontEnd(TEXT("-game"), false, false));
+  TestTrue(TEXT("explicit catalog may enter the front end"), FRuntimeUIPolicy::ShouldStartFrontEnd(TEXT("-game -LingTuGameSelectionCatalog=choices.json"), false, false));
+  TestTrue(TEXT("explicit selector keeps its established route"), FRuntimeUIPolicy::ShouldStartFrontEnd(TEXT("-LingTuGameSelector"), false, false));
+  for (const TCHAR* Request : {TEXT("-LingTuBundle=missing"), TEXT("-LingTuBundle="), TEXT("-LingTuSnapshotPort=bad"),
+       TEXT("-LingTuRunAllocation=missing"), TEXT("-LingTuRunId=run"), TEXT("-LingTuControlPort=bad")})
+    TestFalse(TEXT("failed explicit runtime request cannot be hidden by the welcome screen"), FRuntimeUIPolicy::ShouldStartFrontEnd(Request, false, false));
+  TestFalse(TEXT("bound session stays on the runtime path"), FRuntimeUIPolicy::ShouldStartFrontEnd(TEXT("-game"), true, false));
+  TestFalse(TEXT("bound control stays on the runtime path"), FRuntimeUIPolicy::ShouldStartFrontEnd(TEXT("-game"), false, true));
+  TestFalse(TEXT("explicit development HUD capture still works"), FRuntimeUIPolicy::ShouldStartFrontEnd(TEXT("-LingTuDevRuntimeUIRender"), false, false));
+  return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLingTuRuntimeUIUnattendedDisablesByDefaultTest,
                                  "LingTuSim.UI.Runtime.UnattendedDisablesByDefault",
                                  EAutomationTestFlags::EditorContext |
@@ -301,7 +320,7 @@ bool FLingTuRuntimeUIMenuExitRecordAndCameraKeysAreScopedTest::RunTest(const FSt
   TestTrue(TEXT("X requests exit only from Menu"),
            LingTuSim::UI::FRuntimeUIActionPolicy::ResolveKey(LingTuSim::UI::ERuntimeUIMode::Pause,
                                                              EKeys::X, Action));
-  TestEqual(TEXT("Menu X resolves to runtime exit"), Action, LingTuSim::UI::ERuntimeUIAction::Exit);
+  TestEqual(TEXT("Menu X opens confirmation, not an immediate exit"), Action, LingTuSim::UI::ERuntimeUIAction::OpenQuitConfirmation);
   TestTrue(TEXT("R requests an authority-resolved recording toggle"),
            LingTuSim::UI::FRuntimeUIActionPolicy::ResolveKey(LingTuSim::UI::ERuntimeUIMode::Drive,
                                                              EKeys::R, Action));
@@ -446,6 +465,155 @@ bool FLingTuRuntimeUIHudCaptureRequiresInputAckAndObservedTruthTest::RunTest(
   return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLingTuRuntimeUIHudCaptureRequiresAlignedTruthTest,
+                                 "LingTuSim.UI.Runtime.HudCaptureRequiresAlignedTruth",
+                                 EAutomationTestFlags::EditorContext |
+                                     EAutomationTestFlags::EngineFilter)
+
+bool FLingTuRuntimeUIHudCaptureRequiresAlignedTruthTest::RunTest(const FString &Parameters) {
+  (void)Parameters;
+  auto Status = MakeQualificationReadyStatus();
+  TestTrue(TEXT("matching sample qualifies capture"), Status.IsDriveCaptureReady());
+  Status.FullStatus.TruthSequence -= 1;
+  TestFalse(TEXT("an asynchronous earlier authority sample cannot qualify one-frame capture"),
+            Status.IsDriveCaptureReady());
+  TestTrue(TEXT("same-generation async samples do not change identity"), Status.bFullStatusIdentityCoherent);
+  TestTrue(TEXT("record request remains available from current authority status"), Status.CanRequestRecordStart());
+  Status.FullStatus.TruthSequence = Status.TruthSequence;
+  Status.FullStatus.SimTimeNs -= 1;
+  TestFalse(TEXT("different simulation time cannot qualify one-frame capture"), Status.IsDriveCaptureReady());
+  return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLingTuRuntimeUIReaderAcceptsAsynchronousTruthTest,
+                                 "LingTuSim.UI.Runtime.ReaderAcceptsAsynchronousTruth",
+                                 EAutomationTestFlags::EditorContext |
+                                     EAutomationTestFlags::EngineFilter)
+
+bool FLingTuRuntimeUIReaderAcceptsAsynchronousTruthTest::RunTest(const FString &Parameters) {
+  (void)Parameters;
+  using namespace LingTuSim;
+  FSessionService::UnbindSession();
+  const FWorldInitializationValues Init = FWorldInitializationValues()
+      .AllowAudioPlayback(false).RequiresHitProxies(false).CreatePhysicsScene(false)
+      .CreateNavigation(false).CreateAISystem(false).ShouldSimulatePhysics(false)
+      .SetTransactional(false);
+  UWorld *World = UWorld::CreateWorld(
+      EWorldType::Game, false,
+      FName(*FString::Printf(TEXT("RuntimeUIReader_%s"),
+                           *FGuid::NewGuid().ToString(EGuidFormats::Digits))),
+      nullptr, true, ERHIFeatureLevel::Num, &Init);
+  ON_SCOPE_EXIT {
+    if (World != nullptr) World->DestroyWorld(false);
+    FSessionService::UnbindSession();
+  };
+  if (!TestNotNull(TEXT("a real reader test world exists"), World)) return false;
+  auto *Visual = World->GetSubsystem<ULingTuSimVisualWorldSubsystem>();
+  if (!TestNotNull(TEXT("the real Visual subsystem exists"), Visual)) return false;
+  if (!TestTrue(TEXT("Visual and Session bind together"),
+                Visual->RebindSession(TEXT("session-a"), 7))) return false;
+
+  auto *Body = NewObject<ULingTuSimBodyBindingComponent>(World);
+  Body->StableId = TEXT("thunder_01/base_link");
+  if (!TestTrue(TEXT("one real body binding registers"), Visual->RegisterBinding(Body)))
+    return false;
+  FSnapshotEnvelope Truth;
+  Truth.SessionId = TEXT("session-a");
+  Truth.ModelGeneration = 7;
+  Truth.ResetGeneration = 11;
+  Truth.Sequence = 601;
+  Truth.SimTimeNs = 2'010'000'000;
+  FEntityState &Base = Truth.Entities.AddDefaulted_GetRef();
+  Base.Id.StableId = Body->StableId;
+  Base.Id.InstanceId = TEXT("thunder_01");
+  Base.Id.FrameId = TEXT("base_link");
+  Base.PositionMeters = FVector(0, 0, 0.5);
+  Base.Rotation = FQuat::Identity;
+  if (!TestTrue(TEXT("the Visual frame queues"),
+                Visual->SubmitSnapshot(Truth) == ESnapshotPublishResult::Accepted)) return false;
+  Visual->Tick(0.0F);
+  FSnapshotEnvelope Applied;
+  if (!TestTrue(TEXT("Visual actually applied sequence 601"),
+                Visual->GetLatestAppliedSnapshot(Applied))
+      || !TestEqual(TEXT("the applied frame is exact"), Applied.Sequence, uint64{601}))
+    return false;
+
+  FControlTransportBinding Binding;
+  Binding.RunId = TEXT("run-reader");
+  Binding.SessionId = Truth.SessionId;
+  Binding.BootId = TEXT("boot-reader");
+  Binding.SourceId = TEXT("robotsimue.local_player.0");
+  Binding.ModelGeneration = Truth.ModelGeneration;
+  Binding.ResetGeneration = Truth.ResetGeneration;
+  Binding.LogDirectory = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir());
+  Binding.OriginEvidencePath = FPaths::Combine(Binding.LogDirectory, TEXT("ue-control-origin.jsonl"));
+  Binding.IntentPort = 25124;
+  Binding.StatusPort = 25125;
+  TArray<uint8> Sent;
+  auto Sender = MakeShared<FLingTuSimOperatorIntentSender, ESPMode::ThreadSafe>(
+      Binding,
+      [&Sent](const TArray<uint8> &Datagram, FString &) { Sent = Datagram; return true; },
+      [](const FString &, FString &) { return true; });
+  if (!TestTrue(TEXT("the allocation-bound control sender binds"),
+                FSessionService::BindControlTransport(Sender))) return false;
+  FOperatorIntentSample Input;
+  Input.bViewportFocused = true;
+  Input.bDeadman = true;
+  Input.CameraMode = TEXT("follow");
+  Input.SourceMonotonicNs = 123456789;
+  FString EventId, Error, Hash;
+  if (!TestTrue(TEXT("one intent enters the real successful-send ledger"),
+                FSessionService::PublishOperatorIntent(Input, EventId, Error))
+      || !TestTrue(TEXT("the sent bytes correlate the response"),
+                   FControlTransportProtocol::Sha256Hex(Sent, Hash, Error))) return false;
+  FString Json = TEXT(R"JSON({
+    "schema":"lingtu.sim.ue-control-status.v1",
+    "run_id":"run-reader","session_id":"session-a","boot_id":"boot-reader",
+    "model_generation":7,"reset_generation":11,"server_status_sequence":1,
+    "server_monotonic_ns":123456789,"sim_time_ns":2000000000,"truth_sequence":600,
+    "source_id":"robotsimue.local_player.0","source_epoch":1,"source_sequence":1,
+    "event_id":"EVENT","intent_datagram_sha256":"HASH","status":"accepted","reason":"",
+    "runtime":{"runtime_state":"RUNNING","control_owner":"robotsimue.local_player.0",
+      "deadman":true,"sample_age_ns":10000000,"safe_stop_state":"clear"},
+    "motion":{"requested_axes":{"available":true,"forward":0,"left":0,"yaw_left":0},
+      "admitted_twist_mps_radps":{"available":true,"linear_x":0,"linear_y":0,"angular_z":0},
+      "observed_base_velocity_mps_radps":{"available":true,"linear_x":0,"linear_y":0,"angular_z":0}},
+    "readiness":{
+      "physics":{"state":"ACTIVE","required":true,"source_id":"runtime.physics","blocker":""},
+      "control":{"state":"ACTIVE","required":true,"source_id":"runtime.control","blocker":""},
+      "visual":{"state":"ACTIVE","required":true,"source_id":"runtime.visual","blocker":""},
+      "sensors":{"state":"ACTIVE","required":true,"source_id":"runtime.sensors","blocker":""}},
+    "sensors":[
+      {"stream_id":"thunder_01.front_depth","state":"ACTIVE","sample_count":1,"blocker":""},
+      {"stream_id":"thunder_01.front_rgb","state":"ACTIVE","sample_count":1,"blocker":""},
+      {"stream_id":"thunder_01.imu","state":"ACTIVE","sample_count":1,"blocker":""},
+      {"stream_id":"thunder_01.mid360","state":"ACTIVE","sample_count":1,"blocker":""},
+      {"stream_id":"thunder_01.truth_odom","state":"ACTIVE","sample_count":1,"blocker":""}],
+    "recording":{"state":"idle","elapsed_sim_time_ns":0,"artifact_id":"","blocker":""},
+    "ui":{"ui_mode":"drive","camera_mode":"follow"}
+  })JSON");
+  Json.ReplaceInline(TEXT("EVENT"), *EventId, ESearchCase::CaseSensitive);
+  Json.ReplaceInline(TEXT("HASH"), *Hash, ESearchCase::CaseSensitive);
+  // Publish immediately before Read so freshness measures the production receive stamp.
+  if (!TestTrue(TEXT("the real service accepts the correlated earlier status"),
+                FSessionService::PublishControlStatusJson(Json, Error))) {
+    AddError(Error);
+    return false;
+  }
+  LingTuSim::UI::FRuntimeUILocalState Local;
+  Local.bInputObserved = true;
+  Local.ActualUIMode = TEXT("drive");
+  Local.ActualCameraMode = TEXT("follow");
+  const auto Status = LingTuSim::UI::FRuntimeUIStatusReader::Read(World, &Local);
+  TestTrue(TEXT("the status is fresh"), Status.bFullStatusFresh);
+  TestTrue(TEXT("async samples retain the actual identity"), Status.bFullStatusIdentityCoherent);
+  TestEqual(TEXT("the reader does not report a temporal identity blocker"),
+            Status.FullStatusState, FString(TEXT("Current")));
+  TestTrue(TEXT("record start stays available"), Status.CanRequestRecordStart());
+  TestFalse(TEXT("async samples do not qualify exact-frame capture"), Status.IsDriveCaptureReady());
+  return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLingTuRuntimeUIHudCaptureRejectsNonAcceptedAckStatesTest,
                                  "LingTuSim.UI.Runtime.HudCaptureRejectsNonAcceptedAckStates",
                                  EAutomationTestFlags::EditorContext |
@@ -520,6 +688,45 @@ bool FLingTuRuntimeUIBoundSessionReadLeavesIngressOwnedByVisualTest::RunTest(
   return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLingTuRuntimeUIKeyboardDriveWithoutShiftTest,
+                                 "LingTuSim.UI.Runtime.KeyboardDriveWithoutShift",
+                                 EAutomationTestFlags::EditorContext |
+                                     EAutomationTestFlags::EngineFilter)
+
+bool FLingTuRuntimeUIKeyboardDriveWithoutShiftTest::RunTest(const FString &Parameters) {
+  (void)Parameters;
+  LingTuSim::UI::FRobotDriveInputState State;
+  State.SetDriveMode(true);
+  State.SetViewportFocused(true);
+  TestFalse(TEXT("idle keyboard does not acquire control"), State.GetSnapshot().bDeadman);
+  TestEqual(TEXT("Shift is not a robot motion control"), State.HandleKeyDown(EKeys::LeftShift, false),
+            LingTuSim::UI::ERobotDriveInputUpdate::Unhandled);
+  TestFalse(TEXT("Shift alone never acquires control"), State.GetSnapshot().bDeadman);
+
+  State.HandleKeyDown(EKeys::W, false);
+  TestEqual(TEXT("W moves without Shift"), State.GetSnapshot().Forward, 1.0f);
+  TestTrue(TEXT("held movement key supplies the live input permit"), State.GetSnapshot().bDeadman);
+  State.HandleKeyUp(EKeys::LeftShift);
+  TestEqual(TEXT("releasing Shift never stops a held W"), State.GetSnapshot().Forward, 1.0f);
+  State.HandleKeyDown(EKeys::A, false);
+  State.HandleKeyUp(EKeys::W);
+  TestEqual(TEXT("remaining A continues lateral movement"), State.GetSnapshot().Left, 1.0f);
+  TestEqual(TEXT("last movement key release explicitly stops"), State.HandleKeyUp(EKeys::A),
+            LingTuSim::UI::ERobotDriveInputUpdate::Released);
+  TestFalse(TEXT("release relinquishes the input permit"), State.GetSnapshot().bDeadman);
+  TestTrue(TEXT("last-key release is explicit"), State.GetSnapshot().bRelease);
+  TestEqual(TEXT("release zeros movement"), State.GetSnapshot().Forward, 0.0f);
+
+  State.HandleKeyDown(EKeys::W, false);
+  State.HandleAnalog(EKeys::Gamepad_LeftX, 1.0f);
+  TestEqual(TEXT("keyboard permit does not bypass gamepad safety"), State.GetSnapshot().Left, 0.0f);
+  State.SetViewportFocused(false);
+  State.SetViewportFocused(true);
+  TestEqual(TEXT("focus regain never restores held motion"), State.GetSnapshot().Forward, 0.0f);
+  TestFalse(TEXT("focus regain stays released until fresh input"), State.GetSnapshot().bDeadman);
+  return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLingTuRuntimeUIKeyboardMapsAndCancelsOppositesTest,
                                  "LingTuSim.UI.Runtime.KeyboardMapsAndCancelsOpposites",
                                  EAutomationTestFlags::EditorContext |
@@ -530,11 +737,10 @@ bool FLingTuRuntimeUIKeyboardMapsAndCancelsOppositesTest::RunTest(const FString 
   LingTuSim::UI::FRobotDriveInputState State;
   State.SetDriveMode(true);
   State.SetViewportFocused(true);
-  State.HandleKeyDown(EKeys::LeftShift, false);
   State.HandleKeyDown(EKeys::W, false);
 
   LingTuSim::UI::FRobotDriveInputSnapshot Snapshot = State.GetSnapshot();
-  TestTrue(TEXT("keyboard deadman is active"), Snapshot.bDeadman);
+  TestTrue(TEXT("held keyboard movement permit is active"), Snapshot.bDeadman);
   TestEqual(TEXT("W requests forward"), Snapshot.Forward, 1.0f);
   TestEqual(TEXT("W does not request body-left"), Snapshot.Left, 0.0f);
   TestEqual(TEXT("W does not request yaw-left"), Snapshot.YawLeft, 0.0f);
@@ -586,7 +792,7 @@ bool FLingTuRuntimeUIKeyboardRepeatIsIgnoredTest::RunTest(const FString &Paramet
             LingTuSim::UI::ERobotDriveInputUpdate::Changed);
   TestEqual(TEXT("repeat is handled without changing state"), State.HandleKeyDown(EKeys::W, true),
             LingTuSim::UI::ERobotDriveInputUpdate::Handled);
-  TestEqual(TEXT("repeat does not double the axis"), State.GetSnapshot().Forward, 0.0f);
+  TestEqual(TEXT("repeat does not double the axis"), State.GetSnapshot().Forward, 1.0f);
   return true;
 }
 
@@ -639,33 +845,33 @@ bool FLingTuRuntimeUIGamepadDeadZoneClampAndCameraAxesStaySeparateTest::RunTest(
   return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLingTuRuntimeUIMotionRequiresDriveDeadmanAndForegroundTest,
-                                 "LingTuSim.UI.Runtime.MotionRequiresDriveDeadmanAndForeground",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLingTuRuntimeUIMotionRequiresDriveAndForegroundTest,
+                                 "LingTuSim.UI.Runtime.MotionRequiresDriveAndForeground",
                                  EAutomationTestFlags::EditorContext |
                                      EAutomationTestFlags::EngineFilter)
 
-bool FLingTuRuntimeUIMotionRequiresDriveDeadmanAndForegroundTest::RunTest(
+bool FLingTuRuntimeUIMotionRequiresDriveAndForegroundTest::RunTest(
     const FString &Parameters) {
   (void)Parameters;
   LingTuSim::UI::FRobotDriveInputState State;
   State.SetDriveMode(true);
   State.SetViewportFocused(true);
   State.HandleKeyDown(EKeys::W, false);
-  TestEqual(TEXT("movement without deadman is zero"), State.GetSnapshot().Forward, 0.0f);
-
-  State.HandleKeyDown(EKeys::LeftShift, false);
-  TestEqual(TEXT("deadman admits movement"), State.GetSnapshot().Forward, 1.0f);
+  TestEqual(TEXT("focused Drive admits W without Shift"), State.GetSnapshot().Forward, 1.0f);
 
   TestEqual(TEXT("leaving Drive emits release"), State.SetDriveMode(false),
             LingTuSim::UI::ERobotDriveInputUpdate::Released);
   TestEqual(TEXT("non-Drive movement is zero"), State.GetSnapshot().Forward, 0.0f);
+  State.HandleKeyDown(EKeys::W, false);
+  TestEqual(TEXT("non-Drive key press cannot acquire motion"), State.GetSnapshot().Forward, 0.0f);
 
   State.SetDriveMode(true);
-  State.HandleKeyDown(EKeys::LeftShift, false);
   State.HandleKeyDown(EKeys::W, false);
   TestEqual(TEXT("focus loss emits release"), State.SetViewportFocused(false),
             LingTuSim::UI::ERobotDriveInputUpdate::Released);
   TestEqual(TEXT("background movement is zero"), State.GetSnapshot().Forward, 0.0f);
+  State.HandleKeyDown(EKeys::W, false);
+  TestEqual(TEXT("background key press cannot acquire motion"), State.GetSnapshot().Forward, 0.0f);
   return true;
 }
 
@@ -679,15 +885,14 @@ bool FLingTuRuntimeUIReleasePathsPublishZeroTest::RunTest(const FString &Paramet
   LingTuSim::UI::FRobotDriveInputState State;
   State.SetDriveMode(true);
   State.SetViewportFocused(true);
-  State.HandleKeyDown(EKeys::LeftShift, false);
   State.HandleKeyDown(EKeys::W, false);
 
-  TestEqual(TEXT("deadman key-up emits release"), State.HandleKeyUp(EKeys::LeftShift),
+  TestEqual(TEXT("last movement key-up emits release"), State.HandleKeyUp(EKeys::W),
             LingTuSim::UI::ERobotDriveInputUpdate::Released);
   TestTrue(TEXT("release snapshot is explicit"), State.GetSnapshot().bRelease);
   TestEqual(TEXT("release snapshot zeros forward"), State.GetSnapshot().Forward, 0.0f);
 
-  State.HandleKeyDown(EKeys::LeftShift, false);
+  State.HandleKeyDown(EKeys::W, false);
   TestEqual(TEXT("teardown release is explicit"), State.ReleaseAll(),
             LingTuSim::UI::ERobotDriveInputUpdate::Released);
   TestFalse(TEXT("teardown clears viewport focus"), State.GetSnapshot().bViewportFocused);
@@ -1624,6 +1829,22 @@ bool FLingTuRuntimeUIGameSelectionCatalogContractTest::RunTest(const FString &Pa
            LingTuSim::UI::FGameSelectionCatalogLoader::LoadFromFile(CatalogPath, Catalog, Error));
   TestFalse(TEXT("unavailable asset library is explicit"), Catalog.AssetSummary.bLibraryAvailable);
 
+  const FString LibraryField = TEXT("\"robot_library\":[{\"id\":\"unitree_go2\",\"version\":\"2.3.2\",\"label\":\"Unitree Go2\",\"category\":\"quadruped\"}],");
+  const FString WithLibrary = CatalogJson.Replace(TEXT("\"entries\":"), *(LibraryField + TEXT("\"entries\":")));
+  TestTrue(TEXT("writes source library catalog"), FFileHelper::SaveStringToFile(WithLibrary, *CatalogPath,
+    FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM));
+  TestTrue(TEXT("optional robot source library loads"),
+    LingTuSim::UI::FGameSelectionCatalogLoader::LoadFromFile(CatalogPath, Catalog, Error));
+  TestEqual(TEXT("one imported robot, no new runnable option"), Catalog.RobotLibrary.Num(), 1);
+  if (Catalog.RobotLibrary.Num() == 1) TestEqual(TEXT("category preserved"), Catalog.RobotLibrary[0].Category, FString(TEXT("quadruped")));
+  TestEqual(TEXT("older package metadata defaults to other"), Catalog.Options[0].Robot.Category, FString(TEXT("other")));
+  TestEqual(TEXT("existing session count is unchanged"), Catalog.Options.Num(), 1);
+  const FString BadLibrary = CatalogJson.Replace(TEXT("\"entries\":"), TEXT("\"robot_library\":[{}],\"entries\":"));
+  FFileHelper::SaveStringToFile(BadLibrary, *CatalogPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+  TestFalse(TEXT("incomplete robot summary is rejected"),
+    LingTuSim::UI::FGameSelectionCatalogLoader::LoadFromFile(CatalogPath, Catalog, Error));
+  FFileHelper::SaveStringToFile(CatalogJson, *CatalogPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+
   const FString ControlPath = FPaths::Combine(BundleDirectory, TEXT("control.plan.json"));
   TestTrue(TEXT("writes mismatched plan session id"),
            FFileHelper::SaveStringToFile(
@@ -1830,6 +2051,15 @@ bool FLingTuRuntimeUIInspectionProjectionTrustTest::RunTest(const FString &Param
   TestTrue(TEXT("confirmed continuous progress is displayable"), Projection.bProgressVerified);
   TestEqual(TEXT("current point identity is retained"), Projection.CurrentPointId,
             FString(TEXT("transformer-b")));
+
+  LingTuSim::UI::FInspectionProjection WaitingProjection;
+  TestTrue(TEXT("native loop interval phase remains readable"),
+           LingTuSim::UI::FInspectionProjectionParser::ParseTask(
+               TaskJson.Replace(TEXT("NAVIGATING"), TEXT("WAITING_NEXT_LOOP")),
+               TEXT("task-42"), ExpectedBinding, WaitingProjection, Error));
+  TestEqual(TEXT("loop interval is not presented as driving"),
+            LingTuSim::UI::FInspectionGuidance::PhaseText(WaitingProjection).ToString(),
+            FString(TEXT("等待下一轮巡检 · 当前不行驶")));
 
   const FString ReportJson = TEXT(
       "{\"schema_version\":\"lingtu.inspection.report.v1\",\"task_id\":\"task-42\","

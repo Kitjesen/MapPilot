@@ -4,7 +4,8 @@
   "description": "Saved-map navigation qualification for the SCAN local-planner backend.",
   "product_contract": {
     "product": "nav",
-    "source": "config/runtime_graph/products/nav.yaml",
+    "route": "standard",
+    "source": "config/system/products/nav.yaml",
     "native_control_mode": "autonomy",
     "slam_mode": "localization",
     "requires_map": true
@@ -32,7 +33,7 @@
     ],
     "excluded_claims": [
       "promotion of SCAN to the default local-planner backend",
-      "Fast-LIO2 localization quality",
+      "LTLIO localization quality",
       "S100P timing qualification",
       "Brainstem motor execution",
       "physical robot motion"

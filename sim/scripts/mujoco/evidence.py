@@ -22,6 +22,8 @@ MAX_BASE_HEIGHT_SPAN_M = 0.35
 # Trajectory positions retain world Z, including floor-to-floor elevation.
 MAX_ABS_TILT_RAD = math.radians(30.0)
 MAX_TRAJECTORY_SAMPLES = 4096
+# Accommodate the existing trajectory cap with full-precision JSON floats.
+MAX_MOTION_EVIDENCE_BYTES = 1024 * 1024
 _MOTION_FIELDS = frozenset(
     {
         "schema",
@@ -85,8 +87,9 @@ _STREAM_FIELDS = frozenset(
         "max_schedule_lateness_ms",
     }
 )
-_STREAM_NAMES = frozenset({"imu", "lidar", "camera_rgbd"})
+_STREAM_NAMES = frozenset({"imu", "lidar", "camera_rgbd", "camera_rgb", "camera_depth"})
 _FEEDER_STATES = frozenset({"running", "stopped", "failed"})
+_MEASUREMENT_FIELDS = frozenset({"measurements", "measurement_transport"})
 
 
 class SimMotionEvidenceError(RuntimeError):
@@ -133,7 +136,7 @@ def load_motion_evidence(
 ) -> Mapping[str, Any]:
     payload = _load(
         session_root / MOTION_EVIDENCE_FILENAME,
-        65536,
+        MAX_MOTION_EVIDENCE_BYTES,
         SimMotionEvidenceError,
         "motion evidence",
     )
@@ -154,7 +157,10 @@ def publish_feeder_status(
     environment: Mapping[str, str] | None = None,
     bound_publisher: Callable[[str, bytes], object] | None = None,
 ) -> Mapping[str, Any]:
-    complete = _with_launch_id(payload, _FEEDER_FIELDS, environment, SimFeederStatusError)
+    fields = _FEEDER_FIELDS | ({"gnss"} if "gnss" in payload else set())
+    if _MEASUREMENT_FIELDS & payload.keys():
+        fields |= _MEASUREMENT_FIELDS
+    complete = _with_launch_id(payload, fields, environment, SimFeederStatusError)
     _validate_feeder(
         complete,
         product=complete.get("product"),
@@ -183,7 +189,7 @@ def load_feeder_status(
 ) -> Mapping[str, Any]:
     payload = _load(
         session_root / FEEDER_STATUS_FILENAME,
-        8192,
+        256 * 1024,
         SimFeederStatusError,
         "feeder status",
     )
@@ -391,7 +397,10 @@ def _validate_feeder(
     process: object,
     launch_id: object,
 ) -> None:
-    if frozenset(payload) != _FEEDER_FIELDS:
+    expected = _FEEDER_FIELDS | ({"gnss"} if "gnss" in payload else set())
+    if _MEASUREMENT_FIELDS & payload.keys():
+        expected |= _MEASUREMENT_FIELDS
+    if frozenset(payload) != expected:
         raise SimFeederStatusError("feeder status fields are invalid")
     if (
         payload["schema"] != FEEDER_STATUS_SCHEMA
@@ -416,6 +425,81 @@ def _validate_feeder(
         raise SimFeederStatusError("feeder status streams are invalid")
     for stream in streams.values():
         _validate_stream(stream, window_s, state=str(payload["state"]))
+    if "gnss" in payload:
+        _validate_gnss_sampling(payload["gnss"])
+    if "measurements" in payload:
+        _validate_measurements(payload["measurements"], payload["measurement_transport"])
+
+
+def _validate_measurements(value: Any, transport: Any) -> None:
+    """Sampling and queued batches are evidence, not DDS receipt acknowledgements."""
+    fields = {"state", "streams", "observations", "publication_semantics", "error"}
+    if type(value) is not dict or set(value) != fields:
+        raise SimFeederStatusError("measurement status fields are invalid")
+    if (value["state"] not in {"sampling", "closed", "failed"}
+            or value["publication_semantics"] != "sampled_and_queued_not_dds_receipt_ack"
+            or (value["state"] == "failed" and not _plain_text(value["error"]))
+            or (value["state"] != "failed" and value["error"] is not None)):
+        raise SimFeederStatusError("measurement status state or semantics are invalid")
+    streams, observations = value["streams"], value["observations"]
+    if type(streams) is not dict or not streams or type(observations) is not list:
+        raise SimFeederStatusError("measurement streams or observations are invalid")
+    for sensor_id, stream in streams.items():
+        if (not _plain_text(sensor_id) or type(stream) is not dict
+                or stream.get("sensor_id") != sensor_id or type(stream.get("enabled")) is not bool):
+            raise SimFeederStatusError("measurement stream identity is invalid")
+        if _nonnegative_number(stream.get("rate_hz"), "measurement.rate_hz", SimFeederStatusError) <= 0:
+            raise SimFeederStatusError("measurement rate must be positive")
+    seen: set[str] = set()
+    for observation in observations:
+        if type(observation) is not dict:
+            raise SimFeederStatusError("measurement observation is invalid")
+        sensor_id = observation.get("sensor_id")
+        if not isinstance(sensor_id, str) or sensor_id not in streams or sensor_id in seen:
+            raise SimFeederStatusError("measurement observation sensor is invalid")
+        seen.add(sensor_id)
+        _nonnegative_int(observation.get("sample_count"), "measurement.sample_count", SimFeederStatusError)
+    if type(transport) is not dict or set(transport) != {"scheduled_count", "published_count", "dropped_count"}:
+        raise SimFeederStatusError("measurement transport fields are invalid")
+    counts = {key: _nonnegative_int(number, key, SimFeederStatusError) for key, number in transport.items()}
+    if counts["published_count"] + counts["dropped_count"] > counts["scheduled_count"]:
+        raise SimFeederStatusError("measurement transport counts are inconsistent")
+    try:
+        json.dumps(value, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise SimFeederStatusError("measurement status must be finite JSON") from exc
+
+
+def _validate_gnss_sampling(value: Any) -> None:
+    """GNSS sampling is disclosed separately from endpoint write-rate counters."""
+    from sim.runtime.sensors.gnss import GnssConfig
+
+    fields = {"sensor_id", "frame_id", "expected_hz", "sampled_count", "missed_deadlines", "clock", "delivery", "latest"}
+    if type(value) is not dict or set(value) != fields:
+        raise SimFeederStatusError("GNSS sampling fields are invalid")
+    if (not _plain_text(value["sensor_id"]) or not _plain_text(value["frame_id"])
+            or value["clock"] != "simulation"
+            or value["delivery"] != "queued_on_product_imu_endpoint_not_subscriber_ack"):
+        raise SimFeederStatusError("GNSS sampling identity or clock is invalid")
+    if _nonnegative_number(value["expected_hz"], "gnss.expected_hz", SimFeederStatusError) <= 0:
+        raise SimFeederStatusError("GNSS rate must be positive")
+    count = _nonnegative_int(value["sampled_count"], "gnss.sampled_count", SimFeederStatusError)
+    _nonnegative_int(value["missed_deadlines"], "gnss.missed_deadlines", SimFeederStatusError)
+    latest = value["latest"]
+    if count == 0 and latest is None:
+        return
+    if count == 0 or type(latest) is not dict or set(latest) != {
+        "sim_time_ns", "qualification", "measurement_model", "fix_type", "configuration",
+    }:
+        raise SimFeederStatusError("GNSS latest measurement is inconsistent")
+    _nonnegative_int(latest["sim_time_ns"], "gnss.sim_time_ns", SimFeederStatusError)
+    try:
+        config = GnssConfig.from_mapping(latest["configuration"])
+    except (TypeError, ValueError) as exc:
+        raise SimFeederStatusError(f"GNSS measurement configuration is invalid: {exc}") from exc
+    if (latest["qualification"] != "EXPERIMENTAL" or latest["measurement_model"] != "wgs84_enu_gaussian"
+            or type(latest["fix_type"]) is not int or latest["fix_type"] != (8 if config.fix_available else 0)):
+        raise SimFeederStatusError("GNSS qualification or fix type is inconsistent")
 
 
 def _validate_stream(stream: object, window_s: float, *, state: str) -> None:

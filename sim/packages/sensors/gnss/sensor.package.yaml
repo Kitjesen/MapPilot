@@ -1,0 +1,14 @@
+schema: lingtu.sim.sensor-package.v1
+id: gnss
+version: 1.0.0
+kind: sensor
+description: Experimental WGS84 ENU GNSS; requires an explicit rig georeference, not a calibrated receiver.
+sensor_type: gnss
+outputs:
+  - gnss
+timing:
+  rate_hz: 10
+interface:
+  transport: typed_dds
+  message_type: lingtu.dds.GnssFix
+configuration: {}

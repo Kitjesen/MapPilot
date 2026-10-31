@@ -6,7 +6,7 @@
 #include <utility>
 
 #include "planning/local/planner.hpp"
-#include "runtime/time.hpp"
+#include "app/time.hpp"
 
 namespace lingtu::nav::endpoint {
 namespace {

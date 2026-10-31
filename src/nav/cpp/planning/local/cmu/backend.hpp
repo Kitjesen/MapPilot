@@ -8,7 +8,7 @@
 namespace nav_kernel::local::cmu {
 
 // The fixed path-library backend. This interface is private to Local Planner;
-// callers select a backend through local::Planner.
+// callers select a backend through LocalPlanner.
 class Backend {
  public:
   explicit Backend(const LocalPlannerParams& params);

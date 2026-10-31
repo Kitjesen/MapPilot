@@ -20,7 +20,7 @@ FAST-LIO-SAM 的完整移植。未引入未经标定的里程计噪声或回环�
 
 ## 实际修改
 
-新增 src/localization/opt/gravity_graph.cpp：以原始 LIO 姿态为参考，变量为
+新增 src/localization/map_optimization/gravity_graph.cpp：以原始 LIO 姿态为参考，变量为
 world yaw correction 与 XYZ，R=Rz(delta_yaw)*R_reference。横滚/俯仰在整个
 求解过程中保留，不通过增大软先验权重近似，也不在求解后只把姿态改回去。
 XYZ 均可变化，允许真实坡道、台阶与机身姿态。

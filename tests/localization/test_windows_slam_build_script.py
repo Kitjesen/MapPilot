@@ -383,7 +383,7 @@ def test_windows_slam_build_declares_exact_product_flags_and_cache_identity() ->
         '"-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL"',
         '"-DVCPKG_TARGET_TRIPLET=x64-windows"',
         '"-DVCPKG_HOST_TRIPLET=x64-windows"',
-        '"-DLINGTU_SLAM_FASTLIO2_BACKEND=ON"',
+        '"-DLINGTU_SLAM_LTLIO_BACKEND=ON"',
         '"-DLINGTU_SLAM_BUILD_DDS_RUNTIME=ON"',
         '"-DLINGTU_SLAM_BUILD_TESTS=ON"',
         '"-DLINGTU_ENABLE_SMALL_GICP=OFF"',
@@ -504,7 +504,7 @@ def test_windows_slam_build_accepts_native_vs_cache_without_system_name(
             + __import__("hashlib").sha256(
                 (ROOT / "scripts/build/vcpkg/slam-windows/vcpkg.json").read_bytes()
             ).hexdigest(),
-            "LINGTU_SLAM_FASTLIO2_BACKEND:BOOL=ON",
+            "LINGTU_SLAM_LTLIO_BACKEND:BOOL=ON",
             "LINGTU_SLAM_BUILD_DDS_RUNTIME:BOOL=ON",
             "LINGTU_SLAM_BUILD_TESTS:BOOL=ON",
             "LINGTU_ENABLE_SMALL_GICP:BOOL=OFF",
@@ -545,7 +545,7 @@ def test_windows_slam_build_accepts_native_vs_cache_without_system_name(
             f"CMAKE_HOME_DIRECTORY:INTERNAL={ROOT / 'src' / 'localization' / 'slam' / 'cpp'}",
             "CMAKE_HOME_DIRECTORY:INTERNAL=C:/stale/source",
         ),
-        ("LINGTU_SLAM_FASTLIO2_BACKEND:BOOL=ON", "LINGTU_SLAM_FASTLIO2_BACKEND:BOOL=OFF"),
+        ("LINGTU_SLAM_LTLIO_BACKEND:BOOL=ON", "LINGTU_SLAM_LTLIO_BACKEND:BOOL=OFF"),
         ("LINGTU_SLAM_BUILD_DDS_RUNTIME:BOOL=ON", "LINGTU_SLAM_BUILD_DDS_RUNTIME:BOOL=OFF"),
         ("LINGTU_SLAM_BUILD_TESTS:BOOL=ON", "LINGTU_SLAM_BUILD_TESTS:BOOL=OFF"),
         ("LINGTU_ENABLE_SMALL_GICP:BOOL=OFF", "LINGTU_ENABLE_SMALL_GICP:BOOL=ON"),

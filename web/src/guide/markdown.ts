@@ -41,8 +41,16 @@ export function slugify(value: string): string {
 function collectRawHeadings(markdown: string): RawHeading[] {
   const occurrences = new Map<string, number>()
   const headings: RawHeading[] = []
+  let inCodeFence = false
 
   for (const line of markdown.replace(/\r\n/g, '\n').split('\n')) {
+    if (line.startsWith('```')) {
+      inCodeFence = !inCodeFence
+      continue
+    }
+    if (inCodeFence) {
+      continue
+    }
     const match = /^(#{1,3})\s+(.+?)\s*$/.exec(line)
     if (!match) {
       continue
@@ -77,8 +85,8 @@ function splitTableRow(line: string): string[] {
     .trim()
     .replace(/^\|/, '')
     .replace(/\|$/, '')
-    .split('|')
-    .map((cell) => cell.trim())
+    .split(/(?<!\\)\|/)
+    .map((cell) => cell.trim().replace(/\\\|/g, '|'))
 }
 
 function isListItem(line: string): boolean {

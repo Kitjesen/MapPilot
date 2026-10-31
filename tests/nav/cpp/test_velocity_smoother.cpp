@@ -107,7 +107,7 @@ void TestClosedLoopFeedbackFreshness() {
   Expect(smoother.SetFeedback({0.2, 0.0, 0.0}, 0.01), "feedback accepted");
   const auto fresh = smoother.Step(0.01);
   Expect(fresh.valid && fresh.feedback_used, "fresh feedback is used");
-  ExpectNear(fresh.command.vx, 0.21, 1e-9, "closed-loop rate limit starts from measured velocity");
+  ExpectNear(fresh.command.vx, 0.22, 1e-9, "closed-loop rate limit starts from measured velocity");
 
   const auto stale = smoother.Step(0.2);
   Expect(!stale.valid && stale.reason == "feedback_timeout", "stale feedback fails closed");
@@ -148,7 +148,7 @@ void TestTimeoutBoundaryFailsClosed() {
 }
 
 void TestDtClampingBoundsStepGrowth() {
-  nav_kernel::VelocitySmootherConfig config;  // x accel 1.0, max_step_s 0.2
+  nav_kernel::VelocitySmootherConfig config;  // x accel 2.0, max_step_s 0.2
   config.target_timeout_s = 1.0;              // keep the target fresh across the gap
   nav_kernel::VelocitySmoother smoother(config);
 
@@ -158,18 +158,18 @@ void TestDtClampingBoundsStepGrowth() {
 
   const auto gap = smoother.Step(0.5);
   Expect(gap.dt_clamped, "large step interval must report dt_clamped");
-  ExpectNear(gap.command.vx, 0.2, 1e-9,
+  ExpectNear(gap.command.vx, 0.4, 1e-9,
              "single-step growth is bounded by acceleration times max_step_s");
-  Expect(gap.command.vx <= 1.0 * config.max_step_s + 1e-9,
+  Expect(gap.command.vx <= config.x.acceleration * config.max_step_s + 1e-9,
          "clamped step cannot exceed rate times max_step_s");
 
   const auto normal = smoother.Step(0.6);
   Expect(!normal.dt_clamped, "small interval must not report dt_clamped");
-  ExpectNear(normal.command.vx, 0.3, 1e-9, "normal interval uses the real dt");
+  ExpectNear(normal.command.vx, 0.6, 1e-9, "normal interval uses the real dt");
 }
 
 void TestMultiStepReversalSequence() {
-  nav_kernel::VelocitySmootherConfig config;  // x accel 1.0, decel 2.0
+  nav_kernel::VelocitySmootherConfig config;  // x accel 2.0, decel 2.0
   config.target_timeout_s = 2.0;              // keep the target fresh through the sequence
   nav_kernel::VelocitySmoother smoother(config);
 
@@ -252,7 +252,7 @@ void TestFeedbackValidationAndRecovery() {
   Expect(recovery.SetTarget({1.0, 0.0, 0.0}, 0.0), "recovery target accepted");
   Expect(recovery.SetFeedback({0.0, 0.0, 0.0}, 0.0), "initial feedback accepted");
   (void)recovery.Step(0.0);
-  ExpectNear(recovery.Step(0.05).command.vx, 0.05, 1e-9, "closed-loop ramp in progress");
+  ExpectNear(recovery.Step(0.05).command.vx, 0.1, 1e-9, "closed-loop ramp in progress");
   const auto stale = recovery.Step(0.3);
   Expect(!stale.valid && stale.timed_out && stale.reason == "feedback_timeout",
          "stale feedback fails closed");
@@ -261,9 +261,9 @@ void TestFeedbackValidationAndRecovery() {
   Expect(recovery.SetFeedback({0.0, 0.0, 0.0}, 0.3), "fresh feedback accepted after timeout");
   const auto resume = recovery.Step(0.35);
   Expect(resume.valid && resume.feedback_used, "fresh feedback resumes control");
-  ExpectNear(resume.command.vx, 0.05, 1e-9, "ramp restarts from the fresh measurement");
+  ExpectNear(resume.command.vx, 0.1, 1e-9, "ramp restarts from the fresh measurement");
   Expect(recovery.SetFeedback({0.05, 0.0, 0.0}, 0.4), "measurement feedback accepted");
-  ExpectNear(recovery.Step(0.45).command.vx, 0.15, 1e-9,
+  ExpectNear(recovery.Step(0.45).command.vx, 0.25, 1e-9,
              "ramp keeps accumulating from the latest measurement");
 }
 
@@ -271,14 +271,14 @@ void TestStopRecoveryRampsFromZero() {
   nav_kernel::VelocitySmoother smoother;
   Expect(smoother.SetTarget({1.0, 0.0, 0.0}, 0.0), "target accepted");
   (void)smoother.Step(0.0);
-  ExpectNear(smoother.Step(0.1).command.vx, 0.1, 1e-9, "ramp in progress before stop");
+  ExpectNear(smoother.Step(0.1).command.vx, 0.2, 1e-9, "ramp in progress before stop");
 
   (void)smoother.Stop(0.15, "estop");
   Expect(smoother.SetTarget({0.5, 0.0, 0.0}, 0.15), "fresh target accepted after stop");
   const auto resumed = smoother.Step(0.25);
   Expect(resumed.valid, "post-stop step is valid");
-  ExpectNear(resumed.command.vx, 0.1, 1e-9, "post-stop command ramps from zero, not from history");
-  ExpectNear(smoother.Step(0.35).command.vx, 0.2, 1e-9, "post-stop ramp keeps accelerating");
+  ExpectNear(resumed.command.vx, 0.2, 1e-9, "post-stop command ramps from zero, not from history");
+  ExpectNear(smoother.Step(0.35).command.vx, 0.4, 1e-9, "post-stop ramp keeps accelerating");
 }
 
 void TestConfigureFailurePathsAndReconfigure() {
@@ -341,7 +341,7 @@ void TestConfigureFailurePathsAndReconfigure() {
   // A valid reconfigure clears all runtime state.
   Expect(smoother.SetTarget({1.0, 0.0, 0.0}, 0.0), "target accepted before reconfigure");
   (void)smoother.Step(0.0);
-  ExpectNear(smoother.Step(0.1).command.vx, 0.1, 1e-9, "ramp in progress before reconfigure");
+  ExpectNear(smoother.Step(0.1).command.vx, 0.2, 1e-9, "ramp in progress before reconfigure");
   error.clear();
   Expect(smoother.Configure(smoother.config(), &error), "valid reconfigure succeeds");
   const auto cleared = smoother.Step(0.2);
@@ -349,7 +349,7 @@ void TestConfigureFailurePathsAndReconfigure() {
          "reconfigure clears the previous target");
   ExpectNear(cleared.command.vx, 0.0, 1e-9, "reconfigure output is zero");
   Expect(smoother.SetTarget({1.0, 0.0, 0.0}, 0.2), "new target accepted after reconfigure");
-  ExpectNear(smoother.Step(0.3).command.vx, 0.1, 1e-9, "ramp restarts from zero after reconfigure");
+  ExpectNear(smoother.Step(0.3).command.vx, 0.2, 1e-9, "ramp restarts from zero after reconfigure");
 }
 
 void TestYawAccelerationAtFiftyHertz() {
@@ -388,15 +388,15 @@ void TestCommitAppliedRebasesNextStepWithoutChangingTarget() {
 
   Expect(smoother.SetTarget({1.0, 0.0, 0.0}, 0.0), "target accepted");
   (void)smoother.Step(0.0);
-  ExpectNear(smoother.Step(0.2).command.vx, 0.2, 1e-9, "smoother ramps before safety slowdown");
+  ExpectNear(smoother.Step(0.2).command.vx, 0.4, 1e-9, "smoother ramps before safety slowdown");
   Expect(smoother.CommitApplied({0.05, 0.0, 0.0}, 0.2),
          "actual safety-limited publication is accepted");
 
   const auto released = smoother.Step(0.3);
   Expect(released.valid, "step after safety release is valid");
-  ExpectNear(released.command.vx, 0.15, 1e-9,
+  ExpectNear(released.command.vx, 0.25, 1e-9,
              "step after safety release ramps from the actual published command");
-  ExpectNear(smoother.Step(0.4).command.vx, 0.25, 1e-9,
+  ExpectNear(smoother.Step(0.4).command.vx, 0.45, 1e-9,
              "original target remains active after applied-state commit");
 }
 
@@ -418,7 +418,7 @@ void TestCommitAppliedRejectsInvalidStateWithoutMutation() {
            message + " error=" + error + " expected=" + expected_error);
     ExpectNear(smoother.last_output().vx, 0.05, 1e-9,
                message + " must preserve the previous applied command");
-    ExpectNear(smoother.Step(0.3).command.vx, 0.15, 1e-9,
+    ExpectNear(smoother.Step(0.3).command.vx, 0.25, 1e-9,
                message + " must preserve the previous applied timestamp");
   };
 

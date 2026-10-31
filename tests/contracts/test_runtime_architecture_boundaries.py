@@ -16,7 +16,7 @@ CORE_RUNTIME_BOUNDARY_SOURCES = {
     "runtime_policy": SRC / "runtime" / "runtime_policy.py",
 }
 
-BLUEPRINT_COMPAT_ADAPTER_SOURCES = {
+HOST_BUILDER_COMPAT_ADAPTER_SOURCES = {
     "driver_runtime": SRC
     / "runtime"
     / "adapters"
@@ -24,12 +24,12 @@ BLUEPRINT_COMPAT_ADAPTER_SOURCES = {
 }
 
 STACK_COMPOSITION_SOURCES_WITH_ADAPTER_BOUNDARY = {
-    "driver_stack": SRC / "runtime" / "blueprints" / "stacks" / "driver.py",
-    "gateway_stack": SRC / "runtime" / "blueprints" / "stacks" / "gateway.py",
-    "maps_stack": SRC / "runtime" / "blueprints" / "stacks" / "maps.py",
-    "navigation_stack": SRC / "runtime" / "blueprints" / "stacks" / "navigation.py",
-    "perception_stack": SRC / "runtime" / "blueprints" / "stacks" / "perception.py",
-    "slam_stack": SRC / "runtime" / "blueprints" / "stacks" / "slam.py",
+    "driver_stack": SRC / "lingtu" / "assembly" / "host" / "stacks" / "driver.py",
+    "gateway_stack": SRC / "lingtu" / "assembly" / "host" / "stacks" / "gateway.py",
+    "services_stack": SRC / "lingtu" / "assembly" / "host" / "stacks" / "native_commands.py",
+    "navigation_stack": SRC / "lingtu" / "assembly" / "host" / "stacks" / "navigation.py",
+    "perception_stack": SRC / "lingtu" / "assembly" / "host" / "stacks" / "perception.py",
+    "slam_stack": SRC / "lingtu" / "assembly" / "host" / "stacks" / "localization.py",
 }
 
 REMOVED_COMPATIBILITY_FACADE_PATHS = (
@@ -144,9 +144,9 @@ def test_directory_stage_keeps_lcm_adapter_layer_removed() -> None:
     assert not (SRC / "runtime" / "adapters" / ("lc" + "m")).exists()
 
 
-def test_compat_adapter_helpers_live_in_blueprint_adapter_layer() -> None:
+def test_compat_adapter_helpers_live_in_host_builder_adapter_layer() -> None:
     _assert_sources_exist_under_owner(
-        BLUEPRINT_COMPAT_ADAPTER_SOURCES,
+        HOST_BUILDER_COMPAT_ADAPTER_SOURCES,
         SRC / "runtime" / "adapters",
     )
 

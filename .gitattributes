@@ -1,9 +1,14 @@
 /.gitattributes text eol=lf
 scripts/*.sh text eol=lf
 scripts/**/*.sh text eol=lf
-/tools/release/sync_versions.sh text eol=lf
 tests/native/recording/*.sh text eol=lf
 scripts/lingtu text eol=lf
+# Review evidence pins bind exact bytes across Windows and Linux checkouts.
+sim/packages/robots/doso/thunder_v4/robot.package.yaml text eol=lf
+sim/packages/robots/doso/thunder_v4/visual/robot.visual-projection.json text eol=lf
+sim/packages/payloads/fictional_rws_01/1.0.0/payload.package.yaml text eol=lf
+sim/packages/payloads/fictional_rws_01/1.0.0/visual/payload.visual-projection.json text eol=lf
+sim/packages/scenarios/open_field_pedestrian_crossing/1.1.0/physics/pedestrian_capsule.xml text eol=lf
 scripts/deploy/**/*.service text eol=lf
 docs/04-deployment/services/*.service text eol=lf
 docs/04-deployment/services/*.sh text eol=lf
@@ -32,7 +37,7 @@ scripts/build/vcpkg/**/*.json text eol=lf
 # This vendored tree's reviewed development-source lock was established over
 # CRLF bytes. Force the same bytes on every host so provenance does not depend
 # on each clone's core.autocrlf setting.
-src/localization/fastlio2/** text eol=crlf
+src/localization/ltlio/** text eol=crlf
 
 # Large simulation source assets are versioned through Git LFS. Generated UE
 # directories remain ignored by sim/runtime/visual/RobotSimUE/.gitignore.
@@ -54,3 +59,19 @@ src/nav/cpp/planning/local/cmu/paths/**/correspondences.txt filter=lfs diff=lfs 
 # Preserve the portable factory scene assets without Git's large-blob limit.
 sim/packages/worlds/factory_workshop/**/visual/native/*.obj filter=lfs diff=lfs merge=lfs -text
 sim/packages/worlds/factory_workshop/**/visual/native/*.png filter=lfs diff=lfs merge=lfs -text
+
+# Large model, fabrication and reference assets are distributed via LFS.
+sim/library/**/*.glb filter=lfs diff=lfs merge=lfs -text
+sim/library/**/*.blend filter=lfs diff=lfs merge=lfs -text
+sim/library/**/*.fbx filter=lfs diff=lfs merge=lfs -text
+sim/library/**/*.exr filter=lfs diff=lfs merge=lfs -text
+sim/library/**/*.jpg filter=lfs diff=lfs merge=lfs -text
+sim/packages/worlds/factory_park_hf/visual/surfaces/*.png filter=lfs diff=lfs merge=lfs -text
+sim/packages/controllers/doso/thunder_v4/cts_moe/policy/*.onnx filter=lfs diff=lfs merge=lfs -text
+sim/runtime/visual/RobotSimUE/SourceAssets/**/*.stl filter=lfs diff=lfs merge=lfs -text
+tools/robot/go2_mid360_ground_mount/raised_box/**/*.stl filter=lfs diff=lfs merge=lfs -text
+tools/robot/go2_mid360_ground_mount/raised_box/**/*.STL filter=lfs diff=lfs merge=lfs -text
+tools/robot/go2_mid360_ground_mount/raised_box/**/*.3mf filter=lfs diff=lfs merge=lfs -text
+tools/robot/go2_mid360_ground_mount/raised_box/**/*.zip filter=lfs diff=lfs merge=lfs -text
+web/public/assets/robots/go2/meshes/**/*.dae filter=lfs diff=lfs merge=lfs -text
+docs/research/papers/*.pdf filter=lfs diff=lfs merge=lfs -text

@@ -2,6 +2,7 @@
 
 #include "command_freshness_gate.hpp"
 #include "body.hpp"
+#include "profile_switch.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -52,6 +53,8 @@ class DdsReader {
   const std::string& hostBootId() const noexcept;
   std::uint32_t matchedCommandWriters() const;
   ReadResult takeLatest();
+  std::optional<ProfileRequest> takeProfileRequest(double wall_s);
+  bool writeProfileState(const ProfileStatus &state, double stamp_s);
   bool writeControlState(
       const ControlState& state,
       bool last_command_accepted,

@@ -7,10 +7,10 @@ from typing import get_args
 
 import pytest
 
-from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan
+from lingtu.assembly.config.native_navigation import compile_native_nav_config
+from lingtu.assembly.config.product import resolve_product_host_runtime
 from lingtu.assembly.graph.loader import RuntimeGraph, load_runtime_graph, resolve_product_variant_spec
-from lingtu.assembly.native_nav import compile_native_nav_config
-from lingtu.assembly.products import resolve_product_host_runtime
 from lingtu.products import (
     OPERATOR_PRODUCT_LIFECYCLES,
     ProductName,
@@ -174,7 +174,7 @@ def test_field_traversability_has_one_native_control_writer() -> None:
 
 def test_native_control_modes_match_the_cpp_endpoint_enum() -> None:
     source = (
-        ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "runtime" / "config" / "build.cpp"
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "app" / "config" / "build.cpp"
     ).read_text(encoding="utf-8")
     block = source.split("controlModeName(ControlMode mode)", 1)[1].split(
         "globalPlannerBackendName",

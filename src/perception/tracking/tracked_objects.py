@@ -76,6 +76,15 @@ class TrackedObject:
     last_observed_time: float = 0.0
     is_simulated: bool = False
 
+    def __post_init__(self) -> None:
+        """Keep stored visual features comparable across observations."""
+        if self.features.size == 0:
+            return
+        features = np.asarray(self.features, dtype=np.float64)
+        norm = np.linalg.norm(features)
+        if norm > 0:
+            self.features = features / norm
+
     def update(self, det, alpha: float = 0.3) -> None:
         """Update with new detection (USS-Nav + BA-HSG)."""
         if hasattr(det, 'points') and det.points is not None and len(det.points) > 0:
@@ -118,7 +127,7 @@ class TrackedObject:
         self.points = _voxel_downsample(self.points, POINTCLOUD_VOXEL_SIZE, max_total)
 
     def _fuse_feature(self, new_feature: np.ndarray) -> np.ndarray:
-        """Multi-view CLIP feature fusion (ConceptGraphs EMA + L2 normalize)."""
+        """Quality-weighted visual feature EMA with L2 normalization."""
         nf = np.asarray(new_feature, dtype=np.float64)
         if nf.size == 0:
             return self.features

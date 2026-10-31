@@ -38,14 +38,14 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ROBOT_CONFIG = REPO_ROOT / "config" / "robots" / "unitree" / "go2" / "robot.yaml"
-FASTLIO2_CONFIG = (
+LTLIO_CONFIG = (
     REPO_ROOT
     / "config"
     / "robots"
     / "unitree"
     / "go2"
     / "sensors"
-    / "mid360_fastlio2.yaml"
+    / "mid360_ltlio.yaml"
 )
 
 
@@ -108,7 +108,7 @@ def derive_body_from_imu(
 ) -> tuple[list[float], list[float]]:
     """Derive ``T_body_imu`` while preserving the fixed ``T_body_lidar`` mount.
 
-    Fast-LIO uses ``T_imu_lidar``:
+    LTLIO uses ``T_imu_lidar``:
     ``p_imu = R_il * p_lidar + t_il``. Robot configuration stores the separate
     mechanical mount ``T_body_lidar``. Therefore:
 
@@ -265,8 +265,8 @@ def apply_imu_noise(calib_path: str, dry_run: bool = False) -> None:
     logger.info("\n== IMU Noise Parameters ==")
     try:
         calib = load_yaml(Path(calib_path))
-        fastlio_exists = FASTLIO2_CONFIG.exists()
-        fastlio_cfg = load_yaml(FASTLIO2_CONFIG) if fastlio_exists else {}
+        ltlio_exists = LTLIO_CONFIG.exists()
+        ltlio_cfg = load_yaml(LTLIO_CONFIG) if ltlio_exists else {}
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         logger.error("  Cannot read calibration target configs: %s", exc)
         return
@@ -274,8 +274,8 @@ def apply_imu_noise(calib_path: str, dry_run: bool = False) -> None:
     if not isinstance(calib, dict):
         logger.error("  IMU calibration result in %s must contain a YAML mapping", calib_path)
         return
-    if not isinstance(fastlio_cfg, dict):
-        logger.error("  %s must contain a YAML mapping", FASTLIO2_CONFIG.name)
+    if not isinstance(ltlio_cfg, dict):
+        logger.error("  %s must contain a YAML mapping", LTLIO_CONFIG.name)
         return
 
     # Kalibr-format YAML from allan_variance_ros2
@@ -303,22 +303,22 @@ def apply_imu_noise(calib_path: str, dry_run: bool = False) -> None:
     if nbg is not None:
         _sanity_check_imu_noise("nbg", float(nbg))
 
-    if fastlio_exists:
-        fastlio_cfg["na"] = float(na)
-        fastlio_cfg["ng"] = float(ng)
+    if ltlio_exists:
+        ltlio_cfg["na"] = float(na)
+        ltlio_cfg["ng"] = float(ng)
         if nba is not None:
-            fastlio_cfg["nba"] = float(nba)
+            ltlio_cfg["nba"] = float(nba)
         if nbg is not None:
-            fastlio_cfg["nbg"] = float(nbg)
+            ltlio_cfg["nbg"] = float(nbg)
 
     if dry_run:
-        logger.info("  [DRY RUN] Would update %s", FASTLIO2_CONFIG.name)
+        logger.info("  [DRY RUN] Would update %s", LTLIO_CONFIG.name)
         return
 
-    if fastlio_exists:
-        backup_file(FASTLIO2_CONFIG)
-        save_yaml(FASTLIO2_CONFIG, fastlio_cfg)
-        logger.info("  Updated: %s", FASTLIO2_CONFIG.name)
+    if ltlio_exists:
+        backup_file(LTLIO_CONFIG)
+        save_yaml(LTLIO_CONFIG, ltlio_cfg)
+        logger.info("  Updated: %s", LTLIO_CONFIG.name)
 
 
 def apply_lidar_imu(calib_path: str, dry_run: bool = False) -> None:
@@ -326,8 +326,8 @@ def apply_lidar_imu(calib_path: str, dry_run: bool = False) -> None:
     logger.info("\n== LiDAR-IMU Extrinsics ==")
     try:
         calib = load_yaml(Path(calib_path))
-        fastlio_exists = FASTLIO2_CONFIG.exists()
-        fastlio_cfg = load_yaml(FASTLIO2_CONFIG) if fastlio_exists else {}
+        ltlio_exists = LTLIO_CONFIG.exists()
+        ltlio_cfg = load_yaml(LTLIO_CONFIG) if ltlio_exists else {}
         robot_cfg = load_yaml(ROBOT_CONFIG)
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         logger.error("  Cannot read calibration target configs: %s", exc)
@@ -337,8 +337,8 @@ def apply_lidar_imu(calib_path: str, dry_run: bool = False) -> None:
         "calibration result": calib,
         ROBOT_CONFIG.name: robot_cfg,
     }
-    if fastlio_exists:
-        configs[FASTLIO2_CONFIG.name] = fastlio_cfg
+    if ltlio_exists:
+        configs[LTLIO_CONFIG.name] = ltlio_cfg
     for name, cfg in configs.items():
         if not isinstance(cfg, dict):
             logger.error("  %s must contain a YAML mapping", name)
@@ -352,9 +352,9 @@ def apply_lidar_imu(calib_path: str, dry_run: bool = False) -> None:
         logger.error("  Missing t_il in %s", calib_path)
         return
 
-    effective_r_il = r_il or fastlio_cfg.get("r_il")
+    effective_r_il = r_il or ltlio_cfg.get("r_il")
     if effective_r_il is None:
-        logger.error("  Missing r_il in %s and %s", calib_path, FASTLIO2_CONFIG)
+        logger.error("  Missing r_il in %s and %s", calib_path, LTLIO_CONFIG)
         return
 
     lidar_mount = robot_cfg.get("lidar")
@@ -402,18 +402,18 @@ def apply_lidar_imu(calib_path: str, dry_run: bool = False) -> None:
         write_time_offset = True
 
     # Build every target update before creating backups or replacing files.
-    if fastlio_exists:
-        fastlio_cfg["r_il"] = effective_r_il
-        fastlio_cfg["t_il"] = t_il
-        fastlio_cfg["navigation_body_from_imu_rotation"] = r_body_imu
-        fastlio_cfg["navigation_body_from_imu_translation"] = t_body_imu
+    if ltlio_exists:
+        ltlio_cfg["r_il"] = effective_r_il
+        ltlio_cfg["t_il"] = t_il
+        ltlio_cfg["navigation_body_from_imu_rotation"] = r_body_imu
+        ltlio_cfg["navigation_body_from_imu_translation"] = t_body_imu
         if write_time_offset:
-            fastlio_cfg["time_diff_lidar_to_imu"] = round(time_offset, 6)
+            ltlio_cfg["time_diff_lidar_to_imu"] = round(time_offset, 6)
 
-    if fastlio_exists:
-        backup_file(FASTLIO2_CONFIG)
-        save_yaml(FASTLIO2_CONFIG, fastlio_cfg)
-        logger.info("  Updated: %s", FASTLIO2_CONFIG.name)
+    if ltlio_exists:
+        backup_file(LTLIO_CONFIG)
+        save_yaml(LTLIO_CONFIG, ltlio_cfg)
+        logger.info("  Updated: %s", LTLIO_CONFIG.name)
 
 
 def _parse_camera_lidar_transform(calib: object, source: str):
@@ -565,7 +565,7 @@ def apply_camera_lidar(calib_path: str, dry_run: bool = False) -> None:
 
 
 def main():
-    global ROBOT_CONFIG, FASTLIO2_CONFIG
+    global ROBOT_CONFIG, LTLIO_CONFIG
 
     parser = argparse.ArgumentParser(
         description="Apply calibration results to robot configuration",
@@ -582,14 +582,14 @@ def main():
     )
     parser.add_argument(
         "--slam-config",
-        default=str(FASTLIO2_CONFIG),
-        help="Robot-specific Fast-LIO2 MID-360 config to update",
+        default=str(LTLIO_CONFIG),
+        help="Robot-specific LTLIO MID-360 config to update",
     )
     parser.add_argument("--dry-run", action="store_true", help="Show what would change without writing")
 
     args = parser.parse_args()
     ROBOT_CONFIG = Path(args.robot_config)
-    FASTLIO2_CONFIG = Path(args.slam_config)
+    LTLIO_CONFIG = Path(args.slam_config)
 
     if not any([args.camera, args.imu, args.lidar_imu, args.camera_lidar]):
         parser.print_help()

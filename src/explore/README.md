@@ -146,7 +146,7 @@ It never grants command authority. Gateway commands use
 
 The Python `TAREExplorerModule` and nanobind path remain for development and
 simulation; they are not the `env=real` Product control plane.
-Assembly resolves that field Product with `owner="native"`, so Blueprint omits
+Assembly resolves that field Product with `owner="native"`, so HostBuilder omits
 both `TAREExplorerModule` and `ExplorationSupervisorModule`; `nav.commands` is
 the only Gateway control adapter for the native endpoint.
 All Python exploration code uses the single `explore.*` import surface.

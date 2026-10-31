@@ -18,6 +18,7 @@ FUNCTIONAL_ROOTS = {
     "nav",
     "perception",
     "runtime",
+    "transport",
 }
 SOURCE_FAMILIES = {
     "Product control": {"lingtu"},
@@ -31,7 +32,7 @@ SOURCE_FAMILIES = {
         "nav",
         "perception",
     },
-    "Runtime platform": {"diagnostics", "gateway", "message", "runtime"},
+    "Runtime platform": {"diagnostics", "gateway", "message", "runtime", "transport"},
     "Shared compute": {"kernels"},
     "Shared native": {"native"},
 }

@@ -1,0 +1,33 @@
+{
+  "source_repository": "https://github.com/STAR-Center/Reflection_detection",
+  "revision": "3d4bb102f0c13486fb430f5ad01868b9232d0c0a",
+  "downloads": [
+    {
+      "source_url": "https://raw.githubusercontent.com/STAR-Center/Reflection_detection/3d4bb102f0c13486fb430f5ad01868b9232d0c0a/demo_data/3dRef_data/1689496219.652560.ply",
+      "local_path": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\glass-reflection-demo\\demo_data\\3dRef_data\\1689496219.652560.ply",
+      "bytes": 3772427
+    },
+    {
+      "source_url": "https://raw.githubusercontent.com/STAR-Center/Reflection_detection/3d4bb102f0c13486fb430f5ad01868b9232d0c0a/demo_data/3dRef_data/1689496221.152504.ply",
+      "local_path": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\glass-reflection-demo\\demo_data\\3dRef_data\\1689496221.152504.ply",
+      "bytes": 3750154
+    },
+    {
+      "source_url": "https://raw.githubusercontent.com/STAR-Center/Reflection_detection/3d4bb102f0c13486fb430f5ad01868b9232d0c0a/demo_data/3dRef_data/1689496222.552756.ply",
+      "local_path": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\glass-reflection-demo\\demo_data\\3dRef_data\\1689496222.552756.ply",
+      "bytes": 3748413
+    },
+    {
+      "source_url": "https://raw.githubusercontent.com/STAR-Center/Reflection_detection/3d4bb102f0c13486fb430f5ad01868b9232d0c0a/demo_data/hesai_pose.txt",
+      "local_path": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\glass-reflection-demo\\demo_data\\hesai_pose.txt",
+      "bytes": 417471
+    },
+    {
+      "source_url": "https://raw.githubusercontent.com/STAR-Center/Reflection_detection/3d4bb102f0c13486fb430f5ad01868b9232d0c0a/README.md",
+      "local_path": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\glass-reflection-demo\\README.md",
+      "bytes": 1625
+    }
+  ],
+  "license_note": "No repository LICENSE discovered in upstream recursive tree. Public data is retained for this local requested experiment; redistribution/commercial reuse not established. Website CC terms do not automatically license dataset/code.",
+  "scope": "Three ASCII PLY frames and provided poses only, not the 80 GB 3DRef archive or ROS runtime."
+}

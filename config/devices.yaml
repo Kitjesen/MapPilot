@@ -2,7 +2,8 @@
 #
 # This file describes supported hardware assets and discovery metadata. The
 # camera record is also the native camera service's startup input. Other device
-# endpoints come from the selected RobotConfig and RunPlan; editing an inventory
+# endpoints come from the selected RobotConfig and ProductControl's internal
+# execution snapshot; editing an inventory
 # record here does not rewire Product dataflow.
 
 version: 1

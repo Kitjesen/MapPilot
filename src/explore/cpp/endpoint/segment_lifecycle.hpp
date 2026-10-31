@@ -5,7 +5,7 @@
 #include <string>
 #include <string_view>
 
-#include "runtime/rolling/contract.hpp"
+#include "app/rolling/contract.hpp"
 
 namespace lingtu::nav::endpoint {
 

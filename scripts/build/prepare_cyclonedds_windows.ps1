@@ -9,6 +9,7 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $LockPath = Join-Path $PSScriptRoot "locks\cyclonedds-windows-x64.json"
+$CdrGrowthPatch = Join-Path $PSScriptRoot "patches\cyclonedds-cdr-geometric-growth.patch"
 $StageScript = Join-Path $PSScriptRoot "cmake\stage_cyclonedds_windows_sdk.cmake"
 $VerifyScript = Join-Path $PSScriptRoot "verify_cyclonedds_windows_sdk.ps1"
 $SmokeIdl = Join-Path $RepoRoot "tests\fixtures\idl\cyclonedds_smoke.idl"
@@ -136,7 +137,7 @@ Assert-NoPathOverlap @{
 foreach ($command in "git", "cmake", "pwsh", "tar") {
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "$command is required" }
 }
-foreach ($file in $StageScript, $VerifyScript, $SmokeIdl) {
+foreach ($file in $StageScript, $VerifyScript, $SmokeIdl, $CdrGrowthPatch) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Required build input is missing: $file" }
 }
 
@@ -222,6 +223,8 @@ foreach ($legalFile in "LICENSE", "NOTICE.md") {
         throw "CycloneDDS source snapshot is missing $legalFile"
     }
 }
+Invoke-Checked git @("-C", $SnapshotRoot, "apply", "--check", $CdrGrowthPatch) "CycloneDDS CDR growth patch does not match the pinned source"
+Invoke-Checked git @("-C", $SnapshotRoot, "apply", $CdrGrowthPatch) "CycloneDDS CDR growth patch failed"
 Get-ChildItem -LiteralPath $SnapshotRoot -File -Recurse | ForEach-Object { $_.IsReadOnly = $true }
 
 $configureArgs = @(
@@ -259,6 +262,7 @@ $SourceReceipt = [ordered]@{
     schema_version = 1; repository = $Lock.repository; tag = $Lock.tag; tag_commit = $Lock.commit
     commit = $Lock.commit; tree = $Lock.tree; detached = $true; clean = $true
     checkout_eol_policy = "core.autocrlf=false;core.eol=lf;core.safecrlf=true"
+    local_patches = @(@{ name = (Split-Path -Leaf $CdrGrowthPatch); diff = (Get-Content -Raw -LiteralPath $CdrGrowthPatch) })
 }
 $CmakeVersion = (& cmake --version | Select-Object -First 1).Trim()
 $ToolchainReceipt = [ordered]@{

@@ -20,12 +20,11 @@ from perception.inspection import (
 
 def _request(**overrides: Any) -> InspectionEvidenceRequest:
     values = {
-        "run_id": "run-001",
+        "task_id": "task-001",
         "route_id": "route-main",
         "route_revision": 7,
         "map_id": "field-map",
         "map_content_epoch": 4,
-        "point_id": "point-01",
         "point_index": 0,
         "request_id": "request-001",
         "action": "capture:overview",
@@ -66,12 +65,11 @@ def test_overview_commit_persists_auditable_artifacts_and_manifest(tmp_path: Pat
         "deadline_s": 1_720_000_010.0,
         "map_id": "field-map",
         "map_content_epoch": 4,
-        "point_id": "point-01",
         "point_index": 0,
         "request_id": "request-001",
         "route_id": "route-main",
         "route_revision": 7,
-        "run_id": "run-001",
+        "task_id": "task-001",
         "requested_at_s": 1_720_000_000.0,
     }
     assert manifest["persistence"]["persisted"] is True
@@ -102,7 +100,7 @@ def test_overview_commit_persists_auditable_artifacts_and_manifest(tmp_path: Pat
 def test_request_mapping_is_supported_and_rejects_unknown_fields(tmp_path: Path) -> None:
     store = InspectionEvidenceStore(tmp_path)
     request = {
-        "run_id": "run-001",
+        "task_id": "task-001",
         "route_id": "route-main",
         "route_revision": 7,
         "map_id": "field-map",
@@ -122,6 +120,22 @@ def test_request_mapping_is_supported_and_rejects_unknown_fields(tmp_path: Path)
         store.persist({**request, "request_id": "request-extra", "path": "../escape"})
 
 
+def test_existing_run_id_manifest_reads_as_task_id_without_rewriting(tmp_path: Path) -> None:
+    store = InspectionEvidenceStore(tmp_path)
+    saved = store.persist(_request(), rgb_bytes=b"frame", media_type="image/png")
+    manifest = _load_json(saved.manifest_path)
+    manifest["request"]["run_id"] = manifest["request"].pop("task_id")
+    manifest["request"]["point_id"] = "point-01"
+    saved.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    original = saved.manifest_path.read_bytes()
+
+    loaded = store.get("request-001")
+    assert loaded.request.task_id == "task-001"
+    assert loaded.request.to_dict() == _request().to_dict()
+    assert saved.manifest_path.read_bytes() == original
+    assert store.persist(_request()).request.task_id == "task-001"
+
+
 def test_same_request_id_is_idempotent_and_conflicting_identity_is_rejected(
     tmp_path: Path,
 ) -> None:
@@ -136,12 +150,11 @@ def test_same_request_id_is_idempotent_and_conflicting_identity_is_rejected(
     assert (second.evidence_dir / "rgb.png").read_bytes() == b"first"
 
     conflicting_fields = (
-        {"run_id": "run-002"},
+        {"task_id": "task-002"},
         {"route_id": "route-alternate"},
         {"route_revision": 8},
         {"map_id": "field-map-v2"},
         {"map_content_epoch": 5},
-        {"point_id": "point-02"},
         {"point_index": 1},
         {"action": "capture:parking"},
         {"requested_at_s": 1_720_000_001.0},
@@ -155,10 +168,9 @@ def test_same_request_id_is_idempotent_and_conflicting_identity_is_rejected(
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("run_id", "../run"),
+        ("task_id", "../task"),
         ("route_id", "route/subroute"),
         ("map_id", "../field-map"),
-        ("point_id", r"point\escape"),
         ("request_id", "."),
         ("request_id", ""),
         ("action", "capture:../../passwd"),
@@ -172,12 +184,11 @@ def test_identifiers_and_actions_reject_path_traversal(
 ) -> None:
     store = InspectionEvidenceStore(tmp_path)
     values = {
-        "run_id": "run-001",
+        "task_id": "task-001",
         "route_id": "route-main",
         "route_revision": 7,
         "map_id": "field-map",
         "map_content_epoch": 4,
-        "point_id": "point-01",
         "point_index": 0,
         "request_id": "request-safe",
         "action": "capture:overview",

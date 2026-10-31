@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_set>
 
 #include "core/evidence.hpp"
+#include "cleaning/surface.hpp"
 
 namespace lingtu::map_cleaning {
 namespace {
@@ -13,28 +15,13 @@ double distanceSquared(const PointXYZI& a, const PointXYZI& b) {
   return dx * dx + dy * dy + dz * dz;
 }
 
-PointXYZI inverseTransformPoint(const PointXYZI& point, const Pose& pose) {
-  const double norm =
-      std::sqrt(pose.qw * pose.qw + pose.qx * pose.qx + pose.qy * pose.qy + pose.qz * pose.qz);
-  const double qw = norm > 1e-12 ? pose.qw / norm : 1.0;
-  const double qx = norm > 1e-12 ? -pose.qx / norm : 0.0;
-  const double qy = norm > 1e-12 ? -pose.qy / norm : 0.0;
-  const double qz = norm > 1e-12 ? -pose.qz / norm : 0.0;
-  const PointXYZI translated{
-      static_cast<float>(point.x - pose.tx),
-      static_cast<float>(point.y - pose.ty),
-      static_cast<float>(point.z - pose.tz),
-      point.intensity,
-  };
-  return transformPoint(translated, {0, 0, 0, qw, qx, qy, qz});
-}
 }  // namespace
 
 VisibilityEvidence::VisibilityEvidence(const std::vector<PointXYZI>& points,
     const StaticCleanerOptions& options)
     : points_(points), options_(options), free_frames_(points.size()), seen_(points.size()),
-      hit_frames_(points.size()), ground_protected_(points.size()),
-      occupied_stamp_(points.size()), free_stamp_(points.size()) {
+      hit_frames_(points.size()),
+      occupied_stamp_(points.size()), free_stamp_(points.size()), free_coverage_(points.size()) {
   for (std::size_t i = 0; i < points.size(); ++i)
     cells_[voxelKey(points[i], options_.voxel_size_m)].push_back(i);
 }
@@ -42,6 +29,8 @@ VisibilityEvidence::VisibilityEvidence(const std::vector<PointXYZI>& points,
 void VisibilityEvidence::observe(const std::vector<PointXYZI>& scan, const Pose& pose) {
   const auto& xyz = *options_.sensor_origin;
   const auto origin = transformPoint({xyz[0], xyz[1], xyz[2]}, pose);
+  std::unordered_set<VoxelKey,VoxelKeyHash> current_hits;
+  for (const auto& local : scan) current_hits.insert(voxelKey(transformPoint(local,pose),options_.voxel_size_m));
   ++frame_;
   occupied_.clear();
   free_.clear();
@@ -64,9 +53,6 @@ void VisibilityEvidence::observe(const std::vector<PointXYZI>& scan, const Pose&
                 distanceSquared(points_[index], endpoint) <= confirm_radius * confirm_radius) {
               occupied_stamp_[index] = frame_;
               occupied_.push_back(index);
-              if (!ground_protected_[index] &&
-                  inverseTransformPoint(points_[index], pose).z <= options_.ground_z_threshold)
-                ground_protected_[index] = true;
             }
         }
 
@@ -93,6 +79,7 @@ void VisibilityEvidence::observe(const std::vector<PointXYZI>& scan, const Pose&
     // Traverse only cells hit by a measured ray. No return means no free evidence.
     double travelled = 0;
     while (travelled < end) {
+      if (travelled > margin && current_hits.contains({coordinate[0],coordinate[1],coordinate[2]})) break;
       const auto axis = static_cast<int>(std::min_element(next, next + 3) - next);
       const double segment_end = std::min(next[axis], end);
       int lower[3], upper[3];
@@ -109,14 +96,23 @@ void VisibilityEvidence::observe(const std::vector<PointXYZI>& scan, const Pose&
             const auto found = cells_.find({x, y, z});
             if (found == cells_.end()) continue;
             for (const auto index : found->second) {
-              if (free_stamp_[index] == frame_) continue;
-              const auto& point = points_[index];
-              const double offset[3] = {point.x - origin.x, point.y - origin.y, point.z - origin.z};
-              const double along = offset[0] * direction[0] + offset[1] * direction[1] + offset[2] * direction[2];
-              const double cross2 = std::max(0.0, distanceSquared(point, origin) - along * along);
-              if (along > margin && along < end && cross2 <= tube * tube) {
+              if (free_stamp_[index] != frame_) {
                 free_stamp_[index] = frame_;
+                free_coverage_[index] = 0;
                 free_.push_back(index);
+              }
+              const auto& point = points_[index];
+              for (int sample=0;sample<7;++sample) {
+                auto probe=point;
+                const float d=static_cast<float>(std::min(.02,tube*.4))*(sample%2?1.F:-1.F);
+                if(sample==1 || sample==2)probe.x+=d;
+                if(sample==3 || sample==4)probe.y+=d;
+                if(sample==5 || sample==6)probe.z+=d;
+                const double offset[3] = {probe.x-origin.x,probe.y-origin.y,probe.z-origin.z};
+                const double along=offset[0]*direction[0]+offset[1]*direction[1]+offset[2]*direction[2];
+                const double cross2=std::max(0.0,distanceSquared(probe,origin)-along*along);
+                if(along>margin && along<end && cross2<=tube*tube)
+                  free_coverage_[index]|=static_cast<std::uint8_t>(1U<<sample);
               }
             }
           }
@@ -132,21 +128,13 @@ void VisibilityEvidence::observe(const std::vector<PointXYZI>& scan, const Pose&
     if (hit_frames_[index] < 2) ++hit_frames_[index];
   }
   for (const auto index : free_)
-    if (seen_[index] && occupied_stamp_[index] != frame_ &&
+    if (free_coverage_[index] == 127 && seen_[index] && occupied_stamp_[index] != frame_ &&
         free_frames_[index] < options_.min_free_frames)
       ++free_frames_[index];
 }
 
 bool VisibilityEvidence::contradicted(std::size_t index) const {
   return seen_[index] && free_frames_[index] >= options_.min_free_frames;
-}
-
-bool VisibilityEvidence::groundProtected(std::size_t index) const {
-  return ground_protected_[index];
-}
-
-const std::vector<bool>& VisibilityEvidence::groundEvidence() const {
-  return ground_protected_;
 }
 
 bool VisibilityEvidence::onSupportedSurface(std::size_t index) const {
@@ -193,9 +181,14 @@ bool VisibilityEvidence::onSupportedSurface(std::size_t index) const {
     return std::abs((p.x - anchor.x) * normal[0] + (p.y - anchor.y) * normal[1] +
         (p.z - anchor.z) * normal[2]);
   };
-  if (plane_distance(point) > plane_tolerance) return false;
+  std::vector<PointXYZI> support;
+  support.reserve(neighbors.size());
+  for(auto other:neighbors) support.push_back(points_[other]);
+  if (plane_distance(point) > plane_tolerance)
+    return lingtu::maps::cleaning::HasStableLocalPlane(point,std::span<const PointXYZI>(support));
   const auto supported = std::count_if(neighbors.begin(), neighbors.end(),
       [&](auto other) { return plane_distance(points_[other]) <= plane_tolerance; });
-  return static_cast<std::size_t>(supported) * 5 >= neighbors.size() * 4;
+  return static_cast<std::size_t>(supported) * 5 >= neighbors.size() * 4 ||
+      lingtu::maps::cleaning::HasStableLocalPlane(point,std::span<const PointXYZI>(support));
 }
 }  // namespace lingtu::map_cleaning

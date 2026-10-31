@@ -142,8 +142,8 @@ if(_HAS_OCTOPLANNER3D_RUNTIME)
     nav/input/active/occupancy.cpp
     nav/input/active/declared.cpp
     nav/main.cpp
-    nav/runtime/loop.cpp
-    nav/runtime/semantic/view_query.cpp
+    nav/app/loop.cpp
+    nav/app/semantic/view_query.cpp
     "${_EXPLORE_CPP_DIR}/frontier.cpp"
     "${_EXPLORE_CPP_DIR}/keypose_graph.cpp"
     "${_EXPLORE_CPP_DIR}/tare_policy.cpp"
@@ -153,18 +153,17 @@ if(_HAS_OCTOPLANNER3D_RUNTIME)
     nav/input/motion_worker.cpp
     nav/input/health.cpp
     nav/input/planner.cpp
-    nav/runtime/inspection/inspection_command_coordinator.cpp
-    nav/runtime/inspection/inspection_runtime_controller.cpp
-    nav/runtime/goal/blockage.cpp
-    nav/runtime/goal/task.cpp
-    nav/runtime/goal/retry.cpp
-    nav/runtime/goal/plan.cpp
-    nav/runtime/goal/runtime.cpp
+    nav/app/inspection/inspection_command_coordinator.cpp
+    nav/app/inspection/inspection_runtime_controller.cpp
+    nav/app/goal/task.cpp
+    nav/app/goal/retry.cpp
+    nav/app/goal/plan.cpp
+    nav/app/goal/runtime.cpp
     nav/command/goal.cpp
     nav/command/terminal.cpp
     nav/dds/runtime.cpp
-    nav/runtime/config/parse.cpp
-    nav/runtime/config/build.cpp
+    nav/app/config/parse.cpp
+    nav/app/config/build.cpp
     nav/input/gate.cpp
     nav/dds/codec.cpp
     nav/dds/frame.cpp
@@ -179,7 +178,7 @@ if(_HAS_OCTOPLANNER3D_RUNTIME)
     nav/status/navigation_goal_status_outbox.cpp
     nav/status/goal_terminal_status_delivery.cpp
     nav/status/goal_terminal_transaction.cpp
-    nav/runtime/navigation.cpp
+    nav/app/navigation.cpp
     nav/status/navigation_state.cpp
     nav/status/status_snapshot_file_writer.cpp
     nav/status/inspection_status_file_writer.cpp
@@ -189,6 +188,7 @@ if(_HAS_OCTOPLANNER3D_RUNTIME)
     nav/safety/stop.cpp
     nav/control/admission.cpp
     nav/control/final.cpp
+    nav/control/diagnostics.cpp
     nav/control/teleop.cpp
     nav/control/autonomy.cpp
     nav/input/obstacle.cpp
@@ -207,6 +207,7 @@ if(_HAS_OCTOPLANNER3D_RUNTIME)
 
   target_link_libraries(navd PRIVATE
     lingtu_inspection_core
+    lingtu_maps_artifacts
     lingtu_maps
     lingtu_nav_far
     lingtu_nav_navigation
@@ -214,6 +215,8 @@ if(_HAS_OCTOPLANNER3D_RUNTIME)
     lingtu_nav_velocity_smoother
     lingtu_dds_messages
     octoplanner3d_runtime
+    octomap_vendor
+    octomath_vendor
     CycloneDDS::ddsc
     lingtu_dds_contracts
     Threads::Threads)
@@ -290,7 +293,7 @@ add_executable(lingtu_explore_dds
 
   target_link_libraries(lingtu_explore_dds PRIVATE
     lingtu_dds_messages
-    lingtu_maps
+    lingtu_maps_artifacts
     lingtu_nav_far
     CycloneDDS::ddsc
     lingtu_dds_contracts

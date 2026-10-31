@@ -41,6 +41,24 @@ export function mapIsActivationReady(
     && map.can_activate === true
 }
 
+export function mapUseStatus(map: MapInfo | undefined, loadedForNavigation = false) {
+  if (loadedForNavigation) return {
+    label: '已加载到现场',
+    detail: '当前导航会话已加载此地图，定位与路线预览请在现场查看。',
+  }
+  if (!map) return { label: '读取中', detail: '正在读取地图状态。' }
+  if (mapIsActivationReady(map)) return {
+    label: '导航数据齐全',
+    detail: '地图制品齐全，加载后仍需完成定位与路线预览。',
+  }
+  if (!map.has_pcd) return { label: '数据不完整', detail: '缺少保存点云，暂不能加载此地图。' }
+  if (!map.has_octomap) return { label: '仅可查看', detail: '缺少规划地图，当前只能查看保存点云。' }
+  return {
+    label: '仅可查看',
+    detail: map.activation_blockers?.[0] || '地图服务尚未允许加载此地图导航。',
+  }
+}
+
 export function navigationSessionReady(
   session: SessionEvent['data'],
   mapName: string,

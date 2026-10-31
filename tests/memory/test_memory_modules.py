@@ -50,7 +50,7 @@ class TestSemanticMapperInstantiation(unittest.TestCase):
     """Test SemanticMapperModule creation and initial state."""
 
     def _make(self, **kw):
-        from memory.modules.semantic_mapper_module import SemanticMapperModule
+        from memory.modules.semantic import SemanticMapperModule
         return SemanticMapperModule(**kw)
 
     def test_default_save_dir(self):
@@ -86,10 +86,10 @@ class TestSemanticMapperSetup(unittest.TestCase):
     """Test SemanticMapperModule setup and subscriptions."""
 
     def _make(self, **kw):
-        from memory.modules.semantic_mapper_module import SemanticMapperModule
+        from memory.modules.semantic import SemanticMapperModule
         return SemanticMapperModule(**kw)
 
-    @patch("memory.modules.semantic_mapper_module.SemanticMapperModule._init_backends")
+    @patch("memory.modules.semantic.SemanticMapperModule._init_backends")
     def test_setup_subscribes_ports(self, mock_init):
         m = self._make()
         m.setup()
@@ -161,7 +161,7 @@ class TestVectorMemoryInstantiation(unittest.TestCase):
     """Test VectorMemoryModule creation and initial state."""
 
     def _make(self, **kw):
-        from memory.modules.vector_memory_module import VectorMemoryModule
+        from memory.modules.vector import VectorMemoryModule
         return VectorMemoryModule(**kw)
 
     def test_default_persist_dir(self):
@@ -193,7 +193,7 @@ class TestVectorMemoryOperations(unittest.TestCase):
     """Test VectorMemoryModule store and query with numpy fallback."""
 
     def _make(self, **kw):
-        from memory.modules.vector_memory_module import VectorMemoryModule
+        from memory.modules.vector import VectorMemoryModule
         m = VectorMemoryModule(**kw)
         # Do not call setup() to avoid importing CLIP / ChromaDB
         m._use_chromadb = False
@@ -201,19 +201,19 @@ class TestVectorMemoryOperations(unittest.TestCase):
         return m
 
     def test_hash_embedding_deterministic(self):
-        from memory.modules.vector_memory_module import VectorMemoryModule
+        from memory.modules.vector import VectorMemoryModule
         v1 = VectorMemoryModule._hash_embedding("hello world")
         v2 = VectorMemoryModule._hash_embedding("hello world")
         np.testing.assert_array_equal(v1, v2)
 
     def test_hash_embedding_normalized(self):
-        from memory.modules.vector_memory_module import VectorMemoryModule
+        from memory.modules.vector import VectorMemoryModule
         v = VectorMemoryModule._hash_embedding("backpack bench tree")
         norm = float(np.linalg.norm(v))
         self.assertAlmostEqual(norm, 1.0, places=5)
 
     def test_hash_embedding_uses_stable_word_hash(self):
-        from memory.modules.vector_memory_module import VectorMemoryModule
+        from memory.modules.vector import VectorMemoryModule
 
         v = VectorMemoryModule._hash_embedding("backpack")
         expected = int.from_bytes(
@@ -418,7 +418,7 @@ class TestEpisodicMemoryInstantiation(unittest.TestCase):
     """Test EpisodicMemoryModule creation and initial state."""
 
     def _make(self, **kw):
-        from memory.modules.episodic_module import EpisodicMemoryModule
+        from memory.modules.episodic import EpisodicMemoryModule
         return EpisodicMemoryModule(**kw)
 
     def test_default_creation(self):
@@ -446,7 +446,7 @@ class TestEpisodicMemoryOperations(unittest.TestCase):
     """Test EpisodicMemoryModule record addition and dedup."""
 
     def _make(self, **kw):
-        from memory.modules.episodic_module import EpisodicMemoryModule
+        from memory.modules.episodic import EpisodicMemoryModule
         m = EpisodicMemoryModule(**kw)
         m.setup()
         return m
@@ -534,7 +534,7 @@ class TestTaggedLocationsInstantiation(unittest.TestCase):
     """Test TaggedLocationsModule creation."""
 
     def _make(self, **kw):
-        from memory.modules.tagged_locations_module import TaggedLocationsModule
+        from memory.modules.locations import TaggedLocationsModule
         return TaggedLocationsModule(**kw)
 
     def test_default_creation(self):
@@ -554,7 +554,7 @@ class TestTaggedLocationsOperations(unittest.TestCase):
     """Test tag/untag/goto/list operations."""
 
     def _make(self, **kw):
-        from memory.modules.tagged_locations_module import TaggedLocationsModule
+        from memory.modules.locations import TaggedLocationsModule
         m = TaggedLocationsModule(**kw)
         m.setup()
         return m
@@ -710,7 +710,7 @@ class TestTemporalMemoryInstantiation(unittest.TestCase):
     """Test TemporalMemoryModule creation and initial state."""
 
     def _make(self, **kw):
-        from memory.modules.temporal_memory_module import TemporalMemoryModule
+        from memory.modules.temporal import TemporalMemoryModule
         return TemporalMemoryModule(**kw)
 
     def test_default_creation(self):
@@ -740,7 +740,7 @@ class TestTemporalMemoryOperations(unittest.TestCase):
     """Test TemporalMemoryModule buffer operations and queries."""
 
     def _make(self, **kw):
-        from memory.modules.temporal_memory_module import TemporalMemoryModule
+        from memory.modules.temporal import TemporalMemoryModule
         kw.setdefault("min_observation_interval", 0.0)
         m = TemporalMemoryModule(**kw)
         m.setup()
@@ -864,7 +864,7 @@ class TestTemporalRecord(unittest.TestCase):
     """Test TemporalRecord data class."""
 
     def test_to_dict(self):
-        from memory.modules.temporal_memory_module import TemporalRecord
+        from memory.modules.temporal import TemporalRecord
         rec = TemporalRecord(
             timestamp=1000.0,
             position=(1.0, 2.0, 3.0),
@@ -875,7 +875,7 @@ class TestTemporalRecord(unittest.TestCase):
         self.assertEqual(d["position"], [1.0, 2.0, 3.0])
 
     def test_from_dict_roundtrip(self):
-        from memory.modules.temporal_memory_module import TemporalRecord
+        from memory.modules.temporal import TemporalRecord
         original = TemporalRecord(
             timestamp=500.0,
             position=(10.0, 20.0, 0.0),
@@ -897,7 +897,7 @@ class TestTopologicalInstantiation(unittest.TestCase):
     """Test TopologicalMemoryModule creation."""
 
     def _make(self, **kw):
-        from memory.modules.topological_module import TopologicalMemoryModule
+        from memory.modules.topology import TopologicalMemoryModule
         return TopologicalMemoryModule(**kw)
 
     def test_default_creation(self):
@@ -925,7 +925,7 @@ class TestTopologicalOperations(unittest.TestCase):
     """Test TopologicalMemoryModule node creation and graph operations."""
 
     def _make(self, **kw):
-        from memory.modules.topological_module import TopologicalMemoryModule
+        from memory.modules.topology import TopologicalMemoryModule
         kw.setdefault("new_node_distance", 1.0)
         m = TopologicalMemoryModule(**kw)
         m.setup()

@@ -1,0 +1,47 @@
+{
+  "dataset": "SuperLoc Corridor02",
+  "source": "https://superodometry.com/superloc.html",
+  "local_root": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\superloc-corridor02",
+  "updated_at": "2026-10-19T17:50:14+08:00",
+  "expected_files": 5,
+  "downloaded_files": [
+    {
+      "path": "calibration/corridor02_extrinsics.yaml",
+      "bytes": 860,
+      "url": "https://drive.usercontent.google.com/download?id=1FzepVzxan_9GjS0Rg_3f1LIjjwm2VZrR&export=download&confirm=t",
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\superloc-corridor02\\calibration\\corridor02_extrinsics.yaml",
+      "status": "present"
+    },
+    {
+      "path": "ground_truth/corridor02_gt.txt",
+      "bytes": 475805,
+      "url": "https://drive.usercontent.google.com/download?id=1hb3IVu1OqyPZA61kBZG1raGTBcTv_h3H&export=download&confirm=t",
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\superloc-corridor02\\ground_truth\\corridor02_gt.txt",
+      "status": "present"
+    },
+    {
+      "path": "calibration/corridor02_Intrinsics.yaml",
+      "bytes": 478,
+      "url": "https://drive.usercontent.google.com/download?id=1gCjmOVcwhm55Rwosel79FMxG_WzvnV8g&export=download&confirm=t",
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\superloc-corridor02\\calibration\\corridor02_Intrinsics.yaml",
+      "status": "present"
+    },
+    {
+      "path": "ground_truth/corridor02.pcd",
+      "bytes": 66056109,
+      "url": "https://drive.usercontent.google.com/download?id=1d5vv4kfrTyntZw-82fGeTyih3H7DWxg5&export=download&confirm=t",
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\superloc-corridor02\\ground_truth\\corridor02.pcd",
+      "status": "present"
+    },
+    {
+      "path": "raw/corridor02.zip",
+      "bytes": 15589213681,
+      "parts": 4,
+      "url": "https://drive.usercontent.google.com/download?id=1fbQIjza6zCVZ719VvXfNhAONDZflqGnf&export=download&confirm=t",
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\superloc-corridor02\\raw\\corridor02.zip",
+      "status": "downloaded"
+    }
+  ],
+  "errors": [],
+  "replay_status": "not_run"
+}

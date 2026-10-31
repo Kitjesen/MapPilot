@@ -168,7 +168,7 @@ Host 内通过现有 Module 接口、类型消息和注册机制连接；跨进�
 
 当前代码依据：
 
-- [产品声明与过程边界](../getting-started.md)、[ProductControl](../../src/lingtu/README.md)。
+- [产品声明与过程边界](../../config/system/README.md)、[ProductControl](../../src/lingtu/README.md)。
 - [外部请求与实时通道](../../src/gateway/README.md)、[请求/返回类型](../../src/gateway/schemas.py)。
 - [DDS 消息定义](../../src/message/README.md)、[原生驱动](../../src/drivers/real/motion/README.md)。
 - [视觉服务器](../../tools/inference/follow_service.py)和[远程客户端](../../src/perception/remote.py)。
@@ -183,7 +183,7 @@ Host 内通过现有 Module 接口、类型消息和注册机制连接；跨进�
 细节与验证边界见 [已落地的 Follow 边界](tasks.md#已落地的-follow-边界)。
 以下为实现遵循的职责约束，不表示仿真或实机验收已经通过。
 
-首个验收入口采用已有的 [tracking Product](../getting-started.md)：
+首个验收入口采用已有的 [tracking Product](../../config/system/products/tracking.yaml)：
 它已经声明相机、感知、VisualServo、保存地图定位、原生导航和驱动。
 普通 `nav`/`nav:camera` 不因“有相机”就自动具备跟随能力；本阶段不扩大这些 Product。
 Product 配置存在也不代表模型、外参或现场输入已满足运行条件。
@@ -223,7 +223,7 @@ Host 重启时，[GoalService](../../src/nav/services/goals.py) 会恢复当前 
 | --- | --- |
 | Follow 任务记录、子目标归属、开始/查询/取消 | [visual_servo.py](../../src/decision/modules/visual_servo.py) |
 | 保留身份的命令与回执、对外请求和返回 | [commands.py](../../src/gateway/routes/commands.py)、[schemas.py](../../src/gateway/schemas.py)，以及现有运行时消息定义 |
-| 原生任务类型化反馈接线 | [semantic.py](../../src/lingtu/assembly/wires/semantic.py) |
+| 原生任务类型化反馈接线 | [semantic.py](../../src/lingtu/assembly/host/wiring/semantic.py) |
 | 当前运行内孤儿视觉子任务取消 | [goals.py](../../src/nav/services/goals.py) |
 | Web、SDK、MCP 同一入口与状态解释 | 现有客户端和工具方法；复用执行者而非复制状态机 |
 | 验收入口 | 既有 `tracking` Product 的装配与相关契约测试 |

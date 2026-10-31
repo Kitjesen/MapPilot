@@ -4,7 +4,7 @@
 The short native DDS motion gate only checks one endpoint displacement ratio
 plus a final SLAM status snapshot. That is not sufficient evidence for
 "continuous mapping is stable". This gate runs one long MuJoCo -> native DDS ->
-Fast-LIO2 mapping session and produces a single verdict from four groups:
+LTLIO mapping session and produces a single verdict from four groups:
 
 1. Continuity: periodic SLAM status samples during the whole run must stay
    TRACKING with zero dropped frames, zero rollbacks, no map-frame jump, no
@@ -49,7 +49,7 @@ SCHEMA_VERSION = "lingtu.mujoco_continuous_mapping_quality_gate.v1"
 # CycloneDDS on sunrise rejects high domain ids (multicast port out of range).
 # Keep isolated MuJoCo gates on 200-232; production robot uses domain 0.
 MAX_CYCLONEDDS_DOMAIN_ID = 232
-DEFAULT_SLAM_CONFIG = SRC / "localization" / "fastlio2" / "config" / "sim_mid360_slam.yaml"
+DEFAULT_SLAM_CONFIG = SRC / "localization" / "ltlio" / "config" / "sim_mid360_slam.yaml"
 DEFAULT_SLAM_RUNTIME_BIN = ROOT / "build" / "slam_core" / "slamd"
 BRIDGE_SCRIPT = ROOT / "sim" / "scripts" / "mujoco" / "native_dds_sensors.py"
 
@@ -588,7 +588,7 @@ def analyze_status_continuity(
             break
         worst_abs_xy = max(worst_abs_xy, abs(x), abs(y))
         worst_abs_z = max(worst_abs_z, abs(z))
-        velocity = sample.get("fastlio_velocity") or {}
+        velocity = sample.get("ltlio_velocity") or {}
         vx = _sample_float(velocity, "x") or 0.0
         vy = _sample_float(velocity, "y") or 0.0
         vz = _sample_float(velocity, "z") or 0.0
@@ -732,7 +732,7 @@ def _start_slam_runtime(
     command = [
         str(runtime_bin),
         "--backend",
-        "fastlio2",
+        "ltlio",
         "--mode",
         "mapping",
         "--config",

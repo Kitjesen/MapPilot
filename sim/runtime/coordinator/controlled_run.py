@@ -24,7 +24,7 @@ from sim.runtime.sensors import (
     TruthOdometryEndpointFactory,
 )
 
-from .coordinator import CoordinatorError, RuntimeCoordinator, RuntimeState
+from .coordinator import CoordinatorError, PhysicsPlan, RuntimeCoordinator, RuntimeState
 from .mujoco_process import MujocoProcess
 
 
@@ -84,6 +84,12 @@ class ControlledCoordinator(Protocol):
     @property
     def state(self) -> RuntimeState: ...
 
+    @property
+    def plan(self) -> PhysicsPlan: ...
+
+    @property
+    def command_timeout_ns(self) -> int: ...
+
     def prepare(self) -> dict[str, Any]: ...
 
     def start(self) -> dict[str, Any]: ...
@@ -129,6 +135,15 @@ def _event_integer(event: Mapping[str, Any], field: str) -> int:
     return value
 
 
+def limit_refresh_steps(coordinator: ControlledCoordinator, requested_steps: int) -> int:
+    """Refresh at least every 20 ms, within the compiled timeout and timestep."""
+
+    step_ns = coordinator.plan.global_policy.timestep_s * 1_000_000_000
+    interval_ns = min(20_000_000, coordinator.command_timeout_ns)
+    max_steps = max(1, int(interval_ns // step_ns))
+    return min(requested_steps, max_steps)
+
+
 def run_base_twist_session(
     coordinator: ControlledCoordinator,
     target: BaseTwistTarget,
@@ -155,6 +170,7 @@ def run_base_twist_session(
     command_sequence = 0
     snapshot: dict[str, Any] | None = None
     try:
+        refresh_steps = limit_refresh_steps(coordinator, refresh_steps)
         coordinator.start()
         while remaining > 0:
             command_sequence += 1
@@ -180,15 +196,17 @@ def run_base_twist_session(
             current = snapshot
             remaining -= chunk
     finally:
-        if coordinator.state is RuntimeState.RUNNING:
-            coordinator.pause()
-        if coordinator.state in {
-            RuntimeState.PREPARING,
-            RuntimeState.READY,
-            RuntimeState.RUNNING,
-            RuntimeState.PAUSED,
-        }:
-            coordinator.stop()
+        try:
+            if coordinator.state is RuntimeState.RUNNING:
+                coordinator.pause()
+        finally:
+            if coordinator.state in {
+                RuntimeState.PREPARING,
+                RuntimeState.READY,
+                RuntimeState.RUNNING,
+                RuntimeState.PAUSED,
+            }:
+                coordinator.stop()
 
     if snapshot is None:
         raise CoordinatorError("controlled session did not produce a snapshot")
@@ -222,9 +240,6 @@ def resolve_base_twist_target(bundle_dir: Path, controller_id: str | None) -> Ba
         instance_id=controller.instance_id,
         channel_id=channels[0].channel_id,
     )
-
-
-_target_from_bundle = resolve_base_twist_target
 
 
 def _write_snapshot(path: Path, snapshot: Mapping[str, Any]) -> Path:
@@ -262,7 +277,10 @@ def main() -> int:
     parser.add_argument("--dds-domain", type=int, default=0)
     parser.add_argument("--controller-id")
     parser.add_argument("--steps", type=int, default=250)
-    parser.add_argument("--refresh-steps", type=int, default=25)
+    parser.add_argument(
+        "--refresh-steps", type=int, default=25,
+        help="maximum steps between commands; capped at 20 ms or the shorter compiled timeout",
+    )
     parser.add_argument("--linear-x", type=float, default=0.0)
     parser.add_argument("--linear-y", type=float, default=0.0)
     parser.add_argument("--angular-z", type=float, default=0.0)
@@ -343,6 +361,7 @@ def main() -> int:
 __all__ = [
     "BaseTwist",
     "BaseTwistTarget",
+    "limit_refresh_steps",
     "resolve_base_twist_target",
     "run_base_twist_session",
 ]

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from diagnostics.field.dds_readiness import collect_readiness
-from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan
 from runtime.config import load_config
 from runtime.utils.livox_config import build_mid360_config_dict
 
@@ -244,7 +244,7 @@ def run_gate(*, repo: Path, output_dir: Path, seconds: float, settle_seconds: fl
             [
                 str(slam),
                 "--backend",
-                "fastlio2",
+                "ltlio",
                 "--mode",
                 "mapping",
                 "--config",

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from lingtu.assembly.wires.context import WiringContext
-from lingtu.assembly.wires.gateway import gateway_status_specs
-from lingtu.assembly.wires.semantic import semantic_command_specs
+from lingtu.assembly.host.wiring.context import WiringContext
+from lingtu.assembly.host.wiring.gateway import gateway_status_specs
+from lingtu.assembly.host.wiring.semantic import semantic_command_specs
 from runtime.wiring import wire_key
 
 
@@ -30,9 +30,10 @@ def test_semantic_nav_command_wires_to_goal_service_when_present() -> None:
     assert ("nav.goals", "goal_status", "SemanticPlannerModule", "goal_status") in keys
     assert ("nav.goals", "task_status", "SemanticPlannerModule", "navigation_goal_status") in keys
     assert ("SemanticPlannerModule", "goal_pose", "nav.goals", "goal_request") not in keys
-    assert ("PerceptionModule", "robot_pose", "SemanticPlannerModule", "robot_pose") in keys
+    assert ("PerceptionModule", "observation", "SemanticPlannerModule", "observation") in keys
+    assert ("PerceptionModule", "robot_pose", "SemanticPlannerModule", "robot_pose") not in keys
     assert ("PerceptionModule", "robot_pose", "AgentPlannerModule", "robot_pose") in keys
-    assert ("PerceptionModule", "observation_image", "SemanticPlannerModule", "observation_image") in keys
+    assert ("PerceptionModule", "observation_image", "SemanticPlannerModule", "observation_image") not in keys
     assert ("AgentPlannerModule", "goal_pose", "nav.goals", "goal_request") not in keys
 
 

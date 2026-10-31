@@ -13,12 +13,12 @@ import math
 import os
 import threading
 import time
+from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from runtime import In, Module
 from runtime.contracts.inspection_evidence import (
     SUPPORTED_ACTIONS,
     EvidenceConflictError,
@@ -26,12 +26,26 @@ from runtime.contracts.inspection_evidence import (
     InspectionEvidenceRequest,
     InspectionEvidenceResult,
     InspectionEvidenceStore,
+    InspectionFinding,
+    MeasurementArtifact,
 )
+from runtime.contracts.sensor_control import SensorControlResult
+from runtime.module import Module
+from runtime.msgs.measurement import AcousticMeasurement, SemanticMeasurement, ThermalMeasurement
 from runtime.msgs.nav import Odometry
 from runtime.msgs.sensor import CameraIntrinsics, Image
 from runtime.registry import register
+from runtime.stream import In
 
+from .measurement_capture import (
+    MeasurementUnavailable,
+    capture_measurements,
+    measurement_configuration,
+    validate_measurement_identity,
+    validate_measurement_time,
+)
 from .native_bridge import NativeInspectionEvidenceBridge
+from .visual_checks import VISUAL_ACTIONS, InspectionVisualReader
 
 STATUS_SCHEMA_VERSION = "lingtu.inspection.evidence.status.v1"
 DEFAULT_EVIDENCE_ROOT = "~/data/lingtu/inspection_evidence"
@@ -59,13 +73,29 @@ def _default_status_file() -> Path:
     description="Inspection evidence capture worker using the native C ABI DDS bridge",
 )
 class InspectionEvidenceModule(Module, layer=3):
-    """Persist inspection evidence requested by the native navigation runtime."""
+    """Persist inspection evidence requested by the native navigation runtime.
+
+    Measurement intake is opt-in. ``measurement_sensors`` maps sensor IDs to
+    modality/session_id/instance_id/frame_id/model_generation/reset_generation;
+    ``product_session_id`` binds the Product run. ``measurement_rules`` maps
+    sensor IDs to ThermalRule/AcousticRule constructor fields. Missing rules
+    preserve raw evidence without authorizing a normal verdict.
+
+    ``capture_sensor_ids`` overrides action-specific selection; otherwise thermal
+    and acoustic actions select all declared sensors of their own modality.
+    Other actions retain RGB-only defaults. Semantic labels are raw context,
+    not detector predictions or a semantic fault diagnosis.
+    """
 
     color_image: In[Image]
     depth_image: In[Image]
     camera_info: In[CameraIntrinsics]
     odometry: In[Odometry]
     detections_3d: In[list]
+    thermal: In[ThermalMeasurement]
+    acoustic: In[AcousticMeasurement]
+    semantic: In[SemanticMeasurement]
+    sensor_control_state: In[SensorControlResult]
 
     def __init__(
         self,
@@ -82,6 +112,14 @@ class InspectionEvidenceModule(Module, layer=3):
         bridge_factory: Callable[[], Any] | None = None,
         store_factory: Callable[[Path], InspectionEvidenceStore] | None = None,
         jpeg_encoder: Callable[[Image], bytes] | None = None,
+        vision_service_url: str = "",
+        visual_reader: InspectionVisualReader | None = None,
+        product_session_id: str = "",
+        measurement_sensors: Mapping[str, Mapping[str, Any]] | None = None,
+        measurement_rules: Mapping[str, Mapping[str, Any]] | None = None,
+        capture_sensor_ids: Mapping[str, Sequence[str]] | None = None,
+        max_measurement_age_s: float = 2.0,
+        max_measurement_skew_s: float = 0.2,
         **config: Any,
     ) -> None:
         super().__init__(**config)
@@ -101,6 +139,20 @@ class InspectionEvidenceModule(Module, layer=3):
         )
         self._store_factory = store_factory or InspectionEvidenceStore
         self._jpeg_encoder = jpeg_encoder
+        self._visual_reader = visual_reader or InspectionVisualReader(server_url=vision_service_url)
+        self._product_session_id = product_session_id
+        self._measurement_sensors, self._measurement_rules, self._capture_sensor_ids = measurement_configuration(
+            product_session_id, measurement_sensors or {}, measurement_rules or {}, capture_sensor_ids or {},
+        )
+        self._max_measurement_age_s = float(max_measurement_age_s)
+        self._max_measurement_skew_s = float(max_measurement_skew_s)
+        for name, value in (("max_measurement_age_s", self._max_measurement_age_s),
+                            ("max_measurement_skew_s", self._max_measurement_skew_s)):
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and non-negative")
+        self._measurements: dict[str, ThermalMeasurement | AcousticMeasurement | SemanticMeasurement] = {}
+        self._measurement_controls: dict[str, SensorControlResult] = {}
+        self._control_seen: deque[str] = deque(maxlen=256)
         self._store: InspectionEvidenceStore | None = None
         self._bridge: Any | None = None
         self._thread: threading.Thread | None = None
@@ -110,6 +162,7 @@ class InspectionEvidenceModule(Module, layer=3):
         self._depth: _Sample | None = None
         self._camera_info: _Sample | None = None
         self._odom: _Sample | None = None
+        self._odom_history: deque[_Sample] = deque(maxlen=256)
         self._detections: _Sample | None = None
         self._state = "init"
         self._last_request_id = ""
@@ -128,6 +181,10 @@ class InspectionEvidenceModule(Module, layer=3):
         self.odometry.set_policy("latest")
         self.detections_3d.subscribe(self._on_detections)
         self.detections_3d.set_policy("latest")
+        self.thermal.subscribe(self._on_measurement)
+        self.acoustic.subscribe(self._on_measurement)
+        self.semantic.subscribe(self._on_measurement)
+        self.sensor_control_state.subscribe(self._on_sensor_control)
         self._store = self._store_factory(self._evidence_root)
         self._bridge = self._bridge_factory()
         self._state = "ready"
@@ -199,10 +256,49 @@ class InspectionEvidenceModule(Module, layer=3):
     def _on_detections(self, detections: list) -> None:
         self._set_sample("_detections", detections, None)
 
+    def _on_measurement(self, sample: ThermalMeasurement | AcousticMeasurement | SemanticMeasurement) -> None:
+        with self._lock:
+            sensor_id = sample.identity.sensor_id
+            if sensor_id not in self._measurement_sensors:
+                return
+            previous = self._measurements.get(sensor_id)
+            if previous is not None and type(previous) is type(sample) and all(
+                getattr(previous.identity, key) == getattr(sample.identity, key) for key in (
+                    "product_session_id", "session_id", "instance_id", "frame_id",
+                    "model_generation", "reset_generation",
+                )
+            ):
+                # Transport arrival order cannot replace a newer source sample.
+                # New invalid measurements still replace old valid ones; quality
+                # is assessed at capture, never used to cherry-pick normal data.
+                if (sample.identity.sequence <= previous.identity.sequence
+                        or sample.identity.sim_time_ns < previous.identity.sim_time_ns):
+                    return
+            self._measurements[sensor_id] = sample
+
+    def _on_sensor_control(self, result: SensorControlResult) -> None:
+        binding = self._measurement_sensors.get(result.sensor_id)
+        if (not result.applied or binding is None or result.product_session_id != self._product_session_id
+                or type(result.settings.get("enabled")) is not bool or any(
+                    getattr(result, key) != binding[key] for key in ("session_id", "model_generation", "reset_generation"))):
+            return
+        with self._lock:
+            previous = self._measurement_controls.get(result.sensor_id)
+            if (result.request_id in self._control_seen
+                    or (previous is not None and result.applied_sim_time_ns < previous.applied_sim_time_ns)):
+                return
+            self._control_seen.append(result.request_id)
+            if previous is not None and previous.settings.get("enabled") is False and result.settings["enabled"]:
+                self._measurements.pop(result.sensor_id, None)
+            self._measurement_controls[result.sensor_id] = result
+
     def _set_sample(self, name: str, value: Any, message_ts_s: Any) -> None:
         ts = float(message_ts_s) if isinstance(message_ts_s, (int, float)) else None
         with self._lock:
-            setattr(self, name, _Sample(value=value, received_at_s=time.time(), message_ts_s=ts))
+            sample = _Sample(value=value, received_at_s=time.time(), message_ts_s=ts)
+            setattr(self, name, sample)
+            if name == "_odom":
+                self._odom_history.append(sample)
 
     def _handle_request(self, request: Mapping[str, Any]) -> None:
         now = time.time()
@@ -213,14 +309,12 @@ class InspectionEvidenceModule(Module, layer=3):
         self._write_status(ready=True, state="processing")
 
         persisted = False
-        evidence_id = ""
         reason = "unknown"
         verdict = "inconclusive"
         try:
             existing = self._existing_matching_result(normalized_request)
             if existing is not None:
                 persisted = True
-                evidence_id = existing.request.request_id
                 reason = "persisted"
                 verdict = existing.analysis_verdict
             elif now > float(normalized_request.get("deadline_s", 0.0)):
@@ -232,9 +326,10 @@ class InspectionEvidenceModule(Module, layer=3):
                 else:
                     result = self._persist_request(normalized_request, snapshot)
                     persisted = True
-                    evidence_id = result.request.request_id
                     reason = "persisted"
                     verdict = result.analysis_verdict
+        except MeasurementUnavailable as exc:
+            reason = str(exc)
         except EvidenceConflictError:
             persisted = False
             reason = "request_id_conflict"
@@ -246,13 +341,12 @@ class InspectionEvidenceModule(Module, layer=3):
             reason = f"persist_failed:{exc}"
 
         if persisted:
-            self._last_evidence_id = evidence_id
+            self._last_evidence_id = request_id
             self._last_error = ""
         else:
             self._last_error = reason
         self._write_result(
             request_id=request_id,
-            evidence_id=evidence_id,
             persisted=persisted,
             reason=reason,
             analysis_verdict=verdict,
@@ -270,18 +364,63 @@ class InspectionEvidenceModule(Module, layer=3):
         rgb_bytes = self._encode_jpeg(snapshot["color"].value)
         pose = self._pose_payload(snapshot)
         detections = self._detections_payload(snapshot)
+        finding = None
+        measurements: tuple[MeasurementArtifact, ...] = ()
+        action = str(request["action"])
+        default_sensors = tuple(key for key, value in self._measurement_sensors.items()
+                                if action == f"capture:{value['modality']}" and value["modality"] != "semantic")
+        sensor_ids = self._capture_sensor_ids.get(action, default_sensors)
+        if not sensor_ids and action in {"capture:thermal", "capture:acoustic"}:
+            raise MeasurementUnavailable(f"measurement_not_configured:{action.split(':', 1)[1]}")
+        if sensor_ids:
+            if snapshot["color"].message_ts_s is None:
+                raise MeasurementUnavailable("measurement_rgb_clock_missing")
+            if snapshot["odom"].message_ts_s is None:
+                raise MeasurementUnavailable("measurement_odometry_clock_missing")
+            with self._lock:
+                samples = dict(self._measurements)
+                controls = dict(self._measurement_controls)
+            run_identity = None
+            for sensor_id in sensor_ids:
+                if sensor_id in controls and controls[sensor_id].settings["enabled"] is False:
+                    raise MeasurementUnavailable(f"measurement_disabled:{sensor_id}")
+                if sensor_id not in samples:
+                    raise MeasurementUnavailable(f"measurement_missing:{sensor_id}")
+                validate_measurement_identity(samples[sensor_id], self._measurement_sensors[sensor_id], self._product_session_id)
+                identity = samples[sensor_id].identity
+                source_run = (identity.product_session_id, identity.session_id, identity.instance_id,
+                              identity.model_generation, identity.reset_generation)
+                if run_identity is not None and source_run != run_identity:
+                    raise MeasurementUnavailable(f"measurement_run_mismatch:{sensor_id}")
+                run_identity = source_run
+                validate_measurement_time(
+                    samples[sensor_id], now=time.time(), rgb_ts=snapshot["captured_at_s"],
+                    odom_ts=_sample_timestamp(snapshot["odom"]), max_age_s=self._max_measurement_age_s,
+                    max_skew_s=self._max_measurement_skew_s,
+                )
+            measurements, finding = capture_measurements(samples, sensor_ids, self._measurement_rules, action=action)
+        if request.get("action") in VISUAL_ACTIONS:
+            try:
+                finding = self._visual_reader.read(str(request["action"]), rgb_bytes)
+            except Exception:
+                finding = InspectionFinding(
+                    observed_state="unknown", source="inspection_vlm", reason="vision_reader_failed",
+                )
         return self._store.persist(
             request,
             rgb_bytes=rgb_bytes,
             media_type="image/jpeg",
             pose=pose,
             detections=detections,
+            finding=finding,
+            measurements=measurements,
         )
 
     def _snapshot(self, now: float) -> dict[str, Any]:
         with self._lock:
             color = self._color
-            odom = self._odom
+            latest_odom = self._odom
+            odom = self._odometry_for_color(color, now)
             depth = self._depth
             camera_info = self._camera_info
             detections = self._detections
@@ -289,10 +428,12 @@ class InspectionEvidenceModule(Module, layer=3):
         blocker = self._sensor_readiness_reason(
             now,
             color=color,
-            odom=odom,
+            latest_odom=latest_odom,
+            paired_odom=odom,
         )
         if blocker != "ready":
             return {"blocker": blocker}
+        assert color is not None and odom is not None
         return {
             "blocker": "",
             "color": color,
@@ -303,6 +444,20 @@ class InspectionEvidenceModule(Module, layer=3):
             "captured_at_s": _sample_timestamp(color),
             "rgb_odom_skew_s": _sample_skew_s(color, odom),
         }
+
+    def _odometry_for_color(self, color: _Sample | None, now: float) -> _Sample | None:
+        # The stream age belongs to the latest sample; a photo's pose belongs
+        # to its capture time, even while newer odometry continues arriving.
+        history_age_s = self._max_frame_age_s + self._max_rgb_odom_skew_s
+        self._odom_history = deque(
+            (sample for sample in self._odom_history if _sample_readiness_reason(
+                sample, now=now, max_age_s=history_age_s, missing="missing", stale="stale",
+            ) == "ready"),
+            maxlen=256,
+        )
+        if color is None or not self._odom_history:
+            return None
+        return min(self._odom_history, key=lambda sample: _sample_skew_s(color, sample))
 
     def _encode_jpeg(self, image: Image) -> bytes:
         if self._jpeg_encoder is not None:
@@ -349,7 +504,6 @@ class InspectionEvidenceModule(Module, layer=3):
         self,
         *,
         request_id: str,
-        evidence_id: str,
         persisted: bool,
         reason: str,
         analysis_verdict: str,
@@ -359,7 +513,6 @@ class InspectionEvidenceModule(Module, layer=3):
         try:
             self._bridge.write_result(
                 request_id=request_id,
-                evidence_id=evidence_id,
                 persisted=persisted,
                 reason=reason[:255],
                 analysis_verdict=analysis_verdict[:255],
@@ -396,13 +549,10 @@ class InspectionEvidenceModule(Module, layer=3):
         self,
         now: float,
         *,
-        color: _Sample | None = None,
-        odom: _Sample | None = None,
+        color: _Sample | None,
+        latest_odom: _Sample | None,
+        paired_odom: _Sample | None,
     ) -> str:
-        if color is None or odom is None:
-            with self._lock:
-                color = self._color if color is None else color
-                odom = self._odom if odom is None else odom
         color_reason = _sample_readiness_reason(
             color,
             now=now,
@@ -412,8 +562,9 @@ class InspectionEvidenceModule(Module, layer=3):
         )
         if color_reason != "ready":
             return color_reason
+        assert color is not None
         odom_reason = _sample_readiness_reason(
-            odom,
+            latest_odom,
             now=now,
             max_age_s=self._max_odom_age_s,
             missing="odometry_missing",
@@ -421,14 +572,14 @@ class InspectionEvidenceModule(Module, layer=3):
         )
         if odom_reason != "ready":
             return odom_reason
-        if _sample_skew_s(color, odom) > self._max_rgb_odom_skew_s:
+        if paired_odom is None or _sample_skew_s(color, paired_odom) > self._max_rgb_odom_skew_s:
             return "rgb_odometry_unsynchronized"
         return "ready"
 
     def _write_status(self, *, ready: bool, state: str) -> None:
         now = time.time()
         self._last_heartbeat_s = now
-        readiness_reason = state if not ready else self._sensor_readiness_reason(now)
+        readiness_reason = state if not ready else (self._snapshot(now)["blocker"] or "ready")
         if state == "error":
             readiness_reason = "worker_error"
         effective_ready = bool(ready and state != "error" and readiness_reason == "ready")
@@ -448,6 +599,7 @@ class InspectionEvidenceModule(Module, layer=3):
                 "capture:parking": "trusted_observation_required",
                 "capture:bin_full": "unavailable",
                 "capture:plate_ocr": "unavailable",
+                **dict.fromkeys(VISUAL_ACTIONS, "visual_observation"),
             },
             "last_request_id": self._last_request_id,
             "last_evidence_id": self._last_evidence_id,

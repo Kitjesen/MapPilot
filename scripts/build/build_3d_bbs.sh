@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Build the CPU-only 3D-BBS global relocalization library into third_party/.
-# The installed prefix is consumed by the native Fast-LIO SLAM runtime through
+# The installed prefix is consumed by the native LTLIO SLAM runtime through
 # CPU_BBS3D_ROOT; no ROS 2 packages are involved.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

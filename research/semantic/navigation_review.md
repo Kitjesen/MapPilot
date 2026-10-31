@@ -55,7 +55,7 @@ SysNav 的成功条件还要求：机器人停下的位置能观察到满足全�
 
 ## 当前代码的实际情况
 
-- `config/runtime_graph/products/nav.yaml`：没有 `semantic_planning`。
+- `config/runtime/products/nav.yaml`：没有 `semantic_planning`。
 - `inspection.yaml`：声明 `semantic` 和 `semantic_planning`。
 - `tracking.yaml`：有视觉跟随，但明确禁止 `SemanticPlannerModule`。
 - `modules/semantic_planner.py`：地点意图、场景快速匹配、记忆查询、恢复调度存在；

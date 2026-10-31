@@ -3,11 +3,14 @@
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
+#include <memory>
 #include <optional>
 #include <string>
 #include <thread>
 
 #include "input/obstacle.hpp"
+
+namespace lingtu::nav::collision { class Terrain; }
 
 namespace lingtu::nav::endpoint {
 
@@ -16,6 +19,10 @@ struct MotionObservation {
   SensorOrigin origin;
   double stamp_s{0.0};
   double receive_s{0.0};
+  nav_kernel::Vec3 body_position;
+  std::shared_ptr<const collision::Terrain> terrain;
+  std::optional<double> ground_layer_z;
+  double ground_tolerance_m{0.0};
 };
 
 struct MotionResult {

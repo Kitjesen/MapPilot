@@ -2,6 +2,7 @@
 
 #include "planning/local/planner.hpp"
 #include "planning/local/scan/upstream/plan_manage/closed_loop_controller.h"
+#include "trajectory/spline.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -97,6 +98,7 @@ class Algorithm {
  public:
   virtual ~Algorithm() = default;
   virtual FollowerOutput follow(const FollowerInput &input) = 0;
+  virtual void commitApplied(const Twist &) {}
   virtual void stopLinear() = 0;
   virtual void resetTarget() = 0;
   virtual void resetIntent() = 0;
@@ -354,6 +356,14 @@ class SplineAlgorithm final : public Algorithm {
  public:
   FollowerOutput follow(const FollowerInput &input) override {
     FollowerOutput output;
+    if (!std::isfinite(input.currentTime) || !std::isfinite(input.vehicleYawRelative) ||
+        !std::isfinite(input.vehicleRelative.x) || !std::isfinite(input.vehicleRelative.y) ||
+        !std::isfinite(input.vehicleRelative.z) ||
+        (input.desiredHeading && !std::isfinite(*input.desiredHeading)) ||
+        (input.desiredYawRate && !std::isfinite(*input.desiredYawRate))) {
+      stopLinear();
+      return output;
+    }
     const auto *target =
         std::get_if<std::reference_wrapper<const SplineTarget>>(&input.target);
     if (target == nullptr) return output;
@@ -361,29 +371,51 @@ class SplineAlgorithm final : public Algorithm {
 
     const SplineFollowerParams &scan = input.params.spline;
     const double requestedLimit = std::min(
-        std::max(scan.maxVx, scan.maxVy),
+        std::hypot(scan.maxVx, scan.maxVy),
         std::max(0.0, input.params.maxSpeed) * clamp(input.requestedSpeed, 0.0, 1.0) *
             clamp(input.slowFactor, 0.0, 1.0));
-    const bool speedReplan = spline.maxLinearSpeedMps > 0.0 &&
-                            spline.maxLinearSpeedMps > requestedLimit + 1e-9;
+    const bool newTrajectory = !controller_.hasTrajectory() ||
+                              controller_.trajectoryId() != spline.trajectoryId;
+    if (newTrajectory) {
+      splineView_.emplace(spline);
+      splineSpeedBound_ = splineView_->speedBound();
+    }
+    const bool speedReplan = spline.speedTransitionEndS <= 0.0 &&
+                            spline.maxLinearSpeedMps > 0.0 &&
+                            spline.maxLinearSpeedMps > requestedLimit + 1e-9 &&
+                            splineSpeedBound_ > requestedLimit + 1e-9;
     if (invalidatedTrajectoryId_ && *invalidatedTrajectoryId_ != spline.trajectoryId)
       invalidatedTrajectoryId_.reset();
-    if (speedReplan) invalidatedTrajectoryId_ = spline.trajectoryId;
-    const bool externalHold = invalidatedTrajectoryId_.has_value() || requestedLimit <= kSpeedEpsilon ||
-                              input.safetyStop >= 1;
-    const double speedLimit = spline.maxLinearSpeedMps > 0.0
+    if (speedReplan || (spline.speedTransitionEndS > 0.0 &&
+                       spline.maxLinearSpeedMps > requestedLimit + 1e-9))
+      invalidatedTrajectoryId_ = spline.trajectoryId;
+    const bool waitingForReduction = invalidatedTrajectoryId_.has_value();
+    const bool externalHold = waitingForReduction ||
+                              requestedLimit <= kSpeedEpsilon || input.safetyStop >= 1;
+    double speedLimit = spline.maxLinearSpeedMps > 0.0
                                  ? std::min(requestedLimit, spline.maxLinearSpeedMps)
                                  : requestedLimit;
 
+    // Command time stays independent of the reference clock reset by a new ID.
+    double commandDt = clamp(input.params.nominalDt, 0.0, std::max(0.0, input.params.maxDt));
+    if (lastInputTime_) {
+      const double elapsed = input.currentTime - *lastInputTime_;
+      if (elapsed >= 0.0 &&
+          elapsed <= local::scan::upstream::ClosedLoopController::kMaxUpdateGapS + 1e-9)
+        commandDt = std::min(elapsed, std::max(0.0, input.params.maxDt));
+      else if (!paused_ || elapsed <= 0.0)
+        commandDt = 0.0;
+      // A declared pause resumes with one command step, not the whole hold.
+    }
     // Endpoint holds stop execution without restarting the upstream spline.
-    if ((paused_ || externalHold) && lastInputTime_ && input.currentTime > *lastInputTime_)
+    const bool referenceHeld = paused_ || externalHold;
+    if (referenceHeld && lastInputTime_ && input.currentTime > *lastInputTime_)
       pausedTime_ += input.currentTime - *lastInputTime_;
     lastInputTime_ = input.currentTime;
     paused_ = false;
     const double controlTime = input.currentTime - pausedTime_;
 
-    if (!controller_.hasTrajectory() ||
-        controller_.trajectoryId() != spline.trajectoryId) {
+    if (newTrajectory) {
       local::scan::upstream::BsplineTrajectory trajectory;
       trajectory.positionPoints.resize(
           3, static_cast<Eigen::Index>(spline.controls.size()));
@@ -402,9 +434,31 @@ class SplineAlgorithm final : public Algorithm {
       }
       trajectory.order = spline.order;
       trajectory.trajectoryId = spline.trajectoryId;
-      trajectory.startTimeS = spline.startTimeS;
-      if (!controller_.setTrajectory(trajectory, controlTime))
+      // Only an executing trajectory supplies a physical replacement epoch.
+      // Initial planning wait is not motion; start the first reference at zero.
+      // A replacement must not replay its already elapsed prefix and pull a
+      // moving robot back toward the planning snapshot.
+      const double elapsed = controller_.hasTrajectory() && !referenceHeld && spline.startTimeS >= 0.0
+                                 ? std::max(0.0, input.currentTime - spline.startTimeS)
+                                 : 0.0;
+      trajectory.startTimeS = controlTime - elapsed;
+      if (!controller_.setTrajectory(trajectory, controlTime)) {
+        stopLinear();
         return output;
+      }
+    }
+
+    // This prefix has its own physical time and collision checks; an old
+    // overspeed spline never gets this allowance merely from a new request.
+    if (spline.speedTransitionEndS > 0.0 && !waitingForReduction) {
+      const double phase = newTrajectory
+          ? (spline.startTimeS >= 0.0 && !referenceHeld
+                 ? std::max(0.0, input.currentTime - spline.startTimeS) : 0.0)
+          : tracking_.executionTimeS + commandDt;
+      if (phase < spline.speedTransitionEndS) {
+        const Vec3 velocity = splineView_->velocity(phase);
+        speedLimit = std::max(speedLimit, std::hypot(velocity.x, velocity.y));
+      }
     }
 
     local::scan::upstream::ClosedLoopControllerState state;
@@ -413,12 +467,14 @@ class SplineAlgorithm final : public Algorithm {
     state.yaw = input.vehicleYawRelative;
     state.nowS = controlTime;
     state.desiredHeading = input.desiredHeading;
+    state.desiredYawRate = input.desiredYawRate;
 
     local::scan::upstream::ClosedLoopControllerParams params;
     params.timeForward = scan.timeForward;
     params.headingErrorThreshold = scan.headingErrorThreshold;
     params.positionGain = scan.positionGain;
     params.yawGain = scan.yawGain;
+    params.maxLinearSpeed = speedLimit;
     params.maxVx = std::min(scan.maxVx, speedLimit);
     params.maxVy = std::min(scan.maxVy, speedLimit);
     params.maxYawRate = scan.maxYawRateRadS;
@@ -430,11 +486,64 @@ class SplineAlgorithm final : public Algorithm {
     output.directionError = controlled.yawError;
     output.endDistance = controlled.endDistance;
     output.executionFrozen = controlled.executionFrozen;
-    output.finished = controlled.finished;
+    output.finished = controlled.finished && !waitingForReduction;
     output.awaitingTrajectory = invalidatedTrajectoryId_.has_value();
+    if (!hasMotionCommand_) {
+      const auto &measured = input.measuredBodyTwist;
+      if (input.measuredBodyTwistValid && std::isfinite(measured.vx) &&
+          std::isfinite(measured.vy) && std::isfinite(measured.wz)) {
+        lastCommand_ = measured;
+      }
+      lastCommandYaw_ = input.vehicleYawRelative;
+      hasMotionCommand_ = true;
+    }
+    if (!output.finished) {
+      if (!controlled.executionFrozen && !externalHold) {
+        // Bound the physical XY velocity change in one world frame. Rotating
+        // the body frame alone must not look like extra acceleration.
+        const double c = std::cos(input.vehicleYawRelative);
+        const double s = std::sin(input.vehicleYawRelative);
+        const double pc = std::cos(lastCommandYaw_);
+        const double ps = std::sin(lastCommandYaw_);
+        const double previousX = pc * lastCommand_.vx - ps * lastCommand_.vy;
+        const double previousY = ps * lastCommand_.vx + pc * lastCommand_.vy;
+        const double dx = c * output.cmd.vx - s * output.cmd.vy - previousX;
+        const double dy = s * output.cmd.vx + c * output.cmd.vy - previousY;
+        const double delta = std::hypot(dx, dy);
+        const double step = std::max(0.0, input.params.maxAccel) * commandDt;
+        const double scale = delta > step && delta > 1e-12 ? step / delta : 1.0;
+        const double worldX = previousX + scale * dx;
+        const double worldY = previousY + scale * dy;
+        output.cmd.vx = clamp(c * worldX + s * worldY, -params.maxVx, params.maxVx);
+        output.cmd.vy = clamp(-s * worldX + c * worldY, -params.maxVy, params.maxVy);
+        const double speed = std::hypot(output.cmd.vx, output.cmd.vy);
+        if (speed > speedLimit && speed > 1e-12) {
+          output.cmd.vx *= speedLimit / speed;
+          output.cmd.vy *= speedLimit / speed;
+        }
+      }
+      if (input.params.maxYawAccelRadS2 > 0.0) {
+        const double step = input.params.maxYawAccelRadS2 * commandDt;
+        output.cmd.wz = clamp(output.cmd.wz, lastCommand_.wz - step, lastCommand_.wz + step);
+        const double yawLimit = std::min(1.0, std::max(0.0, params.maxYawRate));
+        output.cmd.wz = clamp(output.cmd.wz, -yawLimit, yawLimit);
+      }
+    }
     if (externalHold) {
       output.cmd.vx = 0.0;
       output.cmd.vy = 0.0;
+      if (waitingForReduction && requestedLimit > kSpeedEpsilon && input.safetyStop == 0) {
+        // Do not advance an invalid reference while its replacement is being
+        // prepared. Brake from the applied command; the final arbiter still
+        // checks this motion against the current map and measured velocity.
+        const double previousSpeed = std::hypot(lastCommand_.vx, lastCommand_.vy);
+        const double speed = std::max(0.0, previousSpeed -
+            std::max(0.0, input.params.maxAccel) * commandDt);
+        const double angle = lastCommandYaw_ - input.vehicleYawRelative;
+        const double scale = previousSpeed > 0.0 ? speed / previousSpeed : 0.0;
+        output.cmd.vx = scale * (std::cos(angle) * lastCommand_.vx - std::sin(angle) * lastCommand_.vy);
+        output.cmd.vy = scale * (std::sin(angle) * lastCommand_.vx + std::cos(angle) * lastCommand_.vy);
+      }
       if (input.safetyStop >= 2) output.cmd.wz = 0.0;
       output.executionFrozen = true;
     }
@@ -442,17 +551,24 @@ class SplineAlgorithm final : public Algorithm {
                        controlled.executionTimeS, controlled.durationS,
                        controlled.positionErrorM, controlled.yawError,
                        controlled.endDistance, output.executionFrozen,
-                       controlled.finished, speedLimit};
+                       output.finished, speedLimit};
     lastCommand_ = output.cmd;
+    lastCommandYaw_ = input.vehicleYawRelative;
     tracking_ = output.tracking;
     output.canAccelerate =
         std::hypot(output.cmd.vx, output.cmd.vy) > kSpeedEpsilon;
     return output;
   }
 
+  void commitApplied(const Twist &command) override {
+    if (controller_.hasTrajectory() && hasMotionCommand_)
+      lastCommand_ = command;
+  }
+
   void stopLinear() override {
     paused_ = true;
     lastCommand_ = {};
+    hasMotionCommand_ = true;
     tracking_.executionFrozen = true;
   }
 
@@ -466,8 +582,11 @@ class SplineAlgorithm final : public Algorithm {
     pausedTime_ = 0.0;
     paused_ = false;
     lastCommand_ = {};
+    lastCommandYaw_ = 0.0;
+    hasMotionCommand_ = false;
     tracking_ = {};
     invalidatedTrajectoryId_.reset();
+    splineView_.reset();
   }
 
   FollowerDiagnostics diagnostics() const override {
@@ -486,8 +605,12 @@ class SplineAlgorithm final : public Algorithm {
   double pausedTime_{0.0};
   bool paused_{false};
   Twist lastCommand_{};
+  double lastCommandYaw_{0.0};
+  bool hasMotionCommand_{false};
   FollowerTracking tracking_{};
   std::optional<std::int64_t> invalidatedTrajectoryId_;
+  double splineSpeedBound_{0.0};
+  std::optional<SplineView> splineView_;
 };
 
 using AlgorithmFactory = std::unique_ptr<Algorithm> (*)();
@@ -536,7 +659,6 @@ FollowerParams cmuFollowerParams(FollowerParams params) {
   params.yawRateGain = 1.5;
   params.stopYawRateGain = 1.5;
   params.minSpeed = 0.0;
-  params.maxAccel = 2.0;
   params.linearStopThreshold = params.maxAccel / 100.0;
   params.nominalDt = 0.01;
   params.switchTimeThre = 1.0;
@@ -607,6 +729,11 @@ class Follower::Impl {
         plan.target());
   }
 
+  void commitApplied(const Twist &command) {
+    if (active_.has_value())
+      algorithms_.at(*active_)->commitApplied(command);
+  }
+
   void stopLinear() {
     for (auto &entry : algorithms_)
       entry.second->stopLinear();
@@ -657,6 +784,10 @@ FollowerOutput Follower::follow(const LocalPlan &plan, const FollowerState &stat
 
 void Follower::stopLinear() {
   impl_->stopLinear();
+}
+
+void Follower::commitApplied(const Twist &command) {
+  impl_->commitApplied(command);
 }
 
 void Follower::resetTarget() {

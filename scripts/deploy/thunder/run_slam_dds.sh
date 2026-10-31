@@ -14,7 +14,7 @@ fi
 
 args=(
   "$SLAM_BIN"
-  --backend "${LINGTU_SLAM_BACKEND:-fastlio2}"
+  --backend "${LINGTU_SLAM_BACKEND:-ltlio}"
   --mode "${LINGTU_SLAM_MODE:-mapping}"
   --config "${SLAM_CONFIG}"
   --domain-id "${LINGTU_DDS_DOMAIN_ID:-0}"

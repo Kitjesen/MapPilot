@@ -19,13 +19,15 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
-from sim.catalog.resolver import CatalogResolver
 from sim.catalog.importers.contracts import canonical_json_bytes, digest_document
+from sim.catalog.resolver import CatalogResolver
+from sim.tools.sensor_selection import build_sensor_setup
 
 SELECTION_SPEC_SCHEMA = "lingtu.sim.game-selection-spec.v1"
 SELECTION_CATALOG_SCHEMA = "lingtu.sim.game-selection-catalog.v1"
 UE_ASSET_LIBRARY_SCHEMA = "lingtu.sim.ue-asset-library.v1"
 ASSET_REVIEW_CATALOG_SCHEMA = "lingtu.sim.game-asset-review-catalog.v1"
+ROBOT_CATEGORIES = frozenset({"quadruped", "wheeled_legged", "humanoid", "wheeled", "manipulator", "other"})
 
 _CATALOG_FILENAME = "game-selection.catalog.json"
 _AVAILABILITY_STATES = frozenset(
@@ -349,14 +351,51 @@ def _presentation_package(value: Any, context: str) -> dict[str, str]:
     _strict_keys(
         package,
         required={"id", "version", "label"},
-        optional=set(),
+        optional={"category"},
         context=context,
     )
-    return {
+    result = {
         "id": _identity(package.get("id"), f"{context}.id"),
         "version": _identity(package.get("version"), f"{context}.version", version=True),
         "label": _string(package.get("label"), f"{context}.label"),
     }
+    if "category" in package:
+        category = package["category"]
+        if not isinstance(category, str) or category not in ROBOT_CATEGORIES:
+            raise GameSelectionCatalogError(f"{context}.category is unsupported")
+        result["category"] = category
+    return result
+
+
+def _robot_library(
+    repo_root: Path, robot_library_path: Path | None
+) -> list[dict[str, str]] | None:
+    if robot_library_path is None:
+        return None
+    requested = Path(robot_library_path)
+    candidate = requested if requested.is_absolute() else repo_root / requested
+    library = _read_strict_json_file(
+        candidate, repo_root=repo_root, context="robot library"
+    )
+    _strict_keys(
+        library,
+        required={"robots"},
+        optional=set(),
+        context="robot library",
+    )
+    robots: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    for index, value in enumerate(
+        _sequence(library.get("robots"), "robot library.robots")
+    ):
+        robot = _presentation_package(value, f"robot library.robots[{index}]")
+        if robot["id"] in seen_ids:
+            raise GameSelectionCatalogError(
+                f"robot library.robots contains duplicate id: {robot['id']}"
+            )
+        seen_ids.add(robot["id"])
+        robots.append(robot)
+    return robots
 
 
 def _presentation(value: Any, context: str) -> dict[str, Any]:
@@ -513,6 +552,7 @@ def _resolved_presentation(
             "id": _identity(reference.get("id"), f"{context}.id"),
             "version": _identity(reference.get("version"), f"{context}.version", version=True),
             "label": display["label"],
+            **({"category": display["category"]} if "category" in display else {}),
         }
 
     robot = _mapping(robots[0], "resolved physics plan.robots[0]")
@@ -583,8 +623,15 @@ def _compiled_entry(
         raise GameSelectionCatalogError(
             f"selection {entry['id']}.presentation is invalid"
         )
+    editable_sensors = {}
+    if resolved.physics_plan.get("robots", [{}])[0].get("sensor_rig") is not None:
+        editable_sensors = {
+            "session_source": session_path.relative_to(repo_root).as_posix(),
+            "sensor_setup": build_sensor_setup(resolver, session_path),
+        }
     return {
         **common,
+        **editable_sensors,
         "bundle": {
             "directory": relative_bundle.as_posix(),
             "session_id": resolved.session_id,
@@ -627,6 +674,7 @@ def build_game_selection_catalog(
     output_root: Path,
     asset_library_path: Path | None = None,
     asset_review_catalog_path: Path | None = None,
+    robot_library_path: Path | None = None,
 ) -> dict[str, Any]:
     """Compile and transactionally publish one deterministic selection catalog."""
 
@@ -639,6 +687,7 @@ def build_game_selection_catalog(
     entries = _normalized_entries(normalized_spec)
     asset_summary = _asset_summary(repository, asset_library_path)
     asset_review = _asset_review(repository, asset_review_catalog_path)
+    robot_library = _robot_library(repository, robot_library_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     _assert_link_free(target.parent, below=repository, context="output_root parent")
     staging = Path(
@@ -666,6 +715,8 @@ def build_game_selection_catalog(
             "asset_review": asset_review,
             "entries": compiled,
         }
+        if robot_library is not None:
+            body["robot_library"] = robot_library
         document = {**body, "digest": digest_document(body)}
         (staging / _CATALOG_FILENAME).write_bytes(canonical_json_bytes(document))
         _publish(staging, target)
@@ -682,6 +733,7 @@ def write_game_selection_catalog(
     output_root: Path,
     asset_library_path: Path | None = None,
     asset_review_catalog_path: Path | None = None,
+    robot_library_path: Path | None = None,
 ) -> Path:
     """Compile the catalog and return its published deterministic JSON path."""
 
@@ -693,6 +745,7 @@ def write_game_selection_catalog(
         output_root=target,
         asset_library_path=asset_library_path,
         asset_review_catalog_path=asset_review_catalog_path,
+        robot_library_path=robot_library_path,
     )
     return target / _CATALOG_FILENAME
 
@@ -706,6 +759,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--asset-library", type=Path)
     parser.add_argument("--asset-review-catalog", type=Path)
+    parser.add_argument("--robot-library", type=Path)
     return parser
 
 
@@ -722,6 +776,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         output_root=args.output_root,
         asset_library_path=args.asset_library,
         asset_review_catalog_path=args.asset_review_catalog,
+        robot_library_path=args.robot_library,
     )
     print(output.relative_to(repo_root).as_posix())
     return 0

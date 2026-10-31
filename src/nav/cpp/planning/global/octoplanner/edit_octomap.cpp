@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <set>
 #include <string>
@@ -156,6 +157,12 @@ int main(int argc, char ** argv)
   const double radius = std::max(args.radius, res * 0.5);
   const int cells = static_cast<int>(std::ceil(radius / res));
   std::set<octomap::OcTreeKey, KeyLess> keys;
+  octomap::OcTreeKey center_key;
+  if (!tree->coordToKeyChecked(args.x, args.y, args.z, center_key)) {
+    std::cerr << "edit center is outside the OctoMap key range\n";
+    return 2;
+  }
+  const int max_key = std::numeric_limits<octomap::key_type>::max();
 
   for (int ix = -cells; ix <= cells; ++ix) {
     for (int iy = -cells; iy <= cells; ++iy) {
@@ -166,10 +173,15 @@ int main(int argc, char ** argv)
         if (args.shape == "sphere" && (dx * dx + dy * dy + dz * dz) > radius * radius) {
           continue;
         }
-        octomap::OcTreeKey key;
-        if (tree->coordToKeyChecked(args.x + dx, args.y + dy, args.z + dz, key)) {
-          keys.insert(key);
-        }
+        // Offset integer keys: floating coordinates on voxel boundaries can
+        // collapse adjacent samples into one key and leave stripes unedited.
+        const int x = static_cast<int>(center_key[0]) + ix;
+        const int y = static_cast<int>(center_key[1]) + iy;
+        const int z = static_cast<int>(center_key[2]) + iz;
+        if (x < 0 || y < 0 || z < 0 || x > max_key || y > max_key || z > max_key) continue;
+        keys.insert(octomap::OcTreeKey(
+          static_cast<octomap::key_type>(x), static_cast<octomap::key_type>(y),
+          static_cast<octomap::key_type>(z)));
       }
     }
   }

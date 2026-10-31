@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 
 
 def handle_odometry(gw: Any, odom: Any) -> None:
-    # SlamBridge applies map->odom TF before publishing to Gateway. Re-applying
-    # the TF here would double-transform the frontend cursor.
+    # Native SLAM resolves the map pose and body twist before Host delivery.
+    # Gateway serializes these values without applying another transform.
     data = {
         "x": float(odom.x),
         "y": float(odom.y),
@@ -23,6 +23,8 @@ def handle_odometry(gw: Any, odom: Any) -> None:
         "frame_id": str(getattr(odom, "frame_id", "") or "unknown"),
         "child_frame_id": str(getattr(odom, "child_frame_id", "") or "body"),
         "ts": odom.ts,
+        "session_distance_m": getattr(odom, "session_distance_m", None),
+        "session_distance_source": getattr(odom, "session_distance_source", None),
     }
     orientation = getattr(getattr(odom, "pose", None), "orientation", None)
     if orientation is not None:

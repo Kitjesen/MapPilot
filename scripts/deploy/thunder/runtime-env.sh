@@ -85,6 +85,14 @@ if [ -d "${LINGTU_REPO}/src" ]; then
     export PYTHONPATH="${LINGTU_REPO}/src${PYTHONPATH:+:${PYTHONPATH}}"
 fi
 
+if [ -d "${LINGTU_REPO}/bin" ]; then
+    export PATH="${LINGTU_REPO}/bin:${PATH}"
+fi
+
+if [ -d "${LINGTU_REPO}/lib" ]; then
+    export LD_LIBRARY_PATH="${LINGTU_REPO}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+fi
+
 export LINGTU_REPO
 export LINGTU_CONFIG_DIR
 export LINGTU_PYTHON

@@ -127,15 +127,16 @@ test('workbench lets an operator select a retained task and inspect native event
   assert.doesNotMatch(workbenchSource, /const currentTask = taskResult\.value\.tasks\[0\] \?\? null/)
 })
 
-test('workbench presents execution, inspection result, and acceptance as separate facts', () => {
+test('workbench presents execution, inspection result, and record completeness as separate facts', () => {
   assert.match(typesSource, /InspectionTaskReportResponse/)
   assert.match(apiSource, /inspection_task_report/)
   assert.match(apiSource, /fetchInspectionTaskReport/)
   assert.match(workbenchSource, /api\.fetchInspectionTaskReport\(selectedTaskId\)/)
   assert.match(workbenchSource, /Inspection result/)
   assert.match(workbenchSource, /巡检结果/)
-  assert.match(workbenchSource, /Acceptance/)
-  assert.match(workbenchSource, /验收结论/)
+  assert.match(workbenchSource, /Record completeness/)
+  assert.match(workbenchSource, /资料完整性/)
+  assert.match(workbenchSource, /taskReport\.inspection_result\.status/)
   assert.match(workbenchSource, /Verified evidence/)
   assert.match(workbenchSource, /已验证证据/)
   assert.match(workbenchSource, /task_history_incomplete/)
@@ -151,6 +152,44 @@ test('workbench presents execution, inspection result, and acceptance as separat
     /\.catch\(err => \{[\s\S]*?setTaskReport\(null\)[\s\S]*?setTaskReportError/,
   )
   assert.doesNotMatch(workbenchSource, /recording.*acceptance|acceptance.*recording/is)
+})
+
+test('point coverage shows skipped and interrupted visits separately from completion', () => {
+  for (const state of ['SKIPPED', 'FAILED', 'CANCELLED', 'NOT_VISITED']) {
+    assert.ok(typesSource.includes(`| '${state}'`))
+    assert.ok(workbenchSource.includes(`case '${state}'`))
+  }
+  assert.match(workbenchSource, /taskReport\.coverage\.completed_points/)
+  assert.match(workbenchSource, /taskReport\.coverage\.skipped_points/)
+  assert.match(workbenchSource, /taskReport\.coverage\.not_visited_points/)
+  assert.doesNotMatch(workbenchSource, /taskProgress\.completed_points/)
+})
+
+test('round waits and restarted pause use native facts without a frontend scheduler', () => {
+  assert.match(workbenchSource, /loop_interval_s: loopInterval/)
+  assert.match(workbenchSource, /setLoopInterval\(Number\(route\.loop_interval_s \?\? 0\)\)/)
+  assert.match(workbenchSource, /Waiting for next round/)
+  assert.match(workbenchSource, /restart_resume_required/)
+  assert.match(workbenchSource, /restart_loop_wait_resume_required/)
+  assert.match(workbenchSource, /current_state === 'PAUSED'/)
+  assert.doesNotMatch(workbenchSource, /Controls remain disabled until native reconciliation|控制操作将保持禁用/)
+  assert.match(workbenchSource, /Some task records are missing; the report needs review/)
+  const resumeButton = workbenchSource.match(/current_state === 'PAUSED' && <button[^>]+>/)?.[0]
+  assert.ok(resumeButton)
+  assert.doesNotMatch(resumeButton, /history_complete|taskReadError|statusReadError/)
+})
+
+test('manual review refreshes evidence and the selected report without changing task motion', () => {
+  const review = workbenchSource.split('const reviewEvidence = useCallback', 2)[1]
+    .split('  useEffect(', 1)[0]
+  assert.match(review, /api\.reviewInspectionEvidence/)
+  assert.match(review, /api\.fetchInspectionEvidence/)
+  assert.match(review, /api\.fetchInspectionTaskReport/)
+  assert.match(review, /setReviewErrors/)
+  assert.doesNotMatch(review, /api\.(?:start|pause|resume|cancel).*Task|setTaskStatus/)
+  assert.match(workbenchSource, /'normal', 'anomaly', 'inconclusive'/)
+  assert.match(workbenchSource, /Optional note/)
+  assert.match(workbenchSource, /evidence\.review\?\.verdict/)
 })
 
 test('workbench only admits locations bound to the selected map revision', () => {
@@ -174,6 +213,9 @@ test('workbench gates evidence actions on worker readiness and supported actions
   assert.match(workbenchSource, /capture:parking/)
   assert.match(workbenchSource, /capture:bin_full/)
   assert.match(workbenchSource, /capture:plate_ocr/)
+  for (const action of ['indicator_on', 'indicator_off', 'indicator_green', 'indicator_red', 'indicator_yellow', 'door_open', 'door_closed']) {
+    assert.ok(workbenchSource.includes(`'capture:${action}'`))
+  }
   assert.match(workbenchSource, /evidenceWorkerReady/)
   assert.match(workbenchSource, /supportedEvidenceActions/)
   assert.match(workbenchSource, /unsupportedRouteActions/)
@@ -187,6 +229,16 @@ test('workbench gates evidence actions on worker readiness and supported actions
   assert.match(workbenchSource, /<select[\s\S]*?onChange=\{event => updatePoint\(index, \{ action: event\.target\.value \}\)\}/)
   assert.match(workbenchSource, /Unsupported action/)
   assert.match(workbenchSource, /不支持的动作/)
+})
+
+test('standby is explicit at the end of each round and is never a capture point', () => {
+  assert.match(workbenchSource, /Device inspection points/)
+  assert.match(workbenchSource, /End each round at standby/)
+  assert.match(workbenchSource, /devicePoints\.map/)
+  assert.match(workbenchSource, /standbyPointIndex/)
+  assert.match(workbenchSource, /\.\.\.ordinary, \{ \.\.\.routePointFromLocation\(location\), id, action: '', dwell: 0, enabled: true \}/)
+  assert.match(workbenchSource, /Pause for manual charging; continue when ready/)
+  assert.match(workbenchSource, /selectStandby\(event\.target\.value\)/)
 })
 
 test('workbench shows recent verified evidence without exposing storage paths', () => {

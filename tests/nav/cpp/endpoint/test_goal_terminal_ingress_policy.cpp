@@ -45,14 +45,10 @@ static_assert(
 
 constexpr std::array kPendingGenericRejectKinds{
     GoalTerminalIngressKind::kTypedGoal,
-    GoalTerminalIngressKind::kTypedTaskCancel,
     GoalTerminalIngressKind::kTypedTaskPause,
     GoalTerminalIngressKind::kTypedTaskResume,
     GoalTerminalIngressKind::kTypedClearEstop,
     GoalTerminalIngressKind::kTypedResumeAutonomy,
-    GoalTerminalIngressKind::kOperatorClaim,
-    GoalTerminalIngressKind::kOperatorHold,
-    GoalTerminalIngressKind::kOperatorRelease,
     GoalTerminalIngressKind::kInspectionCommand,
     GoalTerminalIngressKind::kInspectionGoalDispatch,
     GoalTerminalIngressKind::kRollingCommand,
@@ -80,6 +76,14 @@ void testPendingBarrierRejectsMutatingIngress() {
 }
 
 void testPendingBarrierPreservesSpecialCases() {
+  for (const auto kind : {GoalTerminalIngressKind::kOperatorClaim,
+                         GoalTerminalIngressKind::kOperatorHold,
+                         GoalTerminalIngressKind::kOperatorRelease}) {
+    expect(kind, GoalTerminalBarrierState::kTerminalPending,
+           GoalTerminalIngressDecision::kAllow, "goal_terminal_pending");
+  }
+  expect(GoalTerminalIngressKind::kTypedTaskCancel, GoalTerminalBarrierState::kTerminalPending,
+         GoalTerminalIngressDecision::kSafetyStop, "safety_stop_preserve_goal_terminal");
   expect(GoalTerminalIngressKind::kOperatorMotionSample,
          GoalTerminalBarrierState::kTerminalPending, GoalTerminalIngressDecision::kReject,
          "operator_motion_sample_goal_terminal_pending");

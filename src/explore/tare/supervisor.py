@@ -23,7 +23,7 @@ Supervisor modes
 - ``finished``  鈥?TARE reports exploration complete
 
 The supervisor does NOT auto-swap backends at runtime 鈥?that requires
-Blueprint rebuild and a Navigation handoff that's best done via a
+HostBuilder rebuild and a Navigation handoff that's best done via a
 controlled restart. Instead, it publishes `fallback_requested=True` so the
 operator (or an external orchestrator) can decide.
 """

@@ -119,7 +119,7 @@ def test_native_release_owners_install_only_published_executables() -> None:
         "src/nav/cpp/planning/global/octoplanner/CMakeLists.txt": (
             "install(TARGETS octoplanner3d_pcd_to_octomap"
         ),
-        "src/localization/opt/CMakeLists.txt": "install(TARGETS lt_pgo",
+        "src/localization/map_optimization/CMakeLists.txt": "install(TARGETS lt_pgo",
     }
 
     for path, install_rule in owners.items():

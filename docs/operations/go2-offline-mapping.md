@@ -2,11 +2,70 @@
 
 本页继承 [Locate scanplanner core algorithm](codex://threads/01a075c1-4912-7b02-b188-187b6f73b413)
 中的连接与实机记录，交接日期为 **2026-09-22**。版本与实机状态以本文的
-最新状态记录为准：最后核验安装为 `.87`；`.66` 建图启动暴露的观测状态错误已修正。
+最新状态记录为准：2026-10-25已重新只读登录NX，见下方当前记录；`.93`为10月10日
+的安装历史。`.66` 建图启动暴露的观测状态错误已修正。
 此前遥控和保存修复保留，旧版本记录是历史阶段。
 地址来源为历史实测及 [Go2 RobotConfig](../../config/robots/unitree/go2/robot.yaml)。
 
-**2026-09-28 最新实机状态：** `.87`（`2ddf83e4`）已安装，修复历史地图污染
+**2026-10-25 当前只读连接检查：** 已使用部署identity和受信任主机别名，成功直连
+`unitree@192.168.66.65`。设备实读为NVIDIA Orin NX Developer Kit、aarch64，主机名
+`ubuntu`，wlan0为`192.168.66.65`、eth0为`192.168.123.18`。旧
+`~/.ssh/lingtu-go2.conf`中的Sunrise跳转记录已过时，不能用它认定当前设备身份。
+当前原生链接为`v2.3.0-go2.20261025.95`。当日早先读到的`.94`、Product stopped及
+FastAPI `add_event_handler`启动错误是历史检查点；启动修复和`.95`安装已完成，见
+[发布记录](go2-release-20261024.md)。
+
+2026-10-25 18:45:52（北京时间）再次静止检查：`nav/camera + scan`已成功激活，地图
+`903room_v6_corridor`，详细readiness的ready/data_ready/motion_ready均为true，位姿新鲜，
+任务与规划/执行均IDLE、authority为none。独立Web已更新为r4，修复工具栏悬停文字消失
+及展开工具栏时的面板避让；实际HTTP资源为`app-D2N-0gtq.js`、`app-CrktXUHp.css`。
+此次通过ProductControl重启当前模式，保留地图及原RunPlan参数，没有提交导航目标或
+速度指令。相机外参未验证、此前间歇定位恢复和导航实走仍需独立验收。
+原始报告及截图见[Web修复记录](../../build/nx-ui-fix-20261025/README.md)。
+正确的PowerShell只读登录入口为：
+
+```powershell
+ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o HostKeyAlias=192.168.123.18 -o IdentitiesOnly=yes -o ConnectTimeout=5 -i "$env:USERPROFILE/.ssh/inovxio_deploy" unitree@192.168.66.65
+```
+
+连接与原始状态：[本轮记录](../../build/nx-discovery-20261025/connection-notes.md)。
+
+**2026-10-10 最新实机状态：** `.93`（`05f11ee7`）已整包安装，ProductControl 为
+`nav/camera` active，NX 网页为 [LingTu](http://192.168.66.65:5050/)。普通选点默认在
+当前机身高度的水平面上确定目标，显式三维表面通过悬浮入口或 Alt 点击；单点与连续点
+使用同一方式，目标卡常显高度，清空高度不再变成 0。保留地图 `903room_v5_raised`、
+限速 0.2 m/s、加速度 1.0 m/s² 和 30 Hz 相机；定位 TRACKING、详细 readiness 通过，
+任务 IDLE、无控制者，未下发运动目标。26 个不同相关测试、lint 和构建通过；浏览器
+连接超时，实际鼠标与视觉验收待补。本轮不能证明所有预览故障或导航实走已通过，
+源码只保存在本地发布分支，未推送 main。见[三维选点修复与部署记录](go2-picking-20261010.md)。
+
+**2026-10-10 此前相机与全屏状态：** `.92`（`77a28811`）已整包安装，ProductControl 为
+`nav/camera` active，NX 网页为 [LingTu](http://192.168.66.65:5050/)。保留地图
+`903room_v5_raised`、会话限速 0.2 m/s 和加速度 1.0 m/s²；补入 RealSense 采集程序，
+D435i 彩色/深度约 30 Hz，网页 WebSocket 连续 30 张 640×480 JPEG 解码通过。
+定位 TRACKING，详细 readiness 的 data/motion 均 ready，任务 IDLE、无控制者，未下发
+运动目标。网页已部署左侧相机预览与全屏入口，14 项 UI 测试和构建通过；浏览器自动化
+连接失败，因此全屏实际视觉验收待补，不能把接口检查当成浏览器验收或实走通过。
+见[相机与全屏部署记录](go2-camera-20261010.md)。
+
+**2026-10-10 此前里程修复状态：** `.91`（`e3baba40`）已整包安装。NX 新网卡当前地址
+为 `192.168.66.65`，可从开发电脑直连，无需小电脑跳转；控制网页为
+[LingTu](http://192.168.66.65:5050/)。ProductControl 已启动 `nav/standard`，保留
+活动地图 `903room_v5_raised`，SCAN 会话限速 0.2 m/s、加速度 1.0 m/s²。修复原生里程
+逐帧累加静止定位抖动的问题：ARM 回归与实测回放通过，30 秒实机静止期间原生和 API
+里程均为 0 m，定位持续 TRACKING。Go2 静止 IMU 加速度阈值经实测从 0.25 标定为 0.30。
+详细 readiness 为 ready，未下发运动目标，尚未进行本版本实走验收。见
+[里程修复与实机证据](go2-distance-20261010.md)。同日 `.89` 的完整构建、自检、相机提示
+及前方 1 米无运动预览保留在[此前部署记录](go2-deploy-20261010.md)，不能当成 `.91` 新做的
+运动测试。下方 IP 与版本记录保留各自日期的历史含义。
+
+**2026-09-29 历史实机状态：** `.88`（`bcc0eea8`）已整包安装；原生起点高度选择、
+TF 导出与保存交接修复已生效。ProductControl 为 `nav/standard` active，使用
+`903room_v4_maps84`，SCAN 限速 0.5 m/s、加速度 1.0 m/s²。定位完成，前方
+0.3 m 和 1 m 无运动预览通过，20 秒 80 次输入门采样均 ready，未发送运动目标。
+ARM 回归、版本证据和验证边界见[本轮部署记录](go2-deploy-20260929.md)。
+
+**2026-09-28 历史实机状态：** `.87`（`2ddf83e4`）已安装，修复历史地图污染
 SCAN 实时碰撞图，三条用户目标的静止全局预览和离线局部轨迹生成通过。随后实机
 记录一次 `goal_reached`，用户反馈后续预览失败；已复现起点吸附到低 5 cm 格子触发
 跨高度搜索超时。起点选择修正在本地完成并通过相关回归，ARM 原型回放通过，
@@ -365,7 +424,7 @@ nav 输入就绪、控制循环健康，最终速度为零；driver ready、单�
   支撑规则保持不变。SCAN 84 项和全局支撑相关 2 组通过。
 - 修复饱和占据格不刷新观测时间的问题；启用衰减时，持续命中的格子不应提前衰减。
   rolling/mapd 两组回归通过。
-- `build_slam_core.sh` 现在像 `build_map_opt.sh` 一样，将显式配置的
+- `build_slam_core.sh` 现在像 `build_map_optimization.sh` 一样，将显式配置的
   `LINGTU_POSE_GRAPH_OPT_LIBRARY` 传给 CMake；有/无预编译库和含空格路径测试通过。
   历史 NX ARM 构建使用 `/home/unitree/lingtu-deps-20260910/libpose_graph_opt.a`。
   Cargo 是编译期依赖，运行已编译程序不需要它；没有可用预编译库且未安装 Cargo 时，
@@ -989,7 +1048,7 @@ occupancy、OctoMap、ESDF、traversability、轨迹/扫描及
 本地 Gateway 保存接口 38 项、遥控 WebSocket 12 项、Web 9 项通过；隔离 `.48`
 网页加本轮补丁通过类型检查和生产构建。NX ARM 地图/SLAM/优化相关 11 项通过，
 原点导出新增交付另做 2 项红绿回归。构建源码、安装记录与失败/成功实测均保留在
-[本轮审查记录](../../build/go2-save-audit-20260922/README.md)。
+本轮审查记录 (`build/go2-save-audit-20260922/README.md`)。
 
 本轮还用真实静止数据发现航向角分支错误：`.50` 保存的 47 帧中，实际相邻 yaw
 变化最多 0.168°，旧 Eigen Euler 首角却在过零时跳近 180°，导致静止也持续存帧。
@@ -1034,7 +1093,7 @@ occupancy、OctoMap、ESDF、traversability、轨迹/扫描及
 这一拒绝结果，因此不能把本轮统计修复写成解决了 `floor9` 的断边。生产 `poses.txt`
 及两帧 `scan_000480.pcd` / `scan_000481.pcd` 已与诊断副本逐字核对一致。
 两保存帧位姿相差 0.057 m、40.519°，这是保存数据现象，不足以判定抬抱或传感器故障。
-详见 [两帧诊断](../../build/go2-offline-teleop-20260922/edge480-review/diagnosis.md)。
+详见 两帧诊断 (`build/go2-offline-teleop-20260922/edge480-review/diagnosis.md`)。
 
 当前 Go2 保存关键帧规则是：**先间隔至少 1 秒，再要求平移至少 0.20 m 或 yaw
 至少 5°**。5° 不是帧间转角上限；仅保持转动平稳仍可能保存出大角度间隔。
@@ -1053,10 +1112,10 @@ occupancy、OctoMap、ESDF、traversability、轨迹/扫描及
 保留 `floor9` 原图，不靠缩小碰撞边界、取消支撑检查或降低配准质量来通过验收。
 
 完整过程与未解决项：
-[floor9 定位、地图重建及 .48 安装记录](../../build/go2-offline-teleop-20260922/floor9-navigation-attempt.md)。
-原生实机证据：[postinstall48-native.json](../../build/go2-offline-teleop-20260922/postinstall48-native.json)、
-[页面状态](../../build/go2-offline-teleop-20260922/postinstall48-state.json)、
-[路径预览](../../build/go2-offline-teleop-20260922/floor9-preview48.json)。
+floor9 定位、地图重建及 .48 安装记录 (`build/go2-offline-teleop-20260922/floor9-navigation-attempt.md`)。
+原生实机证据：postinstall48-native.json (`build/go2-offline-teleop-20260922/postinstall48-native.json`)、
+页面状态 (`build/go2-offline-teleop-20260922/postinstall48-state.json`)、
+路径预览 (`build/go2-offline-teleop-20260922/floor9-preview48.json`)。
 这些 `build/` 文件是本机证据，未必包含在新的 Git checkout 中。
 
 ## 继续开发时需要留意
@@ -1079,10 +1138,10 @@ occupancy、OctoMap、ESDF、traversability、轨迹/扫描及
   `unverified`。相机预览不能作为人物跟随、地图坐标精度或 RGB-D 避障已验收的证据。
 - **NX 无线**：USB BCM43569 网卡尚未建立可用无线接口；此前临时驱动测试因 USB
   端点描述失败。不能把有 USB 设备或 Go2 自带 Wi-Fi 当作 NX 已无线联网。
-  详见 [无线调查](../../build/nx-wifi-20260920/README.md)。
+  详见 无线调查 (`build/nx-wifi-20260920/README.md`)。
 - **磁盘历史**：9 月 20 日的 ext4 元数据错误已在 9 月 21 日离线修复并完成观察，
   不要继续按“尚未修复”处理，更不要在挂载中的根分区重复 fsck。后续若出现新 I/O
-  错误再针对处理。见 [修复记录](../../build/go2-repair-20260921/README.md)。
+  错误再针对处理。见 修复记录 (`build/go2-repair-20260921/README.md`)。
 - **平台边界**：这里是 Go2 + NX + MID-360 + D435i 的证据，不是 S100P/RDK X5
   验收。建图与导航分别使用 `map` / `nav` Product；机载链路是原生 DDS，
   `navd → lingtu-driver → Go2 SDK`，不另起竞争的传感器采集或运动出口。

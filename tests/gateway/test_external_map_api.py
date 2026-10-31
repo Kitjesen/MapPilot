@@ -106,7 +106,7 @@ def test_save_map_does_not_expose_optimizer_selection(monkeypatch):
     )
 
     assert response.status_code == 202
-    assert "map_opt" not in captured
+    assert "map_optimization" not in captured
     assert "optimization" not in captured
 
 
@@ -970,6 +970,7 @@ def test_map_list_forwards_navigation_evidence(monkeypatch):
                     "can_activate": False,
                     "activation_blockers": ["octomap.ot is missing", "saved rays are missing"],
                     "map_evidence": "preview",
+                    "record": {"content_epoch": 7},
                 },
                 {"name": "old", "has_pcd": True, "can_activate": False},
             ],
@@ -983,7 +984,90 @@ def test_map_list_forwards_navigation_evidence(monkeypatch):
     payload = response.json()
 
     assert [item["map_evidence"] for item in payload["maps"]] == ["preview", "none"]
+    assert [item["content_epoch"] for item in payload["maps"]] == [7, None]
     assert [item["activation_blockers"] for item in payload["maps"]] == [
         ["octomap.ot is missing", "saved rays are missing"],
         [],
     ]
+
+
+def test_save_edited_map_as_preserves_identity_and_build_provenance(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import gateway.maps.routes as routes
+
+    calls = []
+    build = {"frame_id": "floor_903", "resolution": 0.1, "source_profile": "ltlio"}
+    def request(_gw, command):
+        calls.append(command)
+        return {"success": True, "map_id": "cleaned", "content_epoch": 22,
+                "source_content_epoch": 11, "activation_ready": False,
+                "build_options": build, "saved_rays_preserved": True, "replayed": True}
+    monkeypatch.setattr(routes, "_mapd_http_request", request)
+    app = FastAPI()
+    routes.register_map_routes(app, SimpleNamespace())
+    operations = [{"operation": "delete_inside", "bounds": {
+        "min_x": 0, "min_y": 0, "min_z": 0, "max_x": 1, "max_y": 1, "max_z": 1}}]
+    with TestClient(app) as client:
+        response = client.post("/api/v1/maps/original/save_as", json={
+            "name": "cleaned", "expected_source_content_epoch": 11, "operations": operations})
+        assert response.status_code == 200
+        assert response.json()["content_epoch"] == 22
+        assert response.json()["activation_ready"] is False
+        assert response.json()["build_options"] == build
+        assert response.json()["replayed"] is True
+        rebuilt = client.post("/api/v1/maps/cleaned/build_octomap", json=build)
+        assert rebuilt.status_code == 200
+    assert calls == [
+        {"action": "save_edited_source", "map_id": "original", "new_map_id": "cleaned",
+         "expected_source_content_epoch": 11, "operations": operations},
+        {"action": "build_octomap_artifact", "map_id": "cleaned", **build}]
+
+
+def test_resolution_copy_preserves_source_and_reports_native_build_resolution(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import gateway.maps.routes as routes
+
+    calls = []
+    def request(_gw, command):
+        calls.append(command)
+        if command["action"] == "save_edited_source":
+            return {"success": True, "map_id": "coarse", "saved_rays_preserved": True,
+                    "build_options": {"frame_id": "map", "resolution": .05}}
+        return {"success": True, "octomap_result": {"report": {"resolution": .1, "frame_id": "map"}}}
+    monkeypatch.setattr(routes, "_mapd_http_request", request)
+    app = FastAPI()
+    routes.register_map_routes(app, SimpleNamespace())
+    with TestClient(app) as client:
+        copied = client.post("/api/v1/maps/original/save_as", json={"name": "coarse",
+            "expected_source_content_epoch": 11, "operations": []})
+        assert copied.status_code == 200
+        assert copied.json()["saved_rays_preserved"] is True
+        built = client.post("/api/v1/maps/coarse/build_octomap", json={"resolution": .1, "frame_id": "map"})
+        assert built.status_code == 200
+        assert built.json()["resolution"] == .1
+    assert calls == [
+        {"action": "save_edited_source", "map_id": "original", "new_map_id": "coarse",
+         "expected_source_content_epoch": 11, "operations": []},
+        {"action": "build_octomap_artifact", "map_id": "coarse", "resolution": .1, "frame_id": "map"}]
+
+
+@pytest.mark.parametrize("reason", ["source_epoch_mismatch", "target_exists", "build_in_progress"])
+def test_save_edited_map_conflicts_are_not_reported_as_saved(monkeypatch, reason):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import gateway.maps.routes as routes
+    monkeypatch.setattr(routes, "_mapd_http_request",
+                        lambda *_: {"success": False, "reason_code": reason})
+    app = FastAPI()
+    routes.register_map_routes(app, SimpleNamespace())
+    with TestClient(app) as client:
+        result = client.post("/api/v1/maps/original/save_as", json={"name": "cleaned",
+            "expected_source_content_epoch": 11, "operations": [{"operation": "delete_inside"}]})
+    assert result.status_code == 409
+    assert result.json()["ok"] is False
+    assert result.json()["reason_code"] == reason

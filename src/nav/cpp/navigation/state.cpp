@@ -58,7 +58,7 @@ double Executor::goalYawError(const nav_kernel::Pose& odom_map_body) const {
 }
 
 bool Executor::autonomyMotionStalled(
-    const nav_kernel::Pose& odom_map_body, double timestamp_s) {
+    const nav_kernel::Pose& odom_map_body, double timestamp_s, bool planning_pending) {
   if (!autonomy_motion_expected_) return false;
   if (!autonomy_progress_valid_ ||
       !std::isfinite(timestamp_s) ||
@@ -73,6 +73,13 @@ bool Executor::autonomyMotionStalled(
   }
 
   const double dt = timestamp_s - autonomy_sample_time_s_;
+  if (planning_pending) {
+    // No executable trajectory means no requested travel during this wait.
+    autonomy_progress_time_s_ += dt;
+    autonomy_sample_time_s_ = timestamp_s;
+    autonomy_progress_pose_ = odom_map_body;
+    return false;
+  }
   const auto& command = autonomy_expected_command_;
   const double speed = std::hypot(command.vx, command.vy);
   const bool translating = speed > 1e-6;
@@ -148,37 +155,6 @@ void Executor::resetAutonomyProgress() {
   autonomy_sample_time_s_ = 0.0;
   autonomy_observed_progress_ = 0.0;
   autonomy_requested_progress_ = 0.0;
-}
-
-bool Executor::recoveryObservationAdvanced(
-    const ExecutionObservation& observation) const {
-  if (!recovery_observation_waiting_ ||
-      observation.frame_epoch != recovery_observation_baseline_.frame_epoch) {
-    return false;
-  }
-  const double barrier_stamp = recovery_observation_baseline_.odom_stamp_s;
-  const auto source_after_rotation = [barrier_stamp](double stamp_s) {
-    return std::isfinite(stamp_s) && std::isfinite(barrier_stamp) &&
-           stamp_s > barrier_stamp + 1e-9;
-  };
-  if (local_planner_.params().checkObstacle &&
-      (observation.cloud_generation <=
-           recovery_observation_baseline_.cloud_generation ||
-       !source_after_rotation(observation.cloud_stamp_s))) {
-    return false;
-  }
-  if (local_planner_.params().useTraversabilityCost &&
-      (observation.traversability_generation <=
-           recovery_observation_baseline_.traversability_generation ||
-       !source_after_rotation(observation.traversability_stamp_s))) {
-    return false;
-  }
-  return true;
-}
-
-void Executor::clearRecoveryObservationWait() {
-  recovery_observation_waiting_ = false;
-  recovery_observation_baseline_ = {};
 }
 
 }  // namespace lingtu::nav::navigation

@@ -224,13 +224,13 @@ def _normalize_sample(sample: Mapping[str, Any]) -> dict[str, Any]:
         "imu_rollback_count": _int_or_none(sample.get("imu_rollback_count")),
         "lidar_rollback_count": _int_or_none(sample.get("lidar_rollback_count")),
         "pose": pose,
-        "fastlio_degeneracy": _degeneracy(sample),
+        "ltlio_degeneracy": _degeneracy(sample),
         "relocalization_state": str(sample.get("relocalization_state") or "").upper(),
     }
 
 
 def _degeneracy(sample: Mapping[str, Any]) -> dict[str, bool] | None:
-    raw = sample.get("fastlio_degeneracy")
+    raw = sample.get("ltlio_degeneracy")
     if isinstance(raw, Mapping):
         return {"detected": bool(raw.get("detected"))}
     if "degeneracy_detected" in sample:
@@ -367,11 +367,11 @@ def _degeneracy_check(
 ) -> dict[str, Any]:
     if not samples:
         return _result(INCOMPLETE, ["no status samples in evidence window"])
-    with_diag = [item for item in samples if item["fastlio_degeneracy"] is not None]
+    with_diag = [item for item in samples if item["ltlio_degeneracy"] is not None]
     coverage = len(with_diag) / len(samples)
     reasons: list[str] = []
     if coverage < cfg.min_degeneracy_coverage:
-        reasons.append("fastlio degeneracy diagnostics coverage too low")
+        reasons.append("ltlio degeneracy diagnostics coverage too low")
     annotated_rate: float | None = None
     if annotated_windows:
         expected = [item for item in samples if any(window.contains(item["stamp_s"]) for window in annotated_windows)]
@@ -381,7 +381,7 @@ def _degeneracy_check(
                 ["annotated degeneracy windows contain no samples"],
                 coverage=coverage,
             )
-        actual = [item for item in expected if item["fastlio_degeneracy"] is not None]
+        actual = [item for item in expected if item["ltlio_degeneracy"] is not None]
         if not actual:
             return _result(
                 INCOMPLETE,
@@ -390,7 +390,7 @@ def _degeneracy_check(
             )
         if len(actual) != len(expected):
             reasons.append("annotated degeneracy window diagnostics missing")
-        hits = sum(1 for item in actual if item["fastlio_degeneracy"]["detected"])
+        hits = sum(1 for item in actual if item["ltlio_degeneracy"]["detected"])
         annotated_rate = hits / len(actual)
         if annotated_rate < cfg.min_annotated_degeneracy_detection_rate:
             reasons.append("annotated degeneracy detection rate too low")

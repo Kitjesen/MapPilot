@@ -3,8 +3,8 @@
 #include <stdexcept>
 #include <string>
 
-#include "lingtu/maps/layers/semantic_occupancy.hpp"
-#include "lingtu/maps/semantic_map_persistence.hpp"
+#include "lingtu/maps/semantic/occupancy.hpp"
+#include "lingtu/maps/semantic/store.hpp"
 #include "semantic_map_client.hpp"
 
 namespace {

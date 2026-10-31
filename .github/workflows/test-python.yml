@@ -3,7 +3,7 @@ name: Python Tests + Lint
 on:
   push:
     branches: [main]
-    paths: ['src/**', 'docs/**', 'config/**', 'sim/**', 'tools/**', 'tests/**', 'scripts/**', 'AGENTS.md', 'README.md', '.pre-commit-config.yaml', 'pyproject.toml', '.github/workflows/test-python.yml']
+    paths: ['src/**', 'docs/**', 'config/**', 'sim/**', 'tools/**', 'tests/**', 'scripts/**', 'docker/**', 'AGENTS.md', 'README.md', '.pre-commit-config.yaml', 'pyproject.toml', 'uv.lock', '.github/workflows/test-python.yml']
   pull_request:
     branches: [main]
 
@@ -43,11 +43,12 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.10'
-          cache: pip
-      - name: Install dependencies
-        run: python -m pip install -e '.[dev,sim-recording,nlp]'
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check "uv==0.10.12"
+      - name: Install locked dependencies
+        run: uv sync --locked --python 3.10 --extra dev --extra sim-recording --extra nlp
       - name: Run framework tests
-        run: xvfb-run -a python -m pytest tests/ -q --tb=short
+        run: xvfb-run -a uv run --locked --no-sync python -m pytest tests/ -q --tb=short --basetemp=/tmp/lt
         env:
           PYTHONPATH: src
           LIBGL_ALWAYS_SOFTWARE: '1'
@@ -64,14 +65,19 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.10'
-          cache: pip
-      - name: Install dependencies
-        run: python -m pip install -e '.[dev]'
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check "uv==0.10.12"
+      - name: Install locked dependencies
+        run: uv sync --locked --python 3.10 --extra dev
       - name: Run Windows toolchain tests
         run: >-
-          python -m pytest -q --tb=short
+          uv run --locked --no-sync python -m pytest -q --tb=short
           tests/sim/test_ue_build_preflight.py
           tests/sim/test_ue_build_runner.py
           tests/sim/test_windows_distribution.py
+          tests/localization/test_cyclonedds_windows_stage.py
+          tests/sim/test_recording_qualification.py
+          tests/sim/test_e2e_qualification_record.py
+          tests/sim/test_robotsimue_skeleton.py
         env:
           PYTHONPATH: src

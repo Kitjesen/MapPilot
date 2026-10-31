@@ -8,7 +8,9 @@
 #include <vector>
 
 #include "dds/codec.hpp"
+#include "collision/body.hpp"
 #include "input/planner.hpp"
+#include "planning/local/scan/grid.hpp"
 #include "safety/command.hpp"
 #include "status/nav_status_writer.hpp"
 
@@ -295,6 +297,12 @@ void testLocalCollisionLayerDecodeKeepsCompletenessAndIdentity() {
   message.known_free_bits = message.inflated_occupied_bits;
   message.measured_occupied_bits._buffer = measured.data();
   message.known_free_bits._buffer = free.data();
+  lingtu_dds_MapCollisionHitBounds hit{};
+  hit.cell_index = 61U;
+  hit.minimum = {-5.0 + 61.0 * message.resolution + .01, -4.99, -1.99};
+  hit.maximum = {hit.minimum.x + .02, -4.97, -1.97};
+  message.hit_bounds._length = message.hit_bounds._maximum = 1U;
+  message.hit_bounds._buffer = &hit;
 
   auto decoded = lingtu::nav::endpoint::decodeLocalCollisionMap(message);
   require(decoded.ok(), "structurally valid incomplete collision layer must decode");
@@ -309,6 +317,11 @@ void testLocalCollisionLayerDecodeKeepsCompletenessAndIdentity() {
               view.knownFreeStorage == decoded.value.known_free_bits &&
               *view.measuredOccupiedStorage == measured && *view.knownFreeStorage == free,
           "3D evidence must survive the DDS loan and share lifetime with planner views");
+  require(view.terrain != nullptr, "actual hit bounds must reach the planner view");
+  hit.maximum.z = -1.5;
+  require(!lingtu::nav::endpoint::decodeLocalCollisionMap(message).ok(),
+          "hit evidence outside its occupancy cell must be rejected");
+  hit.maximum.z = -1.97;
   message.known_free_bits._length = 0;
   require(!lingtu::nav::endpoint::decodeLocalCollisionMap(message).ok(),
           "missing ground evidence must reject the incomplete wire payload");
@@ -325,6 +338,66 @@ void testLocalCollisionLayerDecodeKeepsCompletenessAndIdentity() {
   require(!decoded.ok(), "collision payload outside map frame must fail closed");
 }
 
+void testCollisionHitBoundsReachTheRealLocalQuery() {
+  constexpr int size = 40;
+  constexpr double resolution = .05;
+  const std::size_t cell_count = size * size * size;
+  std::vector<std::uint8_t> occupied((cell_count + 7U) / 8U, 0U), free(occupied.size(), 0U);
+  std::vector<lingtu_dds_MapCollisionHitBounds> hits;
+  for (int y = 0; y < size; ++y) for (int x = 0; x < size; ++x) {
+    const auto index = static_cast<std::uint32_t>((10 * size + y) * size + x);
+    occupied[index / 8U] |= static_cast<std::uint8_t>(1U << (index % 8U));
+    lingtu_dds_MapCollisionHitBounds hit{};
+    hit.cell_index = index;
+    hit.minimum = {-1 + x * resolution + .01, -1 + y * resolution + .01, .002};
+    hit.maximum = {-1 + x * resolution + .04, -1 + y * resolution + .04, .002};
+    hits.push_back(hit);
+  }
+  lingtu_dds_MapCollisionLayer message{};
+  message.header = header("map");
+  message.reset_epoch = message.observation_sequence = message.generation = 1;
+  message.live = message.complete = true;
+  message.size_x = message.size_y = message.size_z = size;
+  message.resolution = resolution;
+  message.aabb_min = {-1,-1,-.5};
+  message.aabb_max = {1,1,1.5};
+  message.inflated_occupied_bits._length = message.inflated_occupied_bits._maximum =
+      static_cast<std::uint32_t>(occupied.size());
+  message.inflated_occupied_bits._buffer = occupied.data();
+  message.measured_occupied_bits = message.inflated_occupied_bits;
+  message.known_free_bits = message.inflated_occupied_bits;
+  message.known_free_bits._buffer = free.data();
+  message.hit_bounds._length = message.hit_bounds._maximum = static_cast<std::uint32_t>(hits.size());
+  message.hit_bounds._buffer = hits.data();
+
+  auto body = std::make_shared<lingtu::nav::collision::Body>();
+  body->margin_m = 0;
+  lingtu::nav::collision::Part foot;
+  foot.shape = lingtu::nav::collision::Shape::Sphere;
+  foot.radius_m = .1;
+  foot.half_size = {.1,.1,.1};
+  foot.center = {0,0,.136};
+  foot.support_contact = true;
+  body->parts.push_back(foot);
+  nav_kernel::LocalPlannerParams params;
+  params.scan.voxelResolution = resolution;
+  nav_kernel::LocalPlanRequest request;
+  request.body = body;
+  auto check = [&] {
+    const auto decoded = lingtu::nav::endpoint::decodeLocalCollisionMap(message);
+    require(decoded.ok(), "hit bounds did not decode");
+    request.environment.collision = decoded.value.view();
+    const nav_kernel::local::scan::Grid grid(params, request);
+    require(grid.valid(), "decoded map did not reach local collision query");
+    return grid.inflatedOccupancy({}, 0);
+  };
+  require(check() == 0, "actual ground hits must not block the foot");
+  hits[20 * size + 20].maximum.z = .045;
+  require(check() != 0, "a real raised hit in the same cell must remain an obstacle");
+  message.hit_bounds._length = 0;
+  require(check() != 0, "a cell without hit evidence must retain ordinary collision");
+}
+
 }  // namespace
 
 int main() {
@@ -335,6 +408,7 @@ int main() {
   testResumeBoundaryRejectsOldMotionRequests();
   testPointCloudLayoutValidation();
   testLocalCollisionLayerDecodeKeepsCompletenessAndIdentity();
+  testCollisionHitBoundsReachTheRealLocalQuery();
   std::cout << "test_nav_endpoint_messages passed\n";
   return 0;
 }

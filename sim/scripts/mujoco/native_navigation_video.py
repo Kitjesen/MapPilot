@@ -166,11 +166,13 @@ def _resample_rows_for_cfr(
     held_frames = 0
     for frame_index in range(output_count):
         target_stamp = stamps[0] + frame_index * frame_period_s
-        source_index = bisect_right(stamps, target_stamp + 1e-9) - 1
+        # Epoch timestamps can round one float step apart for the same frame time.
+        tolerance_s = max(1e-9, math.ulp(target_stamp))
+        source_index = bisect_right(stamps, target_stamp + tolerance_s) - 1
         source_index = min(max(0, source_index), len(timed_rows) - 1)
         source_stamp, source_row = timed_rows[source_index]
         rendered_row = dict(source_row)
-        rendered_row["t"] = target_stamp
+        rendered_row["t"] = max(target_stamp, source_stamp)
         rendered_row["timeline_source_stamp_s"] = source_stamp
         rendered_row["timeline_hold_age_s"] = max(0.0, target_stamp - source_stamp)
         output_rows.append(rendered_row)

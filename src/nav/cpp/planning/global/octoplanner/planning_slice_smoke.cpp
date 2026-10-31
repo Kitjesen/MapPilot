@@ -40,9 +40,9 @@ int main() {
     tree->updateInnerOccupancy();
     global_planner::PlannerConfig config;
     config.robot_radius = 0.2;
-    config.ground_support_depth_cells = 1;
-    config.strict_direct_ground_support = true;
-    config.require_ground_support = true;
+    config.support_depth_cells = 1;
+    config.direct_support_only = true;
+    config.ground_support = true;
     config.max_step_height = 0.0;
     global_planner::OctoPlanner3D planner;
     planner.setConfig(config);

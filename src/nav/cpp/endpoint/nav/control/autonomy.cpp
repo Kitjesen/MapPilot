@@ -1,4 +1,5 @@
 #include "control/autonomy.hpp"
+#include "control/diagnostics.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -12,47 +13,6 @@ using Clock = std::chrono::steady_clock;
 
 double elapsedMs(Clock::time_point start) {
   return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
-}
-
-LocalDiagnostics activeDiagnostics(const lingtu::nav::navigation::ExecutionOutput &output,
-                                   const CommandSafetyDecision *final_safety,
-                                   bool safety_applied) {
-  LocalDiagnostics local;
-  local.seen = true;
-  local.active = output.active;
-  local.goal_reached = output.goal_reached;
-  local.path_found = output.path_found;
-  local.near_field_stop = output.near_field_stop;
-  local.reason = output.reason;
-  local.slow_down = output.slow_down;
-  local.recovery_state = output.recovery_state;
-  local.recovery_action = output.recovery_action;
-  local.recovery_attempt = output.recovery_attempt;
-  local.recovery_candidate_count = output.recovery_candidate_count;
-  local.recovery_rotation_target_rad = output.recovery_rotation_target_rad;
-  local.recovery_verified = output.recovery_verified;
-  local.recovery_progress = output.recovery_progress;
-  local.recovery_trigger = output.recovery_trigger;
-  local.recovery_reason = output.recovery_reason;
-  local.prediction_count = output.prediction_count;
-  local.recovery_exhausted = output.recovery_exhausted;
-  local.target_index = output.target_index;
-  local.target_distance_m = output.target_distance_m;
-  local.target = output.target;
-  local.tracking = output.tracking;
-  local.local_path_points = output.local_path_map.size();
-  local.path_follower_cmd_vel = output.cmd_vel;
-  local.cmd_vel = output.cmd_vel;
-  local.final_safety_applied = safety_applied;
-  local.final_safety_stopped = final_safety != nullptr && final_safety->stopped;
-  local.final_safety_slowed = final_safety != nullptr && final_safety->slowed;
-  local.final_safety_limited = final_safety != nullptr && final_safety->limited;
-  local.final_safety_reason = final_safety != nullptr ? final_safety->reason : "zero_command";
-  local.final_safety_obstacle_distance_m =
-      final_safety != nullptr ? final_safety->obstacle_distance_m : -1.0;
-  local.final_safety_traversability_cost =
-      final_safety != nullptr ? final_safety->traversability_cost : -1.0;
-  return local;
 }
 
 std::string activeMapIdentityBlocker(const std::optional<lingtu::nav::plan::MapIdentity> &expected,
@@ -97,25 +57,13 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
     const std::string map_blocker =
         activeMapIdentityBlocker(input.active_path_map_identity, current_map);
     if (!map_blocker.empty()) {
+      const auto final_start = Clock::now();
       final_control_.stop(now_s, map_blocker);
+      result.timing.final_control_ms += elapsedMs(final_start);
       result.clear_local_path = true;
       result.clear_local_planner_debug = true;
-      auto local = input.previous_local;
-      local.seen = true;
-      local.active = false;
-      local.path_found = false;
+      auto local = makeStoppedLocalDiagnostics(input.previous_local, map_blocker, map_blocker);
       local.tracking = {};
-      local.near_field_stop = true;
-      local.reason = map_blocker;
-      local.final_safety_applied = false;
-      local.final_safety_stopped = true;
-      local.final_safety_slowed = false;
-      local.final_safety_limited = false;
-      local.final_safety_reason = map_blocker;
-      local.final_safety_obstacle_distance_m = -1.0;
-      local.final_safety_traversability_cost = -1.0;
-      local.path_follower_cmd_vel = {};
-      local.cmd_vel = {};
       result.local = std::move(local);
       result.publish.cmd_vel = input.publish_cmd_vel;
       result.publish.command = {};
@@ -145,7 +93,9 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
     bool safety_applied = false;
     const bool raw_command_zero = isZeroCommand(output.cmd_vel);
     if (output.goal_reached || raw_command_zero) {
+      const auto final_start = Clock::now();
       final_control_.stop(now_s, output.goal_reached ? "goal_reached" : "zero_command");
+      result.timing.final_control_ms += elapsedMs(final_start);
       output.cmd_vel = {};
     } else {
       CommandSafetyConfig path_safety = input.safety;
@@ -153,6 +103,7 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
       path_safety.verified_recovery_translation =
           output.recovery_verified && output.recovery_action ==
               static_cast<int>(nav_kernel::RecoveryAction::Translate);
+      const auto final_start = Clock::now();
       const auto final = final_control_.finalize(FinalInput{
           FinalMode::kAutonomyPath,
           path_safety,
@@ -163,6 +114,7 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
           input.publish_cmd_vel,
           now_s,
       });
+      result.timing.final_control_ms += elapsedMs(final_start);
       output.cmd_vel = final.decision.cmd;
       // A feasible trajectory can still be rejected by measured-motion braking.
       // Pending replans must not erase this independent recovery trigger.
@@ -189,8 +141,9 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
       safety_applied = final.safety_applied;
     }
 
-    auto local = activeDiagnostics(output, final_safety.has_value() ? &*final_safety : nullptr,
-                                   safety_applied);
+    auto local = makeLocalDiagnostics(
+        output, final_safety.has_value() ? &*final_safety : nullptr,
+        safety_applied);
     local.path_follower_cmd_vel = path_follower_cmd;
     local.cmd_vel = output.cmd_vel;
     local.reason = output.reason;
@@ -234,26 +187,14 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
   if (input.path_active && !input.input_gate.ready) {
     const std::string reason = input.input_gate.reason;
     const std::string stop_reason = inputGateStopReason(reason);
+    const auto final_start = Clock::now();
     final_control_.stop(now_s, stop_reason);
+    result.timing.final_control_ms += elapsedMs(final_start);
     result.handled = true;
     result.clear_local_path = true;
     result.clear_local_planner_debug = true;
-    auto local = input.previous_local;
-    local.seen = true;
-    local.active = false;
-    local.path_found = false;
+    auto local = makeStoppedLocalDiagnostics(input.previous_local, reason, stop_reason);
     local.tracking.executionFrozen = local.tracking.active;
-    local.near_field_stop = true;
-    local.reason = reason;
-    local.final_safety_applied = false;
-    local.final_safety_stopped = true;
-    local.final_safety_slowed = false;
-    local.final_safety_limited = false;
-    local.final_safety_reason = stop_reason;
-    local.final_safety_obstacle_distance_m = -1.0;
-    local.final_safety_traversability_cost = -1.0;
-    local.path_follower_cmd_vel = {};
-    local.cmd_vel = {};
     result.local = std::move(local);
     result.publish.cmd_vel = input.publish_cmd_vel;
     result.publish.command = {};

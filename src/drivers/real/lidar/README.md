@@ -14,7 +14,7 @@
 ```text
 real/lidar/
   __init__.py              # canonical package exports
-  module.py                # LidarModule - Blueprint runtime Module
+  module.py                # LidarModule - HostBuilder runtime Module
   api/
     frames.py              # LivoxPointFrame, POINT_DTYPE (re-export)
     frame_stream.py        # LidarFrameStream ring buffer

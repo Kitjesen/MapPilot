@@ -6,12 +6,16 @@ import os
 import re
 import subprocess
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TextIO, TypeAlias
+from urllib.parse import urlsplit
 
 from sim.runtime.process_owner import ProcessShutdownSnapshot, ProcessTreeOwner
 from sim.runtime.windows_cpu_isolation import validate_windows_affinity_mask
+
+from lingtu.switch_contracts import is_product_session_id
 
 from .coordinator import CoordinatorError, PhysicsPlan
 from .run_allocation import RunAllocation
@@ -27,6 +31,12 @@ _CONTROL_STATUS_PORT = "control_status_udp"
 _CONTROL_SOURCE_ID = "robotsimue.local_player.0"
 _UE_SKIP_UBT_SDK_SETUP = "UE_SKIP_UBT_SDK_SETUP"
 _DEFAULT_MAIN_VIEW_SCREEN_PERCENTAGE = 100
+# Editor-backed game runs do not author assets or expose developer tool servers.
+# Keep rendering plugins (including LCC4Unreal) enabled for supported worlds.
+EDITOR_GAME_DISABLED_PLUGINS_ARGUMENT = (
+    "-DisablePlugins=ModelContextProtocol,AllToolsets,Terminal,Tripo3DUEBridge,"
+    "PythonScriptPlugin,EditorScriptingUtilities"
+)
 _PLAYABLE_HUD_SCREENSHOTS: tuple[tuple[str, str], ...] = (
     ("LingTuHudDriveScreenshot", "hud-drive.png"),
     ("LingTuHudTacticalScreenshot", "hud-tactical.png"),
@@ -42,6 +52,107 @@ class UnrealLaunchProfile(Enum):
     INTERACTIVE_SDK_QUIET = "interactive_sdk_quiet"
     FOREGROUND_SDK_QUIET = "foreground_sdk_quiet"
     PLAYABLE_SDK_QUIET = "playable_sdk_quiet"
+
+
+@dataclass(frozen=True)
+class InspectionPresentationBinding:
+    """Validated inspection identity presented by an existing UE runtime."""
+
+    task_id: str
+    expected_map_id: str
+    expected_map_content_epoch: int
+    expected_route_revision: int
+    expected_product_session_id: str | None = None
+    gateway_url: str | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("task_id", "expected_map_id"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be non-empty")
+            object.__setattr__(self, name, value.strip())
+        for name in ("expected_map_content_epoch", "expected_route_revision"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+        if self.expected_product_session_id is not None:
+            if (
+                not isinstance(self.expected_product_session_id, str)
+                or not self.expected_product_session_id.strip()
+            ):
+                raise ValueError(
+                    "expected_product_session_id must be non-empty when provided"
+                )
+            object.__setattr__(
+                self,
+                "expected_product_session_id",
+                self.expected_product_session_id.strip(),
+            )
+        if self.gateway_url is not None:
+            if not isinstance(self.gateway_url, str) or not self.gateway_url.strip():
+                raise ValueError("gateway_url must be non-empty when provided")
+            gateway_url = self.gateway_url.strip()
+            parsed = urlsplit(gateway_url)
+            if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+                raise ValueError("gateway_url must use an http or https URL scheme")
+            object.__setattr__(self, "gateway_url", gateway_url)
+
+    def arguments(self) -> list[str]:
+        """Return the exact UE inspection presentation argv."""
+
+        arguments = [
+            f"-LingTuInspectionTaskId={self.task_id}",
+            f"-LingTuInspectionExpectedMapId={self.expected_map_id}",
+            f"-LingTuInspectionExpectedMapContentEpoch={self.expected_map_content_epoch}",
+            f"-LingTuInspectionExpectedRouteRevision={self.expected_route_revision}",
+        ]
+        if self.expected_product_session_id is not None:
+            arguments.append(
+                "-LingTuInspectionExpectedProductSessionId="
+                f"{self.expected_product_session_id}"
+            )
+        if self.gateway_url is not None:
+            arguments.append(f"-LingTuInspectionGatewayUrl={self.gateway_url}")
+        return arguments
+
+
+@dataclass(frozen=True)
+class MeasurementPresentationBinding:
+    """Present an existing Product session; live status owns source generations."""
+
+    product_session_id: str
+    gateway_url: str
+
+    def __post_init__(self) -> None:
+        if not is_product_session_id(self.product_session_id):
+            raise ValueError("product_session_id must be a non-empty canonical Product session ID")
+        message = "gateway_url must be an http or https URL with a valid host and port"
+        if (
+            not isinstance(self.gateway_url, str)
+            or not self.gateway_url
+            or any(character.isspace() for character in self.gateway_url)
+        ):
+            raise ValueError(message)
+        if "?" in self.gateway_url or "#" in self.gateway_url:
+            raise ValueError("gateway_url must not contain a query or fragment")
+        try:
+            parsed = urlsplit(self.gateway_url)
+            hostname = parsed.hostname
+            port = parsed.port
+        except ValueError as error:
+            raise ValueError(message) from error
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("gateway_url must not contain userinfo")
+        if parsed.scheme.lower() not in {"http", "https"} or not hostname or (port is not None and port < 1):
+            raise ValueError(message)
+
+    def arguments(self) -> list[str]:
+        """Return only the supplied measurement presentation argv."""
+
+        return [
+            f"-LingTuMeasurementProductSessionId={self.product_session_id}",
+            f"-LingTuMeasurementGatewayUrl={self.gateway_url}",
+        ]
 
 
 def _validate_map_name(map_name: str) -> str:
@@ -399,12 +510,21 @@ class UnrealProcess(_UnrealProcessLifecycle):
         shared_color_depth_capture: bool = False,
         main_view_screen_percentage: int = _DEFAULT_MAIN_VIEW_SCREEN_PERCENTAGE,
         launch_profile: UnrealLaunchProfile = UnrealLaunchProfile.UNATTENDED,
+        inspection_presentation: InspectionPresentationBinding | None = None,
+        measurement_presentation: MeasurementPresentationBinding | None = None,
         popen_factory: PopenFactory = subprocess.Popen,
         timeout_s: float = 10.0,
         affinity_mask: int | None = None,
     ) -> None:
         if not isinstance(launch_profile, UnrealLaunchProfile):
             raise TypeError("launch_profile must be UnrealLaunchProfile")
+        if inspection_presentation is not None and not isinstance(
+            inspection_presentation,
+            InspectionPresentationBinding,
+        ):
+            raise TypeError(
+                "inspection_presentation must be InspectionPresentationBinding or None"
+            )
         self._editor = Path(editor_executable).resolve()
         self._uproject = Path(uproject).resolve()
         self._map_name = _validate_map_name(map_name)
@@ -433,6 +553,15 @@ class UnrealProcess(_UnrealProcessLifecycle):
             main_view_screen_percentage
         )
         self._launch_profile = launch_profile
+        self._inspection_presentation = inspection_presentation
+        if measurement_presentation is not None and not isinstance(
+            measurement_presentation,
+            MeasurementPresentationBinding,
+        ):
+            raise TypeError(
+                "measurement_presentation must be MeasurementPresentationBinding or None"
+            )
+        self._measurement_presentation = measurement_presentation
         self._popen_factory = popen_factory
         self._timeout_s = timeout_s
         self._affinity_mask = (
@@ -506,6 +635,7 @@ class UnrealProcess(_UnrealProcessLifecycle):
             "-nop4",
             "-NoSplash",
             "-NoCompile",
+            EDITOR_GAME_DISABLED_PLUGINS_ARGUMENT,
             "-DDC=InstalledNoZenLocalFallback",
             f"-LocalDataCachePath={ddc_path}",
             "-windowed",
@@ -545,6 +675,10 @@ class UnrealProcess(_UnrealProcessLifecycle):
             command.append("-LingTuDepthCaptureInMainRenderer")
         if self._shared_color_depth_capture:
             command.append("-LingTuSharedColorDepthCapture")
+        if self._inspection_presentation is not None:
+            command.extend(self._inspection_presentation.arguments())
+        if self._measurement_presentation is not None:
+            command.extend(self._measurement_presentation.arguments())
         return command
 
     def _child_environment(self, allocation: RunAllocation) -> dict[str, str]:
@@ -615,6 +749,8 @@ class PackagedUnrealProcess(_UnrealProcessLifecycle):
         depth_capture_in_main_renderer: bool = False,
         shared_color_depth_capture: bool = False,
         main_view_screen_percentage: int = _DEFAULT_MAIN_VIEW_SCREEN_PERCENTAGE,
+        inspection_presentation: InspectionPresentationBinding | None = None,
+        measurement_presentation: MeasurementPresentationBinding | None = None,
         popen_factory: PopenFactory = subprocess.Popen,
         timeout_s: float = 10.0,
         affinity_mask: int | None = None,
@@ -651,6 +787,22 @@ class PackagedUnrealProcess(_UnrealProcessLifecycle):
         self._main_view_screen_percentage = _validate_main_view_screen_percentage(
             main_view_screen_percentage
         )
+        if inspection_presentation is not None and not isinstance(
+            inspection_presentation,
+            InspectionPresentationBinding,
+        ):
+            raise TypeError(
+                "inspection_presentation must be InspectionPresentationBinding or None"
+            )
+        self._inspection_presentation = inspection_presentation
+        if measurement_presentation is not None and not isinstance(
+            measurement_presentation,
+            MeasurementPresentationBinding,
+        ):
+            raise TypeError(
+                "measurement_presentation must be MeasurementPresentationBinding or None"
+            )
+        self._measurement_presentation = measurement_presentation
         self._popen_factory = popen_factory
         self._timeout_s = timeout_s
         self._affinity_mask = (
@@ -726,6 +878,10 @@ class PackagedUnrealProcess(_UnrealProcessLifecycle):
             command.append("-LingTuDepthCaptureInMainRenderer")
         if self._shared_color_depth_capture:
             command.append("-LingTuSharedColorDepthCapture")
+        if self._inspection_presentation is not None:
+            command.extend(self._inspection_presentation.arguments())
+        if self._measurement_presentation is not None:
+            command.extend(self._measurement_presentation.arguments())
         return command
 
     def start(

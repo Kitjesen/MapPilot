@@ -9,6 +9,8 @@
 #include <sstream>
 #include <utility>
 
+#include "collision/body.hpp"
+#include "collision/terrain.hpp"
 #include "planning/local/planner.hpp"
 #include "safety/command.hpp"
 #include "status/nav_status_debug_sampling.hpp"
@@ -679,6 +681,55 @@ std::string scanFailureSnapshotJson(const nav_kernel::ScanFailureSnapshot &failu
     }
     out << ']';
   };
+  const auto optionalNumber = [&out](const std::optional<double> value) {
+    if (value) writeNumberJson(out, *value);
+    else out << "null";
+  };
+  const auto body = [&out, &point](const std::shared_ptr<const collision::Body> &model) {
+    if (!model) {
+      out << "null";
+      return;
+    }
+    out << "{\"margin_m\": "; writeNumberJson(out, model->margin_m);
+    out << ", \"horizontal_margin_m\": "; writeNumberJson(out, model->horizontal_margin_m);
+    out << ", \"parts\": [";
+    for (std::size_t i = 0; i < model->parts.size(); ++i) {
+      if (i != 0U) out << ", ";
+      const auto &part = model->parts[i];
+      const char *shape = "box";
+      switch (part.shape) {
+        case collision::Shape::Box: shape = "box"; break;
+        case collision::Shape::Sphere: shape = "sphere"; break;
+        case collision::Shape::Cylinder: shape = "cylinder"; break;
+        case collision::Shape::Capsule: shape = "capsule"; break;
+      }
+      out << "{\"link\": \"" << jsonEscape(part.link) << "\", \"shape\": \""
+          << shape << "\", \"center\": ";
+      point({part.center.x, part.center.y, part.center.z});
+      out << ", \"rotation\": [";
+      for (std::size_t axis = 0; axis < part.rotation.size(); ++axis) {
+        if (axis != 0U) out << ", ";
+        writeNumberJson(out, part.rotation[axis]);
+      }
+      out << "], \"half_size\": ";
+      point({part.half_size.x, part.half_size.y, part.half_size.z});
+      out << ", \"radius_m\": "; writeNumberJson(out, part.radius_m);
+      out << ", \"half_length_m\": "; writeNumberJson(out, part.half_length_m);
+      out << ", \"support_contact\": " << part.support_contact << '}';
+    }
+    out << "]}";
+  };
+  constexpr char hex[] = "0123456789abcdef";
+  const auto bitmap = [&out, &hex](const std::uint8_t *bits, std::size_t size) {
+    if (bits == nullptr) {
+      out << "null";
+      return;
+    }
+    out << '"';
+    for (std::size_t i = 0; i < size; ++i)
+      out << hex[bits[i] >> 4U] << hex[bits[i] & 15U];
+    out << '"';
+  };
   out << "{\"schema_version\": 1, \"product_session_id\": \""
       << jsonEscape(product_session_id) << "\", \"sequence\": " << failure.sequence
       << ", \"capture\": \"first_failed_fsm_tick_final_attempt\""
@@ -702,7 +753,14 @@ std::string scanFailureSnapshotJson(const nav_kernel::ScanFailureSnapshot &failu
   point(failure.robot.kinematics.linearAcceleration);
   out << ", \"yaw_rate\": "; writeNumberJson(out, failure.robot.kinematics.yawRate);
   out << "}, \"max_linear_speed_mps\": " << failure.maxLinearSpeedMps
-      << ", \"check_obstacle\": " << failure.checkObstacle << ", \"params\": {";
+      << ", \"body_heading\": ";
+  if (failure.bodyHeading) writeNumberJson(out, *failure.bodyHeading);
+  else out << "null";
+  out << ", \"body\": "; body(failure.body);
+  out << ", \"observed_body\": "; body(failure.observedBody);
+  out << ", \"support_height_m\": "; optionalNumber(failure.supportHeightM);
+  out << ", \"support_height_tolerance_m\": "; optionalNumber(failure.supportHeightToleranceM);
+  out << ", \"check_obstacle\": " << failure.checkObstacle << ", \"params\": {";
   const auto &p = failure.params;
   bool first = true;
   for (const auto &[name, value] : std::initializer_list<std::pair<const char *, double>>{
@@ -712,6 +770,7 @@ std::string scanFailureSnapshotJson(const nav_kernel::ScanFailureSnapshot &failu
       {"controlPointSpacing", p.controlPointSpacing},
       {"replanDistance", p.replanDistance}, {"noReplanDistance", p.noReplanDistance},
       {"maxVelocity", p.maxVelocity}, {"maxAcceleration", p.maxAcceleration},
+      {"maxBodyVx", p.maxBodyVx}, {"maxBodyVy", p.maxBodyVy},
       {"planningHorizon", p.planningHorizon}, {"smoothWeight", p.smoothWeight},
       {"collisionWeight", p.collisionWeight}, {"feasibilityWeight", p.feasibilityWeight},
       {"fitnessWeight", p.fitnessWeight}, {"feasibilityTolerance", p.feasibilityTolerance},
@@ -731,7 +790,8 @@ std::string scanFailureSnapshotJson(const nav_kernel::ScanFailureSnapshot &failu
     out << ", \"radius\": " << prediction.radius << ", \"min_z\": " << prediction.minZ
         << ", \"max_z\": " << prediction.maxZ << '}';
   }
-  out << "]}, \"reference_generation\": " << failure.referenceGeneration
+  out << "], \"expires_at_s\": " << failure.predictionsExpiresAtS
+      << "}, \"reference_generation\": " << failure.referenceGeneration
       << ", \"reference\": ";
   points(failure.reference);
   out << ", \"intent\": ";
@@ -766,14 +826,32 @@ std::string scanFailureSnapshotJson(const nav_kernel::ScanFailureSnapshot &failu
       << ", \"stamp_s\": " << map.stampS << ", \"receive_stamp_s\": " << map.receiveStampS
       << ", \"complete\": " << map.complete << ", \"live\": " << map.live
       << ", \"grid_from_planning_translation\": "; point(map.gridFromPlanningTranslation);
-  out << ", \"grid_from_planning_yaw\": " << map.gridFromPlanningYaw
-      << ", \"bits\": \"";
-  constexpr char hex[] = "0123456789abcdef";
-  for (std::size_t i = 0; map.inflatedBits && i < map.inflatedBytes; ++i) {
-    const auto byte = map.inflatedBits[i];
-    out << hex[byte >> 4U] << hex[byte & 15U];
+  out << ", \"grid_from_planning_yaw\": " << map.gridFromPlanningYaw << ", \"bits\": ";
+  bitmap(map.inflatedBits, map.inflatedBytes);
+  out << ", \"measured_occupied_bits\": ";
+  bitmap(map.measuredOccupiedStorage ? map.measuredOccupiedStorage->data() : nullptr,
+         map.measuredOccupiedStorage ? map.measuredOccupiedStorage->size() : 0U);
+  out << ", \"known_free_bits\": ";
+  bitmap(map.knownFreeStorage ? map.knownFreeStorage->data() : nullptr,
+         map.knownFreeStorage ? map.knownFreeStorage->size() : 0U);
+  out << ", \"hit_bounds\": ";
+  const auto *hitBounds = map.terrain ? map.terrain->hitBounds() : nullptr;
+  if (!hitBounds) {
+    out << "null";
+  } else {
+    out << '[';
+    for (std::size_t i = 0; i < hitBounds->size(); ++i) {
+      if (i != 0U) out << ", ";
+      const auto &bound = (*hitBounds)[i];
+      out << "{\"center\": ";
+      point({bound.center.x, bound.center.y, bound.center.z});
+      out << ", \"half_size\": ";
+      point({bound.half_size.x, bound.half_size.y, bound.half_size.z});
+      out << '}';
+    }
+    out << ']';
   }
-  out << "\"}}\n";
+  out << "}}\n";
   return out.str();
 }
 
@@ -905,13 +983,13 @@ void writeStatusSnapshot(
         << "\"body_clearance_above_m\": " << cfg.octoplanner_options.body_clearance_above_m << ", "
         << "\"max_iterations\": " << cfg.octoplanner_options.max_iterations << ", "
         << "\"snap_radius_cells\": " << cfg.octoplanner_options.snap_search_radius_cells << ", "
-        << "\"require_ground_support\": "
-        << (cfg.octoplanner_options.require_ground_support ? "true" : "false") << ", "
-        << "\"strict_ground_support\": "
-        << (cfg.octoplanner_options.strict_direct_ground_support ? "true" : "false") << ", "
-        << "\"ground_support_xy_radius_cells\": "
-        << cfg.octoplanner_options.ground_support_xy_radius_cells << ", "
-        << "\"ground_support_depth_cells\": " << cfg.octoplanner_options.ground_support_depth_cells
+        << "\"ground_support\": "
+        << (cfg.octoplanner_options.ground_support ? "true" : "false") << ", "
+        << "\"direct_support_only\": "
+        << (cfg.octoplanner_options.direct_support_only ? "true" : "false") << ", "
+        << "\"support_radius_cells\": "
+        << cfg.octoplanner_options.support_radius_cells << ", "
+        << "\"support_depth_cells\": " << cfg.octoplanner_options.support_depth_cells
         << ", "
         << "\"support_height_m\": " << cfg.octoplanner_options.support_height_m << ", "
         << "\"support_height_tolerance_m\": " << cfg.octoplanner_options.support_height_tolerance_m
@@ -956,8 +1034,8 @@ void writeStatusSnapshot(
         << "  \"live_obstacle_decay_s\": " << cfg.live_obstacle_decay_s << ",\n"
         << "  \"live_obstacle_inflation_radius_m\": " << cfg.live_obstacle_inflation_radius_m
         << ",\n"
-        << "  \"obstacle_inflation\": {\"owner\": \"active_path_blockage_overlay\", "
-        << "\"overlay_extra_radius_m\": " << cfg.live_obstacle_inflation_radius_m << ", "
+        << "  \"obstacle_inflation\": {\"owner\": \"scan_local_collision\", "
+        << "\"radius_m\": " << cfg.live_obstacle_inflation_radius_m << ", "
         << "\"layer_radius_m\": " << cfg.live_obstacle_layer_inflation_radius_m << "},\n"
         << "  \"live_obstacle_ray_clearing\": "
         << (cfg.live_obstacle_ray_clearing ? "true" : "false") << ",\n"
@@ -1258,6 +1336,9 @@ void writeStatusSnapshot(
         << "  \"timing_ms\": {\n"
         << "    \"loop\": " << timing.loop_ms << ",\n"
         << "    \"sensor_drain\": " << timing.sensor_drain_ms << ",\n"
+        << "    \"sensor_take\": " << timing.sensor_take_ms << ",\n"
+        << "    \"sensor_apply\": " << timing.sensor_apply_ms << ",\n"
+        << "    \"thread_cpu\": " << timing.thread_cpu_ms << ",\n"
         << "    \"operator_drain\": " << timing.operator_drain_ms << ",\n"
         << "    \"command_drain\": " << timing.command_drain_ms << ",\n"
         << "    \"runtime\": " << timing.runtime_ms << ",\n"
@@ -1270,6 +1351,7 @@ void writeStatusSnapshot(
         << "    \"teleop_gate\": " << timing.teleop_gate_ms << ",\n"
         << "    \"obstacle_merge\": " << timing.obstacle_merge_ms << ",\n"
         << "    \"nav_tick\": " << timing.nav_tick_ms << ",\n"
+        << "    \"final_control\": " << timing.final_control_ms << ",\n"
         << "    \"dds_write\": " << timing.dds_write_ms << ",\n"
         << "    \"status_log\": " << timing.status_log_ms << ",\n"
         << "    \"status_snapshot\": " << timing.status_snapshot_ms << ",\n"
@@ -1314,7 +1396,12 @@ void writeStatusSnapshot(
           << ",\"operator_drain_ms\":" << event.stages_ms[1]
           << ",\"command_drain_ms\":" << event.stages_ms[2]
           << ",\"runtime_ms\":" << event.stages_ms[3]
-          << ",\"publish_ms\":" << event.stages_ms[4] << '}';
+          << ",\"publish_ms\":" << event.stages_ms[4]
+          << ",\"nav_tick_ms\":" << event.nav_tick_ms
+          << ",\"final_control_ms\":" << event.final_control_ms
+          << ",\"sensor_take_ms\":" << event.sensor_take_ms
+          << ",\"sensor_apply_ms\":" << event.sensor_apply_ms
+          << ",\"thread_cpu_ms\":" << event.thread_cpu_ms << '}';
     }
     out << "]}\n  },\n"
         << "  \"counters\": {\n"

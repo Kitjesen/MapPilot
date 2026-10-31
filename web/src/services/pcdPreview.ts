@@ -1,12 +1,14 @@
-// Include both ends of the map instead of truncating its later regions.
-function sampleIndex(index: number, total: number, count: number): number {
-  return count <= 1 ? 0 : Math.floor(index * (total - 1) / (count - 1))
-}
-
 export function pcdCameraDistance(radius: number, aspect: number): number {
   // Fit the bounding sphere to the narrower field of view, with room at the edges.
   const halfFov = Math.atan(Math.tan(Math.PI / 8) * Math.min(1, aspect))
   return Math.max(0.1, radius) / Math.sin(halfFov) * 1.1
+}
+
+export function pcdPointCount(buffer: ArrayBuffer): number | null {
+  const header = new TextDecoder().decode(new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 8192)))
+    .split(/^DATA\s/m, 1)[0]
+  const value = header.match(/^POINTS\s+(\d+)\s*$/m)?.[1]
+  return value === undefined ? null : Number(value)
 }
 
 export function parsePcd(buffer: ArrayBuffer): Float32Array | null {
@@ -32,12 +34,12 @@ export function parsePcd(buffer: ArrayBuffer): Float32Array | null {
 
   if (fmt.trim() === 'ascii') {
     const lines = new TextDecoder().decode(bytes.slice(he)).trim().split('\n')
-    const cap = Math.min(lines.length, 300_000), out = new Float32Array(cap * 3)
+    const cap = lines.length, out = new Float32Array(cap * 3)
     let n = 0
     for (let i = 0; i < cap; i++) {
-      const p = lines[sampleIndex(i, lines.length, cap)].trim().split(/\s+/)
+      const p = lines[i].trim().split(/\s+/)
       const x = +p[xi], y = +p[yi], z = zi >= 0 ? +p[zi] : 0
-      if (isFinite(x) && isFinite(y)) { out[n++]=x; out[n++]=y; out[n++]=z }
+      if (isFinite(x) && isFinite(y) && isFinite(z)) { out[n++]=x; out[n++]=y; out[n++]=z }
     }
     return out.slice(0, n)
   }
@@ -48,15 +50,15 @@ export function parsePcd(buffer: ArrayBuffer): Float32Array | null {
     const dv = new DataView(buffer, he)
     const available = Math.floor(dv.byteLength / stride)
     const total = Math.min(nPts || available, available)
-    const cap = Math.min(total, 500_000)
+    const cap = total
     const out = new Float32Array(cap * 3)
     let n = 0
     for (let i = 0; i < cap; i++) {
-      const b = sampleIndex(i, total, cap) * stride
+      const b = i * stride
       const x = dv.getFloat32(b + offsets[xi], true)
       const y = dv.getFloat32(b + offsets[yi], true)
       const z = zi >= 0 ? dv.getFloat32(b + offsets[zi], true) : 0
-      if (isFinite(x) && isFinite(y)) { out[n++]=x; out[n++]=y; out[n++]=z }
+      if (isFinite(x) && isFinite(y) && isFinite(z)) { out[n++]=x; out[n++]=y; out[n++]=z }
     }
     return out.slice(0, n)
   }

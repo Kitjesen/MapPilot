@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2] / "sim"
 PROJECT = ROOT / "runtime" / "visual" / "RobotSimUE"
@@ -77,6 +80,7 @@ def test_has_one_project_and_runtime_plugin() -> None:
     assert [module["Name"] for module in project["Modules"]] == ["RobotSimUE"]
     assert project["Plugins"] == [
         {"Name": "LingTuSim", "Enabled": True},
+        {"Name": "LCC4Unreal", "Enabled": True, "SupportedTargetPlatforms": ["Win64"]},
         {"Name": "PythonScriptPlugin", "Enabled": True},
         {"Name": "EditorScriptingUtilities", "Enabled": True},
         {"Name": "ModelContextProtocol", "Enabled": True},
@@ -84,7 +88,7 @@ def test_has_one_project_and_runtime_plugin() -> None:
         {"Name": "Terminal", "Enabled": True},
         {
             "Name": "Tripo3DUEBridge",
-            "Enabled": True,
+            "Enabled": False,
             "SupportedTargetPlatforms": ["Win64"],
         },
     ]
@@ -195,6 +199,7 @@ def test_json_and_build_cs_static_references_are_closed() -> None:
         "CoreUObject",
         "Engine",
         "InputCore",
+        "HTTP",
         "Json",
         "JsonUtilities",
         "Networking",
@@ -316,9 +321,12 @@ def test_preview_renderer_enables_lumen_and_virtual_shadows() -> None:
 
 def test_thunderv4_preview_entry_is_parseable_and_builds_canonical_physics_host_when_needed() -> None:
     script = PROJECT / "Scripts" / "run_thunderv4_preview.ps1"
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("PowerShell is required to parse the preview entry")
     result = subprocess.run(
         [
-            "powershell",
+            powershell,
             "-NoProfile",
             "-Command",
             f"$null = [scriptblock]::Create((Get-Content -LiteralPath '{script}' -Raw)); 'ok'",

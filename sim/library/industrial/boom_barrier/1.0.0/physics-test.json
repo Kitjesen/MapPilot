@@ -1,0 +1,14 @@
+{
+  "engine": "3.10.0",
+  "joints": [
+    {
+      "angle_rad": 1.5701448871874366,
+      "joint": "barrier/lift",
+      "upper_limit_rad": 1.570796
+    }
+  ],
+  "passed": true,
+  "reset_passed": true,
+  "scope": "standalone_headless_design_model",
+  "ue_validated": false
+}

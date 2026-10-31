@@ -1,4 +1,4 @@
-#include "lingtu/maps/build/pcd.hpp"
+#include "lingtu/maps/io/pcd.hpp"
 
 #include <cassert>
 #include <chrono>

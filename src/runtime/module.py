@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Literal, Union, get_args, get_origin, get
 from .stream import In, Out
 
 if TYPE_CHECKING:
-    from .blueprint import Blueprint
+    from .host import HostBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +50,19 @@ def rpc(fn):
     return fn
 
 
-def skill(fn):
+def skill(
+    fn=None,
+    *,
+    description: str | None = None,
+    parameters: dict[str, str] | None = None,
+    output_schema: dict | None = None,
+    read_only: bool | None = None,
+):
     """Mark a Module method as AI-callable skill.
 
     A skill is an @rpc method additionally exposed to AI agents (MCP server, Agent module).
-    MCPServerModule auto-discovers all @skill methods at build time via on_system_modules().
+    Optional metadata describes use, parameters, object results and read-only behavior.
+    It does not wrap execution or own task state. Input types come from the signature.
 
     Usage:
         class Navigation(Module):
@@ -63,30 +71,67 @@ def skill(fn):
                 \"\"\"Navigate to coordinates (x, y) in map frame.\"\"\"
                 ...
     """
-    fn.__rpc__ = True
-    fn.__skill__ = True
-    return fn
+    if parameters is not None and (
+        not isinstance(parameters, dict) or any(not isinstance(value, str) for value in parameters.values())
+    ):
+        raise TypeError("skill parameters must be a dict of strings")
+    if read_only is not None and not isinstance(read_only, bool):
+        raise TypeError("skill read_only must be bool or None")
+    if output_schema is not None and (not isinstance(output_schema, dict) or output_schema.get("type") != "object"):
+        raise ValueError("skill output_schema must be a JSON object schema")
+
+    def decorate(method):
+        if not callable(method):
+            raise TypeError("@skill must decorate a callable")
+        method.__rpc__ = True
+        method.__skill__ = True
+        method.__skill_description__ = description
+        method.__skill_parameters__ = _deepcopy(parameters or {})
+        method.__skill_output_schema__ = _deepcopy(output_schema) if output_schema is not None else None
+        method.__skill_read_only__ = read_only
+        return method
+
+    return decorate(fn) if fn is not None else decorate
 
 
 import inspect as _inspect
 import json as _json
 import types as _types
+from copy import deepcopy as _deepcopy
 from dataclasses import dataclass as _dataclass
 
 
 @_dataclass
 class SkillInfo:
-    """Metadata for a single @skill method, used by MCPServerModule for tool discovery."""
+    """One method's contract, rendered identically for all skill consumers."""
 
     func_name: str
     class_name: str
     args_schema: str  # JSON string of MCP-compatible inputSchema
+    output_schema: dict | None = None
+    read_only: bool | None = None
+
+    def to_tool(self) -> dict:
+        """Render an independent MCP descriptor without changing the declaration."""
+        schema = _json.loads(self.args_schema)
+        description = schema.pop("description", "")
+        tool = {
+            "name": self.func_name,
+            "description": f"[{self.class_name}] {description}".strip(),
+            "inputSchema": schema,
+        }
+        if self.output_schema is not None:
+            tool["outputSchema"] = _deepcopy(self.output_schema)
+        if self.read_only is not None:
+            tool["annotations"] = {"readOnlyHint": self.read_only}
+        return tool
 
 
 def _build_skill_schema(method) -> dict:
     """Build MCP inputSchema dict from a bound @skill method's signature + docstring."""
     sig = _inspect.signature(method)
-    doc = _inspect.getdoc(method) or ""
+    doc = getattr(method, "__skill_description__", None) or _inspect.getdoc(method) or ""
+    parameter_descriptions = getattr(method, "__skill_parameters__", {}) or {}
     try:
         resolved_hints = get_type_hints(method)
     except (NameError, TypeError):
@@ -148,6 +193,12 @@ def _build_skill_schema(method) -> dict:
             required.append(pname)
         properties[pname] = prop
 
+    unknown = set(parameter_descriptions) - set(properties)
+    if unknown:
+        raise ValueError("skill parameter description names unknown parameter(s): " + ", ".join(sorted(unknown)))
+    for pname, text in parameter_descriptions.items():
+        properties[pname]["description"] = text
+
     schema: dict[str, Any] = {
         "type": "object",
         "description": doc,
@@ -175,7 +226,7 @@ class Module:
     # class-level layer tag; subclasses may override
     _layer: int | None = None
 
-    # Optional soft dependencies - Blueprint warns if missing at startup, but
+    # Optional soft dependencies - HostBuilder warns if missing at startup, but
     # the module still starts and related features degrade gracefully.
     SOFT_DEPENDS: list[str] = []
 
@@ -363,6 +414,8 @@ class Module:
                     func_name=name,
                     class_name=type(self).__name__,
                     args_schema=_json.dumps(schema),
+                    output_schema=_deepcopy(getattr(method, "__skill_output_schema__", None)),
+                    read_only=getattr(method, "__skill_read_only__", None),
                 )
             )
         return infos
@@ -389,7 +442,7 @@ class Module:
     # -- System-level hooks -----------------------------------------------
 
     def on_system_modules(self, modules: dict[str, Module]) -> None:
-        """Called by Blueprint after all modules are built.
+        """Called by HostBuilder after all modules are built.
 
         Override to inspect other modules, discover @rpc methods,
         or establish cross-module dependencies.
@@ -450,14 +503,14 @@ class Module:
         else:
             raise ValueError(f"direction must be In or Out, got {direction}")
 
-    # -- Blueprint factory ---------------------------------------------------
+    # -- HostBuilder factory ---------------------------------------------------
 
     @classmethod
-    def blueprint(cls, **kwargs: Any) -> Blueprint:
-        """Create a Blueprint containing only this module."""
-        from .blueprint import Blueprint
+    def compose(cls, **kwargs: Any) -> HostBuilder:
+        """Create a HostBuilder containing only this module."""
+        from .host import HostBuilder
 
-        return Blueprint().add(cls, **kwargs)
+        return HostBuilder().add(cls, **kwargs)
 
     # -- diagnostics ---------------------------------------------------------
 

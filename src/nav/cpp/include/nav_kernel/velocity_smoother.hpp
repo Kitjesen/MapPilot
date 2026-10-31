@@ -23,8 +23,8 @@ struct VelocityAxisLimits {
 };
 
 struct VelocitySmootherConfig {
-  VelocityAxisLimits x{-1.0, 1.0, 1.0, 2.0, 0.0};
-  VelocityAxisLimits y{-0.5, 0.5, 1.0, 2.0, 0.0};
+  VelocityAxisLimits x{-1.0, 1.0, 2.0, 2.0, 0.0};
+  VelocityAxisLimits y{-0.5, 0.5, 2.0, 2.0, 0.0};
   VelocityAxisLimits yaw{-1.5, 1.5, 2.0, 3.0, 0.0};
   VelocityFeedbackMode feedback_mode{VelocityFeedbackMode::kOpenLoop};
   double target_timeout_s{0.5};     // Seconds before a stale target fails closed.

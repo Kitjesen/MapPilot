@@ -313,6 +313,8 @@ def execute_switch(
             transition_report = exc.report
             raise
         report.phases.append("processes_active")
+        report.readiness = dict(transition_report.ready)
+        report.degraded = dict(transition_report.degraded)
         backend.wait_native_nav(native_environment, timeout_s=10.0)
         report.phases.append("native_nav_ready")
         if target_lifecycle.slam_mode == "mapping" and plan.has_process("slam"):
@@ -387,7 +389,13 @@ def execute_switch(
             ]
             try:
                 stop_product: ProductName | None = target_product
-                if previous is not None and transition_report is not None and previous.plan.has_process("nav"):
+                if previous is None and transition_report is not None and plan.has_process("nav"):
+                    active_or_attempted = set(transition_report.started) | set(transition_report.preserved)
+                    if plan.process("nav").target not in active_or_attempted:
+                        # Initial SLAM startup can fail before a motion owner starts.
+                        # Still stop any endpoint that unexpectedly became active.
+                        stop_product = None
+                elif previous is not None and transition_report is not None and previous.plan.has_process("nav"):
                     previous_nav = previous.plan.process("nav").target
                     nav_targets = {previous_nav, plan.process("nav").target}
                     # Started includes attempts that failed before readiness.

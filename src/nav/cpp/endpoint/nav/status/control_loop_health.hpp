@@ -24,12 +24,23 @@ struct ControlLoopSample {
   double overrun_ms{0.0};
   // Exclusive top-level stages: sensor, operator, command, runtime, publish.
   std::array<double, 5> stages_ms{};
+  // Nested wall measurements and whole-cycle CPU time are not extra stages.
+  double nav_tick_ms{0.0};
+  double final_control_ms{0.0};
+  double sensor_take_ms{0.0};
+  double sensor_apply_ms{0.0};
+  double thread_cpu_ms{0.0};
 };
 
 struct ControlLoopOverrun {
   std::uint64_t sequence{0};
   double work_ms{0.0};
   std::array<double, 5> stages_ms{};
+  double nav_tick_ms{0.0};
+  double final_control_ms{0.0};
+  double sensor_take_ms{0.0};
+  double sensor_apply_ms{0.0};
+  double thread_cpu_ms{0.0};
 };
 
 struct ControlLoopHistory {
@@ -85,6 +96,11 @@ class ControlLoopHealth {
     double overrun_ms{0.0};
     bool deadline_miss{false};
     std::array<double, 5> stages_ms{};
+    double nav_tick_ms{0.0};
+    double final_control_ms{0.0};
+    double sensor_take_ms{0.0};
+    double sensor_apply_ms{0.0};
+    double thread_cpu_ms{0.0};
   };
 
   ControlLoopHealthConfig config_;

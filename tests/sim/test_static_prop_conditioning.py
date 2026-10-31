@@ -220,7 +220,7 @@ def test_blender_command_uses_factory_startup_and_the_frozen_plan(tmp_path: Path
     )
 
     assert command == [
-        "D:\\Development\\Blender\\5.2\\blender.exe",
+        str(Path("D:/Development/Blender/5.2/blender.exe")),
         "--factory-startup",
         "--background",
         "--disable-autoexec",

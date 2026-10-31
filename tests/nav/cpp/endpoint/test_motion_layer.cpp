@@ -1,5 +1,6 @@
 #include <cmath>
 #include <iostream>
+#include <random>
 #include <stdexcept>
 #include <vector>
 
@@ -379,6 +380,48 @@ void testSparseMovingReturnsUseRepeatedObjectLevelFreeEvidence() {
   require(tracks.front().vx > 0.5, "sparse object must retain its observed forward velocity");
 }
 
+void testSubVoxelMovingSurfaceRetainsVelocityEvidence() {
+  auto cfg = baseConfig();
+  cfg.voxel_size_m = 0.08;
+  cfg.max_clearing_rays = 512;
+  cfg.dynamic_min_cells = 8;
+  cfg.dynamic_confirm_frames = 4;
+  cfg.dynamic_free_min_frames = 3;
+  cfg.dynamic_min_speed_mps = 0.25;
+  lingtu::nav::endpoint::MotionLayer layer(cfg);
+  const lingtu::nav::endpoint::SensorOrigin origin{0.0, 0.0, 0.5, true};
+  std::vector<float> background;
+  for (int y = -35; y <= 35; ++y) {
+    for (int z = 0; z < 10; ++z) {
+      const float target_y = 0.04f * y;
+      const float target_z = 0.13f + 0.08f * z;
+      background.insert(background.end(),
+          {3.5f, target_y * 3.5f / 2.35f,
+           0.5f + (target_z - 0.5f) * 3.5f / 2.35f, 0.0f});
+    }
+  }
+  for (int frame = 0; frame < 4; ++frame)
+    layer.updateFromScan(origin, background, 0.1 * (frame + 1));
+
+  bool confirmed = false;
+  for (int frame = 0; frame < 20; ++frame) {
+    const float center_y = 0.83f - (2.2f / 6.0f) * 0.1f * frame;
+    std::vector<float> returns = background;
+    for (int y = 0; y < 9; ++y) for (int z = 0; z < 9; ++z) {
+      const float height = 0.15f + 0.08f * z;
+      returns.insert(returns.end(), {2.35f, center_y - 0.25f + 0.06f * y,
+                                    height, height});
+    }
+    const double stamp = 1.0 + 0.1 * frame;
+    layer.updateFromScan(origin, returns, stamp);
+    const auto tracks = layer.dynamicClusters(8, stamp);
+    for (const auto &track : tracks)
+      if (track.x < 2.6 && track.vy < -0.25) confirmed = true;
+  }
+  require(confirmed,
+          "a 0.3667 m/s surface at 10 Hz must confirm motion below the 8 cm voxel stride");
+}
+
 void testChangingWallVisibilityDoesNotCreateVelocityTrack() {
   auto cfg = baseConfig();
   lingtu::nav::endpoint::MotionLayer layer(cfg);
@@ -394,6 +437,99 @@ void testChangingWallVisibilityDoesNotCreateVelocityTrack() {
     layer.updateFromScan(origin, patch, stamp);
     require(layer.dynamicClusters(8, stamp).empty(),
             "changing visibility on a static wall must not predict wall motion");
+  }
+}
+
+void testConfirmedTrackSurvivesRejectedVisibleHeightFitOnlyUntilTtl() {
+  auto cfg = baseConfig();
+  cfg.dynamic_min_cells = 3;
+  const lingtu::nav::endpoint::SensorOrigin origin{0, 0, 0, true};
+  for (const bool expires : {false, true}) {
+    lingtu::nav::endpoint::MotionLayer layer(cfg);
+    primeFree(layer, origin, {1.05f, 1.15f, 1.25f, 1.35f});
+    std::vector<lingtu::nav::endpoint::DynamicCluster> tracks;
+    for (int frame = 0; frame < 4; ++frame) {
+      const double stamp = 1 + .1 * frame;
+      layer.updateFromScan(origin, cluster(1.05f + .1f * frame), stamp);
+      tracks = layer.dynamicClusters(8, stamp);
+    }
+    require(tracks.size() == 1, "height-fit regression requires an actually confirmed target");
+    const auto confirmed = tracks.front();
+    for (int frame = 4; frame < (expires ? 10 : 7); ++frame) {
+      const double stamp = 1 + .1 * frame;
+      auto points = cluster(1.05f + .1f * frame);
+      for (std::size_t i = 0; i < points.size(); i += 4) points[i + 2] = expires ? -.49f : -.18f;
+      layer.updateFromScan(origin, points, stamp);
+      tracks = layer.dynamicClusters(8, stamp);
+      require(tracks.size() == 1 && tracks.front().id == confirmed.id,
+              "a rejected visible-height fit must retain confirmed motion within existing TTL");
+      require(!layer.predictedVolumes(stamp).empty(), "bounded fallback must retain future geometry");
+      if (frame < 6) {
+        require(tracks.front().vz == confirmed.vz && tracks.front().confidence < confirmed.confidence,
+                "rejected vertical fit must not refresh confidence or adopt its velocity");
+      }
+      const auto measured = layer.snapshot(2000, stamp);
+      bool observed = false;
+      for (std::size_t i = 0; i < measured.size(); i += 4)
+        observed |= std::abs(measured[i] - points[0]) < .01f && measured[i + 2] == points[2];
+      require(observed, "rejected velocity fit must never discard the current measured obstacle");
+    }
+    if (expires) {
+      auto points = cluster(1.96f);
+      for (std::size_t i = 0; i < points.size(); i += 4) points[i + 2] = -.49f;
+      layer.updateFromScan(origin, points, 1.91);
+      require(layer.dynamicClusters(8, 1.91).empty() && layer.predictedVolumes(1.91).empty(),
+              "repeated rejected height fits must not extend the existing motion TTL");
+      require(!layer.snapshot(2000, 1.91).empty(), "expired motion must remain measured geometry");
+    } else {
+      require(tracks.front().confidence >= confirmed.confidence,
+              "plausible observed motion must resume the existing confirmed track");
+    }
+  }
+}
+
+void testRejectedHeightDoesNotPreserveStoppedReversedOrTooFastMotion() {
+  auto cfg = baseConfig();
+  cfg.dynamic_min_cells = 3;
+  const lingtu::nav::endpoint::SensorOrigin origin{0, 0, 0, true};
+  for (const float target_x : {1.35f, 1.25f, 1.75f}) {
+    lingtu::nav::endpoint::MotionLayer layer(cfg);
+    primeFree(layer, origin, {1.05f, 1.15f, 1.25f, 1.35f});
+    for (int frame = 0; frame < 4; ++frame) {
+      const double stamp = 1 + .1 * frame;
+      layer.updateFromScan(origin, cluster(1.05f + .1f * frame), stamp);
+      (void)layer.dynamicClusters(8, stamp);
+    }
+    require(!layer.predictedVolumes(1.3).empty(), "rejection fixture must first confirm motion");
+    auto points = cluster(target_x);
+    for (std::size_t i = 0; i < points.size(); i += 4) points[i + 2] = -.18f;
+    layer.updateFromScan(origin, points, 1.4);
+    require(layer.dynamicClusters(8, 1.4).empty() && layer.predictedVolumes(1.4).empty(),
+            "a height anomaly must not excuse stopped, reversed or excessive planar motion");
+    require(!layer.snapshot(2000, 1.4).empty(), "rejected motion remains a measured obstacle");
+  }
+}
+
+void testMovingSensorDoesNotTurnNoisyStaticWallIntoDynamicObject() {
+  lingtu::nav::endpoint::MotionLayer layer;
+  std::mt19937 random(123);
+  std::normal_distribution<float> noise(0.0f, 0.015f);
+  for (int frame = 0; frame < 20; ++frame) {
+    const float sensor_x = 0.1f * frame;
+    std::vector<float> wall;
+    for (int x = 0; x < 40; ++x) {
+      for (int z = 0; z < 8; ++z) {
+        const float height = 0.15f + 0.12f * z;
+        wall.insert(wall.end(), {sensor_x - 1.0f + 0.06f * x + noise(random),
+                                 -1.45f + noise(random), height + noise(random), height});
+      }
+    }
+    const double stamp = 1.0 + 0.1 * frame;
+    layer.updateFromScan({sensor_x, -0.4, 0.5, true}, wall, stamp);
+    require(layer.dynamicClusters(8, stamp).empty(),
+            "rays grazing a noisy static wall must not turn moving visibility into object velocity");
+    require(!layer.snapshot(1000, stamp).empty(),
+            "suppressing false wall motion must preserve its measured obstacle geometry");
   }
 }
 
@@ -433,6 +569,33 @@ void testImplausibleSpeedDoesNotBecomeDynamic() {
   layer.updateFromScan(origin, cluster(1.6f), 1.1);
   require(layer.dynamicClusters(8, 1.1).empty(),
           "an implausible centroid jump must not become a moving object");
+}
+
+void testOldFreeEvidenceDoesNotConfirmChangingWallVisibility() {
+  auto cfg = baseConfig();
+  cfg.dynamic_min_cells = 3;
+  cfg.dynamic_free_min_frames = 2;
+  cfg.dynamic_confirm_frames = 3;
+  lingtu::nav::endpoint::MotionLayer layer(cfg);
+  const lingtu::nav::endpoint::SensorOrigin origin{0.0, 0.0, 0.0, true};
+  std::vector<float> columns;
+  for (int i = 0; i < 11; ++i) columns.push_back(1.0f + 0.1f * i);
+  primeFree(layer, origin, columns);
+  for (int frame = 0; frame < 8; ++frame) {
+    std::vector<float> visible;
+    const int first_column = frame < 3 ? 0 : frame - 2;
+    for (int i = first_column; i < 11; ++i) {
+      const auto points = cluster(columns[i]);
+      visible.insert(visible.end(), points.begin(), points.end());
+    }
+    const double stamp = 1.0 + 0.1 * frame;
+    // Occlusion changes the visible wall centroid, not the wall's position.
+    layer.update(visible, stamp);
+    require(layer.dynamicClusters(8, stamp).empty(),
+            "one historical free observation must not confirm moving wall fragments");
+    require(!layer.snapshot(1000, stamp).empty(),
+            "unconfirmed wall must remain in measured obstacle geometry");
+  }
 }
 
 void testSameFrameQueriesReusePrunePass() {
@@ -611,9 +774,14 @@ int main() {
   testPriorFreeEvidenceIsRequired();
   testClearingCadenceAtUnixEpochStamps();
   testSparseMovingReturnsUseRepeatedObjectLevelFreeEvidence();
+  testSubVoxelMovingSurfaceRetainsVelocityEvidence();
   testChangingWallVisibilityDoesNotCreateVelocityTrack();
+  testMovingSensorDoesNotTurnNoisyStaticWallIntoDynamicObject();
+  testConfirmedTrackSurvivesRejectedVisibleHeightFitOnlyUntilTtl();
+  testRejectedHeightDoesNotPreserveStoppedReversedOrTooFastMotion();
   testAlternatingJitterDoesNotBecomeDynamic();
   testImplausibleSpeedDoesNotBecomeDynamic();
+  testOldFreeEvidenceDoesNotConfirmChangingWallVisibility();
   testSameFrameQueriesReusePrunePass();
   testBoundedSnapshotUsesFullBudget();
   testBoundedSnapshotPreservesNearestHazard();

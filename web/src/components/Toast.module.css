@@ -2,9 +2,9 @@
 
 .container {
   position: fixed;
-  left: 14px;
-  bottom: calc(var(--statusbar-h) + 12px);
-  width: min(360px, calc(100vw - 28px));
+  right: 18px;
+  bottom: calc(var(--statusbar-h) + 18px);
+  width: min(390px, calc(100vw - 36px));
   max-height: calc(100vh - var(--topbar-h) - var(--statusbar-h) - 32px);
   display: flex;
   flex-direction: column;
@@ -15,22 +15,23 @@
 
 .toast {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 38px;
-  padding: 8px 10px 8px 12px;
-  border-radius: var(--r-sm);
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 54px;
+  padding: 11px 10px 11px 13px;
+  border-radius: var(--r-md);
   font-family: var(--font-ui);
-  font-size: 12.5px;
-  font-weight: 560;
+  font-size: var(--type-secondary);
+  font-weight: 500;
+  line-height: var(--leading-caption);
   letter-spacing: 0;
   width: 100%;
   box-sizing: border-box;
   pointer-events: all;
   animation: toast-in var(--duration-ui, 160ms) var(--ease-out);
-  border: 1px solid var(--border);
-  background: var(--glass-hi);
-  backdrop-filter: blur(16px);
+  border: 1px solid var(--border-hi);
+  background: color-mix(in srgb, var(--bg-layer-2) 94%, transparent);
+  backdrop-filter: blur(18px) saturate(120%);
   -webkit-backdrop-filter: blur(16px);
   box-shadow: var(--shadow-md);
   color: var(--text);
@@ -43,7 +44,7 @@
 
 .toastSuccess {
   composes: toast;
-  border-left: 2px solid #198660;
+  border-left: 3px solid #198660;
 }
 
 :global(html[data-theme="dark"]) .toastSuccess {
@@ -52,17 +53,46 @@
 
 .toastError {
   composes: toast;
-  border-left: 2px solid var(--red);
+  border-left: 3px solid var(--red);
 }
 
 .toastInfo {
   composes: toast;
+  border-left: 3px solid var(--blue);
+}
+
+.icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  margin-top: 1px;
+  color: var(--text-dim);
+}
+
+.toastSuccess .icon { color: #198660; }
+.toastError .icon { color: var(--red); }
+.toastInfo .icon { color: var(--blue); }
+
+.content {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  color: var(--text);
+  font-size: var(--type-caption);
+  font-weight: 700;
+  line-height: var(--leading-heading);
 }
 
 .msg {
   flex: 1;
   min-width: 0;
-  line-height: 1.45;
+  color: var(--text-dim);
+  line-height: var(--leading-caption);
   overflow-wrap: anywhere;
 }
 
@@ -96,4 +126,12 @@
 @media (prefers-reduced-motion: reduce) {
   .toast { animation: none; }
   .close { transition: none; }
+}
+
+@media (max-width: 640px) {
+  .container {
+    right: 10px;
+    bottom: calc(var(--statusbar-h) + 10px);
+    width: calc(100vw - 20px);
+  }
 }

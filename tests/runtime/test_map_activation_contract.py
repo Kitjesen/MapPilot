@@ -126,7 +126,7 @@ def test_native_save_map_prune_is_required_in_field_releases() -> None:
 
 
 def test_saved_map_products_declare_activation_boundary() -> None:
-    real_env = yaml.safe_load(_read("config/runtime_graph/envs/real.yaml"))
+    real_env = yaml.safe_load(_read("config/system/envs/real.yaml"))
     expected_boundary = {
         "request": "/maps/activation/request",
         "ack": "/maps/activation/ack",
@@ -136,17 +136,17 @@ def test_saved_map_products_declare_activation_boundary() -> None:
         "stale_rollback_policy": "reject_unless_active_exactly_matches_target",
     }
     assert real_env["endpoints"]["contract"]["map_activation_boundary"] == expected_boundary
-    sim_env = yaml.safe_load(_read("config/runtime_graph/envs/sim.yaml"))
+    sim_env = yaml.safe_load(_read("config/system/envs/sim.yaml"))
     assert (
         sim_env["backends"]["mujoco"]["endpoints"]["contract"]["map_activation_boundary"]
         == expected_boundary
     )
     for product_name in ("nav", "inspection", "tracking"):
         product = yaml.safe_load(
-            _read(f"config/runtime_graph/products/{product_name}.yaml")
+            _read(f"config/system/products/{product_name}.yaml")
         )
         assert product["requires_map"] is True
 
-    explore = yaml.safe_load(_read("config/runtime_graph/products/explore.yaml"))
+    explore = yaml.safe_load(_read("config/system/products/explore.yaml"))
     assert explore["variants"]["live"]["requires_map"] is False
     assert explore["variants"]["map"]["requires_map"] is True

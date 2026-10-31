@@ -2,7 +2,24 @@
 build/
 install/
 log/
-.colcon/
+dist/
+
+# Local environments, runtime data, and development evidence
+.venv/
+venv/
+.local/
+artifacts/
+logs/
+output/
+
+# Local assistant state and nested worktrees
+.agents/
+.claude/
+.codex/
+.codex_tmp/
+.omc/
+.omx/
+.tripo/
 
 # IDE & OS
 .vscode/
@@ -23,22 +40,22 @@ docs/
 *.md
 !README.md
 
-# Flutter client (built separately)
-client/
+# Frontend dependency caches
+**/node_modules/
 
 # CI/CD
 .github/
-
-# 3rdparty test artifacts
-src/VLM/yolov5/utils/docker/
 
 # Python caches
 __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Temporary
+.tmp/
+tmp/
 *.tmp
 *.bak
-dist/

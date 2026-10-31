@@ -1,7 +1,7 @@
 <!--
   LingTu industrial demo scene for live SLAM, exploration, and navigation gates.
   This is intentionally one floor: large enough to exercise map growth and
-  frontier goals, but without the multi-level degeneracy that makes Fast-LIO
+  frontier goals, but without the multi-level degeneracy that makes LTLIO
   unstable in factory_scene.xml.
 -->
 <mujoco model="lingtu_industrial_demo">
@@ -37,7 +37,7 @@
 
     <!-- Roof deck, overhead beams and pipe racks provide vertical SLAM constraints
          for a level MID-360 whose scan pattern sees much more above the horizon
-         than below it. Without these horizontal returns Fast-LIO's Z estimate is
+         than below it. Without these horizontal returns LTLIO's Z estimate is
          under-constrained in a flat warehouse. -->
     <geom name="roof_deck_main" type="box" pos="15.0 10.0 3.20" size="15.0 10.0 0.04"
           rgba=".54 .56 .57 1" conaffinity="1" condim="3"/>

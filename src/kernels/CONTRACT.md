@@ -17,7 +17,7 @@ Runtime integration does not belong here:
 
 - ROS2 nodes, launch files, systemd services, shell deployment scripts.
 - Gateway, CLI, REST, WebSocket, LCM, DDS, or hardware drivers.
-- Python Module lifecycle, Blueprint wiring, logging dashboards, or UI code.
+- Python Module lifecycle, HostBuilder wiring, logging dashboards, or UI code.
 
 ## Required Boundary
 

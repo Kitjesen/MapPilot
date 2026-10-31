@@ -10,11 +10,12 @@ from localization.service import RelocalizationService
 
 
 def attach_module_refs(gw: Any, modules: dict[str, Any]) -> None:
-    """Attach module references discovered by Blueprint/System startup."""
+    """Attach module references discovered by HostBuilder/System startup."""
     gw._all_modules = dict(modules)
     gw._goals = modules.get("nav.goals")
     gw._nav_commands = modules.get("nav.commands")
     gw._inspection = modules.get("nav.inspection")
+    gw._sensor_control_module = modules.get("sensor.controls")
     bind_navigation_commands(gw, gw._nav_commands)
     relocalization_backend = next(
         (

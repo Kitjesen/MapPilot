@@ -98,16 +98,16 @@ ProductControl 启动导航会话
 局部碰撞观测；检测器重置累计并计入第一帧，但协调器仅检查“累计为零”，
 因而保留旧候选。此时恢复耗尽会让替换路径请求误用旧障碍。
 
-修复将候选记录移回 `ActivePathBlockagePolicy`，与 bind/reset/clearAccumulation
-一起清理，删除协调器内的重复缓存与推测式清理。协调器只在恢复耗尽后读取
-候选。重复观测仍不累加、缺少新观测不伪造“障碍已清除”，现有运动检查不变。
+后续职责收敛已将这条持续障碍升级链从生产 `navd` 移除：实时局部碰撞由
+SCAN/局部恢复处理，协调器只在恢复耗尽后请求一次普通全局重规划，不再读取或
+注入临时全局障碍候选。旧 `ActivePathBlockagePolicy` 及其专用测试已删除，
+不再参与任何现场或离线构建。现有运动检查不变。
 
-新增 `testCollisionObservationResetDiscardsOldObstruction` 在修改前明确失败：
-`observation reset reused the old obstacle overlay before new evidence matured`；
-修复后通过。原有换路、取消、新目标替换、输入等待、终态交付的测试继续验证。
+持续障碍策略测试已随生产职责删除；换路、取消、新目标替换、输入等待、终态
+交付测试继续验证恢复耗尽后的单次重规划事务。
 日志位于 `build/codex-scan-dynamic/recovery-review-*.log`。
 
-最终验证：换路链路、持续障碍策略、任务恢复协调器、NavigationRuntime、终态事务
-共 5 个原生测试程序全部通过，MSVC Release `navd` 构建通过。
+最终验证：换路链路、任务恢复协调器、NavigationRuntime、终态事务等原生测试
+程序继续覆盖恢复耗尽后的单次重规划；持续障碍策略不再编译。
 本轮未修改 Python/网页接口，未重复其无关测试，也未运行 MuJoCo 或实机。
 上述审查范围内未再发现新的流程冲突，不能据此宣称整仓库没有缺陷。

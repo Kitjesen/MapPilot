@@ -94,6 +94,7 @@ class OpenAIClient(LLMClientBase):
                 kwargs = {
                     "api_key": self._api_key,
                     "timeout": self.config.timeout_sec,
+                    "max_retries": 0,
                 }
 
                 if hasattr(self.config, "base_url") and self.config.base_url:
@@ -103,13 +104,27 @@ class OpenAIClient(LLMClientBase):
                 raise LLMError("openai package not installed. Run: pip install openai") from None
 
     def _completion_options(self, temperature: float) -> dict:
-        return {"temperature": temperature}
+        return {"temperature": temperature, "max_tokens": 4096}
 
     async def chat(
         self,
         messages: list[dict],
         temperature: float | None = None,
     ) -> str:
+        message = await self._chat_completion(messages, temperature=temperature)
+        return message.get("content") or ""
+
+    async def chat_with_tools(self, messages: list[dict], tools: list[dict]) -> dict:
+        """Return one native assistant message for the serial Agent tool loop."""
+        return await self._chat_completion(messages, tools=tools)
+
+    async def _chat_completion(
+        self,
+        messages: list[dict],
+        *,
+        temperature: float | None = None,
+        tools: list[dict] | None = None,
+    ) -> dict:
         if not self.supports_vision and any(
             part.get("type") == "image_url"
             for message in messages
@@ -125,18 +140,55 @@ class OpenAIClient(LLMClientBase):
                 kwargs = dict(
                     model=self.config.model,
                     messages=messages,
-                    max_tokens=4096,
                     stream=True,
                     **self._completion_options(temp),
                 )
+                if tools is not None:
+                    kwargs.update(tools=tools, tool_choice="auto", parallel_tool_calls=False)
                 stream = await self._client.chat.completions.create(**kwargs)
                 chunks = []
-                async for chunk in stream:
-                    delta = chunk.choices[0].delta if chunk.choices else None
-                    if delta and delta.content:
-                        chunks.append(delta.content)
+                reasoning_chunks = []
+                tool_fragments = {}
+                finish_reason = None
+                try:
+                    async for chunk in stream:
+                        delta = chunk.choices[0].delta if chunk.choices else None
+                        if chunk.choices and chunk.choices[0].finish_reason:
+                            finish_reason = chunk.choices[0].finish_reason
+                        if delta and delta.content:
+                            chunks.append(delta.content)
+                        if delta and tools is not None:
+                            reasoning = getattr(delta, "reasoning_content", None)
+                            if reasoning:
+                                reasoning_chunks.append(reasoning)
+                            for fragment in delta.tool_calls or []:
+                                call = tool_fragments.setdefault(fragment.index, {
+                                    "id": "", "type": "function", "function": {"name": "", "arguments": ""},
+                                })
+                                if fragment.id:
+                                    call["id"] = fragment.id
+                                if fragment.type:
+                                    call["type"] = fragment.type
+                                if fragment.function:
+                                    if fragment.function.name:
+                                        call["function"]["name"] = fragment.function.name
+                                    call["function"]["arguments"] += fragment.function.arguments or ""
+                finally:
+                    await stream.close()
+                if finish_reason == "length":
+                    raise LLMError("Model reply exceeded the completion token limit")
+                tool_calls = [tool_fragments[index] for index in sorted(tool_fragments)]
+                if tools is not None and finish_reason not in {"stop", "tool_calls"}:
+                    raise LLMError("Model tool reply did not finish successfully")
+                if tools is not None and bool(tool_calls) != (finish_reason == "tool_calls"):
+                    raise LLMError("Model tool calls do not match the reply finish reason")
+                if len(tool_calls) > 1:
+                    raise LLMError("Agent requires one tool call per turn")
+                if any(call["type"] != "function" or not call["id"] or not call["function"]["name"]
+                       for call in tool_calls):
+                    raise LLMError("Model returned an incomplete tool call")
                 content = "".join(chunks)
-                if not content.strip() and attempt < self.config.max_retries:
+                if not content.strip() and not tool_calls and attempt < self.config.max_retries:
                     logger.warning(
                         "OpenAI API returned empty response, retrying (%d/%d)",
                         attempt + 1,
@@ -144,7 +196,12 @@ class OpenAIClient(LLMClientBase):
                     )
                     await asyncio.sleep(2**attempt + random.uniform(0, 0.5 * 2**attempt))
                     continue
-                return content
+                message = {"role": "assistant", "content": content or None}
+                if tool_calls:
+                    message["tool_calls"] = tool_calls
+                if reasoning_chunks:
+                    message["reasoning_content"] = "".join(reasoning_chunks)
+                return message
             except (KeyboardInterrupt, SystemExit):
                 raise
             except LLMError:
@@ -197,7 +254,7 @@ class OpenAIClient(LLMClientBase):
                     raise LLMError(f"OpenAI API failed after {attempt + 1} attempts: {e}") from e
 
         # Should not reach here, but guard against falling through with empty content
-        return ""
+        return {"role": "assistant", "content": None}
 
     async def chat_with_image(
         self,
@@ -475,7 +532,7 @@ class QwenClient(LLMClientBase):
 
 
 class MoonshotClient(OpenAIClient):
-    """Moonshot Open Platform client; K2.6 uses bounded non-thinking replies."""
+    """Moonshot client with model-specific vision and completion parameters."""
 
     _DEFAULT_BASE_URL = "https://api.moonshot.cn/v1"
 
@@ -493,13 +550,15 @@ class MoonshotClient(OpenAIClient):
 
     @property
     def supports_vision(self) -> bool:
-        return self.config.model == "kimi-k2.6"
+        return self.config.model in {"kimi-k2.6", "kimi-k3"}
 
     def _completion_options(self, temperature: float) -> dict:
+        if self.config.model == "kimi-k3":
+            return {"reasoning_effort": "low", "max_completion_tokens": 4096}
         if self.config.model == "kimi-k2.6":
             # K2.6 fixes temperature at 0.6 in non-thinking mode. Omit it as
             # documented instead of forwarding the caller's 0.0/0.2 value.
-            return {"extra_body": {"thinking": {"type": "disabled"}}}
+            return {"extra_body": {"thinking": {"type": "disabled"}}, "max_tokens": 4096}
         return super()._completion_options(temperature)
 
 

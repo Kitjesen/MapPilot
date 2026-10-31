@@ -1,0 +1,780 @@
+{
+  "asset": {
+    "generator": "Khronos glTF Blender I/O v3.6.27",
+    "version": "2.0"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Scene",
+      "nodes": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "modular_industrial_pipes_01_pipe01",
+      "translation": [
+        0.3999999761581421,
+        -0.5249999761581421,
+        -0.025000035762786865
+      ]
+    },
+    {
+      "mesh": 1,
+      "name": "modular_industrial_pipes_01_pipe02",
+      "translation": [
+        -0.5999999642372131,
+        -0.02499999850988388,
+        -0.02500000037252903
+      ]
+    },
+    {
+      "mesh": 2,
+      "name": "modular_industrial_pipes_01_pipe03",
+      "translation": [
+        -0.20000000298023224,
+        -0.32500001788139343,
+        -0.025000005960464478
+      ]
+    },
+    {
+      "mesh": 3,
+      "name": "modular_industrial_pipes_01_pipe05",
+      "translation": [
+        0.3999999761581421,
+        0.675000011920929,
+        -0.02499997615814209
+      ]
+    },
+    {
+      "mesh": 4,
+      "name": "modular_industrial_pipes_01_pipe06",
+      "translation": [
+        0.3999999761581421,
+        0.17500001192092896,
+        -0.024999991059303284
+      ]
+    },
+    {
+      "mesh": 5,
+      "name": "modular_industrial_pipes_01_pipe07",
+      "translation": [
+        0,
+        0.07500000298023224,
+        -0.02499999850988388
+      ]
+    },
+    {
+      "mesh": 6,
+      "name": "modular_industrial_pipes_01_pipe08",
+      "translation": [
+        -0.2999999523162842,
+        -0.7250000238418579,
+        -0.025000035762786865
+      ]
+    },
+    {
+      "mesh": 7,
+      "name": "modular_industrial_pipes_01_pipe04",
+      "translation": [
+        -0.09999998658895493,
+        0.6750000715255737,
+        -0.02499997615814209
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "doubleSided": true,
+      "name": "modular_industrial_pipes_01_group01",
+      "normalTexture": {
+        "index": 0
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 1
+        },
+        "metallicRoughnessTexture": {
+          "index": 2
+        }
+      }
+    },
+    {
+      "doubleSided": true,
+      "name": "modular_industrial_pipes_01_group02",
+      "normalTexture": {
+        "index": 3
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 4
+        },
+        "metallicRoughnessTexture": {
+          "index": 5
+        }
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Mesh",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          },
+          "indices": 3,
+          "material": 0
+        }
+      ]
+    },
+    {
+      "name": "Mesh.001",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 4,
+            "NORMAL": 5,
+            "TEXCOORD_0": 6
+          },
+          "indices": 7,
+          "material": 0
+        }
+      ]
+    },
+    {
+      "name": "Mesh.002",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 8,
+            "NORMAL": 9,
+            "TEXCOORD_0": 10
+          },
+          "indices": 11,
+          "material": 0
+        }
+      ]
+    },
+    {
+      "name": "Mesh.004",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 12,
+            "NORMAL": 13,
+            "TEXCOORD_0": 14
+          },
+          "indices": 15,
+          "material": 1
+        }
+      ]
+    },
+    {
+      "name": "Mesh.005",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 16,
+            "NORMAL": 17,
+            "TEXCOORD_0": 18
+          },
+          "indices": 19,
+          "material": 1
+        }
+      ]
+    },
+    {
+      "name": "Mesh.006",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 20,
+            "NORMAL": 21,
+            "TEXCOORD_0": 22
+          },
+          "indices": 23,
+          "material": 1
+        }
+      ]
+    },
+    {
+      "name": "Mesh.007",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 24,
+            "NORMAL": 25,
+            "TEXCOORD_0": 26
+          },
+          "indices": 27,
+          "material": 1
+        }
+      ]
+    },
+    {
+      "name": "Mesh.011",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 28,
+            "NORMAL": 29,
+            "TEXCOORD_0": 30
+          },
+          "indices": 31,
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "sampler": 0,
+      "source": 0
+    },
+    {
+      "sampler": 0,
+      "source": 1
+    },
+    {
+      "sampler": 0,
+      "source": 2
+    },
+    {
+      "sampler": 0,
+      "source": 3
+    },
+    {
+      "sampler": 0,
+      "source": 4
+    },
+    {
+      "sampler": 0,
+      "source": 5
+    }
+  ],
+  "images": [
+    {
+      "mimeType": "image/jpeg",
+      "name": "modular_industrial_pipes_01_group01_nor_gl",
+      "uri": "textures/modular_industrial_pipes_01_group01_nor_gl_2k.jpg"
+    },
+    {
+      "mimeType": "image/jpeg",
+      "name": "modular_industrial_pipes_01_group01_diff",
+      "uri": "textures/modular_industrial_pipes_01_group01_diff_2k.jpg"
+    },
+    {
+      "mimeType": "image/jpeg",
+      "name": "modular_industrial_pipes_01_group01_metal-modular_industrial_pipes_01_group01_rough",
+      "uri": "textures/modular_industrial_pipes_01_group01_arm_2k.jpg"
+    },
+    {
+      "mimeType": "image/jpeg",
+      "name": "modular_industrial_pipes_01_group02_nor_gl",
+      "uri": "textures/modular_industrial_pipes_01_group02_nor_gl_2k.jpg"
+    },
+    {
+      "mimeType": "image/jpeg",
+      "name": "modular_industrial_pipes_01_group02_diff",
+      "uri": "textures/modular_industrial_pipes_01_group02_diff_2k.jpg"
+    },
+    {
+      "mimeType": "image/jpeg",
+      "name": "modular_industrial_pipes_01_group02_metal-modular_industrial_pipes_01_group02_rough",
+      "uri": "textures/modular_industrial_pipes_01_group02_arm_2k.jpg"
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 810,
+      "max": [
+        0.10355377197265625,
+        0.42953094840049744,
+        0.1031607836484909
+      ],
+      "min": [
+        -0.10355384647846222,
+        -0.42953094840049744,
+        -0.10316061228513718
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 810,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 810,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5123,
+      "count": 1800,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5126,
+      "count": 850,
+      "max": [
+        0.10355186462402344,
+        0.9773200154304504,
+        0.10316036641597748
+      ],
+      "min": [
+        -0.10355205088853836,
+        -0.977319598197937,
+        -0.10316061973571777
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 5,
+      "componentType": 5126,
+      "count": 850,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 6,
+      "componentType": 5126,
+      "count": 850,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 7,
+      "componentType": 5123,
+      "count": 1944,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 8,
+      "componentType": 5126,
+      "count": 1046,
+      "max": [
+        0.2912115454673767,
+        0.6440821886062622,
+        0.10352516174316406
+      ],
+      "min": [
+        -0.30743715167045593,
+        -0.6703025698661804,
+        -0.10285165905952454
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 9,
+      "componentType": 5126,
+      "count": 1046,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 10,
+      "componentType": 5126,
+      "count": 1046,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 11,
+      "componentType": 5123,
+      "count": 2952,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 12,
+      "componentType": 5126,
+      "count": 1044,
+      "max": [
+        0.2992496192455292,
+        0.21644553542137146,
+        0.10318444669246674
+      ],
+      "min": [
+        -0.29883816838264465,
+        -0.2164207547903061,
+        -0.1031605452299118
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 13,
+      "componentType": 5126,
+      "count": 1044,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 14,
+      "componentType": 5126,
+      "count": 1044,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 15,
+      "componentType": 5123,
+      "count": 2952,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 16,
+      "componentType": 5126,
+      "count": 1328,
+      "max": [
+        0.20517486333847046,
+        0.17866015434265137,
+        0.10321727395057678
+      ],
+      "min": [
+        -0.1035558208823204,
+        -0.17889827489852905,
+        -0.10316428542137146
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 17,
+      "componentType": 5126,
+      "count": 1328,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 18,
+      "componentType": 5126,
+      "count": 1328,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 19,
+      "componentType": 5123,
+      "count": 3264,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 20,
+      "componentType": 5126,
+      "count": 1746,
+      "max": [
+        0.17839862406253815,
+        0.20516109466552734,
+        0.10322123765945435
+      ],
+      "min": [
+        -0.17840716242790222,
+        -0.20591944456100464,
+        -0.10316047072410583
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 21,
+      "componentType": 5126,
+      "count": 1746,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 22,
+      "componentType": 5126,
+      "count": 1746,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 23,
+      "componentType": 5123,
+      "count": 4224,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 24,
+      "componentType": 5126,
+      "count": 6009,
+      "max": [
+        0.1627417653799057,
+        0.19008544087409973,
+        0.20443136990070343
+      ],
+      "min": [
+        -0.10355323553085327,
+        -0.18874342739582062,
+        -0.10316090285778046
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 25,
+      "componentType": 5126,
+      "count": 6009,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 26,
+      "componentType": 5126,
+      "count": 6009,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 27,
+      "componentType": 5123,
+      "count": 17364,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 28,
+      "componentType": 5126,
+      "count": 952,
+      "max": [
+        0.12742145359516144,
+        0.25419169664382935,
+        0.1031605526804924
+      ],
+      "min": [
+        -0.29672783613204956,
+        -0.19040973484516144,
+        -0.10316021740436554
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 29,
+      "componentType": 5126,
+      "count": 952,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 30,
+      "componentType": 5126,
+      "count": 952,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 31,
+      "componentType": 5123,
+      "count": 2520,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 9720,
+      "byteOffset": 0,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 9720,
+      "byteOffset": 9720,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 6480,
+      "byteOffset": 19440,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 3600,
+      "byteOffset": 25920,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 10200,
+      "byteOffset": 29520,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 10200,
+      "byteOffset": 39720,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 6800,
+      "byteOffset": 49920,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 3888,
+      "byteOffset": 56720,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 12552,
+      "byteOffset": 60608,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 12552,
+      "byteOffset": 73160,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 8368,
+      "byteOffset": 85712,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 5904,
+      "byteOffset": 94080,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 12528,
+      "byteOffset": 99984,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 12528,
+      "byteOffset": 112512,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 8352,
+      "byteOffset": 125040,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 5904,
+      "byteOffset": 133392,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 15936,
+      "byteOffset": 139296,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 15936,
+      "byteOffset": 155232,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 10624,
+      "byteOffset": 171168,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 6528,
+      "byteOffset": 181792,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 20952,
+      "byteOffset": 188320,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 20952,
+      "byteOffset": 209272,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 13968,
+      "byteOffset": 230224,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 8448,
+      "byteOffset": 244192,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 72108,
+      "byteOffset": 252640,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 72108,
+      "byteOffset": 324748,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 48072,
+      "byteOffset": 396856,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 34728,
+      "byteOffset": 444928,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 11424,
+      "byteOffset": 479656,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 11424,
+      "byteOffset": 491080,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 7616,
+      "byteOffset": 502504,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 5040,
+      "byteOffset": 510120,
+      "target": 34963
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 515160,
+      "uri": "modular_industrial_pipes_01.bin"
+    }
+  ]
+}

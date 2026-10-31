@@ -1,5 +1,6 @@
 #include "control/final.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <utility>
@@ -44,32 +45,52 @@ FinalResult FinalControl::finalize(const FinalInput &input) {
   }
 
   if (isZeroCommand(shaped.command)) {
+    applied_yaw_rate_ = 0.0;
+    applied_yaw_stamp_s_ = input.now_s;
     result.decision.should_publish = true;
     result.decision.reason = "zero";
     return result;
   }
 
+  auto candidate = shaped.command;
+  bool yaw_limited = false;
+  if (input.mode == FinalMode::kTeleopCommand &&
+      input.direct_yaw_accel_rad_s2 > 0.0 &&
+      linearSpeed(input.candidate) <= 1e-6 &&
+      std::abs(input.candidate.wz) > 1e-6) {
+    constexpr double kMaxYawUpdateGapS = 0.2;
+    double dt = applied_yaw_stamp_s_ ? input.now_s - *applied_yaw_stamp_s_
+                                    : input.nominal_dt_s;
+    // A late tick re-anchors time without spending the missed acceleration budget.
+    if (!std::isfinite(dt) || dt < 0.0 || dt > kMaxYawUpdateGapS) dt = 0.0;
+    const double step = input.direct_yaw_accel_rad_s2 * dt;
+    candidate.wz = std::clamp(candidate.wz, applied_yaw_rate_ - step,
+                              applied_yaw_rate_ + step);
+    yaw_limited = candidate.wz != shaped.command.wz;
+  }
+
+  CommandSafetyConfig final_safety = input.safety;
+  if (isTeleop(input.mode) && input.max_request_age_s > 0.0) {
+    final_safety.cmd_max_age_s = final_safety.cmd_max_age_s > 0.0
+                                     ? std::min(final_safety.cmd_max_age_s,
+                                                input.max_request_age_s)
+                                     : input.max_request_age_s;
+  }
   result.decision =
-      actions_.command_safety(input.safety, shaped.command, input.request_age_s);
+      actions_.command_safety(final_safety, candidate, input.request_age_s);
   result.safety_applied = true;
 
   if (isTeleop(input.mode)) {
     result.decision.limited =
-        result.decision.limited || input.limited_before_final || shaped.limited;
+        result.decision.limited || input.limited_before_final || shaped.limited || yaw_limited;
+    if (result.decision.stopped && result.decision.reason == "stale") {
+      result.decision.limited = true;
+    }
     if (input.mode == FinalMode::kTeleopCommand && !result.decision.stopped &&
         result.decision.reason == "accepted" && input.limited_before_final) {
       result.decision.reason = "limited";
     }
   }
-  if (isTeleop(input.mode) && input.max_request_age_s > 0.0 &&
-      input.request_age_s > input.max_request_age_s) {
-    result.decision = stoppedDecision("stale");
-    result.reason = result.decision.reason;
-    stop(input.now_s, result.reason);
-    result.smoother_stopped = true;
-    return result;
-  }
-
   if (result.decision.stopped) {
     result.reason = result.decision.reason;
     stop(input.now_s, result.reason);
@@ -89,10 +110,19 @@ FinalResult FinalControl::finalize(const FinalInput &input) {
     stop(input.now_s, result.reason);
     result.smoother_stopped = true;
   }
+  if (input.publish && result.decision.should_publish && !result.decision.stopped) {
+    applied_yaw_rate_ = result.decision.cmd.wz;
+    applied_yaw_stamp_s_ = applied_yaw_stamp_s_
+                               ? std::max(*applied_yaw_stamp_s_, input.now_s)
+                               : input.now_s;
+  }
   return result;
 }
 
 void FinalControl::stop(double now_s, const std::string &reason) {
+  applied_yaw_rate_ = 0.0;
+  // Retain the clock anchor so a repeated tick cannot spend another first step.
+  applied_yaw_stamp_s_ = now_s;
   actions_.stop(now_s, reason);
 }
 

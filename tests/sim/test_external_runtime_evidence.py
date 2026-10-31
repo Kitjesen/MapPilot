@@ -156,7 +156,9 @@ def test_active_camera_frame_count_must_not_move_backward(tmp_path: Path) -> Non
     assert watcher.apply(_Target())
 
     second = _document(basis="real_rendered_frame_to_camera_shm")
-    path.write_text(json.dumps(second), encoding="utf-8")
+    replacement = tmp_path / "sensor-readiness.next.json"
+    replacement.write_text(json.dumps(second), encoding="utf-8")
+    replacement.replace(path)
 
     with pytest.raises(CoordinatorError, match="published_frames moved backward"):
         watcher.apply(_Target())
@@ -342,20 +344,25 @@ def test_invalid_json_after_permission_denied_fails_immediately(
         watcher.apply(_Target())
 
 
-def test_file_identity_replacement_during_permission_retry_fails_closed(
+def test_atomic_publisher_replacement_after_permission_retry_is_accepted(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = tmp_path / "sensor-readiness.json"
-    path.write_text("{}", encoding="utf-8")
+    document = _document(basis="real_rendered_frame_to_camera_shm")
+    path.write_text(json.dumps(document), encoding="utf-8")
     original_identity = (path.stat().st_dev, path.stat().st_ino)
+    original_read_text = Path.read_text
+    attempts = 0
 
-    def denied_read_text(self: Path, *args: object, **kwargs: object) -> str:
-        if self == path:
+    def denied_once_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        nonlocal attempts
+        if self == path and attempts == 0:
+            attempts += 1
             raise PermissionError("sharing violation")
-        raise AssertionError(f"unexpected read: {self}")
+        return original_read_text(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "read_text", denied_read_text)
+    monkeypatch.setattr(Path, "read_text", denied_once_read_text)
     watcher = ExternalEvidenceWatcher(
         path,
         session_id="a" * 64,
@@ -366,15 +373,22 @@ def test_file_identity_replacement_during_permission_retry_fails_closed(
         clock=lambda: 5.0,
     )
 
-    assert watcher.apply(_Target()) is False
+    target = _Target()
+    assert watcher.apply(target) is False
+    assert target.calls == []
     watcher.advance_generation(model_generation=3, reset_generation=1)
     replacement = tmp_path / "replacement.json"
-    replacement.write_text("{}", encoding="utf-8")
+    document["streams"][0]["published_frames"] = 2  # type: ignore[index]
+    replacement.write_text(json.dumps(document), encoding="utf-8")
     replacement.replace(path)
     assert (path.stat().st_dev, path.stat().st_ino) != original_identity
 
-    with pytest.raises(CoordinatorError, match="identity changed during sharing lock retry"):
-        watcher.apply(_Target())
+    assert watcher.apply(target) is True
+    assert target.calls == [
+        ("sensor_prepared", "thunder_01.front_rgb"),
+        ("sensor_active", "thunder_01.front_rgb"),
+    ]
+    assert target.sensor_reports[-1][2]["published_frames"] == 2
 
 
 def test_existing_non_regular_evidence_path_fails_closed(tmp_path: Path) -> None:

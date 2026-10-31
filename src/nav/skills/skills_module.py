@@ -10,11 +10,10 @@ from typing import Any
 
 from nav.services.goals import build_goal_pose
 from runtime.module import Module, skill
-from runtime.msgs.geometry import Transform, Vector3
+from runtime.msgs.geometry import Vector3
 from runtime.msgs.nav import NavigationGoalStatus, NavigationState, Odometry
 from runtime.registry import register
 from runtime.stream import In, Out
-from runtime.tf.conversions import map_from_odom_transform_from_mapping
 from runtime.tf.frames import map_frame_id, normalize_frame_id
 
 # Match the Host bus's default live-state freshness window; use receipt time.
@@ -33,7 +32,6 @@ class NavSkills(Module, layer=6):
     navigation_state: In[NavigationState]
     navigation_goal_status: In[NavigationGoalStatus]
     odometry: In[Odometry]
-    map_odom_tf: In[dict]
 
     goal_command: Out[str]
 
@@ -43,7 +41,6 @@ class NavSkills(Module, layer=6):
         self._cached_navigation_state: dict[str, Any] = {}
         self._navigation_state_received_s = 0.0
         self._robot_position: tuple[Vector3, str, float] | None = None
-        self._map_odom_transform: tuple[Transform, float] | None = None
         self._acks: dict[str, dict[str, Any]] = {}
         self._pending: set[str] = set()
         self._owned_request_ids: OrderedDict[str, None] = OrderedDict()
@@ -56,7 +53,6 @@ class NavSkills(Module, layer=6):
         self.navigation_state.subscribe(self._on_navigation_state)
         self.navigation_goal_status.subscribe(self._on_navigation_goal_status)
         self.odometry.subscribe(self._on_odometry)
-        self.map_odom_tf.subscribe(self._on_map_odom_tf)
 
     def _on_goal_status(self, status: dict) -> None:
         if not isinstance(status, dict):
@@ -80,11 +76,6 @@ class NavSkills(Module, layer=6):
                 time.monotonic(),
             )
 
-    def _on_map_odom_tf(self, payload: dict) -> None:
-        transform = map_from_odom_transform_from_mapping(payload)
-        with self._command_lock:
-            self._map_odom_transform = (transform, time.monotonic()) if transform else None
-
     def _on_navigation_goal_status(self, status: NavigationGoalStatus) -> None:
         with self._command_lock:
             if status.request_id not in self._owned_request_ids:
@@ -94,7 +85,20 @@ class NavSkills(Module, layer=6):
             while len(self._native_goal_statuses) > 256:
                 self._native_goal_statuses.popitem(last=False)
 
-    @skill
+    @skill(
+        description=(
+            "Submit a navigation goal in the configured planning map frame. This can move the robot. "
+            "The receipt is admission only: retain request_id and query get_navigation_result for native feedback. "
+            "A missing or pending result does not establish success. Cancel using the task_id in native status."
+        ),
+        parameters={
+            "x": "Goal X in metres in the configured planning map frame.",
+            "y": "Goal Y in metres in the same frame.",
+            "yaw": "Goal heading in radians about map Z.",
+            "z": "Goal height in metres in the same frame; omit only when fresh map-frame robot height is available.",
+        },
+        read_only=False,
+    )
     def navigate_to(
         self,
         x: float,
@@ -124,7 +128,15 @@ class NavSkills(Module, layer=6):
             }
         )
 
-    @skill
+    @skill(
+        description=(
+            "Request a stop of the named navigation task without hardware E-stop. "
+            "Use task_id from native navigation status, not a request_id. "
+            "The receipt acknowledges submission; check native status for termination."
+        ),
+        parameters={"task_id": "Native navigation task ID of the mission to stop."},
+        read_only=False,
+    )
     def stop_navigation(self, task_id: str) -> str:
         """Stop the active navigation mission without invoking hardware E-stop."""
         task = str(task_id or "").strip()
@@ -134,7 +146,18 @@ class NavSkills(Module, layer=6):
             {"action": "cancel", "task_id": task, "reason": "navigation_stop"}
         )
 
-    @skill
+    @skill(
+        description=(
+            "Request cancellation of a specific native navigation mission. "
+            "Use task_id from native status, not the submission request_id. "
+            "An accepted receipt does not establish termination; query native task status afterward."
+        ),
+        parameters={
+            "task_id": "Native navigation task ID of the mission to cancel.",
+            "reason": "Human-readable cancellation reason.",
+        },
+        read_only=False,
+    )
     def cancel_mission(self, task_id: str, reason: str = "user_cancel") -> str:
         """Cancel the active navigation mission."""
         task = str(task_id or "").strip()
@@ -143,12 +166,37 @@ class NavSkills(Module, layer=6):
         clean_reason = str(reason or "user_cancel").strip() or "user_cancel"
         return self._submit({"action": "cancel", "task_id": task, "reason": clean_reason})
 
-    @skill
+    @skill(
+        description=(
+            "Read canonical native navigation mission status. UNKNOWN means feedback is absent or stale, "
+            "not that the robot is idle or the task succeeded. Use get_navigation_result(request_id) "
+            "to associate feedback with this adapter's specific submission."
+        ),
+        read_only=True,
+    )
     def get_navigation_status(self) -> str:
         """Return the canonical navigation mission status."""
         return json.dumps(self._current_status())
 
-    @skill
+    @skill(
+        description=(
+            "Read native lifecycle feedback for a request submitted by this navigation adapter. "
+            "Pass request_id from the submission receipt. If found=false, do not infer completion. "
+            "If found=true, inspect status for the actual native task and outcome."
+        ),
+        parameters={"request_id": "Submission request_id returned by this adapter, not task_id or Follow ID."},
+        output_schema={
+            "type": "object",
+            "properties": {
+                "found": {"type": "boolean"},
+                "request_id": {"type": "string"},
+                "reason": {"type": "string"},
+                "status": {"type": ["object", "null"], "description": "Native lifecycle feedback, or null while pending."},
+            },
+            "required": ["found", "request_id", "reason"],
+        },
+        read_only=True,
+    )
     def get_navigation_result(self, request_id: str) -> str:
         """Return the native lifecycle result for a request submitted by this adapter."""
 
@@ -302,19 +350,9 @@ class NavSkills(Module, layer=6):
             return float(z)
         with self._command_lock:
             odometry = self._robot_position
-            transform = self._map_odom_transform
         now = time.monotonic()
         if odometry is not None and now - odometry[2] <= _OBSERVATION_MAX_AGE_S:
             position, frame, _ = odometry
-            if frame != self._planning_frame_id and transform is not None:
-                tf, received = transform
-                if (
-                    now - received <= _OBSERVATION_MAX_AGE_S
-                    and tf.frame_id == self._planning_frame_id
-                    and tf.child_frame_id == frame
-                ):
-                    position = tf.translation + tf.rotation.rotate_vector(position)
-                    frame = tf.frame_id
             if frame == self._planning_frame_id and math.isfinite(position.z):
                 return position.z
         raise ValueError("z is required until fresh map-frame odometry is available")

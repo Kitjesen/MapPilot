@@ -189,7 +189,7 @@ void testTaskPausePublishesStateOnlyAfterConfirmedStop() {
   MotionStopBarrier timed_out_coordinator(true, timed_out.actions);
   const auto timeout_result =
       timed_out_coordinator.pauseTask([&] { timed_out.order.emplace_back("state:paused"); });
-  require(!timeout_result.accepted &&
+  require(!timeout_result.accepted && timeout_result.pending &&
               timeout_result.reason == "stop_confirmation_timeout_pause_remains_stopped",
           "task pause timeout mismatch");
   require(!actionIndex(timed_out, "state:paused").has_value(),
@@ -198,7 +198,131 @@ void testTaskPausePublishesStateOnlyAfterConfirmedStop() {
           "task pause timeout must fail closed");
   orderIs(timed_out, {"stop_control", "suspend_outputs:task_paused", "last_sequence",
                       "confirm_zero:17",
-                      "stop_failure:stop_confirmation_timeout_pause_remains_stopped"});
+                      "stop_failure:stop_confirmation_timeout_pause_remains_stopped",
+                      "last_sequence"});
+}
+
+void testPendingPauseCommitsOnceAndStaysZeroUntilAck() {
+  Fixture fixture;
+  fixture.confirmation = StopConfirmationState::Pending;
+  MotionStopBarrier coordinator(true, fixture.actions);
+  int paused_commits = 0;
+
+  const auto pending = coordinator.pauseTask(
+      [&] {
+        ++paused_commits;
+        fixture.order.emplace_back("state:paused");
+      },
+      "operator:task-a:7");
+  require(!pending.accepted && pending.pending && pending.reason == "stop_confirmation_pending",
+          "pending task pause was reported as confirmed or failed");
+  require(paused_commits == 0 && !fixture.stop_evidence_failure_latched &&
+              coordinator.confirmationPending(),
+          "pending task pause committed state or failed closed before ACK");
+  require(coordinator.keepZeroFresh() && coordinator.keepZeroFresh(),
+          "pending task pause did not keep zero fresh");
+  const auto still_pending = coordinator.poll();
+  require(still_pending && still_pending->pending && paused_commits == 0,
+          "pending task pause committed before the driver ACK");
+
+  fixture.confirmation = StopConfirmationState::Confirmed;
+  const auto confirmed = coordinator.poll();
+  require(confirmed && confirmed->accepted && !confirmed->pending && paused_commits == 1 &&
+              !coordinator.confirmationPending(),
+          "confirmed task pause did not commit exactly once");
+  require(!coordinator.poll().has_value() && paused_commits == 1,
+          "completed task pause replayed its commit");
+}
+
+void testPauseTimeoutRetriesFreshEvidenceAndCommitsOnce() {
+  Fixture fixture;
+  fixture.confirmation = StopConfirmationState::TimedOut;
+  fixture.actions.confirm_zero = [&](std::uint64_t sequence) {
+    fixture.order.emplace_back("confirm_zero:" + std::to_string(sequence));
+    fixture.last_output_sequence = 29U;
+    return fixture.confirmation;
+  };
+  MotionStopBarrier coordinator(true, fixture.actions);
+  int paused_commits = 0;
+
+  const auto retrying = coordinator.pauseTask(
+      [&] { ++paused_commits; }, "operator:task-a:7");
+  require(!retrying.accepted && retrying.pending &&
+              retrying.reason == "stop_confirmation_timeout_pause_remains_stopped" &&
+              paused_commits == 0 && fixture.stop_evidence_failure_latched,
+          "pause timeout did not retain the task while recording real stop-evidence failure");
+  require(actionIndex(fixture, "confirm_zero:17").has_value(),
+          "pause timeout did not test the original zero sequence");
+
+  fixture.confirmation = StopConfirmationState::Confirmed;
+  const auto confirmed = coordinator.poll();
+  require(confirmed && confirmed->accepted && !confirmed->pending && paused_commits == 1 &&
+              actionIndex(fixture, "confirm_zero:29").has_value(),
+          "pause retry did not use fresh zero evidence and commit exactly once");
+  require(!coordinator.poll().has_value() && paused_commits == 1,
+          "confirmed pause retry committed more than once");
+}
+
+void testCancelAndEstopReplacePendingTaskTransitions() {
+  {
+    Fixture fixture;
+    fixture.confirmation = StopConfirmationState::Pending;
+    MotionStopBarrier coordinator(true, fixture.actions);
+    int pause_commits = 0;
+    require(coordinator.pauseTask([&] { ++pause_commits; }, "operator:task-a:7").pending,
+            "cancel replacement fixture did not start a pending pause");
+    fixture.confirmation = StopConfirmationState::Confirmed;
+    const auto cancelled = coordinator.cancel();
+    require(cancelled.accepted && cancelled.reason == "cancelled" && pause_commits == 0,
+            "cancel did not replace the pending pause transaction");
+    require(!coordinator.poll().has_value() && pause_commits == 0,
+            "replaced pause committed after cancel");
+  }
+
+  {
+    Fixture fixture;
+    fixture.confirmation = StopConfirmationState::Pending;
+    MotionStopBarrier coordinator(true, fixture.actions);
+    int resume_commits = 0;
+    require(coordinator
+                .resumeTask([&] { ++resume_commits; }, 42.5, "operator:task-a:7")
+                .pending,
+            "estop replacement fixture did not start a pending resume");
+    fixture.confirmation = StopConfirmationState::Confirmed;
+    const auto estopped = coordinator.estop("operator_estop");
+    require(estopped.accepted && estopped.reason == "estop_latched" && resume_commits == 0 &&
+                fixture.estop_latched,
+            "estop did not replace the pending resume transaction");
+    require(!coordinator.poll().has_value() && resume_commits == 0,
+            "replaced resume committed after estop");
+  }
+}
+
+void testMotionStartInvalidatesCompletedStopReplay() {
+  Fixture fixture;
+  fixture.confirmation = StopConfirmationState::Pending;
+  MotionStopBarrier coordinator(true, fixture.actions);
+  const auto first = coordinator.confirmGoalReplanStop("goal_replan");
+  require(first.pending, "initial replan stop did not enter asynchronous confirmation");
+  fixture.confirmation = StopConfirmationState::Confirmed;
+  const auto confirmed = coordinator.poll();
+  require(confirmed && confirmed->accepted, "asynchronous replan stop did not confirm");
+  const auto action_count = fixture.order.size();
+  const auto replay = coordinator.confirmGoalReplanStop("goal_replan");
+  require(replay.accepted && fixture.order.size() == action_count,
+          "exact asynchronous replan stop replay repeated physical actions");
+
+  fixture.confirmation = StopConfirmationState::Pending;
+  require(coordinator.confirmGoalReplanStop("goal_replan").pending,
+          "second asynchronous replan stop did not start");
+  fixture.confirmation = StopConfirmationState::Confirmed;
+  require(coordinator.poll()->accepted, "second asynchronous replan stop did not confirm");
+  const auto before_motion = fixture.order.size();
+  coordinator.resetAfterMotionStart();
+  fixture.confirmation = StopConfirmationState::Pending;
+  const auto after_motion = coordinator.confirmGoalReplanStop("goal_replan");
+  require(after_motion.pending && fixture.order.size() > before_motion,
+          "new motion reused stop evidence from before motion started");
 }
 
 void testCancelStopAndConfirmationFailures() {
@@ -853,20 +977,21 @@ void testResumeOnlyUnlatchesAfterConfirmation() {
               rejected_result.reason == "driver_rejected_zero_takeover_remains_latched",
           "resume rejection mismatch");
   require(rejected.takeover_latched, "unconfirmed resume must preserve takeover latch");
-  orderIs(rejected, {"defer_abort:autonomy_resume_ready", "sync", "rolling_active",
-                     "clear_outputs:autonomy_resume_ready", "last_sequence", "confirm_zero:17"});
+  orderIs(rejected, {"suspend_outputs:autonomy_resume_ready", "last_sequence",
+                     "confirm_zero:17"});
 
   Fixture confirmed;
   MotionStopBarrier confirmed_coordinator(true, confirmed.actions);
   const auto confirmed_result = confirmed_coordinator.resumeAutonomy(request);
-  require(confirmed_result.accepted &&
-              confirmed_result.reason == "autonomy_resume_ready_reissue_goal",
+  require(confirmed_result.accepted && confirmed_result.reason == "autonomy_resume_ready",
           "resume success mismatch");
   require(!confirmed.takeover_latched, "confirmed resume must unlatch takeover");
-  orderIs(confirmed, {"defer_abort:autonomy_resume_ready", "sync", "rolling_active",
-                      "clear_outputs:autonomy_resume_ready", "last_sequence", "confirm_zero:17",
-                       "abort:autonomy_resume_ready", "resume_control",
+  orderIs(confirmed, {"suspend_outputs:autonomy_resume_ready", "last_sequence",
+                      "confirm_zero:17", "resume_control",
                       "set_resume_stamp:42.500000", "clear_resume_required"});
+  require(!actionIndex(confirmed, "defer_abort:autonomy_resume_ready").has_value() &&
+              !actionIndex(confirmed, "abort:autonomy_resume_ready").has_value(),
+          "autonomy resume must preserve the paused goal");
 
   Fixture already_ready;
   MotionStopBarrier already_ready_coordinator(true, already_ready.actions);
@@ -879,7 +1004,7 @@ void testResumeOnlyUnlatchesAfterConfirmation() {
   independent_hold.takeover_latched = false;
   MotionStopBarrier independent_coordinator(true, independent_hold.actions);
   const auto independent_result = independent_coordinator.resumeAutonomy({{}, false, 42.5, true});
-  require(independent_result.accepted && independent_result.reason == "autonomy_resume_ready_reissue_goal",
+  require(independent_result.accepted && independent_result.reason == "autonomy_resume_ready",
           "independent resume requirement must not report already ready");
   require(independent_hold.order == confirmed.order, "independent hold must use the full resume barrier");
 
@@ -1025,6 +1150,9 @@ int main() {
     testClearEndpointMotionBranches();
     testEndpointHoldPreservesActiveRoute();
     testTaskPausePublishesStateOnlyAfterConfirmedStop();
+    testPendingPauseCommitsOnceAndStaysZeroUntilAck();
+    testPauseTimeoutRetriesFreshEvidenceAndCommitsOnce();
+    testCancelAndEstopReplacePendingTaskTransitions();
     testCancelStopAndConfirmationFailures();
     testCancelTerminalFollowsConfirmedStopEvidence();
     testStopPreservingGoalTerminalCommitsAfterConfirmedZero();
@@ -1045,6 +1173,7 @@ int main() {
     testDriverLossAndKeepZeroOrder();
     testShutdownPhysicalOnlyAndTerminalPreservingPipelines();
     testShutdownZeroFailuresNeverCommitTerminal();
+    testMotionStartInvalidatesCompletedStopReplay();
   } catch (const std::exception &exc) {
     std::fprintf(stderr, "test_motion_stop_barrier: FAIL: %s\n", exc.what());
     return 1;

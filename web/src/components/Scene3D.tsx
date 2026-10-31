@@ -2,6 +2,10 @@ import { scanCanStandAlone } from '../services/sceneTelemetry.ts'
 import { mapProjectionDisplayZ, riskProjectionDisplayZ } from '../services/mapProjectionHeight.ts'
 import type { MappingObservationState } from '../services/mappingObservation.ts'
 import { createMappingObservationLayer } from './scene3d/layers/mappingObservationLayer.ts'
+import type { Octomap } from '../services/octomap.ts'
+import { createOctomapLayer, clipOctomapLayer } from './scene3d/layers/octomapLayer.ts'
+import { setHeightColorRange } from './scene3d/layers/heightColor.ts'
+import { CLOUD_HEIGHT_MIN, CLOUD_HEIGHT_MAX } from '../services/cloudHeightColor.ts'
 /**
  * Scene3D — Three.js 3D map visualization
  *
@@ -10,9 +14,15 @@ import { createMappingObservationLayer } from './scene3d/layers/mappingObservati
  *   Three.js:       X right, Y up,      Z toward camera
  *   → Three.js pos = (worldX, worldZ_height, -worldY)
  */
-import { useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
+import { useRef, useEffect, useMemo, forwardRef, useImperativeHandle } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { pickNavigationPoint, type GoalPickMode } from './scene3d/goalPicking.ts'
+import { createStairAnnotations, selectSavedMapBounds, type ScreenRectangle } from './scene3d/stairAnnotations.ts'
+import type { Bounds, StairAnnotation, StairDraft, StairTool, XYZ } from '../types/stairs.ts'
+import type { MapEditScene, MapEditView } from '../types/mapEdit.ts'
+import { applyMapEditOperations, mapEditCloudBounds, mapEditKeepsPoint, pointInMapEditBounds } from '../services/mapEdit.ts'
+import { alignMapEditTopView, createMapEditBox, frameMapEditView, mapEditDragBounds, mapEditSelectionAnchor } from './scene3d/mapEditing.ts'
 import type { PathPoint, SceneGraphEvent, NavigationDdsSnapshotResponse } from '../types'
 import type { BinaryCloud } from '../hooks/useBinaryCloud'
 import {
@@ -28,7 +38,7 @@ import {
   SAVED_MAP_Z_FLOOR,
   updateSavedMapPointSize,
 } from './scene3d/layers/savedMapLayer'
-import { disposeGroupedMesh, type GroupedMesh } from './scene3d/layers/layerUtils'
+import { disposeGroupedMesh, interpolateCloudHeightRange, updateCloudHeightRange, visibleCloudBounds, type CloudHeightRange, type CloudHeightStyle, type GroupedMesh } from './scene3d/layers/layerUtils'
 import { lingtuToThree, threeToLingtu, lingtuQuaternionToThree } from '../services/coordinateFrame.ts'
 import { createThunderV4Model } from './scene3d/robot/thunderV4Model'
 import { createGo2Model, type Go2Model } from './scene3d/robot/go2Model.ts'
@@ -42,9 +52,11 @@ import {
 } from './scene3d/layers/localPlannerLayer'
 
 export interface Scene3DHandle {
+  focusPoint(x: number, y: number, z: number): void
   resetCamera(): void
   topView(height?: number): void
   fitMap(): void
+  mapEditView(view: MapEditView): void
 }
 
 interface Layers {
@@ -66,6 +78,9 @@ interface Scene3DProps {
   savedMapFrameId?: string | null
   savedMapEpoch?: number | null
   savedMapVisible?: boolean
+  navigationMap?: Octomap
+  voxelScale?: number
+  cloudColorRange?: { min: number; max: number } | null
   mappingObservation?: MappingObservationState
   mappingObservationVisible?: boolean
   scanVisible?: boolean
@@ -90,13 +105,28 @@ interface Scene3DProps {
   safetyEnvelope?: SafetyEnvelope | null
   safetyView?: 'slice' | 'volume'
   layers:       Layers
+  cloudColorMode?: 'height' | 'neutral'
+  cloudMinZ?: number | null
+  cloudMaxZ?: number | null
+  cloudHeightStyle?: CloudHeightStyle
   pointSize:    number
-  onPendingGoal?: (x: number, y: number) => void
+  onPendingGoal?: (x: number, y: number, z?: number, mode?: GoalPickMode) => void
+  goalPickMode?: GoalPickMode
   onRelocalize?: (x: number, y: number) => void
   pendingGoal?:  { x: number; y: number; z?: number } | null
   pendingGoalRadius?: number
+  pendingGoalYaw?: number
   pendingGoalLabel?: string
   previewPath?: PathPoint[]
+  routeDraftPoints?: Array<{ x: number; y: number; z: number }>
+  stairAnnotations?: StairAnnotation[]
+  stairDraft?: StairDraft | null
+  stairTool?: StairTool
+  onStairBounds?: (bounds: Bounds) => void
+  onStairPoint?: (point: XYZ) => void
+  mapEdit?: MapEditScene | null
+  onMapEditBounds?: (bounds: Bounds) => void
+  onMapEditAnchor?: (anchor: { x: number; y: number } | null) => void
 }
 
 const LIVE_SCAN_COLOR = 0xf1f5f9
@@ -145,15 +175,33 @@ function createPoseMarker(): THREE.Group {
 }
 
 export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
-  { cloud, scanCloud, savedMapFlat, savedMapFrameId, savedMapEpoch, savedMapVisible = true, mappingObservation, mappingObservationVisible = false, scanVisible = true, elevationState, nativeTraversabilityState, sceneGraph, robotX, robotY, robotZ = 0, orientation, poseStampS, poseEpoch, robotModel, jointTelemetry, followRobot = false, robotValid, yaw, trail, path, localPath, localPlannerSnapshot, safetyEnvelope, safetyView = 'slice', layers, pointSize, onPendingGoal, onRelocalize, pendingGoal, pendingGoalRadius = 0.25, pendingGoalLabel = '待确认目标', previewPath },
+  { cloud, scanCloud, savedMapFlat, savedMapFrameId, savedMapEpoch, savedMapVisible = true, navigationMap, voxelScale = 1, cloudColorRange, mappingObservation, mappingObservationVisible = false, scanVisible = true, elevationState, nativeTraversabilityState, sceneGraph, robotX, robotY, robotZ = 0, orientation, poseStampS, poseEpoch, robotModel, jointTelemetry, followRobot = false, robotValid, yaw, trail, path, localPath, localPlannerSnapshot, safetyEnvelope, safetyView = 'slice', layers, pointSize, cloudColorMode = 'height', cloudMinZ, cloudMaxZ, cloudHeightStyle = 'clip', onPendingGoal, goalPickMode = 'plane', onRelocalize, pendingGoal, pendingGoalRadius = 0.25, pendingGoalYaw, pendingGoalLabel = '待确认目标', previewPath, routeDraftPoints = [], stairAnnotations = [], stairDraft, stairTool = null, onStairBounds, onStairPoint, mapEdit = null, onMapEditBounds, onMapEditAnchor },
   ref,
 ) {
   const mountRef   = useRef<HTMLDivElement>(null)
   const sceneRef   = useRef<THREE.Scene | null>(null)
   const cameraRef  = useRef<THREE.PerspectiveCamera | null>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
+  const octomapRef = useRef<THREE.InstancedMesh | null>(null)
   const controlsRef = useRef<OrbitControls | null>(null)
   const rafRef     = useRef(0)
+  const stairToolRef = useRef(stairTool)
+  const stairSelectionRef = useRef<HTMLDivElement>(null)
+  const stairPointerRef = useRef<{ pointerId: number; tool: 'bounds' | 'lower' | 'upper'; rectangle: ScreenRectangle } | null>(null)
+  const mapEditPointerRef = useRef<{ pointerId: number; rectangle: ScreenRectangle } | null>(null)
+  const mapEditRef = useRef(mapEdit)
+  const mapEditAnchorCallbackRef = useRef(onMapEditAnchor)
+  const mapEditAnchorRef = useRef<{ x: number; y: number } | null>(null)
+  const mapEditSourceBounds = useMemo(() => mapEditCloudBounds(savedMapFlat ?? []), [savedMapFlat])
+  const mapEditBoundsRef = useRef(mapEditSourceBounds)
+  const editingMap = mapEdit != null
+  const editSelection = mapEdit?.selection
+  const editOperations = mapEdit?.operations
+  const editView = mapEdit?.view
+  const editShowDeleted = mapEdit?.showDeleted
+  const draftOperations = editView === 'draft' ? editOperations : undefined
+  const displayMapFlat = useMemo(() => draftOperations?.length && savedMapFlat
+    ? applyMapEditOperations(savedMapFlat, draftOperations) : savedMapFlat, [savedMapFlat, draftOperations])
   const scanFrameAligned = scanCloud != null
     && (cloudFramesShareCoordinateEpoch(cloud, scanCloud) || scanCanStandAlone(scanCloud, cloud))
   const savedMapFrameAligned = cloudFrameSharesSavedMapFrame(
@@ -181,6 +229,16 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   const liveCloudRef   = useRef<THREE.Points | null>(null)
   const scanCloudRef   = useRef<THREE.Points | null>(null)
   const savedMapRef    = useRef<THREE.Points | null>(null)
+  const cloudHeightRef = useRef({
+    current: { minZ: null, maxZ: null } as CloudHeightRange,
+    from: { minZ: null, maxZ: null } as CloudHeightRange,
+    target: { minZ: null, maxZ: null } as CloudHeightRange,
+    startedAt: 0,
+    moving: false,
+    poseEpoch,
+    savedMapEpoch,
+    style: cloudHeightStyle,
+  })
   const pointSizeRef   = useRef(pointSize)
   const sgGroupRef     = useRef<THREE.Group | null>(null)
   const raycaster  = useRef(new THREE.Raycaster())
@@ -199,14 +257,32 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 
   // ── Expose resetCamera ──────────────────────────────────────────
   useImperativeHandle(ref, () => ({
+    mapEditView(view) {
+      const camera = cameraRef.current
+      const controls = controlsRef.current
+      const bounds = mapEditRef.current?.selection ?? mapEditBoundsRef.current
+      if (!camera || !controls || !bounds) return
+      frameMapEditView(camera, controls.target, bounds, view)
+      controls.update()
+    },
+    focusPoint(x, y, z) {
+      const camera = cameraRef.current
+      const controls = controlsRef.current
+      if (!camera || !controls) return
+      const target = new THREE.Vector3(...lingtuToThree([x, y, z]))
+      camera.position.add(target.clone().sub(controls.target))
+      controls.target.copy(target)
+      controls.update()
+    },
     fitMap() {
       const camera = cameraRef.current
       const controls = controlsRef.current
       const raster = mappingObservationRef.current
       const points = raster ? raster._group ?? raster
-        : savedMapRef.current?.visible ? savedMapRef.current : liveCloudRef.current
+        : octomapRef.current ?? (savedMapRef.current?.visible ? savedMapRef.current : liveCloudRef.current)
       if (!camera || !controls || !points) return
-      const bounds = new THREE.Box3().setFromObject(points)
+      const bounds = points instanceof THREE.Points
+        ? visibleCloudBounds(points) : new THREE.Box3().setFromObject(points)
       if (bounds.isEmpty()) return
       const center = bounds.getCenter(new THREE.Vector3())
       const size = bounds.getSize(new THREE.Vector3())
@@ -251,6 +327,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     cameraRef.current = camera
 
     const renderer = new THREE.WebGLRenderer({ antialias: true })
+    renderer.localClippingEnabled = true
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setSize(w, h)
     renderer.toneMapping = THREE.ACESFilmicToneMapping
@@ -281,7 +358,9 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     gridRef.current = grid
 
     // Keep the sensor viewport dark independently of the surrounding app theme.
-    grid.material.color.setHex(0x283340)
+    grid.material.color.setHex(0x202a35)
+    grid.material.transparent = true
+    grid.material.opacity = 0.55
 
     // Invisible floor plane for click raycasting
     const floor = new THREE.Mesh(
@@ -296,6 +375,15 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const followDelta = new THREE.Vector3()
     const animate = () => {
       rafRef.current = requestAnimationFrame(animate)
+      const height = cloudHeightRef.current
+      if (height.moving) {
+        const progress = (performance.now() - height.startedAt) / 200
+        height.current = interpolateCloudHeightRange(height.from, height.target, progress)
+        height.moving = progress < 1
+        for (const points of [savedMapRef.current, liveCloudRef.current, scanCloudRef.current]) {
+          updateCloudHeightRange(points, height.current.minZ, height.current.maxZ, height.style)
+        }
+      }
       const joints = jointTelemetryRef.current?.getSnapshot()
       if (joints?.connected && joints.sample && go2Ref.current) {
         const nowMs = performance.now()
@@ -312,7 +400,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
           if (pose.orientation) robot.quaternion.fromArray(lingtuQuaternionToThree(pose.orientation)).normalize()
           else robot.rotation.set(0, pose.yaw, 0)
         }
-        if (followRef.current) {
+        if (followRef.current && !stairToolRef.current && !mapEditRef.current) {
           const previous = followAnchorRef.current
           const delta = followDelta.copy(position).sub(previous ?? controls.target)
           camera.position.add(delta)
@@ -323,7 +411,18 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       } else {
         followAnchorRef.current = null
       }
-      controls.update()
+      if ((!stairToolRef.current || mapEditRef.current) && !mapEditPointerRef.current) controls.update()
+      const selection = mapEditRef.current?.selection
+      const onAnchor = mapEditAnchorCallbackRef.current
+      if (onAnchor) {
+        const anchor = selection ? mapEditSelectionAnchor(camera,
+          { width: mount.clientWidth, height: mount.clientHeight }, selection) : null
+        const previous = mapEditAnchorRef.current
+        if (anchor ? !previous || Math.abs(anchor.x - previous.x) > 2 || Math.abs(anchor.y - previous.y) > 2 : previous) {
+          mapEditAnchorRef.current = anchor
+          onAnchor(anchor)
+        }
+      }
       renderer.render(scene, camera)
     }
     animate()
@@ -345,6 +444,48 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement)
     }
   }, [])
+
+  useEffect(() => {
+    stairToolRef.current = stairTool
+    if (controlsRef.current) controlsRef.current.enabled = !stairTool
+    stairPointerRef.current = null
+    if (stairSelectionRef.current) stairSelectionRef.current.style.display = 'none'
+  }, [stairTool])
+
+  useEffect(() => {
+    mapEditRef.current = mapEdit
+    mapEditBoundsRef.current = mapEditSourceBounds
+    mapEditAnchorCallbackRef.current = onMapEditAnchor
+  }, [mapEdit, mapEditSourceBounds, onMapEditAnchor])
+
+  useEffect(() => {
+    const controls = controlsRef.current
+    if (!controls) return
+    controls.maxPolarAngle = editingMap ? Math.PI / 2 : Math.PI * 0.475
+    controls.enabled = editingMap || !stairTool
+    controls.enableRotate = !mapEdit?.selecting
+    controls.enablePan = !mapEdit?.selecting
+    controls.enableDamping = !mapEdit?.selecting
+    mapEditPointerRef.current = null
+    if (stairSelectionRef.current) stairSelectionRef.current.style.display = 'none'
+  }, [editingMap, mapEdit?.selecting, stairTool])
+
+  useEffect(() => {
+    const edit = mapEditRef.current
+    if (!edit?.selecting) return
+    const camera = cameraRef.current
+    const controls = controlsRef.current
+    if (camera && controls) {
+      const target = controls.target.clone()
+      const distance = camera.position.distanceTo(target)
+      // Flush pending orbit damping before restoring the user's target and zoom.
+      controls.update()
+      controls.target.copy(target)
+      alignMapEditTopView(camera, controls.target, distance)
+      controls.update()
+    }
+    // Changing a selection or original/draft must not reset the user's camera.
+  }, [mapEdit?.selecting])
 
   // ── Grid visibility ─────────────────────────────────────────────
   useEffect(() => {
@@ -370,6 +511,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       pointSizeScale: 1.5,
       renderOrder: 6,
       vertexColors: true,
+      heightColors: true,
     })
     if (liveCloudRef.current) (liveCloudRef.current.material as THREE.PointsMaterial).toneMapped = false
   }, [cloud, layers.cloud, liveCloudFrameAllowed, pointSize])
@@ -515,28 +657,138 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     marker.position.set(...lingtuToThree([pendingGoal.x, pendingGoal.y,
       underlayDisplayZ !== undefined ? underlayDisplayZ + 0.012 : (pendingGoal.z ?? 0) + 0.05]))
     const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(pendingGoalRadius, 0.025, 8, 32),
-      new THREE.MeshBasicMaterial({ color: 0xf5b841, depthTest: false }),
+      new THREE.TorusGeometry(pendingGoalRadius, 0.012, 8, 48),
+      new THREE.MeshBasicMaterial({ color: 0xe8edf1, depthTest: false, depthWrite: false }),
     )
+    // The ring is the requested XY acceptance radius, not a collision envelope.
+    const outline = new THREE.Mesh(
+      new THREE.TorusGeometry(pendingGoalRadius, 0.025, 8, 48),
+      new THREE.MeshBasicMaterial({ color: 0x182027, depthTest: false, depthWrite: false }),
+    )
+    outline.rotation.x = Math.PI / 2
+    outline.renderOrder = 49
+    marker.add(outline)
     ring.rotation.x = Math.PI / 2
     ring.renderOrder = 50
     marker.add(ring)
+    const center = new THREE.Mesh(
+      new THREE.CircleGeometry(0.045, 24),
+      new THREE.MeshBasicMaterial({ color: 0xe8edf1, depthTest: false, depthWrite: false }),
+    )
+    center.rotation.x = -Math.PI / 2
+    center.position.y = 0.006
+    center.renderOrder = 51
+    marker.add(center)
+    const cross = new THREE.LineSegments(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-0.12, 0.008, 0), new THREE.Vector3(0.12, 0.008, 0),
+        new THREE.Vector3(0, 0.008, -0.12), new THREE.Vector3(0, 0.008, 0.12),
+      ]),
+      new THREE.LineBasicMaterial({ color: 0xe8edf1, depthTest: false, depthWrite: false }),
+    )
+    cross.renderOrder = 51
+    marker.add(cross)
+    if (pendingGoalYaw !== undefined) {
+      const arrow = new THREE.ArrowHelper(
+        new THREE.Vector3(Math.cos(pendingGoalYaw), 0, -Math.sin(pendingGoalYaw)),
+        new THREE.Vector3(0, 0.025, 0), Math.max(pendingGoalRadius + 0.15, 0.35), 0xe8edf1, 0.13, 0.09,
+      )
+      for (const part of [arrow.line, arrow.cone]) {
+        const materials = Array.isArray(part.material) ? part.material : [part.material]
+        materials.forEach(material => { material.depthTest = false; material.depthWrite = false })
+      }
+      arrow.line.renderOrder = 51
+      arrow.cone.renderOrder = 51
+      marker.add(arrow)
+    }
     const label = document.createElement('canvas')
-    label.width = 256; label.height = 64
+    label.width = 384; label.height = 64
     const context = label.getContext('2d')
     let texture: THREE.CanvasTexture | null = null
     if (context) {
-      context.fillStyle = '#352914'; context.fillRect(0, 0, 256, 64)
-      context.font = 'bold 30px sans-serif'; context.textAlign = 'center'; context.textBaseline = 'middle'
-      context.fillStyle = '#ffd779'; context.fillText(pendingGoalLabel, 128, 32)
+      const uiFont = getComputedStyle(document.documentElement).getPropertyValue('--font-ui').trim() || 'sans-serif'
+      context.font = `500 26px ${uiFont}`; context.textAlign = 'center'; context.textBaseline = 'middle'
+      const labelWidth = Math.min(372, context.measureText(pendingGoalLabel).width + 28)
+      context.fillStyle = 'rgba(20, 28, 36, 0.94)'
+      context.beginPath(); context.roundRect((384 - labelWidth) / 2, 8, labelWidth, 48, 16); context.fill()
+      context.fillStyle = '#e8edf1'; context.fillText(pendingGoalLabel, 192, 32)
       texture = new THREE.CanvasTexture(label)
-      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false }))
-      sprite.position.y = 0.45; sprite.scale.set(1.0, 0.25, 1); sprite.renderOrder = 51
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, depthWrite: false }))
+      sprite.position.y = 0.38; sprite.scale.set(1.6, 0.267, 1); sprite.renderOrder = 52
       marker.add(sprite)
     }
     scene.add(marker)
     return () => { removeFrom(scene, marker); texture?.dispose() }
-  }, [pendingGoal, pendingGoalRadius, pendingGoalLabel, underlayDisplayZ])
+  }, [pendingGoal, pendingGoalRadius, pendingGoalYaw, pendingGoalLabel, underlayDisplayZ])
+
+  // Route draft markers show click order only. The native planner owns the
+  // executable path after the operator starts the route.
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene || routeDraftPoints.length === 0) return
+    const group = new THREE.Group()
+    const textures: THREE.CanvasTexture[] = []
+
+    routeDraftPoints.forEach((point, index) => {
+      const marker = new THREE.Group()
+      marker.position.set(...lingtuToThree([point.x, point.y, point.z + 0.06]))
+      const dot = new THREE.Mesh(
+        new THREE.SphereGeometry(0.09, 14, 10),
+        new THREE.MeshBasicMaterial({ color: 0xd7e2ed, depthTest: false }),
+      )
+      dot.renderOrder = 48
+      marker.add(dot)
+
+      const canvas = document.createElement('canvas')
+      canvas.width = 96
+      canvas.height = 96
+      const context = canvas.getContext('2d')
+      if (context) {
+        context.fillStyle = '#1e2935'
+        context.beginPath()
+        context.arc(48, 48, 42, 0, Math.PI * 2)
+        context.fill()
+        context.strokeStyle = '#e8eef4'
+        context.lineWidth = 4
+        context.stroke()
+        context.fillStyle = '#f8fafc'
+        context.font = '600 42px sans-serif'
+        context.textAlign = 'center'
+        context.textBaseline = 'middle'
+        context.fillText(String(index + 1), 48, 50)
+        const texture = new THREE.CanvasTexture(canvas)
+        textures.push(texture)
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false }))
+        sprite.position.y = 0.28
+        sprite.scale.set(0.28, 0.28, 1)
+        sprite.renderOrder = 49
+        marker.add(sprite)
+      }
+      group.add(marker)
+    })
+
+    if (routeDraftPoints.length > 1) {
+      const geometry = new THREE.BufferGeometry().setFromPoints(routeDraftPoints.map(point =>
+        new THREE.Vector3(...lingtuToThree([point.x, point.y, point.z + 0.065]))))
+      const line = new THREE.Line(geometry, new THREE.LineDashedMaterial({
+        color: 0xd7e2ed,
+        dashSize: 0.1,
+        gapSize: 0.08,
+        opacity: 0.8,
+        transparent: true,
+        depthTest: false,
+      }))
+      line.computeLineDistances()
+      line.renderOrder = 47
+      group.add(line)
+    }
+
+    scene.add(group)
+    return () => {
+      removeFrom(scene, group)
+      textures.forEach(texture => texture.dispose())
+    }
+  }, [routeDraftPoints])
 
   useEffect(() => {
     const scene = sceneRef.current
@@ -544,7 +796,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const geometry = new THREE.BufferGeometry().setFromPoints(previewPath.map(point =>
       new THREE.Vector3(...lingtuToThree([point.x, point.y, (point.z ?? 0) + 0.06]))))
     const line = new THREE.Line(geometry, new THREE.LineDashedMaterial({
-      color: 0xf5b841, dashSize: 0.12, gapSize: 0.08, depthTest: false,
+      color: 0xe8edf1, dashSize: 0.12, gapSize: 0.08, depthTest: false,
     }))
     line.computeLineDistances(); line.renderOrder = 49
     scene.add(line)
@@ -653,7 +905,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 
   // Saved map cloud. Live map_scene labels have an independent lifecycle and
   // point ordering, so they cannot safely recolor or rebind this static PCD.
-  // Height coloring stays stable until an identity-bound semantic artifact exists.
+  // Color mode changes only the display material, never the source geometry.
   useEffect(() => {
     const scene = sceneRef.current
     if (!scene) return
@@ -665,7 +917,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     }
 
     const points = createSavedMapLayer(
-      savedMapFlat,
+      displayMapFlat,
       SAVED_MAP_Z_FLOOR,
       SAVED_MAP_Z_CEIL,
       undefined,
@@ -674,16 +926,124 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (!points) return
     scene.add(points)
     savedMapRef.current = points
-  }, [savedMapFlat])
+  }, [displayMapFlat])
 
   useEffect(() => {
     if (savedMapRef.current) savedMapRef.current.visible = savedMapVisible
-  }, [savedMapVisible, savedMapFlat])
+  }, [savedMapVisible, displayMapFlat])
+
+  const voxelCenterX = navigationMap ? Math.round((robotValid ? robotX : (navigationMap.bounds.min[0] + navigationMap.bounds.max[0]) / 2) / 2) * 2 : 0
+  const voxelCenterY = navigationMap ? Math.round((robotValid ? robotY : (navigationMap.bounds.min[1] + navigationMap.bounds.max[1]) / 2) / 2) * 2 : 0
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene || !navigationMap) return
+    const mesh = createOctomapLayer(navigationMap, voxelCenterX, voxelCenterY, cloudColorMode, voxelScale)
+    if (!mesh) return
+    scene.add(mesh)
+    octomapRef.current = mesh
+    return () => { mesh.dispose(); removeFrom(scene, mesh); octomapRef.current = null }
+  }, [navigationMap, voxelCenterX, voxelCenterY, cloudColorMode, voxelScale])
+
+  useEffect(() => {
+    if (octomapRef.current) clipOctomapLayer(octomapRef.current, cloudMinZ, cloudMaxZ)
+  }, [navigationMap, voxelCenterX, voxelCenterY, cloudColorMode, voxelScale, cloudMinZ, cloudMaxZ])
+
+  // Local material planes affect only the clouds, never routes or robot geometry.
+  // Changing the height range updates existing GPU layers without rewriting source points.
+  useEffect(() => {
+    const height = cloudHeightRef.current
+    const target = {
+      minZ: !editingMap && cloudMinZ != null && Number.isFinite(cloudMinZ) ? cloudMinZ : null,
+      maxZ: !editingMap && cloudMaxZ != null && Number.isFinite(cloudMaxZ) ? cloudMaxZ : null,
+    }
+    const epochChanged = height.poseEpoch !== poseEpoch || height.savedMapEpoch !== savedMapEpoch
+    const styleChanged = height.style !== cloudHeightStyle
+    if (epochChanged || styleChanged || target.minZ !== height.target.minZ || target.maxZ !== height.target.maxZ) {
+      const snap = epochChanged || styleChanged || (target.minZ == null) !== (height.current.minZ == null)
+        || (target.maxZ == null) !== (height.current.maxZ == null)
+        || window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      height.from = height.current
+      height.target = target
+      height.startedAt = performance.now()
+      height.moving = !snap
+      if (snap) height.current = target
+      height.poseEpoch = poseEpoch
+      height.savedMapEpoch = savedMapEpoch
+      height.style = cloudHeightStyle
+    }
+    for (const points of [savedMapRef.current, liveCloudRef.current, scanCloudRef.current]) {
+      updateCloudHeightRange(points, height.current.minZ, height.current.maxZ, height.style)
+    }
+  }, [cloudMinZ, cloudMaxZ, cloudHeightStyle, poseEpoch, savedMapEpoch, displayMapFlat, cloud, scanCloud, layers.cloud, scanVisible, liveCloudFrameAllowed, scanFrameAligned, pointSize, editingMap])
 
   useEffect(() => {
     pointSizeRef.current = pointSize
     updateSavedMapPointSize(savedMapRef.current, pointSize)
   }, [pointSize])
+
+  useEffect(() => {
+    for (const points of [savedMapRef.current, liveCloudRef.current]) {
+      if (!points) continue
+      const material = points.material as THREE.PointsMaterial
+      material.vertexColors = cloudColorMode === 'height'
+      material.color.setHex(cloudColorMode === 'height' ? 0xffffff : 0xc3c6c9)
+      material.needsUpdate = true
+    }
+  }, [cloudColorMode, displayMapFlat, cloud, layers.cloud, liveCloudFrameAllowed, pointSize])
+
+  useEffect(() => {
+    for (const object of [savedMapRef.current, liveCloudRef.current, octomapRef.current]) {
+      if (!object) continue
+      setHeightColorRange(object.material as THREE.Material,
+        cloudColorRange?.min ?? CLOUD_HEIGHT_MIN, cloudColorRange?.max ?? CLOUD_HEIGHT_MAX,
+        cloudColorMode === 'height')
+    }
+  }, [cloudColorRange, cloudColorMode, displayMapFlat, cloud, layers.cloud, liveCloudFrameAllowed, pointSize,
+    navigationMap, voxelCenterX, voxelCenterY, voxelScale])
+
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene || !editingMap || !savedMapVisible) return
+    const group = new THREE.Group()
+    const selection = editSelection
+    if (selection) group.add(createMapEditBox(selection))
+    const displayed = savedMapRef.current?.geometry.getAttribute('position')
+    if (selection && displayed) {
+      const selected: number[] = []
+      for (let i = 0; i < displayed.count; i++) {
+        const x = displayed.getX(i), z = displayed.getY(i), y = -displayed.getZ(i)
+        if (pointInMapEditBounds(x, y, z, selection)) selected.push(x, y, z)
+      }
+      const highlight = createSavedMapLayer(selected, SAVED_MAP_Z_FLOOR, SAVED_MAP_Z_CEIL, undefined, pointSize * 1.15)
+      if (highlight) {
+        const material = highlight.material as THREE.PointsMaterial
+        material.vertexColors = false
+        material.color.setHex(0xe6b96d)
+        material.depthTest = false
+        highlight.renderOrder = 54
+        group.add(highlight)
+      }
+    }
+    if (editView === 'draft' && editShowDeleted && editOperations?.length && savedMapFlat) {
+      const removed: number[] = []
+      for (let i = 0; i + 2 < savedMapFlat.length; i += 3) {
+        if (!mapEditKeepsPoint(savedMapFlat[i], savedMapFlat[i + 1], savedMapFlat[i + 2], editOperations)) {
+          removed.push(savedMapFlat[i], savedMapFlat[i + 1], savedMapFlat[i + 2])
+        }
+      }
+      const deleted = createSavedMapLayer(removed, SAVED_MAP_Z_FLOOR, SAVED_MAP_Z_CEIL, undefined, pointSize)
+      if (deleted) {
+        const material = deleted.material as THREE.PointsMaterial
+        material.vertexColors = false
+        material.color.setHex(0xd79883)
+        material.opacity = 0.25
+        group.add(deleted)
+      }
+    }
+    scene.add(group)
+    return () => removeFrom(scene, group)
+  }, [editingMap, editSelection, editOperations, editView, editShowDeleted, displayMapFlat, savedMapFlat, savedMapVisible, pointSize])
+
 
 
   // ── Semantic scene graph (objects + labels) ────────────────────
@@ -738,16 +1098,178 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     sgGroupRef.current = group
   }, [sceneGraph])
 
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) return
+    const group = createStairAnnotations(stairAnnotations, stairDraft)
+    const textures: THREE.CanvasTexture[] = []
+    group.traverse(object => {
+      if (object.name !== 'stair-lower' && object.name !== 'stair-upper') return
+      const canvas = document.createElement('canvas')
+      canvas.width = 160; canvas.height = 48
+      const context = canvas.getContext('2d')
+      if (!context) return
+      const uiFont = getComputedStyle(document.documentElement).getPropertyValue('--font-ui').trim() || 'sans-serif'
+      context.font = `600 22px ${uiFont}`
+      context.textAlign = 'center'; context.textBaseline = 'middle'
+      context.fillStyle = 'rgba(16,21,29,0.88)'
+      context.beginPath(); context.roundRect(22, 7, 116, 34, 6); context.fill()
+      context.fillStyle = '#d9eaf6'
+      context.fillText(object.name === 'stair-lower' ? '下入口' : '上入口', 80, 24)
+      const texture = new THREE.CanvasTexture(canvas)
+      textures.push(texture)
+      const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }))
+      label.name = `${object.name}-label`
+      label.position.y = 0.2
+      label.scale.set(0.65, 0.195, 1)
+      label.renderOrder = 45
+      object.add(label)
+    })
+    scene.add(group)
+    return () => { removeFrom(scene, group); textures.forEach(texture => texture.dispose()) }
+  }, [stairAnnotations, stairDraft])
+
+  const clearMapEditPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    mapEditPointerRef.current = null
+    mouseDownPos.current = null
+    if (stairSelectionRef.current) stairSelectionRef.current.style.display = 'none'
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    if (controlsRef.current) controlsRef.current.enabled = mapEdit != null || !stairTool
+  }
+
+  const handleMapEditPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!mapEdit?.selecting) return
+    event.stopPropagation()
+    event.preventDefault()
+    if (event.button !== 0 || mapEditPointerRef.current) return
+    const renderer = rendererRef.current
+    const camera = cameraRef.current
+    const controls = controlsRef.current
+    if (!renderer || !camera || !controls || !mapEditSourceBounds) return
+    // Selection remains vertical even if the user has orbited since enabling it.
+    alignMapEditTopView(camera, controls.target)
+    controls.enabled = false
+    const rect = renderer.domElement.getBoundingClientRect()
+    const x = event.clientX - rect.left, y = event.clientY - rect.top
+    mapEditPointerRef.current = { pointerId: event.pointerId, rectangle: { x0: x, y0: y, x1: x, y1: y } }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    if (stairSelectionRef.current) Object.assign(stairSelectionRef.current.style,
+      { display: 'block', left: `${x}px`, top: `${y}px`, width: '0px', height: '0px' })
+  }
+
+  const handleMapEditPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const pointer = mapEditPointerRef.current
+    const renderer = rendererRef.current
+    if (!pointer || pointer.pointerId !== event.pointerId || !renderer) return
+    event.stopPropagation()
+    const rect = renderer.domElement.getBoundingClientRect()
+    const selection = pointer.rectangle
+    selection.x1 = Math.max(0, Math.min(rect.width, event.clientX - rect.left))
+    selection.y1 = Math.max(0, Math.min(rect.height, event.clientY - rect.top))
+    if (stairSelectionRef.current) Object.assign(stairSelectionRef.current.style, {
+      left: `${Math.min(selection.x0, selection.x1)}px`, top: `${Math.min(selection.y0, selection.y1)}px`,
+      width: `${Math.abs(selection.x1 - selection.x0)}px`, height: `${Math.abs(selection.y1 - selection.y0)}px`,
+    })
+  }
+
+  const handleMapEditPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    const pointer = mapEditPointerRef.current
+    if (!pointer || pointer.pointerId !== event.pointerId) return
+    event.stopPropagation()
+    event.preventDefault()
+    handleMapEditPointerMove(event)
+    clearMapEditPointer(event)
+    const renderer = rendererRef.current
+    const camera = cameraRef.current
+    if (!mapEdit?.selecting || !renderer || !camera || !mapEditSourceBounds) return
+    const bounds = mapEditDragBounds(camera, renderer.domElement.getBoundingClientRect(), pointer.rectangle, mapEditSourceBounds)
+    if (bounds) onMapEditBounds?.(bounds)
+  }
+
+  // Annotation tools capture before OrbitControls receives pointer events.
+  const handleStairPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!stairTool) return
+    event.stopPropagation()
+    event.preventDefault()
+    if (controlsRef.current) controlsRef.current.enabled = false
+    if (event.button !== 0) return
+    const renderer = rendererRef.current
+    if (!renderer || !savedMapFlat || !savedMapRef.current?.visible) return
+    const rect = renderer.domElement.getBoundingClientRect()
+    const x = event.clientX - rect.left
+    const y = event.clientY - rect.top
+    stairPointerRef.current = { pointerId: event.pointerId, tool: stairTool, rectangle: { x0: x, y0: y, x1: x, y1: y } }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    if (stairTool === 'bounds' && stairSelectionRef.current) {
+      Object.assign(stairSelectionRef.current.style, { display: 'block', left: `${x}px`, top: `${y}px`, width: '0px', height: '0px' })
+    }
+  }
+
+  const handleStairPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const pointer = stairPointerRef.current
+    const renderer = rendererRef.current
+    if (!pointer || pointer.pointerId !== event.pointerId || !renderer) return
+    event.stopPropagation()
+    const rect = renderer.domElement.getBoundingClientRect()
+    const selection = pointer.rectangle
+    selection.x1 = Math.max(0, Math.min(rect.width, event.clientX - rect.left))
+    selection.y1 = Math.max(0, Math.min(rect.height, event.clientY - rect.top))
+    if (pointer.tool === 'bounds' && stairSelectionRef.current) {
+      Object.assign(stairSelectionRef.current.style, {
+        left: `${Math.min(selection.x0, selection.x1)}px`, top: `${Math.min(selection.y0, selection.y1)}px`,
+        width: `${Math.abs(selection.x1 - selection.x0)}px`, height: `${Math.abs(selection.y1 - selection.y0)}px`,
+      })
+    }
+  }
+
+  const clearStairPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    stairPointerRef.current = null
+    if (stairSelectionRef.current) stairSelectionRef.current.style.display = 'none'
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+
+  const handleStairPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!stairTool) return
+    event.stopPropagation()
+    event.preventDefault()
+    const pointer = stairPointerRef.current
+    const renderer = rendererRef.current
+    const camera = cameraRef.current
+    const points = savedMapRef.current
+    clearStairPointer(event)
+    if (!pointer || pointer.pointerId !== event.pointerId || pointer.tool !== stairTool || !renderer || !camera || !points?.visible || !savedMapFlat) return
+    const rect = renderer.domElement.getBoundingClientRect()
+    const selection = pointer.rectangle
+    selection.x1 = Math.max(0, Math.min(rect.width, event.clientX - rect.left))
+    selection.y1 = Math.max(0, Math.min(rect.height, event.clientY - rect.top))
+    if (pointer.tool === 'bounds') {
+      if (Math.abs(selection.x1 - selection.x0) < 5 || Math.abs(selection.y1 - selection.y0) < 5) return
+      const bounds = selectSavedMapBounds(savedMapFlat, points, camera, rect, selection)
+      if (bounds) onStairBounds?.(bounds)
+      return
+    }
+    if (Math.hypot(selection.x1 - selection.x0, selection.y1 - selection.y0) >= 5) return
+    raycaster.current.setFromCamera(new THREE.Vector2(selection.x1 / rect.width * 2 - 1, 1 - selection.y1 / rect.height * 2), camera)
+    const point = pickNavigationPoint(raycaster.current, [points], robotZ, 'surface')
+    if (point) {
+      const [x, y, z] = threeToLingtu([point.x, point.y, point.z])
+      onStairPoint?.({ x, y, z })
+    }
+  }
+
   // ── Click vs drag detection ────────────────────────────────────
-  const mouseDownPos = useRef<{ x: number; y: number; shift: boolean } | null>(null)
+  const mouseDownPos = useRef<{ x: number; y: number; shift: boolean; alt: boolean } | null>(null)
 
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    mouseDownPos.current = { x: e.clientX, y: e.clientY, shift: e.shiftKey }
+    if (stairTool || mapEdit) return
+    mouseDownPos.current = { x: e.clientX, y: e.clientY, shift: e.shiftKey, alt: e.altKey }
   }
 
   const handleMouseUp = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (stairTool || mapEdit) return
     if (!onPendingGoal && !onRelocalize) return
     const down = mouseDownPos.current
+    mouseDownPos.current = null
     if (!down) return
     const dx = e.clientX - down.x
     const dy = e.clientY - down.y
@@ -756,8 +1278,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 
     const renderer = rendererRef.current
     const camera   = cameraRef.current
-    const floor    = floorRef.current
-    if (!renderer || !camera || !floor) return
+    if (!renderer || !camera) return
 
     const rect = renderer.domElement.getBoundingClientRect()
     const ndc  = new THREE.Vector2(
@@ -765,21 +1286,22 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       -((e.clientY - rect.top) / rect.height) * 2 + 1,
     )
     raycaster.current.setFromCamera(ndc, camera)
-    // Intersect the displayed underlay so oblique clicks retain the same XY.
-    // Navigation target Z still comes from its original planning contract.
-    const pickingZ = mappingObservationVisible ? observationDisplayZ : undefined
-    const p = pickingZ !== undefined
-      ? raycaster.current.ray.intersectPlane(
-        new THREE.Plane(new THREE.Vector3(0, 1, 0), -pickingZ), new THREE.Vector3())
-      : raycaster.current.intersectObject(floor)[0]?.point
+    // Ordinary navigation clicks use the current body-height plane. Selecting
+    // a 3D surface is explicit, so ceiling/wall returns cannot change it by accident.
+    const shiftDown = down.shift || e.shiftKey
+    const pickingZ = mappingObservationVisible ? observationDisplayZ ?? robotZ : robotZ
+    const mode = mappingObservationVisible ? 'plane'
+      : shiftDown || down.alt || e.altKey ? 'surface' : goalPickMode
+    const pickableClouds = mappingObservationVisible ? [] : [savedMapRef.current, liveCloudRef.current, scanCloudRef.current]
+      .filter((object): object is THREE.Points => Boolean(object?.visible))
+    const p = pickNavigationPoint(raycaster.current, pickableClouds, pickingZ, mode, octomapRef.current)
     if (p) {
-      const [wx, wy] = threeToLingtu([p.x, p.y, p.z])
+      const [wx, wy, wz] = threeToLingtu([p.x, p.y, p.z])
       // Shift+click → relocalize (set initial pose); plain click → goal
-      const shiftDown = (down.shift || e.shiftKey)
       if (shiftDown && onRelocalize) {
         onRelocalize(wx, wy)
       } else {
-        onPendingGoal?.(wx, wy)
+        onPendingGoal?.(wx, wy, wz, mode)
       }
     }
   }
@@ -787,10 +1309,16 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   return (
     <div
       ref={mountRef}
+      onPointerDownCapture={mapEdit ? handleMapEditPointerDown : handleStairPointerDown}
+      onPointerMoveCapture={mapEdit ? handleMapEditPointerMove : handleStairPointerMove}
+      onPointerUpCapture={mapEdit ? handleMapEditPointerUp : handleStairPointerUp}
+      onPointerCancel={mapEdit ? clearMapEditPointer : clearStairPointer}
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseUp}
-      style={{ width: '100%', height: '100%', cursor: onPendingGoal ? 'crosshair' : 'grab', position: 'relative' }}
+      style={{ width: '100%', height: '100%', cursor: stairTool || mapEdit?.selecting || (!mapEdit && onPendingGoal) ? 'crosshair' : 'grab', position: 'relative', touchAction: stairTool || mapEdit?.selecting ? 'none' : undefined }}
     >
+      <div ref={stairSelectionRef} aria-hidden="true" style={{ display: 'none', position: 'absolute', pointerEvents: 'none',
+        border: '1px solid #78b8df', background: 'rgba(120,184,223,0.12)', zIndex: 3 }} />
       <div ref={robotLoadStatusRef} role="status"
         style={{ position: 'absolute', bottom: 12, left: 12, zIndex: 2, pointerEvents: 'none',
           color: 'var(--text)', background: 'var(--bg-layer-1)', borderRadius: 6, fontSize: 12 }} />

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from typing import TypeAlias
 
 from .contracts import ScheduledSensorSample
+from .noise import RangeNoiseConfig
 
 Vector3: TypeAlias = tuple[float, float, float]
 QuaternionWxyz: TypeAlias = tuple[float, float, float, float]
@@ -197,8 +199,11 @@ class Mid360FrameSample:
     scan_time_profile: str
     reflectivity_semantics: str = "explicit_conservative_proxy"
     unknown_line_representation: str = "line_0_unknown_physical_channel"
+    range_noise: RangeNoiseConfig = dataclass_field(default_factory=RangeNoiseConfig)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.range_noise, RangeNoiseConfig):
+            raise ValueError("range_noise must be a RangeNoiseConfig")
         if not isinstance(self.stamp, SensorSampleStamp):
             raise ValueError("stamp must be a SensorSampleStamp")
         if not self.points:

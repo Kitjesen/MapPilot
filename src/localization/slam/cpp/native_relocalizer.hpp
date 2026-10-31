@@ -33,7 +33,9 @@ class NativeRelocalizer {
   NativeRelocalizer(const NativeRelocalizer&) = delete;
   NativeRelocalizer& operator=(const NativeRelocalizer&) = delete;
 
-  bool loadMap(const std::string& pcd_path, std::string* message = nullptr);
+  bool loadMap(const std::string& pcd_path, std::string* message = nullptr,
+               const Cloud* saved_cloud = nullptr,
+               const std::string& semantic_map_path = "");
   bool hasMap() const;
   bool supportsSeededRelocalization() const;
   bool supportsGlobalRelocalization() const;

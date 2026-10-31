@@ -50,8 +50,8 @@ Deployment checks use the generated `message.topics.topic_spec` view.
 | --- | --- |
 | Which topics exist, and who publishes/subscribes? | `topics/<domain>.yaml` |
 | What fields and numeric states cross a process boundary? | `idl/<domain>.idl`, `idl/constants.idl` |
-| Which topics does this Product need? | `config/runtime_graph/products/*.yaml` |
-| Which process implements a role in real/sim? | `config/runtime_graph/envs/*.yaml` |
+| Which topics does this Product need? | `config/system/products/*.yaml` |
+| Which process implements a role in real/sim? | `config/system/envs/*.yaml` |
 | Which coordinate frame or calibration applies? | `runtime/tf/frames.py`, `config/robots/*/*/robot.yaml` |
 
 `diagnostics/runtime_contract.py` only projects diagnostics. Explicit legacy

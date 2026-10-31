@@ -1,9 +1,8 @@
 """Tests for runtime.utils.calibration_check — startup calibration validation."""
 
-import math
 import unittest
-from dataclasses import dataclass
-from unittest.mock import patch
+from dataclasses import dataclass, replace
+from unittest.mock import mock_open, patch
 
 
 # Minimal config stubs for testing (avoid importing real config)
@@ -190,6 +189,12 @@ class TestLidarExtrinsics(unittest.TestCase):
 
         return run_calibration_check(config=config)
 
+    def _go2_config(self):
+        from runtime.config import load_config
+        from runtime.utils.calibration_check import LTLIO_CONFIG
+
+        return load_config(str(LTLIO_CONFIG.parent.parent / "robot.yaml"))
+
     def test_near_zero_lidar_offset_warns(self):
         cfg = MockRobotConfig(lidar=MockLidarConfig(offset_x=0, offset_y=0, offset_z=0))
         report = self._run(cfg)
@@ -205,24 +210,38 @@ class TestLidarExtrinsics(unittest.TestCase):
         report = self._run(cfg)
         self.assertTrue(any("lidar offset" in i.lower() for i in report.info))
 
-    def test_product_fastlio_config_path_exists(self):
+    def test_product_ltlio_config_path_exists(self):
         from runtime.utils import calibration_check as cc
 
-        self.assertTrue(cc.FASTLIO2_CONFIG.is_file(), cc.FASTLIO2_CONFIG)
-        self.assertEqual(cc.FASTLIO2_CONFIG.name, "mid360_fastlio2.yaml")
-        self.assertIn("config/robots/unitree/go2/sensors", cc.FASTLIO2_CONFIG.as_posix())
+        self.assertTrue(cc.LTLIO_CONFIG.is_file(), cc.LTLIO_CONFIG)
+        self.assertEqual(cc.LTLIO_CONFIG.name, "mid360_ltlio.yaml")
+        self.assertIn("config/robots/unitree/go2/sensors", cc.LTLIO_CONFIG.as_posix())
 
-    def test_go2_body_lidar_transform_matches_fastlio_runtime(self):
-        cfg = MockRobotConfig(
-            lidar=MockLidarConfig(
-                offset_x=0.16143,
-                offset_y=0.0,
-                offset_z=0.12262,
-                roll=0.0,
-                pitch=math.radians(13.0),
-                yaw=0.0,
-            )
-        )
+    def test_omitted_rotations_use_identity_but_explicit_bad_rotations_fail(self):
+        import yaml
+
+        from runtime.utils import calibration_check as cc
+
+        for rotations, expected_ok in (
+            ({}, True),
+            ({"r_il": [1.0, 0.0]}, False),
+            ({"navigation_body_from_imu_rotation": [1.0, 0.0]}, False),
+        ):
+            with self.subTest(rotations=rotations):
+                payload = {"t_il": [-0.011, -0.02329, 0.04412], **rotations}
+                report = cc.CalibrationReport()
+                with patch("pathlib.Path.exists", return_value=True), patch(
+                    "builtins.open", mock_open(read_data=yaml.safe_dump(payload))
+                ):
+                    cc._check_lidar_imu_consistency(MockRobotConfig(), report, required=True)
+                self.assertEqual(report.ok, expected_ok, report.errors)
+                if expected_ok:
+                    self.assertTrue(any("body-to-lidar" in item for item in report.info), report.info)
+                else:
+                    self.assertIn("LTLIO LiDAR/IMU rotations must be 3x3 matrices", report.errors)
+
+    def test_go2_body_lidar_transform_matches_ltlio_runtime(self):
+        cfg = self._go2_config()
 
         report = self._run(cfg)
 
@@ -237,16 +256,8 @@ class TestLidarExtrinsics(unittest.TestCase):
         )
 
     def test_go2_body_lidar_rotation_mismatch_is_error_when_slam_required(self):
-        cfg = MockRobotConfig(
-            lidar=MockLidarConfig(
-                offset_x=0.16143,
-                offset_y=0.0,
-                offset_z=0.12262,
-                roll=0.0,
-                pitch=0.0,
-                yaw=0.0,
-            )
-        )
+        cfg = self._go2_config()
+        cfg.lidar = replace(cfg.lidar, pitch=cfg.lidar.pitch + 0.1)
 
         from runtime.utils.calibration_check import run_calibration_check
 
@@ -257,6 +268,62 @@ class TestLidarExtrinsics(unittest.TestCase):
             any("lidar mount rotation mismatch" in error.lower() for error in report.errors),
             report.errors,
         )
+
+
+class TestImuNoise(unittest.TestCase):
+    def _run(self, noise, *, require_camera=False):
+        import yaml
+
+        from runtime.utils import calibration_check as cc
+
+        identity = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+        payload = {
+            "t_il": [-0.011, -0.02329, 0.04412],
+            "r_il": identity,
+            "navigation_body_from_imu_rotation": identity,
+            **noise,
+        }
+        cfg = MockRobotConfig(
+            raw={
+                "calibration": {
+                    "slam": {"status": "verified", "reason": "field evidence"},
+                    "camera": {"status": "unverified", "reason": "not measured"},
+                }
+            }
+        )
+        with patch("pathlib.Path.exists", return_value=True), patch(
+            "builtins.open", mock_open(read_data=yaml.safe_dump(payload))
+        ):
+            return cc.run_calibration_check(cfg, require_slam=True, require_camera=require_camera)
+
+    def test_omitted_noise_uses_native_defaults(self):
+        report = self._run({})
+        self.assertTrue(report.ok, report.errors)
+
+    def test_valid_explicit_noise_and_partial_overrides_pass(self):
+        for noise in ({"na": 0.01, "ng": 0.003}, {"na": 0.01}, {"ng": 0.003}):
+            with self.subTest(noise=noise):
+                report = self._run(noise)
+                self.assertTrue(report.ok, report.errors)
+
+    def test_invalid_explicit_noise_blocks_startup(self):
+        for name in ("na", "ng"):
+            for value in (0, -0.01, float("nan"), float("inf"), "invalid", None):
+                with self.subTest(name=name, value=value):
+                    report = self._run({name: value})
+                    self.assertFalse(report.ok)
+                    self.assertTrue(any("SLAM IMU noise" in item for item in report.errors), report.errors)
+
+    def test_high_explicit_noise_keeps_warning(self):
+        report = self._run({"na": 0.6})
+        self.assertTrue(report.ok, report.errors)
+        self.assertTrue(any("High IMU noise: na=" in item for item in report.warnings), report.warnings)
+
+    def test_omitted_noise_does_not_approve_unverified_camera(self):
+        report = self._run({}, require_camera=True)
+        self.assertFalse(report.ok)
+        self.assertTrue(any("Camera calibration is unverified" in item for item in report.errors), report.errors)
+        self.assertFalse(any("SLAM IMU noise" in item for item in report.errors), report.errors)
 
 
 class TestDepthScale(unittest.TestCase):
@@ -316,7 +383,7 @@ class TestCalibrationReport(unittest.TestCase):
 
 
 class TestTimeOffset(unittest.TestCase):
-    """Tests for the Fast-LIO2 LiDAR↔IMU time-offset check."""
+    """Tests for the LTLIO LiDAR↔IMU time-offset check."""
 
     def _run_check(self, lio_offset=None, required=False):
         """Invoke _check_time_offset with mocked yaml loads."""
@@ -330,7 +397,7 @@ class TestTimeOffset(unittest.TestCase):
             import yaml as _y
 
             payload = {}
-            if str(path) == str(cc.FASTLIO2_CONFIG) and lio_offset is not None:
+            if str(path) == str(cc.LTLIO_CONFIG) and lio_offset is not None:
                 payload = {"time_diff_lidar_to_imu": lio_offset}
             return StringIO(_y.dump(payload))
 
@@ -357,7 +424,7 @@ class TestTimeOffset(unittest.TestCase):
         self.assertEqual(len(report.warnings), 0)
         self.assertEqual(len(report.info), 0)
 
-    def test_unreadable_fastlio_config_warns(self):
+    def test_unreadable_ltlio_config_warns(self):
         from runtime.utils import calibration_check as cc
 
         report = cc.CalibrationReport()
@@ -367,7 +434,7 @@ class TestTimeOffset(unittest.TestCase):
         ):
             cc._check_time_offset(report, required=False)
 
-        self.assertTrue(any("Cannot read Fast-LIO2 calibration data" in warning for warning in report.warnings))
+        self.assertTrue(any("Cannot read LTLIO calibration data" in warning for warning in report.warnings))
 
 
 

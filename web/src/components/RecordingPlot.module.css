@@ -1,0 +1,22 @@
+.plot { margin: 0; min-width: 0; color: var(--text-dim); }
+.plot svg { display: block; width: 100%; height: auto; min-height: 140px; }
+.plot svg text { fill: var(--text-dim); font: 10px var(--font-mono); }
+.grid { stroke: var(--border); stroke-width: 1; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 20px; min-height: 28px; padding: 3px 0; font-size: var(--type-caption); }
+.legend > span { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.legend > span > span { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
+.legend i { display: block; width: 15px; height: 2px; background: var(--signal-cyan); flex-shrink: 0; }
+.legend .secondary i { background: transparent; height: 0; border-top: 2px dashed var(--warn); }
+.legend strong { color: var(--text); font: 12px var(--font-mono); font-variant-numeric: tabular-nums; }
+.legend small { color: var(--text-dim); font-size: 10px; }
+.primaryPath { color: var(--signal-cyan); }
+.secondaryPath { color: var(--warn); }
+.plot polyline { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.secondaryPath polyline { stroke-dasharray: 6 4; }
+.plot circle { fill: currentColor; }
+.cursor { stroke: var(--text-dim); stroke-width: 1; stroke-dasharray: 3 3; }
+.interactive { cursor: crosshair; touch-action: pan-y; }
+.plot[data-unavailable] :is(.primaryPath, .secondaryPath) { opacity: .45; }
+.plot figcaption { color: var(--text-dim); font-size: 11px; text-align: right; }
+@container (max-width: 650px) { .plot svg text { font-size: 16px; } }
+@container (max-width: 500px) { .plot svg text { font-size: 20px; } }

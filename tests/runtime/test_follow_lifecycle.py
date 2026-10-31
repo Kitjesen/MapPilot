@@ -75,6 +75,28 @@ def native(goals, ids, state, sequence):
     return event
 
 
+@pytest.mark.parametrize("description", ["我", "他", "她", "那个人", "me", "him", "her", "ME！"])
+def test_unbound_person_reference_does_not_start_follow(chain, description):
+    servo, _, commands = chain
+
+    receipt = servo.start_follow(description=description)
+
+    assert receipt["accepted"] is False
+    assert receipt["reason"] == "follow_target_ambiguous"
+    assert "follow_task_id" not in receipt
+    assert servo.get_servo_status()["mode"] == "idle"
+    assert commands.goals == []
+
+
+def test_person_reference_with_explicit_tracker_identity_can_start(chain):
+    servo, _, _ = chain
+
+    receipt = servo.start_follow(description="我", target_id="selected-person")
+
+    assert receipt["accepted"] is True
+    assert view(servo, receipt)["details"]["target_id"] == "selected-person"
+
+
 def test_follow_cancel_waits_for_all_owned_native_children(chain):
     servo, goals, commands = chain
     ref = start(servo)

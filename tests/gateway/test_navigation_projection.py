@@ -249,6 +249,7 @@ def test_estop_has_no_control_authority_and_blocks_motion() -> None:
 
 def test_operator_takeover_is_projected_as_requiring_resume() -> None:
     facts = _facts()
+    facts.update(can_accept_goal=False, blockers=["operator_takeover", "native_resume_required"])
     facts["navigation_state"].update(
         lifecycle_state_name="IDLE",
         active_task_id="",
@@ -271,6 +272,50 @@ def test_operator_takeover_is_projected_as_requiring_resume() -> None:
         "reason": "operator_takeover",
     }
     assert state["motion"]["permission"] == "HELD"
+    assert state["motion"]["reason"] == "operator_takeover"
+
+
+@pytest.mark.parametrize(
+    "blockers",
+    [
+        ["operator_takeover", "native_resume_required", "native_control_loop_unhealthy"],
+        ["native_control_loop_unhealthy", "operator_takeover"],
+    ],
+)
+def test_independent_control_loop_hold_is_not_hidden_by_operator_takeover(
+    blockers: list[str],
+) -> None:
+    facts = _facts()
+    facts.update(can_accept_goal=False, blockers=blockers)
+    facts["control"].update(
+        active_cmd_source="teleop",
+        operator_takeover_latched=True,
+        resume_required=True,
+    )
+    facts["native_endpoint"].update(active_cmd_source="teleop")
+
+    state = project_navigation_status(facts)
+
+    assert state["control"]["authority"] == "OPERATOR"
+    assert state["control"]["reason"] == "operator_takeover"
+    assert state["motion"]["permission"] == "HELD"
+    assert state["motion"]["reason"] == "native_control_loop_unhealthy"
+
+
+def test_global_map_admission_does_not_add_a_manual_motion_hold() -> None:
+    facts = _facts()
+    facts.update(can_accept_goal=False, blockers=["native_planner_map_missing", "operator_takeover"])
+    facts["control"].update(
+        active_cmd_source="teleop",
+        operator_takeover_latched=True,
+        resume_required=True,
+    )
+    facts["native_endpoint"].update(active_cmd_source="teleop")
+
+    state = project_navigation_status(facts)
+
+    assert state["goal_admission"]["state"] == "BLOCKED"
+    assert state["motion"]["reason"] == "operator_takeover"
 
 
 def test_motion_hold_reason_is_not_hidden_by_confirmed_stop() -> None:

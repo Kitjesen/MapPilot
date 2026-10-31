@@ -48,8 +48,8 @@ def test_map_io_does_not_block_other_requests(monkeypatch, tmp_path, route_name)
     args = {
         "import_pcd_map": ({"name": "yard", "source_path": str(source)},),
         "crop_saved_map": ("yard", {"bounds": {}}),
-        "mark_saved_map_zone": ("yard", {}),
-        "edit_saved_map_voxels": ("yard", {}),
+        "mark_saved_map_zone": ("yard", {"center": {"x": 0.0, "y": 0.0, "z": 0.0}}),
+        "edit_saved_map_voxels": ("yard", {"center": {"x": 0.0, "y": 0.0, "z": 0.0}}),
         "get_saved_map_voxel_edits": ("yard",),
         "rename_map": (MapRenameRequest(old_name="yard", new_name="yard2"),),
         "get_saved_map_points": ("yard",),

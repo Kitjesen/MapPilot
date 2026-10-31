@@ -59,6 +59,7 @@
     }
   ],
   "properties": {
+    "measurements": {"$ref": "lingtu.sim.measurement-scene.v1"},
     "schema": {
       "const": "lingtu.sim.world-package.v1"
     },

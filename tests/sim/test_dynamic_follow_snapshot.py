@@ -18,7 +18,7 @@ from sim.scripts.mujoco.formal_feeder import (
     _Services,
 )
 
-from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan
 from perception.detection.sim_scene_observer import SimSceneObserver
 
 ROOT = Path(__file__).resolve().parents[2]

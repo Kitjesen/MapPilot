@@ -10,7 +10,7 @@ set -euo pipefail
 #   octoplanner3d-pcd-converter: PCL common/io/octree for .pcd -> OctoMap
 #     conversion in OctoPlanner3D headless builds. No ROS 2 packages and no
 #     broader SLAM dependency promise.
-#   slam-native: broader PCL component set for Fast-LIO2/localizer/PGO-style
+#   slam-native: broader PCL component set for LTLIO/localizer/PGO-style
 #     native packages. Use this intentionally; it is not implied by the
 #     OctoPlanner3D converter profile.
 
@@ -112,9 +112,9 @@ set_profile_flags() {
     slam-native)
       PCL_PROFILE_DESCRIPTION="Broader PCL pack for SLAM/native packages; larger than the OctoPlanner3D converter subset."
       PCL_CMAKE_COMPONENT_FLAGS=(
-        -DBUILD_2d=OFF
+        -DBUILD_2d=ON
         -DBUILD_common=ON
-        -DBUILD_features=OFF
+        -DBUILD_features=ON
         -DBUILD_filters=ON
         -DBUILD_geometry=OFF
         -DBUILD_io=ON
@@ -219,6 +219,7 @@ configure_pcl() {
     -DCMAKE_INSTALL_PREFIX="${PCL_PREFIX}" \
     -DPCL_SHARED_LIBS=ON \
     -DBUILD_apps=OFF \
+    -DBUILD_benchmarks=OFF \
     -DBUILD_examples=OFF \
     -DBUILD_global_tests=OFF \
     -DBUILD_tools=OFF \

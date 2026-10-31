@@ -112,7 +112,9 @@ class MotionLayer {
 
   void configure(MotionLayerConfig config);
   void update(const std::vector<float> &xyzh, double stamp_s);
-  void updateFromScan(const SensorOrigin &origin, const std::vector<float> &xyzh, double stamp_s);
+  // Optional classification heights contain one value per XYZH point; measured H stays unchanged.
+  void updateFromScan(const SensorOrigin &origin, const std::vector<float> &xyzh, double stamp_s,
+                      const std::vector<float> *dynamic_heights = nullptr);
   std::vector<float> snapshot(std::size_t max_points, double now_s);
   void snapshot(std::vector<float> &out, std::size_t max_points, double now_s);
   std::vector<float> snapshotDynamic(std::size_t max_points, double now_s);
@@ -156,6 +158,8 @@ class MotionLayer {
     std::uint32_t free_frames{0};
     CellState state{CellState::Free};
     std::uint32_t free_observations{0};
+    double entered_free_space_s{-1.0};
+    float dynamic_height{0.0f};
   };
 
   struct ClusterTrack {

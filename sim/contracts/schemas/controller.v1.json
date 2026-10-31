@@ -145,6 +145,48 @@
         "manifest": {
           "type": "string",
           "minLength": 1
+        },
+        "profiles": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "stairs_up": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "artifact",
+                "manifest"
+              ],
+              "properties": {
+                "artifact": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "manifest": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "stairs_down": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "artifact",
+                "manifest"
+              ],
+              "properties": {
+                "artifact": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "manifest": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
         }
       }
     },

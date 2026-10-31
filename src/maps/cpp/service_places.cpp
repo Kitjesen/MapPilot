@@ -1,8 +1,9 @@
 #include "lingtu/maps/service.hpp"
 
-#include "lingtu/maps/json.hpp"
-#include "lingtu/maps/lock.hpp"
-#include "lingtu/maps/map_graph.hpp"
+#include "lingtu/maps/io/json.hpp"
+#include "lingtu/maps/storage/lock.hpp"
+#include "lingtu/maps/graph.hpp"
+#include "lingtu/maps/storage/stairs.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -158,6 +159,71 @@ bool ValidPoiRecord(const std::vector<std::string>& fields) {
   return NormalizeJsonObject(fields[7]).has_value();
 }
 
+constexpr const char* kStairSchema = "lingtu.stair.v1";
+
+bool IsStairRecord(const std::vector<std::string>& fields) {
+  return JsonObjectStringAtPath(fields[7], {"schema_version"}) == kStairSchema;
+}
+
+std::string StairPoiName(const std::string& id) {
+  if (id.size() > 128U || !MapStore::IsValidMapId(id)) {
+    throw std::invalid_argument("stair id must be a non-empty identifier of at most 128 characters");
+  }
+  return "stair:" + id;
+}
+
+std::vector<std::string> ReadPoiLines(const std::filesystem::path& path) {
+  std::ifstream input(path);
+  if (!input && std::filesystem::exists(path)) {
+    throw std::runtime_error("failed to read POI store");
+  }
+  std::vector<std::string> lines;
+  std::string line;
+  while (std::getline(input, line)) {
+    if (!ValidPoiRecord(SplitTab(line))) throw std::runtime_error("POI store is corrupt");
+    lines.push_back(line);
+  }
+  if (input.bad()) throw std::runtime_error("failed to read POI store");
+  return lines;
+}
+
+void WritePoiLines(const std::filesystem::path& path, const std::vector<std::string>& lines) {
+  std::ostringstream out;
+  for (const auto& line : lines) out << line << '\n';
+  WriteTextAtomic(path, out.str());
+}
+
+std::string StairsResponse(const std::string& action, const MapRecord& record,
+                           const std::vector<std::string>& lines) {
+  std::vector<StairAnnotation> stairs;
+  for (const auto& line : lines) {
+    const auto fields = SplitTab(line);
+    if (!IsStairRecord(fields)) continue;
+    const auto tags = ParseJson(fields[7]);
+    const auto& annotation = tags.AsObject("stair tags").at("stair");
+    const auto id = annotation.AsObject("stair annotation").at("id")
+                        .AsString("stair id");
+    auto stair = StairFromJson(id, annotation);
+    if (fields[0] != StairPoiName(id) || fields[1] != stair.frame_id) {
+      throw std::runtime_error("stair storage identity is inconsistent");
+    }
+    stairs.push_back(std::move(stair));
+  }
+  std::sort(stairs.begin(), stairs.end(), [](const auto& left, const auto& right) {
+    return left.id < right.id;
+  });
+  std::ostringstream out;
+  out << "{\"action\":" << JsonString(action) << ",\"success\":true,\"map_id\":"
+      << JsonString(record.map_id) << ",\"content_epoch\":" << record.content_epoch
+      << ",\"stairs\":[";
+  for (std::size_t i = 0; i < stairs.size(); ++i) {
+    if (i != 0U) out << ',';
+    out << StairJson(stairs[i]);
+  }
+  out << "]}";
+  return out.str();
+}
+
 std::string GraphNodeId(const std::string& map_id) {
   return "map:" + map_id;
 }
@@ -210,6 +276,7 @@ std::string MapsServiceCore::ListPoiJson(const std::string& map_id) const {
       if (!ValidPoiRecord(fields)) {
         return FailureJson("poi_list", "POI store is corrupt", "poi_store_corrupt");
       }
+      if (IsStairRecord(fields)) continue;
       if (!first) {
         pois << ",";
       }
@@ -289,6 +356,9 @@ std::string MapsServiceCore::SetPoiJson(
         if (!ValidPoiRecord(fields)) {
           return FailureJson("poi_set", "POI store is corrupt", "poi_store_corrupt");
         }
+        if (fields[0] == name && IsStairRecord(fields)) {
+          return FailureJson("poi_set", "name belongs to a stair annotation", "poi_name_conflict");
+        }
         if (fields.empty() || fields[0] != name) {
           kept.push_back(line);
         }
@@ -361,7 +431,7 @@ std::string MapsServiceCore::DeletePoiJson(
         if (!ValidPoiRecord(fields)) {
           return FailureJson("poi_delete", "POI store is corrupt", "poi_store_corrupt");
         }
-        if (!fields.empty() && fields[0] == name) {
+        if (!fields.empty() && fields[0] == name && !IsStairRecord(fields)) {
           removed = true;
         } else {
           kept.push_back(line);
@@ -389,6 +459,117 @@ std::string MapsServiceCore::DeletePoiJson(
     return FailureJson("poi_delete", exc.what(), "invalid_map_name");
   } catch (const std::exception& exc) {
     return FailureJson("poi_delete", exc.what(), "poi_store_write_failed");
+  }
+}
+
+std::string MapsServiceCore::ListStairsJson(const std::string& map_id) const {
+  try {
+    const auto id = MapStore::NormalizeMapId(map_id);
+    auto lock = MapLock::TryAcquire(store_.RootDir(), id, "stairs-list");
+    if (!lock.has_value()) {
+      return FailureJson("list_stairs", "map write in progress", "map_write_in_progress");
+    }
+    const auto record = store_.GetMapRecord(id);
+    if (!record.has_value()) {
+      return FailureJson("list_stairs", "map not found", "map_not_found");
+    }
+    return StairsResponse("list_stairs", *record, ReadPoiLines(PoiPath(id)));
+  } catch (const std::exception& exc) {
+    return FailureJson("list_stairs", exc.what(), "stair_store_read_failed");
+  }
+}
+
+std::string MapsServiceCore::SetStairJson(
+    const std::string& map_id, const std::string& stair_id,
+    const std::string& annotation_json) {
+  try {
+    const auto id = MapStore::NormalizeMapId(map_id);
+    auto stair = StairFromJson(stair_id, ParseJson(annotation_json), false);
+    const auto storage_name = StairPoiName(stair_id);
+    auto lock = MapLock::TryAcquire(store_.RootDir(), id, "stair-set");
+    if (!lock.has_value()) {
+      return FailureJson("set_stair", "map write in progress", "map_write_in_progress");
+    }
+    const auto record = store_.GetMapRecord(id);
+    if (!record.has_value()) {
+      return FailureJson("set_stair", "map not found", "map_not_found");
+    }
+    if (stair.content_epoch != record->content_epoch) {
+      return FailureJson("set_stair", "map content changed; reload before saving", "content_epoch_conflict");
+    }
+    if (stair.frame_id != record->scope.frame_id) {
+      return FailureJson("set_stair", "annotation frame does not match map", "frame_id_conflict");
+    }
+    stair.content_epoch = record->content_epoch;
+    stair.frame_id = record->scope.frame_id;
+    // Geometry comes from the saved source, never a browser-provided claim.
+    const auto points = LoadPcdXyz(store_.ContentPath(id) / "map.pcd");
+    stair.geometry = {};
+    if (points.ok) {
+      const PcdBounds bounds{true, stair.minimum.x, stair.minimum.y, stair.minimum.z,
+                            stair.maximum.x, stair.maximum.y, stair.maximum.z};
+      stair.geometry = RecognizeStairGeometry(points.points, bounds,
+          {static_cast<float>(stair.lower.x), static_cast<float>(stair.lower.y), static_cast<float>(stair.lower.z)},
+          {static_cast<float>(stair.upper.x), static_cast<float>(stair.upper.y), static_cast<float>(stair.upper.z)});
+    } else {
+      stair.geometry.reason = "source_cloud_unavailable";
+    }
+    auto lines = ReadPoiLines(PoiPath(id));
+    for (const auto& line : lines) {
+      const auto fields = SplitTab(line);
+      if (fields[0] == storage_name && !IsStairRecord(fields)) {
+        return FailureJson("set_stair", "stair id conflicts with an existing POI", "poi_name_conflict");
+      }
+    }
+    lines.erase(std::remove_if(lines.begin(), lines.end(), [&](const auto& line) {
+                  return SplitTab(line)[0] == storage_name;
+                }), lines.end());
+    // The complete annotation is one POI record, so entry points and bounds commit together.
+    const auto tags = "{\"schema_version\":" + JsonString(kStairSchema) +
+        ",\"type\":\"stairs\",\"stair\":" + StairJson(stair) + "}";
+    lines.push_back(storage_name + "\t" + stair.frame_id + "\t0\t0\t0\t0\t0\t" + tags);
+    const auto response = StairsResponse("set_stair", *record, lines);
+    WritePoiLines(PoiPath(id), lines);
+    return response;
+  } catch (const std::invalid_argument& exc) {
+    return FailureJson("set_stair", exc.what(), "invalid_stair");
+  } catch (const std::exception& exc) {
+    return FailureJson("set_stair", exc.what(), "stair_store_write_failed");
+  }
+}
+
+std::string MapsServiceCore::DeleteStairJson(
+    const std::string& map_id, const std::string& stair_id, std::uint64_t content_epoch) {
+  try {
+    const auto id = MapStore::NormalizeMapId(map_id);
+    const auto storage_name = StairPoiName(stair_id);
+    auto lock = MapLock::TryAcquire(store_.RootDir(), id, "stair-delete");
+    if (!lock.has_value()) {
+      return FailureJson("delete_stair", "map write in progress", "map_write_in_progress");
+    }
+    const auto record = store_.GetMapRecord(id);
+    if (!record.has_value()) {
+      return FailureJson("delete_stair", "map not found", "map_not_found");
+    }
+    if (content_epoch != static_cast<std::uint64_t>(record->content_epoch)) {
+      return FailureJson("delete_stair", "map content changed; reload before deleting", "content_epoch_conflict");
+    }
+    auto lines = ReadPoiLines(PoiPath(id));
+    const auto previous_size = lines.size();
+    lines.erase(std::remove_if(lines.begin(), lines.end(), [&](const auto& line) {
+                  const auto fields = SplitTab(line);
+                  return fields[0] == storage_name && IsStairRecord(fields);
+                }), lines.end());
+    if (lines.size() == previous_size) {
+      return FailureJson("delete_stair", "stair annotation not found", "stair_not_found");
+    }
+    const auto response = StairsResponse("delete_stair", *record, lines);
+    WritePoiLines(PoiPath(id), lines);
+    return response;
+  } catch (const std::invalid_argument& exc) {
+    return FailureJson("delete_stair", exc.what(), "invalid_stair");
+  } catch (const std::exception& exc) {
+    return FailureJson("delete_stair", exc.what(), "stair_store_write_failed");
   }
 }
 

@@ -5,7 +5,8 @@
   "description": "Attach-only dynamic person-follow acceptance through the public Gateway and native navigation boundaries.",
   "product_contract": {
     "product": "tracking",
-    "source": "config/runtime_graph/products/tracking.yaml",
+    "route": null,
+    "source": "config/system/products/tracking.yaml",
     "native_control_mode": "autonomy",
     "slam_mode": "localization",
     "requires_map": true

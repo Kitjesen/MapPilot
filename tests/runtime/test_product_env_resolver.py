@@ -6,19 +6,19 @@ from pathlib import Path
 import pytest
 import yaml
 
-import lingtu.assembly.products.configuration as product_configuration
-from lingtu.assembly.products import (
-    resolve_product_host_config as _resolve_product_host_config,
-)
-from lingtu.assembly.products import (
-    resolve_product_host_runtime as _resolve_product_host_runtime,
-)
-from lingtu.assembly.products.configuration import (
+import lingtu.assembly.config.product as product_configuration
+from lingtu.assembly.config.product import (
     EnvConfig,
     ResolvedProductHostConfig,
 )
-from lingtu.assembly.products.configuration import (
+from lingtu.assembly.config.product import (
     resolve_env_spec as _resolve_env_spec,
+)
+from lingtu.assembly.config.product import (
+    resolve_product_host_config as _resolve_product_host_config,
+)
+from lingtu.assembly.config.product import (
+    resolve_product_host_runtime as _resolve_product_host_runtime,
 )
 from runtime.config import RobotConfig
 
@@ -80,7 +80,7 @@ def test_mid360_is_required_by_the_product_not_by_real_env(
     broken_mid360 = {
         "sensors": {
             "mid360": {
-                "fastlio2_config": "sensors/missing.yaml",
+                "ltlio_config": "sensors/missing.yaml",
                 "extrinsic_profile": "go2_mid360",
             }
         }
@@ -94,7 +94,7 @@ def test_mid360_is_required_by_the_product_not_by_real_env(
     teleop = resolve_product_host_runtime("teleop", "real", robot=REAL_ROBOT)
 
     assert teleop.env_spec.slam_config_ref is None
-    with pytest.raises(FileNotFoundError, match="MID-360 Fast-LIO2 config not found"):
+    with pytest.raises(FileNotFoundError, match="MID-360 LTLIO config not found"):
         resolve_product_host_runtime("teleop_avoid", "real", robot=REAL_ROBOT)
 
 
@@ -113,7 +113,7 @@ def test_real_product_resolution_includes_robot_identity() -> None:
     assert resolved.robot == "unitree/go2"
     assert resolved.product == "nav"
     assert resolved.env == "real"
-    assert resolved.product_variant is None
+    assert resolved.product_variant == "standard"
     assert "_env" not in resolved.config
     assert resolved.product_spec["slam_mode"] == "localization"
     assert resolved.env_spec.name == "real"
@@ -144,8 +144,8 @@ def test_go2_real_env_uses_go2_collision_geometry() -> None:
     assert geometry.vehicle_length == pytest.approx(0.76)
     assert geometry.vehicle_width == pytest.approx(0.31)
     assert geometry.collision_cylinder_radius == pytest.approx(0.25)
-    assert geometry.collision_cylinder_offset == pytest.approx(0.18)
-    assert geometry.collision_hard_margin == pytest.approx(0.10)
+    assert geometry.collision_cylinder_offset == pytest.approx(0.19)
+    assert geometry.collision_hard_margin == pytest.approx(0.05)
 
 
 def test_real_product_keeps_native_driver_values_out_of_host_config() -> None:
@@ -180,7 +180,7 @@ def test_sim_product_uses_the_robot_backend() -> None:
         )
 
 
-@pytest.mark.parametrize("profile", ("fastlio2", "localizer", "pointlio", "genz"))
+@pytest.mark.parametrize("profile", ("ltlio", "localizer", "pointlio", "genz"))
 def test_product_resolution_rejects_slam_identity_overrides(profile: str) -> None:
     with pytest.raises(TypeError, match="reserved Product resolution key"):
         resolve_product_host_config("map", "sim", slam_profile=profile)
@@ -350,7 +350,7 @@ def test_local_planner_selection_keeps_nav_as_the_product() -> None:
     )
 
     assert resolved.product == "nav"
-    assert resolved.product_variant is None
+    assert resolved.product_variant == "standard"
     assert resolved.product_spec["native_nav"]["local_planner"] == "scan"
 
 

@@ -13,7 +13,7 @@ import platform
 from pathlib import Path
 from typing import Any
 
-NATIVE_INSPECTION_STORE_ABI_VERSION = 1
+NATIVE_INSPECTION_STORE_ABI_VERSION = 2
 
 
 class InspectionNativeError(RuntimeError):
@@ -48,6 +48,7 @@ class _Route(ctypes.Structure):
         ("max_retries", ctypes.c_uint32),
         ("points", ctypes.POINTER(_Point)),
         ("point_count", ctypes.c_uint64),
+        ("loop_interval_s", ctypes.c_double),
     ]
 
 
@@ -225,6 +226,7 @@ class NativeInspectionStore:
             int(route.get("max_retries", 0)),
             point_array,
             len(raw_points),
+            float(route.get("loop_interval_s", 0.0)),
         )
         if self._lib.lingtu_inspection_store_put(self._handle, ctypes.byref(native)) != 0:
             raise InspectionNativeError(self._error())

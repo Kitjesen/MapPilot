@@ -25,6 +25,6 @@
   "acceptance_scope": {
     "coverage": "component",
     "claims": ["controlled shirt pixels to RGB-D projection", "production VisualServo and PersonTracker", "native local collision checks", "physical locomotion and terminal stop"],
-    "excluded_claims": ["learned person detection", "multi-person identity or reacquisition", "Fast-LIO2", "Product/Gateway", "Go2 locomotion", "field motion"]
+    "excluded_claims": ["learned person detection", "multi-person identity or reacquisition", "LTLIO", "Product/Gateway", "Go2 locomotion", "field motion"]
   }
 }

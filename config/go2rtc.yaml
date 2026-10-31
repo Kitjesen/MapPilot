@@ -1,26 +1,22 @@
 # LingTu browser-camera sidecar template.
 #
-# The native camera service owns RGB-D acquisition. go2rtc opens the UVC RGB
-# device only for the browser teleoperation feed. Device nodes and encoder
-# availability are deployment-local; `#hardware` asks go2rtc/ffmpeg to use a
-# supported hardware encoder when the target BSP exposes one.
-#
-# Discover your camera:
-#   v4l2-ctl --list-devices
-#   v4l2-ctl -d /dev/video0 --list-formats-ext     # supported input formats
-#   ls /dev/video*
-#
-# Change the device in the installed `/etc/go2rtc/go2rtc.yaml`, then restart:
-#   sudo systemctl restart go2rtc
+# Development/reference route for GStreamer 1.24, which lacks whepserversink.
+# The native camera remains the only RGB-D device owner. This sidecar starts
+# a color-SHM consumer when a viewer subscribes; it never opens /dev/video*.
+# Install the compiled executable at the absolute path below or edit that path.
+# x264enc is an explicit SOFTWARE reference, not target-board qualification.
+# Use the qualified hardware factory only after checking its BSP integration.
+# For native adaptive WHEP use lingtu_camera_webrtc without --output and set
+# Gateway LINGTU_WEBRTC_URL=http://127.0.0.1:9090/whep/endpoint instead.
 
 api:
   # Gateway reverse-proxies WHEP, so the go2rtc API remains private to the host.
   listen: "127.0.0.1:1984"
   origin: "*"
 
-# WebRTC media transport. The browser must be able to reach port 8555.
+# WebRTC media transport. The browser must reach port 8555 over UDP or TCP.
 webrtc:
-  listen: ":8555/tcp"
+  listen: ":8555"
   candidates:
     - "stun:stun.l.google.com:19302"
 
@@ -30,14 +26,10 @@ log:
 
 # The WHEP `src` query parameter selects a stream name.
 streams:
-  # Primary RGB teleoperation feed: MJPEG input, H.264 output.
+  # Fixed-rate H.264 -> go2rtc WebRTC. Encoder feedback does not control the
+  # upstream encoder in this reference route.
   cam:
-    - "ffmpeg:device?video=/dev/video0&input_format=mjpeg&video_size=1280x720&framerate=30#video=h264#hardware"
-
-  # Optional second stream — same device but 640x480 for constrained
-  # uplinks.  Uncomment and select with ?src=cam_lq in the browser.
-  # cam_lq:
-  #   - "ffmpeg:device?video=/dev/video0&input_format=mjpeg&video_size=640x480&framerate=30#video=h264#hardware"
+    - "exec:/usr/local/bin/lingtu_camera_webrtc --output - --encoder x264enc --fps 20 --start-bitrate 1500000"
 
 # Uncomment to record to disk for debugging; paths are relative to go2rtc cwd.
 # record:

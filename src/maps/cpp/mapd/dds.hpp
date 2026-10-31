@@ -9,7 +9,7 @@
 
 #include "lingtu/maps/mapd/activation.hpp"
 #include "lingtu/maps/mapd/engine.hpp"
-#include "lingtu/maps/mapd/save_coordinator.hpp"
+#include "lingtu/maps/mapd/save.hpp"
 
 namespace lingtu::maps::mapd {
 
@@ -27,6 +27,20 @@ struct DdsOutputState {
   std::uint64_t scene_oversize_rejections{0U};
   std::uint32_t unhealthy_writers{0U};
   std::string last_error;
+  Timing realtime_publish_timing;
+  Timing realtime_prepare_timing;
+  Timing live_cloud_write_timing;
+  Timing voxel_cloud_write_timing;
+  Timing collision_write_timing;
+  std::size_t realtime_cloud_bytes{0U};
+  std::size_t collision_bitmap_bytes{0U};
+  std::size_t collision_hit_bounds{0U};
+  std::size_t collision_payload_native_bytes{0U};
+  std::size_t collision_max_payload_native_bytes{0U};
+  bool collision_writer_statistics_available{false};
+  std::uint32_t collision_throttle_count{0U};
+  std::uint64_t collision_throttle_ns{0U};
+  std::uint64_t collision_rexmit_bytes{0U};
 };
 
 struct PublicationCursor {
@@ -122,6 +136,8 @@ class Dds final : public SlamSnapshotExchange {
   Dds &operator=(const Dds &) = delete;
 
   std::optional<Observation> TakeLatestObservation();
+  std::vector<GeometrySnapshot> TakeGeometrySnapshots();
+  bool PublishGeometryApplied(const GeometryApplied& ack);
   bool PublishState(const State &state, const PublicationProgress &publications,
                     const MapIdentity &active_map);
   bool PublishRealtimeClouds(const State &state, const Snapshot &snapshot);

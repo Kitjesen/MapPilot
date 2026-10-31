@@ -1,5 +1,5 @@
-#include "lingtu/maps/sources/unity_scene.hpp"
-#include "lingtu/maps/json.hpp"
+#include "lingtu/maps/semantic/unity.hpp"
+#include "lingtu/maps/io/json.hpp"
 
 #include <cstdlib>
 #include <filesystem>

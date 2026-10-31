@@ -85,6 +85,32 @@
         },
         "allOf": [
           {
+            "if": {"required": ["configuration"], "properties": {"configuration": {"required": ["measurement"]}}},
+            "then": {"properties": {"runtime": {"properties": {
+              "owner": {"const": "physics"}, "source": {"const": "mujoco_measurement"}
+            }}}}
+          },
+          {
+            "if": {"properties": {"package": {"pattern": "^gnss@"}}},
+            "then": {
+              "required": ["configuration"],
+              "properties": {
+                "configuration": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["gnss"],
+                  "properties": {"gnss": {"$ref": "#/$defs/gnss_configuration"}}
+                },
+                "runtime": {
+                  "properties": {
+                    "owner": {"const": "physics"},
+                    "source": {"const": "mujoco_gnss"}
+                  }
+                }
+              }
+            }
+          },
+          {
             "if": {
               "properties": {
                 "package": {
@@ -147,6 +173,13 @@
               "properties": {
                 "configuration": {
                   "$ref": "#/$defs/mid360_configuration_override"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "configuration": {
+                  "not": {"required": ["navigation_fixture_raw_overlay"]}
                 }
               }
             }
@@ -254,6 +287,31 @@
     }
   },
   "$defs": {
+    "gnss_configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin_latitude_deg", "origin_longitude_deg", "origin_altitude_m", "body_frame_id"],
+      "properties": {
+        "origin_latitude_deg": {"type": "number", "minimum": -90, "maximum": 90},
+        "origin_longitude_deg": {"type": "number", "minimum": -180, "maximum": 180},
+        "origin_altitude_m": {"type": "number"},
+        "body_frame_id": {"$ref": "#/$defs/frame_id"},
+        "antenna_offset_m": {"$ref": "#/$defs/vector3"},
+        "world_origin_m": {"$ref": "#/$defs/vector3"},
+        "world_to_enu_yaw_deg": {"type": "number"},
+        "noise_enabled": {"type": "boolean"},
+        "horizontal_std_m": {"type": "number", "minimum": 0},
+        "vertical_std_m": {"type": "number", "minimum": 0},
+        "seed": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "fix_available": {"type": "boolean"}
+      }
+    },
+    "vector3": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {"type": "number"}
+    },
     "extrinsic": {
       "type": "object",
       "additionalProperties": false,
@@ -284,6 +342,8 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "measurement": {"$ref": "#/$defs/measurement_configuration_override"},
+        "gnss": {"$ref": "#/$defs/gnss_configuration"},
         "width": {
           "$ref": "#/$defs/image_dimension"
         },
@@ -342,10 +402,40 @@
         "raycast_frame": {
           "$ref": "#/$defs/frame_id"
         },
+        "navigation_fixture_raw_overlay": {
+          "type": "boolean"
+        },
         "estimator_input": {
           "type": "boolean"
         }
       }
+    },
+    "measurement_configuration_override": {
+      "type": "object", "additionalProperties": false, "required": ["body_frame_id"],
+      "properties": {
+        "body_frame_id": {"$ref": "#/$defs/frame_id"},
+        "camera": {"$ref": "lingtu.sim.sensor-plan.v1#/$defs/measurement_camera"},
+        "gimbal": {"$ref": "lingtu.sim.sensor-plan.v1#/$defs/measurement_gimbal"},
+        "thermal": {"$ref": "lingtu.sim.sensor-plan.v1#/$defs/measurement_thermal"},
+        "microphone": {"$ref": "lingtu.sim.sensor-plan.v1#/$defs/measurement_microphone"},
+        "noise": {"$ref": "lingtu.sim.sensor-plan.v1#/$defs/measurement_configuration/properties/noise"},
+        "max_distance_m": {"type": "number", "exclusiveMinimum": 0.001, "maximum": 1.7976931348623157e308}
+      },
+      "oneOf": [
+        {
+          "required": ["camera", "thermal"], "not": {"required": ["microphone"]},
+          "properties": {"noise": {"properties": {"unit": {"const": "K"}}}}
+        },
+        {
+          "required": ["camera"], "not": {"anyOf": [{"required": ["thermal"]}, {"required": ["microphone"]}]},
+          "properties": {"noise": {"properties": {"unit": {"const": "label"}, "enabled": {"const": false}}}}
+        },
+        {
+          "required": ["microphone"], "not": {"anyOf": [{"required": ["camera"]}, {"required": ["thermal"]},
+            {"required": ["gimbal"]}, {"required": ["max_distance_m"]}]},
+          "properties": {"noise": {"properties": {"unit": {"const": "Pa"}}}}
+        }
+      ]
     },
     "frame_id": {
       "type": "string",

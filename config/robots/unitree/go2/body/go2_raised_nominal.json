@@ -1,0 +1,1001 @@
+{
+  "urdf": "web/public/assets/robots/go2/urdf/go2_mid360_raised_frame.urdf",
+  "model_name": "go2_raised_nominal",
+  "primitive_count": 17,
+  "representation": "source primitive with conservative per-part OBB broad phase",
+  "support_contact_links": [],
+  "frame": "URDF root, metres; center and rotation at the recorded joint pose",
+  "rotation_layout": "row-major local part axes to URDF root",
+  "sphere_obb_axes": "URDF-root identity; source_rotation retained for traceability",
+  "geometry_margin_m": 0.0,
+  "pose_scope": "fixed nominal pose fitted to configured support height; not measured joints or gait",
+  "joint_angles": {
+    "FR_hip_joint": 0.0,
+    "FR_thigh_joint": 0.6967368524132049,
+    "FR_calf_joint": -1.3934737048264099,
+    "FL_hip_joint": 0.0,
+    "FL_thigh_joint": 0.6967368524132049,
+    "FL_calf_joint": -1.3934737048264099,
+    "RR_hip_joint": 0.0,
+    "RR_thigh_joint": 0.6967368524132049,
+    "RR_calf_joint": -1.3934737048264099,
+    "RL_hip_joint": 0.0,
+    "RL_thigh_joint": 0.6967368524132049,
+    "RL_calf_joint": -1.3934737048264099
+  },
+  "model_report": {
+    "urdf": "web/public/assets/robots/go2/urdf/go2_mid360_raised_frame.urdf",
+    "source_collision_count": 32,
+    "imported_collision_count": 32,
+    "collision_links": [
+      "base",
+      "Head_upper",
+      "Head_lower",
+      "FL_hip",
+      "FL_thigh",
+      "FL_calf",
+      "FL_calflower",
+      "FL_calflower1",
+      "FL_foot",
+      "FR_hip",
+      "FR_thigh",
+      "FR_calf",
+      "FR_calflower",
+      "FR_calflower1",
+      "FR_foot",
+      "RL_hip",
+      "RL_thigh",
+      "RL_calf",
+      "RL_calflower",
+      "RL_calflower1",
+      "RL_foot",
+      "RR_hip",
+      "RR_thigh",
+      "RR_calf",
+      "RR_calflower",
+      "RR_calflower1",
+      "RR_foot",
+      "mid360_box",
+      "mid360_lid",
+      "mid360_left_pad",
+      "mid360_right_pad",
+      "livox_frame"
+    ],
+    "visual_elements_removed": 22,
+    "joint_angles": {
+      "FR_hip_joint": 0.0,
+      "FR_thigh_joint": 0.6967368524132049,
+      "FR_calf_joint": -1.3934737048264099,
+      "FL_hip_joint": 0.0,
+      "FL_thigh_joint": 0.6967368524132049,
+      "FL_calf_joint": -1.3934737048264099,
+      "RR_hip_joint": 0.0,
+      "RR_thigh_joint": 0.6967368524132049,
+      "RR_calf_joint": -1.3934737048264099,
+      "RL_hip_joint": 0.0,
+      "RL_thigh_joint": 0.6967368524132049,
+      "RL_calf_joint": -1.3934737048264099
+    },
+    "joint_state_source": "nominal Go2 pose fitted to configured support height, not measured",
+    "distance_solver": "exact primitive AABB separation bound; MuJoCo native CCD for overlapping bounds",
+    "positive_clearance_semantics": "conservative lower bound, not universally exact surface distance",
+    "obstacles": [],
+    "gait_or_ground_support_validated": false
+  },
+  "known_missing_geometry": [
+    "external D435i and its bracket"
+  ],
+  "installation_qualified": false,
+  "parts": [
+    {
+      "link": "base",
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.1881,
+        0.04675,
+        0.057
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "Head_upper",
+      "center": [
+        0.285,
+        0.0,
+        0.01
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.05,
+        0.05,
+        0.045
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.05,
+      "half_length_m": 0.045,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "Head_lower",
+      "center": [
+        0.293,
+        0.0,
+        -0.060000000000000005
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.047,
+        0.047,
+        0.047
+      ],
+      "source_type": "sphere",
+      "radius_m": 0.047,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "axes_policy": "URDF-root identity axes; sphere orientation is immaterial"
+    },
+    {
+      "link": "FL_hip",
+      "center": [
+        0.1934,
+        0.1265,
+        0.0
+      ],
+      "rotation": [
+        [
+          1.0000000000000002,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          -1.0000000000000002
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ]
+      ],
+      "half_size": [
+        0.046,
+        0.046,
+        0.02
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.046,
+      "half_length_m": 0.02,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0000000000000002,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          -1.0000000000000002
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "FL_thigh",
+      "center": [
+        0.12505698306484123,
+        0.14200000000000002,
+        -0.08167914076556267
+      ],
+      "rotation": [
+        [
+          -0.6417184688747303,
+          0.0,
+          0.766940288878523
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ],
+        [
+          -0.766940288878523,
+          0.0,
+          -0.6417184688747303
+        ]
+      ],
+      "half_size": [
+        0.1065,
+        0.01225,
+        0.017
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          -0.6417184688747303,
+          0.0,
+          0.766940288878523
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ],
+        [
+          -0.766940288878523,
+          0.0,
+          -0.6417184688747303
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "FR_hip",
+      "center": [
+        0.1934,
+        -0.1265,
+        0.0
+      ],
+      "rotation": [
+        [
+          1.0000000000000002,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          -1.0000000000000002
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ]
+      ],
+      "half_size": [
+        0.046,
+        0.046,
+        0.02
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.046,
+      "half_length_m": 0.02,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0000000000000002,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          -1.0000000000000002
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "FR_thigh",
+      "center": [
+        0.12505698306484123,
+        -0.14200000000000002,
+        -0.08167914076556267
+      ],
+      "rotation": [
+        [
+          -0.6417184688747303,
+          0.0,
+          0.766940288878523
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ],
+        [
+          -0.766940288878523,
+          0.0,
+          -0.6417184688747303
+        ]
+      ],
+      "half_size": [
+        0.1065,
+        0.01225,
+        0.017
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          -0.6417184688747303,
+          0.0,
+          0.766940288878523
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ],
+        [
+          -0.766940288878523,
+          0.0,
+          -0.6417184688747303
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "RL_hip",
+      "center": [
+        -0.1934,
+        0.1265,
+        0.0
+      ],
+      "rotation": [
+        [
+          1.0000000000000002,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          -1.0000000000000002
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ]
+      ],
+      "half_size": [
+        0.046,
+        0.046,
+        0.02
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.046,
+      "half_length_m": 0.02,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0000000000000002,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          -1.0000000000000002
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "RL_thigh",
+      "center": [
+        -0.2617430169351588,
+        0.14200000000000002,
+        -0.08167914076556267
+      ],
+      "rotation": [
+        [
+          -0.6417184688747303,
+          0.0,
+          0.766940288878523
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ],
+        [
+          -0.766940288878523,
+          0.0,
+          -0.6417184688747303
+        ]
+      ],
+      "half_size": [
+        0.1065,
+        0.01225,
+        0.017
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          -0.6417184688747303,
+          0.0,
+          0.766940288878523
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ],
+        [
+          -0.766940288878523,
+          0.0,
+          -0.6417184688747303
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "RR_hip",
+      "center": [
+        -0.1934,
+        -0.1265,
+        0.0
+      ],
+      "rotation": [
+        [
+          1.0000000000000002,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          -1.0000000000000002
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ]
+      ],
+      "half_size": [
+        0.046,
+        0.046,
+        0.02
+      ],
+      "source_type": "cylinder",
+      "radius_m": 0.046,
+      "half_length_m": 0.02,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0000000000000002,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          -1.0000000000000002
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "RR_thigh",
+      "center": [
+        -0.2617430169351588,
+        -0.14200000000000002,
+        -0.08167914076556267
+      ],
+      "rotation": [
+        [
+          -0.6417184688747303,
+          0.0,
+          0.766940288878523
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ],
+        [
+          -0.766940288878523,
+          0.0,
+          -0.6417184688747303
+        ]
+      ],
+      "half_size": [
+        0.1065,
+        0.01225,
+        0.017
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          -0.6417184688747303,
+          0.0,
+          0.766940288878523
+        ],
+        [
+          0.0,
+          1.0000000000000002,
+          0.0
+        ],
+        [
+          -0.766940288878523,
+          0.0,
+          -0.6417184688747303
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "mid360_box",
+      "center": [
+        0.1966476650238,
+        -1.3542175293e-07,
+        0.12633243751530002
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.062241739273,
+        0.0509998760225,
+        0.065124929428
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "mid360_lid",
+      "center": [
+        0.21160796640062243,
+        0.0,
+        0.1620719738076775
+      ],
+      "rotation": [
+        [
+          0.8191520442890007,
+          0.0,
+          0.5735764363510335
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -0.5735764363510335,
+          0.0,
+          0.8191520442890007
+        ]
+      ],
+      "half_size": [
+        0.055,
+        0.05,
+        0.0025
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          0.8191520442890007,
+          0.0,
+          0.5735764363510335
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -0.5735764363510335,
+          0.0,
+          0.8191520442890007
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "mid360_left_pad",
+      "center": [
+        0.19,
+        0.02925,
+        0.0761300499094
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.055,
+        0.008,
+        0.00691508196025
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "mid360_right_pad",
+      "center": [
+        0.19,
+        -0.02925,
+        0.0763298380722
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.055,
+        0.008,
+        0.00676206633325
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "livox_frame",
+      "center": [
+        0.230249200582031,
+        0.0,
+        0.18869441524707004
+      ],
+      "rotation": [
+        [
+          0.8191520442890007,
+          0.0,
+          0.5735764363510335
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -0.5735764363510335,
+          0.0,
+          0.8191520442890007
+        ]
+      ],
+      "half_size": [
+        0.0325,
+        0.0325,
+        0.03
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "source_rotation": [
+        [
+          0.8191520442890007,
+          0.0,
+          0.5735764363510335
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -0.5735764363510335,
+          0.0,
+          0.8191520442890007
+        ]
+      ],
+      "axes_policy": "source collision axes"
+    },
+    {
+      "link": "unmeasured_payload_cover",
+      "center": [
+        0.0,
+        0.0,
+        0.1485
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.38,
+        0.155,
+        0.0915
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false
+    }
+  ],
+  "excluded_navigation_links": [
+    "FL_calf",
+    "FL_calflower",
+    "FL_calflower1",
+    "FL_foot",
+    "FR_calf",
+    "FR_calflower",
+    "FR_calflower1",
+    "FR_foot",
+    "RL_calf",
+    "RL_calflower",
+    "RL_calflower1",
+    "RL_foot",
+    "RR_calf",
+    "RR_calflower",
+    "RR_calflower1",
+    "RR_foot"
+  ],
+  "planning_scope": "upper body, hips, thighs and payload; lower legs and feet excluded; not full-body collision clearance",
+  "nominal_support_height_m": 0.35,
+  "nominal_fit": {
+    "source": "config/robots/unitree/go2/robot.yaml:geometry.support_height",
+    "constraint": "symmetric thigh=a, calf=-2a, hip=0; raw foot sphere bottoms at -support_height",
+    "thigh_rad": 0.6967368524132049,
+    "foot_bottom_body_z_m": -0.3500000000000001
+  },
+  "conservative_covers": [
+    {
+      "link": "unmeasured_payload_cover",
+      "source": "existing declared upper navigation envelope",
+      "source_config": "config/robots/unitree/go2/robot.yaml",
+      "body_z_interval_m": [
+        0.057,
+        0.24
+      ],
+      "xy_size_m": [
+        0.76,
+        0.31
+      ],
+      "meaning": "coverage inside previously declared upper envelope only; not measured D435i or bracket CAD; actual installed extent remains unverified"
+    }
+  ],
+  "runtime_margin_source": "RobotConfig collision_hard_margin; not baked into raw primitives",
+  "regeneration": "python tools/robot/export_navigation_bodies.py"
+}

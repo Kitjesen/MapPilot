@@ -53,7 +53,10 @@ target_compile_options(lingtu_mujoco_driver_bridge_core PRIVATE
   ${_LINGTU_LOCAL_ENDPOINT_WARNINGS})
 
 add_library(lingtu_mujoco_sensor_record_protocol STATIC
-  sensor_record_protocol.cpp)
+  sensor_record_protocol.cpp
+  measurement_protocol.cpp)
+set_target_properties(lingtu_mujoco_sensor_record_protocol PROPERTIES
+  POSITION_INDEPENDENT_CODE ON)
 target_include_directories(lingtu_mujoco_sensor_record_protocol PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${LINGTU_ROOT}/src/drivers/real/camera/native"
@@ -74,6 +77,13 @@ target_include_directories(lingtu_sim_imu_protocol PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_options(lingtu_sim_imu_protocol PRIVATE
   ${_LINGTU_MUJOCO_WARNINGS})
+
+add_library(lingtu_sim_gnss_protocol STATIC gnss_protocol.cpp)
+target_include_directories(lingtu_sim_gnss_protocol PUBLIC
+  "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_options(lingtu_sim_gnss_protocol PRIVATE
+  ${_LINGTU_LOCAL_ENDPOINT_WARNINGS})
+target_link_libraries(lingtu_mujoco_sensor_record_protocol PUBLIC lingtu_sim_gnss_protocol)
 
 add_library(lingtu_local_endpoint_server STATIC
   local_endpoint_server.cpp)
@@ -222,6 +232,7 @@ with tempfile.TemporaryDirectory(prefix="lingtu-cpp-endpoint-") as temporary:
   add_executable(test_navigation_fixture_observation
     "${_LINGTU_MUJOCO_TESTS_DIR}/test_navigation_fixture_observation.cpp")
   target_include_directories(test_navigation_fixture_observation PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
     "${LINGTU_ROOT}/src/drivers/real/lidar")
   target_compile_options(test_navigation_fixture_observation PRIVATE
     ${_LINGTU_LOCAL_ENDPOINT_WARNINGS})
@@ -247,6 +258,19 @@ with tempfile.TemporaryDirectory(prefix="lingtu-cpp-endpoint-") as temporary:
   add_test(
     NAME test_imu_protocol
     COMMAND test_imu_protocol)
+
+  add_executable(test_gnss_protocol
+    "${_LINGTU_MUJOCO_TESTS_DIR}/test_gnss_protocol.cpp")
+  target_link_libraries(test_gnss_protocol PRIVATE lingtu_sim_gnss_protocol)
+  target_compile_options(test_gnss_protocol PRIVATE ${_LINGTU_LOCAL_ENDPOINT_WARNINGS})
+  add_test(NAME test_gnss_protocol COMMAND test_gnss_protocol)
+  set_tests_properties(test_gnss_protocol PROPERTIES TIMEOUT 10)
+  add_executable(test_measurement_protocol
+    "${_LINGTU_MUJOCO_TESTS_DIR}/test_measurement_protocol.cpp")
+  target_link_libraries(test_measurement_protocol PRIVATE lingtu_mujoco_sensor_record_protocol)
+  target_compile_options(test_measurement_protocol PRIVATE ${_LINGTU_MUJOCO_WARNINGS})
+  add_test(NAME test_measurement_protocol COMMAND test_measurement_protocol)
+  set_tests_properties(test_measurement_protocol PROPERTIES TIMEOUT 10)
 endif()
 
 if(UNIX)
@@ -294,6 +318,38 @@ if(LINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME)
   target_compile_options(lingtu_mujoco_driver_bridge PRIVATE
     ${_LINGTU_LOCAL_ENDPOINT_WARNINGS})
 
+  add_library(lingtu_sim_gnss_dds_writer STATIC gnss_dds_writer.cpp)
+  target_include_directories(lingtu_sim_gnss_dds_writer PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}"
+    PRIVATE "${LINGTU_ROOT}/src")
+  target_link_libraries(lingtu_sim_gnss_dds_writer PUBLIC
+    lingtu_sim_gnss_protocol lingtu_mujoco_dds_messages lingtu_dds_contracts)
+  target_compile_options(lingtu_sim_gnss_dds_writer PRIVATE ${_LINGTU_LOCAL_ENDPOINT_WARNINGS})
+
+  add_library(lingtu_sim_measurement_dds_writer STATIC measurement_dds_writer.cpp)
+  target_include_directories(lingtu_sim_measurement_dds_writer PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}"
+    PRIVATE "${LINGTU_ROOT}/src")
+  target_link_libraries(lingtu_sim_measurement_dds_writer PUBLIC
+    lingtu_mujoco_sensor_record_protocol lingtu_mujoco_dds_messages lingtu_dds_contracts)
+  target_compile_options(lingtu_sim_measurement_dds_writer PRIVATE ${_LINGTU_LOCAL_ENDPOINT_WARNINGS})
+
+  add_library(lingtu_measurement_bridge SHARED
+    "${LINGTU_ROOT}/src/drivers/sim/measurement/native_bridge.cpp")
+  target_include_directories(lingtu_measurement_bridge PRIVATE "${LINGTU_ROOT}/src")
+  target_compile_definitions(lingtu_measurement_bridge PRIVATE LINGTU_MEASUREMENT_BRIDGE_BUILD)
+  target_link_libraries(lingtu_measurement_bridge PRIVATE
+    lingtu_mujoco_sensor_record_protocol lingtu_mujoco_dds_messages lingtu_dds_contracts)
+  target_compile_options(lingtu_measurement_bridge PRIVATE ${_LINGTU_LOCAL_ENDPOINT_WARNINGS})
+  lingtu_mujoco_bundle_cyclonedds(lingtu_measurement_bridge)
+
+  add_library(lingtu_sensor_control_bridge SHARED
+    "${LINGTU_ROOT}/src/drivers/sim/measurement/control_bridge.cpp")
+  target_include_directories(lingtu_sensor_control_bridge PRIVATE "${LINGTU_ROOT}/src")
+  target_compile_definitions(lingtu_sensor_control_bridge PRIVATE LINGTU_SENSOR_CONTROL_BRIDGE_BUILD)
+  target_link_libraries(lingtu_sensor_control_bridge PRIVATE
+    lingtu_mujoco_dds_messages lingtu_dds_contracts)
+  target_compile_options(lingtu_sensor_control_bridge PRIVATE ${_LINGTU_LOCAL_ENDPOINT_WARNINGS})
+  lingtu_mujoco_bundle_cyclonedds(lingtu_sensor_control_bridge)
+
   add_executable(lingtu_mujoco_sensor_publisher
     sensor_publisher.cpp
     "${LINGTU_ROOT}/src/drivers/real/lidar/native/dds_module.cpp")
@@ -311,6 +367,8 @@ if(LINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME)
     "${LINGTU_ROOT}/src/drivers/real/lidar/sdk2_stream")
   target_link_libraries(lingtu_mujoco_sensor_publisher PRIVATE
     lingtu_mujoco_sensor_record_protocol
+    lingtu_sim_gnss_dds_writer
+    lingtu_sim_measurement_dds_writer
     lingtu_local_endpoint_server
     lingtu_run_plan_process_environment
     lingtu_mujoco_dds_messages
@@ -340,6 +398,12 @@ if(LINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME)
   target_compile_options(lingtu_imu_publisher PRIVATE
     ${_LINGTU_MUJOCO_WARNINGS})
 
+  add_executable(lingtu_gnss_publisher gnss_publisher.cpp)
+  target_include_directories(lingtu_gnss_publisher PRIVATE "${LINGTU_ROOT}/src")
+  target_link_libraries(lingtu_gnss_publisher PRIVATE
+    lingtu_sim_gnss_dds_writer)
+  target_compile_options(lingtu_gnss_publisher PRIVATE ${_LINGTU_LOCAL_ENDPOINT_WARNINGS})
+
   # Kept as the existing diagnostic tap. It is not the C2 bridge runtime.
   add_executable(lingtu_mujoco_cmd_vel_tap
     cmd_vel_tap.cpp)
@@ -355,7 +419,40 @@ if(LINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME)
     ${_LINGTU_MUJOCO_WARNINGS})
 
   if(BUILD_TESTING)
+    add_executable(test_sensor_control_bridge
+      "${_LINGTU_MUJOCO_TESTS_DIR}/test_sensor_control_bridge.cpp")
+    target_include_directories(test_sensor_control_bridge PRIVATE "${LINGTU_ROOT}/src")
+    target_link_libraries(test_sensor_control_bridge PRIVATE lingtu_sensor_control_bridge
+      lingtu_mujoco_dds_messages lingtu_dds_contracts Threads::Threads)
+    target_compile_options(test_sensor_control_bridge PRIVATE ${_LINGTU_LOCAL_ENDPOINT_WARNINGS})
+    add_test(NAME test_sensor_control_bridge COMMAND test_sensor_control_bridge)
+    set_tests_properties(test_sensor_control_bridge PROPERTIES
+      TIMEOUT 30 RESOURCE_LOCK lingtu_sensor_control_dds RUN_SERIAL TRUE)
+
+    add_executable(test_measurement_bridge
+      "${_LINGTU_MUJOCO_TESTS_DIR}/test_measurement_bridge.cpp")
+    target_include_directories(test_measurement_bridge PRIVATE "${LINGTU_ROOT}/src")
+    target_link_libraries(test_measurement_bridge PRIVATE lingtu_measurement_bridge
+      lingtu_mujoco_sensor_record_protocol lingtu_mujoco_dds_messages lingtu_dds_contracts)
+    target_compile_options(test_measurement_bridge PRIVATE ${_LINGTU_LOCAL_ENDPOINT_WARNINGS})
+    add_test(NAME test_measurement_bridge COMMAND test_measurement_bridge)
+    set_tests_properties(test_measurement_bridge PROPERTIES
+      TIMEOUT 30 RESOURCE_LOCK lingtu_measurement_host_dds)
+
+    add_executable(test_measurement_publisher_dds_process
+      "${_LINGTU_MUJOCO_TESTS_DIR}/test_measurement_protocol.cpp")
+    target_compile_definitions(test_measurement_publisher_dds_process PRIVATE LINGTU_MEASUREMENT_DDS_TEST)
+    target_include_directories(test_measurement_publisher_dds_process PRIVATE "${LINGTU_ROOT}/src")
+    target_link_libraries(test_measurement_publisher_dds_process PRIVATE
+      lingtu_sim_measurement_dds_writer)
+    target_compile_options(test_measurement_publisher_dds_process PRIVATE ${_LINGTU_MUJOCO_WARNINGS})
+    add_dependencies(test_measurement_publisher_dds_process lingtu_mujoco_sensor_publisher)
+    add_test(NAME test_measurement_publisher_dds_process
+      COMMAND test_measurement_publisher_dds_process $<TARGET_FILE:lingtu_mujoco_sensor_publisher>)
+    set_tests_properties(test_measurement_publisher_dds_process PROPERTIES
+      TIMEOUT 45 RESOURCE_LOCK lingtu_measurement_dds)
     set(_LINGTU_WINDOWS_PRODUCT_DDS_DOMAIN 17)
+    set(_LINGTU_TEST_DDS_DOMAIN_GNSS 7)
     set(_LINGTU_TEST_DDS_DOMAIN_CAMERA_PAYLOAD_RATE 8)
     set(_LINGTU_TEST_DDS_DOMAIN_SENSOR_RATE 9)
     set(_LINGTU_TEST_DDS_DOMAIN_LOOPBACK 10)
@@ -369,6 +466,7 @@ if(LINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME)
     set(_LINGTU_TEST_DDS_DOMAIN_DRIVER_ENDPOINT 19)
     set(_LINGTU_FIRST_NAVIGATION_TEST_DDS_DOMAIN 20)
     set(_LINGTU_TEST_DDS_DOMAINS
+      ${_LINGTU_TEST_DDS_DOMAIN_GNSS}
       ${_LINGTU_TEST_DDS_DOMAIN_CAMERA_PAYLOAD_RATE}
       ${_LINGTU_TEST_DDS_DOMAIN_SENSOR_RATE}
       ${_LINGTU_TEST_DDS_DOMAIN_LOOPBACK}
@@ -488,6 +586,40 @@ if(LINGTU_MUJOCO_NATIVE_DDS_BUILD_RUNTIME)
       set_tests_properties(test_imu_publisher_dds_process PROPERTIES
         ENVIRONMENT "${_LINGTU_CYCLONEDDS_TEST_ENV}")
     endif()
+
+    add_executable(test_gnss_publisher_dds_process
+      "${_LINGTU_MUJOCO_TESTS_DIR}/test_gnss_publisher_dds_process.cpp")
+    target_include_directories(test_gnss_publisher_dds_process PRIVATE "${LINGTU_ROOT}/src")
+    target_link_libraries(test_gnss_publisher_dds_process PRIVATE
+      lingtu_sim_gnss_protocol lingtu_mujoco_dds_messages lingtu_dds_contracts)
+    target_compile_options(test_gnss_publisher_dds_process PRIVATE ${_LINGTU_LOCAL_ENDPOINT_WARNINGS})
+    if(WIN32)
+      target_link_libraries(test_gnss_publisher_dds_process PRIVATE ws2_32 crypt32)
+    endif()
+    target_compile_definitions(test_gnss_publisher_dds_process PRIVATE
+      LINGTU_TEST_DEFAULT_DDS_DOMAIN_ID=${_LINGTU_TEST_DDS_DOMAIN_GNSS})
+    add_dependencies(test_gnss_publisher_dds_process lingtu_gnss_publisher)
+    add_test(NAME test_gnss_publisher_dds_process
+      COMMAND test_gnss_publisher_dds_process $<TARGET_FILE:lingtu_gnss_publisher>)
+    set_tests_properties(test_gnss_publisher_dds_process PROPERTIES
+      TIMEOUT 45 RESOURCE_LOCK lingtu_mujoco_dds
+      ENVIRONMENT "LINGTU_TEST_DDS_DOMAIN_ID=${_LINGTU_TEST_DDS_DOMAIN_GNSS}")
+    if(_LINGTU_CYCLONEDDS_TEST_ENV)
+      set_property(TEST test_gnss_publisher_dds_process APPEND PROPERTY
+        ENVIRONMENT "${_LINGTU_CYCLONEDDS_TEST_ENV}")
+    endif()
+
+    add_dependencies(test_gnss_publisher_dds_process lingtu_mujoco_sensor_publisher)
+    add_test(NAME test_sensor_gnss_publisher_dds_process
+      COMMAND test_gnss_publisher_dds_process --sensor-publisher
+        $<TARGET_FILE:lingtu_mujoco_sensor_publisher>)
+    set_tests_properties(test_sensor_gnss_publisher_dds_process PROPERTIES
+      TIMEOUT 45 RESOURCE_LOCK lingtu_sensor_gnss_dds_134)
+    add_test(NAME test_sensor_gnss_endpoint_process
+      COMMAND test_gnss_publisher_dds_process --sensor-endpoint
+        $<TARGET_FILE:lingtu_mujoco_sensor_publisher>)
+    set_tests_properties(test_sensor_gnss_endpoint_process PROPERTIES
+      TIMEOUT 30 RESOURCE_LOCK lingtu_sensor_gnss_dds_134)
 
     add_executable(test_sensor_publisher_dds_process
       "${_LINGTU_MUJOCO_TESTS_DIR}/test_sensor_publisher_dds_process.cpp")

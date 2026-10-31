@@ -1,0 +1,373 @@
+{
+  "meshes": {
+    "fl_hip_link": "links/fl_hip_link.stl",
+    "fl_thigh_link": "links/fl_thigh_link.stl",
+    "fl_calf_link": "links/fl_calf_link.stl",
+    "fl_foot_link": "links/fl_foot_link.stl",
+    "fr_hip_link": "links/fr_hip_link.stl",
+    "fr_thigh_link": "links/fr_thigh_link.stl",
+    "fr_calf_link": "links/fr_calf_link.stl",
+    "fr_foot_link": "links/fr_foot_link.stl",
+    "rr_hip_link": "links/rr_hip_link.stl",
+    "rr_thigh_link": "links/rr_thigh_link.stl",
+    "rr_calf_link": "links/rr_calf_link.stl",
+    "rr_foot_link": "links/rr_foot_link.stl",
+    "rl_hip_link": "links/rl_hip_link.stl",
+    "rl_thigh_link": "links/rl_thigh_link.stl",
+    "rl_calf_link": "links/rl_calf_link.stl",
+    "rl_foot_link": "links/rl_foot_link.stl",
+    "base_link": "links/base_link.stl",
+    "lidar2_link": "links/lidar2_link.stl",
+    "camera2_link": "links/camera2_link.stl",
+    "lidar1_link": "links/lidar1_link.stl",
+    "camera1_link": "links/camera1_link.stl"
+  },
+  "paint_mesh": "DOSO_side_paint.obj",
+  "paint_material": {
+    "base_color_rgba": [
+      0.015,
+      0.02,
+      0.025,
+      1
+    ],
+    "metallic": 0,
+    "roughness": 0.5
+  },
+  "version": "R46-candidate",
+  "source_assembly": "D:\\inovxio\\robotmodel\\thunder\\新版小轮子机器狗装配.SLDASM",
+  "triangle_budget": 900000,
+  "additional_base_meshes": [
+    {
+      "name": "R43_rubber",
+      "mesh": "links/r43_rubber.stl",
+      "material": "rubber"
+    },
+    {
+      "name": "R43_graphite",
+      "mesh": "links/r43_graphite.stl",
+      "material": "graphite"
+    },
+    {
+      "name": "Battery_LED_Green",
+      "mesh": "links/r43_battery_leds.stl",
+      "material": "battery_led_green"
+    },
+    {
+      "name": "Native_Power_Glyph_Black_Paint",
+      "mesh": "links/battery_power_black_paint.stl",
+      "material": "doso_paint"
+    },
+    {
+      "name": "integrated_vent_left_louver_core",
+      "mesh": "links/integrated_vent_left_louver_core.stl",
+      "material": "graphite"
+    },
+    {
+      "name": "integrated_vent_right_wet_chamber",
+      "mesh": "links/integrated_vent_right_wet_chamber.stl",
+      "material": "graphite"
+    },
+    {
+      "name": "Handle_Original_DOSO_Light_Fill",
+      "mesh": "links/handle_original_doso_fill_large.stl",
+      "material": "silver"
+    },
+    {
+      "name": "Payload_Rails_Two_Track_Body",
+      "mesh": "links/payload_rails_two_track_body.stl",
+      "material": "silver"
+    },
+    {
+      "name": "Payload_Rails_Mounting_Hardware",
+      "mesh": "links/payload_rails_mounting_hardware.stl",
+      "material": "rubber"
+    },
+    {
+      "name": "Marked_Head_All_Five_Holes_Filled",
+      "mesh": "links/head_marked_five_holes_filled.stl",
+      "material": "silver"
+    },
+    {
+      "name": "Handle_Original_Small_DOSO_Recess_Black_Fill",
+      "mesh": "links/handle_original_doso_recess_black_fill.stl",
+      "material": "rubber"
+    },
+    {
+      "name": "Hip_Original_Motor_Black_Body",
+      "mesh": "links/hip_original_motor_black_body_v2.stl",
+      "material": "motor_body_black"
+    }
+  ],
+  "required_components": {
+    "chassis_bodies": 48,
+    "battery_bays": 2,
+    "battery_packs": 2,
+    "battery_pack_leaf_instances": 12,
+    "side_trim": 1,
+    "battery_perimeter_bezel": 0
+  },
+  "build_reversed_index_buffer": false,
+  "materials": {
+    "battery_led_green": {
+      "base_color_rgba": [
+        0.03,
+        1.0,
+        0.08,
+        1.0
+      ],
+      "metallic": 0.0,
+      "roughness": 0.24,
+      "emissive": {
+        "rgb": [
+          0.03,
+          1.0,
+          0.08
+        ],
+        "strength": 6.0
+      }
+    },
+    "motor_body_black": {
+      "base_color_rgba": [
+        0.008,
+        0.011,
+        0.016,
+        1
+      ],
+      "metallic": 0.05,
+      "roughness": 0.46
+    }
+  },
+  "display_revision": "hipguard-v5-2mm-full360-vents-mounting",
+  "battery_refinement": {
+    "inset_mm": 8.5,
+    "main_panel_y_mm": 132.85,
+    "front_panel_width_mm": 126.0,
+    "original_geometry": true,
+    "original_transforms": false,
+    "led_count": 8,
+    "native_cad_modified": false
+  },
+  "bay_internal_interface_candidate": true,
+  "battery_pose_evidence": "D:\\inovxio\\brain\\lingtu\\build\\thunder-r43-battery-seated-20261017\\seated_pose.json",
+  "battery_front_y_mm": 132.85,
+  "power_switch_black_symbols": 2,
+  "doso_width_mm": 100.0,
+  "splash_guards_installed": false,
+  "exterior_guard_count": 0,
+  "inboard_vent_count": 2,
+  "inboard_vents_candidate_only": true,
+  "additional_link_meshes": [
+    {
+      "name": "j07_fl_thigh_link",
+      "parent_link": "fl_thigh_link",
+      "mesh": "links/j07_fl_thigh_link.stl",
+      "material": "silver",
+      "fasteners": 9
+    },
+    {
+      "name": "j07_fr_thigh_link",
+      "parent_link": "fr_thigh_link",
+      "mesh": "links/j07_fr_thigh_link.stl",
+      "material": "silver",
+      "fasteners": 9
+    },
+    {
+      "name": "j07_rr_thigh_link",
+      "parent_link": "rr_thigh_link",
+      "mesh": "links/j07_rr_thigh_link.stl",
+      "material": "silver",
+      "fasteners": 9
+    },
+    {
+      "name": "j07_rl_thigh_link",
+      "parent_link": "rl_thigh_link",
+      "mesh": "links/j07_rl_thigh_link.stl",
+      "material": "silver",
+      "fasteners": 9
+    },
+    {
+      "name": "hip_guard_v5_shell_1",
+      "parent_link": "base_link",
+      "mesh": "links/hip_guard_v5_shell_1.stl",
+      "material": "silver"
+    },
+    {
+      "name": "hip_guard_v5_shell_2",
+      "parent_link": "base_link",
+      "mesh": "links/hip_guard_v5_shell_2.stl",
+      "material": "silver"
+    },
+    {
+      "name": "hip_guard_v5_shell_3",
+      "parent_link": "base_link",
+      "mesh": "links/hip_guard_v5_shell_3.stl",
+      "material": "silver"
+    },
+    {
+      "name": "hip_guard_v5_shell_4",
+      "parent_link": "base_link",
+      "mesh": "links/hip_guard_v5_shell_4.stl",
+      "material": "silver"
+    },
+    {
+      "name": "hip_guard_v5_fasteners_1",
+      "parent_link": "base_link",
+      "mesh": "links/hip_guard_v5_fasteners_1.stl",
+      "material": "motor_body_black"
+    },
+    {
+      "name": "hip_guard_v5_fasteners_2",
+      "parent_link": "base_link",
+      "mesh": "links/hip_guard_v5_fasteners_2.stl",
+      "material": "motor_body_black"
+    },
+    {
+      "name": "hip_guard_v5_fasteners_3",
+      "parent_link": "base_link",
+      "mesh": "links/hip_guard_v5_fasteners_3.stl",
+      "material": "motor_body_black"
+    },
+    {
+      "name": "hip_guard_v5_fasteners_4",
+      "parent_link": "base_link",
+      "mesh": "links/hip_guard_v5_fasteners_4.stl",
+      "material": "motor_body_black"
+    }
+  ],
+  "shoulder_slope_deg": 12.0,
+  "restored_j07_fasteners": 36,
+  "existing_chassis_screws": 16,
+  "existing_chassis_washers": 8,
+  "unresolved_upper_holes": 4,
+  "native_cad_modified": false,
+  "candidate_only": true,
+  "doso_height_mm": 18.0,
+  "slope_evidence": "D:\\inovxio\\brain\\lingtu\\build\\thunder-r43-slope-fasteners-20261017\\slope_rail_candidate.json",
+  "restored_motor_covers": 4,
+  "black_grip_pads": 4,
+  "original_handle_doso_light_fill": 2,
+  "handle_doso_fill_triangles": 126,
+  "restored_hip_motor_cover_sets": 0,
+  "excluded_j03_ring_covers": 8,
+  "restored_ds04_housings": 0,
+  "excluded_knee_cover_set": true,
+  "payload_rails_count": 2,
+  "payload_rail_length_mm": 320.0,
+  "payload_rail_mounting_holes_per_rail": 5,
+  "head_hole_fill_count": 5,
+  "head_hole_fill_candidate": true,
+  "handle_doso_scale": 1.35,
+  "hip_guard_new_design": true,
+  "hip_guard_design_revision": "RS04-V5",
+  "hip_guard_instances": 4,
+  "hip_motor_black_bodies": 4,
+  "hip_guard_continuous_shell": true,
+  "hip_guard_vent_count": 12,
+  "hip_guard_exposed_barrel_covered": true,
+  "hip_guard_sweep_deg": 360,
+  "hip_guard_axial_length_mm": 40.2,
+  "hip_guard_integrated_endcap": false,
+  "design_revision": "RS04-V5",
+  "hip_guard_complete_circumference": true,
+  "hip_guard_integrated_mount_tabs": true,
+  "hip_guard_vent_angles_deg": [
+    0,
+    30,
+    60,
+    90,
+    120,
+    150,
+    180,
+    210,
+    240,
+    270,
+    300,
+    330
+  ],
+  "hip_guard_vent_pattern_full_circumference": true,
+  "hip_guard_wall_mm": 2.0,
+  "hip_guard_endcap_thickness_mm": 0.0,
+  "hip_guard_mounting": {
+    "count": 6,
+    "pcd_mm": 115.2,
+    "diameter_mm": 2.9,
+    "countersink_diameter_mm": 5.0,
+    "countersink_depth_mm": 1.05,
+    "thread": "M2.5x0.45",
+    "thread_evidence": "inferred_from_CAD",
+    "aligned_to_source_motor": true,
+    "angles_deg": [
+      45,
+      105,
+      165,
+      225,
+      285,
+      345
+    ],
+    "centers_mm": [
+      [
+        40.72935059634514,
+        40.72935059634514
+      ],
+      [
+        -14.907976997905202,
+        55.63732759425034
+      ],
+      [
+        -55.63732759425033,
+        14.90797699790521
+      ],
+      [
+        -40.72935059634515,
+        -40.729350596345135
+      ],
+      [
+        14.90797699790517,
+        -55.637327594250344
+      ],
+      [
+        55.63732759425034,
+        -14.907976997905191
+      ]
+    ],
+    "retained_original_screw_count_per_motor": 6
+  },
+  "hip_guard_mounting_hole_count": 6,
+  "hip_guard_mounting_pcd_mm": 115.2,
+  "hip_guard_mounting_hole_diameter_mm": 2.9,
+  "hip_guard_mounting_thread": "M2.5x0.45",
+  "hip_guard_mounting_thread_evidence": "inferred_from_CAD",
+  "hip_guard_mounting_alignment_verified": true,
+  "hip_guard_mounting_hardware_status": "candidate",
+  "hip_guard_mounting_hardware_bom_status": "candidate_inferred_from_CAD",
+  "hip_guard_mounting_procurement_released": false,
+  "hip_guard_mounting_hardware_count_per_guard": 6,
+  "hip_guard_mounting_hardware_geometry": true,
+  "hip_guard_mounting_thread_engagement_mm": 7.15,
+  "hip_guard_mounting_hardware_bom": [
+    {
+      "item": "M2.5x0.45x14 90deg countersunk screw",
+      "quantity_per_guard": 6,
+      "quantity_robot": 24,
+      "source": "RS04 BRep shaft/head/thread geometry; standard/grade/torque unverified",
+      "engagement_mm": 7.15,
+      "original_engagement_mm": 7.21,
+      "nominal_thread_envelope_only": true
+    }
+  ],
+  "hip_guard_mounting_hardware_instances": 24,
+  "hidden_inboard_opening": false,
+  "head_host_relief": true,
+  "head_host_relief_components": [
+    "04",
+    "13"
+  ],
+  "structural_status": "candidate",
+  "load_review_required": true,
+  "old_head_inner_lobes_removed": true,
+  "candidate_cad_modified": true,
+  "original_solidworks_sources_overwritten": false,
+  "r43_sideplates_unchanged": true,
+  "legacy_installed_head_basis": true,
+  "head_design_current_V075_modified": false
+}

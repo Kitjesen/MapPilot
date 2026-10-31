@@ -6,6 +6,7 @@
 #include <limits>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -15,7 +16,7 @@
 #include "command/ingress.hpp"
 #include "command/cancel.hpp"
 #include "safety/stop.hpp"
-#include "runtime/goal/runtime.hpp"
+#include "app/goal/runtime.hpp"
 
 namespace {
 
@@ -90,6 +91,8 @@ struct Fixture {
   std::vector<lingtu::nav::plan::GlobalPlanRequest> planner_requests;
   std::atomic<int> planner_calls{0};
   std::atomic<int> fail_on_call{0};
+  std::string search_failure{"planned_failure"};
+  std::atomic<int> throw_on_call{0};
   std::atomic<int> block_on_call{0};
   std::atomic<bool> release_blocked{false};
   std::atomic<int> cancelled_plans{0};
@@ -101,6 +104,9 @@ struct Fixture {
   std::uint64_t last_output_sequence{17U};
   StopConfirmationState confirmation{StopConfirmationState::Confirmed};
   bool inspection_active{false};
+  int inspection_plan_ready_calls{0};
+  int inspection_leg_failed_calls{0};
+  lingtu::nav::endpoint::GoalPlanInspectionDecision inspection_decision;
   GoalPlanController goal_plan;
   MotionStopBarrier motion_stop;
   GoalReplanRuntimeCoordinator coordinator;
@@ -128,8 +134,11 @@ struct Fixture {
                 result.cancelled = true;
                 return result;
               }
+              if (throw_on_call.load() == call) {
+                throw std::runtime_error("planned_exception");
+              }
               if (fail_on_call.load() == call) {
-                result.failure_reason = "planned_failure";
+                result.failure_reason = search_failure;
                 result.map_identity = map_identity;
                 return result;
               }
@@ -155,10 +164,13 @@ struct Fixture {
     };
     actions.publish_status = [this](const GoalPlanStatus &status) { statuses.push_back(status); };
     actions.inspection_active = [this] { return inspection_active; };
-    actions.inspection_leg_failed = [](const std::string &, double) {};
+    actions.inspection_leg_failed = [this](const std::string &, double) {
+      ++inspection_leg_failed_calls;
+    };
     actions.inspection_pause = [](const std::string &) {};
-    actions.inspection_plan_ready = [](double) {
-      return lingtu::nav::endpoint::GoalPlanInspectionDecision{};
+    actions.inspection_plan_ready = [this](double) {
+      ++inspection_plan_ready_calls;
+      return inspection_decision;
     };
     actions.activate_path = [this](const GoalPlanPathActivation &activation) {
       activations.push_back(activation);
@@ -241,6 +253,7 @@ struct Fixture {
     input.steady_now_s = steady_now_s;
     input.wall_now_s = wall_now_s;
     input.fresh_admission = admission();
+    input.inspection_active = inspection_active;
     return input;
   }
 
@@ -272,26 +285,6 @@ struct Fixture {
     };
   }
 
-  GoalReplanRuntimeAutonomyEvent persistentObstructionEvent() const {
-    GoalReplanTrigger trigger;
-    trigger.kind = GoalReplanTriggerKind::kPersistentPathObstruction;
-    trigger.reason = "persistent_path_obstruction";
-    trigger.goal = activeIdentity();
-    trigger.temporary_overlay.revision = 91U;
-    trigger.temporary_overlay.frame_epoch = 3U;
-    trigger.temporary_overlay.obstacle_generation = 101U;
-    trigger.temporary_overlay.blocked_regions = {
-        {{1.0, 0.25, 0.2}, 0.65, -0.4, 1.6},
-        {{2.5, -0.5, 0.3}, 0.55, -0.3, 1.7},
-    };
-    return {
-        AutonomyTickOutcome{AutonomyTickOutcomeKind::kGoalFailed, "persistent_path_obstruction",
-                            false, trigger},
-        goal_plan.snapshot(),
-        false,
-        false,
-    };
-  }
   GoalReplanRuntimeAutonomyEvent reachedEvent() const {
     return {
         AutonomyTickOutcome{AutonomyTickOutcomeKind::kGoalReached,
@@ -566,16 +559,6 @@ void testStaleExternalTerminalFailureCannotEndTheCurrentGoal() {
           "a stale external timeout stopped a different goal generation");
 }
 
-void testPersistentObstructionCannotBypassLocalRecovery() {
-  Fixture fixture;
-  fixture.activate(fixture.request());
-  const auto event = fixture.persistentObstructionEvent();
-  const auto result = fixture.coordinator.handleAutonomyOutcome(fixture.frameInput(300.0), event);
-  require(!result.replan_started && !result.terminal_after_stop &&
-              fixture.stop_control_calls == 0 && fixture.planner_calls.load() == 1,
-          "an obstruction report alone must not stop or replan an active task");
-}
-
 void testHandleAutonomyOutcomeDoesNotAdvanceOrResume() {
   Fixture fixture;
   fixture.activate(fixture.request());
@@ -735,13 +718,15 @@ void testSteadyClockOwnsRetryDeadlineAcrossWallRegression() {
 
   const auto observed = fixture.coordinator.advancePlanningCycle(fixture.frameInput(320.0, 1000.0));
   require(!observed.terminal_after_stop.has_value() &&
-              !fixture.coordinator.snapshot().budget_consumed,
+              fixture.coordinator.snapshot().state !=
+                  lingtu::nav::endpoint::BoundedGoalReplanState::kCancelled,
           "initial dual-clock observation failed");
   const auto wall_regressed =
       fixture.coordinator.advancePlanningCycle(fixture.frameInput(320.1, 900.0));
   require(!wall_regressed.terminal_after_stop.has_value() &&
-              !fixture.coordinator.snapshot().budget_consumed,
-          "wall-clock regression consumed the bounded steady-clock budget");
+              fixture.coordinator.snapshot().state !=
+                  lingtu::nav::endpoint::BoundedGoalReplanState::kCancelled,
+          "wall-clock regression cancelled the steady-clock retry");
 
   const auto event = fixture.recoveryEvent();
   const auto armed =
@@ -775,8 +760,9 @@ void testInvalidWallTimeFailsClosedBeforePlannerAdvance() {
   require(failed.reason == "invalid_wall_time" && failed.terminal_after_stop.has_value() &&
               !failed.plan_advance.completion_consumed && !failed.plan_advance.path_activated &&
               fixture.activations.size() == activation_count &&
-              !fixture.coordinator.snapshot().budget_consumed,
-          "invalid wall time reached GoalPlan or consumed the steady retry budget");
+              fixture.coordinator.snapshot().state !=
+                  lingtu::nav::endpoint::BoundedGoalReplanState::kCancelled,
+          "invalid wall time reached GoalPlan or cancelled the steady-clock retry");
   fixture.commitTerminal(failed);
   require(fixture.countStatus("task-a", NavigationGoalState::Failed) == 1U &&
               fixture.goal_plan.snapshot().active_task_id.empty(),
@@ -1351,8 +1337,6 @@ void testDeferredReplacementInterruptionsCloseBWithExactNonProjectingTerminals()
        TerminalStopPolicy::kEstop},
       {GoalReplanRuntimeInterruption::kShutdown, NavigationGoalState::Cancelled, "navd_shutdown",
        TerminalStopPolicy::kShutdown},
-      {GoalReplanRuntimeInterruption::kOperatorTakeover, NavigationGoalState::Cancelled,
-       "operator_takeover_resume_required", TerminalStopPolicy::kGenericStop},
       {GoalReplanRuntimeInterruption::kDriverAuthorityLost, NavigationGoalState::Cancelled,
        "driver_authority_lost", TerminalStopPolicy::kGenericStop},
       {GoalReplanRuntimeInterruption::kControlHold, NavigationGoalState::Cancelled, "control_hold",
@@ -1834,6 +1818,8 @@ void testInspectionOutcomesSurfaceTicketedTerminalsAndRollingStaysExcluded() {
   auto failed_event = inspection_failed.recoveryEvent();
   failed_event.inspection_active = true;
   failed_event.outcome.reason = "inspection_action_failed";
+  failed_event.outcome.replan_trigger.reset();
+  failed_event.outcome.terminal_failure_intent = true;
   const auto failed_result =
       inspection_failed.coordinator.handleAutonomyOutcome(failed_frame, failed_event);
   require(failed_result.terminal_after_stop.has_value() &&
@@ -1887,8 +1873,9 @@ void testStopAndZeroFailuresOnlyReturnTerminalIntents() {
   stop_failed.clear_motion_ok = false;
   auto stopped = stop_failed.arm(20.0);
   require(stopped.terminal_after_stop.has_value(), "stop failure did not return terminal intent");
-  require(stop_failed.coordinator.snapshot().budget_consumed,
-          "stop failure did not consume retry budget");
+  require(stop_failed.coordinator.snapshot().state ==
+              lingtu::nav::endpoint::BoundedGoalReplanState::kCancelled,
+          "failed zero publication did not cancel retry execution");
   require(stop_failed.countStatus("task-a", NavigationGoalState::Failed) == 0U,
           "stop failure published terminal before a confirmed stop");
   stop_failed.clear_motion_ok = true;
@@ -1911,27 +1898,250 @@ void testStopAndZeroFailuresOnlyReturnTerminalIntents() {
           "zero refresh terminal did not commit once");
 }
 
-void testPlannerFailureConsumesBudgetAndDefersTerminal() {
+void testInspectionLocalRecoveryRetriesWithoutEndingTheWaypoint() {
+  Fixture fixture;
+  fixture.inspection_active = true;
+  fixture.inspection_decision.tolerance =
+      lingtu::nav::endpoint::GoalPlanPathTolerance{0.13, 0.07};
+  auto goal = fixture.request();
+  goal.origin = GoalPlanOrigin::kInspection;
+  fixture.activate(goal);
+  const auto original = fixture.goal_plan.snapshot();
+  fixture.fail_on_call.store(2);
+
+  auto event = fixture.recoveryEvent();
+  event.inspection_active = true;
+  const auto armed = fixture.coordinator.handleAutonomyOutcome(fixture.frameInput(39.0), event);
+  require(armed.reason == "backoff_pending" && !armed.terminal_after_stop &&
+              !fixture.coordinator.terminalPending(),
+          "inspection local recovery ended the waypoint instead of scheduling replan");
+  const auto started = fixture.coordinator.advancePlanningCycle(fixture.frameInput(39.5));
+  require(started.replan_started && !started.terminal_after_stop,
+          "active inspection waypoint could not start a shared replan");
+  const auto waiting = fixture.waitForPlanning(
+      [](const GoalReplanRuntimeResult &result) { return result.plan_advance.completion_consumed; },
+      39.501);
+  require(waiting.reason == "replan_waiting" && !waiting.terminal_after_stop &&
+              fixture.inspection_leg_failed_calls == 0,
+          "temporary inspection no-path invoked business failure policy");
+  const auto retained = fixture.goal_plan.snapshot();
+  require(retained.active_task_id == original.active_task_id &&
+              retained.active_request_id == original.active_request_id &&
+              retained.active_goal_epoch == original.active_goal_epoch &&
+              retained.active_origin == GoalPlanOrigin::kInspection,
+          "inspection no-path changed the active waypoint identity");
+
+  const auto retry = fixture.coordinator.snapshot();
+  const auto restarted =
+      fixture.coordinator.advancePlanningCycle(fixture.frameInput(retry.deadline_s));
+  require(restarted.replan_started && !restarted.terminal_after_stop,
+          "inspection waypoint did not retry its retained destination");
+  const auto completed = fixture.waitForPlanning(
+      [](const GoalReplanRuntimeResult &result) { return result.plan_advance.path_activated; },
+      retry.deadline_s + 0.001);
+  require(completed.reason == "replan_completed" && fixture.activations.size() == 2U &&
+              fixture.planner_calls.load() == 3 && fixture.inspection_plan_ready_calls == 2 &&
+              fixture.inspection_leg_failed_calls == 0 &&
+              fixture.countStatus("task-a", NavigationGoalState::Failed) == 0U &&
+              fixture.activations.back().tolerance &&
+              fixture.activations.back().tolerance->position_m == 0.13 &&
+              fixture.activations.back().tolerance->yaw_rad == 0.07,
+          "inspection replan lost arrival tolerance or emitted a premature failure");
+}
+
+void testPlannerNoPathWaitsAndRetriesSameGoal() {
+  Fixture fixture;
+  fixture.activate(fixture.request());
+  const auto original = fixture.goal_plan.snapshot();
+  fixture.fail_on_call.store(2);
+  (void)fixture.startReplan(40.0);
+  const auto waiting = fixture.waitForPlanning(
+      [](const GoalReplanRuntimeResult &result) { return result.plan_advance.completion_consumed; },
+      40.501);
+  require(waiting.reason == "replan_waiting" && waiting.zero_kept_fresh &&
+              !waiting.terminal_after_stop.has_value() && !fixture.coordinator.terminalPending(),
+          "ordinary no-path completion terminated the task or stopped refreshing zero");
+  const auto retained = fixture.goal_plan.snapshot();
+  require(retained.active_task_id == original.active_task_id &&
+              retained.active_request_id == original.active_request_id &&
+              retained.active_goal_epoch == original.active_goal_epoch &&
+              retained.active_map_identity && original.active_map_identity &&
+              lingtu::nav::plan::sameMapIdentity(*retained.active_map_identity,
+                                               *original.active_map_identity) &&
+              retained.diagnostics.reason == "planned_failure",
+          "no-path wait changed the active destination identity or hid the search failure");
+  require(fixture.statuses.back().state == NavigationGoalState::PathActive &&
+              fixture.statuses.back().reason == "replan_waiting" &&
+              !decideGoalTerminalScheduling(waiting, false).run_autonomy_tick,
+          "waiting did not publish a nonterminal state or allowed stale path execution");
+  const auto retry = fixture.coordinator.snapshot();
+  require(retry.state == lingtu::nav::endpoint::BoundedGoalReplanState::kBackoffPending,
+          "ordinary no-path completion did not schedule a later retry");
+  const auto early = fixture.coordinator.advancePlanningCycle(
+      fixture.frameInput(retry.deadline_s - 0.001));
+  require(early.reason == "backoff_pending" && early.zero_kept_fresh && !early.replan_started &&
+              fixture.planner_calls.load() == 2 &&
+              !decideGoalTerminalScheduling(early, false).run_autonomy_tick,
+          "waiting restarted too early or resumed the old local path");
+  const auto started = fixture.coordinator.advancePlanningCycle(fixture.frameInput(retry.deadline_s));
+  require(started.replan_started && !started.terminal_after_stop.has_value(),
+          "retained destination could not start another global search");
+  const auto completed = fixture.waitForPlanning(
+      [](const GoalReplanRuntimeResult &result) { return result.plan_advance.path_activated; },
+      retry.deadline_s + 0.001);
+  require(completed.reason == "replan_completed" && fixture.activations.size() == 2U &&
+              fixture.planner_calls.load() == 3 &&
+              fixture.countStatus("task-a", NavigationGoalState::Failed) == 0U,
+          "waiting retry did not activate a new path without an intermediate failure");
+  const auto requests = fixture.plannerRequests();
+  require(requests.size() == 3U && requests[1].goal.x == requests[2].goal.x &&
+              requests[1].goal.y == requests[2].goal.y &&
+              requests[1].goal.z == requests[2].goal.z,
+          "automatic retry changed the requested destination");
+}
+
+void testPendingReplanPauseResumeKeepsDestination() {
+  for (bool stop_pending : {false, true}) {
+    Fixture fixture;
+    fixture.activate(fixture.request());
+    if (stop_pending) {
+      fixture.confirmation = StopConfirmationState::Pending;
+      require(fixture.arm(420.0).reason == "stop_pending", "stop-pending fixture did not wait");
+      fixture.confirmation = StopConfirmationState::Confirmed;
+    } else {
+      fixture.fail_on_call.store(2);
+      (void)fixture.startReplan(420.0);
+      const auto waiting = fixture.waitForPlanning(
+          [](const GoalReplanRuntimeResult &result) { return result.plan_advance.completion_consumed; },
+          420.501);
+      require(waiting.reason == "replan_waiting", "no-path fixture did not enter waiting");
+    }
+    require(fixture.coordinator.replanPending(), "pending retry lost its source before pausing");
+    auto pause = fixture.goal_plan.deferPause("task-a", "pause-request", "operator_pause");
+    require(pause.accepted, "waiting task rejected pause");
+    pause.commit();
+    const int calls_before_pause = fixture.planner_calls.load();
+    const int zero_calls_before_pause = fixture.keep_zero_calls;
+    for (double now : {430.0, 430.1}) {
+      const auto paused = fixture.coordinator.advancePlanningCycle(fixture.frameInput(now));
+      require(paused.reason == "task_paused" && !paused.zero_kept_fresh &&
+                  !paused.replan_started && !paused.terminal_after_stop.has_value() &&
+                  fixture.planner_calls.load() == calls_before_pause,
+              "paused retry searched past its deadline, resumed motion, or ended the task");
+    }
+    require(fixture.keep_zero_calls == zero_calls_before_pause,
+            "paused retry coordinator emitted a redundant zero command");
+    auto resume_context = fixture.admission();
+    resume_context.retained_path_ready = false;
+    resume_context.replan_pending = fixture.coordinator.replanPending();
+    auto resume = fixture.goal_plan.deferResume("task-a", "resume-request", resume_context);
+    require(resume.accepted, "waiting destination without an installed path rejected resume");
+    resume.commit();
+    auto started = fixture.coordinator.advancePlanningCycle(fixture.frameInput(431.0));
+    if (stop_pending) {
+      require(started.reason == "backoff_pending" && !started.replan_started,
+              "resumed stop-pending task did not confirm stop before arming");
+      started = fixture.coordinator.advancePlanningCycle(
+          fixture.frameInput(fixture.coordinator.snapshot().deadline_s));
+    }
+    require(started.replan_started && !started.terminal_after_stop.has_value(),
+            "resumed retry rejected the changed command request identity");
+    const auto completed = fixture.waitForPlanning(
+        [](const GoalReplanRuntimeResult &result) { return result.plan_advance.path_activated; },
+        432.0);
+    const auto active = fixture.goal_plan.snapshot();
+    require(completed.reason == "replan_completed" && active.active_task_id == "task-a" &&
+                active.active_request_id == "resume-request" &&
+                !fixture.coordinator.replanPending() &&
+                fixture.countStatus("task-a", NavigationGoalState::Failed) == 0U,
+            "pause/resume did not continue the same destination after waiting");
+  }
+}
+
+void testInFlightReplanPauseDrainsBeforeResume() {
+  Fixture fixture;
+  fixture.activate(fixture.request());
+  fixture.block_on_call.store(2);
+  (void)fixture.startReplan(480.0);
+  fixture.waitForPlannerCalls(2, "in-flight pause search did not start");
+  auto pause = fixture.goal_plan.deferPause("task-a", "pause-request", "operator_pause");
+  require(pause.accepted, "in-flight search rejected task pause");
+  pause.commit();
+  const int zero_calls_before_pause = fixture.keep_zero_calls;
+  for (int i = 0; i < 2000; ++i) {
+    const auto held = fixture.coordinator.advancePlanningCycle(
+        fixture.frameInput(481.0 + i * 0.001));
+    require(held.reason == "task_paused" && !held.zero_kept_fresh && !held.replan_started &&
+                !held.plan_advance.path_activated && !held.terminal_after_stop.has_value() &&
+                fixture.activations.size() == 1U && fixture.planner_calls.load() == 2,
+            "paused search activated a cancelled path, searched again, or terminated the goal");
+    if (!fixture.goal_plan.snapshot().busy) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  require(fixture.keep_zero_calls == zero_calls_before_pause,
+          "paused in-flight search coordinator emitted a redundant zero command");
+  require(!fixture.goal_plan.snapshot().busy && fixture.cancelled_plans.load() == 1 &&
+              fixture.goal_plan.snapshot().active_paused && fixture.coordinator.replanPending() &&
+              fixture.coordinator.snapshot().state ==
+                  lingtu::nav::endpoint::BoundedGoalReplanState::kBackoffPending,
+          "cancelled paused search did not drain into a retained retry");
+  auto resume_context = fixture.admission();
+  resume_context.retained_path_ready = false;
+  resume_context.replan_pending = fixture.coordinator.replanPending();
+  auto resume = fixture.goal_plan.deferResume("task-a", "resume-request", resume_context);
+  require(resume.accepted, "drained paused search rejected resume without an installed path");
+  resume.commit();
+  const auto started = fixture.coordinator.advancePlanningCycle(fixture.frameInput(500.0));
+  require(started.replan_started && !started.terminal_after_stop.has_value(),
+          "resumed paused search stayed stuck in flight");
+  const auto completed = fixture.waitForPlanning(
+      [](const GoalReplanRuntimeResult &result) { return result.plan_advance.path_activated; },
+      500.001);
+  require(completed.reason == "replan_completed" && fixture.activations.size() == 2U &&
+              fixture.goal_plan.snapshot().active_task_id == "task-a" &&
+              fixture.goal_plan.snapshot().active_request_id == "resume-request" &&
+              fixture.countStatus("task-a", NavigationGoalState::Failed) == 0U &&
+              fixture.countStatus("task-a", NavigationGoalState::Cancelled) == 0U,
+          "resumed cancelled search did not complete the same retained destination");
+}
+
+void testDriverHeartbeatGapPreservesPendingReplan() {
   Fixture fixture;
   fixture.activate(fixture.request());
   fixture.fail_on_call.store(2);
-  (void)fixture.startReplan(40.0);
-  auto failed = fixture.waitForPlanning(
-      [](const GoalReplanRuntimeResult &result) { return result.terminal_after_stop.has_value(); },
-      40.501);
-  require(failed.reason == "planned_failure", "planner failure reason changed");
-  require(fixture.coordinator.snapshot().budget_consumed, "planner failure did not consume budget");
-  require(fixture.countStatus("task-a", NavigationGoalState::Failed) == 0U,
-          "planner failure published terminal before stop barrier");
-  fixture.commitTerminal(failed);
-  require(fixture.countStatus("task-a", NavigationGoalState::Failed) == 1U,
-          "planner failure terminal did not commit once");
+  (void)fixture.startReplan(450.0);
+  const auto waiting = fixture.waitForPlanning(
+      [](const GoalReplanRuntimeResult &result) { return result.plan_advance.completion_consumed; },
+      450.501);
+  require(waiting.reason == "replan_waiting", "driver-gap fixture did not enter waiting");
+  const auto interrupted = fixture.coordinator.interrupt(
+      GoalReplanRuntimeInterruption::kDriverAuthorityLost, 451.0);
+  require(!interrupted.terminal_after_stop.has_value() && fixture.coordinator.replanPending() &&
+              fixture.goal_plan.snapshot().active_task_id == "task-a",
+          "temporary driver heartbeat gap discarded the retained retry");
+  auto blocked = fixture.frameInput(452.0);
+  blocked.fresh_admission.driver_control_blocker = "driver_heartbeat_stale";
+  const auto held = fixture.coordinator.advancePlanningCycle(blocked);
+  require(held.reason == "driver_control_hold_pending" && held.zero_kept_fresh &&
+              !held.replan_started && !held.terminal_after_stop.has_value() &&
+              fixture.planner_calls.load() == 2 &&
+              !decideGoalTerminalScheduling(held, false).run_autonomy_tick,
+          "driver gap started a search or resumed the old path");
+  const auto resumed = fixture.coordinator.advancePlanningCycle(fixture.frameInput(453.0));
+  require(resumed.replan_started && !resumed.terminal_after_stop.has_value(),
+          "healthy driver heartbeat did not resume the retained retry");
+  const auto completed = fixture.waitForPlanning(
+      [](const GoalReplanRuntimeResult &result) { return result.plan_advance.path_activated; },
+      453.001);
+  require(completed.reason == "replan_completed" && fixture.activations.size() == 2U &&
+              !fixture.coordinator.replanPending(),
+          "driver recovery did not activate a new path for the same destination");
 }
 
 void testTerminalIntentPersistsUntilExactSuccessfulAck() {
   Fixture fixture;
   fixture.activate(fixture.request());
-  fixture.fail_on_call.store(2);
+  fixture.throw_on_call.store(2);
   (void)fixture.startReplan(45.0);
   auto pending = fixture.waitForPlanning(
       [](const GoalReplanRuntimeResult &result) { return result.terminal_after_stop.has_value(); },
@@ -1978,7 +2188,7 @@ void testTerminalIntentPersistsUntilExactSuccessfulAck() {
   require(!fixture.coordinator.advancePlanningCycle(fixture.frameInput(46.2)).terminal_after_stop,
           "acknowledged terminal intent resurfaced");
 
-  fixture.fail_on_call.store(0);
+  fixture.throw_on_call.store(0);
   fixture.activate(fixture.request("task-a", "request-a-reused"));
   fixture.clear_motion_ok = false;
   auto second = fixture.arm(47.0);
@@ -1995,7 +2205,7 @@ void testTerminalIntentPersistsUntilExactSuccessfulAck() {
 void testReplayPendingTerminalIsReadOnlyExactSingleOwnerView() {
   Fixture fixture;
   fixture.activate(fixture.request());
-  fixture.fail_on_call.store(2);
+  fixture.throw_on_call.store(2);
   (void)fixture.startReplan(48.0);
   auto pending = fixture.waitForPlanning(
       [](const GoalReplanRuntimeResult &result) { return result.terminal_after_stop.has_value(); },
@@ -2034,7 +2244,7 @@ void testReplayPendingTerminalIsReadOnlyExactSingleOwnerView() {
           "acknowledged terminal replay did not become empty");
 }
 
-void testOnlyNewTaskRestoresRetryBudget() {
+void testSameTaskCanReplanAgainAfterSuccessAndResume() {
   Fixture fixture;
   fixture.activate(fixture.request());
   (void)fixture.startReplan(50.0);
@@ -2050,18 +2260,41 @@ void testOnlyNewTaskRestoresRetryBudget() {
   require(resume.accepted, "same-task resume was rejected");
   resume.commit();
 
-  auto exhausted = fixture.arm(51.0);
-  require(exhausted.terminal_after_stop.has_value(),
-          "same task/request transition reset retry budget");
-  fixture.commitTerminal(exhausted);
+  const auto armed_again = fixture.arm(51.0);
+  require(armed_again.reason == "backoff_pending" && !armed_again.terminal_after_stop.has_value(),
+          "same task could not retry after a successful replan and pause/resume");
+  const auto started_again = fixture.coordinator.advancePlanningCycle(fixture.frameInput(51.5));
+  require(started_again.replan_started, "same task did not start its next replan");
+  const auto completed_again = fixture.waitForPlanning(
+      [](const GoalReplanRuntimeResult &result) { return result.plan_advance.path_activated; },
+      51.501);
+  require(completed_again.reason == "replan_completed" &&
+              fixture.goal_plan.snapshot().active_task_id == "task-a" &&
+              fixture.goal_plan.snapshot().active_request_id == "resume-request" &&
+              fixture.countStatus("task-a", NavigationGoalState::Failed) == 0U,
+          "another successful replan changed the retained task or ended it");
 
-  fixture.activate(fixture.request("task-b", "request-b"));
+  const auto preemption = fixture.coordinator.interrupt(GoalReplanRuntimeInterruption::kNewGoal, 52.0);
+  require(!preemption.terminal_after_stop.has_value() &&
+              fixture.goal_plan.submit(fixture.request("task-b", "request-b"), fixture.admission())
+                  .accepted,
+          "new destination could not start the replacement transaction");
+  const auto old_terminal = fixture.waitForPlanning(
+      [](const GoalReplanRuntimeResult &result) { return result.terminal_after_stop.has_value(); },
+      52.001);
+  fixture.commitTerminal(old_terminal);
+  const auto new_path = fixture.waitForPlanning(
+      [](const GoalReplanRuntimeResult &result) { return result.plan_advance.path_activated; },
+      54.1);
+  require(new_path.plan_advance.path_activated &&
+              fixture.goal_plan.snapshot().active_task_id == "task-b",
+          "new destination did not activate after the old task stop transaction");
   auto fresh = fixture.arm(60.0);
   require(fresh.reason == "backoff_pending" && !fresh.terminal_after_stop.has_value(),
-          "new task did not receive a fresh retry budget");
+          "new task did not retain its own retry timing");
 }
 
-void testPendingGoalDrainsAndResumesWithFreshBudget() {
+void testPendingGoalDrainsAndResumesWithFreshRetryTiming() {
   for (const char *reason : {"", "local_collision_missing", "local_collision_future",
                              "collision_stale"}) {
     Fixture fixture;
@@ -2112,7 +2345,7 @@ void testPendingGoalDrainsAndResumesWithFreshBudget() {
 
     auto fresh = fixture.arm(73.0);
     require(fresh.reason == "backoff_pending" && !fresh.terminal_after_stop.has_value(),
-            "task B did not get a fresh retry budget");
+            "task B did not get fresh retry timing");
   }
 }
 
@@ -2213,14 +2446,114 @@ void testReplacementPlannerFailureDefersOldActiveTerminal() {
           "old active A terminal was not committed exactly once");
 }
 
-void testAllInterruptionsConsumeActiveAttempt() {
+void testOperatorTakeoverPausesAndPreservesEverySingleGoalPhase() {
+  {
+    Fixture fixture;
+    fixture.activate(fixture.request());
+    const auto before = fixture.goal_plan.snapshot();
+    const auto armed = fixture.arm(500.0);
+    require(armed.reason == "backoff_pending",
+            "operator-takeover retry fixture did not arm bounded retry");
+    const auto retry_before = fixture.coordinator.snapshot();
+    fixture.confirmation = StopConfirmationState::Pending;
+    const auto takeover = fixture.coordinator.interrupt(
+        GoalReplanRuntimeInterruption::kOperatorTakeover, 500.1);
+    require(takeover.handled && takeover.interrupted && takeover.zero_kept_fresh &&
+                takeover.reason == "task_pause_pending" &&
+                !takeover.terminal_after_stop.has_value() &&
+                !fixture.coordinator.terminalPending(),
+            "operator takeover converted an asynchronous pause into a terminal failure");
+    const auto preparing = fixture.goal_plan.snapshot();
+    require(preparing.pause_pending && !preparing.active_paused &&
+                preparing.active_task_id == before.active_task_id &&
+                preparing.active_goal_epoch == before.active_goal_epoch &&
+                fixture.coordinator.snapshot().state == retry_before.state &&
+                fixture.coordinator.replanPending(),
+            "operator takeover discarded active identity or bounded retry while stopping");
+    const int stop_calls = fixture.stop_control_calls;
+    const int zero_calls = fixture.keep_zero_calls;
+    const auto duplicate = fixture.coordinator.interrupt(
+        GoalReplanRuntimeInterruption::kOperatorTakeover, 500.2);
+    require(duplicate.reason == "task_pause_pending" &&
+                fixture.stop_control_calls == stop_calls &&
+                fixture.keep_zero_calls == zero_calls && fixture.goal_plan.snapshot().pause_pending,
+            "duplicate takeover restarted the pause transaction");
+
+    fixture.confirmation = StopConfirmationState::Confirmed;
+    const auto confirmed = fixture.motion_stop.poll();
+    require(confirmed && confirmed->accepted && !confirmed->pending,
+            "operator pause did not commit after asynchronous stop confirmation");
+    const auto paused = fixture.goal_plan.snapshot();
+    require(paused.active_paused && !paused.pause_pending &&
+                paused.active_task_id == before.active_task_id &&
+                paused.active_goal_epoch == before.active_goal_epoch &&
+                fixture.countStatus("task-a", NavigationGoalState::Cancelled) == 0U,
+            "confirmed operator takeover cancelled or replaced the active goal");
+    const auto released = fixture.coordinator.advancePlanningCycle(fixture.frameInput(500.3));
+    require(released.reason == "task_paused" && !released.zero_kept_fresh &&
+                fixture.goal_plan.snapshot().active_paused &&
+                fixture.coordinator.snapshot().state == retry_before.state &&
+                fixture.keep_zero_calls == zero_calls,
+            "release without explicit resume restarted a paused retry");
+  }
+
+  {
+    Fixture fixture;
+    auto waiting = fixture.admission();
+    waiting.map_position.reset();
+    waiting.odometry_ready = false;
+    require(fixture.goal_plan.submit(fixture.request(), waiting).accepted,
+            "operator pending fixture could not queue a goal");
+    const auto before = fixture.goal_plan.snapshot();
+    const auto takeover = fixture.coordinator.interrupt(
+        GoalReplanRuntimeInterruption::kOperatorTakeover, 510.0);
+    const auto paused = fixture.goal_plan.snapshot();
+    require(takeover.reason == "task_paused" && !takeover.terminal_after_stop &&
+                paused.active_paused && paused.pending_plan_queued &&
+                paused.pending_task_id == before.pending_task_id &&
+                paused.pending_goal_epoch == before.pending_goal_epoch,
+            "operator takeover lost a queued goal or changed its epoch");
+    const int zero_calls = fixture.keep_zero_calls;
+    const auto held = fixture.coordinator.drainPendingCycle(fixture.frameInput(510.1));
+    require(held.reason == "task_paused" && !held.zero_kept_fresh && !held.pending_resumed &&
+                fixture.planner_calls.load() == 0 && fixture.keep_zero_calls == zero_calls,
+            "operator release automatically started a paused pending goal");
+  }
+
+  {
+    Fixture fixture;
+    fixture.block_on_call.store(1);
+    require(fixture.goal_plan.submit(fixture.request(), fixture.admission()).accepted,
+            "operator planning fixture could not start a goal");
+    fixture.waitForPlannerCalls(1, "operator planning fixture worker did not start");
+    const auto before = fixture.goal_plan.snapshot();
+    const auto takeover = fixture.coordinator.interrupt(
+        GoalReplanRuntimeInterruption::kOperatorTakeover, 520.0);
+    const auto paused = fixture.goal_plan.snapshot();
+    require(takeover.reason == "task_paused" && !takeover.terminal_after_stop &&
+                paused.active_paused && paused.pending_plan_queued &&
+                paused.pending_task_id == before.planning_task_id &&
+                paused.pending_goal_epoch == before.planning_goal_epoch,
+            "operator takeover did not preserve an in-flight planning goal");
+    for (int i = 0; i < 1000 && fixture.goal_plan.snapshot().busy; ++i) {
+      const auto held = fixture.coordinator.advancePlanningCycle(
+          fixture.frameInput(520.1 + i * 0.001));
+      require(!held.plan_advance.path_activated && !held.terminal_after_stop,
+              "late cancelled planning result activated during operator pause");
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(!fixture.goal_plan.snapshot().busy && fixture.activations.empty() &&
+                fixture.goal_plan.snapshot().active_paused,
+            "operator-paused planning worker did not drain without activation");
+  }
+}
+
+void testIntentionalInterruptionsCancelActiveAttempt() {
   const std::vector<GoalReplanRuntimeInterruption> interruptions = {
       GoalReplanRuntimeInterruption::kNewGoal,
       GoalReplanRuntimeInterruption::kCancel,
       GoalReplanRuntimeInterruption::kStop,
       GoalReplanRuntimeInterruption::kEstop,
-      GoalReplanRuntimeInterruption::kOperatorTakeover,
-      GoalReplanRuntimeInterruption::kDriverAuthorityLost,
       GoalReplanRuntimeInterruption::kControlHold,
       GoalReplanRuntimeInterruption::kInspectionPause,
       GoalReplanRuntimeInterruption::kInspectionCancel,
@@ -2241,7 +2574,6 @@ void testAllInterruptionsConsumeActiveAttempt() {
         interruptions[i] == GoalReplanRuntimeInterruption::kCancel ||
         interruptions[i] == GoalReplanRuntimeInterruption::kStop ||
         interruptions[i] == GoalReplanRuntimeInterruption::kEstop ||
-        interruptions[i] == GoalReplanRuntimeInterruption::kOperatorTakeover ||
         interruptions[i] == GoalReplanRuntimeInterruption::kControlHold ||
         interruptions[i] == GoalReplanRuntimeInterruption::kInspectionPause ||
         interruptions[i] == GoalReplanRuntimeInterruption::kInspectionCancel ||
@@ -2259,11 +2591,6 @@ void testAllInterruptionsConsumeActiveAttempt() {
                   ticket.statuses.front().reason == "estop_latched" &&
                   ticket.statuses.front().project_to_navigation_state,
               "active estop must create a durable Cancelled/estop_latched terminal");
-    }
-    if (interruptions[i] == GoalReplanRuntimeInterruption::kDriverAuthorityLost) {
-      require(!interrupted.terminal_after_stop.has_value() &&
-                  fixture.goal_plan.snapshot().active_task_id == "task-a",
-              "transient driver loss cancelled the active navigation goal");
     }
   }
 
@@ -2364,8 +2691,9 @@ void testInvalidTimeAdmissionAndIdentityFailClosed() {
     const auto event = fixture.recoveryEvent();
     auto failed = fixture.coordinator.handleAutonomyOutcome(frame, event);
     require(failed.terminal_after_stop.has_value() &&
-                fixture.coordinator.snapshot().budget_consumed,
-            "invalid time did not consume the current task budget");
+                fixture.coordinator.snapshot().state ==
+                    lingtu::nav::endpoint::BoundedGoalReplanState::kCancelled,
+            "invalid time did not cancel the current retry");
   }
 
   Fixture rollback;
@@ -2373,7 +2701,8 @@ void testInvalidTimeAdmissionAndIdentityFailClosed() {
   (void)rollback.coordinator.advancePlanningCycle(rollback.frameInput(220.0, 1000.0));
   auto regressed = rollback.coordinator.advancePlanningCycle(rollback.frameInput(219.0, 1001.0));
   require(regressed.terminal_after_stop.has_value() &&
-              rollback.coordinator.snapshot().budget_consumed,
+              rollback.coordinator.snapshot().state ==
+                  lingtu::nav::endpoint::BoundedGoalReplanState::kCancelled,
           "clock rollback did not fail closed");
 
   Fixture missing;
@@ -2384,8 +2713,9 @@ void testInvalidTimeAdmissionAndIdentityFailClosed() {
   auto missing_result = missing.coordinator.handleAutonomyOutcome(missing_frame, missing_event);
   require(missing_result.terminal_after_stop.has_value() &&
               missing.coordinator.snapshot().task_id == "task-a" &&
-              missing.coordinator.snapshot().budget_consumed,
-          "missing captured identity did not observe then consume current task");
+              missing.coordinator.snapshot().state ==
+                  lingtu::nav::endpoint::BoundedGoalReplanState::kCancelled,
+          "missing captured identity did not cancel the current retry");
 
   Fixture invalid_position;
   invalid_position.activate(invalid_position.request());
@@ -2575,15 +2905,18 @@ void testGoalTerminalSchedulingDecisionTable() {
     const char *name;
     bool surfaced_terminal;
     bool terminal_pending;
+    bool zero_kept_fresh;
     bool expect_service_terminal;
     bool expect_autonomy_tick;
   };
 
   const Case cases[] = {
-      {"no_terminal_and_not_pending_allows_autonomy", false, false, false, true},
-      {"surfaced_terminal_services_and_freezes_autonomy_this_tick", true, false, true, false},
-      {"surfaced_terminal_while_pending_services_and_freezes_autonomy", true, true, true, false},
-      {"pending_without_surface_skips_service_and_autonomy", false, true, false, false},
+      {"no_terminal_and_not_pending_allows_autonomy", false, false, false, false, true},
+      {"surfaced_terminal_services_and_freezes_autonomy_this_tick", true, false, false, true, false},
+      {"surfaced_terminal_while_pending_services_and_freezes_autonomy", true, true, false, true,
+       false},
+      {"pending_without_surface_skips_service_and_autonomy", false, true, false, false, false},
+      {"retry_zero_hold_skips_autonomy_without_a_terminal", false, false, true, false, false},
   };
 
   for (const Case &entry : cases) {
@@ -2591,6 +2924,7 @@ void testGoalTerminalSchedulingDecisionTable() {
     if (entry.surfaced_terminal) {
       result = terminalResult();
     }
+    result.zero_kept_fresh = entry.zero_kept_fresh;
 
     const GoalTerminalSchedulingDecision decision =
         decideGoalTerminalScheduling(result, entry.terminal_pending);
@@ -2604,16 +2938,79 @@ void testGoalTerminalSchedulingDecisionTable() {
   }
 }
 
+void testInitialSearchFailuresRemainPlanningAcrossRuntimeRetries() {
+  for (bool inspection : {false, true}) {
+    Fixture fixture;
+    fixture.inspection_active = inspection;
+    fixture.search_failure = "empty_path";
+    fixture.fail_on_call = 1;
+    auto goal = fixture.request();
+    if (inspection) goal.origin = GoalPlanOrigin::kInspection;
+    require(fixture.goal_plan.submit(goal, fixture.admission()).accepted,
+            "initial retry runtime fixture was rejected");
+    double now_s = 600.0;
+    const auto complete = [&] {
+      for (int tick = 0; tick < 1000; ++tick) {
+        now_s += .001;
+        auto result = fixture.coordinator.advancePlanningCycle(fixture.frameInput(now_s));
+        require(!result.terminal_after_stop, "ordinary initial search surfaced a terminal");
+        if (result.plan_advance.completion_consumed) return result;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      require(false, "initial retry runtime fixture did not complete");
+      return GoalReplanRuntimeResult{};
+    };
+    (void)complete();
+    require(fixture.goal_plan.snapshot().pending_plan_queued && fixture.activations.empty() &&
+                fixture.countStatus(goal.task_id, NavigationGoalState::Failed) == 0U,
+            "initial ordinary no-path result dropped the runtime goal");
+    auto early = fixture.frameInput(now_s + .499);
+    const auto held = fixture.coordinator.drainPendingCycle(early);
+    require(held.zero_kept_fresh && held.reason == "planning_waiting" &&
+                !held.terminal_after_stop && fixture.planner_calls == 1,
+            "initial runtime retry did not retain zero output during backoff");
+    auto driver_gap = fixture.frameInput(now_s + .5);
+    driver_gap.fresh_admission.driver_control_blocker = "driver_control_stale";
+    const auto driver_held = fixture.coordinator.drainPendingCycle(driver_gap);
+    require(driver_held.zero_kept_fresh && driver_held.reason == "pending_waiting_for_driver" &&
+                !driver_held.terminal_after_stop && fixture.goal_plan.snapshot().pending_plan_queued,
+            "driver gap ended an initial pending runtime goal");
+
+    fixture.fail_on_call = 2;
+    now_s += .51;
+    auto fresh = fixture.frameInput(now_s);
+    fresh.fresh_admission.map_position = nav_kernel::Vec3{1, 2, 0};
+    require(fixture.coordinator.drainPendingCycle(fresh).pending_resumed,
+            "initial runtime goal did not resume with recovered driver");
+    (void)complete();
+    require(fixture.goal_plan.snapshot().pending_plan_queued && fixture.activations.empty() &&
+                !fixture.coordinator.terminalPending(),
+            "second ordinary initial search failure was mistaken for terminal replacement failure");
+    now_s += .5;
+    require(fixture.coordinator.drainPendingCycle(fixture.frameInput(now_s)).pending_resumed,
+            "repeated initial runtime search did not resume again");
+    require(complete().plan_advance.path_activated && fixture.activations.size() == 1U &&
+                fixture.goal_plan.snapshot().active_task_id == goal.task_id &&
+                fixture.goal_plan.snapshot().active_request_id == goal.request_id &&
+                fixture.inspection_leg_failed_calls == 0,
+            "successful runtime retry lost its task or ended the inspection waypoint");
+    const auto requests = fixture.plannerRequests();
+    require(requests.size() == 3U && requests[1].start.x == 1 && requests[1].start.y == 2,
+            "runtime initial retry did not take its fresh pose");
+  }
+}
+
 }  // namespace
 
 int main() {
+  testInitialSearchFailuresRemainPlanningAcrossRuntimeRetries();
+  testInspectionLocalRecoveryRetriesWithoutEndingTheWaypoint();
   testNormalReplanChainHasNoIntermediateTerminal();
   testRuntimeGuardHoldPausesInFlightReplanWithoutTerminal();
   testDriverBlockerPausesInFlightReplanWithoutTerminal();
   testLegacyRecoveryReasonWithoutTypedTriggerDoesNotArm();
   testExternalTerminalFailureWaitsForStopAndEndsWithoutReplanning();
   testStaleExternalTerminalFailureCannotEndTheCurrentGoal();
-  testPersistentObstructionCannotBypassLocalRecovery();
   testHandleAutonomyOutcomeDoesNotAdvanceOrResume();
   testAdvancePlanningCycleProgressesWithoutAutonomyOutcome();
   testRecoveryFailureOnlyArmsUntilAdvanceDeadline();
@@ -2643,14 +3040,18 @@ int main() {
   testTypedTaskCancelRejectsForeignTaskWithoutLifecycleEffects();
   testInspectionOutcomesSurfaceTicketedTerminalsAndRollingStaysExcluded();
   testStopAndZeroFailuresOnlyReturnTerminalIntents();
-  testPlannerFailureConsumesBudgetAndDefersTerminal();
+  testPlannerNoPathWaitsAndRetriesSameGoal();
+  testPendingReplanPauseResumeKeepsDestination();
+  testInFlightReplanPauseDrainsBeforeResume();
+  testDriverHeartbeatGapPreservesPendingReplan();
   testTerminalIntentPersistsUntilExactSuccessfulAck();
   testReplayPendingTerminalIsReadOnlyExactSingleOwnerView();
-  testOnlyNewTaskRestoresRetryBudget();
-  testPendingGoalDrainsAndResumesWithFreshBudget();
+  testSameTaskCanReplanAgainAfterSuccessAndResume();
+  testPendingGoalDrainsAndResumesWithFreshRetryTiming();
   testPendingRejectionClosesBThenDefersA();
   testReplacementPlannerFailureDefersOldActiveTerminal();
-  testAllInterruptionsConsumeActiveAttempt();
+  testOperatorTakeoverPausesAndPreservesEverySingleGoalPhase();
+  testIntentionalInterruptionsCancelActiveAttempt();
   testInspectionInterruptionsProduceCancelledTicketsWithDiagnosticReasons();
   testIneligibleOutcomesNeverTakeOver();
   testInvalidTimeAdmissionAndIdentityFailClosed();

@@ -9,7 +9,7 @@
 #include "input/frame.hpp"
 #include "nav_kernel/types.hpp"
 #include "planning/semantic/contract.hpp"
-#include "runtime/rolling/contract.hpp"
+#include "app/rolling/contract.hpp"
 #include "safety/geofence.hpp"
 
 namespace lingtu::nav::endpoint {

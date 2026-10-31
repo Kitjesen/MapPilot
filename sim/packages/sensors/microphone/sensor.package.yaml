@@ -1,0 +1,23 @@
+schema: lingtu.sim.sensor-package.v1
+id: microphone
+version: 1.0.0
+kind: sensor
+description: Experimental mono simulated reference microphone; 16000 Hz, 160-sample blocks, explicit 0.02 V/Pa software calibration.
+sensor_type: microphone
+outputs: [acoustic]
+timing: {rate_hz: 100}
+interface:
+  transport: typed_dds
+  message_type: lingtu.dds.AcousticBlock
+configuration:
+  measurement:
+    body_frame_id: base_link
+    microphone:
+      sample_rate_hz: 16000
+      block_samples: 160
+      channel_offsets_m: [[0.0, 0.0, 0.0]]
+      speed_of_sound_mps: 343.0
+      sensitivity_volts_per_pa: 0.02
+      calibration_metadata:
+        calibration_id: simulated-reference-v1
+    noise: {unit: Pa, enabled: false, stddev: 0.0, seed: 0}

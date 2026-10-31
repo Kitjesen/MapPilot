@@ -2,9 +2,9 @@ from pathlib import Path
 
 import yaml
 
-from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan
+from lingtu.assembly.config.product import resolve_product_host_runtime
 from lingtu.assembly.graph.processes import ProcessArtifact
-from lingtu.assembly.products import resolve_product_host_runtime
 from runtime.config import load_config
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -20,7 +20,7 @@ def test_robot_catalog_is_company_then_model() -> None:
         "doso/thunder_v4": {
             "sensors": {
                 "mid360": {
-                    "fastlio2_config": "sensors/mid360_fastlio2.yaml",
+                    "ltlio_config": "sensors/mid360_ltlio.yaml",
                     "extrinsic_profile": "thunder_v4_mid360",
                 }
             },
@@ -28,7 +28,7 @@ def test_robot_catalog_is_company_then_model() -> None:
         "unitree/go2": {
             "sensors": {
                 "mid360": {
-                    "fastlio2_config": "sensors/mid360_fastlio2.yaml",
+                    "ltlio_config": "sensors/mid360_ltlio.yaml",
                     "extrinsic_profile": "go2_mid360",
                 }
             },
@@ -41,7 +41,7 @@ def test_robot_catalog_is_company_then_model() -> None:
 
         assert model == runtime
         assert not {"real", "sim"}.intersection(model)
-        mid360_config = model_dir / model["sensors"]["mid360"]["fastlio2_config"]
+        mid360_config = model_dir / model["sensors"]["mid360"]["ltlio_config"]
         assert mid360_config.is_file()
 
 

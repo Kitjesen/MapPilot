@@ -16,14 +16,14 @@ def _read_all(paths: list[Path]) -> str:
 def test_go2rtc_is_not_a_product_or_readiness_service() -> None:
     """go2rtc stays outside Product/RunPlan resolution and field readiness."""
 
-    runtime_graph_files = sorted(
+    runtime_files = sorted(
         path
-        for root in ("config/runtime_graph/products", "config/runtime_graph/envs")
+        for root in ("config/system/products", "config/system/envs")
         for path in (ROOT / root).rglob("*")
         if path.is_file()
     )
     scanned = {
-        "runtime_graph": _read_all(runtime_graph_files),
+        "runtime_config": _read_all(runtime_files),
         "thunder_catalog": _read("src/runtime/service_catalogs/thunder.py"),
         "robot_cli": _read("scripts/lingtu"),
     }

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import sys
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -337,6 +337,7 @@ class ProcessSpec:
     lifecycle: str
     command: ProcessCommand | None = None
     provides: tuple[str, ...] = ()
+    required: bool = True
 
     def __post_init__(self) -> None:
         if not valid_process_name(self.name):
@@ -349,6 +350,8 @@ class ProcessSpec:
             raise ValueError(f"process manager is invalid: {self.manager!r}")
         if not isinstance(self.lifecycle, str) or self.lifecycle not in PROCESS_LIFECYCLES:
             raise ValueError(f"process lifecycle is invalid: {self.lifecycle!r}")
+        if not isinstance(self.required, bool):
+            raise ValueError("process required must be a boolean")
         if isinstance(self.order, bool) or not isinstance(self.order, int) or self.order < 0:
             raise ValueError(f"process order is invalid: {self.order!r}")
         if isinstance(self.timeout_s, bool) or not isinstance(self.timeout_s, int) or self.timeout_s <= 0:
@@ -385,6 +388,7 @@ class ProcessSpec:
             "order": self.order,
             "timeout_s": self.timeout_s,
             "lifecycle": self.lifecycle,
+            "required": self.required,
         }
         if self.manager == "direct":
             if self.command is None:  # pragma: no cover - constructor invariant
@@ -455,6 +459,9 @@ def resolve_processes(
         raise ValueError(f"env {env} has unsupported process control {process_control!r}")
 
     names = _process_names(product_spec.get("processes"), product=product)
+    optional_roles = optional_process_roles(product_spec, product=product)
+    if optional_roles and expected_manager != "systemd":
+        raise ValueError(f"env {env} does not support optional Product processes")
     definitions = implementation.get("processes")
     if not isinstance(definitions, Mapping):
         raise ValueError(f"env {env} has no process mapping")
@@ -531,6 +538,10 @@ def resolve_processes(
             ),
             key=lambda process: (process.order, process.name),
         )
+    )
+    available = tuple(
+        replace(process, required=not bool(process.provides) or not set(process.provides).issubset(optional_roles))
+        for process in available
     )
     targets = [process.target for process in available]
     if len(set(targets)) != len(targets):
@@ -661,6 +672,21 @@ def resolve_env_implementation(
         raise ValueError(f"unknown backend {backend!r} for env sim; available: {available}")
     implementation: Mapping[str, Any] = implementation_value
     return implementation
+
+
+def optional_process_roles(spec: Mapping[str, Any], *, product: str) -> frozenset[str]:
+    """Read the Product's explicitly nonblocking preview roles."""
+
+    value = spec.get("optional_processes", [])
+    if value == []:
+        return frozenset()
+    roles = frozenset(_process_names(value, product=product))
+    selected = set(_process_names(spec.get("processes"), product=product))
+    if not roles <= selected:
+        raise ValueError(f"Product {product} optional_processes must be selected process roles")
+    if roles - {"video"}:
+        raise ValueError(f"Product {product} only video preview may be optional")
+    return roles
 
 
 def _process_names(value: Any, *, product: str) -> tuple[str, ...]:
@@ -1089,7 +1115,7 @@ def _required_mapping_text(
 
 def _repository_root(graph_root: Path) -> Path:
     resolved = graph_root.resolve()
-    if resolved.name == "runtime_graph" and resolved.parent.name == "config":
+    if resolved.name == "system" and resolved.parent.name == "config":
         return resolved.parent.parent
     return resolved
 

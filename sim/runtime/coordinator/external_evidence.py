@@ -346,7 +346,6 @@ class ExternalEvidenceWatcher:
     _stream_last_truth_sequences: dict[str, int] = field(default_factory=dict, init=False)
     _stream_last_sim_times_ns: dict[str, int] = field(default_factory=dict, init=False)
     _sharing_lock_first_denied_at: float | None = field(default=None, init=False)
-    _sharing_lock_identity: tuple[int, int] | None = field(default=None, init=False)
     _unstable_first_observed_at: float | None = field(default=None, init=False)
     _last_file_version: tuple[int, int, int, int, int] | None = field(
         default=None,
@@ -363,7 +362,6 @@ class ExternalEvidenceWatcher:
 
     def _clear_sharing_lock_retry(self) -> None:
         self._sharing_lock_first_denied_at = None
-        self._sharing_lock_identity = None
 
     def _clear_unstable_retry(self) -> None:
         self._unstable_first_observed_at = None
@@ -404,10 +402,9 @@ class ExternalEvidenceWatcher:
             getattr(metadata, "st_file_attributes", 0) & _FILE_ATTRIBUTE_REPARSE_POINT
         ):
             raise CoordinatorError(f"external evidence path is not a regular file: {path}")
-        identity = (metadata.st_dev, metadata.st_ino)
-        if self._sharing_lock_identity is not None and identity != self._sharing_lock_identity:
-            raise CoordinatorError(f"external evidence identity changed during sharing lock retry: {path}")
-        return identity
+        # Atomic producers may replace the file between retries. Identity is
+        # checked across each complete read in apply(), not pinned across ticks.
+        return (metadata.st_dev, metadata.st_ino)
 
     def advance_generation(
         self,
@@ -464,7 +461,6 @@ class ExternalEvidenceWatcher:
             first_denied_at = self._sharing_lock_first_denied_at
             if first_denied_at is None:
                 self._sharing_lock_first_denied_at = now
-                self._sharing_lock_identity = identity
                 first_denied_at = now
             elif now < first_denied_at:
                 raise CoordinatorError("external evidence retry clock moved backwards") from exc

@@ -1,0 +1,29 @@
+{
+  "provider": "Poly Haven",
+  "asset_id": "rocky_terrain_02",
+  "name": "Rocky Terrain 02",
+  "authors": {
+    "Amal Kumar": "All"
+  },
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "source_url": "https://polyhaven.com/a/rocky_terrain_02",
+  "resolution": "2k",
+  "maps": {
+    "diff": {
+      "file": "rocky_terrain_02_diff_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rocky_terrain_02/rocky_terrain_02_diff_2k.jpg",
+      "bytes": 3232826
+    },
+    "nor_gl": {
+      "file": "rocky_terrain_02_nor_gl_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rocky_terrain_02/rocky_terrain_02_nor_gl_2k.jpg",
+      "bytes": 4149208
+    },
+    "rough": {
+      "file": "rocky_terrain_02_rough_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rocky_terrain_02/rocky_terrain_02_rough_2k.jpg",
+      "bytes": 1589303
+    }
+  }
+}

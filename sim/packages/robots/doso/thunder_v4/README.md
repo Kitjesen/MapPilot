@@ -40,6 +40,12 @@ rollout; qualify a radius change separately.
 
 ## Navigation geometry
 
+The documented multi-shape representation is the **组合碰撞模型（Compound Collision
+Model）**: several collision primitives linked by body-relative transforms.
+URDF is a geometry source; `Body` is the C++ container and `BODY2` is a legacy
+internal serialization magic. See the
+[maintained model design](../../../../../docs/design/navigation-body-model-and-motion-posture.md).
+
 `robot.package.yaml:navigation_geometry` describes distances from `base_link`,
 not half the robot's standing height. The fixed torso collision boxes span
 Z `[-0.00209, 0.224772] m` in that frame; the navigation envelope uses
@@ -56,9 +62,22 @@ The simulation resolver carries these values into the physics plan. Product
 assembly uses that already-resolved geometry for native navigation: OctoPlanner
 checks ground support separately from the torso envelope; Mapd uses the same
 below/above envelope for obstacle inflation. Inflation above an obstacle equals
-the body's clearance **below** its origin, and vice versa. SCAN consumes those
-inflated LiDAR cells directly. Geometry changes require a new RunPlan and mapd
+the body's clearance **below** its origin, and vice versa. With an explicit Body,
+SCAN checks that geometry against measured occupied cells rather than applying
+the inflated bitmap to the body a second time. The inflated-cell path remains
+for callers without an explicit Body. Geometry changes require a new RunPlan and mapd
 process; an existing inflated bitmap cannot be reinterpreted with smaller bounds.
+
+The formal sim RunPlan now selects
+`collision/thunderv4_nominal.body2` through `navigation_geometry.body_file`
+and passes its resolved path as `LINGTU_NAV_BODY_FILE`. This 38-part
+组合碰撞模型 is exported from MJCF `v4_nominal_stand`; the real platform copy
+comes from the same export. Native navigation places the fixed nominal parts
+using the measured body pose, including roll and pitch. It does not update
+individual parts from live joint angles or joint FK. Physical MuJoCo contacts
+continue to use the MJCF collision geoms. The dimensions and vertical
+clearances above remain support/map configuration and the single-OBB benchmark
+baseline; they no longer select the formal navigation collision model.
 
 MuJoCo's feeder checks stability using measured vertical clearance above physical
 terrain, not world Z. Its motion-evidence `min_base_height_m` and
@@ -79,10 +98,16 @@ settings.
 The failure mechanism, regression checks, and upstream comparison are recorded
 in [MUJOCO_CONTACT_FRICTION.md](MUJOCO_CONTACT_FRICTION.md).
 
-## Baseline locomotion policy
+## Current and baseline locomotion policies
+
+`defaults.controller` selects `thunderv4_cts_moe@1.0.0` for both ordinary terrain
+and stairs. Current sessions inherit this single selection; navigation's stair
+profile names refer to the same CTS v39 model. See the
+[controller selection and source notes](../../../controllers/doso/thunder_v4/README.md).
+This selection has not qualified complete native navigation or real robot motion.
 
 `sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998.onnx` is the
-default MuJoCo locomotion policy, imported from
+retained baseline MuJoCo locomotion policy, imported from
 `thunder_flat_s4_lateral_g2_v2_model_4998.zip/exported/policy.onnx`.
 The `thunderv4_flat53` adapter consumes one 53-value frame (`obs[batch,53]`):
 body angular velocity, projected gravity, `[vx, vy, wz]`, 12 relative leg

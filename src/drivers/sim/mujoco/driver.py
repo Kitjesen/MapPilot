@@ -30,6 +30,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from runtime.msgs.sensor import LivoxPointFrame
 
+from sim.catalog import resolve_robot_default_policy
+
 from drivers.sim.camera.impl.mujoco.camera import sample_from_camera
 from drivers.sim.mujoco.sensors import (
     world_points_to_body_frame,
@@ -52,16 +54,6 @@ logger = logging.getLogger(__name__)
 _SIM_ROOT = Path(__file__).resolve().parents[4] / "sim"
 _THUNDER_MJCF = (
     _SIM_ROOT / "packages" / "robots" / "doso" / "thunder_v4" / "mjcf" / "thunderv4.xml"
-)
-_THUNDERV4_POLICY = (
-    _SIM_ROOT
-    / "packages"
-    / "controllers"
-    / "doso"
-    / "thunder_v4"
-    / "locomotion"
-    / "policy"
-    / "policy_4998.onnx"
 )
 _ROBOT_XML = _THUNDER_MJCF
 _DEFAULT_START_POS = (0.0, 0.0, 0.55)
@@ -254,10 +246,12 @@ class MujocoDriverModule(Module, layer=1):
         self._drive_mode = (drive_mode or os.environ.get("LINGTU_SIM_DRIVE_MODE", "policy")).strip().lower()
         if self._drive_mode not in {"policy", "kinematic"}:
             raise ValueError(f"Unsupported MuJoCo drive_mode: {self._drive_mode}")
-        self._policy_path = _resolve_sim_path(policy_path) if policy_path else str(_THUNDERV4_POLICY)
-        if self._drive_mode == "kinematic":
-            self._policy_path = ""
-        elif not Path(self._policy_path).is_file():
+        self._policy_path = (
+            "" if self._drive_mode == "kinematic"
+            else _resolve_sim_path(policy_path) if policy_path
+            else str(resolve_robot_default_policy(_SIM_ROOT.parent)["artifact"])
+        )
+        if self._drive_mode == "policy" and not Path(self._policy_path).is_file():
             raise FileNotFoundError(f"ThunderV4 policy is missing: {self._policy_path}")
         self._max_linear_vel = max_linear_vel
         self._max_angular_vel = max_angular_vel
@@ -317,7 +311,7 @@ class MujocoDriverModule(Module, layer=1):
                 logger.error("Robot XML not found: %s", self._robot_xml)
                 return
 
-            robot_cfg = RobotConfig.default_thunder_v4()
+            robot_cfg = RobotConfig()
             robot_cfg.resolve_paths(base_dir=str(_SIM_ROOT))
             robot_cfg.robot_xml = self._robot_xml
             if self._max_linear_vel is not None:

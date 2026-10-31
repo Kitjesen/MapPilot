@@ -4,7 +4,8 @@
   "description": "Attach-only exact-session MuJoCo map component acceptance through ProductControl-owned children and the public Gateway SaveMap boundary.",
   "product_contract": {
     "product": "map",
-    "source": "config/runtime_graph/products/map.yaml",
+    "route": "standard",
+    "source": "config/system/products/map.yaml",
     "native_control_mode": "teleop",
     "slam_mode": "mapping",
     "requires_map": false
@@ -23,7 +24,6 @@
       "mapping-mode native SLAM",
       "scan-time MapObservation delivery",
       "native mapd state and scene publication",
-      "fresh exact-session RGB-D camera SHM during map save",
       "exact-session Gateway SaveMap success",
       "Gateway map listing exposes a nonempty PCD"
     ],

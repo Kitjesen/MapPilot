@@ -1,5 +1,6 @@
 #include "lingtu/maps/mapd/engine.hpp"
 #include "lingtu/maps/layers/surface_projection.hpp"
+#include "lingtu/maps/io/scans.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -8,7 +9,6 @@
 #include <limits>
 #include <optional>
 #include <stdexcept>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -81,13 +81,6 @@ bool IdentityAtLeast(
       (epoch == expected_epoch && sequence >= expected_sequence);
 }
 
-std::uint64_t ColumnKey(float x, float y, float cell_size) {
-  const auto ix = static_cast<std::int32_t>(std::floor(x / cell_size));
-  const auto iy = static_cast<std::int32_t>(std::floor(y / cell_size));
-  return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(ix)) << 32U) |
-      static_cast<std::uint32_t>(iy);
-}
-
 std::string UpperAscii(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
     return static_cast<char>(std::toupper(character));
@@ -118,6 +111,7 @@ Snapshot::CollisionLayer BuildCollisionLayer(
   layer.occupied_bits = std::move(occupancy.occupied_bits);
   layer.measured_occupied_bits = std::move(occupancy.measured_occupied_bits);
   layer.known_free_bits = std::move(occupancy.known_free_bits);
+  layer.hit_bounds = std::move(occupancy.hit_bounds);
   return layer;
 }
 
@@ -194,6 +188,7 @@ void LiveMapEngine::Stop() {
   if (worker_.joinable()) {
     worker_.join();
   }
+  if (geometry_job_.valid()) static_cast<void>(geometry_job_.get());
 }
 
 void LiveMapEngine::SetReferenceMap(MapIdentity identity) {
@@ -230,6 +225,7 @@ SubmitResult LiveMapEngine::Submit(Observation observation) {
   const bool replaced = has_pending_;
   pending_ = std::move(observation);
   has_pending_ = true;
+  if (highest_epoch_ != pending_.reset_epoch) highest_graph_revision_ = 0U;
   highest_epoch_ = pending_.reset_epoch;
   highest_sequence_ = pending_.sequence;
   ++accepted_observations_;
@@ -240,6 +236,194 @@ SubmitResult LiveMapEngine::Submit(Observation observation) {
   return {
       replaced ? SubmitCode::kReplacedPending : SubmitCode::kAccepted,
       replaced ? "newer observation replaced the pending sample" : ""};
+}
+
+SubmitResult LiveMapEngine::SubmitGeometry(GeometrySnapshot snapshot) {
+  if (snapshot.reset_epoch == 0U || snapshot.graph_revision == 0U ||
+      snapshot.keyframe_count == 0U || snapshot.frozen_dir.empty() || snapshot.frame_id.empty())
+    return {SubmitCode::kInvalid, "invalid geometry snapshot"};
+  std::lock_guard<std::mutex> lock(queue_mutex_);
+  if (!running_ || stop_requested_)
+    return {SubmitCode::kStopped, "engine stopped"};
+  if (snapshot.reset_epoch < highest_epoch_ ||
+      (snapshot.reset_epoch == highest_epoch_ &&
+       snapshot.graph_revision < highest_graph_revision_)) {
+    std::lock_guard<std::mutex> data_lock(data_mutex_);
+    geometry_acks_.push_back(
+        {snapshot.reset_epoch, snapshot.graph_revision, false, "stale_geometry"});
+    return {SubmitCode::kStale, "stale geometry snapshot"};
+  }
+  {
+    std::lock_guard<std::mutex> data_lock(data_mutex_);
+    if (reference_map_.present &&
+        !(processed_epoch_ == snapshot.reset_epoch && pose_state_ == "MAPPING")) {
+      geometry_acks_.push_back(
+          {snapshot.reset_epoch, snapshot.graph_revision, false, "saved_map_active"});
+      return {SubmitCode::kInvalid, "saved map active"};
+    }
+    if (snapshot.reset_epoch == processed_epoch_ &&
+        snapshot.graph_revision == applied_graph_revision_) {
+      geometry_acks_.push_back(
+          {snapshot.reset_epoch, snapshot.graph_revision, true, "already_applied"});
+      return {SubmitCode::kAccepted, "already applied"};
+    }
+    if (snapshot.reset_epoch == failed_geometry_epoch_ &&
+        snapshot.graph_revision == failed_geometry_revision_) {
+      geometry_acks_.push_back(
+          {snapshot.reset_epoch, snapshot.graph_revision, false, geometry_error_});
+      return {SubmitCode::kInvalid, geometry_error_};
+    }
+    if (snapshot.reset_epoch == processed_epoch_ &&
+        snapshot.captured_sequence < geometry_discarded_sequence_) {
+      geometry_error_ = "geometry_build_failed: recent processed scans unavailable";
+      failed_geometry_epoch_ = snapshot.reset_epoch;
+      failed_geometry_revision_ = snapshot.graph_revision;
+      geometry_acks_.push_back(
+          {snapshot.reset_epoch, snapshot.graph_revision, false, geometry_error_});
+      return {SubmitCode::kInvalid, geometry_error_};
+    }
+  }
+  if (snapshot.reset_epoch == highest_epoch_ && snapshot.graph_revision == highest_graph_revision_)
+    return {SubmitCode::kStale, "geometry already pending"};
+  if (snapshot.reset_epoch > highest_epoch_) {
+    highest_epoch_ = snapshot.reset_epoch;
+    highest_sequence_ = 0U;
+    highest_graph_revision_ = 0U;
+    has_pending_ = false;
+  }
+  highest_graph_revision_ = snapshot.graph_revision;
+  pending_geometry_ = std::move(snapshot);
+  queue_cv_.notify_one();
+  return {SubmitCode::kAccepted, "geometry queued"};
+}
+
+std::vector<GeometryApplied> LiveMapEngine::TakeGeometryAcks() {
+  std::lock_guard<std::mutex> lock(data_mutex_);
+  std::vector<GeometryApplied> result;
+  result.swap(geometry_acks_);
+  return result;
+}
+
+LiveMapEngine::GeometryBuild LiveMapEngine::RebuildGeometry(GeometrySnapshot source,
+                                                            const Config &config) {
+  PersistentBlockGrid rebuilt(config.accumulated);
+  rebuilt.SetFrame(source.frame_id);
+  rebuilt.SetStampNs(source.captured_stamp_ns);
+  std::size_t count = 0U;
+  try {
+    VisitSavedScans(source.frozen_dir, [&](const SavedScan &scan) {
+      ++count;
+      for (std::size_t i = 0; i + 2 < scan.xyz.size(); i += 3) {
+        const double dx = scan.xyz[i] - scan.origin[0], dy = scan.xyz[i + 1] - scan.origin[1],
+                     dz = scan.xyz[i + 2] - scan.origin[2];
+        const double range_sq = dx * dx + dy * dy + dz * dz;
+        if (range_sq < config.min_range_m * config.min_range_m ||
+            range_sq > config.max_range_m * config.max_range_m ||
+            dz < config.min_height_from_sensor_m || dz > config.max_height_from_sensor_m)
+          continue;
+        rebuilt.InsertRay(scan.origin[0], scan.origin[1], scan.origin[2], scan.xyz[i],
+                          scan.xyz[i + 1], scan.xyz[i + 2]);
+        if (rebuilt.LastStats().capacity_rejections != 0U)
+          throw std::runtime_error("geometry snapshot exceeds map capacity");
+      }
+    });
+    if (count != source.keyframe_count)
+      throw std::runtime_error("geometry keyframe count mismatch");
+    const auto captured = source.captured_sequence;
+    return {std::move(source), std::move(rebuilt), {}, captured};
+  } catch (const std::exception &error) {
+    return {std::move(source), std::move(rebuilt), error.what()};
+  }
+}
+
+void LiveMapEngine::InstallGeometry(GeometryBuild result) {
+  auto &source = result.source;
+  std::lock_guard<std::mutex> queue_lock(queue_mutex_);
+  std::lock_guard<std::mutex> data_lock(data_mutex_);
+  if (stop_requested_ || source.reset_epoch != highest_epoch_ ||
+      source.graph_revision != highest_graph_revision_ ||
+      (reference_map_.present &&
+       !(processed_epoch_ == source.reset_epoch && pose_state_ == "MAPPING"))) {
+    geometry_acks_.push_back(
+        {source.reset_epoch, source.graph_revision, false, "geometry_source_superseded"});
+    return;
+  }
+  if (processed_epoch_ == source.reset_epoch &&
+      geometry_discarded_sequence_ > result.replayed_sequence)
+    result.error = "recent processed scans unavailable";
+  if (!result.error.empty()) {
+    geometry_error_ = "geometry_build_failed: " + result.error;
+    failed_geometry_epoch_ = source.reset_epoch;
+    failed_geometry_revision_ = source.graph_revision;
+    geometry_acks_.push_back({source.reset_epoch, source.graph_revision, false, geometry_error_});
+    return;
+  }
+  std::vector<GeometrySuffix> suffix;
+  if (processed_epoch_ == source.reset_epoch)
+    for (const auto &scan : geometry_suffix_)
+      if (scan.sequence > result.replayed_sequence)
+        suffix.push_back(scan);
+  if (!suffix.empty()) {
+    geometry_job_ = std::async(std::launch::async,
+                               [result = std::move(result), suffix = std::move(suffix)]() mutable {
+                                 return ReplayGeometrySuffix(std::move(result), std::move(suffix));
+                               });
+    return;
+  }
+  if (processed_epoch_ != source.reset_epoch) {
+    Observation epoch;
+    epoch.reset_epoch = source.reset_epoch;
+    epoch.map_frame = source.frame_id;
+    ResetForEpoch(epoch);
+  }
+  accumulated_ = std::move(result.grid);
+  accumulated_total_cells_ = accumulated_.CellCount();
+  voxel_.Reset();
+  voxel_total_cells_ = 0U;
+  occupancy_.Reset(source.frame_id, snapshot_.map_sensor.x, snapshot_.map_sensor.y,
+                   snapshot_.map_sensor.z, snapshot_.stamp_ns);
+  fresh_scan_cutoff_ = std::max({source.captured_sequence, highest_sequence_, processed_sequence_});
+  processed_sequence_ = fresh_scan_cutoff_;
+  applied_graph_revision_ = source.graph_revision;
+  last_processed_steady_ns_ = 0;
+  snapshot_.live_cloud = {};
+  snapshot_.voxel_cloud = {};
+  snapshot_.collision = {};
+  if (source.captured_stamp_ns > 0) {
+    snapshot_.stamp_ns = source.captured_stamp_ns;
+    snapshot_.map_sensor = source.map_body;
+    snapshot_.sensor_origin_z_m = source.sensor_origin_z_m;
+  }
+  snapshot_.frame_id = source.frame_id;
+  snapshot_.reset_epoch = source.reset_epoch;
+  snapshot_.sequence = processed_sequence_;
+  snapshot_.generation = ++generation_;
+  last_error_.clear();
+  geometry_error_.clear();
+  failed_geometry_epoch_ = 0U;
+  failed_geometry_revision_ = 0U;
+  geometry_acks_.push_back({source.reset_epoch, source.graph_revision, true, "applied"});
+  processed_cv_.notify_all();
+}
+
+LiveMapEngine::GeometryBuild
+LiveMapEngine::ReplayGeometrySuffix(GeometryBuild result, std::vector<GeometrySuffix> suffix) {
+  try {
+    for (const auto &scan : suffix) {
+      for (std::size_t i = 0; i + 2 < scan.cloud->interleaved.size(); i += 3) {
+        result.grid.InsertRay(scan.origin_x, scan.origin_y, scan.origin_z,
+                              scan.cloud->interleaved[i], scan.cloud->interleaved[i + 1],
+                              scan.cloud->interleaved[i + 2]);
+        if (result.grid.LastStats().capacity_rejections != 0U)
+          throw std::runtime_error("live geometry suffix exceeds map capacity");
+      }
+      result.grid.SetStampNs(scan.stamp_ns);
+      result.replayed_sequence = scan.sequence;
+    }
+  } catch (const std::exception &error) {
+    result.error = error.what();
+  }
+  return result;
 }
 
 State LiveMapEngine::GetState() const {
@@ -273,10 +457,11 @@ EngineView LiveMapEngine::GetView(SnapshotDetail detail) const {
     EnsureCompleteSnapshotLocked();
   }
   EngineView view;
-  view.state = BuildStateLocked(now_ns, queue);
   view.snapshot = detail == SnapshotDetail::kRealtime
       ? RealtimeSnapshotLocked()
       : snapshot_;
+  view_timing_.Observe((SteadyTimeNs() - now_ns) * 1e-6, processed_sequence_, generation_);
+  view.state = BuildStateLocked(now_ns, queue);
   return view;
 }
 
@@ -337,7 +522,11 @@ State LiveMapEngine::BuildStateLocked(std::int64_t now_ns, const QueueState& que
   state.pose_quality = pose_quality_;
   state.pose_state = pose_state_;
   state.pose_reason = pose_reason_;
-  state.last_error = last_error_;
+  state.last_error = geometry_error_.empty() ? last_error_ : geometry_error_;
+  state.process_timing = process_timing_;
+  state.occupancy_update_timing = occupancy_update_timing_;
+  state.view_timing = view_timing_;
+  state.collision_build_timing = collision_build_timing_;
   return state;
 }
 
@@ -388,9 +577,7 @@ bool LiveMapEngine::ValidateObservation(
   if (pose_state.empty()) {
     return fail("pose_state is required");
   }
-  if (pose_state != "MAPPING" && pose_state != "LOCALIZING" &&
-      pose_state != "TRACKING" &&
-      !(config.accept_degraded_pose && pose_state == "DEGRADED")) {
+  if (pose_state != "MAPPING" && pose_state != "TRACKING") {
     return fail("pose_state is not safe for live map integration");
   }
 
@@ -639,15 +826,19 @@ void LiveMapEngine::Run() {
   auto next_decay = started + config_.decay_period;
   for (;;) {
     std::optional<Observation> observation;
+    std::optional<GeometrySnapshot> geometry;
     {
       std::unique_lock<std::mutex> lock(queue_mutex_);
       queue_cv_.wait_until(
-          lock, std::min(next_update, next_decay), [&] { return stop_requested_; });
+          lock, std::min(next_update, next_decay), [&] {
+            return stop_requested_ || (pending_geometry_.has_value() && !geometry_job_.valid());
+          });
       if (stop_requested_) {
         running_ = false;
         has_pending_ = false;
         break;
       }
+      if (!geometry_job_.valid()) geometry.swap(pending_geometry_);
       const auto now = std::chrono::steady_clock::now();
       if (now >= next_update && has_pending_) {
         observation.emplace(std::move(pending_));
@@ -659,6 +850,13 @@ void LiveMapEngine::Run() {
           next_update += config_.occupancy_update_period;
         } while (next_update <= now);
       }
+    }
+
+    if (geometry_job_.valid() && geometry_job_.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+      InstallGeometry(geometry_job_.get());
+    if (geometry) {
+      geometry_job_=std::async(std::launch::async,
+          [source=std::move(*geometry),config=config_]() mutable { return RebuildGeometry(std::move(source),config); });
     }
 
     const auto now = std::chrono::steady_clock::now();
@@ -693,8 +891,11 @@ void LiveMapEngine::Run() {
 }
 
 void LiveMapEngine::Process(Observation observation) {
+  const std::int64_t started_ns = SteadyTimeNs();
   TransformedObservation transformed = TransformObservation(observation);
   std::lock_guard<std::mutex> lock(data_mutex_);
+  if (observation.reset_epoch < processed_epoch_ ||
+      (observation.reset_epoch == processed_epoch_ && observation.sequence <= fresh_scan_cutoff_)) return;
   const bool mapping = UpperAscii(observation.pose_state) == "MAPPING";
   if (reference_map_.present && !mapping &&
       (observation.reference_map_id != reference_map_.map_id ||
@@ -725,7 +926,10 @@ void LiveMapEngine::Process(Observation observation) {
       observation.sensor_origin_z_m +
       config_.column_carving_max_height_from_sensor_m;
   frame.incremental = true;
+  const std::int64_t update_started_ns = SteadyTimeNs();
   occupancy_.Update(frame);
+  occupancy_update_timing_.Observe((SteadyTimeNs() - update_started_ns) * 1e-6,
+                                   observation.sequence, generation_ + 1U);
 
   bool observation_capacity_limited = false;
   if (config_.build_extended_layers) {
@@ -753,28 +957,6 @@ void LiveMapEngine::Process(Observation observation) {
     accumulated_.SetStampNs(observation.stamp_ns);
   }
   if (config_.build_extended_layers && transformed.cloud.point_count > 0U) {
-    if (config_.accumulated_column_carving) {
-      std::unordered_set<std::uint64_t> columns;
-      std::vector<float> columns_xy;
-      columns.reserve(transformed.cloud.point_count);
-      columns_xy.reserve(transformed.cloud.point_count * 2U);
-      for (std::size_t point = 0U; point < transformed.cloud.point_count; ++point) {
-        const float x = transformed.cloud.interleaved[point * 3U];
-        const float y = transformed.cloud.interleaved[point * 3U + 1U];
-        const auto key = ColumnKey(x, y, config_.accumulated.cell_size_m);
-        if (columns.insert(key).second) {
-          columns_xy.push_back(x);
-          columns_xy.push_back(y);
-        }
-      }
-      static_cast<void>(accumulated_.ClearColumns(
-          columns_xy.data(),
-          columns_xy.size() / 2U,
-          observation.sensor_origin_z_m +
-              config_.column_carving_min_height_from_sensor_m,
-          observation.sensor_origin_z_m +
-              config_.column_carving_max_height_from_sensor_m));
-    }
     std::vector<float> origins(transformed.cloud.point_count * 3U);
     for (std::size_t point = 0U; point < transformed.cloud.point_count; ++point) {
       origins[point * 3U] = observation.sensor_origin_x_m;
@@ -799,6 +981,19 @@ void LiveMapEngine::Process(Observation observation) {
   accumulated_total_cells_ =
       config_.build_extended_layers ? accumulated_.CellCount() : 0U;
 
+  if (config_.build_extended_layers) {
+    const auto budget=config_.max_points_per_observation*4U;
+    geometry_suffix_.push_back({std::make_shared<const OwnedPointCloud>(transformed.cloud),
+        observation.sensor_origin_x_m,observation.sensor_origin_y_m,observation.sensor_origin_z_m,
+        observation.stamp_ns,observation.sequence});
+    geometry_suffix_points_+=transformed.cloud.point_count;
+    while (geometry_suffix_points_>budget || geometry_suffix_.size()>128U) {
+      geometry_discarded_sequence_=geometry_suffix_.front().sequence;
+      geometry_suffix_points_-=geometry_suffix_.front().cloud->point_count;
+      geometry_suffix_.pop_front();
+    }
+  }
+
   processed_epoch_ = observation.reset_epoch;
   processed_sequence_ = observation.sequence;
   ++processed_observations_;
@@ -816,6 +1011,8 @@ void LiveMapEngine::Process(Observation observation) {
   snapshot_.map_sensor = observation.map_sensor;
   snapshot_.sensor_origin_z_m = observation.sensor_origin_z_m;
   snapshot_.live_cloud = std::move(transformed.cloud);
+  process_timing_.Observe((SteadyTimeNs() - started_ns) * 1e-6,
+                          processed_sequence_, generation_);
   processed_cv_.notify_all();
 }
 
@@ -848,6 +1045,14 @@ void LiveMapEngine::Decay(std::int64_t now_ns) {
 }
 
 void LiveMapEngine::ResetForEpoch(const Observation& observation) {
+  geometry_suffix_.clear();
+  geometry_suffix_points_=0U;
+  geometry_discarded_sequence_=0U;
+  if (failed_geometry_epoch_ != observation.reset_epoch) {
+    geometry_error_.clear();
+    failed_geometry_epoch_=0U;
+    failed_geometry_revision_=0U;
+  }
   voxel_.Reset();
   occupancy_.Reset(
       observation.map_frame,
@@ -873,6 +1078,8 @@ void LiveMapEngine::ResetForEpoch(const Observation& observation) {
   complete_snapshot_generation_ = 0U;
   processed_epoch_ = observation.reset_epoch;
   processed_sequence_ = 0U;
+  applied_graph_revision_ = 0U;
+  fresh_scan_cutoff_ = 0U;
   ++epoch_resets_;
 }
 
@@ -905,7 +1112,10 @@ void LiveMapEngine::BuildRealtimeSnapshotLocked() const {
   }
   if (!snapshot_.collision.complete ||
       snapshot_.collision.generation != occupancy_.Generation()) {
+    const std::int64_t started_ns = SteadyTimeNs();
     snapshot_.collision = BuildCollisionLayer(occupancy_.InflatedSnapshot());
+    collision_build_timing_.Observe((SteadyTimeNs() - started_ns) * 1e-6,
+                                    processed_sequence_, generation_);
     ++collision_snapshot_builds_;
   }
   realtime_snapshot_generation_ = generation_;

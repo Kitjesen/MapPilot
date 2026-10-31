@@ -340,7 +340,7 @@ def _run_plan(
             **(
                 {
                     "LINGTU_SLAM_CONFIG": (
-                        "src/localization/fastlio2/config/sim_mid360.yaml"
+                        "src/localization/ltlio/config/sim_mid360.yaml"
                     )
                 }
                 if truth_localization
@@ -446,11 +446,20 @@ class FakeEngine:
         self.support_z_m = 0.0
         self.lidar_calls = 0
         self.camera_calls = 0
+        self.camera_snapshots: list[Any] = []
+        self.camera_render_threads: list[int] = []
+        self.camera_close_threads: list[int] = []
         self.camera_result: Any = SimpleNamespace(
             rgb=np.zeros((480, 640, 3), dtype=np.uint8),
             depth=np.ones((480, 640), dtype=np.float32),
             intrinsics=(500.0, 501.0, 320.0, 240.0),
         )
+        self._cameras = {
+            "front_camera": SimpleNamespace(
+                render_snapshot=self._render_camera_snapshot,
+                close=self._close_snapshot_camera,
+            )
+        }
 
     def step_sensor_tick(self, command: Any, dt_s: float) -> Any:
         if self.fail_first_step and self.steps == 0:
@@ -497,8 +506,10 @@ class FakeEngine:
         points[:, 3] = 100.0
         return points
 
-    def capture_state(self) -> None:
-        return None
+    def capture_state(self) -> Any:
+        snapshot = np.array([self.sim_time], dtype=np.float64)
+        snapshot.flags.writeable = False
+        return snapshot
 
     def get_lidar_points_from_snapshot(
         self,
@@ -517,11 +528,22 @@ class FakeEngine:
         self.events.append(("camera", self.camera_calls))
         return self.camera_result
 
+    def _render_camera_snapshot(self, snapshot: Any) -> Any:
+        self.camera_snapshots.append(snapshot)
+        self.camera_render_threads.append(threading.get_ident())
+        return self.get_camera_data()
+
+    def _close_snapshot_camera(self) -> None:
+        self.camera_close_threads.append(threading.get_ident())
+
     def close(self) -> None:
         self.events.append("engine_close")
 
 
 class FakeSession:
+    def take_profile_request(self):
+        return None
+
     def __init__(
         self,
         services: FakeServices,
@@ -697,11 +719,13 @@ class FakeServices:
         *,
         stream_kind: Any,
         slot_capacity: int,
+        source_generation: int,
     ) -> Any:
         writer = SimpleNamespace(
             path=path,
             stream_kind=stream_kind,
             slot_capacity=slot_capacity,
+            source_generation=source_generation,
             published=[],
             publish=lambda **kwargs: writer.published.append(kwargs) or len(writer.published),
             close=lambda: self.events.append(("camera_writer_close", path.name)),
@@ -887,6 +911,8 @@ def test_artifact_snapshot_is_independent_of_validated_source_paths(
         "robots/robot.xml": b"<mujoco/>\n",
         "robots/meshes/foot.stl": b"solid foot\nendsolid foot\n",
         "controllers/policy.bin": b"policy-v1",
+        "controllers/stairs.bin": b"stair-policy-v1",
+        "controllers/stairs.json": b"{}",
     }
     for relative, raw in artifacts.items():
         path = repository / relative
@@ -898,6 +924,7 @@ def test_artifact_snapshot_is_independent_of_validated_source_paths(
             model="robots/robot.xml",
             package_root="robots",
             policy="controllers/policy.bin",
+            policy_profiles=(("stairs_up", "controllers/stairs.bin", "controllers/stairs.json"),),
         ),
     )
     monkeypatch.setattr(feeder, "_REPOSITORY_ROOT", repository)
@@ -905,12 +932,19 @@ def test_artifact_snapshot_is_independent_of_validated_source_paths(
     world, robot, policy = feeder._Services.snapshot_artifacts(session_root, config)
     (repository / "worlds/world.xml").write_bytes(b"tampered")
 
+    snapshot_root = world.parents[1]
+    assert snapshot_root == robot.parents[1] == policy.parents[1]
+    assert snapshot_root.parent == session_root
+    assert snapshot_root.name.startswith(".feeder-")
+    assert len(snapshot_root.name) == len(".feeder-") + 32
     assert world.read_bytes() == artifacts["worlds/world.xml"]
     assert robot.read_bytes() == artifacts["robots/robot.xml"]
     assert (robot.parent / "meshes" / "foot.stl").read_bytes() == artifacts[
         "robots/meshes/foot.stl"
     ]
     assert policy.read_bytes() == artifacts["controllers/policy.bin"]
+    assert (snapshot_root / "controllers/stairs.bin").read_bytes() == artifacts["controllers/stairs.bin"]
+    assert (snapshot_root / "controllers/stairs.json").read_bytes() == artifacts["controllers/stairs.json"]
 
 
 @pytest.mark.parametrize(
@@ -966,6 +1000,106 @@ def _run(
     monkeypatch.setenv("LINGTU_PRODUCT_SESSION_ID", PRODUCT_SESSION_ID)
     rc = feeder.main(_args(*extra))
     return rc, identity, calls
+
+
+def _gnss_plan(*, available: bool = False) -> RunPlan:
+    payload = _run_plan().as_dict()
+    payload["launch"]["simulation"]["sensor_plan"]["streams"]["gnss"] = [{
+        "instance_id": "robot_01", "sensor_id": "robot_01.gnss",
+        "frame_id": "robot_01/payload_top", "rate_hz": 10,
+        "message_type": "lingtu.dds.GnssFix", "owner": "physics",
+        "source": "mujoco_gnss", "transport": "typed_dds",
+        "gnss": {
+            "origin_latitude_deg": 0.0, "origin_longitude_deg": 0.0,
+            "origin_altitude_m": 0.0, "body_frame_id": "robot_01/base_link",
+            "antenna_offset_m": [0.0, 0.0, 0.14], "fix_available": available,
+        },
+    }]
+    return RunPlan.from_dict(payload)
+
+
+@pytest.mark.parametrize("available", [False, True])
+def test_formal_run_routes_declared_gnss_over_existing_owned_imu_endpoint(monkeypatch, tmp_path, available):
+    import math
+    import struct
+
+    monkeypatch.setenv("LINGTU_PROCESS_LAUNCH_ID", "a" * 64)
+    services = FakeServices(stop_after_readiness=False, stop_after_waits=50, publish_real_artifacts=True)
+    services.engine.get_body_pose = lambda name: (
+        services.engine.position.copy(), np.array([1.0, 0.0, 0.0, 0.0]),
+    )
+    rc, identity, _ = _run(monkeypatch, tmp_path, services, plan=_gnss_plan(available=available))
+    assert rc == 0
+    gnss = [wire for wire in services.sensors["imu_publisher"].records
+            if SENSOR_RECORD_HEADER.unpack_from(wire)[1] == 8]
+    assert len(gnss) >= 3
+    times = []
+    for wire in gnss:
+        _, _, outer_ns, outer_sequence, count, length = SENSOR_RECORD_HEADER.unpack_from(wire)
+        header = struct.unpack_from("<4sHHII64sQQQQ64s", wire, SENSOR_RECORD_HEADER.size)
+        fix = struct.unpack_from("<iII14d", wire, SENSOR_RECORD_HEADER.size + 176)
+        assert (count, length) == (1, 300)
+        assert header[5].rstrip(b"\0").decode() == PRODUCT_SESSION_ID
+        assert header[8:10] == (outer_sequence, outer_ns)
+        assert header[10].rstrip(b"\0") == b"robot_01/payload_top"
+        if available:
+            assert fix[0] == 8
+            assert fix[3:6] == pytest.approx((0.0, 0.0, 0.54))
+        else:
+            assert fix[0] == 0 and all(math.isnan(v) for v in fix[3:15])
+        times.append(outer_ns)
+    assert times[1] - times[0] == 100_000_000
+    assert times[0] < 10_000_000_000  # Simulation time, not epoch time.
+    assert services.events.count("engine_close") == 1
+    assert all("gnss" not in path.name for path in services.connected_paths)
+    evidence = services.status_payloads[-1]["gnss"]
+    assert evidence["sampled_count"] == len(gnss)
+    assert evidence["clock"] == "simulation"
+    assert evidence["latest"]["fix_type"] == (8 if available else 0)
+    assert evidence["latest"]["qualification"] == "EXPERIMENTAL"
+    stored = json.loads((identity.session_root / FEEDER_STATUS_FILENAME).read_text())
+    assert stored["state"] == "stopped"
+    assert stored["gnss"] == json.loads(json.dumps(evidence))
+
+
+@pytest.mark.parametrize("field,value", [
+    ("rate_hz", 201), ("owner", "visual"), ("instance_id", "other"),
+    ("gnss", {"origin_latitude_deg": 0, "origin_longitude_deg": 0, "origin_altitude_m": 0,
+              "body_frame_id": "robot_01/not_a_body"}),
+])
+def test_invalid_gnss_plan_fails_before_physics_or_endpoint_connection(monkeypatch, tmp_path, field, value):
+    payload = _gnss_plan().as_dict()
+    payload["launch"]["simulation"]["sensor_plan"]["streams"]["gnss"][0][field] = value
+    services = FakeServices()
+    rc, _, _ = _run(monkeypatch, tmp_path, services, plan=RunPlan.from_dict(payload))
+    assert rc == 1
+    assert services.build_kwargs is None
+    assert services.connected_paths == []
+
+
+@pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
+def test_inspection_product_gnss_session_reaches_formal_feeder(monkeypatch, tmp_path):
+    from lingtu.assembly.compile_plan import compile_run_plan
+
+    plan = compile_run_plan(
+        "inspection", "sim", robot="doso/thunder_v4",
+        env_config={"backend": "mujoco", "session": "sim/sessions/products/doso/thunder_v4/gnss.yaml"},
+    )
+    services = FakeServices(stop_after_readiness=False, stop_after_waits=50)
+
+    def body(name):
+        assert name == "base_link"
+        return services.engine.position.copy(), [1.0, 0.0, 0.0, 0.0]
+
+    services.engine.get_body_pose = body
+    rc, _, _ = _run(monkeypatch, tmp_path, services, plan=plan)
+    assert rc == 0
+    assert services.build_kwargs["base_body_name"] == "base_link"
+    evidence = services.status_payloads[-1]["gnss"]
+    assert evidence["sensor_id"] == "thunder_01.gnss"
+    assert evidence["latest"]["configuration"]["antenna_offset_m"] == (0, 0, 0.14)
+    assert evidence["latest"]["fix_type"] == 0
+    assert evidence["sampled_count"] >= 3
 
 
 def test_public_surface_and_source_exclude_old_orchestrators() -> None:
@@ -1501,8 +1635,8 @@ def test_catchup_sensor_timestamps_follow_physics_and_snapshot_has_no_rolling_of
     assert pipeline._imu_stats.payload(0.424)["published_count"] == 20
 
 
-@pytest.mark.parametrize("wake_time_s", (0.1, 1.0))
-def test_lidar_drops_a_snapshot_whose_physics_deadline_is_already_stale(wake_time_s: float) -> None:
+@pytest.mark.parametrize("wake_time_s", (0.1, 1.0, 10.1))
+def test_lidar_publishes_fresh_snapshot_even_when_physics_is_delayed(wake_time_s: float) -> None:
     events: list[Any] = []
     records: list[bytes] = []
     engine = FakeEngine(events)
@@ -1527,20 +1661,21 @@ def test_lidar_drops_a_snapshot_whose_physics_deadline_is_already_stale(wake_tim
     pipeline.publish_step(state, tick=feeder._Tick(now_s=wake_time_s, due_s=0.1, skipped=0))
     pipeline.close()
 
-    assert not any(record[4] == RECORD_CLOUD for record in records)
-    assert engine.lidar_calls == 0
+    cloud_record = next(record for record in records if record[4] == RECORD_CLOUD)
+    assert SENSOR_RECORD_HEADER.unpack_from(cloud_record)[2] == 1_000_100_000_000
+    assert engine.lidar_calls == 1
     stats = pipeline._lidar_stats.payload(1.0)
-    assert stats["scheduled_count"] == stats["dropped_count"] == 1
-    assert stats["published_count"] == 0
+    assert stats["scheduled_count"] == stats["published_count"] == 1
+    assert stats["dropped_count"] == 0
     imu_record = next(record for record in records if record[4] == RECORD_IMU)
     assert SENSOR_RECORD_HEADER.unpack_from(imu_record)[2] == 1_000_100_000_000
 
 
 @pytest.mark.parametrize(
     ("queue_age_s", "raycast_age_s", "published", "raycast_calls"),
-    ((0.3, 0.0, False, 0), (0.05, 0.3, False, 1), (0.05, 0.05, True, 1)),
+    ((0.7, 0.0, False, 0), (0.05, 0.6, False, 1), (0.05, 0.05, True, 1)),
 )
-def test_lidar_age_limit_includes_schedule_queue_and_raycast_time(
+def test_lidar_age_limit_includes_queue_and_raycast_time(
     monkeypatch: pytest.MonkeyPatch,
     queue_age_s: float,
     raycast_age_s: float,
@@ -1583,7 +1718,6 @@ def test_lidar_age_limit_includes_schedule_queue_and_raycast_time(
             wall_s=1000.1,
             sequence=0,
             registered_sequence=None,
-            schedule_lateness_s=0.35,
             captured_at_s=0.0,
         ))
     finally:
@@ -2033,6 +2167,52 @@ def test_motion_trajectory_decimates_without_changing_aggregate_metrics() -> Non
     assert replay.trajectory == evidence.trajectory
 
 
+def test_motion_evidence_round_trips_full_feeder_trajectory(tmp_path: Path) -> None:
+    def state(step: int) -> Any:
+        return SimpleNamespace(
+            position=np.array([step * 0.1234567890123, 0.01234567890123, 0.41234567890123]),
+            orientation=np.array([0.0, 0.0, 0.0, 1.0]),
+        )
+
+    evidence = feeder._PhysicalMotionEvidence()
+    steps = MAX_TRAJECTORY_SAMPLES - 1
+    for step in range(1, steps + 1):
+        evidence.observe(
+            _command("nav", step, walk=(0.5, 0.0, 0.0)),
+            before=state(step - 1),
+            after=state(step),
+            step_seq=step,
+            clearance_m=0.41234567890123,
+        )
+    stopped = DriverBridgeStoppedEvidence(
+        bridge_boot_id=BRIDGE_BOOT_ID,
+        controller_boot_id=CONTROLLER_BOOT_ID,
+        bridge_command_seq=steps + 1,
+        applied_step_seq=steps + 1,
+        kind="deactivate_zero",
+        producer_boot_id="",
+        output_sequence=0,
+        walk_x=0.0,
+        walk_y=0.0,
+        walk_z=0.0,
+        terminal_ack=True,
+    )
+    published = publish_motion_evidence(
+        session_root=tmp_path,
+        payload=evidence.payload(product_session_id=PRODUCT_SESSION_ID, product="nav", stopped=stopped),
+        environment={"LINGTU_PROCESS_LAUNCH_ID": "e" * 64},
+    )
+    assert len(published["trajectory"]) == MAX_TRAJECTORY_SAMPLES
+    assert (tmp_path / MOTION_EVIDENCE_FILENAME).stat().st_size > 65536
+    assert load_motion_evidence(
+        session_root=tmp_path,
+        product_session_id=PRODUCT_SESSION_ID,
+        product="nav",
+        process="mujoco_feeder",
+        launch_id="e" * 64,
+    ) == published
+
+
 def test_shutdown_cancels_pending_nav_before_exact_zero(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -2084,9 +2264,17 @@ def test_feeder_status_reports_caught_up_scheduler_and_terminal_state(
         stop_after_readiness=False,
         stop_after_waits=80,
         overshoot_wait=4,
-        overshoot_factor=50.0,
+        overshoot_factor=10.0,
         publish_real_artifacts=True,
     )
+    original_wait = services.wait
+
+    def yielding_wait(stop_event: Any, timeout_s: float) -> bool:
+        stopped = original_wait(stop_event, timeout_s)
+        threading.Event().wait(0.01)
+        return stopped
+
+    services.wait = yielding_wait  # type: ignore[method-assign]
 
     rc, identity, _ = _run(
         monkeypatch,
@@ -2123,8 +2311,11 @@ def test_feeder_status_reports_caught_up_scheduler_and_terminal_state(
         assert stream["actual_hz"] == pytest.approx(
             stream["published_count"] / status["window_s"]
         )
-        assert stream["dropped_count"] == 0
         assert stream["max_schedule_lateness_ms"] > 0.0
+    assert {
+        name: status["streams"][name]["dropped_count"]
+        for name in ("imu", "lidar", "camera_rgbd")
+    } == {"imu": 0, "lidar": 0, "camera_rgbd": 0}
 
 
 def test_camera_warmup_and_readiness_time_do_not_create_runtime_drops(
@@ -2159,7 +2350,12 @@ def test_camera_warmup_and_readiness_time_do_not_create_runtime_drops(
         monkeypatch,
         tmp_path,
         services,
-        plan=_run_plan(camera=True, enable_camera=True),
+        plan=_run_plan(
+            camera=True,
+            enable_camera=True,
+            camera_hz=2.0,
+            depth_camera_hz=2.0,
+        ),
     )
 
     assert rc == 0
@@ -2347,8 +2543,10 @@ def test_contacts_count_mocap_obstacles_but_not_road_support(support):
     mujoco = pytest.importorskip("mujoco")
     model = mujoco.MjModel.from_xml_string(f'''<mujoco><worldbody>
       <geom name="{support}" type="plane" size="2 2 .1"/>
-      <body name="base_link" pos="0 0 .15"><freejoint/><geom size=".2"/></body>
-      <body name="walker" mocap="true" pos=".3 0 .15"><geom name="person" size=".2"/></body>
+      <body name="base_link" pos="0 0 .5"><freejoint/><geom name="robot_body" size=".2"/>
+        <body name="FR_foot" pos="0 0 -.35"><geom name="foot" size=".2"/></body>
+      </body>
+      <body name="walker" mocap="true" pos=".3 0 .5"><geom name="person" size=".2"/></body>
     </worldbody></mujoco>''')
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
@@ -2360,6 +2558,49 @@ def test_contacts_count_mocap_obstacles_but_not_road_support(support):
     mujoco.mj_forward(model, data)
     motion.observe_contacts(model, data)
     assert motion.entity_contact_steps == 1
+
+
+def test_contact_metadata_reused_and_rebound_to_model_and_base(monkeypatch):
+    mujoco = pytest.importorskip("mujoco")
+    xml = '''<mujoco><worldbody><geom name="floor" type="plane" size="2 2 .1"/>
+      <body name="base_link" pos="0 0 .5"><freejoint/><geom name="robot_body" size=".2"/>
+        <body name="FR_foot" pos="0 0 -.35"><geom name="foot" size=".2"/></body>
+      </body>
+      <body name="other_base" pos="1 0 .1"><freejoint/><geom name="other_body" size=".2"/></body>
+    </worldbody></mujoco>'''
+    original = mujoco.mj_id2name
+    names_read = []
+
+    def read_name(model, kind, index):
+        names_read.append((kind, index))
+        return original(model, kind, index)
+
+    monkeypatch.setattr(mujoco, "mj_id2name", read_name)
+    model = mujoco.MjModel.from_xml_string(xml)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    motion = feeder._PhysicalMotionEvidence()
+    motion.observe_contacts(model, data)
+    assert motion.entity_contact_steps == 0
+    initial_reads = len(names_read)
+    motion.observe_contacts(model, data)
+    assert len(names_read) == initial_reads
+
+    motion.observe_contacts(model, data, "other_base")
+    assert len(names_read) > initial_reads
+    assert motion.entity_contact_steps == 1
+    assert motion.first_contact["robot_body"] == "other_base"
+    assert motion.first_contact["robot_position_m"] == pytest.approx([1, 0, .1])
+
+    replacement = mujoco.MjModel.from_xml_string(xml.replace('name="floor"', 'name="floor_new"'))
+    replacement_data = mujoco.MjData(replacement)
+    mujoco.mj_forward(replacement, replacement_data)
+    previous_reads = len(names_read)
+    motion.first_contact = None
+    motion.observe_contacts(replacement, replacement_data, "other_base")
+    assert len(names_read) > previous_reads
+    assert motion.entity_contact_steps == 2
+    assert motion.first_contact_geom == "floor_new"
 
 
 def test_truth_localization_publishes_pose_and_registered_cloud_with_one_timestamp(
@@ -2757,6 +2998,9 @@ def test_camera_first_rgbd_bundle_precedes_feeder_readiness(
         "camera_depth.shm",
         "camera_info.shm",
     }
+    assert len(
+        {writer.source_generation for writer in services.camera_writers.values()}
+    ) == 1
     assert all(
         writer.path.parent == identity.session_root
         for writer in services.camera_writers.values()
@@ -2764,6 +3008,8 @@ def test_camera_first_rgbd_bundle_precedes_feeder_readiness(
     assert len(services.camera_writers["camera_color.shm"].published) == 1
     assert len(services.camera_writers["camera_depth.shm"].published) == 1
     assert len(services.camera_writers["camera_info.shm"].published) == 1
+    assert len(set(services.engine.camera_render_threads)) == 1
+    assert services.engine.camera_close_threads == services.engine.camera_render_threads[:1]
 
 
 def test_camera_writes_reader_valid_rgb_depth_and_intrinsics_shm(
@@ -2820,14 +3066,27 @@ def test_camera_thirty_hz_deadlines_skip_late_slots_without_bursting(
         rate_hz=30.0,
     )
     period_s = 1.0 / 30.0
+    render_started = threading.Event()
+    release_render = threading.Event()
+    original_render = services.engine._cameras["front_camera"].render_snapshot
     try:
         pipeline.publish_initial()
+
+        def blocked_render(snapshot: Any) -> Any:
+            render_started.set()
+            assert release_render.wait(timeout=2.0)
+            return original_render(snapshot)
+
+        services.engine._cameras["front_camera"].render_snapshot = blocked_render
         pipeline.publish_due(monotonic_s=period_s - 1e-6)
         pipeline.publish_due(monotonic_s=period_s)
+        assert render_started.wait(timeout=2.0)
         pipeline.publish_due(monotonic_s=4.5 * period_s)
         pipeline.publish_due(monotonic_s=4.5 * period_s)
         pipeline.publish_due(monotonic_s=5.0 * period_s)
+        release_render.set()
     finally:
+        release_render.set()
         pipeline.close()
 
     records = services.sensors["camera_publisher"].records
@@ -2844,11 +3103,45 @@ def test_camera_thirty_hz_deadlines_skip_late_slots_without_bursting(
     assert rgb_timestamps == depth_timestamps
     assert rgb_timestamps == [
         int((1_800_000_000.0 + offset) * 1_000_000_000)
-        for offset in (0.0, period_s, 4.5 * period_s, 5.0 * period_s)
+        for offset in (0.0, period_s, 5.0 * period_s)
     ]
-    assert len(services.camera_writers["camera_color.shm"].published) == 4
-    assert len(services.camera_writers["camera_depth.shm"].published) == 4
+    assert pipeline._stats.payload(1.0)["scheduled_count"] == 5
+    assert pipeline._stats.payload(1.0)["published_count"] == 2
+    assert pipeline._stats.payload(1.0)["dropped_count"] == 3
+    assert len(services.camera_writers["camera_color.shm"].published) == 3
+    assert len(services.camera_writers["camera_depth.shm"].published) == 3
     assert len(services.camera_writers["camera_info.shm"].published) == 1
+
+
+def test_camera_submit_handles_worker_dequeue_after_full_observation() -> None:
+    class FullThenEmptyQueue:
+        def __init__(self) -> None:
+            self.put_calls = 0
+            self.queued: Any | None = None
+
+        def put_nowait(self, task: Any) -> None:
+            self.put_calls += 1
+            if self.put_calls == 1:
+                raise feeder.queue.Full
+            self.queued = task
+
+        @staticmethod
+        def get_nowait() -> Any:
+            raise feeder.queue.Empty
+
+    pipeline = object.__new__(feeder._CameraPipeline)
+    pipeline._closed = False
+    pipeline._failure_lock = threading.Lock()
+    pipeline._failure = None
+    pipeline._stats = feeder._StreamStats(expected_hz=30.0)
+    pipeline._tasks = FullThenEmptyQueue()
+    task = feeder._CameraTask(snapshot=object(), wall_s=1.0, counted=True)
+
+    pipeline._submit(task)
+
+    assert pipeline._tasks.put_calls == 2
+    assert pipeline._tasks.queued is task
+    assert pipeline._stats.payload(1.0)["dropped_count"] == 0
 
 
 def test_camera_timestamp_uses_observation_time_when_physics_is_late(

@@ -3,7 +3,6 @@
 Implements offscreen RGB and depth rendering via mujoco.Renderer.
 """
 import threading
-from typing import Optional
 
 import numpy as np
 
@@ -31,9 +30,9 @@ class MuJoCoCamera:
         if config.fovy > 0:
             model.cam_fovy[cam_id] = float(config.fovy)
         self._mujoco = mujoco
-        self._renderer_rgb: object | None = None
-        self._renderer_depth: object | None = None
+        self._renderer: object | None = None
         self._renderer_thread_id: int | None = None
+        self._snapshot_data: object | None = None
         self._render_lock = threading.Lock()
 
         print(
@@ -44,22 +43,42 @@ class MuJoCoCamera:
     def render(self, data) -> CameraData:
         """Render current frame and return CameraData."""
         with self._render_lock:
-            self._ensure_renderers()
-            self._renderer_rgb.update_scene(data, camera=self._camera_name)
-            rgb = self._renderer_rgb.render().copy()
+            return self._render_locked(data)
 
-            if self._renderer_depth is not None:
-                self._renderer_depth.update_scene(data, camera=self._camera_name)
-                self._renderer_depth.enable_depth_rendering()
-                depth_raw = self._renderer_depth.render().copy()
-                self._renderer_depth.disable_depth_rendering()
-                depth_meters = self._coerce_depth_meters(
-                    depth_raw,
-                    self._config.depth_near,
-                    self._config.depth_far,
-                )
-            else:
-                depth_meters = np.zeros((self._config.height, self._config.width), dtype=np.float32)
+    def render_snapshot(self, snapshot) -> CameraData:
+        """Render an immutable integration-state snapshot on the calling thread."""
+        if snapshot is None:
+            raise ValueError("camera snapshot is required")
+        with self._render_lock:
+            if self._snapshot_data is None:
+                self._snapshot_data = self._mujoco.MjData(self._model)
+            self._mujoco.mj_setState(
+                self._model,
+                self._snapshot_data,
+                np.asarray(snapshot, dtype=np.float64),
+                self._mujoco.mjtState.mjSTATE_INTEGRATION,
+            )
+            self._mujoco.mj_forward(self._model, self._snapshot_data)
+            return self._render_locked(self._snapshot_data)
+
+    def _render_locked(self, data) -> CameraData:
+        self._ensure_renderer()
+        self._renderer.update_scene(data, camera=self._camera_name)
+        rgb = self._renderer.render().copy()
+
+        if self._config.render_depth:
+            self._renderer.enable_depth_rendering()
+            try:
+                depth_raw = self._renderer.render().copy()
+            finally:
+                self._renderer.disable_depth_rendering()
+            depth_meters = self._coerce_depth_meters(
+                depth_raw,
+                self._config.depth_near,
+                self._config.depth_far,
+            )
+        else:
+            depth_meters = np.zeros((self._config.height, self._config.width), dtype=np.float32)
 
         return CameraData(
             rgb=rgb,
@@ -87,43 +106,36 @@ class MuJoCoCamera:
     def get_rgb(self, data) -> np.ndarray:
         """Render RGB only, skip depth."""
         with self._render_lock:
-            self._ensure_renderers()
-            self._renderer_rgb.update_scene(data, camera=self._camera_name)
-            return self._renderer_rgb.render().copy()
+            self._ensure_renderer()
+            self._renderer.update_scene(data, camera=self._camera_name)
+            return self._renderer.render().copy()
 
     def close(self) -> None:
         """Release renderer resources."""
         with self._render_lock:
-            self._close_renderers()
+            self._close_renderer()
+            self._snapshot_data = None
 
-    def _ensure_renderers(self) -> None:
-        """Create renderers in the calling thread.
+    def _ensure_renderer(self) -> None:
+        """Create the renderer in the calling thread.
 
-        MuJoCo EGL contexts are thread-affine on Linux, so offscreen renderers
+        MuJoCo EGL contexts are thread-affine on Linux, so the offscreen renderer
         must be created in the same thread that later calls ``render()``.
         """
         thread_id = threading.get_ident()
-        if self._renderer_rgb is not None and self._renderer_thread_id == thread_id:
+        if self._renderer is not None and self._renderer_thread_id == thread_id:
             return
 
-        self._close_renderers()
-        self._renderer_rgb = self._mujoco.Renderer(
+        self._close_renderer()
+        self._renderer = self._mujoco.Renderer(
             self._model, self._config.height, self._config.width
         )
-        self._renderer_depth = None
-        if self._config.render_depth:
-            self._renderer_depth = self._mujoco.Renderer(
-                self._model, self._config.height, self._config.width
-            )
         self._renderer_thread_id = thread_id
 
-    def _close_renderers(self) -> None:
-        if self._renderer_rgb is not None:
-            self._renderer_rgb.close()
-            self._renderer_rgb = None
-        if self._renderer_depth is not None:
-            self._renderer_depth.close()
-            self._renderer_depth = None
+    def _close_renderer(self) -> None:
+        if self._renderer is not None:
+            self._renderer.close()
+            self._renderer = None
         self._renderer_thread_id = None
 
     @property

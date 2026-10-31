@@ -11,8 +11,8 @@ Pipeline:
   own native NavigationGoalStatus (FAILED) -> LERa recovery -> new goal
 
 Ports:
-  In:  instruction, scene_graph, robot_pose,
-       detections, navigation_state, goal_status, navigation_goal_status,
+  In:  instruction, observation,
+       navigation_state, goal_status, navigation_goal_status,
        topo_summary, room_graph
   Out: nav_command, task_plan, planner_status, servo_target, agent_message
 
@@ -25,7 +25,7 @@ Strategies:
 Usage::
 
     bp.add(SemanticPlannerModule, decomposer="rules")
-    bp.add(LLMModule, backend="kimi")  # separate, wired via Blueprint
+    bp.add(LLMModule, backend="kimi")  # separate, wired via HostBuilder
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ from __future__ import annotations
 import json as _json
 import logging
 import math
+import os
 import re
 import threading
 import time
@@ -45,6 +46,8 @@ from decision.semantic_navigation.execution import GoalExecution
 from decision.semantic_navigation.intent import HybridSemanticIntentParser, SemanticAction, SemanticIntent, TravelMode
 from decision.semantic_navigation.intent import normalize_floor_id as normalize_semantic_floor_id
 from decision.semantic_navigation.observation import ObjectTarget, ObservationRequest, observation_candidates
+from decision.semantic_navigation.query import parse_object_query
+from decision.semantic_navigation.search import SearchHistory, camera_view
 from decision.semantic_navigation.verification import (
     TargetVerification,
     VerificationSample,
@@ -58,7 +61,7 @@ from runtime.module import Module, skill
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from runtime.msgs.nav import NavigationGoalState, NavigationGoalStatus, NavigationState
 from runtime.msgs.numpy_compat import np
-from runtime.msgs.semantic import SceneGraph
+from runtime.msgs.semantic import SceneGraph, SemanticObservation
 from runtime.msgs.sensor import Image
 from runtime.registry import register
 from runtime.stream import In, Out
@@ -117,10 +120,7 @@ class SemanticPlannerModule(Module, layer=4):
 
     # -- Inputs --
     instruction: In[str]  # single-shot resolve (Fast->Frontier->VisualServo)
-    scene_graph: In[SceneGraph]
-    robot_pose: In[PoseStamped]
-    observation_image: In[Image]
-    detections: In[list]
+    observation: In[SemanticObservation]
     navigation_state: In[NavigationState]
     goal_status: In[dict]
     navigation_goal_status: In[NavigationGoalStatus]
@@ -153,9 +153,19 @@ class SemanticPlannerModule(Module, layer=4):
         goal_republish_yaw_epsilon_rad: float = math.radians(5.0),
         save_dir: str = "",
         map_query: object | None = None,
+        product_session_id: str = "",
+        llm_base_url: str = "",
+        llm_api_key_env: str = "OPENAI_API_KEY",
+        llm_timeout_sec: float = 10.0,
         **kw,
     ):
         super().__init__(**kw)
+        self._product_session_id = product_session_id or os.environ.get("LINGTU_PRODUCT_SESSION_ID", "")
+        self._observation_boundary: tuple[int, str, int] | None = None
+        self._latest_observation_sequence = 0
+        self._latest_observation_source_ts = 0.0
+        self._latest_observation: SemanticObservation | None = None
+        self._search: SearchHistory | None = None
         self._decomposer_strategy = decomposer
         self._fast_threshold = fast_path_threshold
         self._save_dir = save_dir
@@ -168,6 +178,9 @@ class SemanticPlannerModule(Module, layer=4):
         self._lera_cooldown = lera_cooldown
         self._llm_backend = llm_backend
         self._llm_model = llm_model
+        self._llm_base_url = llm_base_url
+        self._llm_api_key_env = llm_api_key_env
+        self._llm_timeout_sec = llm_timeout_sec
         self._scene_graph_max_age_s = max(0.0, float(scene_graph_max_age_s))
         self._scene_graph_future_tolerance_s = max(0.0, float(scene_graph_future_tolerance_s))
         self._goal_republish_position_epsilon_m = max(
@@ -200,6 +213,8 @@ class SemanticPlannerModule(Module, layer=4):
         self._current_instruction: str = ""
         self._instruction_owner = ""
         self._instruction_failure = ""
+        self._instruction_cancel_requested = False
+        self._instruction_cancel_reason = ""
         self._instruction_lock = threading.RLock()
         self._current_goal_pose: PoseStamped | None = None
         self._last_goal_publish_signature: tuple[str, str, str, str] | None = None
@@ -255,10 +270,7 @@ class SemanticPlannerModule(Module, layer=4):
     def setup(self) -> None:
         self._init_backends()
         self.instruction.subscribe(self._on_instruction)
-        self.scene_graph.subscribe(self._on_scene_graph)
-        self.robot_pose.subscribe(self._on_robot_pose)
-        self.observation_image.subscribe(self._on_observation_image)
-        self.detections.subscribe(self._on_detections)
+        self.observation.subscribe(self._on_observation)
         self.navigation_state.subscribe(self._on_navigation_state)
         self.goal_status.subscribe(self._on_goal_status)
         self.navigation_goal_status.subscribe(self._on_navigation_goal_status)
@@ -286,7 +298,13 @@ class SemanticPlannerModule(Module, layer=4):
             from decision.goals.resolver import GoalResolver
             from decision.llm.client import LLMConfig
 
-            llm_cfg = LLMConfig(backend=self._llm_backend, model=self._llm_model)
+            llm_cfg = LLMConfig(
+                backend=self._llm_backend,
+                model=self._llm_model,
+                base_url=self._llm_base_url,
+                api_key_env=self._llm_api_key_env,
+                timeout_sec=self._llm_timeout_sec,
+            )
             self._goal_resolver = GoalResolver(
                 primary_config=llm_cfg,
                 fast_path_threshold=self._fast_threshold,
@@ -349,6 +367,7 @@ class SemanticPlannerModule(Module, layer=4):
                     "text": text,
                     "ts": time.time(),
                     "phase": phase or "",
+                    "run_id": self._instruction_owner,
                 }
             )
         except Exception:
@@ -386,6 +405,12 @@ class SemanticPlannerModule(Module, layer=4):
             receipt = servo.start_follow(description=follow_target) if servo else {"accepted": False}
             if receipt.get("accepted") is not True:
                 self._instruction_failure = str(receipt.get("reason") or "follow_unavailable")
+                if self._instruction_failure == "follow_target_ambiguous":
+                    self._chat(
+                        "assistant",
+                        "请描述要跟随的人的衣着，或在画面中选择目标。当前还未把“我／他”与具体人物绑定。",
+                        phase="follow_target",
+                    )
                 self.planner_status.publish("FAILED")
                 return
             self._follow_ref = receipt
@@ -398,6 +423,21 @@ class SemanticPlannerModule(Module, layer=4):
         self.planner_status.publish("PROCESSING")
         self._chat("thinking", "Parsing instruction", phase="parse")
 
+        # Compound instructions must become an ordered symbolic plan before
+        # any single-goal semantic shortcut is allowed to run.  Otherwise a
+        # phrase such as "先去会议室，然后找箱子" can dispatch only its first
+        # destination and silently drop the second step.
+        decomposition = self._decompose(text)
+        if decomposition and decomposition.get("status") == "needs_llm":
+            self.task_plan.publish(decomposition)
+            self.planner_status.publish("TASK_DECOMPOSITION_REQUIRED")
+            self._chat(
+                "assistant",
+                "This is a multi-step task. I need its symbolic task plan before grounding a target.",
+                phase="decompose",
+            )
+            return
+
         if self._try_semantic_navigation_intent(text):
             return
 
@@ -409,6 +449,9 @@ class SemanticPlannerModule(Module, layer=4):
         plan = self._decompose(text)
         if plan:
             self.task_plan.publish(plan)
+            if plan.get("status") == "needs_llm":
+                self.planner_status.publish("TASK_DECOMPOSITION_REQUIRED")
+                return
             subtasks = plan.get("subtasks") or []
             if len(subtasks) > 1:
                 self._chat(
@@ -500,6 +543,8 @@ class SemanticPlannerModule(Module, layer=4):
     def _begin_symbolic_llm_instruction_epoch(self) -> None:
         self._instruction_owner = ""
         self._instruction_failure = ""
+        self._instruction_cancel_requested = False
+        self._instruction_cancel_reason = ""
         with self._symbolic_llm_lock:
             self._symbolic_llm_instruction_epoch += 1
             self._symbolic_llm_current_request_id = ""
@@ -510,6 +555,8 @@ class SemanticPlannerModule(Module, layer=4):
         self._observation_image = None
         self._object_candidates.clear()
         self._object_verifications.clear()
+        self._latest_observation = None
+        self._search = None
 
     def _symbolic_llm_epoch_is_current(self, epoch: int) -> bool:
         with self._symbolic_llm_lock:
@@ -841,6 +888,82 @@ class SemanticPlannerModule(Module, layer=4):
         target = m.group(2).strip(" \t\r\n.!,;:")
         return target or "person"
 
+    def _on_observation(self, observation: SemanticObservation) -> None:
+        """Use one perception snapshot, including immediate source invalidation."""
+        if observation.product_session_id != self._product_session_id:
+            return
+        if observation.sequence <= self._latest_observation_sequence:
+            return
+        self._latest_observation_sequence = observation.sequence
+        boundary = (observation.source_generation, observation.map_id, observation.content_epoch)
+        context = self._navigation_context
+        if context is not None and boundary[1:] != context[1:]:
+            return
+        if observation.status in {"positive", "negative"} and (
+            self._timestamp_is_stale(observation.source_ts)
+            or (boundary == self._observation_boundary
+                and observation.source_ts <= self._latest_observation_source_ts)
+        ):
+            return
+        if self._observation_boundary is not None and boundary != self._observation_boundary:
+            self._invalidate_object_context(observation.reason or "perception_context_changed")
+            self._latest_observation_source_ts = 0.0
+        self._observation_boundary = boundary
+        scene, pose, image = observation.scene_graph, observation.robot_pose, observation.image
+        if (
+            observation.status not in {"positive", "negative"}
+            or not observation.map_id or scene is None or pose is None or image is None
+            or (scene.map_id, scene.content_epoch) != boundary[1:]
+            or scene.ts != observation.source_ts or pose.ts != scene.ts or image.ts != scene.ts
+        ):
+            self._clear_observation()
+            self._pending_observation = None
+            with self._verification_lock:
+                state = self._verification
+                if state is not None and not state.terminal:
+                    state.request_id, state.sample, state.confirmations = "", None, 0
+                    if state.state == "checking":
+                        state.state = "waiting"
+            if self._current_instruction:
+                self.planner_status.publish("WAITING_FOR_FRESH_OBSERVATION")
+            return
+        self._latest_observation_source_ts = observation.source_ts
+        # The scene callback may resolve or verify a target; install its image
+        # and capture-time pose first, never values from another publication.
+        self._observation_image = image
+        self._latest_observation = observation
+        self._on_robot_pose(pose)
+        self._on_scene_graph(scene)
+
+    def _clear_observation(self) -> None:
+        self._latest_observation = None
+        self._observation_image = None
+        self._current_robot_pose = None
+        self._current_scene_graph = None
+        self._latest_sg = None
+
+    def _invalidate_object_context(self, reason: str) -> None:
+        self._clear_observation()
+        # Named-place tasks and Follow have their own context/lifecycle owner.
+        verifying = self._verification is not None and not self._verification.terminal
+        searching = self._pending_observation is not None or any(
+            stage in {"checking_path", "waiting_path"} for stage in self._object_candidates.values()
+        )
+        if not self._current_instruction and not verifying and not searching:
+            return
+        owner = self._instruction_owner
+        self._begin_symbolic_llm_instruction_epoch()
+        self._instruction_owner = owner
+        self._instruction_failure = reason
+        self._current_instruction = ""
+        self._current_goal_pose = None
+        self._last_goal_publish_signature = None
+        self._last_published_goal_pose = None
+        self._cancel_owned_goals(reason)
+        self._stop_visual_handoff()
+        self._active_goal = None
+        self.planner_status.publish("PERCEPTION_CONTEXT_CHANGED")
+
     def _on_scene_graph(self, sg: SceneGraph) -> None:
         """Scene graph update ->cache + re-resolve if active instruction."""
         if self._map_sample_is_stale(sg):
@@ -863,9 +986,6 @@ class SemanticPlannerModule(Module, layer=4):
             return
         self._current_robot_pose = pose
         self._robot_pos = np.array([pose.x, pose.y, pose.z])
-
-    def _on_observation_image(self, image: Image) -> None:
-        self._observation_image = image
 
     def _map_sample_is_stale(self, sg: SceneGraph | PoseStamped) -> bool:
         frame_id = str(getattr(sg, "frame_id", "") or "")
@@ -904,6 +1024,13 @@ class SemanticPlannerModule(Module, layer=4):
         return yaw_delta <= self._goal_republish_yaw_epsilon_rad
 
     def _goal_updates_suspended(self) -> bool:
+        verification = self._verification
+        if (
+            verification is not None
+            and verification.state in {"confirmed", "timeout", "unavailable"}
+            and self._symbolic_llm_epoch_is_current(verification.instruction_epoch)
+        ):
+            return True
         task = self._active_goal
         return task is not None and (
             task.state in {"unconfirmed", "cancel_requested", "recovering", "paused"}
@@ -1042,6 +1169,9 @@ class SemanticPlannerModule(Module, layer=4):
         if task.verification is not None and task.verification.terminal:
             self.planner_status.publish(task.verification.status)
             return
+        if task.purpose == "search" and self._search is not None and status.terminal:
+            self._finish_search_move(task, status)
+            return
         if int(status.state) == int(NavigationGoalState.REACHED):
             self._current_instruction = ""
             self._current_goal_pose = None
@@ -1154,7 +1284,7 @@ class SemanticPlannerModule(Module, layer=4):
                 self._verification_timer = None
             self.planner_status.publish(state.status)
             self._chat("assistant", {
-                "confirmed": "The requested target was visually confirmed in two fresh observations.",
+                "confirmed": "The candidate visually matches the requested target in two fresh observations.",
                 "mismatch": "The observed candidate does not match the requested target.",
                 "uncertain": "The available views are inconclusive; the target is not confirmed.",
                 "timeout": "Target verification timed out; the target is not confirmed.",
@@ -1179,6 +1309,7 @@ class SemanticPlannerModule(Module, layer=4):
         grounding = self._grounding_scene()
         candidates = {str(obj["id"]) for obj in grounding["objects"]} - self._object_candidates.keys()
         if not candidates:
+            self._resume_native_search(state)
             return
         try:
             result = self._goal_resolver.fast_resolve(
@@ -1198,6 +1329,17 @@ class SemanticPlannerModule(Module, layer=4):
             and self._symbolic_llm_epoch_is_current(state.instruction_epoch)
         ):
             self._queue_observation_goal(state.instruction, object_id, after_verification=state)
+        else:
+            self._resume_native_search(state)
+
+    def _resume_native_search(self, state: TargetVerification) -> None:
+        commands = self._backends.get("nav.commands") if self._backends else None
+        if not callable(getattr(commands, "query_semantic_views", None)):
+            return
+        self._cancel_target_verification()
+        self._active_goal = None
+        self._current_instruction = state.instruction
+        self._explore_frontier(state.instruction)
 
     def _retry_target_view(self, state: TargetVerification) -> None:
         if not self._verification_is_current(state):
@@ -1346,10 +1488,6 @@ class SemanticPlannerModule(Module, layer=4):
             if not state.terminal:
                 self._try_verify_target()
 
-    def _on_detections(self, dets: list) -> None:
-        """Detection update -consumed by scene_graph path."""
-        pass
-
     def _on_topo_summary(self, summary: str) -> None:
         self._latest_topo_summary = summary or ""
 
@@ -1369,6 +1507,8 @@ class SemanticPlannerModule(Module, layer=4):
         self._navigation_context = context
         self._navigation_sequence = int(status.sequence)
         if previous is not None and previous != context:
+            self._observation_boundary = None
+            self._latest_observation_source_ts = 0.0
             self._begin_symbolic_llm_instruction_epoch()
             self._current_instruction = ""
             self._current_goal_pose = None
@@ -1555,7 +1695,13 @@ class SemanticPlannerModule(Module, layer=4):
             if self._decomposer_strategy == "rules":
                 plan = self._task_decomposer.decompose_with_rules(instruction)
                 if plan is None:
-                    return {"subtasks": [instruction]}
+                    return {
+                        "status": "needs_llm",
+                        "instruction": instruction,
+                        "subtasks": [],
+                        "subgoals": [],
+                        "decomposition_prompt": self._task_decomposer.build_decomposition_prompt(instruction),
+                    }
                 # decompose_with_rules returns a TaskPlan dataclass; normalize
                 # to the dict shape that _on_instruction reads ("subtasks").
                 return {
@@ -1571,6 +1717,13 @@ class SemanticPlannerModule(Module, layer=4):
     # Goal Resolution
 
     def _try_resolve(self, instruction: str, sg_json: str) -> None:
+        search = self._search
+        if search is not None and search.after_ts:
+            observation = self._latest_observation
+            if observation is None or observation.source_ts <= search.after_ts:
+                self.planner_status.publish("SEARCH_WAITING_FOR_OBSERVATION")
+                return
+            search.after_ts = 0.0
         if self._goal_updates_suspended():
             return
         # A graph fresh on arrival can expire while perception is disconnected.
@@ -1603,10 +1756,27 @@ class SemanticPlannerModule(Module, layer=4):
         try:
             self._goal_resolver.maybe_reload_kg()
             grounding_scene = self._grounding_scene()
+            query = parse_object_query(instruction)
+            resolver_instruction = instruction
+            if query is not None and not any(
+                token in instruction.lower() for token in ("旁边", "附近", "near", "next to", "close by")
+            ):
+                # Resolve known object phrases through the same canonical label
+                # used by the persisted instance index. The resolver still
+                # supplies the observed geometry; this step only normalizes
+                # language and never creates a pose.
+                resolver_instruction = f"find {query.label.replace('_', ' ')}"
+                aliases = {str(alias).strip().lower() for alias in query.aliases}
+                for obj in grounding_scene.get("objects", []):
+                    if str(obj.get("label", "")).strip().lower() in aliases:
+                        obj["label"] = query.label.replace("_", " ")
+            excluded = {key for key, outcome in self._object_candidates.items()
+                        if outcome in {"mismatch", "uncertain", "path_blocked"}}
             result = self._goal_resolver.fast_resolve(
-                instruction,
+                resolver_instruction,
                 _json.dumps(grounding_scene),
                 robot_position=dict(zip(("x", "y", "z"), map(float, self._robot_pos))),
+                **({"excluded_object_ids": excluded} if excluded else {}),
             )
             if result and hasattr(result, "confidence") and result.confidence >= self._fast_threshold:
                 self._resolve_count += 1
@@ -1659,6 +1829,12 @@ class SemanticPlannerModule(Module, layer=4):
     def _queue_observation_goal(
         self, instruction: str, object_id: str, *, after_verification: TargetVerification | None = None,
     ) -> None:
+        active = self._active_goal
+        if active is not None and active.purpose == "search" and not active.terminal and self._search is not None:
+            self._search.interrupting = True
+            self._cancel_owned_goals("semantic_target_observed")
+            self.planner_status.publish("TARGET_OBSERVED_WAITING_FOR_STOP")
+            return
         if self._pending_observation is not None or time.monotonic() < self._observation_retry_after:
             return
         robot = self._current_robot_pose
@@ -1880,7 +2056,155 @@ class SemanticPlannerModule(Module, layer=4):
 
     # Frontier Exploration
 
+    def _search_is_current(self, search: SearchHistory) -> bool:
+        return (
+            self._search is search
+            and self._symbolic_llm_epoch_is_current(search.instruction_epoch)
+            and self._current_instruction == search.instruction
+            and self._navigation_context == search.navigation_context
+            and self._observation_boundary == search.observation_boundary
+        )
+
+    def _queue_search_view(self, instruction: str, query: Any, preview: Any) -> None:
+        active = self._active_goal
+        if active is not None and not active.terminal:
+            return
+        observation, context = self._latest_observation, self._navigation_context
+        if observation is None or self._timestamp_is_stale(observation.source_ts) or context is None:
+            self.planner_status.publish("SEARCH_WAITING_FOR_OBSERVATION")
+            return
+        search = self._search
+        if search is None:
+            search = self._search = SearchHistory(
+                instruction, self._symbolic_llm_instruction_epoch, context, self._observation_boundary,
+            )
+        if not self._search_is_current(search) or search.pending or time.monotonic() < search.retry_after:
+            return
+        if search.moves >= self._max_frontiers or len(search.views) >= 256:
+            self._fail_instruction("SEARCH_BUDGET_EXHAUSTED", expected_epoch=search.instruction_epoch)
+            return
+        try:
+            view = camera_view(observation)
+        except (TypeError, ValueError):
+            self.planner_status.publish("SEARCH_WAITING_FOR_CAMERA_GEOMETRY")
+            return
+        if not callable(preview):
+            self._fail_instruction("SEARCH_PLANNER_UNAVAILABLE", expected_epoch=search.instruction_epoch)
+            return
+        if search.frame_epoch:
+            search.observe(view)
+        search.pending = True
+        self.planner_status.publish("SEARCH_QUERYING_VIEWS")
+        threading.Thread(
+            target=self._select_search_view, args=(search, query, preview, view),
+            daemon=True, name="semantic-search",
+        ).start()
+
+    def _select_search_view(self, search: SearchHistory, query: Any, preview: Any, view: dict) -> None:
+        """Native proposals and a native 3D preview precede every search goal."""
+        had_history = bool(search.views)
+        try:
+            boot_id, map_id, content_epoch = search.navigation_context
+            result = query(
+                boot_id=boot_id, map_id=map_id, map_content_epoch=content_epoch,
+                frame_id=SEMANTIC_PLANNER_MAP_FRAME_ID, frame_epoch=search.frame_epoch,
+                reference_z=search.reference_z, camera_range_m=view["range_m"],
+                camera_horizontal_fov_rad=view["horizontal_fov_rad"],
+                views=[dict(old) for old in search.views],
+            )
+            if not self._search_is_current(search):
+                return
+            if result.get("reason") in {"navigation_busy", "semantic_search_query_busy", "semantic_search_inputs_not_ready"}:
+                self.planner_status.publish("SEARCH_WAITING_FOR_NAVIGATION")
+                return
+            if result.get("available") is not True:
+                self._fail_instruction(str(result.get("reason") or "SEARCH_QUERY_UNAVAILABLE"),
+                                       expected_epoch=search.instruction_epoch)
+                return
+            identity = (result.get("boot_id"), result.get("map_id"), result.get("map_content_epoch"))
+            frame_epoch = int(result.get("frame_epoch", 0))
+            if (identity != search.navigation_context or result.get("frame_id") != SEMANTIC_PLANNER_MAP_FRAME_ID
+                    or frame_epoch <= 0 or (search.frame_epoch and frame_epoch != search.frame_epoch)):
+                self._fail_instruction("SEARCH_CONTEXT_CHANGED", expected_epoch=search.instruction_epoch)
+                return
+            search.frame_epoch, search.reference_z = frame_epoch, float(result["reference_z"])
+            search.observe(view)
+            if result.get("geometry_exhausted") is True:
+                self._fail_instruction("SEARCH_COVERAGE_EXHAUSTED", expected_epoch=search.instruction_epoch)
+                return
+            for candidate in result.get("candidates", []):
+                coordinates = tuple(float(candidate[key]) for key in ("x", "y", "z", "yaw"))
+                if not all(math.isfinite(value) for value in coordinates) or search.excludes(coordinates):
+                    continue
+                robot = self._current_robot_pose
+                if robot is None or self._map_sample_is_stale(robot):
+                    return
+                if (math.dist(coordinates[:3], (robot.x, robot.y, robot.z)) < 0.15
+                        and self._wrap_angle_delta_rad(coordinates[3], robot.yaw) < 0.15):
+                    continue
+                plan = preview(*coordinates[:3])
+                if not self._search_is_current(search):
+                    return
+                if plan.get("reason") in {"navigation_busy", "planner_busy"}:
+                    return
+                if (plan.get("feasible") is not True or plan.get("start_valid") is not True
+                        or plan.get("frame_id") != SEMANTIC_PLANNER_MAP_FRAME_ID or not plan.get("path")):
+                    search.rejected.append(coordinates)
+                    continue
+                with self._instruction_lock:
+                    if not self._search_is_current(search):
+                        return
+                    observation = self._latest_observation
+                    active = self._active_goal
+                    if (observation is None or self._timestamp_is_stale(observation.source_ts)
+                            or self._pending_observation is not None or (active is not None and not active.terminal)):
+                        return
+                    pose = PoseStamped(Pose(Vector3(*coordinates[:3]), Quaternion.from_yaw(coordinates[3])),
+                                       frame_id=SEMANTIC_PLANNER_MAP_FRAME_ID)
+                    task = self._dispatch_navigation_goal(pose, instruction=search.instruction, purpose="search")
+                    search.moves += 1
+                    self._frontier_count += 1
+                    if task.state == "rejected":
+                        search.rejected.append(coordinates)
+                        self._fail_instruction("SEARCH_GOAL_REJECTED", expected_epoch=search.instruction_epoch)
+                        return
+                    if task.state == "unconfirmed":
+                        self._cancel_owned_goals("semantic_search_admission_unconfirmed")
+                        self._fail_instruction("SEARCH_ADMISSION_UNCONFIRMED", expected_epoch=search.instruction_epoch)
+                        return
+                    self.planner_status.publish("SEARCH_MOVING_TO_VIEW")
+                return
+            if had_history:
+                self._fail_instruction("SEARCH_NO_REACHABLE_VIEW", expected_epoch=search.instruction_epoch)
+        except Exception:
+            logger.exception("Native semantic view query failed")
+            if self._search_is_current(search):
+                self._fail_instruction("SEARCH_QUERY_UNAVAILABLE", expected_epoch=search.instruction_epoch)
+        finally:
+            search.pending = False
+            search.retry_after = time.monotonic() + 1.0
+
+    def _finish_search_move(self, task: GoalExecution, status: NavigationGoalStatus) -> None:
+        search = self._search
+        if search is None or not self._search_is_current(search):
+            return
+        if int(status.state) == int(NavigationGoalState.CANCELLED) and not search.interrupting:
+            self._fail_instruction("SEARCH_CANCELLED", expected_epoch=search.instruction_epoch)
+            return
+        if int(status.state) == int(NavigationGoalState.FAILED):
+            search.rejected.append((task.pose.x, task.pose.y, task.pose.z, task.pose.yaw))
+        search.interrupting = False
+        search.after_ts = float(status.ts)
+        self._last_nav_state = ""
+        self._current_goal_pose = None
+        self.planner_status.publish("SEARCH_WAITING_FOR_OBSERVATION")
+
     def _explore_frontier(self, instruction: str) -> None:
+        commands = self._backends.get("nav.commands") if self._backends else None
+        query = getattr(commands, "query_semantic_views", None)
+        if callable(query) and parse_object_query(instruction) is not None:
+            self._queue_search_view(instruction, query, getattr(commands, "preview_plan", None))
+            return
         if self._frontier_scorer is None:
             self._fallback_visual_servo(instruction)
             return
@@ -1949,12 +2273,30 @@ class SemanticPlannerModule(Module, layer=4):
         with self._instruction_lock:
             if not owner_id or self._instruction_owner != owner_id:
                 return False
+            if self._instruction_cancel_requested:
+                return True
+            follow_ref = self._follow_ref
+            visual_handoff = self._visual_handoff
             self._begin_symbolic_llm_instruction_epoch()
+            self._instruction_owner = owner_id
+            self._instruction_cancel_requested = True
+            self._instruction_cancel_reason = reason
             self._current_instruction = ""
             self._current_goal_pose = None
             self._cancel_owned_goals(reason)
-            self._stop_visual_handoff()
-            self.planner_status.publish("CANCELLING" if self._navigation_goals else "CANCELLED")
+            if visual_handoff and follow_ref is not None:
+                self._visual_handoff = True
+                self._follow_ref = follow_ref
+                servo = self._backends.get("VisualServoModule") if self._backends else None
+                if servo is not None:
+                    servo.cancel_follow_task(follow_ref["follow_task_id"], follow_ref["product_session_id"], reason=reason)
+            elif visual_handoff:
+                # The legacy visual handoff has no correlated terminal feedback.
+                # Keep it visible as unconfirmed after requesting its stop.
+                self._visual_handoff = True
+                self.servo_target.publish("stop")
+            status = self.owned_instruction_status(owner_id)
+            self.planner_status.publish("CANCELLED" if status.get("stop_confirmed") is True else "CANCELLING")
             return True
 
     def owned_instruction_status(self, owner_id: str) -> dict:
@@ -1962,27 +2304,127 @@ class SemanticPlannerModule(Module, layer=4):
         with self._instruction_lock:
             if not owner_id or self._instruction_owner != owner_id:
                 return {"owned": False, "terminal": True, "success": False, "state": "SUPERSEDED"}
+            task = self._active_goal
+            if self._instruction_cancel_requested:
+                result = {
+                    "owned": True,
+                    "terminal": False,
+                    "success": False,
+                    "state": "CANCELLING",
+                    "cancel_requested": True,
+                    "stop_confirmed": False,
+                    "reason": self._instruction_cancel_reason,
+                }
+                if self._follow_ref is not None:
+                    ref = self._follow_ref
+                    result.update(
+                        follow_task_id=ref["follow_task_id"],
+                        product_session_id=ref["product_session_id"],
+                    )
+                    servo = self._backends.get("VisualServoModule") if self._backends else None
+                    if servo is None:
+                        return {**result, "state": "FOLLOW_UNAVAILABLE"}
+                    follow = servo.get_follow_task(ref["follow_task_id"], ref["product_session_id"])
+                    if follow.get("found") is not True:
+                        return {
+                            **result,
+                            "state": "FOLLOW_UNKNOWN",
+                            "reason": str(follow.get("reason") or "follow_task_unknown"),
+                        }
+                    stopped = follow.get("terminal") is True
+                    result.update(
+                        state="CANCELLED" if stopped else "CANCELLING",
+                        terminal=stopped,
+                        stop_confirmed=stopped,
+                        phase=str(follow.get("phase") or ""),
+                        reason=str(follow.get("reason") or self._instruction_cancel_reason),
+                        result=follow.get("result"),
+                        children=follow.get("children", {}),
+                        details=follow.get("details", {}),
+                    )
+                    return result
+                if task is not None:
+                    stopped = task.terminal
+                    result.update(
+                        state="CANCELLED" if stopped else "CANCELLING",
+                        terminal=stopped,
+                        stop_confirmed=stopped,
+                        task_id=task.task_id,
+                        request_id=task.request_id,
+                        native_state=task.state,
+                        native_reason=task.reason,
+                    )
+                    return result
+                if self._visual_handoff:
+                    result["state"] = "CANCEL_UNCONFIRMED"
+                    return result
+                return {**result, "state": "CANCELLED", "terminal": True, "stop_confirmed": True}
             if self._instruction_failure:
                 return {"owned": True, "terminal": True, "success": False, "state": self._instruction_failure}
-            task, verification = self._active_goal, self._verification
+            verification = self._verification
             result = {"owned": True, "terminal": False, "success": False,
                       "state": "FOLLOW" if self._visual_handoff else "RESOLVING"}
+            if self._visual_handoff and self._follow_ref is not None:
+                ref = self._follow_ref
+                servo = self._backends.get("VisualServoModule") if self._backends else None
+                if servo is None:
+                    return {
+                        **result,
+                        "terminal": True,
+                        "state": "FOLLOW_UNAVAILABLE",
+                        "reason": "visual_servo_unavailable",
+                    }
+                follow = servo.get_follow_task(
+                    ref["follow_task_id"],
+                    ref["product_session_id"],
+                )
+                result.update(
+                    follow_task_id=ref["follow_task_id"],
+                    product_session_id=ref["product_session_id"],
+                )
+                if follow.get("found") is not True:
+                    result.update(
+                        terminal=True,
+                        state="FOLLOW_UNKNOWN",
+                        reason=str(follow.get("reason") or "follow_task_unknown"),
+                    )
+                    return result
+                terminal = follow.get("terminal") is True
+                domain_result = follow.get("result")
+                result.update(
+                    state=str(follow.get("state") or "unknown"),
+                    terminal=terminal,
+                    success=terminal and domain_result in {"success", "completed"},
+                    phase=str(follow.get("phase") or ""),
+                    reason=str(follow.get("reason") or ""),
+                    result=domain_result,
+                    children=follow.get("children", {}),
+                    details=follow.get("details", {}),
+                )
+                return result
             if task is not None:
                 result.update(task_id=task.task_id, request_id=task.request_id)
+                if task.reason:
+                    result["reason"] = task.reason
             if self._pending_observation is not None or "waiting_path" in self._object_candidates.values():
                 result["state"] = "CHECKING_OBSERVATION_PATH"
+            elif (self._search is not None and self._search_is_current(self._search)
+                  and (task is None or task.purpose == "search")):
+                result.update(state="SEARCHING", search_moves=self._search.moves,
+                              observed_views=len(self._search.views), pending_query=self._search.pending)
             elif verification is not None:
                 result.update(state=verification.status, terminal=verification.terminal,
                               success=verification.state == "confirmed", confirmations=verification.confirmations)
+                if verification.reason:
+                    result["reason"] = verification.reason
             elif task is not None:
                 result.update(state=task.state, task_id=task.task_id, request_id=task.request_id)
                 if task.state in {"rejected", "unconfirmed"} or (task.terminal and task.purpose == "place"):
                     result.update(terminal=True, success=task.state == "reached")
             return result
 
-    @skill
     def send_instruction(self, text: str) -> str:
-        """Send a natural language navigation instruction to the semantic planner.
+        """Submit a direct domain instruction; public language tasks enter through Gateway/Agent.
 
         Args:
             text: Instruction in natural language, e.g. "go to the kitchen"
@@ -1990,7 +2432,7 @@ class SemanticPlannerModule(Module, layer=4):
         self._on_instruction(text)
         return _json.dumps({"status": "sent", "instruction": text})
 
-    @skill
+    @skill(read_only=True)
     def get_planner_status(self) -> str:
         """Return current semantic planner state and counters."""
         state = self._last_nav_state or (f"NAVIGATION_{self._active_goal.state.upper()}" if self._active_goal else "IDLE")
@@ -2019,7 +2461,13 @@ class SemanticPlannerModule(Module, layer=4):
             }
         )
 
-    @skill
+    @skill(
+        description=(
+            "Read objects from the latest scene graph as a JSON array of label, confidence and position. "
+            "This is cached perception, not proof of a freshly confirmed target or an executable goal."
+        ),
+        read_only=True,
+    )
     def get_scene_objects(self) -> str:
         """Return the latest scene graph objects for facade/API clients."""
         sg = self._current_scene_graph
@@ -2043,25 +2491,244 @@ class SemanticPlannerModule(Module, layer=4):
             )
         return _json.dumps(objects)
 
-    @skill
+    @skill(
+        description=(
+            "Parse an instruction into a symbolic task plan without grounding or motion. "
+            "status=parsed returns task_plan.v1; status=needs_llm returns a prompt, not a completed model request. "
+            "A parsed plan still needs scene grounding with resolve_task_step and explicit execution."
+        ),
+        parameters={"instruction": "High-level natural-language task to decompose into ordered symbolic steps."},
+        read_only=True,
+    )
     def decompose_task(self, instruction: str) -> str:
-        """Decompose a complex instruction into ordered sub-goals.
+        """Parse an instruction into a symbolic task plan without scene grounding.
+
+        Rule-parsed instructions return ``status=parsed`` with a
+        ``task_plan.v1`` payload.  Complex instructions return
+        ``status=needs_llm`` and a decomposition prompt; neither result sends a
+        navigation goal or resolves a scene object.
 
         Args:
             instruction: High-level task description, e.g. "fetch coffee from the kitchen"
         """
         if self._task_decomposer is None:
             return _json.dumps({"error": "task decomposer not loaded"})
+        text = str(instruction or "").strip()
+        if not text:
+            return _json.dumps({"status": "invalid", "error": "instruction must not be blank"})
         try:
-            subtasks = self._task_decomposer.decompose(instruction)
-            return _json.dumps(
-                {
-                    "instruction": instruction,
-                    "subtasks": subtasks if isinstance(subtasks, list) else list(subtasks),
-                }
-            )
+            plan = self._task_decomposer.decompose(text)
+            if plan is None:
+                return _json.dumps(
+                    {
+                        "status": "needs_llm",
+                        "schema_version": "task_plan.v1",
+                        "instruction": text,
+                        "subgoals": [],
+                        "subtasks": [],
+                        "decomposition_prompt": self._task_decomposer.build_decomposition_prompt(text),
+                    },
+                    ensure_ascii=False,
+                )
+            payload = plan.to_dict()
+            payload["status"] = "parsed"
+            payload["subtasks"] = [goal.to_dict() for goal in plan.subgoals]
+            return _json.dumps(payload, ensure_ascii=False)
         except Exception as exc:
             return _json.dumps({"error": str(exc)})
+
+    @skill(
+        description=(
+            "Ground the active symbolic task step against the current scene and map identity. "
+            "Pass JSON from decompose_task or a validated task_plan.v1. This returns a candidate only; "
+            "it neither checks an executable route nor publishes motion. Waiting, invalid or needs_llm results "
+            "are not successful execution."
+        ),
+        parameters={"task_plan": "Serialized task_plan.v1 JSON with instruction, ordered subgoals and current_step."},
+        read_only=True,
+    )
+    def resolve_task_step(self, task_plan: str) -> str:
+        """Ground the active symbolic task step against the current scene.
+
+        ``task_plan`` is the JSON returned by :meth:`decompose_task` or by a
+        validated symbolic LLM response.  This method only performs semantic
+        grounding.  It returns a candidate with the current map identity and
+        never calls ``preview_plan`` or publishes a navigation command.
+        """
+        try:
+            payload = _json.loads(task_plan) if isinstance(task_plan, str) else task_plan
+        except (TypeError, ValueError) as exc:
+            return _json.dumps({"status": "invalid", "error": f"task plan must be JSON: {exc}"})
+        if not isinstance(payload, dict):
+            return _json.dumps({"status": "invalid", "error": "task plan must be an object"})
+        if payload.get("status") == "needs_llm":
+            return _json.dumps(
+                {"status": "needs_llm", "instruction": payload.get("instruction", "")},
+                ensure_ascii=False,
+            )
+
+        from decision.tasks.decomposition import SubGoalStatus, TaskDecomposer
+
+        instruction = str(payload.get("instruction", "")).strip()
+        raw_subgoals = payload.get("subgoals")
+        if not isinstance(raw_subgoals, list):
+            raw_subgoals = payload.get("subtasks")
+        if not instruction or not isinstance(raw_subgoals, list):
+            return _json.dumps({"status": "invalid", "error": "task plan requires instruction and subgoals"})
+        try:
+            plan = TaskDecomposer().parse_decomposition_response(
+                instruction,
+                {"subgoals": raw_subgoals},
+            )
+            for raw, goal in zip(raw_subgoals, plan.subgoals):
+                if isinstance(raw, dict):
+                    try:
+                        goal.status = SubGoalStatus(str(raw.get("status", goal.status.value)))
+                    except ValueError:
+                        pass
+            plan.current_step = int(payload.get("current_step", 0) or 0)
+        except (TypeError, ValueError, OverflowError) as exc:
+            return _json.dumps({"status": "invalid", "error": f"task plan is malformed: {exc}"})
+
+        errors = plan.validate()
+        if errors:
+            return _json.dumps({"status": "invalid", "errors": list(errors)}, ensure_ascii=False)
+        step = plan.active_subgoal
+        if step is not None and step.step_id != plan.current_step:
+            return _json.dumps(
+                {
+                    "status": "invalid",
+                    "error": "current_step_does_not_match_active_subgoal",
+                    "current_step": plan.current_step,
+                    "active_step": step.step_id,
+                },
+                ensure_ascii=False,
+            )
+        if step is None:
+            return _json.dumps({"status": "complete", "instruction": instruction}, ensure_ascii=False)
+
+        from decision.tasks.decomposition import SubGoalAction
+
+        if step.action not in {
+            SubGoalAction.NAVIGATE,
+            SubGoalAction.FIND,
+            SubGoalAction.APPROACH,
+            SubGoalAction.VERIFY,
+        }:
+            return _json.dumps(
+                {
+                    "status": "not_groundable",
+                    "step_id": step.step_id,
+                    "action": step.action.value,
+                    "target": step.target,
+                },
+                ensure_ascii=False,
+            )
+
+        scene = self._current_scene_graph
+        if scene is None or self._map_sample_is_stale(scene):
+            return _json.dumps({"status": "waiting_for_fresh_scene_graph", "step_id": step.step_id})
+        scene_map_id = str(getattr(scene, "map_id", "") or "")
+        scene_epoch = int(getattr(scene, "content_epoch", 0) or 0)
+        context = self._navigation_context
+        if context is not None and context[1] and context[2] > 0:
+            if (scene_map_id and scene_map_id != context[1]) or (scene_epoch and scene_epoch != context[2]):
+                return _json.dumps(
+                    {
+                        "status": "stale_scene_map",
+                        "step_id": step.step_id,
+                        "scene_map_id": scene_map_id,
+                        "scene_content_epoch": scene_epoch,
+                        "active_map_id": context[1],
+                        "active_content_epoch": context[2],
+                    },
+                    ensure_ascii=False,
+                )
+            scene_map_id = scene_map_id or context[1]
+            scene_epoch = scene_epoch or context[2]
+        hierarchy_errors = scene.validate_hierarchy()
+        if hierarchy_errors:
+            return _json.dumps(
+                {"status": "scene_invalid", "errors": list(hierarchy_errors)}, ensure_ascii=False
+            )
+        if self._goal_resolver is None:
+            return _json.dumps({"status": "resolver_unavailable", "step_id": step.step_id})
+
+        query = step.target.strip()
+        relation = step.parameters.get("relation")
+        reference = step.parameters.get("reference")
+        if relation and reference:
+            query = f"{query} {relation} {reference}"
+        grounding = self._grounding_scene()
+        object_query = parse_object_query(query) if not relation else None
+        if object_query is not None:
+            query = f"find {object_query.label.replace('_', ' ')}"
+            aliases = {str(alias).strip().lower() for alias in object_query.aliases}
+            for obj in grounding.get("objects", []):
+                if str(obj.get("label", "")).strip().lower() in aliases:
+                    obj["label"] = object_query.label.replace("_", " ")
+        try:
+            reload_kg = getattr(self._goal_resolver, "maybe_reload_kg", None)
+            if callable(reload_kg):
+                reload_kg()
+            result = self._goal_resolver.fast_resolve(
+                query,
+                _json.dumps(grounding, ensure_ascii=False),
+                robot_position=dict(zip(("x", "y", "z"), map(float, self._robot_pos))),
+            )
+        except Exception as exc:
+            logger.exception("Task-step semantic grounding failed")
+            return _json.dumps({"status": "grounding_failed", "step_id": step.step_id, "error": str(exc)})
+        if result is None or not bool(getattr(result, "is_valid", True)):
+            return _json.dumps(
+                {
+                    "status": "unresolved",
+                    "step_id": step.step_id,
+                    "action": step.action.value,
+                    "target": step.target,
+                },
+                ensure_ascii=False,
+            )
+
+        result_frame = str(getattr(result, "frame_id", "") or "")
+        scene_frame = str(getattr(scene, "frame_id", "") or "")
+        if result_frame and scene_frame and result_frame != scene_frame:
+            return _json.dumps(
+                {
+                    "status": "stale_scene_frame",
+                    "step_id": step.step_id,
+                    "scene_frame_id": scene_frame,
+                    "candidate_frame_id": result_frame,
+                },
+                ensure_ascii=False,
+            )
+        confidence = float(getattr(result, "confidence", 0.0) or 0.0)
+        return _json.dumps(
+            {
+                "status": "resolved" if confidence >= self._fast_threshold else "candidate",
+                "step_id": step.step_id,
+                "action": step.action.value,
+                "query": query,
+                "target": step.target,
+                "candidate_id": str(getattr(result, "candidate_id", "") or ""),
+                "target_label": str(getattr(result, "target_label", "") or ""),
+                "target_pose": {
+                    "x": float(getattr(result, "target_x", 0.0) or 0.0),
+                    "y": float(getattr(result, "target_y", 0.0) or 0.0),
+                    "z": float(getattr(result, "target_z", 0.0) or 0.0),
+                },
+                "confidence": confidence,
+                "evidence": {
+                    "path": str(getattr(result, "path", "") or ""),
+                    "reasoning": str(getattr(result, "reasoning", "") or ""),
+                    "hint_room": str(getattr(result, "hint_room", "") or ""),
+                },
+                "map_id": scene_map_id,
+                "content_epoch": scene_epoch,
+                "frame_id": result_frame or scene_frame,
+            },
+            ensure_ascii=False,
+        )
 
     # Visual Servo Fallback
 

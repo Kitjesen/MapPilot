@@ -24,5 +24,5 @@ python -m pytest tests/sim/test_sim_layout_contract.py -q
 ## Boundary
 
 These tests prove repository and local simulation contracts at their stated
-level. They do not prove S100P behavior, real sensor fidelity, supervised field
+level. They do not prove physical-target behavior, real sensor fidelity, supervised field
 motion, or deployment readiness.

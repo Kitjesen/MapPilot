@@ -84,7 +84,14 @@ BsplineOptimizer::initControlPoints(Eigen::MatrixXd &init_points, bool flag_firs
       if (i > i_end && !flag_got_start) break;
       Eigen::Vector3d sample_pt = a * init_points.col(i - 1) + (1 - a) * init_points.col(i);
       double sample_yaw = estimateSegmentYaw(init_points.col(i - 1), init_points.col(i));
-      occ = grid_map_->getInflateOccupancy(sample_pt, sample_yaw);
+      const double next_a = std::max(0.0, a - step_size);
+      const Eigen::Vector3d next_sample =
+          next_a * init_points.col(i - 1) + (1 - next_a) * init_points.col(i);
+      // Dense controls can straddle a voxel corner while both are free. The
+      // same segment query used for candidate validation must seed a rebound
+      // guide too, including when the interpolation step exceeds one span.
+      occ = grid_map_->getInflateOccupancySegment(
+                sample_pt, sample_yaw, next_sample, sample_yaw) != 0;
       // cout << setprecision(5);
       // cout << (a * init_points.col(i-1) + (1-a) * init_points.col(i)).transpose() << " occ1=" <<
       // occ << endl;
@@ -928,13 +935,20 @@ bool BsplineOptimizer::rebound_optimize() {
           0.01, (tmp - tm) /
                     ((traj.evaluateDeBoorT(tmp) - traj.evaluateDeBoorT(tm)).norm() /
                      grid_map_->getResolution()));
+      Eigen::Vector3d last_heading_tangent = Eigen::Vector3d::Zero();
+      const auto heading_tangent = [&](const Eigen::Vector3d &tangent) {
+        if (!tangent.allFinite()) return tangent;
+        if (tangent.head<2>().norm() > 0.03) last_heading_tangent = tangent;
+        return last_heading_tangent;
+      };
       for (double t = tm; t < tmp; t += t_step)
       {
         Eigen::Vector3d pos = traj.evaluateDeBoorT(t);
         const double next_t = std::min(t + t_step, tmp);
         const Eigen::Vector3d pos_next = traj.evaluateDeBoorT(next_t);
-        const Eigen::Vector3d tangent = velocity.evaluateDeBoorT(t);
-        const Eigen::Vector3d next_tangent = velocity.evaluateDeBoorT(next_t);
+        // These vectors select collision heading only; physical derivatives stay unchanged.
+        const Eigen::Vector3d tangent = heading_tangent(velocity.evaluateDeBoorT(t));
+        const Eigen::Vector3d next_tangent = heading_tangent(velocity.evaluateDeBoorT(next_t));
         const int collision_state = grid_map_->getTrajectoryOccupancySegment(
             pos, tangent, pos_next, next_tangent, t - tm, next_t - tm);
         flag_occ = collision_state != 0;
@@ -990,12 +1004,18 @@ bool BsplineOptimizer::checkTrajectoryCollisionFree(const UniformBspline &traj) 
       0.01, (tmp - tm) /
                 ((traj.evaluateDeBoorT(tmp) - traj.evaluateDeBoorT(tm)).norm() /
                  grid_map_->getResolution()));
+  Eigen::Vector3d last_heading_tangent = Eigen::Vector3d::Zero();
+  const auto heading_tangent = [&](const Eigen::Vector3d &tangent) {
+    if (!tangent.allFinite()) return tangent;
+    if (tangent.head<2>().norm() > 0.03) last_heading_tangent = tangent;
+    return last_heading_tangent;
+  };
   for (double t = tm; t < tmp; t += t_step) {
     Eigen::Vector3d pos = traj.evaluateDeBoorT(t);
     const double next_t = std::min(t + t_step, tmp);
     const Eigen::Vector3d pos_next = traj.evaluateDeBoorT(next_t);
-    const Eigen::Vector3d tangent = velocity.evaluateDeBoorT(t);
-    const Eigen::Vector3d next_tangent = velocity.evaluateDeBoorT(next_t);
+    const Eigen::Vector3d tangent = heading_tangent(velocity.evaluateDeBoorT(t));
+    const Eigen::Vector3d next_tangent = heading_tangent(velocity.evaluateDeBoorT(next_t));
     const int collision_state = grid_map_->getTrajectoryOccupancySegment(
         pos, tangent, pos_next, next_tangent, t - tm, next_t - tm);
     if (collision_state != 0) {
@@ -1014,8 +1034,8 @@ bool BsplineOptimizer::checkTrajectoryCollisionFree(const UniformBspline &traj) 
 
 bool BsplineOptimizer::refine_optimize() {
   iter_num_ = 0;
-  int start_id = order_;
-  int end_id = this->cps_.points.cols() - order_;
+  const int start_id = order_;
+  const int end_id = this->cps_.points.cols() - order_;
   variable_num_ = 3 * (end_id - start_id);
 
   std::vector<double> q(static_cast<std::size_t>(variable_num_));
@@ -1024,42 +1044,29 @@ bool BsplineOptimizer::refine_optimize() {
   memcpy(q.data(), cps_.points.data() + 3 * start_id,
          static_cast<std::size_t>(variable_num_) * sizeof(q[0]));
 
-  double origin_lambda4 = lambda4_;
-  bool flag_safe = true;
-  int iter_count = 0;
-  do {
-    lbfgs::lbfgs_parameter_t lbfgs_params;
-    lbfgs::lbfgs_load_default_parameters(&lbfgs_params);
-    lbfgs_params.mem_size = 16;
-    lbfgs_params.max_iterations = 200;
-    lbfgs_params.g_epsilon = 0.001;
+  lbfgs::lbfgs_parameter_t lbfgs_params;
+  lbfgs::lbfgs_load_default_parameters(&lbfgs_params);
+  lbfgs_params.mem_size = 16;
+  lbfgs_params.max_iterations = 200;
+  lbfgs_params.g_epsilon = 0.001;
 
-    int result =
-        lbfgs::lbfgs_optimize(variable_num_, q.data(), &final_cost,
-                              BsplineOptimizer::costFunctionRefine,
-                              NULL, NULL, this, &lbfgs_params);
-    debug_.optimizerReturnCodeValid = true;
-    debug_.optimizerReturnCode = result;
-    if (result == lbfgs::LBFGS_CONVERGENCE || result == lbfgs::LBFGSERR_MAXIMUMITERATION ||
-        result == lbfgs::LBFGS_ALREADY_MINIMIZED || result == lbfgs::LBFGS_STOP) {
-      // pass
-    } else {
-    }
+  const int result =
+      lbfgs::lbfgs_optimize(variable_num_, q.data(), &final_cost,
+                            BsplineOptimizer::costFunctionRefine,
+                            NULL, NULL, this, &lbfgs_params);
+  debug_.optimizerReturnCodeValid = true;
+  debug_.optimizerReturnCode = result;
+  // Line-search failures roll q back, while the last callback still holds
+  // its rejected trial in cps_.points. Always expose the solver's result.
+  memcpy(cps_.points.data() + 3 * start_id, q.data(),
+         static_cast<std::size_t>(variable_num_) * sizeof(q[0]));
+  if (result != lbfgs::LBFGS_CONVERGENCE && result != lbfgs::LBFGSERR_MAXIMUMITERATION &&
+      result != lbfgs::LBFGS_ALREADY_MINIMIZED && result != lbfgs::LBFGS_STOP) {
+    debug_.reason = "optimizer_error";
+    return false;
+  }
 
-    UniformBspline traj = UniformBspline(cps_.points, 3, bspline_interval_);
-    flag_safe = checkTrajectoryCollisionFree(traj);
-
-    if (!flag_safe)
-      lambda4_ *= 2;
-
-    iter_count++;
-  } while (!flag_safe && iter_count <= 0);
-
-  lambda4_ = origin_lambda4;
-
-  // cout << "iter_num_=" << iter_num_ << endl;
-
-  return flag_safe;
+  return checkTrajectoryCollisionFree(UniformBspline(cps_.points, 3, bspline_interval_));
 }
 
 void BsplineOptimizer::combineCostRebound(const double *x, double *grad, double &f_combine,

@@ -21,6 +21,7 @@ struct GoalTaskCancelRequest {
 struct GoalTaskCancelTerminalServiceResult {
   bool action_committed{false};
   std::string reason;
+  bool pending{false};
 };
 
 class GoalTaskCancelRouter {

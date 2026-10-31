@@ -59,9 +59,9 @@ def _write_active_same_source_octomap(map_root: Path) -> Path:
                 "schema_version": "lingtu.saved_map_artifacts.v1",
                 "source_profile": "thunder",
                 "data_source": "field",
-                "slam_source": "fastlio2",
-                "localization_source": "fastlio2",
-                "mapping_source": "fastlio2",
+                "slam_source": "ltlio",
+                "localization_source": "ltlio",
+                "mapping_source": "ltlio",
                 "frame_id": "map",
                 "created_at": "2026-05-25T00:00:00Z",
                 "artifacts": {
@@ -69,7 +69,7 @@ def _write_active_same_source_octomap(map_root: Path) -> Path:
                         "path": "map.pcd",
                         "source_profile": "thunder",
                         "data_source": "field",
-                        "slam_source": "fastlio2",
+                        "slam_source": "ltlio",
                         "frame_id": "map",
                         "point_count": 1,
                     },
@@ -1221,22 +1221,37 @@ def test_gateway_explicit_person_track_is_consumed_by_visual_servo():
     from decision.modules.visual_servo import VisualServoModule
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import VisualServoRequest
-    from runtime.msgs.geometry import Vector3
-    from runtime.msgs.semantic import Detection3D
+    from runtime.msgs.geometry import Pose, PoseStamped, Vector3
+    from runtime.msgs.semantic import Detection3D, SemanticObservation
 
     visual_servo = VisualServoModule()
     visual_servo.setup()
-    visual_servo.detections_3d._deliver(
-        [
+    source_ts = time.time()
+    visual_servo.observation._deliver(
+        SemanticObservation(
+            sequence=1,
+            source_ts=source_ts,
+            completed_ts=source_ts,
+            source_generation=1,
+            map_id="test-map",
+            content_epoch=1,
+            status="positive",
+            robot_pose=PoseStamped(
+                pose=Pose(position=Vector3()),
+                ts=source_ts,
+                frame_id="map",
+            ),
+            detections=(
             Detection3D(
                 id="person-7",
                 label="person",
                 confidence=0.9,
                 position=Vector3(4.0, 0.0, 1.2),
                 bbox_2d=[0.0, 0.0, 30.0, 30.0],
-                ts=20.0,
-            )
-        ]
+                ts=source_ts,
+            ),
+            ),
+        )
     )
 
     gateway = GatewayModule()

@@ -112,7 +112,7 @@ ControlLoopRuntimeGuard::observe(const ControlLoopHealthSnapshot &health) {
   if (deadline_streak && health.current_miss_streak < config_.latch_miss_streak) {
     // A short scheduling stall is observable but recoverable. The driver
     // watchdog owns immediate stale-command stopping; only a sustained loop
-    // failure creates the operator-resume boundary.
+    // failure creates a motion hold until healthy control cycles resume.
     unhealthy_samples_ = 0;
     recovery_samples_ = 0;
     reason_ = reason;

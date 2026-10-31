@@ -8,6 +8,7 @@
 class SWidget;
 
 namespace LingTuSim::UI {
+struct FPlayerSettings;
 enum class ERobotDrivePublishReason : uint8 {
   StateChanged,
   Periodic,
@@ -20,6 +21,14 @@ using FRuntimeUIActionPublisher = TFunction<void(ERuntimeUIAction)>;
 using FRuntimeUIFrontEndLockQuery = TFunction<bool()>;
 using FRuntimeUITextEntryFocusQuery = TFunction<bool()>;
 
+/** Local player-view deltas only; these are never robot motion intent. */
+struct FRuntimeCameraInput {
+  float YawDeltaDegrees = 0.0f;
+  float PitchDeltaDegrees = 0.0f;
+  float ZoomSteps = 0.0f;
+};
+using FRuntimeCameraInputPublisher = TFunction<void(const FRuntimeCameraInput&)>;
+
 /** Viewport-scoped input adapter. Transport ownership remains in Session. */
 class FLingTuSimRuntimeUIInputProcessor final : public IInputProcessor {
  public:
@@ -29,7 +38,13 @@ class FLingTuSimRuntimeUIInputProcessor final : public IInputProcessor {
                                     FRobotDriveInputPublisher InPublisher,
                                     FRuntimeUIActionPublisher InActionPublisher,
                                     FRuntimeUIFrontEndLockQuery InFrontEndLockQuery,
-                                    FRuntimeUITextEntryFocusQuery InTextEntryFocusQuery);
+                                    FRuntimeUITextEntryFocusQuery InTextEntryFocusQuery,
+                                    FRuntimeCameraInputPublisher InCameraPublisher = {},
+                                    TFunction<bool()> InMenuBackHandler = {},
+                                    TSharedPtr<FPlayerSettings> InPlayerSettings = {},
+                                    TFunction<bool(const FKeyEvent&)> InKeyCaptureHandler = {},
+                                    TFunction<void()> InCancelKeyCapture = {},
+                                    TFunction<void()> InRestoreMenuFocus = {});
   virtual ~FLingTuSimRuntimeUIInputProcessor() override;
 
   virtual void Tick(float DeltaTime, FSlateApplication &SlateApplication,
@@ -40,6 +55,12 @@ class FLingTuSimRuntimeUIInputProcessor final : public IInputProcessor {
                                 const FKeyEvent &KeyEvent) override;
   virtual bool HandleAnalogInputEvent(FSlateApplication &SlateApplication,
                                       const FAnalogInputEvent &AnalogInputEvent) override;
+  virtual bool HandleMouseMoveEvent(FSlateApplication& SlateApplication, const FPointerEvent& Event) override;
+  virtual bool HandleMouseButtonDownEvent(FSlateApplication& SlateApplication, const FPointerEvent& Event) override;
+  virtual bool HandleMouseButtonUpEvent(FSlateApplication& SlateApplication, const FPointerEvent& Event) override;
+  virtual bool HandleMouseButtonDoubleClickEvent(FSlateApplication& SlateApplication, const FPointerEvent& Event) override;
+  virtual bool HandleMouseWheelOrGestureEvent(FSlateApplication& SlateApplication, const FPointerEvent& Event,
+                                            const FPointerEvent* Gesture) override;
 
   void ReleaseInput();
 
@@ -48,6 +69,9 @@ class FLingTuSimRuntimeUIInputProcessor final : public IInputProcessor {
   void PublishForUpdate(ERobotDriveInputUpdate Update);
   void Publish(ERobotDrivePublishReason Reason);
   void InvalidateHUD() const;
+  bool CanAdjustCamera() const;
+  bool ViewportOwnsMouseCapture(FSlateApplication& App) const;
+  bool OwnsMousePointer(FSlateApplication& App, const FPointerEvent& Event) const;
 
   TSharedRef<FRuntimeUIModeController> ModeController;
   TWeakPtr<SWidget> HUDWidget;
@@ -56,8 +80,16 @@ class FLingTuSimRuntimeUIInputProcessor final : public IInputProcessor {
   FRuntimeUIActionPublisher ActionPublisher;
   FRuntimeUIFrontEndLockQuery FrontEndLockQuery;
   FRuntimeUITextEntryFocusQuery TextEntryFocusQuery;
+  FRuntimeCameraInputPublisher CameraPublisher;
+  TFunction<bool()> MenuBackHandler;
+  TSharedPtr<FPlayerSettings> PlayerSettings;
+  TFunction<bool(const FKeyEvent&)> KeyCaptureHandler;
+  TFunction<void()> CancelKeyCapture;
+  TFunction<void()> RestoreMenuFocus;
   FRobotDriveInputState DriveInput;
+  ERuntimeUIMode PublishedMode;
   float PublishAccumulatorSeconds = 0.0f;
   bool bTeardownReleasePublished = false;
+  bool bMouseLooking = false;
 };
 }  // namespace LingTuSim::UI

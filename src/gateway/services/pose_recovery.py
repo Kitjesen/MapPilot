@@ -11,10 +11,9 @@ from runtime.tf.frames import map_frame_id, odom_frame_id
 logger = logging.getLogger(__name__)
 
 def handle_map_odom_tf(gw: Any, tf: dict) -> None:
-    """Cache canonical ``T_map_from_odom`` in FrameTree and matrix form."""
+    """Mirror native frame values for diagnostics only; never resolve navigation poses."""
     transform = map_from_odom_transform_from_mapping(tf)
     if transform is None:
-        gw._T_map_odom = None
         gw._has_map_odom_tf = False
         gw._frame_tree.remove_transform(
             map_frame_id(),
@@ -26,10 +25,8 @@ def handle_map_odom_tf(gw: Any, tf: dict) -> None:
     try:
         gw._blackbox.record("tf", map_from_odom_transform_to_dict(transform))
         gw._frame_tree.set_transform(transform)
-        gw._T_map_odom = transform.to_matrix()
         gw._has_map_odom_tf = True
     except Exception as e:
-        gw._T_map_odom = None
         gw._has_map_odom_tf = False
         gw._frame_tree.remove_transform(
             transform.frame_id,

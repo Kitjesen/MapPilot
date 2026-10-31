@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "InputCoreTypes.h"
+#include "LingTuSimDriveKeyBindings.h"
 
 namespace LingTuSim::UI {
 constexpr float RobotDriveGamepadDeadZone = 0.15f;
@@ -27,6 +28,7 @@ struct LINGTUSIMUI_API FRobotDriveInputSnapshot final {
   ERobotDriveInputDevice InputDevice = ERobotDriveInputDevice::Unknown;
   bool bDriveMode = false;
   bool bViewportFocused = false;
+  // Live keyboard movement or the gamepad LB permit; retained at the intent boundary.
   bool bDeadman = false;
   bool bRelease = false;
   float Forward = 0.0f;
@@ -42,6 +44,7 @@ class LINGTUSIMUI_API FRobotDriveInputState final {
  public:
   ERobotDriveInputUpdate SetDriveMode(bool bInDriveMode);
   ERobotDriveInputUpdate SetViewportFocused(bool bInViewportFocused);
+  ERobotDriveInputUpdate SetKeyBindings(const FDriveKeyBindings &InKeyBindings);
   ERobotDriveInputUpdate HandleKeyDown(const FKey &Key, bool bIsRepeat);
   ERobotDriveInputUpdate HandleKeyUp(const FKey &Key);
   ERobotDriveInputUpdate HandleAnalog(const FKey &Key, float Value);
@@ -50,7 +53,7 @@ class LINGTUSIMUI_API FRobotDriveInputState final {
   FRobotDriveInputSnapshot GetSnapshot() const;
   bool IsEligible() const { return bDriveMode && bViewportFocused; }
 
-  static bool IsMappedKey(const FKey &Key);
+  bool IsMappedKey(const FKey &Key) const;
   static bool IsMappedAnalog(const FKey &Key);
   static const TCHAR *InputDeviceName(ERobotDriveInputDevice Device);
 
@@ -62,18 +65,18 @@ class LINGTUSIMUI_API FRobotDriveInputState final {
   static FVector2D ApplyRadialDeadZone(float X, float Y);
   static float ApplyScalarDeadZone(float Value);
 
+  FDriveKeyBindings KeyBindings;
   bool bDriveMode = false;
   bool bViewportFocused = false;
   bool bRelease = false;
   ERobotDriveInputDevice LastInputDevice = ERobotDriveInputDevice::Unknown;
 
-  bool bW = false;
-  bool bS = false;
-  bool bA = false;
-  bool bD = false;
-  bool bQ = false;
-  bool bE = false;
-  bool bKeyboardDeadman = false;
+  bool bForward = false;
+  bool bBackward = false;
+  bool bLeft = false;
+  bool bRight = false;
+  bool bTurnLeft = false;
+  bool bTurnRight = false;
   bool bGamepadDeadman = false;
 
   float GamepadLeftX = 0.0f;

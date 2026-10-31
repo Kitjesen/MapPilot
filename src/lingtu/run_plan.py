@@ -12,6 +12,11 @@ from dataclasses import field as dataclass_field
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
+from lingtu.assembly.config.native_navigation import (
+    NATIVE_NAV_ENVIRONMENT,
+    NATIVE_NAV_TEXT_FIELDS,
+    render_native_nav_environment,
+)
 from lingtu.assembly.graph import (
     ProcessArtifact,
     ProcessCommand,
@@ -19,13 +24,8 @@ from lingtu.assembly.graph import (
     ProcessShutdown,
     ProcessSpec,
 )
-from lingtu.assembly.native_nav import (
-    NATIVE_NAV_ENVIRONMENT,
-    NATIVE_NAV_TEXT_FIELDS,
-    render_native_nav_environment,
-)
 
-RUN_PLAN_SCHEMA = "lingtu.run_plan.v10"
+RUN_PLAN_SCHEMA = "lingtu.run_plan.v11"
 CURRENT_RUN_SCHEMA = "lingtu.current.v1"
 SIMULATION_SCHEMA = "lingtu.run_plan.simulation.v1"
 
@@ -46,7 +46,7 @@ _LAUNCH_FIELDS = frozenset(
 _PROCESS_CATALOG_FIELDS = frozenset({"selected", "available", "support_processes"})
 _HOST_FIELDS = frozenset({"config", "expected_modules", "route_contract"})
 _CHECK_FIELDS = frozenset({"topics", "capabilities", "critical_modules"})
-_PROCESS_FIELDS = frozenset({"name", "manager", "target", "order", "timeout_s", "lifecycle"})
+_PROCESS_FIELDS = frozenset({"name", "manager", "target", "order", "timeout_s", "lifecycle", "required"})
 _SIMULATION_FIELDS = frozenset({"schema", "session_source", "session", "physics_plan"})
 _SIMULATION_BUNDLE_SCHEMAS = {
     "visual_plan": "lingtu.sim.visual-plan.v1",
@@ -286,8 +286,8 @@ class RunPlan:
         raise KeyError(name)
 
     def build(self) -> Any:
-        """Build the Host Blueprint described by this plan."""
-        from lingtu.assembly.compiler import build_host_from_run_plan
+        """Build the Host module graph described by this plan."""
+        from lingtu.assembly.compile_plan import build_host_from_run_plan
 
         return build_host_from_run_plan(self)
 
@@ -587,6 +587,7 @@ def _process(value: Any, *, field: str) -> ProcessSpec:
         order=process.get("order"),
         timeout_s=process.get("timeout_s"),
         lifecycle=process.get("lifecycle"),
+        required=process.get("required"),
         command=command,
         provides=provides,
     )
@@ -671,7 +672,7 @@ def _normalized_native_nav(value: Mapping[str, Any] | None) -> dict[str, Any]:
 
 
 def _resolved_parameters(value: Mapping[str, Any] | None) -> dict[str, int | float]:
-    from lingtu.assembly.parameters import PARAMETER_SPECS, resolve_parameters
+    from lingtu.assembly.config.native_parameters import PARAMETER_SPECS, resolve_parameters
 
     if value is None:
         return resolve_parameters().as_dict()
@@ -690,7 +691,7 @@ def _resolved_parameters(value: Mapping[str, Any] | None) -> dict[str, int | flo
 
 
 def _parameter_environment(value: Mapping[str, int | float]) -> dict[str, str]:
-    from lingtu.assembly.parameters import resolve_parameters
+    from lingtu.assembly.config.native_parameters import resolve_parameters
 
     return resolve_parameters(session_overrides=value).environment()
 

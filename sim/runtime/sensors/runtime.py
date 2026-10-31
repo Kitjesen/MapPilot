@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, Mapping
@@ -18,13 +18,18 @@ from .contracts import (
     SensorScheduleBatch,
     SensorStreamPlan,
 )
+from .gnss import GnssConfig
+from .noise import RangeNoiseConfig
 
 _DEFAULT_POLICY_BY_TRANSPORT = {
     "camera_shm": DeadlinePolicy.DROP_INTERMEDIATE,
     "typed_dds": DeadlinePolicy.CATCH_UP,
+    "in_process": DeadlinePolicy.DROP_INTERMEDIATE,
 }
+_LATEST_SOURCE_STREAM_KINDS = frozenset({"thermal", "semantic", "instance", "acoustic"})
 _POLICY_BY_STREAM_KIND = {
     "mid360": DeadlinePolicy.DROP_INTERMEDIATE,
+    **{kind: DeadlinePolicy.DROP_INTERMEDIATE for kind in _LATEST_SOURCE_STREAM_KINDS},
 }
 
 
@@ -41,6 +46,9 @@ class _StreamState:
     stream: SensorStreamPlan
     policy: DeadlinePolicy
     next_sequence: int = 0
+    enabled: bool = True
+    phase_ns: int = 0
+    phase_sequence: int = 0
 
 
 def _text(value: Any, field: str) -> str:
@@ -191,6 +199,22 @@ class SensorRuntime:
                     raise SensorPlanError(f"{field} {kind} streams must not declare raycast_frame_stable_id")
                 else:
                     raycast_frame_stable_id = None
+                range_noise = RangeNoiseConfig()
+                if "range_noise" in declaration:
+                    if kind != "mid360":
+                        raise SensorPlanError(f"{field} range_noise is only supported for mid360")
+                    try:
+                        range_noise = RangeNoiseConfig.from_mapping(declaration["range_noise"])
+                    except ValueError as exc:
+                        raise SensorPlanError(f"{field}: {exc}") from exc
+                gnss = None
+                if kind == "gnss":
+                    try:
+                        gnss = GnssConfig.from_mapping(declaration.get("gnss"))
+                    except ValueError as exc:
+                        raise SensorPlanError(f"{field}: {exc}") from exc
+                elif "gnss" in declaration:
+                    raise SensorPlanError(f"{field} gnss configuration is only supported for gnss")
                 streams.append(
                     SensorStreamPlan(
                         stream_kind=kind,
@@ -213,6 +237,8 @@ class SensorRuntime:
                             ),
                         ),
                         raycast_frame_stable_id=raycast_frame_stable_id,
+                        range_noise=range_noise,
+                        gnss=gnss,
                     )
                 )
         return cls(
@@ -233,6 +259,50 @@ class SensorRuntime:
 
         return self._session_id
 
+    def _state(self, sensor_id: str) -> _StreamState:
+        for state in self._states:
+            if state.stream.sensor_id == sensor_id:
+                return state
+        raise SensorPlanError(f"unknown sensor stream {sensor_id!r}")
+
+    def set_enabled(self, sensor_id: str, enabled: bool) -> None:
+        """Suspend scheduling without releasing the stream's transport."""
+        if type(enabled) is not bool:
+            raise ValueError("enabled must be a boolean")
+        state = self._state(sensor_id)
+        if enabled and not state.enabled:
+            self._rephase(state)
+        state.enabled = enabled
+
+    def set_rate_hz(self, sensor_id: str, rate_hz: float) -> None:
+        """Change effective scheduling after the last source clock, not the plan.
+
+        Producer validation/reconfiguration belongs to SessionSensorRuntime.
+        Generation changes retain this rate but restart phase and sequence at 0.
+        """
+        state = self._state(sensor_id)
+        rate = _rate(rate_hz, "rate_hz")
+        if rate != state.stream.rate_hz:
+            state.stream = replace(state.stream, rate_hz=rate)
+            self._rephase(state)
+
+    def _rephase(self, state: _StreamState) -> None:
+        if self._last_sim_time_ns is not None:
+            state.phase_ns = self._last_sim_time_ns
+            state.phase_sequence = state.next_sequence - 1
+
+    def status(self, sensor_id: str | None = None) -> dict[str, Any]:
+        """Return a detached view of effective controls, not the immutable plan."""
+        if sensor_id is None:
+            return {state.stream.sensor_id: self.status(state.stream.sensor_id) for state in self._states}
+        state = self._state(sensor_id)
+        return {
+            "sensor_id": sensor_id,
+            "enabled": state.enabled,
+            "rate_hz": float(state.stream.rate_hz),
+            "policy": state.policy.value,
+        }
+
     def advance(
         self,
         *,
@@ -250,13 +320,18 @@ class SensorRuntime:
         if generation_changed:
             for state in self._states:
                 state.next_sequence = 0
+                state.phase_ns = 0
+                state.phase_sequence = 0
 
         samples: list[ScheduledSensorSample] = []
         drops: list[DroppedDeadlineRange] = []
         next_sequences: list[int] = []
         for state in self._states:
-            latest_sequence = state.stream.latest_sequence_at(sim_time_ns)
+            latest_sequence = state.phase_sequence + state.stream.latest_sequence_at(sim_time_ns - state.phase_ns)
             first_sequence = state.next_sequence
+            if not state.enabled:
+                next_sequences.append(max(first_sequence, latest_sequence + 1))
+                continue
             if first_sequence > latest_sequence:
                 next_sequences.append(first_sequence)
                 continue
@@ -282,7 +357,7 @@ class SensorRuntime:
                     model_generation=model_generation,
                     reset_generation=reset_generation,
                     sequence=sequence,
-                    deadline_ns=state.stream.deadline_ns(sequence),
+                    deadline_ns=state.phase_ns + state.stream.deadline_ns(sequence - state.phase_sequence),
                     policy=state.policy,
                 )
                 for sequence in sequences

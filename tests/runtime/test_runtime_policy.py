@@ -43,7 +43,7 @@ def test_stop_is_not_a_runtime_profile():
     assert not is_supported_slam_profile("stop")
 
 
-@pytest.mark.parametrize("profile", ("fastlio2", "localizer", "pointlio", "genz"))
+@pytest.mark.parametrize("profile", ("ltlio", "localizer", "pointlio", "genz"))
 def test_algorithm_and_placeholder_names_are_not_product_selectable(profile: str):
     assert not is_supported_slam_profile(profile)
 

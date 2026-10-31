@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from lingtu.assembly.stacks.system import run_startup_preflight
+from lingtu.assembly.host.stacks.startup_checks import run_startup_preflight
 
 
 def test_slam_preflight_does_not_require_camera_without_semantics(monkeypatch) -> None:

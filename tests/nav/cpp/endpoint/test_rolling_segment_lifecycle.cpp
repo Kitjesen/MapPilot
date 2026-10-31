@@ -7,7 +7,7 @@
 #include <variant>
 #include <vector>
 
-#include "runtime/rolling/lifecycle.hpp"
+#include "app/rolling/lifecycle.hpp"
 
 namespace {
 

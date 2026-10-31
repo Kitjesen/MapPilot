@@ -188,6 +188,7 @@ def test_plan_is_no_process_dry_run_with_unique_owned_intent(tmp_path: Path) -> 
         "-unattended",
         "-UnattendedInput",
         "-NoCompile",
+        "-DisablePlugins=ModelContextProtocol,AllToolsets,Terminal,Tripo3DUEBridge,PythonScriptPlugin,EditorScriptingUtilities",
         "-LingTuRuntimeUI",
         "-LingTuGameSelector",
         "-LingTuGameSelectorExitOnConfirm",
@@ -203,6 +204,105 @@ def test_plan_is_no_process_dry_run_with_unique_owned_intent(tmp_path: Path) -> 
             unreal_executable=unreal,
             unreal_project=project,
             run_id="selector-fixture",
+        )
+
+
+def test_selector_accepts_current_compiler_asset_review_field(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    catalog, _, _ = _catalog(repo)
+    executable, project = _external_files(repo)
+    document = json.loads(catalog.read_text(encoding="utf-8"))
+    document["asset_review"] = {
+        "availability": {"state": "unavailable", "reason": "asset review catalog not provided"},
+        "catalog": None,
+    }
+    document["digest"] = digest_document({key: value for key, value in document.items() if key != "digest"})
+    _write_json(catalog, document)
+    plan = create_selector_launch_plan(
+        repo_root=repo, catalog_path=catalog,
+        unreal_executable=executable, unreal_project=project,
+    )
+    assert plan.catalog_document["asset_review"] == document["asset_review"]
+
+
+def test_selector_skips_authoring_plugins_without_disabling_scene_renderers(tmp_path: Path) -> None:
+    _, plan, _, _ = _plan(tmp_path)
+    switches = [arg for arg in plan.selector_argv if arg.startswith("-DisablePlugins=")]
+    assert len(switches) == 1
+    assert set(switches[0].split("=", 1)[1].split(",")) == {
+        "ModelContextProtocol", "AllToolsets", "Terminal", "Tripo3DUEBridge",
+        "PythonScriptPlugin", "EditorScriptingUtilities",
+    }
+    assert not plan.intent_path.exists()
+
+
+@pytest.mark.parametrize(
+    "robot_library",
+    [
+        None,
+        [
+            {"id": "fixture_robot", "version": "1.0.0", "label": "Fixture source"},
+            {"id": "go2", "version": "robotlab-2.3.2", "label": "Unitree Go2"},
+        ],
+        [{"id": "go2", "version": "2.3.2", "label": "Go2", "category": "quadruped"}],
+    ],
+)
+def test_selector_loads_old_and_robot_library_catalogs(
+    robot_library: list[dict[str, str]] | None,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    catalog, _, _ = _catalog(repo)
+    executable, project = _external_files(repo)
+    document = json.loads(catalog.read_text(encoding="utf-8"))
+    if robot_library is not None:
+        document["robot_library"] = robot_library
+        document["digest"] = digest_document(
+            {key: value for key, value in document.items() if key != "digest"}
+        )
+        _write_json(catalog, document)
+
+    plan = create_selector_launch_plan(
+        repo_root=repo,
+        catalog_path=catalog,
+        unreal_executable=executable,
+        unreal_project=project,
+    )
+
+    assert plan.catalog_document.get("robot_library") == robot_library
+    assert not plan.intent_path.exists()
+
+
+@pytest.mark.parametrize("invalid_category", [None, "unknown", 1, []])
+def test_selector_rejects_invalid_category(tmp_path: Path, invalid_category: object) -> None:
+    from sim.tools.game_selection_launcher import _validate_robot_library
+    with pytest.raises(GameSelectionLauncherError, match="category"):
+        _validate_robot_library([{"id": "go2", "version": "1", "label": "Go2", "category": invalid_category}])
+
+
+def test_selector_rejects_invalid_robot_library_metadata(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    catalog, _, _ = _catalog(repo)
+    executable, project = _external_files(repo)
+    document = json.loads(catalog.read_text(encoding="utf-8"))
+    document["robot_library"] = [
+        {"id": "go2", "version": "1.0.0", "label": "Go2"},
+        {"id": "go2", "version": "2.0.0", "label": "Go2 v2"},
+    ]
+    document["digest"] = digest_document(
+        {key: value for key, value in document.items() if key != "digest"}
+    )
+    _write_json(catalog, document)
+
+    with pytest.raises(GameSelectionLauncherError, match="ids must be unique"):
+        create_selector_launch_plan(
+            repo_root=repo,
+            catalog_path=catalog,
+            unreal_executable=executable,
+            unreal_project=project,
         )
 
 
@@ -545,7 +645,6 @@ def test_playable_handoff_revalidates_bundle_then_uses_existing_entrypoint(
     selection = execute_selector(plan, process_runner=selector_runner)
     coordinator_argv = build_playable_coordinator_argv(
         selection,
-        python_executable=Path(sys.executable),
         coordinator_arguments=("--repo-root", str(repo)),
     )
     calls: list[tuple[tuple[str, ...], Path]] = []
@@ -563,12 +662,17 @@ def test_playable_handoff_revalidates_bundle_then_uses_existing_entrypoint(
 
     assert returncode == 0
     assert coordinator_argv[:4] == (
-        os.path.abspath(sys.executable),
+        str(Path(sys.executable)),
         "-m",
         "sim.runtime.coordinator.playable_vertical_slice",
         str(selection.bundle_dir),
     )
     assert calls == [(coordinator_argv, repo.resolve())]
+    prefix = subprocess.check_output(
+        [coordinator_argv[0], "-c", "import sys; print(sys.prefix)"], text=True,
+    ).strip()
+    assert Path(prefix) == Path(sys.prefix)
+    assert launcher_module._parser().get_default("python_executable") == Path(sys.executable)
 
 
 def test_playable_handoff_rejects_bundle_change_before_process_start(tmp_path: Path) -> None:

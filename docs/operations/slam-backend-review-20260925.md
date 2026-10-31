@@ -11,8 +11,8 @@ implemented changes, ARM validation, and remaining field-scale acceptance.
 ## Legacy PGO status
 
 OnlineMapping calls sam::Backend. SaveMap recognizes lio_sam_isam2 snapshots and
-skips the legacy PGO stage. However, opt/CMakeLists.txt still requires the Rust
-kernel (or a supplied prebuilt library), links it through map_opt, and installs
+skips the legacy PGO stage. However, map_optimization/CMakeLists.txt still requires the Rust
+kernel (or a supplied prebuilt library), links it through map_optimization, and installs
 lt_pgo. SaveMap still invokes the older path for explicit offline constraints or
 complete bundles without a SAM report. The legacy implementation is bypassed for
 new SAM snapshots, not deleted or unreachable across the entire product.

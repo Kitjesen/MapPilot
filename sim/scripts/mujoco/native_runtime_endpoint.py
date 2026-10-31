@@ -17,6 +17,7 @@ import struct
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from lingtu.switch_contracts import is_product_session_id
@@ -371,6 +372,7 @@ class SensorPublisherClient:
         self._connection = connection
         self._operation_timeout_s = operation_timeout_s
         self._closed = False
+        self._write_lock = Lock()
 
     @classmethod
     def connect(
@@ -395,14 +397,25 @@ class SensorPublisherClient:
     def write(self, payload: bytes) -> int:
         """Write one or more already-framed native sensor records."""
 
-        if self._closed:
-            raise NativeRuntimeEndpointError("native endpoint client is closed")
-        if not isinstance(payload, bytes):
-            raise TypeError("sensor payload must be bytes")
-        if payload:
-            deadline = time.monotonic() + self._operation_timeout_s
-            _send_all(self._connection, payload, deadline)
-        return len(payload)
+        with self._write_lock:
+            if self._closed:
+                raise NativeRuntimeEndpointError("native endpoint client is closed")
+            if not isinstance(payload, bytes):
+                raise TypeError("sensor payload must be bytes")
+            if payload:
+                deadline = time.monotonic() + self._operation_timeout_s
+                try:
+                    _send_all(self._connection, payload, deadline)
+                except (NativeRuntimeEndpointError, OSError):
+                    # A partially written record cannot be resumed by another
+                    # producer. Invalidate under the same whole-record lock.
+                    self._closed = True
+                    try:
+                        self._connection.close()
+                    except OSError:
+                        pass
+                    raise
+            return len(payload)
 
     def flush(self) -> None:
         """Match the binary writer interface; socket writes are unbuffered."""
@@ -412,9 +425,10 @@ class SensorPublisherClient:
     def close(self) -> None:
         """Close the local stream idempotently."""
 
-        if not self._closed:
-            self._closed = True
-            self._connection.close()
+        with self._write_lock:
+            if not self._closed:
+                self._closed = True
+                self._connection.close()
 
 
 class DriverBridgeClient:

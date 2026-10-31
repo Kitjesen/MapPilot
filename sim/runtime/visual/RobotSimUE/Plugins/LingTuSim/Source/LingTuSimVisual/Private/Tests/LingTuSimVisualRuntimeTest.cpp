@@ -18,6 +18,7 @@
 #include "Misc/Guid.h"
 #include "Misc/Paths.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Engine/WorldInitializationValues.h"
 #include "GameFramework/WorldSettings.h"
@@ -31,6 +32,7 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 
+#include <limits>
 #include <type_traits>
 
 static_assert(
@@ -563,6 +565,26 @@ namespace
 
     private:
         UWorld* World = nullptr;
+    };
+
+    class FScopedCameraWorldContext final
+    {
+    public:
+        explicit FScopedCameraWorldContext(UWorld* InWorld) : World(InWorld)
+        {
+            if (World != nullptr && GEngine != nullptr)
+            {
+                GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+                bRegistered = true;
+            }
+        }
+        ~FScopedCameraWorldContext()
+        {
+            if (bRegistered && GEngine != nullptr) GEngine->DestroyWorldContext(World);
+        }
+    private:
+        UWorld* World = nullptr;
+        bool bRegistered = false;
     };
 
     bool PathTraversesSymlinkForTest(const FString& Path)
@@ -2664,6 +2686,7 @@ bool FLingTuSimVisualRuntimeCameraModesUseConfirmedViewTargetsTest::RunTest(
 
     UWorld* World = CreateVisualTestWorld();
     TestNotNull(TEXT("runtime camera test world exists"), World);
+    FScopedCameraWorldContext CameraContext(World);
     ULingTuSimVisualWorldSubsystem* Subsystem =
         World != nullptr ? World->GetSubsystem<ULingTuSimVisualWorldSubsystem>() : nullptr;
     TestNotNull(TEXT("visual subsystem exists"), Subsystem);
@@ -2758,6 +2781,233 @@ bool FLingTuSimVisualRuntimeCameraModesUseConfirmedViewTargetsTest::RunTest(
     TestEqual(TEXT("failed camera switch preserves the prior mode"),
               Subsystem != nullptr ? Subsystem->GetRuntimeCameraModeName() : FString(),
               FString(TEXT("free")));
+
+    FCommandLine::Set(*OriginalCommandLine);
+    if (World != nullptr)
+    {
+        World->DestroyWorld(false);
+    }
+    LingTuSim::FSessionService::UnbindSession();
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FLingTuSimVisualRuntimeCameraAdjustmentTest,
+    "LingTuSim.Visual.Runtime.CameraAdjustment",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FLingTuSimVisualRuntimeCameraAdjustmentTest::RunTest(const FString& Parameters)
+{
+    (void)Parameters;
+    const FString OriginalCommandLine(FCommandLine::Get());
+    FCommandLine::Set(*FString::Printf(
+        TEXT("%s -LingTuMotionCameraStableId=robot/base_link ")
+        TEXT("-LingTuSessionCameraTag=InspectionCamera"),
+        *OriginalCommandLine));
+    LingTuSim::FSessionService::UnbindSession();
+
+    UWorld* World = CreateVisualTestWorld();
+    TestNotNull(TEXT("camera adjustment test world exists"), World);
+    FScopedCameraWorldContext CameraContext(World);
+    ULingTuSimVisualWorldSubsystem* Subsystem =
+        World != nullptr ? World->GetSubsystem<ULingTuSimVisualWorldSubsystem>() : nullptr;
+    TestNotNull(TEXT("visual subsystem exists"), Subsystem);
+    APlayerController* PlayerController =
+        World != nullptr ? World->SpawnActor<APlayerController>() : nullptr;
+    TestNotNull(TEXT("player 0 controller exists"), PlayerController);
+    if (World != nullptr && PlayerController != nullptr)
+    {
+        World->AddController(PlayerController);
+        PlayerController->SpawnPlayerCameraManager();
+    }
+
+    const FString Session = TEXT("session-camera-adjustment");
+    TestTrue(TEXT("camera adjustment fixture session binds"),
+             Subsystem != nullptr && Subsystem->RebindSession(Session, 1));
+    ULingTuSimBodyBindingComponent* Binding =
+        World != nullptr ? NewObject<ULingTuSimBodyBindingComponent>(World) : nullptr;
+    TestNotNull(TEXT("camera adjustment body binding exists"), Binding);
+    if (Binding != nullptr)
+    {
+        Binding->StableId = TEXT("robot/base_link");
+    }
+    TestTrue(TEXT("camera adjustment body binding registers"),
+             Subsystem != nullptr && Binding != nullptr && Subsystem->RegisterBinding(Binding));
+    TestEqual(TEXT("initial camera truth queues"),
+              Subsystem != nullptr
+                  ? Subsystem->SubmitSnapshot(
+                        MakeBodySnapshot(Session, 1, 0, 1, TEXT("robot/base_link")))
+                  : LingTuSim::ESnapshotPublishResult::SessionMismatch,
+              LingTuSim::ESnapshotPublishResult::Accepted);
+    if (Subsystem != nullptr)
+    {
+        Subsystem->Tick(0.0F);
+    }
+
+    AActor* FollowCamera =
+        PlayerController != nullptr ? PlayerController->GetViewTarget() : nullptr;
+    TestTrue(TEXT("fixture confirms the follow camera view target"),
+             IsValid(FollowCamera)
+                 && FollowCamera->ActorHasTag(FName(TEXT("LingTuMotionCamera"))));
+    const FTransform RootBeforeAdjustment =
+        Binding != nullptr ? Binding->GetComponentTransform() : FTransform::Identity;
+    const FVector ExpectedDefaultLocation = RootBeforeAdjustment.TransformPosition(
+        FVector(-300.0, 300.0, 180.0));
+    TestTrue(TEXT("follow camera preserves the exact existing default offset"),
+             IsValid(FollowCamera)
+                 && FollowCamera->GetActorLocation().Equals(ExpectedDefaultLocation, 0.01));
+
+    FString Error;
+    TestTrue(TEXT("follow camera accepts degree orbit and wheel zoom"),
+             Subsystem != nullptr
+                 && Subsystem->AdjustRuntimeCamera(30.0F, 1000.0F, 1000.0F, Error));
+    TestTrue(TEXT("camera adjustment never mutates the robot root"),
+             Binding != nullptr
+                 && Binding->GetComponentTransform().Equals(RootBeforeAdjustment, 0.0001));
+    const FVector FollowLookAtWorld = RootBeforeAdjustment.TransformPosition(
+        FVector(100.0, 0.0, 20.0));
+    const FVector MinimumOrbit =
+        IsValid(FollowCamera) ? FollowCamera->GetActorLocation() - FollowLookAtWorld
+                              : FVector::ZeroVector;
+    TestTrue(TEXT("follow zoom clamps at the minimum distance"),
+             FMath::IsNearlyEqual(MinimumOrbit.Size(), 100.0, 0.01));
+    TestTrue(TEXT("follow pitch clamps at the maximum elevation"),
+             FMath::IsNearlyEqual(
+                 FMath::RadiansToDegrees(FMath::Atan2(
+                     MinimumOrbit.Z,
+                     FMath::Sqrt(MinimumOrbit.X * MinimumOrbit.X
+                                 + MinimumOrbit.Y * MinimumOrbit.Y))),
+                 80.0,
+                 0.01));
+    TestTrue(TEXT("follow zoom clamps at the maximum distance"),
+             Subsystem != nullptr
+                 && Subsystem->AdjustRuntimeCamera(0.0F, 0.0F, -1000.0F, Error));
+    const FVector MaximumOrbit =
+        IsValid(FollowCamera) ? FollowCamera->GetActorLocation() - FollowLookAtWorld
+                              : FVector::ZeroVector;
+    TestTrue(TEXT("follow maximum distance is bounded"),
+             FMath::IsNearlyEqual(MaximumOrbit.Size(), 2000.0, 0.01));
+
+    const FVector AdjustedFollowLocation =
+        IsValid(FollowCamera) ? FollowCamera->GetActorLocation() : FVector::ZeroVector;
+    TestEqual(TEXT("subsequent follow truth queues"),
+              Subsystem != nullptr
+                  ? Subsystem->SubmitSnapshot(
+                        MakeBodySnapshot(Session, 1, 0, 2, TEXT("robot/base_link")))
+                  : LingTuSim::ESnapshotPublishResult::SessionMismatch,
+              LingTuSim::ESnapshotPublishResult::Accepted);
+    if (Subsystem != nullptr)
+    {
+        Subsystem->Tick(0.0F);
+    }
+    TestTrue(TEXT("adjusted follow offset survives subsequent truth ticks"),
+             IsValid(FollowCamera)
+                 && FollowCamera->GetActorLocation().Equals(AdjustedFollowLocation, 0.01));
+    TestTrue(TEXT("subsequent truth still does not mutate the robot root"),
+             Binding != nullptr
+                 && Binding->GetComponentTransform().Equals(RootBeforeAdjustment, 0.0001));
+
+    ACameraActor* InspectionCamera =
+        World != nullptr ? World->SpawnActor<ACameraActor>() : nullptr;
+    TestNotNull(TEXT("inspection camera exists"), InspectionCamera);
+    if (InspectionCamera != nullptr)
+    {
+        InspectionCamera->Tags.Add(FName(TEXT("InspectionCamera")));
+        InspectionCamera->SetActorLocationAndRotation(
+            FVector(700.0, -125.0, 240.0), FRotator(-10.0, 35.0, 0.0));
+    }
+    TestTrue(TEXT("inspection camera becomes the confirmed view target"),
+             Subsystem != nullptr
+                 && Subsystem->SetRuntimeCameraMode(
+                     ELingTuSimRuntimeCameraMode::Inspection, Error));
+    const FTransform InspectionTransform =
+        InspectionCamera != nullptr ? InspectionCamera->GetActorTransform() : FTransform::Identity;
+    TestTrue(TEXT("inspection adjustment clones to free and applies mouse plus wheel"),
+             Subsystem != nullptr
+                 && Subsystem->AdjustRuntimeCamera(15.0F, 1000.0F, 1.0F, Error));
+    AActor* FreeCamera =
+        PlayerController != nullptr ? PlayerController->GetViewTarget() : nullptr;
+    TestTrue(TEXT("inspection adjustment switches to a real free camera"),
+             IsValid(FreeCamera)
+                 && FreeCamera->ActorHasTag(FName(TEXT("LingTuFreeCamera"))));
+    TestEqual(TEXT("inspection adjustment changes the runtime mode"),
+              Subsystem != nullptr ? Subsystem->GetRuntimeCameraModeName() : FString(),
+              FString(TEXT("free")));
+    TestTrue(TEXT("inspection source camera remains untouched"),
+             InspectionCamera != nullptr
+                 && InspectionCamera->GetActorTransform().Equals(InspectionTransform, 0.0001));
+    TestTrue(TEXT("free wheel dollies exactly one local-forward step"),
+             IsValid(FreeCamera)
+                 && FMath::IsNearlyEqual(
+                     FVector::Distance(FreeCamera->GetActorLocation(),
+                                       InspectionTransform.GetLocation()),
+                     50.0,
+                     0.01));
+    TestTrue(TEXT("free mouse pitch is bounded"),
+             IsValid(FreeCamera)
+                 && FMath::Abs(FreeCamera->GetActorRotation().Pitch) <= 85.01F);
+
+    const FTransform FreeTransformBeforeInvalid =
+        IsValid(FreeCamera) ? FreeCamera->GetActorTransform() : FTransform::Identity;
+    TestFalse(TEXT("nonfinite camera input is rejected"),
+              Subsystem != nullptr
+                  && Subsystem->AdjustRuntimeCamera(
+                      std::numeric_limits<float>::quiet_NaN(), 0.0F, 0.0F, Error));
+    TestTrue(TEXT("rejected input preserves the free camera transform"),
+             IsValid(FreeCamera)
+                 && FreeCamera->GetActorTransform().Equals(FreeTransformBeforeInvalid, 0.0001));
+    TestTrue(TEXT("legacy gamepad free-look remains supported"),
+             Subsystem != nullptr
+                 && Subsystem->ApplyRuntimeFreeCameraLook(0.5F, -0.5F, Error));
+
+    TestTrue(TEXT("rebind destroys camera state"),
+             Subsystem != nullptr && Subsystem->RebindSession(Session, 2));
+    TestEqual(TEXT("rebind returns runtime camera mode to unavailable"),
+              Subsystem != nullptr ? Subsystem->GetRuntimeCameraModeName() : FString(),
+              FString(TEXT("unavailable")));
+    int32 CameraCountBeforeZeroAdjustment = 0;
+    if (World != nullptr)
+    {
+        for (TActorIterator<ACameraActor> It(World); It; ++It)
+        {
+            ++CameraCountBeforeZeroAdjustment;
+        }
+    }
+    TestTrue(TEXT("zero adjustment is a no-op while unavailable"),
+             Subsystem != nullptr
+                 && Subsystem->AdjustRuntimeCamera(0.0F, 0.0F, 0.0F, Error));
+    int32 CameraCountAfterZeroAdjustment = 0;
+    if (World != nullptr)
+    {
+        for (TActorIterator<ACameraActor> It(World); It; ++It)
+        {
+            ++CameraCountAfterZeroAdjustment;
+        }
+    }
+    TestEqual(TEXT("zero adjustment does not create a fake camera binding"),
+              CameraCountAfterZeroAdjustment, CameraCountBeforeZeroAdjustment);
+    TestFalse(TEXT("nonzero adjustment requires a confirmed runtime view target"),
+              Subsystem != nullptr
+                  && Subsystem->AdjustRuntimeCamera(1.0F, 0.0F, 0.0F, Error));
+
+    TestEqual(TEXT("rebound camera truth queues"),
+              Subsystem != nullptr
+                  ? Subsystem->SubmitSnapshot(
+                        MakeBodySnapshot(Session, 2, 0, 1, TEXT("robot/base_link")))
+                  : LingTuSim::ESnapshotPublishResult::SessionMismatch,
+              LingTuSim::ESnapshotPublishResult::Accepted);
+    if (Subsystem != nullptr)
+    {
+        Subsystem->Tick(0.0F);
+    }
+    AActor* ReboundFollowCamera =
+        PlayerController != nullptr ? PlayerController->GetViewTarget() : nullptr;
+    const FTransform ReboundRoot =
+        Binding != nullptr ? Binding->GetComponentTransform() : FTransform::Identity;
+    TestTrue(TEXT("rebound follow camera restores the exact default offset"),
+             IsValid(ReboundFollowCamera)
+                 && ReboundFollowCamera->GetActorLocation().Equals(
+                     ReboundRoot.TransformPosition(FVector(-300.0, 300.0, 180.0)), 0.01));
 
     FCommandLine::Set(*OriginalCommandLine);
     if (World != nullptr)

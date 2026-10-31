@@ -1,9 +1,9 @@
-"""LidarModule - Livox MID-360 as a first-class Blueprint Module.
+"""LidarModule - Livox MID-360 as a first-class HostBuilder Module.
 
 Decouples LiDAR from SLAM: LiDAR is an independent hardware resource
 that can be started, stopped, and subscribed to without running SLAM.
 
-Blueprint usage::
+HostBuilder usage::
 
     from drivers.real.lidar import LidarModule
 
@@ -34,7 +34,7 @@ LIDAR_RAW_FRAME_ID = real_lidar_frame_id()
 @register("lidar", "mid360", description="Livox MID-360 LiDAR driver")
 @register("driver", "lidar_mid360", description="Livox MID-360 LiDAR driver")
 class LidarModule(Module, layer=1):
-    """Livox MID-360 driver as a Module in the Blueprint system.
+    """Livox MID-360 driver as a Module in the HostBuilder system.
 
     Owns the selected Livox source lifecycle and bridges raw point cloud + IMU
     data into Module output ports. The default source is the ROS-free official

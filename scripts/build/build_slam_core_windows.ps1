@@ -5,6 +5,7 @@ param(
     [string]$VcpkgRoot,
     [string]$VcpkgInstallRoot,
     [string]$VcpkgBinaryCache,
+    [string]$GtsamPrefix = "",
     [string]$GitExecutable = "git",
     [string]$BuildDir = "",
     [ValidateSet("Release")]
@@ -97,6 +98,9 @@ $CycloneDDSPrefix = Resolve-ExplicitPrefix $CycloneDDSPrefix "CycloneDDSPrefix"
 $VcpkgRoot = Resolve-ExplicitPrefix $VcpkgRoot "VcpkgRoot"
 $VcpkgInstallRoot = Resolve-ExplicitPrefix $VcpkgInstallRoot "VcpkgInstallRoot"
 $VcpkgBinaryCache = Resolve-ExplicitPrefix $VcpkgBinaryCache "VcpkgBinaryCache"
+if (-not [string]::IsNullOrWhiteSpace($GtsamPrefix)) {
+    $GtsamPrefix = Resolve-ExplicitPrefix $GtsamPrefix "GtsamPrefix"
+}
 if ($VcpkgBinaryCache -match '[,;]') {
     throw "-VcpkgBinaryCache must not contain a comma or semicolon: $VcpkgBinaryCache"
 }
@@ -245,7 +249,7 @@ if (Test-Path -LiteralPath $CachePath -PathType Leaf) {
         throw "vcpkg manifest SHA256 drift in CMake cache '$CachePath': expected $ManifestSha256, found $CacheManifestSha256"
     }
     foreach ($FlagIdentity in @(
-            @("LINGTU_SLAM_FASTLIO2_BACKEND", "ON"),
+            @("LINGTU_SLAM_LTLIO_BACKEND", "ON"),
             @("LINGTU_SLAM_BUILD_DDS_RUNTIME", "ON"),
             @("LINGTU_SLAM_BUILD_TESTS", "ON"),
             @("LINGTU_ENABLE_SMALL_GICP", "OFF"))) {
@@ -298,7 +302,7 @@ $ConfigureArgs = @(
     "-Dyaml-cpp_DIR=$(Split-Path -Parent $YamlConfig)",
     "-DCycloneDDS_DIR=$CycloneDDSConfigDir",
     "-DCYCLONEDDS_IDLC_EXECUTABLE=$Idlc",
-    "-DLINGTU_SLAM_FASTLIO2_BACKEND=ON",
+    "-DLINGTU_SLAM_LTLIO_BACKEND=ON",
     "-DLINGTU_SLAM_BUILD_DDS_RUNTIME=ON",
     "-DLINGTU_SLAM_BUILD_TESTS=ON",
     "-DLINGTU_ENABLE_SMALL_GICP=OFF"
@@ -335,6 +339,7 @@ $StageRoot = Join-Path $BuildDir "stage"
     "-DSLAMD_EXECUTABLE=$(Join-Path $RuntimeDir 'slamd.exe')" `
     "-DSLAMCTL_EXECUTABLE=$(Join-Path $RuntimeDir 'slamctl.exe')" `
     "-DDEPENDENCY_PREFIX=$DependencyPrefix" `
+    "-DGTSAM_PREFIX=$GtsamPrefix" `
     "-DCYCLONEDDS_PREFIX=$CycloneDDSPrefix" `
     "-DCYCLONEDDS_SDK_RECEIPT=$CycloneDDSReceipt" `
     "-DCYCLONEDDS_CANONICAL_LOCK=$CycloneDDSCanonicalLock" `

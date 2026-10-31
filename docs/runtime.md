@@ -5,8 +5,8 @@
 **Runs on:** Primarily `env=real`; lifecycle semantics also apply to `env=sim`
 
 This page defines the current Product runtime and physical-field ownership.
-Product declarations in `config/runtime_graph/products/*.yaml` and mappings in
-`config/runtime_graph/envs/*.yaml` remain authoritative.
+Product declarations in `config/system/products/*.yaml` and mappings in
+`config/system/envs/*.yaml` remain authoritative.
 
 ## Products
 
@@ -26,29 +26,47 @@ saved-map variant of the same Product, not a separate Product.
 Product activation does not itself begin exploration motion. The explicit
 task-start surface owns that action.
 
+The first product delivery path is:
+
+```text
+map Product -> durable SaveMap -> stop/restart -> nav Product with that map
+  -> localization ready -> goal -> autonomous motion -> terminal result/stop
+```
+
+Each arrow has its own evidence. Save admission is not durable completion,
+process liveness is not localization readiness, and route preview is not motion
+permission. The same flow applies to every supported RobotConfig; each robot
+still needs its own calibration and field evidence.
+
 ## Lifecycle
 
 ```text
-Product + env=real
-  -> one RunPlan
-  -> ProductControl
+ProductControl request (Product + RobotConfig + env=real)
+  -> internal resolved execution snapshot
   -> internal SystemdRunner
   -> declared lt-*.service processes
   -> readiness
   -> commit product_session_id
 ```
 
+`ProductControl` is the public lifecycle entry. The resolved execution
+snapshot is currently serialized as a `RunPlan` for restart, readiness, and
+rollback; that file and its path are implementation details. Operators,
+Gateway callers, and public SDK users select a Product through ProductControl
+and never construct or pass a RunPlan.
+
 The implementation path is:
 
 - `src/lingtu/control.py`: public lifecycle.
 - `src/lingtu/real/switch.py`: field transaction and rollback.
 - `src/lingtu/real/systemd.py`: declared process execution and readiness.
-- `src/lingtu/run_plan.py`: immutable resolved artifact.
-- `config/runtime_graph/envs/real.yaml`: real implementation mapping.
+- `src/lingtu/run_plan.py`: internal immutable execution snapshot.
+- `config/system/envs/real.yaml`: real implementation mapping.
 
 Direct `systemctl` is a service-level diagnostic, not a second Product startup
 API. ProductControl stops current motion, stages map/session state, applies the
-RunPlan, checks readiness, and only then commits the current run.
+internal execution snapshot, checks readiness, and only then commits the
+current run.
 
 ## Field owners
 
@@ -63,8 +81,8 @@ RunPlan, checks readiness, and only then commits the current run.
 | Host | `src/runtime/` and `src/gateway/` | Gateway, Agent, MCP, semantic behavior, and low-rate adapters |
 
 Deployed roles use `lt-lidar`, `lt-slam`, `lt-maps`, `lt-terrain`, `lt-nav`,
-`lt-driver`, `lt-camera`, `lt-explore`, and `lt-host` units when declared by the
-RunPlan.
+`lt-driver`, `lt-camera`, `lt-explore`, and `lt-host` units when declared by
+the selected Product and environment.
 
 ## Native dataflow
 
@@ -90,7 +108,7 @@ Visualization layers do not authorize motion.
 algorithm fallback. Gateway translates requests and projects typed state; it
 does not infer a second navigation or map success state.
 
-The real RunPlan selects `cpp_slam_status`,
+The real execution snapshot selects `cpp_slam_status`,
 `command_output_mode=endpoint_only`, and
 `hardware_control_boundary=driver`. `lt-host.service` keeps
 `LINGTU_ENABLE_ROBOT_DRIVER=0` so the Host cannot open a second hardware writer.
@@ -101,9 +119,7 @@ The real RunPlan selects `cpp_slam_status`,
 
 ```text
 operator lease + deadman + body-frame samples
-  -> navd final gates
-  -> rt/nav/cmd_vel
-  -> driver
+  -> navd final gates -> rt/nav/cmd_vel -> driver
 ```
 
 An acknowledgement proves command admission only. Native endpoint state,
@@ -115,10 +131,7 @@ driver acknowledgement, and actuator evidence are separate claims.
 operator sample
   + SLAM odometry and cloud
   + Mapd 3D collision volume
-  -> LocalPlanner
-  -> PathFollower
-  -> final gates
-  -> cmd_vel
+  -> LocalPlanner -> PathFollower -> final gates -> cmd_vel
 ```
 
 `teleop_avoid` has `requires_map: false`. It does not receive localization or
@@ -131,169 +144,74 @@ zero; blind direct motion is not a fallback.
 typed goal
   -> goal lifecycle
   -> exact active MapIdentity
-  -> global planner
-  -> LocalPlanner
-  -> PathFollower
-  -> final gates
-  -> cmd_vel
+  -> global planner -> LocalPlanner -> PathFollower -> final gates -> cmd_vel
 ```
 
 `NavigationCommandAck`, `NavigationGoalStatus`, and `NavigationState` carry
 different semantics. A terminal task result is correlated by `request_id`; it
 must not be inferred from a current-state snapshot.
 
-OctoPlanner owns the saved-map route and terrain constraints. SCAN owns the
+The live UI displays the lifecycle in fresh native `NavigationState` rather
+than reconstructing it from command receipts or goal events. Durable task
+completion still comes from the matching execution event. Inspection waypoints
+reuse the route's task and command IDs; their planning epochs stay internal.
+Leg results advance the native Inspection Executor without publishing a second
+single-goal lifecycle. Inspection events update the route's live state. Runtime
+input holds affect motion permission, not the task's committed pause state.
+
+Waypoint completion is taken from the committed native goal result after stop
+confirmation, including replay of a pending terminal. The route does not run
+another planning timer or straight-line distance watchdog: the planner owns
+search termination, and the navigation executor owns motion progress and local
+recovery. Inspection owns settling, point actions, and the route failure policy.
+
+OctoPlanner owns the saved-map route and terrain constraints. LocalPlanner owns the
 heading-dependent body envelope, live obstacle avoidance, and local trajectory.
-The global route radius is independent of SCAN's two-cylinder dimensions.
-The goal adapter preserves the global planner's returned points, including a
-single-point arrival; it does not append the requested goal to make a longer
-path. SCAN-specific reference-spacing adjustments belong inside the SCAN
-adapter, not in Executor's shared route construction.
-
-Product owns task arrival policy through `native_nav.goal_reached_m` and
-`native_nav.goal_height_tolerance_m`. Switching between SCAN and CMU does not
-select a different arrival policy. The former
-`scan_planner.route_z_tolerance_m` parameter and its
-`LINGTU_NAV_SCAN_ROUTE_Z_TOLERANCE_M` binding are removed; regenerate RunPlan
-with the task-owned field. The `nav` Product explicitly retains 0.35 m for Z.
-
-Endpoint snapping follows the upstream OctoPlanner policy: choose a nearby
-traversable start and search from that candidate. There is no separate rejection
-of the measured start or mandatory straight-line connection from that start to
-the snapped candidate. The former `start_connection_blocked` gate is removed.
-The searched route retains its 3D support, unknown-space, clearance, step and
-slope constraints. These constraints cover the searched route, not the omitted
-measured-start-to-candidate connection.
-
-Executor anchors the local reference to the measured body pose. SCAN checks the
-resulting trajectory against live 3D inflated occupancy and dynamic predictions.
-It does not certify ground support or negative obstacles on that connection;
-snapping must not be described as physical relocation, nor preview success as
-complete terrain certification from the measured pose.
-
-In the production map-frame SCAN path, Executor constructs the complete
-reference once and reuses it until route replacement, suspension, or a frame
-epoch change. SCAN selects the local target; Executor does not rebuild a CMU
-corridor segment every control tick. Local target diagnostics use SCAN's
-generated target, falling back to the global endpoint until a new target is
-available. For SCAN, `target_index` identifies that global endpoint rather than
-local progress. CMU and odom-frame reference construction remain unchanged.
-
-SCAN receives fresh dynamic predictions directly. Executor does not add a
-second prediction-based wait/resume timer before local planning; it retains
-route progress, recovery, tracking, and final motion gates. A prediction that
-blocks the current global reference may still permit a local detour.
-
-Same-floor preference is a soft global search cost. A supported route is not
-discarded solely because its total height excursion exceeds a fixed threshold;
-per-edge terrain and collision constraints still apply.
-
-Preview carries the same requested acceptance radius as goal submission and
-uses the smaller of that radius and the configured terminal XY tolerance.
-Preview success describes a global route, not permission to move or a promise
-that the live local trajectory is executable.
-
-Goal admission does not require SCAN's local collision sample to be ready.
-The known `local_collision_missing`, `local_collision_future`,
-`collision_stale`, and `local_collision_incomplete` holds allow an initial
-global route request, including a queued request, while motion remains held.
-`collision_stale` is also the task/stop reason; it has no added `input_gate_` prefix.
-All four holds preserve a pending replacement. After recovery, the existing
-replacement flow replans from the stopped pose before activation. Endpoint/Product readiness
-still reports the hold, and native autonomy waits for InputGate recovery before
-running the local planner. Missing endpoint status, unhealthy localization,
-driver authority, E-stop and map identity failures retain their own checks.
-InputGate evaluates required localization and traversability before the local
-collision holds. A simultaneous localization failure must remain the canonical
-reason, rather than being hidden by a hold that permits global goal admission.
-Gateway consumes that reason; it does not repeat native localization policy.
+Product owns arrival tolerances; RobotConfig owns the physical body model.
+Executor supplies one identified map-frame reference, while LocalPlanner selects the
+local target. Preview proves only that a global route was found. Motion waits
+for fresh localization and collision input, authority, map identity, driver
+readiness, and final native checks. Gateway projects these reasons without
+reimplementing them.
 
 ### Route, trajectory and motion conditions
 
 | Stage | Required evidence | Handling a failure |
 | --- | --- | --- |
-| Global preview | Valid map-frame target and tolerance, current map pose, configured planner map, available planner | Restore localization/map binding, correct the target, or wait for the current search |
-| Global route search | Traversable snapped endpoints and a connected 3D route satisfying support, unknown-space, clearance, step and slope rules | Inspect the failing map cells and input evidence; repair/rebuild a candidate map when the geometry is wrong |
-| Goal admission | Active navigation session, current endpoint status, valid task/request identity, control ownership, no E-stop/takeover hold, matching active map | Restore the identified session/authority/map condition; local collision holds alone do not prevent initial planning |
-| SCAN trajectory | Measured pose/velocity, valid reference, fresh complete local collision data, successful trajectory optimization and static/dynamic collision checks | Restore mapd input or let SCAN replan around observed obstacles; local recovery runs before the task coordinator may request a global replan |
-| Trajectory feasibility | Finite spline samples within configured speed/acceleration bounds | Inspect the reported quantity/time and reference continuity; change physical limits only with measured robot evidence |
-| Nonzero command | Active route, matching current map, recovered InputGate, motion authority, executable local result, follower/final safety checks, enabled command publication | Remain stopped while the failed condition is present; route-preview success does not bypass it |
+| Global preview/search | Current map pose, matching map, valid target, supported connected 3D route | Restore localization/map binding, correct the target, or inspect map evidence |
+| Goal admission | Active session, exact identity, control ownership, no E-stop/takeover hold | Restore the reported session, authority, or map condition |
+| Local trajectory | Measured state, reference, fresh collision data, feasible collision-free trajectory | Restore inputs or allow local recovery before requesting a replacement route |
+| Nonzero command | Active route, recovered InputGate, authority, executable result, final safety and driver gates | Remain stopped while any condition fails |
 
-For Go2, input ages are bounded at 0.25 s for odometry/TF, 0.35 s for the
-required cloud, 0.50 s for local collision/localization health, and 0.35 s for
-driver control. Future-stamp tolerance is 0.05 s and recovery requires three
-valid frames. These are execution-input bounds, not additional terrain tests.
+Recovery is local wait/retry, checked local recovery, then a replacement route
+when local recovery is exhausted. An accepted goal has no lifetime replan-count
+limit. An ordinary replacement search with no path retains the destination and
+task/request identity, keeps output zero, and retries after the existing 0.5 s
+backoff. Only one search may be in flight. Success returns to local tracking;
+another obstruction can start this cycle again. Stop confirmation that has not
+arrived yet keeps the task waiting rather than consuming a retry.
 
-SCAN's reference must retain at least two finite points after the upstream
-0.50 m waypoint-spacing filter. Its local target is selected along the
-reference within the 3.5 m horizon, outside inflated occupancy and normally at
-least 0.20 m ahead; the final goal is exempt from that distance condition.
-Blocked targets trigger an along-reference search before rejection. The
-rebound seed requires at least seven samples/control points. Optimization must
-succeed, the complete spline must pass swept 3D collision validation (also
-after refinement), and sampled velocity/acceleration must pass their configured
-acceptance bounds. A new reference is received on one FSM tick and generated
-on a later tick; asynchronous `Pending` is not a failed route.
-
-The follower's 0.80 rad heading freeze and final live-grid braking sweep act on
-execution after a spline exists. Goal-height tolerance likewise governs
-arrival, not whether SCAN may generate a trajectory.
-
-The task recovery sequence is local waiting/retry, checked local recovery,
-then at most one bounded replacement route after local recovery is exhausted.
-`Executor` runs the local recovery actions; `GoalReplanRuntimeCoordinator` owns
-the decision to stop and request another global route. Neither SCAN nor the
-obstacle observer may preempt a local execution tick to request global planning.
-A successful local recovery continues the current route. A replacement keeps
-the same task/request identity and uses the existing stop-confirmation and
-backoff transaction. Cancellation, takeover and map changes interrupt that
-transaction through the same task owner.
-
-The coordinator collects persistent obstacle evidence during execution. It
-follows measured obstacle snapshot generations, not traversability-grid
-versions, and refreshes candidate geometry with each new persistent observation.
-A viable local path or cleared corridor discards the candidate. Only after local
-recovery is exhausted may the coordinator attach it to a replacement request.
-The temporary measured voxels retain one-voxel Z extents and separate heights
-at the same XY; they are neither robot-inflated nor extended into vertical columns.
-
-A local planner can report typed collision evidence outside the global route
-corridor. SCAN extracts nearby measured occupied cells from the same collision
-snapshot that rejected its trajectory. Coordination consumes that evidence
-without interpreting SCAN's private attempt diagnostics or inflated-only cells.
-The failed body sample is not itself obstacle geometry.
-Persistence counts new sensor observation sequences, not collision-map version
-changes caused by decay. New observations still count when geometry is unchanged.
-Input or acceleration failures without spatial collision evidence do not create
-blocked regions. This feedback does not rewrite the saved OctoMap or bypass the
-existing stop-before-replan transaction.
+The UI shows this ordinary no-path wait as `replan_waiting` (waiting for a route,
+continue automatically), not `FAILED` or `PAUSED`. Deliberate operator takeover
+pauses and retains the ordinary goal, including first planning or retry waiting.
+Release keeps motion held; an explicit TaskResume continues the same task from
+the current measured pose. A source Claim alone does not pause or cancel it.
+Explicit cancel, stop, identity changes, planner exceptions, and command-delivery
+faults keep their own interruption/terminal handling. Initial goal admission and preview
+failures retain their existing behavior. Measured obstacle evidence stays in
+local planning/recovery and does not rewrite the saved map. Detailed native
+behavior and tuning belong in the
+[navigation implementation guide](../src/nav/cpp/README.md).
 
 ### Go2 navigation parameter reference
 
-Resolving `compile_run_plan("nav", "real", robot="unitree/go2")` without
-session overrides gives the following values. They describe repository
-configuration, not the currently installed field release; the active RunPlan
-and native status are the field source of truth.
-
-| Parameter | Resolved value | Meaning |
-| --- | --- | --- |
-| Global route radius | 0.155 m | Half the Go2 width; independent of SCAN's body model |
-| Start/goal snap search | 24 cells per axis | At 5 cm resolution, up to 1.2 m per axis, not a 1.2 m Euclidean sphere |
-| Ground support | Required; strict direct support off; XY neighborhood 1 cell | Applied to searched global-route cells |
-| Body-to-support height | 0.35 m, tolerance 0.05 m | Go2 calibration |
-| Global maximum step / slope | 0.45 m / 0.57735 (30 degrees) | Geometric search bounds, not verified stair-climbing capability |
-| Terminal tolerance | 0.15 m in 3D, XY and Z | Preview also honors the requested acceptance radius |
-| SCAN body cylinders | Radius 0.25 m, offsets +/-0.19 m | Heading-dependent 0.50 m wide, 0.88 m long model |
-| Body vertical clearance | 0.10 m below and above | Applied when inflating the 3D collision volume |
-| Local collision maximum age | 0.50 s | Freshness condition for local planning and collision queries |
-| SCAN planning horizon | 3.5 m | Local target selection along the reference |
-| SCAN control-point spacing | 0.20 m | B-spline seed spacing |
-| SCAN replan / no-replan distance | 1.00 m / 0.10 m | FSM distance thresholds, not a fixed trajectory-update frequency |
-| Nominal speed / acceleration | 0.75 m/s / 0.50 m/s² | Product values; a goal's speed cap can reduce execution speed |
-| Sampled velocity allowance | 1.00 m/s | Spline acceptance allowance; follower commands remain capped at the configured/session speed |
-| Sampled acceleration allowance | 1.20 m/s² | Added to the nominal acceleration for the trajectory validation threshold (1.70 m/s²) |
-| Goal height tolerance | 0.35 m | Product task-arrival Z value, independent of the planar acceptance radius; not a SCAN setting |
-| Native tick rate | 100 Hz | FSM/controller cadence, not 100 complete optimizations per second |
+Go2 is one supported RobotConfig, not the product boundary. Its physical values
+live in [`config/robots/unitree/go2/robot.yaml`](../config/robots/unitree/go2/robot.yaml);
+Product navigation values live in
+[`config/system/products/nav.yaml`](../config/system/products/nav.yaml).
+Inspect ProductControl's resolved runtime status and the native status for the
+deployed robot instead of copying parameter values from this page. The backing
+execution snapshot is diagnostic detail, not an operator input.
 
 ## Maps and localization
 
@@ -305,7 +223,7 @@ fields: `map_id` and a positive numeric `content_epoch`. DDS carries
 `.versions/`, `current_version.txt`, or version-directory rollback contract.
 
 ProductControl is the only public map activation owner. SLAM, mapd, and the
-planner in one RunPlan must bind the same MapIdentity.
+planner in one Product run must bind the same MapIdentity.
 
 Delete, rename, retire, source replacement, artifact rebuild, and voxel edits
 reject changes to the active map with `active_map_conflict`. SaveMap does not
@@ -320,6 +238,13 @@ new map ID, or switch maps through ProductControl before modifying the old one.
 | `occupancy.npz` | Default save output; consumed by saved-map exploration |
 | `esdf.npz`, `traversability.npz` | Explicit offline build outputs; not required by default save or 3D navigation |
 | `semantic_map.bin` | Optional semantic product; does not alone make a map activation-ready |
+
+Semantic artifacts are bound to the same `map_id` and `content_epoch` as the
+geometric package. They can answer object/place queries, but they do not alter
+the native collision, support, traversability, global-route, or motion
+contracts. See [Persistent semantic mapping](research/semantic-map.md)
+for the proposed `object_memory` structure and the current implementation
+gaps.
 
 SaveMap follows one transaction:
 

@@ -28,6 +28,7 @@ from sim.runtime.control import create_production_components
 from sim.runtime.process_owner import ProcessShutdownSnapshot
 from sim.runtime.recording import CameraShmPayloadSource
 from sim.runtime.sensors import (
+    GnssEndpointFactory,
     ImuEndpointFactory,
     Mid360EndpointFactory,
     SensorEndpointFactory,
@@ -47,13 +48,13 @@ from .control_intent_udp import (
     UdpLoopbackControlAckPublisher,
     UdpLoopbackOperatorIntentReceiver,
 )
-from .controlled_run import BaseTwistTarget
+from .controlled_run import BaseTwist, BaseTwistTarget
 from .coordinator import RuntimeCoordinator, RuntimeState
 from .external_evidence import ExternalEvidenceWatcher
 from .interactive_session import InteractiveSimulationSession
 from .live_snapshot import UdpLoopbackSnapshotPublisher
 from .mujoco_process import MujocoProcess
-from .playable_control import PlayableControlPump
+from .playable_control import DEFAULT_DRIVE_SPEED_LIMITS, PlayableControlPump
 from .playable_evidence import (
     PinnedPlayableMediaToolchain,
     PlayableEvidenceError,
@@ -67,7 +68,13 @@ from .run_allocation import (
     load_resolved_session_bundle,
 )
 from .session_host import SessionHost
-from .unreal_process import PackagedUnrealProcess, UnrealLaunchProfile, UnrealProcess
+from .unreal_process import (
+    InspectionPresentationBinding,
+    MeasurementPresentationBinding,
+    PackagedUnrealProcess,
+    UnrealLaunchProfile,
+    UnrealProcess,
+)
 
 PLAYABLE_SESSION_ID = "thunderv4_factory_park_hf"
 PLAYABLE_LEVEL = (
@@ -76,29 +83,26 @@ PLAYABLE_LEVEL = (
 )
 PLAYABLE_WORLD_PACKAGE = ("factory_park_hf", "1.2.1")
 PLAYABLE_ROBOT_PACKAGE = ("thunderv4", "1.0.3")
-PLAYABLE_CONTROLLER_PACKAGE = ("thunderv4_locomotion", "1.0.0")
-PLAYABLE_CONTROLLER_MANIFEST_PATH = "sim/packages/controllers/doso/thunder_v4/locomotion/controller.package.yaml"
+PLAYABLE_CONTROLLER_PACKAGE = ("thunderv4_cts_moe", "1.0.0")
+PLAYABLE_CONTROLLER_MANIFEST_PATH = "sim/packages/controllers/doso/thunder_v4/cts_moe/controller.package.yaml"
 PLAYABLE_CONTROLLER_COMMAND_CALIBRATION: Mapping[str, Any] = MappingProxyType(
     {
         "schema": "lingtu.sim.controller-command-calibration.v1",
-        "scope": "quadruped_him_observation_only",
+        "scope": "thunder_cts_moe_si_commands",
         "provenance": {
-            "source_id": "factory_park_turn_truth_qa_20260809",
-            "audit_note": (
-                "Source identifier records the calibration rationale only; no warehouse "
-                "artifact is claimed as yaw-turn qualification proof."
-            ),
+            "source_id": "cts_moe_v39_runtime_contract",
+            "audit_note": ("CTS v39 receives SI base twist without a separate yaw gain; this is not motion qualification."),
             "qualification_claim": False,
         },
         "external_yaw_cap_radps": 0.35,
-        "policy_yaw_observation_gain": 1.2857142857142858,
-        "policy_yaw_observation_limit_radps": 0.45,
+        "policy_yaw_observation_gain": 1.0,
+        "policy_yaw_observation_limit_radps": 0.35,
         "leaves_base_twist_unchanged": True,
-        "affected_axes": ["angular_z"],
+        "affected_axes": [],
     }
 )
 PLAYABLE_INSTANCE_ID = "thunder_01"
-PLAYABLE_CONTROLLER_ID = "thunder_01.thunderv4_locomotion"
+PLAYABLE_CONTROLLER_ID = "thunder_01.thunderv4_cts_moe"
 PLAYABLE_BASE_TWIST_CHANNEL = "thunder_01.control.base_twist"
 PLAYABLE_CONTROL_SOURCE_ID = "robotsimue.local_player.0"
 PLAYABLE_SESSION_CAMERA_TAG = "PreviewTarget:south_gate_robot_eye"
@@ -220,8 +224,7 @@ PLAYABLE_INPUT_SCHEDULE = (
     PlayableInputAction("left", "A", 3.0, 0.5),
     PlayableInputAction("right", "D", 3.0, 0.5),
     # 5.3 s at the fixed external 0.35 rad/s cap yields ~1.855 rad of
-    # commanded yaw while the ThunderV4 controller-local HIM observation is
-    # calibrated to the historically proven 0.45 rad/s policy input.
+    # commanded yaw. CTS receives the same SI command without a second gain.
     PlayableInputAction("turn_left", "Q", 5.3, 0.5),
     PlayableInputAction("turn_right", "E", 5.3, 0.5),
 )
@@ -1559,6 +1562,7 @@ class PlayableRuntimeConfig:
     imu_publisher: Path | None = None
     truth_odom_publisher: Path | None = None
     mid360_publisher: Path | None = None
+    gnss_publisher: Path | None = None
     truth_odom_parent_frame: str = "map"
     dds_domain: int = 0
     run_id: str | None = None
@@ -1571,9 +1575,16 @@ class PlayableRuntimeConfig:
     depth_capture_in_main_renderer: bool = False
     shared_color_depth_capture: bool = False
     main_view_screen_percentage: int = 100
+    inspection_presentation: InspectionPresentationBinding | None = None
     windows_cpu_isolation: WindowsCpuIsolationConfig | None = None
+    drive_speed_limits: BaseTwist = DEFAULT_DRIVE_SPEED_LIMITS
+    measurement_presentation: MeasurementPresentationBinding | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.drive_speed_limits, BaseTwist):
+            raise TypeError("drive_speed_limits must be a BaseTwist")
+        if min(self.drive_speed_limits.linear_x, self.drive_speed_limits.linear_y, self.drive_speed_limits.angular_z) <= 0:
+            raise PlayableLaunchError("drive speed limits must be positive")
         for name in (
             "repo_root",
             "run_root",
@@ -1589,6 +1600,7 @@ class PlayableRuntimeConfig:
             "imu_publisher",
             "truth_odom_publisher",
             "mid360_publisher",
+            "gnss_publisher",
         ):
             value = getattr(self, name)
             if value is not None:
@@ -1633,6 +1645,20 @@ class PlayableRuntimeConfig:
             raise TypeError("depth_capture_in_main_renderer must be boolean")
         if not isinstance(self.shared_color_depth_capture, bool):
             raise TypeError("shared_color_depth_capture must be boolean")
+        if self.inspection_presentation is not None and not isinstance(
+            self.inspection_presentation,
+            InspectionPresentationBinding,
+        ):
+            raise TypeError(
+                "inspection_presentation must be InspectionPresentationBinding or None"
+            )
+        if self.measurement_presentation is not None and not isinstance(
+            self.measurement_presentation,
+            MeasurementPresentationBinding,
+        ):
+            raise TypeError(
+                "measurement_presentation must be MeasurementPresentationBinding or None"
+            )
         if (
             isinstance(self.main_view_screen_percentage, bool)
             or not isinstance(self.main_view_screen_percentage, int)
@@ -1848,6 +1874,10 @@ def create_playable_launch(
         }
         if cpu_isolation_plan is not None:
             unreal_kwargs["affinity_mask"] = cpu_isolation_plan.unreal_affinity_mask
+        if runtime.inspection_presentation is not None:
+            unreal_kwargs["inspection_presentation"] = runtime.inspection_presentation
+        if runtime.measurement_presentation is not None:
+            unreal_kwargs["measurement_presentation"] = runtime.measurement_presentation
         if runtime.runtime_surface == PLAYABLE_RUNTIME_SURFACE_EDITOR_GAME:
             unreal = deps.editor_process_factory(
                 runtime.unreal_editor_executable,
@@ -1935,6 +1965,7 @@ def create_playable_launch(
             ack_publisher=ack_publisher,
             trace_sink=evidence_writer,
             recording_controller=recording_controller,
+            drive_speed_limits=runtime.drive_speed_limits,
         )
         interactive_kwargs = {}
         if cpu_isolation_plan is not None:
@@ -2748,7 +2779,8 @@ def _production_sensor_endpoint_factory(
                 parent_frame=runtime.truth_odom_parent_frame,
             ),
             Mid360EndpointFactory(mid360, physics_host),
-        )
+        ) + ((GnssEndpointFactory(executable=runtime.gnss_publisher),)
+             if runtime.gnss_publisher is not None else ())
     )
 
 
@@ -2891,7 +2923,7 @@ def _validate_fixed_bundle(bundle: ResolvedSessionBundle) -> None:
         controller.get("instance_id") != PLAYABLE_INSTANCE_ID
         or controller.get("controller_id") != PLAYABLE_CONTROLLER_ID
     ):
-        raise PlayableLaunchError("playable controller must be thunder_01.thunderv4_locomotion")
+        raise PlayableLaunchError("playable controller must be thunder_01.thunderv4_cts_moe")
     _require_package(
         controller.get("package"),
         expected=PLAYABLE_CONTROLLER_PACKAGE,
@@ -3120,6 +3152,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--imu-publisher", type=Path, required=True)
     parser.add_argument("--truth-odom-publisher", type=Path, required=True)
     parser.add_argument("--mid360-publisher", type=Path, required=True)
+    parser.add_argument("--gnss-publisher", type=Path)
     parser.add_argument("--ffmpeg", type=Path, required=True)
     parser.add_argument("--ffprobe", type=Path, required=True)
     parser.add_argument("--visual-snapshot-port", type=int, required=True)
@@ -3201,6 +3234,10 @@ def main(argv: list[str] | None = None) -> int:
             imu_publisher=imu_publisher,
             truth_odom_publisher=truth_odom_publisher,
             mid360_publisher=mid360_publisher,
+            gnss_publisher=(
+                _existing_file(args.gnss_publisher, "gnss_publisher")
+                if args.gnss_publisher is not None else None
+            ),
             ports={
                 "visual_snapshot_udp": args.visual_snapshot_port,
                 "control_intent_udp": args.control_intent_port,

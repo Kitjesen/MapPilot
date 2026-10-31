@@ -6,9 +6,9 @@
 #include <utility>
 #include <vector>
 
-#include "lingtu/maps/json.hpp"
-#include "lingtu/maps/mapd/save_coordinator.hpp"
-#include "lingtu/maps/mapd/service_dispatch.hpp"
+#include "lingtu/maps/io/json.hpp"
+#include "lingtu/maps/mapd/save.hpp"
+#include "mapd/dispatch.hpp"
 #include "lingtu/maps/service.hpp"
 
 namespace {
@@ -85,7 +85,7 @@ void TestSaveMapRequestsSlamAndConsumesReceipt() {
   ack.map_id = request.map_id;
   ack.success = true;
   ack.output_path = request.output_path;
-  ack.runtime_instance_id = "fastlio2:boot:1";
+  ack.runtime_instance_id = "ltlio:boot:1";
   ack.product_session_id = request.product_session_id;
   ack.reset_epoch = 3U;
   ack.observation_sequence = 11U;

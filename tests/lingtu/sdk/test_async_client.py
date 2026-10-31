@@ -38,16 +38,80 @@ class TestAsyncLingTuClient(unittest.IsolatedAsyncioTestCase):
             request_id="request-1",
         )
 
-    async def test_person_following_delegates_to_sync_client(self) -> None:
+    async def test_follow_lifecycle_delegates_exact_owner_identity(self) -> None:
+        started = CommandResult(
+            ok=True,
+            accepted=True,
+            follow_task_id="follow-1",
+            product_session_id="product-session-1",
+        )
+        cancelled = CommandResult(ok=True, accepted=True)
+        task = {"found": True, "state": "running"}
+        self.client.start_follow.return_value = started
+        self.client.get_follow_task.return_value = task
+        self.client.cancel_follow_task.return_value = cancelled
+
+        self.assertIs(
+            await self.robot.start_follow(
+                description="person in gray",
+                request_id="follow-request-1",
+                client_id="async-sdk",
+            ),
+            started,
+        )
+        self.assertIs(
+            await self.robot.get_follow_task("follow-1", "product-session-1"),
+            task,
+        )
+        self.assertIs(
+            await self.robot.cancel_follow_task(
+                "follow-1",
+                "product-session-1",
+                reason="operator_cancel",
+                request_id="cancel-follow-1",
+                client_id="async-sdk",
+            ),
+            cancelled,
+        )
+
+        self.client.start_follow.assert_called_once_with(
+            description="person in gray",
+            target_id=None,
+            request_id="follow-request-1",
+            client_id="async-sdk",
+        )
+        self.client.get_follow_task.assert_called_once_with(
+            "follow-1", "product-session-1"
+        )
+        self.client.cancel_follow_task.assert_called_once_with(
+            "follow-1",
+            "product-session-1",
+            reason="operator_cancel",
+            request_id="cancel-follow-1",
+            client_id="async-sdk",
+        )
+
+    async def test_follow_person_and_stop_following_use_owned_lifecycle(self) -> None:
         expected = CommandResult(ok=True)
         self.client.follow_person.return_value = expected
         self.client.stop_following.return_value = expected
 
         self.assertIs(await self.robot.follow_person("person_01"), expected)
-        self.assertIs(await self.robot.stop_following(), expected)
+        self.assertIs(
+            await self.robot.stop_following("follow-1", "product-session-1"),
+            expected,
+        )
 
-        self.client.follow_person.assert_called_once_with("person_01")
-        self.client.stop_following.assert_called_once_with()
+        self.client.follow_person.assert_called_once_with(
+            "person_01", request_id=None, client_id="sdk"
+        )
+        self.client.stop_following.assert_called_once_with(
+            "follow-1",
+            "product-session-1",
+            reason="operator_cancel",
+            request_id=None,
+            client_id="sdk",
+        )
 
     async def test_wait_until_arrived_delegates_task_identity(self) -> None:
         expected = NavigationStatus(task=NavigationTask(state="SUCCESS"))

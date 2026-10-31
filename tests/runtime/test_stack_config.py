@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from lingtu.assembly.stacks.stack_config import (
+from lingtu.assembly.host.stacks.settings import (
     driver_stack_config,
     exploration_owner,
     exploration_stack_config,

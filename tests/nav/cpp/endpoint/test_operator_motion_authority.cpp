@@ -154,6 +154,7 @@ void testDeadmanFalseIsExplicitHold() {
 void testReleaseRequiresZeroBarrierBeforeSourceSwitch() {
   OperatorMotionAuthority authority;
   require(authority.claim(claim("board", 1)).accepted, "claim failed");
+  require(submitSample(authority, sample("board", 1, 2), 10.02).accepted, "moving sample failed");
   require(!authority.claim(claim("websocket", 1)).accepted,
           "second source must not steal authority while lease is live");
 
@@ -161,7 +162,7 @@ void testReleaseRequiresZeroBarrierBeforeSourceSwitch() {
   require(!wrong_release.accepted, "wrong source release must reject");
   require(wrong_release.reason == "not_active_source", "wrong release reason mismatch");
 
-  const auto release = authority.release({"board", 1, 2});
+  const auto release = authority.release({"board", 1, 3});
   require(release.accepted, "active source release failed");
   require(release.reason == "released_zero_required", "release reason mismatch");
   require(authority.snapshot().has_active_authority,
@@ -184,6 +185,7 @@ void testReleaseRequiresZeroBarrierBeforeSourceSwitch() {
 void testTickExpiresSilentAuthorityIntoZeroBarrier() {
   OperatorMotionAuthority authority;
   require(authority.claim(claim("board", 1)).accepted, "claim failed");
+  require(submitSample(authority, sample("board", 1, 2), 10.02).accepted, "moving sample failed");
   require(authority.tick(10.50).accepted, "live authority tick failed");
 
   const auto expired = authority.tick(11.61);
@@ -235,6 +237,7 @@ void testClaimChangesCannotBypassZeroBarrier() {
 void testExpiredLeaseClaimCannotBypassTick() {
   OperatorMotionAuthority authority;
   require(authority.claim(claim("board", 1)).accepted, "claim failed");
+  require(submitSample(authority, sample("board", 1, 2), 10.0).accepted, "moving sample failed");
 
   auto late = claim("websocket", 1);
   late.now_monotonic_s = 11.01;
@@ -257,7 +260,7 @@ void testLeaseTtlIsBoundedAndEpochCannotReplayAfterRelease() {
 
   require(authority.claim(claim("board", 1)).accepted, "claim failed");
   require(authority.release({"board", 1, 2}).accepted, "release failed");
-  require(authority.completeZeroBarrier(true).accepted, "zero completion failed");
+  require(!authority.snapshot().zero_barrier_pending, "unused release must not request motion zero");
   const auto replay = authority.claim(claim("board", 1));
   require(!replay.accepted, "released source epoch must not replay");
   require(replay.reason == "stale_epoch", "released epoch replay reason mismatch");
@@ -269,10 +272,10 @@ void testPerSourceEpochHighWaterSurvivesSourceSwitches() {
   OperatorMotionAuthority authority;
   require(authority.claim(claim("board", 1)).accepted, "board claim failed");
   require(authority.release({"board", 1, 2}).accepted, "board release failed");
-  require(authority.completeZeroBarrier(true).accepted, "board zero failed");
+  require(!authority.snapshot().zero_barrier_pending, "unused board release must not request zero");
   require(authority.claim(claim("websocket", 1)).accepted, "websocket claim failed");
   require(authority.release({"websocket", 1, 2}).accepted, "websocket release failed");
-  require(authority.completeZeroBarrier(true).accepted, "websocket zero failed");
+  require(!authority.snapshot().zero_barrier_pending, "unused websocket release must not request zero");
 
   const auto old_board = authority.claim(claim("board", 1));
   require(!old_board.accepted, "old board epoch must not replay after A->B->A");
@@ -316,10 +319,10 @@ void testRetainedSourceIdentityCapacityEvictsOldestInactiveSource() {
 
   require(authority.claim(claim("alpha", 1)).accepted, "first source claim failed");
   require(authority.release({"alpha", 1, 2}).accepted, "first source release failed");
-  require(authority.completeZeroBarrier(true).accepted, "first source zero failed");
+  require(!authority.snapshot().has_active_authority, "unused first source must release permission");
   require(authority.claim(claim("beta", 1)).accepted, "second source claim failed");
   require(authority.release({"beta", 1, 2}).accepted, "second source release failed");
-  require(authority.completeZeroBarrier(true).accepted, "second source zero failed");
+  require(!authority.snapshot().has_active_authority, "unused second source must release permission");
 
   const auto new_source = authority.claim(claim("gamma", 1));
   require(new_source.accepted, "new source must evict the oldest inactive identity at capacity");
@@ -389,14 +392,16 @@ void testFreshSamplesRefreshLeasePastInitialClaimDeadline() {
 void testDeadmanFalseRefreshesLeaseBeforeHolding() {
   OperatorMotionAuthority authority;
   require(authority.claim(claim("board", 1)).accepted, "claim failed");
-  auto hold = freshSample("board", 1, 2, 100.0);
+  require(authority.submit(freshSample("board", 1, 2, 100.0), 10.70, 100.0).accepted,
+          "moving sample failed");
+  auto hold = freshSample("board", 1, 3, 100.0);
   hold.deadman = false;
   require(authority.submit(hold, 10.80, 100.0).accepted, "fresh hold sample failed");
   require(authority.snapshot().lease_until_monotonic_s == 11.80,
           "hold sample must refresh lease before zero barrier");
   require(authority.completeZeroBarrier(true).accepted, "hold zero completion failed");
   require(authority.tick(11.70).accepted, "held authority should still be live");
-  const auto resumed = authority.submit(freshSample("board", 1, 3, 101.0), 11.75, 101.0);
+  const auto resumed = authority.submit(freshSample("board", 1, 4, 101.0), 11.75, 101.0);
   require(resumed.accepted, "held authority must resume with fresh sample");
 }
 
@@ -432,8 +437,9 @@ void testControlAndSamplesShareOneMonotonicSequence() {
 void testPendingBarrierDispositionCannotBeOverwritten() {
   OperatorMotionAuthority authority;
   require(authority.claim(claim("board", 1, 1)).accepted, "claim failed");
-  require(authority.hold({"board", 1, 2}).accepted, "hold failed");
-  const auto release_while_hold_pending = authority.release({"board", 1, 3});
+  require(submitSample(authority, sample("board", 1, 2), 10.02).accepted, "moving sample failed");
+  require(authority.hold({"board", 1, 3}).accepted, "hold failed");
+  const auto release_while_hold_pending = authority.release({"board", 1, 4});
   require(!release_while_hold_pending.accepted,
           "release must not overwrite a pending hold barrier");
   require(release_while_hold_pending.reason == "zero_barrier_pending",
@@ -442,8 +448,8 @@ void testPendingBarrierDispositionCannotBeOverwritten() {
   require(authority.snapshot().has_active_authority,
           "completed hold must retain authority despite rejected release");
 
-  require(authority.release({"board", 1, 3}).accepted, "release failed");
-  const auto hold_while_release_pending = authority.hold({"board", 1, 4});
+  require(authority.release({"board", 1, 4}).accepted, "release failed");
+  const auto hold_while_release_pending = authority.hold({"board", 1, 5});
   require(!hold_while_release_pending.accepted,
           "hold must not overwrite a pending release barrier");
   require(hold_while_release_pending.reason == "zero_barrier_pending",
@@ -469,6 +475,39 @@ void testInnerTeleopRequestIsClearedBeforeOuterZeroCompletes() {
   require(outer.completeZeroBarrier(true).accepted, "outer zero completion failed");
   require(!inner.teleopRequest().has_value(),
           "old teleop request must not revive after zero completion");
+}
+
+void testUnusedClaimsCloseWithoutMotionZero() {
+  for (const auto &action : {std::string("hold"), std::string("release"), std::string("expiry")}) {
+    OperatorMotionAuthority authority;
+    require(authority.claim(claim("websocket", 1)).accepted, "claim failed");
+    const auto result = action == "hold" ? authority.hold({"websocket", 1, 2})
+                        : action == "release" ? authority.release({"websocket", 1, 2})
+                                              : authority.tick(11.1);
+    require(result.accepted && result.authority_changed, "unused permission must close successfully");
+    require(!result.sample_changed, "closing unused permission must not change a motion sample");
+    const auto closed = authority.snapshot();
+    require(!closed.has_active_authority && !closed.zero_required && !closed.zero_barrier_pending,
+            "an input source that never moved must not stop the current autonomous command");
+    require(result.reason == (action == "hold" ? "hold_no_motion"
+                              : action == "release" ? "release_no_motion"
+                                                    : "authority_lease_expired_no_motion"),
+            "permission-only closure must not claim that a zero was published");
+    require(authority.claim(claim("board", 1)).accepted,
+            "another source must be able to claim after unused permission closes");
+  }
+
+  OperatorMotionAuthority authority;
+  require(authority.claim(claim("websocket", 1)).accepted, "claim failed");
+  require(authority.claim(claim("websocket", 2)).accepted,
+          "an unused permission may change its epoch without inserting motion zero");
+  require(!authority.snapshot().zero_barrier_pending, "unused epoch transition must not request zero");
+  auto late = claim("board", 1);
+  late.now_monotonic_s = 11.1;
+  require(!authority.claim(late).accepted, "expired claim must still reject the first renewal attempt");
+  require(!authority.snapshot().has_active_authority && !authority.snapshot().zero_barrier_pending,
+          "expiry discovered by a new claim must release only the unused permission");
+  require(authority.claim(late).accepted, "a fresh retry must claim the now-unowned permission");
 }
 
 void testPassiveTicksDoNotOverwriteAdmissionObservability() {
@@ -512,6 +551,7 @@ int main() {
     testControlAndSamplesShareOneMonotonicSequence();
     testPendingBarrierDispositionCannotBeOverwritten();
     testInnerTeleopRequestIsClearedBeforeOuterZeroCompletes();
+    testUnusedClaimsCloseWithoutMotionZero();
     testPassiveTicksDoNotOverwriteAdmissionObservability();
   } catch (const std::exception &exc) {
     std::fprintf(stderr, "test_operator_motion_authority: FAIL: %s\n", exc.what());

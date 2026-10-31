@@ -11,11 +11,13 @@ DEGENERACY_LEVELS = frozenset({"NONE", "MILD", "SEVERE", "CRITICAL", "UNKNOWN"})
 def degeneracy_level(status: Mapping[str, Any]) -> str:
     """Translate native diagnostics into the public degeneracy enum."""
 
+    raw = status.get("ltlio_degeneracy")
+    if isinstance(raw, Mapping) and raw.get("available") is False:
+        return "UNKNOWN"
     existing = str(status.get("degeneracy") or "").strip().upper()
     if existing in DEGENERACY_LEVELS:
         return existing
 
-    raw = status.get("fastlio_degeneracy")
     diagnostics = raw if isinstance(raw, Mapping) else status
     detected_value = diagnostics.get("detected", diagnostics.get("degeneracy_detected"))
     count_value = diagnostics.get("degenerate_dof_count")

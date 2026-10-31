@@ -6,8 +6,8 @@ from unittest.mock import Mock
 
 import pytest
 
-import lingtu.assembly.host_bus as host_bus_module
-from lingtu.assembly.host_bus import HostBus
+import lingtu.assembly.host.native_state_bridge as host_bus_module
+from lingtu.assembly.host.native_state_bridge import HostBus
 from nav.adapters.native.abi import NativeCommandClientError
 
 
@@ -236,7 +236,6 @@ def test_host_bus_projects_ordered_native_inspection_task_events() -> None:
             "kind": 1,
             "task_id": "inspection-task-7",
             "request_id": "inspection-start-7",
-            "command_request_id": "inspection-start-7",
             "state": 2,
             "map_id": "field-map",
             "map_content_epoch": 3,
@@ -260,7 +259,6 @@ def test_host_bus_projects_ordered_native_inspection_task_events() -> None:
             "kind": 2,
             "task_id": "inspection-task-7",
             "request_id": "inspection-start-7",
-            "command_request_id": "inspection-start-7",
             "state": 9,
             "map_id": "field-map",
             "map_content_epoch": 3,

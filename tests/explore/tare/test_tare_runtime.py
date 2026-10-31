@@ -18,7 +18,7 @@ from runtime.msgs.nav import Odometry
 
 ROOT = Path(__file__).resolve().parents[3]
 TARE_ENDPOINT_BOUNDARY_FILES = (
-    ROOT / "src/lingtu/assembly/stacks/exploration.py",
+    ROOT / "src/lingtu/assembly/host/stacks/exploration.py",
     ROOT / "src/explore/tare/module.py",
     ROOT / "src/explore/tare/supervisor.py",
 )
@@ -607,31 +607,31 @@ class TestTARESkills(unittest.TestCase):
 
 
 def _module_names(bp) -> set[str]:
-    """Return the set of registered module names/aliases in a Blueprint."""
+    """Return the set of registered module names/aliases in a HostBuilder."""
     return {e.name for e in bp._entries}
 
 
 class TestExplorationStackFactory(unittest.TestCase):
-    def test_none_returns_empty_blueprint(self):
-        from lingtu.assembly.stacks.exploration import exploration
+    def test_none_returns_empty_host_builder(self):
+        from lingtu.assembly.host.stacks.exploration import exploration
 
         bp = exploration(backend="none")
         self.assertEqual(len(bp._entries), 0)
 
     def test_empty_backend_returns_empty(self):
-        from lingtu.assembly.stacks.exploration import exploration
+        from lingtu.assembly.host.stacks.exploration import exploration
 
         bp = exploration(backend="")
         self.assertEqual(len(bp._entries), 0)
 
     def test_unknown_backend_raises(self):
-        from lingtu.assembly.stacks.exploration import exploration
+        from lingtu.assembly.host.stacks.exploration import exploration
 
         with self.assertRaises(ValueError):
             exploration(backend="bogus")
 
     def test_tare_external_adds_bridge_without_native_binary(self):
-        from lingtu.assembly.stacks.exploration import exploration
+        from lingtu.assembly.host.stacks.exploration import exploration
 
         bp = exploration(backend="tare_external", auto_start=False)
         names = _module_names(bp)
@@ -644,9 +644,9 @@ class TestExplorationStackFactory(unittest.TestCase):
         self.assertEqual(tare.config["configured_backend"], "tare_external")
 
     def test_full_stack_forwards_external_tare_supervisor_timeout(self):
-        from lingtu.assembly.products.host import host_blueprint
+        from lingtu.assembly.host.build import host_builder
 
-        bp = host_blueprint(
+        bp = host_builder(
             robot="stub",
             slam_profile="none",
             llm="mock",
@@ -669,7 +669,7 @@ class TestExplorationStackFactory(unittest.TestCase):
 
     def test_tare_adds_bridge_without_native_binary(self):
         """LingTu TARE is in-process by default; no native binary required."""
-        from lingtu.assembly.stacks.exploration import exploration
+        from lingtu.assembly.host.stacks.exploration import exploration
 
         bp = exploration(backend="tare", auto_start=False)
         names = _module_names(bp)
@@ -681,16 +681,16 @@ class TestExplorationStackFactory(unittest.TestCase):
         self.assertEqual(tare.config["configured_backend"], "tare")
 
     def test_native_tare_owner_mounts_no_python_goal_producer(self):
-        from lingtu.assembly.stacks.exploration import exploration
+        from lingtu.assembly.host.stacks.exploration import exploration
 
         bp = exploration(backend="tare", owner="native", auto_start=False)
 
         self.assertEqual(_module_names(bp), set())
 
     def test_native_field_stack_mounts_command_client_not_python_tare(self):
-        from lingtu.assembly.products.host import host_blueprint
+        from lingtu.assembly.host.build import host_builder
 
-        bp = host_blueprint(
+        bp = host_builder(
             robot="stub",
             slam_profile="none",
             llm="mock",

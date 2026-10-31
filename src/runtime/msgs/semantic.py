@@ -18,8 +18,38 @@ from runtime.tf.frames import map_frame_id
 from .geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
 from .numpy_compat import np
 from .protocol import json_message_decode, json_message_encode
+from .sensor import CameraIntrinsics, Image
 
 SEMANTIC_MSG_MAP_FRAME_ID = map_frame_id()
+
+
+@dataclass(frozen=True)
+class SemanticObservation:
+    """One Host-local perception result, or an immediate context invalidation.
+
+    Images and geometry are shared read-only references, not a new wire format.
+    Sequence orders publications in this Host; camera stream sequences remain
+    on the source messages. Stable person identity belongs to Follow.
+    """
+
+    product_session_id: str = ""
+    sequence: int = 0
+    source_ts: float = 0.0
+    completed_ts: float = 0.0
+    source_generation: int = 0
+    map_id: str = ""
+    content_epoch: int = 0
+    status: str = "unavailable"
+    reason: str = ""
+    image: Image | None = None
+    depth: Image | None = None
+    camera_info: CameraIntrinsics | None = None
+    robot_pose: PoseStamped | None = None
+    map_from_camera: Any = None
+    detections: tuple[Detection3D, ...] = ()
+    scene_graph: SceneGraph | None = None
+    odometry_ts: float = 0.0
+    map_odom_ts: float = 0.0
 
 # ---------------------------------------------------------------------------
 # Detection3D
@@ -238,7 +268,14 @@ class Region:
 
 @dataclass
 class SceneGraph:
-    """Scene graph 鈥?the primary perception output."""
+    """Scene graph, including an optional hierarchical perception snapshot.
+
+    ``objects``/``relations``/``regions`` remain the compatibility surface for
+    flat consumers.  Tracker-produced hierarchy data is carried as JSON-shaped
+    records so the runtime message does not import perception-owned classes.
+    The records are read-only semantic context; native map and navigation
+    services remain the authority for geometry and motion.
+    """
 
     msg_name: ClassVar[str] = "lingtu_msgs.SceneGraph"
     objects: list[Detection3D] = field(default_factory=list)
@@ -246,6 +283,21 @@ class SceneGraph:
     regions: list[Region] = field(default_factory=list)
     ts: float = 0.0
     frame_id: str = SEMANTIC_MSG_MAP_FRAME_ID
+    graph_level: str = "flat"
+    graph_version: str = "1.0"
+    map_id: str = ""
+    content_epoch: int = 0
+    floors: list[dict[str, Any]] = field(default_factory=list)
+    rooms: list[dict[str, Any]] = field(default_factory=list)
+    groups: list[dict[str, Any]] = field(default_factory=list)
+    views: list[dict[str, Any]] = field(default_factory=list)
+    hierarchy_edges: list[dict[str, Any]] = field(default_factory=list)
+    topology_edges: list[dict[str, Any]] = field(default_factory=list)
+    frontier_nodes: list[dict[str, Any]] = field(default_factory=list)
+    subgraphs: list[dict[str, Any]] = field(default_factory=list)
+    phantom_nodes: list[dict[str, Any]] = field(default_factory=list)
+    room_type_posteriors: list[dict[str, Any]] = field(default_factory=list)
+    belief_propagation: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.ts == 0.0:
@@ -264,6 +316,96 @@ class SceneGraph:
         """Get objects by label (case-insensitive)."""
         return [o for o in self.objects if o.label.lower() == label.lower()]
 
+    def validate_hierarchy(self) -> tuple[str, ...]:
+        """Return deterministic errors for a hierarchical scene snapshot.
+
+        This is a structural check only.  It verifies references and the
+        parent-to-child direction; it does not claim that a semantic relation
+        is geometrically true or that a navigation target is safe.
+        """
+        if self.graph_level != "hierarchical":
+            if any((self.floors, self.rooms, self.groups, self.views, self.hierarchy_edges,
+                   self.topology_edges, self.subgraphs)):
+                return ("hierarchy_data_requires_graph_level_hierarchical",)
+            return ()
+
+        errors: list[str] = []
+        object_ids = {str(obj.id) for obj in self.objects if obj.id}
+
+        def ids(records: list[dict[str, Any]], key: str) -> set[str]:
+            return {str(record[key]) for record in records if isinstance(record, dict) and key in record}
+
+        floor_ids = ids(self.floors, "floor_id")
+        room_ids = ids(self.rooms, "room_id")
+        group_ids = ids(self.groups, "group_id")
+        view_ids = ids(self.views, "view_id")
+
+        def check_refs(records: list[dict[str, Any]], field_name: str, valid: set[str], owner: str) -> None:
+            for record in records:
+                if not isinstance(record, dict):
+                    errors.append(f"{owner}_record_not_object")
+                    continue
+                values = record.get(field_name, [])
+                if not isinstance(values, list):
+                    errors.append(f"{owner}_{field_name}_not_list")
+                    continue
+                for value in values:
+                    if str(value) not in valid:
+                        errors.append(f"{owner}_{field_name}_unknown:{value}")
+
+        check_refs(self.floors, "room_ids", room_ids, "floor")
+        check_refs(self.floors, "object_ids", object_ids, "floor")
+        check_refs(self.rooms, "object_ids", object_ids, "room")
+        check_refs(self.rooms, "group_ids", group_ids, "room")
+        check_refs(self.groups, "object_ids", object_ids, "group")
+
+        node_sets = {
+            "floor": floor_ids,
+            "room": room_ids,
+            "group": group_ids,
+            "view": view_ids,
+            "object": object_ids,
+        }
+        parent_types = set(node_sets)
+        graph: dict[tuple[str, str], set[tuple[str, str]]] = {}
+        for edge in self.hierarchy_edges:
+            if not isinstance(edge, dict):
+                errors.append("hierarchy_edge_not_object")
+                continue
+            parent_type = str(edge.get("parent_type", ""))
+            child_type = str(edge.get("child_type", ""))
+            parent = str(edge.get("parent_id", ""))
+            child = str(edge.get("child_id", ""))
+            if parent_type not in parent_types or child_type not in parent_types:
+                errors.append(f"hierarchy_edge_unknown_type:{parent_type}->{child_type}")
+                continue
+            if parent not in node_sets[parent_type]:
+                errors.append(f"hierarchy_edge_unknown_parent:{parent_type}:{parent}")
+            if child not in node_sets[child_type]:
+                errors.append(f"hierarchy_edge_unknown_child:{child_type}:{child}")
+            graph.setdefault((parent_type, parent), set()).add((child_type, child))
+
+        # A hierarchy must be acyclic.  Relations such as ``near`` are kept in
+        # ``relations`` and are intentionally excluded from this check.
+        visiting: set[tuple[str, str]] = set()
+        visited: set[tuple[str, str]] = set()
+
+        def visit(node: tuple[str, str]) -> None:
+            if node in visiting:
+                errors.append(f"hierarchy_cycle:{node[0]}:{node[1]}")
+                return
+            if node in visited:
+                return
+            visiting.add(node)
+            for child in graph.get(node, ()):
+                visit(child)
+            visiting.remove(node)
+            visited.add(node)
+
+        for node in graph:
+            visit(node)
+        return tuple(dict.fromkeys(errors))
+
     # -- serialization ---------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
@@ -273,6 +415,21 @@ class SceneGraph:
             "regions": [r.to_dict() for r in self.regions],
             "ts": self.ts,
             "frame_id": self.frame_id,
+            "graph_level": self.graph_level,
+            "graph_version": self.graph_version,
+            "map_id": self.map_id,
+            "content_epoch": self.content_epoch,
+            "floors": self.floors,
+            "rooms": self.rooms,
+            "groups": self.groups,
+            "views": self.views,
+            "hierarchy_edges": self.hierarchy_edges,
+            "topology_edges": self.topology_edges,
+            "frontier_nodes": self.frontier_nodes,
+            "subgraphs": self.subgraphs,
+            "phantom_nodes": self.phantom_nodes,
+            "room_type_posteriors": self.room_type_posteriors,
+            "belief_propagation": self.belief_propagation,
         }
 
     @classmethod
@@ -283,6 +440,21 @@ class SceneGraph:
             regions=[Region.from_dict(r) for r in d.get("regions", [])],
             ts=float(d.get("ts", 0)),
             frame_id=str(d.get("frame_id", SEMANTIC_MSG_MAP_FRAME_ID)),
+            graph_level=str(d.get("graph_level", "flat")),
+            graph_version=str(d.get("graph_version", "1.0")),
+            map_id=str(d.get("map_id", "")),
+            content_epoch=int(d.get("content_epoch", 0)),
+            floors=[dict(v) for v in d.get("floors", []) if isinstance(v, dict)],
+            rooms=[dict(v) for v in d.get("rooms", []) if isinstance(v, dict)],
+            groups=[dict(v) for v in d.get("groups", []) if isinstance(v, dict)],
+            views=[dict(v) for v in d.get("views", []) if isinstance(v, dict)],
+            hierarchy_edges=[dict(v) for v in d.get("hierarchy_edges", []) if isinstance(v, dict)],
+            topology_edges=[dict(v) for v in d.get("topology_edges", []) if isinstance(v, dict)],
+            frontier_nodes=[dict(v) for v in d.get("frontier_nodes", []) if isinstance(v, dict)],
+            subgraphs=[dict(v) for v in d.get("subgraphs", []) if isinstance(v, dict)],
+            phantom_nodes=[dict(v) for v in d.get("phantom_nodes", []) if isinstance(v, dict)],
+            room_type_posteriors=[dict(v) for v in d.get("room_type_posteriors", []) if isinstance(v, dict)],
+            belief_propagation=dict(d.get("belief_propagation", {})),
         )
 
     def to_json(self, **kwargs: Any) -> str:

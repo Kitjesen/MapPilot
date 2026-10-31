@@ -71,6 +71,54 @@ def test_coordinate_tool_waits_for_correlated_native_arrival_before_done(agent):
     assert run.motion_success
 
 
+@pytest.mark.parametrize("instruction", ["find a water bottle", "follow me", "do the requested task"])
+def test_execution_instruction_cannot_finish_without_execution_evidence(agent, instruction):
+    script(agent, tool("done", summary="claimed complete"))
+    agent.module.run_agent_task(instruction)
+    run = agent.module._active_run
+    run.future.result(timeout=2)
+    assert run.requires_execution_evidence is True
+    assert run.state == "failed"
+    assert agent.statuses[-1] == "AGENT_FAILED"
+    status = json.loads(agent.module.get_agent_status())
+    assert status["instruction"] == instruction
+    assert status["failure_reason"]
+    assert status["summary"]
+    assert status["navigation"] is None
+    assert agent.chats[-1]["text"].startswith("任务未完成：")
+    assert "claimed complete" not in agent.chats[-1]["text"]
+
+
+def test_coordinate_arrival_cannot_complete_a_find_task(agent):
+    script(
+        agent,
+        tool("navigate_to", x=1, y=2, z=0.3),
+        tool("done", summary="claimed object found"),
+    )
+    agent.h.goal_sent.clear()
+    agent.module.run_agent_task("帮我找一瓶水")
+    run = agent.module._active_run
+    assert agent.h.goal_sent.wait(1.0)
+    agent.h.reach()
+    run.future.result(timeout=2.0)
+
+    assert run.motion_success is True
+    assert run.requires_object_confirmation is True
+    assert run.object_confirmed is False
+    assert run.state == "failed"
+    assert agent.statuses[-1] == "AGENT_FAILED"
+
+
+def test_explicit_status_instruction_can_finish_without_motion(agent):
+    script(agent, tool("done", summary="status reported"))
+    agent.module.run_agent_task("current status")
+    run = agent.module._active_run
+    run.future.result(timeout=2)
+    assert run.requires_execution_evidence is False
+    assert run.state == "done"
+    assert agent.statuses[-1] == "AGENT_DONE"
+
+
 @pytest.mark.parametrize("change", ["replace", "map", "restart", "cancel", "stop"])
 def test_late_model_reply_cannot_issue_motion_or_finish_old_run(agent, change):
     entered, release, cancelled, returned = (threading.Event() for _ in range(4))
@@ -95,7 +143,7 @@ def test_late_model_reply_cannot_issue_motion_or_finish_old_run(agent, change):
     stopping = None
     try:
         if change == "replace":
-            agent.module.run_agent_task("new instruction")
+            agent.module._on_agent_instruction("current status")
             agent.module._active_run.future.result(timeout=1)
         elif change in {"map", "restart"}:
             agent.module.navigation_state._deliver(NavigationState(
@@ -103,7 +151,8 @@ def test_late_model_reply_cannot_issue_motion_or_finish_old_run(agent, change):
                 map_id="map-b" if change == "map" else "map-a"))
         elif change == "cancel":
             response = json.loads(agent.module.cancel_agent_task(old.run_id))
-            assert response == {"cancel_requested": True, "stop_confirmed": False}
+            assert response["cancel_requested"] is True
+            assert response["stop_confirmed"] is True
         else:
             stopping = threading.Thread(target=agent.module.stop)
             stopping.start()
@@ -138,10 +187,49 @@ def test_task_timeout_requests_cancellation_of_its_actual_native_goal(agent):
     run.future.result(timeout=2)
     assert agent.statuses[-1] == "AGENT_FAILED"
     assert any(command["task_id"] == task_id for command in agent.cancels)
+    assert json.loads(agent.module.get_agent_status())["stop_confirmed"] is False
     before = list(agent.statuses)
-    agent.h.reach()
+    agent.h.reach(NavigationGoalState.CANCELLED)
     assert agent.statuses == before
     assert "AGENT_DONE" not in agent.statuses
+    stopped = json.loads(agent.module.get_agent_status())
+    assert stopped["state"] == "failed"
+    assert stopped["stop_confirmed"] is True
+
+
+def test_cancelled_agent_reports_native_stop_only_after_terminal(agent):
+    script(agent, tool("navigate_to", x=1, y=2, z=0.3))
+    agent.h.goal_sent.clear()
+    agent.module.run_agent_task("visit coordinate")
+    run = agent.module._active_run
+    assert agent.h.goal_sent.wait(1)
+
+    cancelled = json.loads(agent.module.cancel_agent_task(run.run_id))
+    assert cancelled["cancel_requested"] is True
+    assert cancelled["stop_confirmed"] is False
+    assert cancelled["navigation"]["state"] == "CANCELLING"
+    assert cancelled["navigation"]["task_id"] == agent.h.goals[-1]["task_id"]
+
+    pending = json.loads(agent.module.get_agent_status())
+    assert pending["state"] == "cancelled"
+    assert pending["stop_confirmed"] is False
+    assert pending["navigation"]["native_state"] == "cancel_requested"
+
+    agent.h.modules["nav.goals"].navigation_goal_status._deliver(NavigationGoalStatus(
+        ts=agent.h.clock.now,
+        frame_id="map",
+        boot_id="test-nav",
+        sequence=1,
+        goal_epoch=1,
+        task_id=agent.h.goals[-1]["task_id"],
+        request_id=agent.h.goals[-1]["request_id"],
+        state=NavigationGoalState.CANCELLED,
+    ))
+    stopped = json.loads(agent.module.get_agent_status())
+    assert stopped["state"] == "cancelled"
+    assert stopped["stop_confirmed"] is True
+    assert stopped["navigation"]["state"] == "CANCELLED"
+    assert stopped["navigation"]["native_state"] == "cancelled"
 
 
 def test_manual_semantic_instruction_cannot_be_cancelled_by_old_agent(agent):
@@ -242,7 +330,7 @@ def test_manual_takeover_while_model_pending_prevents_next_motion(agent, motion_
 def test_motion_aliases_use_the_same_owned_navigation(agent):
     from decision.modules.visual_servo import VisualServoModule
     from decision.modules.vla import VLAModule
-    from memory.modules.tagged_locations_module import TaggedLocationsModule
+    from memory.modules.locations import TaggedLocationsModule
     from nav.skills.skills_module import NavSkills
 
     agent.module.on_system_modules({"SemanticPlannerModule": agent.h.module,
@@ -274,12 +362,13 @@ def test_owned_follow_handoff_stops_on_agent_cancel(agent):
     assert sent.wait(1)
     ref = servo.get_servo_status()
     assert ref["follow_task_id"]
-    agent.module.cancel_agent_task(run.run_id)
+    cancelled = json.loads(agent.module.cancel_agent_task(run.run_id))
+    assert cancelled["stop_confirmed"] is True
     assert servo.get_follow_task(ref["follow_task_id"], ref["product_session_id"])["state"] == "cancelled"
     assert "AGENT_DONE" not in agent.statuses
 
 
-def test_replacing_an_executing_agent_cancels_only_its_old_task(agent):
+def test_internal_replacing_an_executing_agent_cancels_only_its_old_task(agent):
     h = agent.h
     script(agent, tool("navigate_to", x=1, y=2, z=0.3))
     h.goal_sent.clear()
@@ -289,7 +378,7 @@ def test_replacing_an_executing_agent_cancels_only_its_old_task(agent):
     old_goal = h.goals[-1]
     script(agent, tool("navigate_to", x=4, y=5, z=0.3))
     h.goal_sent.clear()
-    agent.module.run_agent_task("second")
+    agent.module._on_agent_instruction("second")
     new_run = agent.module._active_run
     assert h.goal_sent.wait(1)
     new_goal = h.goals[-1]
@@ -313,7 +402,7 @@ def test_repeated_agent_runs_keep_one_model_event_loop(agent):
         loops.append(asyncio.get_running_loop())
         return tool("done", summary="greeting complete")
     agent.module._llm_client = SimpleNamespace(chat_with_tools=chat)
-    for instruction in ("first greeting", "second greeting"):
+    for instruction in ("current status", "battery level"):
         agent.module.run_agent_task(instruction)
         agent.module._active_run.future.result(timeout=1)
     assert len(loops) == 2 and loops[0] is loops[1]
@@ -365,6 +454,123 @@ def test_blank_or_closed_submission_does_not_return_an_old_run_identity(agent):
     script(agent, tool("done", summary="complete"))
     agent.module.run_agent_task("first")
     agent.module._active_run.future.result(timeout=1)
-    assert json.loads(agent.module.run_agent_task(" ")) == {"run_id": "", "state": "unavailable"}
+    assert json.loads(agent.module.run_agent_task(" ")) == {"run_id": "", "state": "unavailable", "accepted": False}
     agent.module.stop()
-    assert json.loads(agent.module.run_agent_task("another")) == {"run_id": "", "state": "unavailable"}
+    assert json.loads(agent.module.run_agent_task("another")) == {"run_id": "", "state": "unavailable", "accepted": False}
+
+@pytest.mark.parametrize(('text', 'operation'), [
+    ('现在在干什么？', 'query'), ('继续跟着他', 'keep'), ('停下！', 'cancel'),
+    ('不用跟了', 'cancel'), ('暂停一下', 'pause'), ('恢复任务', 'resume'),
+    ('当前状态', 'query'), ('为什么不走', 'query'), ('为什么停止', 'query'),
+    ('结束当前任务', 'cancel'), ('取消当前任务', 'cancel'), ('停止当前任务', 'cancel'),
+    ('别停', None), ('找到后停下', None),
+])
+def test_instruction_control_is_a_whole_sentence_match(text, operation):
+    assert AgentPlannerModule.classify_instruction_control(text) == operation
+
+
+def test_dialogue_controls_keep_identity_and_reject_stale_or_unsupported(agent):
+    script(agent, tool('navigate_to', x=1, y=2, z=0.3))
+    agent.h.goal_sent.clear()
+    receipt = json.loads(agent.module.run_agent_task('visit coordinate'))
+    assert agent.h.goal_sent.wait(1)
+    run = agent.module._active_run
+    for text, operation in [('现在在干什么', 'query'), ('继续跟着他', 'keep')]:
+        result = agent.module.handle_instruction_control(text, run.run_id)
+        assert result['accepted'] and result['operation'] == operation
+        assert result['task_status']['instruction'] == 'visit coordinate'
+        assert result['task_status']['found'] is True
+        assert result['run_id'] == receipt['run_id']
+        assert agent.module._active_run is run and not run.cancelled
+    paused = agent.module.handle_instruction_control('暂停一下', run.run_id)
+    assert paused['accepted'] is False and paused['reason'] == 'unsupported_control'
+    assert run.state == 'running'
+    stale = agent.module.handle_instruction_control('停下', 'old-run')
+    assert stale['reason'] == 'not_current' and not run.cancelled
+    stopped = agent.module.handle_instruction_control('停下', run.run_id)
+    assert stopped['operation'] == 'cancel' and stopped['accepted']
+    assert stopped['stop_confirmed'] is False
+    assert stopped['task_status']['found'] is True
+    assert agent.module.handle_instruction_control('继续任务', run.run_id)['accepted'] is False
+
+
+def test_public_admission_preserves_active_run_until_stop_confirmed(agent):
+    script(agent, tool('navigate_to', x=1, y=2, z=0.3))
+    agent.h.goal_sent.clear()
+    agent.module.run_agent_task('visit coordinate')
+    assert agent.h.goal_sent.wait(1)
+    run = agent.module._active_run
+    refused = json.loads(agent.module.run_agent_task('follow me'))
+    assert refused['accepted'] is False and refused['reason'] == 'task_active'
+    assert agent.module._active_run is run and not run.cancelled
+    agent.module.cancel_agent_task(run.run_id)
+    refused = json.loads(agent.module.run_agent_task('follow me'))
+    assert refused['accepted'] is False and refused['reason'] == 'stop_unconfirmed'
+    agent.h.reach(NavigationGoalState.CANCELLED)
+    started = json.loads(agent.module.run_agent_task('current status'))
+    assert started['accepted'] and started['run_id'] != run.run_id
+
+
+def test_dialogue_cancel_does_not_wait_for_a_slow_model(agent):
+    entered, release = threading.Event(), threading.Event()
+    async def chat(*args, **kwargs):
+        entered.set()
+        while not release.is_set():
+            await asyncio.sleep(0.005)
+        return tool('navigate_to', x=9, y=9, z=0.3)
+    agent.module._llm_client = SimpleNamespace(chat_with_tools=chat)
+    before = len(agent.h.goals)
+    agent.module.run_agent_task('follow me')
+    assert entered.wait(1)
+    run = agent.module._active_run
+    try:
+        receipt = agent.module.handle_instruction_control('不用跟了', run.run_id)
+        assert receipt['accepted'] and receipt['stop_confirmed']
+        assert run.cancelled and len(agent.h.goals) == before
+    finally:
+        release.set()
+
+
+def test_stale_dialogue_cancel_cannot_affect_new_run_or_resume_finished_run(agent):
+    script(agent, tool('done', summary='status'))
+    old = json.loads(agent.module.run_agent_task('current status'))['run_id']
+    agent.module._active_run.future.result(timeout=1)
+    resumed = agent.module.handle_instruction_control('恢复任务', old)
+    assert resumed['accepted'] is False and resumed['reason'] == 'unsupported_control'
+    assert agent.module._active_run.state == 'done'
+    script(agent, tool('navigate_to', x=1, y=2, z=0.3))
+    agent.h.goal_sent.clear()
+    new = json.loads(agent.module.run_agent_task('visit coordinate'))['run_id']
+    assert agent.h.goal_sent.wait(1)
+    refused = agent.module.handle_instruction_control('停下', old)
+    assert refused['accepted'] is False and refused['reason'] == 'not_current'
+    assert refused['run_id'] == new
+    assert not agent.module._active_run.cancelled
+    assert not agent.h.module._active_goal.cancel_request_id
+
+
+def test_dialogue_idle_query_reports_idle_without_starting_a_model(agent):
+    result = agent.module.handle_instruction_control('现在在干什么')
+    assert result['accepted'] and result['operation'] == 'query'
+    assert result['state'] == 'idle' and result['run_id'] == ''
+    assert result['task_status']['found'] is False
+    assert agent.module._active_run is None
+
+
+def test_cancelling_completed_task_preserves_completion_evidence(agent):
+    script(agent, tool('navigate_to', x=1, y=2, z=0.3))
+    agent.h.goal_sent.clear()
+    agent.module.run_agent_task('visit coordinate')
+    run = agent.module._active_run
+    assert agent.h.goal_sent.wait(1)
+    agent.h.reach()
+    run.future.result(timeout=2)
+    assert run.state == 'done' and run.motion_success
+    before = json.loads(agent.module.get_agent_status())
+    cancellation_count = len(agent.cancels)
+    for receipt in [json.loads(agent.module.cancel_agent_task(run.run_id)),
+                    agent.module.handle_instruction_control('停下', run.run_id)]:
+        assert receipt['cancel_requested'] is False and receipt['reason'] == 'task_not_running'
+    assert receipt['accepted'] is False and receipt['ok'] is False
+    assert json.loads(agent.module.get_agent_status()) == before
+    assert len(agent.cancels) == cancellation_count

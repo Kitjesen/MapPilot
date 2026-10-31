@@ -1,0 +1,81 @@
+{
+  "dataset": "Hilti SLAM Challenge 2023 / Site1 Handheld5 / Stairs",
+  "source": "https://hilti-challenge.com/dataset-2023",
+  "checked_at": "2026-10-20",
+  "operation": "indexed_existing_recording_without_duplicate_download",
+  "storage_root": "D:\\inovxio\\datasets\\lingtu\\hilti2023_stair",
+  "revision": "8e2a7a2de63670730a322d74090c1a5ea4b641eb",
+  "license": "CC BY-NC-SA 3.0; research access does not grant commercial redistribution",
+  "files": [
+    {
+      "path": "D:\\inovxio\\datasets\\lingtu\\hilti2023_stair\\site1_handheld_5.bag",
+      "bytes": 17140264234,
+      "url": "https://huggingface.co/datasets/Hilti-Research/hilti-slam-challenge-2023/resolve/8e2a7a2de63670730a322d74090c1a5ea4b641eb/rosbags/site1_handheld_5.bag",
+      "status": "present_existing",
+      "provenance": "official_download"
+    },
+    {
+      "path": "D:\\inovxio\\datasets\\lingtu\\hilti2023_stair\\site1_handheld_5.txt",
+      "bytes": 164,
+      "url": "https://huggingface.co/datasets/Hilti-Research/hilti-slam-challenge-2023/resolve/8e2a7a2de63670730a322d74090c1a5ea4b641eb/ground_truth/site1_handheld_5.txt",
+      "status": "present_existing",
+      "provenance": "official_download"
+    },
+    {
+      "path": "D:\\inovxio\\datasets\\lingtu\\hilti2023_stair\\calibration.zip",
+      "bytes": 91972172,
+      "url": "https://huggingface.co/datasets/Hilti-Research/hilti-slam-challenge-2023/resolve/8e2a7a2de63670730a322d74090c1a5ea4b641eb/calibration/calibration.zip",
+      "status": "present_existing",
+      "provenance": "official_download"
+    },
+    {
+      "path": "D:\\inovxio\\datasets\\lingtu\\hilti2023_stair\\calibration.yaml",
+      "bytes": 1764,
+      "url": null,
+      "status": "present_existing",
+      "provenance": "prior_local_extraction_or_conversion"
+    },
+    {
+      "path": "D:\\inovxio\\datasets\\lingtu\\hilti2023_stair\\calibration_lidar.yaml",
+      "bytes": 468,
+      "url": null,
+      "status": "present_existing",
+      "provenance": "prior_local_extraction_or_conversion"
+    },
+    {
+      "path": "D:\\inovxio\\datasets\\lingtu\\hilti2023_stair\\calibration_imu.yaml",
+      "bytes": 418,
+      "url": null,
+      "status": "present_existing",
+      "provenance": "prior_local_extraction_or_conversion"
+    },
+    {
+      "path": "D:\\inovxio\\datasets\\lingtu\\hilti2023_stair\\calibration.txt",
+      "bytes": 9631,
+      "url": null,
+      "status": "present_existing",
+      "provenance": "prior_local_extraction_or_conversion"
+    },
+    {
+      "path": "D:\\inovxio\\datasets\\lingtu\\hilti2023_stair\\stairs.ltu",
+      "bytes": 2361155020,
+      "url": null,
+      "status": "present_existing",
+      "provenance": "prior_local_extraction_or_conversion"
+    },
+    {
+      "path": "D:\\inovxio\\datasets\\lingtu\\hilti2023_stair\\stairs.records.jsonl",
+      "bytes": 14076700,
+      "url": null,
+      "status": "present_existing",
+      "provenance": "prior_local_extraction_or_conversion"
+    }
+  ],
+  "validation": {
+    "fresh": "metadata/bag-inspection-20261020.json",
+    "scope": "complete index; first2 clouds and200 IMU payloads; no new replay",
+    "prior_full_source_verification": "D:\\inovxio\\brain\\lingtu\\build\\stair-validation-20261018\\conversion-full-check.json"
+  },
+  "ground_truth": "three surveyed steel-pin positions; identity quaternion placeholders, not orientation truth",
+  "new_evaluation_status": "not_run"
+}

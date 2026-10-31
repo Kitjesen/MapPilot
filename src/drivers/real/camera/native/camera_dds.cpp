@@ -615,11 +615,13 @@ void validateHeader(const RecordHeader& header) {
 
 lingtu::drivers::camera::shm::WriterConfig shmWriterConfig(
     const CliConfig& cfg,
-    const std::string& name) {
+    const std::string& name,
+    std::uint64_t source_generation) {
   lingtu::drivers::camera::shm::WriterConfig writer;
   writer.name = name;
   writer.slot_count = cfg.shm_slot_count;
   writer.slot_capacity = cfg.shm_slot_capacity;
+  writer.source_generation = source_generation;
   return writer;
 }
 
@@ -632,12 +634,14 @@ int main(int argc, char** argv) {
   try {
     const CliConfig cfg = parseArgs(argc, argv);
     DdsRuntime dds(cfg);
+    const std::uint64_t source_generation =
+        lingtu::drivers::camera::shm::unixTimeNs();
     lingtu::drivers::camera::shm::FrameWriter color_shm(
-        shmWriterConfig(cfg, cfg.color_shm));
+        shmWriterConfig(cfg, cfg.color_shm, source_generation));
     lingtu::drivers::camera::shm::FrameWriter depth_shm(
-        shmWriterConfig(cfg, cfg.depth_shm));
+        shmWriterConfig(cfg, cfg.depth_shm, source_generation));
     lingtu::drivers::camera::shm::FrameWriter info_shm(
-        shmWriterConfig(cfg, cfg.info_shm));
+        shmWriterConfig(cfg, cfg.info_shm, source_generation));
     CaptureProcess capture;
     capture.start(cfg);
 

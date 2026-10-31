@@ -161,6 +161,18 @@ def test_flatwall_ground_truth_is_not_claimed_as_tum_before_conversion():
     assert dataset.ground_truth.canonical_format == "source_archive"
 
 
+def test_flatwall_manifest_preserves_recorded_g_units_and_native_converter(tmp_path):
+    dataset = load_public_dataset_catalog().require("aist-flatwall-avia")
+    manifest = build_replay_manifest(
+        dataset,
+        source_path=tmp_path / "flatwall_01.bag",
+        output_dir=tmp_path / "converted",
+    )
+
+    assert manifest["streams"]["imu"]["acceleration_unit"] == "g"
+    assert manifest["source"]["conversion_adapter"] == "aist_flatwall_to_ltu1"
+
+
 def test_aist_driving_is_transport_smoke_not_frontend_accuracy_evidence():
     catalog = load_public_dataset_catalog()
     dataset = catalog.require("aist-driving-mid360")
@@ -209,7 +221,7 @@ def test_catalog_path_is_repository_owned():
     assert PUBLIC_DATASET_CATALOG_PATH == Path("sim/evaluation/slam/configs/public_datasets.json")
 
 
-def test_public_mid360_runbook_reaches_native_dds_and_fastlio2():
+def test_public_mid360_runbook_reaches_native_dds_and_ltlio():
     runbook = SLAM_EVALUATION_README_PATH.read_text(encoding="utf-8")
 
     assert "--stdin-records" in runbook

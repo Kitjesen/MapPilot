@@ -12,9 +12,25 @@ from lingtu.sdk import CommandResult
 from lingtu.sdk import cli as sdk_cli
 
 
+def test_stop_cli_uses_emergency_control_without_cancelling_navigation(capsys) -> None:
+    robot = Mock()
+    robot.system.emergency_stop.return_value = CommandResult(ok=True, message="stop requested")
+
+    with (
+        patch.object(sys, "argv", ["lingtu-sdk", "stop"]),
+        patch.object(sdk_cli, "LingTuClient", return_value=robot),
+    ):
+        sdk_cli.main()
+
+    robot.system.emergency_stop.assert_called_once_with()
+    robot.navigation.cancel.assert_not_called()
+    assert capsys.readouterr().out == "stop requested\n"
+    robot.close.assert_called_once_with()
+
+
 def test_inspection_start_cli_calls_sdk_and_prints_gateway_receipt(capsys) -> None:
     robot = Mock()
-    robot.start_inspection.return_value = CommandResult(
+    robot.tasks.start_inspection.return_value = CommandResult(
         ok=True,
         accepted=True,
         task_id="inspection-task-1",
@@ -47,7 +63,7 @@ def test_inspection_start_cli_calls_sdk_and_prints_gateway_receipt(capsys) -> No
     ):
         sdk_cli.main()
 
-    robot.start_inspection.assert_called_once_with(
+    robot.tasks.start_inspection.assert_called_once_with(
         "route-1",
         map_id="factory",
         revision=4,
@@ -59,7 +75,7 @@ def test_inspection_start_cli_calls_sdk_and_prints_gateway_receipt(capsys) -> No
 
 def test_inspection_status_cli_calls_sdk(capsys) -> None:
     robot = Mock()
-    robot.inspection_task.return_value = {
+    robot.tasks.inspection_task.return_value = {
         "found": True,
         "task_id": "inspection-task-1",
         "current_state": "EXECUTING",
@@ -75,7 +91,7 @@ def test_inspection_status_cli_calls_sdk(capsys) -> None:
     ):
         sdk_cli.main()
 
-    robot.inspection_task.assert_called_once_with("inspection-task-1")
+    robot.tasks.inspection_task.assert_called_once_with("inspection-task-1")
     assert json.loads(capsys.readouterr().out)["current_state"] == "EXECUTING"
     robot.close.assert_called_once_with()
 
@@ -83,7 +99,7 @@ def test_inspection_status_cli_calls_sdk(capsys) -> None:
 @pytest.mark.parametrize("action", ["pause", "resume", "cancel"])
 def test_inspection_control_cli_calls_sdk(action: str, capsys) -> None:
     robot = Mock()
-    method = getattr(robot, f"{action}_inspection")
+    method = getattr(robot.tasks, f"{action}_inspection")
     method.return_value = CommandResult(
         ok=True,
         accepted=True,
@@ -128,7 +144,7 @@ def test_inspection_control_cli_calls_sdk(action: str, capsys) -> None:
 )
 def test_inspection_read_cli_calls_sdk(command: str, sdk_method: str, capsys) -> None:
     robot = Mock()
-    method = getattr(robot, sdk_method)
+    method = getattr(robot.tasks, sdk_method)
     method.return_value = {"ok": True}
     argv = ["lingtu-sdk", command]
     expected_args: tuple[str, ...] | tuple[None]

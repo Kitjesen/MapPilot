@@ -4,7 +4,7 @@
   "description": "Map-free native teleoperation through navd and the MuJoCo physical driver bridge.",
   "product_contract": {
     "product": "teleop",
-    "source": "config/runtime_graph/products/teleop.yaml",
+    "source": "config/system/products/teleop.yaml",
     "native_control_mode": "teleop",
     "slam_mode": "none",
     "requires_map": false

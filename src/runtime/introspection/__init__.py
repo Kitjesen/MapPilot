@@ -1,1 +1,1 @@
-"""Portable Blueprint graph contracts."""
+"""Portable HostBuilder graph contracts."""

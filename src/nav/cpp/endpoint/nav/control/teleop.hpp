@@ -12,7 +12,7 @@
 #include "control/final.hpp"
 #include "input/planner.hpp"
 #include "nav_kernel/velocity_smoother.hpp"
-#include "runtime/config/config.hpp"
+#include "app/config/config.hpp"
 #include "navigation/executor.hpp"
 #include "status/nav_status_writer.hpp"
 
@@ -85,6 +85,7 @@ struct TeleopTickCounterDelta {
 struct TeleopTickTimingDelta {
   bool nav_tick_measured{false};
   double nav_tick_ms{0.0};
+  double final_control_ms{0.0};
   double teleop_gate_ms{0.0};
 };
 

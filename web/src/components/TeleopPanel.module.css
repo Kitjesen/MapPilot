@@ -3,6 +3,7 @@
 .speedLimit { display: flex; align-items: center; position: relative; border-left: 1px solid var(--border-hi); margin-left: 2px; }
 .speedLimit select { appearance: none; min-height: 30px; padding: 4px 24px 4px 11px; border: 0; border-radius: 5px; background: transparent; color: var(--text); font: inherit; font-variant-numeric: tabular-nums; cursor: pointer; }
 .speedLimit select:hover { background: var(--bg-layer-1); }
+.speedLimit .gamepadDevice { max-width: 170px; }
 .speedLimit select:disabled { opacity: .5; cursor: default; }
 .speedLimit > svg { position: absolute; right: 7px; pointer-events: none; color: var(--text-dim); }
 .connection { display: inline-flex; align-items: center; gap: 6px; color: var(--text-dim); white-space: nowrap; }

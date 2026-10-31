@@ -134,7 +134,7 @@ def _categories_for_gate(
             for item in ("abi", "native runtime", "python_tag", "mingw numpy", "numpy")
         ):
             categories = ["environment_runtime"]
-        elif any(item in blockers for item in ("fast-lio", "fastlio", "slam", "localization")):
+        elif any(item in blockers for item in ("fast-lio", "ltlio", "slam", "localization")):
             categories = ["slam_localization"]
         elif any(
             item in blockers for item in ("replay", "deviation", "tracking", "cmd_vel", "replan", "blocked_route")

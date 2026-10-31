@@ -204,11 +204,22 @@ class NativeByteTracker:
         detection_classes = classes[detection_indices]
         cost[track_classes[:, None] != detection_classes[None, :]] = 1e6
 
-        row_indices, column_indices = linear_sum_assignment(cost)
+        # ByteTrack's cost-limited assignment allows either side to stay unmatched.
+        track_count, detection_count = cost.shape
+        assignment_cost = np.full(
+            (track_count + detection_count, track_count + detection_count),
+            max_cost / 2.0,
+            dtype=np.float64,
+        )
+        assignment_cost[:track_count, :detection_count] = cost
+        assignment_cost[track_count:, detection_count:] = 0.0
+        row_indices, column_indices = linear_sum_assignment(assignment_cost)
         matches: list[tuple[int, int]] = []
         matched_tracks: set[int] = set()
         matched_detections: set[int] = set()
         for row, column in zip(row_indices.tolist(), column_indices.tolist()):
+            if row >= track_count or column >= detection_count:
+                continue
             if float(cost[row, column]) > max_cost:
                 continue
             track_index = track_indices[row]

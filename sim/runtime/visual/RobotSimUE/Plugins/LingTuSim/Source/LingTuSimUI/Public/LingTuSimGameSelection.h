@@ -4,6 +4,7 @@
 #include "LingTuSimAssetReview.h"
 
 namespace LingTuSim::UI {
+class FSensorSelectionModel;
 enum class EGameSelectionAvailability : uint8 {
   Runnable,
   PreviewOnly,
@@ -12,11 +13,13 @@ enum class EGameSelectionAvailability : uint8 {
 };
 
 LINGTUSIMUI_API const TCHAR *GameSelectionAvailabilityName(EGameSelectionAvailability Availability);
+LINGTUSIMUI_API const TCHAR *RobotCategoryLabel(const FString& Category);
 
 struct LINGTUSIMUI_API FGameSelectionPackageSummary final {
   FString Id;
   FString Version;
   FString Label;
+  FString Category = TEXT("other");
 
   bool IsValid() const { return !Id.IsEmpty() && !Version.IsEmpty() && !Label.IsEmpty(); }
 };
@@ -49,6 +52,8 @@ struct LINGTUSIMUI_API FGameSelectionOption final {
   FString BundleDirectory;
   FString SessionId;
   TArray<FGameSelectionBundleArtifact> BundleArtifacts;
+  FString SessionSource;
+  TSharedPtr<FSensorSelectionModel> SensorSelection;
 
   bool IsRunnable() const;
 };
@@ -59,6 +64,8 @@ struct LINGTUSIMUI_API FGameSelectionCatalog final {
   FString CatalogDirectory;
   FGameSelectionAssetSummary AssetSummary;
   FAssetReviewCatalog AssetReview;
+  // Imported bodies are browseable without inventing a runnable session.
+  TArray<FGameSelectionPackageSummary> RobotLibrary;
   TArray<FGameSelectionOption> Options;
 };
 
@@ -85,6 +92,12 @@ class LINGTUSIMUI_API FGameSelectionModel final {
   bool SelectNext();
   bool SelectPrevious();
   bool SelectById(const FString &OptionId);
+  TArray<FGameSelectionPackageSummary> GetRobotChoices() const;
+  TArray<FGameSelectionPackageSummary> GetWorldChoices() const;
+  const FString& GetRequestedRobotId() const { return RequestedRobotId; }
+  const FString& GetRequestedWorldId() const { return RequestedWorldId; }
+  bool SelectRobotById(const FString& RobotId);
+  bool SelectWorldById(const FString& WorldId);
   bool CanConfirm(FString &OutBlocker) const;
   bool MarkConfirmed(FString &OutBlocker);
   const FString &GetConfirmedOptionId() const { return ConfirmedOptionId; }
@@ -94,6 +107,9 @@ class LINGTUSIMUI_API FGameSelectionModel final {
   FGameSelectionCatalog Catalog;
   int32 SelectedIndex = INDEX_NONE;
   FString ConfirmedOptionId;
+  FString RequestedRobotId;
+  FString RequestedWorldId;
+  void ResolveRequestedPair();
 };
 
 /** Writes one no-replace handoff for an external launcher; it does not start a runtime. */

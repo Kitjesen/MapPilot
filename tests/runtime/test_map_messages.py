@@ -105,11 +105,11 @@ def test_map_observation_frame_accepts_geometry_only_incremental_scan():
         sequence=42,
         frame_id="map",
         sensor_frame_id="body",
-        sensor_origin=transform.translation,
+        sensor_origin=Vector3(1.16, 2.0, 0.42),
         map_sensor_pose=Pose(transform.translation, transform.rotation),
         map_sensor_transform=transform,
         pose_quality={"confidence": 0.91},
-        source="native_slam:fastlio2:registered_cloud_body",
+        source="native_slam:ltlio:registered_cloud_body",
     )
 
     decoded = MapObservationFrame.decode(frame.encode())
@@ -118,7 +118,9 @@ def test_map_observation_frame_accepts_geometry_only_incremental_scan():
     assert decoded.observation_kind == "INCREMENTAL"
     assert decoded.sequence == 42
     assert decoded.points.shape == (1, 3)
-    assert decoded.sensor_origin.x == pytest.approx(1.0)
+    assert decoded.sensor_origin.x == pytest.approx(1.16)
+    assert decoded.sensor_origin.z == pytest.approx(0.42)
+    assert decoded.map_sensor_transform.translation.x == pytest.approx(1.0)
     assert decoded.map_sensor_transform.frame_id == "map"
     assert decoded.map_sensor_transform.child_frame_id == "body"
     assert decoded.pose_quality == {"confidence": 0.91}

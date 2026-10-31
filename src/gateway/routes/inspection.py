@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import errno
 import json
+import logging
 import math
 import os
+import re
 import stat
 import time
 import uuid
@@ -16,11 +18,12 @@ from typing import Any
 
 from fastapi.responses import JSONResponse, Response
 
-from gateway.maps.status import EnvironmentMapFeedback
 from gateway.maps.transport import active_map, mapd_request
 from gateway.schemas import (
     GatewayErrorResponse,
     InspectionCommandResponse,
+    InspectionEvidenceReviewRequest,
+    InspectionGuidanceResponse,
     InspectionRouteListResponse,
     InspectionRouteRequest,
     InspectionRouteResponse,
@@ -37,12 +40,14 @@ from gateway.services.inspection_boundary import (
     InspectionCommandRejected,
     invoke_inspection,
 )
+from gateway.services.inspection_guidance import build_inspection_guidance
 from gateway.services.inspection_report import build_inspection_task_report
 from gateway.services.inspection_task_lifecycle import (
     InspectionTaskJournalUnavailable,
     ensure_inspection_task_timeline,
 )
 from gateway.services.recording import NativeRecordingError
+from gateway.services.runtime_status import build_localization_status, runtime_identity
 from runtime.contracts.inspection_evidence import (
     EvidenceIntegrityError,
     EvidenceValidationError,
@@ -55,6 +60,7 @@ _DEFAULT_EVIDENCE_HEARTBEAT_MAX_AGE_S = 3.0
 _ARTIFACT_INTEGRITY_ERRNOS = {errno.ENOENT, errno.ENOTDIR, errno.EISDIR, errno.ELOOP}
 _DEFAULT_EVIDENCE_ROOT = "~/data/lingtu/inspection_evidence"
 _EVIDENCE_ARTIFACT_KINDS = {"rgb", "pose", "detections"}
+_LOGGER = logging.getLogger(__name__)
 
 
 def _is_safe_artifact_name(value: str) -> bool:
@@ -228,14 +234,24 @@ def _public_artifacts(result: InspectionEvidenceResult) -> list[dict[str, Any]]:
             "media_type": record.get("media_type"),
             "bytes": record.get("bytes"),
         }
+        if record.get("kind") == "measurement":
+            item.update(
+                modality=record["modality"],
+                sensor_id=record["sensor_id"],
+                metadata=record["metadata"],
+                download_url=(
+                    f"/api/v1/inspection/evidence/{result.request.request_id}"
+                    f"/measurements/{record['sensor_id']}"
+                ),
+            )
         public.append({key: value for key, value in item.items() if value is not None})
     return public
 
 
 def _evidence_summary(result: InspectionEvidenceResult) -> dict[str, Any]:
-    return {
+    summary = {
         "evidence_id": result.request.request_id,
-        "request": result.manifest.get("request", {}),
+        "request": result.request.to_dict(),
         "analysis": result.manifest.get("analysis", {}),
         "persistence": {
             key: value
@@ -244,6 +260,9 @@ def _evidence_summary(result: InspectionEvidenceResult) -> dict[str, Any]:
         },
         "artifacts": _public_artifacts(result),
     }
+    if "review" in result.manifest:
+        summary["review"] = result.manifest["review"]
+    return summary
 
 
 def _report_evidence_by_id(task: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -286,8 +305,13 @@ def _report_evidence_by_id(task: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def _read_evidence_artifact(
     result: InspectionEvidenceResult,
     kind: str,
+    *,
+    sensor_id: str | None = None,
 ) -> tuple[bytes, str] | JSONResponse:
-    if kind not in _EVIDENCE_ARTIFACT_KINDS:
+    measurement = kind == "measurement" and sensor_id is not None
+    if sensor_id is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", sensor_id):
+        return _evidence_not_found()
+    if kind not in _EVIDENCE_ARTIFACT_KINDS and not measurement:
         return _error(
             400,
             "inspection_evidence_artifact_kind_invalid",
@@ -295,9 +319,15 @@ def _read_evidence_artifact(
             detail={"kind": kind, "allowed": sorted(_EVIDENCE_ARTIFACT_KINDS)},
         )
     try:
-        matching = [record for record in _artifact_records(result) if record.get("kind") == kind]
+        matching = [
+            record for record in _artifact_records(result)
+            if record.get("kind") == kind
+            and (not measurement or record.get("sensor_id") == sensor_id)
+        ]
         if not matching:
             return _evidence_not_found()
+        if len(matching) != 1:
+            raise EvidenceIntegrityError(f"ambiguous artifact identity: {kind}")
         record = matching[0]
         relative_path = record.get("path")
         if not isinstance(relative_path, str) or not _is_safe_artifact_name(relative_path):
@@ -399,6 +429,7 @@ def _route_payload(body: InspectionRouteRequest) -> dict[str, Any]:
         "map_content_epoch": body.map_content_epoch,
         "revision": body.revision,
         "loop_count": body.loop_count,
+        "loop_interval_s": body.loop_interval_s,
         "failure_policy": body.failure_policy,
         "max_retries": body.max_retries,
         "points": [
@@ -470,6 +501,80 @@ def _new_task_request_id(value: str | None) -> str:
     if normalized:
         return normalized
     return f"inspection-request-{uuid.uuid4().hex}"
+
+
+def _start_runtime_binding(
+    gw: Any,
+    request: InspectionTaskStartRequest,
+) -> tuple[str | None, JSONResponse | None]:
+    try:
+        runtime = runtime_identity(gw)
+    except ValueError as exc:
+        return None, _error(503, "inspection_product_session_unavailable", str(exc))
+    product_session_id = str(runtime.get("product_session_id") or "").strip()
+    if runtime.get("state") != "active" or not product_session_id:
+        return None, _error(
+            503,
+            "inspection_product_session_unavailable",
+            "inspection start requires an active compiled Product session",
+        )
+    if request.expected_env is not None and request.expected_env != runtime.get("env"):
+        return None, _error(
+            409,
+            "inspection_expected_env_mismatch",
+            "inspection request expected a different runtime env",
+        )
+    if (
+        request.expected_product_session_id is not None
+        and request.expected_product_session_id != product_session_id
+    ):
+        return None, _error(
+            409,
+            "inspection_product_session_mismatch",
+            "inspection request expected a different Product session",
+        )
+    return product_session_id, None
+
+
+def _control_runtime_conflict(
+    gw: Any,
+    request: InspectionTaskControlRequest,
+    *,
+    task_product_session_id: str,
+) -> JSONResponse | None:
+    try:
+        runtime = runtime_identity(gw)
+    except ValueError as exc:
+        return _error(409, "inspection_product_session_unavailable", str(exc))
+    if request.expected_env is not None and request.expected_env != runtime.get("env"):
+        return _error(
+            409,
+            "inspection_expected_env_mismatch",
+            "inspection control expected a different runtime env",
+        )
+    current_product_session_id = str(runtime.get("product_session_id") or "").strip()
+    if runtime.get("state") != "active" or not current_product_session_id:
+        return _error(
+            409,
+            "inspection_product_session_unavailable",
+            "inspection control requires an active compiled Product session",
+        )
+    if (
+        request.expected_product_session_id is not None
+        and request.expected_product_session_id != task_product_session_id
+    ):
+        return _error(
+            409,
+            "inspection_product_session_mismatch",
+            "inspection control does not match the task Product session",
+        )
+    if task_product_session_id != current_product_session_id:
+        return _error(
+            409,
+            "inspection_product_session_mismatch",
+            "inspection task belongs to a different Product session",
+        )
+    return None
 
 
 def _task_id_for_request(request_id: str) -> str:
@@ -687,49 +792,6 @@ def _validate_route_evidence_worker(route: dict[str, Any]) -> JSONResponse | Non
     return None
 
 
-def _inspection_environment_admission(gw: Any) -> dict[str, Any]:
-    feedback = getattr(gw, "_environment_map_feedback", None)
-    if not isinstance(feedback, EnvironmentMapFeedback):
-        return {
-            "ready": False,
-            "blockers": ["environment_map_feedback_unavailable"],
-        }
-
-    modules = getattr(gw, "_all_modules", None)
-    host_bus = modules.get("host.bus") if isinstance(modules, Mapping) else None
-    map_readiness_checked = False
-    map_readiness_reason: str | None = None
-    readiness = getattr(host_bus, "map_readiness", None)
-    if host_bus is None:
-        map_readiness_reason = "host_bus_missing"
-    elif not callable(readiness):
-        map_readiness_reason = "map_readiness_contract_missing"
-    else:
-        try:
-            raw_reason = readiness()
-            map_readiness_checked = True
-            if raw_reason is None:
-                map_readiness_reason = None
-            elif isinstance(raw_reason, str) and raw_reason.strip():
-                map_readiness_reason = raw_reason.strip()
-            else:
-                map_readiness_reason = "map_readiness_result_invalid"
-        except Exception as exc:
-            map_readiness_reason = f"map_readiness_error:{type(exc).__name__}"
-
-    try:
-        return feedback.inspection_admission(
-            map_readiness_checked=map_readiness_checked,
-            map_readiness_reason=map_readiness_reason,
-            product_session_id=os.environ.get("LINGTU_PRODUCT_SESSION_ID"),
-        )
-    except Exception as exc:
-        return {
-            "ready": False,
-            "blockers": [f"environment_map_feedback_error:{type(exc).__name__}"],
-        }
-
-
 def register_inspection_routes(app, gw) -> None:
     @app.get(
         "/api/v1/inspection/evidence",
@@ -755,6 +817,32 @@ def register_inspection_routes(app, gw) -> None:
             "ts": time.time(),
         }
 
+    @app.post(
+        "/api/v1/inspection/evidence/{evidence_id}/review",
+        summary="Record a human inspection finding without changing task execution",
+        responses={404: {"model": GatewayErrorResponse}, 409: {"model": GatewayErrorResponse}},
+    )
+    async def review_inspection_evidence(evidence_id: str, body: InspectionEvidenceReviewRequest):
+        try:
+            result = await asyncio.to_thread(
+                InspectionEvidenceStore(_evidence_root()).review,
+                evidence_id, verdict=body.verdict, note=body.note,
+            )
+        except FileNotFoundError:
+            return _evidence_not_found()
+        except EvidenceValidationError:
+            return _evidence_not_found()
+        except EvidenceIntegrityError as exc:
+            return _evidence_integrity_error(exc)
+        except OSError as exc:
+            return _evidence_unavailable(exc)
+        return {
+            "schema_version": "lingtu.inspection.evidence.detail.v1",
+            "ok": True,
+            "evidence": _evidence_summary(result),
+            "ts": time.time(),
+        }
+
     @app.get(
         "/api/v1/inspection/evidence/{evidence_id}/artifacts/{kind}",
         summary="Read one verified inspection evidence artifact",
@@ -770,6 +858,27 @@ def register_inspection_routes(app, gw) -> None:
         if isinstance(result, JSONResponse):
             return result
         artifact = await asyncio.to_thread(_read_evidence_artifact, result, kind)
+        if isinstance(artifact, JSONResponse):
+            return artifact
+        payload, media_type = artifact
+        return Response(content=payload, media_type=media_type)
+
+    @app.get(
+        "/api/v1/inspection/evidence/{evidence_id}/measurements/{sensor_id}",
+        summary="Download one verified inspection measurement by sensor identity",
+        responses={
+            404: {"model": GatewayErrorResponse},
+            409: {"model": GatewayErrorResponse},
+            503: {"model": GatewayErrorResponse},
+        },
+    )
+    async def get_inspection_evidence_measurement(evidence_id: str, sensor_id: str):
+        result = await asyncio.to_thread(_evidence_result, evidence_id)
+        if isinstance(result, JSONResponse):
+            return result
+        artifact = await asyncio.to_thread(
+            _read_evidence_artifact, result, "measurement", sensor_id=sensor_id,
+        )
         if isinstance(artifact, JSONResponse):
             return artifact
         payload, media_type = artifact
@@ -929,6 +1038,10 @@ def register_inspection_routes(app, gw) -> None:
             task_timeline.require_available()
         except InspectionTaskJournalUnavailable as exc:
             return _error(503, "inspection_task_journal_unavailable", str(exc))
+        product_session_id, runtime_error = _start_runtime_binding(gw, body)
+        if runtime_error is not None:
+            return runtime_error
+        assert product_session_id is not None
         resolved = _resolve_map_id(gw, None)
         if isinstance(resolved, JSONResponse):
             return resolved
@@ -1000,20 +1113,13 @@ def register_inspection_routes(app, gw) -> None:
         evidence_error = _validate_route_evidence_worker(route)
         if evidence_error is not None:
             return evidence_error
-        admission = _inspection_environment_admission(gw)
-        if admission.get("ready") is not True:
-            return _error(
-                503,
-                "inspection_environment_not_ready",
-                "inspection cannot start until the current environment map is admitted",
-                detail=admission,
-            )
         try:
             task_timeline.reserve_submission(
                 task_id=task_id,
                 action="start",
                 request_id=request_id,
                 route_snapshot=route_snapshot,
+                product_session_id=product_session_id,
             )
         except ValueError as exc:
             return _error(
@@ -1056,15 +1162,16 @@ def register_inspection_routes(app, gw) -> None:
                     getattr(started_recording, "session_id", "") or ""
                 )
                 rollback_recording_session_id = new_recording_session_id
-                product_session_id = str(
+                recording_product_session_id = str(
                     getattr(started_recording, "product_session_id", "") or ""
                 )
                 task_timeline.bind_recording(
                     task_id=task_id,
                     session_id=new_recording_session_id,
-                    product_session_id=product_session_id,
+                    product_session_id=recording_product_session_id,
                 )
             except NativeRecordingError as exc:
+                _LOGGER.warning("Inspection recording start failed [%s]: %s", exc.code, exc)
                 return _error(
                     exc.status_code,
                     "inspection_recording_start_failed",
@@ -1225,6 +1332,7 @@ def register_inspection_routes(app, gw) -> None:
                 map_content_epoch=int(route.get("map_content_epoch", 0) or 0),
                 route_revision=current_revision,
                 route_snapshot=route_snapshot,
+                product_session_id=product_session_id,
             )
         except ValueError as exc:
             return _error(
@@ -1280,12 +1388,28 @@ def register_inspection_routes(app, gw) -> None:
         request_id = _new_task_request_id(request.request_id)
         default_reason = f"operator_{action}"
         reason = str(request.reason or default_reason).strip() or default_reason
+        task = task_timeline.query(normalized_task_id)
+        task_product_session_id = str(task.get("product_session_id") or "").strip()
+        if not task_product_session_id:
+            return _error(
+                409,
+                "inspection_task_product_session_unbound",
+                "inspection task has no bound Product session and is read-only",
+            )
+        runtime_conflict = _control_runtime_conflict(
+            gw,
+            request,
+            task_product_session_id=task_product_session_id,
+        )
+        if runtime_conflict is not None:
+            return runtime_conflict
         try:
             task_timeline.reserve_submission(
                 task_id=normalized_task_id,
                 action=action,
                 request_id=request_id,
                 reason=reason,
+                product_session_id=task_product_session_id,
             )
         except ValueError as exc:
             return _error(
@@ -1301,15 +1425,28 @@ def register_inspection_routes(app, gw) -> None:
             )
         except InspectionTaskJournalUnavailable as exc:
             return _error(503, "inspection_task_journal_unavailable", str(exc))
-        try:
-            await asyncio.to_thread(
-                _run_native_task_command,
+
+        def invoke_if_runtime_bound() -> JSONResponse | None:
+            final_conflict = _control_runtime_conflict(
+                gw,
+                request,
+                task_product_session_id=task_product_session_id,
+            )
+            if final_conflict is not None:
+                return final_conflict
+            _run_native_task_command(
                 gw,
                 action,
                 normalized_task_id,
                 reason=reason,
                 request_id=request_id,
             )
+            return None
+
+        try:
+            runtime_conflict = await asyncio.to_thread(invoke_if_runtime_bound)
+            if runtime_conflict is not None:
+                return runtime_conflict
         except InspectionCommandRejected as exc:
             return _task_command_rejected(
                 exc,
@@ -1325,6 +1462,7 @@ def register_inspection_routes(app, gw) -> None:
                 action=action,
                 request_id=request_id,
                 reason=reason,
+                product_session_id=task_product_session_id,
             )
         except ValueError as exc:
             return _error(
@@ -1408,6 +1546,39 @@ def register_inspection_routes(app, gw) -> None:
         body: InspectionTaskControlRequest | None = None,
     ):
         return await _control_inspection_task(task_id, body, action="cancel")
+
+    @app.get(
+        "/api/v1/inspection/tasks/{task_id}/guidance",
+        summary="Read presentation guidance for one inspection task",
+        response_model=InspectionGuidanceResponse,
+    )
+    async def get_inspection_task_guidance(task_id: str):
+        task = ensure_inspection_task_timeline(gw).query(task_id)
+        if task.get("found") is False:
+            localization: dict[str, Any] = {}
+            active_map_id = None
+            active_map_content_epoch = None
+        else:
+            localization, active_map_id = await asyncio.gather(
+                asyncio.to_thread(build_localization_status, gw),
+                asyncio.to_thread(active_map, gw),
+            )
+            active_map_content_epoch = None
+            if active_map_id:
+                epoch = await asyncio.to_thread(_map_content_epoch, gw, active_map_id)
+                if isinstance(epoch, int) and not isinstance(epoch, bool):
+                    active_map_content_epoch = epoch
+        guidance = build_inspection_guidance(
+            task,
+            localization,
+            active_map_id=active_map_id,
+            active_map_content_epoch=active_map_content_epoch,
+        )
+        return {
+            **guidance,
+            "product_session_id": task.get("product_session_id"),
+            "runtime": runtime_identity(gw),
+        }
 
     @app.get(
         "/api/v1/inspection/tasks/{task_id}/report",

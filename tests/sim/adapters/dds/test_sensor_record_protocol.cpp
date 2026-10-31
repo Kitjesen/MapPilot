@@ -86,6 +86,63 @@ void registered_cloud_origin_decodes_without_shifting_points() {
           "origin prefix must not shift point data");
 }
 
+std::string gnss_payload() {
+  std::string inner("LTGN\x01\x00\x07\x00", 8);
+  append_u32(inner, 176); append_u32(inner, 124);
+  inner += "sim-session"; inner.append(53, '\0');
+  append_u64(inner, 2); append_u64(inner, 3);
+  append_u64(inner, 0); append_u64(inner, 1234567890);
+  inner += "robot/gnss"; inner.append(54, '\0');
+  append_u32(inner, 0); append_u32(inner, 0); append_u32(inner, 0);
+  for (int i = 0; i < 14; ++i) append_pod(inner, std::numeric_limits<double>::quiet_NaN());
+  require(inner.size() == 300, "GNSS fixture size");
+  return inner;
+}
+
+void valid_gnss_record_preserves_inner_record() {
+  const auto inner = gnss_payload();
+  std::istringstream input(make_record(8, 1234567890, 0, 1, inner));
+  SensorRecord record;
+  std::string error;
+  require(lingtu::sim::dds_adapter::read_sensor_record(input, record, error) ==
+              SensorRecordReadStatus::Ok, "valid LTU1 GNSS must parse");
+  require(std::string(record.payload.begin(), record.payload.end()) == inner,
+          "GNSS envelope must preserve exact LTGN bytes");
+  const auto decoded = lingtu::sim::dds_adapter::decode_gnss_payload(record);
+  require(decoded.session_id == "sim-session" && decoded.sequence == 0 &&
+              decoded.timestamp_ns == 1234567890 && decoded.fix_type == 0,
+          "GNSS inner fields must decode unchanged");
+  SensorRecordStats stats;
+  lingtu::sim::dds_adapter::accumulate_sensor_record_stats(record, stats);
+  require(stats.gnss == 1 && stats.bytes == 328, "GNSS record statistic mismatch");
+}
+
+void rejects_gnss_outer_inner_disagreement_and_malformed_payload() {
+  const auto inner = gnss_payload();
+  auto malformed = inner;
+  malformed[0] = 'X';
+  auto non_simulation = inner;
+  non_simulation[176] = 4;
+  auto large_sequence = inner;
+  large_sequence[100] = 1; // 2^32 must not truncate to outer sequence zero.
+  for (const auto& bytes : {
+           make_record(8, 1234567891, 0, 1, inner),
+           make_record(8, 1234567890, 1, 1, inner),
+           make_record(8, 1234567890, 0, 2, inner),
+           make_record(8, 1234567890, 0, 1, inner.substr(0, 299)),
+           make_record(8, 1234567890, 0, 1, inner + "x"),
+           make_record(8, 1234567890, 0, 1, malformed),
+           make_record(8, 1234567890, 0, 1, non_simulation),
+           make_record(8, 1234567890, 0, 1, large_sequence)}) {
+    SensorRecord record;
+    std::string error;
+    std::istringstream input(bytes);
+    require(lingtu::sim::dds_adapter::read_sensor_record(input, record, error) ==
+                SensorRecordReadStatus::Error && !error.empty(),
+            "malformed or disagreeing LTU1 GNSS must fail");
+  }
+}
+
 void valid_point_record_decodes() {
   Point point{};
   point.x = 1.0F;
@@ -305,6 +362,8 @@ void validates_supported_dds_domain_range() {
 }  // namespace
 
 int main() {
+  valid_gnss_record_preserves_inner_record();
+  rejects_gnss_outer_inner_disagreement_and_malformed_payload();
   registered_cloud_origin_decodes_without_shifting_points();
   valid_point_record_decodes();
   valid_imu_and_odom_decode();

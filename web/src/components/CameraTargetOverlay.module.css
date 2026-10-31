@@ -1,0 +1,31 @@
+.caption {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 2;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: calc(100% - 28px);
+  padding: 7px 10px;
+  color: #fff;
+  background: rgb(24 24 24 / 68%);
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: 10px;
+  pointer-events: none;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.label {
+  flex-shrink: 0;
+  font-weight: 500;
+}
+
+.target {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgb(255 255 255 / 78%);
+}

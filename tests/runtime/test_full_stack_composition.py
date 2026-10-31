@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from lingtu.assembly.products.host import host_blueprint
-from lingtu.assembly.stacks.composition import compose_full_stack_modules
+from lingtu.assembly.host.build import host_builder
+from lingtu.assembly.host.stacks.composition import compose_full_stack_modules
 
 
 def _entry_names(bp) -> set[str]:
@@ -180,8 +180,8 @@ def test_compose_full_stack_modules_keeps_mujoco_driver_sensor_publish_off_by_de
     assert driver_config["publish_lidar"] is False
 
 
-def test_product_blueprint_keeps_wiring_outside_stack_composition() -> None:
-    bp = host_blueprint(
+def test_product_host_builder_keeps_wiring_outside_stack_composition() -> None:
+    bp = host_builder(
         robot="stub",
         slam_profile="none",
         detector="yoloe",

@@ -40,6 +40,34 @@ from .detector_base import Detection2D, DetectorBase
 logger = logging.getLogger(__name__)
 
 
+def _parse_detections(boxes, classes: list[str]) -> list[Detection2D]:
+    """Transfer one Ultralytics Boxes result to CPU and preserve row order."""
+    if boxes is None or len(boxes) == 0:
+        return []
+
+    cpu_boxes = boxes.cpu()
+    xyxy_rows = cpu_boxes.xyxy.numpy()
+    confidences = cpu_boxes.conf.numpy()
+    class_ids = cpu_boxes.cls.numpy()
+    detections = []
+    for xyxy, confidence, class_value in zip(
+        xyxy_rows,
+        confidences,
+        class_ids,
+        strict=True,
+    ):
+        class_id = int(class_value)
+        label = classes[class_id] if class_id < len(classes) else f"class_{class_id}"
+        detections.append(
+            Detection2D(
+                bbox=xyxy,
+                label=label,
+                score=float(confidence),
+            )
+        )
+    return detections
+
+
 class YOLOWorldDetector(DetectorBase):
     """
     YOLO-World 检测器（论文级实现）
@@ -62,6 +90,7 @@ class YOLOWorldDetector(DetectorBase):
         tensorrt_int8: bool = False,  # 是否使用INT8量化
         batch_size: int = 1,          # 批处理大小
         enable_cache: bool = True,    # 是否启用类别缓存
+        model_path: str | None = None,
     ):
         self.model_size = model_size
         self.confidence = confidence
@@ -71,6 +100,7 @@ class YOLOWorldDetector(DetectorBase):
         self.tensorrt_int8 = tensorrt_int8
         self.batch_size = batch_size
         self.enable_cache = enable_cache
+        self.model_path = model_path
 
         self._model = None
         self._current_classes: list[str] | None = None
@@ -94,7 +124,7 @@ class YOLOWorldDetector(DetectorBase):
         try:
             from ultralytics import YOLO
 
-            model_name = f"yolov8{self.model_size}-worldv2"
+            model_name = self.model_path or f"yolov8{self.model_size}-worldv2.pt"
             logger.info(
                 "Loading YOLO-World: %s, device=%s, tensorrt=%s, int8=%s",
                 model_name, self.device or "auto", self.tensorrt, self.tensorrt_int8
@@ -154,6 +184,31 @@ class YOLOWorldDetector(DetectorBase):
             logger.warning("TensorRT export failed, using PyTorch: %s", e)
             self.tensorrt = False
 
+    def _predict(self, source):
+        """Run the initialized Ultralytics predictor without its timing barriers."""
+        predictor = self._model.predictor
+        if predictor is None or not predictor.done_warmup:
+            return self._model.predict(
+                source,
+                conf=self.confidence,
+                iou=self.iou_threshold,
+                verbose=False,
+                device=self.device,
+            )
+
+        with predictor._lock, torch.inference_mode():
+            predictor.args.conf = self.confidence
+            predictor.args.iou = self.iou_threshold
+            predictor.args.verbose = False
+            predictor.setup_source(source)
+            batch = next(iter(predictor.dataset))
+            predictor.batch = batch
+            _, images, _ = batch
+            prepared = predictor.preprocess(images)
+            predictions = predictor.inference(prepared)
+            predictor.results = predictor.postprocess(predictions, prepared, images)
+            return predictor.results
+
     def detect(self, rgb: np.ndarray, text_prompt: str) -> list[Detection2D]:
         """
         使用 YOLO-World 进行开放词汇检测（优化版）
@@ -194,13 +249,7 @@ class YOLOWorldDetector(DetectorBase):
 
         # 推理
         try:
-            results = self._model.predict(
-                rgb,
-                conf=self.confidence,
-                iou=self.iou_threshold,
-                verbose=False,
-                device=self.device,
-            )
+            results = self._predict(rgb)
         except Exception as e:
             error_msg = str(e).lower()
             if "cuda" in error_msg or "out of memory" in error_msg:
@@ -213,26 +262,7 @@ class YOLOWorldDetector(DetectorBase):
         # 解析结果
         detections = []
         if results and len(results) > 0:
-            result = results[0]
-            boxes = result.boxes
-
-            if boxes is not None and len(boxes) > 0:
-                for i in range(len(boxes)):
-                    box = boxes[i]
-                    xyxy = box.xyxy[0].cpu().numpy()
-                    conf = float(box.conf[0])
-                    cls_id = int(box.cls[0])
-
-                    if cls_id < len(classes):
-                        label = classes[cls_id]
-                    else:
-                        label = f"class_{cls_id}"
-
-                    detections.append(Detection2D(
-                        bbox=xyxy,
-                        label=label,
-                        score=conf,
-                    ))
+            detections = _parse_detections(results[0].boxes, classes)
 
         # 性能统计
         elapsed = time.time() - start_time
@@ -286,13 +316,7 @@ class YOLOWorldDetector(DetectorBase):
 
         # 批处理推理
         try:
-            results = self._model.predict(
-                rgb_batch,
-                conf=self.confidence,
-                iou=self.iou_threshold,
-                verbose=False,
-                device=self.device,
-            )
+            results = self._predict(rgb_batch)
         except Exception as e:
             error_msg = str(e).lower()
             if "cuda" in error_msg or "out of memory" in error_msg:
@@ -305,28 +329,7 @@ class YOLOWorldDetector(DetectorBase):
         # 解析每张图像的结果
         all_detections = []
         for result in results:
-            detections = []
-            boxes = result.boxes
-
-            if boxes is not None and len(boxes) > 0:
-                for i in range(len(boxes)):
-                    box = boxes[i]
-                    xyxy = box.xyxy[0].cpu().numpy()
-                    conf = float(box.conf[0])
-                    cls_id = int(box.cls[0])
-
-                    if cls_id < len(classes):
-                        label = classes[cls_id]
-                    else:
-                        label = f"class_{cls_id}"
-
-                    detections.append(Detection2D(
-                        bbox=xyxy,
-                        label=label,
-                        score=conf,
-                    ))
-
-            all_detections.append(detections)
+            all_detections.append(_parse_detections(result.boxes, classes))
 
         return all_detections
 

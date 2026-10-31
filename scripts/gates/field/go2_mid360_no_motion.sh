@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start only MID-360 and Fast-LIO, prove sensor freshness, then cleanly stop.
+# Start only MID-360 and LTLIO, prove sensor freshness, then cleanly stop.
 
 set -euo pipefail
 

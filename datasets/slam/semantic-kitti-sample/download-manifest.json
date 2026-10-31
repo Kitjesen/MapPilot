@@ -1,0 +1,3914 @@
+{
+  "dataset": "SemanticKITTI small research subset: 00 and 08",
+  "date": "2026-10-20",
+  "complete_dataset": false,
+  "selection": {
+    "segments": [
+      {
+        "sequence": "00",
+        "frames": "000000..000199",
+        "frame_count": 200,
+        "duration_s": 20.63096,
+        "point_count": 24228694,
+        "moving_frames": 97,
+        "moving_points": 2547,
+        "moving_point_fraction": 0.00010512328893996515,
+        "ground_40_44_48_49_points": 9672054,
+        "terrain_72_points": 122170,
+        "official_gt_pose_rows": 4541,
+        "annotation_pose_rows": 4541,
+        "time_rows": 4541,
+        "checks": {
+          "aligned_frames": 200,
+          "all_point_label_counts_match": true,
+          "all_xyz_reflectance_finite": true,
+          "total_points": 24228694,
+          "semantic_id_histogram": {
+            "0": 457856,
+            "1": 13728,
+            "10": 2371389,
+            "40": 4770409,
+            "44": 1257723,
+            "48": 3642568,
+            "50": 6107420,
+            "51": 141249,
+            "52": 115148,
+            "60": 27751,
+            "70": 4495349,
+            "71": 344054,
+            "72": 122170,
+            "80": 70209,
+            "81": 35537,
+            "99": 175703,
+            "255": 2211,
+            "254": 20,
+            "20": 47369,
+            "32": 2,
+            "252": 21,
+            "253": 295,
+            "11": 7149,
+            "49": 1354,
+            "15": 15488,
+            "30": 6522
+          },
+          "frames_with_actual_moving_class": 97,
+          "moving_points": 2547,
+          "selected_duration_s": 20.63096,
+          "official_gt_pose_rows": 4541,
+          "semantic_kitti_pose_rows": 4541,
+          "time_rows": 4541,
+          "pose_cols": 12,
+          "frame_times_strictly_increasing": true,
+          "algorithms_evaluated": false
+        }
+      },
+      {
+        "sequence": "08",
+        "frames": "000000..000099",
+        "frame_count": 100,
+        "duration_s": 10.29086,
+        "point_count": 12262418,
+        "moving_frames": 100,
+        "moving_points": 462853,
+        "moving_point_fraction": 0.037745655057591414,
+        "ground_40_44_48_49_points": 6118399,
+        "terrain_72_points": 1851964,
+        "official_gt_pose_rows": 4071,
+        "annotation_pose_rows": 4071,
+        "time_rows": 4071,
+        "checks": {
+          "aligned_frames": 100,
+          "all_point_label_counts_match": true,
+          "all_xyz_reflectance_finite": true,
+          "total_points": 12262418,
+          "semantic_id_histogram": {
+            "0": 622155,
+            "1": 1887,
+            "10": 85638,
+            "11": 6788,
+            "30": 10350,
+            "40": 3597240,
+            "44": 35360,
+            "48": 2485713,
+            "50": 451546,
+            "51": 46092,
+            "52": 44666,
+            "70": 1631648,
+            "71": 266490,
+            "72": 1851964,
+            "80": 57204,
+            "81": 79652,
+            "99": 525086,
+            "252": 406048,
+            "254": 22921,
+            "49": 86,
+            "253": 33884
+          },
+          "frames_with_actual_moving_class": 100,
+          "moving_points": 462853,
+          "selected_duration_s": 10.29086,
+          "official_gt_pose_rows": 4071,
+          "semantic_kitti_pose_rows": 4071,
+          "time_rows": 4071,
+          "pose_cols": 12,
+          "frame_times_strictly_increasing": true,
+          "algorithms_evaluated": false
+        }
+      }
+    ],
+    "frame_count": 300,
+    "temporal_contract": "Each segment is continuous within its own original sequence. Different sequences are independent recordings; never concatenate as one continuous 300-frame stream.",
+    "selection_reason": "00 first 200 provide ground-rich context; label-only activity probes selected 08 first 100 for stronger actual motion. Selection is purposive, not a representative benchmark."
+  },
+  "archives": {
+    "scans": {
+      "url": "https://s3.eu-central-1.amazonaws.com/avg-kitti/data_odometry_velodyne.zip",
+      "remote_archive_bytes": 84786535790,
+      "selected_entries": 300,
+      "selected_uncompressed_bytes": 583857792,
+      "download_strategy": "HTTP Range selected ZIP entries; no full archive"
+    },
+    "labels": {
+      "url": "https://www.semantic-kitti.org/assets/data_odometry_labels.zip",
+      "remote_archive_bytes": 179298418,
+      "selected_entries": 302,
+      "selected_uncompressed_bytes": 146950620,
+      "download_strategy": "HTTP Range selected ZIP entries; no full archive"
+    },
+    "poses": {
+      "url": "https://s3.eu-central-1.amazonaws.com/avg-kitti/data_odometry_poses.zip",
+      "remote_archive_bytes": 1309620,
+      "selected_entries": 2,
+      "selected_uncompressed_bytes": 1381354,
+      "download_strategy": "HTTP Range selected ZIP entries; no full archive"
+    },
+    "calib": {
+      "url": "https://s3.eu-central-1.amazonaws.com/avg-kitti/data_odometry_calib.zip",
+      "remote_archive_bytes": 600238,
+      "selected_entries": 4,
+      "selected_uncompressed_bytes": 114299,
+      "download_strategy": "HTTP Range selected ZIP entries; no full archive"
+    }
+  },
+  "files": [
+    {
+      "path": "metadata/calib-archive-index.json",
+      "bytes": 261,
+      "role": "generated selected ZIP central-directory index"
+    },
+    {
+      "path": "metadata/kitti-license-homepage.html",
+      "source_url": "https://www.cvlibs.net/datasets/kitti/",
+      "bytes": 19970
+    },
+    {
+      "source_url": "https://www.cvlibs.net/datasets/kitti/eval_odometry.php",
+      "path": "metadata/kitti-odometry.html",
+      "bytes": 141461
+    },
+    {
+      "path": "metadata/label-activity-other-sequences.json",
+      "bytes": 812,
+      "role": "selection probes; numeric label activity only; probe labels were not retained"
+    },
+    {
+      "path": "metadata/label-activity-samples.json",
+      "bytes": 1177,
+      "role": "selection probes; numeric label activity only; probe labels were not retained"
+    },
+    {
+      "path": "metadata/labels-archive-index.json",
+      "bytes": 663472,
+      "role": "generated selected ZIP central-directory index"
+    },
+    {
+      "path": "metadata/poses-archive-index.json",
+      "bytes": 129,
+      "role": "generated selected ZIP central-directory index"
+    },
+    {
+      "path": "metadata/scans-archive-index.json",
+      "bytes": 685238,
+      "role": "generated selected ZIP central-directory index"
+    },
+    {
+      "source_url": "https://raw.githubusercontent.com/PRBonn/semantic-kitti-api/master/README.md",
+      "path": "metadata/semantic-kitti-api-README.md",
+      "bytes": 16784
+    },
+    {
+      "source_url": "https://www.semantic-kitti.org/dataset.html",
+      "path": "metadata/semantic-kitti-dataset.html",
+      "bytes": 12984
+    },
+    {
+      "source_url": "https://raw.githubusercontent.com/PRBonn/semantic-kitti-api/master/config/semantic-kitti.yaml",
+      "path": "metadata/semantic-kitti.yaml",
+      "bytes": 5539
+    },
+    {
+      "archive": "poses",
+      "archive_entry": "dataset/poses/00.txt",
+      "path": "raw/dataset/poses/00.txt",
+      "bytes": 728871
+    },
+    {
+      "archive": "poses",
+      "archive_entry": "dataset/poses/08.txt",
+      "path": "raw/dataset/poses/08.txt",
+      "bytes": 652483
+    },
+    {
+      "archive": "calib",
+      "archive_entry": "dataset/sequences/00/calib.txt",
+      "path": "raw/dataset/sequences/00/calib.txt",
+      "bytes": 1171
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000000.label",
+      "path": "raw/dataset/sequences/00/labels/000000.label",
+      "bytes": 498672
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000001.label",
+      "path": "raw/dataset/sequences/00/labels/000001.label",
+      "bytes": 498420
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000002.label",
+      "path": "raw/dataset/sequences/00/labels/000002.label",
+      "bytes": 497912
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000003.label",
+      "path": "raw/dataset/sequences/00/labels/000003.label",
+      "bytes": 496668
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000004.label",
+      "path": "raw/dataset/sequences/00/labels/000004.label",
+      "bytes": 495876
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000005.label",
+      "path": "raw/dataset/sequences/00/labels/000005.label",
+      "bytes": 495696
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000006.label",
+      "path": "raw/dataset/sequences/00/labels/000006.label",
+      "bytes": 493492
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000007.label",
+      "path": "raw/dataset/sequences/00/labels/000007.label",
+      "bytes": 491060
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000008.label",
+      "path": "raw/dataset/sequences/00/labels/000008.label",
+      "bytes": 488492
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000009.label",
+      "path": "raw/dataset/sequences/00/labels/000009.label",
+      "bytes": 485428
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000010.label",
+      "path": "raw/dataset/sequences/00/labels/000010.label",
+      "bytes": 484072
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000011.label",
+      "path": "raw/dataset/sequences/00/labels/000011.label",
+      "bytes": 483780
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000012.label",
+      "path": "raw/dataset/sequences/00/labels/000012.label",
+      "bytes": 482012
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000013.label",
+      "path": "raw/dataset/sequences/00/labels/000013.label",
+      "bytes": 481180
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000014.label",
+      "path": "raw/dataset/sequences/00/labels/000014.label",
+      "bytes": 481624
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000015.label",
+      "path": "raw/dataset/sequences/00/labels/000015.label",
+      "bytes": 484092
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000016.label",
+      "path": "raw/dataset/sequences/00/labels/000016.label",
+      "bytes": 487368
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000017.label",
+      "path": "raw/dataset/sequences/00/labels/000017.label",
+      "bytes": 492428
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000018.label",
+      "path": "raw/dataset/sequences/00/labels/000018.label",
+      "bytes": 495760
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000019.label",
+      "path": "raw/dataset/sequences/00/labels/000019.label",
+      "bytes": 497204
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000020.label",
+      "path": "raw/dataset/sequences/00/labels/000020.label",
+      "bytes": 498212
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000021.label",
+      "path": "raw/dataset/sequences/00/labels/000021.label",
+      "bytes": 498624
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000022.label",
+      "path": "raw/dataset/sequences/00/labels/000022.label",
+      "bytes": 498576
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000023.label",
+      "path": "raw/dataset/sequences/00/labels/000023.label",
+      "bytes": 498104
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000024.label",
+      "path": "raw/dataset/sequences/00/labels/000024.label",
+      "bytes": 498080
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000025.label",
+      "path": "raw/dataset/sequences/00/labels/000025.label",
+      "bytes": 498400
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000026.label",
+      "path": "raw/dataset/sequences/00/labels/000026.label",
+      "bytes": 498200
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000027.label",
+      "path": "raw/dataset/sequences/00/labels/000027.label",
+      "bytes": 496968
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000028.label",
+      "path": "raw/dataset/sequences/00/labels/000028.label",
+      "bytes": 496652
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000029.label",
+      "path": "raw/dataset/sequences/00/labels/000029.label",
+      "bytes": 496072
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000030.label",
+      "path": "raw/dataset/sequences/00/labels/000030.label",
+      "bytes": 496536
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000031.label",
+      "path": "raw/dataset/sequences/00/labels/000031.label",
+      "bytes": 496560
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000032.label",
+      "path": "raw/dataset/sequences/00/labels/000032.label",
+      "bytes": 495728
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000033.label",
+      "path": "raw/dataset/sequences/00/labels/000033.label",
+      "bytes": 495304
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000034.label",
+      "path": "raw/dataset/sequences/00/labels/000034.label",
+      "bytes": 494008
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000035.label",
+      "path": "raw/dataset/sequences/00/labels/000035.label",
+      "bytes": 492024
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000036.label",
+      "path": "raw/dataset/sequences/00/labels/000036.label",
+      "bytes": 490996
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000037.label",
+      "path": "raw/dataset/sequences/00/labels/000037.label",
+      "bytes": 489516
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000038.label",
+      "path": "raw/dataset/sequences/00/labels/000038.label",
+      "bytes": 486952
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000039.label",
+      "path": "raw/dataset/sequences/00/labels/000039.label",
+      "bytes": 485988
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000040.label",
+      "path": "raw/dataset/sequences/00/labels/000040.label",
+      "bytes": 484592
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000041.label",
+      "path": "raw/dataset/sequences/00/labels/000041.label",
+      "bytes": 481436
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000042.label",
+      "path": "raw/dataset/sequences/00/labels/000042.label",
+      "bytes": 477816
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000043.label",
+      "path": "raw/dataset/sequences/00/labels/000043.label",
+      "bytes": 473596
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000044.label",
+      "path": "raw/dataset/sequences/00/labels/000044.label",
+      "bytes": 467524
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000045.label",
+      "path": "raw/dataset/sequences/00/labels/000045.label",
+      "bytes": 457984
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000046.label",
+      "path": "raw/dataset/sequences/00/labels/000046.label",
+      "bytes": 452556
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000047.label",
+      "path": "raw/dataset/sequences/00/labels/000047.label",
+      "bytes": 455240
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000048.label",
+      "path": "raw/dataset/sequences/00/labels/000048.label",
+      "bytes": 463896
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000049.label",
+      "path": "raw/dataset/sequences/00/labels/000049.label",
+      "bytes": 468624
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000050.label",
+      "path": "raw/dataset/sequences/00/labels/000050.label",
+      "bytes": 474544
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000051.label",
+      "path": "raw/dataset/sequences/00/labels/000051.label",
+      "bytes": 479320
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000052.label",
+      "path": "raw/dataset/sequences/00/labels/000052.label",
+      "bytes": 483184
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000053.label",
+      "path": "raw/dataset/sequences/00/labels/000053.label",
+      "bytes": 487564
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000054.label",
+      "path": "raw/dataset/sequences/00/labels/000054.label",
+      "bytes": 490556
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000055.label",
+      "path": "raw/dataset/sequences/00/labels/000055.label",
+      "bytes": 493372
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000056.label",
+      "path": "raw/dataset/sequences/00/labels/000056.label",
+      "bytes": 492928
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000057.label",
+      "path": "raw/dataset/sequences/00/labels/000057.label",
+      "bytes": 492520
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000058.label",
+      "path": "raw/dataset/sequences/00/labels/000058.label",
+      "bytes": 491716
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000059.label",
+      "path": "raw/dataset/sequences/00/labels/000059.label",
+      "bytes": 490812
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000060.label",
+      "path": "raw/dataset/sequences/00/labels/000060.label",
+      "bytes": 490276
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000061.label",
+      "path": "raw/dataset/sequences/00/labels/000061.label",
+      "bytes": 488644
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000062.label",
+      "path": "raw/dataset/sequences/00/labels/000062.label",
+      "bytes": 486928
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000063.label",
+      "path": "raw/dataset/sequences/00/labels/000063.label",
+      "bytes": 482784
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000064.label",
+      "path": "raw/dataset/sequences/00/labels/000064.label",
+      "bytes": 483752
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000065.label",
+      "path": "raw/dataset/sequences/00/labels/000065.label",
+      "bytes": 484204
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000066.label",
+      "path": "raw/dataset/sequences/00/labels/000066.label",
+      "bytes": 484796
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000067.label",
+      "path": "raw/dataset/sequences/00/labels/000067.label",
+      "bytes": 484464
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000068.label",
+      "path": "raw/dataset/sequences/00/labels/000068.label",
+      "bytes": 484324
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000069.label",
+      "path": "raw/dataset/sequences/00/labels/000069.label",
+      "bytes": 484388
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000070.label",
+      "path": "raw/dataset/sequences/00/labels/000070.label",
+      "bytes": 483172
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000071.label",
+      "path": "raw/dataset/sequences/00/labels/000071.label",
+      "bytes": 481968
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000072.label",
+      "path": "raw/dataset/sequences/00/labels/000072.label",
+      "bytes": 481128
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000073.label",
+      "path": "raw/dataset/sequences/00/labels/000073.label",
+      "bytes": 480144
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000074.label",
+      "path": "raw/dataset/sequences/00/labels/000074.label",
+      "bytes": 478988
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000075.label",
+      "path": "raw/dataset/sequences/00/labels/000075.label",
+      "bytes": 476212
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000076.label",
+      "path": "raw/dataset/sequences/00/labels/000076.label",
+      "bytes": 474968
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000077.label",
+      "path": "raw/dataset/sequences/00/labels/000077.label",
+      "bytes": 472696
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000078.label",
+      "path": "raw/dataset/sequences/00/labels/000078.label",
+      "bytes": 469912
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000079.label",
+      "path": "raw/dataset/sequences/00/labels/000079.label",
+      "bytes": 469780
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000080.label",
+      "path": "raw/dataset/sequences/00/labels/000080.label",
+      "bytes": 469648
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000081.label",
+      "path": "raw/dataset/sequences/00/labels/000081.label",
+      "bytes": 470960
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000082.label",
+      "path": "raw/dataset/sequences/00/labels/000082.label",
+      "bytes": 471908
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000083.label",
+      "path": "raw/dataset/sequences/00/labels/000083.label",
+      "bytes": 474292
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000084.label",
+      "path": "raw/dataset/sequences/00/labels/000084.label",
+      "bytes": 477404
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000085.label",
+      "path": "raw/dataset/sequences/00/labels/000085.label",
+      "bytes": 476500
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000086.label",
+      "path": "raw/dataset/sequences/00/labels/000086.label",
+      "bytes": 477408
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000087.label",
+      "path": "raw/dataset/sequences/00/labels/000087.label",
+      "bytes": 479260
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000088.label",
+      "path": "raw/dataset/sequences/00/labels/000088.label",
+      "bytes": 480268
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000089.label",
+      "path": "raw/dataset/sequences/00/labels/000089.label",
+      "bytes": 482196
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000090.label",
+      "path": "raw/dataset/sequences/00/labels/000090.label",
+      "bytes": 483860
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000091.label",
+      "path": "raw/dataset/sequences/00/labels/000091.label",
+      "bytes": 485332
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000092.label",
+      "path": "raw/dataset/sequences/00/labels/000092.label",
+      "bytes": 486000
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000093.label",
+      "path": "raw/dataset/sequences/00/labels/000093.label",
+      "bytes": 486380
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000094.label",
+      "path": "raw/dataset/sequences/00/labels/000094.label",
+      "bytes": 486472
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000095.label",
+      "path": "raw/dataset/sequences/00/labels/000095.label",
+      "bytes": 486684
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000096.label",
+      "path": "raw/dataset/sequences/00/labels/000096.label",
+      "bytes": 487040
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000097.label",
+      "path": "raw/dataset/sequences/00/labels/000097.label",
+      "bytes": 487804
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000098.label",
+      "path": "raw/dataset/sequences/00/labels/000098.label",
+      "bytes": 488936
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000099.label",
+      "path": "raw/dataset/sequences/00/labels/000099.label",
+      "bytes": 489968
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000100.label",
+      "path": "raw/dataset/sequences/00/labels/000100.label",
+      "bytes": 490732
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000101.label",
+      "path": "raw/dataset/sequences/00/labels/000101.label",
+      "bytes": 490644
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000102.label",
+      "path": "raw/dataset/sequences/00/labels/000102.label",
+      "bytes": 491156
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000103.label",
+      "path": "raw/dataset/sequences/00/labels/000103.label",
+      "bytes": 491548
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000104.label",
+      "path": "raw/dataset/sequences/00/labels/000104.label",
+      "bytes": 492032
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000105.label",
+      "path": "raw/dataset/sequences/00/labels/000105.label",
+      "bytes": 492848
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000106.label",
+      "path": "raw/dataset/sequences/00/labels/000106.label",
+      "bytes": 492708
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000107.label",
+      "path": "raw/dataset/sequences/00/labels/000107.label",
+      "bytes": 492976
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000108.label",
+      "path": "raw/dataset/sequences/00/labels/000108.label",
+      "bytes": 492584
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000109.label",
+      "path": "raw/dataset/sequences/00/labels/000109.label",
+      "bytes": 492768
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000110.label",
+      "path": "raw/dataset/sequences/00/labels/000110.label",
+      "bytes": 492688
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000111.label",
+      "path": "raw/dataset/sequences/00/labels/000111.label",
+      "bytes": 492640
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000112.label",
+      "path": "raw/dataset/sequences/00/labels/000112.label",
+      "bytes": 492104
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000113.label",
+      "path": "raw/dataset/sequences/00/labels/000113.label",
+      "bytes": 490920
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000114.label",
+      "path": "raw/dataset/sequences/00/labels/000114.label",
+      "bytes": 490484
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000115.label",
+      "path": "raw/dataset/sequences/00/labels/000115.label",
+      "bytes": 490552
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000116.label",
+      "path": "raw/dataset/sequences/00/labels/000116.label",
+      "bytes": 490308
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000117.label",
+      "path": "raw/dataset/sequences/00/labels/000117.label",
+      "bytes": 489632
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000118.label",
+      "path": "raw/dataset/sequences/00/labels/000118.label",
+      "bytes": 487976
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000119.label",
+      "path": "raw/dataset/sequences/00/labels/000119.label",
+      "bytes": 486720
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000120.label",
+      "path": "raw/dataset/sequences/00/labels/000120.label",
+      "bytes": 485776
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000121.label",
+      "path": "raw/dataset/sequences/00/labels/000121.label",
+      "bytes": 486368
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000122.label",
+      "path": "raw/dataset/sequences/00/labels/000122.label",
+      "bytes": 485804
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000123.label",
+      "path": "raw/dataset/sequences/00/labels/000123.label",
+      "bytes": 486108
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000124.label",
+      "path": "raw/dataset/sequences/00/labels/000124.label",
+      "bytes": 486600
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000125.label",
+      "path": "raw/dataset/sequences/00/labels/000125.label",
+      "bytes": 486412
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000126.label",
+      "path": "raw/dataset/sequences/00/labels/000126.label",
+      "bytes": 486116
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000127.label",
+      "path": "raw/dataset/sequences/00/labels/000127.label",
+      "bytes": 483476
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000128.label",
+      "path": "raw/dataset/sequences/00/labels/000128.label",
+      "bytes": 481204
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000129.label",
+      "path": "raw/dataset/sequences/00/labels/000129.label",
+      "bytes": 475404
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000130.label",
+      "path": "raw/dataset/sequences/00/labels/000130.label",
+      "bytes": 472308
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000131.label",
+      "path": "raw/dataset/sequences/00/labels/000131.label",
+      "bytes": 467912
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000132.label",
+      "path": "raw/dataset/sequences/00/labels/000132.label",
+      "bytes": 461300
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000133.label",
+      "path": "raw/dataset/sequences/00/labels/000133.label",
+      "bytes": 458932
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000134.label",
+      "path": "raw/dataset/sequences/00/labels/000134.label",
+      "bytes": 460868
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000135.label",
+      "path": "raw/dataset/sequences/00/labels/000135.label",
+      "bytes": 457848
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000136.label",
+      "path": "raw/dataset/sequences/00/labels/000136.label",
+      "bytes": 457916
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000137.label",
+      "path": "raw/dataset/sequences/00/labels/000137.label",
+      "bytes": 463668
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000138.label",
+      "path": "raw/dataset/sequences/00/labels/000138.label",
+      "bytes": 470388
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000139.label",
+      "path": "raw/dataset/sequences/00/labels/000139.label",
+      "bytes": 475636
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000140.label",
+      "path": "raw/dataset/sequences/00/labels/000140.label",
+      "bytes": 479172
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000141.label",
+      "path": "raw/dataset/sequences/00/labels/000141.label",
+      "bytes": 483924
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000142.label",
+      "path": "raw/dataset/sequences/00/labels/000142.label",
+      "bytes": 485988
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000143.label",
+      "path": "raw/dataset/sequences/00/labels/000143.label",
+      "bytes": 487264
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000144.label",
+      "path": "raw/dataset/sequences/00/labels/000144.label",
+      "bytes": 485716
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000145.label",
+      "path": "raw/dataset/sequences/00/labels/000145.label",
+      "bytes": 485012
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000146.label",
+      "path": "raw/dataset/sequences/00/labels/000146.label",
+      "bytes": 483788
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000147.label",
+      "path": "raw/dataset/sequences/00/labels/000147.label",
+      "bytes": 483020
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000148.label",
+      "path": "raw/dataset/sequences/00/labels/000148.label",
+      "bytes": 484252
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000149.label",
+      "path": "raw/dataset/sequences/00/labels/000149.label",
+      "bytes": 487400
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000150.label",
+      "path": "raw/dataset/sequences/00/labels/000150.label",
+      "bytes": 488904
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000151.label",
+      "path": "raw/dataset/sequences/00/labels/000151.label",
+      "bytes": 487932
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000152.label",
+      "path": "raw/dataset/sequences/00/labels/000152.label",
+      "bytes": 489592
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000153.label",
+      "path": "raw/dataset/sequences/00/labels/000153.label",
+      "bytes": 491332
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000154.label",
+      "path": "raw/dataset/sequences/00/labels/000154.label",
+      "bytes": 493940
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000155.label",
+      "path": "raw/dataset/sequences/00/labels/000155.label",
+      "bytes": 498008
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000156.label",
+      "path": "raw/dataset/sequences/00/labels/000156.label",
+      "bytes": 501548
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000157.label",
+      "path": "raw/dataset/sequences/00/labels/000157.label",
+      "bytes": 503644
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000158.label",
+      "path": "raw/dataset/sequences/00/labels/000158.label",
+      "bytes": 504196
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000159.label",
+      "path": "raw/dataset/sequences/00/labels/000159.label",
+      "bytes": 504748
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000160.label",
+      "path": "raw/dataset/sequences/00/labels/000160.label",
+      "bytes": 505152
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000161.label",
+      "path": "raw/dataset/sequences/00/labels/000161.label",
+      "bytes": 504692
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000162.label",
+      "path": "raw/dataset/sequences/00/labels/000162.label",
+      "bytes": 504668
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000163.label",
+      "path": "raw/dataset/sequences/00/labels/000163.label",
+      "bytes": 504348
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000164.label",
+      "path": "raw/dataset/sequences/00/labels/000164.label",
+      "bytes": 503516
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000165.label",
+      "path": "raw/dataset/sequences/00/labels/000165.label",
+      "bytes": 501692
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000166.label",
+      "path": "raw/dataset/sequences/00/labels/000166.label",
+      "bytes": 499948
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000167.label",
+      "path": "raw/dataset/sequences/00/labels/000167.label",
+      "bytes": 494504
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000168.label",
+      "path": "raw/dataset/sequences/00/labels/000168.label",
+      "bytes": 490128
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000169.label",
+      "path": "raw/dataset/sequences/00/labels/000169.label",
+      "bytes": 485576
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000170.label",
+      "path": "raw/dataset/sequences/00/labels/000170.label",
+      "bytes": 482696
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000171.label",
+      "path": "raw/dataset/sequences/00/labels/000171.label",
+      "bytes": 478364
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000172.label",
+      "path": "raw/dataset/sequences/00/labels/000172.label",
+      "bytes": 473376
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000173.label",
+      "path": "raw/dataset/sequences/00/labels/000173.label",
+      "bytes": 467972
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000174.label",
+      "path": "raw/dataset/sequences/00/labels/000174.label",
+      "bytes": 465336
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000175.label",
+      "path": "raw/dataset/sequences/00/labels/000175.label",
+      "bytes": 460424
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000176.label",
+      "path": "raw/dataset/sequences/00/labels/000176.label",
+      "bytes": 455684
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000177.label",
+      "path": "raw/dataset/sequences/00/labels/000177.label",
+      "bytes": 449584
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000178.label",
+      "path": "raw/dataset/sequences/00/labels/000178.label",
+      "bytes": 448384
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000179.label",
+      "path": "raw/dataset/sequences/00/labels/000179.label",
+      "bytes": 447808
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000180.label",
+      "path": "raw/dataset/sequences/00/labels/000180.label",
+      "bytes": 447524
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000181.label",
+      "path": "raw/dataset/sequences/00/labels/000181.label",
+      "bytes": 451408
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000182.label",
+      "path": "raw/dataset/sequences/00/labels/000182.label",
+      "bytes": 458708
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000183.label",
+      "path": "raw/dataset/sequences/00/labels/000183.label",
+      "bytes": 466036
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000184.label",
+      "path": "raw/dataset/sequences/00/labels/000184.label",
+      "bytes": 469904
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000185.label",
+      "path": "raw/dataset/sequences/00/labels/000185.label",
+      "bytes": 475256
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000186.label",
+      "path": "raw/dataset/sequences/00/labels/000186.label",
+      "bytes": 478464
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000187.label",
+      "path": "raw/dataset/sequences/00/labels/000187.label",
+      "bytes": 484188
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000188.label",
+      "path": "raw/dataset/sequences/00/labels/000188.label",
+      "bytes": 487276
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000189.label",
+      "path": "raw/dataset/sequences/00/labels/000189.label",
+      "bytes": 490640
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000190.label",
+      "path": "raw/dataset/sequences/00/labels/000190.label",
+      "bytes": 492696
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000191.label",
+      "path": "raw/dataset/sequences/00/labels/000191.label",
+      "bytes": 492640
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000192.label",
+      "path": "raw/dataset/sequences/00/labels/000192.label",
+      "bytes": 493956
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000193.label",
+      "path": "raw/dataset/sequences/00/labels/000193.label",
+      "bytes": 494780
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000194.label",
+      "path": "raw/dataset/sequences/00/labels/000194.label",
+      "bytes": 495220
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000195.label",
+      "path": "raw/dataset/sequences/00/labels/000195.label",
+      "bytes": 494788
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000196.label",
+      "path": "raw/dataset/sequences/00/labels/000196.label",
+      "bytes": 493104
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000197.label",
+      "path": "raw/dataset/sequences/00/labels/000197.label",
+      "bytes": 492736
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000198.label",
+      "path": "raw/dataset/sequences/00/labels/000198.label",
+      "bytes": 492136
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/labels/000199.label",
+      "path": "raw/dataset/sequences/00/labels/000199.label",
+      "bytes": 491656
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/00/poses.txt",
+      "path": "raw/dataset/sequences/00/poses.txt",
+      "bytes": 521018
+    },
+    {
+      "archive": "calib",
+      "archive_entry": "dataset/sequences/00/times.txt",
+      "path": "raw/dataset/sequences/00/times.txt",
+      "bytes": 59033
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000000.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000000.bin",
+      "bytes": 1994688
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000001.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000001.bin",
+      "bytes": 1993680
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000002.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000002.bin",
+      "bytes": 1991648
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000003.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000003.bin",
+      "bytes": 1986672
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000004.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000004.bin",
+      "bytes": 1983504
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000005.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000005.bin",
+      "bytes": 1982784
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000006.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000006.bin",
+      "bytes": 1973968
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000007.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000007.bin",
+      "bytes": 1964240
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000008.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000008.bin",
+      "bytes": 1953968
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000009.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000009.bin",
+      "bytes": 1941712
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000010.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000010.bin",
+      "bytes": 1936288
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000011.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000011.bin",
+      "bytes": 1935120
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000012.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000012.bin",
+      "bytes": 1928048
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000013.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000013.bin",
+      "bytes": 1924720
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000014.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000014.bin",
+      "bytes": 1926496
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000015.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000015.bin",
+      "bytes": 1936368
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000016.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000016.bin",
+      "bytes": 1949472
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000017.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000017.bin",
+      "bytes": 1969712
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000018.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000018.bin",
+      "bytes": 1983040
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000019.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000019.bin",
+      "bytes": 1988816
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000020.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000020.bin",
+      "bytes": 1992848
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000021.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000021.bin",
+      "bytes": 1994496
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000022.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000022.bin",
+      "bytes": 1994304
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000023.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000023.bin",
+      "bytes": 1992416
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000024.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000024.bin",
+      "bytes": 1992320
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000025.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000025.bin",
+      "bytes": 1993600
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000026.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000026.bin",
+      "bytes": 1992800
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000027.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000027.bin",
+      "bytes": 1987872
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000028.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000028.bin",
+      "bytes": 1986608
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000029.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000029.bin",
+      "bytes": 1984288
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000030.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000030.bin",
+      "bytes": 1986144
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000031.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000031.bin",
+      "bytes": 1986240
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000032.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000032.bin",
+      "bytes": 1982912
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000033.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000033.bin",
+      "bytes": 1981216
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000034.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000034.bin",
+      "bytes": 1976032
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000035.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000035.bin",
+      "bytes": 1968096
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000036.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000036.bin",
+      "bytes": 1963984
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000037.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000037.bin",
+      "bytes": 1958064
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000038.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000038.bin",
+      "bytes": 1947808
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000039.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000039.bin",
+      "bytes": 1943952
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000040.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000040.bin",
+      "bytes": 1938368
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000041.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000041.bin",
+      "bytes": 1925744
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000042.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000042.bin",
+      "bytes": 1911264
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000043.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000043.bin",
+      "bytes": 1894384
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000044.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000044.bin",
+      "bytes": 1870096
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000045.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000045.bin",
+      "bytes": 1831936
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000046.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000046.bin",
+      "bytes": 1810224
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000047.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000047.bin",
+      "bytes": 1820960
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000048.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000048.bin",
+      "bytes": 1855584
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000049.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000049.bin",
+      "bytes": 1874496
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000050.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000050.bin",
+      "bytes": 1898176
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000051.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000051.bin",
+      "bytes": 1917280
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000052.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000052.bin",
+      "bytes": 1932736
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000053.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000053.bin",
+      "bytes": 1950256
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000054.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000054.bin",
+      "bytes": 1962224
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000055.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000055.bin",
+      "bytes": 1973488
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000056.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000056.bin",
+      "bytes": 1971712
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000057.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000057.bin",
+      "bytes": 1970080
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000058.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000058.bin",
+      "bytes": 1966864
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000059.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000059.bin",
+      "bytes": 1963248
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000060.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000060.bin",
+      "bytes": 1961104
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000061.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000061.bin",
+      "bytes": 1954576
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000062.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000062.bin",
+      "bytes": 1947712
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000063.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000063.bin",
+      "bytes": 1931136
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000064.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000064.bin",
+      "bytes": 1935008
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000065.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000065.bin",
+      "bytes": 1936816
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000066.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000066.bin",
+      "bytes": 1939184
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000067.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000067.bin",
+      "bytes": 1937856
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000068.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000068.bin",
+      "bytes": 1937296
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000069.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000069.bin",
+      "bytes": 1937552
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000070.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000070.bin",
+      "bytes": 1932688
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000071.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000071.bin",
+      "bytes": 1927872
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000072.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000072.bin",
+      "bytes": 1924512
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000073.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000073.bin",
+      "bytes": 1920576
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000074.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000074.bin",
+      "bytes": 1915952
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000075.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000075.bin",
+      "bytes": 1904848
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000076.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000076.bin",
+      "bytes": 1899872
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000077.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000077.bin",
+      "bytes": 1890784
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000078.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000078.bin",
+      "bytes": 1879648
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000079.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000079.bin",
+      "bytes": 1879120
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000080.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000080.bin",
+      "bytes": 1878592
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000081.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000081.bin",
+      "bytes": 1883840
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000082.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000082.bin",
+      "bytes": 1887632
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000083.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000083.bin",
+      "bytes": 1897168
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000084.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000084.bin",
+      "bytes": 1909616
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000085.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000085.bin",
+      "bytes": 1906000
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000086.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000086.bin",
+      "bytes": 1909632
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000087.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000087.bin",
+      "bytes": 1917040
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000088.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000088.bin",
+      "bytes": 1921072
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000089.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000089.bin",
+      "bytes": 1928784
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000090.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000090.bin",
+      "bytes": 1935440
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000091.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000091.bin",
+      "bytes": 1941328
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000092.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000092.bin",
+      "bytes": 1944000
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000093.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000093.bin",
+      "bytes": 1945520
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000094.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000094.bin",
+      "bytes": 1945888
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000095.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000095.bin",
+      "bytes": 1946736
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000096.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000096.bin",
+      "bytes": 1948160
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000097.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000097.bin",
+      "bytes": 1951216
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000098.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000098.bin",
+      "bytes": 1955744
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000099.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000099.bin",
+      "bytes": 1959872
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000100.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000100.bin",
+      "bytes": 1962928
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000101.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000101.bin",
+      "bytes": 1962576
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000102.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000102.bin",
+      "bytes": 1964624
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000103.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000103.bin",
+      "bytes": 1966192
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000104.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000104.bin",
+      "bytes": 1968128
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000105.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000105.bin",
+      "bytes": 1971392
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000106.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000106.bin",
+      "bytes": 1970832
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000107.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000107.bin",
+      "bytes": 1971904
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000108.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000108.bin",
+      "bytes": 1970336
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000109.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000109.bin",
+      "bytes": 1971072
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000110.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000110.bin",
+      "bytes": 1970752
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000111.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000111.bin",
+      "bytes": 1970560
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000112.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000112.bin",
+      "bytes": 1968416
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000113.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000113.bin",
+      "bytes": 1963680
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000114.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000114.bin",
+      "bytes": 1961936
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000115.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000115.bin",
+      "bytes": 1962208
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000116.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000116.bin",
+      "bytes": 1961232
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000117.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000117.bin",
+      "bytes": 1958528
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000118.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000118.bin",
+      "bytes": 1951904
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000119.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000119.bin",
+      "bytes": 1946880
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000120.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000120.bin",
+      "bytes": 1943104
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000121.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000121.bin",
+      "bytes": 1945472
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000122.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000122.bin",
+      "bytes": 1943216
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000123.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000123.bin",
+      "bytes": 1944432
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000124.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000124.bin",
+      "bytes": 1946400
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000125.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000125.bin",
+      "bytes": 1945648
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000126.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000126.bin",
+      "bytes": 1944464
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000127.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000127.bin",
+      "bytes": 1933904
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000128.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000128.bin",
+      "bytes": 1924816
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000129.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000129.bin",
+      "bytes": 1901616
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000130.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000130.bin",
+      "bytes": 1889232
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000131.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000131.bin",
+      "bytes": 1871648
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000132.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000132.bin",
+      "bytes": 1845200
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000133.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000133.bin",
+      "bytes": 1835728
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000134.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000134.bin",
+      "bytes": 1843472
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000135.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000135.bin",
+      "bytes": 1831392
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000136.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000136.bin",
+      "bytes": 1831664
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000137.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000137.bin",
+      "bytes": 1854672
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000138.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000138.bin",
+      "bytes": 1881552
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000139.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000139.bin",
+      "bytes": 1902544
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000140.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000140.bin",
+      "bytes": 1916688
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000141.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000141.bin",
+      "bytes": 1935696
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000142.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000142.bin",
+      "bytes": 1943952
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000143.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000143.bin",
+      "bytes": 1949056
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000144.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000144.bin",
+      "bytes": 1942864
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000145.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000145.bin",
+      "bytes": 1940048
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000146.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000146.bin",
+      "bytes": 1935152
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000147.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000147.bin",
+      "bytes": 1932080
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000148.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000148.bin",
+      "bytes": 1937008
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000149.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000149.bin",
+      "bytes": 1949600
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000150.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000150.bin",
+      "bytes": 1955616
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000151.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000151.bin",
+      "bytes": 1951728
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000152.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000152.bin",
+      "bytes": 1958368
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000153.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000153.bin",
+      "bytes": 1965328
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000154.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000154.bin",
+      "bytes": 1975760
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000155.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000155.bin",
+      "bytes": 1992032
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000156.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000156.bin",
+      "bytes": 2006192
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000157.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000157.bin",
+      "bytes": 2014576
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000158.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000158.bin",
+      "bytes": 2016784
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000159.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000159.bin",
+      "bytes": 2018992
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000160.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000160.bin",
+      "bytes": 2020608
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000161.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000161.bin",
+      "bytes": 2018768
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000162.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000162.bin",
+      "bytes": 2018672
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000163.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000163.bin",
+      "bytes": 2017392
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000164.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000164.bin",
+      "bytes": 2014064
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000165.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000165.bin",
+      "bytes": 2006768
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000166.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000166.bin",
+      "bytes": 1999792
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000167.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000167.bin",
+      "bytes": 1978016
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000168.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000168.bin",
+      "bytes": 1960512
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000169.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000169.bin",
+      "bytes": 1942304
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000170.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000170.bin",
+      "bytes": 1930784
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000171.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000171.bin",
+      "bytes": 1913456
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000172.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000172.bin",
+      "bytes": 1893504
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000173.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000173.bin",
+      "bytes": 1871888
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000174.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000174.bin",
+      "bytes": 1861344
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000175.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000175.bin",
+      "bytes": 1841696
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000176.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000176.bin",
+      "bytes": 1822736
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000177.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000177.bin",
+      "bytes": 1798336
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000178.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000178.bin",
+      "bytes": 1793536
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000179.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000179.bin",
+      "bytes": 1791232
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000180.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000180.bin",
+      "bytes": 1790096
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000181.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000181.bin",
+      "bytes": 1805632
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000182.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000182.bin",
+      "bytes": 1834832
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000183.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000183.bin",
+      "bytes": 1864144
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000184.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000184.bin",
+      "bytes": 1879616
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000185.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000185.bin",
+      "bytes": 1901024
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000186.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000186.bin",
+      "bytes": 1913856
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000187.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000187.bin",
+      "bytes": 1936752
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000188.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000188.bin",
+      "bytes": 1949104
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000189.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000189.bin",
+      "bytes": 1962560
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000190.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000190.bin",
+      "bytes": 1970784
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000191.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000191.bin",
+      "bytes": 1970560
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000192.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000192.bin",
+      "bytes": 1975824
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000193.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000193.bin",
+      "bytes": 1979120
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000194.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000194.bin",
+      "bytes": 1980880
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000195.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000195.bin",
+      "bytes": 1979152
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000196.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000196.bin",
+      "bytes": 1972416
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000197.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000197.bin",
+      "bytes": 1970944
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000198.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000198.bin",
+      "bytes": 1968544
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/00/velodyne/000199.bin",
+      "path": "raw/dataset/sequences/00/velodyne/000199.bin",
+      "bytes": 1966624
+    },
+    {
+      "archive": "calib",
+      "archive_entry": "dataset/sequences/08/calib.txt",
+      "path": "raw/dataset/sequences/08/calib.txt",
+      "bytes": 1172
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000000.label",
+      "path": "raw/dataset/sequences/08/labels/000000.label",
+      "bytes": 493556
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000001.label",
+      "path": "raw/dataset/sequences/08/labels/000001.label",
+      "bytes": 493732
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000002.label",
+      "path": "raw/dataset/sequences/08/labels/000002.label",
+      "bytes": 492636
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000003.label",
+      "path": "raw/dataset/sequences/08/labels/000003.label",
+      "bytes": 492276
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000004.label",
+      "path": "raw/dataset/sequences/08/labels/000004.label",
+      "bytes": 491424
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000005.label",
+      "path": "raw/dataset/sequences/08/labels/000005.label",
+      "bytes": 491168
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000006.label",
+      "path": "raw/dataset/sequences/08/labels/000006.label",
+      "bytes": 491768
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000007.label",
+      "path": "raw/dataset/sequences/08/labels/000007.label",
+      "bytes": 492700
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000008.label",
+      "path": "raw/dataset/sequences/08/labels/000008.label",
+      "bytes": 493472
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000009.label",
+      "path": "raw/dataset/sequences/08/labels/000009.label",
+      "bytes": 493780
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000010.label",
+      "path": "raw/dataset/sequences/08/labels/000010.label",
+      "bytes": 494276
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000011.label",
+      "path": "raw/dataset/sequences/08/labels/000011.label",
+      "bytes": 495264
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000012.label",
+      "path": "raw/dataset/sequences/08/labels/000012.label",
+      "bytes": 495412
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000013.label",
+      "path": "raw/dataset/sequences/08/labels/000013.label",
+      "bytes": 495952
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000014.label",
+      "path": "raw/dataset/sequences/08/labels/000014.label",
+      "bytes": 496156
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000015.label",
+      "path": "raw/dataset/sequences/08/labels/000015.label",
+      "bytes": 496228
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000016.label",
+      "path": "raw/dataset/sequences/08/labels/000016.label",
+      "bytes": 496192
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000017.label",
+      "path": "raw/dataset/sequences/08/labels/000017.label",
+      "bytes": 495868
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000018.label",
+      "path": "raw/dataset/sequences/08/labels/000018.label",
+      "bytes": 496296
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000019.label",
+      "path": "raw/dataset/sequences/08/labels/000019.label",
+      "bytes": 496500
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000020.label",
+      "path": "raw/dataset/sequences/08/labels/000020.label",
+      "bytes": 496336
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000021.label",
+      "path": "raw/dataset/sequences/08/labels/000021.label",
+      "bytes": 496128
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000022.label",
+      "path": "raw/dataset/sequences/08/labels/000022.label",
+      "bytes": 495824
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000023.label",
+      "path": "raw/dataset/sequences/08/labels/000023.label",
+      "bytes": 495384
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000024.label",
+      "path": "raw/dataset/sequences/08/labels/000024.label",
+      "bytes": 495356
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000025.label",
+      "path": "raw/dataset/sequences/08/labels/000025.label",
+      "bytes": 495144
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000026.label",
+      "path": "raw/dataset/sequences/08/labels/000026.label",
+      "bytes": 494612
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000027.label",
+      "path": "raw/dataset/sequences/08/labels/000027.label",
+      "bytes": 494444
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000028.label",
+      "path": "raw/dataset/sequences/08/labels/000028.label",
+      "bytes": 494184
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000029.label",
+      "path": "raw/dataset/sequences/08/labels/000029.label",
+      "bytes": 494088
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000030.label",
+      "path": "raw/dataset/sequences/08/labels/000030.label",
+      "bytes": 493604
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000031.label",
+      "path": "raw/dataset/sequences/08/labels/000031.label",
+      "bytes": 493636
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000032.label",
+      "path": "raw/dataset/sequences/08/labels/000032.label",
+      "bytes": 493536
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000033.label",
+      "path": "raw/dataset/sequences/08/labels/000033.label",
+      "bytes": 492784
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000034.label",
+      "path": "raw/dataset/sequences/08/labels/000034.label",
+      "bytes": 492696
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000035.label",
+      "path": "raw/dataset/sequences/08/labels/000035.label",
+      "bytes": 492532
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000036.label",
+      "path": "raw/dataset/sequences/08/labels/000036.label",
+      "bytes": 491896
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000037.label",
+      "path": "raw/dataset/sequences/08/labels/000037.label",
+      "bytes": 491124
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000038.label",
+      "path": "raw/dataset/sequences/08/labels/000038.label",
+      "bytes": 490764
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000039.label",
+      "path": "raw/dataset/sequences/08/labels/000039.label",
+      "bytes": 489868
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000040.label",
+      "path": "raw/dataset/sequences/08/labels/000040.label",
+      "bytes": 488104
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000041.label",
+      "path": "raw/dataset/sequences/08/labels/000041.label",
+      "bytes": 487432
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000042.label",
+      "path": "raw/dataset/sequences/08/labels/000042.label",
+      "bytes": 486312
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000043.label",
+      "path": "raw/dataset/sequences/08/labels/000043.label",
+      "bytes": 485260
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000044.label",
+      "path": "raw/dataset/sequences/08/labels/000044.label",
+      "bytes": 482224
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000045.label",
+      "path": "raw/dataset/sequences/08/labels/000045.label",
+      "bytes": 479652
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000046.label",
+      "path": "raw/dataset/sequences/08/labels/000046.label",
+      "bytes": 479476
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000047.label",
+      "path": "raw/dataset/sequences/08/labels/000047.label",
+      "bytes": 478372
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000048.label",
+      "path": "raw/dataset/sequences/08/labels/000048.label",
+      "bytes": 479252
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000049.label",
+      "path": "raw/dataset/sequences/08/labels/000049.label",
+      "bytes": 481032
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000050.label",
+      "path": "raw/dataset/sequences/08/labels/000050.label",
+      "bytes": 483100
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000051.label",
+      "path": "raw/dataset/sequences/08/labels/000051.label",
+      "bytes": 483700
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000052.label",
+      "path": "raw/dataset/sequences/08/labels/000052.label",
+      "bytes": 483372
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000053.label",
+      "path": "raw/dataset/sequences/08/labels/000053.label",
+      "bytes": 484272
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000054.label",
+      "path": "raw/dataset/sequences/08/labels/000054.label",
+      "bytes": 485044
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000055.label",
+      "path": "raw/dataset/sequences/08/labels/000055.label",
+      "bytes": 484952
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000056.label",
+      "path": "raw/dataset/sequences/08/labels/000056.label",
+      "bytes": 485388
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000057.label",
+      "path": "raw/dataset/sequences/08/labels/000057.label",
+      "bytes": 486576
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000058.label",
+      "path": "raw/dataset/sequences/08/labels/000058.label",
+      "bytes": 487376
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000059.label",
+      "path": "raw/dataset/sequences/08/labels/000059.label",
+      "bytes": 488036
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000060.label",
+      "path": "raw/dataset/sequences/08/labels/000060.label",
+      "bytes": 489012
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000061.label",
+      "path": "raw/dataset/sequences/08/labels/000061.label",
+      "bytes": 488940
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000062.label",
+      "path": "raw/dataset/sequences/08/labels/000062.label",
+      "bytes": 489368
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000063.label",
+      "path": "raw/dataset/sequences/08/labels/000063.label",
+      "bytes": 488940
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000064.label",
+      "path": "raw/dataset/sequences/08/labels/000064.label",
+      "bytes": 488880
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000065.label",
+      "path": "raw/dataset/sequences/08/labels/000065.label",
+      "bytes": 488732
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000066.label",
+      "path": "raw/dataset/sequences/08/labels/000066.label",
+      "bytes": 488512
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000067.label",
+      "path": "raw/dataset/sequences/08/labels/000067.label",
+      "bytes": 488416
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000068.label",
+      "path": "raw/dataset/sequences/08/labels/000068.label",
+      "bytes": 488144
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000069.label",
+      "path": "raw/dataset/sequences/08/labels/000069.label",
+      "bytes": 487780
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000070.label",
+      "path": "raw/dataset/sequences/08/labels/000070.label",
+      "bytes": 487336
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000071.label",
+      "path": "raw/dataset/sequences/08/labels/000071.label",
+      "bytes": 487240
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000072.label",
+      "path": "raw/dataset/sequences/08/labels/000072.label",
+      "bytes": 487108
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000073.label",
+      "path": "raw/dataset/sequences/08/labels/000073.label",
+      "bytes": 487648
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000074.label",
+      "path": "raw/dataset/sequences/08/labels/000074.label",
+      "bytes": 488204
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000075.label",
+      "path": "raw/dataset/sequences/08/labels/000075.label",
+      "bytes": 488372
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000076.label",
+      "path": "raw/dataset/sequences/08/labels/000076.label",
+      "bytes": 487424
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000077.label",
+      "path": "raw/dataset/sequences/08/labels/000077.label",
+      "bytes": 486400
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000078.label",
+      "path": "raw/dataset/sequences/08/labels/000078.label",
+      "bytes": 485712
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000079.label",
+      "path": "raw/dataset/sequences/08/labels/000079.label",
+      "bytes": 485568
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000080.label",
+      "path": "raw/dataset/sequences/08/labels/000080.label",
+      "bytes": 486852
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000081.label",
+      "path": "raw/dataset/sequences/08/labels/000081.label",
+      "bytes": 488780
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000082.label",
+      "path": "raw/dataset/sequences/08/labels/000082.label",
+      "bytes": 488948
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000083.label",
+      "path": "raw/dataset/sequences/08/labels/000083.label",
+      "bytes": 487568
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000084.label",
+      "path": "raw/dataset/sequences/08/labels/000084.label",
+      "bytes": 487384
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000085.label",
+      "path": "raw/dataset/sequences/08/labels/000085.label",
+      "bytes": 490224
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000086.label",
+      "path": "raw/dataset/sequences/08/labels/000086.label",
+      "bytes": 492912
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000087.label",
+      "path": "raw/dataset/sequences/08/labels/000087.label",
+      "bytes": 494472
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000088.label",
+      "path": "raw/dataset/sequences/08/labels/000088.label",
+      "bytes": 494304
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000089.label",
+      "path": "raw/dataset/sequences/08/labels/000089.label",
+      "bytes": 492460
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000090.label",
+      "path": "raw/dataset/sequences/08/labels/000090.label",
+      "bytes": 489832
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000091.label",
+      "path": "raw/dataset/sequences/08/labels/000091.label",
+      "bytes": 490400
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000092.label",
+      "path": "raw/dataset/sequences/08/labels/000092.label",
+      "bytes": 491852
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000093.label",
+      "path": "raw/dataset/sequences/08/labels/000093.label",
+      "bytes": 493580
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000094.label",
+      "path": "raw/dataset/sequences/08/labels/000094.label",
+      "bytes": 494612
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000095.label",
+      "path": "raw/dataset/sequences/08/labels/000095.label",
+      "bytes": 496436
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000096.label",
+      "path": "raw/dataset/sequences/08/labels/000096.label",
+      "bytes": 498012
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000097.label",
+      "path": "raw/dataset/sequences/08/labels/000097.label",
+      "bytes": 498816
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000098.label",
+      "path": "raw/dataset/sequences/08/labels/000098.label",
+      "bytes": 498308
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/labels/000099.label",
+      "path": "raw/dataset/sequences/08/labels/000099.label",
+      "bytes": 498656
+    },
+    {
+      "archive": "labels",
+      "archive_entry": "dataset/sequences/08/poses.txt",
+      "path": "raw/dataset/sequences/08/poses.txt",
+      "bytes": 465154
+    },
+    {
+      "archive": "calib",
+      "archive_entry": "dataset/sequences/08/times.txt",
+      "path": "raw/dataset/sequences/08/times.txt",
+      "bytes": 52923
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000000.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000000.bin",
+      "bytes": 1974224
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000001.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000001.bin",
+      "bytes": 1974928
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000002.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000002.bin",
+      "bytes": 1970544
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000003.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000003.bin",
+      "bytes": 1969104
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000004.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000004.bin",
+      "bytes": 1965696
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000005.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000005.bin",
+      "bytes": 1964672
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000006.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000006.bin",
+      "bytes": 1967072
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000007.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000007.bin",
+      "bytes": 1970800
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000008.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000008.bin",
+      "bytes": 1973888
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000009.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000009.bin",
+      "bytes": 1975120
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000010.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000010.bin",
+      "bytes": 1977104
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000011.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000011.bin",
+      "bytes": 1981056
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000012.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000012.bin",
+      "bytes": 1981648
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000013.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000013.bin",
+      "bytes": 1983808
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000014.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000014.bin",
+      "bytes": 1984624
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000015.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000015.bin",
+      "bytes": 1984912
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000016.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000016.bin",
+      "bytes": 1984768
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000017.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000017.bin",
+      "bytes": 1983472
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000018.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000018.bin",
+      "bytes": 1985184
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000019.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000019.bin",
+      "bytes": 1986000
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000020.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000020.bin",
+      "bytes": 1985344
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000021.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000021.bin",
+      "bytes": 1984512
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000022.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000022.bin",
+      "bytes": 1983296
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000023.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000023.bin",
+      "bytes": 1981536
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000024.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000024.bin",
+      "bytes": 1981424
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000025.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000025.bin",
+      "bytes": 1980576
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000026.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000026.bin",
+      "bytes": 1978448
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000027.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000027.bin",
+      "bytes": 1977776
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000028.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000028.bin",
+      "bytes": 1976736
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000029.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000029.bin",
+      "bytes": 1976352
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000030.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000030.bin",
+      "bytes": 1974416
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000031.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000031.bin",
+      "bytes": 1974544
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000032.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000032.bin",
+      "bytes": 1974144
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000033.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000033.bin",
+      "bytes": 1971136
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000034.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000034.bin",
+      "bytes": 1970784
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000035.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000035.bin",
+      "bytes": 1970128
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000036.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000036.bin",
+      "bytes": 1967584
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000037.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000037.bin",
+      "bytes": 1964496
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000038.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000038.bin",
+      "bytes": 1963056
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000039.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000039.bin",
+      "bytes": 1959472
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000040.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000040.bin",
+      "bytes": 1952416
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000041.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000041.bin",
+      "bytes": 1949728
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000042.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000042.bin",
+      "bytes": 1945248
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000043.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000043.bin",
+      "bytes": 1941040
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000044.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000044.bin",
+      "bytes": 1928896
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000045.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000045.bin",
+      "bytes": 1918608
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000046.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000046.bin",
+      "bytes": 1917904
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000047.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000047.bin",
+      "bytes": 1913488
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000048.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000048.bin",
+      "bytes": 1917008
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000049.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000049.bin",
+      "bytes": 1924128
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000050.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000050.bin",
+      "bytes": 1932400
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000051.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000051.bin",
+      "bytes": 1934800
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000052.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000052.bin",
+      "bytes": 1933488
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000053.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000053.bin",
+      "bytes": 1937088
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000054.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000054.bin",
+      "bytes": 1940176
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000055.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000055.bin",
+      "bytes": 1939808
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000056.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000056.bin",
+      "bytes": 1941552
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000057.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000057.bin",
+      "bytes": 1946304
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000058.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000058.bin",
+      "bytes": 1949504
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000059.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000059.bin",
+      "bytes": 1952144
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000060.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000060.bin",
+      "bytes": 1956048
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000061.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000061.bin",
+      "bytes": 1955760
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000062.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000062.bin",
+      "bytes": 1957472
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000063.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000063.bin",
+      "bytes": 1955760
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000064.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000064.bin",
+      "bytes": 1955520
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000065.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000065.bin",
+      "bytes": 1954928
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000066.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000066.bin",
+      "bytes": 1954048
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000067.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000067.bin",
+      "bytes": 1953664
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000068.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000068.bin",
+      "bytes": 1952576
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000069.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000069.bin",
+      "bytes": 1951120
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000070.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000070.bin",
+      "bytes": 1949344
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000071.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000071.bin",
+      "bytes": 1948960
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000072.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000072.bin",
+      "bytes": 1948432
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000073.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000073.bin",
+      "bytes": 1950592
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000074.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000074.bin",
+      "bytes": 1952816
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000075.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000075.bin",
+      "bytes": 1953488
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000076.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000076.bin",
+      "bytes": 1949696
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000077.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000077.bin",
+      "bytes": 1945600
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000078.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000078.bin",
+      "bytes": 1942848
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000079.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000079.bin",
+      "bytes": 1942272
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000080.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000080.bin",
+      "bytes": 1947408
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000081.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000081.bin",
+      "bytes": 1955120
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000082.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000082.bin",
+      "bytes": 1955792
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000083.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000083.bin",
+      "bytes": 1950272
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000084.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000084.bin",
+      "bytes": 1949536
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000085.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000085.bin",
+      "bytes": 1960896
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000086.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000086.bin",
+      "bytes": 1971648
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000087.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000087.bin",
+      "bytes": 1977888
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000088.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000088.bin",
+      "bytes": 1977216
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000089.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000089.bin",
+      "bytes": 1969840
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000090.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000090.bin",
+      "bytes": 1959328
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000091.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000091.bin",
+      "bytes": 1961600
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000092.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000092.bin",
+      "bytes": 1967408
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000093.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000093.bin",
+      "bytes": 1974320
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000094.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000094.bin",
+      "bytes": 1978448
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000095.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000095.bin",
+      "bytes": 1985744
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000096.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000096.bin",
+      "bytes": 1992048
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000097.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000097.bin",
+      "bytes": 1995264
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000098.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000098.bin",
+      "bytes": 1993232
+    },
+    {
+      "archive": "scans",
+      "archive_entry": "dataset/sequences/08/velodyne/000099.bin",
+      "path": "raw/dataset/sequences/08/velodyne/000099.bin",
+      "bytes": 1994624
+    }
+  ],
+  "license": {
+    "semantic_kitti_labels": "CC BY-NC-SA 4.0",
+    "kitti_source_data": "CC BY-NC-SA 3.0",
+    "use": "Research evaluation material only. Offline use does not authorize commercial R&D, training, product use, or redistribution; confirm separate permission before such use."
+  },
+  "checks": {
+    "aligned_frames": 300,
+    "total_points": 36491112,
+    "moving_points": 465400,
+    "all_point_label_counts_match": true,
+    "all_xyz_reflectance_finite": true,
+    "timestamps_strictly_increasing_within_each_segment": true,
+    "semantic_id_histogram": {
+      "0": 1080011,
+      "1": 15615,
+      "10": 2457027,
+      "40": 8367649,
+      "44": 1293083,
+      "48": 6128281,
+      "50": 6558966,
+      "51": 187341,
+      "52": 159814,
+      "60": 27751,
+      "70": 6126997,
+      "71": 610544,
+      "72": 1974134,
+      "80": 127413,
+      "81": 115189,
+      "99": 700789,
+      "255": 2211,
+      "254": 22941,
+      "20": 47369,
+      "32": 2,
+      "252": 406069,
+      "253": 34179,
+      "11": 13937,
+      "49": 1440,
+      "15": 15488,
+      "30": 16872
+    },
+    "algorithms_evaluated": false
+  },
+  "pose_provenance": {
+    "raw/dataset/poses/{sequence}.txt": "KITTI official ground truth; camera coordinates",
+    "raw/dataset/sequences/{sequence}/poses.txt": "SemanticKITTI annotation trajectory estimated with SuMa and manually closed loops; not independent ground truth",
+    "calibration": "Each sequence has its own calib.txt; Tr maps Velodyne to camera coordinates"
+  },
+  "limitations": [
+    "No IMU selected/provided in this subset",
+    "No per-point timestamps",
+    "Outdoor vehicle-mounted scene, not low-mounted quadruped indoor/stairs ground truth",
+    "Semantic ground classes are not identical to geometric support labels",
+    "No independent ideal cleaned-map artifact; moving labels are per scan",
+    "Only the two selected segments are present; complete-sequence poses/times metadata are preserved"
+  ],
+  "total_local_file_bytes": 733851892
+}

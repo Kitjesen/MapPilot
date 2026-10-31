@@ -27,7 +27,7 @@ from sim.runtime.recording import (
 )
 from sim.runtime.sensors import TruthOdometryEndpointFactory
 
-from .controlled_run import BaseTwist, BaseTwistTarget, resolve_base_twist_target
+from .controlled_run import BaseTwist, BaseTwistTarget, limit_refresh_steps, resolve_base_twist_target
 from .coordinator import CoordinatorError, RuntimeCoordinator, RuntimeState
 from .external_evidence import ExternalEvidenceWatcher
 from .live_snapshot import UdpLoopbackSnapshotPublisher
@@ -871,7 +871,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--controller-id")
     parser.add_argument("--frames", type=int, default=180)
     parser.add_argument("--steps-per-frame", type=int, default=8)
-    parser.add_argument("--refresh-steps", type=int, default=25)
+    parser.add_argument(
+        "--refresh-steps", type=int, default=25,
+        help="maximum steps between commands; capped at 20 ms or the shorter compiled timeout",
+    )
     parser.add_argument("--linear-x", type=float, default=0.25)
     parser.add_argument("--linear-y", type=float, default=0.0)
     parser.add_argument("--angular-z", type=float, default=0.0)
@@ -1181,6 +1184,7 @@ def _advance_recording_command(
     steps: int,
     refresh_steps: int,
 ) -> tuple[dict[str, Any], int]:
+    refresh_steps = limit_refresh_steps(launch.coordinator, refresh_steps)
     remaining = steps
     snapshot = dict(current)
     while remaining:
@@ -1435,14 +1439,16 @@ def _prepare_capture_directory(directory: Path) -> int:
     return time.time_ns()
 
 
-def _valid_pngs(directory: Path, *, capture_started_at_ns: int) -> tuple[Path, ...]:
+def _valid_pngs(directory: Path) -> tuple[Path, ...]:
     if not directory.is_dir():
         return ()
     frames: list[Path] = []
     for path in sorted(directory.glob("frame_*.png")):
         try:
             stat = path.stat()
-            if stat.st_mtime_ns < capture_started_at_ns or stat.st_size <= 8:
+            # The run starts with an empty capture directory. File mtimes can
+            # lag the wall clock because of filesystem timestamp precision.
+            if stat.st_size <= 8:
                 continue
             with path.open("rb") as handle:
                 if handle.read(8) != b"\x89PNG\r\n\x1a\n":
@@ -1461,10 +1467,7 @@ def _wait_for_captured_frames(
 ) -> CapturedFrameMetadata:
     deadline = time.monotonic() + timeout_s
     while True:
-        frames = _valid_pngs(
-            options.directory,
-            capture_started_at_ns=capture_started_at_ns,
-        )
+        frames = _valid_pngs(options.directory)
         if len(frames) >= options.minimum_frames:
             break
         if time.monotonic() >= deadline:
@@ -1484,10 +1487,7 @@ def _captured_frame_metadata(
     *,
     capture_started_at_ns: int,
 ) -> CapturedFrameMetadata:
-    frames = _valid_pngs(
-        options.directory,
-        capture_started_at_ns=capture_started_at_ns,
-    )
+    frames = _valid_pngs(options.directory)
     return CapturedFrameMetadata(
         directory=options.directory,
         captured_count=len(frames),

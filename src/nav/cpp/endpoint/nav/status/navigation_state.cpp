@@ -3,7 +3,7 @@
 #include <utility>
 #include <tuple>
 
-#include "runtime/goal/plan.hpp"
+#include "app/goal/plan.hpp"
 #include "nav/inspection/inspection.hpp"
 
 namespace lingtu::nav::endpoint {
@@ -115,6 +115,7 @@ void NavigationStateTracker::observeInspection(const inspection::RunStatus &stat
     case RunState::kRecovering:
     case RunState::kPausing:
     case RunState::kCancelling:
+    case RunState::kWaitingNextLoop:
       break;
   }
   observe(GoalPlanStatus{status.task_id, status.request_id, 0U, goal_state, status.reason});
@@ -123,7 +124,7 @@ void NavigationStateTracker::observeInspection(const inspection::RunStatus &stat
   // Waiting at a waypoint is still part of the running task, not path following.
   if (status.state == RunState::kSettling || status.state == RunState::kActionPending ||
       status.state == RunState::kDwelling || status.state == RunState::kPausing ||
-      status.state == RunState::kCancelling) {
+      status.state == RunState::kCancelling || status.state == RunState::kWaitingNextLoop) {
     state_.execution_state = static_cast<std::int32_t>(NavigationExecutionState::kIdle);
   }
   if (status.state == RunState::kRecovering) {

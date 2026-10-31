@@ -105,9 +105,9 @@ def test_association_respects_time_gate():
 
 
 def test_manifest_baseline_case_validates():
-    case = load_case("sim/evaluation/slam/configs/thunder_v4_fastlio2.json")
+    case = load_case("sim/evaluation/slam/configs/thunder_v4_ltlio.json")
 
-    assert case.name == "thunder_v4_factory_fastlio2"
+    assert case.name == "thunder_v4_factory_ltlio"
     assert case.robot.name == "doso/thunder_v4"
-    assert case.backend.name == "fastlio2"
+    assert case.backend.name == "ltlio"
     assert case.validate(repo_root=".") == []

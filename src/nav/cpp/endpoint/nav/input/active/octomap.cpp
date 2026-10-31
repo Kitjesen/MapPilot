@@ -1,11 +1,22 @@
 #include "input/active/octomap.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <system_error>
 #include <utility>
 
+#include <octomap/AbstractOcTree.h>
+#include <octomap/OcTree.h>
+
+#include "collision/terrain.hpp"
+#include "lingtu/maps/io/json.hpp"
+#include "lingtu/maps/io/pcd.hpp"
+#include "lingtu/maps/io/scans.hpp"
+#include "lingtu/maps/storage/store.hpp"
 #include "nav/cpp/planning/global/octoplanner/octoplanner3d_core.hpp"
 #include "nav/cpp/platform/runtime.hpp"
 
@@ -48,11 +59,87 @@ bool sameFileState(const std::filesystem::path &path,
          std::filesystem::last_write_time(path, error) == modified && !error;
 }
 
+std::shared_ptr<const collision::Terrain> loadDeclaredTerrain(
+    const std::filesystem::path &source, const std::filesystem::path &snapshot,
+    const plan::MapIdentity &identity) {
+  maps::MapStore store({source.parent_path().parent_path()});
+  const auto declared_octomap = store.ReadDeclaredArtifactIdentity(
+      identity.map_id, maps::ArtifactType::kOctomap3D, identity.frame_id);
+  const auto pointcloud = store.ReadDeclaredArtifactIdentity(
+      identity.map_id, maps::ArtifactType::kPointCloud, identity.frame_id);
+  if (!declared_octomap.ok() || !pointcloud.ok() ||
+      declared_octomap.identity->content_epoch != identity.content_epoch ||
+      pointcloud.identity->content_epoch != identity.content_epoch ||
+      declared_octomap.identity->artifact_path != source) return {};
+  std::ifstream metadata_file(source.parent_path() / "metadata.json");
+  const std::string metadata{std::istreambuf_iterator<char>(metadata_file), {}};
+  // shortcut: Edited maps retain whole voxels until modified cells carry separate hit provenance.
+  if (maps::JsonObjectHasPath(metadata, {"manual_voxel_edits"}) ||
+      maps::JsonObjectBoolAtPath(metadata,
+          {"artifacts", "octomap", "manual_voxel_edit"}).value_or(false)) return {};
+  std::ifstream map_file(snapshot, std::ios::binary);
+  std::string header;
+  std::getline(map_file, header);
+  std::unique_ptr<octomap::AbstractOcTree> tree;
+  if (header == "# Octomap OcTree binary file") {
+    auto binary = std::make_unique<octomap::OcTree>(1.0);
+    if (!binary->readBinary(snapshot.string())) return {};
+    tree = std::move(binary);
+  } else tree.reset(octomap::AbstractOcTree::read(snapshot.string()));
+  if (!tree) return {};
+  const auto *octree = dynamic_cast<octomap::OcTree *>(tree.get());
+  if (!octree) return {};
+  const auto retained = maps::JsonObjectNumberAtPath(metadata,
+      {"artifacts", "octomap", "stats", "retained_endpoints"});
+  if (maps::JsonObjectStringAtPath(metadata,
+          {"artifacts", "octomap", "evidence_source"}) == "saved_rays" &&
+      maps::JsonObjectStringAtPath(metadata,
+          {"artifacts", "octomap", "build_mode"}) == "native_octomap" &&
+      maps::JsonObjectNumberAtPath(metadata,
+          {"artifacts", "octomap", "stats", "dropped_endpoints"}) == 0 &&
+      retained && *retained > 0) {
+    std::vector<collision::Aabb> hits;
+    hits.reserve(static_cast<std::size_t>(*retained));
+    try {
+      maps::VisitSavedScans(source.parent_path(), [&](const maps::SavedScan &scan) {
+        for (std::size_t i = 0; i + 2 < scan.xyz.size(); i += 3) {
+          const octomap::point3d hit(static_cast<float>(scan.xyz[i]),
+              static_cast<float>(scan.xyz[i+1]),static_cast<float>(scan.xyz[i+2]));
+          octomap::OcTreeKey key;
+          if (!octree->coordToKeyChecked(hit,key)) continue;
+          hits.push_back({{hit.x(),hit.y(),hit.z()}, {}});
+        }
+      });
+      if (hits.size() == *retained && store.ContentEpoch(identity.map_id) == identity.content_epoch)
+        return std::make_shared<const collision::Terrain>(std::move(hits), tree->getResolution());
+    } catch (const std::runtime_error &) {
+      // Missing saved scans keep the existing sampled-surface/voxel query.
+    }
+  }
+  auto loaded = maps::LoadPcdXyz(pointcloud.identity->artifact_path);
+  if (!loaded.ok || loaded.points.empty()) return {};
+  if (store.ContentEpoch(identity.map_id) != identity.content_epoch) return {};
+  std::vector<collision::Vec3> points;
+  points.reserve(loaded.points.size());
+  for (const auto &point : loaded.points) points.push_back({point.x, point.y, point.z});
+  // This is only a sample index: the original subvoxel positions stay intact.
+  return std::make_shared<const collision::Terrain>(std::move(points), tree->getResolution());
+}
+
 }  // namespace
 
 ValidatedOctomap::ValidatedOctomap(std::filesystem::path load_path,
-                                   lingtu::nav::plan::MapIdentity identity)
-    : load_path_(std::move(load_path)), identity_(std::move(identity)) {}
+                                   lingtu::nav::plan::MapIdentity identity,
+                                   std::filesystem::path source_path)
+    : load_path_(std::move(load_path)), identity_(std::move(identity)),
+      source_path_(std::move(source_path)) {}
+
+const std::shared_ptr<const collision::Terrain> &ValidatedOctomap::terrain() const {
+  std::call_once(terrain_once_, [&] {
+    terrain_ = loadDeclaredTerrain(source_path_, load_path_, identity_);
+  });
+  return terrain_;
+}
 
 ValidatedOctomap::~ValidatedOctomap() {
   std::error_code error;
@@ -90,7 +177,7 @@ ActiveOctomapGateResult ActiveOctomapGate::prepare(
     return {nullptr, "octomap changed while it was being loaded"};
   }
   cached_artifact_ = std::shared_ptr<const ValidatedOctomap>(
-      new ValidatedOctomap(std::move(snapshot), *bound.identity));
+      new ValidatedOctomap(std::move(snapshot), *bound.identity, source));
   return {cached_artifact_, {}};
 }
 
@@ -108,8 +195,13 @@ lingtu::nav::plan::GlobalPlanResult runWithActiveOctomap(
   if (!prepared.ok()) {
     throw std::runtime_error("active_octomap_gate_rejected: " + prepared.reason);
   }
-  auto result =
-      planner(prepared.artifact->loadPath(), prepared.artifact->identity(), request, cancel_check);
+  auto bound_request = request;
+  const bool contact_body = request.body && std::any_of(
+      request.body->parts.begin(), request.body->parts.end(),
+      [](const auto &part) { return part.support_contact; });
+  bound_request.terrain = contact_body ? prepared.artifact->terrain() : nullptr;
+  auto result = planner(prepared.artifact->loadPath(), prepared.artifact->identity(),
+                        bound_request, cancel_check);
   result.map_identity = prepared.artifact->identity();
   return result;
 }

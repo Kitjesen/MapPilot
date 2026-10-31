@@ -38,6 +38,13 @@ public:
   PlannerSession(const PlannerSession &) = delete;
   PlannerSession & operator=(const PlannerSession &) = delete;
 
+  // Prepare only immutable map-derived state at activation, without a goal,
+  // route search or motion. run() still checks map/options/overlay identity.
+  void prepare(
+    const std::filesystem::path & map_path,
+    const lingtu::nav::plan::MapIdentity & map_identity,
+    const PlannerOptions & options);
+
   PlanResult run(
     const std::filesystem::path & map_path,
     const lingtu::nav::plan::MapIdentity & map_identity,

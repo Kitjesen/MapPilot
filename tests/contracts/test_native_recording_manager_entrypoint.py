@@ -101,8 +101,8 @@ def test_recording_file_management_is_native_catalog_bound_and_path_scoped() -> 
     assert "S_ISLNK" in files
 
 
-def test_sdk_uses_canonical_recording_api_and_keeps_bag_as_method_alias_only() -> None:
-    source = _read(ROOT / "src/lingtu/sdk/client.py")
+def test_sdk_domain_uses_canonical_recording_api() -> None:
+    source = _read(ROOT / "src/lingtu/sdk/observations.py")
     for endpoint in (
         "/api/v1/recordings/start",
         "/api/v1/recordings/status",
@@ -111,9 +111,9 @@ def test_sdk_uses_canonical_recording_api_and_keeps_bag_as_method_alias_only() -
         assert endpoint in source
     assert "/api/v1/bag/" not in source
 
-    async_source = _read(ROOT / "src/lingtu/sdk/async_client.py")
-    for method in ("recording_start", "recording_status", "recording_stop"):
-        assert f"self._client.{method}" in async_source
+    async_source = _read(ROOT / "src/lingtu/sdk/async_domains.py")
+    for method in ("start_recording", "recording_status", "stop_recording"):
+        assert f"self._client.observations.{method}" in async_source
 
     assert not (ROOT / "web" / "src" / "components" / "BagRecorder.tsx").exists()
     assert not (ROOT / "web" / "src" / "components" / "BagRecorder.module.css").exists()

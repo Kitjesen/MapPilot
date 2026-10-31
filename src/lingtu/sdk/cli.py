@@ -71,47 +71,53 @@ def main() -> None:
     robot = LingTuClient(args.host, args.port)
 
     if args.cmd == "go":
-        r = robot.go(args.x, args.y, args.yaw)
+        r = robot.navigation.go(args.x, args.y, args.yaw)
         print(r.message or "ok")
     elif args.cmd == "stop":
-        r = robot.stop()
+        r = robot.system.emergency_stop()
         print(r.message or "ok")
     elif args.cmd == "state":
-        s = robot.state()
+        s = robot.system.state()
         print(f"Mode: {s.mode}")
-        print(f"Pos: ({s.odometry.x:.2f}, {s.odometry.y:.2f}, yaw={s.odometry.yaw:.2f})")
+        if s.odometry is None:
+            print("Pos: unavailable")
+        else:
+            print(
+                f"Pos: ({s.odometry.x:.2f}, {s.odometry.y:.2f}, "
+                f"yaw={s.odometry.yaw:.2f})"
+            )
         print(f"Navigation task: {s.mission.task.state}")
     elif args.cmd == "health":
-        h = robot.health()
+        h = robot.system.health()
         print(f"Modules: {h.modules_ok}/{h.modules_total} ok")
         print(f"SLAM rate: {h.slam_rate:.1f} Hz")
         print(f"Mode: {h.mode}")
     elif args.cmd == "maps":
-        ml = robot.maps()
+        ml = robot.map.list()
         print(f"Active map: {ml.active_map}")
         for m in ml.maps:
             print(f"  {m.name}  active={m.is_active}  pcd={m.has_pcd}")
     elif args.cmd == "save-map":
-        r = robot.save_map(args.name)
+        r = robot.map.save(args.name)
         print(r.message or "saved")
     elif args.cmd == "nav-status":
-        ns = robot.navigation_status()
+        ns = robot.navigation.status()
         print(f"Task: {ns.task.state}")
         print(f"Goal admission: {ns.goal_admission.state}")
         print(f"Control: {ns.control.authority}")
         print(f"Motion: {ns.motion.permission} / {ns.motion.observation}")
     elif args.cmd == "position":
-        p = robot.position()
-        print(f"x={p.x:.2f}  y={p.y:.2f}  z={p.z:.2f}  yaw={p.yaw:.2f}")
+        position = robot.navigation.position()
+        print(f"x={position.x:.2f}  y={position.y:.2f}  z={position.z:.2f}  yaw={position.yaw:.2f}")
     elif args.cmd == "session":
-        s = robot.session()
-        print(f"Mode: {s.mode}")
-        print(f"Map: {s.active_map}")
-        print(f"SLAM: {s.slam_profile}")
+        session = robot.system.session()
+        print(f"Mode: {session.mode}")
+        print(f"Map: {session.active_map}")
+        print(f"SLAM: {session.slam_profile}")
     elif args.cmd == "inspection-routes":
-        print(json.dumps(robot.inspection_routes(args.map_id), ensure_ascii=False, indent=2))
+        print(json.dumps(robot.tasks.inspection_routes(args.map_id), ensure_ascii=False, indent=2))
     elif args.cmd == "inspection-start":
-        result = robot.start_inspection(
+        result = robot.tasks.start_inspection(
             args.route_id,
             map_id=args.map_id,
             revision=args.revision,
@@ -119,17 +125,17 @@ def main() -> None:
         )
         print(json.dumps(result.raw, ensure_ascii=False, indent=2))
     elif args.cmd == "inspection-status":
-        print(json.dumps(robot.inspection_task(args.task_id), ensure_ascii=False, indent=2))
+        print(json.dumps(robot.tasks.inspection_task(args.task_id), ensure_ascii=False, indent=2))
     elif args.cmd in {"inspection-pause", "inspection-resume", "inspection-cancel"}:
         action = args.cmd.removeprefix("inspection-")
-        result = getattr(robot, f"{action}_inspection")(
+        result = getattr(robot.tasks, f"{action}_inspection")(
             args.task_id,
             reason=args.reason,
             request_id=args.request_id,
         )
         print(json.dumps(result.raw, ensure_ascii=False, indent=2))
     elif args.cmd == "inspection-report":
-        print(json.dumps(robot.inspection_report(args.task_id), ensure_ascii=False, indent=2))
+        print(json.dumps(robot.tasks.inspection_report(args.task_id), ensure_ascii=False, indent=2))
     else:
         p.print_help()
 

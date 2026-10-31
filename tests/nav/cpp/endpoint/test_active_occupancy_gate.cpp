@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "lingtu/maps/build/grid_artifacts.hpp"
+#include "lingtu/maps/build/grids.hpp"
 #include "lingtu/maps/build/occupancy_snapshot.hpp"
 #include "input/active/occupancy.hpp"
 

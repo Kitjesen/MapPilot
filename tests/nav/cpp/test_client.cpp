@@ -56,6 +56,7 @@ enum class TestDomainSlot : std::size_t {
   kGoalStatus,
   kPathTelemetry,
   kPlanPreview,
+  kSemanticViews,
   kMapScene,
   kSourceStamp,
   kClockAnchor,
@@ -240,7 +241,6 @@ void writeInspectionTaskAck(
   ack.kind = static_cast<std::int32_t>(kind);
   ack.accepted = accepted;
   ack.reason = const_cast<char*>(reason.c_str());
-  ack.run_id = const_cast<char*>("inspection-test-run");
   checked(dds_write(writer, &ack), "dds_write(test_inspection_task_client_ack)");
 }
 
@@ -1062,8 +1062,7 @@ void testInspectionTaskCommands() {
       });
   check(
       start_receipt.accepted && start_receipt.task_id == "inspection-task-1" &&
-          start_receipt.request_id == "inspection-start" &&
-          start_receipt.run_id == "inspection-test-run",
+          start_receipt.request_id == "inspection-start",
       "inspection task start receipt lost correlation identity");
 
   sendInspectionTaskAndReply(
@@ -2504,6 +2503,154 @@ void testPlanPreview() {
   dds_delete(participant);
 }
 
+void testSemanticViewQueryRoundtripAndTimeout() {
+  check(
+      (lingtu_nav_client_capabilities() &
+       LINGTU_NAV_CLIENT_CAP_SEMANTIC_VIEW_QUERY) != 0U,
+      "semantic view query client capability missing");
+  const int domain_id = testDomain(TestDomainSlot::kSemanticViews);
+  const dds_entity_t participant = checked(
+      dds_create_participant(
+          static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
+      "dds_create_participant(test_semantic_views)");
+  const dds_entity_t subscriber = checked(
+      dds_create_subscriber(participant, nullptr, nullptr),
+      "dds_create_subscriber(test_semantic_views)");
+  const dds_entity_t publisher = checked(
+      dds_create_publisher(participant, nullptr, nullptr),
+      "dds_create_publisher(test_semantic_views)");
+  const dds_entity_t request_reader = createReader(
+      participant,
+      subscriber,
+      lingtu::message::kNavSemanticViewRequest,
+      &lingtu_dds_SemanticViewRequest_desc);
+  const dds_entity_t result_writer = createWriter(
+      participant,
+      publisher,
+      lingtu::message::kNavSemanticViewResult,
+      &lingtu_dds_SemanticViewResult_desc);
+  lingtu_nav_client_handle client = lingtu_nav_client_create(domain_id);
+  check(client != nullptr, "C semantic view client creation failed");
+
+  const lingtu_nav_semantic_camera_view_v1 history[] = {
+      {1.0, 2.0, 0.4, 4.0, 1.1},
+  };
+  lingtu_nav_semantic_view_result_v1 result{};
+  result.abi_version = LINGTU_NAV_SEMANTIC_VIEW_ABI_VERSION;
+  result.struct_size = sizeof(result);
+  int call_result = -1;
+  std::thread caller([&]() {
+    call_result = lingtu_nav_client_query_semantic_views_v1(
+        client,
+        "nav-boot-7",
+        "903room",
+        12,
+        "map",
+        9U,
+        0.72,
+        4.0,
+        1.1,
+        history,
+        1U,
+        2000,
+        &result);
+  });
+
+  auto* request = takeOne<lingtu_dds_SemanticViewRequest>(request_reader, 2000);
+  check(
+      std::string(request->boot_id) == "nav-boot-7" &&
+          std::string(request->map_id) == "903room" &&
+          request->map_content_epoch == 12 && request->frame_epoch == 9U &&
+          request->reference_z == 0.72 && request->camera_range_m == 4.0 &&
+          request->camera_horizontal_fov_rad == 1.1 &&
+          request->views._length == 1U && request->views._buffer != nullptr &&
+          request->views._buffer[0].x == 1.0 &&
+          request->views._buffer[0].range_m == 4.0,
+      "semantic view request payload was not preserved");
+  const std::string request_id = request->request_id;
+  returnLoan(request_reader, request);
+
+  lingtu_dds_SemanticViewResult response{};
+  const double stamp_s = nowSeconds();
+  response.header.stamp.sec = static_cast<std::int32_t>(stamp_s);
+  response.header.stamp.nanosec = static_cast<std::uint32_t>(
+      (stamp_s - static_cast<double>(response.header.stamp.sec)) * 1e9);
+  response.header.frame_id = const_cast<char*>("map");
+  response.request_id = const_cast<char*>("unrelated-semantic-view");
+  response.boot_id = const_cast<char*>("nav-boot-7");
+  response.map_id = const_cast<char*>("903room");
+  response.map_content_epoch = 12;
+  response.frame_epoch = 10U;
+  response.reference_z = 0.72;
+  response.available = true;
+  response.geometry_exhausted = false;
+  response.reason = const_cast<char*>("ok");
+  std::array<lingtu_dds_SemanticViewCandidate, 1U> candidates{{
+      {{1.5, -0.5, 0.72}, 0.25, 0.9, 2.4, 17U},
+  }};
+  response.candidates._maximum = static_cast<std::uint32_t>(candidates.size());
+  response.candidates._length = static_cast<std::uint32_t>(candidates.size());
+  response.candidates._buffer = candidates.data();
+  response.candidates._release = false;
+  checked(
+      dds_write(result_writer, &response),
+      "dds_write(test_unrelated_semantic_view_result)");
+  response.request_id = const_cast<char*>(request_id.c_str());
+  checked(
+      dds_write(result_writer, &response),
+      "dds_write(test_semantic_view_result)");
+  caller.join();
+
+  check(
+      call_result == 0 && std::string(result.request_id) == request_id &&
+          std::string(result.boot_id) == "nav-boot-7" &&
+          std::string(result.map_id) == "903room" &&
+          result.map_content_epoch == 12 && result.frame_epoch == 10U &&
+          result.available == 1 && result.geometry_exhausted == 0 &&
+          result.candidate_count == 1U && result.candidates[0].x == 1.5 &&
+          result.candidates[0].visible_cells == 17U,
+      "semantic view result correlation or fixed C ABI copy failed");
+
+  lingtu_nav_semantic_view_result_v1 timeout_result{};
+  timeout_result.abi_version = LINGTU_NAV_SEMANTIC_VIEW_ABI_VERSION;
+  timeout_result.struct_size = sizeof(timeout_result);
+  int timeout_call_result = 0;
+  std::string timeout_error;
+  const auto timeout_started = std::chrono::steady_clock::now();
+  std::thread timeout_caller([&]() {
+    timeout_call_result = lingtu_nav_client_query_semantic_views_v1(
+        client,
+        "nav-boot-7",
+        "903room",
+        12,
+        "map",
+        10U,
+        0.72,
+        4.0,
+        1.1,
+        nullptr,
+        0U,
+        120,
+        &timeout_result);
+    timeout_error = lingtu_nav_client_last_error(client);
+  });
+  auto* timeout_request =
+      takeOne<lingtu_dds_SemanticViewRequest>(request_reader, 1000);
+  returnLoan(request_reader, timeout_request);
+  timeout_caller.join();
+  const auto timeout_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - timeout_started);
+  check(
+      timeout_call_result == -1 &&
+          timeout_error.find("timed out waiting for semantic view result") !=
+              std::string::npos &&
+          timeout_elapsed < std::chrono::milliseconds(400),
+      "semantic view query did not report a bounded correlated timeout");
+
+  lingtu_nav_client_destroy(client);
+  dds_delete(participant);
+}
+
 void testMapSceneTelemetryAndCapacityGate() {
   const int domain_id = testDomain(TestDomainSlot::kMapScene);
   const dds_entity_t participant = checked(
@@ -3109,6 +3256,7 @@ bool runNamedTest(const std::string &name) {
       {"delayed_clock_ack", &testDelayedClockAckIsResampledBeforeClockSensitiveCommand},
       {"concurrent_clients", &testConcurrentClientsKeepClockAcksIsolated},
       {"plan_preview", &testPlanPreview},
+      {"semantic_views", &testSemanticViewQueryRoundtripAndTimeout},
       {"clock_rollback", &testClockOffsetTracksRealtimeRollback},
   };
   for (const auto &test : tests) {
@@ -3181,6 +3329,10 @@ int main(int argc, char **argv) {
         "navigation task status client capability missing");
     check(
         (lingtu_nav_client_capabilities() &
+         LINGTU_NAV_CLIENT_CAP_SEMANTIC_VIEW_QUERY) != 0U,
+        "semantic view query client capability missing");
+    check(
+        (lingtu_nav_client_capabilities() &
          LINGTU_NAV_CLIENT_CAP_EXPLORATION_RUN_EVENTS) != 0U,
         "exploration run event client capability missing");
     testDdsDomainPortContract();
@@ -3200,6 +3352,7 @@ int main(int argc, char **argv) {
     testFirstClockSensitiveCommandUsesEndpointClockAnchor();
     testDelayedClockAckIsResampledBeforeClockSensitiveCommand();
     testConcurrentClientsKeepClockAcksIsolated();
+    testSemanticViewQueryRoundtripAndTimeout();
     testClockOffsetTracksRealtimeRollback();
     std::puts("test_nav_client: PASS");
     return 0;

@@ -20,12 +20,13 @@ from sim.scripts.mujoco import (
 from sim.scripts.mujoco.evidence import (
     FEEDER_STATUS_SCHEMA,
     SimFeederStatusError,
+    SimMotionEvidenceError,
     publish_feeder_status,
 )
 
 import lingtu.sim.switch as sim_switch
 from drivers.real.camera.shm import ShmFrameWriter, StreamKind
-from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan
 from lingtu.assembly.graph import RuntimeGraph
 from lingtu.assembly.graph.loader import load_runtime_graph
 from lingtu.control import ProductControl
@@ -314,7 +315,7 @@ def linux_sim_plan(
         *,
         product_variant: str | None = None,
         local_planner: str | None = None,
-        localization: str = "fastlio2",
+        localization: str = "ltlio",
     ) -> RunPlan:
         key = (product, product_variant, local_planner, localization)
         if key not in plans:
@@ -363,7 +364,7 @@ def _write_exact_feeder_ledger(
                     started_wall_ns=started_wall_ns,
                     launch_id=f"launch-{name}",
                 )
-                for name in map_native_acceptance._ATTACHED_PROCESSES
+                for name in map_native_acceptance._ATTACHED_PROCESSES if name in targets
             ),
         )
     )
@@ -694,7 +695,7 @@ def test_mujoco_catalog_declares_persistent_products() -> None:
         "inspection",
         "explore",
     )
-    assert "supported_product_variants" not in backend
+    assert backend["supported_product_variants"] == {"map": ["standard"], "nav": ["standard"]}
     assert "acceptance" not in backend
     assert "acceptance_manifests" not in backend
     assert "acceptance_runners" not in backend
@@ -712,12 +713,12 @@ def test_nav_catalog_binds_non_degraded_60m_manifest() -> None:
 
     assert manifest["product_contract"] == {
         "product": "nav",
-        "source": "config/runtime_graph/products/nav.yaml",
+        "source": "config/system/products/nav.yaml",
         "native_control_mode": "autonomy",
         "slam_mode": "localization",
         "requires_map": True,
     }
-    assert manifest["slam_runtime"]["provider"] == "fastlio2"
+    assert manifest["slam_runtime"]["provider"] == "ltlio"
     assert "fixture" not in json.dumps(manifest).lower()
     assert manifest["sensor_runtime"]["imu_hz"] == 200.0
     assert manifest["sensor_runtime"]["scan_time_profile"] == "physical_rolling"
@@ -827,14 +828,37 @@ def test_mujoco_saved_map_navigation_products_resolve_exact_chain(
         "map_runtime",
         "mujoco_feeder",
         "nav_runtime",
-        "traversability_runtime",
         "host_runtime",
     }
+    if product == "tracking":
+        expected.add("traversability_runtime")
     if product in {"inspection", "tracking"}:
         expected.add("camera_publisher")
     assert {process.name for process in plan.processes} == expected
     assert "acceptance" not in plan.as_dict()["launch"]
     assert plan.host_config["enable_camera"] is (product in {"inspection", "tracking"})
+
+
+def test_inspection_truth_run_plan_reuses_nav_world_and_spawn() -> None:
+    env_config = {"backend": "mujoco", "localization": "truth"}
+    nav = compile_run_plan("nav", "sim", robot="doso/thunder_v4", env_config=env_config)
+    inspection = compile_run_plan(
+        "inspection",
+        "sim",
+        robot="doso/thunder_v4",
+        env_config=env_config,
+    )
+
+    assert nav.simulation["session_source"].endswith("/nav.yaml")
+    assert inspection.simulation["session_source"].endswith("/default.yaml")
+    nav_session = nav.simulation["session"]
+    inspection_session = inspection.simulation["session"]
+    assert inspection_session["world"] == nav_session["world"] == "factory_workshop@2.0.0"
+    assert inspection_session["robots"][0]["spawn"] == nav_session["robots"][0]["spawn"]
+    assert inspection_session["runtime"]["mode"] == "headless"
+    assert nav_session["runtime"]["mode"] == "headless"
+    assert "slam_runtime" not in {process.name for process in inspection.processes}
+    assert "--navigation-fixture" in inspection.process("lidar").command.argv
 
 
 def test_scan_is_a_nav_local_planner_selection(
@@ -849,7 +873,7 @@ def test_scan_is_a_nav_local_planner_selection(
     restored = RunPlan.from_dict(plan.as_dict())
 
     assert plan.product == "nav"
-    assert plan.product_variant is None
+    assert plan.product_variant == "standard"
     assert plan.native_nav["local_planner"] == "scan"
     assert "LINGTU_LOCAL_PLANNER_PATHS" not in plan.native_process_environment
     assert target.product == "nav"
@@ -858,7 +882,7 @@ def test_scan_is_a_nav_local_planner_selection(
     assert restored.native_nav["local_planner"] == "scan"
 
 
-def test_cmu_and_scan_share_actual_fastlio_localization(
+def test_cmu_and_scan_share_actual_ltlio_localization(
     linux_sim_plan: Callable[..., RunPlan],
 ) -> None:
     plans = tuple(
@@ -869,7 +893,7 @@ def test_cmu_and_scan_share_actual_fastlio_localization(
     assert {
         plan.native_process_environment["LINGTU_SLAM_CONFIG"].replace("\\", "/")
         for plan in plans
-    } == {"src/localization/fastlio2/config/sim_mid360_slam.yaml"}
+    } == {"src/localization/ltlio/config/sim_mid360_slam.yaml"}
     assert not any(product_acceptance._uses_mujoco_truth_localization(plan) for plan in plans)
     assert {plan.process("slam").name for plan in plans} == {"slam_runtime"}
 
@@ -894,7 +918,7 @@ def test_mujoco_product_acceptance_scopes_do_not_overclaim_partial_gates() -> No
     assert "exact-session Gateway SaveMap success" in scopes["map"]["claims"]
     assert "saved-map metadata and format validation" in scopes["map"]["excluded_claims"]
     assert scopes["inspection"]["coverage"] == "component"
-    assert "capture:overview route submission and business acknowledgement" in scopes["inspection"]["claims"]
+    assert "ordered three-point capture:overview route submission and business acknowledgement" in scopes["inspection"]["claims"]
     assert "stable scene-graph person identity selection" in scopes["tracking"]["claims"]
     assert "exact target_id visual follow producing a map-frame native navigation task" in scopes["tracking"]["claims"]
     for product in ("nav", "tracking", "explore"):
@@ -1156,7 +1180,7 @@ def test_sensor_runtime_evidence_rejects_bad_terminal_status(
         product_acceptance._sensor_runtime_evidence(plan, status)
 
 
-@pytest.mark.parametrize("localization", ("truth", "fastlio2"))
+@pytest.mark.parametrize("localization", ("truth", "ltlio"))
 def test_imu_rate_gate_follows_explicit_localization_authority(
     linux_sim_plan: Callable[..., RunPlan],
     localization: str,
@@ -1171,7 +1195,7 @@ def test_imu_rate_gate_follows_explicit_localization_authority(
         actual_hz=125.0,
     )
 
-    if localization == "fastlio2":
+    if localization == "ltlio":
         with pytest.raises(RuntimeError, match="imu drop rate"):
             product_acceptance._sensor_runtime_evidence(plan, status)
         return
@@ -1603,11 +1627,13 @@ def test_exact_teleop_rejects_session_replaced_before_switch_returns(
     assert current["product_session_id"] == replacement_session_id
 
 
-def test_exact_teleop_physical_evidence_requires_applied_output_and_threshold(
+@pytest.mark.parametrize("product", ["teleop", "nav"])
+def test_exact_product_physical_evidence_requires_applied_output_and_threshold(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    product: str,
 ) -> None:
-    plan = SimpleNamespace(product="teleop")
+    plan = SimpleNamespace(product=product)
     child = SimpleNamespace(target="mujoco_feeder", launch_id="b" * 64)
     evidence = {
         "commanded_motion_observed": True,
@@ -1648,6 +1674,33 @@ def test_exact_teleop_physical_evidence_requires_applied_output_and_threshold(
                 {"min_path_length_m": invalid},
                 PRODUCT_SESSION_ID,
             )
+
+
+@pytest.mark.parametrize("product", ["teleop", "nav"])
+def test_exact_product_motion_evidence_error_preserves_product_and_reason(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    product: str,
+) -> None:
+    failure = SimMotionEvidenceError("motion evidence exceeds 65536 bytes")
+
+    def fail_load(**_kwargs: Any) -> None:
+        raise failure
+
+    monkeypatch.setattr(product_acceptance, "load_motion_evidence", fail_load)
+    with pytest.raises(RuntimeError) as caught:
+        product_acceptance._check_motion(
+            tmp_path,
+            SimpleNamespace(product=product),
+            [SimpleNamespace(target="mujoco_feeder", launch_id="b" * 64)],
+            {"min_path_length_m": 0.15},
+            PRODUCT_SESSION_ID,
+        )
+
+    assert str(caught.value) == (
+        f"exact {product} physical motion evidence is invalid: motion evidence exceeds 65536 bytes"
+    )
+    assert caught.value.__cause__ is failure
 
 
 def test_exact_teleop_avoid_physical_evidence_requires_clear_detour_and_corridor_restoration(
@@ -1931,15 +1984,13 @@ def test_map_strict_runner_attaches_to_current_and_uses_gateway_save_api(
         "size_bytes": 128,
         "size_mb": 0.001,
     }
-    assert report["camera"]["after"]["ready"] is True
-    assert set(report["children"]["before_save"]) == set(map_native_acceptance._ATTACHED_PROCESSES)
+    assert "camera" not in report
+    assert set(report["children"]["before_save"]) == set(map_native_acceptance._ATTACHED_PROCESSES) - {"camera_publisher"}
     assert report["children"]["before_save"] == report["children"]["after_save"]
     assert all(
         set(item["process_identity"]) == {"pid", "platform", "start_identity"}
         for item in report["children"]["after_save"].values()
     )
-    assert set(report["camera"]["after"]["streams"]) == {"color", "depth", "info"}
-    assert report["camera"]["after"]["streams"]["info"]["timestamp_ns"] < current_mtime_ns
     assert report["evidence_scope"] == "component_e2e"
     assert report["product_acceptance_passed"] is False
     assert observed["gateway"] == ("127.0.0.1", 5050)
@@ -1947,7 +1998,6 @@ def test_map_strict_runner_attaches_to_current_and_uses_gateway_save_api(
     assert {path.name for path, _kwargs in readiness} == {
         "lidar.ready.json",
         "imu.ready.json",
-        "camera.ready.json",
         "slam.status.json",
         "mapd.status.json",
     }
@@ -2165,71 +2215,20 @@ def test_map_strict_runner_rejects_current_session_change_during_gateway_save(
         (("color", "depth", "info"), -2_000_000_000, "camera SHM frame exceeded"),
     ),
 )
-def test_map_strict_runner_rejects_missing_or_stale_camera_at_save_time(
+def test_map_camera_evidence_rejects_missing_or_stale_frames(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    linux_sim_plan: Callable[..., RunPlan],
     include: tuple[str, ...],
     timestamp_offset_ns: int,
     expected_blocker: str,
 ) -> None:
-    plan = linux_sim_plan("map")
-    product_session_id = "e" * 32
-    plan_path = plan.write(tmp_path / f"plan-{product_session_id}.json")
-    sim_switch._commit_current(
-        plan_path,
-        plan,
-        {},
-        tmp_path,
-        product_session_id=product_session_id,
-    )
     feeder_started_ns = time.time_ns() - 3_000_000_000
-    _write_exact_feeder_ledger(
-        tmp_path,
-        plan,
-        product_session_id=product_session_id,
-        started_wall_ns=feeder_started_ns,
-    )
     _write_camera_shm(
         tmp_path,
         timestamp_ns=time.time_ns() + timestamp_offset_ns,
         include=include,
     )
-    monkeypatch.setattr(
-        map_native_acceptance,
-        "load_typed_readiness",
-        lambda *_args, **_kwargs: {
-            "details": {
-                "live": True,
-                "reset_epoch": 1,
-                "observation_sequence": 1,
-                "processed_observations": 1,
-            }
-        },
-    )
-    monkeypatch.setattr(
-        map_native_acceptance,
-        "LingTuClient",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("camera gate must run before Gateway SaveMap")),
-    )
-    report_path = tmp_path / "strict-map-camera-failure.json"
-
-    assert (
-        map_native_acceptance.main(
-            [
-                "--run-plan",
-                str(plan_path),
-                "--strict",
-                "--json-out",
-                str(report_path),
-            ]
-        )
-        == 1
-    )
-    report = json.loads(report_path.read_text(encoding="utf-8"))
-    assert report["ok"] is False
-    assert report["product_acceptance_passed"] is False
-    assert expected_blocker in report["blockers"][0]
+    with pytest.raises(RuntimeError, match=expected_blocker):
+        map_native_acceptance._camera(tmp_path, feeder_started_ns)
 
 
 @pytest.mark.parametrize("failure", ("missing", "foreign", "dead"))
@@ -2307,7 +2306,7 @@ def test_map_camera_rejects_frozen_color_or_depth() -> None:
 
 @pytest.mark.parametrize(
     "missing",
-    ("lidar_publisher", "imu_publisher", "camera_publisher", "slam_runtime"),
+    ("lidar_publisher", "imu_publisher", "slam_runtime"),
 )
 def test_map_typed_readiness_requires_sensor_and_slam(
     monkeypatch: pytest.MonkeyPatch,
@@ -2644,17 +2643,523 @@ def test_inspection_manifest_keeps_attached_success_at_component_e2e() -> None:
     assert "lingtu_dds_player" not in source
 
 
+def test_inspection_route_points_support_relative_world_and_legacy_default() -> None:
+    points = inspection_native_acceptance._route_points(
+        {
+            "route_points": [
+                {
+                    "id": "relative",
+                    "relative_dx": 1.0,
+                    "relative_dy": -2.0,
+                    "relative_dz": 0.2,
+                },
+                {"id": "world", "x": 8.0, "y": 9.0, "z": 1.4},
+            ]
+        },
+        10.0,
+        20.0,
+        1.2,
+        0.1,
+    )
+
+    assert [(point["x"], point["y"], point["z"]) for point in points] == [
+        (11.0, 18.0, 1.4),
+        (8.0, 9.0, 1.4),
+    ]
+    assert inspection_native_acceptance._route_points({}, 10.0, 20.0, 1.2, 0.1) == [
+        {
+            "id": "overview-1",
+            "x": 10.5,
+            "y": 20.0,
+            "z": 1.2,
+            "yaw": 0.0,
+            "tolerance": 0.15,
+            "dwell": 0.0,
+            "action": "capture:overview",
+        }
+    ]
+    with pytest.raises(ValueError, match="exactly one coordinate mode"):
+        inspection_native_acceptance._route_points(
+            {
+                "route_points": [
+                    {
+                        "id": "mixed",
+                        "relative_dx": 1.0,
+                        "relative_dy": 0.0,
+                        "x": 1.0,
+                        "y": 0.0,
+                    }
+                ]
+            },
+            0.0,
+            0.0,
+            0.45,
+            0.1,
+        )
+
+    with pytest.raises(ValueError, match="must use relative_dz, not z"):
+        inspection_native_acceptance._route_points(
+            {
+                "route_points": [
+                    {
+                        "id": "mixed-z",
+                        "relative_dx": 1.0,
+                        "relative_dy": 0.0,
+                        "z": 0.45,
+                    }
+                ]
+            },
+            0.0,
+            0.0,
+            0.45,
+            0.1,
+        )
+
+
+def test_inspection_position_uses_native_map_frame_pose() -> None:
+    class Gateway:
+        def _get(self, path: str) -> dict[str, object]:
+            assert path == "/api/v1/state"
+            return {
+                "localization": {
+                    "odometry": {
+                        "frame_id": "map",
+                        "x": 61.25,
+                        "y": 16.75,
+                        "z": 0.46,
+                    }
+                }
+            }
+
+        def position(self) -> None:
+            raise AssertionError("SDK default Position must not supply inspection goals")
+
+    assert inspection_native_acceptance._position(Gateway()) == (61.25, 16.75, 0.46)
+
+
+def test_inspection_position_rejects_missing_native_map_frame_pose() -> None:
+    class Gateway:
+        def _get(self, path: str) -> dict[str, object]:
+            assert path == "/api/v1/state"
+            return {"localization": {"odometry": None}}
+
+        def position(self) -> SimpleNamespace:
+            return SimpleNamespace(x=0.0, y=0.0, z=0.0)
+
+    with pytest.raises(RuntimeError, match="no native map-frame robot pose"):
+        inspection_native_acceptance._position(Gateway())
+
+
+class _ThreePointInspectionGateway:
+    def __init__(self, product_session_id: str, timeline_failure: str | None = None) -> None:
+        self.product_session_id = product_session_id
+        self.timeline_failure = timeline_failure
+        self.posts: list[tuple[str, dict[str, object]]] = []
+        self.positions = iter(
+            (
+                (0.0, 0.0, 0.45),
+                (0.5, 0.5, 0.45),
+            )
+        )
+        self.route: dict[str, Any] = {}
+        self.task_id = ""
+        self.request_id = ""
+
+    def _request_json(
+        self,
+        path: str,
+        body: dict[str, object] | None = None,
+        *,
+        method: str = "POST",
+    ) -> dict[str, object]:
+        assert method == "POST"
+        assert body is not None
+        self.posts.append((path, body))
+        if path == "/api/v1/inspection/routes":
+            self.route = body
+            return {
+                "ok": True,
+                "route": {
+                    "id": body["id"],
+                    "map_id": body["map_id"],
+                    "map_content_epoch": body["map_content_epoch"],
+                    "revision": body["revision"],
+                },
+            }
+        if path == "/api/v1/inspection/tasks":
+            self.request_id = str(body["request_id"])
+            self.task_id = inspection_native_acceptance._expected_task_id(self.request_id)
+            return {
+                "ok": True,
+                "accepted": True,
+                "action": "start",
+                "lifecycle": "submission_accepted",
+                "terminal": False,
+                "task_id": self.task_id,
+                "request_id": self.request_id,
+                "route_id": body["route_id"],
+                "revision": body["revision"],
+                "map_id": body["map_id"],
+            }
+        if path.endswith("/cancel"):
+            return {
+                "ok": True,
+                "accepted": True,
+                "action": "cancel",
+                "task_id": self.task_id,
+                "request_id": body["request_id"],
+            }
+        raise AssertionError(path)
+
+    def _evidence_events(self) -> list[dict[str, object]]:
+        route_points = cast(list[dict[str, object]], self.route["points"])
+        events = [
+            {
+                "kind": 5,
+                "task_id": self.task_id,
+                "request_id": self.request_id,
+                "route_id": self.route["id"],
+                "route_revision": 1,
+                "map_id": "saved-map",
+                "map_content_epoch": 7,
+                "point_index": index,
+                "loop_index": loop_index,
+                "action": point["action"],
+                "action_request_id": f"evidence-{loop_index * len(route_points) + index}",
+                "evidence_id": f"evidence-{loop_index * len(route_points) + index}",
+            }
+            for loop_index in range(int(self.route.get("loop_count", 1)))
+            for index, point in enumerate(route_points)
+        ]
+        if self.timeline_failure == "missing_middle":
+            return [events[0], events[2]]
+        if self.timeline_failure == "reordered_middle":
+            return [events[0], events[2], events[1]]
+        return events
+
+    def _get(self, path: str) -> dict[str, object]:
+        if path == "/api/v1/state":
+            x, y, z = next(self.positions)
+            return {
+                "localization": {
+                    "odometry": {"frame_id": "map", "x": x, "y": y, "z": z}
+                }
+            }
+        if path == "/api/v1/readiness":
+            return {
+                "schema_version": 1,
+                "status": "ready",
+                "ready": True,
+                "product_contract": {
+                    "product": "inspection",
+                    "product_session_id": self.product_session_id,
+                }
+            }
+        if path == "/api/v1/runtime/dataflow":
+            return {
+                "authoritative": True,
+                "available": True,
+                "run_plan": {"identity": {"product": "inspection", "env": "sim"}},
+            }
+        if path == f"/api/v1/inspection/tasks/{self.task_id}":
+            events = self._evidence_events()
+            return {
+                "task_id": self.task_id,
+                "terminal": True,
+                "current_state": "SUCCESS",
+                "execution_confirmed": True,
+                "terminal_source": "native_task_event",
+                "identity": {
+                    "task_id": self.task_id,
+                    "route_id": self.route["id"],
+                    "route_revision": 1,
+                    "map_id": "saved-map",
+                    "map_content_epoch": 7,
+                },
+                "last_submission": {"request_id": self.request_id, "action": "start"},
+                "latest_event": {
+                    "task_id": self.task_id,
+                    "request_id": self.request_id,
+                    "route_id": self.route["id"],
+                    "route_revision": 1,
+                    "map_id": "saved-map",
+                    "map_content_epoch": 7,
+                    "point_index": 3,
+                    "action": "",
+                },
+                "timeline": [item for event in events for item in
+                             (event, {**event, "kind": 3, "reason": "point_completed"})] + [
+                                 {"state": 14, "reason": "waiting_next_loop", "loop_index": loop}
+                                 for loop in range(1, int(self.route.get("loop_count", 1)))
+                                 if self.route.get("loop_interval_s", 0.0) > 0.0
+                             ],
+                "delivery": {"history_complete": True},
+                "recording": {
+                    "state": "completed",
+                    "session_id": "recording-three-point",
+                    "product_session_id": self.product_session_id,
+                },
+            }
+        if path == f"/api/v1/inspection/tasks/{self.task_id}/report":
+            route_points = cast(list[dict[str, object]], self.route["points"])
+            visit_count = len(route_points) * int(self.route.get("loop_count", 1))
+            return {
+                "task_id": self.task_id,
+                "report_status": "COMPLETE",
+                "acceptance": "NEEDS_REVIEW",
+                "inspection_result": {"status": "NEEDS_REVIEW"},
+                "terminal": True,
+                "execution": {"terminal": True, "confirmed": True, "history_complete": True},
+                "issues": [],
+                "coverage": {
+                    "required_points": visit_count,
+                    "completed_points": visit_count,
+                    "required_evidence": visit_count,
+                    "verified_evidence": visit_count,
+                    "missing_evidence": 0,
+                    "invalid_evidence": 0,
+                    "unavailable_evidence": 0,
+                    "unknown_evidence": 0,
+                },
+                "identity": {
+                    "route_id": self.route["id"],
+                    "route_revision": 1,
+                    "map_id": "saved-map",
+                    "map_content_epoch": 7,
+                },
+                "points": [
+                    {
+                        "point_id": point["id"],
+                        "point_index": index,
+                        "loop_index": loop_index,
+                        "action": point["action"],
+                        "status": "COMPLETED",
+                        "evidence_status": "VERIFIED",
+                        "evidence_id": f"evidence-{loop_index * len(route_points) + index}",
+                    }
+                    for loop_index in range(int(self.route.get("loop_count", 1)))
+                    for index, point in enumerate(route_points)
+                ],
+            }
+        if path.startswith("/api/v1/inspection/evidence/evidence-"):
+            point_index = int(path.rsplit("-", 1)[1])
+            return {
+                "evidence": {
+                    "evidence_id": f"evidence-{point_index}",
+                    "request": {
+                        "request_id": f"evidence-{point_index}",
+                        "task_id": self.task_id,
+                        "route_id": self.route["id"],
+                        "route_revision": 1,
+                        "map_id": "saved-map",
+                        "map_content_epoch": 7,
+                        "point_index": point_index % len(cast(list, self.route["points"])),
+                        "action": "capture:overview",
+                    },
+                    "artifacts": [{"kind": "rgb", "bytes": 10}],
+                }
+            }
+        raise AssertionError(path)
+
+    def readiness(self) -> dict[str, object]:
+        return self._get("/api/v1/readiness")
+
+
+def _run_three_point_inspection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    timeline_failure: str | None = None,
+    loop_count: int = 1,
+    loop_interval_s: float = 0.0,
+) -> tuple[dict[str, Any], _ThreePointInspectionGateway]:
+    product_session_id = "e" * 32
+    gateway = _ThreePointInspectionGateway(product_session_id, timeline_failure)
+    plan_path = (tmp_path / "plan.json").resolve()
+    current = json.dumps(
+        {
+            "schema_version": "lingtu.current.v1",
+            "product": "inspection",
+            "env": "sim",
+            "run_plan_path": str(plan_path),
+            "product_session_id": product_session_id,
+            "map_name": "saved-map",
+            "map_identity": {
+                "map_id": "saved-map",
+                "content_epoch": 7,
+                "frame_id": "map",
+                "artifacts": [
+                    {"artifact_type": "pointcloud", "uri": str(tmp_path / "map.pcd")}
+                ],
+            },
+        }
+    ).encode()
+    plan = SimpleNamespace(
+        host_config={"gateway_port": 5050},
+        lifecycle={"requires_map": True},
+        native_process_environment={
+            "LINGTU_MAP_ID": "saved-map",
+            "LINGTU_MAP_CONTENT_EPOCH": "7",
+            "LINGTU_MAP_FRAME": "map",
+        },
+    )
+    monkeypatch.setattr(
+        inspection_native_acceptance,
+        "_current_identity",
+        lambda *_args: (tmp_path, product_session_id, current),
+    )
+    monkeypatch.setattr(inspection_native_acceptance, "_client", lambda *_args: gateway)
+    monkeypatch.setattr(
+        inspection_native_acceptance,
+        "_recording_mcap",
+        lambda *_args: ("recording-three-point", tmp_path / "inspection.mcap"),
+    )
+    manifest = json.loads(inspection_native_acceptance.DEFAULT_MANIFEST.read_text(encoding="utf-8"))
+    manifest.update(loop_count=loop_count, loop_interval_s=loop_interval_s)
+    details = inspection_native_acceptance._run_attached(
+        plan,
+        plan_path,
+        manifest,
+        0.1,
+    )
+    return details, gateway
+
+
+def test_inspection_attached_runner_accepts_three_fixed_loops(monkeypatch, tmp_path) -> None:
+    details, gateway = _run_three_point_inspection(monkeypatch, tmp_path, loop_count=3,
+                                                  loop_interval_s=2.0)
+    assert len(gateway.route["points"]) == 3
+    assert gateway.route["loop_count"] == 3
+    assert gateway.route["loop_interval_s"] == 2.0
+    assert details["repetition"]["visits_verified"] == 9
+    assert [record["evidence"]["request"]["point_index"] for record in details["evidence"]] == [0, 1, 2] * 3
+    assert details["equipment_condition_verified"] is False
+    assert details["inspection_findings"]["status"] == "NEEDS_REVIEW"
+
+
+@pytest.mark.parametrize("manifest", [{"loop_count": 0}, {"loop_count": True},
+                                      {"loop_interval_s": -1}, {"loop_interval_s": float("nan")}])
+def test_inspection_repetition_rejects_unusable_settings(manifest) -> None:
+    with pytest.raises(ValueError):
+        inspection_native_acceptance._repetition(manifest)
+
+
+def test_inspection_three_loop_manifest_preserves_three_fixed_points() -> None:
+    from lingtu.sim.acceptance import load_manifest
+
+    path = inspection_native_acceptance.DEFAULT_MANIFEST.with_name("inspection_three_loops.json")
+    manifest = load_manifest(path, root=inspection_native_acceptance.ROOT)
+    assert len(manifest["route_points"]) == 3
+    assert inspection_native_acceptance._repetition(manifest) == (3, 2.0)
+
+
+def test_inspection_attached_runner_accepts_ordered_three_point_native_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    details, gateway = _run_three_point_inspection(monkeypatch, tmp_path)
+
+    assert [point["id"] for point in cast(list[dict[str, object]], gateway.route["points"])] == [
+        "overview-1",
+        "overview-2",
+        "overview-3",
+    ]
+    assert gateway.route["map_content_epoch"] == 7
+    assert details["task_report"]["coverage"]["verified_evidence"] == 3
+    assert [item["evidence"]["request"]["point_index"] for item in details["evidence"]] == [0, 1, 2]
+    assert details["attached_identity"]["map_identity"]["map_id"] == "saved-map"
+    assert details["attached_identity"]["map_identity"]["content_epoch"] == 7
+
+
+def test_inspection_acceptance_uses_current_sdk_http_surface() -> None:
+    client_type = inspection_native_acceptance.LingTuClient
+
+    assert callable(getattr(client_type, "readiness", None))
+    assert callable(getattr(client_type, "_get", None))
+    assert callable(getattr(client_type, "_request_json", None))
+    assert not hasattr(client_type, "_post")
+
+
+def test_inspection_current_map_identity_requires_map_name_and_runplan_binding(
+    tmp_path: Path,
+) -> None:
+    product_session_id = "e" * 32
+    plan_path = (tmp_path / "plan.json").resolve()
+    current = {
+        "schema_version": "lingtu.current.v1",
+        "product": "inspection",
+        "env": "sim",
+        "run_plan_path": str(plan_path),
+        "product_session_id": product_session_id,
+        "map_name": "saved-map",
+        "map_identity": {
+            "map_id": "saved-map",
+            "content_epoch": 7,
+            "frame_id": "map",
+            "artifacts": [
+                {"artifact_type": "pointcloud", "uri": str(tmp_path / "map.pcd")}
+            ],
+        },
+    }
+    environment = {
+        "LINGTU_MAP_ID": "saved-map",
+        "LINGTU_MAP_CONTENT_EPOCH": "7",
+        "LINGTU_MAP_FRAME": "map",
+    }
+    plan = SimpleNamespace(native_process_environment=environment)
+
+    identity = inspection_native_acceptance._current_map_identity(
+        plan,
+        json.dumps(current).encode(),
+    )
+    assert (identity.map_id, identity.content_epoch, identity.frame_id) == (
+        "saved-map",
+        7,
+        "map",
+    )
+
+    mismatched_current = {**current, "map_name": "other-map"}
+    with pytest.raises(RuntimeError, match="does not match map_name"):
+        inspection_native_acceptance._current_map_identity(
+            plan,
+            json.dumps(mismatched_current).encode(),
+        )
+
+    plan.native_process_environment = {
+        **environment,
+        "LINGTU_MAP_CONTENT_EPOCH": "8",
+    }
+    with pytest.raises(RuntimeError, match="does not bind the committed map identity"):
+        inspection_native_acceptance._current_map_identity(
+            plan,
+            json.dumps(current).encode(),
+        )
+
+
+@pytest.mark.parametrize("timeline_failure", ("missing_middle", "reordered_middle"))
+def test_inspection_attached_runner_rejects_missing_or_reordered_middle_native_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    timeline_failure: str,
+) -> None:
+    with pytest.raises(RuntimeError, match="native evidence event"):
+        _run_three_point_inspection(monkeypatch, tmp_path, timeline_failure)
+
+
 @pytest.mark.parametrize(
     ("failure", "message"),
     (
         ("ack", "business ACK identity mismatch"),
+        ("native_recording_error", "native_recorder_unavailable"),
+        ("native_failed", "reason=goal_snap_exhausted"),
+        ("native_failed_recording", "reason=goal_snap_exhausted.*recording finalization failed"),
+        ("route_error", "inspection_map_content_epoch_mismatch"),
         ("response_lost", "connection lost"),
         ("cleanup", "cleanup failed"),
         ("cleanup_recording", "recording did not complete"),
         ("identity", "status identity mismatch"),
         ("post_status", "status identity mismatch"),
-        ("report_exact", "COMPLETE and ACCEPTABLE"),
-        ("report", "COMPLETE and ACCEPTABLE"),
+        ("report_exact", "incomplete execution or capture coverage"),
+        ("report", "incomplete execution or capture coverage"),
         ("evidence", "valid RGB"),
         ("recording", "recording failed"),
         ("motion", "displacement"),
@@ -2668,11 +3173,6 @@ def test_inspection_attached_runner_fails_closed_and_cancels_only_own_task(
 ) -> None:
     product_session_id = "f" * 32
 
-    class Position:
-        def __init__(self, x: float) -> None:
-            self.x = x
-            self.y = 0.0
-
     class Gateway:
         def __init__(self) -> None:
             self.posts: list[tuple[str, dict[str, object]]] = []
@@ -2681,10 +3181,15 @@ def test_inspection_attached_runner_fails_closed_and_cancels_only_own_task(
             self.route: dict[str, object] = {}
             self.status_calls = 0
 
-        def position(self) -> Position:
-            return Position(next(self.positions))
-
-        def _post(self, path: str, body: dict[str, object]) -> dict[str, object]:
+        def _request_json(
+            self,
+            path: str,
+            body: dict[str, object] | None = None,
+            *,
+            method: str = "POST",
+        ) -> dict[str, object]:
+            assert method == "POST"
+            assert body is not None
             self.posts.append((path, body))
             if path.endswith("/cancel"):
                 if failure == "cleanup":
@@ -2698,11 +3203,18 @@ def test_inspection_attached_runner_fails_closed_and_cancels_only_own_task(
                 }
             if path == "/api/v1/inspection/routes":
                 self.route = body
+                if failure == "route_error":
+                    return {
+                        "ok": False,
+                        "error": "inspection_map_content_epoch_mismatch",
+                        "detail": {"requested": 7, "current": 8},
+                    }
                 return {
                     "ok": True,
                     "route": {
                         "id": body["id"],
                         "map_id": body["map_id"],
+                        "map_content_epoch": body["map_content_epoch"],
                         "revision": body["revision"],
                     },
                 }
@@ -2710,6 +3222,12 @@ def test_inspection_attached_runner_fails_closed_and_cancels_only_own_task(
                 self.task_id = inspection_native_acceptance._expected_task_id(str(body["request_id"]))
                 if failure == "response_lost":
                     raise ConnectionError("connection lost after submission")
+                if failure == "native_recording_error":
+                    return {
+                        "ok": False,
+                        "error": "inspection_recording_start_failed",
+                        "detail": {"recording_error": "native_recorder_unavailable"},
+                    }
                 return {
                     "ok": True,
                     "accepted": True,
@@ -2725,8 +3243,22 @@ def test_inspection_attached_runner_fails_closed_and_cancels_only_own_task(
             raise AssertionError(path)
 
         def _get(self, path: str) -> dict[str, object]:
-            if path == "/ready":
+            if path == "/api/v1/state":
                 return {
+                    "localization": {
+                        "odometry": {
+                            "frame_id": "map",
+                            "x": next(self.positions),
+                            "y": 0.0,
+                            "z": 0.45,
+                        }
+                    }
+                }
+            if path == "/api/v1/readiness":
+                return {
+                    "schema_version": 1,
+                    "status": "ready",
+                    "ready": True,
                     "product_contract": {
                         "product": "inspection",
                         "product_session_id": product_session_id,
@@ -2753,7 +3285,7 @@ def test_inspection_attached_runner_fails_closed_and_cancels_only_own_task(
                 return {
                     "task_id": self.task_id,
                     "terminal": True,
-                    "current_state": "SUCCESS",
+                    "current_state": "FAILED" if failure.startswith("native_failed") else "SUCCESS",
                     "execution_confirmed": True,
                     "terminal_source": "native_task_event",
                     "identity": {
@@ -2765,6 +3297,7 @@ def test_inspection_attached_runner_fails_closed_and_cancels_only_own_task(
                         ),
                         "route_revision": 1,
                         "map_id": "saved-map",
+                        "map_content_epoch": 7,
                     },
                     "last_submission": {"request_id": request_id, "action": "start"},
                     "latest_event": {
@@ -2773,16 +3306,43 @@ def test_inspection_attached_runner_fails_closed_and_cancels_only_own_task(
                         "route_id": route_id,
                         "route_revision": 1,
                         "map_id": "saved-map",
+                        "map_content_epoch": 7,
+                        "point_index": 0 if failure.startswith("native_failed") else 1,
                         "point_id": "overview-1",
-                        "action": "capture:overview",
+                        "action": "capture:overview" if failure.startswith("native_failed") else "",
+                        "reason": "goal_snap_exhausted" if failure.startswith("native_failed") else "completed",
                         "action_request_id": "evidence-own",
                     },
+                    "timeline": [
+                        {
+                            "kind": 5,
+                            "task_id": self.task_id,
+                            "request_id": request_id,
+                            "route_id": route_id,
+                            "route_revision": 1,
+                            "map_id": "saved-map",
+                            "map_content_epoch": 7,
+                            "point_index": 0,
+                            "loop_index": 0,
+                            "action": "capture:overview",
+                            "action_request_id": "evidence-own",
+                            "evidence_id": "evidence-own",
+                        },
+                        {
+                            "kind": 3, "reason": "point_completed",
+                            "task_id": self.task_id,
+                            "route_id": route_id, "route_revision": 1,
+                            "map_id": "saved-map", "map_content_epoch": 7,
+                            "point_index": 0, "loop_index": 0,
+                        }
+                    ],
                     "delivery": {"history_complete": True},
                     "recording": (
                         None
                         if failure == "cleanup_recording"
                         else {
                             "state": (
+                                "failed" if failure == "native_failed_recording" else
                                 "stopping" if failure == "post_status" and self.status_calls == 1 else "completed"
                             ),
                             "session_id": "recording-own",
@@ -2816,6 +3376,7 @@ def test_inspection_attached_runner_fails_closed_and_cancels_only_own_task(
                         "route_id": self.route["id"],
                         "route_revision": 1,
                         "map_id": "saved-map",
+                        "map_content_epoch": 7,
                     },
                     "points": [
                         {
@@ -2835,11 +3396,11 @@ def test_inspection_attached_runner_fails_closed_and_cancels_only_own_task(
                         "evidence_id": "evidence-own",
                         "request": {
                             "request_id": "evidence-own",
-                            "run_id": self.task_id,
+                            "task_id": self.task_id,
                             "route_id": self.route["id"],
                             "route_revision": 1,
                             "map_id": "saved-map",
-                            "point_id": "overview-1",
+                            "map_content_epoch": 7,
                             "point_index": 0,
                             "action": "capture:overview",
                         },
@@ -2850,16 +3411,42 @@ def test_inspection_attached_runner_fails_closed_and_cancels_only_own_task(
                 }
             raise AssertionError(path)
 
+        def readiness(self) -> dict[str, object]:
+            return self._get("/api/v1/readiness")
+
     gateway = Gateway()
+    plan_path = (tmp_path / "plan.json").resolve()
+    current = json.dumps(
+        {
+            "schema_version": "lingtu.current.v1",
+            "product": "inspection",
+            "env": "sim",
+            "run_plan_path": str(plan_path),
+            "product_session_id": product_session_id,
+            "map_name": "saved-map",
+            "map_identity": {
+                "map_id": "saved-map",
+                "content_epoch": 7,
+                "frame_id": "map",
+                "artifacts": [
+                    {"artifact_type": "pointcloud", "uri": str(tmp_path / "map.pcd")}
+                ],
+            },
+        }
+    ).encode()
     plan = SimpleNamespace(
         host_config={"gateway_port": 5050},
         lifecycle={"requires_map": True},
-        native_process_environment={"LINGTU_MAP_NAME": "saved-map"},
+        native_process_environment={
+            "LINGTU_MAP_ID": "saved-map",
+            "LINGTU_MAP_CONTENT_EPOCH": "7",
+            "LINGTU_MAP_FRAME": "map",
+        },
     )
     monkeypatch.setattr(
         inspection_native_acceptance,
         "_current_identity",
-        lambda *_args: (tmp_path, product_session_id, b"current"),
+        lambda *_args: (tmp_path, product_session_id, current),
     )
     monkeypatch.setattr(inspection_native_acceptance, "_client", lambda *_args: gateway)
     if failure == "recording":
@@ -2877,12 +3464,17 @@ def test_inspection_attached_runner_fails_closed_and_cancels_only_own_task(
     with pytest.raises(RuntimeError, match=message):
         inspection_native_acceptance._run_attached(
             plan,
-            tmp_path / "plan.json",
+            plan_path,
             {"thresholds": {"minimum_displacement_m": 0.1, "poll_interval_s": 0.001}},
             0.1,
         )
     cancel_paths = [path for path, _body in gateway.posts if path.endswith("/cancel")]
-    assert cancel_paths == [f"/api/v1/inspection/tasks/{gateway.task_id}/cancel"]
+    expected_cancel_paths = (
+        []
+        if failure in {"route_error", "native_recording_error", "native_failed", "native_failed_recording"}
+        else [f"/api/v1/inspection/tasks/{gateway.task_id}/cancel"]
+    )
+    assert cancel_paths == expected_cancel_paths
 
 
 def test_mujoco_product_dispatcher_accepts_only_a_published_run_plan(

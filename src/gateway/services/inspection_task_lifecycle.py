@@ -41,6 +41,7 @@ _STATE_NAMES = {
     11: "ACTION_PENDING",
     12: "PAUSING",
     13: "CANCELLING",
+    14: "WAITING_NEXT_LOOP",
 }
 _TASK_EVENT_STATES = frozenset(_STATE_NAMES) - {0}
 _PUBLIC_STATE_BY_PHASE = {
@@ -55,6 +56,7 @@ _PUBLIC_STATE_BY_PHASE = {
     "CANCELLED": "CANCELLED",
     "SETTLING": "EXECUTING",
     "ACTION_PENDING": "EXECUTING",
+    "WAITING_NEXT_LOOP": "EXECUTING",
 }
 _TRANSITION_BY_PHASE = {
     "PAUSING": "PAUSE_REQUESTED",
@@ -68,7 +70,7 @@ _EVENT_KIND_NAMES = {
     5: "EVIDENCE_RECORDED",
 }
 _TERMINAL_STATES = {7, 8, 9}
-_PAUSE_CANCEL_STATES = {1, 2, 3, 4, 6, 10, 11}
+_PAUSE_CANCEL_STATES = {1, 2, 3, 4, 6, 10, 11, 14}
 _JOURNAL_SCHEMA = "lingtu.inspection.task.journal.v1"
 _JOURNAL_MAX_BYTES = 16 * 1024 * 1024
 _JOURNAL_PATH_ENV = "LINGTU_INSPECTION_TASK_JOURNAL"
@@ -121,6 +123,7 @@ class InspectionTaskTimeline:
         map_content_epoch: int | None = None,
         route_revision: int | None = None,
         route_snapshot: Mapping[str, Any] | None = None,
+        product_session_id: str | None = None,
         reason: str | None = None,
     ) -> None:
         """Record an admitted command without asserting execution progress."""
@@ -129,6 +132,7 @@ class InspectionTaskTimeline:
         normalized_request = _required_text(request_id, "request_id")
         normalized_action = _required_text(action, "action")
         normalized_route = _normalise_route_snapshot(route_snapshot)
+        normalized_product_session = _optional_product_session_id(product_session_id)
         normalized_reason = str(reason or "")
         binding = _request_binding(
             task_id=normalized_task,
@@ -136,12 +140,22 @@ class InspectionTaskTimeline:
             request_id=normalized_request,
             reason=normalized_reason,
             route_snapshot=normalized_route,
+            product_session_id=normalized_product_session,
         )
         with self._lock:
             self._require_journal_available_locked()
             self._reserve_request_locked(binding)
             now = time.time()
             record = self._record_for(normalized_task)
+            retained_product_session = record.get("product_session_id")
+            if (
+                retained_product_session is not None
+                and normalized_product_session is not None
+                and retained_product_session != normalized_product_session
+            ):
+                raise ValueError("inspection task product_session_id is immutable")
+            if normalized_action == "start" and retained_product_session is None:
+                record["product_session_id"] = normalized_product_session
             identity = record["identity"]
             _require_identity_compatible(
                 identity,
@@ -196,6 +210,7 @@ class InspectionTaskTimeline:
         request_id: str,
         reason: str | None = None,
         route_snapshot: Mapping[str, Any] | None = None,
+        product_session_id: str | None = None,
     ) -> None:
         """Durably bind one idempotency key before contacting the native endpoint."""
 
@@ -206,6 +221,7 @@ class InspectionTaskTimeline:
             request_id=_required_text(request_id, "request_id"),
             reason=str(reason or ""),
             route_snapshot=normalized_route,
+            product_session_id=_optional_product_session_id(product_session_id),
         )
         with self._lock:
             self._require_journal_available_locked()
@@ -322,10 +338,9 @@ class InspectionTaskTimeline:
     def observe(self, event: Any) -> bool:
         """Accept one monotonic native event and reject duplicates/reordering.
 
-        A sequence gap is not rejected: the newest native fact is still useful,
-        but the resulting projection is explicitly marked incomplete and cannot
-        offer task controls until continuity is restored by a future product
-        journal/reconciliation feature.
+        Missing history remains visible. A fresh native phase can still expose
+        task controls, and a checkpoint recovery can link the retained history
+        across endpoint boots without inventing any missing event.
         """
 
         normalized = _normalise_event(event)
@@ -340,12 +355,21 @@ class InspectionTaskTimeline:
             previous_sequence = self._last_sequence_by_boot.get(boot_id, 0)
             if sequence <= previous_sequence:
                 return False
+            previous_record = self._tasks.get(task_id)
+            checkpoint_link, terminal_replay = _checkpoint_restart_link(
+                previous_record, normalized
+            )
+            retained_delivery = (
+                dict(previous_record["delivery"])
+                if checkpoint_link or terminal_replay
+                else None
+            )
             if boot_id not in self._last_sequence_by_boot and known_boots:
                 self._mark_endpoint_restart(boot_id)
             # The first event observed by this Gateway may itself be late.  A
             # non-one cursor means this process cannot honestly claim a full
             # task history even when no earlier local cursor exists.
-            gap_detected = sequence != previous_sequence + 1
+            gap_detected = sequence != previous_sequence + 1 and retained_delivery is None
             self._last_sequence_by_boot[boot_id] = sequence
 
             record = self._record_for(task_id)
@@ -371,17 +395,25 @@ class InspectionTaskTimeline:
             delivery["event_sequence"] = sequence
             if gap_detected:
                 self._mark_sequence_gap(boot_id)
-            if delivery["continuity"] != "endpoint_restart_observed":
-                delivery["continuity"] = "verified"
-                if not delivery["history_complete"]:
-                    delivery["reason"] = str(
-                        delivery.get("reason") or "event_history_incomplete"
-                    )
-                else:
-                    delivery["reason"] = ""
+            if retained_delivery is not None:
+                delivery["history_complete"] = retained_delivery["history_complete"]
+                delivery["reason"] = retained_delivery["reason"]
+            # This task has a fresh, identity-bound native fact even when its
+            # earlier report history is incomplete. Other tasks still await
+            # their own post-restart fact.
+            delivery["continuity"] = "verified"
+            if not delivery["history_complete"]:
+                delivery["reason"] = str(
+                    delivery.get("reason") or "event_history_incomplete"
+                )
+            else:
+                delivery["reason"] = ""
 
             record["latest_event"] = normalized
-            record["timeline"].append(normalized)
+            if terminal_replay:
+                record["timeline"][-1] = normalized
+            else:
+                record["timeline"].append(normalized)
             if len(record["timeline"]) > self._event_retention:
                 del record["timeline"][: len(record["timeline"]) - self._event_retention]
                 delivery["history_complete"] = False
@@ -537,6 +569,7 @@ class InspectionTaskTimeline:
                 "last_submission": None,
                 "commands": [],
                 "route_snapshot": None,
+                "product_session_id": None,
                 "latest_event": None,
                 "timeline": [],
                 "recording": None,
@@ -652,6 +685,7 @@ class InspectionTaskTimeline:
                         request_id=command["request_id"],
                         reason=command["reason"],
                         route_snapshot=route_snapshot,
+                        product_session_id=record.get("product_session_id"),
                     )
                     existing_binding = request_bindings.get(command["request_id"])
                     if existing_binding is not None:
@@ -726,6 +760,12 @@ def _required_text(value: object, label: str) -> str:
     return normalized
 
 
+def _optional_product_session_id(value: object) -> str | None:
+    if value is None:
+        return None
+    return _required_text(value, "product_session_id")
+
+
 def _request_binding(
     *,
     task_id: str,
@@ -733,6 +773,7 @@ def _request_binding(
     request_id: str,
     reason: str,
     route_snapshot: Mapping[str, Any] | None,
+    product_session_id: str | None,
 ) -> dict[str, Any]:
     return {
         "request_id": request_id,
@@ -740,6 +781,7 @@ def _request_binding(
         "action": action,
         "reason": reason,
         "route_snapshot": dict(route_snapshot) if route_snapshot is not None else None,
+        "product_session_id": product_session_id,
     }
 
 
@@ -752,6 +794,7 @@ def _require_request_binding_compatible(
         "action",
         "reason",
         "route_snapshot",
+        "product_session_id",
     ):
         if existing.get(field) != candidate.get(field):
             raise ValueError(
@@ -816,25 +859,49 @@ def _normalise_route_snapshot(
     for raw_point in raw_points:
         if not isinstance(raw_point, Mapping):
             raise ValueError("inspection task route snapshot point must be an object")
-        points.append(
-            {
-                "id": _required_text(
-                    raw_point.get("id"),
-                    "inspection task route point id",
-                ),
-                "action": str(raw_point.get("action") or "").strip(),
-                "enabled": raw_point.get("enabled") is not False,
-            }
-        )
+        point = {
+            "id": _required_text(
+                raw_point.get("id"),
+                "inspection task route point id",
+            ),
+            "action": str(raw_point.get("action") or "").strip(),
+            "enabled": raw_point.get("enabled") is not False,
+        }
+        coordinate_fields = ("x", "y", "z")
+        supplied_coordinates = [field in raw_point for field in coordinate_fields]
+        if any(supplied_coordinates) and not all(supplied_coordinates):
+            raise ValueError(
+                "inspection task route point geometry must supply x, y, and z together"
+            )
+        if all(supplied_coordinates):
+            coordinates = _finite_route_point_values(raw_point, coordinate_fields)
+            point.update(coordinates)
+            frame_id = str(raw_point.get("frame_id") or "map").strip()
+            if frame_id != "map":
+                raise ValueError("inspection task route point frame_id must be map")
+            point["frame_id"] = frame_id
+            if raw_point.get("yaw") is not None:
+                point["yaw"] = _finite_route_point_value(raw_point, "yaw")
+            for canonical, alias in (
+                ("position_tolerance_m", "tolerance"),
+                ("dwell_s", "dwell"),
+            ):
+                if canonical in raw_point or alias in raw_point:
+                    source = canonical if canonical in raw_point else alias
+                    point[canonical] = _finite_route_point_value(raw_point, source)
+        points.append(point)
     map_content_epoch = value.get("map_content_epoch")
     revision = int(value.get("revision", 0) or 0)
     loop_count = int(value.get("loop_count", 1) or 1)
+    loop_interval_s = float(value.get("loop_interval_s", 0.0))
     if (
         isinstance(map_content_epoch, bool)
         or not isinstance(map_content_epoch, int)
         or map_content_epoch <= 0
         or revision <= 0
         or loop_count <= 0
+        or not math.isfinite(loop_interval_s)
+        or loop_interval_s < 0.0
     ):
         raise ValueError("inspection task route snapshot has invalid version fields")
     return {
@@ -846,9 +913,32 @@ def _normalise_route_snapshot(
         "map_content_epoch": map_content_epoch,
         "revision": revision,
         "loop_count": loop_count,
+        "loop_interval_s": loop_interval_s,
         "failure_policy": str(value.get("failure_policy") or "stop"),
         "points": points,
     }
+
+
+def _finite_route_point_values(
+    point: Mapping[str, Any],
+    fields: tuple[str, ...],
+) -> dict[str, float]:
+    return {field: _finite_route_point_value(point, field) for field in fields}
+
+
+def _finite_route_point_value(point: Mapping[str, Any], field: str) -> float:
+    value = point.get(field)
+    if isinstance(value, bool):
+        raise ValueError(f"inspection task route point {field} must be finite")
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"inspection task route point {field} must be finite"
+        ) from exc
+    if not math.isfinite(normalized):
+        raise ValueError(f"inspection task route point {field} must be finite")
+    return normalized
 
 
 def _copy_route_snapshot(value: object) -> dict[str, Any] | None:
@@ -929,7 +1019,6 @@ def _normalise_event(event: Any) -> dict[str, Any] | None:
         "kind_name": _EVENT_KIND_NAMES[kind],
         "task_id": task_id,
         "request_id": request_id,
-        "command_request_id": str(payload.get("command_request_id") or ""),
         "state": state,
         "state_name": _STATE_NAMES[state],
         "terminal": state in _TERMINAL_STATES,
@@ -941,7 +1030,6 @@ def _normalise_event(event: Any) -> dict[str, Any] | None:
         "point_count": _integer("point_count"),
         "loop_index": _integer("loop_index"),
         "retry_count": _integer("retry_count"),
-        "point_id": str(payload.get("point_id") or ""),
         "action": str(payload.get("action") or ""),
         "action_request_id": str(payload.get("action_request_id") or ""),
         "evidence_id": str(payload.get("evidence_id") or ""),
@@ -958,6 +1046,7 @@ def _unknown_task_snapshot(
         "schema_version": "lingtu.inspection.task.v1",
         "found": False,
         "task_id": task_id,
+        "product_session_id": None,
         "current_state": None,
         "state_available": False,
         "phase": None,
@@ -994,8 +1083,12 @@ def _snapshot(record: Mapping[str, Any]) -> dict[str, Any]:
     last_submission = record.get("last_submission")
     if isinstance(last_submission, Mapping):
         last_submission = dict(last_submission)
-    progress = _task_progress(event)
+    progress = _task_progress(event, record.get("route_snapshot"))
     restored_from_journal = bool(delivery.get("restored_from_journal", False))
+    identity_bound = all(
+        identity.get(field) is not None
+        for field in ("route_id", "map_id", "map_content_epoch", "route_revision")
+    )
     phase = str(event["state_name"]) if isinstance(event, Mapping) else None
     transition = _TRANSITION_BY_PHASE.get(phase)
 
@@ -1053,7 +1146,7 @@ def _snapshot(record: Mapping[str, Any]) -> dict[str, Any]:
         terminal_source = "native_task_event" if terminal else ""
         actions = (
             []
-            if restored_from_journal
+            if restored_from_journal or not state_available or not identity_bound
             else _available_actions(
                 state=int(event["state"]),
                 terminal=terminal,
@@ -1065,6 +1158,7 @@ def _snapshot(record: Mapping[str, Any]) -> dict[str, Any]:
         "schema_version": "lingtu.inspection.task.v1",
         "found": True,
         "task_id": identity["task_id"],
+        "product_session_id": record.get("product_session_id"),
         "current_state": current_state,
         "state_available": state_available,
         "phase": phase,
@@ -1116,23 +1210,42 @@ def _unknown_progress() -> dict[str, Any]:
     }
 
 
-def _task_progress(event: Any) -> dict[str, Any]:
+def _task_progress(event: Any, route_snapshot: Any = None) -> dict[str, Any]:
     if not isinstance(event, Mapping):
         return _unknown_progress()
     point_count = max(0, int(event.get("point_count", 0)))
     point_index = max(0, int(event.get("point_index", 0)))
-    has_current_point = point_index < point_count
+    loop_index = max(0, int(event.get("loop_index", 0)))
+    succeeded = event.get("state") == 7
+    points = route_snapshot.get("points") if isinstance(route_snapshot, Mapping) else None
+    known = succeeded or isinstance(points, list)
+    completed_points = point_count if succeeded else 0
+    current_point_number = None
+    point_id = ""
+    action = str(event.get("action") or "") if not succeeded else ""
+    if not succeeded and isinstance(points, list):
+        # Native indices address the full route, while counts exclude disabled points.
+        completed_points = sum(
+            isinstance(point, Mapping) and point.get("enabled") is not False
+            for point in points[:point_index]
+        )
+        action = ""
+        if point_index < len(points):
+            point = points[point_index]
+            if isinstance(point, Mapping) and point.get("enabled") is not False:
+                current_point_number = completed_points + 1
+                point_id = str(point.get("id") or "")
+                action = str(point.get("action") or "")
     return {
-        "known": True,
-        "completed_points": min(point_index, point_count),
+        "known": known,
+        "completed_points": completed_points,
         "point_count": point_count,
-        "current_point_number": point_index + 1 if has_current_point else None,
-        "current_point_id": str(event.get("point_id") or "")
-        if has_current_point
-        else "",
-        "loop_number": max(0, int(event.get("loop_index", 0))) + 1,
+        "current_point_number": current_point_number,
+        "current_point_id": point_id,
+        # Success already advanced the loop index and replaced the point index.
+        "loop_number": loop_index if succeeded else loop_index + 1,
         "retry_count": max(0, int(event.get("retry_count", 0))),
-        "action": str(event.get("action") or "") if has_current_point else "",
+        "action": action,
         "evidence_id": str(event.get("evidence_id") or ""),
     }
 
@@ -1145,8 +1258,6 @@ def _available_actions(
 ) -> list[str]:
     if terminal or delivery.get("continuity") != "verified":
         return []
-    if not bool(delivery.get("history_complete", False)):
-        return []
     if state in _PAUSE_CANCEL_STATES:
         return ["pause", "cancel"]
     if state == 5:
@@ -1154,6 +1265,37 @@ def _available_actions(
     if state == 12:
         return ["cancel"]
     return []
+
+
+def _checkpoint_restart_link(
+    record: Mapping[str, Any] | None,
+    event: Mapping[str, Any],
+) -> tuple[bool, bool]:
+    previous = record.get("latest_event") if record is not None else None
+    if not isinstance(previous, Mapping) or previous["boot_id"] == event["boot_id"]:
+        return False, False
+    if _identity_conflict_field(record["identity"], event) is not None:
+        return False, False
+    terminal_replay = bool(previous["terminal"] and event["terminal"]) and all(
+        previous[key] == value
+        for key, value in event.items()
+        if key not in {"boot_id", "event_id"}
+    )
+    recovery_phase = event["kind"] == 2 and (
+        (event["state"] == 5 and event["reason"] in {
+            "restart_resume_required", "restart_loop_wait_resume_required"
+        })
+        or (event["state"] == 9 and event["reason"] == "cancelled_after_restart")
+        or (event["state"] == 7 and event["reason"] == "route_complete" and (
+            previous["kind"] == 5 or previous["reason"] == "point_completed"
+        ))
+    )
+    checkpoint_link = bool(
+        not previous["terminal"]
+        and recovery_phase
+        and event["event_sequence"] == previous["event_sequence"] + 1
+    )
+    return checkpoint_link, terminal_replay
 
 
 def _canonical_json(value: object) -> bytes:
@@ -1223,6 +1365,9 @@ def _restore_request_bindings(
                 "journal request binding action",
             ),
             "reason": str(raw_binding.get("reason") or ""),
+            "product_session_id": _restored_optional_text(
+                raw_binding.get("product_session_id")
+            ),
             "route_snapshot": (
                 dict(raw_route_snapshot) if raw_route_snapshot is not None else None
             ),
@@ -1245,6 +1390,7 @@ def _restore_record(
     if not isinstance(raw_identity, Mapping):
         raise ValueError("journal task identity must be an object")
     task_id = _required_text(raw_identity.get("task_id"), "journal task_id")
+    product_session_id = _restored_optional_text(value.get("product_session_id"))
     identity = {
         "task_id": task_id,
         "route_id": _restored_optional_text(raw_identity.get("route_id")),
@@ -1347,6 +1493,7 @@ def _restore_record(
     recording = _restore_recording(value.get("recording"))
     return {
         "identity": identity,
+        "product_session_id": product_session_id,
         "route_snapshot": route_snapshot,
         "last_submission": commands[-1] if commands else None,
         "commands": commands,

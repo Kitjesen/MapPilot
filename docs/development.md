@@ -4,152 +4,98 @@
 **Audience:** Contributors, maintainers, and integration engineers
 **Runs on:** Local development, native builds, simulation, and field-targeted builds
 
-Make the smallest change in the layer that owns the behavior. A correct
-implementation in the wrong layer creates a second source of truth.
+Change the layer that owns the behavior. Use [Architecture](architecture.md)
+for system boundaries and [Testing](testing.md) for the evidence required.
+
+## Product-focused simplification
+
+Prioritize the [shared delivery workflow](product.md#完整交付流程).
+Reduce duplicate ownership and maintenance work; file count is not a product
+acceptance criterion.
+
+- Retain the runtime, build, installation, operator, diagnostic, and test
+  support needed for delivery. Preserve existing robots and supported Products.
+- Give each responsibility one implementation and configuration owner. Reuse
+  existing factories, registries, and interfaces before adding abstractions.
+- Trace Product/Env declarations, registries, schemas, build/install paths,
+  public entrypoints, and imports before declaring something unused.
+- Remove obsolete duplicates and disposable output. Preserve uncommitted work,
+  calibration, maps, models, field recordings, and unique investigation data.
+- Change one responsibility at a time, updating consumers and documentation
+  together. Tidying does not justify changing algorithms, public contracts,
+  dependency versions, or support policy.
+- State the reason and focused verification for each change. Run clean-build,
+  package, and end-to-end gates at the corresponding delivery milestone.
 
 ## Find the owner first
 
-| Change | Primary owner |
+| Change | Owner |
 | --- | --- |
-| Product roles, capabilities, or logical topics | `config/runtime_graph/products/` |
-| Real or simulation implementation mapping | `config/runtime_graph/envs/` |
-| Product resolution and RunPlan | `src/lingtu/run_plan.py` and `src/lingtu/assembly/` |
-| Product lifecycle | `src/lingtu/control.py` |
-| Host Module framework and shared messages | `src/runtime/` |
-| Global/local planning, safety, or tracking hot path | `src/nav/cpp/` |
-| Saved maps and live map services | `src/maps/` |
-| Localization and SLAM | `src/localization/` |
-| Hardware and simulation I/O | `src/drivers/` |
-| Perception, decision, and memory | Their matching `src/` package |
-| REST, SSE, WebSocket, and MCP | `src/gateway/` |
-| Simulation packages and runtime | `sim/` |
+| Product roles, topics, capabilities | `config/system/products/` |
+| Real/sim implementation mapping | `config/system/envs/` |
+| Product resolution and lifecycle | `src/lingtu/assembly/`, `src/lingtu/control.py` |
+| Host Modules, internal assembly, messages, registry | `src/runtime/` |
+| Planning and motion safety | `src/nav/cpp/` |
+| Maps, localization, drivers | Their matching `src/` package |
+| Perception, decision, memory, Gateway | Their matching `src/` package |
+| Simulation packages and sessions | `sim/` |
+| Build/deploy commands and developer tools | `scripts/` and [tools](../tools/README.md) |
 
-Package-local READMEs explain deeper placement. The repository-level map is in
-[Architecture](./architecture.md).
-
-## Dependency direction
-
-```text
-All Modules -> runtime core, contracts, messages, registry, and utilities
-
-nav/        must not import perception/, decision/, drivers/, gateway/
-perception/ must not import nav/, decision/, drivers/, gateway/
-decision/   consumes perception through messages, not nav/gateway imports
-drivers/    must not import nav/ or semantic code except lazy registration
-gateway/    must not import nav/, semantic/, or drivers/
-```
-
-Machine-enforced ownership is defined in
-[`config/architecture_layers.yaml`](../config/architecture_layers.yaml).
+Detailed placement is in [the source guide](../src/README.md).
 
 ## Ordinary change loop
 
-1. State the user-visible contract and the evidence level it affects.
-2. Find the current owner, interface, configuration, and focused tests.
-3. Reuse an existing message, registry, factory, or native boundary.
-4. Implement one behavior slice without adding a parallel lifecycle.
-5. Wire the change through the owning Blueprint or Product declaration.
-6. Run the narrowest test that could disprove the intended behavior.
-7. Update one of these ten docs only when a maintained public contract changes.
+1. Define the user-visible behavior and current owner.
+2. Implement one slice through the existing Product, HostBuilder, or adapter.
+3. Run the narrowest test that could disprove the behavior, then affected
+   lint/type/build checks. Before each check, name the failure and response.
+4. Update the owning documentation and review the exact diff.
 
-Before a check, name the concrete failure it can reveal and what you would
-change if it fails.
+Preserve unrelated changes. Report baseline failures separately from new
+ones. Use small, reversible commits and do not add dependencies without approval.
 
-## Modules and Blueprints
+## Modules and HostBuilders
 
-A Module is one typed, in-process Host runtime unit. Keep construction cheap;
-open devices, threads, subscriptions, and external resources in the declared
-lifecycle. A Module cleans up only resources it owns.
+A Module is a typed in-process Host unit. Keep construction cheap; acquire
+resources in its lifecycle and clean up only what it owns. Use typed `In`/`Out`
+ports and explicit command, map, localization, and external-boundary wires.
+Use `auto_wire()` only for unique, unambiguous local matches.
 
-Use typed `In` and `Out` ports for Host dataflow. Critical command, map,
-localization, and external-boundary wires must be explicit. `auto_wire()` is
-only suitable for unique, unambiguous local matches.
-
-Blueprint constructs one Host graph. It may choose Modules, configuration,
-aliases, wires, and boundary adapters. It must not resolve a Product, manage
-systemd, start native endpoints, or hide domain algorithms.
-
-Adding a Python class does not make it Product behavior. The Product compiler,
-assembly stack, critical wires, and focused graph tests must agree.
+HostBuilder constructs the Host graph; it does not resolve Products, manage
+systemd, or start native processes. A new class becomes Product behavior only
+when declarations, assembly, wiring, and focused graph tests agree.
 
 ## Backends and adapters
 
-Use the existing runtime registry and the owning factory when an implementation
-is intentionally selectable. Business logic depends on a stable interface,
-not a concrete backend import.
+Use the runtime registry and owning factory for selectable implementations.
+Record the boundary's owner and failure behavior: devices need calibration and
+reconnect rules; DDS needs schema, frame, timestamp, QoS, and stale handling;
+shared memory needs payload lifetime and readiness; replay needs timing/reset
+and source identity. ROS compatibility must remain explicitly selected.
 
-An adapter belongs at a real boundary:
-
-| Boundary | Required design information |
-| --- | --- |
-| Hardware SDK | Device owner, reconnect behavior, calibration, and failure state |
-| Typed DDS | Producer, consumer, schema, frame, timestamp, QoS, and stale behavior |
-| Shared memory | Ownership, generation, payload lifetime, and readiness metadata |
-| Simulator or replay | Source identity, timing, reset, and claim boundary |
-| ROS 2 compatibility | Explicit opt-in path that cannot become a default Product dependency |
-
-Do not add a Module merely to wrap a pure function, or a transport abstraction
-where an existing adapter already expresses the seam.
+Import direction is enforced by
+[`config/architecture_layers.yaml`](../config/architecture_layers.yaml).
 
 ## Native code
 
-Python owns the Host framework and semantic/API layer. C++ owns field LiDAR,
-SLAM, maps, terrain, navigation, and driver hot paths.
-
-Rust is appropriate for a bounded portable kernel when its ownership and build
-path are explicit. It is not automatically faster than optimized C++.
-
-Native executables, libraries, configuration, and assets must provide CMake
-install rules for `bin`, `lib`, `etc/lingtu`, and `share/lingtu`. Production
-code must not assume a component build directory.
-
-Do not add dependencies without explicit approval. For third-party code, record
-its license, provenance, supported target, and actual Product role.
+Python owns Host and semantic/API behavior; C++ owns field sensor, SLAM, map,
+terrain, navigation, and driver hot paths. Portable Rust kernels need an
+explicit owner and build path. Native install rules publish `bin`, `lib`,
+`etc/lingtu`, and `share/lingtu`; deployed code must not require build directories.
+Record provenance, license, target, and use when adopting third-party code.
 
 ## Configuration and parameters
 
-Keep source-of-truth values with their owner:
-
-- Product behavior in `config/runtime_graph/products/*.yaml`.
-- Environment mapping in `config/runtime_graph/envs/*.yaml`.
-- Physical devices and calibration in RobotConfig and `config/devices.yaml`.
-- Algorithm defaults at the owning algorithm boundary.
-- Operator overrides only for bounded, documented tuning surfaces.
-
-Never embed a robot address, credential, map choice, or runtime env in Product
-source. Do not solve a field issue by weakening a production threshold without
-representative evidence.
+Product behavior belongs in Product YAML, environment bindings in Env YAML,
+and physical devices/calibration in RobotConfig and `config/devices.yaml`.
+Keep algorithm defaults with their owner and expose only bounded tuning knobs.
+Do not embed credentials, robot addresses, map choices, or env selection in a
+Product, or weaken field thresholds without representative evidence.
 
 ## Tests and style
 
-Start with the owning unit or contract test, then run only directly affected
-lint, type, native-build, simulation, or field gates. See
-[Testing](./testing.md) for claim levels.
-
-Useful repository checks include:
-
-```bash
-python tools/validate/validate_architecture_boundaries.py
-python tools/validate/validate_topics.py
-python tools/validate/validate_docs.py
-python -m pytest tests/docs/test_documentation_navigation.py -q
-```
-
-Run Ruff only on touched Python files. Run `bash -n` on changed shell scripts.
-Use a parser-only PowerShell check for changed `.ps1` files.
-
-## Commit and review
-
-Keep unrelated user changes intact. Prefer small, reversible commits with one
-clear purpose. A commit message should describe the owned behavior, not the
-editing activity.
-
-Before pushing:
-
-1. Review the exact diff and staged paths.
-2. Run the narrow validation that proves the change.
-3. Record known baseline failures separately from new failures.
-4. Do not claim field behavior without fresh S100P evidence.
-
-Git history is the archive. Do not keep completed plans, transcripts, or dated
-implementation diaries in `docs/`.
+See [Testing](testing.md#local-checks) for checks by task. Run Ruff only on
+changed Python files, `bash -n` on changed shell scripts, and parser-only
+checks on changed PowerShell scripts. New Python comments are English.
+Keep detailed implementation notes beside their owner and run evidence in
+its designated artifact store.

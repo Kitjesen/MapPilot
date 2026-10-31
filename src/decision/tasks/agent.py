@@ -181,11 +181,19 @@ _PLANNER_HANDLER_TOOLS.extend([
         "name": "find_object", "description": "Find and visually verify the described object.",
         "parameters": {"type": "object", "properties": {"target": {"type": "string"}}, "required": ["target"]}}},
     {"type": "function", "function": {
-        "name": "follow_person", "description": "Follow the described person until cancellation or the task deadline.",
+        "name": "follow_person", "description": (
+            "Follow the described person through this Agent run's owned motion task and wait for its "
+            "real terminal result. Success requires verified domain feedback, not only task submission. "
+            "Use visible clothing or appearance from the user's description; me or him alone does not "
+            "identify a person. Request clarification instead of guessing the speaker's appearance."
+        ),
         "parameters": {"type": "object", "properties": {"description": {"type": "string"}},
                        "required": ["description"]}}},
     {"type": "function", "function": {
-        "name": "stop_servo", "description": "Request cancellation of this Agent's own motion only.",
+        "name": "stop_servo", "description": (
+            "Request cancellation of only this Agent run's owned motion. The response confirms the "
+            "request, not that physical motion has stopped."
+        ),
         "parameters": {"type": "object", "properties": {}}}},
 ])
 
@@ -211,12 +219,24 @@ def skills_to_openai_tools(tool_list: list[dict]) -> list[dict]:
     """
     result = []
     for t in tool_list:
+        description = t.get("description", "")
+        output_schema = t.get("outputSchema")
+        if output_schema is not None:
+            compact_schema = json.dumps(output_schema, ensure_ascii=False, separators=(",", ":"))
+            description = f"{description}\nReturns JSON matching: {compact_schema}".strip()
+        read_only = t.get("annotations", {}).get("readOnlyHint")
+        if read_only is True:
+            description = f"{description}\nRead-only: does not change robot or task state.".strip()
+        elif read_only is False:
+            description = (
+                f"{description}\nChanges runtime state; task ownership and motion gates still apply."
+            ).strip()
         result.append(
             {
                 "type": "function",
                 "function": {
                     "name": t["name"],
-                    "description": t.get("description", ""),
+                    "description": description,
                     "parameters": t.get("inputSchema", {"type": "object", "properties": {}}),
                 },
             }
@@ -235,16 +255,24 @@ Available information:
 
 Rules:
 - Break complex tasks into steps and execute them one at a time.
+- Choose exactly one available tool per turn; wait for its result before choosing the next action.
 - Use detect_object to check if something is visible before navigating to it.
 - Use query_memory for fuzzy location requests ("the place where I left my backpack last time").
 - Use navigate_to_object for objects currently in view.
+- Use find_object(target) when the requested object is not currently visible.
+  This tool explores using the map and verifies candidates visually; a detection miss is not search failure.
 - Use navigate_to for known coordinates.
 - Use follow_person(description) to continuously follow a specific person
   (e.g. "follow the person in red"); call stop_servo to cancel following.
+- A speaker reference such as "me" or "him" is not a visual identity. If no visual
+  description or selected identity is provided, ask for it without starting motion.
+  Never invent clothing or select the nearest person to resolve the reference.
 - Use describe_scene() when you need to understand what the robot currently sees.
 - Use assess_situation(goal) when you are unsure whether the current view is helpful.
-- Call done() when the task is complete.
-- If you cannot complete the task after several attempts, call done() with an explanation.
+- Detection, task admission and navigation arrival alone do not prove an object was found.
+  Execution tools wait for domain feedback; report success only when that feedback confirms success.
+- Call done(success=true) when the task is complete.
+- If you cannot complete the task, call done(success=false) with an explanation.
 """
 
 
@@ -274,6 +302,7 @@ class AgentLoop:
         max_steps: int = 10,
         timeout: float = 120.0,
         *,
+        llm_timeout: float | None = None,
         tool_handlers: dict[str, Callable] | None = None,
         cancelled: Callable[[], bool] | None = None,
         completion_check: Callable[[], str | None] | None = None,
@@ -300,6 +329,7 @@ class AgentLoop:
         self._context_fn = context_fn
         self._max_steps = max_steps
         self._timeout = timeout
+        self._llm_timeout = llm_timeout if llm_timeout is not None else timeout
         self._vlm_agent = None  # lazy-initialized on first VLM tool call
 
         # W2-12: tool-call audit log + required-argument schemas for the 7
@@ -335,28 +365,10 @@ class AgentLoop:
         ctx = self._context_fn()
         # Ensure new keys have defaults for backward-compat with older context_fn
         ctx.setdefault("camera_available", ctx.get("camera_image") is not None)
-        c = ctx
-        system_msg = (
-            f"You are a navigation robot assistant. You execute tasks by calling tools in sequence.\n\n"
-            f"Available information:\n"
-            f"- Current position: ({c.get('robot_x', 0.0):.1f}, {c.get('robot_y', 0.0):.1f})\n"
-            f"- Visible objects: {c.get('visible_objects', 'N/A')}\n"
-            f"- Navigation status: {c.get('nav_status', 'N/A')}\n"
-            f"- Memory context: {c.get('memory_context', 'N/A')}\n"
-            f"- Camera available: {c.get('camera_available', False)}\n\n"
-            f"Rules:\n"
-            f"- Break complex tasks into steps and execute them one at a time.\n"
-            f"- Use detect_object to check if something is visible before navigating to it.\n"
-            f'- Use query_memory for fuzzy location requests ("the place where I left my backpack last time").\n'
-            f"- Use navigate_to_object for objects currently in view.\n"
-            f"- Use navigate_to for known coordinates.\n"
-            f"- Use follow_person(description) to continuously follow a specific person\n"
-            f"- Use follow_person with a description (e.g. 'person in red') to follow"
-            f" someone; call stop_servo to cancel following.\n"
-            f"- Use describe_scene() when you need to understand what the robot currently sees.\n"
-            f"- Use assess_situation(goal) when you are unsure whether the current view is helpful.\n"
-            f"- Call done(success=true) when the task is complete.\n"
-            f"- If you cannot complete the task, call done(success=false) with an explanation.\n"
+        system_msg = AGENT_SYSTEM_PROMPT.format(
+            robot_x=ctx.get("robot_x", 0.0), robot_y=ctx.get("robot_y", 0.0),
+            visible_objects=ctx.get("visible_objects", "N/A"), nav_status=ctx.get("nav_status", "N/A"),
+            memory_context=ctx.get("memory_context", "N/A"), camera_available=ctx["camera_available"],
         )
         state.messages = [
             {"role": "system", "content": system_msg},
@@ -376,12 +388,20 @@ class AgentLoop:
             state.step += 1
 
             # LLM call with tools
+            task_remaining = max(0.0, deadline - time.monotonic())
+            model_wait_timeout = min(self._llm_timeout, task_remaining)
+            task_deadline_is_limit = task_remaining <= self._llm_timeout
             try:
-                response = await asyncio.wait_for(self._llm_call(state.messages),
-                                                  timeout=max(0.0, deadline - time.monotonic()))
+                response = await asyncio.wait_for(
+                    self._llm_call(state.messages),
+                    timeout=model_wait_timeout,
+                )
             except asyncio.TimeoutError:
-                state.summary = f"Timeout after {self._timeout}s"
-                state.failure_reason = "timeout"
+                state.summary = (
+                    f"Timeout after {self._timeout}s" if task_deadline_is_limit
+                    else f"Model request timed out after {self._llm_timeout}s"
+                )
+                state.failure_reason = "timeout" if task_deadline_is_limit else "llm_timeout"
                 state.completed = True
                 break
             except Exception as e:
@@ -402,8 +422,21 @@ class AgentLoop:
                         state.completed = True
                         break
                     try:
-                        await asyncio.wait_for(self._execute_tool(tc, state),
-                                               timeout=max(0.0, deadline - time.monotonic()))
+                        tool_name = tc.get("function", {}).get("name", "")
+                        if tool_name == "follow_person":
+                            # Follow is an explicitly sustained domain task. Its
+                            # owner decides when it reaches a terminal state;
+                            # Agent replacement/cancellation still cancels this
+                            # await immediately. Exclude only that owned wait
+                            # from the finite reasoning/action budget.
+                            wait_started = time.monotonic()
+                            await self._execute_tool(tc, state, assistant_message=response)
+                            deadline += time.monotonic() - wait_started
+                        else:
+                            await asyncio.wait_for(
+                                self._execute_tool(tc, state, assistant_message=response),
+                                timeout=max(0.0, deadline - time.monotonic()),
+                            )
                     except asyncio.TimeoutError:
                         state.summary = f"Timeout after {self._timeout}s"
                         state.failure_reason = "timeout"
@@ -412,7 +445,7 @@ class AgentLoop:
                     if state.completed:
                         break
             elif response.get("content"):
-                state.messages.append({"role": "assistant", "content": response["content"]})
+                state.messages.append({"role": "assistant", **response})
                 logger.debug("AgentLoop step %d: LLM text: %s", state.step, response["content"][:100])
             else:
                 state.summary = "LLM returned empty response"
@@ -479,6 +512,7 @@ class AgentLoop:
                                 return {
                                     "tool_calls": [
                                         {
+                                            "type": "function",
                                             "function": {"name": tool_name, "arguments": json.dumps(args)},
                                             "id": f"call_{time.time_ns()}",
                                         }
@@ -507,20 +541,26 @@ class AgentLoop:
             return "argument 'success' must be a boolean"
         return None
 
-    async def _execute_tool(self, tool_call: dict, state: AgentState) -> str:
+    async def _execute_tool(
+        self, tool_call: dict, state: AgentState, *, assistant_message: dict | None = None,
+    ) -> str:
         """Execute a single tool call and append results to message history."""
         if self._cancelled():
             raise asyncio.CancelledError
         fn = tool_call.get("function", {})
         name = fn.get("name", "")
+        validation_err = None
         try:
             args = json.loads(fn.get("arguments", "{}"))
-        except json.JSONDecodeError:
+            if not isinstance(args, dict):
+                validation_err = "tool arguments must be a JSON object"
+        except (json.JSONDecodeError, TypeError):
             args = {}
+            validation_err = "tool arguments must be a valid JSON object"
 
         # Append assistant tool call
         state.messages.append(
-            {
+            {"role": "assistant", **assistant_message} if assistant_message is not None else {
                 "role": "assistant",
                 "content": None,
                 "tool_calls": [tool_call],
@@ -528,7 +568,7 @@ class AgentLoop:
         )
 
         # self-correction instead of silently skipping.
-        validation_err = self._validate_tool_call(name, args)
+        validation_err = validation_err or self._validate_tool_call(name, args)
         if validation_err is not None:
             summary = f"VALIDATION_ERROR: {validation_err}"
             self._tool_call_audit.append(
@@ -570,7 +610,12 @@ class AgentLoop:
                     result = await handler(**args)
                 else:
                     result = handler(**args)
-                result = str(result) if result is not None else "OK"
+                if isinstance(result, (dict, list)):
+                    result = json.dumps(result, ensure_ascii=False)
+                elif result is not None:
+                    result = str(result)
+                else:
+                    result = "OK"
             except Exception as e:
                 result = f"Error: {e}"
                 logger.warning("AgentLoop: tool '%s' failed: %s", name, e)

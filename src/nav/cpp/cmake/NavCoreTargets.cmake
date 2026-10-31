@@ -42,6 +42,16 @@ if(WIN32)
 endif()
 find_package(Eigen3 REQUIRED CONFIG)
 
+if(NOT TARGET lingtu_nav_body)
+  add_library(lingtu_nav_body STATIC
+    "${LINGTU_NAV_CPP_ROOT}/collision/body.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/collision/body_io.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/collision/terrain.cpp")
+  target_compile_features(lingtu_nav_body PUBLIC cxx_std_17)
+  target_include_directories(lingtu_nav_body PUBLIC "${LINGTU_NAV_CPP_ROOT}")
+  set_target_properties(lingtu_nav_body PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
+
 if(NOT TARGET lingtu_nav_far)
   add_library(lingtu_nav_far STATIC
     "${LINGTU_NAV_GLOBAL_PLANNING_DIR}/far/planner.cpp")
@@ -105,9 +115,8 @@ if(NOT TARGET lingtu_nav_local_planner)
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/path_searching/dyn_a_star.cpp"
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/plan_env/grid_map.cpp"
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/plan_manage/planner_manager.cpp"
-    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/plan_manage/scan_replan_fsm.cpp"
-    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/traj_utils/polynomial_traj.cpp"
-    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/recovery.cpp")
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/plan_manage/planner_fsm.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/traj_utils/polynomial_traj.cpp")
   add_library(LingTuNav::local_planner ALIAS lingtu_nav_local_planner)
   add_library(local_planner_cpp ALIAS lingtu_nav_local_planner)
   target_compile_features(lingtu_nav_local_planner PUBLIC cxx_std_17)
@@ -118,6 +127,7 @@ if(NOT TARGET lingtu_nav_local_planner)
   target_link_libraries(lingtu_nav_local_planner PUBLIC
     Threads::Threads
     Eigen3::Eigen
+    lingtu_nav_body
     lingtu_nav_spline)
   set_target_properties(lingtu_nav_local_planner PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
@@ -152,8 +162,11 @@ endif()
 if(NOT TARGET lingtu_nav_navigation)
   add_library(lingtu_nav_navigation STATIC
     "${LINGTU_NAV_NAVIGATION_DIR}/executor.cpp"
+    "${LINGTU_NAV_NAVIGATION_DIR}/pose_route.cpp"
     "${LINGTU_NAV_NAVIGATION_DIR}/recovery.cpp"
+    "${LINGTU_NAV_NAVIGATION_DIR}/recovery_search.cpp"
     "${LINGTU_NAV_NAVIGATION_DIR}/route.cpp"
+    "${LINGTU_NAV_NAVIGATION_DIR}/stairs.cpp"
     "${LINGTU_NAV_NAVIGATION_DIR}/state.cpp")
   add_library(LingTuNav::navigation ALIAS lingtu_nav_navigation)
   target_compile_features(lingtu_nav_navigation PUBLIC cxx_std_17)

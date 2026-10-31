@@ -33,7 +33,7 @@
    fastlio.cpp::startSaveMapAsync 只要曾有成功优化，就采用此结果；writeCapturedMap
    将其写入关键帧、点云和逐帧轨迹。这解释了错误如何进入保存产物；重锚定本身并非证明算错。
 
-NX 最小复现使用当前 libmap_opt.a、libpose_graph_opt.a 和正式信息矩阵转换函数：
+NX 最小复现使用当前 libmap_optimization.a、libpose_graph_opt.a 和正式信息矩阵转换函数：
 平坦的 4 m 方形五节点，顺序边带 3 cm 高度误差，闭环无误差。
 没有倾斜观测时求解成功，代价 0.18 降至 1.40e-16，但本来为零的横滚/俯仰被改变
 约 0.007–0.008 rad。加入独立的倾斜约束作诊断对照后，此变化明显受限。
@@ -109,7 +109,7 @@ OnlinePoseGraph 的 map_from_odom 输出使用同一计算。保存使用这些�
 
 ## 配准拒绝的进一步回放
 
-在 NX 上调用正式 generate_sequential_constraint 和当前 ARM map_opt 库，读取
+在 NX 上调用正式 generate_sequential_constraint 和当前 ARM map_optimization 库，读取
 903room_v2 的 129 份 body-local patches 与已保存 poses.txt，保持所有验收门限不变。
 这不是历史在线过程的精确重放：原始完整位姿、当时每轮图状态未保存，不能将下面
 拒绝数替代现场记录的 42 次，也不能据此确定造成 63 cm 高差的具体回环边。
@@ -126,7 +126,7 @@ OnlinePoseGraph 的 map_from_odom 输出使用同一计算。保存使用这些�
 上的重复采样导致额外拒绝，证实保持旧锚点会将局部失败放大为长段未接入图。
 并非原始点云被丢弃：OnlineMapping 保留这些帧，但只能沿用此前锚点的修正。
 
-这也是 MIGRATION.md / NEXT_STEPS.md 曾记录的配准覆盖缺口类型，不能当成已经
+这也是[迁移记录](../research/localization-opt-migration.md)和[后续计划](../roadmap/localization-opt-next-steps.md)曾记录的配准覆盖缺口类型，不能当成已经
 随重力补丁解决。保存时 assembly 要求完整相邻链，在线流程则允许跳过节点；
 本图第 3->4 边被拒绝，导致保存阶段额外优化被跳过，不代表在线没有优化过。
 加密采样没有改善整体通过率，因此未修改生产采样尺度或放宽几何门限。

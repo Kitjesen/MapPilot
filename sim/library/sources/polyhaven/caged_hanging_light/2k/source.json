@@ -1,0 +1,45 @@
+{
+  "provider": "Poly Haven",
+  "asset_id": "caged_hanging_light",
+  "name": "Caged Hanging Light",
+  "authors": {
+    "Ulan Cabanilla": "All"
+  },
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "source_url": "https://polyhaven.com/a/caged_hanging_light",
+  "resolution": "2k",
+  "model": "caged_hanging_light_2k.gltf",
+  "files": [
+    {
+      "path": "caged_hanging_light_2k.gltf",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/2k/caged_hanging_light/caged_hanging_light_2k.gltf",
+      "bytes": 3098
+    },
+    {
+      "path": "textures/caged_hanging_light_emissive_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/caged_hanging_light/caged_hanging_light_emissive_2k.jpg",
+      "bytes": 215883
+    },
+    {
+      "path": "textures/caged_hanging_light_nor_gl_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/caged_hanging_light/caged_hanging_light_nor_gl_2k.jpg",
+      "bytes": 2654221
+    },
+    {
+      "path": "textures/caged_hanging_light_diff_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/caged_hanging_light/caged_hanging_light_diff_2k.jpg",
+      "bytes": 2099065
+    },
+    {
+      "path": "textures/caged_hanging_light_arm_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/caged_hanging_light/caged_hanging_light_arm_2k.jpg",
+      "bytes": 3331285
+    },
+    {
+      "path": "caged_hanging_light.bin",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/caged_hanging_light/caged_hanging_light.bin",
+      "bytes": 711056
+    }
+  ]
+}

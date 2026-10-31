@@ -1,0 +1,30 @@
+{
+  "provider": "Poly Haven",
+  "asset_id": "concrete_floor_worn_001",
+  "name": "Concrete Floor Worn 001",
+  "authors": {
+    "Dimitrios Savva": "Photography",
+    "Rico Cilliers": "Processing"
+  },
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "source_url": "https://polyhaven.com/a/concrete_floor_worn_001",
+  "resolution": "2k",
+  "maps": {
+    "diff": {
+      "file": "concrete_floor_worn_001_diff_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/concrete_floor_worn_001/concrete_floor_worn_001_diff_2k.jpg",
+      "bytes": 482906
+    },
+    "nor_gl": {
+      "file": "concrete_floor_worn_001_nor_gl_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/concrete_floor_worn_001/concrete_floor_worn_001_nor_gl_2k.jpg",
+      "bytes": 870609
+    },
+    "rough": {
+      "file": "concrete_floor_worn_001_rough_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/concrete_floor_worn_001/concrete_floor_worn_001_rough_2k.jpg",
+      "bytes": 735249
+    }
+  }
+}

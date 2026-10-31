@@ -18,7 +18,7 @@ contract to one vendor API. `Velocity` is always expressed as `vx_mps`,
 LingTu driver. The common driver owns DDS, command freshness, speed limits,
 single-writer enforcement, status, and shutdown safety.
 
-DOSO SDK 0.5 or newer owns gRPC, mTLS, Lease, sequence, retry, checked stop,
+DOSO SDK 0.6 or newer owns gRPC, mTLS, Lease, sequence, retry, checked stop,
 and typed Brainstem control/body state. `Doso` only maps those public types to
 LingTu's neutral `Body` interface. The motion adapter does not start IMU or
 joint telemetry streams; sensor consumers opt into those long-lived streams
@@ -46,6 +46,48 @@ Change it in the selected model's `robot.yaml`, then rebuild and deploy the matc
 driver. ProductControl publishes that value in `/run/lingtu/session.env` and
 restarts the driver when the resolved configuration changes.
 
+## Stair controller profiles
+
+The same driver consumes `/driver/profile/request` and publishes
+`/driver/profile/state`. A request reuses the navigation `task_id` and asks for
+`stairs_up`, `stairs_down`, `restore`, or `hold`; it introduces no per-attempt identity.
+The navigation executor renews the request while the handoff or traversal is
+active. DDS requests are volatile and must have a timestamp within one second.
+The driver retains the existing single final-velocity-writer gate.
+
+`ProfileSwitch` performs the landing handoff in the driver loop. It waits for a
+fresh checked zero command, stops/releases locomotion, observes Grounded when
+required, requests the configured controller, separately reads its actual name,
+stands again and obtains motion readiness. The model command's response alone
+never confirms the active profile. The planned transition reports
+`ready=false`, `control_assured=false`, `lease_valid=false` and
+`reason=profile_transition`; this is an intentional hold, not a terminal
+navigation failure. No second velocity writer exists.
+
+The original actual controller name is retained across consecutive flights
+in this driver process. A driver restart loses that observation; a restore
+request then reports `previous_profile_unknown`, never a guessed default.
+`restore` returns to that exact name after nav confirms exit onto a landing.
+An explicit matching-task `hold` immediately suspends further body/profile
+actions while retaining the handoff. Losing requests, pausing or cancelling
+never restores a normal profile on the flight. A stale request stops further body/profile commands; a subsequent fresh
+request resumes the retained handoff. RPC failures wait for retry without a
+separate navigation replan budget.
+
+DOSO maps `Body::readProfile` and `switchProfile` to SDK 0.6's `GetProfile`,
+`GetCmsState`, and `SwitchProfile`. The server's Grounded prerequisite is
+retained. Configure `--stairs-up-profile` and `--stairs-down-profile` only with
+installed and qualified profiles (environment variables
+`LINGTU_DRIVER_STAIRS_UP_PROFILE` and `LINGTU_DRIVER_STAIRS_DOWN_PROFILE`). Empty
+bindings report unsupported stairs and do not disable ordinary navigation.
+The source fields are `driver.stairs_up_profile` and
+`driver.stairs_down_profile` in the selected RobotConfig. ProductControl's
+existing RunPlan resolution exports these values to the driver; do not maintain
+a separate profile binding in the browser or the stair map annotation.
+Go2 currently has no verified actual controller-profile readback binding; its
+profile capability remains unsupported rather than interpreting a gait number
+as model confirmation. Mock tests do not qualify a real stair policy.
+
 ## Why the robot is selected at build time
 
 The Doso build uses the Ubuntu CycloneDDS C runtime. Unitree SDK2 ships its
@@ -70,7 +112,7 @@ starting the driver.
 
 The Go2 target must have SDK2 installed at `/opt/unitree_robotics`, or set
 `LINGTU_UNITREE_SDK2_PREFIX` consistently for both build and service startup.
-The Doso target must have DOSO SDK 0.5+ (`BrainstemClient`) installed for CMake discovery;
+The Doso target must have DOSO SDK 0.6+ (`BrainstemClient`) installed for CMake discovery;
 set `LINGTU_BRAINSTEM_CLIENT_PREFIX` when it is not under a standard prefix.
 
 ## Runtime configuration
@@ -125,6 +167,27 @@ mode is not used in the field driver. Do not issue concurrent motion commands
 from the Unitree App or remote controller while LingTu owns the final command
 path.
 
+The Web keyboard and browser-connected USB/Bluetooth gamepad use the existing
+typed operator-input path into native navigation; neither sends `Move` directly
+to the vendor endpoint. The Go2 factory handheld remote is not integrated into
+that path. SDK2 exposes [`SportClient::SwitchJoystick(bool)`](https://github.com/unitreerobotics/unitree_sdk2/blob/main/include/unitree/robot/go2/sport/sport_client.hpp)
+and [`WirelessController_`](https://github.com/unitreerobotics/unitree_sdk2/blob/main/include/unitree/idl/go2/WirelessController_.hpp)
+with four stick axes and button bits, but the message has no radio-link validity,
+remote timestamp or input sequence. Fresh `LowState` alone cannot establish
+fresh wireless input. Unitree's [motion service documentation](https://support.unitree.com/home/en/developer/Motion_Services_Interface_V2.0)
+states that disabling joystick response prevents stick movement from
+interfering with the program; it does not specify the three handoff facts below.
+The current driver therefore does not disable firmware
+joystick handling or claim to safely arbitrate factory-remote motion.
+
+Before connecting that remote to the operator protocol, verify on the named Go2
+firmware that input remains available after joystick handling is disabled,
+confirm what happens to factory stop controls, and check transmitter disconnect
+behavior. The integration must normalize vendor input and publish existing
+operator intent; final checked velocity must still come back through this driver.
+Do not enable the optional SDK lease thread or substitute direct remote motion
+for this handoff.
+
 Go2's raw `SportModeState.error_code` is retained as `adapter.state_code` for
 diagnosis. It is not promoted to a LingTu health fault without a documented
 SDK2 interpretation; fresh Sport state and motion mode remain the public health
@@ -141,4 +204,6 @@ watchdog, fault, or shutdown zeroes. `active_motion_run` and
 command distance, start/end odometry, measured displacement, ratio, and ending
 output kind. This is the evidence used to diagnose a command such as
 `0.30 m/s` for `3 s` without inferring distance from the requested speed alone.
+Product travel distance is estimated by localization using continuous SLAM
+odometry. The body positions above remain bounded-run diagnostics.
 Restarting the service does not power off the robot or expansion computer.

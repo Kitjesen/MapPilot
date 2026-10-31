@@ -1,0 +1,40 @@
+{
+  "extends": "stairs.json",
+  "name": "mujoco_stair_descent",
+  "simulation_session": "sim/sessions/examples/thunderv4_stairs/descent.yaml",
+  "initial_pose": [
+    5.9,
+    0.0,
+    1.155,
+    3.141592653589793
+  ],
+  "goal": [
+    -1.0,
+    0.0,
+    0.465
+  ],
+  "goal_world": [
+    -1.0,
+    0.0,
+    0.465
+  ],
+  "goals": [
+    {
+      "id": "down",
+      "goal": [
+        -1.0,
+        0.0,
+        0.465
+      ],
+      "goal_world": [
+        -1.0,
+        0.0,
+        0.465
+      ],
+      "profile_sequence": [
+        "stairs_down",
+        "restore"
+      ]
+    }
+  ]
+}

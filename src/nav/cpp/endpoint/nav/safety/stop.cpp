@@ -273,101 +273,199 @@ MotionStopTerminalCommit MotionStopBarrier::deferGoalAbort(const std::string &re
 }
 
 MotionStopResult MotionStopBarrier::failClosed(MotionStopResult result) const {
-  actions_.record_stop_evidence_failure(result.reason);
+  if (!result.pending) actions_.record_stop_evidence_failure(result.reason);
+  return result;
+}
+
+bool MotionStopBarrier::confirmationPending() const noexcept {
+  return pending_confirmation_.has_value();
+}
+
+std::string MotionStopBarrier::confirmationKey() const {
+  return pending_confirmation_ ? pending_confirmation_->key : std::string{};
+}
+
+void MotionStopBarrier::resetAfterMotionStart() const {
+  completed_confirmation_.reset();
+}
+
+void MotionStopBarrier::cancelPendingResume() const {
+  if (pending_confirmation_ && pending_confirmation_->key.rfind("resume", 0) == 0) {
+    replaceConfirmation();
+  }
+}
+
+void MotionStopBarrier::replaceConfirmation() const {
+  pending_confirmation_.reset();
+  completed_confirmation_.reset();
+}
+
+std::optional<MotionStopResult> MotionStopBarrier::poll() const {
+  if (!pending_confirmation_) return std::nullopt;
+  const auto state = actions_.confirm_zero(pending_confirmation_->output_sequence);
+  if (state == StopConfirmationState::Pending) {
+    return MotionStopResult{false, "stop_confirmation_pending", true};
+  }
+  PendingConfirmation pending = std::move(*pending_confirmation_);
+  pending_confirmation_.reset();
+  if (state != StopConfirmationState::Confirmed && pending.key.rfind("pause:", 0) == 0) {
+    // Preserve the requested pause and its ticket across a reconnect. A fresh
+    // zero publication starts the next evidence attempt; no motion is released.
+    const std::string failure = (state == StopConfirmationState::DriverRejected
+                                    ? "driver_rejected_zero_" : "stop_confirmation_timeout_") +
+                                    pending.failure_suffix;
+    actions_.record_stop_evidence_failure(failure);
+    pending.output_sequence = actions_.last_output_sequence();
+    pending_confirmation_ = std::move(pending);
+    return MotionStopResult{false, failure, true};
+  }
+  MotionStopResult result;
+  if (state == StopConfirmationState::Confirmed) {
+    result = pending.commit ? pending.commit()
+                            : MotionStopResult{true, pending.confirmed_reason};
+  } else {
+    result = {false, (state == StopConfirmationState::DriverRejected
+                         ? "driver_rejected_zero_" : "stop_confirmation_timeout_") +
+                         pending.failure_suffix};
+    if (pending.fail_closed) result = failClosed(std::move(result));
+  }
+  if (pending.retain_completion) {
+    completed_confirmation_ = CompletedConfirmation{std::move(pending.key), result};
+  }
+  return result;
+}
+
+std::optional<MotionStopResult>
+MotionStopBarrier::replayConfirmation(const std::string &key) const {
+  if (pending_confirmation_ && pending_confirmation_->key == key) {
+    auto result = poll();
+    if (result && result->pending) return result;
+    if (result && !completed_confirmation_) return result;
+  }
+  if (completed_confirmation_ && completed_confirmation_->key == key) {
+    auto result = std::move(completed_confirmation_->result);
+    completed_confirmation_.reset();
+    return result;
+  }
+  return std::nullopt;
+}
+
+MotionStopResult MotionStopBarrier::confirmTransition(
+    const std::string &key, const std::string &confirmed_reason,
+    const std::string &failure_suffix, bool fail_closed,
+    std::function<MotionStopResult()> commit, std::optional<std::uint64_t> sequence,
+    bool retain_completion) const {
+  if (auto replay = replayConfirmation(key)) return *replay;
+  replaceConfirmation();
+  if (!publish_cmd_vel_) {
+    MotionStopResult failure{false, "zero_publish_unavailable_" + failure_suffix};
+    return fail_closed ? failClosed(std::move(failure)) : failure;
+  }
+  const auto output_sequence = sequence ? *sequence : actions_.last_output_sequence();
+  if (output_sequence == 0U) {
+    MotionStopResult failure{false, "zero_publish_unavailable_" + failure_suffix};
+    return fail_closed ? failClosed(std::move(failure)) : failure;
+  }
+  pending_confirmation_ = PendingConfirmation{key, output_sequence, confirmed_reason,
+                                             failure_suffix, fail_closed, retain_completion,
+                                             std::move(commit)};
+  auto result = *poll();
+  if (!result.pending) completed_confirmation_.reset();
   return result;
 }
 
 MotionStopResult MotionStopBarrier::confirmAndCommitTerminal(
     MotionStopTerminalCommit commit_terminal, const std::string &confirmed_reason,
-    const std::string &failure_suffix, bool fail_closed) const {
-  const MotionStopResult confirmation = confirmLastZero(confirmed_reason, failure_suffix);
-  if (!confirmation.accepted) {
-    return fail_closed ? failClosed(confirmation) : confirmation;
-  }
-  commit_terminal();
-  return confirmation;
+    const std::string &failure_suffix, bool fail_closed, bool retain_completion) const {
+  return confirmTransition(confirmed_reason + ":" + failure_suffix, confirmed_reason,
+                           failure_suffix, fail_closed,
+                           [commit_terminal = std::move(commit_terminal), confirmed_reason] {
+                             if (commit_terminal) commit_terminal();
+                             return MotionStopResult{true, confirmed_reason};
+                           }, std::nullopt, retain_completion);
 }
 
 MotionStopResult MotionStopBarrier::confirmLastZero(const std::string &confirmed_reason,
                                                         const std::string &failure_suffix) const {
-  if (!publish_cmd_vel_) {
-    return {
-        false,
-        "zero_publish_unavailable_" + failure_suffix,
-    };
-  }
-  const std::uint64_t output_sequence = actions_.last_output_sequence();
-  if (output_sequence == 0U) {
-    return {
-        false,
-        "zero_publish_unavailable_" + failure_suffix,
-    };
-  }
-  const StopConfirmationState state = actions_.confirm_zero(output_sequence);
-  if (state == StopConfirmationState::Confirmed) {
-    return {true, confirmed_reason};
-  }
-  if (state == StopConfirmationState::DriverRejected) {
-    return {
-        false,
-        "driver_rejected_zero_" + failure_suffix,
-    };
-  }
-  return {
-      false,
-      "stop_confirmation_timeout_" + failure_suffix,
-  };
+  return confirmTransition(confirmed_reason + ":" + failure_suffix, confirmed_reason,
+                           failure_suffix, false, {}, std::nullopt, true);
 }
 
 MotionStopResult MotionStopBarrier::cancel() const {
+  const auto result = runCancelPipeline(std::nullopt);
+  return {result.accepted, result.reason, result.pending};
+}
+
+MotionStopTerminalBarrierResult
+MotionStopBarrier::runCancelPipeline(std::optional<MotionStopTerminalCommit> commit_terminal) const {
+  if (auto replay = replayConfirmation("cancelled:cancel_remains_stopped")) {
+    return {replay->accepted, replay->reason, replay->accepted, replay->pending};
+  }
+  replaceConfirmation();
   actions_.cancel_control();
   actions_.clear_operator_resume_required();
   actions_.cancel_inspection("navigation_cancelled");
-  MotionStopTerminalCommit commit_cancelled = deferGoalAbort("cancelled");
+  if (!commit_terminal) commit_terminal = deferGoalAbort("cancelled");
   if (!clearMotionOutputs("cancelled")) {
-    return failClosed({false, "zero_publish_failed"});
+    const auto failure = failClosed({false, "zero_publish_failed"});
+    return {failure.accepted, failure.reason, false};
   }
-  return confirmAndCommitTerminal(std::move(commit_cancelled), "cancelled",
-                                  "cancel_remains_stopped", true);
+  const auto result = confirmAndCommitTerminal(std::move(*commit_terminal), "cancelled",
+                                              "cancel_remains_stopped", true);
+  return {result.accepted, result.reason, result.accepted, result.pending};
 }
 
 MotionStopTerminalBarrierResult
 MotionStopBarrier::cancelPreservingGoalTerminal(MotionStopTerminalCommit commit_terminal) const {
-  actions_.cancel_control();
-  actions_.clear_operator_resume_required();
-  actions_.cancel_inspection("navigation_cancelled");
-  if (!clearMotionOutputs("cancelled")) {
-    const MotionStopResult failure = failClosed({false, "zero_publish_failed"});
-    return {failure.accepted, failure.reason, false};
-  }
-  const MotionStopResult confirmation = confirmLastZero("cancelled", "cancel_remains_stopped");
-  if (!confirmation.accepted) {
-    const MotionStopResult failure = failClosed(confirmation);
-    return {failure.accepted, failure.reason, false};
-  }
-  commit_terminal();
-  return {true, confirmation.reason, true};
+  return runCancelPipeline(std::move(commit_terminal));
 }
 
 MotionStopResult MotionStopBarrier::pauseTask(
-    MotionStopTerminalCommit commit_paused) const {
+    MotionStopTerminalCommit commit_paused, const std::string &identity) const {
+  const auto key = "pause:" + identity;
+  if (auto replay = replayConfirmation(key)) return *replay;
+  replaceConfirmation();
   actions_.stop_control();
   if (!actions_.suspend_motion_outputs("task_paused")) {
     return failClosed({false, "zero_publish_failed_pause_remains_stopped"});
   }
-  return confirmAndCommitTerminal(std::move(commit_paused), "pause_requested",
-                                  "pause_remains_stopped", true);
+  return confirmTransition(key, "pause_requested", "pause_remains_stopped", true,
+                           [commit_paused = std::move(commit_paused)] {
+                             commit_paused();
+                             return MotionStopResult{true, "pause_requested"};
+                           });
+}
+
+MotionStopResult MotionStopBarrier::resumeTask(MotionStopTerminalCommit commit_resumed,
+                                               double source_stamp_s,
+                                               const std::string &identity) const {
+  const auto key = "resume_task:" + identity;
+  if (auto replay = replayConfirmation(key)) return *replay;
+  replaceConfirmation();
+  if (!actions_.suspend_motion_outputs("task_resuming")) {
+    return failClosed({false, "zero_publish_failed_resume_remains_stopped"});
+  }
+  return confirmTransition(key, "resume_requested", "resume_remains_stopped", true,
+                           [this, commit_resumed = std::move(commit_resumed), source_stamp_s] {
+                             if (!actions_.resume_control()) return MotionStopResult{false, "estop_latched"};
+                             actions_.set_autonomy_request_not_before(source_stamp_s);
+                             actions_.clear_operator_resume_required();
+                             commit_resumed();
+                             return MotionStopResult{true, "resume_requested"};
+                           });
 }
 
 MotionStopResult
 MotionStopBarrier::confirmGoalReplanStop(const std::string &reason) const {
+  if (auto replay = replayConfirmation("replan_stop_confirmed:goal_replan_pending")) return *replay;
+  replaceConfirmation();
   actions_.stop_control();
   if (!clearMotionOutputs(reason)) {
     return failClosed({false, "zero_publish_failed_goal_replan_pending"});
   }
   const MotionStopResult confirmation =
       confirmLastZero("replan_stop_confirmed", "goal_replan_pending");
-  if (!confirmation.accepted) {
+  if (!confirmation.accepted && !confirmation.pending) {
     return failClosed(confirmation);
   }
   return confirmation;
@@ -376,6 +474,8 @@ MotionStopBarrier::confirmGoalReplanStop(const std::string &reason) const {
 MotionStopResult
 MotionStopBarrier::commitGoalTerminalAfterStop(const std::string &reason,
                                                    MotionStopTerminalCommit commit_terminal) const {
+  if (auto replay = replayConfirmation(reason + ":goal_terminal_pending")) return *replay;
+  replaceConfirmation();
   actions_.stop_control();
   if (!clearMotionOutputs(reason)) {
     return failClosed({false, "zero_publish_failed_goal_terminal_pending"});
@@ -385,20 +485,13 @@ MotionStopBarrier::commitGoalTerminalAfterStop(const std::string &reason,
 }
 
 MotionStopResult MotionStopBarrier::stop() const {
-  actions_.stop_control();
-  actions_.clear_operator_resume_required();
-  actions_.cancel_inspection("navigation_stopped");
-  MotionStopTerminalCommit commit_stopped = deferGoalAbort("stopped");
-  if (!clearMotionOutputs("stopped")) {
-    return failClosed({false, "zero_publish_failed"});
-  }
-  return confirmAndCommitTerminal(std::move(commit_stopped), "stopped", "stop_remains_latched",
-                                  true);
+  const auto result = runStopPipeline(std::nullopt, true);
+  return {result.accepted, result.reason, result.pending};
 }
 
 MotionStopResult MotionStopBarrier::stopWithoutTerminalCommit() const {
   const MotionStopTerminalBarrierResult stopped = runStopPipeline(std::nullopt);
-  return {stopped.accepted, stopped.reason};
+  return {stopped.accepted, stopped.reason, stopped.pending};
 }
 
 MotionStopTerminalBarrierResult
@@ -407,36 +500,40 @@ MotionStopBarrier::stopPreservingGoalTerminal(MotionStopTerminalCommit commit_te
 }
 
 MotionStopTerminalBarrierResult MotionStopBarrier::runStopPipeline(
-    std::optional<MotionStopTerminalCommit> commit_terminal) const {
+    std::optional<MotionStopTerminalCommit> commit_terminal, bool defer_goal_terminal) const {
+  if (auto replay = replayConfirmation("stopped:stop_remains_latched")) {
+    return {replay->accepted, replay->reason,
+            replay->accepted && (defer_goal_terminal || commit_terminal.has_value()),
+            replay->pending};
+  }
+  replaceConfirmation();
   actions_.stop_control();
   actions_.clear_operator_resume_required();
   actions_.cancel_inspection("navigation_stopped");
+  if (defer_goal_terminal) commit_terminal = deferGoalAbort("stopped");
   if (!clearMotionOutputs("stopped")) {
     const MotionStopResult failure = failClosed({false, "zero_publish_failed"});
     return {failure.accepted, failure.reason, false};
   }
-  const MotionStopResult confirmation = confirmLastZero("stopped", "stop_remains_latched");
-  if (!confirmation.accepted) {
-    const MotionStopResult failure = failClosed(confirmation);
-    return {failure.accepted, failure.reason, false};
-  }
-  if (commit_terminal) {
-    (*commit_terminal)();
-  }
-  return {true, confirmation.reason, commit_terminal.has_value()};
+  const bool has_terminal = commit_terminal.has_value();
+  const auto result = confirmAndCommitTerminal(commit_terminal ? std::move(*commit_terminal)
+                                                              : MotionStopTerminalCommit{},
+                                              "stopped", "stop_remains_latched", true,
+                                              has_terminal);
+  return {result.accepted, result.reason, result.accepted && has_terminal, result.pending};
 }
 
 MotionStopResult MotionStopBarrier::estop(const std::string &reason) const {
   const MotionStopTerminalBarrierResult estopped =
       runEstopPipeline(reason, std::nullopt, true);
-  return {estopped.accepted, estopped.reason};
+  return {estopped.accepted, estopped.reason, estopped.pending};
 }
 
 MotionStopResult
 MotionStopBarrier::estopWithoutTerminalCommit(const std::string &reason) const {
   const MotionStopTerminalBarrierResult estopped =
       runEstopPipeline(reason, std::nullopt, false);
-  return {estopped.accepted, estopped.reason};
+  return {estopped.accepted, estopped.reason, estopped.pending};
 }
 
 MotionStopTerminalBarrierResult
@@ -449,6 +546,11 @@ MotionStopTerminalBarrierResult MotionStopBarrier::runEstopPipeline(
     const std::string &estop_reason,
     std::optional<MotionStopTerminalCommit> commit_terminal,
     bool defer_goal_terminal) const {
+  if (auto replay = replayConfirmation("estop_latched:estop_remains_latched")) {
+    return {replay->accepted, replay->reason,
+            replay->accepted && (defer_goal_terminal || commit_terminal.has_value()), replay->pending};
+  }
+  replaceConfirmation();
   actions_.latch_estop(estop_reason);
   const bool persisted = actions_.persist_estop_latch(estop_reason);
   actions_.cancel_control();
@@ -461,107 +563,75 @@ MotionStopTerminalBarrierResult MotionStopBarrier::runEstopPipeline(
         false,
     };
   }
-  const MotionStopResult confirmation = confirmLastZero("estop_latched", "estop_remains_latched");
-  if (!confirmation.accepted) {
-    return {confirmation.accepted, confirmation.reason, false};
-  }
-  if (!persisted) {
-    return {
-        false,
-        "estop_latch_persist_failed_estop_remains_latched",
-        false,
-    };
-  }
-  if (defer_goal_terminal) {
-    commit_terminal = deferGoalAbort("estop_latched");
-  }
-  if (commit_terminal) {
-    (*commit_terminal)();
-  }
-  return {true, "estop_latched", commit_terminal.has_value()};
+  const bool has_terminal = defer_goal_terminal || commit_terminal.has_value();
+  const auto result = confirmTransition(
+      "estop_latched:estop_remains_latched", "estop_latched", "estop_remains_latched", false,
+      [this, persisted, defer_goal_terminal, commit_terminal = std::move(commit_terminal)]() mutable {
+        if (!persisted) return MotionStopResult{false, "estop_latch_persist_failed_estop_remains_latched"};
+        if (defer_goal_terminal) commit_terminal = deferGoalAbort("estop_latched");
+        if (commit_terminal) (*commit_terminal)();
+        return MotionStopResult{true, "estop_latched"};
+      }, std::nullopt, has_terminal);
+  return {result.accepted, result.reason, result.accepted && has_terminal, result.pending};
 }
 
 MotionStopResult MotionStopBarrier::clearEstop(const std::string &precondition_error) const {
-  if (!precondition_error.empty()) {
-    return {false, precondition_error};
-  }
-  MotionStopTerminalCommit commit_cleared = deferGoalAbort("estop_cleared");
+  if (!precondition_error.empty()) return {false, precondition_error};
+  const std::string key = "clear_estop";
+  if (auto replay = replayConfirmation(key)) return *replay;
+  replaceConfirmation();
+  auto commit_cleared = deferGoalAbort("estop_cleared");
   if (!clearMotionOutputs("estop_cleared")) {
-    return {
-        false,
-        "zero_publish_failed_estop_remains_latched",
-    };
+    return {false, "zero_publish_failed_estop_remains_latched"};
   }
-  const MotionStopResult confirmation = confirmAndCommitTerminal(
-      std::move(commit_cleared), "zero_confirmed", "estop_remains_latched", false);
-  if (!confirmation.accepted) {
-    return confirmation;
-  }
-  if (!actions_.clear_persisted_estop_latch()) {
-    return {
-        false,
-        "estop_latch_clear_failed_estop_remains_latched",
-    };
-  }
-  const bool cleared = actions_.clear_control_estop();
-  actions_.clear_operator_resume_required();
-  return {
-      cleared,
-      cleared ? "estop_cleared" : "estop_remains_latched",
-  };
+  return confirmTransition(key, "estop_cleared", "estop_remains_latched", false,
+      [this, commit_cleared = std::move(commit_cleared)] {
+        commit_cleared();
+        if (!actions_.clear_persisted_estop_latch()) {
+          return MotionStopResult{false, "estop_latch_clear_failed_estop_remains_latched"};
+        }
+        const bool cleared = actions_.clear_control_estop();
+        actions_.clear_operator_resume_required();
+        return MotionStopResult{cleared, cleared ? "estop_cleared" : "estop_remains_latched"};
+      });
 }
 
 MotionStopResult MotionStopBarrier::resumeAutonomy(const ResumeAutonomyRequest &request) const {
-  if (!request.precondition_error.empty()) {
-    return {false, request.precondition_error};
-  }
+  if (!request.precondition_error.empty()) return {false, request.precondition_error};
   if (!request.operator_takeover_latched && !request.resume_required) {
     return {true, "autonomy_already_ready"};
   }
-  MotionStopTerminalCommit commit_ready = deferGoalAbort("autonomy_resume_ready");
-  if (!clearMotionOutputs("autonomy_resume_ready")) {
-    return {
-        false,
-        "zero_publish_failed_takeover_remains_latched",
-    };
+  const std::string key = "resume_autonomy:" + std::to_string(request.source_stamp_s);
+  if (auto replay = replayConfirmation(key)) return *replay;
+  replaceConfirmation();
+  if (!actions_.suspend_motion_outputs("autonomy_resume_ready")) {
+    return {false, "zero_publish_failed_takeover_remains_latched"};
   }
-  const MotionStopResult confirmation = confirmAndCommitTerminal(
-      std::move(commit_ready), "zero_confirmed", "takeover_remains_latched", false);
-  if (!confirmation.accepted) {
-    return confirmation;
-  }
-  if (!actions_.resume_control()) {
-    return {false, "estop_latched"};
-  }
-  actions_.set_autonomy_request_not_before(request.source_stamp_s);
-  actions_.clear_operator_resume_required();
-  return {true, "autonomy_resume_ready_reissue_goal"};
+  return confirmTransition(key, "autonomy_resume_ready", "takeover_remains_latched", false,
+      [this, source_stamp_s = request.source_stamp_s] {
+        if (!actions_.resume_control()) return MotionStopResult{false, "estop_latched"};
+        actions_.set_autonomy_request_not_before(source_stamp_s);
+        actions_.clear_operator_resume_required();
+        return MotionStopResult{true, "autonomy_resume_ready"};
+      });
 }
 
 MotionStopResult MotionStopBarrier::resumeTeleop(const ResumeTeleopRequest &request) const {
-  if (!request.precondition_error.empty()) {
-    return {false, request.precondition_error};
-  }
-  if (!request.motion_hold_latched && !request.resume_required) {
-    return {true, "teleop_already_ready"};
-  }
+  if (!request.precondition_error.empty()) return {false, request.precondition_error};
+  if (!request.motion_hold_latched && !request.resume_required) return {true, "teleop_already_ready"};
+  const std::string key = "resume_teleop:" + std::to_string(request.source_stamp_s);
+  if (auto replay = replayConfirmation(key)) return *replay;
+  replaceConfirmation();
   if (!clearMotionOutputs("teleop_resume_ready")) {
-    return {
-        false,
-        "zero_publish_failed_takeover_remains_latched",
-    };
+    return {false, "zero_publish_failed_takeover_remains_latched"};
   }
-  const MotionStopResult confirmation =
-      confirmLastZero("zero_confirmed", "takeover_remains_latched");
-  if (!confirmation.accepted) {
-    return confirmation;
-  }
-  actions_.set_teleop_request_not_before(request.source_stamp_s);
-  if (!actions_.resume_control()) {
-    return {false, "estop_latched"};
-  }
-  actions_.clear_operator_resume_required();
-  return {true, "teleop_resume_ready_reassert_command"};
+  return confirmTransition(key, "teleop_resume_ready_reassert_command", "takeover_remains_latched", false,
+      [this, source_stamp_s = request.source_stamp_s] {
+        actions_.set_teleop_request_not_before(source_stamp_s);
+        if (!actions_.resume_control()) return MotionStopResult{false, "estop_latched"};
+        actions_.clear_operator_resume_required();
+        return MotionStopResult{true, "teleop_resume_ready_reassert_command"};
+      });
 }
 
 bool MotionStopBarrier::driverAuthorityLost(const std::string &blocker) const {
@@ -590,28 +660,27 @@ FinalShutdownResult MotionStopBarrier::finalShutdownPreservingGoalTerminal(
 
 FinalShutdownResult MotionStopBarrier::runFinalShutdownPipeline(
     std::optional<MotionStopTerminalCommit> commit_terminal) const {
-  actions_.stop_control();
-  actions_.cancel_inspection("navd_shutdown");
-  if (!clearMotionOutputs("navd_shutdown")) {
-    return {false, std::nullopt};
+  const std::string key = "shutdown";
+  auto result = replayConfirmation(key);
+  if (!result) {
+    replaceConfirmation();
+    actions_.stop_control();
+    actions_.cancel_inspection("navd_shutdown");
+    if (!clearMotionOutputs("navd_shutdown") || !publish_cmd_vel_) return {false, std::nullopt};
+    const auto sequence = actions_.publish_sequenced_zero();
+    if (!sequence) return {false, std::nullopt};
+    result = confirmTransition(key, "shutdown_confirmed", "shutdown_pending", false,
+        [commit_terminal = std::move(commit_terminal)] {
+          if (commit_terminal) (*commit_terminal)();
+          return MotionStopResult{true, "shutdown_confirmed"};
+        }, *sequence, true);
   }
-  if (!publish_cmd_vel_) {
-    return {false, std::nullopt};
-  }
-  const std::optional<std::uint64_t> output_sequence = actions_.publish_sequenced_zero();
-  if (!output_sequence) {
-    return {false, std::nullopt};
-  }
-  const StopConfirmationState state = actions_.confirm_zero(*output_sequence);
-  if (state == StopConfirmationState::Confirmed) {
-    if (commit_terminal) {
-      (*commit_terminal)();
-    }
-  }
-  return {
-      state == StopConfirmationState::Confirmed,
-      state,
-  };
+  return {result->accepted,
+          result->pending ? StopConfirmationState::Pending :
+              result->accepted ? StopConfirmationState::Confirmed :
+              result->reason.find("driver_rejected_zero") == 0 ? StopConfirmationState::DriverRejected :
+                                                               StopConfirmationState::TimedOut,
+          result->pending};
 }
 
 }  // namespace lingtu::nav::endpoint

@@ -1,4 +1,11 @@
 import { dashboardFetch } from './observationMode.ts'
+import type { RecordingSeriesQuery, RecordingSeriesResponse } from '../types/recordingSeries.ts'
+import type { RecordingCameraFrame, RecordingSceneInfoResponse, RecordingSceneQuery, RecordingSceneResponse } from '../types/recordingScene.ts'
+import type { StairAnnotation, StairListResponse } from '../types/stairs.ts'
+import type { MapEditOperation, MapEditSource } from '../types/mapEdit.ts'
+import { MapEditSaveUnconfirmed, mapEditWireOperations } from './mapEdit.ts'
+import { fetchMapPreview } from './mapPreview.ts'
+import { parsePcd } from './pcdPreview.ts'
 // Centralized API service layer for LingTu web dashboard
 // All fetch() calls in one place.
 
@@ -7,11 +14,17 @@ import type {
   AppBootstrapResponse,
   AppCapabilitiesResponse,
   AppTrafficResponse,
+  AgentTaskCancelResponse,
+  AgentTaskStatusResponse,
   RecordingOperationResponse,
   RecordingStartConfig,
   RecordingDetailResponse,
   RecordingListResponse,
   RecordingStatusResponse,
+  RecordingCatalogResponse,
+  RecordingStreamsResponse,
+  RecordingSummaryResponse,
+  RecordingValidationResponse,
   ClientLinks,
   CommandReceipt,
   ControlCommandResponse,
@@ -76,6 +89,24 @@ import { currentNavigationTaskStore } from './currentNavigationTask.ts'
 
 const WEB_CLIENT_ID = 'web-dashboard'
 
+export function fetchMapStairs(map: string): Promise<StairListResponse> {
+  return fetchJson(`/api/v1/maps/${encodeURIComponent(map)}/stairs`)
+}
+
+export async function saveMapStair(map: string, stair: StairAnnotation): Promise<StairListResponse> {
+  const { id, name, content_epoch, frame_id, bounds, lower, upper } = stair
+  const body = { name, content_epoch, frame_id, bounds, lower, upper }
+  return readJsonResponse(await dashboardFetch(`/api/v1/maps/${encodeURIComponent(map)}/stairs/${encodeURIComponent(id)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }))
+}
+
+export async function deleteMapStair(map: string, id: string, epoch: number): Promise<StairListResponse> {
+  return readJsonResponse(await dashboardFetch(
+    `/api/v1/maps/${encodeURIComponent(map)}/stairs/${encodeURIComponent(id)}?content_epoch=${epoch}`, { method: 'DELETE' },
+  ))
+}
+
 type CommandResponse = ControlCommandResponse | LeaseResponse
 
 export interface SavedMapPointCloud {
@@ -93,10 +124,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
-function shortRequestId(id?: string | null): string {
-  return id ? id.slice(0, 8) : ''
-}
-
 function detailStrings(detail: unknown, key: string): string[] {
   if (!isRecord(detail)) return []
   const value = detail[key]
@@ -107,8 +134,6 @@ function detailStrings(detail: unknown, key: string): string[] {
 function commandSuffix(command?: CommandReceipt): string {
   const parts: string[] = []
   if (command?.replay) parts.push('重复请求已确认')
-  const requestId = shortRequestId(command?.request_id)
-  if (requestId) parts.push(`#${requestId}`)
   return parts.length ? `（${parts.join(' ')}）` : ''
 }
 
@@ -143,6 +168,9 @@ export function formatCommandAck(response: CommandResponse, label = '命令'): s
 
 export function formatCommandError(error: unknown, label = '命令失败'): string {
   if (isGatewayApiError(error)) {
+    if (!error.body && [502, 503, 504].includes(error.statusCode)) {
+      return `${label}: 未收到机器人服务的确认（HTTP ${error.statusCode}）。请检查服务连接，并核对执行结果后再操作。`
+    }
     const message = error.body?.message || error.body?.error || error.message || `HTTP ${error.statusCode}`
     const blockers = detailStrings(error.detail, 'blockers')
     const advisories = detailStrings(error.detail, 'advisories')
@@ -150,6 +178,9 @@ export function formatCommandError(error: unknown, label = '命令失败'): stri
     const reason = reasonParts.length ? `；原因：${reasonParts.join('，')}` : ''
     const rejected = error.command?.accepted === false ? '（未接受）' : ''
     return `${label}${rejected}: ${message}${reason}${commandSuffix(error.command)}`
+  }
+  if (error instanceof TypeError && /failed to fetch|networkerror|network request failed|load failed/i.test(error.message)) {
+    return `${label}: 网络请求未完成，请检查机器人服务连接，并核对执行结果后再操作。`
   }
   if (error instanceof Error) {
     return `${label}: ${error.message}`
@@ -205,7 +236,8 @@ function mapPointsPath(name: string): string {
     ? template.replace('{name}', encoded)
     : `/api/v1/maps/${encoded}/points?max_points=30000`
   const url = new URL(withName, window.location.origin)
-  url.searchParams.set('max_points', '30000')
+  // Only scene identity comes from JSON; geometry is loaded from the full PCD.
+  url.searchParams.set('max_points', '1')
   return `${url.pathname}${url.search}`
 }
 
@@ -291,14 +323,6 @@ function commandBody<T extends Record<string, unknown>>(
     client_id: WEB_CLIENT_ID,
     request_id: makeRequestId(prefix),
   }
-}
-
-function flattenPointArray(points: MapPointsResponse['points']): number[] {
-  const first = points[0]
-  if (Array.isArray(first)) {
-    return (points as Array<[number, number, number]>).flatMap(([x, y, z]) => [x, y, z])
-  }
-  return points as number[]
 }
 
 async function postJson<T>(url: string, body?: unknown): Promise<T> {
@@ -533,7 +557,7 @@ export async function fetchInspectionTaskReport(
 
 export async function startInspectionTask(
   routeId: string,
-  options: { map_id?: string | null; revision?: number | null } = {},
+  options: { map_id?: string | null; revision?: number | null; request_id?: string } = {},
 ): Promise<InspectionTaskCommandResponse> {
   return postJson<InspectionTaskCommandResponse>(
     apiPath('inspection_tasks', '/api/v1/inspection/tasks'),
@@ -541,7 +565,7 @@ export async function startInspectionTask(
       route_id: routeId,
       map_id: options.map_id ?? null,
       revision: options.revision ?? 0,
-      request_id: makeRequestId('inspection_start'),
+      request_id: options.request_id ?? makeRequestId('inspection_start'),
     },
   )
 }
@@ -613,6 +637,15 @@ export async function fetchInspectionEvidenceDetail(
   return fetchJson<InspectionEvidenceDetailResponse>(inspectionEvidenceDetailPath(evidenceId))
 }
 
+export async function reviewInspectionEvidence(
+  evidenceId: string,
+  review: { verdict: 'normal' | 'anomaly' | 'inconclusive'; note?: string },
+): Promise<InspectionEvidenceDetailResponse> {
+  return postJson<InspectionEvidenceDetailResponse>(
+    `${inspectionEvidenceDetailPath(evidenceId)}/review`, review,
+  )
+}
+
 export async function saveLocation(body: LocationUpsertRequest): Promise<LocationOperationResponse> {
   return postJson<LocationOperationResponse>(
     apiPath('locations', '/api/v1/locations'),
@@ -650,11 +683,31 @@ export async function deleteLocation(name: string): Promise<LocationOperationRes
 
 // --- Navigation ---
 
-export async function sendInstruction(text: string): Promise<ControlCommandResponse> {
+export async function sendInstruction(text: string, runId?: string, controlOnly = false): Promise<ControlCommandResponse> {
   return postJson<ControlCommandResponse>(
     apiPath('instruction', '/api/v1/instruction'),
-    commandBody('instruction', { text }),
+    commandBody('instruction', { text, control_only: controlOnly, ...(runId ? { run_id: runId } : {}) }),
   )
+}
+
+export async function getAgentTask(runId: string): Promise<AgentTaskStatusResponse> {
+  return readJsonResponse<AgentTaskStatusResponse>(await dashboardFetch(
+    `/api/v1/agent/runs/${encodeURIComponent(runId)}`,
+    { signal: AbortSignal.timeout(5_000) },
+  ))
+}
+
+export async function cancelAgentTask(runId: string): Promise<AgentTaskCancelResponse> {
+  const body = commandBody('agent-cancel', {})
+  return readJsonResponse<AgentTaskCancelResponse>(await dashboardFetch(
+    `/api/v1/agent/runs/${encodeURIComponent(runId)}/cancel`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(5_000),
+    },
+  ))
 }
 
 export interface SendGoalOptions {
@@ -905,7 +958,9 @@ export async function fetchSlamStatus(): Promise<SlamStatusResponse> {
 // --- Maps ---
 
 export async function fetchMapList(): Promise<MapListResponse> {
-  return fetchJson<MapListResponse>(apiPath('maps', '/api/v1/slam/maps'))
+  return readJsonResponse<MapListResponse>(await dashboardFetch(apiPath('maps', '/api/v1/slam/maps'), {
+    cache: 'no-store',
+  }))
 }
 
 export async function fetchMaps(): Promise<MapInfo[]> {
@@ -1163,9 +1218,33 @@ export async function markMapZone(
   return readMapLifecycle(res)
 }
 
-export async function buildMapOctomap(name: string): Promise<MapLifecycleResponse> {
+export interface EditedMapResponse extends MapLifecycleResponse {
+  build_options?: Record<string, unknown>
+  content_epoch?: number
+  saved_rays_preserved?: boolean
+  point_count?: number
+  removed_points?: number
+  /** Local review responses explicitly distinguish sampled-only counts. */
+  point_count_scope?: 'preview_sample'
+}
+
+export async function saveEditedMap(source: Pick<MapEditSource, 'name' | 'contentEpoch'>, name: string, operations: readonly MapEditOperation[]): Promise<EditedMapResponse> {
+  let res: Response
+  try {
+    res = await dashboardFetch(mapNamedPath('map_save_as', '/api/v1/maps/{name}/save_as', source.name), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, expected_source_content_epoch: source.contentEpoch,
+        operations: mapEditWireOperations(operations) }),
+    })
+  } catch { throw new MapEditSaveUnconfirmed() }
+  try { return await readMapLifecycle(res) as EditedMapResponse }
+  catch (reason) { if (res.ok) throw new MapEditSaveUnconfirmed(); throw reason }
+}
+
+export async function buildMapOctomap(name: string, options?: Record<string, unknown>): Promise<MapLifecycleResponse> {
   const res = await dashboardFetch(mapNamedPath('map_build_octomap', '/api/v1/maps/{name}/build_octomap', name), {
     method: 'POST',
+    ...(options ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(options) } : {}),
   })
   return readMapLifecycle(res)
 }
@@ -1225,10 +1304,8 @@ export async function resumeNavigation(): Promise<ControlCommandResponse> {
       if (permission === 'ESTOPPED') {
         throw new Error('控制暂停未恢复：急停仍在生效')
       }
-      if (permission === 'HELD') {
-        const blocker = status.motion?.reason || status.goal_admission?.reason || '其他运动条件未满足'
-        throw new Error(`控制暂停已解除，但运动仍被阻止：${blocker}`)
-      }
+      // A task pause or input hold can remain after the control hold is released.
+      // Motion permission is reported separately; this command never starts a task.
       return response
     }
     if (attempt < 11) await new Promise(resolve => setTimeout(resolve, 150))
@@ -1275,12 +1352,18 @@ export async function fetchSavedMapPointCloud(name: string): Promise<SavedMapPoi
       throw new Error('Saved map response is missing a valid content_epoch')
     }
   }
+  const preview = await fetchMapPreview(name, contentEpoch)
+  if (preview.frameId.replace(/^\/+/, '') !== frameId) {
+    throw new Error('Saved map frame changed while loading; retry')
+  }
+  const points = parsePcd(preview.buffer)
+  if (!points || points.length < 3) throw new Error('地图点云为空或格式不支持')
   return {
-    points: flattenPointArray(data.points),
+    points: Array.from(points),
     frameId,
     epoch,
     mapName,
-    contentEpoch,
+    contentEpoch: preview.contentEpoch,
     timestamp: Number(data.ts) || 0,
   }
 }
@@ -1323,6 +1406,48 @@ export async function fetchRecordingStatus(): Promise<RecordingStatusResponse> {
   return fetchJson<RecordingStatusResponse>(apiPath('recording_status', '/api/v1/recordings/status'))
 }
 
+export async function fetchRecordingCatalog(): Promise<RecordingCatalogResponse> {
+  return fetchJson<RecordingCatalogResponse>('/api/v1/recordings/catalog')
+}
+
+export async function fetchRecordingStreams(): Promise<RecordingStreamsResponse> {
+  return fetchJson<RecordingStreamsResponse>('/api/v1/recordings/streams')
+}
+
+export async function fetchRecordingSeries(sessionId: string, query: RecordingSeriesQuery, signal?: AbortSignal): Promise<RecordingSeriesResponse> {
+  const params = new URLSearchParams({ topic: query.topic })
+  if (query.field) params.set('field', query.field)
+  if (query.start !== undefined) params.set('start', String(query.start))
+  if (query.end !== undefined) params.set('end', String(query.end))
+  if (query.max_points !== undefined) params.set('max_points', String(query.max_points))
+  return readJsonResponse<RecordingSeriesResponse>(await dashboardFetch(`/api/v1/recordings/${encodeURIComponent(sessionId)}/series?${params}`, { signal }))
+}
+
+export async function fetchRecordingSceneInfo(sessionId: string, signal?: AbortSignal): Promise<RecordingSceneInfoResponse> {
+  return readJsonResponse<RecordingSceneInfoResponse>(await dashboardFetch(`/api/v1/recordings/${encodeURIComponent(sessionId)}/scene-info`, { signal }))
+}
+
+export async function fetchRecordingScene(sessionId: string, query: RecordingSceneQuery, signal?: AbortSignal): Promise<RecordingSceneResponse> {
+  const params = new URLSearchParams({ start: String(query.start), end: String(query.end), max_frames: '32', max_points: '2048', max_poses: '2000' })
+  if (query.cloud_topic) params.set('cloud_topic', query.cloud_topic)
+  if (query.pose_topic) params.set('pose_topic', query.pose_topic)
+  for (const topic of query.path_topic ?? []) params.append('path_topic', topic)
+  return readJsonResponse<RecordingSceneResponse>(await dashboardFetch(`/api/v1/recordings/${encodeURIComponent(sessionId)}/scene?${params}`, { signal }))
+}
+
+export async function fetchRecordingCameraFrame(sessionId: string, segment: number, time: number, cameraId: string, signal?: AbortSignal): Promise<RecordingCameraFrame | null> {
+  const params = new URLSearchParams({ segment: String(segment), t: String(time), camera_id: cameraId })
+  const response = await dashboardFetch(`/api/v1/recordings/${encodeURIComponent(sessionId)}/camera-frame?${params}`, { signal })
+  if (response.status === 204) return null
+  if (!response.ok) { await readJsonResponse(response); return null }
+  const timestamp = response.headers.get('X-Recording-Time-S')
+  const frameTime = timestamp === null ? NaN : Number(timestamp)
+  if (!Number.isFinite(frameTime)) throw new Error('recording_camera_frame_time_missing')
+  const mediaTime = response.headers.get('X-Recording-Media-Time-S')
+  const frameIndex = response.headers.get('X-Recording-Frame-Index')
+  return { blob: await response.blob(), t: frameTime, mediaTime: mediaTime === null ? null : Number(mediaTime), timing: response.headers.get('X-Recording-Timing') ?? 'segment_cfr_estimate', sourceTimeNs: response.headers.get('X-Recording-Source-Time-Ns'), frameIndex: frameIndex === null ? null : Number(frameIndex), frameId: response.headers.get('X-Recording-Frame-Id') }
+}
+
 export async function fetchRecordingList(limit = 100): Promise<RecordingListResponse> {
   const bounded = Math.max(1, Math.min(256, Math.trunc(limit)))
   return fetchJson<RecordingListResponse>(`/api/v1/recordings?limit=${bounded}`)
@@ -1334,9 +1459,21 @@ export async function fetchRecordingDetail(sessionId: string): Promise<Recording
   )
 }
 
+export async function fetchRecordingSummary(sessionId: string): Promise<RecordingSummaryResponse> {
+  return fetchJson<RecordingSummaryResponse>(`/api/v1/recordings/${encodeURIComponent(sessionId)}/summary`)
+}
+
+export async function validateRecording(sessionId: string): Promise<RecordingValidationResponse> {
+  return postJson<RecordingValidationResponse>(`/api/v1/recordings/${encodeURIComponent(sessionId)}/validate`)
+}
+
 export function recordingArtifactUrl(sessionId: string, artifactPath: string): string {
   const encodedPath = artifactPath.split('/').map(part => encodeURIComponent(part)).join('/')
   return `/api/v1/recordings/${encodeURIComponent(sessionId)}/files/${encodedPath}`
+}
+
+export function recordingArchiveUrl(sessionId: string): string {
+  return `/api/v1/recordings/${encodeURIComponent(sessionId)}/archive`
 }
 
 export async function deleteRecording(sessionId: string): Promise<{ ok: boolean; session_id: string }> {
@@ -1358,6 +1495,7 @@ export async function startRecording(
       ...(config.task_id !== undefined ? { task_id: config.task_id } : {}),
       camera: config.camera ?? false,
       minimum_free_gib: config.minimum_free_gib ?? 5,
+      ...(config.topics !== undefined ? { topics: config.topics } : {}),
     },
   )
 }

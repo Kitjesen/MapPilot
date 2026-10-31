@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from memory.modules.vector_memory_module import VectorMemoryModule
+from memory.modules.vector import VectorMemoryModule
 from runtime.msgs.geometry import Pose, PoseStamped, Vector3
 from runtime.msgs.nav import NavigationState
 from runtime.msgs.semantic import Detection3D, SceneGraph
@@ -14,7 +14,7 @@ from runtime.msgs.semantic import Detection3D, SceneGraph
 
 @pytest.fixture
 def memory(monkeypatch):
-    monkeypatch.setattr("memory.modules.vector_memory_module.time.time", lambda: 1000.0)
+    monkeypatch.setattr("memory.modules.vector.time.time", lambda: 1000.0)
     monkeypatch.setattr(VectorMemoryModule, "_init_encoder", lambda self: None)
     monkeypatch.setattr(VectorMemoryModule, "_init_store", lambda self: None)
     module = VectorMemoryModule(store_interval=0)

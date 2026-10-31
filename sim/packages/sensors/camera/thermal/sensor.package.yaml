@@ -1,0 +1,31 @@
+schema: lingtu.sim.sensor-package.v1
+id: thermal_camera
+version: 1.0.0
+kind: sensor
+description: Experimental 64x48 calibrated simulation thermal camera; Kelvin apparent temperatures, not hardware LWIR qualification.
+sensor_type: thermal_camera
+outputs: [thermal]
+timing: {rate_hz: 10}
+interface:
+  transport: typed_dds
+  message_type: lingtu.dds.ThermalImage
+configuration:
+  measurement:
+    body_frame_id: base_link
+    camera:
+      model: pinhole
+      width: 64
+      height: 48
+      fx_px: 32.0
+      fy_px: 32.0
+      cx_px: 32.0
+      cy_px: 24.0
+    thermal:
+      calibration_id: simulated-reference-v1
+      background_temperature_k: 293.15
+      atmospheric_temperature_k: 293.15
+      transmittance: 1.0
+      temperature_mode: apparent
+      min_temperature_k: 1.0
+      max_temperature_k: 2000.0
+    noise: {unit: K, enabled: false, stddev: 0.0, seed: 0}

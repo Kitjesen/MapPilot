@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "dds/dds.h"
+#include "dds/ddsc/dds_statistics.h"
 #include "messages.h"
 #include "transport/dds/qos.hpp"
 #include "message/generated/topics.hpp"
@@ -469,6 +470,7 @@ struct CloudMessage {
 struct CollisionMessage {
   lingtu_dds_MapCollisionLayer message{};
   std::string frame;
+  std::vector<lingtu_dds_MapCollisionHitBounds> hit_bounds;
 
   CollisionMessage(const Snapshot &snapshot, bool live)
       : frame(snapshot.frame_id.empty() ? "map" : snapshot.frame_id) {
@@ -505,6 +507,18 @@ struct CollisionMessage {
     message.known_free_bits._buffer =
         const_cast<std::uint8_t *>(snapshot.collision.known_free_bits.data());
     message.known_free_bits._release = false;
+    hit_bounds.reserve(snapshot.collision.hit_bounds.size());
+    for (const auto &bounds : snapshot.collision.hit_bounds) {
+      lingtu_dds_MapCollisionHitBounds hit{};
+      hit.cell_index = bounds.cell_index;
+      hit.minimum = {bounds.min_x, bounds.min_y, bounds.min_z};
+      hit.maximum = {bounds.max_x, bounds.max_y, bounds.max_z};
+      hit_bounds.push_back(hit);
+    }
+    message.hit_bounds._maximum = message.hit_bounds._length =
+        static_cast<std::uint32_t>(hit_bounds.size());
+    message.hit_bounds._buffer = hit_bounds.data();
+    message.hit_bounds._release = false;
   }
 };
 
@@ -599,6 +613,10 @@ struct Dds::Impl {
         Checked(dds_create_publisher(participant, nullptr, nullptr), "dds_create_publisher(mapd)");
     observation_reader = Reader(lingtu::message::kSlamMapObservation.dds_topic.data(),
                                 &lingtu_dds_MapObservation_desc);
+    geometry_reader = Reader(lingtu::message::kSlamMapGeometrySnapshot.dds_topic.data(),
+                             &lingtu_dds_SlamMapGeometrySnapshot_desc);
+    geometry_ack_writer = Writer(lingtu::message::kSlamMapGeometryApplied.dds_topic.data(),
+                                 &lingtu_dds_SlamMapGeometryApplied_desc);
     activation_request_reader = Reader(lingtu::message::kMapsActivationRequest.dds_topic.data(),
                                        &lingtu_dds_MapActivationRequest_desc);
     snapshot_ack_reader = Reader(lingtu::message::kSlamMapSnapshotAck.dds_topic.data(),
@@ -695,6 +713,8 @@ struct Dds::Impl {
   dds_entity_t subscriber{0};
   dds_entity_t publisher{0};
   dds_entity_t observation_reader{0};
+  dds_entity_t geometry_reader{0};
+  dds_entity_t geometry_ack_writer{0};
   dds_entity_t activation_request_reader{0};
   dds_entity_t snapshot_ack_reader{0};
   dds_entity_t state_writer{0};
@@ -718,6 +738,46 @@ Dds::Dds(int domain_id, DdsLimits limits)
     : impl_(std::make_unique<Impl>(domain_id, std::move(limits))) {}
 
 Dds::~Dds() = default;
+
+std::vector<GeometrySnapshot> Dds::TakeGeometrySnapshots() {
+  void* samples[kTakeBatch]{};
+  dds_sample_info_t infos[kTakeBatch]{};
+  const auto count = dds_take(impl_->geometry_reader, samples, infos, kTakeBatch, kTakeBatch);
+  std::vector<GeometrySnapshot> result;
+  if (count < 0) { impl_->input_state.last_error = dds_strretcode(-count); return result; }
+  for (dds_return_t i = 0; i < count; ++i) {
+    if (!infos[i].valid_data) continue;
+    const auto& sample = *static_cast<lingtu_dds_SlamMapGeometrySnapshot*>(samples[i]);
+    GeometrySnapshot snapshot;
+    std::string error;
+    if (!CopyBoundedString(sample.frame_id, impl_->limits.max_string_bytes, "geometry frame", &snapshot.frame_id, &error) ||
+        !CopyBoundedString(sample.frozen_dir, impl_->limits.max_string_bytes, "geometry directory", &snapshot.frozen_dir, &error)) {
+      impl_->input_state.last_error = error;
+      continue;
+    }
+    snapshot.reset_epoch = sample.reset_epoch;
+    snapshot.graph_revision = sample.graph_revision;
+    snapshot.captured_sequence = sample.captured_sequence;
+    snapshot.keyframe_count = sample.keyframe_count;
+    snapshot.captured_stamp_ns = sample.captured_stamp_ns;
+    snapshot.map_body={sample.map_body.position.x,sample.map_body.position.y,sample.map_body.position.z,
+        sample.map_body.orientation.x,sample.map_body.orientation.y,sample.map_body.orientation.z,
+        sample.map_body.orientation.w};
+    snapshot.sensor_origin_z_m=sample.sensor_origin_z_m;
+    result.push_back(std::move(snapshot));
+  }
+  if (count > 0) dds_return_loan(impl_->geometry_reader, samples, count);
+  return result;
+}
+
+bool Dds::PublishGeometryApplied(const GeometryApplied& ack) {
+  lingtu_dds_SlamMapGeometryApplied message{};
+  message.reset_epoch = ack.reset_epoch;
+  message.graph_revision = ack.graph_revision;
+  message.success = ack.success;
+  message.message = const_cast<char*>(ack.message.c_str());
+  return impl_->Write(impl_->geometry_ack_writer, &message, "geometry_applied");
+}
 
 std::optional<Observation> Dds::TakeLatestObservation() {
   void *samples[kTakeBatch]{};
@@ -869,6 +929,7 @@ bool Dds::PublishState(const State &state, const PublicationProgress &publicatio
 }
 
 bool Dds::PublishRealtimeClouds(const State &state, const Snapshot &snapshot) {
+  const auto started = std::chrono::steady_clock::now();
   OwnedPointCloud empty_cloud;
   empty_cloud.frame_id = snapshot.frame_id;
   empty_cloud.stamp_ns = snapshot.stamp_ns;
@@ -881,11 +942,38 @@ bool Dds::PublishRealtimeClouds(const State &state, const Snapshot &snapshot) {
   CloudMessage voxel("voxel", voxel_cloud, snapshot.reset_epoch, snapshot.sequence,
                      snapshot.generation, state.live, false);
   CollisionMessage collision(snapshot, state.live);
+  impl_->output_state.realtime_cloud_bytes = live.bytes.size() + voxel.bytes.size();
+  impl_->output_state.collision_bitmap_bytes = snapshot.collision.occupied_bits.size() +
+      snapshot.collision.measured_occupied_bits.size() + snapshot.collision.known_free_bits.size();
+  impl_->output_state.collision_hit_bounds = collision.hit_bounds.size();
+  impl_->output_state.collision_payload_native_bytes =
+      impl_->output_state.collision_bitmap_bytes +
+      collision.hit_bounds.size() * sizeof(lingtu_dds_MapCollisionHitBounds);
+  impl_->output_state.collision_max_payload_native_bytes = std::max(
+      impl_->output_state.collision_max_payload_native_bytes,
+      impl_->output_state.collision_payload_native_bytes);
+  impl_->output_state.realtime_prepare_timing.Observe(
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(),
+      snapshot.sequence, snapshot.generation);
+  const auto write = [&](dds_entity_t writer, const void *message, const char *channel,
+                         Timing &timing) {
+    const auto write_started = std::chrono::steady_clock::now();
+    const bool result = impl_->Write(writer, message, channel);
+    timing.Observe(std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - write_started).count(), snapshot.sequence,
+        snapshot.generation);
+    return result;
+  };
   bool success = true;
-  success = impl_->Write(impl_->live_cloud_writer, &live.message, "live_cloud") && success;
-  success = impl_->Write(impl_->voxel_cloud_writer, &voxel.message, "voxel_cloud") && success;
-  success = impl_->Write(impl_->local_collision_writer, &collision.message, "local_collision") &&
-            success;
+  success = write(impl_->live_cloud_writer, &live.message, "live_cloud",
+                  impl_->output_state.live_cloud_write_timing) && success;
+  success = write(impl_->voxel_cloud_writer, &voxel.message, "voxel_cloud",
+                  impl_->output_state.voxel_cloud_write_timing) && success;
+  success = write(impl_->local_collision_writer, &collision.message, "local_collision",
+                  impl_->output_state.collision_write_timing) && success;
+  impl_->output_state.realtime_publish_timing.Observe(
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(),
+      snapshot.sequence, snapshot.generation);
   return success;
 }
 
@@ -1064,7 +1152,21 @@ DdsInputState Dds::GetInputState() const {
 }
 
 DdsOutputState Dds::GetOutputState() const {
-  return impl_->output_state;
+  DdsOutputState output = impl_->output_state;
+  if (auto *statistics = dds_create_statistics(impl_->local_collision_writer)) {
+    output.collision_writer_statistics_available = true;
+    for (std::size_t index = 0; index < statistics->count; ++index) {
+      const auto &value = statistics->kv[index];
+      if (std::strcmp(value.name, "throttle_count") == 0)
+        output.collision_throttle_count = value.u.u32;
+      else if (std::strcmp(value.name, "time_throttle") == 0)
+        output.collision_throttle_ns = value.u.u64;
+      else if (std::strcmp(value.name, "rexmit_bytes") == 0)
+        output.collision_rexmit_bytes = value.u.u64;
+    }
+    dds_delete_statistics(statistics);
+  }
+  return output;
 }
 
 }  // namespace lingtu::maps::mapd

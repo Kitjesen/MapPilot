@@ -6,6 +6,7 @@
 #include "planning/local/planner.hpp"
 #include "planning/local/scan/upstream/bspline_opt/uniform_bspline.h"
 #include "tracking/follower.hpp"
+#include "trajectory/spline.hpp"
 
 using namespace nav_kernel;
 
@@ -55,7 +56,7 @@ SplineTarget scanSpline(std::vector<Vec3> controls, int degree, double interval,
   SplineTarget target;
   target.controls = std::move(controls);
   target.order = degree;
-  target.startTimeS = 0.0;
+  target.startTimeS = -1.0;
   target.knots.assign(knots.data(), knots.data() + knots.size());
   target.trajectoryId = trajectory_id;
   return target;
@@ -86,6 +87,54 @@ TEST(FollowerPath, AcceleratesUsingElapsedControlTime) {
   EXPECT_NEAR(second.cmd.vx, 0.10, 1e-6);
   EXPECT_EQ(follower.diagnostics().algorithm, FollowerAlgorithm::Path);
   EXPECT_NEAR(follower.diagnostics().linearSpeed, 0.10, 1e-6);
+}
+
+TEST(FollowerSpline, TangentModeSharesTheCollisionQuietSpeedHeadingFallback) {
+  for(const double speed:{.02,.04}) {
+    auto params=FollowerParams{};
+    params.spline.timeForward=0;
+    const auto spline=scanSpline({{0,0,0},{speed,0,0},{2*speed,0,0}},1,1);
+    Follower follower;
+    const auto output=followSpline(follower,spline,params,1,{},1.0);
+    EXPECT_NEAR(output.tracking.headingErrorRad,speed<=.03 ? 0. : -1.,1e-12);
+    EXPECT_EQ(output.executionFrozen,speed>.03);
+  }
+  Follower follower;
+  const auto spline=scanSpline({{0,0,0},{.02,0,0},{.04,0,0}},1,1);
+  const auto output=followSpline(follower,spline,FollowerParams{},1,{},1.0);
+  EXPECT_NEAR(output.tracking.headingErrorRad,-1.,1e-12);
+  EXPECT_TRUE(output.executionFrozen);
+}
+
+TEST(FollowerSpline, TangentModeTracksSplineCurvatureWithoutWaitingForYawError) {
+  const std::vector<Vec3> controls={{0,0,0},{1,0,0},{1,1,0},{0,1,0}};
+  const auto spline=scanSpline(controls,2,2);
+  Eigen::MatrixXd points(3,4);points<<0,1,1,0,0,0,1,1,0,0,0,0;
+  const local::scan::upstream::UniformBspline curve(points,2,2);
+  const auto position=curve.evaluateDeBoorT(0);
+  const auto velocity=curve.getDerivative().evaluateDeBoorT(0);
+  const auto acceleration=curve.getDerivative().getDerivative().evaluateDeBoorT(0);
+  const double yaw=std::atan2(velocity.y(),velocity.x());
+  const double curvatureRate=(velocity.x()*acceleration.y()-velocity.y()*acceleration.x())/
+      velocity.head<2>().squaredNorm();
+  auto params=FollowerParams{};params.spline.timeForward=0;
+  Follower follower;
+  const auto output=followSpline(follower,spline,params,1,{position.x(),position.y(),position.z()},yaw);
+  EXPECT_NEAR(output.tracking.headingErrorRad,0,1e-12);
+  EXPECT_NEAR(output.cmd.wz,curvatureRate,1e-12);
+  EXPECT_FALSE(output.executionFrozen);
+  Follower fixed;
+  FollowerState state;state.vehicleRelative={position.x(),position.y(),position.z()};
+  state.vehicleYawRelative=yaw;state.currentTime=1;state.params=params;state.desiredHeading=yaw;
+  EXPECT_DOUBLE_EQ(fixed.follow(LocalPlan::spline(spline),state).cmd.wz,0);
+  Follower aligning;
+  const auto held=followSpline(aligning,spline,params,1,
+      {position.x(),position.y(),position.z()},yaw+1);
+  EXPECT_TRUE(held.executionFrozen);
+  const auto released=followSpline(aligning,spline,params,1.02,
+      {position.x(),position.y(),position.z()},yaw+.4);
+  EXPECT_FALSE(released.executionFrozen);
+  EXPECT_NEAR(released.cmd.wz,curvatureRate-params.spline.yawGain*.4,1e-12);
 }
 
 TEST(FollowerPath, ClampsLongControlGap) {
@@ -167,6 +216,11 @@ TEST(FollowerPath, CmuProfileMatchesUpstreamAndKeepsDriveMode) {
 
   base.twoWayDrive = false;
   EXPECT_FALSE(cmuFollowerParams(base).twoWayDrive);
+
+  base.maxAccel = 0.4;
+  const auto limited = cmuFollowerParams(base);
+  EXPECT_DOUBLE_EQ(limited.maxAccel, 0.4);
+  EXPECT_DOUBLE_EQ(limited.linearStopThreshold, 0.004);
 }
 
 TEST(FollowerPath, CmuSuppressesTheFirstAccelerationQuantum) {
@@ -413,22 +467,30 @@ TEST(FollowerPath, FixedOffsetCommandMatchesGolden) {
 TEST(FollowerSpline, ExternalStopPausesTimeWithoutRestartingSpline) {
   Follower follower;
   FollowerParams params;
+  params.maxYawAccelRadS2 = 2.0;
   const auto trajectory = scanSpline({{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}, 1, 10.0);
   (void)followSpline(follower, trajectory, params, 10.0);
   const auto moving = followSpline(follower, trajectory, params, 10.05);
   follower.stopLinear();
   const auto resumed = followSpline(follower, trajectory, params, 10.15);
-  EXPECT_NEAR(resumed.cmd.vx, moving.cmd.vx, 1e-9);
+  EXPECT_DOUBLE_EQ(resumed.tracking.executionTimeS, moving.tracking.executionTimeS);
+  EXPECT_LE(std::hypot(resumed.cmd.vx, resumed.cmd.vy), params.maxAccel * 0.10 + 1e-9);
   const auto next = followSpline(follower, trajectory, params, 10.16);
   EXPECT_GT(next.cmd.vx, resumed.cmd.vx);
   follower.stopLinear();
-  const auto afterLongStop = followSpline(follower, trajectory, params, 15.0);
-  EXPECT_NEAR(afterLongStop.cmd.vx, next.cmd.vx, 1e-9);
+  const auto afterLongStop = followSpline(follower, trajectory, params, 15.0, {}, -0.2);
+  EXPECT_DOUBLE_EQ(afterLongStop.tracking.executionTimeS, next.tracking.executionTimeS);
+  EXPECT_GT(afterLongStop.cmd.vx, 0.0);
+  EXPECT_LE(std::hypot(afterLongStop.cmd.vx, afterLongStop.cmd.vy),
+            params.maxAccel * params.nominalDt + 1e-9);
+  EXPECT_GT(afterLongStop.cmd.wz, 0.0);
+  EXPECT_LE(afterLongStop.cmd.wz, params.maxYawAccelRadS2 * params.nominalDt + 1e-9);
 }
 
 TEST(FollowerSpline, RepeatedPhysicalTimeDoesNotRunAhead) {
   Follower follower;
   FollowerParams params;
+  params.maxAccel = 1000.0;  // Isolate the trajectory clock from command ramping.
   const auto trajectory = scanSpline({{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}, 1, 10.0);
   (void)followSpline(follower, trajectory, params, 0.0);
   const auto moving = followSpline(follower, trajectory, params, 0.05);
@@ -443,23 +505,522 @@ TEST(FollowerSpline, RepeatedPhysicalTimeDoesNotRunAhead) {
   EXPECT_NEAR(resumed.cmd.vx - moving.cmd.vx, 0.05 * 0.1 * params.spline.positionGain, 1e-9);
 }
 
-TEST(FollowerSpline, DefaultsMatchOfficialScanController) {
+TEST(FollowerSpline, DefaultsUseLingTuOneMeterPerSecondMotionLimits) {
   const SplineFollowerParams params;
 
   EXPECT_DOUBLE_EQ(params.timeForward, 0.8);
   EXPECT_DOUBLE_EQ(params.headingErrorThreshold, 0.8);
   EXPECT_DOUBLE_EQ(params.positionGain, 0.8);
   EXPECT_DOUBLE_EQ(params.yawGain, 1.5);
-  EXPECT_DOUBLE_EQ(params.maxVx, 0.75);
-  EXPECT_DOUBLE_EQ(params.maxVy, 0.35);
+  EXPECT_DOUBLE_EQ(params.maxVx, 1.0);
+  EXPECT_DOUBLE_EQ(params.maxVy, 1.0);
   EXPECT_DOUBLE_EQ(params.maxYawRateRadS, 1.0);
   EXPECT_DOUBLE_EQ(params.finishDistance, 0.15);
 }
 
+TEST(FollowerSpline, DefaultLimitsPermitOneMeterPerSecondOnEitherBodyAxis) {
+  for (const Vec3 velocity : {Vec3{1, 0, 0}, Vec3{0, 1, 0}}) {
+    SCOPED_TRACE(velocity.x);
+    const auto target = scanSpline({{0, 0, 0},
+        {3 * velocity.x, 3 * velocity.y, 0}}, 1, 3);
+    Follower follower;
+    FollowerState state;
+    state.currentTime = 1;
+    state.desiredHeading = 0;
+    state.measuredBodyTwistValid = true;
+    state.measuredBodyTwist = {velocity.x, velocity.y, 0};
+    const auto output = follower.follow(LocalPlan::spline(target), state);
+    EXPECT_FALSE(output.executionFrozen);
+    EXPECT_NEAR(output.cmd.vx, velocity.x, 1e-9);
+    EXPECT_NEAR(output.cmd.vy, velocity.y, 1e-9);
+    EXPECT_NEAR(std::hypot(output.cmd.vx, output.cmd.vy), 1, 1e-9);
+  }
+}
+
+TEST(FollowerSpline, FeedbackJumpRespectsPlanarCommandAcceleration) {
+  FollowerParams params;
+  params.maxAccel = 0.5;
+  params.nominalDt = 0.02;
+  params.maxSpeed = 1.0;
+  params.spline.maxVx = params.spline.maxVy = 1.0;
+  const auto trajectory = scanSpline({{0, 0, 0}, {1, 0, 0}}, 1, 10.0);
+  Follower follower;
+  FollowerState state;
+  state.params = params;
+  state.currentTime = 10.0;
+  state.desiredHeading = 0.0;
+  const auto first = follower.follow(LocalPlan::spline(trajectory), state);
+  EXPECT_GT(first.cmd.vx, 0.0);
+  EXPECT_LE(std::hypot(first.cmd.vx, first.cmd.vy), params.maxAccel * params.nominalDt + 1e-9);
+  state.currentTime += 0.05;
+  state.vehicleRelative = {-3, -3, 0};
+  const auto jumped = follower.follow(LocalPlan::spline(trajectory), state);
+  EXPECT_GT(jumped.cmd.vy, 0.0);
+  EXPECT_LE(std::hypot(jumped.cmd.vx - first.cmd.vx, jumped.cmd.vy - first.cmd.vy),
+            params.maxAccel * 0.05 + 1e-9);
+}
+
+TEST(FollowerSpline, ReplacementResetsReferenceClockButPreservesCommandContinuity) {
+  FollowerParams params;
+  params.maxAccel = 0.5;
+  params.nominalDt = 0.02;
+  params.spline.positionGain = 0.0;
+  const auto first = scanSpline({{0, 0, 0}, {1, 0, 0}}, 1, 2.0, 501);
+  const auto second = scanSpline({{0, 0, 0}, {0, 1, 0}}, 1, 2.0, 502);
+  Follower follower;
+  FollowerState state;
+  state.params = params;
+  state.desiredHeading = 0.0;
+  FollowerOutput moving;
+  for (int step = 0; step <= 10; ++step) {
+    state.currentTime = 1.0 + step * 0.05;
+    moving = follower.follow(LocalPlan::spline(first), state);
+  }
+  ASSERT_GT(moving.cmd.vx, 0.1);
+  const auto replaced = follower.follow(LocalPlan::spline(second), state);
+  EXPECT_EQ(replaced.tracking.trajectoryId, 502);
+  EXPECT_DOUBLE_EQ(replaced.tracking.executionTimeS, 0.0);
+  EXPECT_NEAR(replaced.cmd.vx, moving.cmd.vx, 1e-9);
+  EXPECT_NEAR(replaced.cmd.vy, moving.cmd.vy, 1e-9);
+  state.currentTime += 0.05;
+  const auto next = follower.follow(LocalPlan::spline(second), state);
+  EXPECT_GT(next.cmd.vy, replaced.cmd.vy);
+  EXPECT_LE(std::hypot(next.cmd.vx - replaced.cmd.vx, next.cmd.vy - replaced.cmd.vy),
+            params.maxAccel * 0.05 + 1e-9);
+}
+
+TEST(FollowerSpline, InitialPlanningWaitDoesNotConsumeExecutionTime) {
+  FollowerParams params;
+  params.maxSpeed = 1.0;
+  params.spline.maxVx = params.spline.maxVy = 1.0;
+  auto first = scanSpline({{0,0,0},{6,0,0}},1,12.0,501);
+  first.startTimeS = 2.02;
+  for (bool stoppedWhilePending : {false,true}) {
+    SCOPED_TRACE(stoppedWhilePending);
+    Follower follower;
+    if (stoppedWhilePending) {
+      // Executor can hold motion before the first algorithm is activated.
+      for (int tick = 0; tick < 10; ++tick) follower.stopLinear();
+    }
+    FollowerState state;
+    state.params = params;
+    state.desiredHeading = 0.0;
+    state.currentTime = 10.76;
+    const auto started = follower.follow(LocalPlan::spline(first),state);
+    ASSERT_TRUE(started.tracking.active);
+    EXPECT_DOUBLE_EQ(started.tracking.executionTimeS,0.0);
+    EXPECT_NEAR(started.tracking.positionErrorM,0.0,1e-9);
+    state.currentTime = 10.78;
+    state.vehicleRelative = {.01,0,0};
+    const auto next = follower.follow(LocalPlan::spline(first),state);
+    EXPECT_NEAR(next.tracking.executionTimeS,.02,1e-9);
+    EXPECT_NEAR(next.tracking.positionErrorM,0.0,1e-9);
+  }
+}
+
+TEST(FollowerSpline, DelayedReplacementContinuesAtItsPhysicalTime) {
+  FollowerParams params;
+  params.maxSpeed = 1.0;
+  params.spline.maxVx = params.spline.maxVy = 1.0;
+  auto first = scanSpline({{0, 0, 0}, {2, 0, 0}}, 1, 2.0, 501);
+  first.startTimeS = 10.0;
+  Follower follower;
+  FollowerState state;
+  state.params = params;
+  state.desiredHeading = 0.0;
+  state.currentTime = 10.0;
+  state.measuredBodyTwistValid = true;
+  state.measuredBodyTwist = {1.0, 0.0, 0.0};
+  (void)follower.follow(LocalPlan::spline(first), state);
+  state.currentTime = 10.1;
+  state.vehicleRelative = {0.1, 0, 0};
+  ASSERT_NEAR(follower.follow(LocalPlan::spline(first), state).cmd.vx, 1.0, 1e-9);
+
+  auto replacement = scanSpline({{0.1, 0, 0}, {2.1, 0, 0}}, 1, 2.0, 502);
+  replacement.startTimeS = 10.1;
+  state.currentTime = 10.15;
+  state.vehicleRelative = {0.15, 0, 0};
+  const auto replaced = follower.follow(LocalPlan::spline(replacement), state);
+  EXPECT_NEAR(replaced.tracking.executionTimeS, 0.05, 1e-9);
+  EXPECT_NEAR(replaced.tracking.positionErrorM, 0.0, 1e-9);
+  EXPECT_NEAR(replaced.cmd.vx, 1.0, 1e-9);
+}
+
+TEST(FollowerSpline, ScheduledCubicReplacementPreservesTheMovingReference) {
+  FollowerParams params;
+  params.maxSpeed = 2.0;
+  params.maxAccel = 10.0;
+  params.spline.maxVx = params.spline.maxVy = 2.0;
+  std::vector<Vec3> oldControls;
+  for (int i = 0; i < 7; ++i) {
+    const double time = i - 1.0;
+    oldControls.push_back({0.2 * time + 0.025 * time * time - 0.05 / 6.0, 0.0, 0.0});
+  }
+  auto first = scanSpline(oldControls, 3, 1.0, 501);
+  first.startTimeS = 10.0;
+  Follower follower;
+  FollowerState state;
+  state.params = params;
+  state.desiredHeading = 0.0;
+  state.measuredBodyTwistValid = true;
+  state.measuredBodyTwist = {0.2, 0.0, 0.0};
+  for (int tick = 0; tick <= 31; ++tick) {
+    const double time = 0.05 * tick;
+    state.currentTime = 10.0 + time;
+    state.vehicleRelative = {0.2 * time + 0.025 * time * time, 0.0, 0.0};
+    const auto output = follower.follow(LocalPlan::spline(first), state);
+    EXPECT_NEAR(output.tracking.positionErrorM, 0.0, 1e-9);
+  }
+
+  // Planning started before t=1.5. The replacement is constrained at t=1.5,
+  // and arrives one control tick later while the old curve is still followed.
+  constexpr double boundaryTime = 1.5;
+  constexpr double position = 0.2 * boundaryTime + 0.025 * boundaryTime * boundaryTime;
+  constexpr double velocity = 0.2 + 0.05 * boundaryTime;
+  std::vector<Vec3> replacementControls;
+  for (int i = 0; i < 7; ++i) {
+    const double time = i - 1.0;
+    replacementControls.push_back(
+        {position + velocity * time + 0.025 * time * time - 0.05 / 6.0 +
+             (i >= 3 ? 0.02 * (i - 2) : 0.0),
+         0.0, 0.0});
+  }
+  auto replacement = scanSpline(replacementControls, 3, 1.0, 502);
+  replacement.startTimeS = 11.5;
+  const auto replaced = follower.follow(LocalPlan::spline(replacement), state);
+  EXPECT_NEAR(replaced.tracking.executionTimeS, 0.05, 1e-9);
+  EXPECT_LT(replaced.tracking.positionErrorM, 1e-6);
+  EXPECT_NEAR(replaced.cmd.vx, 0.2 + 0.05 * 1.55, 1e-4);
+}
+
+TEST(FollowerSpline, ReplacementReceivedWhilePausedDoesNotConsumeItsAge) {
+  FollowerParams params;
+  auto first = scanSpline({{0, 0, 0}, {1, 0, 0}}, 1, 2.0, 501);
+  first.startTimeS = 10.0;
+  Follower follower;
+  (void)followSpline(follower, first, params, 10.0);
+  (void)followSpline(follower, first, params, 10.1);
+  follower.stopLinear();
+  auto replacement = scanSpline({{0, 0, 0}, {1, 0, 0}}, 1, 2.0, 502);
+  replacement.startTimeS = 11.0;
+  const auto paused = followSpline(follower, replacement, params, 11.1);
+  EXPECT_DOUBLE_EQ(paused.tracking.executionTimeS, 0.0);
+  EXPECT_GT(paused.cmd.vx, 0.0);
+  EXPECT_LE(paused.cmd.vx, params.maxAccel * params.nominalDt + 1e-9);
+  const auto resumed = followSpline(follower, replacement, params, 11.15);
+  EXPECT_NEAR(resumed.tracking.executionTimeS, 0.05, 1e-9);
+}
+
+TEST(FollowerSpline, YawReversalRespectsAngularAcceleration) {
+  FollowerParams params;
+  params.maxYawAccelRadS2 = 2.0;
+  params.nominalDt = 0.02;
+  const auto trajectory = scanSpline({{0, 0, 0}, {1, 0, 0}}, 1, 10.0);
+  Follower follower;
+  FollowerState state;
+  state.params = params;
+  state.currentTime = 1.0;
+  state.desiredHeading = 0.6;
+  const auto first = follower.follow(LocalPlan::spline(trajectory), state);
+  EXPECT_GT(first.cmd.wz, 0.0);
+  EXPECT_LE(first.cmd.wz, params.maxYawAccelRadS2 * params.nominalDt + 1e-9);
+  state.currentTime += 0.05;
+  const auto turning = follower.follow(LocalPlan::spline(trajectory), state);
+  EXPECT_GT(turning.cmd.wz, first.cmd.wz);
+  EXPECT_LE(turning.cmd.wz - first.cmd.wz, 0.1 + 1e-9);
+  state.currentTime += 0.05;
+  state.desiredHeading = -0.6;
+  const auto reversed = follower.follow(LocalPlan::spline(trajectory), state);
+  EXPECT_LT(reversed.cmd.wz, turning.cmd.wz);
+  EXPECT_LE(std::abs(reversed.cmd.wz - turning.cmd.wz), 0.1 + 1e-9);
+}
+
+TEST(FollowerSpline, HeadingFreezeUsesOfficialThresholdInsteadOfPathHysteresis) {
+  FollowerParams params;
+  params.spline.headingErrorThreshold = 0.8;
+  params.maxYawAccelRadS2 = 2.0;
+  const auto trajectory = scanSpline({{0, 0, 0}, {1, 0, 0}}, 1, 10.0);
+  for (const double pathExit : {0.05, 0.35, 0.75}) {
+    SCOPED_TRACE(pathExit);
+    params.headingAlignExitRad = pathExit;
+    Follower follower;
+    FollowerState state;
+    state.params = params;
+    state.currentTime = 1.0;
+    state.desiredHeading = 0.81;
+    const auto held = follower.follow(LocalPlan::spline(trajectory), state);
+    ASSERT_TRUE(held.executionFrozen);
+    EXPECT_DOUBLE_EQ(held.cmd.vx, 0.0);
+    EXPECT_DOUBLE_EQ(held.tracking.executionTimeS, 0.0);
+
+    state.currentTime += 0.05;
+    state.desiredHeading = 0.79;
+    const auto released = follower.follow(LocalPlan::spline(trajectory), state);
+    EXPECT_FALSE(released.executionFrozen);
+    EXPECT_GT(released.cmd.vx, 0.0);
+    EXPECT_NEAR(released.tracking.executionTimeS, 0.05, 1e-9);
+    EXPECT_LE(std::abs(released.cmd.wz - held.cmd.wz), 0.1 + 1e-9);
+
+    state.currentTime += 0.05;
+    state.desiredHeading = 0.81;
+    const auto heldAgain = follower.follow(LocalPlan::spline(trajectory), state);
+    EXPECT_TRUE(heldAgain.executionFrozen);
+    EXPECT_DOUBLE_EQ(heldAgain.cmd.vx, 0.0);
+    EXPECT_NEAR(heldAgain.tracking.executionTimeS, 0.05, 1e-9);
+  }
+}
+
+TEST(FollowerSpline, AngularVelocityIntentDoesNotWaitForHeadingAlignment) {
+  Follower follower;
+  FollowerState state;
+  state.params.maxYawAccelRadS2 = 2.0;
+  state.params.nominalDt = 0.01;
+  state.currentTime = 1.0;
+  state.desiredHeading = 0.81;
+  const auto trajectory = scanSpline({{0, 0, 0}, {1, 0, 0}}, 1, 5.0);
+  ASSERT_TRUE(follower.follow(LocalPlan::spline(trajectory), state).executionFrozen);
+
+  state.desiredYawRate = 1.0;
+  for (int tick = 1; tick <= 20; ++tick) {
+    state.currentTime = 1.0 + tick * 0.05;
+    state.vehicleYawRelative += 0.04;
+    // The previous pseudo-heading contract kept this error permanently
+    // between the alignment entry and exit thresholds.
+    state.desiredHeading = state.vehicleYawRelative + 1.0 / state.params.spline.yawGain;
+    const auto output = follower.follow(LocalPlan::spline(trajectory), state);
+    EXPECT_FALSE(output.executionFrozen);
+    EXPECT_GT(std::hypot(output.cmd.vx, output.cmd.vy), 0.0);
+    EXPECT_GT(output.cmd.wz, 0.0);
+  }
+  state.currentTime += 0.05;
+  state.desiredYawRate = 0.0;
+  state.desiredHeading = state.vehicleYawRelative + 2.0;
+  EXPECT_FALSE(follower.follow(LocalPlan::spline(trajectory), state).executionFrozen);
+  state.currentTime += 0.05;
+  state.desiredYawRate.reset();
+  EXPECT_TRUE(follower.follow(LocalPlan::spline(trajectory), state).executionFrozen);
+}
+
+TEST(FollowerSpline, StopAndExternalHoldDiscardPreviousMotionCommand) {
+  FollowerParams params;
+  params.maxAccel = 0.5;
+  params.maxYawAccelRadS2 = 2.0;
+  params.nominalDt = 0.02;
+  const auto trajectory = scanSpline({{0, 0, 0}, {1, 0, 0}}, 1, 5.0);
+  Follower follower;
+  FollowerState state;
+  state.params = params;
+  state.desiredHeading = 0.5;
+  state.currentTime = 1.0;
+  for (int step = 0; step < 8; ++step) {
+    state.currentTime += 0.05;
+    (void)follower.follow(LocalPlan::spline(trajectory), state);
+  }
+  follower.stopLinear();
+  state.currentTime += 0.05;
+  const auto resumed = follower.follow(LocalPlan::spline(trajectory), state);
+  EXPECT_LE(std::hypot(resumed.cmd.vx, resumed.cmd.vy), params.maxAccel * 0.05 + 1e-9);
+  EXPECT_LE(std::abs(resumed.cmd.wz), params.maxYawAccelRadS2 * 0.05 + 1e-9);
+  state.safetyStop = 2;
+  state.currentTime += 0.05;
+  const auto stopped = follower.follow(LocalPlan::spline(trajectory), state);
+  EXPECT_DOUBLE_EQ(stopped.cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(stopped.cmd.vy, 0.0);
+  EXPECT_DOUBLE_EQ(stopped.cmd.wz, 0.0);
+  state.safetyStop = 0;
+  state.currentTime += 0.05;
+  const auto after_hold = follower.follow(LocalPlan::spline(trajectory), state);
+  EXPECT_LE(std::hypot(after_hold.cmd.vx, after_hold.cmd.vy), params.maxAccel * 0.05 + 1e-9);
+  EXPECT_LE(std::abs(after_hold.cmd.wz), params.maxYawAccelRadS2 * 0.05 + 1e-9);
+}
+
+TEST(FollowerSpline, PhysicalTimeLimitsFeedbackBudgetAcrossGaps) {
+  FollowerParams params;
+  params.maxAccel = 0.5;
+  params.maxDt = 0.05;
+  params.nominalDt = 0.02;
+  const auto trajectory = scanSpline({{0, 0, 0}, {1, 0, 0}}, 1, 10.0);
+  Follower follower;
+  FollowerState state;
+  state.params = params;
+  state.currentTime = 10.0;
+  state.desiredHeading = 0.0;
+  const auto first = follower.follow(LocalPlan::spline(trajectory), state);
+  state.vehicleRelative = {-3, -3, 0};
+  const auto repeated = follower.follow(LocalPlan::spline(trajectory), state);
+  EXPECT_NEAR(repeated.cmd.vx, first.cmd.vx, 1e-9);
+  EXPECT_NEAR(repeated.cmd.vy, first.cmd.vy, 1e-9);
+  state.currentTime = 9.9;
+  const auto backward = follower.follow(LocalPlan::spline(trajectory), state);
+  EXPECT_NEAR(backward.cmd.vx, repeated.cmd.vx, 1e-9);
+  EXPECT_NEAR(backward.cmd.vy, repeated.cmd.vy, 1e-9);
+  state.currentTime = 11.0;
+  const auto gap = follower.follow(LocalPlan::spline(trajectory), state);
+  EXPECT_NEAR(gap.cmd.vx, backward.cmd.vx, 1e-9);
+  EXPECT_NEAR(gap.cmd.vy, backward.cmd.vy, 1e-9);
+  state.currentTime = 11.15;
+  const auto clamped = follower.follow(LocalPlan::spline(trajectory), state);
+  EXPECT_LE(std::hypot(clamped.cmd.vx - gap.cmd.vx, clamped.cmd.vy - gap.cmd.vy),
+            params.maxAccel * params.maxDt + 1e-9);
+}
+
+TEST(FollowerSpline, ValidMeasuredTwistSeedsOnceAndInvalidTwistCannotSeed) {
+  FollowerParams params;
+  params.maxAccel = 1.0;
+  params.maxYawAccelRadS2 = 2.0;
+  params.nominalDt = 0.02;
+  params.spline.positionGain = 0.0;
+  const auto trajectory = scanSpline({{0, 0, 0}, {1, 0, 0}}, 1, 10.0);
+  for (const bool valid : {false, true}) {
+    SCOPED_TRACE(valid);
+    Follower follower;
+    FollowerState state;
+    state.params = params;
+    state.currentTime = 1.0;
+    state.desiredHeading = 0.6;
+    state.measuredBodyTwist = {0.3, 0.2, 0.4};
+    state.measuredBodyTwistValid = valid;
+    const auto seeded = follower.follow(LocalPlan::spline(trajectory), state);
+    const Twist baseline = valid ? state.measuredBodyTwist : Twist{};
+    EXPECT_LE(std::hypot(seeded.cmd.vx - baseline.vx, seeded.cmd.vy - baseline.vy),
+              params.maxAccel * params.nominalDt + 1e-9);
+    EXPECT_LE(std::abs(seeded.cmd.wz - baseline.wz),
+              params.maxYawAccelRadS2 * params.nominalDt + 1e-9);
+    if (valid) EXPECT_GT(seeded.cmd.vx, 0.25);
+    else EXPECT_LE(std::hypot(seeded.cmd.vx, seeded.cmd.vy), 0.02 + 1e-9);
+
+    // Later observations must not reset the command ramp every input tick.
+    state.currentTime += 0.05;
+    state.measuredBodyTwist = {-0.5, -0.3, -0.5};
+    state.measuredBodyTwistValid = true;
+    const auto next = follower.follow(LocalPlan::spline(trajectory), state);
+    EXPECT_LE(std::hypot(next.cmd.vx - seeded.cmd.vx, next.cmd.vy - seeded.cmd.vy),
+              params.maxAccel * 0.05 + 1e-9);
+    EXPECT_LE(std::abs(next.cmd.wz - seeded.cmd.wz), params.maxYawAccelRadS2 * 0.05 + 1e-9);
+    follower.stopLinear();
+    state.currentTime += 0.05;
+    const auto after_stop = follower.follow(LocalPlan::spline(trajectory), state);
+    EXPECT_LE(std::hypot(after_stop.cmd.vx, after_stop.cmd.vy), params.maxAccel * 0.05 + 1e-9);
+    EXPECT_LE(std::abs(after_stop.cmd.wz), params.maxYawAccelRadS2 * 0.05 + 1e-9)
+        << "stop must not reseed from the retained measured twist";
+  }
+}
+
+TEST(FollowerSpline, PlanarAccelerationUsesWorldFrameWhileBodyTurns) {
+  FollowerParams params;
+  params.maxAccel = 0.5;
+  params.nominalDt = 0.02;
+  params.spline.positionGain = 0.0;
+  const auto trajectory = scanSpline({{0, 0, 0}, {1, 0, 0}}, 1, 5.0);
+  Follower follower;
+  FollowerState state;
+  state.params = params;
+  state.currentTime = 1.0;
+  state.desiredHeading = 0.0;
+  const auto first = follower.follow(LocalPlan::spline(trajectory), state);
+  state.currentTime += 0.05;
+  state.vehicleYawRelative = M_PI / 2.0;
+  state.desiredHeading = state.vehicleYawRelative;
+  const auto turned = follower.follow(LocalPlan::spline(trajectory), state);
+  // At yaw=pi/2, world velocity is (-body.vy, body.vx).
+  EXPECT_NEAR(turned.cmd.vx, 0.0, 1e-9);
+  EXPECT_LT(turned.cmd.vy, 0.0);
+  EXPECT_LE(std::hypot(-turned.cmd.vy - first.cmd.vx, turned.cmd.vx - first.cmd.vy),
+            params.maxAccel * 0.05 + 1e-9);
+}
+
+TEST(FollowerSpline, CompletionAndResetCannotResurrectMotionCommand) {
+  FollowerParams params;
+  params.maxAccel = 0.5;
+  params.maxYawAccelRadS2 = 2.0;
+  params.nominalDt = 0.02;
+  params.spline.positionGain = 0.0;
+  const auto short_target = scanSpline({{0, 0, 0}, {0.2, 0, 0}}, 1, 0.1, 701);
+  const auto next_target = scanSpline({{0, 0, 0}, {1, 0, 0}}, 1, 5.0, 702);
+  Follower follower;
+  FollowerState state;
+  state.params = params;
+  state.desiredHeading = 0.0;
+  state.currentTime = 1.0;
+  FollowerOutput moving;
+  for (int step = 0; step <= 8; ++step) {
+    state.currentTime = 1.0 + step * 0.05;
+    moving = follower.follow(LocalPlan::spline(short_target), state);
+  }
+  ASSERT_GT(moving.cmd.vx, 0.05);
+  state.vehicleRelative.x = 0.2;
+  state.currentTime += 0.05;
+  const auto finished = follower.follow(LocalPlan::spline(short_target), state);
+  ASSERT_TRUE(finished.finished);
+  EXPECT_DOUBLE_EQ(finished.cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(finished.cmd.vy, 0.0);
+  EXPECT_DOUBLE_EQ(finished.cmd.wz, 0.0);
+  state.currentTime += 0.05;
+  const auto after_finish = follower.follow(LocalPlan::spline(next_target), state);
+  EXPECT_LE(std::hypot(after_finish.cmd.vx, after_finish.cmd.vy), params.maxAccel * 0.05 + 1e-9);
+  follower.reset();
+  state.currentTime += 0.05;
+  const auto after_reset = follower.follow(LocalPlan::spline(next_target), state);
+  EXPECT_LE(std::hypot(after_reset.cmd.vx, after_reset.cmd.vy),
+            params.maxAccel * params.nominalDt + 1e-9);
+}
+
+TEST(FollowerSpline, AppliedSafetyScalingUpdatesCommandBaselineWithoutAdvancingTime) {
+  FollowerParams params;
+  params.maxSpeed = std::sqrt(2.0);
+  params.maxAccel = 0.5;
+  params.maxYawAccelRadS2 = 2.0;
+  params.nominalDt = 0.02;
+  params.spline.maxVx = params.spline.maxVy = 1.0;
+  params.spline.positionGain = 0.0;
+  const auto trajectory = scanSpline({{0, 0, 0}, {1, 1, 0}}, 1, 1.0);
+  Follower follower;
+  FollowerState state;
+  state.params = params;
+  state.currentTime = 1.0;
+  state.desiredHeading = 0.6;
+  state.measuredBodyTwist = {0.4, 0.2, 0.5};
+  state.measuredBodyTwistValid = true;
+  const auto candidate = follower.follow(LocalPlan::spline(trajectory), state);
+  ASSERT_GT(candidate.cmd.vx, 0.3);
+  ASSERT_GT(candidate.cmd.vy, 0.15);
+  ASSERT_GT(candidate.cmd.wz, 0.4);
+
+  const Twist applied{0.04, 0.03, 0.05};
+  follower.commitApplied(applied);
+  EXPECT_DOUBLE_EQ(follower.diagnostics().tracking.executionTimeS,
+                   candidate.tracking.executionTimeS);
+  const auto same_time = follower.follow(LocalPlan::spline(trajectory), state);
+  EXPECT_NEAR(same_time.cmd.vx, applied.vx, 1e-9);
+  EXPECT_NEAR(same_time.cmd.vy, applied.vy, 1e-9);
+  EXPECT_NEAR(same_time.cmd.wz, applied.wz, 1e-9);
+  EXPECT_DOUBLE_EQ(same_time.tracking.executionTimeS, candidate.tracking.executionTimeS);
+
+  state.currentTime += 0.05;
+  const auto resumed = follower.follow(LocalPlan::spline(trajectory), state);
+  EXPECT_GT(resumed.cmd.vx, applied.vx);
+  EXPECT_LE(std::hypot(resumed.cmd.vx - applied.vx, resumed.cmd.vy - applied.vy),
+            params.maxAccel * 0.05 + 1e-9);
+  EXPECT_LE(std::abs(resumed.cmd.wz - applied.wz), params.maxYawAccelRadS2 * 0.05 + 1e-9);
+
+  follower.commitApplied({});
+  const auto zero = follower.follow(LocalPlan::spline(trajectory), state);
+  EXPECT_DOUBLE_EQ(zero.cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(zero.cmd.vy, 0.0);
+  EXPECT_DOUBLE_EQ(zero.cmd.wz, 0.0);
+  EXPECT_DOUBLE_EQ(zero.tracking.executionTimeS, resumed.tracking.executionTimeS);
+  state.currentTime += 0.05;
+  const auto fresh = follower.follow(LocalPlan::spline(trajectory), state);
+  EXPECT_LE(std::hypot(fresh.cmd.vx, fresh.cmd.vy), params.maxAccel * 0.05 + 1e-9);
+  EXPECT_LE(std::abs(fresh.cmd.wz), params.maxYawAccelRadS2 * 0.05 + 1e-9);
+}
+
 TEST(FollowerSpline, UsesOfficialFeedForwardAndLiveWorldPoseError) {
   FollowerParams params;
+  params.maxAccel = 1000.0;  // Check the controller formula without ramp saturation.
   params.spline.positionGain = 0.8;
   params.spline.headingErrorThreshold = 2.0;
+  params.spline.maxVx = 0.75;
   const SplineTarget trajectory =
       scanSpline({{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}, 1, 1.0);
   Follower follower;
@@ -476,6 +1037,7 @@ TEST(FollowerSpline, UsesOfficialFeedForwardAndLiveWorldPoseError) {
 
 TEST(FollowerSpline, ResolvesRequestedSpeedIntoControllerLimits) {
   FollowerParams params;
+  params.maxAccel = 1000.0;
   params.spline.positionGain = 0.0;
   params.spline.headingErrorThreshold = 2.0;
   const SplineTarget trajectory =
@@ -488,31 +1050,328 @@ TEST(FollowerSpline, ResolvesRequestedSpeedIntoControllerLimits) {
   EXPECT_NEAR(output.cmd.vy, 0.0, 1e-9);
 }
 
-TEST(FollowerSpline, SlowerRequestHoldsOldTrajectoryUntilMatchingReplacement) {
+TEST(FollowerSpline, DiagonalUsesExplicitTotalSpeedAndIndependentAxisLimits) {
+  FollowerParams params;
+  params.maxAccel = 1000.0;
+  params.maxSpeed = std::hypot(1.0, 1.0);
+  params.spline.maxVx = 1.0;
+  params.spline.maxVy = 1.0;
+  params.spline.positionGain = 0.0;
+  params.spline.headingErrorThreshold = 2.0;
+  auto trajectory = scanSpline({{0, 0, 0}, {1, 1, 0}}, 1, 1.0);
+  trajectory.maxLinearSpeedMps = params.maxSpeed;
+  Follower follower;
+  const auto output = followSpline(follower, trajectory, params, 0.0);
+  EXPECT_FALSE(output.executionFrozen);
+  EXPECT_NEAR(output.cmd.vx, 1.0, 1e-9);
+  EXPECT_NEAR(output.cmd.vy, 1.0, 1e-9);
+  EXPECT_NEAR(std::hypot(output.cmd.vx, output.cmd.vy), params.maxSpeed, 1e-9);
+
+  for (const auto endpoint : std::vector<Vec3>{{2, 0, 0}, {0, 2, 0}}) {
+    Follower single_axis;
+    trajectory = scanSpline({{0, 0, 0}, endpoint}, 1, 1.0);
+    trajectory.maxLinearSpeedMps = params.maxSpeed;
+    const auto axis = followSpline(single_axis, trajectory, params, 0.0);
+    EXPECT_FALSE(axis.executionFrozen);
+    EXPECT_NEAR(std::hypot(axis.cmd.vx, axis.cmd.vy), 1.0, 1e-9);
+    EXPECT_LE(std::abs(axis.cmd.vx), 1.0);
+    EXPECT_LE(std::abs(axis.cmd.vy), 1.0);
+  }
+}
+
+TEST(FollowerSpline, ExplicitTotalSpeedStillCapsAutonomousDiagonalMotion) {
+  FollowerParams params;
+  params.maxAccel = 1000.0;
+  params.maxSpeed = 0.6;
+  params.spline.maxVx = 1.0;
+  params.spline.maxVy = 1.0;
+  params.spline.positionGain = 0.0;
+  params.spline.headingErrorThreshold = 2.0;
+  auto trajectory = scanSpline({{0, 0, 0}, {1, 1, 0}}, 1, 1.0);
+  trajectory.maxLinearSpeedMps = 0.6;
+  Follower follower;
+  const auto output = followSpline(follower, trajectory, params, 0.0);
+  EXPECT_FALSE(output.executionFrozen);
+  EXPECT_NEAR(std::hypot(output.cmd.vx, output.cmd.vy), 0.6, 1e-9);
+  EXPECT_NEAR(output.cmd.vx, 0.6 / std::sqrt(2.0), 1e-9);
+  EXPECT_NEAR(output.cmd.vy, output.cmd.vx, 1e-9);
+}
+
+TEST(FollowerSpline, AxisLimitsPreserveDiagonalDirectionAcrossBodyFrames) {
+  FollowerParams params;
+  params.maxSpeed = .6;
+  params.maxAccel = 2;
+  params.nominalDt = .01;
+  params.spline.maxVx = .6;
+  params.spline.maxVy = .35;
+  params.spline.positionGain = 0;
+  for (const double yaw : {0.0,.6}) {
+    for (const double side : {-1.0,1.0}) {
+      SCOPED_TRACE(::testing::Message() << "yaw=" << yaw << " side=" << side);
+      const double bodyVx = .6/std::sqrt(2.0);
+      const double bodyVy = side*bodyVx;
+      const double c = std::cos(yaw), s = std::sin(yaw);
+      const double worldVx = c*bodyVx-s*bodyVy;
+      const double worldVy = s*bodyVx+c*bodyVy;
+      auto trajectory = scanSpline({{0,0,0},{10*worldVx,10*worldVy,0}},1,10);
+      trajectory.maxLinearSpeedMps = .6;
+      Follower follower;
+      FollowerState state;
+      state.params = params;
+      state.vehicleYawRelative = yaw;
+      state.desiredHeading = yaw;
+      Twist previous;
+      double maximumDirectionError = 0;
+      FollowerOutput output;
+      for (int tick = 0; tick < 100; ++tick) {
+        state.currentTime = 1.0+.01*tick;
+        output = follower.follow(LocalPlan::spline(trajectory),state);
+        EXPECT_FALSE(output.executionFrozen);
+        EXPECT_LE(std::abs(output.cmd.vx),.6+1e-9);
+        EXPECT_LE(std::abs(output.cmd.vy),.35+1e-9);
+        EXPECT_LE(std::hypot(output.cmd.vx,output.cmd.vy),.6+1e-9);
+        EXPECT_LE(std::hypot(output.cmd.vx-previous.vx,output.cmd.vy-previous.vy),
+                  params.maxAccel*.01+1e-9);
+        maximumDirectionError = std::max(maximumDirectionError,
+            std::abs(output.cmd.vx*bodyVy-output.cmd.vy*bodyVx));
+        state.vehicleRelative.x += .01*(c*output.cmd.vx-s*output.cmd.vy);
+        state.vehicleRelative.y += .01*(s*output.cmd.vx+c*output.cmd.vy);
+        previous = output.cmd;
+      }
+      EXPECT_LE(maximumDirectionError,1e-9);
+      EXPECT_NEAR(output.cmd.vx,.35,1e-9);
+      EXPECT_NEAR(output.cmd.vy,side*.35,1e-9);
+      EXPECT_NEAR(output.tracking.executionTimeS,.99,1e-9);
+    }
+  }
+}
+
+TEST(FollowerSpline, AxisLimitsPreservePositionCorrectionDirection) {
+  FollowerParams params;
+  params.maxSpeed = .6;
+  params.maxAccel = 2;
+  params.spline.maxVx = .6;
+  params.spline.maxVy = .35;
+  params.spline.positionGain = .8;
+  auto trajectory = scanSpline({{0,0,0},{3,-4,0}},1,10);
+  trajectory.maxLinearSpeedMps = .6;
+  Follower follower;
+  FollowerState state;
+  state.params = params;
+  state.desiredHeading = 0;
+  state.vehicleRelative = {-.1,.2,0};
+  state.currentTime = 1;
+  const auto output = follower.follow(LocalPlan::spline(trajectory),state);
+  // The feedback-corrected request is (.3,-.4) + .8*(.1,-.2).
+  constexpr double correctedX = .38, correctedY = -.56;
+  EXPECT_GT(std::hypot(output.cmd.vx,output.cmd.vy),0);
+  EXPECT_LE(std::abs(output.cmd.vx*correctedY-output.cmd.vy*correctedX),1e-9);
+  EXPECT_LE(std::hypot(output.cmd.vx,output.cmd.vy),params.maxAccel*params.nominalDt+1e-9);
+  EXPECT_LE(std::abs(output.cmd.vy),.35+1e-9);
+}
+
+TEST(FollowerSpline, DiagonalStillHonorsCertifiedSplineTotalSpeed) {
+  FollowerParams params;
+  params.maxAccel = 1000.0;
+  params.maxSpeed = std::sqrt(2.0);
+  params.spline.maxVx = 1.0;
+  params.spline.maxVy = 1.0;
+  params.spline.positionGain = 0.0;
+  params.spline.headingErrorThreshold = 2.0;
+  auto trajectory = scanSpline({{0, 0, 0}, {1, 1, 0}}, 1, 1.0);
+  trajectory.maxLinearSpeedMps = 0.8;
+  Follower follower;
+  const auto output = followSpline(follower, trajectory, params, 0.0);
+  EXPECT_NEAR(std::hypot(output.cmd.vx, output.cmd.vy), 0.8, 1e-9);
+  EXPECT_DOUBLE_EQ(output.tracking.speedLimitMps, 0.8);
+}
+
+TEST(FollowerSpline, LowerLimitKeepsAlreadySlowSplineAndItsClock) {
   Follower follower;
   FollowerParams params;
+  params.maxSpeed = .5;
+  params.maxAccel = 1000;
+  params.spline.maxVx = params.spline.maxVy = .5;
+  params.spline.positionGain = 0;
+  auto trajectory = scanSpline({{0, 0, 0}, {1, 0, 0}}, 1, 10.0, 10);
+  trajectory.maxLinearSpeedMps = .5;
+  (void)followSpline(follower, trajectory, params, 1.0);
+  const auto before = followSpline(follower, trajectory, params, 1.1, {.01, 0, 0});
+  ASSERT_GT(before.cmd.vx, 0);
+  for (int tick = 1; tick <= 4; ++tick) {
+    const double speed = .5 - .05*tick;
+    const auto output = followSpline(follower, trajectory, params,
+        1.1 + .1*tick, {.01 + .01*tick, 0, 0}, 0, speed/.5);
+    EXPECT_FALSE(output.executionFrozen);
+    EXPECT_FALSE(output.awaitingTrajectory);
+    EXPECT_GT(output.cmd.vx, 0);
+    EXPECT_LE(output.cmd.vx, speed);
+    EXPECT_DOUBLE_EQ(output.tracking.speedLimitMps, speed);
+    EXPECT_NEAR(output.tracking.executionTimeS, .1 + .1*tick, 1e-9);
+    EXPECT_EQ(output.tracking.trajectoryId, trajectory.trajectoryId);
+  }
+}
+
+TEST(FollowerSpline, SpeedBoundCoversEverySplineDegreeAndInvalidInput) {
+  EXPECT_FALSE(std::isfinite(SplineView(SplineTarget{}).speedBound()));
+  for (const int degree : {1, 2, 3}) {
+    const auto trajectory = scanSpline({{0, 0, 0}, {1, 2, -1},
+                                       {2, -1, 2}, {3, 2, 1}, {4, 0, 0}}, degree, .7);
+    const SplineView view(trajectory);
+    ASSERT_TRUE(view.valid());
+    const double bound = view.speedBound();
+    ASSERT_TRUE(std::isfinite(bound));
+    for (int sample = 0; sample <= 400; ++sample) {
+      const auto velocity = view.velocity(view.duration()*sample/400);
+      EXPECT_LE(std::sqrt(velocity.x*velocity.x + velocity.y*velocity.y +
+                          velocity.z*velocity.z), bound + 1e-9);
+    }
+  }
+  const SplineView linear(scanSpline({{0, 0, 0}, {3, 4, 0}}, 1, 2));
+  EXPECT_NEAR(linear.speedBound(), 2.5, 1e-12);
+}
+
+TEST(FollowerSpline, MeasuredOverspeedDoesNotFreezeAnOtherwiseSlowSpline) {
+  Follower follower;
+  FollowerParams params;
+  params.maxSpeed = .5;
+  auto trajectory = scanSpline({{0, 0, 0}, {1, 0, 0}}, 1, 10, 10);
+  trajectory.maxLinearSpeedMps = .5;
+  (void)followSpline(follower, trajectory, params, 1);
+  FollowerState state;
+  state.params = params;
+  state.currentTime = 1.1;
+  state.requestedSpeed = .4;
+  state.measuredBodyTwistValid = true;
+  state.measuredBodyTwist = {.3, 0, 0};
+  const auto output = follower.follow(LocalPlan::spline(trajectory), state);
+  EXPECT_FALSE(output.executionFrozen);
+  EXPECT_FALSE(output.awaitingTrajectory);
+  EXPECT_GT(output.cmd.vx, 0);
+  EXPECT_LE(output.cmd.vx, .2);
+  state.currentTime = 1.2;
+  state.measuredBodyTwist.vx = .1;
+  const auto resumed = follower.follow(LocalPlan::spline(trajectory), state);
+  EXPECT_FALSE(resumed.executionFrozen);
+  EXPECT_FALSE(resumed.awaitingTrajectory);
+  EXPECT_GT(resumed.cmd.vx, 0);
+  EXPECT_LE(resumed.cmd.vx, .2);
+  EXPECT_EQ(resumed.tracking.trajectoryId, trajectory.trajectoryId);
+}
+
+TEST(FollowerSpline, SlowerRequestBrakesWhileWaitingWithoutRevivingTheOldReference) {
+  Follower follower;
+  FollowerParams params;
+  params.maxSpeed = .5;
+  params.maxAccel = 1;
+  params.spline.positionGain = 0;
   auto trajectory = scanSpline({{0, 0, 0}, {2, 0, 0}}, 1, 4.0, 11);
   trajectory.maxLinearSpeedMps = 0.5;
-  (void)followSpline(follower, trajectory, params, 1.0);
-  const auto moving = followSpline(follower, trajectory, params, 1.1);
+  FollowerState state;
+  state.params = params;
+  state.currentTime = 1;
+  state.measuredBodyTwistValid = true;
+  state.measuredBodyTwist.vx = .5;
+  (void)follower.follow(LocalPlan::spline(trajectory), state);
+  const auto moving = followSpline(follower, trajectory, params, 1.02);
   ASSERT_GT(moving.cmd.vx, 0.0);
-  const auto held = followSpline(follower, trajectory, params, 1.2, {}, 0.0, 0.1);
-  const auto still_held = followSpline(follower, trajectory, params, 1.3, {}, 0.0, 0.1);
+  const auto held = followSpline(follower, trajectory, params, 1.04, {}, 0.0, 0.6);
+  const auto still_held = followSpline(follower, trajectory, params, 1.06, {}, 0.0, 0.6);
   EXPECT_TRUE(held.executionFrozen);
-  EXPECT_DOUBLE_EQ(held.cmd.vx, 0.0);
+  EXPECT_TRUE(held.awaitingTrajectory);
+  EXPECT_NEAR(held.cmd.vx, moving.cmd.vx - .02, 1e-9);
+  EXPECT_NEAR(still_held.cmd.vx, held.cmd.vx - .02, 1e-9);
   EXPECT_DOUBLE_EQ(still_held.tracking.executionTimeS, moving.tracking.executionTimeS);
-  const auto speed_restored = followSpline(follower, trajectory, params, 1.35);
+  const auto speed_restored = followSpline(follower, trajectory, params, 1.08);
   EXPECT_TRUE(speed_restored.executionFrozen);
-  EXPECT_DOUBLE_EQ(speed_restored.cmd.vx, 0.0);
+  EXPECT_NEAR(speed_restored.cmd.vx, still_held.cmd.vx - .02, 1e-9);
   EXPECT_DOUBLE_EQ(speed_restored.tracking.executionTimeS, moving.tracking.executionTimeS);
-  auto slower = scanSpline({{0, 0, 0}, {2, 0, 0}}, 1, 20.0, 12);
-  slower.maxLinearSpeedMps = 0.1;
-  const auto resumed = followSpline(follower, slower, params, 1.4, {}, 0.0, 0.1);
-  EXPECT_FALSE(resumed.executionFrozen);
-  EXPECT_GT(resumed.cmd.vx, 0.0);
-  EXPECT_LE(resumed.cmd.vx, 0.1);
-  EXPECT_EQ(resumed.tracking.trajectoryId, 12);
-  EXPECT_DOUBLE_EQ(resumed.tracking.executionTimeS, 0.0);
+  FollowerOutput stopped;
+  for (int tick = 5; tick <= 30; ++tick)
+    stopped = followSpline(follower, trajectory, params, 1 + .02*tick);
+  EXPECT_NEAR(stopped.cmd.vx, 0, 1e-9);
+  EXPECT_TRUE(stopped.awaitingTrajectory);
+}
+
+TEST(FollowerSpline, CheckedDecelerationKeepsMotionAndUsesItsPhysicalClock) {
+  Follower follower;
+  FollowerParams params;
+  params.maxSpeed = .5;
+  params.maxAccel = .5;
+  params.spline.maxVx = .6;
+  params.spline.positionGain = 0;
+  auto original = scanSpline({{0,0,0},{3,0,0}}, 1, 6, 30);
+  original.maxLinearSpeedMps = .5;
+  FollowerState state;
+  state.params = params;
+  state.currentTime = 1;
+  state.measuredBodyTwistValid = true;
+  state.measuredBodyTwist.vx = .5;
+  auto previous = follower.follow(LocalPlan::spline(original), state);
+  ASSERT_NEAR(previous.cmd.vx, .5, 1e-9);
+  // Exact cubic fixture: v(0)=.5, a(0)=0; v(1)=.3, a(1)=0.
+  auto bridge = scanSpline({{-.25,0,0},{0,0,0},{.25,0,0},
+                             {.4,0,0},{.55,0,0},{.7,0,0}}, 3, .5, 31);
+  bridge.maxLinearSpeedMps = .3;
+  bridge.speedTransitionEndS = 1;
+  bridge.startTimeS = 1;
+  const SplineView view(bridge);
+  ASSERT_TRUE(view.valid());
+  state.requestedSpeed = .6;
+  for (int tick = 0; tick <= 60; ++tick) {
+    state.currentTime = 1 + .02*tick;
+    const auto output = follower.follow(LocalPlan::spline(bridge), state);
+    EXPECT_FALSE(output.executionFrozen);
+    EXPECT_FALSE(output.awaitingTrajectory);
+    EXPECT_GT(output.cmd.vx, .29);
+    EXPECT_LE(std::abs(output.cmd.vx-previous.cmd.vx), .5*.02+1e-9);
+    EXPECT_NEAR(output.tracking.executionTimeS, .02*tick, 1e-9);
+    EXPECT_NEAR(output.cmd.vx, view.velocity(.02*tick).x, 1e-9);
+    if (tick >= 50) EXPECT_LE(output.cmd.vx, .3+1e-9);
+    state.vehicleRelative.x += .02*output.cmd.vx;
+    state.measuredBodyTwist = output.cmd;
+    previous = output;
+  }
+  EXPECT_LT(std::abs(state.vehicleRelative.x-view.position(1.22).x), .006);
+  state.safetyStop = 2;
+  state.currentTime += .02;
+  const auto stopped = follower.follow(LocalPlan::spline(bridge), state);
+  EXPECT_DOUBLE_EQ(stopped.cmd.vx, 0);
+  EXPECT_TRUE(stopped.executionFrozen);
+}
+
+TEST(FollowerSpline, DecelerationMetadataCannotExtendBeyondTheCurve) {
+  auto target = scanSpline({{0,0,0},{1,0,0}}, 1, 1);
+  target.speedTransitionEndS = 2;
+  EXPECT_FALSE(LocalPlan::spline(target).ready());
+}
+
+TEST(FollowerSpline, FinishingAnInvalidOldCurveDoesNotCancelItsBoundedBraking) {
+  Follower follower;
+  FollowerParams params;
+  params.maxSpeed = .5;
+  params.maxAccel = .5;
+  params.spline.positionGain = 0;
+  auto curve = scanSpline({{0,0,0},{.05,0,0}}, 1, .1);
+  curve.maxLinearSpeedMps = .5;
+  FollowerState state;
+  state.params = params;
+  state.currentTime = 1;
+  state.measuredBodyTwistValid = true;
+  state.measuredBodyTwist.vx = .5;
+  (void)follower.follow(LocalPlan::spline(curve), state);
+  state.currentTime = 1.1;
+  state.vehicleRelative.x = -.2;
+  const auto correcting = follower.follow(LocalPlan::spline(curve), state);
+  ASSERT_FALSE(correcting.finished);
+  state.currentTime = 1.12;
+  state.vehicleRelative.x = .05;
+  state.requestedSpeed = .4;
+  const auto braking = follower.follow(LocalPlan::spline(curve), state);
+  EXPECT_GT(braking.cmd.vx, .2);
+  EXPECT_FALSE(braking.finished);
+  EXPECT_FALSE(braking.tracking.finished);
+  EXPECT_TRUE(braking.awaitingTrajectory);
 }
 
 TEST(FollowerSpline, ReportsActualReferenceErrorAndPausesTelemetry) {
@@ -534,8 +1393,10 @@ TEST(FollowerSpline, ReportsActualReferenceErrorAndPausesTelemetry) {
 
 TEST(FollowerSpline, ConvertsWorldVelocityIntoCurrentBodyFrame) {
   FollowerParams params;
+  params.maxAccel = 1000.0;  // Check the coordinate transform independently of ramping.
   params.spline.positionGain = 0.0;
   params.spline.headingErrorThreshold = 2.0;
+  params.spline.maxVy = 0.35;
   const SplineTarget trajectory =
       scanSpline({{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}, 1, 1.0);
   Follower follower;
@@ -581,12 +1442,15 @@ TEST(FollowerSpline, ResetsExecutionOnlyForANewOfficialTrajectoryId) {
   Follower follower;
 
   (void)followSpline(follower, first, params, 4.0);
-  const auto advanced = followSpline(follower, first, params, 4.2);
-  const auto reset = followSpline(follower, replacement, params, 4.2);
+  const auto advanced = followSpline(follower, first, params, 4.1);
+  const auto reset = followSpline(follower, replacement, params, 4.1);
 
   EXPECT_GT(advanced.cmd.vx, 0.0);
-  EXPECT_NEAR(reset.cmd.vx, 0.0, 1e-9);
-  EXPECT_GT(reset.cmd.vy, 0.0);
+  EXPECT_GT(advanced.tracking.executionTimeS, 0.0);
+  EXPECT_DOUBLE_EQ(reset.tracking.executionTimeS, 0.0);
+  EXPECT_EQ(reset.tracking.trajectoryId, replacement.trajectoryId);
+  EXPECT_NEAR(reset.cmd.vx, advanced.cmd.vx, 1e-9);
+  EXPECT_NEAR(reset.cmd.vy, advanced.cmd.vy, 1e-9);
 }
 
 TEST(FollowerSpline, StopsAtOfficialFinishDistance) {

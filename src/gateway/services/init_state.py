@@ -84,6 +84,7 @@ def init_module_refs(gw: Any) -> None:
     gw._goals = None
     gw._nav_commands = None
     gw._inspection = None
+    gw._sensor_control_module = None
     gw.localization = Localization()
 
 

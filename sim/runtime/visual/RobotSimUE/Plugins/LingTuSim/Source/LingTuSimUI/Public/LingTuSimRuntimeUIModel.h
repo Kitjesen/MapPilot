@@ -21,6 +21,7 @@ enum class ERuntimeUIAction : uint8 {
   SelectNextAsset,
   ConfirmGameSelection,
   ReturnFromFrontEnd,
+  OpenQuitConfirmation,
 };
 
 LINGTUSIMUI_API const TCHAR *RuntimeUIModeWireName(ERuntimeUIMode Mode);
@@ -42,11 +43,16 @@ class LINGTUSIMUI_API FRuntimeUIModeController final {
   void ToggleBuild();
   void ToggleTactical();
   void TogglePause();
+  // Temporarily view live data without replacing the mode saved by Pause.
+  bool SetLiveMenuView(bool bVisible);
+  bool SetDriveHelpVisible(bool bVisible);
+  bool IsDriveHelpVisible() const { return Mode == ERuntimeUIMode::Drive && bDriveHelpVisible; }
 
  private:
   void ToggleExclusive(ERuntimeUIMode RequestedMode);
 
   ERuntimeUIMode Mode = ERuntimeUIMode::Drive;
   ERuntimeUIMode ModeBeforePause = ERuntimeUIMode::Drive;
+  bool bDriveHelpVisible = false;
 };
 }  // namespace LingTuSim::UI

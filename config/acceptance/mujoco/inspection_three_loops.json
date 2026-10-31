@@ -1,0 +1,14 @@
+{
+  "schema_version": "lingtu.mujoco.inspection_native_acceptance.v1",
+  "extends": "inspection.json",
+  "name": "mujoco_inspection_three_loops",
+  "description": "Three fixed three-point capture loops with two intervals through the native inspection authority.",
+  "loop_count": 3,
+  "loop_interval_s": 2.0,
+  "thresholds": {"timeout_s": 360.0},
+  "acceptance_scope": {
+    "coverage": "component",
+    "claims": ["three fixed-point loops and nine ordered native completions", "nine verified RGB captures", "configured interval between loops", "MuJoCo displacement during native inspection"],
+    "excluded_claims": ["SLAM localization with truth input", "equipment condition", "field navigation", "long-duration endurance", "charging"]
+  }
+}

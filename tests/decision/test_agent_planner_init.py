@@ -3,6 +3,8 @@
 import builtins
 import time
 
+import pytest
+
 from decision.modules.agent_planner import AgentPlannerModule
 from runtime.module import Module, skill
 from runtime.msgs.geometry import Pose, PoseStamped, Vector3
@@ -75,6 +77,34 @@ class TestAgentPlannerInit:
         assert mod._llm_backend == "mock"
         assert mod._max_steps == 5
         assert mod._timeout == 60.0
+
+    def test_agent_llm_client_receives_resolved_provider_config(self, monkeypatch):
+        captured = {}
+
+        class FakeClient:
+            pass
+
+        def fake_create(config):
+            captured.update(config.__dict__)
+            return FakeClient()
+
+        import decision.llm.client as llm_client
+        monkeypatch.setattr(llm_client, "create_llm_client", fake_create)
+        mod = AgentPlannerModule(
+            llm_backend="kimi",
+            llm_model="kimi-k3",
+            llm_base_url="https://example.invalid/v1",
+            llm_api_key_env="TEST_LLM_KEY",
+            llm_timeout_sec=7.5,
+            timeout=120.0,
+        )
+        mod._init_llm()
+        assert captured["backend"] == "kimi"
+        assert captured["model"] == "kimi-k3"
+        assert captured["base_url"] == "https://example.invalid/v1"
+        assert captured["api_key_env"] == "TEST_LLM_KEY"
+        assert captured["timeout_sec"] == 7.5
+        assert mod._timeout == 120.0
 
     def test_setup_does_not_crash(self):
         mod = _make_module(llm_backend="mock")
@@ -217,6 +247,25 @@ class _UnsafeSkillModule(Module):
         """Trigger an emergency stop."""
         return "stopped"
 
+    @skill
+    def start_follow(self, description: str) -> dict:
+        return {"accepted": True, "description": description}
+
+
+class _MetadataSkillModule(Module):
+    @skill(
+        description="Read retained task state.",
+        parameters={"task_id": "Task identity returned by the start call."},
+        output_schema={
+            "type": "object",
+            "properties": {"found": {"type": "boolean"}},
+            "required": ["found"],
+        },
+        read_only=True,
+    )
+    def inspect_task(self, task_id: str) -> dict:
+        return {"found": bool(task_id)}
+
 
 class TestAgentPlannerToolDiscovery:
     def test_on_system_modules_discovers_skills(self):
@@ -235,6 +284,7 @@ class TestAgentPlannerToolDiscovery:
         assert any(t["name"] == "hello" for t in mod._agent_tool_list)
         # emergency_stop is in the blocklist
         assert "emergency_stop" not in mod._agent_tool_registry
+        assert "start_follow" not in mod._agent_tool_registry
 
     def test_tool_list_schema(self):
         mod = AgentPlannerModule(llm_backend="mock")
@@ -255,3 +305,26 @@ class TestAgentPlannerToolDiscovery:
         mod.on_system_modules({})
         assert mod._agent_tool_registry == {}
         assert mod._agent_tool_list == []
+
+    def test_shared_discovery_preserves_metadata(self):
+        mod = AgentPlannerModule(llm_backend="mock")
+        mod.on_system_modules({"metadata": _MetadataSkillModule()})
+
+        tool = next(t for t in mod._agent_tool_list if t["name"] == "inspect_task")
+        assert tool["inputSchema"]["properties"]["task_id"]["description"] == (
+            "Task identity returned by the start call."
+        )
+        assert tool["outputSchema"]["type"] == "object"
+        assert tool["annotations"]["readOnlyHint"] is True
+
+    def test_same_module_instance_alias_is_discovered_once(self):
+        mod = AgentPlannerModule(llm_backend="mock")
+        skill_module = _FakeSkillModule()
+        mod.on_system_modules({"skill.primary": skill_module, "skill.alias": skill_module})
+
+        assert [t["name"] for t in mod._agent_tool_list].count("hello") == 1
+
+    def test_distinct_skill_owners_are_not_silently_overwritten(self):
+        mod = AgentPlannerModule(llm_backend="mock")
+        with pytest.raises(ValueError, match="duplicate skill 'hello'"):
+            mod.on_system_modules({"skill.a": _FakeSkillModule(), "skill.b": _FakeSkillModule()})

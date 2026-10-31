@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>LingTu 地图查看器</title>
+  <link rel="stylesheet" href="map.css">
+</head>
+<body>
+  <main id="view" aria-label="点云地图，可拖动旋转和滚轮缩放"></main>
+  <header class="topbar">
+    <div class="identity">
+      <div class="brand">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 11 16-7-7 16-2-7-7-2Z"/><path d="m11 13 9-9"/></svg>
+        <span>LingTu</span>
+      </div>
+      <span class="separator" aria-hidden="true"></span>
+      <h1 id="map-title">地图</h1>
+      <span class="map-subtitle" id="map-subtitle"></span>
+    </div>
+    <div class="top-actions">
+      <div class="segments" role="group" aria-label="地图图层">
+        <button id="cloud" aria-pressed="true">点云</button>
+        <button id="octo" aria-pressed="false">占据</button>
+      </div>
+      <button class="icon-button" id="info" aria-label="地图详情" aria-expanded="false" aria-controls="details" title="地图详情">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 7.5v.1"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <aside class="drawer" id="details" aria-label="地图详情" hidden>
+    <h2 id="details-title">地图</h2>
+    <p class="sub" id="details-subtitle"></p>
+    <dl>
+      <dt>点云</dt><dd id="point-count">—</dd>
+      <dt>占据体素</dt><dd id="occupied-count">—</dd>
+      <dt>地图分辨率</dt><dd id="resolution">—</dd>
+      <dt>扫描片段</dt><dd id="frame-count">—</dd>
+    </dl>
+    <div class="group" id="evidence-group">
+      <label class="toggle-row" id="history-row" for="history">采集轨迹<input id="history" type="checkbox"></label>
+      <div id="routes-block">
+        <label class="select-label" for="routes">离线规划路线</label>
+        <select id="routes"><option value="none">隐藏</option><option value="all">全部</option></select>
+        <details class="results-details"><summary>测试结果</summary><div id="results">正在读取…</div></details>
+      </div>
+    </div>
+    <div class="group">
+      <details>
+        <summary>数据与操作说明</summary>
+        <p><code id="map-name"></code><br><span id="source-note"></span></p>
+        <p id="limits-note"></p>
+        <p>拖动旋转 · 滚轮缩放<br>Shift + 拖动平移</p>
+      </details>
+    </div>
+  </aside>
+
+  <div class="dock" aria-label="地图视图控制">
+    <div class="view-actions" role="group" aria-label="视角">
+      <button id="fit" title="查看完整范围"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4H4v4m12-4h4v4M4 16v4h4m12-4v4h-4"/></svg>全图</button>
+      <button id="top" aria-pressed="false" title="切换俯视与三维视角"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 4 9 6-9 6-9-6 9-6Zm-8 11 8 5 8-5"/></svg>俯视</button>
+      <button id="focus" title="近景"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 5 14 0v14H5V5Zm0 0 5 5h4l5-5M10 10v9m4-9v9"/></svg><span id="focus-label">近景</span></button>
+    </div>
+    <span class="dock-divider" aria-hidden="true"></span>
+    <div class="height-control">
+      <label for="ceiling">高度</label>
+      <input id="ceiling" type="range" min="-1" max="11" step=".1" value="1.5" aria-label="最高显示高度">
+      <output id="zout" for="ceiling">1.5 m</output>
+    </div>
+  </div>
+  <div class="footer-note"><span id="status" role="status" aria-live="polite">读取数据说明</span><span>保存数据查看</span></div>
+  <div class="hint">拖动旋转 · 滚轮缩放</div>
+  <div id="loading" class="loading" role="status">正在读取数据说明…</div>
+  <div id="error" role="alert" hidden></div>
+  <script type="module" src="map.js"></script>
+</body>
+</html>

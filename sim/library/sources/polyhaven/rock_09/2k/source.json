@@ -1,0 +1,40 @@
+{
+  "provider": "Poly Haven",
+  "asset_id": "rock_09",
+  "name": "Rock 09",
+  "authors": {
+    "Jenelle van Heerden": "All"
+  },
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "source_url": "https://polyhaven.com/a/rock_09",
+  "resolution": "2k",
+  "model": "rock_09_2k.gltf",
+  "files": [
+    {
+      "path": "rock_09_2k.gltf",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/2k/rock_09/rock_09_2k.gltf",
+      "bytes": 2745
+    },
+    {
+      "path": "textures/rock_09_nor_gl_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/rock_09/rock_09_nor_gl_2k.jpg",
+      "bytes": 2565303
+    },
+    {
+      "path": "textures/rock_09_diff_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/rock_09/rock_09_diff_2k.jpg",
+      "bytes": 2102702
+    },
+    {
+      "path": "rock_09.bin",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/rock_09/rock_09.bin",
+      "bytes": 286592
+    },
+    {
+      "path": "textures/rock_09_arm_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/rock_09/rock_09_arm_2k.jpg",
+      "bytes": 863180
+    }
+  ]
+}

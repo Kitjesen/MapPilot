@@ -41,7 +41,6 @@ def test_gateway_map_odom_tf_updates_frame_tree() -> None:
     }
 
     assert gateway._has_map_odom_tf
-    assert gateway._T_map_odom[0, 3] == pytest.approx(1.0)
     assert transform.translation.x == pytest.approx(1.0)
     assert transform.translation.y == pytest.approx(2.0)
     assert transform.translation.z == pytest.approx(3.0)
@@ -82,7 +81,6 @@ def test_gateway_invalid_map_odom_tf_clears_cached_transform(change) -> None:
 
     gateway._on_map_odom_tf(payload)
 
-    assert gateway._T_map_odom is None
     assert gateway._has_map_odom_tf is False
     edges = {
         (edge["parent"], edge["child"])
@@ -114,7 +112,6 @@ def test_gateway_incomplete_map_odom_tf_clears_cached_transform(
 
     gateway._on_map_odom_tf(payload)
 
-    assert gateway._T_map_odom is None
     assert gateway._has_map_odom_tf is False
     edges = {
         (edge["parent"], edge["child"])

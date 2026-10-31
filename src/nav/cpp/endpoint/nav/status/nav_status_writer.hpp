@@ -174,6 +174,9 @@ struct TeleopDiagnostics {
 struct TimingDiagnostics {
   double loop_ms{0.0};
   double sensor_drain_ms{0.0};
+  double sensor_take_ms{0.0};
+  double sensor_apply_ms{0.0};
+  double thread_cpu_ms{0.0};
   double operator_drain_ms{0.0};
   double command_drain_ms{0.0};
   double runtime_ms{0.0};
@@ -187,6 +190,7 @@ struct TimingDiagnostics {
   double teleop_gate_ms{0.0};
   double obstacle_merge_ms{0.0};
   double nav_tick_ms{0.0};
+  double final_control_ms{0.0};
   double dds_write_ms{0.0};
   double status_log_ms{0.0};
   double status_snapshot_ms{0.0};

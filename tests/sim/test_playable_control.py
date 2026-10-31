@@ -20,7 +20,7 @@ from sim.runtime.coordinator.control_intent_udp import (
     OperatorRuntimeRequest,
 )
 from sim.runtime.coordinator.control_status import CONTROL_STATUS_SCHEMA
-from sim.runtime.coordinator.controlled_run import BaseTwistTarget
+from sim.runtime.coordinator.controlled_run import BaseTwist, BaseTwistTarget
 from sim.runtime.coordinator.coordinator import RuntimeState
 from sim.runtime.coordinator.interactive_session import (
     InteractiveControlRequest,
@@ -326,6 +326,35 @@ def _runtime_request(
     )
 
 
+@pytest.mark.parametrize(
+    ("axes", "expected"),
+    [
+        (OperatorMotionAxes(1, 0, 0), {"linear_x": .6, "linear_y": 0, "angular_z": 0}),
+        (OperatorMotionAxes(0, -1, 0), {"linear_x": 0, "linear_y": -.15, "angular_z": 0}),
+        (OperatorMotionAxes(0, 0, 1), {"linear_x": 0, "linear_y": 0, "angular_z": .6}),
+    ],
+)
+def test_explicit_drive_speeds_reach_the_controller_and_authority_status(axes, expected):
+    host = _RecordingSessionHost()
+    inbox = LatestOperatorIntentInbox()
+    inbox.put(_motion_intent(axes=axes))
+    ack = _RecordingAckPublisher()
+    pump = PlayableControlPump(
+        session_host=host,
+        target=BaseTwistTarget("thunder_01.thunderv4_cts_moe", "thunder_01", "thunder_01.control.base_twist"),
+        motion_inbox=inbox,
+        request_inbox=BoundedRuntimeRequestInbox(),
+        ack_publisher=ack,
+        drive_speed_limits=BaseTwist(.6, .15, .6),
+        monotonic_ns=lambda: 1_050_000_000,
+    )
+    pump.process_before_advance(_current_event())
+    assert host.submissions[-1][1].payload == expected
+    pump.publish_status_after_advance(_current_event(), runtime_state="RUNNING")
+    full = [item for item in ack.documents if item["schema"] == CONTROL_STATUS_SCHEMA][-1]
+    assert full["motion"]["admitted_twist_mps_radps"] == {"available": True, **expected}
+
+
 def test_fresh_drive_intent_is_scaled_and_submitted_with_hash_join() -> None:
     host = _RecordingSessionHost()
     motion_inbox = LatestOperatorIntentInbox()
@@ -335,7 +364,7 @@ def test_fresh_drive_intent_is_scaled_and_submitted_with_hash_join() -> None:
     pump = PlayableControlPump(
         session_host=host,
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),
@@ -351,7 +380,7 @@ def test_fresh_drive_intent_is_scaled_and_submitted_with_hash_join() -> None:
 
     assert len(host.submissions) == 1
     controller_id, command, submit_thread_id = host.submissions[0]
-    assert controller_id == "thunder_01.thunderv4_locomotion"
+    assert controller_id == "thunder_01.thunderv4_cts_moe"
     assert submit_thread_id == owner_thread_id
     assert command.channel_id == "thunder_01.control.base_twist"
     assert command.instance_id == "thunder_01"
@@ -393,7 +422,7 @@ def test_fresh_drive_intent_is_scaled_and_submitted_with_hash_join() -> None:
         "admitted_twist",
     }
     assert accepted["datagram_sha256"] == "b" * 64
-    assert accepted["controller_id"] == "thunder_01.thunderv4_locomotion"
+    assert accepted["controller_id"] == "thunder_01.thunderv4_cts_moe"
     assert accepted["channel_id"] == "thunder_01.control.base_twist"
     assert accepted["controller_sequence"] == 18
     assert accepted["apply_time_ns"] == 900_000_000
@@ -420,7 +449,7 @@ def test_active_intent_times_out_to_one_zero_without_old_input_revival() -> None
     pump = PlayableControlPump(
         session_host=host,
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),
@@ -484,7 +513,7 @@ def test_unsafe_or_stale_sample_is_admitted_only_as_zero(
     pump = PlayableControlPump(
         session_host=host,
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),
@@ -532,7 +561,7 @@ def test_generation_race_rejects_motion_and_uses_current_event_for_safe_zero(
     pump = PlayableControlPump(
         session_host=host,
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),
@@ -573,7 +602,7 @@ def test_clear_discards_unread_motion_and_emits_one_correlated_zero() -> None:
     pump = PlayableControlPump(
         session_host=host,
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),
@@ -617,7 +646,7 @@ def test_lifecycle_runtime_requests_are_consumed_in_fifo_order() -> None:
     pump = PlayableControlPump(
         session_host=_RecordingSessionHost(),
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),
@@ -679,7 +708,7 @@ def test_non_lifecycle_runtime_requests_are_explicitly_acked_and_traced(
     pump = PlayableControlPump(
         session_host=_RecordingSessionHost(),
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),
@@ -717,7 +746,7 @@ def test_release_requests_clear_motion_and_submit_a_hash_correlated_zero(
     pump = PlayableControlPump(
         session_host=host,
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),
@@ -760,7 +789,7 @@ def test_clear_motion_preserves_queued_runtime_requests() -> None:
     pump = PlayableControlPump(
         session_host=_RecordingSessionHost(),
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),
@@ -784,7 +813,7 @@ def test_full_clear_explicitly_rejects_every_queued_runtime_request() -> None:
     pump = PlayableControlPump(
         session_host=_RecordingSessionHost(),
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),
@@ -817,7 +846,7 @@ def test_real_interactive_session_resumes_from_runtime_request() -> None:
     pump = PlayableControlPump(
         session_host=coordinator,
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),
@@ -879,7 +908,7 @@ def test_runtime_exit_flushes_correlated_zero_before_hold_and_stop() -> None:
     pump = PlayableControlPump(
         session_host=coordinator,
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),
@@ -1002,7 +1031,7 @@ def test_runtime_exit_status_send_failure_never_confirms_normal_stop() -> None:
     pump = PlayableControlPump(
         session_host=coordinator,
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),
@@ -1048,7 +1077,7 @@ def test_command_submission_is_bound_to_the_first_owner_thread() -> None:
     pump = PlayableControlPump(
         session_host=host,
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),
@@ -1097,7 +1126,7 @@ def test_invalid_current_event_fails_before_consuming_or_submitting(
     pump = PlayableControlPump(
         session_host=host,
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),
@@ -1121,7 +1150,7 @@ def test_controller_rejection_is_traced_and_acked_before_failing_closed() -> Non
     pump = PlayableControlPump(
         session_host=host,
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),
@@ -1154,7 +1183,7 @@ def test_rejected_safety_zero_fails_the_owner_loop_after_evidence() -> None:
     pump = PlayableControlPump(
         session_host=host,
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),
@@ -1186,7 +1215,7 @@ def test_server_caps_out_of_range_axes_at_its_speed_limits() -> None:
     pump = PlayableControlPump(
         session_host=host,
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),

@@ -7,6 +7,7 @@ import time
 from contextlib import suppress
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from gateway.gateway_module import GatewayModule
@@ -362,7 +363,8 @@ def test_websocket_expired_or_reused_input_cannot_reach_native_motion(monkeypatc
         gateway.stop()
 
 
-def test_slow_claim_cannot_refresh_an_expired_browser_input(monkeypatch) -> None:
+@pytest.mark.parametrize("finish", ["hold", "close", "move_again"])
+def test_slow_claim_cannot_refresh_an_expired_browser_input(monkeypatch, finish) -> None:
     monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
     clock = {"offset": 0.0}
     fake_time = SimpleNamespace(
@@ -375,13 +377,29 @@ def test_slow_claim_cannot_refresh_an_expired_browser_input(monkeypatch) -> None
     class SlowClaim(RecordingCommands):
         def claim(self, *args, **kwargs):
             receipt = super().claim(*args, **kwargs)
-            clock["offset"] += 1.0
+            if len([call for call in self.calls if call[0] == "claim"]) == 1:
+                clock["offset"] += 1.0
             return receipt
+
+        def hold(self, source_id, source_epoch, sequence, *, reason="operator_hold", request_id=None):
+            if self.called.is_set():
+                return super().hold(
+                    source_id, source_epoch, sequence, reason=reason, request_id=request_id
+                )
+            self.calls.append(("hold", source_id, source_epoch, sequence, reason, request_id))
+            self.hold_called.set()
+            self.no_motion_receipt = _receipt(
+                OperatorMotionAction.HOLD, source_id, source_epoch, sequence, request_id,
+                reason="hold_no_motion",
+            )
+            return self.no_motion_receipt
 
     commands = SlowClaim()
     gateway = GatewayModule()
     gateway.setup()
     gateway.on_system_modules({"nav.commands": commands})
+    lifecycle = RecordingTeleopLifecycle()
+    gateway._camera_module = lifecycle
     try:
         with TestClient(gateway._app).websocket_connect("/ws/teleop") as ws:
             window = _input_window(ws)
@@ -389,8 +407,33 @@ def test_slow_claim_cannot_refresh_an_expired_browser_input(monkeypatch) -> None
                           "input_window": window, "request_id": "slow-claim"})
             assert ws.receive_json()["error"] == "input_expired"
             assert [call[0] for call in commands.calls] == ["claim"]
-            ws.send_json({"type": "velocity", "deadman": False, "request_id": "release"})
-            assert ws.receive_json()["action"] == "hold"
+            if finish != "close":
+                ws.send_json({"type": "velocity", "deadman": False, "request_id": "release"})
+                held = ws.receive_json()
+                assert held["type"] == "control_ack"
+                assert held["action"] == "hold"
+                assert held["accepted"] is True
+                assert held["stage"] == "no_active_command"
+                assert held["final_cmd_vel_confirmed"] is False
+                assert held["motor_confirmed"] is False
+                assert gateway._teleop_native_publisher.last_error is None
+            if finish == "move_again":
+                ws.send_json({"type": "velocity", "deadman": True, "vx_mps": 0.2,
+                              "input_window": _input_window(ws), "request_id": "new-input"})
+                assert ws.receive_json()["type"] == "ingress_ack"
+                assert commands.called.wait(1.0)
+                assert [call[0] for call in commands.calls] == ["claim", "hold", "claim", "sample"]
+            ws.close()
+            assert lifecycle.disconnected.wait(1.0)
+        assert commands.hold_called.wait(1.0)
+        assert commands.no_motion_receipt.source_accepted is True
+        assert commands.no_motion_receipt.final_output_sequence == 0
+        assert commands.no_motion_receipt.final_output_published is False
+        if finish != "move_again":
+            assert [call[0] for call in commands.calls] == ["claim", "hold"]
+        else:
+            assert [call[0] for call in commands.calls] == ["claim", "hold", "claim", "sample", "hold", "release"]
+        assert gateway._web_teleop_owner is None
     finally:
         gateway.stop()
 

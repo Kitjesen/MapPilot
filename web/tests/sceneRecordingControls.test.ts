@@ -7,6 +7,9 @@ import {
   recordingArtifactDownloadBlocked,
   recordingNeedsRecovery,
   recordingStatusIsActive,
+  recordingStatusCanStart,
+  formatRecordingDuration,
+  recordingStopHasIncompleteData,
 } from '../src/services/recordingStatus.ts'
 
 const sceneViewSource = readFileSync(
@@ -26,7 +29,7 @@ const recordingApiSource = readFileSync(
 
 test('recording is discoverable in scene tools and unavailable in observation mode', () => {
   assert.match(sceneViewSource, /<CircleDot size=\{12\} \/>/)
-  assert.match(sceneViewSource, /recordingPanelOpen \? '收起录制' : '录制'/)
+  assert.match(sceneViewSource, /recordingPanelOpen \? '收起数据' : '数据流与录制'/)
   assert.match(sceneViewSource, /<div id="scene-recording">/)
   assert.doesNotMatch(sceneViewSource, /<FloatingWidget/)
   assert.match(sceneViewSource, /<RecordingPanel[\s\S]*embedded/)
@@ -76,6 +79,30 @@ test('an unhealthy active native state is recovery-required, not idle', () => {
   assert.match(recordingPanelSource, /const active = recordingStatusIsActive\(status\)/)
   assert.match(recordingPanelSource, /disabled=\{busy !== null \|\| !active\}/)
   assert.match(recordingPanelSource, /Recovery required/)
+})
+
+test('a terminal failed recording does not require deleting evidence before recording again', () => {
+  assert.equal(recordingStatusCanStart({ available: true, state: 'failed', recording: false, healthy: false }), true)
+  assert.equal(recordingStatusCanStart({ available: true, state: 'idle', recording: false, healthy: true }), true)
+  for (const state of ['preparing', 'recording', 'stopping']) {
+    assert.equal(recordingStatusCanStart({ available: true, state, recording: false, healthy: false }), false)
+  }
+  assert.equal(recordingStatusCanStart({ available: false, state: 'failed', recording: false, healthy: false }), false)
+})
+
+test('sample coverage keeps subsecond recordings visible and preserves long durations', () => {
+  assert.equal(formatRecordingDuration(0.2), '0.2s')
+  assert.equal(formatRecordingDuration(0.01), '<0.1s')
+  assert.equal(formatRecordingDuration(20), '20s')
+  assert.equal(formatRecordingDuration(125), '2m 05s')
+  assert.equal(formatRecordingDuration(3600), '1h 00m')
+})
+
+test('only a confirmed terminal failed capture is described as stopped with incomplete data', () => {
+  assert.equal(recordingStopHasIncompleteData('native_recorder_stop_failed', { state: 'failed' }), true)
+  assert.equal(recordingStopHasIncompleteData('native_recorder_stop_failed', { state: 'stopping' }), false)
+  assert.equal(recordingStopHasIncompleteData('native_recorder_stop_failed', undefined), false)
+  assert.equal(recordingStopHasIncompleteData('native_recorder_unavailable', { state: 'failed' }), false)
 })
 
 test('artifacts remain non-downloadable until the native session is terminal', () => {

@@ -769,7 +769,7 @@ class FieldBackend:
         require_localization: bool = False,
         timeout_s: float,
     ) -> None:
-        """Wait for a tracking frontend and, when requested, saved-map alignment."""
+        """Wait for frontend odometry and, when requested, saved-map alignment."""
 
         status_path = Path(
             self._environment.get("LINGTU_SLAM_STATUS_JSON")
@@ -800,7 +800,15 @@ class FieldBackend:
                 and last.get("alive") is True
                 and -0.05 <= age_s <= max_age_s
                 and (not require_map or bool(last.get("map_loaded")))
-                and state in {"TRACKING", "MAPPING", "OK"}
+                and (
+                    state in {"TRACKING", "MAPPING", "OK"}
+                    or (
+                        mode == "localization"
+                        and not require_localization
+                        and state == "LOCALIZING"
+                        and last.get("has_odom") is True
+                    )
+                )
             )
             localization_ready = localized and _raw_map_tracking_healthy(last)
             if frontend_ready and (not require_localization or localization_ready):
@@ -1086,6 +1094,7 @@ class FieldBackend:
         raise RuntimeError(
             "navigation did not become ready: "
             f"state={task.get('state', 'UNKNOWN')} map={session.get('active_map')} "
+            f"goal_admission={admission} "
             f"native_status_available={native.get('status_available')} "
             f"native_blockers={native.get('blockers') or []} "
             f"control_loop={native.get('control_loop_health') or {}}"

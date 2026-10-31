@@ -78,7 +78,7 @@ def _contract_evidence(manifest: Mapping[str, Any]) -> dict[str, Any]:
     lifecycle = product_lifecycle("teleop")
     expected = {
         "product": "teleop",
-        "source": "config/runtime_graph/products/teleop.yaml",
+        "source": "config/system/products/teleop.yaml",
         "native_control_mode": lifecycle.native_control_mode,
         "slam_mode": lifecycle.slam_mode,
         "requires_map": lifecycle.requires_map,

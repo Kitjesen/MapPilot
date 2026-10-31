@@ -41,7 +41,7 @@ def run_test(name, fn):
 # Test 31: SemanticMapper persistence
 # =========================================================================
 def test_31_semantic_mapper_persistence():
-    from memory.modules.semantic_mapper_module import SemanticMapperModule
+    from memory.modules.semantic import SemanticMapperModule
     from runtime.msgs.geometry import Vector3
     from runtime.msgs.semantic import Detection3D, Region, SceneGraph
 
@@ -79,7 +79,7 @@ def test_31_semantic_mapper_persistence():
 # Test 32: VectorMemory numpy fallback (in-memory)
 # =========================================================================
 def test_32_vector_memory_numpy():
-    from memory.modules.vector_memory_module import VectorMemoryModule
+    from memory.modules.vector import VectorMemoryModule
     from runtime.msgs.geometry import Pose, Vector3
     from runtime.msgs.nav import Odometry
 
@@ -114,10 +114,10 @@ def test_33_no_api_key_startup():
     for k in ["MOONSHOT_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DASHSCOPE_API_KEY"]:
         os.environ.pop(k, None)
 
-    from lingtu.assembly.products.host import host_blueprint
+    from lingtu.assembly.host.build import host_builder
 
     # Build dev profile: stub driver, no C++ nodes, semantic enabled, mock LLM
-    system = host_blueprint(
+    system = host_builder(
         robot="stub",
         slam_profile="none",
         detector="yoloe",

@@ -77,8 +77,8 @@ BBS3D，全局搜索与 `.54` 一样可链接。NX 系统 PCL 1.10 不满足 Sma
 
 ### R3 · P1：在线建图一次丢帧，会使后续校正地图保存无法靠重试恢复
 
-- 位置：`src/localization/opt/online_mapping.hpp:18`；
-  `src/localization/opt/online_mapping.cpp:158`；
+- 位置：`src/localization/map_optimization/online_mapping.hpp:18`；
+  `src/localization/map_optimization/online_mapping.cpp:158`；
   `src/localization/slam/cpp/fastlio.cpp:1243,2166,2177`。
 - 触发：后台优化未完成时待处理帧超过 4，或累计接收达到 3000；原始 patch 历史
   超过 3000 也会删掉最早数据。待处理容量和累计容量是两种不同限制。
@@ -139,7 +139,7 @@ BBS3D，全局搜索与 `.54` 一样可链接。NX 系统 PCL 1.10 不满足 Sma
 
 ### R7 · P2：在线预览限制了输出点数，却仍每批重建全部历史点
 
-- 位置：`src/localization/opt/online_mapping.cpp:94,114,126,131`。
+- 位置：`src/localization/map_optimization/online_mapping.cpp:94,114,126,131`。
 - 触发：较长建图会话，每次处理新关键帧后生成 preview snapshot。
 - 原因：先遍历所有历史帧，将全部点变换后加入临时 vector，再采样到 20 万点。
   输出上限没有限制本次中间内存和运算量。

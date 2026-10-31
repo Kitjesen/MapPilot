@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from decision.vision.person import PersonTracker, verify_candidate
-from lingtu.assembly.stacks.perception import _perception_runtime_config
+from lingtu.assembly.host.stacks.perception import _perception_runtime_config
 from perception.backends import DetectorSpec, RgbdObservationSource
 from perception.pipeline import to_runtime_detections
 from perception.remote import (

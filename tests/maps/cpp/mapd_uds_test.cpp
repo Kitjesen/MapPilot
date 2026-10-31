@@ -2,20 +2,30 @@
 #include <cassert>
 #include <chrono>
 #include <cstring>
-#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <string>
-#include <sys/socket.h>
-#include <sys/un.h>
 #include <thread>
-#include <unistd.h>
 #include <vector>
 
-#include "lingtu/maps/json.hpp"
-#include "lingtu/maps/mapd/query_core.hpp"
-#include "lingtu/maps/mapd/query_protocol.hpp"
-#include "lingtu/maps/mapd/query_server.hpp"
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <afunix.h>
+#else
+#include <fcntl.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#endif
+
+#include "lingtu/maps/io/json.hpp"
+#include "mapd/query.hpp"
+#include "lingtu/maps/mapd/protocol.hpp"
+#include "mapd/server.hpp"
 #include "lingtu/maps/service.hpp"
 
 namespace {
@@ -27,6 +37,8 @@ using lingtu::maps::mapd::query::MapQueryCore;
 using lingtu::maps::mapd::query::Opcode;
 using lingtu::maps::mapd::query::QueryServer;
 using lingtu::maps::mapd::query::QueryServerConfig;
+using lingtu::maps::mapd::query::QuerySocket;
+using lingtu::maps::mapd::query::kInvalidQuerySocket;
 using lingtu::maps::mapd::query::Status;
 
 struct ClientResponse {
@@ -99,10 +111,23 @@ std::vector<unsigned char> RequestBytes(Opcode opcode, const std::string &json =
   return out;
 }
 
-bool SendAll(int fd, const unsigned char *data, std::size_t size) {
+void CloseSocket(QuerySocket fd) {
+#if defined(_WIN32)
+  ::closesocket(fd);
+#else
+  ::close(fd);
+#endif
+}
+
+bool SendAll(QuerySocket fd, const unsigned char *data, std::size_t size) {
   std::size_t offset = 0U;
   while (offset < size) {
+#if defined(_WIN32)
+    const int sent = ::send(fd, reinterpret_cast<const char*>(data + offset),
+                           static_cast<int>(size - offset), 0);
+#else
     const ssize_t sent = ::send(fd, data + offset, size - offset, MSG_NOSIGNAL);
+#endif
     if (sent < 0) {
       if (errno == EINTR) {
         continue;
@@ -114,10 +139,14 @@ bool SendAll(int fd, const unsigned char *data, std::size_t size) {
   return true;
 }
 
-bool RecvAll(int fd, char *data, std::size_t size) {
+bool RecvAll(QuerySocket fd, char *data, std::size_t size) {
   std::size_t offset = 0U;
   while (offset < size) {
+#if defined(_WIN32)
+    const int got = ::recv(fd, data + offset, static_cast<int>(size - offset), 0);
+#else
     const ssize_t got = ::recv(fd, data + offset, size - offset, 0);
+#endif
     if (got <= 0) {
       if (got < 0 && errno == EINTR) {
         continue;
@@ -129,31 +158,38 @@ bool RecvAll(int fd, char *data, std::size_t size) {
   return true;
 }
 
-int Connect(const std::filesystem::path &socket_path) {
+QuerySocket Connect(const std::filesystem::path &socket_path) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   while (std::chrono::steady_clock::now() < deadline) {
-    const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-    assert(fd >= 0);
+#if defined(_WIN32)
+    const QuerySocket fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+#else
+    const QuerySocket fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+#endif
+    assert(fd != kInvalidQuerySocket);
     sockaddr_un address{};
     address.sun_family = AF_UNIX;
-    std::strncpy(address.sun_path, socket_path.c_str(), sizeof(address.sun_path) - 1U);
+    std::strncpy(address.sun_path, socket_path.u8string().c_str(), sizeof(address.sun_path) - 1U);
     if (::connect(fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0) {
       return fd;
     }
-    ::close(fd);
+    CloseSocket(fd);
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   assert(false && "failed to connect to mapd UDS test server");
-  return -1;
+  return kInvalidQuerySocket;
 }
 
 ClientResponse Query(const std::filesystem::path &socket_path, Opcode opcode,
                      const std::string &json = "{}") {
-  const int fd = Connect(socket_path);
+  const QuerySocket fd = Connect(socket_path);
   const auto request = RequestBytes(opcode, json);
   assert(SendAll(fd, request.data(), request.size()));
 
   unsigned char header[16]{};
+#if defined(_WIN32)
+  assert(RecvAll(fd, reinterpret_cast<char*>(header), sizeof(header)));
+#else
   struct iovec iov{};
   iov.iov_base = header;
   iov.iov_len = sizeof(header);
@@ -170,6 +206,7 @@ ClientResponse Query(const std::filesystem::path &socket_path, Opcode opcode,
     assert(RecvAll(fd, reinterpret_cast<char *>(header) + header_size,
                    sizeof(header) - static_cast<std::size_t>(header_size)));
   }
+#endif
   assert(std::equal(header, header + 4, reinterpret_cast<const unsigned char *>("LTMR")));
   assert(header[4] == 2U);
 
@@ -178,51 +215,63 @@ ClientResponse Query(const std::filesystem::path &socket_path, Opcode opcode,
   response.flags = ReadU16(header + 6);
   const std::uint32_t json_len = ReadU32(header + 8);
   assert(ReadU32(header + 12) == 0U);
+#if !defined(_WIN32)
   for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(&message); cmsg != nullptr;
        cmsg = CMSG_NXTHDR(&message, cmsg)) {
     if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
       std::memcpy(&response.fd, CMSG_DATA(cmsg), sizeof(int));
     }
   }
+#endif
   response.json.resize(json_len);
   assert(RecvAll(fd, response.json.data(), response.json.size()));
-  ::close(fd);
+  CloseSocket(fd);
   return response;
 }
 
-int OpenIdleClient(const std::filesystem::path &socket_path) {
+QuerySocket OpenIdleClient(const std::filesystem::path &socket_path) {
   return Connect(socket_path);
 }
 
+#if !defined(_WIN32)
 std::string ReadFd(int fd) {
   char buffer[64]{};
   const ssize_t got = ::read(fd, buffer, sizeof(buffer));
   assert(got >= 0);
   return std::string(buffer, static_cast<std::size_t>(got));
 }
+#endif
 
 }  // namespace
 
 int main() {
   const auto root = TempRoot();
   const auto socket_path = root / "mapd.sock";
-  CreateMap(root, "map_a");
-  CreateMap(root, "map_odom", "odom");
-  MapsServiceCore service(MapsServiceConfig{MapStoreConfig{root}});
+  const auto maps_root = root / "maps";
+  CreateMap(maps_root, "map_a");
+  CreateMap(maps_root, "map_odom", "odom");
+  MapsServiceCore service(MapsServiceConfig{MapStoreConfig{maps_root}});
   assert(service.Store().SetActiveMap("map_a", false).ok);
 
   MapQueryCore query(service);
   QueryServer server(query, QueryServerConfig{socket_path, 1024U * 1024U, 50U});
   server.Start();
 
-  const int idle = OpenIdleClient(socket_path);
+  const QuerySocket idle = OpenIdleClient(socket_path);
   std::this_thread::sleep_for(std::chrono::milliseconds(150));
   const auto ping = Query(socket_path, Opcode::kPing);
   assert(ping.status == Status::kOk);
   assert(ping.fd < 0);
   assert(ping.json.find("\"action\":\"ping\"") != std::string::npos);
-  ::close(idle);
+  CloseSocket(idle);
 
+#if defined(_WIN32)
+  const auto unsupported = Query(socket_path, Opcode::kOpenArtifact,
+                                R"({"map_id":"map_a","capability":"source_pointcloud"})");
+  assert(unsupported.status == Status::kError);
+  assert(unsupported.flags == 0U);
+  assert(unsupported.json.find("\"reason_code\":\"unsupported_platform\"") != std::string::npos);
+#else
   auto opened = Query(socket_path, Opcode::kOpenArtifact,
                       R"({"map_id":"map_a","capability":"path_planning_2d"})");
   assert(opened.status == Status::kOk);
@@ -265,8 +314,12 @@ int main() {
                                  R"({"map_id":"../bad","capability":"source_pointcloud"})");
   assert(invalid_map.status == Status::kError);
   assert(invalid_map.json.find("\"reason_code\":\"invalid_map_id\"") != std::string::npos);
+#endif
 
   const auto listed = Query(socket_path, Opcode::kService, R"({"action":"list_maps"})");
+  if (listed.status != Status::kOk) {
+    std::cerr << listed.json << '\n';
+  }
   assert(listed.status == Status::kOk);
   assert(listed.json.find("map_a") != std::string::npos);
 
@@ -302,6 +355,7 @@ int main() {
 
   server.Stop();
   server.Stop();
+  assert(!std::filesystem::exists(socket_path));
   std::filesystem::remove_all(root);
   return 0;
 }

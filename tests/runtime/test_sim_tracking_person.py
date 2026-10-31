@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 
 import numpy as np
@@ -7,11 +8,12 @@ import pytest
 from sim.runtime.scenario.runtime import parse_scenario_plan
 
 from decision.modules.visual_servo import VisualServoModule
-from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan
 from lingtu.assembly.graph.processes import ProcessArtifact
 from perception.detection.sim_scene_observer import SimSceneObserver
 from perception.pipeline import to_runtime_detections
 from runtime.msgs.geometry import Pose, PoseStamped, Vector3
+from runtime.msgs.semantic import SemanticObservation
 
 
 @pytest.fixture(autouse=True)
@@ -83,18 +85,26 @@ def test_sim_person_can_be_selected_by_id_and_publish_a_goal() -> None:
     servo.setup()
     goals = []
     servo.goal_pose._add_callback(goals.append)
-    servo.robot_pose._deliver(
-        PoseStamped(
-            pose=Pose(position=Vector3(3.0, 4.0, 0.0)),
-            ts=42.0,
-            frame_id="map",
-        )
-    )
     servo._on_servo_target("follow_id:track_person_01")
-    servo.detections_3d._deliver(detections)
+    source_ts = time.time()
+    servo.observation._deliver(SemanticObservation(
+        sequence=1,
+        source_ts=source_ts,
+        completed_ts=source_ts,
+        source_generation=1,
+        map_id="test-map",
+        content_epoch=1,
+        status="positive",
+        robot_pose=PoseStamped(
+            pose=Pose(position=Vector3(3.0, 4.0, 0.0)),
+            ts=source_ts,
+            frame_id="map",
+        ),
+        detections=tuple(detections),
+    ))
 
     assert len(goals) == 1
-    assert goals[0].frame_id == "map"
+    assert goals[0].goal.frame_id == "map"
     status = servo.get_servo_status()
     assert status["target_id"] == "track_person_01"
     assert status["person"]["id"] == "track_person_01"

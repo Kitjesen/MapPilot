@@ -1,9 +1,10 @@
-#include "lingtu/maps/store.hpp"
+#include "lingtu/maps/storage/store.hpp"
 #include "lingtu/maps/service.hpp"
 #include "lingtu/maps/build/occupancy_snapshot.hpp"
-#include "lingtu/maps/build/pcd.hpp"
+#include "lingtu/maps/io/pcd.hpp"
+#include "lingtu/maps/io/patch_bundle.hpp"
 #include "lingtu/maps/build/pipeline.hpp"
-#include "lingtu/maps/json.hpp"
+#include "lingtu/maps/io/json.hpp"
 
 #include <cassert>
 #include <chrono>
@@ -17,7 +18,7 @@
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)
 #include <octomap/OcTree.h>
 
-#include "lingtu/maps/build/octomap_io.hpp"
+#include "lingtu/maps/octomap/io.hpp"
 #endif
 
 using lingtu::maps::ArtifactType;
@@ -50,13 +51,13 @@ void WriteText(const std::filesystem::path& path, const std::string& value) {
 void WriteValidOccupancyMetadata(const std::filesystem::path& path) {
   std::ofstream file(path, std::ios::binary | std::ios::trunc);
   file << "{\"frame_id\":\"map\",\"data_source\":\"field\","
-       << "\"source_profile\":\"fastlio2\",\"artifacts\":{"
+       << "\"source_profile\":\"ltlio\",\"artifacts\":{"
        << "\"map_pcd\":{\"path\":\"map.pcd\",\"frame_id\":\"map\","
-          "\"data_source\":\"field\",\"source_profile\":\"fastlio2\"},"
+          "\"data_source\":\"field\",\"source_profile\":\"ltlio\"},"
        << "\"occupancy_grid\":{\"path\":\"occupancy.npz\",\"frame_id\":\"map\","
-          "\"data_source\":\"field\",\"source_profile\":\"fastlio2\"},"
+          "\"data_source\":\"field\",\"source_profile\":\"ltlio\"},"
        << "\"octomap\":{\"path\":\"octomap.ot\",\"frame_id\":\"map\","
-          "\"data_source\":\"field\",\"source_profile\":\"fastlio2\","
+          "\"data_source\":\"field\",\"source_profile\":\"ltlio\","
           "\"evidence_source\":\"saved_rays\",\"navigation_ready\":true,"
           "\"encoding\":\"full_log_odds\","
           "\"build_mode\":\"native_octomap\"}}}";
@@ -254,6 +255,14 @@ void TestSavedRayEvidence(MapStore& store, const std::filesystem::path& root) {
   assert(tree->search(person.x, person.y, person.z) == nullptr);
   const auto* dropped_prefix = tree->search(0.55, -0.55, 0.05);
   assert(dropped_prefix != nullptr && !tree->isNodeOccupied(dropped_prefix));
+  // Editing a saved map produced before the surface guard counter existed
+  // must preserve its six historical replay counters.
+  auto legacy_metadata=read_metadata();
+  const std::string optional_counter=",\"surface_guarded_miss_suppressions\":0";
+  const auto optional_at=legacy_metadata.find(optional_counter);
+  assert(optional_at!=std::string::npos);
+  legacy_metadata.erase(optional_at,optional_counter.size());
+  WriteText(dir / "metadata.json",legacy_metadata);
   lingtu::maps::OctomapEditOptions edit;
   edit.state = "occupied";
   edit.x_m = 4.0;
@@ -263,8 +272,9 @@ void TestSavedRayEvidence(MapStore& store, const std::filesystem::path& root) {
   assert_stats();
 }
 
-// An imported point cloud has no saved rays: its OctoMap is a preview that
-// can be viewed and used for localization, never activated for navigation.
+// An imported point cloud has no saved rays: its OctoMap remains marked as a
+// preview, but a valid full OcTree can still be activated. Provenance is not
+// a runtime motion gate.
 void TestPointCloudPreview(MapStore& store, const std::filesystem::path& root) {
   const std::string map_id = "imported_room";
   assert(store.CreateMap(map_id).ok);
@@ -287,11 +297,7 @@ void TestPointCloudPreview(MapStore& store, const std::filesystem::path& root) {
   assert(lingtu::maps::JsonObjectBoolAtPath(
              metadata, {"artifacts", "octomap", "navigation_ready"}) == false);
   const auto activation = store.CheckMapActivation(map_id);
-  assert(!activation.ok);
-  bool preview = false;
-  for (const auto& blocker : activation.blockers)
-    preview = preview || blocker.find("point-cloud preview") != std::string::npos;
-  assert(preview);
+  assert(activation.ok);
 }
 
 // One operator edit must decide a voxel regardless of how much ray evidence
@@ -414,7 +420,7 @@ int main() {
   validation_options.validate_metadata_identity = true;
   validation_options.expected_frame_id = "map";
   validation_options.expected_data_source = "field";
-  validation_options.expected_source_profile = "fastlio2";
+  validation_options.expected_source_profile = "ltlio";
   const auto malformed = store.ValidateArtifacts("building_1f", validation_options);
   assert(!malformed.map_pcd.format_ok);
   assert(!malformed.occupancy_grid.format_ok);
@@ -434,8 +440,8 @@ int main() {
   assert(activation_check.ok);
   assert(activation_check.content_epoch == store.ContentEpoch("building_1f"));
 
-  // Only an OctoMap built from saved rays may be activated; a point-cloud
-  // preview or an artifact that predates the marker is refused.
+  // A valid OctoMap may be activated regardless of provenance. Saved-ray
+  // markers remain diagnostic metadata rather than a motion gate.
   const auto metadata_file = root / "building_1f" / "metadata.json";
   const auto valid_metadata = [&] {
     std::ifstream file(metadata_file);
@@ -451,34 +457,24 @@ int main() {
   };
   std::string preview = valid_metadata;
   preview.replace(preview.find("\"navigation_ready\":true"), 23, "\"navigation_ready\":false");
-  blocked_with(preview, "navigation evidence is preview-only");
+  WriteText(metadata_file, preview);
+  assert(store.CheckMapActivation("building_1f").ok);
   std::string legacy = valid_metadata;
   legacy.replace(legacy.find(",\"navigation_ready\":true"), 24, "");
-  blocked_with(legacy, "navigation evidence marker is missing");
+  WriteText(metadata_file, legacy);
+  assert(store.CheckMapActivation("building_1f").ok);
   assert(store.ValidateArtifacts("building_1f", validation_options).ok);
   WriteText(metadata_file, valid_metadata);
   assert(store.CheckMapActivation("building_1f").ok);
   WriteText(root / "building_1f" / "patch_bundle.manifest", "patches=1\n");
   const auto incomplete_bundle = store.CheckMapActivation("building_1f");
-  assert(!incomplete_bundle.ok);
-  bool incomplete_blocker = false;
-  for (const auto& blocker : incomplete_bundle.blockers) {
-    incomplete_blocker |= blocker.find("saved scans are missing or incomplete") !=
-                          std::string::npos;
-  }
-  assert(incomplete_blocker);
+  assert(incomplete_bundle.ok);
   WriteText(root / "building_1f" / "patch_bundle.manifest",
             "LINGTU_PATCH_BUNDLE_V1\ncomplete 1\ndropped_count 0\n"
             "first_sequence 0\nlast_sequence 0\npatch_count 1\n");
   std::filesystem::remove(root / "building_1f" / "patches" / "0.pcd");
   const auto missing_patch = store.CheckMapActivation("building_1f");
-  assert(!missing_patch.ok);
-  bool missing_patch_blocker = false;
-  for (const auto& blocker : missing_patch.blockers) {
-    missing_patch_blocker |= blocker.find("saved scans are missing or incomplete") !=
-                             std::string::npos;
-  }
-  assert(missing_patch_blocker);
+  assert(missing_patch.ok);
   std::string error;
   assert(lingtu::maps::WriteBinaryXyzPcd(
       root / "building_1f" / "patches" / "0.pcd",
@@ -757,10 +753,10 @@ int main() {
   };
   assert(build_status() == "reused");
   metadata = read_metadata();
-  assert(lingtu::maps::JsonObjectStringAtPath(metadata, {"builder_version"}) == "0.3.1");
-  const std::string version_field = "\"builder_version\":\"0.3.1\"";
+  assert(lingtu::maps::JsonObjectStringAtPath(metadata, {"builder_version"}) == "0.3.2");
+  const std::string version_field = "\"builder_version\":\"0.3.2\"";
   metadata.replace(metadata.find(version_field), version_field.size(),
-                   "\"builder_version\":\"0.3.0\"");
+                   "\"builder_version\":\"0.3.1\"");
   WriteText(ray_dir / "metadata.json", metadata);
   assert(build_status() == "built");
   // Missing any replay counter makes a saved-ray artifact ineligible for reuse.
@@ -773,6 +769,31 @@ int main() {
     assert(build_status() == "built");
   }
   assert(build_status() == "reused");
+
+  const auto source_epoch = store.ContentEpoch("ray_support");
+  for (const auto &[name, resolution] : std::vector<std::pair<std::string, double>>{
+           {"ray_5cm", .05}, {"ray_10cm", .1}, {"ray_20cm", .2}}) {
+    const auto copied = pipeline.SaveEditedSourceJson("ray_support", name, source_epoch, {});
+    assert(lingtu::maps::JsonObjectBoolAtPath(copied, {"success"}) == true);
+    assert(lingtu::maps::HasSavedRays(root / name));
+    auto resolution_options = finer_options;
+    resolution_options.resolution = resolution;
+    const auto built = pipeline.BuildOctomapArtifactJson(name, resolution_options);
+    assert(lingtu::maps::JsonObjectBoolAtPath(built, {"success"}) == true);
+    const auto changed_tree = lingtu::maps::LoadOctomapTree(root / name / "octomap.ot");
+    assert(changed_tree && changed_tree->getResolution() == resolution);
+    const auto* hit = changed_tree->search(1.25, .25, -.75);
+    assert(hit && changed_tree->isNodeOccupied(hit));
+    const auto* free = changed_tree->search(.625, .125, -.375);
+    assert(free && !changed_tree->isNodeOccupied(free));
+    assert(changed_tree->search(1.25, .25, .5) == nullptr);
+    std::ifstream metadata_file(root / name / "metadata.json");
+    const std::string derivative_metadata{std::istreambuf_iterator<char>(metadata_file), {}};
+    assert(lingtu::maps::JsonObjectStringAtPath(derivative_metadata, {"source_map_id"}) == "ray_support");
+    assert(lingtu::maps::JsonObjectNumberAtPath(derivative_metadata, {"resolution"}) == resolution);
+  }
+  assert(store.ContentEpoch("ray_support") == source_epoch);
+  assert(lingtu::maps::LoadOctomapTree(ray_dir / "octomap.ot")->getResolution() == .1);
 
   TestOctomapRoundTripKeepsEvidence(root);
   TestSavedRayEvidence(store, root);

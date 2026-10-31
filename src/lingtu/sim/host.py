@@ -49,7 +49,8 @@ def run(stop_event: threading.Event | None = None) -> int:
             product=plan.product,
             process=plan.process("host").name,
         )
-        event.wait()
+        while not event.wait(0.1):
+            pass
         return 0
     finally:
         try:
@@ -78,7 +79,10 @@ def _install_signal_handlers(stop_event: threading.Event) -> None:
     def request_stop(_signum: int, _frame: object) -> None:
         stop_event.set()
 
-    for signum in (signal.SIGINT, signal.SIGTERM):
+    signals = [signal.SIGINT, signal.SIGTERM]
+    if hasattr(signal, "SIGBREAK"):
+        signals.append(signal.SIGBREAK)
+    for signum in signals:
         signal.signal(signum, request_stop)
 
 

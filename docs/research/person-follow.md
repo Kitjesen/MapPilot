@@ -6,6 +6,12 @@ As of 2026-10-13, no new online following release or physical following motion
 has been qualified. Recorded-camera replay, HTTP contract tests and CPU model
 export are separate evidence levels.
 
+2026-10-17 local preparation adds the explicit real `tracking/camera` preview
+variant, synchronous/asynchronous SDK task references, and 640×480 SHM-to-Follow
+API integration. The native encoder cadence was corrected using synthetic
+parallel-load evidence. Models and motion are not qualified by this work; see
+the [local results and retained failures](../../build/tracking-video-check/README.md).
+
 Local consumer regressions now cover the remote vision interfaces and expose
 visual-follow waiting/rejection reasons. Real-model acceptance remains open.
 The [Follow task lifecycle](tasks.md#已落地的-follow-边界) now has a stable execution
@@ -17,7 +23,56 @@ camera-to-body calibration. The fixed-person YOLO export agrees with CPU
 references, but the current NX DINO engines fail real-crop feature comparison.
 The torso-anchor change reduces recorded position variation; foreground-chair
 depth contamination remains unresolved. See the dated sections below and the
-[current delivery order](../roadmap.md#spot-reference-and-next-local-work-2026-10-13).
+[current delivery order](../roadmap.md#current-delivery-cycle).
+
+## 共同观测交接 2026-10-14
+
+本轮修改的是相机来源到 Follow 的代码交接，没有运行新的连续视频或机器狗运动实验。
+Perception 现在一次发布 `SemanticObservation`，包含 Product session、相机代次、来源时间、
+固定的地图身份与位姿、图像和检测。Follow 不再分别拼接图像、检测和位姿。
+
+- 旧帧、重复观测和已退休相机代次被丢弃，不能增加三帧核验计数或触发当前任务的误取消。
+- 相机重启和地图切换立即使旧空间上下文失效，并定向取消 Follow 所属的导航目标；
+  旧推理或异步身份确认随后返回时不能恢复这些目标。
+- 稳定人物身份和已经验证的多视角参考保留，当前 track ID、坐标、速度和候选证据清除。
+  新上下文需要重新积累三次不同观测并通过既有身份核验；复用同一个 track ID 不能跳过。
+  若原本没有可靠的外观身份参考，则沿既有生命周期取消 Follow，要求显式重新选择，
+  不把重启后复用的检测 ID 或新出现的单个人当作原目标。
+- 检测器保持加载，空间 tracker 在 worker 内重置；正常等待中的新帧不令所有正在执行的
+  推理失效。各相机流序号独立，RGB-D 配对不依赖序号相等。
+
+本地验证入口：
+
+- [SHM 来源与重启](../../tests/drivers/test_camera_shm.py)
+- [感知同步与地图切换](../../tests/perception/test_perception_frames.py)
+- [worker 与观测发布](../../tests/perception/test_perception_module_adapter.py)
+- [Follow 多视角、重识别与旧回调](../../tests/runtime/test_follow_person_selection.py)
+- [实际 RGB-D 投影到 Follow 的组件集成](../../tests/integration/semantic/test_follow_observation.py)
+
+本轮验证结果（重复运行不累计）：相机 SHM/Module 27 项；感知同步、worker、pipeline 与
+故障语义 83 项；Follow 生命周期、重识别和组件集成 94 项；装配、消息与模块边界 88 项；
+图像来源保持与既有 sensor 回归 47 项；MuJoCo formal feeder 119 项，均通过。
+另外在 Linux/WSL 编译并运行了原生 SHM ring 测试。相关 Python lint 与补丁格式检查通过。
+补齐仿真脚本输入迁移和 Gateway 显式选人后，包含上述 94 项在内的直接受影响组合为
+123 项通过；没有把两轮重叠用例累加。网页人物位置类型已允许暂不可用，TypeScript 检查通过。
+
+附加检查 `tests/decision/test_llm_vision_transport.py` 存在基线失败：项目 uv 环境为 3 项，
+涉及多图提示词位置、旧提示词文本和未设置匹配图像时间的单人 fixture。本机 Conda 环境
+另外有 4 项 SDK 流关闭预期失败，合计 7 失败、23 通过。为核对归属，在同一 Conda 环境
+仅替换导入本轮前 HEAD 的 PersonTracker/VisualServo，保留当前测试和其余依赖，复跑得到
+相同的 7 个失败与 23 个通过。这些未计入本轮通过结果，也未扩展修改到 LLM 传输功能。
+
+核心交接回归可复跑：
+
+```powershell
+python -m pytest tests/perception/test_perception_frames.py tests/perception/test_perception_module_adapter.py -q
+python -m pytest tests/runtime/test_follow_person_selection.py tests/runtime/test_follow_lifecycle.py tests/runtime/test_sim_tracking_person.py tests/runtime/test_visual_servo_semantic_integration.py tests/integration/semantic/test_follow_observation.py -q
+```
+
+集成测试使用可控检测输出，执行真实同步、深度投影、感知发布和 Follow 接收，不调用真实
+检测模型；它验证交接与隔离，不证明模型识别人脸/衣着的正确率。取消事件也不等于实机
+停稳证据。旧 producer 的 generation=0 与既有 binary Image 编码不提供新来源契约；
+实机重启隔离需要配套更新原生相机和 Host。原生仿真运动、标定与受监督实机验证仍待进行。
 
 ## What ran
 
@@ -344,13 +399,13 @@ unmeasured, and the individual timings below are not latency percentiles.
 
 ### AIXForge live API evidence (2026-10-10)
 
-The retained evidence is [results.json](../../artifacts/aixforge-api-20261010/results.json),
-[wire.json](../../artifacts/aixforge-api-20261010/wire.json), and
-[retest.json](../../artifacts/aixforge-api-20261010/retest.json), plus the final
-single-purpose [follow-final.json](../../artifacts/aixforge-api-20261010/follow-final.json)
-and the later [image-first.json](../../artifacts/aixforge-api-20261010/image-first.json)
+The retained evidence is results.json (`artifacts/aixforge-api-20261010/results.json`),
+wire.json (`artifacts/aixforge-api-20261010/wire.json`), and
+retest.json (`artifacts/aixforge-api-20261010/retest.json`), plus the final
+single-purpose follow-final.json (`artifacts/aixforge-api-20261010/follow-final.json`)
+and the later image-first.json (`artifacts/aixforge-api-20261010/image-first.json`)
 format comparison. Additional calling-mode reports are retained under
-[modes/](../../artifacts/aixforge-api-20261010/modes/).
+modes/ (`artifacts/aixforge-api-20261010/modes`).
 These files do not contain the API key. They cover API/task parsing and bounded
 image and text transport diagnostics only;
 they do not run the robot or the navigation stack.
@@ -452,8 +507,10 @@ and the corresponding evaluation JSON. The annotated video is evidence for the
 specific run whose directory contains it; an older successful video must not be
 used to represent this run.
 
-- [Verified RGB inspection video](D:/inovxio/brain/lingtu/build/person-follow/verified/inspection.mp4): 6 seconds and 180 frames, with the full frame, original target crop, and current crop. The inspection layout does not change model decisions.
-- [Passing native MuJoCo video](D:/inovxio/brain/lingtu/build/person-follow-native-20261009-tolerance-fix/native/motion/native_navigation.mp4): 34.75 seconds and 139 frames, encoded as H.264 at 960 x 540.
+These videos are local run artifacts, not files included in a fresh checkout:
+
+- Verified RGB inspection video: `build/person-follow/verified/inspection.mp4`; 6 seconds and 180 frames, with the full frame, original target crop, and current crop. The inspection layout does not change model decisions.
+- Passing native MuJoCo video: `build/person-follow-native-20261009-tolerance-fix/native/motion/native_navigation.mp4`; 34.75 seconds and 139 frames, encoded as H.264 at 960 x 540.
 
 ## Separate MuJoCo/native diagnostic
 
@@ -1210,7 +1267,7 @@ explicit eight-thread setting for the research-server replay; it does not
 change other deployments' default.
 
 The thread budget is configurable end-to-end as the optional Host field
-`person_appearance_cpu_threads`, through the existing Blueprint/provider
+`person_appearance_cpu_threads`, through the existing HostBuilder/provider
 construction path. Its default remains four. Direct recorded-data replay
 uses `--dino-cpu-threads 8` for this server. The encoder, Product Host field,
 immutable RunPlan and provider tests cover explicit eight-thread propagation
@@ -1306,7 +1363,7 @@ The encoder tests cover CUDA selection, explicit ONNX CUDA failure, the
 FP32 load, RoPE-period conversion, wrapper CLS output, unchanged input shape
 and normalized descriptor validation. The original Host fields
 `person_appearance_model` and `person_appearance_device` already carry the
-checkpoint and CUDA choice through the Blueprint/provider boundary. The
+checkpoint and CUDA choice through the HostBuilder/provider boundary. The
 research runs do not activate a robot Product or turn this local encoder
 into a network model service.
 
@@ -1529,7 +1586,7 @@ detections. The RGB input is unthrottled and selection/tracking require the
 same source timestamp. The regression sends one RGB image followed by
 three increasing detection timestamps and verifies that it cannot produce
 three-image identity evidence; only the corresponding new RGB observations
-can complete that evidence. Blueprint wiring is checked as well.
+can complete that evidence. HostBuilder wiring is checked as well.
 
 This fixes evidence provenance within the existing Host ports; it adds no
 transport, model service or runtime scheduler. The actual tracking Product's
@@ -1549,7 +1606,7 @@ Final affected checks pass without new or baseline failures on these surfaces:
 - `test_follow_person_selection.py`,
   `test_perception_assembly_convergence.py` and
   `test_sim_tracking_person.py`: 45 tests.
-- Ruff passes on the changed visual-servo, wire and Blueprint-test surfaces.
+- Ruff passes on the changed visual-servo, wire and HostBuilder-test surfaces.
 - Both complete comparison videos are H.264 / YUV420P, 1280 x 720,
   827 frames / 28.858569 seconds and pass full FFmpeg decoding.
 
@@ -2149,15 +2206,15 @@ being filled with another person or interpolated target observations.
 
 Final media and raw evidence:
 
-- [Complete baseline/final video](../../build/dino-return/results/gpu-cpu-batched-final-comparison/return-view.mp4):
+- Complete baseline/final video (`build/dino-return/results/gpu-cpu-batched-final-comparison/return-view.mp4`):
   H.264/yuv420p, 1280x720, 827 frames, 28.858569 seconds; complete FFmpeg
   decode succeeds. It displays source order, current native ID, raw XYZ,
   first selection/lock, per-frame inference and completion delay.
-- [First-frame cost split](../../build/dino-return/results/gpu-cpu-batched-final-comparison/first-frame.png)
-  and [complete phase/queue plot](../../build/dino-return/results/gpu-cpu-batched-final-comparison/phases.png).
-- [Accepted-target audit](../../build/dino-return/results/return-gpu-cpu-final8-batched/all-accepted-audit.jpg),
-  [final metrics](../../build/dino-return/results/return-gpu-cpu-final8-batched/metrics.json)
-  and [raw tracking records](../../build/dino-return/results/return-gpu-cpu-final8-batched/tracks_dino.json).
+- First-frame cost split (`build/dino-return/results/gpu-cpu-batched-final-comparison/first-frame.png`)
+  and complete phase/queue plot (`build/dino-return/results/gpu-cpu-batched-final-comparison/phases.png`).
+- Accepted-target audit (`build/dino-return/results/return-gpu-cpu-final8-batched/all-accepted-audit.jpg`),
+  final metrics (`build/dino-return/results/return-gpu-cpu-final8-batched/metrics.json`)
+  and raw tracking records (`build/dino-return/results/return-gpu-cpu-final8-batched/tracks_dino.json`).
 
 For a fresh reproduction, choose a new output directory rather than
 overwriting the retained baseline, intermediate or final evidence.
@@ -2340,7 +2397,7 @@ permission `HELD`, observation `QUIET`, and admission reason
 `navigation_session_inactive`. No following or body-motion test is claimed.
 
 The complete annotated RGB-D video is
-[follow-003-tracking.mp4](../../build/dino-camera/field-20261012/follow-003-tracking/follow-003-tracking.mp4).
+follow-003-tracking.mp4 (`build/dino-camera/field-20261012/follow-003-tracking/follow-003-tracking.mp4`).
 It contains 1341 frames in source order, H.264/yuv420p at 1280x720, and passes
 complete FFmpeg decoding. The encoded duration is 44.998 seconds, including the
 final frame interval. Green boxes indicate accepted targets only; gray boxes
@@ -2360,7 +2417,7 @@ the NX release used above:
   nonempty cached snapshot short-circuited subsequent requests indefinitely
   when there was no WebSocket consumer. Two snapshot-route regression tests
   pass. The recorded SHM stream was current and was not affected by this bug.
-- `config/runtime/products/tracking.yaml` now declares `tick_hz: 100.0`, so an
+- `config/system/products/tracking.yaml` now declares `tick_hz: 100.0`, so an
   explicit SCAN selection satisfies the native compiler's frequency contract.
   The default backend remains CMU. Both backend selections compile in the new
   regression test, which also preserves the required map and critical modules.
@@ -2550,6 +2607,92 @@ from actual holds/rejections and require native confirmation for a stopped
 claim. They do not constitute a rendered-browser or hardware acceptance test.
 These are local contract tests using controlled features; they do not qualify
 onboard recognition, physical stopping or a new field release.
+
+## 论文对照与改进判断（2026-10-20）
+
+后续开发的较新论文依据、训练/推理硬件边界、代码映射和逐项待办统一维护在
+[人物识别、跟踪与遮挡恢复：开发参考](person-tracking-development-reference.md)。
+该参考补充 2025–2026 工作，本文继续保存原有实验与失败记录。
+
+本节是针对当前人物检测、跟踪和 Follow 代码的有范围文献核对，不是新的模型回放结果，也不是完整系统综述。检索围绕低分关联、相机自运动、遮挡恢复、描述选人、人物 ReID、可信身份记忆和部分遮挡定位；来源限原论文、正式出版页和作者仓库。以下明确区分论文机制、当前代码事实与建议实验，没有下载权重或新增依赖。
+
+### 当前判断与审查更正
+
+检测、描述检索、短时轨迹关联、人物身份确认、当前三维位置和运动授权各自解决不同问题。当前原始身份参考、经核验的多视角参考、来源时间、上下文隔离与原生导航所有权值得保留；不能把已有机制再次写成全部缺失。
+
+上下文恢复时与零位置做 EMA、带外观限制的指令被唯一人物快捷分支绕过、同步编码持有取消所需状态锁、固定类别模型按提示词重标，以及容量裁剪重绑共享字典，属于已复现的实现问题，应先修正，不需要以新模型替代修复。
+
+上一轮对几何/距离回退的定性需要收紧：点云零重叠、外观分数低并不自动证明不是同一人。人移动后点云可以不重叠，遮挡/模糊也会破坏特征。BoT-SORT、DeepSORT 和 Deep OC-SORT 都有允许 IoU 补配的阶段。因此不应无条件删除全部运动回退；需要区分轨迹状态、距离/时间可达性、观测质量和可靠身份否定。现有无 DINO 路径三帧邻近候选即可换身份的反例仍成立，但修法不能退化成对低质量外观分数的一票否决。
+
+### 可迁移机制及边界
+
+| 当前问题 | 论文及已核对机制 | 对 LingTu 的建议与边界 |
+| --- | --- | --- |
+| 低分框在进入 tracker 前已经被删掉 | [ByteTrack，ECCV 2022](https://www.ecva.net/papers/eccv_2022/papers_ECCV/papers/136820001.pdf)：高分关联后，低分框恢复未匹配的现有轨迹，不独立建轨 | 先修检测候选入口与建轨/发布阈值的接线。低分不能任意复活长期丢失身份。保留已经修好的部分赋值目标，不需要整套换库 |
+| 图像框预测没有相机自运动补偿；遮挡时预测会漂移 | [BoT-SORT，2022 arXiv](https://arxiv.org/abs/2206.14651)修正相机运动；[OC-SORT，CVPR 2023](https://arxiv.org/abs/2203.14360)用真实观测估计方向，并在恢复后重更新内部滤波；[Deep OC-SORT，ICIP 2023](https://arxiv.org/abs/2302.11813)加入检测质量加权的外观更新与关联歧义处理 | 对机器人转动视频做 CMC 对照；区分最后真实观测与内部预测。虚拟路径不能发布为真实看到的人。图像补偿不能在 map 系三维位置上重复施加 |
+| 处理帧率不规则，却按 update 次数预测/过期；三维 person 沿用静态融合 | 作者 ByteTrack KF 实际仍用每步 dt=1，不是任意采样间隔的现成解法；这些 MOT 方法具有动态预测和过程噪声机制 | 基于实际 source_ts 适配 F(Δt)、Q(Δt) 与恢复期，是本项目的工程建议。动态人采用当前观测或动态滤波，不能把历史平均位置贴上最新时间；新上下文首次有效位置直接初始化 |
+| “唯一可见的人”替代了“符合描述的人” | [IRRA，CVPR 2023](https://arxiv.org/abs/2303.12501)以图文细粒度交互训练强化描述检索；[TransRMOT，CVPR 2023 项目/摘要](https://referringmot.github.io/)让语言作为目标相关性依据 | 描述匹配是初始候选选择的必要依据。先取消绕过，再评测人物领域文本检索模型。IRRA 的 Rank-1 检索能力不自动提供目标缺席时的拒识，也不完成跨帧身份保持；TransRMOT 是语言条件多目标跟踪，不能直接替代机器人三维跟随 |
+| 通用外观相似被当成专用人物身份能力 | [OSNet，ICCV 2019](https://arxiv.org/abs/1905.00953)学习多尺度人物特征；[CLIP-ReID，AAAI 2023](https://ojs.aaai.org/index.php/AAAI/article/view/25225)用人物 ID 标签做两阶段适配；[PersonViT，MVA 2025](https://link.springer.com/article/10.1007/s00138-025-01659-y)使用人体域预训练与 ReID 微调；[DINOv3，2025](https://arxiv.org/abs/2508.10104)提供通用自监督表征 | 保留当前 DINOv3 CLS 作为基线，用真正的 ReID checkpoint 做同输入比较。DINOv3 CLS+余弦是合理的通用实例检索基线，但不是已证实的机器人身份保证；不能预先断言 OSNet 一定更好。CLIP 属性检索不等于复现 CLIP-ReID 的身份训练 |
+| 身份参考会受不完整/背景占比高的 crop 污染 | [OCL-RPF，RA-L 2024](https://arxiv.org/abs/2309.11727)区分长短期正负样本、可见部位并在丢失时暂停学习；[TrackVLA++ 原文 IV-A](https://arxiv.org/html/2510.07134v1)在目标无效时冻结身份记忆 | 复用现有可信图库，先评测部位可见性、有限干扰者证据及参考更新质量条件，再决定是否在线训练。UNKNOWN/OTHER 不丰富可信身份。在线训练依赖标签正确，不应先把模型自举污染引入默认链 |
+| 人物身份正确但深度取到了前景椅子/遮挡物 | [Robot Person Following Under Partial Occlusion，ICRA 2023](https://arxiv.org/abs/2302.02121)利用可见人体关节参与定位，而不要求每帧全身可见 | 可以用可见关节/部位选择 depth patch，并检查多个有效区域的一致性。原论文是带初始全身和地面/关节高度先验的单目几何方法，不能宣称直接解决我们的 RGB-D 污染；不引入固定地面/固定人体高度来替代现有三维地图 |
+
+### 两个额外源码事实
+
+1. `DetectorSpec.confidence` 默认 0.3，BPUDetector 直接构造默认 0.25，而 BPUTracker 默认 low=0.1、high=0.25；常规 BPU head 和 YOLOE head 都先按 detector confidence 过滤。因此默认组合下 `[0.1,0.25)` 的框进不了第二阶段。显式配置 confidence=0.1 时不能沿用这个结论。修法应区分候选检测阈值、建轨门限及发布策略，而不是全局调低置信度后让弱框任意建轨。源码位置：`src/perception/backends.py:406`、`:538`，`src/perception/detection/bpu_detector.py:467`、`:626`，`src/perception/tracking/bpu_tracker.py:152`。
+2. `src/decision/vision/reid.py:54` 的开发后端调用 `FeatureExtractor(model_name="osnet_x1_0", model_path="")`。作者 [FeatureExtractor](https://github.com/KaiyangZhou/deep-person-reid/blob/master/torchreid/utils/feature_extractor.py)和 [OSNet](https://github.com/KaiyangZhou/deep-person-reid/blob/master/torchreid/models/osnet.py) 源码表明默认预训练是 ImageNet；这不能当成已加载 Market1501/MSMT17 人物 ReID 权重。此项只核对源码，没有加载后端，也不能推断 BPU 文件的训练来源或当前选定平台已启用 OSNet。
+
+TrackVLA++ 的状态另作更新：arXiv 仍为 2025-10-08 的 v1，[作者页面](https://pku-epic.github.io/)已列 ICRA 2026。TIM 是使用推理 token 熵与 invalid 判断控制的视觉特征记忆，不是我们参考图库的完整复现。论文使用 7B VLA、四路 RGB 与远端 RTX4090，不能据此声称本机目标平台能以同样速度部署；本项目只迁移身份/观测机制，运动继续经过 native 三维规划和安全链。
+
+### 建议实施与评测顺序
+
+1. 固定并修复确定性反例：描述不匹配的唯一人物不得锁定；上下文恢复首帧位置不混入原点；编码延迟不能挡住取消；检测回退保留真实类别；共享对象表原地裁剪。
+2. 在同一检测输入下修正低分恢复入口，加入时间一致的动态状态，分别测丢帧/变帧率和自运动补偿；不要同时替换检测器、特征模型与关联器，否则无法归因。
+3. 对照当前 DINOv3 与明确人物训练来源的 ReID checkpoint；如果要改描述选择，再单独对照 IRRA 类模型。模型名、实际权重、预处理和后端必须一致记录。
+4. 再加入可见部位、受控参考更新和遮挡搜索。需要新训练/模型依赖的分支仍先做离线实验，不把论文动作头直接接到机器人。
+
+验证和测试按人物/片段分离，用验证集选择阈值后冻结测试。余弦 0.65 不是 65% 身份正确率；多参考取最大相似度时，参考集大小也会改变误接受机会。需要报告错误人物接受/错误目标下发、目标可见时正确跟踪覆盖率、缺席时拒识、ID 切换、遮挡恢复成功率和耗时、正确身份上的三维位置误差，以及端到端帧龄和取消延迟。不能只统计已经接受帧的正确率，也不能用“长期拒识”换取看似零错认。
+
+[HOTA](https://www.cvlibs.net/publications/Luiten2020IJCV.pdf)明确区分检测、关联与定位误差，可联合 HOTA/AssA、IDF1 和碎片化指标。已有 180 帧实验中 88 帧正确、0 帧错人、92 帧缺失，应继续作为覆盖不足的历史失败记录，不能被新论文指标覆盖。
+
+评测输入可扩展已有 MOT17，加入 [DanceTrack](https://dancetrack.github.io/) 的相似衣着/复杂交叉和 [JRDB](https://jrdb.erc.monash.edu/) 的机器人自运动/二维三维人体标注。JRDB 当前下载需登录，DanceTrack 原视频有非商业研究限制；本轮只核对入口和适用问题，没有下载这些新增数据或取得再分发资格。
+
+## First deterministic tracking repairs, 2026-10-20
+
+The current development reference now records the completed first slice under
+DEV-01/02/09. This implementation does not add RexSeek, COPE, new model weights,
+dependencies or a V100 requirement. It preserves the existing native navigation
+owner and its cancellation transaction.
+
+- Descriptive person selection no longer uses the confirmed-single-person shortcut.
+  Generic `the visible person` following keeps its existing model-free path.
+- After an observation-context reset, the first identity-confirmed position
+  initializes directly. Regressions previously measured x=4 instead of x=10
+  and waypoint x=5.5 instead of x=8.5; both now pass, while subsequent EMA,
+  source-time velocity, duplicate rejection and jump rejection remain covered.
+- Appearance and description scoring, including long-absence candidate ranking,
+  run before acquiring commit locks. Current intent, sequence and freshness
+  checks reject superseded work. Controlled blocking encoders demonstrate that
+  cancellation and the perception watchdog advance before encoding is released.
+  VLM target installation uses the same prepared-feature path; waiting for VLM
+  selection does not repeat unused per-frame inference.
+- The DINO backend serializes loading, inference and shutdown per instance, so
+  supported TensorRT contexts cannot be reused concurrently or destroyed while
+  an inference is in flight. Three fake native-entry regressions failed before
+  the fix and pass afterwards; this is not a hardware TensorRT run.
+- Fixed-class YOLO-E fallback retains its own labels and class IDs, filtering
+  against the requested labels instead of interpreting COCO IDs as prompt indices.
+  Instance capacity pruning mutates the shared object table in place.
+
+The six directly affected follow/person/detector/instance suites pass with
+**209 tests**. The DINO encoder suite separately passes with **18 tests**.
+Ruff passes on the ten changed Python files. All reported evidence is local
+contract testing with controlled features or fake native calls; no new video
+benchmark, onboard FPS, physical stopping or field-following result is claimed.
+
+The next slice remains weak-candidate input, real source-time dynamics, and
+identity/reference recovery. Long-term motion-only reacquisition, RGB-D occluder
+contamination and cross-frame VLM reference freshness remain open. The fixes
+above must not be described as resolving all identity recovery failures.
 
 ## Sources
 

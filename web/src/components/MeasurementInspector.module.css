@@ -1,0 +1,40 @@
+.panel {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-layer-1);
+  color: var(--text);
+}
+.panel > summary { padding: 14px 18px; cursor: pointer; font-weight: 600; }
+.body { padding: 0 18px 18px; display: grid; gap: 14px; min-width: 0; }
+.toolbar, .controls, .fields { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.body label { display: inline-flex; align-items: center; gap: 7px; }
+.body input, .body select, .body button {
+  font: inherit;
+  color: var(--text);
+  background: var(--glass-hi);
+  border: 1px solid var(--border-hi);
+  border-radius: var(--r-xs);
+  min-height: 36px;
+  padding: 4px 9px;
+}
+.body input[type='number'] { width: 112px; }
+.body input[type='checkbox'] { min-height: auto; }
+.body button { cursor: pointer; }
+.body button:disabled, .body fieldset:disabled { opacity: .6; cursor: not-allowed; }
+.panel summary:focus-visible, .body :is(button, input, select, a):focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 3px;
+}
+.note { margin: 0; color: var(--text-dim); font-size: var(--t-caption-size); overflow-wrap: anywhere; }
+.error { color: var(--red); margin: 0; overflow-wrap: anywhere; }
+.visual { margin: 0; min-width: 0; }
+.visual canvas { display: block; width: min(100%, 576px); height: auto; image-rendering: pixelated; border: 1px solid var(--border); }
+.visual figcaption { margin: 8px 0; color: var(--text-dim); }
+.wave { width: 100%; max-height: 150px; display: block; background: var(--bg-layer-2); }
+.wave line { stroke: var(--accent); stroke-width: 1.5; }
+.wave .axis { stroke: var(--border-hi); }
+.wave text { fill: var(--text); font-size: 11px; }
+.body fieldset { border: 1px solid var(--border); border-radius: var(--r-sm); padding: 12px; min-width: 0; }
+.body legend { padding: 0 6px; }
+.fields { margin-top: 10px; }
+.confirmed { max-height: 180px; overflow: auto; font-size: var(--t-caption-size); white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .body { padding: 0 12px 12px; } .toolbar label { width: 100%; } }

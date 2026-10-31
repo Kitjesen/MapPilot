@@ -13,6 +13,8 @@ _IMAGE = np.zeros((16, 16, 3), dtype=np.uint8)
 
 
 class _FailingModel:
+    predictor = None
+
     def set_classes(self, _classes: list[str]) -> None:
         pass
 
@@ -21,6 +23,8 @@ class _FailingModel:
 
 
 class _EmptyModel:
+    predictor = None
+
     def set_classes(self, _classes: list[str]) -> None:
         pass
 

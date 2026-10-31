@@ -11,6 +11,33 @@ snapshots. **Unreal Engine 5** is the high-fidelity Visual Runtime: it follows
 immutable MuJoCo truth snapshots and owns presentation plus render sensors only.
 No UE Actor transform is written back as simulation truth.
 
+Thunder V4's current controller is CTS MoE v39 on ordinary terrain and stairs.
+The [controller selection guide](packages/controllers/doso/thunder_v4/README.md)
+owns the single default, model source and runtime binding contract. Historical
+locomotion results retain their original policy identities.
+
+## Sensor selection and viewing
+
+The robot-selection step now includes a sensor-configuration drawer, without a
+third wizard step. It presents the selected rig's actual declarations, mount
+frames, enable state and sample rate. See
+[sensor selection](../docs/design/sensor-selection.md) for authoring boundaries,
+original illustrations, verification and the remaining navigation gates.
+
+## Local visual asset library
+
+Current product work: the selected Factory Environment Collection production-line
+site is being integrated for inspection. The
+[factory README](tools/worlds/factory_environment_collection/README.md) records
+loading measurements, completed UI work, source-bay intake and the remaining
+physics/navigation/evidence gates. A home background is not a drivable world.
+
+Versioned industrial visual candidates are archived in [`library/`](library/README.md).
+The read-only category/search/GLB viewer starts with
+`node sim/tools/assets/library_preview/server.cjs 63426` from the repository root.
+It reuses the existing asset-review catalog format; library admission is not UE
+import, collision, or simulation qualification.
+
 ## Full Pipeline
 
 ```text
@@ -121,7 +148,7 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the detailed architecture,
 authority matrix, migration tree, and delivery gates.
 
 Simulation can validate software wiring and algorithm contracts. It does not
-prove field readiness by itself. Claims about S100P/sunrise deployment require
+prove field readiness by itself. Claims about a physical deployment require
 field runtime evidence.
 
 ## Stable Root Contract
@@ -162,6 +189,10 @@ Direct-engine showcase assets that are not catalog packages live under
 
 The generic runtime path starts from one resolved SessionBundle. Run-specific
 PIDs, logs, ports, and shared-memory names remain in `RunAllocation`:
+
+The coordinator command below is a **Physics smoke test with zero actuator
+output**. It does not load the selected policy. Policy execution uses the
+separate [controlled runner](runtime/coordinator/controlled_run.py).
 
 ```powershell
 python -m sim.catalog resolve `
@@ -217,7 +248,7 @@ PYTHONPATH=src:. python sim/scripts/mujoco/native_navigation_acceptance.py \
 ```
 
 This manifest isolates navigation using truth localization. It exercises
-SCAN, path following, and the simulated driver; it does not qualify Fast-LIO2,
+SCAN, path following, and the simulated driver; it does not qualify LTLIO,
 the full Product lifecycle, or a field robot. `local_cmu.json` is the separate
 CMU component comparison.
 
@@ -231,7 +262,7 @@ PYTHONPATH=src:. python sim/scripts/mujoco/native_navigation_acceptance.py \
   --out-dir artifacts/mujoco_native_nav_60m
 ```
 
-`industrial_park_60m.json` explicitly selects CMU. It requires native Fast-LIO2
+`industrial_park_60m.json` explicitly selects CMU. It requires native LTLIO
 localization, physical rolling LiDAR, goal arrival, and at least 50 m of path
 length, net XY displacement, and goal-distance reduction. Its result must not
 be described as SCAN qualification. A direct runner result is component
@@ -239,7 +270,8 @@ evidence; Product acceptance additionally requires the exact RunPlan and the
 [ProductControl wrapper](#products-in-envsim) below.
 
 The wrapper checks the manifest against the RunPlan, including the selected
-local planner.
+local planner. `scan_goal.json` is a native test fixture without a
+`product_contract` and cannot be passed to `product_acceptance.py`.
 
 The command below is a Linux/WSL component-diagnostic compatibility path. If it
 is used from a Windows shell, keep high-rate native status/log files on WSL
@@ -257,7 +289,7 @@ Those children are Linux/CycloneDDS binaries. Running them from PowerShell is
 Linux evidence and must never be labeled Windows-native Product evidence.
 Windows-native parity for all Products is the active P0 target and requires a
 RunPlan whose selected native artifacts are PE/DLL-only, including a verified
-Fast-LIO `slamd.exe`; declared Python feeder/Host processes remain
+LTLIO `slamd.exe`; declared Python feeder/Host processes remain
 interpreter-owned. The Windows `/mnt/<drive>` mount is a 9p path and is too slow
 for high-rate status snapshots, so this compatibility path should use a
 `\\wsl.localhost\<distro>\...` output directory. The runner performs a bounded
@@ -279,16 +311,25 @@ python -m lingtu.control switch teleop_avoid `
 ProductControl owns the process graph and opens the MuJoCo viewer. Focus the
 viewer, hold `Shift` as the deadman, and use `W/S` for forward/reverse, `A/D`
 for lateral intent, `Q/E` for yaw, `M` for manual escape, `Space` to command
-zero, and `Esc` to exit. This Product defaults to native Fast-LIO2 using
+zero, and `Esc` to exit. This Product defaults to native LTLIO using
 simulated LiDAR and IMU; Mapd supplies the local collision map. An explicitly
 selected truth-localization diagnostic bypasses that estimator and only
 validates the downstream navigation chain. The native endpoint owns
 LocalPlanner, Follower, final motion arbitration, and `/nav/cmd_vel`. The
 Thunder policy and MuJoCo driver do not validate Go2 SDK2 execution.
 
-`sim/packages/controllers/doso/thunder_v4/locomotion/keyboard.py --keyboard`
-is a gait-policy debug tool that bypasses LingTu planning and must not be used
-as local-avoidance evidence.
+`sim/packages/controllers/doso/thunder_v4/locomotion/keyboard.py` is an explicit
+legacy comparison tool. It requires `--policy-path` to select a retained
+4998/1119 model, for example:
+
+```powershell
+python sim/packages/controllers/doso/thunder_v4/locomotion/keyboard.py `
+  --policy-path sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998.onnx `
+  --keyboard
+```
+
+It bypasses LingTu planning and does not select the current CTS default or
+prove local avoidance.
 
 Use [`docs/simulation.md`](../docs/simulation.md)
 for the exact claim boundary. The current native-DDS navigation component gate
@@ -360,7 +401,7 @@ Key rules:
 - Use `mujoco_lidar` for product-style simulated LiDAR.
 - `ray_caster_lidar` is a fallback/compatibility backend.
 - Simulated LiDAR scan timing, IMU sampling, and publish time must come from a
-  single simulated hardware clock model for Fast-LIO-style validation.
+  single simulated hardware clock model for LTLIO-style validation.
 - Ground-truth or odometry-prior shortcuts are diagnostics only and must not be
   presented as production localization.
 

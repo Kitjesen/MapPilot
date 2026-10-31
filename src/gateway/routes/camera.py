@@ -107,7 +107,7 @@ def register_camera_routes(app, gw=None) -> None:
     )
     async def camera_snapshot():
         """Return the current JPEG frame without blocking cold-start clients."""
-        frame = _cached_gateway_jpeg(gw) or _teleop_snapshot_jpeg(gw)
+        frame = _teleop_snapshot_jpeg(gw) or _cached_gateway_jpeg(gw)
         if frame:
             return Response(content=frame, media_type="image/jpeg")
 

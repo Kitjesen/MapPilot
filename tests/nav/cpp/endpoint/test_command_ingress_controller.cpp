@@ -275,6 +275,27 @@ void testTaskIdStableAcrossRequestRetries() {
           "one request id must not alias two task ids");
   require(dispatches == 1, "conflicting task identity dispatched work");
 }
+void testPendingControlReceiptCompletesWithOriginalRequest() {
+  CommandIngressController controller;
+  const auto control = request("client-a", "resume-wait", NavigationCommandKind::ResumeAutonomy);
+  int dispatches = 0;
+  const auto waiting = controller.handle(control, [&](NavigationCommandKind, const CommandPayload &) {
+    ++dispatches;
+    return CommandAck{true, "resume_requested", true};
+  });
+  require(waiting.ack.pending && waiting.ack.accepted, "control wait is an accepted request");
+  require(controller.diagnostics().rejected == 0, "waiting stop evidence counted as rejection");
+  const auto completed = controller.complete(control, {true, "autonomy_resume_ready"});
+  require(!completed.ack.pending && completed.request_id == control.request_id,
+          "confirmed receipt lost the original request identity");
+  const auto replay = controller.handle(control, [&](NavigationCommandKind, const CommandPayload &) {
+    ++dispatches;
+    return CommandAck{false, "must_not_dispatch"};
+  });
+  require(replay.replayed && replay.ack.reason == "autonomy_resume_ready" && dispatches == 1,
+          "completed control receipt was not replayed exactly");
+}
+
 }  // namespace
 
 int main() {
@@ -286,6 +307,7 @@ int main() {
     testRemovedCommandVelocityKindFailsClosed();
     testTaskIdStableAcrossRequestRetries();
     testTaskPauseResumeCommandsAreDistinctUserActions();
+    testPendingControlReceiptCompletesWithOriginalRequest();
   } catch (const std::exception &exc) {
     std::fprintf(stderr, "test_command_ingress_controller: FAIL: %s\n", exc.what());
     return 1;

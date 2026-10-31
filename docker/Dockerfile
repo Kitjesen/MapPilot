@@ -8,6 +8,9 @@
 # =============================================================================
 
 ARG UBUNTU_VERSION=22.04
+ARG UV_VERSION=0.10.12
+
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
 FROM ubuntu:${UBUNTU_VERSION} AS build
 
@@ -15,13 +18,19 @@ ARG DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    UV_PROJECT_ENVIRONMENT=/opt/lingtu-venv \
+    UV_PYTHON_DOWNLOADS=never \
+    PATH=/opt/lingtu-venv/bin:${PATH}
+
+COPY --from=uv /uv /usr/local/bin/uv
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     cargo \
     cmake \
+    curl \
     cyclonedds-dev \
     cyclonedds-tools \
     libeigen3-dev \
@@ -47,8 +56,7 @@ WORKDIR /app
 COPY . .
 
 RUN python3 -c "import sys; assert sys.version_info[:2] == (3, 10), sys.version" \
-    && python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel \
-    && python3 -m pip install --no-cache-dir '.[dev]'
+    && uv sync --locked --python /usr/bin/python3 --no-editable --extra dev --no-cache
 
 ENV CMAKE_BUILD_TYPE=Release \
     LINGTU_BUILD_JOBS=4 \
@@ -57,6 +65,9 @@ ENV CMAKE_BUILD_TYPE=Release \
     LINGTU_SLAM_BUILD_DDS_RUNTIME=ON \
     LINGTU_SLAM_BUILD_TESTS=ON
 
+ENV LINGTU_GTSAM_PREFIX=/opt/gtsam \
+    CMAKE_PREFIX_PATH=/opt/gtsam
+RUN bash scripts/build/prepare_gtsam.sh
 RUN make build PYTHON=python3
 
 FROM ubuntu:${UBUNTU_VERSION} AS runtime
@@ -65,7 +76,12 @@ ARG DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    UV_PROJECT_ENVIRONMENT=/opt/lingtu-venv \
+    UV_PYTHON_DOWNLOADS=never \
+    PATH=/opt/lingtu-venv/bin:${PATH}
+
+COPY --from=uv /uv /usr/local/bin/uv
 
 # Development packages are intentionally installed here as a portable way to
 # provide every shared library needed by the native artifacts on Ubuntu 22.04.
@@ -85,17 +101,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY . .
 COPY --from=build /app/build /app/build
+COPY --from=build /opt/gtsam/lib /opt/gtsam/lib
 
 RUN python3 -c "import sys; assert sys.version_info[:2] == (3, 10), sys.version" \
-    && python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel \
-    && python3 -m pip install --no-cache-dir '.[gateway]'
+    && uv sync --locked --python /usr/bin/python3 --no-editable --extra gateway --no-cache
 
 ENV PYTHONPATH=/app/src:/app \
     PATH=/app/build/nav_endpoint:/app/build/slam_core:/app/build/maps:/app/build/dds_probe:/app/build/driver:/app/build/livox_sdk2_stream:${PATH} \
-    LD_LIBRARY_PATH=/app/build/nav_endpoint:/app/build/slam_core:/app/build/maps:/app/build/driver:/app/build/livox_sdk2_stream:/usr/local/lib
+    LD_LIBRARY_PATH=/opt/gtsam/lib:/app/build/nav_endpoint:/app/build/slam_core:/app/build/maps:/app/build/driver:/app/build/livox_sdk2_stream:/usr/local/lib
 
 FROM runtime AS test
 
-RUN python3 -m pip install --no-cache-dir '.[dev]'
+RUN uv sync --locked --python /usr/bin/python3 --no-editable --extra gateway --extra dev --no-cache
 
 CMD ["python3", "-m", "pytest", "tests/runtime/", "-q", "-x"]

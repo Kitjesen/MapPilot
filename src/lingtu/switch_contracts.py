@@ -48,6 +48,7 @@ class ProcessReport:
     preserved: list[str] = field(default_factory=list)
     identities: dict[str, Mapping[str, Any]] = field(default_factory=dict)
     ready: dict[str, Mapping[str, Any]] = field(default_factory=dict)
+    degraded: dict[str, Mapping[str, Any]] = field(default_factory=dict)
     stop_evidence: dict[str, Mapping[str, Any]] = field(default_factory=dict)
     rolled_back: list[str] = field(default_factory=list)
     rollback_errors: list[str] = field(default_factory=list)
@@ -69,6 +70,7 @@ class ProcessReport:
             "started": list(self.started),
             "preserved": list(self.preserved),
             "ready": dict(self.ready),
+            "degraded": dict(self.degraded),
             "stop_evidence": dict(self.stop_evidence),
             "rolled_back": list(self.rolled_back),
             "rollback_errors": list(self.rollback_errors),
@@ -127,6 +129,7 @@ class SwitchReport:
     product_session_id: str | None = None
     phases: list[str] = field(default_factory=list)
     cleanup: list[str] = field(default_factory=list)
+    degraded: dict[str, Mapping[str, Any]] = field(default_factory=dict)
     error: str | None = None
     readiness: Mapping[str, Mapping[str, Any]] | None = field(
         default=None,
@@ -150,6 +153,7 @@ class SwitchReport:
             "product_session_id": self.product_session_id,
             "phases": list(self.phases),
             "cleanup": list(self.cleanup),
+            "degraded": dict(self.degraded),
             "error": self.error,
         }
 

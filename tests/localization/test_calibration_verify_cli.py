@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import sys
-from math import pi
+from math import pi, sqrt
 from pathlib import Path
 
 import pytest
@@ -15,14 +15,14 @@ def _write_yaml(path: Path, payload: dict) -> None:
     path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
-def test_fastlio2_noise_is_the_only_slam_noise_source(
+def test_ltlio_noise_is_the_only_slam_noise_source(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    fastlio_config = tmp_path / "mid360_fastlio2.yaml"
+    ltlio_config = tmp_path / "mid360_ltlio.yaml"
     _write_yaml(
-        fastlio_config,
+        ltlio_config,
         {
             "na": 0.001,
             "ng": 0.0001,
@@ -30,7 +30,7 @@ def test_fastlio2_noise_is_the_only_slam_noise_source(
             "nbg": 0.000001,
         },
     )
-    monkeypatch.setattr(verify, "FASTLIO2_CONFIG", fastlio_config)
+    monkeypatch.setattr(verify, "LTLIO_CONFIG", ltlio_config)
     result = verify.CheckResult()
 
     with caplog.at_level(logging.INFO, logger=verify.__name__):
@@ -38,7 +38,24 @@ def test_fastlio2_noise_is_the_only_slam_noise_source(
 
     assert result.failed == 0
     assert result.passed == 1
-    assert "Fast-LIO2: na=0.001, ng=0.0001" in caplog.text
+    assert "LTLIO: na=0.001, ng=0.0001" in caplog.text
+
+
+def test_imu_noise_defaults_match_native_process_covariance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ltlio_config = tmp_path / "mid360_ltlio.yaml"
+    _write_yaml(ltlio_config, {})
+    monkeypatch.setattr(verify, "LTLIO_CONFIG", ltlio_config)
+    result = verify.CheckResult()
+
+    with caplog.at_level(logging.INFO, logger=verify.__name__):
+        verify.check_imu(result, verbose=False)
+
+    assert result.failed == 0
+    assert f"LTLIO: na=0.01, ng={sqrt(1e-5)}, nba=0.001, nbg=0.001" in caplog.text
 
 
 def test_cli_reports_invalid_utf8_without_traceback(tmp_path: Path) -> None:

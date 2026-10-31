@@ -1,0 +1,67 @@
+{
+  "dataset": "AIST Flat-wall",
+  "record": "https://zenodo.org/api/records/7641866",
+  "local_root": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\aist-flatwall-avia",
+  "updated_at": "2026-10-19T15:45:58+08:00",
+  "license": {
+    "id": "cc-by-4.0"
+  },
+  "downloaded_files": [
+    {
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\aist-flatwall-avia\\raw\\flatwall_01.bag",
+      "bytes": 184597802,
+      "status": "downloaded",
+      "url": "https://zenodo.org/api/records/7641866/files/flatwall_01.bag/content"
+    },
+    {
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\aist-flatwall-avia\\raw\\flatwall_02.bag",
+      "bytes": 135975445,
+      "status": "downloaded",
+      "url": "https://zenodo.org/api/records/7641866/files/flatwall_02.bag/content"
+    },
+    {
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\aist-flatwall-avia\\raw\\flatwall_03.bag",
+      "bytes": 143913789,
+      "status": "downloaded",
+      "url": "https://zenodo.org/api/records/7641866/files/flatwall_03.bag/content"
+    },
+    {
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\aist-flatwall-avia\\raw\\flatwall_04.bag",
+      "bytes": 131013599,
+      "status": "downloaded",
+      "url": "https://zenodo.org/api/records/7641866/files/flatwall_04.bag/content"
+    },
+    {
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\aist-flatwall-avia\\raw\\flatwall_05.bag",
+      "bytes": 139946903,
+      "status": "downloaded",
+      "url": "https://zenodo.org/api/records/7641866/files/flatwall_05.bag/content"
+    },
+    {
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\aist-flatwall-avia\\raw\\flatwall_06.bag",
+      "bytes": 88340047,
+      "status": "downloaded",
+      "url": "https://zenodo.org/api/records/7641866/files/flatwall_06.bag/content"
+    },
+    {
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\aist-flatwall-avia\\raw\\flatwall_07.bag",
+      "bytes": 89331959,
+      "status": "downloaded",
+      "url": "https://zenodo.org/api/records/7641866/files/flatwall_07.bag/content"
+    },
+    {
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\aist-flatwall-avia\\raw\\flatwall_08.bag",
+      "bytes": 121088764,
+      "status": "downloaded",
+      "url": "https://zenodo.org/api/records/7641866/files/flatwall_08.bag/content"
+    },
+    {
+      "file": "D:\\inovxio\\brain\\lingtu\\datasets\\slam\\aist-flatwall-avia\\raw\\gt.tar.gz",
+      "bytes": 213710,
+      "status": "downloaded",
+      "url": "https://zenodo.org/api/records/7641866/files/gt.tar.gz/content"
+    }
+  ],
+  "errors": [],
+  "replay_status": "not_run"
+}

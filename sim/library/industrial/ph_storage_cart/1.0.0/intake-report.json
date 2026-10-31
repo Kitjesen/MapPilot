@@ -1,0 +1,84 @@
+{
+  "provider": "Poly Haven",
+  "source": {
+    "provider": "Poly Haven",
+    "id": "industrial_storage_cart",
+    "name": "Industrial Storage Cart",
+    "authors": {
+      "Jule Bielitz": "All"
+    },
+    "license": "CC0-1.0",
+    "license_url": "https://polyhaven.com/license",
+    "source_url": "https://polyhaven.com/a/industrial_storage_cart",
+    "resolution": "2k",
+    "model": "industrial_storage_cart_2k.gltf",
+    "files": [
+      {
+        "path": "industrial_storage_cart_2k.gltf",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/2k/industrial_storage_cart/industrial_storage_cart_2k.gltf",
+        "bytes": 2878
+      },
+      {
+        "path": "textures/industrial_storage_cart_nor_gl_2k.jpg",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/industrial_storage_cart/industrial_storage_cart_nor_gl_2k.jpg",
+        "bytes": 2344898
+      },
+      {
+        "path": "textures/industrial_storage_cart_diff_2k.jpg",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/industrial_storage_cart/industrial_storage_cart_diff_2k.jpg",
+        "bytes": 2116931
+      },
+      {
+        "path": "textures/industrial_storage_cart_arm_2k.jpg",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/industrial_storage_cart/industrial_storage_cart_arm_2k.jpg",
+        "bytes": 3001625
+      },
+      {
+        "path": "industrial_storage_cart.bin",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/industrial_storage_cart/industrial_storage_cart.bin",
+        "bytes": 664580
+      }
+    ],
+    "ue_imported": false,
+    "physics_qualified": false
+  },
+  "axes": "Blender Z-up metres; GLB Y-up metres",
+  "bounds_m": [
+    [
+      -0.8016743063926697,
+      -0.551372766494751,
+      0.0023205429315567017
+    ],
+    [
+      0.8016743659973145,
+      0.5513727068901062,
+      1.3797049522399902
+    ]
+  ],
+  "mesh_objects": [
+    "industrial_storage_cart"
+  ],
+  "materials": [
+    "industrial_storage_cart"
+  ],
+  "images": [
+    {
+      "name": "industrial_storage_cart_diff",
+      "width": 2048,
+      "height": 2048
+    },
+    {
+      "name": "industrial_storage_cart_metal-industrial_storage_cart_rough",
+      "width": 2048,
+      "height": 2048
+    },
+    {
+      "name": "industrial_storage_cart_nor_gl",
+      "width": 2048,
+      "height": 2048
+    }
+  ],
+  "processing": "glTF import, embedded-texture GLB and FBX export; no decimation or geometry edits",
+  "ue_imported": false,
+  "physics_qualified": false
+}

@@ -6,7 +6,7 @@
 #include <string>
 #include <utility>
 
-#include "lingtu/maps/semantic_map_persistence.hpp"
+#include "lingtu/maps/semantic/store.hpp"
 
 namespace lingtu::slam {
 namespace {

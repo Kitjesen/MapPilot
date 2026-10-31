@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "safety/stop.hpp"
-#include "runtime/goal/runtime.hpp"
+#include "app/goal/runtime.hpp"
 #include "status/goal_terminal_status_delivery.hpp"
 #include "status/navigation_goal_status_outbox.hpp"
 
@@ -208,7 +208,7 @@ void testStageReplayWaitsForCommitAndRetriesBeforeExactAck() {
   conflicting_origin.statuses.front().origin = GoalPlanOrigin::kInspection;
   require(delivery.stage(pending.terminal_intent_id, conflicting_origin) ==
               GoalTerminalStatusDelivery::StageResult::kConflict,
-          "same intent with a different delivery owner was accepted");
+          "same intent with a different origin was accepted");
   require(delivery.stage(pending.terminal_intent_id + 1U, semantic_replay) ==
               GoalTerminalStatusDelivery::StageResult::kConflict,
           "different intent replaced the staged transaction");

@@ -47,11 +47,6 @@ bool transformCloudToMap(
     cloud.xyzh[index] = static_cast<float>(world.x);
     cloud.xyzh[index + 1U] = static_cast<float>(world.y);
     cloud.xyzh[index + 2U] = static_cast<float>(world.z);
-    if (!std::isfinite(cloud.xyzh[index + 3U])) {
-      cloud.xyzh[index + 3U] = map_body
-                                    ? static_cast<float>(world.z - map_body->translation.z)
-                                    : static_cast<float>(world.z);
-    }
   }
   return true;
 }
@@ -127,8 +122,15 @@ void InputProjector::projectCloud(InputSample<PointCloudSample> sample,
     return;
   }
 
-  obstacles_.submit({std::move(xyzh), sensorOriginFromBody(*cloud_pose, config_.sensor_offset),
-                     stamp_s, receive_steady_s});
+  MotionObservation observation{std::move(xyzh),
+      sensorOriginFromBody(*cloud_pose, config_.sensor_offset), stamp_s, receive_steady_s};
+  observation.body_position = cloud_pose->translation;
+  observation.terrain = state_.local_collision_map.terrain;
+  if (config_.support_height_m > 0.0) {
+    observation.ground_layer_z = observation.body_position.z - config_.support_height_m;
+    observation.ground_tolerance_m = config_.support_tolerance_m;
+  }
+  obstacles_.submit(std::move(observation));
   last_submitted_cloud_s_ = stamp_s;
 }
 
@@ -167,6 +169,12 @@ void InputProjector::projectTerrain(InputSample<PointCloudSample> sample,
     return;
   }
   auto xyzh = std::move(message.xyzh);
+  for (std::size_t index = 0; index < xyzh.size(); index += 4) {
+    if (!std::isfinite(xyzh[index + 3])) {
+      xyzh[index + 3] = static_cast<float>(xyzh[index + 2] -
+          (state_.map_body_transform ? state_.map_body_transform->translation.z : 0.0));
+    }
+  }
   timing.cloud_convert_ms += elapsedMs(convert_start);
   if (xyzh.empty()) {
     return;
@@ -231,6 +239,32 @@ void InputProjector::projectLocalCollision(InputSample<LocalCollisionMap> sample
   state_.last_local_collision_s = state_.local_collision_map.stamp_s;
   state_.last_local_collision_receive_s = receive_steady_s;
   ++state_.local_collision_count;
+}
+
+InputProjector::SpaceQueries InputProjector::observedSpaceQueries(
+    double now_s, double max_age_s) const {
+  SpaceQueries queries;
+  const auto map = state_.local_collision_map.view();
+  const double age = now_s - map.receiveStampS;
+  if (!state_.map_body || !map.valid()) return queries;
+  if (map.measuredOccupiedStorage && map.measuredOccupiedStorage->size()==map.inflatedBytes) {
+    queries.second=[map](const lingtu::nav::collision::Vec3 &center, double radius,
+                         double below, double above, bool hemisphere) {
+      return map.measuredOccupiedCylinder({center.x,center.y,center.z},radius,below,above,hemisphere);
+    };
+  }
+  // Delayed observations cannot clear obstacles; existing hits remain until
+  // mapd supplies a replacement. Motion freshness is enforced by the input gate.
+  if (!map.live || map.receiveStampS <= 0 || age < 0 ||
+      (max_age_s > 0 && age > max_age_s)) return queries;
+  queries.first=[map](const lingtu::nav::collision::Aabb &cell) {
+    const nav_kernel::Vec3 low{cell.center.x-cell.half_size.x,
+        cell.center.y-cell.half_size.y, cell.center.z-cell.half_size.z};
+    const nav_kernel::Vec3 high{cell.center.x+cell.half_size.x,
+        cell.center.y+cell.half_size.y, cell.center.z+cell.half_size.z};
+    return map.observedFreeBox(low,high);
+  };
+  return queries;
 }
 
 void InputProjector::clearPlannerInputs(const PlannerClearSample &sample) {

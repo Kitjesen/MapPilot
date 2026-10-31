@@ -198,8 +198,8 @@ def test_global_planner_contract_does_not_expose_octomap_storage() -> None:
 
 def test_endpoint_rejects_stale_plans_and_reuses_validated_maps() -> None:
     endpoint = _read("src/nav/cpp/endpoint/nav/main.cpp")
-    controller = _read("src/nav/cpp/endpoint/nav/runtime/goal/plan.cpp")
-    stale_guard = _read("src/nav/cpp/endpoint/nav/runtime/goal/task.cpp")
+    controller = _read("src/nav/cpp/endpoint/nav/app/goal/plan.cpp")
+    stale_guard = _read("src/nav/cpp/endpoint/nav/app/goal/task.cpp")
     gate = _read("src/nav/cpp/endpoint/nav/input/active/octomap.cpp")
 
     assert "globalPlanStaleReason" in controller

@@ -10,6 +10,7 @@ FRONT_END = PLUGIN / "Resources" / "FrontEnd"
 BUILD_RULES = PLUGIN / "Source" / "LingTuSimUI" / "LingTuSimUI.Build.cs"
 
 EXPECTED_FRONT_END_PNGS = {
+    "factory-corridor.png",
     "lingtu-field-ops-hero-v1.png",
     "preview-forest-birch-v1.png",
     "preview-forest-boulder-v1.png",
@@ -45,4 +46,11 @@ def test_build_rules_stage_each_front_end_png_explicitly_as_non_ufs() -> None:
         )
     )
     assert staged_pngs == EXPECTED_FRONT_END_PNGS
-    assert build_rules.count("StagedFileType.NonUFS") == len(EXPECTED_FRONT_END_PNGS)
+    selection_staging = re.findall(
+        r'RuntimeDependencies\.Add\(\s*'
+        r'Path\.Combine\(PluginDirectory, "Resources", "Selection", "\*\.png"\),\s*'
+        r'StagedFileType\.NonUFS\s*\);',
+        build_rules,
+    )
+    assert len(selection_staging) == 1
+    assert build_rules.count("StagedFileType.NonUFS") == len(EXPECTED_FRONT_END_PNGS) + 1

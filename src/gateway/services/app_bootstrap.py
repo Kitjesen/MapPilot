@@ -63,6 +63,7 @@ CLIENT_LINKS: dict[str, str] = {
     "scan_ws": "/ws/scan",
     "camera_snapshot": "/api/v1/camera/snapshot",
     "webrtc_whep": "/api/v1/webrtc/whep",
+    "webrtc_status": "/api/v1/webrtc/status",
     "go2rtc_status": "/api/v1/webrtc/go2rtc/status",
     "goal": "/api/v1/goal",
     "navigate_click": "/api/v1/navigate/click",
@@ -194,6 +195,7 @@ CLIENT_ENDPOINTS: dict[str, dict[str, dict[str, str]]] = {
     "media": {
         "camera_snapshot": {"method": "GET", "path": CLIENT_LINKS["camera_snapshot"]},
         "webrtc_whep": {"method": "POST", "path": CLIENT_LINKS["webrtc_whep"]},
+        "webrtc_status": {"method": "GET", "path": CLIENT_LINKS["webrtc_status"]},
         "go2rtc_status": {"method": "GET", "path": CLIENT_LINKS["go2rtc_status"]},
     },
     "map": {
@@ -650,6 +652,7 @@ def _whep_summary() -> dict[str, Any]:
         "supported": True,
         "endpoint": CLIENT_LINKS["webrtc_whep"],
         "go2rtc_status": CLIENT_LINKS["go2rtc_status"],
+        "status": CLIENT_LINKS["webrtc_status"],
     }
 
 
@@ -663,6 +666,7 @@ def _media_summary(gw: Any) -> dict[str, Any]:
         "scan_ws": CLIENT_LINKS["scan_ws"],
         "camera_snapshot": CLIENT_LINKS["camera_snapshot"],
         "webrtc_whep": CLIENT_LINKS["webrtc_whep"],
+        "webrtc_status": CLIENT_LINKS["webrtc_status"],
         "go2rtc_status": CLIENT_LINKS["go2rtc_status"],
         "camera": media["camera"],
         "whep": _whep_summary(),

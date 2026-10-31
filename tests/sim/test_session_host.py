@@ -810,13 +810,13 @@ def test_unreal_command_uses_argv_and_preserves_paths_with_spaces() -> None:
     )
 
     assert command[:4] == [
-        "D:\\Program Files\\Epic Games\\UE_5.8\\Engine\\Binaries\\Win64\\UnrealEditor.exe",
-        "D:\\inovxio\\brain\\lingtu\\sim\\runtime\\visual\\RobotSimUE\\RobotSimUE.uproject",
+        str(Path("D:/Program Files/Epic Games/UE_5.8/Engine/Binaries/Win64/UnrealEditor.exe").resolve()),
+        str(Path("D:/inovxio/brain/lingtu/sim/runtime/visual/RobotSimUE/RobotSimUE.uproject").resolve()),
         "/Game/Maps/Open Field",
         "-game",
     ]
     assert "-log" in command
-    assert "-abslog=C:\\runs\\live run\\logs\\Unreal.log" in command
+    assert f"-abslog={allocation.log_dir / 'Unreal.log'}" in command
     assert command.count("-unattended") == 1
     assert "-UnattendedInput" not in command
     assert "-LingTuRuntimeUI" not in command
@@ -825,20 +825,23 @@ def test_unreal_command_uses_argv_and_preserves_paths_with_spaces() -> None:
     assert "-nop4" in command
     assert "-NoSplash" in command
     assert command.count("-NoCompile") == 1
+    assert command.count(
+        "-DisablePlugins=ModelContextProtocol,AllToolsets,Terminal,Tripo3DUEBridge,PythonScriptPlugin,EditorScriptingUtilities"
+    ) == 1
     assert command.count("-DDC=InstalledNoZenLocalFallback") == 1
-    assert "-LocalDataCachePath=C:\\artifact roots\\live artifact root\\build\\unreal-ddc" in command
+    assert f"-LocalDataCachePath={(allocation.artifact_root / 'build/unreal-ddc').resolve()}" in command
     assert "-windowed" in command
     assert "-ResX=1920" in command
     assert "-ResY=1080" in command
     assert "-ForceRes" in command
-    assert "-LingTuBundle=C:\\bundles\\session bundle" in command
-    assert "-LingTuRunAllocation=C:\\runs\\live run\\run-allocation.json" in command
+    assert f"-LingTuBundle={Path('C:/bundles/session bundle')}" in command
+    assert f"-LingTuRunAllocation={allocation.path}" in command
     assert "-LingTuRunId=live-run-with-spaces" in command
-    assert "-LingTuArtifactRoot=C:\\artifact roots\\live artifact root" in command
+    assert f"-LingTuArtifactRoot={allocation.artifact_root}" in command
     assert "-LingTuSnapshotPort=25123" in command
     assert "-LingTuModelGeneration=5" in command
     assert "-LingTuResetGeneration=2" in command
-    assert "-LingTuScreenshot=C:\\runs\\live run\\logs\\visual-first-frame.png" in command
+    assert f"-LingTuScreenshot={(allocation.log_dir / 'visual-first-frame.png').resolve()}" in command
 
 
 def test_interactive_unreal_command_is_windowed_capped_and_not_unattended() -> None:
@@ -1136,9 +1139,9 @@ def test_unreal_command_binds_playable_control_to_run_allocation_ports(
     assert command.count("-LingTuControlStatusPort=25125") == 1
     assert command.count("-LingTuControlSourceId=robotsimue.local_player.0") == 1
     expected_hud_arguments = {
-        "-LingTuHudDriveScreenshot=C:\\runs\\playable-run-001\\screenshots\\hud-drive.png",
-        "-LingTuHudTacticalScreenshot=C:\\runs\\playable-run-001\\screenshots\\hud-tactical.png",
-        "-LingTuHudMenuRecordingScreenshot=C:\\runs\\playable-run-001\\screenshots\\hud-menu-recording.png",
+        f"-LingTuHudDriveScreenshot={(allocation.path.parent / 'screenshots/hud-drive.png').resolve()}",
+        f"-LingTuHudTacticalScreenshot={(allocation.path.parent / 'screenshots/hud-tactical.png').resolve()}",
+        f"-LingTuHudMenuRecordingScreenshot={(allocation.path.parent / 'screenshots/hud-menu-recording.png').resolve()}",
     }
     for argument in expected_hud_arguments:
         assert command.count(argument) == 1
@@ -1341,7 +1344,7 @@ def test_unreal_command_can_enable_bounded_frame_capture() -> None:
         reset_generation=2,
     )
 
-    assert "-LingTuFrameCaptureDir=C:\\runs\\live run\\frame capture" in command
+    assert f"-LingTuFrameCaptureDir={Path('C:/runs/live run/frame capture').resolve()}" in command
     assert "-LingTuFrameCaptureEvery=4" in command
     assert "-LingTuFrameCaptureMax=90" in command
 
@@ -1520,28 +1523,29 @@ def test_packaged_unreal_command_uses_exe_map_and_runtime_identity_only() -> Non
     )
 
     assert command[:2] == [
-        "C:\\trusted builds\\RobotSimUE\\RobotSimUE-Win64-Release.exe",
+        str(Path("C:/trusted builds/RobotSimUE/RobotSimUE-Win64-Release.exe").resolve()),
         "/Game/Maps/FactoryPark_HF",
     ]
     assert not any(argument.endswith(".uproject") for argument in command)
     assert "-game" not in command
     assert "-nop4" not in command
     assert "-NoCompile" not in command
+    assert not any(argument.startswith("-DisablePlugins=") for argument in command)
     assert not any(argument.startswith("-DDC=") for argument in command)
     assert not any(argument.startswith("-LocalDataCachePath=") for argument in command)
-    assert "-abslog=C:\\runs\\live run\\logs\\RobotSimUE.log" in command
+    assert f"-abslog={allocation.log_dir / 'RobotSimUE.log'}" in command
     assert command.count("-unattended") == 1
     assert "-NoSound" not in command
     assert not any(argument.startswith("-ExecCmds=") for argument in command)
-    assert "-LingTuBundle=C:\\bundles\\session bundle" in command
-    assert "-LingTuRunAllocation=C:\\runs\\live run\\run-allocation.json" in command
+    assert f"-LingTuBundle={Path('C:/bundles/session bundle')}" in command
+    assert f"-LingTuRunAllocation={allocation.path}" in command
     assert "-LingTuRunId=packaged-run-001" in command
-    assert "-LingTuArtifactRoot=C:\\artifact roots\\live artifact root" in command
+    assert f"-LingTuArtifactRoot={allocation.artifact_root}" in command
     assert "-LingTuSnapshotPort=25123" in command
     assert "-LingTuModelGeneration=5" in command
     assert "-LingTuResetGeneration=2" in command
-    assert "-LingTuScreenshot=C:\\runs\\live run\\logs\\visual-first-frame.png" in command
-    assert "-LingTuFrameCaptureDir=C:\\runs\\live run\\frame capture" in command
+    assert f"-LingTuScreenshot={(allocation.log_dir / 'visual-first-frame.png').resolve()}" in command
+    assert f"-LingTuFrameCaptureDir={Path('C:/runs/live run/frame capture').resolve()}" in command
     assert "-LingTuFrameCaptureEvery=4" in command
     assert "-LingTuFrameCaptureMax=90" in command
     assert "-LingTuSessionCameraTag=PreviewTarget:south_gate_robot_eye" in command

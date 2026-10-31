@@ -1,3 +1,4 @@
+#include "lingtu/maps/layers/terrain.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>

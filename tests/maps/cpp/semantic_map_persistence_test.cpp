@@ -1,4 +1,4 @@
-#include "lingtu/maps/semantic_map_persistence.hpp"
+#include "lingtu/maps/semantic/store.hpp"
 
 #include <cassert>
 #include <chrono>

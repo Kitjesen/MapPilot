@@ -22,7 +22,7 @@ void printHelp() {
       << "  --voxel-size M              Evidence voxel size (default 0.20)\n"
       << "  --sensor-origin X Y Z       LiDAR origin in scan coordinates; otherwise read scan_origin.txt\n"
       << "  --min-free-frames N         Later free-space frames required (default 3, minimum 2)\n"
-      << "  --ground-z-threshold Z      Local scan ground protection threshold (default -0.45)\n"
+      << "  --ground-z-threshold Z      Deprecated: accepted for compatibility; ground uses geometry\n"
       << "  --instance-grid-m M         XY instance score grid size (default 0.8)\n"
       << "  --moving-score-threshold R  Moving candidate ratio threshold (default 0.65)\n"
       << "  --min-frame-support N       Multi-frame support report threshold (default 2)\n"
@@ -80,6 +80,7 @@ int main(int argc, char **argv) {
       options.min_free_frames = static_cast<std::uint32_t>(std::strtoul(value.c_str(), nullptr, 10));
     } else if (arg == "--ground-z-threshold" && nextValue(i, argc, argv, value)) {
       options.ground_z_threshold = std::strtof(value.c_str(), nullptr);
+      std::cerr << "--ground-z-threshold is deprecated; ground protection uses geometry\n";
     } else if (arg == "--instance-grid-m" && nextValue(i, argc, argv, value)) {
       options.instance_grid_m = std::strtof(value.c_str(), nullptr);
     } else if (arg == "--moving-score-threshold" && nextValue(i, argc, argv, value)) {

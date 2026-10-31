@@ -92,7 +92,7 @@ SaveMap 日志为 `build/ownership-fix-20260927/maps/Testing/Temporary/LastTest.
 WSL 地图服务产物为 `build/maps-mapd-wsl/mapd`。编译有既有 WSL 文件时间偏差提示，
 最终编译链接退出码为零。
 
-`tools/release/sync_versions.sh --check` 首次因 CRLF 无法执行；修复换行后又暴露
+`scripts/deploy/sync_versions.sh --check` 首次因 CRLF 无法执行；修复换行后又暴露
 上述硬件固件与软件版本混用。移除错误同步后，同一检查成功返回
 `Version metadata is in sync`。发布工作流调用的同步脚本不再改写 Go2 固件版本。
 

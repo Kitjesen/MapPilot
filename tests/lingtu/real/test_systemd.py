@@ -8,9 +8,9 @@ from typing import Any
 
 import pytest
 
-from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan
+from lingtu.assembly.config.product import resolve_product_host_runtime
 from lingtu.assembly.graph import ProcessSpec
-from lingtu.assembly.products import resolve_product_host_runtime
 from lingtu.real.systemd import (
     ServiceReadiness,
     Systemd,
@@ -303,6 +303,36 @@ def test_systemd_runner_rejects_stopping_its_own_systemd_unit() -> None:
 
     assert control.started == []
     assert control.stopped == []
+
+
+def test_systemd_runner_inspect_does_not_probe_readiness_for_unavailable_unit() -> None:
+    process = ProcessSpec(
+        "video",
+        "systemd",
+        "lt-video.service",
+        80,
+        5,
+        "mode",
+        required=False,
+    )
+
+    class UnavailableControl(FakeControl):
+        def available(self, target: str) -> bool:
+            return False
+
+    class RejectReadiness(FakeReadiness):
+        def inspect(self, process: ProcessSpec) -> dict[str, Any]:
+            raise AssertionError("readiness must not run for an unavailable unit")
+
+    snapshot = SystemdRunner(UnavailableControl(), RejectReadiness()).inspect(process)
+
+    assert snapshot == {
+        "available": False,
+        "active": False,
+        "ready": False,
+        "blockers": ["unit_unavailable"],
+        "observed": {},
+    }
 
 
 def test_systemd_runner_stop_stops_all_mode_processes() -> None:

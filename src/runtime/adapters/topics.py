@@ -31,36 +31,36 @@ ADAPTER_TOPIC_ALIASES = {
             note="Livox IMU output normalized for LingTu SLAM input.",
         ),
     ),
-    "fastlio2": (
+    "ltlio": (
         AdapterTopicAlias(
             source="/cloud_registered",
             target=TOPICS.registered_cloud,
             msg_format="registered_cloud",
-            note="Fast-LIO2 current scan in body frame.",
+            note="LTLIO current scan in body frame.",
         ),
         AdapterTopicAlias(
             source="/cloud_map",
             target=TOPICS.map_cloud,
             msg_format="map_cloud",
-            note="Fast-LIO2 local/world map cloud.",
+            note="LTLIO local/world map cloud.",
         ),
         AdapterTopicAlias(
             source="/Odometry",
             target=TOPICS.odometry,
             msg_format="odometry",
-            note="Fast-LIO2 odometry normalized to odom->body.",
+            note="LTLIO odometry normalized to odom->body.",
         ),
         AdapterTopicAlias(
             source="/imu/data",
             target=TOPICS.imu,
             msg_format="sensor_msgs/msg/Imu",
-            note="Canonical IMU input for Fast-LIO2 launch/service paths.",
+            note="Canonical IMU input for LTLIO launch/service paths.",
         ),
         AdapterTopicAlias(
             source="/lidar/scan",
             target=TOPICS.lidar_scan,
             msg_format="raw_livox_custom",
-            note="Canonical LiDAR input for Fast-LIO2 launch/service paths.",
+            note="Canonical LiDAR input for LTLIO launch/service paths.",
         ),
     ),
     "tare": (

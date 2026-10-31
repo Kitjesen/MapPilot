@@ -46,6 +46,7 @@ def build_gateway_app(gw: Any):
     from gateway.maps.locations import register_location_routes
     from gateway.maps.places import register_place_routes
     from gateway.maps.routes import register_map_routes
+    from gateway.maps.stairs import register_stair_routes
     from gateway.navigation.diagnostics import register_navigation_diagnostic_routes
     from gateway.navigation.routes import register_navigation_routes
     from gateway.routes import (
@@ -64,6 +65,8 @@ def build_gateway_app(gw: Any):
         register_session_routes,
         register_status_routes,
     )
+    from gateway.routes.measurements import register_measurement_routes
+    from gateway.routes.sensor_control import register_sensor_control_routes
     from gateway.services.rate_limit import RateLimitMiddleware
 
     app.add_middleware(RateLimitMiddleware)
@@ -133,6 +136,7 @@ def build_gateway_app(gw: Any):
     register_map_routes(app, gw)
     register_location_routes(app, gw)
     register_place_routes(app, gw)
+    register_stair_routes(app, gw)
     register_status_routes(app, gw)
     register_health_routes(app, gw)
     register_session_routes(app, gw)
@@ -143,6 +147,8 @@ def build_gateway_app(gw: Any):
     register_navigation_routes(app, gw)
     register_navigation_diagnostic_routes(app, gw)
     register_inspection_routes(app, gw)
+    register_measurement_routes(app, gw)
+    register_sensor_control_routes(app, gw)
     register_safety_routes(app, gw)
 
     register_app_routes(app, gw)

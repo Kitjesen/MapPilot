@@ -4,7 +4,7 @@
 #include <optional>
 #include <string>
 
-#include "runtime/goal/runtime.hpp"
+#include "app/goal/runtime.hpp"
 #include "status/navigation_goal_status_outbox.hpp"
 
 namespace lingtu::nav::endpoint {

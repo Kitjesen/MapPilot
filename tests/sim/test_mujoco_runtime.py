@@ -126,16 +126,18 @@ def test_support_clearance_uses_native_clamped_groups_and_current_collision_flag
     assert engine.get_support_clearance() == pytest.approx(.5)
 
 
-def test_support_clearance_does_not_step_through_coplanar_visual_into_tread():
+@pytest.mark.parametrize("mixed_groups", [False, True])
+def test_support_clearance_does_not_step_through_coplanar_visual_into_tread(mixed_groups):
     import mujoco
     from sim.compat.engine.mujoco.engine import MuJoCoEngine
 
     # The factory stair's visual top is 61 nm above its physical top. Advancing
     # the ray by 1 um after a visual hit used to return the tread's bottom face.
-    model = mujoco.MjModel.from_xml_string('''<mujoco><worldbody>
+    visual_group, physical_group = (0, 0) if mixed_groups else (2, 4)
+    model = mujoco.MjModel.from_xml_string(f'''<mujoco><worldbody>
       <geom name="visual_tread" type="box" pos="0 0 .590000061" size="1 1 .01"
-            group="2" contype="0" conaffinity="0"/>
-      <geom name="physical_tread" type="box" pos="0 0 .54" size="1 1 .06" group="4"/>
+            group="{visual_group}" contype="0" conaffinity="0"/>
+      <geom name="physical_tread" type="box" pos="0 0 .54" size="1 1 .06" group="{physical_group}"/>
       <body name="base_link" pos="0 0 1.05"><freejoint/><geom size=".1" group="3"/></body>
     </worldbody></mujoco>''')
     data = mujoco.MjData(model)
@@ -145,6 +147,64 @@ def test_support_clearance_does_not_step_through_coplanar_visual_into_tread():
     engine._base_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
     engine._data_lock = threading.RLock()
     assert engine.get_support_clearance() == pytest.approx(.45)
+
+
+@pytest.mark.parametrize("x,tread_z", [(4.79, .66), (4.799, .66), (4.801, .72), (4.810915487, .72), (4.82, .72)])
+def test_showcase_descent_edge_reports_tread_clearance_to_feeder(x, tread_z):
+    import mujoco
+    from sim.compat.engine.mujoco.engine import MuJoCoEngine
+    from sim.scripts.mujoco.formal_feeder import _require_stable_pose
+
+    # Reconstruct the desc-v3 failure location without running or moving a robot.
+    source = Path(__file__).resolve().parents[2] / "sim/compat/engine/worlds/thunderv4_stair_showcase.xml"
+    world = ET.parse(source).getroot()
+    body = ET.SubElement(world.find("worldbody"), "body", {
+        "name": "base_link", "pos": f"{x} .136728781 1.087882190",
+    })
+    ET.SubElement(body, "freejoint")
+    ET.SubElement(body, "geom", {"size": ".01", "group": "3"})
+    model = mujoco.MjModel.from_xml_string(ET.tostring(world, encoding="unicode"))
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    engine = MuJoCoEngine.__new__(MuJoCoEngine)
+    engine._model, engine._data = model, data
+    engine._base_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+    engine._data_lock = threading.RLock()
+    clearance = engine.get_support_clearance()
+    assert clearance == pytest.approx(1.087882190 - tread_z)
+    state = types.SimpleNamespace(position=data.xpos[engine._base_body_id], orientation=[0, 0, 0, 1])
+    assert _require_stable_pose(state, clearance)[0] == pytest.approx(clearance)
+
+
+@pytest.mark.parametrize("surface", ["mesh", "hfield"])
+def test_support_clearance_mixed_group_preserves_mesh_and_heightfield(surface):
+    import mujoco
+    from sim.compat.engine.mujoco.engine import MuJoCoEngine
+
+    if surface == "mesh":
+        asset = '<mesh name="surface" vertex="-1 -1 -.1 1 -1 -.1 1 1 -.1 -1 1 -.1 -1 -1 .1 1 -1 .1 1 1 .1 -1 1 .1"/>'
+        geom = '<geom type="mesh" mesh="surface" pos="0 0 .5"/>'
+        top = .6
+    else:
+        asset = '<hfield name="surface" nrow="2" ncol="2" size="1 1 .2 .1"/>'
+        geom = '<geom type="hfield" hfield="surface" pos="0 0 .4"/>'
+        top = .6
+    model = mujoco.MjModel.from_xml_string(f'''<mujoco><asset>{asset}</asset><worldbody>
+      {geom}
+      <geom name="decoration" type="box" pos="0 0 .7" size="1 1 .01" contype="0" conaffinity="0"/>
+      <body name="base_link" pos="0 0 1.05"><freejoint/><geom size=".1" group="3"/></body>
+    </worldbody></mujoco>''')
+    if surface == "hfield":
+        model.hfield_data[:] = 1.0
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    engine = MuJoCoEngine.__new__(MuJoCoEngine)
+    engine._model, engine._data = model, data
+    engine._base_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+    engine._data_lock = threading.RLock()
+    groups = model.geom_group.copy()
+    assert engine.get_support_clearance() == pytest.approx(1.05 - top)
+    np.testing.assert_array_equal(model.geom_group, groups)
 
 
 @pytest.mark.parametrize(
@@ -157,7 +217,7 @@ def test_support_clearance_does_not_step_through_coplanar_visual_into_tread():
          "Local trajectory blocked near robot; back away or change goal", {"ready": True, "healthy": True}),
         ({"ready": True}, {"active": True, "reason": "scan_local_target_blocked"},
          "No reachable local target; change goal or wait for clear space", {"ready": True, "healthy": True}),
-        ({"ready": True}, {"active": True, "reason": "autonomy_motion_stalled"},
+        ({"ready": True}, {"active": True, "reason": "execution_stalled"},
          "Motion stalled; stopped. Change goal or use keyboard to back away", {"ready": True, "healthy": True}),
         ({"ready": True}, {"goal_reached": True}, "goal reached", {"ready": True, "healthy": True}),
         ({"ready": True}, {}, "waiting for control loop health", {}),
@@ -478,7 +538,7 @@ def test_default_thunder_v4_resolves_current_robot_and_controller():
 
     assert Path(cfg.robot_xml).as_posix().endswith("robots/doso/thunder_v4/mjcf/thunderv4.xml")
     assert Path(cfg.robot_xml).exists()
-    assert Path(cfg.policy_onnx).name == "policy_4998.onnx"
+    assert Path(cfg.policy_onnx).name == "policy_cts_moe_v39_61128.onnx"
     assert cfg.base_body_name == "base_link"
     assert cfg.lidar_body_name == "lidar_link"
     assert cfg.leg_act_offset == 0
@@ -710,7 +770,7 @@ def test_mujoco_native_dds_sensor_bridge_lidar_imu_timebase_contract():
     assert frame.timestamp_ns <= imu_ts_ns < frame.timestamp_ns + scan_duration_ns
 
 
-def test_mujoco_native_dds_sensor_bridge_defaults_to_fastlio_only():
+def test_mujoco_native_dds_sensor_bridge_defaults_to_ltlio_only():
     from sim.scripts.mujoco import native_dds_sensors as bridge
 
     args = bridge._build_parser().parse_args([])
@@ -947,6 +1007,19 @@ def test_navigation_fixture_registered_cloud_can_disable_raw_overlay_for_free_sp
     assert stats["raw_overlay_points"] == 0
 
 
+def test_navigation_fixture_can_publish_only_raw_lidar_without_synthetic_ground():
+    from drivers.sim.mujoco import sensors as sensor_helpers
+
+    state = types.SimpleNamespace(position=np.array([0.0, 0.0, 1.35], dtype=np.float64))
+    raw = np.array([[0.4, 0.0, -0.45, 13.0], [1.2, 0.3, 0.7, 88.0]], dtype=np.float32)
+    combined, stats = sensor_helpers.navigation_fixture_registered_body_points(
+        raw, state, max_points=100, synthetic_ground_enabled=False,
+    )
+    np.testing.assert_array_equal(combined, raw)
+    assert stats["synthetic_ground_points"] == 0
+    assert stats["raw_overlay_points"] == len(raw)
+
+
 def test_navigation_fixture_registered_cloud_keeps_raw_points_with_full_budget():
     from drivers.sim.mujoco import sensors as sensor_helpers
 
@@ -1037,8 +1110,8 @@ def test_mujoco_native_dds_odom_prior_contract_is_wired():
     bridge_source = Path("sim/scripts/mujoco/native_dds_sensors.py").read_text(encoding="utf-8")
     sdk_source = Path("src/drivers/real/lidar/sdk2_stream/main.cpp").read_text(encoding="utf-8")
     runtime_source = Path("src/localization/slam/cpp/cyclone_runtime.cpp").read_text(encoding="utf-8")
-    fastlio_source = Path("src/localization/slam/cpp/fastlio.cpp").read_text(encoding="utf-8")
-    config_source = Path("src/localization/fastlio2/config/sim_mid360_slam.yaml").read_text(encoding="utf-8")
+    ltlio_source = Path("src/localization/slam/cpp/ltlio.cpp").read_text(encoding="utf-8")
+    config_source = Path("src/localization/ltlio/config/sim_mid360_slam.yaml").read_text(encoding="utf-8")
     topics_source = Path("src/message/generated/topics.hpp").read_text(encoding="utf-8")
 
     assert native_sensor_records.RECORD_ODOM_PRIOR == 3
@@ -1048,7 +1121,7 @@ def test_mujoco_native_dds_odom_prior_contract_is_wired():
     assert "kRecordOdomPrior = 3" in sdk_source
     assert "publish_odom_prior" in sdk_source
     assert "drainOdomPrior" in runtime_source
-    assert "tracking_with_odom_prior" in fastlio_source
+    assert "tracking_with_odom_prior" in ltlio_source
     assert "odom_prior_enabled: false" in config_source
     assert "kSlamOdomPrior" in topics_source
     assert "rt/slam/odom_prior" in topics_source
@@ -1271,7 +1344,7 @@ def test_mujoco_native_dds_sensor_bridge_defaults_to_physical_rolling_scan_time(
     assert args.imu_acc_max_slew_mps3 == pytest.approx(30.0)
     assert args.imu_acc_axis_scale == "auto"
     assert args.imu_gyro_axis_scale == "1,1,1"
-    assert args.allow_kinematic_fastlio_acceptance is False
+    assert args.allow_kinematic_ltlio_acceptance is False
     assert args.min_slam_motion_ratio == pytest.approx(0.5)
     assert args.max_slam_motion_ratio == pytest.approx(1.6)
     assert args.max_slam_map_xy_error_m == pytest.approx(0.35)
@@ -1431,8 +1504,13 @@ def test_mujoco_native_dds_clock_handshake_excludes_wsl_startup(monkeypatch):
     ]
 
 
-def test_mujoco_native_dds_managed_wsl_clock_handshake_is_opt_in(tmp_path):
+def test_mujoco_native_dds_managed_wsl_clock_handshake_is_opt_in(tmp_path, monkeypatch):
     from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    platform_os = types.SimpleNamespace(**vars(bridge.os))
+    platform_os.name = "nt"
+    monkeypatch.setattr(bridge, "os", platform_os)
+    monkeypatch.setattr(bridge, "_wsl_path", lambda path: str(path))
 
     command = ["wsl.exe", "-e", "/tmp/livox_sdk2_stream", "--dds"]
     plain = bridge._managed_wsl_command(command, tmp_path / "plain.pid")
@@ -2179,7 +2257,7 @@ def test_mujoco_native_dds_sensor_bridge_sensor_imu_preserves_physical_accelerom
     assert imu.linear_acceleration.z == pytest.approx(10.1)
 
 
-def test_mujoco_native_dds_sensor_bridge_conditions_contact_impulses_before_fastlio():
+def test_mujoco_native_dds_sensor_bridge_conditions_contact_impulses_before_ltlio():
     from sim.scripts.mujoco import native_dds_sensors as bridge
 
     class State:
@@ -2209,7 +2287,7 @@ def test_mujoco_native_dds_sensor_bridge_conditions_contact_impulses_before_fast
     assert conditioner.stats()["dynamic_clipped_count"] == 1
 
 
-def test_mujoco_native_dds_sensor_bridge_rejects_kinematic_fastlio_acceptance_by_default():
+def test_mujoco_native_dds_sensor_bridge_rejects_kinematic_ltlio_acceptance_by_default():
     from sim.scripts.mujoco import native_dds_sensors as bridge
 
     from message.topics import TOPICS
@@ -2228,10 +2306,10 @@ def test_mujoco_native_dds_sensor_bridge_rejects_kinematic_fastlio_acceptance_by
         slam_counts=slam_counts,
         require_slam_output=True,
         drive_mode="kinematic",
-        allow_kinematic_fastlio_acceptance=True,
+        allow_kinematic_ltlio_acceptance=True,
     )
 
-    assert gaps == ["kinematic_fastlio_acceptance_disabled"]
+    assert gaps == ["kinematic_ltlio_acceptance_disabled"]
     assert allowed == []
 
 
@@ -2488,21 +2566,25 @@ def test_mujoco_native_dds_sensor_bridge_auto_keeps_policy_imu_identity():
     assert source == "auto_identity"
 
 
-def test_mujoco_native_dds_fastlio_config_uses_sim_gravity_scale():
-    cfg = Path("src/localization/fastlio2/config/sim_mid360_slam.yaml")
-    text = cfg.read_text(encoding="utf-8")
+def test_mujoco_native_dds_ltlio_config_uses_sim_gravity_scale():
+    import yaml
 
-    assert "acc_scale: 9.80665" in text
-    assert "r_il: [0.7071067812, 0.0, 0.7071067812, 0.0, -1.0, 0.0, 0.7071067812, 0.0, -0.7071067812]" in text
-    assert "t_il: [0.402876074867229, 0.0, 0.0582019450665819]" in text
-    assert "navigation_body_from_imu_translation: [0.0, 0.0, 0.0]" in text
-    assert "max_update_translation_m: 0.35" in text
-    assert "max_update_velocity_mps: 3.0" in text
-    assert "odom_prior_enabled: false" in text
-    assert "vertical_velocity_constraint_enabled: true" in text
-    assert "max_update_velocity_delta_mps: 0.35" in text
-    assert "reject_nonconverged_update: false" in text
-    assert "reject_degenerate_nonconverged_update: false" in text
+    cfg = Path("src/localization/ltlio/config/sim_mid360_slam.yaml")
+    config = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+
+    assert config["acc_scale"] == pytest.approx(9.80665)
+    assert config["r_il"] == pytest.approx([
+        0.7071067812, 0.0, 0.7071067812, 0.0, -1.0, 0.0, 0.7071067812, 0.0, -0.7071067812,
+    ])
+    assert config["t_il"] == pytest.approx([0.402876074867229, 0.0, 0.0582019450665819])
+    assert config["navigation_body_from_imu_translation"] == [0.0, 0.0, 0.0]
+    assert config["max_update_translation_m"] == pytest.approx(0.35)
+    assert config["max_update_velocity_mps"] == pytest.approx(3.0)
+    assert config["odom_prior_enabled"] is False
+    assert "vertical_velocity_constraint_enabled" not in config
+    assert "vertical_velocity_sigma_v" not in config
+    assert config["max_update_velocity_delta_mps"] == pytest.approx(0.35)
+    assert config.get("esti_il", False) is False
 
 
 def test_thunderv4_mid360_recording_world_is_dense(tmp_path):
@@ -2606,37 +2688,35 @@ def test_semantic_namespace_wrappers_expose_runtime_import_paths():
     assert scene_msgs.RoomNode is RoomNode
 
 
-def test_fastlio2_cpp_applies_configured_ieskf_iteration_and_degeneracy_guard():
-    root = Path(__file__).resolve().parents[2]
-    fastlio2 = root / "src" / "localization" / "fastlio2"
-    lidar_processor = (fastlio2 / "src" / "map_builder" / "lidar_processor.cpp").read_text(
-        encoding="utf-8"
-    )
-    ieskf = (fastlio2 / "src" / "map_builder" / "ieskf.cpp").read_text(encoding="utf-8")
-    native_backend = (
-        root / "src" / "localization" / "slam" / "cpp" / "fastlio.cpp"
-    ).read_text(encoding="utf-8")
+@pytest.mark.parametrize("profile", [
+    "src/localization/ltlio/config/sim_mid360_slam.yaml",
+    "config/robots/unitree/go2/sensors/mid360_ltlio.yaml",
+    "config/robots/doso/thunder_v4/sensors/mid360_ltlio.yaml",
+])
+def test_ltlio_profiles_retain_geometry_and_resource_contracts(profile):
+    import yaml
 
-    assert "setMaxIter(static_cast<size_t>(std::max(1, m_config.ieskf_max_iter)))" in lidar_processor
-    assert "setDegeneracyGuard(" in lidar_processor
-    assert "degeneracy_max_update_dof" in native_backend
-    assert "max_update_translation_m" in native_backend
-    assert "max_update_rotation_rad" in native_backend
-    assert "reject_nonconverged_update" in native_backend
-    assert "reject_degenerate_nonconverged_update" in native_backend
-    assert "vertical_velocity_constraint_enabled" in native_backend
-    assert "injectVerticalVelocityConstraint" in ieskf
-    assert "injectVerticalVelocityConstraint" in (
-        fastlio2 / "src" / "map_builder" / "imu_processor.cpp"
-    ).read_text(encoding="utf-8")
-    assert "too_many_degenerate_dofs" in ieskf
-    assert "update_translation_too_large" in ieskf
-    assert "update_rotation_too_large" in ieskf
-    assert "m_reject_nonconverged_update" in ieskf
-    assert "m_reject_degenerate_nonconverged_update" in ieskf
-    assert "candidate_covariance_positive_diagonal" in ieskf
-    assert "(P_candidate.diagonal().array() > 0.0).all()" in ieskf
-    assert "P_MIN" in ieskf
+    config = yaml.safe_load(Path(profile).read_text(encoding="utf-8"))
+    assert config["near_search_num"] == 5
+    assert config["ieskf_max_iter"] == 5
+    assert config["lidar_filter_num"] == 2
+    assert config["scan_resolution"] == pytest.approx(0.25)
+    assert config["map_resolution"] == pytest.approx(0.2)
+    assert config["lidar_min_range"] == pytest.approx(0.5)
+    assert config["lidar_max_range"] == pytest.approx(20.0)
+    assert config["cube_len"] == 1000
+    assert config["det_range"] == 30
+    assert config["max_map_points"] == 1_000_000
+    assert config["stationary_thresh"] == pytest.approx(0.08)
+    assert config["imu_static_acc_thresh"] > 0
+    assert config["imu_static_gyro_thresh"] > 0
+    assert config.get("esti_il", False) is False
+    retired = {
+        "estimator", "na", "ng", "nba", "nbg", "gravity_align", "zupt_sigma_pos",
+        "degeneracy_max_update_dof", "degeneracy_max_condition",
+        "reject_nonconverged_update", "reject_degenerate_nonconverged_update",
+    }
+    assert retired.isdisjoint(config)
 
 
 def test_mujoco_sensor_helper_prefers_lidar_site_pose(monkeypatch):
@@ -2724,14 +2804,14 @@ def test_mujoco_sensor_helper_preserves_signed_imu_gyro_z():
     assert msg.angular_velocity.z == pytest.approx(-0.25)
 
 
-def test_navigation_runtime_dataflow_documents_no_python_slam_rule():
+def test_navigation_runtime_dataflow_documents_native_slam_and_truth_boundary():
     runtime = " ".join(Path("docs/runtime.md").read_text(encoding="utf-8").split())
     simulation = " ".join(Path("docs/simulation.md").read_text(encoding="utf-8").split())
 
     assert "Field Products have no Python algorithm fallback" in runtime
-    assert "Do not write or ship Python SLAM" in simulation
-    assert "simulation substitute for the native" in simulation
-    assert "Reports must keep `no_python_slam=true`" in simulation
+    assert "MuJoCo navigation uses synthetic IMU and LiDAR with native LTLIO" in simulation
+    assert "Truth odometry remains evaluation evidence rather than estimator input" in simulation
+    assert "sensor source -> endpoint adapter -> native SLAM -> map and terrain" in simulation
 
 
 def test_mujoco_native_dds_sensor_bridge_declares_no_python_slam_contract():
@@ -3769,7 +3849,7 @@ def _native_slam_status_payload(**overrides):
         "runtime_instance_id": "native-slam-test",
         "source_epoch": 1,
         "source": "cpp_cyclone_slam",
-        "backend": "fastlio2",
+        "backend": "ltlio",
         "mode": "mapping",
         "state": "TRACKING",
         "reason": "tracking",
@@ -3779,7 +3859,9 @@ def _native_slam_status_payload(**overrides):
         "confidence": 0.8,
         "localization_quality": 0.7,
         "observation_sequence": 1,
-        "odometry": {
+        "map_odometry": {
+            "frame_id": "map",
+            "child_frame_id": "body",
             "pose": {
                 "x": 1.0,
                 "y": 2.0,
@@ -3789,6 +3871,7 @@ def _native_slam_status_payload(**overrides):
                 "qz": 0.0,
                 "qw": 1.0,
             },
+            "twist": {"vx": 0.125, "vy": 0.0, "vz": 0.0, "wx": 0.0, "wy": 0.0, "wz": 0.0},
         },
     }
     payload.update(overrides)
@@ -3810,10 +3893,8 @@ def test_native_slam_status_adapter_records_odom_snapshot_stamp():
     assert status_seen[-1]["ts"] == pytest.approx(12.34)
 
 
-def test_native_slam_status_adapter_uses_runtime_default_frames():
+def test_native_slam_status_adapter_preserves_native_map_body_frames():
     from localization.adapters.status import CppSlamStatusAdapterModule
-    from message.topics import TOPICS
-    from runtime.tf.frames import topic_default_frame_id
 
     adapter = CppSlamStatusAdapterModule()
     odometry_seen = []
@@ -3821,7 +3902,7 @@ def test_native_slam_status_adapter_uses_runtime_default_frames():
 
     adapter._publish_status_snapshot(_native_slam_status_payload())
 
-    assert odometry_seen[-1].frame_id == topic_default_frame_id(TOPICS.odometry)
+    assert odometry_seen[-1].frame_id == "map"
     assert odometry_seen[-1].child_frame_id == "body"
 
 
@@ -3854,7 +3935,8 @@ def test_native_slam_status_adapter_feeds_module_ports_directly(tmp_path):
     adapter._publish_status_snapshot(_native_slam_status_payload())
     adapter._poll_cloud_snapshots()
 
-    assert odometry_seen[-1].frame_id == topic_default_frame_id(TOPICS.odometry)
+    assert odometry_seen[-1].frame_id == "map"
+    assert odometry_seen[-1].twist.linear.x == pytest.approx(0.125)
     assert registered_seen[-1].frame_id == topic_default_frame_id(TOPICS.registered_cloud)
     assert map_seen[-1].frame_id == topic_default_frame_id(TOPICS.map_cloud)
     assert map_seen[-1].mode == "FULL"
@@ -3868,7 +3950,7 @@ def test_native_slam_status_adapter_ignores_status_without_odom_pose():
     status_seen = []
     adapter.odometry.subscribe(odometry_seen.append)
     adapter.localization_status.subscribe(status_seen.append)
-    payload = _native_slam_status_payload(odometry={"frame_id": "odom"})
+    payload = _native_slam_status_payload(map_odometry={"frame_id": "map"})
 
     adapter._publish_status_snapshot(payload)
 
@@ -3965,7 +4047,8 @@ def test_mujoco_driver_setup_uses_selected_scene_and_real_robot(monkeypatch):
     assert driver._engine.lidar_config.body_name == "lidar_link"
     assert driver._engine.drive_mode == "policy"
     assert driver._engine.reset_called is True
-    assert driver._engine.reset_dt == pytest.approx(0.005)
+    # The real CTS engine installs embedded timing; this fake does not load policy metadata.
+    assert driver._engine.reset_dt is None
     assert len(driver._engine.camera_configs) == 1
 
 
@@ -4006,7 +4089,7 @@ def test_mujoco_driver_uses_scene_placeholder_start_pose(monkeypatch):
 
     assert driver._engine is not None
     assert driver._engine.robot_config.init_position == [2.0, 3.0, 0.5]
-    assert Path(driver._engine.robot_config.policy_onnx).name == "policy_4998.onnx"
+    assert Path(driver._engine.robot_config.policy_onnx).name == "policy_cts_moe_v39_61128.onnx"
 
 
 def test_root_operation_entrypoint_is_unique_and_uses_current_release_paths():
@@ -4141,69 +4224,76 @@ def test_mujoco_driver_stop_signal_zero_clears_soft_stop_latch():
 
 
 def test_mujoco_policy_runner_resolves_legacy_history_contracts():
-    from sim.compat.engine.mujoco.robot_controller import OBS_DIM, PolicyRunner
+    from sim.runtime.control.thunder.legacy_policy import OBS_DIM, HistoryPolicy
 
-    assert PolicyRunner._resolve_history_len(OBS_DIM) == 1
-    assert PolicyRunner._resolve_history_len(OBS_DIM * 5) == 5
+    assert HistoryPolicy.history_frames(OBS_DIM) == 1
+    assert HistoryPolicy.history_frames(OBS_DIM * 5) == 5
 
 
 def test_mujoco_policy_runner_rejects_unknown_obs_contract():
-    from sim.compat.engine.mujoco.robot_controller import PolicyRunner, UnsupportedPolicyInputError
+    from sim.runtime.control.thunder.legacy_policy import HistoryPolicy
 
-    with pytest.raises(UnsupportedPolicyInputError, match="76-D input"):
-        PolicyRunner._resolve_history_len(76)
+    with pytest.raises(ValueError, match="76-D input"):
+        HistoryPolicy.history_frames(76)
 
 
 def test_mujoco_policy_runner_does_not_pad_or_truncate_obs():
-    from sim.compat.engine.mujoco.robot_controller import OBS_DIM, PolicyRunner
+    from sim.runtime.control.thunder.legacy_policy import OBS_DIM, HistoryPolicy
 
-    runner = object.__new__(PolicyRunner)
-    runner._history_len = 1
+    runner = object.__new__(HistoryPolicy)
 
     obs = np.arange(OBS_DIM, dtype=np.float32)
-    adapted = runner._adapt_obs_to_policy_input(obs)
+    adapted = runner._frame(obs)
 
     assert adapted.shape == (OBS_DIM,)
     assert np.allclose(adapted, obs)
 
     with pytest.raises(ValueError, match="expected one 57-D observation"):
-        runner._adapt_obs_to_policy_input(np.arange(76, dtype=np.float32))
+        runner._frame(np.arange(76, dtype=np.float32))
 
 
-def test_mujoco_policy_runner_clamp_matches_brainstem_noop():
-    from sim.compat.engine.mujoco.robot_controller import PolicyRunner
+def test_mujoco_policy_runner_does_not_clip_actions():
+    from types import SimpleNamespace
 
-    action = np.array(
+    from sim.runtime.control.thunder.legacy_policy import ACTION_SCALE, STANDING_POSE, HistoryPolicy
+
+    raw = np.array(
         [2.0, -3.0, 4.0, -2.0, 3.0, -4.0, 1.8, -2.8, 3.8, -1.8, 2.8, -3.8, 0.8, -0.9, 1.1, -1.2],
         dtype=np.float64,
     )
-
-    clamped = PolicyRunner.clamp_action(action)
-
-    assert np.allclose(clamped, action)
-    assert clamped is not action
+    session = SimpleNamespace(
+        get_inputs=lambda: [SimpleNamespace(name="obs", shape=[1, 57])],
+        get_outputs=lambda: [SimpleNamespace(name="actions", shape=[1, 16])],
+        run=lambda *_args: [raw[None]],
+    )
+    policy = HistoryPolicy("model.onnx", session=session)
+    action = policy.infer(np.zeros(57))
+    expected = raw * ACTION_SCALE + STANDING_POSE
+    np.testing.assert_allclose(action, expected)
+    action[0] += 1.0
+    np.testing.assert_allclose(policy.last_action, expected)
 
 
 def test_mujoco_thunderv4_policy_identifier_accepts_canonical_layout():
-    from sim.compat.engine.mujoco.robot_controller import _is_thunderv4_policy
+    from sim.runtime.control.thunder.legacy_policy import _is_thunder
 
-    assert _is_thunderv4_policy(
+    assert _is_thunder(
         Path("sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_1119.onnx")
     )
-    assert _is_thunderv4_policy(
+    assert _is_thunder(
         Path("sim/packages/controllers/doso/thunder_v4/locomotion/policy/pose_flat_low_kpkd_microterrain_model29600_policy.onnx")
     )
-    assert _is_thunderv4_policy(Path("pose_flat_low_kpkd_microterrain_model29600_policy.onnx"))
-    assert not _is_thunderv4_policy(Path("model/policy_251119.onnx"))
+    assert _is_thunder(Path("pose_flat_low_kpkd_microterrain_model29600_policy.onnx"))
+    assert not _is_thunder(Path("model/policy_251119.onnx"))
 
 
 def test_mujoco_thunderv4_policy_1119_uses_history_runner():
     pytest.importorskip("onnxruntime")
-    from sim.compat.engine.mujoco.robot_controller import (
+    from sim.runtime.control.policy_loader import load_policy
+    from sim.runtime.control.thunder.legacy_policy import (
         OBS_DIM,
-        THUNDERV4_STANDING_POSE,
-        PolicyRunner,
-        load_policy_runner,
+        STANDING_POSE,
+        HistoryPolicy,
     )
 
     policy = (
@@ -4220,13 +4310,13 @@ def test_mujoco_thunderv4_policy_1119_uses_history_runner():
     if not policy.exists():
         pytest.skip(f"ThunderV4 ONNX policy missing: {policy}")
 
-    runner = load_policy_runner(str(policy))
+    runner = load_policy(str(policy))
     action = runner.infer(np.zeros(OBS_DIM, dtype=np.float32))
 
-    assert type(runner) is PolicyRunner
-    assert runner._history_len == 5
+    assert type(runner) is HistoryPolicy
+    assert runner.history.maxlen == 5
     assert action.shape == (16,)
-    assert np.allclose(action, THUNDERV4_STANDING_POSE)
+    assert np.allclose(action, STANDING_POSE)
 
 
 def test_mujoco_policy_idle_command_detection():

@@ -832,6 +832,7 @@ def test_build_e2e_qualification_record_rejects_artifact_symlink_before_hash(
         build_e2e_qualification_record(bundle_dir, run_dir)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction contract")
 def test_build_e2e_qualification_record_rejects_windows_junction_before_read(
     tmp_path: Path,
 ) -> None:

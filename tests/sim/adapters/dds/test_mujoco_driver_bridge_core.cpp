@@ -180,7 +180,7 @@ void testPhysicalNavAppliedPublishesExactOutputAck() {
   check(emitted->kind == BridgeCommandKind::Nav, "command kind must be Nav");
   check(emitted->walk.x == 1.0, "linear x must use real Core normalization");
   check(emitted->walk.y == -0.5, "linear y must use real Core normalization");
-  check(emitted->walk.z == 2.0, "angular z must use the configured real Core limit");
+  check(emitted->walk.z == 1.0, "bridge normalizes the configured angular limit for its controller");
   auto status = core.status(start + 4ms);
   check(status.output_ack.producerBootId().empty(),
         "Nav command must not ACK before physical APPLIED");
@@ -198,7 +198,7 @@ void testPhysicalNavAppliedPublishesExactOutputAck() {
   check(status.accepted_sequence != status.output_ack.outputSequence(),
         "bridge accepted_sequence and Nav output sequence must remain distinct");
   check(status.applied_walk.x == 1.0 && status.applied_walk.y == -0.5 &&
-            status.applied_walk.z == 2.0,
+            status.applied_walk.z == 1.0,
         "BridgeStatus must expose only the physically APPLIED walk");
 }
 
@@ -858,6 +858,14 @@ void testExpiredLatestNeverEmitsOldMotion() {
 void testPrivateV2ParserAndSerializersAreStrict() {
   const std::string bridge = kBridgeBoot;
   const std::string controller = kControllerBoot;
+  const auto profile = lingtu::sim::driver_bridge::parseControllerLine(
+      "LT_DRIVER_PROFILE_STATE_V1\t" + bridge + "\t" + controller +
+      "\tnav-task-1\tstairs_up\tready\tpolicies/up.onnx\tpolicies/up.onnx\t-");
+  check(std::get<lingtu::sim::driver_bridge::ProfileState>(profile).active_profile ==
+      "policies/up.onnx", "profile feedback retains observed model path");
+  check(lingtu::sim::driver_bridge::serializeProfileRequest({"nav-task-1", "hold"}, bridge, controller) ==
+      "LT_DRIVER_PROFILE_REQUEST_V1\t" + bridge + "\t" + controller + "\tnav-task-1\thold",
+      "hold request preserves task identity");
 
   const auto activate = lingtu::sim::driver_bridge::parseControllerLine(
       "LT_DRIVER_ACTIVATE_V2\t" + bridge + "\t" + controller + "\t1");
@@ -976,6 +984,25 @@ void testPrivateV2ParserAndSerializersAreStrict() {
   std::locale::global(previous);
 }
 
+void testControllerUnitsRoundTripWithNonUnitLimits() {
+  auto selected = config();
+  selected.limits.max_linear_mps = 0.5;
+  selected.limits.max_angular_rps = 1.5;
+  MujocoDriverBridgeCore core(selected);
+  const auto start = TimePoint{} + 40s;
+  activateToReady(core, start);
+  auto command = nav(start + 4ms, 301);
+  command.vx = 0.2;
+  command.vy = -0.1;
+  command.wz = 0.75;
+  const auto output = core.submitNav(command);
+  check(output.has_value(), "unit fixture must output a command");
+  check(std::abs(output->walk.x * selected.limits.max_linear_mps - command.vx) < 1e-12 &&
+        std::abs(output->walk.y * selected.limits.max_linear_mps - command.vy) < 1e-12 &&
+        std::abs(output->walk.z * selected.limits.max_angular_rps - command.wz) < 1e-12,
+        "physics controller must receive the original SI velocity after scaling");
+}
+
 }  // namespace
 
 int main() {
@@ -1010,6 +1037,7 @@ int main() {
     testZeroApplyTimeoutAndControllerEofAreTerminal();
     testExpiredLatestNeverEmitsOldMotion();
     testPrivateV2ParserAndSerializersAreStrict();
+    testControllerUnitsRoundTripWithNonUnitLimits();
     std::cout << "test_mujoco_driver_bridge_core: PASS\n";
     return 0;
   } catch (const std::exception &exc) {

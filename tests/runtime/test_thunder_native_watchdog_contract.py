@@ -53,6 +53,7 @@ PRODUCT_MODE_UNITS = (
     "lt-nav.service",
     "lt-explore.service",
     "lt-camera.service",
+    "lt-video.service",
     "lt-host.service",
 )
 

@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "lingtu/maps/build/pipeline.hpp"
-#include "lingtu/maps/store.hpp"
+#include "lingtu/maps/storage/store.hpp"
 
 namespace lingtu::maps {
 

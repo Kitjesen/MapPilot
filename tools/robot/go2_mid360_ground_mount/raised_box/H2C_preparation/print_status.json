@@ -1,0 +1,48 @@
+{
+  "updated_at": "2026-09-29T06:27:57",
+  "requested_material": "blue PLA, slot 3; last device label B3",
+  "requested_parts": [
+    "box",
+    "lid",
+    "left_pad",
+    "right_pad"
+  ],
+  "plate_centers_mm": [
+    [
+      95,
+      120
+    ],
+    [
+      240,
+      115
+    ],
+    [
+      110,
+      235
+    ],
+    [
+      240,
+      235
+    ]
+  ],
+  "geometry": "original millimetre size and source print orientation, no scaling or mesh repair",
+  "gauge_status": "sliced 10 layers, 14m36s,3g; not sent; superseded by user request for four parts together",
+  "four_parts_status": "Sliced baseline: 23h17m, 416.54g, 137.44m, 510 layers. NOT SENT. User requested faster/simple design; hold V7 original, await lightweight model.",
+  "accepted_limit": "user accepts prototype interface may require revision and reprint; physical fit/load/thermal validation pending",
+  "project": "H2C_V7_four_parts_blue_PLA_待切片.3mf",
+  "baseline_time": "23h17m",
+  "baseline_weight_g": 416.54,
+  "baseline_filament_m": 137.44,
+  "printer_sent": false,
+  "baseline_support": {
+    "body_time": "3h37m",
+    "interface_time": "22m20s",
+    "body_g": 46.32,
+    "interface_g": 4.27,
+    "total_g": 50.59
+  },
+  "baseline_inner_wall_time": "5h33m",
+  "baseline_outer_wall_time": "2h",
+  "baseline_sparse_infill_time": "4h21m",
+  "baseline_solid_infill_time": "3h10m"
+}

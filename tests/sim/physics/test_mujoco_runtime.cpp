@@ -84,6 +84,40 @@ void test_reset_starts_a_new_generation() {
           "reset must restore the model reference pose");
 }
 
+void test_contact_snapshot_tracks_last_solved_contact_and_reset() {
+  lingtu::sim::MujocoRuntime runtime({LINGTU_MUJOCO_TEST_MODEL});
+
+  const auto &separated = runtime.snapshot();
+  require(separated.contact_count == 0 && separated.contacts.empty(),
+          "a body separated from the floor must publish no contacts");
+
+  const auto &resting = runtime.advance(500);
+  require(resting.contact_count == resting.contacts.size(),
+          "contact_count must match the published contact array");
+  require(resting.contact_count > 0,
+          "the falling body must publish its real MuJoCo floor contact");
+  const auto contact = std::find_if(
+      resting.contacts.begin(), resting.contacts.end(),
+      [](const lingtu::sim::ContactState &candidate) {
+        return candidate.geom1_name == "floor" ||
+               candidate.geom2_name == "floor";
+      });
+  require(contact != resting.contacts.end(),
+          "the published contact must identify the floor geom");
+  require(contact->body1_stable_id == "test_body" ||
+              contact->body2_stable_id == "test_body",
+          "the published contact must identify the dynamic body by stable ID");
+  require(contact->distance_m <= 0.0,
+          "a resting collision contact must report MuJoCo's non-positive distance");
+  require(std::isfinite(contact->normal_force_n) &&
+              contact->normal_force_n > 0.0,
+          "a solved resting contact must publish a positive normal force");
+
+  const auto &reset = runtime.reset();
+  require(reset.contact_count == 0 && reset.contacts.empty(),
+          "reset to the separated reference pose must clear contacts");
+}
+
 void test_mid360_raycast_uses_current_mujoco_model_and_data() {
   lingtu::sim::MujocoRuntime runtime({LINGTU_MUJOCO_MID360_RAYCAST});
 
@@ -704,7 +738,29 @@ void test_composed_runtime_applies_package_keyframe_and_spawn() {
               std::abs(base->position_m[2] - 0.6) < 1e-12,
           "per-instance keyframe must compose with the session spawn transform");
 
-  runtime.advance(10);
+  const auto &grounded = runtime.advance(100);
+  std::set<std::string> loaded_feet;
+  for (const auto &contact : grounded.contacts) {
+    const bool floor = contact.geom1_name == "floor" ||
+                       contact.geom2_name == "floor";
+    if (!floor || !contact.normal_force_available ||
+        contact.normal_force_n <= 0.0) {
+      continue;
+    }
+    if (contact.body1_stable_id.rfind("thunder_01/", 0) == 0) {
+      loaded_feet.insert(contact.body1_stable_id);
+    }
+    if (contact.body2_stable_id.rfind("thunder_01/", 0) == 0) {
+      loaded_feet.insert(contact.body2_stable_id);
+    }
+  }
+  require(grounded.contact_count == grounded.contacts.size() &&
+              loaded_feet ==
+                  std::set<std::string>{"thunder_01/FL_foot",
+                                        "thunder_01/FR_foot",
+                                        "thunder_01/RL_foot",
+                                        "thunder_01/RR_foot"},
+          "composed Thunder must publish all four solved foot-to-ground contacts");
   const auto &reset = runtime.reset();
   const auto reset_base = find_base(reset);
   require(reset_base != reset.bodies.end() &&
@@ -961,6 +1017,7 @@ int main() {
     test_load_and_advance();
     test_pause_preserves_the_published_state();
     test_reset_starts_a_new_generation();
+    test_contact_snapshot_tracks_last_solved_contact_and_reset();
     test_mid360_raycast_uses_current_mujoco_model_and_data();
     test_thunder_model_snapshot_contract();
     test_named_keyframe_initializes_thunder_nominal_stand();

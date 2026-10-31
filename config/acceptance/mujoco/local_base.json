@@ -10,7 +10,7 @@
   "windows_cpu_isolation": true,
   "windows_navigation_physical_cores": 3,
   "paths": {
-    "slam_config": "src/localization/fastlio2/config/sim_mid360.yaml",
+    "slam_config": "src/localization/ltlio/config/sim_mid360.yaml",
     "path_library": null
   },
   "asset_builder": {
@@ -72,13 +72,13 @@
     "coverage": "component",
     "claims": [
       "CMU and SCAN use the same industrial-park world, spawn, goal, map assets, truth pose, LiDAR sample count, scan timing, and physics timebase",
-      "MuJoCo truth odometry isolates local planning and tracking from Fast-LIO2 error",
+      "MuJoCo truth odometry isolates local planning and tracking from LTLIO error",
       "live MuJoCo LiDAR geometry remains present in the registered obstacle cloud",
       "the simulated MuJoCo robot base reaches at least 0.5 m/s planar speed during the long-range run",
       "terminal exact Driver stop acknowledgement, zero command, authority clear, and owned-process cleanup"
     ],
     "excluded_claims": [
-      "Fast-LIO2 localization quality",
+      "LTLIO localization quality",
       "S100P timing qualification",
       "Brainstem motor execution",
       "physical robot motion"

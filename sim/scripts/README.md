@@ -64,5 +64,5 @@ own Product lifecycle.
 
 ## Boundary
 
-These scripts prove simulation behavior only. They do not prove S100P field
+These scripts prove simulation behavior only. They do not prove physical-target
 readiness or authorize physical motion.

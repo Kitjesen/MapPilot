@@ -36,7 +36,7 @@ class _Host:
         controller_id: str,
         command: ControllerCommand,
     ) -> CommandSubmitResult:
-        assert controller_id == "thunder_01.thunderv4_locomotion"
+        assert controller_id == "thunder_01.thunderv4_cts_moe"
         self.submissions.append(command)
         return CommandSubmitResult.ACCEPTED
 
@@ -163,7 +163,7 @@ def _pump(
     return PlayableControlPump(
         session_host=host,
         target=BaseTwistTarget(
-            controller_id="thunder_01.thunderv4_locomotion",
+            controller_id="thunder_01.thunderv4_cts_moe",
             instance_id="thunder_01",
             channel_id="thunder_01.control.base_twist",
         ),

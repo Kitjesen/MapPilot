@@ -32,14 +32,14 @@ def test_mapd_status_uses_product_session_identity() -> None:
 
 
 def test_runtime_maps_stack_does_not_expose_python_map_management() -> None:
-    assert not (REPO / "src" / "lingtu" / "assembly" / "stacks" / "maps.py").exists()
+    assert not (REPO / "src" / "lingtu" / "assembly" / "host" / "stacks" / "maps.py").exists()
 
 
 def test_legacy_nav_map_service_entry_is_removed() -> None:
     assert not (REPO / "src" / "nav" / "services" / "maps.py").exists()
     assert not (REPO / "src" / "nav" / "services" / "map").exists()
     old_service = "nav.services" + ".maps"
-    files = (REPO / "src" / "lingtu" / "assembly" / "plugins.py",)
+    files = (REPO / "src" / "lingtu" / "assembly" / "host" / "plugin_catalog.py",)
     for path in files:
         assert old_service not in path.read_text(encoding="utf-8")
 
@@ -70,7 +70,7 @@ def test_save_source_postprocess_uses_native_commit_contract() -> None:
 
 def test_save_map_commits_one_locked_checked_canonical_directory() -> None:
     save = (REPO / "src" / "maps" / "cpp" / "save.cpp").read_text(encoding="utf-8")
-    store = (REPO / "src" / "maps" / "cpp" / "store.cpp").read_text(encoding="utf-8")
+    store = (REPO / "src" / "maps" / "cpp" / "storage" / "store.cpp").read_text(encoding="utf-8")
     assert "MapLock::TryAcquire" in save
     assert "VerifyRequiredArtifacts(commit_stage" in save
     assert 'root / (".save-staging-" + job_id)' in save

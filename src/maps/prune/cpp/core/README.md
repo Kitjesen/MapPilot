@@ -22,14 +22,18 @@ Current files:
 | `save.hpp` / `save.cpp` | Clean/removed output, backup, and apply semantics. |
 | `flow.hpp` / `flow.cpp` | Canonical stage names, implementation state, and JSON report shape. |
 
-Planned product files:
+Reserved stage names (not implementation requirements):
 
 | File | Role |
 | --- | --- |
-| `label.hpp` / `label.cpp` | Ground and instance labeling. |
+| `label.hpp` / `label.cpp` | Unused in the saved-map path; standalone ground segmentation lives in `src/maps/ground`. |
 | `submap.hpp` / `submap.cpp` | Multi-frame submap accumulation. |
 | `protect.hpp` / `protect.cpp` | Static structure protection. |
 | `split.hpp` / `split.cpp` | Static/dynamic point split. |
 
 Do not add ERASOR2 headers or source includes here. ERASOR2 remains a research
 reference and optional external comparison path.
+
+The saved-map path evaluates planar support from final multi-frame evidence.
+It does not use cached ground labels or link Patchwork++/Eigen. The legacy JSON
+ground-protection count remains zero; supported surfaces have their own count.

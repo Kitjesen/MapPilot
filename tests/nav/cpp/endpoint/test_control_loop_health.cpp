@@ -315,7 +315,7 @@ void testPublicationHistoryRetainsUnsampledSpikeAndExactContext() {
   config.minimum_samples = 1;
   ControlLoopHealth health(config);
   health.observe({10.0, 8.0, 0.0});
-  health.observe({199.0, 0.0, 189.0, {2.0, 1.0, 0.0, 194.0, 1.0}});
+  health.observe({199.0, 0.0, 189.0, {2.0, 1.0, 0.0, 194.0, 1.0},123.0,67.0,.75,1.25,84.0});
   health.observe({10.0, 8.0, 0.0});
   require(health.snapshot().history.overruns_ms.empty(),
           "the per-tick safety gate must not copy publication history");
@@ -327,6 +327,10 @@ void testPublicationHistoryRetainsUnsampledSpikeAndExactContext() {
   const auto &event = snapshot.history.overruns.front();
   require(event.sequence == 2 && event.work_ms == 199.0 && event.stages_ms[3] == 194.0,
           "the spike must retain its own runtime stage and sequence");
+  require(event.nav_tick_ms == 123.0 && event.final_control_ms == 67.0,
+          "an unsampled spike must retain its own Executor and final-control timings");
+  require(event.sensor_take_ms == .75 && event.sensor_apply_ms == 1.25 && event.thread_cpu_ms == 84.0,
+          "the spike must retain its sensor wall subphases and same-cycle thread CPU time");
   health.observe({10.0, 8.0, 0.0});
   health.observe({10.0, 8.0, 0.0});
   require(health.snapshot(true).history.first_sequence == 2,

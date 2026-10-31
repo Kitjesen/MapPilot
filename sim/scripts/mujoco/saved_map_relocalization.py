@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Runtime saved-map relocalization gate for the MuJoCo/Fast-LIO source path.
+"""Runtime saved-map relocalization gate for the MuJoCo/LTLIO source path.
 
 This gate proves the saved-map stage with live simulated sensors:
 
-raw MuJoCo MID-360 + IMU -> native DDS -> slamd (FastLIO2 localization)
+raw MuJoCo MID-360 + IMU -> native DDS -> slamd (LTLIO localization)
   -> slamd loads the same-source map.pcd
   -> slamctl typed-DDS relocalization succeeds
   -> slamd health, saved-map points, and map->odom remain sane
@@ -35,7 +35,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 DEFAULT_SLAM_CONFIG = (
-    SRC / "localization/fastlio2/config/sim_mid360_slam.yaml"
+    SRC / "localization/ltlio/config/sim_mid360_slam.yaml"
 )
 DEFAULT_SLAM_RUNTIME_BIN = ROOT / "build/slam_core/slamd"
 DEFAULT_SLAM_CONTROL_BIN = ROOT / "build/slam_core/slamctl"
@@ -382,7 +382,7 @@ def _sensor_feed_command(
         str(args.duration),
         "--drive-mode",
         "kinematic",
-        "--allow-kinematic-fastlio-acceptance",
+        "--allow-kinematic-ltlio-acceptance",
         "--drive-vx",
         str(args.drive_vx),
         "--drive-vy",
@@ -455,7 +455,7 @@ def _slamd_command(
 ) -> list[str]:
     return [
         str(args.slam_runtime_bin),
-        "--backend", "fastlio2",
+        "--backend", "ltlio",
         "--mode", "localization",
         "--map", str(map_pcd),
         "--config", str(args.slam_config),
@@ -606,7 +606,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         args.slam_control_bin, DEFAULT_SLAM_CONTROL_BIN, WINDOWS_SLAM_CONTROL_BIN
     )
     if not args.slam_config.is_file():
-        blockers.append(f"FastLIO native config not found: {args.slam_config}")
+        blockers.append(f"LTLIO native config not found: {args.slam_config}")
     if not args.sensor_bridge.is_file():
         blockers.append(f"native DDS sensor bridge not found: {args.sensor_bridge}")
     if not args.slam_runtime_bin.is_file():
@@ -701,7 +701,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             slamd_proc, status_path, sampler, float(args.topic_timeout_s)
         )
         if int(ready_status.get("registered_points") or 0) <= 0:
-            blockers.append("native FastLIO registered cloud did not become ready")
+            blockers.append("native LTLIO registered cloud did not become ready")
         if ready_status.get("map_loaded") is not True:
             blockers.append("slamd did not load the saved map")
 
@@ -937,7 +937,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--slam-config", default=str(DEFAULT_SLAM_CONFIG),
-        help="FastLIO2 native runtime YAML.",
+        help="LTLIO native runtime YAML.",
     )
     parser.add_argument("--sensor-bridge", default=str(NATIVE_SENSOR_BRIDGE))
     parser.add_argument("--publisher-bin", default="")
@@ -951,7 +951,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["map_metadata", "instantaneous", "synthetic_rolling", "physical_rolling"],
         default="map_metadata",
         help=(
-            "Per-point time model passed to the MuJoCo Fast-LIO live feed. "
+            "Per-point time model passed to the MuJoCo LTLIO live feed. "
             "The default reads same_source_map/metadata.json and falls back "
             "to the strict physical_rolling profile when unavailable."
         ),
@@ -997,7 +997,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--preflight-only",
         action="store_true",
         help=(
-            "Check the saved map, native binaries, FastLIO config, and sensor "
+            "Check the saved map, native binaries, LTLIO config, and sensor "
             "publisher path without launching any process."
         ),
     )

@@ -113,6 +113,12 @@ if ($sourceLock.repository -ne $ExpectedRepository -or $sourceLock.tag -ne $Expe
 if ($sourceReceipt.checkout_eol_policy -ne "core.autocrlf=false;core.eol=lf;core.safecrlf=true") {
     throw "Invalid CycloneDDS checkout EOL policy receipt"
 }
+$patchPath = Join-Path $PSScriptRoot "patches\cyclonedds-cdr-geometric-growth.patch"
+$patches = @($sourceReceipt.local_patches)
+if ($patches.Count -ne 1 -or $patches[0].name -ne (Split-Path -Leaf $patchPath) -or
+    $patches[0].diff -cne (Get-Content -Raw -LiteralPath $patchPath)) {
+    throw "CycloneDDS SDK lacks the current CDR growth patch; prepare a new SDK in a new directory"
+}
 $toolchainReceipt = ConvertFrom-LingTuJson (Get-Content -Raw -LiteralPath (Join-Path $SdkRoot "evidence\toolchain.json"))
 if ($toolchainReceipt.generator -ne "Visual Studio 17 2022" -or $toolchainReceipt.toolset -ne "v143" -or
     $toolchainReceipt.architecture -ne "x64" -or $toolchainReceipt.configuration -ne "Release" -or

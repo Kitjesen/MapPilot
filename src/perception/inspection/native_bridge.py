@@ -15,6 +15,7 @@ from typing import Any
 ID_CAP = 128
 ACTION_CAP = 64
 REASON_CAP = 256
+ABI_VERSION = 2
 
 
 class InspectionEvidenceBridgeError(RuntimeError):
@@ -25,13 +26,12 @@ class _Request(ctypes.Structure):
     _fields_ = [
         ("requested_at_s", ctypes.c_double),
         ("request_id", ctypes.c_char * ID_CAP),
-        ("run_id", ctypes.c_char * ID_CAP),
+        ("task_id", ctypes.c_char * ID_CAP),
         ("route_id", ctypes.c_char * ID_CAP),
         ("route_revision", ctypes.c_uint64),
         ("map_id", ctypes.c_char * ID_CAP),
         ("map_content_epoch", ctypes.c_int64),
         ("point_index", ctypes.c_uint32),
-        ("point_id", ctypes.c_char * ID_CAP),
         ("action", ctypes.c_char * ACTION_CAP),
         ("deadline_s", ctypes.c_double),
     ]
@@ -109,6 +109,19 @@ class NativeInspectionEvidenceBridge:
 
     def _configure_abi(self) -> None:
         lib = self._lib
+        try:
+            version = lib.lingtu_inspection_evidence_bridge_abi_version
+        except AttributeError as exc:
+            raise InspectionEvidenceBridgeError(
+                "inspection evidence bridge ABI is outdated; rebuild the native bridge"
+            ) from exc
+        version.argtypes = []
+        version.restype = ctypes.c_uint32
+        actual = int(version())
+        if actual != ABI_VERSION:
+            raise InspectionEvidenceBridgeError(
+                f"inspection evidence bridge ABI mismatch: expected {ABI_VERSION}, got {actual}"
+            )
         lib.lingtu_inspection_evidence_bridge_create.argtypes = [ctypes.c_int32]
         lib.lingtu_inspection_evidence_bridge_create.restype = ctypes.c_void_p
         lib.lingtu_inspection_evidence_bridge_destroy.argtypes = [ctypes.c_void_p]
@@ -163,12 +176,11 @@ class NativeInspectionEvidenceBridge:
         if status == 0:
             return None
         return {
-            "run_id": _decode_fixed(request.run_id),
+            "task_id": _decode_fixed(request.task_id),
             "route_id": _decode_fixed(request.route_id),
             "route_revision": int(request.route_revision),
             "map_id": _decode_fixed(request.map_id),
             "map_content_epoch": int(request.map_content_epoch),
-            "point_id": _decode_fixed(request.point_id),
             "point_index": int(request.point_index),
             "request_id": _decode_fixed(request.request_id),
             "action": _decode_fixed(request.action),
@@ -180,7 +192,6 @@ class NativeInspectionEvidenceBridge:
         self,
         *,
         request_id: str,
-        evidence_id: str,
         persisted: bool,
         reason: str = "",
         analysis_verdict: str = "",
@@ -189,7 +200,8 @@ class NativeInspectionEvidenceBridge:
         result = _Result()
         result.result_at_s = float(result_at_s)
         result.request_id = _encode_fixed(request_id, ID_CAP, "request_id")
-        result.evidence_id = _encode_fixed(evidence_id, ID_CAP, "evidence_id")
+        # Storage uses the operation ID; only a committed result has an artifact.
+        result.evidence_id = result.request_id if persisted else b""
         result.persisted = 1 if persisted else 0
         result.reason = _encode_fixed(reason, REASON_CAP, "reason")
         result.analysis_verdict = _encode_fixed(

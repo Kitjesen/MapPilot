@@ -4,13 +4,27 @@
 **Audience:** Contributors, integrators, and architecture reviewers
 **Runs on:** Repository-wide; applies to `env=real` and `env=sim`
 
-This page defines ownership, dependency direction, and the system vocabulary.
-Running configuration and typed schemas outrank prose when they conflict.
+This page defines system ownership, dependency direction, and vocabulary.
+[`config/system/`](../config/system/README.md) is authoritative
+for Products and environments; typed schemas are authoritative for wire data;
+[`config/architecture_layers.yaml`](../config/architecture_layers.yaml)
+enforces package direction.
 
-Product and environment truth lives in
-[`config/runtime_graph/`](../config/runtime_graph/README.md). Machine-enforced
-layer rules live in
-[`config/architecture_layers.yaml`](../config/architecture_layers.yaml).
+The [Spot architecture comparison](research/spot.md) records public upstream
+contracts and a staged LingTu task-interface proposal. It does not replace the
+current ownership rules on this page or claim new deployed capabilities.
+The [task interface proposal](research/tasks.md) defines the proposed shared
+semantics above existing domain executors. The first Follow lifecycle is now
+implemented and locally tested; native simulation and field qualification remain
+open. It does not change this page's dependency rules.
+The [camera-to-motion design](design/autonomy.md) traces observation ownership,
+semantic reasoning, domain tasks, and native execution through current code. It
+records the implemented shared observation input to Follow and the remaining
+Agent/memory migration plan; local contract tests are not evidence of field readiness.
+For the current instruction/Agent split, skill ownership, model call paths and
+code-reading order, use the [Decision code guide](../src/decision/README.md).
+The task proposal's final section records the verified gaps and incremental
+cleanup order; it does not describe an already completed runtime refactor.
 
 ## Fixed vocabulary
 
@@ -18,101 +32,76 @@ layer rules live in
 | --- | --- |
 | `env` | Outer runtime environment; public values are exactly `real` and `sim` |
 | Product | Immutable, env-independent operating-mode declaration |
-| RunPlan | Immutable execution artifact produced by resolving one Product in one env |
+| RunPlan | Internal immutable execution snapshot produced for ProductControl; not a public lifecycle object |
 | ProductControl | Only public owner of a complete Product lifecycle transaction in one fixed env |
 | Host | Managed Python process containing Gateway, Agent, adapters, and selected Modules |
-| Blueprint | Construction and wiring of Modules inside one Host |
 | Module | Typed in-process Host runtime unit |
 | DDS | Native typed cross-process data plane |
 | RobotConfig | Static physical robot, device, and calibration data used by `real` |
 | Endpoint | Concrete HTTP, DDS, or native-service access point |
 
-Blueprint is not a process orchestrator. DDS does not own Product policy.
+Host module assembly is internal. DDS does not own Product policy.
 RobotConfig does not select a runtime mode. An Endpoint is not an env.
 
 ## System model
 
 ```text
-RobotConfig + Product + env(real | sim)
-                 -> RunPlan
-                 -> ProductControl
+ProductControl request (RobotConfig + Product + env(real | sim))
+                 -> internal execution snapshot (RunPlan)
                  -> real: SystemdRunner
                  -> sim: direct-child runner
 
 Host
-  -> Blueprint
   -> typed Modules, Ports, and Wires
 
 native processes
   <-> typed DDS
 ```
 
-Assembly resolves a Product once. CLI, Gateway, systemd, runners, and Host
-consume the published RunPlan; they do not independently resolve it again.
-
-A Product run is identified by `product_session_id`. RunPlan paths, native
-launch IDs, PIDs, and protocol boot IDs stay private to their runtime boundary.
+ProductControl resolves a Product once. CLI, Gateway, runners, and Host consume
+the resulting private execution snapshot. `product_session_id` identifies the run; snapshot paths,
+native launch IDs, PIDs, and boot IDs stay private to their runtime boundary.
 
 ## Control plane
 
-The control path has one direction:
+The public control path is request -> ProductControl -> execution:
 
-1. `config/runtime_graph/products/*.yaml` declares capabilities, logical roles,
-   topics, and the Host Blueprint.
-2. `config/runtime_graph/envs/{real,sim}.yaml` maps roles to implementations,
-   process control, and transports.
-3. `src/lingtu/assembly/` resolves without side effects.
-4. `src/lingtu/run_plan.py` owns the immutable RunPlan type.
-5. `src/lingtu/control.py` exposes `switch`, `status`, and `stop`.
-6. The selected runner executes only the resolved plan.
+1. Product YAML declares capabilities, logical roles, topics, and Host modules.
+2. Environment YAML maps roles to implementations, process control, and transport.
+3. ProductControl resolves the selected declarations into one private immutable
+   execution snapshot without starting processes.
+4. `lingtu.control` exposes `switch`, `status`, and `stop`; the selected runner
+   executes that snapshot.
 
 ProductControl owns the mutation lock, staged state, readiness, rollback, and
 current-run record. `scripts/lingtu` is a thin adapter to
 `python -m lingtu.control`.
 
 `lingtu/assembly/graph/` owns declaration loading, variant resolution, and
-process contracts. The compiler passes its selected Product onward; downstream
-code validates that value instead of selecting a variant again. The Host's
-generic `runtime/` does not import Product assembly or diagnostic projections.
-
-Real and simulation switches share request/report semantics. They do not share
-rollback implementation, process operations, runtime identity, or a generic
-phase engine.
+process contracts. Generic `runtime/` does not import Product assembly.
+Real and simulation share request/report semantics, while each owns its process
+operations, identity evidence, and rollback.
 
 ## Host and Module model
 
-[`src/runtime/blueprint.py`](../src/runtime/blueprint.py) constructs one Host
-graph. [`src/runtime/registry.py`](../src/runtime/registry.py) is the normal
+[`src/runtime/host.py`](../src/runtime/host.py) contains Host's internal module
+construction and lifecycle implementation. `HostBuilder` is an implementation
+helper, not another operating mode or scheduler. Product callers use
+ProductControl; Host startup uses the resolved configuration.
+[`src/runtime/registry.py`](../src/runtime/registry.py) is the normal
 backend and capability registration boundary.
 
 The Module lifecycle is `preflight -> setup -> start -> stop`. Typed Ports and
-Wires describe in-process data relationships. A transport is selected only at
-an explicit process, hardware, simulator, or external API seam.
+Wires describe in-process relationships; transports begin only at an explicit
+process, hardware, simulator, or external API seam.
 
-Gateway, Agent, and MCP are Host surfaces. They submit intent and project
-facts; they do not become a native planner, map state machine, driver, or
-Product lifecycle owner. Invocation is not a continuous data wire.
-
-`gateway/navigation/` owns the navigation-facing HTTP commands, exact task
-queries, admission evaluation, and state projection. HTTP, SSE, readiness, and
-the full state snapshot share its evaluated navigation facts. Shared request
-deduplication and control transport remain under `gateway/services/`; neither
-is another navigation task owner.
-
-`gateway/maps/` groups saved-map HTTP operations, mapd transport, environment
-layer projection, tagged locations, and semantic places. The last two retain
-their distinct existing data models. Native mapd owns map state and save jobs;
-ProductControl alone switches the active map. Gateway adds no map manager.
-
-`gateway/routes/status.py` exposes only aggregate state, scene, and localization.
-Health/readiness/metrics live in `routes/health.py`, runtime dataflow inspection
-in `routes/diagnostics.py`, and SSE/WebSocket delivery in `routes/realtime.py`.
-The public URLs and response contracts do not depend on this code layout.
-[`src/gateway/README.md`](../src/gateway/README.md) maps user-facing questions to
-their API and source owner.
-
-Detailed lifecycle and delivery rules live in
-[`src/runtime/README.md`](../src/runtime/README.md).
+Gateway, Agent, and MCP submit intent and project facts. They do not own Product
+lifecycle, map state, planning, or hardware. `gateway/navigation/` owns HTTP
+navigation commands and state projection; `gateway/maps/` owns saved-map HTTP
+operations and mapd transport. Native owners still execute those operations,
+and ProductControl alone activates a map. See the
+[Gateway owner map](../src/gateway/README.md) and
+[Host lifecycle](../src/runtime/README.md).
 
 ## Process and data plane
 
@@ -124,11 +113,23 @@ ROS 2, LCM, and Gazebo belong only to explicit compatibility, replay, or
 diagnostic adapters. Product runtime source is ROS-free. A compatibility
 surface cannot silently become the Product data plane.
 
-The canonical camera Web path is go2rtc WHEP, with Gateway
-JPEG-over-WebSocket as the fallback. go2rtc is an optional machine-level
-external media sidecar outside ProductControl. It is not part of any Product,
-RunPlan, or Product readiness gate; if unavailable, the client falls directly
-back to JPEG.
+Scene and Console prefer the configured WHEP endpoint and retain Gateway
+JPEG-over-WebSocket as the fallback. Gateway proxies SDP negotiation and session
+deletion, never the video payload. Raw color SHM has one native camera owner;
+`lingtu_camera_webrtc` consumes it without opening another camera device.
+Native `whepserversink` uses GStreamer 1.28 and gst-plugin-webrtc 0.15; the
+GStreamer 1.24 reference publishes fixed-rate H.264 through go2rtc WHEP.
+go2rtc is an optional machine-level external media sidecar outside ProductControl;
+it is not part of any Product, RunPlan, or Product readiness gate. If WHEP is
+unavailable, each view falls directly back to JPEG. A connected peer is not
+treated as a live camera until the browser decodes a frame. Source changes and
+view closure release the old peer; missing initial frames or frozen video trigger
+reconnection. Display rotation comes from RobotConfig.
+The native media executable is a foreground development path until its actual
+board encoder and readiness are qualified for ProductControl ownership. The
+[remote-video research](research/video.md) compares shared-source direct WebRTC,
+TURN fallback and optional SFU distribution. Public-network traversal, SFU
+distribution and board performance remain separate qualification work.
 
 ## Dependency direction
 
@@ -150,8 +151,8 @@ concrete backend across an owner boundary.
 
 | Source owner | Responsibility |
 | --- | --- |
-| `src/runtime/` | Module framework, Blueprint, shared contracts, messages, registry, and graph utilities |
-| `src/lingtu/` | Product resolution, RunPlan, lifecycle routing, and real/sim process control |
+| `src/runtime/` | Host Module framework, internal assembly, shared contracts, messages, and registry |
+| `src/lingtu/` | ProductControl lifecycle, internal resolution, and real/sim process control |
 | `src/nav/` | Navigation command surface and native planning, tracking, safety, and control |
 | `src/maps/` | Live map services, map packages, artifacts, and saved-map lifecycle |
 | `src/localization/` | SLAM, localization, relocalization, and normalized status |
@@ -161,8 +162,45 @@ concrete backend across an owner boundary.
 | `src/memory/` | Semantic, episodic, spatial, and temporal memory |
 | `src/gateway/` | REST, SSE, WebSocket, MCP, validation, and status projection |
 
+Semantic memory is a read/query layer around native map identity. It may keep
+objects, places, relations, and observation history, but it does not duplicate
+occupancy, collision geometry, elevation, traversability, or saved-map
+lifecycle. The design and current implementation audit are in
+[Persistent semantic mapping](research/semantic-map.md).
+
 Hot-path native code stays with the functional owner under its `cpp/` tree.
 The package structure is described in [`src/README.md`](../src/README.md).
+
+### Localization layout
+
+Localization has one production numerical core and several deliberately
+bounded collaborators. The directory names describe ownership and lifetime;
+they are not competing estimators:
+
+| Path | Boundary | Lifetime | Responsibility |
+| --- | --- | --- | --- |
+| `src/localization/ltlio/` | library | per `slamd` process | LTLIO scan/IMU estimation and transport-mode state |
+| `src/localization/slam/cpp/` | native service | resident field process | DDS, lifecycle, status, map/odom, save/load and relocalization wiring |
+| `src/localization/online_mapping/` | library/worker | bounded online mapping worker | keyframe graph, loop factors and corrected map snapshots |
+| `src/localization/map_optimization/` | executable/library | short-lived save-time job | PGO, loop verification and map-bundle optimization |
+| `src/localization/relocalization/` | library/CLI | request-scoped | global/seeded registration and ICP refinement |
+
+The physical directory names now carry those responsibilities directly:
+`online_mapping` is the **online mapping backend**, `map_optimization` is the
+**map optimization job**, and `relocalization` is the **relocalization library**.
+The upstream `sam` spelling remains only where it identifies the pinned
+LIO-SAM-derived implementation or its evidence format.
+
+The production call path is `drivers -> slam/cpp -> ltlio`; `online_mapping` may consume
+LTLIO snapshots for online map correction, while `relocalization` and `map_optimization` are
+explicit map workflows. Neither `online_mapping` nor `map_optimization` replaces the LTLIO frontend,
+and neither owns DDS or Product lifecycle. `ContractBackend` in
+`slam/cpp/slam.cpp` is a test seam; it is not a field estimator.
+
+Use [`src/localization/README.md`](../src/localization/README.md) for the
+directory-level contract and reading order. Do not add a second `slam2`,
+`elevator_lio`, or generic `localization_core` tree to make a new feature fit;
+extend the owning boundary and its existing interface.
 
 ## Navigation, map, and command ownership
 
@@ -179,13 +217,14 @@ control-risk grid. `mapd` owns live map state and persistent map operations.
 Only `lingtu-driver` may forward a checked command to the RobotConfig-selected
 hardware adapter.
 
-Python map or planning code may exist for development and simulation fallback
-work, but it cannot compete with field owners.
+Python map or planning code may support development and simulation; it cannot
+compete with field owners.
 
 ### Global and local planning
 
-Product selects planners and declares their configuration. Assembly resolves
-those inputs into one RunPlan; ProductControl starts that plan. Neither layer
+Product selects planners and declares their configuration. ProductControl
+resolves those inputs once and starts the resulting runtime; its internal
+execution snapshot preserves the selected values. Neither layer
 implements search, selects a local target, or edits a generated trajectory.
 
 | Owner | Inputs and responsibility | Output |
@@ -196,24 +235,69 @@ implements search, selects a local target, or edits a generated trajectory.
 | Local planner | Reference, measured state, live collision/prediction data and its own settings | Executable local path or B-spline, or typed pending/blocked result |
 | Follower and final control | Executable local result, measured state, speed limits and motion authority | Checked body velocity for the driver |
 
-The global-to-local geometric contract is a reference polyline, not a sequence
-of separate navigation-goal commands. SCAN selects its local target and
-trajectory horizon from that reference. Pose updates do not create new routes.
-Frame and route identity travel with the geometry so stale work can be
-discarded; neither planner needs the other's backend type or tuning parameters.
-Reference points guide local planning; they are not individually mandatory
-arrival points. SCAN retains its own waypoint filtering, smoothing and local
-detour behavior, with collision validation of the executable trajectory.
+The global-to-local contract is one identified map-frame reference polyline,
+not a sequence of goals. LocalPlanner selects its local target, trajectory, and detours;
+pose updates do not create routes. Persistent blockage can request one bounded
+replacement through the goal lifecycle. Global search does not inspect LocalPlanner's
+private failures, and local planning does not rewrite the saved map.
 
-Persistent local blockage may request another global route through the goal
-lifecycle. The coordinator supplies measured temporary obstacle geometry when
-available. The local algorithm does not call global search, and the global
-algorithm does not inspect SCAN's FSM or optimizer failures. Saved global
-occupancy and live local collision maps retain separate owners. A local input
-hold can stop execution without invalidating an already computed global route.
+`LocalPlanner` names the module. SCAN is its default algorithm; CMU remains an
+explicit alternative. The execution layer depends on the module interface.
 
 See [runtime conditions and parameters](runtime.md#route-trajectory-and-motion-conditions)
 and the [native navigation interfaces](../src/nav/cpp/README.md).
+
+## Motion authority
+
+Native `navd` owns motion authority. Web, SDK, and CLI submit typed requests;
+they do not publish final robot velocity. Its operator source lease admits one
+external source, while its control state selects autonomous or operator motion.
+FinalControl applies shaping and safety to that source's candidate command.
+Only `lingtu-driver` forwards the resulting command through the selected robot
+adapter.
+
+Claim reserves an operator source; it does not interrupt a task by itself.
+Deliberate operator motion pauses the ordinary single-goal task and retains its
+destination and task identity. After operator input is active, holding sends
+zero but retains the source lease. Releasing or expiring that lease leaves
+motion held. Closing an unused Claim by Hold, Release, or expiry releases only
+source permission; it does not publish velocity zero or interrupt autonomy.
+TaskResume
+is the explicit request to release that hold and continue the same task; the
+generic control-resume request only releases the hold and does not continue a
+paused task. Estop is latched and clearing it does not replay old commands.
+
+The default operator sample age limit is 0.35 s; the maximum source lease is
+2 s. Valid incoming samples renew the source lease. The web session requests
+1 s and sends held input every 20 ms, so these limits do not cap the length of
+a teleoperation session. Lease expiry and command freshness are different facts.
+
+Once a task is paused, its coordinator does not publish steady velocity zeros.
+The endpoint owns the current operator output and its no-output zero fallback;
+stop confirmation still owns zero output while the handoff is pending. Explicit
+task continuation resets local tracking and reprojects the retained 3D route
+from the measured pose, preserving its goal and execution settings.
+
+Control source, task state, and stop evidence are separate facts. A safety veto
+can send zero while the source still owns control. Operator zero publication
+does not prove physical rest. The autonomous stop transaction also requires
+driver acknowledgement and measured stationary odometry; teleop uses its
+declared driver-acknowledgement policy. Stop confirmation advances on ordinary
+endpoint ticks: pending evidence keeps output zero while commands and sensors
+continue to be processed. A pause request acknowledgement is not a confirmed
+PAUSED event.
+
+## Directory names
+
+| Path | Responsibility |
+| --- | --- |
+| `config/system/` | Product and real/sim declarations used by ProductControl |
+| `src/runtime/` | Shared Python Host Module framework and internal assembly |
+| `src/nav/cpp/endpoint/nav/app/` | navd composition, control loop, and goal/task coordination |
+
+RunPlan is the private resolved configuration; HostBuilder is Host's internal
+construction helper. Neither is an additional task scheduler or user-facing
+operating mode. DDS/platform runtime files keep their transport-specific meaning.
 
 ## Topics, frames, schemas, and IDs
 
@@ -235,6 +319,13 @@ Saved maps and global paths use the `map` frame. Local sensing and control use
 the declared `body` or `odom` contract. `base_link == body` is a compatibility
 alias; ROS TF is not the Product data plane.
 
+Native SLAM resolves map/body/scan poses in `src/localization/slam/cpp/frames.hpp`.
+Its status export supplies Host with `map_odometry` (map pose, body twist) and
+`map_scan_pose` (scan pose, physical ray origin). Host adapters and the browser
+consume these values without composing independently received TF and odometry.
+Raw odometry and TF remain native algorithm inputs and diagnostic data. The
+Gateway frame tree is a diagnostic mirror, not another localization authority.
+
 Use identifiers by meaning, not by string shape. `product_session_id`,
 `request_id`, `task_id`, `operation_id`, map identity, and simulation
 `session_id` have different owners and lifetimes.
@@ -252,13 +343,13 @@ clock, pose, or configuration authority. See [Simulation](./simulation.md).
 ## Repository and install layout
 
 `src/` owns source, `sim/` owns simulation composition, and
-`config/runtime_graph/envs/{real,sim}.yaml` owns environment mapping.
+`config/system/envs/{real,sim}.yaml` owns environment mapping.
 
 | Path | Meaning |
 | --- | --- |
 | `src/` | Functional-owner source tree |
 | `sim/` | Simulation workspace; not a third public env |
-| `config/runtime_graph/envs/` | `real` and `sim` implementation mappings |
+| `config/system/envs/` | `real` and `sim` implementation mappings |
 | `build/`, `install/`, `dist/` | Compile, install-stage, and release outputs |
 
 Generated artifacts move through:
@@ -280,7 +371,7 @@ details live in [`src/README.md`](../src/README.md),
 
 | Subject | Authority |
 | --- | --- |
-| Product and env | `config/runtime_graph/` |
+| Product and env | `config/system/` |
 | Product control | `src/lingtu/` |
 | Host graph | `src/runtime/` |
 | Robot, device, calibration | `config/robots/` and `config/devices.yaml` |
@@ -293,10 +384,3 @@ details live in [`src/README.md`](../src/README.md),
 Current operational behavior is detailed in [Runtime](./runtime.md). Evidence
 and open work belong in [Testing](./testing.md) and [Roadmap](./roadmap.md),
 not in this contract.
-
-## Task interface
-
-The [task interface design](research/tasks.md) records the implemented Follow lifecycle
-and its local evidence. The [next upgrade plan](research/plan.md) starts with Agent
-ownership and real domain-task results. Native simulation and field qualification
-remain separate gates; ProductControl and native motion ownership are unchanged.

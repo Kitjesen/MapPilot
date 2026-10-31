@@ -6,6 +6,9 @@
 #include <string>
 
 #include "lingtu/recording/recording_catalog.hpp"
+#if defined(_WIN32)
+#include <Windows.h>
+#endif
 
 namespace {
 
@@ -46,6 +49,26 @@ void write_manifest(const std::filesystem::path &session, const std::string &sta
          << ",\"created_at_unix_ns\":1,\"started_at_unix_ns\":2,"
             "\"ended_at_unix_ns\":3,\"children\":[]}\n";
 }
+
+#if defined(_WIN32)
+void test_status_reader_shares_manifest_replacement_access() {
+  TemporaryDirectory temporary;
+  const auto session = temporary.path / "atomic-replacement";
+  write_manifest(session, "recording", 1001);
+  const auto writer = ::CreateFileW((session / "session.json").c_str(), DELETE,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+      FILE_ATTRIBUTE_NORMAL, nullptr);
+  require(writer != INVALID_HANDLE_VALUE, "could not hold atomic-replacement access");
+  try {
+    const auto manifest = recording::read_recording_manifest(session);
+    require(manifest.state == "recording", "shared status reader read the wrong manifest");
+  } catch (...) {
+    ::CloseHandle(writer);
+    throw;
+  }
+  ::CloseHandle(writer);
+}
+#endif
 
 void test_empty_catalog_is_idle() {
   TemporaryDirectory temporary;
@@ -120,6 +143,9 @@ void test_size_scan_is_hard_bounded() {
 
 int main() {
   try {
+#if defined(_WIN32)
+    test_status_reader_shares_manifest_replacement_access();
+#endif
     test_empty_catalog_is_idle();
     test_active_session_wins_over_newer_history();
     test_multiple_active_sessions_fail_closed();

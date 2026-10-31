@@ -296,6 +296,14 @@ const char *faultCodeName(BridgeFaultCode fault) noexcept {
 ControllerMessage parseControllerLine(std::string_view line) {
   const auto fields = splitFields(line);
   const auto message_name = fields.front();
+  if (message_name == "LT_DRIVER_PROFILE_STATE_V1") {
+    requireFieldCount(fields, 9, message_name);
+    requireBootId(fields[1], "bridge_boot_id");
+    requireBootId(fields[2], "controller_boot_id");
+    if (!validProducerToken(fields[3])) throw ProtocolError("invalid profile task_id");
+    const auto value = [&](std::size_t i) { return fields[i] == "-" ? std::string{} : std::string(fields[i]); };
+    return ProfileState{value(1), value(2), value(3), value(4), value(5), value(6), value(7), value(8)};
+  }
   if (message_name == kActivateName) {
     requireFieldCount(fields, 4, message_name);
     requireBootId(fields[1], "bridge_boot_id");
@@ -380,6 +388,20 @@ std::string serializeCommand(const BridgeCommand &command) {
 std::string serializeHello(const HelloMessage &hello) {
   requireBootId(hello.bridge_boot_id, "bridge_boot_id");
   return checkedSerializedLine(std::string(kHelloName) + "\t" + hello.bridge_boot_id);
+}
+
+std::string serializeProfileRequest(const ProfileRequest &request,
+                                    std::string_view bridge_boot_id,
+                                    std::string_view controller_boot_id) {
+  requireBootId(bridge_boot_id, "bridge_boot_id");
+  requireBootId(controller_boot_id, "controller_boot_id");
+  if (!validProducerToken(request.task_id) ||
+      (request.requirement != "stairs_up" && request.requirement != "stairs_down" &&
+       request.requirement != "restore" && request.requirement != "hold")) {
+    throw ProtocolError("invalid profile request");
+  }
+  return checkedSerializedLine("LT_DRIVER_PROFILE_REQUEST_V1\t" + std::string(bridge_boot_id) +
+      "\t" + std::string(controller_boot_id) + "\t" + request.task_id + "\t" + request.requirement);
 }
 
 std::string serializeReady(const ReadyMessage &ready) {

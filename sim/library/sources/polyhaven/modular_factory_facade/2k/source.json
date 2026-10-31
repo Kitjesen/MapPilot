@@ -1,0 +1,100 @@
+{
+  "provider": "Poly Haven",
+  "asset_id": "modular_factory_facade",
+  "name": "Modular Factory Facade",
+  "authors": {
+    "James Ray Cock": "All"
+  },
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "source_url": "https://polyhaven.com/a/modular_factory_facade",
+  "resolution": "2k",
+  "model": "modular_factory_facade_2k.gltf",
+  "files": [
+    {
+      "path": "modular_factory_facade_2k.gltf",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/2k/modular_factory_facade/modular_factory_facade_2k.gltf",
+      "bytes": 372666
+    },
+    {
+      "path": "textures/modular_factory_facade_trim_01_diff_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_factory_facade/modular_factory_facade_trim_01_diff_2k.jpg",
+      "bytes": 2537009
+    },
+    {
+      "path": "textures/modular_factory_facade_brick_nor_gl_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_factory_facade/modular_factory_facade_brick_nor_gl_2k.jpg",
+      "bytes": 3471100
+    },
+    {
+      "path": "textures/modular_factory_facade_doors_nor_gl_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_factory_facade/modular_factory_facade_doors_nor_gl_2k.jpg",
+      "bytes": 2099914
+    },
+    {
+      "path": "textures/modular_factory_facade_garage_nor_gl_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_factory_facade/modular_factory_facade_garage_nor_gl_2k.jpg",
+      "bytes": 3235785
+    },
+    {
+      "path": "textures/modular_factory_facade_trim_01_arm_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_factory_facade/modular_factory_facade_trim_01_arm_2k.jpg",
+      "bytes": 3129201
+    },
+    {
+      "path": "textures/modular_factory_facade_garage_diff_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_factory_facade/modular_factory_facade_garage_diff_2k.jpg",
+      "bytes": 2189076
+    },
+    {
+      "path": "textures/modular_factory_facade_trim_01_nor_gl_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_factory_facade/modular_factory_facade_trim_01_nor_gl_2k.jpg",
+      "bytes": 3717593
+    },
+    {
+      "path": "textures/modular_factory_facade_brick_arm_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_factory_facade/modular_factory_facade_brick_arm_2k.jpg",
+      "bytes": 2567917
+    },
+    {
+      "path": "textures/modular_factory_facade_windows_nor_gl_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_factory_facade/modular_factory_facade_windows_nor_gl_2k.jpg",
+      "bytes": 2675074
+    },
+    {
+      "path": "textures/modular_factory_facade_garage_arm_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_factory_facade/modular_factory_facade_garage_arm_2k.jpg",
+      "bytes": 2542492
+    },
+    {
+      "path": "textures/modular_factory_facade_windows_diff_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_factory_facade/modular_factory_facade_windows_diff_2k.jpg",
+      "bytes": 2316599
+    },
+    {
+      "path": "textures/modular_factory_facade_doors_arm_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_factory_facade/modular_factory_facade_doors_arm_2k.jpg",
+      "bytes": 2628673
+    },
+    {
+      "path": "textures/modular_factory_facade_windows_arm_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_factory_facade/modular_factory_facade_windows_arm_2k.jpg",
+      "bytes": 3333067
+    },
+    {
+      "path": "textures/modular_factory_facade_doors_diff_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_factory_facade/modular_factory_facade_doors_diff_2k.jpg",
+      "bytes": 2081334
+    },
+    {
+      "path": "modular_factory_facade.bin",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/modular_factory_facade/modular_factory_facade.bin",
+      "bytes": 6269260
+    },
+    {
+      "path": "textures/modular_factory_facade_brick_diff_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_factory_facade/modular_factory_facade_brick_diff_2k.jpg",
+      "bytes": 4421090
+    }
+  ]
+}

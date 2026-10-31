@@ -292,7 +292,7 @@ def test_soak_process_summary_only_tracks_native_slamd_and_host():
     assert "super-lio" not in text
     assert "relocation_node" not in text
     assert "lio_node" not in text
-    assert "fastlio" not in text
+    assert "ltlio" not in text
     assert '"slamd"' in text
     assert '"host"' in text
     assert '"avg_rss_mb"' in text

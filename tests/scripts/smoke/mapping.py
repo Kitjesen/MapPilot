@@ -10,7 +10,7 @@ sys.path.insert(0, "src")
 
 logging.basicConfig(level=logging.INFO)
 
-from lingtu.assembly.stacks.slam import slam as external_slam
+from lingtu.assembly.host.stacks.localization import slam as external_slam
 
 print("=== Observing external C++ mapping runtime ===")
 bp = external_slam(

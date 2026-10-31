@@ -932,7 +932,7 @@ def test_blender_command_uses_factory_startup_background_and_exact_delimiter(tmp
     )
 
     assert command[:6] == [
-        "D:\\Development\\Blender\\5.2\\blender.exe",
+        str(Path("D:/Development/Blender/5.2/blender.exe")),
         "--factory-startup",
         "--background",
         "--python",

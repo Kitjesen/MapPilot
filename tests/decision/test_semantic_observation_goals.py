@@ -21,7 +21,7 @@ def _scene(*, x=2.0, z=1.2, object_ts=100.0):
     ])
 
 
-def _feasible(x, y, z):
+def _feasible(x, y, z, *, acceptance_radius_m=None):
     return {"feasible": True, "start_valid": True, "frame_id": "map",
             "path": [{"x": 0, "y": 0, "z": z}, {"x": x, "y": y, "z": z}]}
 
@@ -42,8 +42,8 @@ def harness(monkeypatch):
     module._action_executor = None
     module.setup()
     module.on_system_modules({"nav.commands": Commands()})
-    module.robot_pose._deliver(PoseStamped(Pose(Vector3(0, 0, 0.3)), frame_id="map", ts=100.0))
-    module.scene_graph._deliver(_scene())
+    module._on_robot_pose(PoseStamped(Pose(Vector3(0, 0, 0.3)), frame_id="map", ts=100.0))
+    module._on_scene_graph(_scene())
     commands, statuses, servo = [], [], []
     module.nav_command.subscribe(lambda raw: commands.append(json.loads(raw)))
     module.planner_status.subscribe(statuses.append)
@@ -84,7 +84,7 @@ def test_object_center_and_robot_observation_pose_are_distinct(harness):
 
 def test_blocked_near_side_tries_another_native_checked_position(harness):
     h = harness
-    def preview(x, y, z):
+    def preview(x, y, z, *, acceptance_radius_m=None):
         if abs(y) < 0.01:
             return {"feasible": False, "reason": "goal_blocked"}
         return _feasible(x, y, z)
@@ -105,20 +105,20 @@ def test_blocked_near_side_tries_another_native_checked_position(harness):
 ])
 def test_rejected_previews_never_fall_back_to_object_center(harness, response):
     h = harness
-    h.client.preview_plan.side_effect = lambda *args: response
+    h.client.preview_plan.side_effect = lambda *args, **kwargs: response
     h.module.instruction._deliver("find chair")
     h.join()
     assert h.client.preview_plan.call_count == 8
     assert h.commands == h.servo == []
     assert h.statuses[-1] == "OBSERVATION_PATH_BLOCKED"
-    h.module.scene_graph._deliver(_scene())
+    h.module._on_scene_graph(_scene())
     assert h.client.preview_plan.call_count == 8
 
 
 @pytest.mark.parametrize("reason", ["navigation_busy", "planner_busy", "odometry_not_ready", "map_odom_tf_not_ready"])
 def test_busy_native_planner_defers_without_trying_all_candidates(harness, reason):
     h = harness
-    h.client.preview_plan.side_effect = lambda *args: {"reason": reason}
+    h.client.preview_plan.side_effect = lambda *args, **kwargs: {"reason": reason}
     h.module.instruction._deliver("find chair")
     h.join()
     assert h.client.preview_plan.call_count == 1
@@ -146,7 +146,7 @@ def test_missing_rpc_does_not_issue_motion(harness):
 @pytest.mark.parametrize("object_ts", [90.0, 110.0])
 def test_fresh_graph_cannot_renew_stale_object_evidence(harness, object_ts):
     h = harness
-    h.module.scene_graph._deliver(_scene(object_ts=object_ts))
+    h.module._on_scene_graph(_scene(object_ts=object_ts))
     h.module.instruction._deliver("find chair")
     assert h.commands == h.servo == []
     h.client.preview_plan.assert_not_called()
@@ -158,7 +158,7 @@ def test_blocking_preview_cannot_use_superseded_context(harness, change):
     h = harness
     entered, release = threading.Event(), threading.Event()
     h.module.navigation_state._deliver(NavigationState(boot_id="nav-a", sequence=1, map_id="map-a"))
-    def preview(x, y, z):
+    def preview(x, y, z, *, acceptance_radius_m=None):
         entered.set()
         assert release.wait(2.0)
         return _feasible(x, y, z)
@@ -176,11 +176,11 @@ def test_blocking_preview_cannot_use_superseded_context(harness, change):
                 map_id="map-b" if change == "map" else "map-a",
             ))
         elif change == "moved":
-            h.module.scene_graph._deliver(_scene(x=3))
+            h.module._on_scene_graph(_scene(x=3))
         elif change == "disappeared":
-            h.module.scene_graph._deliver(SceneGraph(ts=100.0, frame_id="map"))
+            h.module._on_scene_graph(SceneGraph(ts=100.0, frame_id="map"))
         elif change == "pose_expired":
-            h.module.robot_pose._deliver(PoseStamped(Pose(), frame_id="map", ts=90.0))
+            h.module._on_robot_pose(PoseStamped(Pose(), frame_id="map", ts=90.0))
     finally:
         release.set()
         h.join()
@@ -191,8 +191,8 @@ def test_stationary_object_does_not_replan_as_robot_approaches(harness):
     h = harness
     h.module.instruction._deliver("find chair")
     h.join()
-    h.module.robot_pose._deliver(PoseStamped(Pose(Vector3(0.5, 0.2, 0.3)), frame_id="map", ts=100.0))
-    h.module.scene_graph._deliver(_scene())
+    h.module._on_robot_pose(PoseStamped(Pose(Vector3(0.5, 0.2, 0.3)), frame_id="map", ts=100.0))
+    h.module._on_scene_graph(_scene())
     h.join()
     assert len(h.commands) == 1
     assert h.client.preview_plan.call_count == 1

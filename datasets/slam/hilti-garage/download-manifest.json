@@ -1,0 +1,216 @@
+{
+  "dataset": "Hilti2023 Site2 Robot1 / Parking 3x floors down",
+  "source": "https://hilti-challenge.com/dataset-2023.html",
+  "revision": "8e2a7a2de63670730a322d74090c1a5ea4b641eb",
+  "updated_at": "2026-10-20",
+  "raw_expected_bytes": 67922363685,
+  "raw_status": "downloaded_complete",
+  "download_complete": true,
+  "license": "CC BY-NC-SA 3.0",
+  "files": [
+    {
+      "path": "raw/site2_robot_1.bag",
+      "expected_bytes": 67922363685,
+      "url": "https://huggingface.co/datasets/Hilti-Research/hilti-slam-challenge-2023/resolve/8e2a7a2de63670730a322d74090c1a5ea4b641eb/rosbags/site2_robot_1.bag",
+      "status": "downloaded",
+      "completion_evidence": "metadata/download-completion.json",
+      "bytes": 67922363685
+    },
+    {
+      "path": "ground_truth/site2_robot_1.txt",
+      "bytes": 358,
+      "url": "https://huggingface.co/datasets/Hilti-Research/hilti-slam-challenge-2023/resolve/8e2a7a2de63670730a322d74090c1a5ea4b641eb/ground_truth/site2_robot_1.txt",
+      "status": "downloaded"
+    },
+    {
+      "path": "calibration/calibration.txt",
+      "bytes": 13285,
+      "url": "https://huggingface.co/datasets/Hilti-Research/hilti-slam-challenge-2023/resolve/8e2a7a2de63670730a322d74090c1a5ea4b641eb/calibration/calibration.zip",
+      "status": "extracted_existing_official_archive",
+      "archive_entry": "calibration_robot/calibration.txt",
+      "existing_archive": "D:\\inovxio\\datasets\\lingtu\\hilti2023_stair\\calibration.zip"
+    },
+    {
+      "path": "calibration/calibration.yaml",
+      "bytes": 2474,
+      "url": "https://huggingface.co/datasets/Hilti-Research/hilti-slam-challenge-2023/resolve/8e2a7a2de63670730a322d74090c1a5ea4b641eb/calibration/calibration.zip",
+      "status": "extracted_existing_official_archive",
+      "archive_entry": "calibration_robot/calibration.yaml",
+      "existing_archive": "D:\\inovxio\\datasets\\lingtu\\hilti2023_stair\\calibration.zip"
+    },
+    {
+      "path": "calibration/calibration_cams.yaml",
+      "bytes": 6976,
+      "url": "https://huggingface.co/datasets/Hilti-Research/hilti-slam-challenge-2023/resolve/8e2a7a2de63670730a322d74090c1a5ea4b641eb/calibration/calibration.zip",
+      "status": "extracted_existing_official_archive",
+      "archive_entry": "calibration_robot/calibration_cams.yaml",
+      "existing_archive": "D:\\inovxio\\datasets\\lingtu\\hilti2023_stair\\calibration.zip"
+    },
+    {
+      "path": "calibration/calibration_imu.yaml",
+      "bytes": 411,
+      "url": "https://huggingface.co/datasets/Hilti-Research/hilti-slam-challenge-2023/resolve/8e2a7a2de63670730a322d74090c1a5ea4b641eb/calibration/calibration.zip",
+      "status": "extracted_existing_official_archive",
+      "archive_entry": "calibration_robot/calibration_imu.yaml",
+      "existing_archive": "D:\\inovxio\\datasets\\lingtu\\hilti2023_stair\\calibration.zip"
+    },
+    {
+      "path": "calibration/calibration_lidar.yaml",
+      "bytes": 444,
+      "url": "https://huggingface.co/datasets/Hilti-Research/hilti-slam-challenge-2023/resolve/8e2a7a2de63670730a322d74090c1a5ea4b641eb/calibration/calibration.zip",
+      "status": "extracted_existing_official_archive",
+      "archive_entry": "calibration_robot/calibration_lidar.yaml",
+      "existing_archive": "D:\\inovxio\\datasets\\lingtu\\hilti2023_stair\\calibration.zip"
+    }
+  ],
+  "ground_truth": "7 independent surveyed reflector positions; all quaternion entries are identity placeholders, not orientation measurements",
+  "sensors": [
+    "RoboSense BPearl",
+    "XSens MTi-600",
+    "four OAK-D Pro PoE stereo camera units"
+  ],
+  "coverage": {
+    "official": "Three parking garage levels",
+    "full_revisit": "No direct revisit in site2_robot_1, as described in Hilti SLAM Challenge 2023 paper section IV-B (arXiv:2404.09765).",
+    "periodic_pillar_labels": "not supplied",
+    "per_point_dynamic_labels": "not supplied"
+  },
+  "validation_status": "passed_complete_index_and_first_samples",
+  "evaluation_status": "not_run",
+  "optional_calibration_recording_not_downloaded": {
+    "file": "calibration_robot.zip",
+    "bytes": 18522358668,
+    "reason": "existing official calibration parameters reused; raw recalibration recording unnecessary"
+  },
+  "transport_sources": [
+    {
+      "host": "huggingface.co",
+      "role": "official pinned release and main transfer"
+    },
+    {
+      "url": "https://hf-mirror.com/datasets/Hilti-Research/hilti-slam-challenge-2023/resolve/8e2a7a2de63670730a322d74090c1a5ea4b641eb/rosbags/site2_robot_1.bag",
+      "role": "single bounded alternative-mirror benchmark; stopped because slower",
+      "sample_comparison": "first and last4096 bytes equal official verified chunks, compared directly without hashes",
+      "actual_payload_range_start": 67377299456,
+      "actual_payload_range_end_exclusive": 67404038144,
+      "actual_payload_bytes": 26738688,
+      "evidence": [
+        "metadata/mirror-probe.json",
+        "metadata/mirror-benchmark.json"
+      ],
+      "remainder": "official transfer resumes remaining bytes of same partial block"
+    }
+  ],
+  "benchmark_paper": "https://arxiv.org/abs/2404.09765",
+  "validation": {
+    "report": "metadata/bag-inspection-20261020.json",
+    "scope": "complete index plus first 2 cloud/200 IMU records; no full payload scan or estimator replay",
+    "duration_s": 699.773117952,
+    "connections": [
+      {
+        "topic": "/oak_cam_front/right/exposure_info",
+        "type": "hilti_slam_challenge_msgs/ExposureInfo",
+        "messages": 6998
+      },
+      {
+        "topic": "/oak_cam_front/right/image_raw",
+        "type": "sensor_msgs/Image",
+        "messages": 6998
+      },
+      {
+        "topic": "/oak_cam_front/left/exposure_info",
+        "type": "hilti_slam_challenge_msgs/ExposureInfo",
+        "messages": 6998
+      },
+      {
+        "topic": "/oak_cam_front/left/image_raw",
+        "type": "sensor_msgs/Image",
+        "messages": 6998
+      },
+      {
+        "topic": "/oak_cam_left/left/exposure_info",
+        "type": "hilti_slam_challenge_msgs/ExposureInfo",
+        "messages": 6997
+      },
+      {
+        "topic": "/oak_cam_left/left/image_raw",
+        "type": "sensor_msgs/Image",
+        "messages": 6997
+      },
+      {
+        "topic": "/imu/data",
+        "type": "sensor_msgs/Imu",
+        "messages": 139949
+      },
+      {
+        "topic": "/oak_cam_left/right/exposure_info",
+        "type": "hilti_slam_challenge_msgs/ExposureInfo",
+        "messages": 6992
+      },
+      {
+        "topic": "/oak_cam_left/right/image_raw",
+        "type": "sensor_msgs/Image",
+        "messages": 6992
+      },
+      {
+        "topic": "/oak_cam_right/left/exposure_info",
+        "type": "hilti_slam_challenge_msgs/ExposureInfo",
+        "messages": 6997
+      },
+      {
+        "topic": "/oak_cam_right/right/exposure_info",
+        "type": "hilti_slam_challenge_msgs/ExposureInfo",
+        "messages": 6997
+      },
+      {
+        "topic": "/oak_cam_right/left/image_raw",
+        "type": "sensor_msgs/Image",
+        "messages": 6997
+      },
+      {
+        "topic": "/oak_cam_right/right/image_raw",
+        "type": "sensor_msgs/Image",
+        "messages": 6997
+      },
+      {
+        "topic": "/oak_cam_rear/left/exposure_info",
+        "type": "hilti_slam_challenge_msgs/ExposureInfo",
+        "messages": 6997
+      },
+      {
+        "topic": "/oak_cam_rear/right/exposure_info",
+        "type": "hilti_slam_challenge_msgs/ExposureInfo",
+        "messages": 6979
+      },
+      {
+        "topic": "/oak_cam_rear/left/image_raw",
+        "type": "sensor_msgs/Image",
+        "messages": 6997
+      },
+      {
+        "topic": "/oak_cam_rear/right/image_raw",
+        "type": "sensor_msgs/Image",
+        "messages": 6978
+      },
+      {
+        "topic": "/track_odometry",
+        "type": "nav_msgs/Odometry",
+        "messages": 69046
+      },
+      {
+        "topic": "/rslidar_points",
+        "type": "sensor_msgs/PointCloud2",
+        "messages": 6996
+      },
+      {
+        "topic": "/ground_control_point",
+        "type": "hilti_slam_challenge_msgs/GroundControlPoint",
+        "messages": 7
+      }
+    ],
+    "first_cloud_nonfinite_xyz": 7749,
+    "initial_acc_norm_median": 9.808509630588649,
+    "imu_interval_ns_median": 5000000.0
+  },
+  "download_evidence": "metadata/download-completion.json"
+}

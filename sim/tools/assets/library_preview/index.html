@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>灵途 · 素材库</title>
+<link rel="stylesheet" href="/style.css">
+<script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
+<script defer src="/app.js"></script>
+</head>
+<body>
+<header class="top"><a class="brand" href="/">灵途 <span>LINGTU</span></a><span class="page-title">素材库</span><span class="archive-label">本地归档 · 工业场景</span></header>
+<main class="layout">
+<aside class="sidebar"><h1>场景素材</h1><p class="muted" id="total">正在读取目录</p><nav id="categories" aria-label="素材分类"></nav><div class="library-note"><strong>先入库，再接入场景</strong><p>这些模型可预览、下载。碰撞、尺寸和动作接入尚未全部验收。</p><a href="/catalog.json" download>下载审阅目录</a></div></aside>
+<section class="collection" aria-label="素材列表"><label class="search-label" for="search">搜索素材</label><input id="search" type="search" placeholder="名称、用途…" autocomplete="off"><div class="collection-head"><span id="filter-title">全部素材</span><span id="count"></span></div><div id="cards" class="cards"></div><p id="empty" hidden>没有匹配素材，试试其他名称或分类。</p></section>
+<section class="detail" aria-label="素材详情">
+<div class="detail-heading"><div><p class="category" id="category"></p><h2 id="title">读取素材库…</h2></div><span id="stage" class="stage">待验收</span></div>
+<div class="viewport"><model-viewer id="model" camera-controls shadow-intensity="0.6" exposure="0.9" camera-orbit="55deg 75deg 110%" alt="素材三维预览"></model-viewer><img id="fallback" hidden alt="模型预览图，三维组件未加载"><p id="load-status" role="status">正在加载目录</p><span class="gesture">拖动旋转 · 滚轮缩放</span></div>
+<div class="actions"><label id="variant-label" hidden>查看<select id="variant" aria-label="动作演示"></select></label><button id="play" hidden>播放</button><button id="reset" type="button">复位视角</button><a id="download" class="primary" download>下载 GLB</a></div>
+<div class="info"><p id="description"></p><dl class="facts"><div><dt>三角面</dt><dd id="triangles">—</dd></div><div><dt>材质 / 贴图</dt><dd id="materials">—</dd></div><div><dt>版本</dt><dd id="version">—</dd></div></dl><p id="scale" class="muted"></p><p id="limitation" class="muted"></p><div class="links"><a id="reference" target="_blank" rel="noopener">查看生成参考</a><a id="physics" download hidden>物理模型 MJCF</a><a id="metadata" download>来源与状态</a><a href="/assets-ledger.md" target="_blank" rel="noopener">素材总表</a></div></div>
+<div class="info"><p id="source" class="muted"></p><div class="links"><a id="fbx" download hidden>下载 FBX</a><a id="motion-project" download hidden>下载可编辑动作工程</a></div></div>
+</section>
+</main>
+</body></html>

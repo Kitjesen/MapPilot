@@ -145,6 +145,27 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
         description="Optional native camera service using SHM for frames and DDS for camera metadata.",
     ),
     ThunderServiceSpec(
+        name="video",
+        role="operator_video",
+        units=("lt-video.service",),
+        start_units=("lt-video.service",),
+        group="hardware",
+        optional=True,
+        checks=("systemd", "native_binary", "status_file", "whep"),
+        shm_topics=(TOPICS.camera_color,),
+        shm_channels=("/lingtu_camera_color",),
+        files=("/dev/shm/lingtu/video_status.json",),
+        status_max_age_s=3.0,
+        binaries=(
+            (
+                "camera_webrtc",
+                "LINGTU_VIDEO_BIN",
+                "/opt/lingtu/current/bin/lingtu_camera_webrtc",
+            ),
+        ),
+        description="Optional native WebRTC preview consuming the existing color SHM.",
+    ),
+    ThunderServiceSpec(
         name="brainstem",
         role="hardware_bridge",
         units=("robot-brainstem.service", "brainstem.service", "brainstem"),
@@ -393,12 +414,13 @@ THUNDER_GROUP_ORDER: dict[str, tuple[str, ...]] = {
         "explore",
     ),
     "host": ("gateway", "lingtu"),
-    "hardware": ("camera", "gnss", "brainstem"),
+    "hardware": ("camera", "video", "gnss", "brainstem"),
 }
 
 THUNDER_RUNTIME_INSTALL_ORDER: tuple[str, ...] = (
     "lidar",
     "camera",
+    "video",
     "slam",
     "maps",
     "traversability",
@@ -418,6 +440,9 @@ THUNDER_INSTALL_MODE_ALIASES: dict[str, str] = {
     "camera": "camera",
     "camera-dds": "camera",
     "native-camera": "camera",
+    "video": "video",
+    "camera-video": "video",
+    "native-video": "video",
     "gnss": "gnss",
     "gnss-dds": "gnss",
     "native-gnss": "gnss",

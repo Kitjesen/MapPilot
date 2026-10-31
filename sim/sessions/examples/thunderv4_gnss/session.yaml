@@ -1,0 +1,20 @@
+# Opt-in contract example: synthetic WGS84 zero origin, NO_FIX, no real-site claim.
+schema: lingtu.sim.session.v1
+session_id: thunderv4_gnss
+mujoco_version: 3.10.0
+seed: 20260805
+world: open_field@1.1.0
+robots:
+  - instance_id: thunder_01
+    package: thunderv4@1.0.3
+    sensor_rig: thunderv4_gnss@1.0.0
+    controller: null
+    spawn:
+      position_m: [0.0, 0.0, 0.0]
+      quaternion_wxyz: [1.0, 0.0, 0.0, 0.0]
+runtime:
+  backend: mujoco
+  mode: headless
+  required_bindings:
+    - physics
+    - sensors

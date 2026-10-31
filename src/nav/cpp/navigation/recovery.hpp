@@ -1,7 +1,6 @@
 #pragma once
 
 #include "planning/local/planner.hpp"
-#include "planning/local/recovery.hpp"
 
 #include <memory>
 #include <string>
@@ -37,7 +36,6 @@ struct RecoveryOutput {
   bool exhausted{false};
   bool verified{false};
   bool direct_command{false};
-  bool observation_refresh_required{false};
   nav_kernel::RecoveryAction action{nav_kernel::RecoveryAction::None};
   std::string reason{"inactive"};
   double progress{0.0};

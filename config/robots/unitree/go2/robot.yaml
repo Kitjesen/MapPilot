@@ -1,6 +1,6 @@
 # Unitree Go2 physical configuration, selected by the adjacent model.yaml.
-# Product behavior and topics belong to config/runtime_graph/.
-# MID-360 SLAM parameters live in sensors/mid360_fastlio2.yaml.
+# Product behavior and topics belong to config/system/.
+# MID-360 SLAM parameters live in sensors/mid360_ltlio.yaml.
 
 # Robot identity
 robot:
@@ -13,7 +13,7 @@ robot:
 calibration:
   slam:
     status: "verified"
-    reason: "Official Go2 MID-360 bracket; 2026-08-23 NX no-motion gate: TRACKING, zero drops/cmd_vel, floor tilt 0.65 deg and 4.3 mm RMS"
+    reason: "2026-09-29 six-piece raised mount, 35 deg CAD nominal; NX stationary gate TRACKING, zero drops/cmd_vel, map floor tilt 0.95 deg / RMS 4.9 mm. Not a fitted six-DoF or motion calibration; see docs/operations/go2-raised-mount-20260929.md"
   camera:
     status: "unverified"
     reason: "Go2 camera calibration has not been measured; Thunder V4 legacy values must not be used as Go2 evidence"
@@ -26,19 +26,25 @@ camera:
 geometry:
   vehicle_height: 0.5
   # Unitree publishes 0.70 x 0.31 m standing and 0.76 x 0.31 m crouching.
-  # Keep the largest published length as the physical Go2 envelope.
+  # Use the larger published static outline; this is not an installed gait measurement.
   vehicle_width: 0.31
   vehicle_length: 0.76
-  # SCAN-Planner's Go2-tuned heading-aligned double-cylinder hard envelope.
+  # Legacy cylinder settings remain for declared compatibility paths.
+  # OctoPlanner3D + SCAN loads navigation_body_file when configured.
+  # With no body file, length/width and the extents below define the 3-D box.
   collision_cylinder_radius: 0.25
-  # One quarter of the 0.76 m length centres both circles over the full outline.
+  # Historical double-cylinder offset: one quarter of the 0.76 m length.
   collision_cylinder_offset: 0.19
-  # One horizontal hard margin for rectangular CMU/final-safety checks.
-  # The double-cylinder values above already include their own hard clearance.
-  collision_hard_margin: 0.10
-  # Match the requested SCAN Go2 vertical collision extent.
+  # Extra horizontal clearance, not a measured Go2 tracking-error allowance.
+  # Applied once in world-horizontal axes to the selected raw compound model.
+  collision_hard_margin: 0.05
+  # Body-relative OBB Z extent is [-0.10, +0.24] m, with no extra Z margin.
   collision_clearance_below: 0.10
-  collision_clearance_above: 0.10
+  # Raised MID-360 assembly reaches body.z + 0.232 m (CAD nominal).
+  collision_clearance_above: 0.24
+  # Raised installation, fixed nominal stance fitted to support_height.
+  # Camera/bracket geometry is unmeasured; see the adjacent model metadata.
+  navigation_body_file: "body/go2_raised_nominal.body2"
   # 2026-09-24 stationary MID-360: body-to-floor 0.345 m, plane RMS 0.004 m.
   # Constrain the standing body height; planar velocity commands cannot crouch.
   support_height: 0.35
@@ -92,15 +98,14 @@ lidar:
   network_interface: "eth0"   # Interface that owns the MID-360 host address.
   lidar_ip: "192.168.123.20"  # Unitree expansion-dock MID-360 default.
   host_ip: "192.168.123.18"   # Go2 expansion-board NIC on the Livox subnet.
-  # Unitree official MID-360 bracket nominal body/base->lidar TF (m/rad).
-  # Composed from Go2 base->internal-IMU xyz [-0.02557, 0, 0.04232] and
-  # internal-IMU->MID-360 xyz [0.1870, 0, 0.0803], pitch +13 deg.
+  # Installed six-piece printed mount, nominal body/base->lidar TF (m/rad).
+  # Optical origin: +80 mm height and +78.57 mm forward from the 13 deg mount.
   # Do not put the MID-360 package LiDAR->IMU calibration (t_il) here.
-  offset_x:   0.16143
+  offset_x:   0.240
   offset_y:   0.0
-  offset_z:   0.12262
+  offset_z:   0.20262
   roll:       0.0
-  pitch:      0.22689280275926285
+  pitch:      0.6108652381980153
   yaw:        0.0
   # Camera Z offset relative to LiDAR for visualization TF.
   camera_offset_z: 0.0

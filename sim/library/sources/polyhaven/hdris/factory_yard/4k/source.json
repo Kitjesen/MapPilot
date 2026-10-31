@@ -1,0 +1,14 @@
+{
+  "provider": "Poly Haven",
+  "asset_id": "factory_yard",
+  "name": "Factory Yard",
+  "authors": {
+    "Sergej Majboroda": "All"
+  },
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "source_url": "https://polyhaven.com/a/factory_yard",
+  "resolution": "4k",
+  "file": "factory_yard_4k.exr",
+  "bytes": 20223625
+}

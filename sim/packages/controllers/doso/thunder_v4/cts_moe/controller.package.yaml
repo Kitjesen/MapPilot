@@ -1,0 +1,50 @@
+schema: lingtu.sim.controller-package.v1
+id: thunderv4_cts_moe
+version: 1.0.0
+kind: controller
+description: CTS MoE v39 student for Thunder V4 ordinary terrain and stairs;
+  no complete native navigation or hardware qualification.
+adapter:
+  plugin: thunderv4_cts_moe
+  abi: lingtu.sim.controller-adapter.v1
+policy:
+  runtime: onnxruntime
+  <<: &cts_policy
+    artifact: policy/policy_cts_moe_v39_61128.onnx
+    manifest: policy/policy_v39_manifest.json
+  profiles:
+    stairs_up: *cts_policy
+    stairs_down: *cts_policy
+timing:
+  inference_hz: 50
+  low_level_hz: 200
+robot_interface:
+  requires_state:
+  - joint_position
+  - joint_velocity
+  - base_angular_velocity
+  - projected_gravity
+  accepts_command:
+    type: base_twist
+    message_type: lingtu.dds.FinalVelocityCommand
+  produces_command:
+    type: joint_torque
+    message_type: lingtu.sim.joint-torque.v1
+actuators:
+  channels:
+  - FR_hip_joint
+  - FR_thigh_joint
+  - FR_calf_joint
+  - FL_hip_joint
+  - FL_thigh_joint
+  - FL_calf_joint
+  - RR_hip_joint
+  - RR_thigh_joint
+  - RR_calf_joint
+  - RL_hip_joint
+  - RL_thigh_joint
+  - RL_calf_joint
+  - FR_foot_joint
+  - FL_foot_joint
+  - RR_foot_joint
+  - RL_foot_joint

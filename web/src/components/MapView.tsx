@@ -1,14 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { ArrowLeft, Map, FolderOpen, Trash2, RefreshCw, Save, Pencil, Navigation, ChevronDown, Check, MoreHorizontal, X, Search } from 'lucide-react'
-import type { MapInfo, NavigationStatusResponse, SessionEvent, ToastKind } from '../types'
+import type { MapInfo, SessionEvent, ToastKind } from '../types'
 import * as api from '../services/api'
 import { formatMapSaveProgress, pendingMapSaveStatus, savedMapStatus, mapSaveProgressValue, mapSaveElapsedMs, formatMapSaveElapsed, type MapSaveStatus } from '../services/mapSavePresentation.ts'
-import { mapIsActivationReady, mapSaveBlockedReason, navigationGoalQueueReady } from '../services/mapReadiness'
-import { PointCloudViewer, type PointCloudPick } from './PointCloudViewer'
+import { mapIsActivationReady, mapSaveBlockedReason, mapUseStatus, navigationGoalQueueReady } from '../services/mapReadiness'
+import { PointCloudViewer } from './PointCloudViewer'
 import { PromptModal, ConfirmModal } from './Modal'
 import { text, type Locale } from '../i18n'
 import { isObservationMode } from '../services/observationMode.ts'
 import { parseInitialPose, type InitialPoseInput, type LocalizationInitialPose } from '../services/localizationInitialPose.ts'
+import { mapEditNameError } from '../services/mapEdit.ts'
 import styles from './MapView.module.css'
 
 interface MapViewProps {
@@ -19,7 +20,6 @@ interface MapViewProps {
   productSwitchMessage: string
   onReturnLive: () => void
   session: SessionEvent['data'] | null
-  navigationStatus: NavigationStatusResponse | null
   showToast: (msg: string, kind?: ToastKind) => void
   locale: Locale
 }
@@ -28,19 +28,17 @@ interface CardProps {
   m: MapInfo
   selected: boolean
   readOnly: boolean
-  navigationReady: boolean
   onPreview:  (name: string) => void
-  onNavigate: (name: string) => void
   onRename:   (name: string) => void
   onDelete:   (name: string) => void
 }
 
 const MAP_EVIDENCE_LABEL: Record<string, string> = {
   saved_rays: '射线建图',
-  preview: '点云预览·仅定位',
+  preview: '点云预览',
 }
 
-function MapCard({ m, selected, readOnly, navigationReady, onPreview, onNavigate, onRename, onDelete }: CardProps) {
+function MapCard({ m, selected, readOnly, onPreview, onRename, onDelete }: CardProps) {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const activationBlockers = m.activation_blockers ?? []
   return (
@@ -71,8 +69,6 @@ function MapCard({ m, selected, readOnly, navigationReady, onPreview, onNavigate
           {!!m.patch_count && <span>{m.patch_count} 子图</span>}
         </div>
         {!readOnly && <div className={styles.rowActions}>
-          {navigationReady && mapIsActivationReady(m) && <button className={styles.quietButton}
-            onClick={() => onNavigate(m.name)}><Navigation size={15} />选目标</button>}
           <button className={styles.quietButton} onClick={() => onRename(m.name)}><Pencil size={15} />重命名</button>
           <button className={styles.dangerButton} onClick={() => onDelete(m.name)}><Trash2 size={15} />删除</button>
         </div>}
@@ -90,7 +86,6 @@ export function MapView({
   productSwitchMessage,
   onReturnLive,
   session,
-  navigationStatus,
   showToast,
   locale,
 }: MapViewProps) {
@@ -102,11 +97,15 @@ export function MapView({
   const [selectedMap, setSelectedMap] = useState<string | null>(initialSelectedMap)
   const [libraryOpen, setLibraryOpen] = useState(initialSelectedMap === null)
   const [search, setSearch] = useState('')
-  const [pickedPoint, setPickedPoint] = useState<PointCloudPick | null>(null)
-  const [goalPickingMap, setGoalPickingMap] = useState<string | null>(null)
+  const [previewRefresh, setPreviewRefresh] = useState(0)
 
   // Modal state
   const [saveOpen,   setSaveOpen  ] = useState(false)
+  const [resolution, setResolution] = useState(0.1)
+  const [resolutionCopyOpen, setResolutionCopyOpen] = useState(false)
+  const [resolutionBuild, setResolutionBuild] = useState<{
+    source: string; name: string; options: Record<string, unknown>; state: 'copying' | 'building' | 'ready' | 'failed'; message: string
+  } | null>(null)
   const [useMapFrom, setUseMapFrom] = useState<string | null>(null)
   const [useInitialPose, setUseInitialPose] = useState(false)
   const [initialPose, setInitialPose] = useState<InitialPoseInput>({ x: '0', y: '0', z: '0', yaw: '0' })
@@ -114,8 +113,6 @@ export function MapView({
     setUseInitialPose(false)
     setInitialPose({ x: '0', y: '0', z: '0', yaw: '0' })
   }, [selectedMap])
-  const [navigateFrom, setNavigateFrom] = useState<string | null>(null)
-  const [navigationPendingMap, setNavigationPendingMap] = useState<string | null>(null)
   const [renameFrom, setRenameFrom] = useState<string | null>(null)
   const [deleteFrom, setDeleteFrom] = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<MapSaveStatus | null>(null)
@@ -131,61 +128,44 @@ export function MapView({
   }, [saveActive])
 
   const hasAutoSelected = useRef(initialSelectedMap !== null)
+  const listRequest = useRef(0)
 
   // Data
   const loadMaps = useCallback(async () => {
+    const request = ++listRequest.current
     setLoading(true); setError('')
     try {
       const data = await api.fetchMaps()
+      if (request !== listRequest.current) return null
       setMaps(data)
-      if (!hasAutoSelected.current) {
-        const active = data.find(m => m.is_active)
-        if (active) { setSelectedMap(active.name); hasAutoSelected.current = true }
-      }
+      setSelectedMap(current => {
+        if (current && data.some(map => map.name === current)) return current
+        if (!hasAutoSelected.current) {
+          const active = data.find(map => map.is_active)
+          if (active) { hasAutoSelected.current = true; return active.name }
+        }
+        return null
+      })
+      return data
     }
     catch (e: unknown) {
+      if (request !== listRequest.current) return null
+      setMaps([])
+      setSelectedMap(null)
+      setLibraryOpen(true)
       setError(`无法获取地图列表: ${e instanceof Error ? e.message : String(e)}`)
-    } finally { setLoading(false) }
+      return null
+    } finally { if (request === listRequest.current) setLoading(false) }
   }, [])
 
-  useEffect(() => { loadMaps() }, [loadMaps])
+  useEffect(() => {
+    void loadMaps()
+    return () => { listRequest.current += 1 }
+  }, [loadMaps, session?.product_session_id])
 
-  useEffect(() => { setPickedPoint(null) }, [selectedMap])
-
-  const handleNavigate = (name: string) => setNavigateFrom(name)
   const handleDelete = (name: string) => setDeleteFrom(name)
   const handleRename = (name: string) => setRenameFrom(name)
   const handleSave = () => setSaveOpen(true)
-
-  const ensureNavigationSession = async (mapName: string) => {
-    const [session, navigation] = await Promise.all([
-      api.fetchSession(),
-      api.fetchNavigationStatus(),
-    ])
-    if (!navigationGoalQueueReady(session, mapName)
-      || navigation.goal_admission.state !== 'ACCEPTING') {
-      throw new Error(`当前导航未在地图 ${mapName} 接收目标，请确认地图已加载且导航服务在线`)
-    }
-  }
-
-  const confirmNavigate = async () => {
-    const name = navigateFrom
-    setNavigateFrom(null)
-    if (!name || navigationPendingMap) return
-    setNavigationPendingMap(name)
-    try {
-      await ensureNavigationSession(name)
-      setSelectedMap(name)
-      setGoalPickingMap(name)
-      setLibraryOpen(false)
-      showToast(`导航已就绪：${name}`, 'success')
-      await loadMaps()
-    } catch (error) {
-      showToast(`导航就绪检查失败：${error instanceof Error ? error.message : String(error)}`, 'error')
-    } finally {
-      setNavigationPendingMap(null)
-    }
-  }
 
   const confirmDelete = async () => {
     const name = deleteFrom
@@ -194,7 +174,7 @@ export function MapView({
     try {
       await api.deleteMap(name); showToast(`已删除: ${name}`, 'success')
       if (selectedMap === name) { setSelectedMap(null); setLibraryOpen(true) }
-      loadMaps()
+      void loadMaps()
     } catch { showToast(`删除失败: ${name}`, 'error') }
   }
   const confirmRename = async (newName: string) => {
@@ -203,7 +183,7 @@ export function MapView({
     if (!oldName || newName === oldName) return
     try {
       await api.renameMap(oldName, newName); showToast(`已重命名: ${newName}`, 'success')
-      if (selectedMap === oldName) setSelectedMap(newName); loadMaps()
+      if (selectedMap === oldName) setSelectedMap(newName); void loadMaps()
     } catch { showToast('重命名失败', 'error') }
   }
   const confirmSave = async (name: string, existing?: api.SaveMapResult & { operation_id: string }) => {
@@ -245,10 +225,10 @@ export function MapView({
       hasAutoSelected.current = true
       setSelectedMap(savedName)
       setLibraryOpen(false)
-      setGoalPickingMap(null)
       showToast(`已保存 ${savedName}`, 'success')
       if (r.warnings?.length) showToast(r.warnings.join('；'), 'info')
-      loadMaps()
+      await loadMaps()
+      setPreviewRefresh(value => value + 1)
     }
     catch (e: unknown) {
       updateProgress()
@@ -262,27 +242,6 @@ export function MapView({
     }
   }
 
-  const confirmPickedGoal = async () => {
-    if (!pickedPoint || !selectedMap) return
-    try {
-      await ensureNavigationSession(selectedMap)
-      const res = await api.navigateClick(pickedPoint.x, pickedPoint.y, {
-        z: pickedPoint.z,
-        source: 'map_click',
-        target_type: 'map_point',
-        label: 'point_cloud_click',
-        metadata: { map_name: selectedMap, source_view: 'point_cloud' },
-      })
-      showToast(
-        api.formatCommandAck(res, `3D goal (${pickedPoint.x.toFixed(2)}, ${pickedPoint.y.toFixed(2)})`),
-        'success',
-      )
-      setPickedPoint(null)
-    } catch (e: unknown) {
-      showToast(api.formatCommandError(e, '3D 点目标失败'), 'error')
-    }
-  }
-
   const nameValidator = (v: string) => {
     if (!/^[a-zA-Z0-9_-]+$/.test(v)) return '仅支持字母、数字、下划线和横线'
     if (v.length > 32) return '名称过长 (最多 32 字符)'
@@ -291,20 +250,48 @@ export function MapView({
 
   const togglePreview = (name: string) => {
     hasAutoSelected.current = true
-    setGoalPickingMap(null)
     setSelectedMap(name)
     setLibraryOpen(false)
   }
 
+  const refreshMapsAndPreview = async () => {
+    if (await loadMaps()) setPreviewRefresh(value => value + 1)
+  }
+
+  const rebuildResolution = async (target: { source: string; name: string; options: Record<string, unknown> }) => {
+    setResolutionBuild({ ...target, state: 'building', message: '正在从保存的原始点云与射线重建导航地图…' })
+    try {
+      const result = await api.buildMapOctomap(target.name, target.options)
+      setResolutionBuild({ ...target, state: 'ready', message: `已生成 ${Number(result.resolution ?? target.options.resolution) * 100} cm 导航地图；使用此地图导航后生效。原图 ${target.source} 已保留。` })
+      hasAutoSelected.current = true
+      setSelectedMap(target.name)
+      await refreshMapsAndPreview()
+    } catch (reason) {
+      setResolutionBuild({ ...target, state: 'failed', message: `${target.name} 的源数据已保存，导航重建失败：${reason instanceof Error ? reason.message : String(reason)}` })
+      await loadMaps()
+    }
+  }
+
+  const createResolutionCopy = async (name: string) => {
+    if (!selectedMap || !selectedInfo?.content_epoch) return
+    setResolutionCopyOpen(false)
+    const target = { source: selectedMap, name, options: { resolution } }
+    setResolutionBuild({ ...target, state: 'copying', message: '正在复制地图源数据与测量射线…' })
+    try {
+      const copied = await api.saveEditedMap({ name: selectedMap, contentEpoch: selectedInfo.content_epoch }, name, [])
+      await rebuildResolution({ ...target, options: { ...copied.build_options, resolution } })
+    } catch (reason) {
+      setResolutionBuild(null)
+      showToast(`副本 ${name} 未确认保存：${reason instanceof Error ? reason.message : String(reason)}`, 'error')
+      await loadMaps()
+    }
+  }
+
   const filteredMaps = maps.filter(map => map.name.toLowerCase().includes(search.trim().toLowerCase()))
   const selectedInfo = maps.find(map => map.name === selectedMap)
-  const canPickGoal = !observe && selectedMap !== null && goalPickingMap === selectedMap
-    && session !== null && navigationGoalQueueReady(session, selectedMap)
-  const goalAdmissionReady = navigationStatus?.goal_admission.state === 'ACCEPTING'
-  const selectedNavigationReady = !observe && selectedMap !== null && selectedInfo !== undefined
-    && mapIsActivationReady(selectedInfo) && session !== null && navigationGoalQueueReady(session, selectedMap)
-    && goalAdmissionReady
-  const selectedMapActive = selectedMap !== null && session?.active_map === selectedMap
+  const selectedNavigationMap = selectedMap !== null && session !== null
+    && navigationGoalQueueReady(session, selectedMap)
+  const selectedStatus = mapUseStatus(selectedInfo, selectedNavigationMap)
 
   return (
     <section className={styles.mapTab} aria-label="已保存地图">
@@ -316,11 +303,32 @@ export function MapView({
           <Map size={17} strokeWidth={1.6} />
           <span>{selectedMap ?? '选择地图'}</span><ChevronDown size={15} />
         </button>
-        {selectedMap && <details className={styles.snapshotInfo}>
-          <summary>已保存</summary>
+        {selectedMap && <details className={styles.snapshotInfo} key={selectedMap}>
+          <summary aria-label={`地图状态：${selectedStatus.label}`}>{selectedStatus.label}</summary>
           <div className={styles.snapshotPopover}>
-            <strong>整图快照</strong>
-            <p>显示保存时的地图。补扫后再次保存，即可更新。</p>
+            <strong>地图状态</strong>
+            <p>{selectedStatus.detail}</p>
+            {selectedInfo && <dl className={styles.snapshotArtifacts}>
+              <div><dt>保存点云</dt><dd>{selectedInfo.has_pcd ? '已保存' : '缺失'}</dd></div>
+              <div><dt>规划地图</dt><dd data-missing={!selectedInfo.has_octomap}>{selectedInfo.has_octomap ? '已保存' : '缺失'}</dd></div>
+            </dl>}
+            {!observe && selectedInfo?.has_pcd && selectedInfo.content_epoch && <>
+              <label className={styles.resolutionOption}>全局导航地图分辨率
+                <select aria-label="全局导航地图分辨率" value={resolution} onChange={event => setResolution(Number(event.target.value))}>
+                  <option value={0.05}>5 cm</option>
+                  <option value={0.06}>6 cm</option>
+                  <option value={0.1}>10 cm</option>
+                  <option value={0.2}>20 cm</option>
+                </select>
+              </label>
+              <button className={styles.quietButton} disabled={resolutionBuild?.state === 'copying' || resolutionBuild?.state === 'building'}
+                onClick={() => setResolutionCopyOpen(true)}>另存为此分辨率导航地图</button>
+              <p>重建全局规划实际读取的地图，实时局部避障保持原有精度。原图保留，生成后需使用新地图导航。</p>
+            </>}
+            {!!selectedInfo?.activation_blockers?.length && <details>
+              <summary>服务原因</summary>
+              {selectedInfo.activation_blockers.map(blocker => <p key={blocker}>{blocker}</p>)}
+            </details>}
             {saveStatus?.state === 'saved' && saveStatus.name === selectedMap && <details>
               <summary>保存详情</summary>
               <p>{saveStatus.detail}</p><p>{saveStatus.location}</p><p>{saveStatus.summary}</p>
@@ -328,19 +336,18 @@ export function MapView({
           </div>
         </details>}
         <div className={styles.headerActions}>
-          {!observe && selectedMap && selectedInfo && mapIsActivationReady(selectedInfo) && !selectedNavigationReady && (
+          <button className={styles.quietButton} onClick={() => void refreshMapsAndPreview()}
+            aria-label="刷新地图" title="服务重连后重新读取地图">
+            <RefreshCw size={16} />刷新地图
+          </button>
+          {!observe && selectedMap && selectedInfo && mapIsActivationReady(selectedInfo) && !selectedNavigationMap && (
             <button className={styles.primaryButton} disabled={!productSwitchAllowed}
               title={productSwitchReason || '加载这张地图并切换导航'} onClick={() => setUseMapFrom(selectedMap)}>
               <Navigation size={16} />使用此地图导航
             </button>
           )}
-          {selectedNavigationReady && !canPickGoal && <button className={styles.quietButton}
-            onClick={() => handleNavigate(selectedMap!)}><Navigation size={16} />选目标</button>}
-          {!observe && selectedMapActive && !selectedNavigationReady && selectedInfo && mapIsActivationReady(selectedInfo) && (
-            <button className={styles.quietButton} disabled title="等待定位和导航准入状态就绪">
-              <Navigation size={16} />等待定位/准入
-            </button>
-          )}
+          {!observe && selectedNavigationMap && <button className={styles.primaryButton}
+            onClick={onReturnLive}><Navigation size={16} />在现场中导航</button>}
           {!observe && session?.product === 'map' && <button className={styles.primaryButton}
             onClick={handleSave} disabled={Boolean(saveBlockedReason) || saveStatus?.state === 'saving' || saveStatus?.state === 'pending'}
             title={saveBlockedReason || '保存当前建图并查看整图'}>
@@ -349,11 +356,23 @@ export function MapView({
         </div>
       </header>
       {productSwitchMessage && <div className={styles.saveNotice} role="status">{productSwitchMessage}</div>}
+      {resolutionBuild && <div className={styles.saveNotice} role="status">
+        <span>{resolutionBuild.message}</span>
+        {resolutionBuild.state === 'failed' && <button className={styles.quietButton}
+          onClick={() => void rebuildResolution(resolutionBuild)}>重试导航重建</button>}
+        {(resolutionBuild.state === 'ready' || resolutionBuild.state === 'failed') && <button className={styles.iconButton}
+          aria-label="关闭导航地图重建提示" onClick={() => setResolutionBuild(null)}><X size={16} /></button>}
+      </div>}
+      <PromptModal open={resolutionCopyOpen} title="生成新分辨率导航地图"
+        message={`将 ${selectedMap ?? ''} 另存并重建为 ${resolution * 100} cm 导航地图。原地图和当前导航不受影响。`}
+        initialValue={`${(selectedMap ?? 'map').slice(0, 88)}-${Math.round(resolution * 100)}cm`}
+        validate={name => mapEditNameError(name, selectedMap ?? '')} confirmLabel="复制并重建"
+        onConfirm={name => void createResolutionCopy(name)} onCancel={() => setResolutionCopyOpen(false)} />
       <ConfirmModal open={useMapFrom !== null} title="使用此地图导航"
         message={<>
           <p>{session?.product === 'map'
-          ? '将结束本次建图并加载所选地图。请确认最新补扫已保存；定位成功后可以选择目标。'
-          : '将停止当前任务并加载所选地图，定位成功后可以选择目标。'}</p>
+          ? '将结束本次建图并加载所选地图。请确认最新补扫已保存；随后在现场选择目标并预览路线。'
+          : '将停止当前任务并加载所选地图，随后在现场选择目标并预览路线。'}</p>
           <label className={styles.poseOption}>
             <input type="checkbox" checked={useInitialPose} onChange={event => setUseInitialPose(event.target.checked)} />
             指定初始位姿
@@ -411,7 +430,7 @@ export function MapView({
             {loading && <p className={styles.stateMsg} role="status">正在读取地图…</p>}
             {error && <div className={styles.stateMsg} role="status">
               <p>{error}</p>{maps.length > 0 && <p>以下为上次读取的地图。</p>}
-              <button className={styles.quietButton} onClick={loadMaps}>重试</button>
+              <button className={styles.quietButton} onClick={() => void loadMaps()}>重试</button>
             </div>}
             {!loading && !error && maps.length === 0 && <div className={styles.emptyLibrary}>
               <FolderOpen size={28} strokeWidth={1.3} /><p>还没有保存的地图</p>
@@ -419,29 +438,19 @@ export function MapView({
             {!loading && <ul className={styles.mapList}>
               {filteredMaps.map(map => <MapCard key={map.name} m={map} selected={selectedMap === map.name}
                 readOnly={observe}
-                navigationReady={navigationStatus !== null && goalAdmissionReady
-                  && session !== null && navigationGoalQueueReady(session, map.name)}
-                onPreview={togglePreview} onNavigate={handleNavigate} onRename={handleRename} onDelete={handleDelete} />)}
+                onPreview={togglePreview} onRename={handleRename} onDelete={handleDelete} />)}
             </ul>}
             {!loading && maps.length > 0 && filteredMaps.length === 0 && <p className={styles.stateMsg}>没有找到匹配的地图</p>}
           </div>
         </aside>}
         <div className={styles.mapCanvas}>
-          {selectedMap ? <PointCloudViewer mapName={selectedMap} pickedPoint={canPickGoal && goalAdmissionReady ? pickedPoint : null}
-            onPick={canPickGoal && goalAdmissionReady ? setPickedPoint : undefined} /> : <div className={styles.emptyCanvas}>
+          {selectedMap && selectedInfo ? <PointCloudViewer mapName={selectedMap}
+              contentEpoch={selectedInfo.content_epoch} productSessionId={session?.product_session_id}
+              refreshToken={previewRefresh} /> : <div className={styles.emptyCanvas}>
               <Map size={36} strokeWidth={1.2} /><h2>查看已保存的地图</h2>
               <p>选择一张地图，查看完整建图范围。</p>
               {!libraryOpen && <button className={styles.quietButton} onClick={() => setLibraryOpen(true)}>打开地图库</button>}
             </div>}
-          {canPickGoal && goalAdmissionReady && <div className={styles.pickPanel}>
-            <div className={styles.pickInfo}>
-              <strong>{pickedPoint ? '导航目标' : '点击地图选择目标'}</strong>
-              {pickedPoint && <span>{pickedPoint.x.toFixed(2)}, {pickedPoint.y.toFixed(2)}, {pickedPoint.z.toFixed(2)} m</span>}
-            </div>
-            {pickedPoint && <button className={styles.primaryButton} onClick={confirmPickedGoal}
-              title="发送导航目标；定位暂时不可用时会排队等待">发送目标</button>}
-            <button className={styles.quietButton} onClick={() => { setPickedPoint(null); setGoalPickingMap(null) }}>取消</button>
-          </div>}
         </div>
       </div>
 
@@ -468,15 +477,6 @@ export function MapView({
         validate={nameValidator}
         onConfirm={confirmRename}
         onCancel={() => setRenameFrom(null)}
-      />
-
-      <ConfirmModal
-        open={navigateFrom != null}
-        title="在此地图选目标"
-        message={`检查当前导航是否已在“${navigateFrom ?? ''}”就绪。通过后将打开该地图以选择目标；发送目标后才会运动。`}
-        confirmLabel="检查就绪"
-        onConfirm={confirmNavigate}
-        onCancel={() => setNavigateFrom(null)}
       />
 
       <ConfirmModal

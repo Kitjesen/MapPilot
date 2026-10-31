@@ -1,0 +1,46 @@
+{
+  "schema_version": "lingtu.mujoco.native_navigation_acceptance.v1",
+  "name": "mujoco_scan_click_sequence",
+  "description": "Same-session A-B-A Gateway click sequence on the factory-workshop SCAN map.",
+  "product_contract": {
+    "product": "nav",
+    "route": "standard",
+    "source": "config/system/products/nav.yaml",
+    "native_control_mode": "autonomy",
+    "slam_mode": "localization",
+    "requires_map": true
+  },
+  "navigation_runtime": {"local_planner": "scan"},
+  "localization": "mujoco_truth",
+  "scene_contract": {"world": "factory_workshop@2.0.0", "map_source_profile": "factory_workshop_v2"},
+  "initial_pose": [61.0, 16.5, 0.45, 1.5707963267948966],
+  "goal": [61.0, 18.5, 0.45],
+  "goal_world": [61.0, 18.5, 0.0],
+  "goals": [
+    {"id": "A1", "goal": [61.0, 18.5, 0.45], "goal_world": [61.0, 18.5, 0.0]},
+    {"id": "B", "goal": [61.0, 20.5, 0.45], "goal_world": [61.0, 20.5, 0.0]},
+    {"id": "A2", "goal": [61.0, 18.5, 0.45], "goal_world": [61.0, 18.5, 0.0]}
+  ],
+  "motion_duration_s": 60.0,
+  "thresholds": {
+    "startup_timeout_s": 18.0,
+    "startup_ready_stable_s": 1.0,
+    "min_motion_m": 1.0,
+    "min_net_displacement_m": 1.0,
+    "max_goal_error_m": 0.5,
+    "min_input_gate_ready_fraction": 0.98
+  },
+  "acceptance_scope": {
+    "coverage": "product",
+    "claims": [
+      "one native ProductControl session accepts explicit A-B-A goals",
+      "each goal reports its exact task identity and terminal status",
+      "each leg records physical goal error, input freshness, and terminal stop evidence"
+    ],
+    "excluded_claims": [
+      "physical mouse gesture through the operating system",
+      "global relocalization without an initial map pose",
+      "S100P or physical robot behavior"
+    ]
+  }
+}

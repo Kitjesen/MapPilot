@@ -66,6 +66,7 @@ enum class InspectionTaskState : std::int32_t {
   kActionPending = 11,
   kPausing = 12,
   kCancelling = 13,
+  kWaitingNextLoop = 14,
 };
 enum class ExplorationRunEventKind : std::int32_t {
   kAdmitted = 1,
@@ -118,5 +119,14 @@ enum class GeofenceAction : std::int32_t {
   kEnable = 4,
   kDisable = 5,
   kList = 6,
+};
+enum class SensorControlKind : std::int32_t {
+  kQuery = 1,
+  kSetEnabled = 2,
+  kSetRate = 3,
+  kConfigureNoise = 4,
+  kSetNoiseEnabled = 5,
+  kSetRecording = 6,
+  kSetGimbal = 7,
 };
 }  // namespace lingtu::message

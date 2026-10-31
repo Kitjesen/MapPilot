@@ -436,10 +436,13 @@ struct MujocoRuntime::Implementation {
       state.frame_id = source_frame;
       state.values.resize(static_cast<std::size_t>(descriptor.width));
     }
+    if (model->nconmax > 0) {
+      snapshot.contacts.reserve(static_cast<std::size_t>(model->nconmax));
+    }
     snapshot_allocated = true;
   }
 
-  void refresh_snapshot() noexcept {
+  void refresh_snapshot() {
     snapshot.sim_time_ns = static_cast<std::uint64_t>(std::llround(data->time * 1'000'000'000.0));
 
     for (BodyPose &pose : snapshot.bodies) {
@@ -483,6 +486,7 @@ struct MujocoRuntime::Implementation {
       }
     }
     refresh_actuator_state();
+    refresh_contacts();
   }
 
   const ModelDescriptor &descriptor() const noexcept {
@@ -493,6 +497,47 @@ struct MujocoRuntime::Implementation {
     for (int actuator_id = 0; actuator_id < model->nu; ++actuator_id) {
       snapshot.actuators[static_cast<std::size_t>(actuator_id)].control =
           data->ctrl[actuator_id];
+    }
+  }
+
+  std::string body_stable_id(int body_id) const {
+    const BodyDescriptor *body =
+        body_descriptor_for_dense_index(descriptor(), body_id);
+    return body != nullptr ? body->stable_id
+                           : local_name_for(model, mjOBJ_BODY, body_id);
+  }
+
+  void refresh_contacts() {
+    snapshot.contacts.resize(static_cast<std::size_t>(data->ncon));
+    snapshot.contact_count = snapshot.contacts.size();
+    for (int contact_id = 0; contact_id < data->ncon; ++contact_id) {
+      const mjContact &source = data->contact[contact_id];
+      ContactState &contact =
+          snapshot.contacts[static_cast<std::size_t>(contact_id)];
+      contact.geom1_id = source.geom[0];
+      contact.geom2_id = source.geom[1];
+      contact.geom1_name = source.geom[0] >= 0
+                               ? local_name_for(model, mjOBJ_GEOM, source.geom[0])
+                               : std::string{};
+      contact.geom2_name = source.geom[1] >= 0
+                               ? local_name_for(model, mjOBJ_GEOM, source.geom[1])
+                               : std::string{};
+      contact.body1_stable_id =
+          source.geom[0] >= 0
+              ? body_stable_id(model->geom_bodyid[source.geom[0]])
+              : std::string{};
+      contact.body2_stable_id =
+          source.geom[1] >= 0
+              ? body_stable_id(model->geom_bodyid[source.geom[1]])
+              : std::string{};
+      contact.distance_m = source.dist;
+      contact.normal_force_available = source.efc_address >= 0;
+      contact.normal_force_n = 0.0;
+      if (contact.normal_force_available) {
+        mjtNum force[6]{};
+        mj_contactForce(model, data.get(), contact_id, force);
+        contact.normal_force_n = force[0];
+      }
     }
   }
 

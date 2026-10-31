@@ -175,7 +175,7 @@ def test_lidar_imu_apply_preserves_body_mount_and_updates_body_from_imu(
     tmp_path: Path,
 ) -> None:
     robot_config = tmp_path / "robot_config.yaml"
-    fastlio_config = tmp_path / "mid360_fastlio2.yaml"
+    ltlio_config = tmp_path / "mid360_ltlio.yaml"
     calibration_result = tmp_path / "lidar_imu.yaml"
 
     body_lidar = {
@@ -188,7 +188,7 @@ def test_lidar_imu_apply_preserves_body_mount_and_updates_body_from_imu(
     }
     _write_yaml(robot_config, {"lidar": body_lidar})
     _write_yaml(
-        fastlio_config,
+        ltlio_config,
         {
             "r_il": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
             "t_il": [0.0, 0.0, 0.0],
@@ -216,7 +216,7 @@ def test_lidar_imu_apply_preserves_body_mount_and_updates_body_from_imu(
     )
 
     monkeypatch.setattr(apply_calibration, "ROBOT_CONFIG", robot_config)
-    monkeypatch.setattr(apply_calibration, "FASTLIO2_CONFIG", fastlio_config)
+    monkeypatch.setattr(apply_calibration, "LTLIO_CONFIG", ltlio_config)
     replace_calls: list[tuple[Path, Path]] = []
     original_replace = apply_calibration.os.replace
 
@@ -229,26 +229,26 @@ def test_lidar_imu_apply_preserves_body_mount_and_updates_body_from_imu(
     apply_calibration.apply_lidar_imu(str(calibration_result))
 
     assert _read_yaml(robot_config)["lidar"] == body_lidar
-    fastlio = _read_yaml(fastlio_config)
-    assert fastlio["t_il"] == pytest.approx([0.1, -0.2, 0.3])
-    assert fastlio["navigation_body_from_imu_translation"] == pytest.approx([0.9, 2.2, 2.7])
-    assert np.asarray(fastlio["navigation_body_from_imu_rotation"]).reshape(3, 3) == pytest.approx(np.eye(3))
+    ltlio = _read_yaml(ltlio_config)
+    assert ltlio["t_il"] == pytest.approx([0.1, -0.2, 0.3])
+    assert ltlio["navigation_body_from_imu_translation"] == pytest.approx([0.9, 2.2, 2.7])
+    assert np.asarray(ltlio["navigation_body_from_imu_rotation"]).reshape(3, 3) == pytest.approx(np.eye(3))
     assert len(replace_calls) == 1
     temporary, target = replace_calls[0]
-    assert temporary.parent == target.parent == fastlio_config.parent
-    assert target == fastlio_config
-    assert temporary.name.startswith(f".{fastlio_config.name}.")
+    assert temporary.parent == target.parent == ltlio_config.parent
+    assert target == ltlio_config
+    assert temporary.name.startswith(f".{ltlio_config.name}.")
 
 
-def test_imu_noise_apply_updates_only_fastlio2(
+def test_imu_noise_apply_updates_only_ltlio(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    fastlio_config = tmp_path / "mid360_fastlio2.yaml"
+    ltlio_config = tmp_path / "mid360_ltlio.yaml"
     legacy_config = tmp_path / "pointlio.yaml"
     calibration_result = tmp_path / "imu.yaml"
     _write_yaml(
-        fastlio_config,
+        ltlio_config,
         {"na": 0.01, "ng": 0.01, "nba": 0.0001, "nbg": 0.0001},
     )
     legacy_config.write_bytes(b"\xff\xfelegacy")
@@ -261,13 +261,13 @@ def test_imu_noise_apply_updates_only_fastlio2(
             "gyroscope_random_walk": 0.000001,
         },
     )
-    monkeypatch.setattr(apply_calibration, "FASTLIO2_CONFIG", fastlio_config)
+    monkeypatch.setattr(apply_calibration, "LTLIO_CONFIG", ltlio_config)
     monkeypatch.setattr(apply_calibration, "POINTLIO_CONFIG", legacy_config, raising=False)
     legacy_before = legacy_config.read_bytes()
 
     apply_calibration.apply_imu_noise(str(calibration_result))
 
-    updated = _read_yaml(fastlio_config)
+    updated = _read_yaml(ltlio_config)
     assert updated == {
         "na": pytest.approx(0.001),
         "ng": pytest.approx(0.0001),
@@ -281,9 +281,9 @@ def test_verify_accepts_composed_body_imu_lidar_chain(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    fastlio_config = tmp_path / "mid360_fastlio2.yaml"
+    ltlio_config = tmp_path / "mid360_ltlio.yaml"
     _write_yaml(
-        fastlio_config,
+        ltlio_config,
         {
             "r_il": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
             "t_il": [0.1, -0.2, 0.3],
@@ -301,7 +301,7 @@ def test_verify_accepts_composed_body_imu_lidar_chain(
             "navigation_body_from_imu_translation": [0.9, 2.2, 2.7],
         },
     )
-    monkeypatch.setattr(verify, "FASTLIO2_CONFIG", fastlio_config)
+    monkeypatch.setattr(verify, "LTLIO_CONFIG", ltlio_config)
     result = verify.CheckResult()
 
     verify.check_consistency(
@@ -327,9 +327,9 @@ def test_verify_rejects_body_mount_chain_mismatch(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    fastlio_config = tmp_path / "mid360_fastlio2.yaml"
+    ltlio_config = tmp_path / "mid360_ltlio.yaml"
     _write_yaml(
-        fastlio_config,
+        ltlio_config,
         {
             "r_il": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
             "t_il": [0.1, 0.0, 0.0],
@@ -347,7 +347,7 @@ def test_verify_rejects_body_mount_chain_mismatch(
             "navigation_body_from_imu_translation": [0.0, 0.0, 0.0],
         },
     )
-    monkeypatch.setattr(verify, "FASTLIO2_CONFIG", fastlio_config)
+    monkeypatch.setattr(verify, "LTLIO_CONFIG", ltlio_config)
     result = verify.CheckResult()
 
     verify.check_consistency(

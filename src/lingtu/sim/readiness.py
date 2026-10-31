@@ -669,7 +669,7 @@ def _validate_slam_status(
     if (
         payload.get("schema_version") != expectation.schema
         or payload.get("source") != "cpp_cyclone_slam"
-        or payload.get("backend") != "fastlio2"
+        or payload.get("backend") != "ltlio"
         or payload.get("mode") != expected_mode
     ):
         raise SimReadinessError(f"{context} identity is invalid")
@@ -853,7 +853,12 @@ def _validate_mapd_status(
         for field in ("engine_error", "input_error", "output_error")
     )
     if any(errors):
-        raise SimReadinessError(f"{context} reports an active error")
+        detail = "; ".join(
+            f"{field}={value}" for field, value in zip(
+                ("engine_error", "input_error", "output_error"), errors
+            ) if value
+        )
+        raise SimReadinessError(f"{context} reports an active error: {detail}")
 
     running = _require_status_bool(payload, "running", context=context)
     live = _require_status_bool(payload, "live", context=context)

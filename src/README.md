@@ -2,7 +2,7 @@
 
 `src/` uses one placement rule: code lives with the function that owns it.
 Products do not get parallel source trees. Product declarations live in
-[`config/runtime_graph/products/`](../config/runtime_graph/products/), while
+[`config/system/products/`](../config/system/products/), while
 [`lingtu/`](lingtu/README.md) resolves those declarations and owns their
 lifecycle. A Product selects functional code; it does not own that code.
 
@@ -17,8 +17,8 @@ environment happens to run it.
 
 | Question | Source of truth |
 | --- | --- |
-| Which capabilities make up a Product? | [`config/runtime_graph/products/`](../config/runtime_graph/products/) |
-| Does it run in `real` or `sim`? | [`config/runtime_graph/envs/`](../config/runtime_graph/envs/) and `lingtu/` lifecycle code |
+| Which capabilities make up a Product? | [`config/system/products/`](../config/system/products/) |
+| Does it run in `real` or `sim`? | [`config/system/envs/`](../config/system/envs/) and `lingtu/` lifecycle code |
 | Where does production behavior belong? | The functional owner under this directory |
 | Where do simulation packages, worlds, evaluation, and distribution belong? | Root [`sim/`](../sim/README.md), the simulation workspace |
 | Where do compiled and release outputs belong? | Root `build/`, `install/`, and `dist/`. Checked-in generated message views remain beside their schema sources. |
@@ -31,9 +31,10 @@ reading aid; do not create wrapper directories such as `capabilities/`,
 
 | Category | Package guide | Owns |
 | --- | --- | --- |
-| Product control | [`lingtu/`](lingtu/README.md) | ProductControl, RunPlan, Product assembly, and real/sim lifecycle routing. |
-| Runtime platform | [`runtime/`](runtime/README.md) | Host Module, ports, registry, Blueprint, local delivery, and TF. No Product parsing or process orchestration. |
-| Runtime platform | [`message/`](message/README.md) | Native cross-process topic metadata, IDL, QoS, and generated contracts. |
+| Product control | [`lingtu/`](lingtu/README.md) | ProductControl public lifecycle, internal resolution, and real/sim execution routing. |
+| Runtime platform | [`runtime/`](runtime/README.md) | Host Module, ports, registry, HostBuilder, local delivery, and TF. No Product parsing or process orchestration. |
+| Runtime platform | [`message/`](message/README.md) | Native cross-process topic metadata, IDL, and generated contracts. |
+| Runtime platform | [`transport/`](transport/README.md) | Native DDS QoS profiles used by process adapters. |
 | Runtime platform | [`gateway/`](gateway/README.md) | REST, SSE, WebSocket, MCP, media, visualization, and external command/status services. |
 | Runtime platform | [`diagnostics/`](diagnostics/README.md) | Field readiness, acceptance, and runtime evidence helpers. |
 | Capability | [`drivers/`](drivers/README.md) | Robot and sensor backends plus hardware/simulation adapters. |
@@ -82,14 +83,14 @@ native executables are installed by their owning CMake project.
 
 ```text
 installed lingtu / python -m lingtu.control
-  -> ProductControl -> RunPlan -> real or sim lifecycle
+  -> ProductControl -> internal execution snapshot -> real or sim lifecycle
 
 python -m lingtu.real.host
-  -> published RunPlan -> lingtu.assembly -> managed Host Module graph
+  -> ProductControl-selected Host configuration -> lingtu.assembly -> managed Host Module graph
 ```
 
-Product stack factories live under `src/lingtu/assembly/stacks/`; the generic
-graph mechanism remains `src/runtime/blueprint.py`.
+Product stack factories live under `src/lingtu/assembly/host/stacks/`; the generic
+graph mechanism remains `src/runtime/host.py`.
 
 ## Navigation chain
 
@@ -104,7 +105,7 @@ Gateway / MCP / CLI
 ```
 
 Both `env=real` and `env=sim` use the native endpoint shape. Development Host
-Blueprints keep the same command and status contracts; they do not install a
+HostBuilders keep the same command and status contracts; they do not install a
 second Python planner, tracker, safety mux, or motion controller.
 
 ## Boundary rules

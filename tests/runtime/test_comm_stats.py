@@ -3,7 +3,7 @@
 Covers:
   - Out: rate_hz, publish_errors, stale_ms
   - In: rate_hz, deliver_count, callback_errors, avg/max_callback_ms, stale_ms
-  - Blueprint.comm_health() aggregation
+  - HostBuilder.comm_health() aggregation
 """
 
 import time
@@ -231,11 +231,11 @@ class TestPortSummaryStats(unittest.TestCase):
         self.assertIn("stale_ms", out_info)
 
 
-class TestBlueprintCommHealth(unittest.TestCase):
-    """Test Blueprint.comm_health() aggregation."""
+class TestHostBuilderCommHealth(unittest.TestCase):
+    """Test HostBuilder.comm_health() aggregation."""
 
     def test_comm_health_basic(self):
-        from runtime.blueprint import Blueprint
+        from runtime.host import HostBuilder
         from runtime.module import Module
 
         class Producer(Module):
@@ -246,7 +246,7 @@ class TestBlueprintCommHealth(unittest.TestCase):
             input: In[int]
             def setup(self): pass
 
-        bp = Blueprint()
+        bp = HostBuilder()
         bp.add(Producer)
         bp.add(Consumer)
         bp.wire("Producer", "output", "Consumer", "input")
@@ -277,7 +277,7 @@ class TestBlueprintCommHealth(unittest.TestCase):
         system.stop()
 
     def test_comm_health_with_errors(self):
-        from runtime.blueprint import Blueprint
+        from runtime.host import HostBuilder
         from runtime.module import Module
 
         class Sender(Module):
@@ -291,7 +291,7 @@ class TestBlueprintCommHealth(unittest.TestCase):
             def _on_msg(self, msg):
                 raise RuntimeError("intentional")
 
-        bp = Blueprint()
+        bp = HostBuilder()
         bp.add(Sender)
         bp.add(BadReceiver)
         bp.wire("Sender", "out", "BadReceiver", "inp")

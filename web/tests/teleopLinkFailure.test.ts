@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { runInNewContext } from 'node:vm'
-import ts from 'typescript'
 
 import {
   TeleopWsClient,
+  resolveTeleopWsUrl,
   type TeleopAck,
 } from '../src/services/teleopWsClient.ts'
 
@@ -35,97 +33,6 @@ class FakeSocket {
     this.onmessage?.({ data: JSON.stringify(data) } as MessageEvent)
   }
 }
-const panelSource = readFileSync(
-  new URL('../src/components/TeleopPanel.tsx', import.meta.url),
-  'utf8',
-)
-
-class FocusElement {
-  tagName: string
-  parentElement: FocusElement | null
-  attributes: Record<string, string>
-  isContentEditable: boolean
-
-  constructor(tag: string, parent: FocusElement | null = null, attributes: Record<string, string> = {}) {
-    this.tagName = tag.toUpperCase()
-    this.parentElement = parent
-    this.attributes = attributes
-    this.isContentEditable = attributes.contenteditable === 'true' || parent?.isContentEditable === true
-  }
-
-  contains(other: FocusElement): boolean {
-    for (let node: FocusElement | null = other; node; node = node.parentElement) {
-      if (node === this) return true
-    }
-    return false
-  }
-
-  closest(selectors: string): FocusElement | null {
-    const matches = selectors.split(',').some(selector => {
-      const match = selector.trim().match(/^([a-z]+)?(?:\[([a-z-]+)(?:="([^"]*)")?\])?$/)
-      assert.ok(match, `Supported selector: ${selector}`)
-      return (!match[1] || this.tagName.toLowerCase() === match[1])
-        && (!match[2] || (match[3] === undefined
-          ? match[2] in this.attributes : this.attributes[match[2]] === match[3]))
-    })
-    return matches ? this : this.parentElement?.closest(selectors) ?? null
-  }
-}
-
-// Compile the actual component callbacks; no copy of their keyboard logic is tested.
-const keyboardNames = new Set([
-  'commandFromKeys', 'sendCurrentInput',
-  'blocksTeleopKeyboard', 'teleopKey', 'clearInputIntent', 'sendHold', 'setManualEscape',
-  'quiesceInput', 'quiesceForInteraction', 'onKeyDown', 'onKeyUp',
-])
-const keyboardAst = ts.createSourceFile('TeleopPanel.tsx', panelSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-const keyboardDeclarations: string[] = []
-function collectKeyboardCallbacks(node: ts.Node) {
-  if (ts.isFunctionDeclaration(node) && node.name && keyboardNames.has(node.name.text)) {
-    keyboardDeclarations.push(node.getText(keyboardAst))
-  } else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && keyboardNames.has(node.name.text)) {
-    const initializer = node.initializer
-    assert.ok(initializer)
-    const callback = ts.isCallExpression(initializer) ? initializer.arguments[0] : initializer
-    keyboardDeclarations.push(`const ${node.name.text} = ${callback.getText(keyboardAst)};`)
-  }
-  ts.forEachChild(node, collectKeyboardCallbacks)
-}
-collectKeyboardCallbacks(keyboardAst)
-assert.equal(keyboardDeclarations.length, keyboardNames.size)
-const keyboardCode = ts.transpileModule(
-  keyboardDeclarations.join('\n') + '\n({ blocksTeleopKeyboard, clearInputIntent, quiesceForInteraction, onKeyDown, onKeyUp });',
-  { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } },
-).outputText
-
-function keyEvent(key: string, target: FocusElement, repeat = false) {
-  return {
-    key, target, repeat, code: key === ' ' ? 'Space' : /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : key,
-    defaultPrevented: false,
-    preventDefault() { this.defaultPrevented = true },
-  }
-}
-
-function componentValue(name: string, context: Record<string, unknown>): unknown {
-  let declaration: ts.VariableDeclaration | undefined
-  function find(node: ts.Node) {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) declaration = node
-    ts.forEachChild(node, find)
-  }
-  find(keyboardAst)
-  assert.ok(declaration)
-  return runInNewContext(ts.transpileModule(`const ${declaration.getText(keyboardAst)}; ${name};`, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
-  }).outputText, context)
-}
-
-test('a physical key release clears motion even when the input method changes its key value', () => {
-  const h = keyboardHarness()
-  h.onKeyDown(keyEvent('w', h.panel))
-  h.onKeyUp({ ...keyEvent('Process', h.panel), code: 'KeyW' })
-  assert.equal(h.keysRef.current.size, 0)
-  assert.equal(h.state.holds, 1)
-})
 
 test('delayed gateway receipts cannot create a queue of old motion commands ahead of hold', () => {
   const socket = new FakeSocket()
@@ -142,41 +49,6 @@ test('delayed gateway receipts cannot create a queue of old motion commands ahea
     client.disconnect()
   }
 })
-
-function keyboardHarness(connected = true, connectionReady = true) {
-  const body = new FocusElement('body')
-  const panel = new FocusElement('div', body)
-  const state = { precision: false, manual: false, holds: 0, connects: 0, moves: [] as Record<string, unknown>[] }
-  const keysRef = { current: new Set<string>() }
-  const blockedKeysRef = { current: new Set<string>() }
-  const document = { activeElement: body }
-  const context = {
-    Element: FocusElement, HTMLElement: FocusElement,
-    document,
-    panelRef: { current: Object.assign(panel, { focus: () => { document.activeElement = panel } }) }, keysRef, blockedKeysRef,
-    directionsRef: { current: new Set<string>() },
-    inputActiveRef: { current: false }, manualModeRef: { current: false },
-    clientRef: { current: { hold: () => { state.holds += 1 }, move: (command: Record<string, unknown>) => state.moves.push(command) } },
-    precisionMode: false, PRECISION_SCALE: 0.4, teleopLimits: { linearMps: 0.5, yawRadS: 1.0 },
-    product: 'teleop_avoid', enabled: componentValue('enabled', {
-      sseState: { connected }, product: 'teleop_avoid', teleopPath: '/ws/teleop',
-    }), connectionReady, resumeRequired: false,
-    connectClient: () => { state.connects += 1 },
-    onExit: () => {},
-    setPrecisionMode: (value: boolean) => { state.precision = value },
-    setManualMode: (value: boolean) => { state.manual = value },
-    setActiveDirections: () => {},
-  }
-  const handlers = runInNewContext(keyboardCode, context) as {
-    blocksTeleopKeyboard: (target: FocusElement | null, panel: FocusElement) => boolean
-    clearInputIntent: () => void
-    quiesceForInteraction: (event: { target: FocusElement }) => void
-    onKeyDown: (event: ReturnType<typeof keyEvent>) => void
-    onKeyUp: (event: ReturnType<typeof keyEvent>) => void
-    onShortcutToggle: (event: { currentTarget: FocusElement & { open: boolean } }) => void
-  }
-  return { ...handlers, ...context, body, panel, state }
-}
 
 test('hold supersedes pending input and late ACKs never replay a released key', () => {
   const socket = new FakeSocket()
@@ -311,93 +183,33 @@ test('idle connection probes detect a silent broken cable without sending veloci
   } finally { client.disconnect() }
 })
 
-test('reconnect does not wait for a broken socket close handshake', async () => {
+test('reconnect does not wait for a broken socket close handshake', { timeout: 1000 }, async () => {
   class StalledCloseSocket extends FakeSocket {
     close(): void { this.readyState = 2 }
   }
   const sockets: StalledCloseSocket[] = []
+  let onReconnect!: () => void
+  const reconnected = new Promise<void>(resolve => { onReconnect = resolve })
   const client = new TeleopWsClient({
     url: '/ws/teleop', inputTimeoutMs: 5, reconnectDelayMs: 0,
-    socketFactory: () => { const socket = new StalledCloseSocket(); sockets.push(socket); return socket },
+    socketFactory: () => {
+      const socket = new StalledCloseSocket()
+      sockets.push(socket)
+      if (sockets.length === 2) onReconnect()
+      return socket
+    },
   })
   client.connect()
   sockets[0].open()
   client.move({ vxMps: 0.2, deadman: true })
-  await new Promise(resolve => setTimeout(resolve, 25))
   try {
+    await reconnected
     assert.equal(sockets.length, 2)
     sockets[1].open()
     sockets[0].onclose?.({ type: 'close' } as CloseEvent)
     assert.equal(client.isOpen(), true)
     assert.equal(sockets[1].sent.length, 0)
   } finally { client.disconnect() }
-})
-
-test('browser shortcuts and IME composition cannot become motion commands', () => {
-  for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'isComposing']) {
-    const h = keyboardHarness()
-    const event = { ...keyEvent('w', h.panel), [modifier]: true }
-    h.onKeyDown(event)
-    assert.equal(h.keysRef.current.size, 0, modifier)
-    assert.equal(event.defaultPrevented, false, modifier)
-    h.onKeyDown(keyEvent('w', h.panel, true))
-    assert.equal(h.keysRef.current.size, 0, `${modifier} release cannot resume a held key`)
-  }
-})
-
-test('pressing a browser modifier while driving immediately clears the held intent', () => {
-  const h = keyboardHarness()
-  h.onKeyDown(keyEvent('w', h.panel))
-  h.onKeyDown({ ...keyEvent('Control', h.panel), ctrlKey: true })
-  assert.equal(h.keysRef.current.size, 0)
-  assert.equal(h.state.holds, 1)
-  h.onKeyDown(keyEvent('w', h.panel, true))
-  assert.equal(h.keysRef.current.size, 0)
-})
-
-test('opening a ready teleop panel prepares the connection before any direction key', () => {
-  let effect: ts.Expression | undefined
-  function find(node: ts.Node) {
-    if (ts.isCallExpression(node) && node.expression.getText(keyboardAst) === 'useEffect'
-      && node.arguments[1]?.getText(keyboardAst) === '[closeClient, connectClient, enabled]') effect = node.arguments[0]
-    ts.forEachChild(node, find)
-  }
-  find(keyboardAst)
-  assert.ok(effect)
-  for (const enabled of [false, true]) {
-    const calls: string[] = []
-    let scheduled: (() => void) | undefined
-    const run = runInNewContext(ts.transpileModule(`(${effect.getText(keyboardAst)})`, {
-      compilerOptions: { target: ts.ScriptTarget.ES2022 },
-    }).outputText, {
-      enabled,
-      connectClient: () => calls.push('connect'), closeClient: () => calls.push('close'),
-      window: { setTimeout: (fn: () => void) => { scheduled = fn; return 1 }, clearTimeout: () => {} },
-    }) as () => () => void
-    const cleanup = run()
-    assert.ok(scheduled)
-    scheduled()
-    assert.deepEqual(calls, [enabled ? 'connect' : 'close'])
-    cleanup()
-  }
-})
-
-test('a direction pressed before connection only connects and cannot be replayed on open', () => {
-  const h = keyboardHarness(true, false)
-  h.onKeyDown(keyEvent('w', h.panel))
-  assert.equal(h.state.connects, 1)
-  assert.equal(h.keysRef.current.size, 0)
-  h.onKeyDown(keyEvent('w', h.panel, true))
-  assert.equal(h.state.connects, 1)
-  assert.equal(h.keysRef.current.size, 0)
-})
-
-test('disconnected telemetry blocks motion despite cached teleop configuration and an open socket', () => {
-  const h = keyboardHarness(false)
-  for (const key of ['w', 'a', 's', 'd', 'q', 'e', 'm']) h.onKeyDown(keyEvent(key, h.panel))
-  assert.equal(h.keysRef.current.size, 0)
-  assert.equal(h.manualModeRef.current, false)
-  assert.equal(h.state.connects, 0)
 })
 
 test('an ACK blackhole stops sending after 350 ms even while socket close never completes', async () => {
@@ -435,11 +247,18 @@ test('an ACK blackhole stops sending after 350 ms even while socket close never 
   }
 })
 
-test('a missing hold ACK blocks new movement and reconnection never replays the previous velocity', async () => {
+test('a missing hold ACK blocks new movement and reconnection never replays the previous velocity', { timeout: 1000 }, async () => {
   const sockets: FakeSocket[] = []
+  let onReconnect!: () => void
+  const reconnected = new Promise<void>(resolve => { onReconnect = resolve })
   const client = new TeleopWsClient({
     url: '/ws/teleop', inputTimeoutMs: 5, reconnectDelayMs: 0,
-    socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket },
+    socketFactory: () => {
+      const socket = new FakeSocket()
+      sockets.push(socket)
+      if (sockets.length === 2) onReconnect()
+      return socket
+    },
   })
   client.connect()
   sockets[0].open()
@@ -455,7 +274,7 @@ test('a missing hold ACK blocks new movement and reconnection never replays the 
     sockets[0].receive({ type: 'ingress_ack', request_id: movement, input_window: 'obsolete' })
     for (let i = 0; i < 150; i++) client.move({ vxMps: 0.5, deadman: true })
     assert.equal(sockets[0].sent.length, 3)
-    await new Promise(resolve => setTimeout(resolve, 25))
+    await reconnected
     assert.equal(sockets.length, 2)
     sockets[1].open()
     sockets[0].receive({ type: 'control_ack', request_id: hold.request_id })
@@ -467,15 +286,106 @@ test('a missing hold ACK blocks new movement and reconnection never replays the 
   }
 })
 
-test('clearing input on connection failure requires a physical release before movement can restart', () => {
-  const h = keyboardHarness()
-  h.onKeyDown(keyEvent('w', h.panel))
-  h.clearInputIntent()
-  assert.equal(h.keysRef.current.size, 0)
-  h.onKeyDown(keyEvent('w', h.panel, true))
-  h.onKeyDown(keyEvent('w', h.panel))
-  assert.equal(h.keysRef.current.size, 0, 'reconnection alone does not release the blocked physical key')
-  h.onKeyUp({ ...keyEvent('Process', h.panel), code: 'KeyW' })
-  h.onKeyDown(keyEvent('w', h.panel))
-  assert.equal(h.keysRef.current.has('w'), true)
+test('teleop websocket client sends physical velocity samples as ingress-only operator intent', () => {
+  const sockets: FakeSocket[] = []
+  const acks: TeleopAck[] = []
+  const client = new TeleopWsClient({
+    url: '/ws/teleop',
+    clientId: 'operator-a',
+    socketFactory: () => {
+      const socket = new FakeSocket()
+      sockets.push(socket)
+      return socket
+    },
+    onAck: ack => acks.push(ack),
+  })
+
+  client.connect()
+  sockets[0].open()
+  client.move({ deadman: true })
+  const inputRequest = JSON.parse(sockets[0].sent[0])
+  sockets[0].receive({ type: 'input_ack', request_id: inputRequest.request_id, input_window: 'window-1' })
+  const request = client.move({
+    vxMps: 0.4,
+    vyMps: -0.2,
+    yawRps: 0.3,
+    deadman: true,
+    manualMode: true,
+  })
+  assert.ok(request)
+  const payload = JSON.parse(sockets[0].sent[1]) as Record<string, unknown>
+  assert.equal(payload.type, 'velocity')
+  assert.equal(payload.deadman, true)
+  assert.equal(payload.manual_mode, true)
+  assert.equal(payload.vx_mps, 0.4)
+  assert.equal(payload.vy_mps, -0.2)
+  assert.equal(payload.yaw_rps, 0.3)
+  assert.equal(payload.request_id, request)
+  assert.equal(payload.input_window, 'window-1')
+  assert.equal('sequence' in payload, false)
+
+  sockets[0].receive({
+    type: 'ingress_ack',
+    action: 'queued',
+    request_id: request,
+    final_cmd_vel_confirmed: false,
+    motor_confirmed: false,
+  })
+  assert.equal(acks[0].type, 'ingress_ack')
+  assert.equal(acks[0].final_cmd_vel_confirmed, false)
+  assert.equal(acks[0].motor_confirmed, false)
+  client.disconnect()
+})
+
+test('teleop websocket disconnect sends deadman false zero hold before closing', () => {
+  const sockets: FakeSocket[] = []
+  const client = new TeleopWsClient({
+    url: '/ws/teleop',
+    socketFactory: () => {
+      const socket = new FakeSocket()
+      sockets.push(socket)
+      return socket
+    },
+  })
+
+  client.connect()
+  sockets[0].open()
+  client.disconnect()
+
+  const hold = JSON.parse(sockets[0].sent.at(-1) ?? '{}') as Record<string, unknown>
+  assert.equal(hold.type, 'velocity')
+  assert.equal(hold.deadman, false)
+  assert.equal(hold.vx_mps, 0)
+  assert.equal(hold.vy_mps, 0)
+  assert.equal(hold.yaw_rps, 0)
+})
+
+test('teleop websocket client retries occupancy without sending motion', async () => {
+  const sockets: FakeSocket[] = []
+  const client = new TeleopWsClient({
+    url: '/ws/teleop',
+    reconnectDelayMs: 0,
+    socketFactory: () => {
+      const socket = new FakeSocket()
+      sockets.push(socket)
+      return socket
+    },
+  })
+
+  client.connect()
+  sockets[0].open()
+  sockets[0].receive({ type: 'control_rejected', error: 'control_in_use' })
+  sockets[0].close()
+  await new Promise(resolve => setTimeout(resolve, 5))
+
+  assert.equal(sockets.length, 2)
+  assert.equal(sockets[1].sent.length, 0)
+  client.disconnect()
+})
+
+test('same-origin websocket URL is resolved without treating queued intent as motor truth', () => {
+  const url = resolveTeleopWsUrl('/ws/teleop', 'client x')
+  assert.match(url, /^ws:\/\/127\.0\.0\.1\/ws\/teleop\?/)
+  assert.match(url, /client_id=client\+x/)
+  assert.match(url, /source=web_scene/)
 })

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from lingtu.assembly.wires.context import WiringContext
-from lingtu.assembly.wires.slam import map_specs
+from lingtu.assembly.host.wiring.context import WiringContext
+from lingtu.assembly.host.wiring.localization import map_specs
 
 
 def test_slam_adapter_does_not_fan_out_to_retired_python_map_layers() -> None:

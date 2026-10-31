@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <vector>
 
-#include "lingtu/maps/layers/semantic_occupancy.hpp"
+#include "lingtu/maps/semantic/occupancy.hpp"
 
 namespace {
 

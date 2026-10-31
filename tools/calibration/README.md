@@ -7,7 +7,7 @@
 | 传感器 | 型号/来源 | 标定类型 | 结果去向 |
 | --- | --- | --- | --- |
 | 相机 | Orbbec RGB-D | 相机内参、畸变 | `config/robots/unitree/go2/robot.yaml` |
-| IMU | Livox Mid-360 内置 IMU | Allan Variance 噪声参数 | Fast-LIO2 配置 |
+| IMU | Livox Mid-360 内置 IMU | Allan Variance 噪声参数 | LTLIO 配置 |
 | LiDAR + IMU | Livox Mid-360 + 内置 IMU | 外参、时间偏移、初始 bias | SLAM/LIO 配置 |
 | 相机 + LiDAR | Orbbec + Livox Mid-360 | Camera-LiDAR 外参 | `config/robots/unitree/go2/robot.yaml` |
 
@@ -30,8 +30,7 @@ tools/calibration/
 │   ├── direct_visual_lidar_calibration/   # 第三方 koide3 ROS2 工具
 │   ├── livox_calib_standalone/            # ROS-free Livox wrapper/CLI
 │   ├── livox_camera_calib/                # 用户新增：HKU-MARS Livox targetless
-│   ├── livox_camera_lidar_calibration/    # 用户新增：Livox 官方 target-based
-│   └── mlcc/                             # 用户新增：HKU-MARS 多 LiDAR/Camera
+│   └── livox_camera_lidar_calibration/    # 用户新增：Livox 官方 target-based
 ├── apply_calibration.py            # 将标定结果写入 LingTu 配置
 ├── verify.py                       # 标定配置一致性检查
 └── README.md
@@ -40,7 +39,7 @@ tools/calibration/
 ## 运行边界
 
 - 产品运行时不依赖 ROS、rclpy、roslaunch 或 rosbag。
-- `allan_variance_ros2`、`LiDAR_IMU_Init`、`direct_visual_lidar_calibration`、`livox_camera_calib`、`livox_camera_lidar_calibration`、`mlcc` 都应视为离线标定/对比工具。
+- `allan_variance_ros2`、`LiDAR_IMU_Init`、`direct_visual_lidar_calibration`、`livox_camera_calib`、`livox_camera_lidar_calibration` 都应视为离线标定/对比工具。
 - ROS1/ROS2 环境建议放在专用 Ubuntu 工位、容器或 WSL2，不要安装到 ThunderV4/S100P 的产品控制栈中。
 - 标定完成后的交付物是 YAML/JSON/TXT 参数文件，以及由 `apply_calibration.py` 写入的 LingTu 配置。
 
@@ -150,7 +149,6 @@ python tools/calibration/verify.py
 | `livox_calib_standalone` | LingTu wrapper around Livox calibration code | GPL-2.0-only（派生适配） | ROS-free Livox Camera-LiDAR wrapper | vendor/离线验证；不要并入产品 runtime 或发布包 |
 | `livox_camera_calib` | [hku-mars](https://github.com/hku-mars/livox_camera_calib) | GPL-2.0-only | Livox 专用 target-less Camera-LiDAR 外参 | vendor 快照；仅离线对比，不并入产品 runtime 或发布包 |
 | `livox_camera_lidar_calibration` | [Livox-SDK](https://github.com/Livox-SDK/livox_camera_lidar_calibration) | MIT | Livox 官方 target-based Camera-LiDAR 外参 | vendor 快照；离线使用，需要标定板 |
-| `mlcc` | [hku-mars](https://github.com/hku-mars/mlcc) | GPL-2.0-only | 多 LiDAR + 多 Camera 联合标定 | vendor 快照；研究/离线工具，不并入产品 runtime 或发布包 |
 
 ## 标定参数最终写到哪里
 
@@ -159,8 +157,8 @@ python tools/calibration/verify.py
 | 输入 | 实际写入目标 | 保持不变 |
 | --- | --- | --- |
 | 相机内参 | Go2 `robot.yaml` 的 `camera` 内参和畸变字段 | LiDAR/IMU 配置 |
-| IMU 噪声 | `--slam-config` 指定的机器人专属 MID-360 Fast-LIO2 配置 | 不写 `robot.yaml` |
-| LiDAR-IMU 外参 | 上述 Fast-LIO2 配置中的 `r_il`、`t_il` 和可用的时间偏移 | Go2 `robot.yaml` 中机械安装的 `T_body_lidar` |
+| IMU 噪声 | `--slam-config` 指定的机器人专属 MID-360 LTLIO 配置 | 不写 `robot.yaml` |
+| LiDAR-IMU 外参 | 上述 LTLIO 配置中的 `r_il`、`t_il` 和可用的时间偏移 | Go2 `robot.yaml` 中机械安装的 `T_body_lidar` |
 | Camera-LiDAR 外参 | Go2 `robot.yaml` 的 `camera` 位姿字段 | 机械 `T_body_lidar` |
 
 接受标定结果前至少完成：

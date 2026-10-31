@@ -23,6 +23,7 @@ export default defineConfig({
       '/ws': { target: `ws://${ROBOT_HOST}`, ws: true },
       '/mcp': `http://${ROBOT_HOST}`,
       '/map': `http://${ROBOT_HOST}`,
+      '/robot': `http://${ROBOT_HOST}`,
     },
   },
   build: {

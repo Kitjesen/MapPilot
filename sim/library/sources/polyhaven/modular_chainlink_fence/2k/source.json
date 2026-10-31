@@ -1,0 +1,56 @@
+{
+  "provider": "Poly Haven",
+  "asset_id": "modular_chainlink_fence",
+  "name": "Modular Chainlink Fence",
+  "authors": {
+    "James Ray Cock": "All",
+    "Amal Kumar": "Fence Wire Material"
+  },
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "source_url": "https://polyhaven.com/a/modular_chainlink_fence",
+  "resolution": "2k",
+  "model": "modular_chainlink_fence_2k.gltf",
+  "files": [
+    {
+      "path": "modular_chainlink_fence_2k.gltf",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/2k/modular_chainlink_fence/modular_chainlink_fence_2k.gltf",
+      "bytes": 41838
+    },
+    {
+      "path": "textures/modular_chainlink_fence_wire_nor_gl_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_chainlink_fence/modular_chainlink_fence_wire_nor_gl_2k.jpg",
+      "bytes": 1882329
+    },
+    {
+      "path": "modular_chainlink_fence.bin",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/modular_chainlink_fence/modular_chainlink_fence.bin",
+      "bytes": 3168016
+    },
+    {
+      "path": "textures/modular_chainlink_fence_wire_arm_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_chainlink_fence/modular_chainlink_fence_wire_arm_2k.jpg",
+      "bytes": 2082073
+    },
+    {
+      "path": "textures/modular_chainlink_fence_posts_arm_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_chainlink_fence/modular_chainlink_fence_posts_arm_2k.jpg",
+      "bytes": 3004035
+    },
+    {
+      "path": "textures/modular_chainlink_fence_wire_diff_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_chainlink_fence/modular_chainlink_fence_wire_diff_2k.jpg",
+      "bytes": 1746959
+    },
+    {
+      "path": "textures/modular_chainlink_fence_posts_diff_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_chainlink_fence/modular_chainlink_fence_posts_diff_2k.jpg",
+      "bytes": 2425889
+    },
+    {
+      "path": "textures/modular_chainlink_fence_posts_nor_gl_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/modular_chainlink_fence/modular_chainlink_fence_posts_nor_gl_2k.jpg",
+      "bytes": 1869713
+    }
+  ]
+}

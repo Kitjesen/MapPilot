@@ -1,4 +1,5 @@
 #include "control/teleop.hpp"
+#include "control/diagnostics.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -60,6 +61,9 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
         (input.config.control_mode == ControlMode::Teleop ||
          input.config.control_mode == ControlMode::TeleopAvoid);
     if (idle_teleop) {
+      const auto final_start = Clock::now();
+      final_control_.stop(actions_.steady_now_s(), "idle");
+      result.timing.final_control_ms += elapsedMs(final_start);
       result.handled = true;
       result.teleop = input.previous_teleop;
       result.teleop.fresh = false;
@@ -95,7 +99,9 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
   bool linear_motion_stopped = false;
   const auto stop_velocity = [&](const std::string &reason) {
     if (!velocity_stopped) {
+      const auto final_start = Clock::now();
       final_control_.stop(tick_now, reason);
+      result.timing.final_control_ms += elapsedMs(final_start);
       velocity_stopped = true;
     }
   };
@@ -162,6 +168,7 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
     const auto precheck =
         arbitrateTeleopCommand(sample_safety, *input.active_request, age_s);
     auto decision = precheck;
+    bool final_safety_applied = false;
     bool hard_zero_requested = isZeroCommand(precheck.cmd);
     // Pure rotation needs final swept-footprint safety, not a translation path.
     const bool use_assisted_planner =
@@ -191,6 +198,7 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
         path_safety.verified_recovery_translation =
             assisted.recovery_verified && assisted.recovery_action ==
                 static_cast<int>(nav_kernel::RecoveryAction::Translate);
+        const auto final_start = Clock::now();
         const auto final = final_control_.finalize(FinalInput{
             FinalMode::kTeleopPath,
             path_safety,
@@ -201,10 +209,14 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
             input.config.publish_cmd_vel,
             tick_now,
         });
+        result.timing.final_control_ms += elapsedMs(final_start);
         decision = final.decision;
+        final_safety_applied = final.safety_applied;
         velocity_stopped = velocity_stopped || final.smoother_stopped;
         if (decision.stopped) {
-          if (path_ready && std::abs(decision.cmd.wz) > 1e-6) {
+          if (decision.reason == "stale") {
+            stop_linear_motion();
+          } else if (path_ready && std::abs(decision.cmd.wz) > 1e-6) {
             pause_linear_motion();
           } else {
             replan_motion(assisted.cmd_vel, decision);
@@ -225,39 +237,14 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
         pause_linear_motion();
       }
 
-      LocalDiagnostics local;
-      local.seen = true;
-      local.active = assisted.active;
+      auto local = makeLocalDiagnostics(assisted, &decision, true);
       local.goal_reached = false;
       local.path_found = assisted.path_found;
       local.near_field_stop = assisted.near_field_stop || decision.stopped;
       local.reason = assisted.reason;
       local.slow_down = assisted.slow_down;
-      local.recovery_state = assisted.recovery_state;
-      local.recovery_action = assisted.recovery_action;
-      local.recovery_attempt = assisted.recovery_attempt;
-      local.recovery_candidate_count = assisted.recovery_candidate_count;
-      local.recovery_rotation_target_rad =
-          assisted.recovery_rotation_target_rad;
-      local.recovery_verified = assisted.recovery_verified;
-      local.recovery_progress = assisted.recovery_progress;
-      local.recovery_trigger = assisted.recovery_trigger;
-      local.recovery_reason = assisted.recovery_reason;
-      local.recovery_exhausted = assisted.recovery_exhausted;
       local.target_index = 0;
-      local.target_distance_m = assisted.target_distance_m;
-      local.target = assisted.target;
-      local.local_path_points = assisted.local_path_map.size();
-      local.tracking = assisted.tracking;
-      local.path_follower_cmd_vel = assisted.cmd_vel;
       local.cmd_vel = decision.cmd;
-      local.final_safety_applied = true;
-      local.final_safety_stopped = decision.stopped;
-      local.final_safety_slowed = decision.slowed;
-      local.final_safety_limited = decision.limited;
-      local.final_safety_reason = decision.reason;
-      local.final_safety_obstacle_distance_m = decision.obstacle_distance_m;
-      local.final_safety_traversability_cost = decision.traversability_cost;
       result.local = std::move(local);
       result.local_path = std::move(assisted.local_path_map);
       result.local_planner_debug = std::move(assisted.local_planner_debug);
@@ -269,6 +256,7 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
       if (precheck.stopped || !precheck.should_publish || hard_zero_requested) {
         decision = precheck;
       } else {
+        const auto final_start = Clock::now();
         const auto final = final_control_.finalize(FinalInput{
             FinalMode::kTeleopCommand,
             sample_safety,
@@ -278,8 +266,17 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
             precheck.limited,
             input.config.publish_cmd_vel,
             tick_now,
+            !input.manual_mode && input.config.teleop_local_planner &&
+                    input.config.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan &&
+                    !input.config.velocity_smoother_enabled &&
+                    linearSpeed(*input.active_request) <= 1e-6 &&
+                    std::abs(input.active_request->wz) > 1e-6
+                ? input.config.path_follower_max_yaw_accel_rad_s2 : 0.0,
+            1.0 / input.config.tick_hz,
         });
+        result.timing.final_control_ms += elapsedMs(final_start);
         decision = final.decision;
+        final_safety_applied = final.safety_applied;
         velocity_stopped = velocity_stopped || final.smoother_stopped;
       }
       if (input.manual_mode && decision.should_publish && !decision.stopped) {
@@ -294,7 +291,8 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
     }
 
     (void)sample_publish_age();
-    if (max_age_s > 0.0 && publish_age_s > max_age_s) {
+    if (!final_safety_applied && max_age_s > 0.0 &&
+        publish_age_s > max_age_s) {
       decision = {};
       decision.should_publish = true;
       decision.stopped = true;

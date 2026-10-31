@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 ENDPOINT_DIR = ROOT / "src" / "nav" / "cpp" / "endpoint"
 NAV_ENDPOINT_DIR = ENDPOINT_DIR / "nav"
-INSPECTION_DIR = NAV_ENDPOINT_DIR / "runtime" / "inspection"
+INSPECTION_DIR = NAV_ENDPOINT_DIR / "app" / "inspection"
 COORDINATOR_HEADER = INSPECTION_DIR / "inspection_command_coordinator.hpp"
 COORDINATOR_SOURCE = INSPECTION_DIR / "inspection_command_coordinator.cpp"
 COORDINATOR_TEST = (
@@ -16,7 +16,7 @@ COORDINATOR_TEST = (
     / "test_inspection_command_coordinator.cpp"
 )
 ENDPOINT = NAV_ENDPOINT_DIR / "main.cpp"
-ENDPOINT_LOOP = NAV_ENDPOINT_DIR / "runtime" / "loop.cpp"
+ENDPOINT_LOOP = NAV_ENDPOINT_DIR / "app" / "loop.cpp"
 DDS_HEADER = NAV_ENDPOINT_DIR / "dds" / "runtime.hpp"
 DDS_SOURCE = NAV_ENDPOINT_DIR / "dds" / "runtime.cpp"
 CLIENT_DIR = ROOT / "src" / "nav" / "cpp" / "client"
@@ -105,7 +105,7 @@ def test_native_endpoint_only_forwards_inspection_command_requests_to_coordinato
         "auto process_geofence_command =",
     )
 
-    assert '#include "runtime/inspection/inspection_command_coordinator.hpp"' in endpoint
+    assert '#include "app/inspection/inspection_command_coordinator.hpp"' in endpoint
     assert "InspectionCommandCoordinator inspection_command_coordinator" in endpoint
     assert "inspection_command_coordinator.handle" in command_block
     assert "InspectionTaskAckOutput" in endpoint
@@ -222,6 +222,6 @@ def test_taskless_inspection_client_and_endpoint_wire_are_removed() -> None:
 def test_endpoint_readme_documents_completed_command_coordinator_split() -> None:
     readme = _read(ENDPOINT_README)
 
-    assert "nav/runtime/" in readme
+    assert "nav/app/" in readme
     assert "inspection" in readme
     assert "command admission" in readme

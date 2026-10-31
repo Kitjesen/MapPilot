@@ -1,4 +1,8 @@
-"""Robot-agnostic scheduling and safety core for simulation controllers."""
+"""Schedule simulation inference and return actuator commands.
+
+Missing or stale commands use adapter.safe_stop(). Other failures propagate
+to the session owner, which stops the simulation.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +24,7 @@ from .contracts import (
 )
 from .plan import CommandChannelSpec, ControllerSpec, ControlPlan
 
-_NANOSECONDS_PER_SECOND = 1_000_000_000
+NS_PER_SECOND = 1_000_000_000
 
 
 def _validate_start_time_ns(start_time_ns: int) -> None:
@@ -28,7 +32,7 @@ def _validate_start_time_ns(start_time_ns: int) -> None:
         raise ValueError("start_time_ns must be a non-negative integer")
 
 
-class _FixedRateSchedule:
+class RateSchedule:
     """Phase-stable schedule that drops, rather than replays, missed periods."""
 
     def __init__(self, rate_hz: float, start_time_ns: int) -> None:
@@ -44,7 +48,7 @@ class _FixedRateSchedule:
         if sim_time_ns < self._origin_ns:
             raise ControllerRuntimeError("state sim_time_ns precedes the active generation schedule")
         elapsed_ns = sim_time_ns - self._origin_ns
-        last_due_tick = (elapsed_ns * self._rate.numerator) // (_NANOSECONDS_PER_SECOND * self._rate.denominator)
+        last_due_tick = (elapsed_ns * self._rate.numerator) // (NS_PER_SECOND * self._rate.denominator)
         if self._next_tick > last_due_tick:
             return False
         self._next_tick = last_due_tick + 1
@@ -80,10 +84,10 @@ class ControllerRuntime:
         self._generation = generation
         self._adapter = adapter
         self._policy = policy
-        self._inference_schedule = _FixedRateSchedule(controller.inference_hz, start_time_ns)
-        self._low_level_schedule = _FixedRateSchedule(controller.low_level_hz, start_time_ns)
+        self._inference_schedule = RateSchedule(controller.inference_hz, start_time_ns)
+        self._low_level_schedule = RateSchedule(controller.low_level_hz, start_time_ns)
         self._latest_command: ControllerCommand | None = None
-        self._command_watermark: tuple[int, int] | None = None
+        self._last_command_order: tuple[int, int] | None = None
         self._last_action: Any = None
         self._last_state_sequence: int | None = None
         self._last_sim_time_ns: int | None = None
@@ -108,25 +112,28 @@ class ControllerRuntime:
             return CommandSubmitResult.REJECTED_INSTANCE
         if command.channel_id not in self._input_channels:
             return CommandSubmitResult.REJECTED_CHANNEL
-        generation_result = self._command_generation_result(command.generation)
+        generation_result = self._generation_result(command.generation)
         if generation_result is not CommandSubmitResult.ACCEPTED:
             return generation_result
-        if self._command_watermark is not None:
-            sequence, apply_time_ns = self._command_watermark
+        if self._last_command_order is not None:
+            sequence, apply_time_ns = self._last_command_order
             if (
                 command.sequence <= sequence
                 or command.apply_time_ns < apply_time_ns
             ):
                 return CommandSubmitResult.REJECTED_OUT_OF_ORDER
         self._latest_command = command
-        self._command_watermark = (command.sequence, command.apply_time_ns)
+        self._last_command_order = (command.sequence, command.apply_time_ns)
         return CommandSubmitResult.ACCEPTED
 
     def hold(self) -> None:
-        """Clear active control state until a fresh command is submitted."""
+        """Clear commands and component memory before a fresh command can resume."""
 
+        # Retain command order so the cleared command cannot be replayed.
         self._latest_command = None
         self._last_action = None
+        self._adapter.reset(self._generation)
+        self._policy.reset(self._generation)
 
     def step(self, state: ControllerState) -> ControllerStep:
         """Consume one immutable state snapshot and run all currently due work."""
@@ -157,7 +164,7 @@ class ControllerRuntime:
             else:
                 raw_values = self._adapter.safe_stop(state, self._controller.actuators)
                 safe_stop_reason = stop_reason or SafeStopReason.WAITING_FOR_INFERENCE
-            values = self._ordered_finite_values(raw_values)
+            values = self._actuator_values(raw_values)
             self._output_sequence += 1
             actuator_command = ActuatorCommand(
                 session_id=self._plan.session_id,
@@ -199,7 +206,7 @@ class ControllerRuntime:
         self._policy.reset(generation)
         self._generation = generation
         self._latest_command = None
-        self._command_watermark = None
+        self._last_command_order = None
         self._last_action = None
         self._last_state_sequence = None
         self._last_sim_time_ns = None
@@ -226,7 +233,7 @@ class ControllerRuntime:
             )
         return inputs, outputs[0]
 
-    def _command_generation_result(self, generation: GenerationStamp) -> CommandSubmitResult:
+    def _generation_result(self, generation: GenerationStamp) -> CommandSubmitResult:
         if generation.model_generation < self._generation.model_generation:
             return CommandSubmitResult.REJECTED_STALE_MODEL_GENERATION
         if generation.model_generation > self._generation.model_generation:
@@ -262,7 +269,7 @@ class ControllerRuntime:
             return SafeStopReason.STALE_COMMAND
         return None
 
-    def _ordered_finite_values(self, raw_values: Any) -> tuple[float, ...]:
+    def _actuator_values(self, raw_values: Any) -> tuple[float, ...]:
         try:
             ordered = self._controller.actuators.order(raw_values)
             values = tuple(float(value) for value in ordered)

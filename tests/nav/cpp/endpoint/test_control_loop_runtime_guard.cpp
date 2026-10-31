@@ -50,6 +50,7 @@ ControlLoopRuntimeGuardConfig config() {
   cfg.unhealthy_confirmation_samples = 2;
   cfg.recovery_confirmation_samples = 20;
   cfg.latch_miss_streak = 20;
+  cfg.auto_resume = false;
   return cfg;
 }
 
@@ -250,6 +251,26 @@ void testOperatorModeAutoResumesAfterRecoveryConfirmation() {
           "operator control recovery must release its transient runtime hold automatically");
 }
 
+void testDefaultGuardAutoResumesAfterSchedulingRecovery() {
+  ControlLoopRuntimeGuard guard;
+  guard.observe(matureUnhealthy("consecutive_deadline_misses", 20));
+  ControlLoopRuntimeGuardDecision decision;
+  for (int sample = 0; sample < 20; ++sample) decision = guard.observe(matureHealthy());
+  requireState(decision, ControlLoopRuntimeGuardState::kMonitoring,
+               "default scheduling guard must recover without an operator resume");
+  require(!decision.hold_motion && decision.resume_completed,
+          "a recovered scheduling fault must release only its own hold");
+
+  guard.observe(matureUnhealthy("consecutive_deadline_misses", 20));
+  for (int sample = 0; sample < 25; ++sample)
+    require(guard.observe(matureUnhealthy("consecutive_deadline_misses", 20)).hold_motion,
+            "a continuous current deadline fault must not automatically release its hold");
+  for (int sample = 0; sample < 20; ++sample)
+    decision = guard.observe(matureUnhealthy("deadline_miss_ratio_high", 0));
+  require(!decision.hold_motion && decision.resume_completed,
+          "historical rolling warnings must not keep a recovered current scheduling fault latched");
+}
+
 void testRollingWarningCanConfirmRecoveryAfterHardDeadlineFault() {
   ControlLoopRuntimeGuard guard(config());
   guard.observe(matureUnhealthy("consecutive_deadline_misses", 20));
@@ -365,6 +386,7 @@ void testResumeCompletionOutsideRecoveredDoesNotChangeHoldOrUnlock() {
 
 int main() {
   try {
+    testDefaultGuardAutoResumesAfterSchedulingRecovery();
     testRejectsInvalidConfiguration();
     testWarmupSnapshotDoesNotTripGuard();
     testHighUtilizationWarningDoesNotHoldMotion();

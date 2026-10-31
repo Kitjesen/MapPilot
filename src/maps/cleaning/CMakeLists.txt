@@ -1,0 +1,30 @@
+cmake_minimum_required(VERSION 3.16)
+project(lingtu_maps_cleaning_experiment LANGUAGES CXX)
+
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  include(CTest)
+endif()
+
+if(NOT TARGET lingtu_maps_cleaning)
+  if(NOT TARGET lingtu_maps_ground)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../ground" "${CMAKE_CURRENT_BINARY_DIR}/ground")
+  endif()
+  add_library(lingtu_maps_cleaning STATIC incremental.cpp)
+  target_compile_features(lingtu_maps_cleaning PUBLIC cxx_std_20)
+  target_include_directories(lingtu_maps_cleaning PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
+  target_link_libraries(lingtu_maps_cleaning PUBLIC lingtu_maps_ground)
+  set_target_properties(lingtu_maps_cleaning PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../prune/cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/prune" EXCLUDE_FROM_ALL)
+  add_executable(maps_cleaning_replay EXCLUDE_FROM_ALL
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../tools/diagnostics/map_cleaning_replay.cpp")
+  target_link_libraries(maps_cleaning_replay PRIVATE prune_core lingtu_maps_cleaning)
+  if(BUILD_TESTING)
+    add_executable(lingtu_maps_incremental_cleaning_test
+      ../../../tests/maps/cpp/incremental_cleaning_test.cpp)
+    target_link_libraries(lingtu_maps_incremental_cleaning_test PRIVATE lingtu_maps_cleaning)
+    add_test(NAME lingtu_maps_incremental_cleaning_test COMMAND lingtu_maps_incremental_cleaning_test)
+  endif()
+endif()

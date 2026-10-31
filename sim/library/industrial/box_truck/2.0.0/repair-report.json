@@ -1,0 +1,98 @@
+{
+  "scope": "wheel surfaces only; chassis unchanged; no physics or new Tripo task",
+  "before": [
+    {
+      "name": "Wheel_FL",
+      "boundary_edges": 72,
+      "nonmanifold_edges": 72,
+      "radial_max_m": 0.4676921444575417,
+      "uv_present": true
+    },
+    {
+      "name": "Wheel_FR",
+      "boundary_edges": 74,
+      "nonmanifold_edges": 74,
+      "radial_max_m": 0.47239602434789235,
+      "uv_present": true
+    },
+    {
+      "name": "Wheel_RL",
+      "boundary_edges": 95,
+      "nonmanifold_edges": 95,
+      "radial_max_m": 0.47818135965051967,
+      "uv_present": true
+    },
+    {
+      "name": "Wheel_RR",
+      "boundary_edges": 116,
+      "nonmanifold_edges": 117,
+      "radial_max_m": 0.4628642645853232,
+      "uv_present": true
+    }
+  ],
+  "after": [
+    {
+      "name": "Wheel_FL",
+      "boundary_edges": 0,
+      "nonmanifold_edges": 0,
+      "radial_max_m": 0.4431671027456852,
+      "uv_present": true
+    },
+    {
+      "name": "Wheel_FR",
+      "boundary_edges": 0,
+      "nonmanifold_edges": 0,
+      "radial_max_m": 0.4431671027456852,
+      "uv_present": true
+    },
+    {
+      "name": "Wheel_RL",
+      "boundary_edges": 0,
+      "nonmanifold_edges": 0,
+      "radial_max_m": 0.45029513254286463,
+      "uv_present": true
+    },
+    {
+      "name": "Wheel_RR",
+      "boundary_edges": 0,
+      "nonmanifold_edges": 0,
+      "radial_max_m": 0.45029513254286463,
+      "uv_present": true
+    }
+  ],
+  "rebuilt": [
+    {
+      "name": "Wheel_FL",
+      "tires": 1,
+      "radius_m": 0.44316709,
+      "vertices": 4928,
+      "polygons": 9704
+    },
+    {
+      "name": "Wheel_FR",
+      "tires": 1,
+      "radius_m": 0.44316709,
+      "vertices": 4928,
+      "polygons": 9704
+    },
+    {
+      "name": "Wheel_RL",
+      "tires": 2,
+      "radius_m": 0.45029512,
+      "vertices": 9856,
+      "polygons": 19408
+    },
+    {
+      "name": "Wheel_RR",
+      "tires": 2,
+      "radius_m": 0.45029512,
+      "vertices": 9856,
+      "polygons": 19408
+    }
+  ],
+  "chassis_counts_unchanged": true,
+  "chassis_vertices": 53319,
+  "chassis_faces": 81041,
+  "material_change": "chassis retains original 4K maps; wheels use dedicated rubber/steel PBR values and geometric tread",
+  "physics_connected": false
+}

@@ -26,6 +26,7 @@ export function pickVisiblePcdPoint(
   clickY: number,
   pickRadius: number,
   pointSize: number,
+  maxZ = Infinity,
 ): PointCloudPick | null {
   // Only keep depth for pixel centers in the click neighborhood, not the full canvas.
   const left = Math.max(0, Math.ceil(clickX - pickRadius - 0.5))
@@ -41,6 +42,7 @@ export function pickVisiblePcdPoint(
   const radiusSquared = radius * radius
 
   for (let i = 0; i < points.length; i += 3) {
+    if (points[i + 2] > maxZ) continue
     const projected = projectPcdPoint(mvp, { x: points[i], y: points[i + 1], z: points[i + 2] }, width, height)
     if (!projected) continue
     const x0 = Math.max(left, Math.ceil(projected.x - radius - 0.5))

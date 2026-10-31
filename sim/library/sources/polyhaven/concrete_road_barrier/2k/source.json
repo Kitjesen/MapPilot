@@ -1,0 +1,40 @@
+{
+  "provider": "Poly Haven",
+  "asset_id": "concrete_road_barrier",
+  "name": "Concrete Road Barrier",
+  "authors": {
+    "Amal Kumar": "All"
+  },
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "source_url": "https://polyhaven.com/a/concrete_road_barrier",
+  "resolution": "2k",
+  "model": "concrete_road_barrier_2k.gltf",
+  "files": [
+    {
+      "path": "concrete_road_barrier_2k.gltf",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/2k/concrete_road_barrier/concrete_road_barrier_2k.gltf",
+      "bytes": 2868
+    },
+    {
+      "path": "textures/concrete_road_barrier_arm_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/concrete_road_barrier/concrete_road_barrier_arm_2k.jpg",
+      "bytes": 2515448
+    },
+    {
+      "path": "textures/concrete_road_barrier_diff_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/concrete_road_barrier/concrete_road_barrier_diff_2k.jpg",
+      "bytes": 3189621
+    },
+    {
+      "path": "textures/concrete_road_barrier_nor_gl_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/concrete_road_barrier/concrete_road_barrier_nor_gl_2k.jpg",
+      "bytes": 3888469
+    },
+    {
+      "path": "concrete_road_barrier.bin",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/concrete_road_barrier/concrete_road_barrier.bin",
+      "bytes": 1374016
+    }
+  ]
+}

@@ -1,33 +1,29 @@
+"""Explicit legacy 4998/1119 comparisons; current simulation uses the controller catalog."""
+
+from __future__ import annotations
+
 import sys
 import threading
 import time
 from collections import defaultdict, deque
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import matplotlib.pyplot as plt
 import mujoco
 import mujoco.viewer
 import numpy as np
-import torch
-from pynput import keyboard as pynput_keyboard
 from scipy.spatial.transform import Rotation as R
+
+if TYPE_CHECKING:
+    import torch
 
 REPO_ROOT = Path(__file__).resolve().parents[6]
 if __package__ in {None, ""}:
     sys.path.insert(0, str(REPO_ROOT))
-from sim.runtime.control import thunderv4_flat as flat
+from sim.runtime.control.thunder import flat
 
 ROBOT_DIR = REPO_ROOT / "sim" / "packages" / "robots" / "doso" / "thunder_v4"
 DEFAULT_MODEL_PATH = ROBOT_DIR / "mjcf" / "thunderv4.xml"
-DEFAULT_POLICY_PATH = (
-    REPO_ROOT
-    / "sim" / "packages" / "controllers"
-    / "doso"
-    / "thunder_v4"
-    / "locomotion"
-    / "policy"
-    / "policy_4998.onnx"
-)
 DEFAULT_PHYSICS_TIMESTEP_S = 0.005
 DEFAULT_POLICY_DECIMATION = 4
 
@@ -37,17 +33,9 @@ class _OnnxHistoryPolicy:
 
     def __init__(self, path: Path, *, session=None) -> None:
         if session is None:
-            import onnxruntime as ort
+            from sim.runtime.control.policy_loader import open_session
 
-            options = ort.SessionOptions()
-            options.intra_op_num_threads = 1
-            options.inter_op_num_threads = 1
-            options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-            session = ort.InferenceSession(
-                str(path),
-                sess_options=options,
-                providers=["CPUExecutionProvider"],
-            )
+            session = open_session(str(path), 1)
         inputs = session.get_inputs()
         outputs = session.get_outputs()
         input_shape = tuple(inputs[0].shape) if len(inputs) == 1 else ()
@@ -64,6 +52,7 @@ class _OnnxHistoryPolicy:
         self._history = deque(maxlen=5)
 
     def __call__(self, observation: torch.Tensor) -> torch.Tensor:
+        import torch
         frame = np.asarray(observation.detach().cpu().numpy(), dtype=np.float32).reshape(-1)
         if self.flat53:
             action = self._session.run(
@@ -89,6 +78,8 @@ def _load_policy(path: str):
         raise FileNotFoundError(f"Policy file is missing: {policy_path}")
     if policy_path.suffix.lower() == ".onnx":
         return _OnnxHistoryPolicy(policy_path)
+    import torch
+
     policy = torch.jit.load(str(policy_path), map_location="cpu")
     policy.eval()
     return policy
@@ -471,6 +462,7 @@ class ObservationHistory:
             self.buffer[-1] = obs
 
     def get_tensor(self) -> torch.Tensor:
+        import torch
         if self.count == 0:
             padded = self.buffer.copy()
         elif self.count < self.history_len:
@@ -540,6 +532,8 @@ vel_cmd = Cmd()
 
 
 def start_keyboard_listener():
+    from pynput import keyboard as pynput_keyboard
+
     def on_press(key):
         try:
             k = key.char.lower()
@@ -683,6 +677,8 @@ def scale_action(raw_action, cfg):
 
 def plot_joint_data(plot_data):
     """Plot two figures: 1) Target vs Actual, 2) Error vs Torque"""
+    import matplotlib.pyplot as plt
+
     joint_names = [
         "FR_hip",
         "FR_thigh",
@@ -784,6 +780,8 @@ def run_mujoco(
     plot=False,
     keyboard_control=False,
 ):
+    import torch
+
     model = mujoco.MjModel.from_xml_path(mujoco_model_path)
     model.opt.timestep = dt
     qpos_ids, qvel_ids, actuator_ids = resolve_joint_addresses(model)
@@ -906,7 +904,7 @@ def run_mujoco(
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Mujoco deployment")
+    parser = argparse.ArgumentParser(description="Legacy policy comparison; select each model explicitly")
     parser.add_argument(
         "--model-path",
         type=str,
@@ -915,15 +913,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--policy-path",
         type=str,
-        default=str(DEFAULT_POLICY_PATH),
-        help="Path to Policy A (Default)",
+        required=True,
+        help="Explicit legacy 4998/1119 model for Policy A",
     )
     parser.add_argument(
         "--policy-path-b",
         type=str,
-        default=str(DEFAULT_POLICY_PATH),
-        help="Path to Policy B (High Stand)",
-    )  # 默认暂时用A，请修改为实际B路径
+        help="Optional legacy comparison model; omitted means reuse Policy A",
+    )
     parser.add_argument("--duration", type=float, default=600.0)
     parser.add_argument("--dt", type=float, default=DEFAULT_PHYSICS_TIMESTEP_S)
     parser.add_argument("--decimation", type=int, default=DEFAULT_POLICY_DECIMATION)
@@ -949,12 +946,7 @@ if __name__ == "__main__":
     print(f"Loading Policy A from: {args.policy_path}")
     policy_a = _load_policy(args.policy_path)
 
-    print(f"Loading Policy B from: {args.policy_path_b}")
-    try:
-        policy_b = _load_policy(args.policy_path_b)
-    except Exception as e:
-        print(f"⚠️ Warning: Failed to load Policy B ({e}). Using Policy A as fallback.")
-        policy_b = policy_a
+    policy_b = _load_policy(args.policy_path_b) if args.policy_path_b else policy_a
 
     policies = {"A": policy_a, "B": policy_b}
 

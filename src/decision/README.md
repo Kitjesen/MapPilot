@@ -1,347 +1,291 @@
-# Decision
+# Decision layer
 
-`src/decision/` is the semantic decision layer. It turns high-level user
-instructions and perception outputs into navigation goals, visual-servo targets,
-cancel requests, task plans, and agent status messages.
+`src/decision/` is the Python semantic decision layer. It converts user intent
+and synchronized perception into typed task decisions, semantic targets,
+visual-servo requests, and status. It does not own sensors, SLAM, maps, global
+planning, local planning, velocity arbitration, or the robot driver.
 
-Semantic planning is pure Python Module orchestration.
+Native navigation remains the authority for geometry and motion. The decision
+layer submits goals, waits for native lifecycle evidence, and reports results.
+A command acknowledgement is not proof that the robot moved or stopped. This
+document describes current code, not a future architecture.
 
-It is not the robot driver, SLAM, map builder, global planner, local planner, or
-velocity arbiter. Those live in `src/drivers/`, `src/localization/`, and
-`src/nav/`.
+## Runtime entry points
 
-The local autonomy uses in-process C++/Python kernels in the navigation layer;
-decision only chooses semantic intent and target outputs. Compute-heavy SLAM,
-map building, global planning, local planning, and velocity arbitration stay
-outside this package.
+The Host assembly creates these Modules when the selected Product enables them:
 
-The old `src/decision/legacy/` Module wrappers have been removed. Runtime code
-should use `modules/semantic_planner.py`, `modules/visual_servo.py`, and
-`modules/llm.py`; tests for goal resolution, task decomposition, frontier
-scoring, and action shaping target the strategy packages directly.
-
-## Main Entry Point
-
-The main program in this package is:
-
-| Runtime object | File | Role |
+| Module | Source | Responsibility / owned state |
 | --- | --- | --- |
-| `SemanticPlannerModule` | `modules/semantic_planner.py` | Primary semantic planner. Receives instructions, scene graph, synchronized map-frame robot pose, topology summary, native admission receipts and task lifecycle. Publishes task-scoped `nav_command`, `servo_target`, `task_plan`, and `agent_message`. |
-| `AgentPlannerModule` | `modules/agent_planner.py` | Bounded multi-turn tasks. Delegates motion to the semantic owner, correlates native/visual completion, and scopes cancellation to its own run. |
-| `VisualServoModule` | `modules/visual_servo.py` | Visual target selection and tracking. Receives the current map-frame detections, synchronized robot pose, selection image, and `servo_target`; publishes bounded map-frame goals and visual-task cancellation through native navigation. |
-| `LLMModule` | `modules/llm.py` | Optional LLM backend module. The planner can also build its own LLM client directly. |
+| `SemanticPlannerModule` | [semantic_planner.py](modules/semantic_planner.py) | Current instruction, observed target, pending preview/model requests, verification, recovery and owned navigation goals. |
+| `AgentPlannerModule` | [agent_planner.py](modules/agent_planner.py) | Current `AgentRun`, cancellation and owned skill results; [AgentLoop](tasks/agent.py) holds model messages and tool progression. |
+| `VisualServoModule` | [visual_servo.py](modules/visual_servo.py) | Person reference, visual phase, Follow task records and native child goals; also retains the simpler visual Find mode. |
+| `LLMModule` | [llm.py](modules/llm.py) | Model request/response handling and client lifetime; does not own a robot task. |
 
-There is no standalone `main.py` under `src/decision/`. Decision modules are
-started by the runtime blueprint system.
+Assembly and port ownership are defined in:
 
-## How It Starts
+- [semantic task stack](../lingtu/assembly/host/stacks/semantic_tasks.py)
+- [semantic wires](../lingtu/assembly/host/wiring/semantic.py)
 
-The startup chain is:
+`nav/semantic` in `env=real` loads RGB-D perception, semantic planning, the
+Agent stack, Follow, and native navigation. Its model declaration and process
+graph are product wiring, not proof that weights are installed or the target
+board is qualified. `tracking` loads perception and visual following but does
+not load `SemanticPlannerModule`.
+Inspect the resolved RunPlan before claiming a capability is active.
 
-```text
-Product + env
-  -> resolve one RunPlan
-  -> build the selected Blueprint
-  -> lingtu.assembly.stacks.planner()
-  -> add SemanticPlannerModule, AgentPlannerModule, LLMModule, VisualServoModule
-  -> lingtu.assembly.wires.semantic connects ports
-```
-
-The stack factory that creates decision modules is:
+## Current call graph
 
 ```text
-src/lingtu/assembly/stacks/planner.py
+Gateway /api/v1/instruction and MCP send_instruction ---> AgentPlannerModule
+    returns run_id; AgentLoop selects bounded domain tools
+    owned motion handlers ---> SemanticPlannerModule ---> nav.goals
+    tool results <--- owner status <--- native admission / lifecycle
+
+Host without Agent ---> semantic instruction stream fallback
+Explicit decompose_task ---> rules or needs_llm prompt; read-only parsing API
+
+nav.goals <----> native global/local navigation and execution
+
+PerceptionModule.observation ---> SemanticPlanner + VisualServo
+Scene graph / pose / image ---> Agent and memory through separate inputs
 ```
 
-The wires that connect decision modules to Gateway, MCP, Perception, Memory, and
-Navigation are:
+The common `SemanticObservation` input is used by `SemanticPlannerModule` and
+`VisualServoModule`. Agent context and memory still consume older separate
+scene, pose, and image inputs; they have not migrated to that contract.
 
-```text
-src/lingtu/assembly/wires/semantic.py
-```
+## Two parallel task mechanisms
 
-The current `inspection` Product declares `semantic_planning` and loads the Agent
-through the same planner stack. Standard `nav`
-does not; `tracking` selects perception and visual following but explicitly
-forbids `SemanticPlannerModule`. Check the resolved RunPlan before attributing
-a robot failure to this module or claiming an available semantic capability.
+`tasks/decomposition.py` contains symbolic `TaskPlan`, `SubGoal`, action
+vocabulary, validation, and rule/LLM prompt parsing. It is a plan data model and
+parser. Scene grounding belongs to `SemanticPlannerModule.resolve_task_step()`;
+the decomposition helper does not itself drive navigation.
 
-Agent location tagging uses the registered `tag_location` skill, which the
-MCP/Gateway path supplies with pose and map-binding checks. Without that skill,
-the agent does not advertise location tagging. There is no raw `tag:` port
-fallback that reports success without a persistence acknowledgement.
+`tasks/agent.py` and `modules/agent_planner.py` contain the separate AgentLoop:
+the model selects bounded tools, receives results, and eventually calls
+`done(success=...)`. `run_agent_task()` returns an Agent `run_id`; status and
+cancellation are scoped to that run. `get_agent_status()` reports the current
+run; it is not an arbitrary historical run lookup. The AgentLoop and `TaskPlan`
+are related but parallel mechanisms today. There is no single persistent
+Mission object owning both.
 
-## Runtime Data Flow
+The regular HTTP and MCP instruction adapters prefer `AgentPlannerModule` and
+return its `run_id`. A Host that did not load Agent retains the existing
+semantic instruction-stream fallback. `SemanticPlannerModule.send_instruction`
+remains a Python domain method for owned execution, but it no longer exposes a
+second generic `@skill` owner. Explicit `decompose_task()` remains a read-only
+parse operation; a `needs_llm` result is a prompt, not an execution record.
 
-Typical instruction flow:
+## Intent, task, and model boundaries
 
-```text
-GatewayModule.instruction
-MCPServerModule.instruction
-runtime nav input topic
-        |
-        v
-SemanticPlannerModule.instruction
-        |
-        +-- goals/resolver.py          fast/slow target grounding
-        +-- tasks/decomposition.py     task splitting
-        +-- tasks/actions.py           action command shaping
-        +-- frontiers/scorer.py        fallback frontier target
-        |
-        +--> nav_command    -> nav.goals.goal_command
-        +<-- goal_status    <- nav.goals.goal_status (admission receipts)
-        +<-- navigation_goal_status <- nav.goals.task_status (native lifecycle)
-        +--> servo_target   -> VisualServoModule.servo_target
-        +--> task_plan      -> Gateway/status consumers
-        +--> agent_message  -> Gateway chat/status stream
-```
+`LLMModule` is the shared request boundary wired by Host. The Agent also owns a
+model client/event loop for its tool loop. Host assembly now passes the same
+resolved backend, model, base URL, API-key environment-variable name and request
+timeout into both. AgentLoop applies that request timeout as a total bound for
+each model call, separately from the whole task deadline. The two callers still
+own separate client lifetimes. Matching configuration does not prove model
+quality or physical task completion.
 
-Typical visual-servo flow:
+OpenAI-compatible clients, including Kimi, now send native `tools` and receive
+`tool_calls`. The streaming client assembles argument fragments by call index
+and retains the assistant's content, tool-call identity and `reasoning_content`
+for the next request. Reasoning is protocol history, not operator-facing text.
+The existing text-JSON fallback remains for clients without `chat_with_tools`.
+Ordinary `chat()` and vision callers still receive text.
 
-```text
-CameraModule.color_image
-PerceptionModule.detections_3d + PerceptionModule.robot_pose
-SemanticPlannerModule.servo_target or GatewayModule.servo_target
-        |
-        v
-VisualServoModule
-        |
-        +--> goal_pose    -> nav.goals.visual_goal_request
-        +--> goal_cancel  -> nav.goals.visual_cancel_request
-        +<-- goal_status  <- nav.goals.goal_status
-        +--> servo_status -> GatewayModule.visual_servo_status
-```
+The Agent chooses one tool per turn. The request sets
+`parallel_tool_calls=false`, and the client also rejects a multi-call reply
+before any handler executes. Truncated or incomplete replies are not executed;
+arguments must decode to an object and pass the existing tool validation.
+Cancellation and timeout close the response stream. Owned motion and completion
+evidence remain the responsibility of the existing domain handlers.
 
-The current Product that loads the visual-following stack is `tracking`. Within that
-running Host, `find:<target>`, `follow:<target>`, and `stop` are hot task
-switches; they do not reload modules or restart the Product. Follow goals are
-updated at a bounded 2.5 Hz baseline and ignore sub-deadband target movement.
-The status reports target visibility and the matching native navigation task;
-stop remains `stopping` until native navigation publishes a terminal event.
-If no image-capable selector is configured, find remains available while
-description-based follow is unavailable instead of choosing an arbitrary
-person; selecting a visible person by track ID remains available.
+Calls are event-driven, not a fixed-rate control loop: instruction -> model
+decision -> await tool result -> next decision or `done`. A query can return
+quickly; a find or navigation tool waits for its owned domain result. Follow
+waits for its domain task's termination or cancellation and does not repeatedly
+ask the model to generate velocity commands. The model-request deadline is
+separate from this wait and the Agent task budget. See
+[native transport tests](../../tests/decision/test_llm_native_tools.py) for the
+two-round message, cancellation and malformed-reply contracts.
 
-## Semantic Task Boundaries And Remaining Gaps
+`SemanticPlannerModule.decompose_task()` uses `TaskDecomposer`. Rule parsing
+can return `status=parsed`; complex input returns `status=needs_llm` and a
+decomposition prompt. `resolve_task_step()` grounds a validated plan against
+the current scene but deliberately does not publish a navigation goal. Ordinary
+instructions now use AgentLoop for model-selected tool execution; `TaskPlan`
+still does not drive that loop or provide one persistent multi-step executor.
 
-A new instruction discards the previous scene goal. Only instructions routed
-into scene resolution remain eligible for scene-driven updates. A named-place
-command, a rejected symbolic command, or a follow handoff cannot be reinterpreted
-by a later scene callback. Cached scene data is checked again when consumed.
-The robot pose comes from `PerceptionModule.robot_pose`, in the same map frame
-as the scene. Missing, expired or non-map poses defer scene-goal selection;
-raw odometry coordinates cannot be used to rank map-frame object distances.
-Current-object grounding excludes expired tracks without deleting scene memory.
-An object centroid is not a robot pose: the planner proposes up to eight nearby
-positions at the robot's current navigation height, facing the object, then uses
-the registered `nav.commands.preview_plan` RPC off the perception callback.
-Only a native-feasible map-frame path permits dispatch. This is a same-floor
-proposal mechanism, not a visibility test or a multi-floor observation planner.
-Unavailable or blocked previews never fall back to the object centroid.
-Replacement, cancellation, map changes, expired poses and moved/disappeared
-targets invalidate pending previews. Persistent scene IDs and capture times
-come from the tracker; refreshing the graph cannot refresh an unseen object.
-Goals and cancellations carry separate task and request identities. GoalService
-validates native lifecycle evidence before forwarding it. A cancel receipt means
-admitted, not stopped; only a native terminal event ends that geometric task.
-Late receipts and old tasks cannot overwrite the current task's outcome.
+Execution-oriented Agent runs require domain evidence. A model calling
+`done(success=true)` without an attempted and successful owned motion is
+rejected. Explicit pure status plans are informational and do not require motion.
+Runs containing FIND also require object-confirmation evidence from the owned
+semantic object path. Coordinate arrival cannot complete a find request. For
+the default single-target find workflow, that path receives the user's original
+instruction, so a model-supplied label cannot weaken the requested target.
 
-Semantic recovery starts only on its own native FAILED terminal. Scene updates
-do not replace a paused or recovering native goal. Background results match both
-the instruction epoch and goal; a replaced instruction or stopped Module cannot
-dispatch a delayed retry. Cooldown delays a new failure instead of dropping it.
-Map identity changes and native restarts invalidate the cached semantic goal.
-Visual handoffs stop on replacement and are not restarted on every scene frame.
-An admitted object approach retains its tracked target when later recognition
-is missing or lower confidence; native navigation still owns path failure and
-obstacle handling. Goal deduplication includes the purpose and object identity,
-so two nearby candidates do not suppress each other's task lifecycle.
+## Existing callable skills and APIs
 
-`send_instruction` invokes the same instruction handler used by the input port.
-Agent object requests delegate to this semantic owner, including observation
-preview and target verification. Agent coordinate requests accept explicit `z`;
-omitting it requires a fresh map-frame pose from perception, never raw odometry
-or an assumed zero floor. A map/native context change invalidates that pose.
-Agent loop errors, empty replies, timeout and exhausted steps report failure.
-The model must explicitly choose `done(success=true|false, summary=...)`; an
-incomplete outcome reports failure. A success claim cannot override unsuccessful
-motion. Coordinate tools wait for their correlated native terminal result; object
-tools wait for visual verification, including bounded candidate reselection.
-`AGENT_DONE` on a task without motion still reports conversational completion,
-not independently verified task success.
+Methods marked `@skill` are discovered by the MCP server at runtime and exposed
+with generated JSON schemas. HTTP navigation routes are separate Gateway APIs.
+The declaration and Schema belong to [runtime.module](../runtime/module.py);
+[MCP](../gateway/mcp_server.py) adapts external calls, while
+[Agent tools](tasks/agent.py) adapt model calls. These are distinct responsibilities.
+Both use [shared discovery](../runtime/skills.py): aliases of one instance are
+collapsed and different owners with the same skill name are rejected. MCP
+explicitly keeps its built-in fallback policy; Agent retains its blocklist and
+task-owned motion handlers. The configured `@skill(...)` form adds parameter
+descriptions, optional object output schemas and a read-only hint. MCP exposes
+structured object results; Agent receives the output/behavior contract in the
+tool description and JSON-encoded object results. See the
+[skill contract](../runtime/README.md#skill-contract) for the declaration boundary.
 
-`run_agent_task` returns a run ID. `cancel_agent_task(run_id)` affects only that
-run, and `get_agent_status` separates loop state from motion results. One managed
-event loop owns the model client across tasks. Replacement, cancellation, map
-changes and native restarts invalidate late replies. The semantic instruction
-revision also prevents the first pending model reply from replacing a newer
-manual semantic instruction. A newly accepted operator/API goal received through
-GoalService (`goal` or `goal_pose`) also invalidates pending semantic instructions,
-model replies and observation previews. Cancellation stays scoped to previously
-owned tasks; the operator's new task is not cancelled. Rejected goals, replayed
-receipts and delegated visual-servo goals do not trigger this takeover. This has
-local integration coverage, not field evidence or coverage of every teleop input.
-Cancellation acknowledgement does not prove the robot has stopped.
+Follow's external `start_follow` returns an admission receipt and requires a
+task/session query. Agent's internal `follow_person` waits for its owned domain
+result. Shared discovery does not make those two operations equivalent or expose
+the blocked raw motion tools to the Agent.
 
-Place lookup refusal, missing place clarification and symbolic interpretation
-failure are terminal failures in the owned-instruction query. A new instruction
-clears that failure. Delayed place-query failures carry the instruction revision
-so that an old result cannot overwrite the replacement task's status.
-
-Agent context excludes stale scene objects and uses camera frames only when the
-processed image, scene graph and fresh map pose have matching timestamps. Motion
-skills without Agent ownership (`vla_navigate`, `go_to_tag`) are excluded from
-its automatic tool discovery. The VLA status query is `get_vla_status`; the
-`vla_status` name belongs to its telemetry output port.
-
-Known-place REACHED reports COMPLETED. A reached object goal with a tracked
-target starts bounded visual verification and stops scene-driven goal updates.
-The exact processed color frame arrives through `PerceptionModule.observation_image`;
-its timestamp must match the scene, target observation and map-frame robot pose.
-Only post-arrival observations of the same nearby target are submitted to the
-registered image-capable LLM. It receives the full scene, candidate crop and the
-original instruction, including attribute and relationship constraints.
-
-Two positive observations, at least 0.5 seconds apart, report COMPLETED; repeated
-timestamps cannot count twice. These are temporal observations, not guaranteed
-independent viewpoints. Each view allows up to three calls. If inconclusive,
-the planner previews a different observation position through native navigation.
-At most three positions are tried for one object within the original 20-second
-verification deadline; arrival at another position does not reset this deadline.
-No images are verified while that native motion task is active. New observation
-goals exclude positions within 0.30 m of tried/current positions and request a
-0.15 m arrival radius. These are provisional engineering settings, not calibrated
-guarantees of useful visibility or independent evidence.
-
-A visible contradiction records TARGET_MISMATCH for that candidate. A bounded
-search can then select another freshly observed object using the full instruction.
-It can also switch candidates after exhausting inconclusive/reachable views.
-At most three object candidates are attempted per instruction; blocked candidates
-count toward that limit. Candidates already tried are excluded only for that
-instruction's candidate scoring; they remain in scene context as possible
-landmarks for relational instructions. Changing the instruction, map or native boot clears the search.
-Uncertainty is retained as uncertainty, not relabeled as a visual mismatch.
-Timeout, missing vision capability, encoding failure and model error are explicit
-non-success outcomes. The declared client capability is checked: the current
-MoonshotClient adapter enables this path for `kimi-k2.6`; the mock backend and
-other unverified Moonshot model configurations do not claim image support.
-This describes our adapters, not every model supported by those vendors.
-
-The `kimi` and `moonshot` aliases share the Open Platform defaults:
-`kimi-k2.6`, `MOONSHOT_API_KEY`, and `https://api.moonshot.cn/v1`. K2.6 requests
-disable thinking and omit temperature, following its fixed sampling contract.
-The old K2.5 default was retired by the provider on 2026-08-31; an explicitly
-configured model is not silently upgraded. Kimi Code is a separate service and
-is not the default endpoint. See the [current model list](https://platform.kimi.com/docs/models)
-and [K2.6 request contract](https://platform.kimi.com/docs/guide/kimi-k2-6-quickstart).
-Install the existing `llm` extra in an environment that will call real models.
-Local transport tests use the real SDK with in-memory HTTP responses, not a
-paid API or field images; provider availability, recognition accuracy and field
-latency still require separate evidence.
-
-Image and text calls share request handling and preserve the selected model.
-Only final content is consumed as a verdict. Request latency includes dispatch
-and inference waiting, including failures; empty timeout exceptions remain
-explicit errors. Changing providers resets provider-specific defaults unless
-overridden in that request. Stopping cancels pending calls and closes the client;
-reconfiguration closes the retired client.
-
-Native geometric state remains separate from `navigation_goal.verification` in
-`get_planner_status`; Gateway receives verification progress through the existing
-agent-message wire. `object_candidates` and `object_verifications` preserve the
-current instruction's bounded candidate history. A verification timeout during
-re-observation requests scoped native cancellation; its ACK does not prove stop.
-Late REACHED cannot resurrect an expired verification. Paused/recovering native
-tasks retain motion ownership. A new view's admission failure does not trigger
-unbounded LERa recovery.
-
-Memory/frontier goals without a tracked instance still report
-TARGET_VERIFICATION_REQUIRED. Re-observation and alternate observed candidates
-have local contract coverage; recorded-image accuracy, native simulation and field
-motion remain unverified. The candidate fallback is not whole-building search:
-unseen candidates still require the missing frontier/map connection described below.
-
-`FrontierScorer` is an algorithm, not an active map subscriber. The planner's
-private scorer currently has no map-input/update/extraction wiring. Reading
-`center_world` correctly and passing service tests does not make field semantic
-exploration available. `SGNavReasoner` and `verify_and_reselect` likewise have no
-runtime planner callers. Their unit tests prove helpers, not the full search and
-re-observation loop.
-
-`frontiers/vlnav.py` implements the VL-Nav v7 visual/curiosity scoring and
-instance-first candidate ranking. It adapts existing `Frontier` clusters for
-offline experiments and preserves their geometry-provided reference height.
-It does not yet feed the live planner. See [the reproduction record](../../docs/research/vlnav.md)
-for the exact paper equations, deviations, tests, and remaining wiring.
-
-The strategy service regressions use concrete resolver, frontier scorer, and
-action executor instances. Only model responses are replaced for offline tests;
-permissive mocks cannot establish API compatibility or semantic model quality.
-See [the research and integration review](../../research/semantic/navigation_review.md)
-for source-backed method choices and remaining field gates.
-
-## Directory Layout
-
-| Path | Runtime status | Purpose |
+| Capability | Current entry point | Current boundary |
 | --- | --- | --- |
-| `modules/` | Runtime entrypoints | Runtime `Module` classes registered into the blueprint system. |
-| `goals/` | Decision strategy | Fast/slow goal grounding, route selection, SG-Nav helper, tokenizer. |
-| `tasks/` | Decision strategy | Task decomposition, action shaping, agent loop, service wrappers. |
-| `frontiers/` | Decision strategy | Frontier extraction, scoring, and exploration fallback. |
-| `llm/` | Decision utility | LLM clients and prompt builders. |
-| `vision/` | Decision utility | BBox navigation, person tracking, Re-ID, VLM helpers. |
-| `tests/` | Tests | Decision-layer regression tests. |
+| Intent input | `POST /api/v1/instruction`, `MCPServerModule.send_instruction` | Prefers Agent and returns `run_id`; falls back to the semantic stream only when Agent is absent. Admission is not completion. |
+| Agent task | `AgentPlannerModule.run_agent_task` | Returns `run_id`; model/tool loop owns progression. |
+| Agent status/cancel | `get_agent_status`, `cancel_agent_task`; HTTP `/api/v1/agent/runs/{run_id}` and `/cancel` | Current-Host run only. Cancellation is scoped to the referenced run; query domain/native state for physical stop evidence. |
+| Scene read | `get_scene_graph`, `get_scene_objects` | Reads the latest cached observation. |
+| Object query | `detect_objects(query)` | Case-insensitive label matching in cached scene JSON; not a fresh detector call. |
+| Memory query | `query_memory(query)` | Searches available episodic/spatial/vector memory. |
+| Semantic find | `navigate_to_object(instruction)` | Enters the semantic planner and its object grounding/verification path. |
+| Agent object find | Agent `_tool_find_object` in `modules/agent_planner.py` | Sends an owned semantic instruction through the Agent's task path; it is not the MCP visual trigger. |
+| MCP visual find | `VisualServoModule.find_object(target)` | Calls the visual-mode handler with `find:<target>`; it has no find task lifecycle. |
+| Coordinate navigation | `nav.skills.navigate_to`, `POST /api/v1/goal` | Submits a map-frame goal to native navigation. |
+| Plan preview | `POST /api/v1/navigation/plan` | Previews feasibility without publishing a goal. |
+| Native status/control | `get_navigation_status`, task status/cancel/pause/resume routes | Queries or controls native task lifecycle. |
 
-## Strategy Entrypoints
+HTTP routes are in [navigation routes](../gateway/navigation/routes.py). MCP
+discovery and built-in read tools are in [MCP server](../gateway/mcp_server.py).
 
-| Need | Use |
-| --- | --- |
-| Runtime semantic planning | `modules/semantic_planner.py::SemanticPlannerModule` |
-| Near-target visual control | `modules/visual_servo.py::VisualServoModule` |
-| Optional LLM module boundary | `modules/llm.py::LLMModule` |
-| Goal grounding without Module wiring | `goals/resolver.py::GoalResolver` |
-| Fast deterministic goal match | `goals/fast.py` |
-| Slow LLM-backed goal match | `goals/slow.py` |
-| Task decomposition | `tasks/decomposition.py::TaskDecomposer` |
-| Action command shaping | `tasks/actions.py::ActionExecutor` |
-| Frontier fallback scoring | `frontiers/scorer.py::FrontierScorer` |
+## Find and Follow status
 
-Removed compatibility wrappers:
+Follow has a real task lifecycle:
 
-- `GoalResolverModule`
-- `TaskDecomposerModule`
-- `ActionExecutorModule`
-- `FrontierModule`
+```text
+start_follow -> follow_task_id + product_session_id
+             -> get_follow_task
+             -> cancel_follow_task
+             -> cancel request -> native child terminal -> cancellation result
+```
 
-Those names were test-only adapters around the strategy classes. They are not a
-product startup surface anymore.
+The task is retained for the Host's last 64 executions and does not recover
+after a Host restart. Camera restart or map change invalidates stale visual
+decisions and cancels owned navigation goals. Reacquisition requires existing
+identity checks, multiple views, and three consecutive observations. A native
+child arrival is not automatically the domain-level completion of Follow; the
+Follow task has its own state and status. See [person-follow replay notes](../../docs/research/person-follow.md)
+for evidence and limits.
 
-## Product Boundary
+For the recent-paper comparison, current failure cases and proposed changes,
+use the [person tracking development reference](../../docs/research/person-tracking-development-reference.md).
+Its paper mechanisms and external timings do not establish implemented or
+field-qualified behaviour.
 
-Allowed dependencies:
+Follow prepares appearance features outside its lifecycle and tracking state
+locks, then checks the intent generation, observation sequence and freshness
+before committing. Encoding failure does not trigger a second inference under
+the commit lock. The generic single-person shortcut cannot bypass an appearance
+description. These are locally tested contracts; target-platform timing remains
+unqualified.
 
-- `runtime`: Module base class, typed messages, registry, stream ports.
-- `memory`: semantic/tagged/topological memory helpers.
-- `decision.*`: local strategy packages.
+When Agent starts Follow, the sustained domain wait is not charged against the
+finite Agent reasoning/action deadline. Model calls still keep their per-call
+timeout, and ordinary navigation/find actions still keep the Agent task
+deadline. Agent retains the exact `follow_task_id` and reads that same task's
+terminal domain status; it does not infer Follow success or failure from an
+expired reasoning budget. Explicit cancellation remains immediate and scoped.
 
-Forbidden direct dependencies:
+`VisualServoModule.find_object()` is much thinner:
 
-- `drivers`
-- `nav`
-- `gateway`
-- `localization`
+```text
+find_object(target) -> _on_servo_target("find:<target>") -> visual mode
+```
 
-Decision talks to those layers through Module ports and blueprint wires, not by
-importing their implementations.
+It returns a message string and has no dedicated find task ID, task query, or
+task cancellation lifecycle. `get_servo_status()` reports the broader servo
+state. Do not describe this as the same complete lifecycle as Follow.
 
-## Functional Data
+## Perception and semantic grounding
 
-Some Chinese text remains intentionally in functional data:
+`PerceptionModule.observation` carries synchronized image, detections, scene,
+pose, map identity, and source context. Semantic planning checks publication
+order, session, source time, and map binding. An object centroid is not a
+motion goal: the planner proposes nearby map-frame observation positions and
+uses native plan preview before dispatch. Expired or unavailable observations
+do not authorize motion.
 
-- tokenizer vocabulary and bilingual label maps,
-- rule-based Chinese command phrases,
-- Chinese LLM/VLM prompts,
-- tests that verify Chinese instruction handling.
+Object verification is bounded by instruction, candidate history, native task
+ownership, and a verification deadline. Late native receipts and old model
+replies cannot overwrite a newer instruction. The local record is
+`artifacts/semantic-observation-20261016/README.md`; it uses controlled
+detector/native doubles and is not field or learned-model evidence.
 
-Comments and docstrings should be English-only. Do not add explanatory Chinese
-comments back into source code.
+When an object query has no current candidate, SemanticPlanner can request
+observation viewpoints from the native `/nav/semantic/views/request` service.
+The request carries the current map identity, frame epoch, camera range/FoV and
+actual observation history. Every returned candidate still requires native 3D
+plan preview before dispatch. Reaching a search viewpoint only triggers a fresh
+observation; it is never reported as finding the object. The bridge passed
+local Python ABI/lifetime checks, a WSL native build, real CycloneDDS correlated
+request/result and bounded-timeout tests, the existing candidate algorithm,
+and the combined controlled lifecycle regressions. These results do not use a
+real saved production map, verified camera calibration, simulation, or a field robot.
+
+## Strategy packages
+
+| Package | Role | Runtime status |
+| --- | --- | --- |
+| `goals/` | Fast/slow goal grounding and target resolution | Used by semantic planning. |
+| `semantic_navigation/` | Intent/query/observation/execution/verification helpers | Used by semantic navigation; not a separate top-level Module. |
+| `tasks/` | TaskPlan, AgentLoop, and action shaping | Used, but TaskPlan and AgentLoop remain parallel. |
+| `frontiers/` | Frontier extraction/scoring and VL-Nav helpers | Algorithms and experiments; the product search path uses native semantic view queries rather than allowing this Python projection to authorize motion. |
+| `vision/` | Person tracking, VLM helpers, bbox and appearance logic | Used by visual tasks and replay tools. |
+| `llm/` | Model clients and prompt builders | Shared boundary and helper clients; Product wiring depends on RunPlan. |
+
+`FrontierScorer`, `SGNavReasoner`, and `verify_and_reselect` are not proof of a
+live exploration planner merely because unit tests pass. The native semantic
+view bridge is a LingTu product adaptation, not a complete VL-Nav reproduction. See
+the [VL-Nav notes](../../docs/research/vlnav.md) and current [research index](../../docs/research/tasks.md).
+
+## Memory boundary
+
+The system has scene/object memory, vector or episodic lookup, and per-run
+Agent message context. Agent runs are process-local and are not a durable task
+memory record. Search history, excluded candidates, failure reasons, and
+resumable plan steps are not yet unified into persistent task memory that
+automatically feeds replanning.
+
+Keep scene memory separate from task memory:
+
+- Scene memory answers what was observed and where.
+- Task memory answers what this task tried, completed, rejected, or should try next.
+
+Current memory boundaries are in [memory README](../memory/README.md). Research
+and code-audit ordering is tracked in [research tasks](../../docs/research/tasks.md);
+autonomy design notes are in [autonomy design](../../docs/design/autonomy.md).
+
+## Read the code in this order
+
+1. [Semantic planner](modules/semantic_planner.py) -- instruction, grounding, verification, and native feedback.
+2. [Agent Module](modules/agent_planner.py) and [AgentLoop](tasks/agent.py) -- the separate model/tool loop.
+3. [Decomposition](tasks/decomposition.py) -- TaskPlan and symbolic subgoals. [ActionExecutor](tasks/actions.py) shapes commands; it does not execute hardware motion.
+4. [Visual servo](modules/visual_servo.py) -- Follow and the thinner Find trigger.
+5. [semantic task stack](../lingtu/assembly/host/stacks/semantic_tasks.py) and [semantic wires](../lingtu/assembly/host/wiring/semantic.py) -- what is loaded and connected.
+6. [MCP server](../gateway/mcp_server.py) and [navigation routes](../gateway/navigation/routes.py) -- external skills and HTTP boundaries.
+7. [goals](goals/), [semantic_navigation](semantic_navigation/), [frontiers](frontiers/), and [vision](vision/) -- algorithms used by runtime or documented experiments.
+
+## Product boundary
+
+Decision may depend on `runtime`, `memory`, and local `decision.*` strategies.
+It must not import `drivers`, `nav`, `gateway`, or `localization`
+implementations. Cross-layer communication uses typed Module ports and Host
+wires. Native C++ navigation owns the final geometric and motion decision.
+
+Functional Chinese strings remain in tokenizer data, bilingual labels, command
+rules, prompts, and tests. New comments and docstrings should be English.

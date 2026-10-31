@@ -171,7 +171,10 @@ class LiveViewer:
         elif local.get("active"):
             reason = local.get("reason")
             navigation_message = {
-                "autonomy_motion_stalled": "Motion stalled; stopped. Change goal or use keyboard to back away",
+                "execution_stalled": "Motion stalled; stopped. Change goal or use keyboard to back away",
+                "local_blocked": "No reachable local trajectory; change goal or wait for clear space",
+                "local_no_path": "No local trajectory; change goal or wait for clear space",
+                "local_near_field_stop": "Obstacle within local stopping distance; stopped",
                 "scan_initialization_failed": "Local trajectory blocked near robot; back away or change goal",
                 "scan_local_target_blocked": "No reachable local target; change goal or wait for clear space",
             }.get(reason, str(reason or "active"))
@@ -602,7 +605,7 @@ def resolve_physics_timestep(
     policy_path: Path | str,
     physics_timestep_s: float | None = None,
 ) -> float | None:
-    """Resolve the policy's reference timing before the engine is reset."""
+    """Override explicit/legacy timing; otherwise retain the engine's metadata timing."""
     if physics_timestep_s is not None:
         return float(physics_timestep_s)
     if (
@@ -647,7 +650,11 @@ def build_engine(
     from sim.compat.engine.core.world import WorldConfig
     from sim.compat.engine.mujoco.engine import MuJoCoEngine
 
-    robot_cfg = RobotConfig.default_thunder_v4()
+    robot_cfg = (
+        RobotConfig(robot_xml="packages/robots/doso/thunder_v4/mjcf/thunderv4.xml")
+        if policy_path is not None or drive_mode == "kinematic"
+        else RobotConfig.default_thunder_v4()
+    )
     robot_cfg.resolve_paths(base_dir=str(SIM_ROOT))
     if robot_xml is not None:
         robot_cfg.robot_xml = str(robot_xml)

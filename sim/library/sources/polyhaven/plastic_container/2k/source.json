@@ -1,0 +1,40 @@
+{
+  "provider": "Poly Haven",
+  "asset_id": "plastic_container",
+  "name": "Plastic Container",
+  "authors": {
+    "PierreB3D": "All"
+  },
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "source_url": "https://polyhaven.com/a/plastic_container",
+  "resolution": "2k",
+  "model": "plastic_container_2k.gltf",
+  "files": [
+    {
+      "path": "plastic_container_2k.gltf",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/2k/plastic_container/plastic_container_2k.gltf",
+      "bytes": 2820
+    },
+    {
+      "path": "textures/plastic_container_nor_gl_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/plastic_container/plastic_container_nor_gl_2k.jpg",
+      "bytes": 1242854
+    },
+    {
+      "path": "textures/plastic_container_diff_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/plastic_container/plastic_container_diff_2k.jpg",
+      "bytes": 1192199
+    },
+    {
+      "path": "textures/plastic_container_arm_2k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/plastic_container/plastic_container_arm_2k.jpg",
+      "bytes": 1429369
+    },
+    {
+      "path": "plastic_container.bin",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/4k/plastic_container/plastic_container.bin",
+      "bytes": 144324
+    }
+  ]
+}

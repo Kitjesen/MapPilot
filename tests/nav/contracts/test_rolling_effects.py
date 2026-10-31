@@ -3,7 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 NAV_CPP = ROOT / "src" / "nav" / "cpp"
-ROLLING_DIR = NAV_CPP / "endpoint" / "nav" / "runtime" / "rolling"
+ROLLING_DIR = NAV_CPP / "endpoint" / "nav" / "app" / "rolling"
 COORDINATOR_HEADER = ROLLING_DIR / "effects.hpp"
 COORDINATOR_SOURCE = ROLLING_DIR / "effects.cpp"
 COORDINATOR_TEST = ROOT / "tests/nav/cpp/endpoint/test_rolling_segment_effect_coordinator.cpp"
@@ -50,7 +50,7 @@ def test_cmake_registers_portable_effect_coordinator_ctest():
 
 def test_native_endpoint_includes_and_constructs_named_effect_coordinator():
     source = _read(ENDPOINT)
-    assert '#include "runtime/rolling/effects.hpp"' in source
+    assert '#include "app/rolling/effects.hpp"' in source
     assert re.search(
         r"RollingSegmentEffectCoordinator\s+rolling_segment_effect_coordinator\b",
         source,

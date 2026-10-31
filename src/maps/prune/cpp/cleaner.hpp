@@ -20,6 +20,7 @@ struct StaticCleanerOptions {
   float endpoint_margin_m{0.20F};
   float max_ray_length_m{20.0F};
   float voxel_size_m{0.20F};
+  // Legacy input retained for existing callers; geometry owns ground protection.
   float ground_z_threshold{-0.45F};
   float instance_grid_m{0.8F};
   float moving_score_threshold{0.65F};
@@ -47,6 +48,7 @@ struct StaticCleanerResult {
   std::uint64_t source_points{0};
   std::uint64_t kept_points{0};
   std::uint64_t removed_points{0};
+  // Legacy report field; surfaces are now counted in kept_supported_surface_points.
   std::uint64_t kept_ground_points{0};
   std::uint64_t kept_multi_frame_points{0};
   std::uint64_t kept_hit_support_points{0};

@@ -23,11 +23,11 @@ SYNC_PATHS = [
     "sim/scripts/mujoco/continuous_mapping_quality_gate.py",
     "sim/scripts/mujoco/native_dds_sensors.py",
 
-    "src/localization/fastlio2/config/sim_mid360_slam.yaml",
-    "src/localization/fastlio2/config/sim_mid360_slam_tight.yaml",
+    "src/localization/ltlio/config/sim_mid360_slam.yaml",
+    "src/localization/ltlio/config/sim_mid360_slam_tight.yaml",
 ]
-DEFAULT_SLAM_CONFIG = ROOT / "src" / "localization" / "fastlio2" / "config" / "sim_mid360_slam.yaml"
-VEL_TIGHT_SLAM_CONFIG = ROOT / "src" / "localization" / "fastlio2" / "config" / "sim_mid360_slam_tight.yaml"
+DEFAULT_SLAM_CONFIG = ROOT / "src" / "localization" / "ltlio" / "config" / "sim_mid360_slam.yaml"
+VEL_TIGHT_SLAM_CONFIG = ROOT / "src" / "localization" / "ltlio" / "config" / "sim_mid360_slam_tight.yaml"
 
 
 @dataclass(frozen=True)
@@ -352,7 +352,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--slam-config",
         default=str(DEFAULT_SLAM_CONFIG),
-        help="Fast-LIO yaml on the dev machine; synced to sunrise before run.",
+        help="LTLIO yaml on the dev machine; synced to sunrise before run.",
     )
     run_parser.add_argument("--no-sync", action="store_true")
     run_parser.add_argument("--no-kill-stale", action="store_true", help="Do not pkill prior gate SLAM on this domain.")

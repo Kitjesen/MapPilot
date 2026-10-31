@@ -1,15 +1,15 @@
-"""lingtu.core — lazily loaded Module orchestration framework facade.
+"""runtime — lazily loaded Module orchestration framework facade.
 
 Core components:
 - transport — Process-local Module transport (Transport, LocalTransport)
 - msgs      — Unified message types (Vector3, Odometry, SceneGraph, ...)
 - stream    — Typed data-flow ports (Out[T], In[T]) and transport abstraction
 - module    — Module base class with automatic port scanning
-- blueprint — Declarative orchestration blueprint (Blueprint, autoconnect, SystemHandle)
+- host      — In-process Host assembly (HostBuilder, autoconnect, SystemHandle)
 - config    — Typed RobotConfig loader
 - clock     — Switchable real-time / simulation clock
 Importing a contract submodule such as :mod:`lingtu.assembly.graph.processes` must not
-load Blueprint or construct the Module framework.  Public facade symbols stay
+load HostBuilder or construct the Module framework.  Public facade symbols stay
 source-compatible and are imported only when requested.
 """
 
@@ -19,7 +19,7 @@ import importlib
 from typing import Any
 
 __all__ = [
-    "Blueprint",
+    "HostBuilder",
     "Buffer",
     "Clock",
     "ConnectivityException",
@@ -54,9 +54,9 @@ __all__ = [
 
 
 _LAZY_EXPORTS = {
-    "Blueprint": (".blueprint", "Blueprint"),
-    "SystemHandle": (".blueprint", "SystemHandle"),
-    "autoconnect": (".blueprint", "autoconnect"),
+    "HostBuilder": (".host", "HostBuilder"),
+    "SystemHandle": (".host", "SystemHandle"),
+    "autoconnect": (".host", "autoconnect"),
     "Clock": (".clock", "Clock"),
     "clock": (".clock", "clock"),
     "RobotConfig": (".config", "RobotConfig"),
@@ -94,7 +94,7 @@ def __getattr__(name: str) -> Any:
         value = getattr(importlib.import_module(module_name, package=__name__), attribute)
         globals()[name] = value
         return value
-    raise AttributeError(f"module 'core' has no attribute {name!r}")
+    raise AttributeError(f"module 'runtime' has no attribute {name!r}")
 
 
 def __dir__() -> list[str]:

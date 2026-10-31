@@ -1,0 +1,26 @@
+{
+  "status": "passed",
+  "objects": 25,
+  "moving_parts": [
+    "service_door/panel_right",
+    "right lower kickplate",
+    "right inset panel",
+    "right hinge.002",
+    "right hinge.001",
+    "right hinge",
+    "right handle base",
+    "right handle",
+    "service_door/panel_left",
+    "left lower kickplate",
+    "left inset panel",
+    "left hinge.002",
+    "left hinge.001",
+    "left hinge",
+    "left handle base",
+    "left handle"
+  ],
+  "source_geometry_unchanged": true,
+  "duration_s": 6,
+  "fps": 30,
+  "ue_validated": false
+}

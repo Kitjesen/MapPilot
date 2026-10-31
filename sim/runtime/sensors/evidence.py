@@ -9,13 +9,16 @@ exact route compiled into the SensorPlan.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from typing import Any
 
 from .contracts import SensorStreamPlan
+from .gnss import GnssConfig
+from .noise import RangeNoiseConfig
 from .runtime import SensorRuntime
 
 _SCHEMA = "lingtu.sim.sensor-stream-summary.v1"
-_STATES = frozenset({"UNBOUND", "PREPARED", "ACTIVE", "FAILED"})
+_STATES = frozenset({"UNBOUND", "PREPARED", "ACTIVE", "DISABLED", "FAILED"})
 _OBSERVATION_FIELDS = frozenset(
     {
         "sensor_id",
@@ -318,6 +321,25 @@ def _validate_fidelity(
     *,
     state: str,
 ) -> dict[str, Any] | None:
+    if stream.stream_kind == "gnss":
+        if raw is None and state != "ACTIVE":
+            return None
+        if (type(raw) is not dict or set(raw) != {"qualification", "measurement_model", "fix_type", "configuration"}
+                or raw.get("qualification") != "EXPERIMENTAL"
+                or raw.get("measurement_model") != "wgs84_enu_gaussian"):
+            raise SensorEvidenceError(f"{sensor_id} requires explicit experimental GNSS fidelity evidence")
+        try:
+            config = GnssConfig.from_mapping(raw["configuration"])
+        except ValueError as exc:
+            raise SensorEvidenceError(f"{sensor_id}: {exc}") from exc
+        if stream.gnss is None or replace(
+            config, noise_enabled=stream.gnss.noise_enabled,
+            fix_available=stream.gnss.fix_available,
+        ) != stream.gnss:
+            raise SensorEvidenceError(f"{sensor_id} GNSS configuration does not match its plan")
+        if type(raw["fix_type"]) is not int or raw["fix_type"] != (8 if config.fix_available else 0):
+            raise SensorEvidenceError(f"{sensor_id} GNSS fix quality contradicts its model configuration")
+        return dict(raw)
     if stream.stream_kind != "mid360":
         if raw is not None:
             raise SensorEvidenceError(
@@ -331,7 +353,7 @@ def _validate_fidelity(
         }
     if type(raw) is not dict:
         raise SensorEvidenceError(f"{sensor_id} requires explicit Mid360 fidelity evidence")
-    unknown = sorted(set(raw) - _MID360_EVIDENCE_FIELDS)
+    unknown = sorted(set(raw) - (_MID360_EVIDENCE_FIELDS | {"range_noise"}))
     missing = sorted(_MID360_EVIDENCE_FIELDS - set(raw))
     if unknown or missing:
         detail = []
@@ -346,7 +368,7 @@ def _validate_fidelity(
             raise SensorEvidenceError(
                 f"{sensor_id} Mid360 {field} must disclose {expected!r}"
             )
-    return {
+    document: dict[str, Any] = {
         "qualification": _MID360_FIDELITY["qualification"],
         "reflectivity_semantics": _MID360_FIDELITY["reflectivity_semantics"],
         "scan_time_profile": _MID360_FIDELITY["scan_time_profile"],
@@ -355,6 +377,20 @@ def _validate_fidelity(
         ],
         "limitations": list(_MID360_FIDELITY["limitations"]),
     }
+    if "range_noise" not in raw:
+        if stream.range_noise != RangeNoiseConfig():
+            raise SensorEvidenceError(f"{sensor_id} requires explicit range_noise evidence")
+        return document
+    try:
+        noise = RangeNoiseConfig.from_mapping(raw["range_noise"])
+    except ValueError as exc:
+        raise SensorEvidenceError(f"{sensor_id}: {exc}") from exc
+    if (noise.stddev_m, noise.seed) != (stream.range_noise.stddev_m, stream.range_noise.seed):
+        raise SensorEvidenceError(f"{sensor_id} range_noise parameters do not match the compiled plan")
+    # The explicit owner-thread switch may change enabled, but not model/seed.
+    document["range_noise"] = noise.to_dict()
+    document["limitations"].append("range_noise_is_an_uncalibrated_saturated_gaussian_model")
+    return document
 
 
 def _missing_stream_document(

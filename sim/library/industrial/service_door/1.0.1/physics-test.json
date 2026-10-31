@@ -1,0 +1,19 @@
+{
+  "engine": "3.10.0",
+  "joints": [
+    {
+      "angle_rad": 1.9199940115490404,
+      "joint": "service_door/hinge_left",
+      "upper_limit_rad": 1.919862
+    },
+    {
+      "angle_rad": 1.9199940115490404,
+      "joint": "service_door/hinge_right",
+      "upper_limit_rad": 1.919862
+    }
+  ],
+  "passed": true,
+  "reset_passed": true,
+  "scope": "standalone_headless_design_model",
+  "ue_validated": false
+}

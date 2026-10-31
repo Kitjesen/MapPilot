@@ -128,7 +128,7 @@ inspection::Executor makeActionPendingExecutor() {
 
   inspection::Executor executor;
   std::string error;
-  require(executor.Start(route, "run-1", "factory", 7, 0.0, &error), "inspection route must start");
+  require(executor.Start(route, "task-1", "factory", 7, 0.0, &error), "inspection route must start");
   require(executor.OnPlanningStarted(0.1), "planning start");
   require(executor.OnPlanReady(0.2), "plan ready");
   executor.OnGoalReached(1.0);
@@ -223,20 +223,18 @@ void testRequestStatusAndMatchedResultHandshake() {
   }
   require(request_wire.request_id != nullptr, "evidence request must arrive");
   require(std::string(request_wire.request_id) == request->request_id, "request id");
-  require(std::string(request_wire.run_id) == "run-1", "run id");
+  require(std::string(request_wire.task_id) == "task-1", "task id");
   require(std::string(request_wire.route_id) == "route-1", "route id");
-  require(request_wire.revision == 3, "route revision");
+  require(request_wire.route_revision == 3, "route revision");
   require(std::string(request_wire.map_id) == "factory", "map id");
   require(request_wire.map_content_epoch == 7, "map version");
   require(request_wire.point_index == 0, "point index");
-  require(std::string(request_wire.point_id) == "bin-a", "point id");
   require(std::string(request_wire.action) == "capture:bin_full", "action");
   require(request_wire.deadline_s > 1.61, "deadline");
   dds_free(request_wire.request_id);
-  dds_free(request_wire.run_id);
+  dds_free(request_wire.task_id);
   dds_free(request_wire.route_id);
   dds_free(request_wire.map_id);
-  dds_free(request_wire.point_id);
   dds_free(request_wire.action);
 
   require(executor.OnActionStarted(request->request_id, 1.70),
@@ -255,9 +253,8 @@ void testRequestStatusAndMatchedResultHandshake() {
   require(status_wire.phase_started_at == 1.70, "status phase start");
   require(status_wire.stable_since > 0.0, "status stable since");
   require(status_wire.deadline > status_wire.phase_started_at, "status deadline");
-  dds_free(status_wire.run_id);
+  dds_free(status_wire.task_id);
   dds_free(status_wire.route_id);
-  dds_free(status_wire.point_id);
   dds_free(status_wire.action);
   dds_free(status_wire.action_request_id);
   dds_free(status_wire.evidence_id);

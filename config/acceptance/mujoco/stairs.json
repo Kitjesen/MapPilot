@@ -1,0 +1,96 @@
+{
+  "schema_version": "lingtu.mujoco.native_navigation_acceptance.v1",
+  "name": "mujoco_stair_model_sequence",
+  "description": "Native nav + SCAN with measured stair map and real ONNX handoffs; MuJoCo truth localization, experimental Thunder models only.",
+  "product_contract": {
+    "product": "nav",
+    "route": "standard",
+    "source": "config/system/products/nav.yaml",
+    "native_control_mode": "autonomy",
+    "slam_mode": "localization",
+    "requires_map": true
+  },
+  "navigation_runtime": {
+    "local_planner": "scan"
+  },
+  "localization": "mujoco_truth",
+  "scene_contract": {
+    "world": "stair_showcase@1.0.0"
+  },
+  "initial_pose": [
+    -1.0,
+    0.0,
+    0.465,
+    0.0
+  ],
+  "goal": [
+    5.9,
+    0.0,
+    1.155
+  ],
+  "goal_world": [
+    5.9,
+    0.0,
+    1.155
+  ],
+  "goals": [
+    {
+      "id": "up",
+      "goal": [
+        5.9,
+        0.0,
+        1.155
+      ],
+      "goal_world": [
+        5.9,
+        0.0,
+        1.155
+      ],
+      "profile_sequence": [
+        "stairs_up",
+        "restore"
+      ]
+    },
+    {
+      "id": "down",
+      "goal": [
+        -1.0,
+        0.0,
+        0.465
+      ],
+      "goal_world": [
+        -1.0,
+        0.0,
+        0.465
+      ],
+      "profile_sequence": [
+        "stairs_down",
+        "restore"
+      ]
+    }
+  ],
+  "motion_duration_s": 90.0,
+  "thresholds": {
+    "startup_timeout_s": 30.0,
+    "startup_ready_stable_s": 1.0,
+    "min_motion_m": 1.0,
+    "min_net_displacement_m": 1.0,
+    "max_goal_error_m": 0.5,
+    "min_input_gate_ready_fraction": 0.98,
+    "max_goal_height_error_m": 0.15
+  },
+  "acceptance_scope": {
+    "coverage": "component",
+    "claims": [
+      "native navigation goal and stair profile handoff around MuJoCo physical actuation",
+      "XYZ arrival and original loaded model restoration recorded per stair leg"
+    ],
+    "excluded_claims": [
+      "SLAM robustness",
+      "real robot stair capability",
+      "qualified stair locomotion model",
+      "full Product regression and rollback suite"
+    ]
+  },
+  "simulation_session": "sim/sessions/examples/thunderv4_stairs/session.yaml"
+}

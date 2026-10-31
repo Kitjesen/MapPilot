@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
+
 from lingtu.sim.viewer_goal import ViewerGoal, world_point_to_map
 
 
@@ -160,9 +162,9 @@ def test_stale_or_missing_localization_never_submits(bridge, tmp_path, change):
 
 def test_missing_odometry_reports_actual_slam_failure_before_submission(bridge, tmp_path):
     snapshot = slam_snapshot()
-    snapshot.update(has_odom=False, state="LOST", reason="fastlio_lidar_update_rejected_streak")
+    snapshot.update(has_odom=False, state="LOST", reason="ltlio_lidar_update_rejected_streak")
     (tmp_path / "slam.status.json").write_text(json.dumps(snapshot))
-    with pytest.raises(ValueError, match="LOST / fastlio_lidar_update_rejected_streak"):
+    with pytest.raises(ValueError, match="LOST / ltlio_lidar_update_rejected_streak"):
         bridge.submit(np.zeros(3))
     assert bridge._future is None
 
@@ -310,7 +312,7 @@ def test_lost_http_reply_is_reported_as_unknown_and_not_retried(bridge, monkeypa
 
 
 def test_compiled_truth_navigation_uses_world_goal_without_slam_file(tmp_path, monkeypatch):
-    from lingtu.assembly.compiler import compile_run_plan
+    from lingtu.assembly.compile_plan import compile_run_plan
 
     plan = compile_run_plan("nav", "sim", robot="doso/thunder_v4", env_config={"backend": "mujoco", "localization": "truth"})
     goal = ViewerGoal(plan, tmp_path, "test-session")

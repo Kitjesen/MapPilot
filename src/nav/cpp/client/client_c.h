@@ -38,6 +38,7 @@ enum {
   LINGTU_NAV_CLIENT_CAP_TRAVERSABILITY_GRID = 1ULL << 14,
   LINGTU_NAV_CLIENT_CAP_PLAN_PREVIEW = 1ULL << 15,
   LINGTU_NAV_CLIENT_CAP_JOINT_STATE = 1ULL << 16,
+  LINGTU_NAV_CLIENT_CAP_SEMANTIC_VIEW_QUERY = 1ULL << 17,
 };
 
 enum {
@@ -53,7 +54,7 @@ enum {
   LINGTU_NAV_OPERATOR_MOTION_RECEIPT_ABI_VERSION = 1,
   LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION = 1,
   LINGTU_NAV_NAVIGATION_GOAL_STATUS_ABI_VERSION = 1,
-  LINGTU_NAV_INSPECTION_TASK_EVENT_ABI_VERSION = 1,
+  LINGTU_NAV_INSPECTION_TASK_EVENT_ABI_VERSION = 3,
   LINGTU_NAV_EXPLORATION_COMMAND_RECEIPT_ABI_VERSION = 1,
   LINGTU_NAV_EXPLORATION_RUN_EVENT_ABI_VERSION = 2,
   LINGTU_NAV_TRAVERSABILITY_GRID_ABI_VERSION = 1,
@@ -61,7 +62,46 @@ enum {
   LINGTU_NAV_PLAN_RESULT_ABI_VERSION = 1,
   LINGTU_NAV_JOINT_STATE_ABI_VERSION = 1,
   LINGTU_NAV_JOINT_STATE_MAX_JOINTS = 12,
+  LINGTU_NAV_SEMANTIC_VIEW_ABI_VERSION = 1,
+  LINGTU_NAV_SEMANTIC_VIEW_MAX_VIEWS = 256,
+  LINGTU_NAV_SEMANTIC_VIEW_MAX_CANDIDATES = 16,
 };
+
+typedef struct lingtu_nav_semantic_camera_view_v1 {
+  double x;
+  double y;
+  double yaw;
+  double range_m;
+  double horizontal_fov_rad;
+} lingtu_nav_semantic_camera_view_v1;
+
+typedef struct lingtu_nav_semantic_view_candidate_v1 {
+  double x;
+  double y;
+  double z;
+  double yaw;
+  double score;
+  double route_cost_m;
+  uint32_t visible_cells;
+} lingtu_nav_semantic_view_candidate_v1;
+
+typedef struct lingtu_nav_semantic_view_result_v1 {
+  uint32_t abi_version;
+  uint32_t struct_size;
+  double timestamp_s;
+  char frame_id[32];
+  char request_id[128];
+  char boot_id[128];
+  char map_id[128];
+  int64_t map_content_epoch;
+  unsigned long long frame_epoch;
+  double reference_z;
+  int32_t available;
+  int32_t geometry_exhausted;
+  char reason[256];
+  uint32_t candidate_count;
+  lingtu_nav_semantic_view_candidate_v1 candidates[LINGTU_NAV_SEMANTIC_VIEW_MAX_CANDIDATES];
+} lingtu_nav_semantic_view_result_v1;
 
 typedef struct lingtu_nav_joint_state_v1 {
   uint32_t abi_version;
@@ -136,6 +176,8 @@ typedef struct lingtu_nav_navigation_goal_status_v1 {
 // One immutable inspection task fact. This is intentionally separate from
 // the legacy InspectionStatus snapshot and remains append-only under its own
 // feature capability.
+// The exported symbol keeps its v1 name; the numeric version rejects older
+// layouts after redundant live identity fields were removed.
 typedef struct lingtu_nav_inspection_task_event_v1 {
   uint32_t abi_version;
   uint32_t struct_size;
@@ -146,7 +188,6 @@ typedef struct lingtu_nav_inspection_task_event_v1 {
   int32_t kind;
   char task_id[128];
   char request_id[128];
-  char command_request_id[128];
   int32_t state;
   char map_id[128];
   int64_t map_content_epoch;
@@ -156,7 +197,6 @@ typedef struct lingtu_nav_inspection_task_event_v1 {
   uint32_t point_count;
   uint32_t loop_index;
   uint32_t retry_count;
-  char point_id[128];
   char action[128];
   char action_request_id[128];
   char evidence_id[128];
@@ -415,6 +455,23 @@ LINGTU_NAV_CLIENT_API int lingtu_nav_client_preview_plan_v2(
     lingtu_nav_plan_result_v1* result,
     lingtu_nav_path_point* points,
     unsigned long long point_capacity);
+
+// Runs one read-only native 3D semantic observation query. The fixed result
+// contains at most 16 candidates; no motion is authorized by this operation.
+LINGTU_NAV_CLIENT_API int lingtu_nav_client_query_semantic_views_v1(
+    lingtu_nav_client_handle handle,
+    const char* boot_id,
+    const char* map_id,
+    int64_t map_content_epoch,
+    const char* frame_id,
+    unsigned long long frame_epoch,
+    double reference_z,
+    double camera_range_m,
+    double camera_horizontal_fov_rad,
+    const lingtu_nav_semantic_camera_view_v1* views,
+    uint32_t view_count,
+    int timeout_ms,
+    lingtu_nav_semantic_view_result_v1* result);
 
 // Cancels the task identified by task_id. Returns 0 after a correlated ACK,
 // including accepted=false. Transport, timeout, and argument errors return -1.

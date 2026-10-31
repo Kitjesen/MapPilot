@@ -79,6 +79,8 @@ class OperatorMotionAuthority {
   OperatorMotionReceipt hold(const OperatorMotionRelease &hold);
   OperatorMotionReceipt tick(double now_monotonic_s);
   OperatorMotionReceipt completeZeroBarrier(bool zero_published);
+  // Explicit autonomous resume calls this only after its confirmed zero.
+  void releaseAfterStop();
 
   OperatorMotionSnapshot snapshot() const;
 
@@ -100,6 +102,7 @@ class OperatorMotionAuthority {
   OperatorMotionReceipt reject(std::string reason);
   bool commandIsFinite(const nav_kernel::Twist &command) const;
   bool hasLiveAuthority(double now_monotonic_s) const;
+  bool releaseUnusedAuthority();
   void enterZeroBarrier(ZeroBarrierDisposition disposition);
   OperatorMotionReceipt requireZeroBarrier(std::string reason, ZeroBarrierDisposition disposition);
   void refreshLease(double receive_monotonic_s);

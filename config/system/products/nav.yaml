@@ -1,0 +1,234 @@
+schema_version: lingtu.runtime_graph.product.v3
+name: nav
+default_variant: standard
+variants:
+  standard: {}
+  camera:
+    # Operator video preview only. Navigation still consumes LiDAR geometry.
+    require_map_scene: false
+    processes: [lidar, imu, slam, maps, nav, driver, camera, video, host]
+    optional_processes: [video]
+    topics:
+      - /tf
+      - /slam/odometry
+      - /slam/registered_cloud
+      - /slam/map_observation
+      - /slam/map_geometry_snapshot
+      - /slam/map_geometry_applied
+      - /slam/map_cloud
+      - /slam/localization_health
+      - /maps/state
+      - /maps/scene
+      - /maps/activation/request
+      - /maps/activation/ack
+      - /nav/command/request
+      - /nav/command/ack
+      - /nav/goal/status
+      - /nav/state
+      - /nav/operator_motion/control
+      - /nav/operator_motion/sample
+      - /nav/operator_motion/ack
+      - /nav/operator_motion/status
+      - /nav/global_path
+      - /nav/local_path
+      - /nav/way_point
+      - /nav/cmd_vel
+      - /camera/color/image_raw
+      - /camera/depth/image_raw
+      - /camera/color/camera_info
+    capabilities:
+      - saved_map_relocalization
+      - octoplanner3d_global_planning
+      - local_planner_collision_scoring
+      - path_follower_pre_command_output
+      - final_cmd_vel_single_writer
+      - operator_motion_typed_dds_interface
+      - native_operator_motion_authority
+      - operator_teleop_takeover_with_safety_veto
+      - operator_assisted_local_planner_takeover
+      - camera_preview
+  semantic:
+    # RGB-D semantic perception and language planning over native navigation.
+    processes: [lidar, imu, slam, maps, nav, driver, camera, video, host]
+    optional_processes: [video]
+    topics:
+      - /tf
+      - /slam/odometry
+      - /slam/registered_cloud
+      - /slam/map_observation
+      - /slam/map_geometry_snapshot
+      - /slam/map_geometry_applied
+      - /slam/map_cloud
+      - /slam/localization_health
+      - /maps/state
+      - /maps/scene
+      - /maps/activation/request
+      - /maps/activation/ack
+      - /nav/command/request
+      - /nav/command/ack
+      - /nav/goal/status
+      - /nav/state
+      - /nav/operator_motion/control
+      - /nav/operator_motion/sample
+      - /nav/operator_motion/ack
+      - /nav/operator_motion/status
+      - /nav/global_path
+      - /nav/local_path
+      - /nav/way_point
+      - /nav/cmd_vel
+      - /nav/semantic/views/request
+      - /nav/semantic/views/result
+      - /camera/color/image_raw
+      - /camera/depth/image_raw
+      - /camera/color/camera_info
+    capabilities:
+      - saved_map_relocalization
+      - octoplanner3d_global_planning
+      - local_planner_collision_scoring
+      - path_follower_pre_command_output
+      - final_cmd_vel_single_writer
+      - operator_motion_typed_dds_interface
+      - native_operator_motion_authority
+      - operator_teleop_takeover_with_safety_veto
+      - operator_assisted_local_planner_takeover
+      - camera_preview
+    host:
+      capabilities:
+        - gateway
+        - operator_motion
+        - navigation_skills
+        - goal_commands
+        - semantic
+        - semantic_planning
+      detector: yolo_world
+      llm: kimi
+      llm_model: kimi-k3
+      llm_base_url: https://api.moonshot.cn/v1
+      llm_api_key_env: MOONSHOT_API_KEY
+      llm_timeout_sec: 30.0
+      default_classes: person . bottle . cup
+      run_startup_checks: true
+    critical_modules:
+      - host.bus
+      - SlamAdapterModule
+      - nav.commands
+      - nav.goals
+      - PerceptionModule
+      - LLMModule
+      - SemanticPlannerModule
+      - AgentPlannerModule
+      - VisualServoModule
+      - GatewayModule
+topics:
+  - /tf
+  - /slam/odometry
+  - /slam/registered_cloud
+  - /slam/map_observation
+  - /slam/map_geometry_snapshot
+  - /slam/map_geometry_applied
+  - /slam/map_cloud
+  - /slam/localization_health
+  - /maps/state
+  - /maps/scene
+  - /maps/activation/request
+  - /maps/activation/ack
+  - /nav/command/request
+  - /nav/command/ack
+  - /nav/goal/status
+  - /nav/state
+  - /nav/operator_motion/control
+  - /nav/operator_motion/sample
+  - /nav/operator_motion/ack
+  - /nav/operator_motion/status
+  - /nav/global_path
+  - /nav/local_path
+  - /nav/way_point
+  - /nav/cmd_vel
+capabilities:
+  - saved_map_relocalization
+  - octoplanner3d_global_planning
+  - local_planner_collision_scoring
+  - path_follower_pre_command_output
+  - final_cmd_vel_single_writer
+  - operator_motion_typed_dds_interface
+  - native_operator_motion_authority
+  - operator_teleop_takeover_with_safety_veto
+  - operator_assisted_local_planner_takeover
+summary: Saved-map autonomous navigation through native localization, native DDS SLAM, OctoPlanner3D, C++ LocalPlanner, and gated command output.
+operator_switchable: true
+session_mode: navigating
+default_for_session_mode: true
+native_control_mode: autonomy
+slam_mode: localization
+requires_map: true
+switch_policy: cold_restart
+online_hot_switch_supported: false
+host:
+  capabilities: [gateway, operator_motion, navigation_skills, goal_commands]
+  run_startup_checks: true
+native_nav:
+  # Match SCAN's upstream 100 Hz FSM and closed-loop controller cadence.
+  tick_hz: 100.0
+  global_planner: octoplanner3d
+  local_planner: scan
+  local_planners: [cmu, scan]
+  use_traversability_cost: false
+  corridor_lookahead_m: 3.5
+  goal_reached_m: 0.15
+  goal_height_tolerance_m: 0.35
+  # Do not report a route as feasible when its snapped endpoint stops short
+  # of the clicked goal beyond the execution arrival threshold.
+  octoplanner3d_terminal_goal_tolerance_m: 0.15
+  octoplanner3d_terminal_goal_xy_tolerance_m: 0.15
+  octoplanner3d_terminal_goal_z_tolerance_m: 0.15
+  waypoint_reached_m: 0.20
+  path_follower_goal_tolerance_m: 0.15
+  path_follower_lookahead_m: 0.35
+  # The command contract is expressed per body axis (1 m/s for x and y).
+  # Keep the norm limit at sqrt(2) so a diagonal x=1,y=1 command is not
+  # compressed back to a 1 m/s total-speed cap.
+  path_follower_max_speed_mps: 1.4142135623730951
+  path_follower_min_speed_mps: 0.08
+  path_follower_max_accel_mps2: 4.0
+  path_follower_max_yaw_accel_rad_s2: 4.0
+  braking_deceleration_mps2: 4.0
+  teleop_max_speed_mps: 1.0
+  teleop_max_yaw_rate_rad_s: 1.0
+  path_follower_max_yaw_rate_rad_s: 1.0
+  path_follower_heading_align_enter_rad: 0.7853981633974483
+  path_follower_heading_align_exit_rad: 0.35
+  recovery:
+    behavior_order: [translate, rotate]
+    blocked_interval_s: 2.0
+    rotation_timeout_s: 2.5
+    translation_timeout_s: 1.5
+    max_attempts: 3
+    translation_speed_mps: 0.50
+    rotation_rate_rad_s: 0.80
+    min_rotation_rad: 0.20
+    max_rotation_rad: 1.20
+    rotation_candidate_step_rad: 0.20
+    rotation_sample_step_rad: 0.05
+  allow_teleop_takeover: true
+  teleop_local_planner: true
+parameters:
+  # Keep planner and follower on the same 1 m/s-per-axis motion contract.
+  scan_follower.max_vx_mps: 1.0
+  scan_follower.max_vy_mps: 1.0
+  scan_planner.acceleration_tolerance: 1.2
+processes:
+  - lidar
+  - imu
+  - slam
+  - maps
+  - nav
+  - driver
+  - host
+critical_modules:
+  - host.bus
+  - SlamAdapterModule
+  - nav.commands
+  - nav.goals
+  - GatewayModule
+forbidden_modules:
+  - SimEndpointDriverModule

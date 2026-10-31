@@ -68,7 +68,7 @@ def planner(monkeypatch):
     module.nav_command.subscribe(collect)
     module.planner_status._add_callback(statuses.append)
     module.servo_target._add_callback(servo.append)
-    module.robot_pose._deliver(PoseStamped(Pose(), ts=100.0, frame_id="map"))
+    module._on_robot_pose(PoseStamped(Pose(), ts=100.0, frame_id="map"))
     module._on_scene_graph(_scene())
     yield module, goals, cancels, statuses, servo
     module.stop()
@@ -257,7 +257,7 @@ def test_rejected_goal_is_not_reported_as_resolved_or_repeated(planner):
     module._test_commands.mode = "reject"
     module.instruction._deliver("find chair")
     module._goal_resolver.fast_resolve.return_value.position = [3, 0, 0]
-    module.scene_graph._deliver(_scene())
+    module._on_scene_graph(_scene())
     assert len(goals) == 1
     assert statuses[-1] == "NAVIGATION_REJECTED"
     assert module._active_goal.terminal
@@ -268,7 +268,7 @@ def test_lost_ack_cannot_start_another_goal_or_servo(planner):
     module._test_commands.mode = "timeout"
     module.instruction._deliver("find chair")
     module._goal_resolver.fast_resolve.return_value = None
-    module.scene_graph._deliver(_scene())
+    module._on_scene_graph(_scene())
     assert len(goals) == 1
     assert servo == []
     assert statuses[-1] == "NAVIGATION_UNCONFIRMED"
@@ -285,7 +285,7 @@ def test_arrival_ends_geometric_task_without_inventing_object_verification(plann
                                      instruction="find chair", purpose=purpose)
     _native(module, NavigationGoalState.REACHED)
     module._goal_resolver.fast_resolve.return_value.position = [3, 0, 0]
-    module.scene_graph._deliver(_scene())
+    module._on_scene_graph(_scene())
     assert len(goals) == 1
     assert statuses[-1] == expected
     assert module._active_goal.terminal
@@ -312,7 +312,7 @@ def test_external_cancel_with_a_new_request_id_ends_owned_task(planner):
     result = module._test_service.submit_cancel("web_cancel", task_id=goals[-1]["task_id"], request_id="web-cancel")
     assert result["accepted"] is True
     _native(module, NavigationGoalState.CANCELLED, request_id="web-cancel")
-    module.scene_graph._deliver(_scene())
+    module._on_scene_graph(_scene())
     assert statuses[-1] == "CANCELLED"
     assert len(goals) == 1
 
@@ -394,14 +394,14 @@ def test_native_pause_or_recovery_defers_scene_goal_updates(planner, lifecycle):
         boot_id="test-nav", sequence=1, lifecycle_state=lifecycle,
         active_task_id=original["task_id"], active_request_id=original["request_id"],
     ))
-    module.scene_graph._deliver(_scene(x=3))
+    module._on_scene_graph(_scene(x=3))
     assert len(goals) == 1
     assert servo == []
     module.navigation_state._deliver(NavigationState(
         boot_id="test-nav", sequence=2, lifecycle_state=NavigationLifecycle.EXECUTING,
         active_task_id=original["task_id"], active_request_id=original["request_id"],
     ))
-    module.scene_graph._deliver(_scene(x=3))
+    module._on_scene_graph(_scene(x=3))
     assert len(goals) == 2
 
 
@@ -409,10 +409,10 @@ def test_goal_pause_cannot_be_undone_by_scene_update(planner):
     module, goals, _, _, _ = planner
     module.instruction._deliver("find chair")
     _native(module, NavigationGoalState.PAUSED)
-    module.scene_graph._deliver(_scene(x=3))
+    module._on_scene_graph(_scene(x=3))
     assert len(goals) == 1
     _native(module, NavigationGoalState.PATH_ACTIVE, sequence=2)
-    module.scene_graph._deliver(_scene(x=3))
+    module._on_scene_graph(_scene(x=3))
     assert len(goals) == 2
 
 
@@ -428,7 +428,7 @@ def test_map_or_native_restart_invalidates_cached_goal(planner, changed):
     ))
     module.instruction._deliver("find chair")
     module.navigation_state._deliver(NavigationState(**{"boot_id": "test-nav", "sequence": 2, **changed}))
-    module.scene_graph._deliver(_scene())
+    module._on_scene_graph(_scene())
     assert len(goals) == 1
     assert cancels[-1]["task_id"] == goals[-1]["task_id"]
     assert statuses[-1] == "NAVIGATION_CONTEXT_CHANGED"
@@ -444,8 +444,8 @@ def test_failed_goal_retries_only_with_fresh_scene(planner, monkeypatch):
     _native(module, NavigationGoalState.FAILED)
     assert len(goals) == 1
     assert statuses[-1] == "WAITING_FOR_FRESH_SCENE_GRAPH"
-    module.robot_pose._deliver(PoseStamped(Pose(), ts=105.0, frame_id="map"))
-    module.scene_graph._deliver(_scene(ts=105.0))
+    module._on_robot_pose(PoseStamped(Pose(), ts=105.0, frame_id="map"))
+    module._on_scene_graph(_scene(ts=105.0))
     assert len(goals) == 2
     assert goals[-1]["task_id"] != goals[0]["task_id"]
 
@@ -458,7 +458,7 @@ def test_unknown_recovery_strategy_cannot_restart_on_next_scene(planner, monkeyp
                         lambda *, target, args, **kw: SimpleNamespace(start=lambda: target(*args)))
     _native(module, NavigationGoalState.FAILED)
     module._goal_resolver.fast_resolve.return_value.position = [3, 0, 0]
-    module.scene_graph._deliver(_scene())
+    module._on_scene_graph(_scene())
     assert statuses[-1] == "ABORTED"
     assert len(goals) == 1
 
@@ -469,7 +469,7 @@ def test_failed_cancelled_goal_cannot_restart_on_next_scene(planner):
     module._cancel_owned_goals("operator_cancel")
     _native(module, NavigationGoalState.FAILED)
     module._goal_resolver.fast_resolve.return_value.position = [3, 0, 0]
-    module.scene_graph._deliver(_scene())
+    module._on_scene_graph(_scene())
     assert len(goals) == 1
     assert statuses[-1] == "NAVIGATION_FAILED"
 
@@ -484,12 +484,92 @@ def test_new_goal_stops_prior_visual_following(planner):
     assert len(goals) == 1
 
 
+def test_owned_follow_cancel_waits_for_its_native_child_terminal(planner):
+    module, _, _, _, _ = planner
+    module._on_instruction("follow person", owner_id="agent-follow")
+    ref = module._follow_ref.copy()
+    visual = module._test_visual
+    child_id = "follow-child-1"
+    with visual._state_lock:
+        visual._navigation_tasks.add(child_id)
+        visual._navigation_task_id = child_id
+        visual._navigation_state = "path_active"
+        visual._follow_tasks[ref["follow_task_id"]]["children"][child_id] = {
+            "state": "path_active",
+            "terminal": False,
+            "cancel_state": "none",
+        }
+
+    assert module.cancel_owned_instruction("agent-follow", "agent_user_cancel") is True
+    pending = module.owned_instruction_status("agent-follow")
+    assert pending["state"] == "CANCELLING"
+    assert pending["stop_confirmed"] is False
+    assert pending["follow_task_id"] == ref["follow_task_id"]
+
+    visual._on_navigation_goal_status(NavigationGoalStatus(
+        ts=100.0,
+        frame_id="map",
+        boot_id="test-nav",
+        sequence=1,
+        goal_epoch=1,
+        task_id=child_id,
+        request_id="follow-child-request",
+        state=NavigationGoalState.CANCELLED,
+    ))
+    stopped = module.owned_instruction_status("agent-follow")
+    assert stopped["state"] == "CANCELLED"
+    assert stopped["terminal"] is True
+    assert stopped["stop_confirmed"] is True
+
+
+def test_old_owned_cancel_terminal_cannot_change_replacement(planner):
+    module, goals, _, _, _ = planner
+    module._nav_goal_service_available = True
+    module.submit_owned_pose(
+        PoseStamped(Pose(1, 2, 0.3), ts=100.0, frame_id="map"),
+        "visit old",
+        "agent-old",
+    )
+    old = goals[-1]
+    assert module.cancel_owned_instruction("agent-old", "agent_replaced") is True
+
+    module.submit_owned_pose(
+        PoseStamped(Pose(4, 5, 0.3), ts=100.0, frame_id="map"),
+        "visit replacement",
+        "agent-new",
+    )
+    new = goals[-1]
+    _native(module, NavigationGoalState.CANCELLED, command=old, sequence=1)
+
+    assert module.owned_instruction_status("agent-old")["state"] == "SUPERSEDED"
+    current = module.owned_instruction_status("agent-new")
+    assert current["owned"] is True
+    assert current["task_id"] == new["task_id"]
+    assert current["terminal"] is False
+
+
+def test_owned_navigation_status_exposes_native_failure_reason(planner):
+    module, _, _, _, _ = planner
+    module._nav_goal_service_available = True
+    module._test_commands.mode = "reject"
+
+    status = module.submit_owned_pose(
+        PoseStamped(Pose(1, 2, 0.3), ts=100.0, frame_id="map"),
+        "visit blocked target",
+        "agent-blocked",
+    )
+
+    assert status["state"] == "rejected"
+    assert status["terminal"] is True
+    assert "localization_unavailable" in status["reason"]
+
+
 def test_visual_fallback_is_a_handoff_not_a_repeated_command(planner):
     module, _, _, _, servo = planner
     module._goal_resolver.fast_resolve.return_value = None
     module.instruction._deliver("find chair")
-    module.scene_graph._deliver(_scene())
-    module.scene_graph._deliver(_scene())
+    module._on_scene_graph(_scene())
+    module._on_scene_graph(_scene())
     assert servo == ["find:find chair"]
     module.stop()
     assert servo[-1] == "stop"
@@ -586,7 +666,7 @@ def test_retry_failure_before_worker_returns_is_not_lost(planner, monkeypatch):
 ])
 def test_scene_grounding_requires_fresh_finite_map_pose(planner, frame, stamp, x):
     module, goals, _, statuses, servo = planner
-    module.robot_pose._deliver(PoseStamped(Pose(Vector3(x, 0, 0)), ts=stamp, frame_id=frame))
+    module._on_robot_pose(PoseStamped(Pose(Vector3(x, 0, 0)), ts=stamp, frame_id=frame))
     module.instruction._deliver("find chair")
     module._goal_resolver.fast_resolve.assert_not_called()
     assert goals == []
@@ -597,7 +677,7 @@ def test_scene_grounding_requires_fresh_finite_map_pose(planner, frame, stamp, x
 def test_map_pose_expiry_is_checked_again_when_resolving(planner, monkeypatch):
     module, goals, _, statuses, _ = planner
     monkeypatch.setattr("decision.modules.semantic_planner.time.time", lambda: 105.0)
-    module.scene_graph._deliver(_scene(ts=105.0))
+    module._on_scene_graph(_scene(ts=105.0))
     module.instruction._deliver("find chair")
     assert goals == []
     assert statuses[-1] == "WAITING_FOR_MAP_POSE"

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan
 from lingtu.real.backend import FieldBackend
 
 ROOT = Path(__file__).resolve().parents[3]

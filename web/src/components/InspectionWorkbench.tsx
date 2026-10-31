@@ -32,11 +32,14 @@ import { text, type Locale } from '../i18n'
 import * as api from '../services/api'
 import { isObservationMode } from '../services/observationMode.ts'
 import styles from './InspectionWorkbench.module.css'
+import MeasurementInspector from './MeasurementInspector'
 
 interface InspectionWorkbenchProps {
   sseState: SSEState
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void
   locale: Locale
+  initialRouteId?: string | null
+  onShowRoute?: (route: InspectionRoute) => void
 }
 
 type BusyAction = 'load' | 'save' | 'start' | 'pause' | 'resume' | 'cancel' | 'release' | 'delete' | null
@@ -48,6 +51,13 @@ const INSPECTION_ACTION_OPTIONS = [
   'capture:parking',
   'capture:bin_full',
   'capture:plate_ocr',
+  'capture:indicator_on',
+  'capture:indicator_off',
+  'capture:indicator_green',
+  'capture:indicator_red',
+  'capture:indicator_yellow',
+  'capture:door_open',
+  'capture:door_closed',
 ]
 
 function sessionActiveMap(sseState: SSEState): string {
@@ -79,15 +89,32 @@ function taskTruthLabel(task: InspectionTaskStatusResponse | null, locale: Local
 function inspectionTaskStateLabel(state: string, locale: Locale): string {
   const labels: Record<string, [string, string]> = {
     ACCEPTED: ['Waiting to start', '等待开始'],
+    PLANNING: ['Planning', '规划中'],
+    EXECUTING: ['Running', '执行中'],
+    RECOVERING: ['Recovering', '正在脱困'],
+    WAITING_NEXT_LOOP: ['Waiting for next round', '等待下一轮'],
     RUNNING: ['Running', '执行中'],
     PAUSED: ['Paused', '已暂停'],
     SUCCEEDED: ['Completed', '已完成'],
     COMPLETED: ['Completed', '已完成'],
+    SUCCESS: ['Completed', '已完成'],
     FAILED: ['Failed', '失败'],
     CANCELLED: ['Cancelled', '已取消'],
   }
   const label = labels[state]
   return label ? text(locale, label[0], label[1]) : state
+}
+
+function inspectionTaskLabel(task: InspectionTaskStatusResponse, locale: Locale): string {
+  if (task.current_state === 'PAUSED' && [
+    'restart_resume_required', 'restart_loop_wait_resume_required',
+  ].includes(task.reason)) {
+    return text(locale, 'Restarted · waiting to continue', '重启后等待继续')
+  }
+  if (Number(task.latest_event?.state) === 14 && task.current_state === 'EXECUTING') {
+    return text(locale, 'Waiting for next round', '等待下一轮')
+  }
+  return inspectionTaskStateLabel(task.current_state, locale)
 }
 
 function evidenceWorkerFromStatus(status: Record<string, unknown>): InspectionEvidenceWorkerStatus {
@@ -122,13 +149,19 @@ function routePointFromLocation(location: LocationEntry): InspectionRoutePoint {
     yaw: location.yaw ?? null,
     tolerance: 0.35,
     dwell: 3,
-    action: '',
+    action: 'capture:overview',
     enabled: true,
   }
 }
 
 function routePointKey(point: InspectionRoutePoint, index: number): string {
   return `${point.id}:${index}`
+}
+
+function standbyPointIndex(points: InspectionRoutePoint[]): number {
+  const last = points.at(-1)
+  return last && last.action === '' && (last.id === 'standby' || /^route-standby(?:-\d+)?$/.test(last.id))
+    ? points.length - 1 : -1
 }
 
 function locationIsBoundToRoute(
@@ -178,6 +211,20 @@ function inspectionActionLabel(action: string, locale: Locale): string {
       return text(locale, 'Bin status', '料箱状态')
     case 'capture:plate_ocr':
       return text(locale, 'Identifier OCR', '标识识别')
+    case 'capture:indicator_on':
+      return text(locale, 'Indicator expected on', '指示灯亮')
+    case 'capture:indicator_off':
+      return text(locale, 'Indicator expected off', '指示灯灭')
+    case 'capture:indicator_green':
+      return text(locale, 'Indicator expected green', '指示灯绿')
+    case 'capture:indicator_red':
+      return text(locale, 'Indicator expected red', '指示灯红')
+    case 'capture:indicator_yellow':
+      return text(locale, 'Indicator expected yellow', '指示灯黄')
+    case 'capture:door_open':
+      return text(locale, 'Cabinet door expected open', '柜门打开')
+    case 'capture:door_closed':
+      return text(locale, 'Cabinet door expected closed', '柜门关闭')
     case '':
       return text(locale, 'None', '无')
     default:
@@ -187,6 +234,11 @@ function inspectionActionLabel(action: string, locale: Locale): string {
 
 function inspectionVerdictLabel(verdict: string, locale: Locale): string {
   switch (verdict.toLowerCase()) {
+    case 'anomaly':
+      return text(locale, 'Anomaly', '异常')
+    case 'needs_review':
+    case 'not_evaluated':
+      return text(locale, 'Needs review', '需复核')
     case 'violation':
       return text(locale, 'Needs review', '需复核')
     case 'ok':
@@ -194,6 +246,7 @@ function inspectionVerdictLabel(verdict: string, locale: Locale): string {
     case 'pass':
       return text(locale, 'Normal', '正常')
     case 'inconclusive':
+      return text(locale, 'Not readable', '未读到')
     case 'unknown':
       return text(locale, 'Uncertain', '不确定')
     default:
@@ -201,31 +254,28 @@ function inspectionVerdictLabel(verdict: string, locale: Locale): string {
   }
 }
 
-function inspectionReportStatusLabel(status: string, locale: Locale): string {
-  switch (status) {
-    case 'COMPLETE':
-      return text(locale, 'Complete', '完整')
-    case 'PARTIAL':
-      return text(locale, 'Partial', '部分完成')
-    case 'IN_PROGRESS':
-      return text(locale, 'In progress', '进行中')
-    case 'FAILED':
-      return text(locale, 'Failed', '失败')
-    case 'CANCELLED':
-      return text(locale, 'Cancelled', '已取消')
-    default:
-      return text(locale, 'Unknown', '未知')
+function inspectionResultLabel(result: string, locale: Locale): string {
+  const labels: Record<string, [string, string]> = {
+    NOT_REQUIRED: ['No inspection required', '无检查动作'],
+    IN_PROGRESS: ['Inspection in progress', '检查进行中'],
+    NEEDS_REVIEW: ['Needs review', '需复核'],
+    NORMAL: ['Normal', '正常'],
+    ANOMALY: ['Anomaly found', '发现异常'],
+    INCONCLUSIVE: ['Not readable', '未读到'],
+    NOT_INSPECTED: ['Not inspected', '未检查'],
   }
+  const label = labels[result]
+  return label ? text(locale, label[0], label[1]) : text(locale, 'Awaiting result', '等待结果')
 }
 
 function inspectionAcceptanceLabel(status: string, locale: Locale): string {
   switch (status) {
     case 'ACCEPTABLE':
-      return text(locale, 'Acceptable', '可验收')
+      return text(locale, 'Complete records', '资料完整')
     case 'REVIEW_REQUIRED':
       return text(locale, 'Review required', '需要复核')
     case 'NOT_ACCEPTABLE':
-      return text(locale, 'Not acceptable', '不可验收')
+      return text(locale, 'Incomplete records', '资料未齐')
     case 'PENDING':
       return text(locale, 'Pending', '等待完成')
     default:
@@ -237,6 +287,14 @@ function inspectionPointResultLabel(status: string, locale: Locale): string {
   switch (status) {
     case 'COMPLETED':
       return text(locale, 'Complete', '已完成')
+    case 'SKIPPED':
+      return text(locale, 'Skipped', '已跳过')
+    case 'FAILED':
+      return text(locale, 'Failed', '失败')
+    case 'CANCELLED':
+      return text(locale, 'Cancelled', '已取消')
+    case 'NOT_VISITED':
+      return text(locale, 'Not visited', '未执行')
     case 'IN_PROGRESS':
       return text(locale, 'In progress', '执行中')
     case 'PENDING':
@@ -280,6 +338,10 @@ function inspectionReportIssueLabel(
       return text(locale, 'Evidence is invalid at ' + point + '.', point + ' 的证据无效。')
     case 'unavailable_evidence':
       return text(locale, 'Evidence is unavailable at ' + point + '.', point + ' 的证据不可用。')
+    case 'point_skipped':
+      return text(locale, point + ' was skipped.', point + ' 已跳过。')
+    case 'point_outcome_unknown':
+      return text(locale, point + ' has no confirmed completion.', point + ' 缺少完成记录。')
     default:
       return text(locale, 'This result needs operator review.', '此结果需要人工复核。')
   }
@@ -320,7 +382,7 @@ function upsertInspectionTask(
   return [snapshot, ...tasks.filter(task => task.task_id !== snapshot.task_id)].slice(0, 12)
 }
 
-export function InspectionWorkbench({ sseState, showToast, locale }: InspectionWorkbenchProps) {
+export function InspectionWorkbench({ sseState, showToast, locale, initialRouteId, onShowRoute }: InspectionWorkbenchProps) {
   const observe = isObservationMode()
   const [mapId, setMapId] = useState(() => sessionActiveMap(sseState))
   const [routeId, setRouteId] = useState('route-1')
@@ -329,12 +391,13 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
   const [revision, setRevision] = useState(1)
   const [savedRevision, setSavedRevision] = useState(0)
   const [loopCount, setLoopCount] = useState(1)
+  const [loopInterval, setLoopInterval] = useState(0)
   const [failurePolicy, setFailurePolicy] = useState<InspectionFailurePolicy>('stop')
   const [maxRetries, setMaxRetries] = useState(0)
   const [points, setPoints] = useState<InspectionRoutePoint[]>([])
   const [routes, setRoutes] = useState<InspectionRoute[]>([])
   const [locations, setLocations] = useState<LocationsResponse | null>(null)
-  const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
+  const [selectedRouteId, setSelectedRouteId] = useState<string | null>(initialRouteId ?? null)
   const [status, setStatus] = useState<Record<string, unknown>>({})
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
   const [taskStatus, setTaskStatus] = useState<InspectionTaskStatusResponse | null>(null)
@@ -344,6 +407,9 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
   const [manualTakeoverReleasedForTask, setManualTakeoverReleasedForTask] = useState<string | null>(null)
   const [evidenceItems, setEvidenceItems] = useState<InspectionEvidenceSummary[]>([])
   const [evidenceIntegrityFailures, setEvidenceIntegrityFailures] = useState(0)
+  const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({})
+  const [reviewErrors, setReviewErrors] = useState<Record<string, string>>({})
+  const [reviewBusyId, setReviewBusyId] = useState<string | null>(null)
   const [busy, setBusy] = useState<BusyAction>(null)
   const [error, setError] = useState<string | null>(null)
   const [taskReadError, setTaskReadError] = useState<string | null>(null)
@@ -361,13 +427,33 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
     () => routes.find(route => route.id === selectedRouteId) ?? null,
     [routes, selectedRouteId],
   )
+  const routeMatchesActiveMap = Boolean(selectedRoute?.map_id)
+    && selectedRoute?.map_id === sessionActiveMap(sseState)
+  const editorHasUnsavedChanges = selectedRoute !== null && (
+    routeId !== selectedRoute.id
+    || routeName !== (selectedRoute.name || selectedRoute.id)
+    || mapId !== (selectedRoute.map_id || '')
+    || mapVersion !== Number(selectedRoute.map_content_epoch ?? 1)
+    || revision !== nextRevision(selectedRoute)
+    || loopCount !== Number(selectedRoute.loop_count ?? 1)
+    || loopInterval !== Number(selectedRoute.loop_interval_s ?? 0)
+    || failurePolicy !== (selectedRoute.failure_policy || 'stop')
+    || maxRetries !== Number(selectedRoute.max_retries ?? 0)
+    || points !== selectedRoute.points
+  )
 
   const enabledPointCount = points.filter(point => point.enabled).length
+  const standbyIndex = standbyPointIndex(points)
+  const standbyPoint = standbyIndex >= 0 ? points[standbyIndex] : null
+  const devicePoints = standbyPoint ? points.slice(0, -1) : points
+  const standbyLocations = (locations?.locations ?? []).filter(location => locationIsBoundToRoute(location, mapId, mapVersion))
+  const matchedStandbyLocation = standbyPoint && standbyLocations.find(location =>
+    location.x === standbyPoint.x && location.y === standbyPoint.y && (location.z ?? 0) === standbyPoint.z,
+  )
   const taskProgress = taskStatus?.progress
   const taskPointNumber = taskProgress?.current_point_number ?? null
-  const taskPointTotal = taskProgress?.point_count ?? 0
-  const progressLabel = taskProgress?.known && taskPointNumber !== null && taskPointTotal > 0
-    ? `${Math.min(taskPointNumber, taskPointTotal)}/${taskPointTotal}`
+  const progressLabel = taskReport
+    ? `${taskReport.coverage.completed_points}/${taskReport.coverage.required_points}`
     : '--'
   const taskStillOpen = (activeTaskId !== null && taskStatus?.terminal !== true)
     || inspectionTasks.some(task => !task.terminal)
@@ -395,6 +481,7 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
 
   const applyRouteToEditor = useCallback((route: InspectionRoute) => {
     const currentRevision = Number(route.revision ?? 0)
+    setRoutes(current => current.map(item => item.id === route.id ? route : item))
     setSelectedRouteId(route.id)
     setRouteId(route.id)
     setRouteName(route.name || route.id)
@@ -403,6 +490,7 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
     setSavedRevision(Number.isInteger(currentRevision) && currentRevision > 0 ? currentRevision : 0)
     setRevision(nextRevision(route))
     setLoopCount(Number(route.loop_count ?? 1))
+    setLoopInterval(Number(route.loop_interval_s ?? 0))
     setFailurePolicy((route.failure_policy as InspectionFailurePolicy) || 'stop')
     setMaxRetries(Number(route.max_retries ?? 0))
     setPoints(route.points ?? [])
@@ -504,11 +592,10 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
         ? text(locale, 'Inspection service is unavailable (HTTP 502). Check Gateway and refresh.', '巡检服务暂时不可用（HTTP 502），请检查 Gateway 后刷新。')
         : err instanceof Error ? err.message : String(err)
       setError(message)
-      showToast(message, 'error')
     } finally {
       setBusy(null)
     }
-  }, [applyRouteToEditor, locale, mapId, selectInspectionTask, selectedRouteId, showToast])
+  }, [applyRouteToEditor, locale, mapId, selectInspectionTask, selectedRouteId])
 
   useEffect(() => {
     void load()
@@ -526,6 +613,49 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
     }, 2000)
     return () => window.clearInterval(timer)
   }, [inspectionAvailability])
+
+  const reviewEvidence = useCallback(async (
+    evidence: InspectionEvidenceSummary,
+    verdict: 'normal' | 'anomaly' | 'inconclusive',
+  ) => {
+    const evidenceId = evidence.evidence_id
+    const selectedTaskId = activeTaskIdRef.current
+    setReviewBusyId(evidenceId)
+    setReviewErrors(current => ({ ...current, [evidenceId]: '' }))
+    try {
+      const response = await api.reviewInspectionEvidence(evidenceId, {
+        verdict, note: reviewNotes[evidenceId] ?? evidence.review?.note ?? '',
+      })
+      setEvidenceItems(current => current.map(item => item.evidence_id === evidenceId ? response.evidence : item))
+      showToast(text(locale, 'Review saved', '复核已保存'), 'success')
+      const [evidenceRefresh, reportRefresh] = await Promise.allSettled([
+        api.fetchInspectionEvidence(12),
+        selectedTaskId ? api.fetchInspectionTaskReport(selectedTaskId) : Promise.resolve(null),
+      ])
+      if (evidenceRefresh.status === 'fulfilled') {
+        setEvidenceItems(evidenceRefresh.value.evidence)
+        setEvidenceIntegrityFailures(evidenceRefresh.value.integrity_failures)
+        setEvidenceReadError(null)
+      } else {
+        setEvidenceReadError(String(evidenceRefresh.reason))
+      }
+      if (activeTaskIdRef.current === selectedTaskId) {
+        if (reportRefresh.status === 'fulfilled') {
+          setTaskReport(reportRefresh.value)
+          setTaskReportError(null)
+        } else {
+          setTaskReport(null)
+          setTaskReportError(inspectionReportErrorLabel(reportRefresh.reason, locale))
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setReviewErrors(current => ({ ...current, [evidenceId]: message }))
+      showToast(text(locale, 'Review was not saved: ', '复核未保存：') + message, 'error')
+    } finally {
+      setReviewBusyId(null)
+    }
+  }, [locale, reviewNotes, showToast])
 
   useEffect(() => {
     if (!activeTaskId) return
@@ -639,17 +769,52 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
     }
   }, [applyRouteToEditor, mapId, showToast])
 
+  const showSelectedRouteOnMap = useCallback(async () => {
+    if (!selectedRoute || !onShowRoute || editorHasUnsavedChanges || !routeMatchesActiveMap) return
+    setBusy('load')
+    try {
+      const detail = await api.fetchInspectionRoute(selectedRoute.id, selectedRoute.map_id || null)
+      onShowRoute(detail.route)
+      setError(null)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setError(message)
+      showToast(message, 'error')
+    } finally {
+      setBusy(null)
+    }
+  }, [editorHasUnsavedChanges, onShowRoute, routeMatchesActiveMap, selectedRoute, showToast])
+
   const addLocation = useCallback((location: LocationEntry) => {
     setPoints(current => {
       if (current.some(point => point.id === location.name)) return current
-      return [...current, routePointFromLocation(location)]
+      const standby = standbyPointIndex(current)
+      return standby >= 0
+        ? [...current.slice(0, standby), routePointFromLocation(location), current[standby]]
+        : [...current, routePointFromLocation(location)]
     })
   }, [])
+
+  const selectStandby = useCallback((name: string) => {
+    setPoints(current => {
+      const existingIndex = standbyPointIndex(current)
+      const ordinary = existingIndex >= 0 ? current.slice(0, existingIndex) : current
+      if (!name) return ordinary
+      if (name === '__saved_standby__') return current
+      const location = locations?.locations.find(item => item.name === name)
+      if (!location) return current
+      let id = existingIndex >= 0 ? current[existingIndex].id : 'route-standby'
+      let suffix = 2
+      while (ordinary.some(point => point.id === id)) id = `route-standby-${suffix++}`
+      return [...ordinary, { ...routePointFromLocation(location), id, action: '', dwell: 0, enabled: true }]
+    })
+  }, [locations])
 
   const movePoint = useCallback((index: number, delta: -1 | 1) => {
     setPoints(current => {
       const nextIndex = index + delta
-      if (nextIndex < 0 || nextIndex >= current.length) return current
+      const deviceCount = standbyPointIndex(current) >= 0 ? current.length - 1 : current.length
+      if (nextIndex < 0 || nextIndex >= deviceCount) return current
       const next = [...current]
       const [item] = next.splice(index, 1)
       next.splice(nextIndex, 0, item)
@@ -675,6 +840,7 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
         map_content_epoch: Math.max(0, Math.trunc(mapVersion)),
         revision: Math.max(1, Math.trunc(revision)),
         loop_count: Math.max(1, Math.trunc(loopCount)),
+        loop_interval_s: loopInterval,
         failure_policy: failurePolicy,
         max_retries: Math.max(0, Math.trunc(maxRetries)),
         points,
@@ -691,7 +857,7 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
     } finally {
       setBusy(null)
     }
-  }, [failurePolicy, load, locale, loopCount, mapId, mapVersion, maxRetries, points, revision, routeId, routeName, showToast])
+  }, [failurePolicy, load, locale, loopCount, loopInterval, mapId, mapVersion, maxRetries, points, revision, routeId, routeName, showToast])
 
   const runAction = useCallback(async (
     action: Exclude<BusyAction, 'load' | 'save' | 'delete' | null>,
@@ -828,6 +994,8 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
         </div>
       </header>
 
+      <MeasurementInspector locale={locale} />
+
       {busy === 'load' && (
         <div className={styles.readNotice} role="status">{text(locale, 'Refreshing inspection data…', '正在读取巡检数据…')}</div>
       )}
@@ -872,10 +1040,33 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
               {routes.map(route => <option key={route.id} value={route.id}>{route.name || route.id}</option>)}
             </select>
           </label>
-          <span className={styles.routeMeta}>{selectedRoute
-            ? `${selectedRoute.map_id} · ${selectedRoute.point_count ?? selectedRoute.points.length} ${text(locale, 'points', '个点位')}`
-            : observe ? text(locale, 'No saved route', '暂无已保存路线')
-              : text(locale, 'Save a route in the editor below', '在下方编辑并保存路线')}</span>
+          <div className={styles.routeContext}>
+            <span className={styles.routeMeta}>{selectedRoute
+              ? `${selectedRoute.map_id} · v${selectedRoute.map_content_epoch ?? '--'} · ${selectedRoute.point_count ?? selectedRoute.points.length} ${text(locale, 'points', '个点位')}`
+              : observe ? text(locale, 'No saved route', '暂无已保存路线')
+                : text(locale, 'Save a route in the editor below', '在下方编辑并保存路线')}</span>
+            {onShowRoute && selectedRoute && <>
+              <button
+                type="button"
+                className={styles.showRouteButton}
+                onClick={() => void showSelectedRouteOnMap()}
+                disabled={busy !== null || editorHasUnsavedChanges || !routeMatchesActiveMap}
+                aria-describedby="inspection-route-map-note"
+              >
+                <MapPin size={15} aria-hidden="true" />
+                {observe
+                  ? text(locale, 'View on map', '在地图中查看')
+                  : text(locale, 'View / edit on map', '在地图中查看/编辑')}
+              </button>
+              <small id="inspection-route-map-note" className={styles.routeMapNote}>
+                {editorHasUnsavedChanges
+                  ? text(locale, 'Save your edits below before opening this route on the map.', '请先保存下方编辑，再打开地图中的路线。')
+                  : !routeMatchesActiveMap
+                    ? text(locale, 'Select this route’s map in map tools first.', '请先在地图工具中切换到该路线绑定的地图。')
+                    : text(locale, 'Opens the saved route without starting a task.', '打开已保存路线，不会启动任务。')}
+              </small>
+            </>}
+          </div>
         </div>
         <div className={styles.taskSelection}>
           <label>
@@ -887,25 +1078,32 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
               {activeTaskId && !inspectionTasks.some(task => task.task_id === activeTaskId) &&
                 <option value={activeTaskId}>{text(locale, 'Awaiting task confirmation', '等待任务确认')}</option>}
               {inspectionTasks.map(task => <option key={task.task_id} value={task.task_id}>
-                {`${routes.find(route => route.id === task.identity.route_id)?.name || task.identity.route_id || text(locale, 'Route', '路线')} · ${inspectionTaskStateLabel(task.current_state, locale)} · ${taskEventTimestamp({ ts: task.updated_at }, locale)}`}
+                {`${routes.find(route => route.id === task.identity.route_id)?.name || task.identity.route_id || text(locale, 'Route', '路线')} · ${inspectionTaskLabel(task, locale)} · ${taskEventTimestamp({ ts: task.updated_at }, locale)}`}
               </option>)}
             </select>
           </label>
           <div className={styles.taskState}>
             <span>{text(locale, 'Task state', '任务状态')}</span>
-            <strong>{taskStatus ? inspectionTaskStateLabel(taskStatus.current_state, locale)
+            <strong>{taskStatus ? inspectionTaskLabel(taskStatus, locale)
               : activeTaskId || taskReadError || error || inspectionAvailability !== 'available'
                 ? text(locale, 'Unconfirmed', '待确认') : text(locale, 'Not started', '未开始')}</strong>
             {activeTaskId && <small role="status">{taskReadError ? text(locale, 'State may be stale', '状态可能已过期') : taskTruthLabel(taskStatus, locale)}</small>}
           </div>
           {activeTaskId && <div className={styles.taskProgress}>
-            <span>{text(locale, 'Route progress', '路线进度')}</span>
+            <span>{text(locale, 'Completed points', '已完成点位')}</span>
             <strong>{progressLabel}</strong>
-            <small>{text(locale, 'Current point', '当前点')} · {statusText(taskProgress?.current_point_id)}</small>
+            {taskProgress?.known && taskPointNumber !== null && <small>
+              {text(locale, 'Current point', '当前点')} · {taskPointNumber} · {statusText(taskProgress.current_point_id)}
+            </small>}
+            {taskProgress?.known && taskProgress.loop_number != null && <small>
+              {text(locale, 'Loop', '当前循环')} · {taskProgress.loop_number}
+            </small>}
           </div>}
         </div>
         {taskStatus && ['FAILED', 'PAUSED'].includes(taskStatus.current_state) && taskStatus.reason &&
-          <p className={styles.runReason} role="status">{taskStatus.reason}</p>}
+          <p className={styles.runReason} role="status">{taskStatus.reason.startsWith('restart_')
+            ? text(locale, 'Progress was retained. Continue when the robot is ready.', '已保留任务进度，机器人就绪后可继续。')
+            : taskStatus.reason}</p>}
         {!observe && <div className={styles.runControls}>
             {!taskStillOpen && <button
               type="button"
@@ -933,7 +1131,7 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
                 <Play size={15} />{text(locale, 'Release manual control', '释放人工接管')}
               </button>
             )}
-            {taskStatus?.current_state === 'PAUSED' && <button type="button" onClick={() => void runAction('resume', resumeRoute)} disabled={inspectionAvailability !== 'available' || busy !== null || !taskStatus?.can_resume || manualTakeoverReleaseRequired || Boolean(taskReadError || statusReadError)}>
+            {taskStatus?.current_state === 'PAUSED' && <button type="button" onClick={() => void runAction('resume', resumeRoute)} disabled={inspectionAvailability !== 'available' || busy !== null || !taskStatus?.can_resume || manualTakeoverReleaseRequired}>
               <RotateCcw size={15} />{text(locale, 'Resume', '恢复')}
             </button>}
             <button type="button" className={styles.cancelButton} onClick={() => void runAction('cancel', cancelRoute)} disabled={inspectionAvailability !== 'available' || busy !== null || !taskStatus?.can_cancel}>
@@ -954,11 +1152,11 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
                 : taskReportError
                 ? text(locale, 'Unavailable', '暂不可用')
                 : taskReport
-                  ? inspectionReportStatusLabel(taskReport.report_status, locale)
+                  ? inspectionResultLabel(taskReport.inspection_result.status, locale)
                   : text(locale, 'Awaiting report', '等待报告')}</strong>
             </div>
             <div>
-              <span>{text(locale, 'Acceptance', '验收结论')}</span>
+              <span>{text(locale, 'Record completeness', '资料完整性')}</span>
               <strong>{!activeTaskId
                 ? text(locale, 'No task selected', '未选择任务')
                 : taskReportError
@@ -974,13 +1172,27 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
                 : '--'}</strong>
             </div>
           </div>
+          {taskReport && <div className={styles.coverageSummary} aria-label={text(locale, 'Point coverage', '点位完成情况')}>
+            <span>{text(locale, 'Completed', '完成')} {taskReport.coverage.completed_points}/{taskReport.coverage.required_points}</span>
+            <span>{text(locale, 'Skipped', '跳过')} {taskReport.coverage.skipped_points}</span>
+            <span>{text(locale, 'Not visited', '未执行')} {taskReport.coverage.not_visited_points}</span>
+            {(taskReport.coverage.failed_points > 0 || taskReport.coverage.cancelled_points > 0) &&
+              <span>{text(locale, 'Interrupted', '中断')} {taskReport.coverage.failed_points + taskReport.coverage.cancelled_points}</span>}
+          </div>}
+          {taskReport && <div className={styles.coverageSummary} aria-label={text(locale, 'Inspection coverage', '检查完成情况')}>
+            <span>{text(locale, 'Normal', '正常')} {taskReport.inspection_result.normal_points}</span>
+            <span>{text(locale, 'Anomaly', '异常')} {taskReport.inspection_result.anomaly_points}</span>
+            <span>{text(locale, 'Needs review', '待复核')} {taskReport.inspection_result.unreviewed_points}</span>
+            <span>{text(locale, 'Not readable', '未读到')} {taskReport.inspection_result.inconclusive_points}</span>
+            <span>{text(locale, 'Not inspected', '未检查')} {taskReport.inspection_result.not_inspected_points}</span>
+          </div>}
         </div>
       </section>
 
       {activeTaskId && <details className={styles.reportPanel}>
         <summary>
           <span>{text(locale, 'Inspection result', '巡检结果')}</span>
-          <span>{taskReportError ? text(locale, 'Unavailable', '暂不可用') : inspectionAcceptanceLabel(taskReport?.acceptance ?? 'UNKNOWN', locale)}</span>
+          <span>{taskReportError ? text(locale, 'Unavailable', '暂不可用') : inspectionResultLabel(taskReport?.inspection_result.status ?? '', locale)}</span>
         </summary>
         <div className={styles.statusBand}>
           <div>
@@ -989,10 +1201,10 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
           </div>
           <div>
             <span>{text(locale, 'Inspection result', '巡检结果')}</span>
-            <strong>{inspectionReportStatusLabel(taskReport?.report_status ?? 'UNKNOWN', locale)}</strong>
+            <strong>{inspectionResultLabel(taskReport?.inspection_result.status ?? '', locale)}</strong>
           </div>
           <div>
-            <span>{text(locale, 'Acceptance', '验收结论')}</span>
+            <span>{text(locale, 'Record completeness', '资料完整性')}</span>
             <strong>{inspectionAcceptanceLabel(taskReport?.acceptance ?? 'UNKNOWN', locale)}</strong>
           </div>
           <div>
@@ -1050,6 +1262,7 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
                   </div>
                   <span>{inspectionActionLabel(point.action, locale)}</span>
                   <em>{inspectionPointResultLabel(point.status, locale)}</em>
+                  <small>{inspectionResultLabel(point.inspection_result, locale)}</small>
                   {point.evidence_id && (
                     <details className={styles.inlineDetails}>
                       <summary>{text(locale, 'Evidence ID', '证据 ID')}</summary>
@@ -1079,8 +1292,8 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
           <AlertTriangle size={16} />
           <span>{text(
             locale,
-            'Event history is incomplete. Controls remain disabled until native reconciliation is available.',
-            '任务事件历史不完整。在原生端完成对账前，控制操作将保持禁用。',
+            'Some task records are missing; the report needs review.',
+            '部分历史记录缺失，报告需复核。',
           )}</span>
         </div>
       )}
@@ -1095,11 +1308,13 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
         <div className={styles.evidenceGrid}>
           {evidenceItems.map(evidence => {
             const request = evidence.request
-            const verdict = statusText(evidence.analysis.verdict, 'inconclusive')
+            const verdict = evidence.review?.verdict
+              ?? (['unavailable', 'not_applicable'].includes(evidence.analysis.support ?? '')
+                ? 'needs_review' : statusText(evidence.analysis.verdict, 'needs_review'))
             const verdictLabel = inspectionVerdictLabel(verdict, locale)
             const rgbUrl = api.inspectionEvidenceArtifactUrl(evidence.evidence_id, 'rgb')
             return (
-              <article key={evidence.evidence_id} className={styles.evidenceCard}>
+              <article key={evidence.evidence_id} className={styles.evidenceCard} aria-busy={reviewBusyId === evidence.evidence_id}>
                 {hasEvidenceArtifact(evidence, 'rgb') ? (
                   <a
                     className={styles.evidencePreview}
@@ -1108,7 +1323,7 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
                     rel="noreferrer"
                     title={text(locale, 'Open full image', '打开原图')}
                   >
-                    <img src={rgbUrl} alt={`${request.route_id ?? 'route'} ${request.point_id ?? 'point'}`} loading="lazy" />
+                    <img src={rgbUrl} alt={`${request.route_id ?? 'route'} · ${text(locale, 'Point', '点位')} ${(request.point_index ?? 0) + 1}`} loading="lazy" />
                   </a>
                 ) : (
                   <div className={styles.evidencePlaceholder}>{text(locale, 'No RGB', '无 RGB')}</div>
@@ -1116,15 +1331,41 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
                 <div className={styles.evidenceBody}>
                   <div className={styles.evidenceIdentity}>
                     <strong>{statusText(request.route_id)}</strong>
-                    <span>{statusText(request.point_id)}</span>
+                    <span>{text(locale, 'Point', '点位')} {(request.point_index ?? 0) + 1}</span>
                   </div>
                   <div className={styles.evidenceAction}>{inspectionActionLabel(statusText(request.action, ''), locale)}</div>
                   <div className={styles.evidenceMeta}>
-                    <span className={verdict === 'violation' ? styles.verdictAlert : styles.verdictNeutral} title={verdict}>
+                    <span className={['violation', 'anomaly'].includes(verdict) ? styles.verdictAlert : styles.verdictNeutral} title={verdict}>
                       {verdictLabel}
                     </span>
                     <time>{evidenceTimestamp(evidence, locale)}</time>
                   </div>
+                  {!observe && <fieldset className={styles.evidenceReview} disabled={reviewBusyId !== null}>
+                    <legend>{text(locale, 'Manual review', '人工复核')}</legend>
+                    <label>
+                      <span className={styles.reviewNoteLabel}>{text(locale, 'Optional note', '说明（可选）')}</span>
+                      <textarea rows={2} maxLength={2000}
+                        aria-label={text(locale, 'Review note for point ', '点位复核说明 ') + String((request.point_index ?? 0) + 1)}
+                        placeholder={text(locale, 'Optional note', '说明（可选）')}
+                        value={reviewNotes[evidence.evidence_id] ?? evidence.review?.note ?? ''}
+                        onChange={event => setReviewNotes(current => ({ ...current, [evidence.evidence_id]: event.target.value }))} />
+                    </label>
+                    <div className={styles.reviewActions}>
+                      {(['normal', 'anomaly', 'inconclusive'] as const).map(value => <button key={value} type="button"
+                        aria-pressed={evidence.review?.verdict === value}
+                        onClick={() => void reviewEvidence(evidence, value)}>
+                        {inspectionVerdictLabel(value, locale)}
+                      </button>)}
+                    </div>
+                    {reviewBusyId === evidence.evidence_id && <span role="status">{text(locale, 'Saving review…', '正在保存复核…')}</span>}
+                    {reviewErrors[evidence.evidence_id] && <p className={styles.reviewError} role="alert">
+                      {text(locale, 'Review was not saved: ', '复核未保存：') + reviewErrors[evidence.evidence_id]}
+                    </p>}
+                  </fieldset>}
+                  {evidence.review && <small className={styles.reviewStamp}>
+                    {text(locale, 'Manually reviewed · ', '人工复核 · ')}
+                    {new Date(evidence.review.reviewed_at).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US', { hour12: false })}
+                  </small>}
                   <details className={styles.inlineDetails}>
                     <summary>{text(locale, 'Evidence details', '证据详情')}</summary>
                     <code>{evidence.evidence_id}</code>
@@ -1197,6 +1438,10 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
               <input type="number" min="1" value={loopCount} onChange={event => setLoopCount(Number(event.target.value))} />
             </label>
             <label>
+              <span>{text(locale, 'Between rounds (seconds)', '循环间隔（秒）')}</span>
+              <input type="number" min="0" step="1" value={loopInterval} onChange={event => setLoopInterval(Number(event.target.value))} />
+            </label>
+            <label>
               <span>{text(locale, 'Failure policy', '失败策略')}</span>
               <select value={failurePolicy} onChange={event => setFailurePolicy(event.target.value as InspectionFailurePolicy)}>
                 <option value="stop">{text(locale, 'Stop mission', '停止任务')}</option>
@@ -1265,13 +1510,13 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
             </section>
 
             <section className={styles.pointPane}>
-              <div className={styles.sectionTitle}>{text(locale, 'Inspection sequence', '巡检顺序')}</div>
+              <div className={styles.sectionTitle}>{text(locale, 'Device inspection points', '设备检查点')}</div>
               <div className={styles.pointRows}>
-                {points.map((point, index) => (
+                {devicePoints.map((point, index) => (
                   <div key={routePointKey(point, index)} className={styles.pointRow}>
                     <div className={styles.orderButtons}>
                       <button type="button" onClick={() => movePoint(index, -1)} disabled={index === 0} title={text(locale, 'Move up', '上移')}><ArrowUp size={14} /></button>
-                      <button type="button" onClick={() => movePoint(index, 1)} disabled={index === points.length - 1} title={text(locale, 'Move down', '下移')}><ArrowDown size={14} /></button>
+                      <button type="button" onClick={() => movePoint(index, 1)} disabled={index === devicePoints.length - 1} title={text(locale, 'Move down', '下移')}><ArrowDown size={14} /></button>
                     </div>
                     <strong>{index + 1}. {point.id}</strong>
                     <label>
@@ -1326,8 +1571,31 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
                     </button>
                   </div>
                 ))}
-                {points.length === 0 && <div className={styles.empty}>{text(locale, 'Select locations to build a route', '选择位置来生成路线')}</div>}
+                {devicePoints.length === 0 && <div className={styles.empty}>{text(locale, 'Select locations to build a route', '选择位置来生成路线')}</div>}
               </div>
+              <section className={styles.standbySection} aria-label={text(locale, 'End each round at standby', '每轮回待机')}>
+                <label>
+                  <span>{text(locale, 'End each round at standby', '每轮最后回待机')}</span>
+                  <select aria-label={text(locale, 'Standby location', '待机点')}
+                    value={standbyPoint ? matchedStandbyLocation?.name ?? '__saved_standby__' : ''}
+                    onChange={event => selectStandby(event.target.value)}>
+                    <option value="">{text(locale, 'No standby destination', '不设待机点')}</option>
+                    {standbyPoint && !matchedStandbyLocation && <option value="__saved_standby__">{text(locale, 'Saved standby point', '已保存待机点')}</option>}
+                    {standbyLocations.map(location => <option key={location.name} value={location.name}>{location.name}</option>)}
+                  </select>
+                </label>
+                {standbyPoint && <div className={styles.standbyPoint}>
+                  <strong>{points.length}. {text(locale, 'Return to standby · no capture', '回到待机 · 不拍照')}</strong>
+                  <span>X {standbyPoint.x.toFixed(2)} · Y {standbyPoint.y.toFixed(2)} · Z {standbyPoint.z.toFixed(2)} m</span>
+                  <label className={styles.toggle}>
+                    <input type="checkbox" checked={standbyPoint.enabled} onChange={event => updatePoint(standbyIndex, { enabled: event.target.checked })} />
+                    <span>{text(locale, 'Enabled', '启用')}</span>
+                  </label>
+                </div>}
+                <small>{text(locale,
+                  'Each round returns here before the interval. Pause for manual charging; continue when ready.',
+                  '每轮结束先回到此处，再等待循环间隔。人工充电时暂停，完成后继续。')}</small>
+              </section>
             </section>
           </div>
 
@@ -1356,7 +1624,7 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
           <strong>{taskReadError ? text(locale, 'State may be stale', '状态可能已过期') : taskTruthLabel(taskStatus, locale)}</strong>
         </div>
         <div>
-          <span>{text(locale, 'Route progress', '路线进度')}</span>
+          <span>{text(locale, 'Completed points', '已完成点位')}</span>
           <strong>{progressLabel}</strong>
         </div>
         <div>

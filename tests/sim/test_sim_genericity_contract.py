@@ -13,7 +13,7 @@ SIM_ROOT = REPO_ROOT / "sim"
 
 CPP_SUFFIXES = {".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".inl"}
 MODEL_SPECIFIC_SOURCES = {
-    SIM_ROOT / "runtime" / "control" / "thunderv4.py",
+    SIM_ROOT / "runtime" / "control" / "thunder" / "legacy_controller.py",
     SIM_ROOT / "runtime" / "coordinator" / "playable_evidence.py",
     SIM_ROOT / "runtime" / "coordinator" / "playable_vertical_slice.py",
     SIM_ROOT

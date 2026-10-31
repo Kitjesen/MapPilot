@@ -162,6 +162,7 @@ class DriverBridgeSession:
         self._ready_expected = False
         self._heartbeat_after_applied = False
         self._ready_deadline: float | None = None
+        self._profile_request: dict[str, str] | None = None
 
     @property
     def controller_boot_id(self) -> str:
@@ -276,6 +277,8 @@ class DriverBridgeSession:
                     self._check_deadline(deadline)
                     return False
                 fields = self._receive_fields(deadline)
+                if self._queue_profile_request(fields):
+                    continue
                 if fields and fields[0] == "LT_DRIVER_FAULT_V2":
                     _raise_native_fault(fields)
                 if fields and fields[0] == "LT_DRIVER_COMMAND_V2":
@@ -348,6 +351,41 @@ class DriverBridgeSession:
         self._state = "applying"
         return command
 
+    def take_profile_request(self) -> dict[str, str] | None:
+        """Take the latest model request already received beside motion commands."""
+        request = self._profile_request
+        self._profile_request = None
+        return request
+
+    def publish_profile_state(
+        self, *, task_id: str, requirement: str, phase: str,
+        requested_profile: str, active_profile: str, reason: str = "",
+    ) -> None:
+        """Report the controller's observed model, never infer it from the request."""
+        self._require_state("active", "command_available", "applying", "awaiting_ready")
+        values = [task_id, requirement, phase, requested_profile, active_profile, reason]
+        if not _valid_token(task_id) or any("\t" in value for value in values):
+            raise DriverBridgeSessionError("invalid profile state fields")
+        self._send(
+            "\t".join([
+                "LT_DRIVER_PROFILE_STATE_V1", self._bridge_boot_id,
+                self._controller_boot_id, *(value or "-" for value in values),
+            ]), self._deadline(),
+        )
+
+    def _queue_profile_request(self, fields: list[str]) -> bool:
+        if not fields or fields[0] != "LT_DRIVER_PROFILE_REQUEST_V1":
+            return False
+        if len(fields) != 5:
+            raise DriverBridgeSessionError("invalid profile request fields")
+        self._require_identity(fields[1], fields[2])
+        if not _valid_token(fields[3]) or fields[4] not in {
+            "stairs_up", "stairs_down", "restore", "hold",
+        }:
+            raise DriverBridgeSessionError("invalid profile request")
+        self._profile_request = {"task_id": fields[3], "requirement": fields[4]}
+        return True
+
     def begin_deactivate(self) -> DriverBridgeCommand:
         """Request or continue shutdown and return its next physical command."""
 
@@ -413,6 +451,8 @@ class DriverBridgeSession:
         deadline = self._deadline()
         try:
             fields = self._receive_fields(deadline)
+            while self._queue_profile_request(fields):
+                fields = self._receive_fields(deadline)
             if fields and fields[0] == "LT_DRIVER_FAULT_V2":
                 _raise_native_fault(fields)
             if len(fields) != 6 or fields[0] != "LT_DRIVER_STOPPED_V2":
@@ -463,6 +503,8 @@ class DriverBridgeSession:
         self, deadline: float, *, expected_kind: str | None = None
     ) -> DriverBridgeCommand:
         fields = self._receive_fields(deadline)
+        while self._queue_profile_request(fields):
+            fields = self._receive_fields(deadline)
         if fields and fields[0] == "LT_DRIVER_FAULT_V2":
             _raise_native_fault(fields)
         return self._parse_command_fields(fields, expected_kind=expected_kind)

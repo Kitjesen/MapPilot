@@ -367,6 +367,10 @@
             "support_height_tolerance_m"
           ],
           "properties": {
+            "body_file": {
+              "type": "string",
+              "minLength": 1
+            },
             "collision_clearance_below_m": {
               "type": "number",
               "exclusiveMinimum": 0

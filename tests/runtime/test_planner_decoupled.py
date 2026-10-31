@@ -1,6 +1,6 @@
 """Tests for decoupled planner modules — LLMModule + GoalResolver + pipeline.
 
-Verifies pluggable LLM backends, async request/response, Blueprint wiring.
+Verifies pluggable LLM backends, async request/response, HostBuilder wiring.
 No API keys needed — uses mock backend.
 """
 
@@ -8,7 +8,7 @@ import time
 import unittest
 
 from decision.modules.llm import LLMModule, LLMRequest, LLMResponse
-from runtime import Blueprint, In, Module, Out
+from runtime import HostBuilder, In, Module, Out
 
 # ---------------------------------------------------------------------------
 # LLMRequest / LLMResponse
@@ -90,7 +90,7 @@ class TestLLMModule(unittest.TestCase):
 
 
 class TestLLMPipeline(unittest.TestCase):
-    def test_two_modules_wire_via_blueprint(self):
+    def test_two_modules_wire_via_host_builder(self):
         """GoalResolver-like module can wire to LLMModule via request/response."""
 
         class FakeGoalResolver(Module, layer=4):
@@ -105,7 +105,7 @@ class TestLLMPipeline(unittest.TestCase):
                 if resp.ok:
                     self.goal.publish(f"resolved: {resp.text}")
 
-        bp = Blueprint()
+        bp = HostBuilder()
         bp.add(FakeGoalResolver)
         bp.add(LLMModule, backend="mock")
         bp.wire("FakeGoalResolver", "llm_request", "LLMModule", "request")
@@ -131,14 +131,14 @@ class TestLLMPipeline(unittest.TestCase):
         self.assertTrue(goals[0].startswith("resolved:"))
 
     def test_swap_llm_backend(self):
-        """Swapping LLM = changing one Blueprint argument."""
+        """Swapping LLM = changing one HostBuilder argument."""
 
         class Requester(Module, layer=4):
             llm_request: Out[LLMRequest]
             llm_response: In[LLMResponse]
 
         for backend in ["mock"]:  # only mock testable without API keys
-            bp = Blueprint()
+            bp = HostBuilder()
             bp.add(Requester)
             bp.add(LLMModule, backend=backend)
             bp.wire("Requester", "llm_request", "LLMModule", "request")

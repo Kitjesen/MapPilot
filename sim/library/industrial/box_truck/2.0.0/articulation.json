@@ -1,0 +1,126 @@
+{
+  "status": "visual_articulation_draft",
+  "revision": "wheel-surface-repair-v2",
+  "repair_report": "repair-report.json",
+  "current_triangle_count": 139265,
+  "source": "D:\\inovxio\\brain\\lingtu\\build\\tripo\\factory-box-truck-20261017\\tripo-out\\factory-box-truck-v1-360c3d11\\model.glb",
+  "scale_assumption": "7m overall length, not a surveyed dimension",
+  "source_faces": 93251,
+  "source_to_metre_scale": 7.128018879456525,
+  "physics_connected": false,
+  "cut_fragments": {
+    "Wheel_FL": {
+      "component_sizes": [
+        2626
+      ],
+      "faces_returned_to_chassis": 0
+    },
+    "Wheel_FR": {
+      "component_sizes": [
+        2664
+      ],
+      "faces_returned_to_chassis": 0
+    },
+    "Wheel_RL": {
+      "component_sizes": [
+        3255,
+        32,
+        5
+      ],
+      "faces_returned_to_chassis": 37
+    },
+    "Wheel_RR": {
+      "component_sizes": [
+        3665,
+        52
+      ],
+      "faces_returned_to_chassis": 52
+    }
+  },
+  "parts": [
+    {
+      "name": "Wheel_FL",
+      "faces": 9704,
+      "uv_layers": 1,
+      "pivot_m": [
+        2.414259910583496,
+        1.1476110219955444,
+        0.4431670904159546
+      ],
+      "spin_axis_local": [
+        0,
+        1,
+        0
+      ],
+      "nominal_radius_m": 0.44407557619014154
+    },
+    {
+      "name": "Wheel_FR",
+      "faces": 9704,
+      "uv_layers": 1,
+      "pivot_m": [
+        2.414259910583496,
+        -1.1476110219955444,
+        0.4431670904159546
+      ],
+      "spin_axis_local": [
+        0,
+        1,
+        0
+      ],
+      "nominal_radius_m": 0.44407557619014154
+    },
+    {
+      "name": "Wheel_RL",
+      "faces": 19408,
+      "uv_layers": 1,
+      "pivot_m": [
+        -1.7641847133636475,
+        0.9836665987968445,
+        0.4502951204776764
+      ],
+      "spin_axis_local": [
+        0,
+        1,
+        0
+      ],
+      "nominal_radius_m": 0.4490651894057611
+    },
+    {
+      "name": "Wheel_RR",
+      "faces": 19408,
+      "uv_layers": 1,
+      "pivot_m": [
+        -1.7641847133636475,
+        -0.9836665987968445,
+        0.4502951204776764
+      ],
+      "spin_axis_local": [
+        0,
+        1,
+        0
+      ],
+      "nominal_radius_m": 0.4490651894057611
+    },
+    {
+      "name": "Chassis",
+      "faces": 81041,
+      "uv_layers": 1
+    }
+  ],
+  "checks": {
+    "chassis_preserved_wheels_reconstructed": true,
+    "wheel_components_have_no_open_or_nonmanifold_edges": true,
+    "all_parts_have_uv": true,
+    "wheel_pivots_distinct": true,
+    "wheel_count": 4,
+    "front_steer_count": 2
+  },
+  "limitations": [
+    "Rear dual tires stay grouped per axle side.",
+    "Wheel surfaces are locally reconstructed with separate rubber/steel PBR materials; original source wheels are retained in wheel-repair/v1.",
+    "No suspension, drive torque, tire contact, traffic logic or MuJoCo dynamics yet.",
+    "Roll clip is 0.5 revolutions/second only: stationary chassis on a demonstration stand.",
+    "Steering clip uses equal visual angles, not calibrated Ackermann steering."
+  ]
+}

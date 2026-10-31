@@ -29,6 +29,8 @@ from gateway.services.safety_status import safety_stop_active
 logger = logging.getLogger(__name__)
 NAVIGATION_STATUS_SCHEMA_VERSION = 3
 _NATIVE_STATUS_UNSET = object()
+# Native endpoint status serializes parameters with six decimal places.
+_NATIVE_PARAMETER_ABS_TOL = 0.5e-6
 # These are transient input holds.  The native goal controller can queue the
 # goal while they recover; the same gate still holds every motion command at
 # zero.  Hard admission barriers (estop, takeover, driver, session and map
@@ -286,7 +288,7 @@ def _native_endpoint_readiness(
                     actual,
                     expected,
                     rel_tol=1e-9,
-                    abs_tol=1e-9,
+                    abs_tol=_NATIVE_PARAMETER_ABS_TOL,
                 ):
                     parameter_mismatches[field] = {
                         "actual": actual,
@@ -323,7 +325,9 @@ def _native_endpoint_readiness(
         ):
             actual = _as_float(raw_actual, None)
             expected = float(expected_parameters[expected_key])
-            if actual is None or not math.isclose(actual, expected, rel_tol=1e-9, abs_tol=1e-9):
+            if actual is None or not math.isclose(
+                actual, expected, rel_tol=1e-9, abs_tol=_NATIVE_PARAMETER_ABS_TOL
+            ):
                 parameter_mismatches[field] = {"actual": actual, "expected": expected}
         if parameter_mismatches and "native_product_parameters_mismatch" not in blockers:
             blockers.append("native_product_parameters_mismatch")

@@ -115,6 +115,49 @@ class TestLLMDecompositionParsing(unittest.TestCase):
         plan = self.decomposer.parse_decomposition_response("fly", response)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.NAVIGATE)
 
+    def test_decompose_returns_rule_plan_without_scene_resolution(self):
+        plan = self.decomposer.decompose("去会议室")
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.validate(), ())
+        self.assertEqual(plan.subgoals[0].action, SubGoalAction.NAVIGATE)
+        self.assertEqual(plan.subgoals[0].target, "会议室")
+
+    def test_decompose_leaves_complex_instruction_for_llm(self):
+        plan = self.decomposer.decompose("先去会议室，然后找到桌子旁边的箱子")
+        self.assertIsNone(plan)
+
+    def test_parse_keeps_plan_symbolic_and_drops_geometry(self):
+        response = {
+            "subgoals": [
+                {
+                    "action": "navigate",
+                    "target": "会议室",
+                    "parameters": {"room_type": "meeting", "x": 2.0, "pose": {"y": 1.0}},
+                }
+            ]
+        }
+        plan = self.decomposer.parse_decomposition_response("去会议室", response)
+        self.assertEqual(plan.validate(), ())
+        self.assertEqual(plan.subgoals[0].target, "会议室")
+        self.assertEqual(plan.subgoals[0].parameters, {"room_type": "meeting"})
+        self.assertNotIn("x", plan.to_dict()["subgoals"][0]["parameters"])
+
+    def test_plan_schema_reports_invalid_symbolic_fields(self):
+        plan = TaskPlan(
+            instruction="去会议室",
+            subgoals=[
+                SubGoal(
+                    step_id=1,
+                    action=SubGoalAction.NAVIGATE,
+                    target="会议室",
+                    parameters={"x": 1.0},
+                )
+            ],
+        )
+        errors = plan.validate()
+        self.assertIn("step_ids_must_be_zero_based_sequential", errors)
+        self.assertIn("subgoal_1:geometric_parameters_not_allowed:x", errors)
+
     def test_build_decomposition_prompt(self):
         messages = self.decomposer.build_decomposition_prompt(
             "去厨房拿红杯子", scene_summary="3 objects in scene", language="zh"
@@ -122,6 +165,7 @@ class TestLLMDecompositionParsing(unittest.TestCase):
         self.assertEqual(len(messages), 2)
         self.assertEqual(messages[0]["role"], "system")
         self.assertIn("navigate", messages[0]["content"])
+        self.assertIn("never emit coordinates", messages[0]["content"])
         self.assertIn("红杯子", messages[1]["content"])
 
     def test_build_decomposition_prompt_en(self):

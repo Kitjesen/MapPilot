@@ -122,6 +122,21 @@
               }
             }
           },
+          "sensor_overrides": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {"type": "boolean"},
+                "frequency_hz": {"type": "number", "exclusiveMinimum": 0},
+                "camera_preset": {"enum": ["pinhole", "equidistant_fisheye", "equirectangular"]},
+                "pan_deg": {"type": "number"},
+                "tilt_deg": {"type": "number"},
+                "gnss_fix_available": {"type": "boolean"}
+              }
+            }
+          },
           "spawn": {
             "type": "object",
             "additionalProperties": false,

@@ -83,9 +83,12 @@ if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
     throw "Pinned vcpkg manifest is missing: $ManifestPath"
 }
 $Manifest = Get-Content -Raw -LiteralPath $ManifestPath | ConvertFrom-Json
+$Configuration = Get-Content -Raw -LiteralPath (Join-Path $ManifestRoot "vcpkg-configuration.json") | ConvertFrom-Json
+$OverlayPorts = Join-Path $ManifestRoot $Configuration.'overlay-ports'[0]
 if ($Manifest.'builtin-baseline' -ne $ExpectedBaseline) {
     throw "vcpkg baseline drift: expected $ExpectedBaseline, found $($Manifest.'builtin-baseline')"
 }
+$GtsamOverlay = Get-Content -Raw -LiteralPath (Join-Path $OverlayPorts "gtsam\vcpkg.json") | ConvertFrom-Json
 $GitCommand = Get-Command git -ErrorAction SilentlyContinue
 if (-not $GitCommand) {
     throw "git is required to prepare the pinned vcpkg toolchain."
@@ -124,6 +127,7 @@ function Assert-VcpkgQuarantineBoundary {
 
 Write-Output "Dependency plan: vcpkg $ExpectedBaseline, target=$Triplet, host=$Triplet"
 Write-Output "Manifest: $ManifestPath"
+Write-Output "GTSAM $($GtsamOverlay.version), overlay: $OverlayPorts"
 Write-Output "Toolchain: $VcpkgRoot"
 Write-Output "Install root: $InstallRoot"
 Write-Output "Local binary cache: $BinaryCache"

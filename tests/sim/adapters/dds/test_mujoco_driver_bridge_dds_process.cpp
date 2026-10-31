@@ -1013,6 +1013,14 @@ int main(int argc, const char *const argv[]) {
                 "dds_create_participant(test)");
     const dds_entity_t nav_writer = create_nav_writer(participant);
     const dds_entity_t control_state_reader = create_control_state_reader(participant);
+    const auto profile_request_topic = checked(dds_create_topic(participant, &lingtu_dds_MotionProfileRequest_desc,
+        lingtu::message::kMotionProfileRequest.dds_topic.data(), nullptr, nullptr), "profile request topic");
+    auto profile_request_qos = lingtu::dds::make_qos(lingtu::dds::qos_for_topic(lingtu::message::kMotionProfileRequest.dds_topic));
+    const auto profile_writer = checked(dds_create_writer(participant, profile_request_topic, profile_request_qos.get(), nullptr), "profile request writer");
+    const auto profile_state_topic = checked(dds_create_topic(participant, &lingtu_dds_MotionProfileState_desc,
+        lingtu::message::kMotionProfileState.dds_topic.data(), nullptr, nullptr), "profile state topic");
+    auto profile_state_qos = lingtu::dds::make_qos(lingtu::dds::qos_for_topic(lingtu::message::kMotionProfileState.dds_topic));
+    const auto profile_reader = checked(dds_create_reader(participant, profile_state_topic, profile_state_qos.get(), nullptr), "profile state reader");
     ControlStateStream control_states(participant, control_state_reader);
 
     ready_file = std::filesystem::temp_directory_path() /
@@ -1024,6 +1032,8 @@ int main(int argc, const char *const argv[]) {
     const Deadline discovery_deadline = bounded_deadline(overall_deadline, std::chrono::seconds(5));
     wait_for_dds_match(participant, nav_writer, true, discovery_deadline);
     wait_for_dds_match(participant, control_state_reader, false, discovery_deadline);
+    wait_for_dds_match(participant, profile_writer, true, discovery_deadline);
+    wait_for_dds_match(participant, profile_reader, false, discovery_deadline);
     wait_for_ready_file(bridge, ready_file, discovery_deadline);
 
     bridge.write_line(std::string("LT_DRIVER_ACTIVATE_V2\t") + kBridgeBootId + "\t" +
@@ -1106,14 +1116,148 @@ int main(int argc, const char *const argv[]) {
                 accepted.accepted_sequence == nav.bridge_command_seq,
             "DriverControlState must publish the exact physically applied producer/output");
 
+    const auto request_profile = [&](const char *requirement) {
+      lingtu_dds_MotionProfileRequest request{};
+      const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+      request.header.stamp.sec = static_cast<std::int32_t>(ns / 1'000'000'000LL);
+      request.header.stamp.nanosec = static_cast<std::uint32_t>(ns % 1'000'000'000LL);
+      request.header.frame_id = const_cast<char *>("base_link");
+      request.task_id = const_cast<char *>("nav-task-1");
+      request.requirement = const_cast<char *>(requirement);
+      checked(dds_write(profile_writer, &request), "profile request write");
+      const auto forwarded = wait_for_protocol_line(bridge, "LT_DRIVER_PROFILE_REQUEST_V1", Clock::now() + std::chrono::milliseconds(250));
+      require(forwarded == std::string("LT_DRIVER_PROFILE_REQUEST_V1\t") + kBridgeBootId + "\t" + kControllerBootId + "\tnav-task-1\t" + requirement,
+              "profile request did not reach physics controller");
+    };
+    const auto profile_feedback = [&](const char *requirement, const char *phase, const char *requested, const char *actual,
+                                      const char *reason = "-") {
+      bridge.write_line(std::string("LT_DRIVER_PROFILE_STATE_V1\t") + kBridgeBootId + "\t" + kControllerBootId +
+          "\tnav-task-1\t" + requirement + "\t" + phase + "\t" + requested + "\t" + actual + "\t" + reason);
+    };
+    std::uint64_t profile_step_seq = 4;
+    std::uint64_t profile_control_seq = 3;
+    const auto apply_profile_command = [&](const ParsedBridgeCommand &command) {
+      bridge.write_line(applied_line(command, ++profile_step_seq));
+      bridge.write_line(std::string("LT_DRIVER_HEARTBEAT_V2\t") + kBridgeBootId + "\t" + kControllerBootId +
+          "\t" + std::to_string(++profile_control_seq) + "\t" + std::to_string(++profile_step_seq));
+    };
+    const auto profile_zero = [&]() {
+      const auto command = wait_for_command(bridge, "safety_zero", Clock::now() + std::chrono::milliseconds(250));
+      check_internal_zero(command, "safety_zero");
+      apply_profile_command(command);
+      return command.bridge_command_seq;
+    };
+    request_profile("stairs_up");
+    profile_zero();
+    profile_feedback("stairs_up", "waiting", "up.onnx", "flat.onnx");
+    control_states.wait_for([](const ObservedControlState &state) {
+      return !state.ready && !state.critical_fault && state.reason == "profile_transition";
+    }, Clock::now() + std::chrono::milliseconds(250));
+    // Pausing an unfinished switch must not claim its requested model is ready.
+    request_profile("hold");
+    const auto pending_hold_zero = profile_zero();
+    profile_feedback("hold", "waiting", "up.onnx", "flat.onnx", "profile_paused");
+    control_states.wait_for([&](const ObservedControlState &state) {
+      return state.accepted_sequence == pending_hold_zero && !state.ready &&
+          state.reason == "profile_transition";
+    }, Clock::now() + std::chrono::milliseconds(250));
+    request_profile("stairs_up");
+    profile_zero();
+    profile_feedback("stairs_up", "ready", "up.onnx", "flat.onnx");
+    bool mismatch_waiting = false;
+    const auto profile_deadline = Clock::now() + std::chrono::milliseconds(250);
+    while (Clock::now() < profile_deadline && !mismatch_waiting) {
+      void *samples[16]{};
+      dds_sample_info_t infos[16]{};
+      const auto count = dds_take(profile_reader, samples, infos, 16, 16);
+      checked(count, "take profile feedback");
+      for (dds_return_t i = 0; i < count; ++i) {
+        if (!infos[i].valid_data) continue;
+        const auto &sample = *static_cast<lingtu_dds_MotionProfileState *>(samples[i]);
+        require(nullable_string(sample.phase) != "ready", "mismatched active model cannot be ready");
+        mismatch_waiting = mismatch_waiting || nullable_string(sample.reason) == "profile_not_confirmed";
+      }
+      if (count > 0) checked(dds_return_loan(profile_reader, samples, count), "return profile state");
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(mismatch_waiting, "independent active model mismatch was not reported");
+    profile_feedback("stairs_up", "ready", "up.onnx", "up.onnx");
+    control_states.wait_for([](const ObservedControlState &state) {
+      return state.ready && state.reason.empty();
+    }, Clock::now() + std::chrono::milliseconds(250));
+    // Once confirmed, pausing model work leaves that controller available for
+    // operator takeover. The navigation task still owns its own paused state.
+    request_profile("hold");
+    const auto ready_hold_zero = profile_zero();
+    profile_feedback("hold", "waiting", "up.onnx", "up.onnx", "profile_paused");
+    control_states.wait_for([&](const ObservedControlState &state) {
+      return state.accepted_sequence == ready_hold_zero && state.ready && state.reason.empty();
+    }, Clock::now() + std::chrono::milliseconds(250));
+    publish_nav_command(nav_writer, kOutputSequence + 1);
+    const auto takeover = wait_for_command(bridge, "nav", Clock::now() + std::chrono::milliseconds(250));
+    require(takeover.output_sequence == kOutputSequence + 1 && close_enough(takeover.walk_x, kExpectedWalkX),
+            "confirmed held controller must accept the existing final-control output");
+    apply_profile_command(takeover);
+    control_states.wait_for([&](const ObservedControlState &state) {
+      return state.accepted_sequence == takeover.bridge_command_seq && state.ready &&
+          exact_output_ack(state, kOutputSequence + 1);
+    }, Clock::now() + std::chrono::milliseconds(250));
+    request_profile("stairs_up");
+    const auto resumed_zero = profile_zero();
+    profile_feedback("stairs_up", "waiting", "up.onnx", "up.onnx");
+    control_states.wait_for([&](const ObservedControlState &state) {
+      return state.accepted_sequence == resumed_zero && !state.ready &&
+          state.reason == "profile_transition";
+    }, Clock::now() + std::chrono::milliseconds(250));
+    profile_feedback("stairs_up", "ready", "up.onnx", "up.onnx");
+    control_states.wait_for([](const ObservedControlState &state) {
+      return state.ready && state.reason.empty();
+    }, Clock::now() + std::chrono::milliseconds(250));
+    request_profile("restore");
+    profile_zero();
+    profile_feedback("restore", "ready", "flat.onnx", "flat.onnx");
+    control_states.wait_for([](const ObservedControlState &state) {
+      return state.ready && state.reason.empty();
+    }, Clock::now() + std::chrono::milliseconds(250));
+
+    // A profile transition in the same input batch must not swallow the ACK
+    // that lets the controller apply an already issued, queued Nav command.
+    publish_nav_command(nav_writer, kOutputSequence + 2);
+    const auto before_transition = wait_for_command(
+        bridge, "nav", Clock::now() + std::chrono::milliseconds(250));
+    publish_nav_command(nav_writer, kOutputSequence + 3);
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    bridge.write_line(applied_line(before_transition, ++profile_step_seq) + "\n" +
+        "LT_DRIVER_PROFILE_STATE_V1\t" + kBridgeBootId + "\t" + kControllerBootId +
+        "\tnav-task-1\trestore\twaiting\tflat.onnx\tflat.onnx\twaiting_for_stop");
+    const auto queued_transition = wait_for_command(
+        bridge, "nav", Clock::now() + std::chrono::milliseconds(250));
+    require(queued_transition.output_sequence == kOutputSequence + 3,
+            "the next Nav command must have been queued before the transition");
+    const auto transition_ack = parse_ready(wait_for_protocol_line(
+        bridge, "LT_DRIVER_READY_V2", Clock::now() + std::chrono::milliseconds(250)));
+    require(transition_ack.accepted_sequence == before_transition.bridge_command_seq &&
+                transition_ack.producer_boot_id == kProducerBootId &&
+                transition_ack.output_sequence == kOutputSequence + 2,
+            "profile transition must preserve the preceding physical Nav ACK");
+    control_states.wait_for([](const ObservedControlState &state) {
+      return !state.ready && state.reason == "profile_transition";
+    }, Clock::now() + std::chrono::milliseconds(250));
+    apply_profile_command(queued_transition);
+    profile_zero();
+    profile_feedback("restore", "ready", "flat.onnx", "flat.onnx");
+    control_states.wait_for([](const ObservedControlState &state) {
+      return state.ready && state.reason.empty();
+    }, Clock::now() + std::chrono::milliseconds(250));
+
     bridge.write_line(std::string("LT_DRIVER_DEACTIVATE_V2\t") + kBridgeBootId + "\t" +
-                      kControllerBootId + "\t4");
+                      kControllerBootId + "\t" + std::to_string(++profile_control_seq));
     const auto deactivation = wait_for_command(
         bridge, "deactivate_zero", bounded_deadline(overall_deadline, std::chrono::seconds(2)));
     check_internal_zero(deactivation, "deactivate_zero");
     require(deactivation.bridge_command_seq > nav.bridge_command_seq,
             "deactivation zero command sequence must advance after nav");
-    bridge.write_line(applied_line(deactivation, 5));
+    bridge.write_line(applied_line(deactivation, ++profile_step_seq));
     const auto stopped = control_states.wait_for(
         [](const ObservedControlState &state) {
           return !state.connected && !state.ready && !state.lease_valid &&
@@ -1171,7 +1315,7 @@ int main(int argc, const char *const argv[]) {
     const auto stopping = control_states.wait_for(
         [&](const ObservedControlState &state) {
           return !state.ready && state.accepted_sequence == signal_activation.bridge_command_seq &&
-                 state.reason == "deactivating_zero";
+                 state.reason == "requested_safety_stop";
         },
         bounded_deadline(overall_deadline, std::chrono::milliseconds(250)));
     require(!stopping.last_command_accepted,

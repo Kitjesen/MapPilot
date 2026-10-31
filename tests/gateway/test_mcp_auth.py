@@ -304,6 +304,41 @@ def _capture_mcp_endpoint(monkeypatch, module):
     return next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/mcp")
 
 
+def test_mcp_declared_navigation_result_is_structured_at_call_boundary(monkeypatch):
+    from gateway.mcp_server import MCPServerModule
+    from nav.skills.skills_module import NavSkills
+
+    module = MCPServerModule(host="127.0.0.1")
+    module.on_system_modules({"nav.skills": NavSkills()})
+    endpoint = _capture_mcp_endpoint(monkeypatch, module)
+    response = asyncio.run(endpoint({
+        "jsonrpc": "2.0", "id": 20, "method": "tools/call",
+        "params": {"name": "get_navigation_result", "arguments": {"request_id": "unknown"}},
+    }))
+    result = json.loads(response.body)["result"]
+    assert result["structuredContent"] == {
+        "found": False, "request_id": "unknown", "reason": "request_not_owned_by_nav_skills",
+    }
+    assert json.loads(result["content"][0]["text"]) == result["structuredContent"]
+
+
+def test_mcp_declared_object_cannot_succeed_with_array_result(monkeypatch):
+    from gateway.mcp_server import MCPServerModule
+    from nav.skills.skills_module import NavSkills
+
+    module = MCPServerModule(host="127.0.0.1")
+    module.on_system_modules({"nav.skills": NavSkills()})
+    module._tool_registry["get_navigation_result"] = lambda request_id: "[]"
+    endpoint = _capture_mcp_endpoint(monkeypatch, module)
+    response = asyncio.run(endpoint({
+        "jsonrpc": "2.0", "id": 21, "method": "tools/call",
+        "params": {"name": "get_navigation_result", "arguments": {"request_id": "unknown"}},
+    }))
+    result = json.loads(response.body)["result"]
+    assert result["isError"] is True
+    assert "structuredContent" not in result
+
+
 def test_unknown_mcp_tool_is_invalid_params_error(monkeypatch):
     from gateway.mcp_server import MCPServerModule
 

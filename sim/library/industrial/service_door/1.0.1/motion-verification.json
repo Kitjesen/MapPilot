@@ -1,0 +1,10 @@
+{
+  "passed": true,
+  "checked_parts": 25,
+  "checks": [
+    "hinge centres at 90 degrees",
+    "fixed frame remains fixed",
+    "closed return pose"
+  ],
+  "scope": "exported GLB motion, not physical dynamics"
+}

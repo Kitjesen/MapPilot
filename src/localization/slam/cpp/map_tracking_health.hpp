@@ -15,6 +15,7 @@ struct MapTrackingHealthInput {
   std::uint64_t successes = 0U;
   double last_success_age_s = -1.0;
   int degraded_failure_count = 3;
+  bool transport_active = false;
 };
 
 struct MapTrackingHealthProjection {
@@ -66,6 +67,10 @@ inline MapTrackingHealthProjection ProjectMapTrackingHealth(
     out.degraded = true;
     return out;
   }
+  // Cabin scans intentionally do not match the static building map. Preserve
+  // the last alignment while transport is active, without masking actual
+  // backend failures or an alignment that has never succeeded.
+  if (tracking.transport_active) return out;
   if (tracking.last_success_age_s < 0.0 ||
       tracking.last_success_age_s > out.stale_after_s) {
     out.state = SlamState::Degraded;

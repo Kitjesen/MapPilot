@@ -8,13 +8,13 @@ import pytest
 import yaml
 
 from decision.modules.visual_servo import VisualServoModule
-from lingtu.assembly.compiler import blueprint_from_run_plan, compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan, host_builder_from_run_plan
 from lingtu.assembly.graph.processes import ProcessArtifact
-from lingtu.assembly.products.host import host_blueprint
-from lingtu.assembly.stacks import perception as perception_stack
-from lingtu.assembly.stacks.composition import compose_full_stack_modules
-from lingtu.assembly.wires.context import ODOMETRY_CONSUMERS, build_wiring_context
-from lingtu.assembly.wires.slam import localization_specs, odometry_fanout_specs
+from lingtu.assembly.host.build import host_builder
+from lingtu.assembly.host.stacks import perception as perception_stack
+from lingtu.assembly.host.stacks.composition import compose_full_stack_modules
+from lingtu.assembly.host.wiring.context import ODOMETRY_CONSUMERS, build_wiring_context
+from lingtu.assembly.host.wiring.localization import localization_specs, odometry_fanout_specs
 from perception.backends import create_observation_source
 from runtime.config import (
     CameraConfig,
@@ -33,14 +33,51 @@ class _FakePerception(Module, layer=3):
     pass
 
 
-def _perception_entry(blueprint):
-    return next(entry for entry in blueprint._entries if entry.name == "PerceptionModule")
+class _FakeInspectionEvidence(Module, layer=3):
+    pass
+
+
+def _perception_entry(host_builder):
+    return next(entry for entry in host_builder._entries if entry.name == "PerceptionModule")
+
+
+@pytest.mark.parametrize("domain_id", (17, 231))
+def test_inspection_evidence_uses_host_process_dds_domain(
+    monkeypatch: pytest.MonkeyPatch,
+    domain_id: int,
+) -> None:
+    monkeypatch.setenv("LINGTU_DDS_DOMAIN_ID", str(domain_id))
+    monkeypatch.setattr(perception_stack, "get_config", RobotConfig)
+    monkeypatch.setattr(perception_stack, "stack_module", lambda *args, **kwargs: _FakePerception)
+    monkeypatch.setattr(
+        perception_stack,
+        "optional_stack_module",
+        lambda role, *args, **kwargs: (
+            _FakeInspectionEvidence if role == "inspection_evidence" else None
+        ),
+    )
+
+    host_builder = perception_stack.perception(
+        enable_camera=False,
+        enable_inspection_evidence=True,
+        dds_domain_id=0,
+        domain_id=0,
+        vision_service_url="http://vision-fixture:8080",
+    )
+
+    entry = next(
+        item for item in host_builder._entries if item.name == "InspectionEvidenceModule"
+    )
+    assert entry.config["domain_id"] == domain_id
+    assert entry.config["evidence_root"] is None
+    assert entry.config["status_file"] is None
+    assert entry.config["vision_service_url"] == "http://vision-fixture:8080"
 
 
 def test_product_and_stack_interfaces_do_not_expose_perception_encoder() -> None:
     for product in ("tracking", "inspection"):
         data = yaml.safe_load(
-            (REPO_ROOT / "config" / "runtime_graph" / "products" / f"{product}.yaml").read_text(
+            (REPO_ROOT / "config" / "system" / "products" / f"{product}.yaml").read_text(
                 encoding="utf-8"
             )
         )
@@ -51,7 +88,7 @@ def test_product_and_stack_interfaces_do_not_expose_perception_encoder() -> None
     with pytest.raises(ValueError, match="encoder"):
         perception_stack.perception(encoder="mobileclip", enable_camera=False)
     with pytest.raises(ValueError, match="encoder"):
-        host_blueprint(encoder="mobileclip", run_startup_checks=False)
+        host_builder(encoder="mobileclip", run_startup_checks=False)
 
 
 def test_perception_config_owns_sync_thresholds_but_not_camera_depth_scale() -> None:
@@ -128,8 +165,8 @@ def test_perception_stack_resolves_one_typed_configuration(monkeypatch) -> None:
     monkeypatch.setattr(perception_stack, "get_config", fake_get_config, raising=False)
     monkeypatch.setattr(perception_stack, "stack_module", lambda *args, **kwargs: _FakePerception)
 
-    blueprint = perception_stack.perception(detector="bpu", enable_camera=True)
-    entry = _perception_entry(blueprint)
+    host_builder = perception_stack.perception(detector="bpu", enable_camera=True)
+    entry = _perception_entry(host_builder)
     settings = entry.config["settings"]
     detector = entry.config["detector"]
 
@@ -184,13 +221,13 @@ def test_explicit_product_values_only_override_the_named_typed_values(monkeypatc
     monkeypatch.setattr(perception_stack, "get_config", lambda: robot_config, raising=False)
     monkeypatch.setattr(perception_stack, "stack_module", lambda *args, **kwargs: _FakePerception)
 
-    blueprint = perception_stack.perception(
+    host_builder = perception_stack.perception(
         detector="yolo_world",
         enable_camera=False,
         confidence=0.83,
         perception_skip_frames=6,
     )
-    entry = _perception_entry(blueprint)
+    entry = _perception_entry(host_builder)
     detector = entry.config["detector"]
 
     assert detector.name == "yolo_world"
@@ -265,8 +302,8 @@ def test_sim_run_plan_builds_complete_sim_scene_detector_spec(monkeypatch) -> No
         env_config={"backend": "mujoco"},
     )
 
-    blueprint = blueprint_from_run_plan(plan)
-    entry = _perception_entry(blueprint)
+    host_builder = host_builder_from_run_plan(plan)
+    entry = _perception_entry(host_builder)
     detector = entry.config["detector"]
 
     assert detector.name == "sim_scene"
@@ -302,7 +339,7 @@ def test_sim_run_plan_forces_sim_scene_over_explicit_detector_override(monkeypat
         overrides={"detector": "yoloe"},
     )
 
-    detector = _perception_entry(blueprint_from_run_plan(plan)).config["detector"]
+    detector = _perception_entry(host_builder_from_run_plan(plan)).config["detector"]
 
     assert detector.name == "sim_scene"
     assert detector.world == (

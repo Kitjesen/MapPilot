@@ -822,25 +822,43 @@ def _mapctl(
     if not domain_id:
         raise RuntimeError("native sim map control requires the exact mapd DDS domain")
     command.extend(("--domain-id", domain_id))
-    completed = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=timeout_s + 1.0,
-        env={**os.environ, **environment},
-    )
-    try:
-        payload = json.loads(str(completed.stdout or ""))
-    except (TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise RuntimeError("native sim map control returned invalid JSON") from exc
-    if not isinstance(payload, dict):
-        raise RuntimeError("native sim map control response must be an object")
-    if (
-        completed.returncode != 0
-        or payload.get("accepted") is not True
-    ):
+    deadline = time.monotonic() + timeout_s
+    remaining = timeout_s
+    while True:
+        attempt = command.copy()
+        attempt[attempt.index("--timeout-ms") + 1] = str(max(1, round(remaining * 1000)))
+        if operation == "verify":
+            # mapd caches refusals by request ID, including transient read-lock contention.
+            attempt.extend(("--request-id", uuid.uuid4().hex))
+        completed = subprocess.run(
+            attempt,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=remaining + 1.0,
+            env={**os.environ, **environment},
+        )
+        try:
+            payload = json.loads(str(completed.stdout or ""))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError("native sim map control returned invalid JSON") from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError("native sim map control response must be an object")
+        if completed.returncode == 0 and payload.get("accepted") is True:
+            break
         message = str(payload.get("message") or completed.stderr or "rejected")
+        target = payload.get("target")
+        if (
+            operation == "verify" and completed.returncode == 2
+            and isinstance(target, dict) and target.get("map_id")
+            and message == f"artifact_gate_failed:map write in progress: {target['map_id']}"
+        ):
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(0.02, remaining))
+                remaining = deadline - time.monotonic()
+                if remaining > 0:
+                    continue
         raise RuntimeError(f"native sim map {operation} rejected: {message}")
     _validate_mapctl_receipt(
         payload,

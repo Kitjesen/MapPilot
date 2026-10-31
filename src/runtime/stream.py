@@ -143,7 +143,7 @@ class Out(Generic[T]):
             self._remove_callback(cb)
         return unsubscribe
 
-    # -- wiring API (called by Blueprint) -----------------------------------------
+    # -- wiring API (called by HostBuilder) -----------------------------------------
 
     def _add_callback(self, cb: Callable[[T], None]) -> None:
         """Register a local callback (for Out→In direct wiring)."""

@@ -5,7 +5,8 @@
   "description": "Attach-only exact-session MuJoCo inspection component acceptance through the public Gateway task boundary.",
   "product_contract": {
     "product": "inspection",
-    "source": "config/runtime_graph/products/inspection.yaml",
+    "route": null,
+    "source": "config/system/products/inspection.yaml",
     "native_control_mode": "autonomy",
     "slam_mode": "localization",
     "requires_map": true
@@ -19,12 +20,32 @@
     "evidence_result": "/nav/inspection/evidence/result",
     "required_identity": ["task_id", "request_id"]
   },
+  "route_points": [
+    {
+      "id": "overview-1",
+      "relative_dx": 0.6,
+      "relative_dy": 0.0,
+      "action": "capture:overview"
+    },
+    {
+      "id": "overview-2",
+      "relative_dx": 0.6,
+      "relative_dy": 0.5,
+      "action": "capture:overview"
+    },
+    {
+      "id": "overview-3",
+      "relative_dx": 0.1,
+      "relative_dy": 0.5,
+      "action": "capture:overview"
+    }
+  ],
   "acceptance_scope": {
     "coverage": "component",
     "claims": [
       "exact committed inspection RunPlan and Gateway dataflow identity",
-      "capture:overview route submission and business acknowledgement",
-      "native terminal task projection with verified RGB evidence and ACCEPTABLE report",
+      "ordered three-point capture:overview route submission and business acknowledgement",
+      "ordered native point completion with three verified RGB evidence records and ACCEPTABLE report",
       "task-bound completed native recording with one nonempty MCAP and exact task/Product-session manifest identity",
       "minimal MuJoCo displacement during inspection execution"
     ],

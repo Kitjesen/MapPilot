@@ -4,6 +4,7 @@ import test from 'node:test'
 
 import {
   mapIsActivationReady,
+  mapUseStatus,
   mapSaveBlockedReason,
   navigationGoalQueueReady,
   navigationRuntimeReady,
@@ -32,6 +33,25 @@ const sceneSource = readFileSync(
   'utf8',
 )
 
+test('map status separates viewable geometry, loadable data and an already-loaded navigation map', () => {
+  const ready = { name: 'demo', has_pcd: true, has_octomap: true, can_activate: true, is_active: false }
+  const preview = { ...ready, has_octomap: false, can_activate: false, map_evidence: 'preview' as const }
+  assert.equal(mapUseStatus(undefined).label, '读取中')
+  assert.equal(mapUseStatus(preview).label, '仅可查看')
+  assert.match(mapUseStatus(preview).detail, /缺少规划地图/)
+  assert.equal(mapUseStatus({ ...ready, has_pcd: false, can_activate: false }).label, '数据不完整')
+  assert.equal(mapUseStatus(ready).label, '导航数据齐全')
+  assert.match(mapUseStatus(ready).detail, /仍需完成定位与路线预览/)
+  const blocked = { ...ready, can_activate: false, activation_blockers: ['保存尚未完成'] }
+  assert.deepEqual(mapUseStatus(blocked), { label: '仅可查看', detail: '保存尚未完成' })
+  assert.match(mapUseStatus({ ...blocked, activation_blockers: [] }).detail, /尚未允许/)
+  assert.equal(mapUseStatus(ready, true).label, '已加载到现场')
+  assert.match(mapUseStatus(ready, true).detail, /定位与路线预览请在现场查看/)
+  assert.match(source, /mapUseStatus\(selectedInfo, selectedNavigationMap\)/)
+  assert.match(source, /地图状态：\$\{selectedStatus.label\}/)
+  assert.doesNotMatch(source, /点云预览·仅定位/)
+})
+
 test('map saving is offered only for the active mapping Product', () => {
   const mapping = { product: 'map', map_save_supported: true } as Parameters<typeof mapSaveBlockedReason>[0]
   assert.equal(mapSaveBlockedReason(mapping), '')
@@ -55,24 +75,22 @@ test('scene map-list failures retain prior maps and never claim an empty library
   assert.match(sceneSource, /onClick=\{\(\) => void loadMaps\(\)\}[^>]*><RefreshCw size=\{13\} \/> 重试/)
 })
 
-test('map page navigates only when the current Product is ready', () => {
-  assert.match(source, /onNavigate/)
-  assert.match(source, /ensureNavigationSession\(name\)/)
-  assert.match(source, /selectedMapActive/)
-  assert.match(source, /等待定位/)
+test('map library opens the active navigation map in Scene without another readiness transaction', () => {
+  assert.match(source, /const selectedNavigationMap = selectedMap !== null && session !== null\s*&& navigationGoalQueueReady\(session, selectedMap\)/)
+  assert.match(source, /!observe && selectedNavigationMap && <button[^>]*\s*onClick=\{onReturnLive\}><Navigation size=\{16\} \/>在现场中导航/)
+  assert.doesNotMatch(source, /fetchSession|fetchNavigationStatus|goal_admission|检查就绪/)
   assert.doesNotMatch(source, /onActivate|激活地图/)
   assert.doesNotMatch(apiSource, /activateMap|\/api\/v1\/map\/activate/)
 })
 
-test('map-point goal is gated behind the active-map goal queue contract', () => {
-  const readinessCheck = source.indexOf('ensureNavigationSession')
-  const goalDispatch = source.indexOf('api.navigateClick')
-
-  assert.notEqual(readinessCheck, -1)
-  assert.notEqual(goalDispatch, -1)
-  assert.ok(readinessCheck < goalDispatch)
-  assert.match(source, /navigationGoalQueueReady/)
-  assert.doesNotMatch(source, /if \(!motionStartAllowed\)/)
+test('saved-map previews cannot pick or submit navigation goals outside Scene', () => {
+  assert.match(source, /<PointCloudViewer mapName=\{selectedMap\}[\s\S]*?contentEpoch=\{selectedInfo.content_epoch\}/)
+  assert.match(source, /productSessionId=\{session\?\.product_session_id\}/)
+  assert.doesNotMatch(source, /onPick|pickedPoint|confirmPickedGoal|goalPickingMap|发送目标/)
+  const apiCalls = [...source.matchAll(/api\.(\w+)\(/g)].map(match => match[1])
+  assert.deepEqual([...new Set(apiCalls)].sort(), [
+    'buildMapOctomap', 'deleteMap', 'fetchMaps', 'renameMap', 'saveEditedMap', 'saveMap', 'waitForMapSaveOperation',
+  ])
 })
 
 test('map page uses the map-list can_activate gate and requires both artifacts', () => {
@@ -88,7 +106,10 @@ test('map page uses the map-list can_activate gate and requires both artifacts',
   assert.equal(mapIsActivationReady({ ...listedMap, has_pcd: false }), false)
   assert.equal(mapIsActivationReady({ ...listedMap, has_octomap: false }), false)
   assert.equal(mapIsActivationReady({ ...listedMap, can_activate: false }), false)
-  assert.match(source, /mapIsActivationReady/)
+  assert.match(source, /!observe && selectedMap && selectedInfo && mapIsActivationReady\(selectedInfo\) && !selectedNavigationMap/)
+  assert.match(source, /disabled=\{!productSwitchAllowed\}/)
+  assert.match(source, /if \(name\) onUseMap\(name, pose\)/)
+  assert.match(source, /随后在现场选择目标并预览路线/)
 })
 
 test('map cards show the first activation blocker and retain all blockers in details', () => {
@@ -161,7 +182,8 @@ test('scene saved-map preview opens the independent viewer without switching Pro
   const viewerSource = readFileSync(new URL('../src/components/PointCloudViewer.tsx', import.meta.url), 'utf8')
   assert.match(sceneSource, /onOpenSavedMap\(m.name\)/)
   assert.match(appSource, /initialSelectedMap=\{selectedSavedMap\}/)
-  assert.match(viewerSource, /\/api\/v1\/maps\/\$\{encodeURIComponent\(name\)\}\/pcd/)
+  assert.match(viewerSource, /fetchMapPreview\(name, contentEpoch, controller.signal\)/)
+  assert.match(viewerSource, /\[mapName, contentEpoch, productSessionId, refreshToken,/)
   assert.doesNotMatch(viewerSource, /relocalize|navigateClick|activateMap|switchProduct/)
   assert.doesNotMatch(sceneSource, /waitForMapNavigationReady/)
   assert.doesNotMatch(sceneSource, /relocalize\(name,\s*0,\s*0,\s*0\)/)

@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 
 import type { BinaryCloud } from '../../../hooks/useBinaryCloud'
+import { writeCloudHeightColor } from '../../../services/cloudHeightColor.ts'
 
 const MIN_CONTROL_POINT_SIZE = 0.02
 const MAX_CONTROL_POINT_SIZE = 0.4
@@ -14,6 +15,20 @@ export interface LiveCloudLayerOptions {
   pointSizeScale?: number
   renderOrder?: number
   vertexColors?: boolean
+  heightColors?: boolean
+}
+
+function updateHeightColors(geometry: THREE.BufferGeometry, count: number): void {
+  const positions = geometry.getAttribute('position')
+  let colors = geometry.getAttribute('color') as THREE.BufferAttribute | undefined
+  if (!colors || colors.name !== 'map-height' || colors.count < count) {
+    colors = new THREE.BufferAttribute(new Float32Array(positions.count * 3), 3)
+    colors.name = 'map-height'
+    geometry.setAttribute('color', colors)
+  }
+  // Three Y is map Z. Reuse the display buffer; preserve incoming sensor RGB.
+  for (let i = 0; i < count; i++) writeCloudHeightColor(positions.getY(i), colors.array as Float32Array, i * 3)
+  colors.needsUpdate = true
 }
 
 export function pointSizeToWorld(pointSize: number): number {
@@ -37,11 +52,12 @@ export function createLiveCloudLayer(
   const colorData = cloud.colors.length >= count * 3
     ? cloud.colors.subarray(0, count * 3)
     : null
-  const useVertexColors = options.vertexColors ?? Boolean(colorData)
+  const useVertexColors = options.heightColors || (options.vertexColors ?? Boolean(colorData))
 
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.BufferAttribute(positionData, 3))
-  if (colorData && useVertexColors) geometry.setAttribute('color', new THREE.BufferAttribute(colorData, 3))
+  if (options.heightColors) updateHeightColors(geometry, count)
+  else if (colorData && useVertexColors) geometry.setAttribute('color', new THREE.BufferAttribute(colorData, 3))
 
   const material = new THREE.PointsMaterial({
     size: pointSizeToWorld(pointSize) * (options.pointSizeScale ?? 1),
@@ -109,7 +125,7 @@ export function upsertLiveCloudLayer(
   const colorData = cloud.colors.length >= count * 3
     ? cloud.colors.subarray(0, count * 3)
     : null
-  const useVertexColors = options.vertexColors ?? Boolean(colorData)
+  const useVertexColors = options.heightColors || (options.vertexColors ?? Boolean(colorData))
 
   if (!current) {
     const created = createLiveCloudLayer(cloud, pointSize, options)
@@ -120,7 +136,9 @@ export function upsertLiveCloudLayer(
   current.visible = true
   current.renderOrder = options.renderOrder ?? current.renderOrder
   updateBufferAttribute(current.geometry, 'position', positionData)
-  if (colorData && useVertexColors) updateBufferAttribute(current.geometry, 'color', colorData)
+  current.geometry.boundingSphere = null
+  if (options.heightColors) updateHeightColors(current.geometry, count)
+  else if (colorData && useVertexColors) updateBufferAttribute(current.geometry, 'color', colorData)
   else current.geometry.deleteAttribute('color')
   current.geometry.setDrawRange(0, count)
 

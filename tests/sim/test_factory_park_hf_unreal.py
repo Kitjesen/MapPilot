@@ -988,7 +988,8 @@ def test_factory_park_launcher_scales_vectors_component_wise_and_can_revalidate(
     assert "master_graph.roughness_path" in runner
     assert "'clamped_parameter'" in runner
     assert "master_graph.world_position_noise_used -ne $false" in runner
-    assert "master_graph.expression_connection_count -ne 1" in runner
+    assert "$masterGraph.expression_connection_count -ne 1" in runner
+    assert "'normal' -notin @($masterGraph.material_outputs)" in runner
     assert "PSObject.Properties).Count -ne 3" in runner
     assert "base_color_policy -ne" in runner
     assert "manifest_material_swatch_then_neutral_identity_fallback" in runner

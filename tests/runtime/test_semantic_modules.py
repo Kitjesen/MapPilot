@@ -70,12 +70,17 @@ class TestVisualServoModeTransitions(unittest.TestCase):
         self.assertEqual(m._target_label, "red cup")
 
     def test_cancel_tracking_cancels_owned_goal(self):
+        import numpy as np
+
         m = self._make()
         cancels = []
         m.goal_cancel._add_callback(cancels.append)
-        m._goal_published = True
+        self.assertTrue(m._publish_goal_from_3d(np.array([1.0, 2.0, 0.3])))
+        owned_tasks = tuple(sorted(m._navigation_tasks))
         m._cancel_tracking()
-        self.assertEqual(cancels, ["visual_servo_stop"])
+        self.assertEqual(len(cancels), 1)
+        self.assertEqual(cancels[0].task_ids, owned_tasks)
+        self.assertEqual(cancels[0].reason, "visual_servo_stop")
         self.assertFalse(m._goal_published)
         self.assertEqual(m._mode, "idle")
 
@@ -149,14 +154,18 @@ class TestVisualServoSkills(unittest.TestCase):
             )()
         )
         result = m.follow_person("person in hat")
-        self.assertIn("person in hat", result)
+        self.assertTrue(result["accepted"])
+        self.assertTrue(result["follow_task_id"])
+        self.assertEqual(m._target_label, "person in hat")
         self.assertEqual(m._mode, "follow")
 
     def test_stop_servo_skill(self):
         m = self._make()
         m._on_servo_target("find:chair")
         result = m.stop_servo()
-        self.assertIn("stopped", result)
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["reason"], "stop_requested")
+        self.assertFalse(result["execution_confirmed"])
         self.assertEqual(m._mode, "idle")
 
     def test_get_servo_status_skill(self):

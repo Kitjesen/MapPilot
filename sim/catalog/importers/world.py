@@ -1,4 +1,4 @@
-"""Deterministic fail-closed importer for heightmap-backed simulation worlds."""
+"""Heightmap world imports and unqualified, same-source static MJCF candidates."""
 
 from __future__ import annotations
 
@@ -10,13 +10,16 @@ import secrets
 import shutil
 import tempfile
 import xml.etree.ElementTree as ET
+from collections import Counter
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import yaml
 
+from ..measurement import validate_scene
 from .contracts import (
     ImportCode,
+    ImportDiagnostic,
     ImportDraft,
     ImportFailure,
     assert_no_reparse_components,
@@ -73,7 +76,7 @@ class _SchemaValidationError(ValueError):
 
 
 class WorldImporter:
-    """Import one same-source world package into a qualified draft."""
+    """Import qualified heightmaps or explicitly unqualified MJCF candidates."""
 
     def __init__(self, repo_root: Path, *, intake: SourceIntake | None = None) -> None:
         self.repo_root = Path(repo_root).resolve()
@@ -81,9 +84,28 @@ class WorldImporter:
 
     def import_world(self, request: Mapping[str, Any], *, draft_root: Path | None = None) -> ImportDraft:
         """Create a qualified draft or quarantine the rejected request."""
+        return self._import_world(request, draft_root=draft_root, mjcf_candidate=False)
+
+    def import_mjcf_candidate(self, request: Mapping[str, Any], *, draft_root: Path | None = None) -> ImportDraft:
+        """Import static inline MJCF + measurements without qualification.
+
+        Required request fields: package, source, units, visual, mjcf,
+        source_bindings, measurements. The first four reuse the existing world
+        request structures; the two paths are relative to source.path.
+        source_bindings is a JSON list of source_id/component_source_id/mjcf_geom
+        records. The entire source is retained byte-for-byte in package/source.
+        visual is a source-level hint, NOT a migrated/aligned projection.
+        Returns state=candidate and qualification_path=None; promotion rejects it.
+        No heightmap, spawn, visual projection or qualification is fabricated.
+        """
+        return self._import_world(request, draft_root=draft_root, mjcf_candidate=True)
+
+    def _import_world(
+        self, request: Mapping[str, Any], *, draft_root: Path | None, mjcf_candidate: bool
+    ) -> ImportDraft:
 
         try:
-            normalized = self._normalize_request(request)
+            normalized = self._normalize_mjcf_candidate(request) if mjcf_candidate else self._normalize_request(request)
         except ImportFailure as exc:
             root = self._lexical_absolute(
                 draft_root or (self.repo_root / "sim" / "imports" / "world" / "invalid-request")
@@ -92,6 +114,17 @@ class WorldImporter:
             raise
         import_id = f"{normalized['package']['id']}-{normalized['package']['version']}"
         root = self._lexical_absolute(draft_root or (self.repo_root / "sim" / "imports" / "world" / import_id))
+        if mjcf_candidate:
+            try:
+                root.resolve().relative_to((self.repo_root / "sim" / "packages").resolve())
+            except ValueError:
+                pass
+            else:
+                raise ImportFailure(
+                    "unqualified candidates must stay outside the active catalog",
+                    code=ImportCode.PROMOTION_INVALID,
+                    context=str(root),
+                )
         lock_path = self.repo_root / "sim" / "imports" / "world" / ".locks" / f"{import_id}.lock"
         with _PackageLock(lock_path):
             assert_no_reparse_components(root.parent, context=str(root.parent))
@@ -99,7 +132,11 @@ class WorldImporter:
             assert_no_reparse_components(root.parent, context=str(root.parent))
             staging = Path(tempfile.mkdtemp(prefix=f".{root.name}.staging-", dir=str(root.parent))).resolve()
             try:
-                draft = self._import_normalized(normalized, root=staging, import_id=import_id)
+                draft = (
+                    self._import_mjcf_candidate(normalized, root=staging, import_id=import_id)
+                    if mjcf_candidate
+                    else self._import_normalized(normalized, root=staging, import_id=import_id)
+                )
                 if os.path.lexists(root):
                     try:
                         assert_no_reparse_components(root, below=root.parent, context=str(root))
@@ -132,6 +169,205 @@ class WorldImporter:
                 )
                 self._quarantine(root, normalized, failure)
                 raise failure from exc
+
+    def _normalize_mjcf_candidate(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        request = require_mapping(value, "request")
+        strict_keys(
+            request,
+            required={"package", "source", "units", "visual", "mjcf", "source_bindings", "measurements"},
+            optional=set(),
+            context="request",
+        )
+        package = require_mapping(request["package"], "package")
+        strict_keys(package, required={"id", "version"}, optional={"description"}, context="package")
+        source = require_mapping(request["source"], "source")
+        strict_keys(source, required={"path", "provenance"}, optional=set(), context="source")
+        units = require_mapping(request["units"], "units")
+        if units != {"length": "m", "up_axis": "Z", "handedness": "RH"}:
+            raise ImportFailure("MJCF candidate units must be explicit metres/RH Z-up", code=ImportCode.UNIT_AMBIGUOUS)
+        visual = require_mapping(request["visual"], "visual")
+        strict_keys(visual, required={"binding", "level"}, optional=set(), context="visual")
+        normalized: dict[str, Any] = {
+            "package": {
+                "id": require_identity(package["id"], "package.id"),
+                "version": require_identity(package["version"], "package.version", version=True),
+            },
+            "source": {
+                "path": require_string(source["path"], "source.path"),
+                "provenance": require_mapping(source["provenance"], "source.provenance"),
+            },
+            "units": units,
+            "visual": {key: require_string(visual[key], f"visual.{key}") for key in ("binding", "level")},
+            "mjcf": safe_relative_path(request["mjcf"], "mjcf"),
+            "source_bindings": safe_relative_path(request["source_bindings"], "source_bindings"),
+            "measurements": require_mapping(request["measurements"], "measurements"),
+        }
+        if "description" in package:
+            normalized["package"]["description"] = require_string(package["description"], "package.description")
+        return normalized
+
+    def _import_mjcf_candidate(self, request: dict[str, Any], *, root: Path, import_id: str) -> ImportDraft:
+        package = request["package"]
+        package_root = root / "package"
+        intake = self.intake.materialize(self._source_path(request["source"]["path"]), package_root / "source")
+        provenance = validate_provenance(request["source"]["provenance"], source_root=intake.root)
+        mjcf_path = resolve_beneath(intake.root, request["mjcf"], "mjcf")
+        try:
+            tree = ET.parse(mjcf_path).getroot()
+        except ET.ParseError as exc:
+            raise ImportFailure(
+                f"cannot parse candidate MJCF: {exc}",
+                code=ImportCode.MODEL_INVALID,
+                context=str(mjcf_path),
+            ) from exc
+        worldbody = tree.find("worldbody")
+        if tree.tag != "mujoco" or worldbody is None:
+            raise ImportFailure("candidate must contain a mujoco worldbody", code=ImportCode.MODEL_INVALID)
+        if any(
+            element.tag in {"include", "joint", "freejoint", "actuator", "flexcomp", "composite", "replicate", "attach"}
+            or "file" in element.attrib
+            or element.get("mocap") == "true"
+            for element in tree.iter()
+        ):
+            raise ImportFailure(
+                "candidate requires static inline MJCF without generators, joints, actuators, mocap or external files",
+                code=ImportCode.MODEL_INVALID,
+            )
+        compiler = tree.find("compiler")
+        if compiler is not None and compiler.get("fusestatic", "false") != "false":
+            raise ImportFailure(
+                "candidate must preserve named static bodies; fusestatic is not supported",
+                code=ImportCode.MODEL_INVALID,
+            )
+        geom_names = [require_string(g.get("name"), "candidate geom.name") for g in worldbody.iter("geom")]
+        if not geom_names or len(geom_names) != len(set(geom_names)):
+            raise ImportFailure("candidate has missing/duplicate geom names", code=ImportCode.MODEL_INVALID)
+        bindings_path = resolve_beneath(intake.root, request["source_bindings"], "source_bindings")
+        bindings = json.loads(bindings_path.read_text(encoding="utf-8"))
+        if not isinstance(bindings, list) or not bindings:
+            raise ImportFailure(
+                "source_bindings must be a nonempty geometry mapping list", code=ImportCode.MODEL_INVALID
+            )
+        source_ids, bound_geoms = set(), set()
+        for index, row in enumerate(bindings):
+            context = f"source_bindings[{index}]"
+            row = require_mapping(row, context)
+            strict_keys(
+                row, required={"source_id", "component_source_id", "mjcf_geom"}, optional=set(), context=context
+            )
+            sid, _, name = (
+                require_string(row[key], f"{context}.{key}")
+                for key in ("source_id", "component_source_id", "mjcf_geom")
+            )
+            if sid in source_ids or name in bound_geoms:
+                raise ImportFailure(
+                    f"duplicate source geometry ID or geom mapping: {sid} / {name}", code=ImportCode.MODEL_INVALID
+                )
+            source_ids.add(sid)
+            bound_geoms.add(name)
+        if bound_geoms != set(geom_names):
+            raise ImportFailure(
+                "source geometry mappings do not match MJCF geoms",
+                code=ImportCode.MODEL_INVALID,
+                details={
+                    "unmapped": sorted(set(geom_names) - bound_geoms),
+                    "nonexistent": sorted(bound_geoms - set(geom_names)),
+                },
+            )
+        strict_keys(
+            request["measurements"],
+            required={"thermal_surfaces", "semantic_labels", "acoustic_sources"},
+            optional=set(),
+            context="measurements",
+        )
+        if any(not values for values in request["measurements"].values()):
+            raise ImportFailure(
+                "candidate measurement declarations must be nonempty, not fallback objects",
+                code=ImportCode.MODEL_INVALID,
+            )
+        option = tree.find("option")
+        if option is None or {"timestep", "integrator", "solver", "iterations", "gravity"} - option.attrib.keys():
+            raise ImportFailure(
+                "candidate must explicitly author all global physics options", code=ImportCode.MODEL_INVALID
+            )
+        policy = self._normalize_physics(
+            {
+                "timestep_s": float(option.attrib["timestep"]),
+                "integrator": option.attrib["integrator"].lower(),
+                "solver": option.attrib["solver"].lower(),
+                "iterations": int(option.attrib["iterations"]),
+                "gravity": [float(v) for v in option.attrib["gravity"].split()],
+            }
+        )
+        measurements = validate_scene(
+            request["measurements"],
+            geom_names=set(geom_names),
+            body_names={b.attrib["name"] for b in worldbody.iter("body") if "name" in b.attrib},
+        )
+        bodies = {b.get("name"): b for b in worldbody.iter("body")}
+        for source in measurements["acoustic_sources"]:
+            if not bodies[source["body_name"]].findall("geom"):
+                raise ImportFailure(
+                    f"acoustic source {source['source_id']} must bind a body with source geometry",
+                    code=ImportCode.MODEL_INVALID,
+                )
+        compile_report = self._compile_mjcf(
+            mjcf_path,
+            candidate={
+                "geom_names": geom_names,
+                "body_names": [body.get("name") for body in worldbody.iter("body")],
+                "measurements": measurements,
+            },
+        )
+        manifest = {
+            "schema": _PACKAGE_SCHEMA,
+            "id": package["id"],
+            "version": package["version"],
+            "kind": "world",
+            "physics": {"mjcf": f"source/{request['mjcf']}", "global_policy": policy},
+            "visual": request["visual"],
+            "entities": [],
+        }
+        if "description" in package:
+            manifest["description"] = package["description"]
+        # The existing legacy World envelope does not invent a terrain/spawn
+        # projection. Measurements have their existing semantic/name validator.
+        self._schema_gate(manifest, "world.v1.json", "candidate manifest", ImportCode.MODEL_INVALID)
+        manifest["measurements"] = measurements
+        manifest_path = package_root / _MANIFEST_PATH
+        manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+        provenance_path = write_json(
+            package_root / _PROVENANCE_PATH,
+            {
+                "schema": "lingtu.sim.world-provenance.v1",
+                "package": {**package, "manifest": _MANIFEST_PATH},
+                "source_intake": intake.to_dict(),
+                "provenance": provenance,
+                "source_bindings": f"source/{request['source_bindings']}",
+                "state": "candidate",
+                "pending": ["visual_alignment", "navigation_spawn", "world_qualification"],
+                "mujoco_compile": compile_report,
+            },
+        )
+        return ImportDraft(
+            import_id=import_id,
+            kind="world",
+            package_id=package["id"],
+            version=package["version"],
+            state="candidate",
+            root=root,
+            package_root=package_root,
+            manifest_path=manifest_path,
+            provenance_path=provenance_path,
+            qualification_path=None,
+            diagnostics=(
+                ImportDiagnostic(
+                    ImportCode.WORLD_ALIGNMENT_INVALID,
+                    "Unqualified candidate: visual alignment, navigation/spawn and world qualification pending",
+                    severity="warning",
+                ),
+            ),
+        )
 
     def _import_normalized(self, request: dict[str, Any], *, root: Path, import_id: str) -> ImportDraft:
         package = request["package"]
@@ -1015,7 +1251,8 @@ class WorldImporter:
         path = Path(value)
         if not path.is_absolute():
             path = self.repo_root / path
-        return path.resolve()
+        # SourceIntake must inspect lexical components before resolving links.
+        return self._lexical_absolute(path)
 
     def _publish_staging(self, staging: Path, target: Path) -> None:
         """Atomically publish one owned staging directory without replacing a target."""
@@ -1207,7 +1444,7 @@ class WorldImporter:
 
     def _validate_entity_graph(self, mjcf_path: Path, entities: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         try:
-            root = ET.parse(mjcf_path).getroot()  # noqa: S314 - the importer generated this MJCF.
+            root = ET.parse(mjcf_path).getroot()  # The importer generated this MJCF.
         except (OSError, ET.ParseError) as exc:
             raise ImportFailure(f"cannot parse generated world XML: {exc}", code=ImportCode.MODEL_INVALID) from exc
         worldbody = root.find("worldbody")
@@ -1244,7 +1481,7 @@ class WorldImporter:
             )
         return {"status": "passed", "expected_mujoco_entities": sorted(expected), "emitted_bodies": sorted(actual)}
 
-    def _compile_mjcf(self, mjcf_path: Path) -> dict[str, Any]:
+    def _compile_mjcf(self, mjcf_path: Path, *, candidate: Mapping[str, Any] | None = None) -> dict[str, Any]:
         try:
             import mujoco  # type: ignore[import-not-found]
         except ImportError as exc:
@@ -1261,13 +1498,55 @@ class WorldImporter:
                 code=ImportCode.MODEL_INVALID,
                 context=str(mjcf_path),
             ) from exc
-        return {
+        report: dict[str, Any] = {
             "status": "passed",
             "backend": "mujoco",
             "nhfield": int(model.nhfield),
             "ngeom": int(model.ngeom),
             "nbody": int(model.nbody),
         }
+        if candidate is not None:
+            if model.nq != 0 or model.nv != 0:
+                raise ImportFailure(
+                    "compiled candidate must have nq=nv=0",
+                    code=ImportCode.MODEL_INVALID,
+                    details={"nq": int(model.nq), "nv": int(model.nv)},
+                )
+            geom_names = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, i) for i in range(model.ngeom)]
+            body_names = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, i) for i in range(1, model.nbody)]
+            if Counter(geom_names) != Counter(candidate["geom_names"]) or Counter(body_names) != Counter(
+                candidate["body_names"]
+            ):
+                raise ImportFailure(
+                    "compiled candidate geom/body names differ from source bindings", code=ImportCode.MODEL_INVALID
+                )
+            scene = validate_scene(
+                candidate["measurements"],
+                geom_names={name for name in geom_names if name is not None},
+                body_names={name for name in body_names if name is not None},
+            )
+            source_bodies = {}
+            for source in scene["acoustic_sources"]:
+                body_id = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, source["body_name"]))
+                if body_id <= 0 or not any(int(owner) == body_id for owner in model.geom_bodyid):
+                    raise ImportFailure(
+                        "compiled acoustic source has no bound device geometry", code=ImportCode.MODEL_INVALID
+                    )
+                source_bodies[source["source_id"]] = body_id
+            report.update(
+                nq=int(model.nq),
+                nv=int(model.nv),
+                geom_names=geom_names,
+                body_names=body_names,
+                measurement_bindings={
+                    group: {
+                        name: int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)) for name in scene[group]
+                    }
+                    for group in ("thermal_surfaces", "semantic_labels")
+                }
+                | {"acoustic_sources": source_bodies},
+            )
+        return report
 
     def _write_exclusive_json(self, directory: Path, name: str, value: Any, token: str) -> Path:
         candidate = directory / name

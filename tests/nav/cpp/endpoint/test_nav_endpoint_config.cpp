@@ -2,13 +2,15 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-#include "runtime/config/config.hpp"
+#include "app/config/config.hpp"
 #include "planning/rolling/segment.hpp"
+#include "planning/local/scan/upstream/plan_manage/closed_loop_controller.h"
 
 namespace {
 
@@ -16,6 +18,7 @@ using lingtu::nav::endpoint::CliConfig;
 using lingtu::nav::endpoint::ControlMode;
 using lingtu::nav::endpoint::GlobalPlannerBackend;
 using lingtu::nav::endpoint::buildExecutorConfig;
+using lingtu::nav::endpoint::buildNavigationBody;
 using lingtu::nav::endpoint::buildLocalPlannerParams;
 using lingtu::nav::endpoint::buildStatusWriterConfig;
 using lingtu::nav::endpoint::commandSafetyConfig;
@@ -100,6 +103,82 @@ void testNavigationRateAndAcceleration() {
   require(std::abs(cfg.corridor_lookahead_m - 1.2) < 1e-12, "corridor lookahead must parse");
 }
 
+void testOrdinarySpeedDefaultsAgreeAcrossTheNativeBoundary() {
+  ScopedEnvironment nav_speed("LINGTU_NAV_MAX_SPEED_MPS", "");
+  ScopedEnvironment follower_speed("LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS", "");
+  ScopedEnvironment planner_speed("LINGTU_NAV_SCAN_PLANNER_MAX_VELOCITY_MPS", "");
+  ScopedEnvironment forward_speed("LINGTU_NAV_SCAN_MAX_VX_MPS", "");
+  ScopedEnvironment lateral_speed("LINGTU_NAV_SCAN_MAX_VY_MPS", "");
+  ScopedEnvironment teleop_speed("LINGTU_TELEOP_MAX_SPEED_MPS", "");
+  const auto cfg=parse({"navd", "--local-planner", "scan"});
+  const auto planner=buildLocalPlannerParams(cfg);
+  const auto executor=buildExecutorConfig(cfg);
+  require(nav_kernel::ScanPlannerParams{}.maxVelocity == 1.0 &&
+              nav_kernel::SplineFollowerParams{}.maxVx == 1.0 &&
+              nav_kernel::SplineFollowerParams{}.maxVy == 1.0 &&
+              nav_kernel::local::scan::upstream::ClosedLoopControllerParams{}.maxLinearSpeed == 1.0 &&
+              nav_kernel::local::scan::upstream::ClosedLoopControllerParams{}.maxVx == 1.0 &&
+              nav_kernel::local::scan::upstream::ClosedLoopControllerParams{}.maxVy == 1.0,
+          "ordinary SCAN library speed defaults must be one meter per second");
+  require(cfg.nav_max_speed_mps == 1.0 && cfg.path_follower_max_speed_mps == 1.0 &&
+              cfg.teleop_max_speed_mps == 1.0 && planner.scan.maxVelocity == 1.0 &&
+              planner.scan.maxBodyVx == 1.0 && planner.scan.maxBodyVy == 1.0 &&
+              executor.max_speed == 1.0 && executor.follower.spline.maxVx == 1.0 &&
+              executor.follower.spline.maxVy == 1.0 &&
+              lingtu::nav::navigation::ExecutorConfig{}.max_speed == 1.0 &&
+              lingtu::nav::endpoint::CommandSafetyConfig{}.max_speed_mps == 1.0,
+          "bare endpoint parsing and planner/follower wiring must preserve the speed default");
+}
+
+void testOrdinaryAccelerationDefaultsAndExplicitOverrides() {
+  ScopedEnvironment nav_accel("LINGTU_NAV_MAX_ACCEL_MPS2", "");
+  ScopedEnvironment follower_accel("LINGTU_NAV_PATH_FOLLOWER_MAX_ACCEL_MPS2", "");
+  ScopedEnvironment scan_accel("LINGTU_NAV_SCAN_PLANNER_MAX_ACCELERATION_MPS2", "");
+  ScopedEnvironment x_accel("LINGTU_NAV_SMOOTHER_X_ACCEL_MPS2", "");
+  ScopedEnvironment y_accel("LINGTU_NAV_SMOOTHER_Y_ACCEL_MPS2", "");
+  require(nav_kernel::ScanPlannerParams{}.maxAcceleration == 2.0 &&
+              nav_kernel::FollowerParams{}.maxAccel == 2.0 &&
+              nav_kernel::VelocitySmootherConfig{}.x.acceleration == 2.0 &&
+              nav_kernel::VelocitySmootherConfig{}.y.acceleration == 2.0,
+          "native library ordinary acceleration defaults must agree");
+  for (const char *backend : {"cmu", "scan"}) {
+    const auto cfg = parse({"navd", "--path-library", "fixture-paths", "--local-planner", backend});
+    require(cfg.nav_max_accel_mps2 == 2.0 && cfg.path_follower_max_accel_mps2 == 2.0 &&
+                cfg.scan_planner.maxAcceleration == 2.0 &&
+                cfg.velocity_smoother.x.acceleration == 2.0 &&
+                cfg.velocity_smoother.y.acceleration == 2.0,
+            "ordinary endpoint acceleration defaults must agree");
+    require(buildExecutorConfig(cfg).follower.maxAccel == 2.0 &&
+                buildLocalPlannerParams(cfg).scan.maxAcceleration == 2.0,
+            "ordinary defaults must reach planner and follower");
+
+    const auto lower = parse({"navd", "--path-library", "fixture-paths", "--local-planner", backend,
+                              "--max-accel-mps2", "1.3", "--path-follower-max-accel-mps2", "0.4"});
+    require(lower.nav_max_accel_mps2 == 1.3 && lower.path_follower_max_accel_mps2 == 0.4 &&
+                lower.scan_planner.maxAcceleration == 0.4 &&
+                lower.velocity_smoother.x.acceleration == 0.4 &&
+                lower.velocity_smoother.y.acceleration == 0.4,
+            "dependent acceleration defaults must follow the final CLI follower override");
+    require(buildExecutorConfig(lower).follower.maxAccel == 0.4 &&
+                buildLocalPlannerParams(lower).scan.maxAcceleration == 0.4,
+            "explicit lower acceleration must survive CMU and SCAN composition");
+    require(lower.velocity_smoother.x.deceleration == 2.0 &&
+                lower.velocity_smoother.y.deceleration == 2.0 &&
+                lower.velocity_smoother.yaw.acceleration == 2.0 &&
+                lower.velocity_smoother.yaw.deceleration == 3.0,
+            "ordinary translation acceleration must not alter braking or yaw defaults");
+  }
+  ScopedEnvironment explicit_follower("LINGTU_NAV_PATH_FOLLOWER_MAX_ACCEL_MPS2", "0.8");
+  ScopedEnvironment explicit_scan("LINGTU_NAV_SCAN_PLANNER_MAX_ACCELERATION_MPS2", "0.25");
+  ScopedEnvironment explicit_x("LINGTU_NAV_SMOOTHER_X_ACCEL_MPS2", "0.3");
+  ScopedEnvironment explicit_y("LINGTU_NAV_SMOOTHER_Y_ACCEL_MPS2", "0.35");
+  const auto cfg = parse({"navd", "--local-planner", "scan", "--path-follower-max-accel-mps2", "0.4"});
+  require(cfg.path_follower_max_accel_mps2 == 0.4 && cfg.scan_planner.maxAcceleration == 0.25 &&
+              cfg.velocity_smoother.x.acceleration == 0.3 &&
+              cfg.velocity_smoother.y.acceleration == 0.35,
+          "CLI must override follower environment while explicit SCAN and smoother tuning survive");
+}
+
 void testCompiledProductMotionContractParses() {
   const auto cfg = parse({
       "navd",
@@ -173,11 +252,11 @@ void testCompiledProductMotionContractParses() {
               std::abs(executor_config.follower.headingAlignEnterRad - 0.40) < 1e-12 &&
               std::abs(executor_config.follower.headingAlignExitRad - 0.40) < 1e-12 &&
               std::abs(executor_config.follower.baseLookAheadDis - 0.50) < 1e-12 &&
-              std::abs(executor_config.follower.maxAccel - 2.0) < 1e-12,
+              std::abs(executor_config.follower.maxAccel - 1.0) < 1e-12,
           "CMU config must apply the official Go2 follower profile");
   const auto status = buildStatusWriterConfig(cfg, inputGateConfig(cfg));
   require(std::abs(status.follower_lookahead_m - 0.50) < 1e-12 &&
-              std::abs(status.max_accel_mps2 - 2.0) < 1e-12 &&
+              std::abs(status.max_accel_mps2 - 1.0) < 1e-12 &&
               std::abs(status.follower_goal_tolerance_m - 0.30) < 1e-12 &&
               std::abs(status.nominal_dt_s - 0.01) < 1e-12,
           "CMU status must report the effective Go2 follower profile");
@@ -327,14 +406,18 @@ void testOctoPlanner3DPhysicalContractIsConfigurable() {
       "240000",
       "--octo-snap-radius-cells",
       "16",
-      "--octo-require-ground-support",
+      "--octo-ground-support",
       "true",
-      "--octo-strict-ground-support",
+      "--octo-direct-support-only",
       "false",
-      "--octo-ground-support-xy-radius-cells",
+      "--octo-support-radius-cells",
       "1",
-      "--octo-ground-support-depth-cells",
+      "--octo-support-depth-cells",
       "8",
+      "--octo-search-resolution-m",
+      "0.15",
+      "--octo-surface-closing-radius-m",
+      "0.4",
       "--octo-support-height-m",
       "0.55",
       "--octo-support-height-tolerance-m",
@@ -378,10 +461,12 @@ void testOctoPlanner3DPhysicalContractIsConfigurable() {
   require(std::abs(octo.body_clearance_above_m - 0.30) < 1e-12, "body upper envelope must parse");
   require(octo.max_iterations == 240000, "A* budget must parse");
   require(octo.snap_search_radius_cells == 16, "snap radius must parse");
-  require(octo.require_ground_support, "ground support must stay enabled");
-  require(!octo.strict_direct_ground_support, "nearby support must remain allowed");
-  require(octo.ground_support_xy_radius_cells == 1, "support XY radius must parse");
-  require(octo.ground_support_depth_cells == 8, "support depth must parse");
+  require(octo.ground_support, "ground support must stay enabled");
+  require(!octo.direct_support_only, "nearby support must remain allowed");
+  require(octo.support_radius_cells == 1, "support XY radius must parse");
+  require(octo.support_depth_cells == 8, "support depth must parse");
+  require(std::abs(octo.search_resolution_m - 0.15) < 1e-12, "search resolution must parse");
+  require(std::abs(octo.surface_closing_radius_m - 0.4) < 1e-12, "surface closing radius must parse");
   require(std::abs(octo.support_height_m - 0.55) < 1e-12, "support height must parse");
   require(std::abs(octo.support_height_tolerance_m - 0.05) < 1e-12, "support tolerance must parse");
   require(!octo.enable_preblocked_costmap, "preblocked soft cost must be configurable");
@@ -861,7 +946,9 @@ void testRuntimeEnvironmentPrecedesDefaultsAndCliPrecedesEnvironment() {
 void testGo2RunPlanGeometryEnvironmentParsesExactly() {
   ScopedEnvironment length("LINGTU_NAV_VEHICLE_LENGTH_M", "0.76");
   ScopedEnvironment width("LINGTU_NAV_VEHICLE_WIDTH_M", "0.31");
-  ScopedEnvironment hard_margin("LINGTU_TELEOP_OBSTACLE_MARGIN_M", "0.10");
+  ScopedEnvironment hard_margin("LINGTU_TELEOP_OBSTACLE_MARGIN_M", "0.05");
+  ScopedEnvironment clearance_below("LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M", "0.10");
+  ScopedEnvironment clearance_above("LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M", "0.24");
   ScopedEnvironment cylinder_radius("LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M", "0.25");
   ScopedEnvironment cylinder_offset("LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M", "0.18");
   ScopedEnvironment follower_speed("LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS", "0.50");
@@ -878,7 +965,7 @@ void testGo2RunPlanGeometryEnvironmentParsesExactly() {
   require(std::abs(cmu_cfg.obstacle_voxel_size_m - 0.05) < 1e-12,
           "Go2 CMU obstacle fusion must retain the upstream five-centimeter density");
   const auto cmu = buildLocalPlannerParams(cmu_cfg);
-  require(std::abs(cmu.footprintPadding - 0.10) < 1e-12,
+  require(std::abs(cmu.footprintPadding - 0.05) < 1e-12,
           "Go2 CMU must receive the one configured hard margin");
   require(std::abs(cmu.autonomySpeed - 0.50) < 1e-12 &&
               std::abs(cmu.maxSpeed - 0.50) < 1e-12,
@@ -900,6 +987,16 @@ void testGo2RunPlanGeometryEnvironmentParsesExactly() {
           "Go2 SCAN must use the complete double-cylinder envelope without extra padding");
   require(!scan.useTerrainAnalysis,
           "SCAN collision input must not inherit the CMU terrain-cloud interpretation");
+  const auto body = buildExecutorConfig(scan_cfg).body;
+  require(body && body->parts.size() == 1 &&
+              std::abs(body->parts.front().half_size.x - .43) < 1e-12 &&
+              std::abs(body->parts.front().half_size.y - .205) < 1e-12 &&
+              body->margin_m == 0.0,
+          "Go2 five-centimeter RunPlan margin must produce a 0.86 x 0.41 m box once");
+  const auto &box = body->parts.front();
+  require(std::abs(box.center.z - box.half_size.z + .10) < 1e-12 &&
+              std::abs(box.center.z + box.half_size.z - .24) < 1e-12,
+          "Go2 horizontal margin change must preserve the configured vertical extent");
 }
 
 void testScanPlannerEnvironmentReachesCore() {
@@ -938,9 +1035,9 @@ void testScanPlannerEnvironmentReachesCore() {
               buildLocalPlannerParams(cfg).localCollisionMaxAge == 0.75,
           "input gate and recovery must consume the same collision freshness policy");
   const auto status = buildStatusWriterConfig(cfg, inputGateConfig(cfg));
-  require(status.input_require_local_collision && status.input_require_cloud &&
+  require(status.input_require_local_collision && !status.input_require_cloud &&
               status.local_collision_max_age_s == 0.75,
-          "autonomous SCAN requires fresh collision and motion-prediction source inputs");
+          "autonomous SCAN requires Mapd collision without a redundant raw-cloud gate");
   const auto avoid = parse({"navd", "--local-planner", "scan", "--control-mode", "teleop_avoid"});
   require(inputGateConfig(avoid).require_local_collision && !inputGateConfig(avoid).require_cloud,
           "assisted teleop keeps its Mapd-only observation contract");
@@ -1149,13 +1246,14 @@ void testLocalPlannerUsesConfiguredTraversabilityPolicy() {
   require(!scan.useTraversabilityCost,
           "SCAN must use its 3D collision volume without the CMU terrain-cost grid");
   const auto scan_gate = inputGateConfig(cfg);
-  require(!scan_gate.require_traversability && scan_gate.require_local_collision &&
+  require(!scan_gate.require_traversability && !scan_gate.require_cloud &&
+              scan_gate.require_odom && scan_gate.require_local_collision &&
               scan_gate.require_localization_health && scan_gate.require_driver_control,
-          "SCAN must remove only the unused 2D terrain gate and retain motion evidence");
+          "SCAN must require authoritative collision and retain pose, localization and driver gates");
 
   cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Cmu;
-  require(inputGateConfig(cfg).require_traversability,
-          "CMU must retain its configured terrain input requirement");
+  require(inputGateConfig(cfg).require_traversability && inputGateConfig(cfg).require_cloud,
+          "CMU must retain its consumed cloud and configured terrain input requirements");
 
   cfg.use_traversability_cost = false;
   const auto disabled = buildLocalPlannerParams(cfg);
@@ -1174,22 +1272,37 @@ void testCommandBoundaryUsesActiveControlModeMotionLimits() {
   auto safety = commandSafetyConfig(cfg);
   require(std::abs(safety.max_speed_mps - 0.6) < 1e-12,
           "autonomy command boundary must preserve the configured follower speed limit");
+  require(std::abs(safety.max_axis_speed_mps - 0.4) < 1e-12,
+          "autonomy command boundary must preserve the shared body-axis speed budget");
   require(std::abs(safety.max_yaw_rate - 0.8) < 1e-12,
           "autonomy command boundary must preserve the configured follower yaw limit");
 
   cfg.control_mode = ControlMode::Teleop;
   safety = commandSafetyConfig(cfg);
-  require(std::abs(safety.max_speed_mps - 0.4) < 1e-12,
-          "teleop command boundary must use the teleop speed limit");
+  require(std::abs(safety.max_speed_mps - std::hypot(0.4, 0.4)) < 1e-12 &&
+              std::abs(safety.max_axis_speed_mps - 0.4) < 1e-12,
+          "teleop command boundary must allow the full per-axis diagonal budget");
   require(std::abs(safety.max_yaw_rate - 1.0) < 1e-12,
           "teleop command boundary must use the teleop yaw limit");
 
   cfg.control_mode = ControlMode::TeleopAvoid;
   safety = commandSafetyConfig(cfg);
-  require(std::abs(safety.max_speed_mps - 0.4) < 1e-12,
-          "teleop_avoid command boundary must use the teleop speed limit");
+  require(std::abs(safety.max_speed_mps - std::hypot(0.4, 0.4)) < 1e-12,
+          "teleop_avoid total speed must allow both body axes together");
+  require(std::abs(safety.max_axis_speed_mps - 0.4) < 1e-12,
+          "teleop_avoid must preserve its separate body-axis bound");
   require(std::abs(safety.max_yaw_rate - 1.0) < 1e-12,
           "teleop_avoid command boundary must use the teleop yaw limit");
+  cfg.teleop_max_speed_mps = 1.0;
+  cfg.path_follower_max_speed_mps = std::hypot(1.0, 1.0);
+  safety = commandSafetyConfig(cfg);
+  require(safety.max_axis_speed_mps == 1.0 &&
+              std::abs(safety.max_speed_mps - std::hypot(1.0, 1.0)) < 1e-12,
+          "resolved assisted profile must admit the full diagonal budget");
+  cfg.path_follower_max_speed_mps = 1.2;
+  safety = commandSafetyConfig(cfg);
+  require(std::abs(safety.max_speed_mps - 1.2) < 1e-12,
+          "explicit lower assisted total-speed override must remain binding");
 }
 
 void testScanCollisionEnvelopeIsConfigurable() {
@@ -1214,12 +1327,57 @@ void testScanCollisionEnvelopeIsConfigurable() {
           "SCAN prediction envelope must use the same radius as Mapd");
   require(std::abs(planner.scan.cylinderOffset - 0.24) < 1e-12,
           "SCAN collision offset must reach the planner");
-  require(std::abs(cfg.octoplanner_options.robot_radius - 0.155) < 1e-12,
-          "SCAN envelope must not overwrite the global route clearance");
+  require(std::abs(cfg.octoplanner_options.robot_radius - 0.41) < 1e-12,
+          "global XYZ search must use corridor width without adding body length");
+  require(std::abs(cfg.octoplanner_options.body_clearance_below_m - 0.25) < 1e-12 &&
+              std::abs(cfg.octoplanner_options.body_clearance_above_m - 0.40) < 1e-12,
+          "global clearance must cover SCAN's discretely inflated vertical extent");
   require(std::abs(planner.scan.bodyClearanceBelow - 0.22) < 1e-12,
           "SCAN lower body clearance must reach the planner");
   require(std::abs(planner.scan.bodyClearanceAbove - 0.36) < 1e-12,
           "SCAN upper body clearance must reach the planner");
+}
+
+void testScanGlobalCorridorEnvironmentAndLargerOverrides() {
+  ScopedEnvironment planner_backend("LINGTU_NAV_LOCAL_PLANNER_BACKEND", "scan");
+  ScopedEnvironment radius("LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M", "0.25");
+  ScopedEnvironment offset("LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M", "0.19");
+  ScopedEnvironment below("LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M", "0.10");
+  ScopedEnvironment above("LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M", "0.24");
+  ScopedEnvironment global_radius("LINGTU_NAV_OCTO_ROBOT_RADIUS_M", "0.10");
+  ScopedEnvironment global_below("LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M", "0.01");
+  ScopedEnvironment global_above("LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M", "0.01");
+  const auto cfg = parse({"navd"});
+  require(std::abs(cfg.octoplanner_options.robot_radius - 0.25) < 1e-12 &&
+              std::abs(cfg.octoplanner_options.body_clearance_below_m - 0.10) < 1e-12 &&
+              std::abs(cfg.octoplanner_options.body_clearance_above_m - 0.25) < 1e-12,
+          "undersized environment values must not shrink corridor width or height");
+
+  const auto larger = parse({"navd", "--octo-robot-radius-m", "0.70",
+                            "--octo-body-clearance-below-m", "0.40",
+                            "--octo-body-clearance-above-m", "0.50"});
+  require(std::abs(larger.octoplanner_options.robot_radius - 0.70) < 1e-12 &&
+              std::abs(larger.octoplanner_options.body_clearance_below_m - 0.40) < 1e-12 &&
+              std::abs(larger.octoplanner_options.body_clearance_above_m - 0.50) < 1e-12,
+          "larger explicit global clearances must remain available");
+
+  const auto cmu = parse({"navd", "--local-planner", "cmu", "--path-library", "fixture-paths"});
+  require(std::abs(cmu.octoplanner_options.robot_radius - 0.10) < 1e-12 &&
+              std::abs(cmu.octoplanner_options.body_clearance_below_m - 0.01) < 1e-12 &&
+              std::abs(cmu.octoplanner_options.body_clearance_above_m - 0.01) < 1e-12,
+          "SCAN geometry normalization must not change the CMU contract");
+}
+
+void testScanGlobalCorridorUsesThunderGeometry() {
+  const auto cfg = parse({"navd", "--local-planner", "scan",
+                          "--collision-cylinder-radius-m", "0.40",
+                          "--collision-cylinder-offset-m", "0.25",
+                          "--collision-clearance-below-m", "0.25",
+                          "--collision-clearance-above-m", "0.35"});
+  require(std::abs(cfg.octoplanner_options.robot_radius - 0.40) < 1e-12 &&
+              std::abs(cfg.octoplanner_options.body_clearance_below_m - 0.25) < 1e-12 &&
+              std::abs(cfg.octoplanner_options.body_clearance_above_m - 0.35) < 1e-12,
+          "the global corridor must derive from the selected platform geometry");
 }
 
 void testVelocitySmootherEnvironmentParsesExactly() {
@@ -1509,12 +1667,98 @@ void testRollingSegmentPoliciesAreConfigurableAndBounded() {
   }
 }
 
+void testNavigationBoxUsesOneHorizontalMarginAndOriginalVerticalExtent() {
+  CliConfig cfg;
+  cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Scan;
+  cfg.vehicle_length_m = 0.76;
+  cfg.vehicle_width_m = 0.31;
+  cfg.teleop_obstacle_margin_m = 0.10;
+  cfg.collision_clearance_below_m = 0.10;
+  cfg.collision_clearance_above_m = 0.24;
+  const auto body = buildExecutorConfig(cfg).body;
+  require(body && body->parts.size() == 1, "navigation must use one shared box");
+  const auto& box = body->parts.front();
+  require(box.shape == lingtu::nav::collision::Shape::Box,
+          "navigation must not fall back to cylinder geometry");
+  require(std::abs(box.half_size.x - .48) < 1e-12 &&
+          std::abs(box.half_size.y - .255) < 1e-12,
+          "horizontal hard margin must be included once");
+  require(std::abs(box.center.z - box.half_size.z + .10) < 1e-12 &&
+          std::abs(box.center.z + box.half_size.z - .24) < 1e-12 && body->margin_m == 0.0,
+          "horizontal margin must not change vertical body clearances");
+  require(!box.support_contact,
+          "body volume must not invent foot support contacts");
+  cfg.vehicle_length_m = 1.0;
+  cfg.vehicle_width_m = 0.6;
+  cfg.collision_cylinder_radius_m = 20.0;
+  const auto other = buildExecutorConfig(cfg).body;
+  require(std::abs(other->parts.front().half_size.x - .6) < 1e-12 &&
+          std::abs(other->parts.front().half_size.y - .4) < 1e-12,
+          "other robot dimensions must work without legacy cylinder inflation");
+  cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Cmu;
+  require(!buildExecutorConfig(cfg).body,
+          "legacy CMU cannot be given a pose-route body it does not consume");
+}
+
+void testRobotConfigBody2ModelReplacesDimensionDerivedBox() {
+  const auto path = std::filesystem::temp_directory_path() /
+                    "lingtu-navigation-body2-test.body2";
+  {
+    std::ofstream output(path);
+    output << "BODY2 2\n"
+           << "base 0 0 0.2 1 0 0 0 1 0 0 0 1 0.5 0.3 0.2 box 0 0 0 0\n"
+           << "FL_foot 0.2 0.1 0.02 1 0 0 0 1 0 0 0 1 0.03 0.03 0.03 sphere 0.03 0 1 1\n";
+  }
+  CliConfig cfg;
+  cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Scan;
+  cfg.navigation_body_file = path.string();
+  cfg.teleop_obstacle_margin_m = .05;
+  const auto body = buildNavigationBody(cfg);
+  require(body && body->parts.size() == 2,
+          "RobotConfig BODY2 must retain all exported collision parts");
+  require(body->parts.front().link == "base" &&
+              body->parts.back().support_contact &&
+              body->parts.back().shape == lingtu::nav::collision::Shape::Sphere,
+          "BODY2 support roles and primitive types must reach native navigation");
+  require(body->margin_m == 0.0 && body->horizontal_margin_m == .05 &&
+              body->parts.front().half_size.z == .2 && body->parts.back().radius_m == .03,
+          "BODY2 must use configured horizontal clearance without hidden isotropic padding");
+  cfg.teleop_obstacle_margin_m = .12;
+  const auto wider = buildNavigationBody(cfg);
+  require(wider->horizontal_margin_m == .12 && wider->margin_m == 0.0 &&
+              wider->parts.front().half_size.x == .5,
+          "changing configured clearance must reach BODY2 without baking it twice");
+  std::error_code error;
+  std::filesystem::remove(path, error);
+}
+
+void testStairLandingUsesPhysicalFootprint() {
+  CliConfig cfg;
+  cfg.vehicle_length_m = 1.0;
+  cfg.vehicle_width_m = 0.6;
+  cfg.collision_cylinder_radius_m = 0.4;
+  cfg.collision_cylinder_offset_m = 0.25;
+  const auto executor = buildExecutorConfig(cfg);
+  require(std::abs(executor.stairs.bodyLength - 1.0) < 1e-12 &&
+              std::abs(executor.stairs.bodyWidth - 0.6) < 1e-12,
+          "stair landing must use the physical vehicle footprint, not SCAN circles");
+  const auto local = buildLocalPlannerParams(cfg);
+  require(std::abs(local.scan.cylinderRadius - 0.4) < 1e-12 &&
+              std::abs(local.scan.cylinderOffset - 0.25) < 1e-12,
+          "stair footprint mapping must retain the local collision envelope");
+}
+
 }  // namespace
 
 int main() {
   try {
     ScopedEnvironment runtime_env("LINGTU_ENV", "");
     testNavigationRateAndAcceleration();
+    testNavigationBoxUsesOneHorizontalMarginAndOriginalVerticalExtent();
+    testRobotConfigBody2ModelReplacesDimensionDerivedBox();
+    testOrdinaryAccelerationDefaultsAndExplicitOverrides();
+    testOrdinarySpeedDefaultsAgreeAcrossTheNativeBoundary();
+    testStairLandingUsesPhysicalFootprint();
     testDynamicObstacleThresholdsParse();
     testRuntimeEnvironmentPrecedesDefaultsAndCliPrecedesEnvironment();
     testGo2RunPlanGeometryEnvironmentParsesExactly();
@@ -1547,6 +1791,8 @@ int main() {
     testLocalPlannerUsesConfiguredTraversabilityPolicy();
     testCommandBoundaryUsesActiveControlModeMotionLimits();
     testScanCollisionEnvelopeIsConfigurable();
+    testScanGlobalCorridorEnvironmentAndLargerOverrides();
+    testScanGlobalCorridorUsesThunderGeometry();
     testFarPlannerRejectsInvalidConfiguration();
     testNonFiniteMotionLimitsFailClosed();
     testControlModesLockTheirSafetyContract();

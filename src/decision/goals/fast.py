@@ -210,6 +210,19 @@ class FastPathMixin:
                 except Exception as _e:
                     logger.debug("Batch CLIP similarity failed, falling back per-object: %s", _e)
 
+        relation_bound_ids: set[Any] = set()
+
+        def _matches_role(value: str, roles: list[str]) -> bool:
+            """Match a scene label against a parsed instruction role."""
+            value_core = self._extract_core_noun(value)
+            return any(
+                value == role
+                or value in role
+                or role in value
+                or value_core == self._extract_core_noun(role)
+                for role in roles
+            )
+
         for obj in objects:
             # A rejected goal may still be a landmark in a relational instruction.
             if excluded_object_ids and str(obj.get("id")) in excluded_object_ids:
@@ -292,6 +305,34 @@ class FastPathMixin:
                         label_in_inst = label_core in inst_lower or label in inst_lower
                         related_in_inst = related_core in inst_lower or related_label in inst_lower
 
+                        # Runtime SceneGraph serializes the relation kind as
+                        # ``predicate``; older fixtures use ``relation``.
+                        relation_kind = rel.get("predicate", rel.get("relation", ""))
+                        relation_kind = str(relation_kind).lower().replace("_", " ").strip()
+                        spatial_relation = relation_kind in {
+                            "near",
+                            "close",
+                            "close by",
+                            "beside",
+                            "next to",
+                        }
+
+                        # ``near`` is symmetric; iterating either endpoint
+                        # still lets the target role be identified.  When the
+                        # instruction names both roles, bind the target to the
+                        # actual edge instead of giving every unrelated near
+                        # edge the same generic bonus.  This also handles
+                        # translated labels (``箱子`` -> ``box``) which are
+                        # not present verbatim in the instruction text.
+                        relation_target_match = spatial_relation and (
+                            _matches_role(label, subject_labels)
+                            and _matches_role(related_label, modifier_labels)
+                        )
+                        if relation_target_match:
+                            spatial_score = max(spatial_score, 1.0)
+                            relation_bound_ids.add(obj_id)
+                            continue
+
                         if label_in_inst and related_in_inst:
                             label_pos = inst_lower.find(label_core if label_core in inst_lower else label)
                             related_pos = inst_lower.find(related_core if related_core in inst_lower else related_label)
@@ -302,7 +343,7 @@ class FastPathMixin:
                             else:
                                 spatial_score = 0.2
 
-                        elif rel.get("relation") == "near":
+                        elif relation_kind == "near":
                             spatial_score = max(spatial_score, 0.3)
 
             if has_real_clip:
@@ -344,6 +385,16 @@ class FastPathMixin:
                     "ts": time.time(),
                 },
             )
+
+        if relation_bound_ids:
+            # Once the graph contains an explicitly related target, unrelated
+            # instances of the same target label cannot satisfy the request.
+            scored = [
+                item
+                for item in scored
+                if item[0].get("id") in relation_bound_ids
+                or not _matches_role(str(item[0].get("label", "")).lower(), subject_labels)
+            ]
 
         if not scored:
             room_result = self._try_room_fallback(instruction, keywords, sg, clip_encoder)
@@ -704,6 +755,15 @@ class FastPathMixin:
                 continue
 
             name_lower = name.lower()
+            room_terms = [name_lower]
+            for key in ("room_type", "label"):
+                value = room.get(key)
+                if value:
+                    room_terms.append(str(value).lower())
+            aliases = room.get("aliases", [])
+            if isinstance(aliases, (list, tuple)):
+                room_terms.extend(str(alias).lower() for alias in aliases if alias)
+            normalized_terms = {term.replace("_", " ") for term in room_terms}
             match_score = 0.0
 
             if clip_encoder is not None and room.get("clip_feature") is not None:
@@ -718,12 +778,20 @@ class FastPathMixin:
 
             for kw in keywords:
                 kw_l = kw.lower()
-                if kw_l in name_lower or name_lower in kw_l:
+                normalized_kw = kw_l.replace("_", " ")
+                if any(
+                    normalized_kw in term or term in normalized_kw
+                    for term in normalized_terms
+                ):
                     match_score = max(match_score, 0.8)
                     break
 
             if match_score < 0.5:
-                if name_lower in inst_lower or inst_lower in name_lower:
+                normalized_instruction = inst_lower.replace("_", " ")
+                if any(
+                    term in normalized_instruction or normalized_instruction in term
+                    for term in normalized_terms
+                ):
                     match_score = max(match_score, 0.7)
 
             if match_score > best_match:
@@ -844,7 +912,11 @@ class FastPathMixin:
                 zh_tokens = _re.findall(r"[\u4e00-\u9fff]+", chinese_text)
                 all_keywords.extend(t for t in zh_tokens if t not in stop_words and len(t) > 1)
 
-        deduped = list(set(all_keywords))
+        # Preserve text/tokenizer order.  Role parsing uses the first scene
+        # label as the relation subject when a relation pattern is not
+        # available; an unordered set can therefore swap target and reference
+        # across processes (for example, ``箱子 near 桌子``).
+        deduped = list(dict.fromkeys(all_keywords))
 
         try:
             from .tokenizer import expand_bilingual
@@ -923,6 +995,22 @@ class FastPathMixin:
                     if alias.lower() in lbl or lbl in alias.lower():
                         return True
             return False
+
+        mixed_patterns = [
+            r"([\u4e00-\u9fff]+)\s+(?:near|by|beside|next\s+to)\s+([\u4e00-\u9fff]+)",
+        ]
+        for pat in mixed_patterns:
+            m = re.search(pat, inst_lower)
+            if not m:
+                continue
+            subj_str, mod_str = m.group(1), m.group(2)
+            for lbl in scene_labels:
+                if _match_label(subj_str, lbl):
+                    subjects.append(lbl)
+                if _match_label(mod_str, lbl):
+                    modifiers.append(lbl)
+            if subjects:
+                return list(dict.fromkeys(subjects)), list(dict.fromkeys(modifiers))
 
         for i, pat in enumerate(zh_patterns):
             m = re.search(pat, inst_lower)

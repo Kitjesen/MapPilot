@@ -9,16 +9,24 @@ artifact building, or activation.
 
 | Question | Code |
 | --- | --- |
+| Where is the public C++ header catalogue? | [`include/lingtu/maps/README.md`](include/lingtu/maps/README.md) |
 | Where does live mapping run? | `cpp/mapd/` |
 | Where is the incremental map updated? | `cpp/mapd/engine.cpp`, `cpp/layers/` |
-| Who stores maps? | `cpp/store.cpp`, `cpp/service_lifecycle.cpp` |
+| Who stores maps? | `cpp/storage/store.cpp`, `cpp/service_lifecycle.cpp` |
 | Who may activate a map? | ProductControl, through `cpp/mapd/activation.cpp` and the native service |
 | How does Gateway call native maps? | Stateless `runtime/endpoints/mapd.py` UDS transport to `mapd` |
-| How is a map saved and built? | `cpp/mapd/save_coordinator.cpp`, `cpp/save.cpp`, `cpp/build/` |
+| How is a map saved and built? | `cpp/mapd/save.cpp`, `cpp/save.cpp`, `cpp/build/`, and header algorithms under `include/lingtu/maps/octomap/` |
 | Where is saved-map cleanup? | `prune/` |
-| Where are the tests? | `tests/` |
+| Where are the native maps tests? | `../../tests/maps/cpp/` |
 
 ## How It Runs
+
+Product map previews use the existing native artifact endpoint: `mapd`
+`open_artifact(source_pointcloud)` → Gateway `/api/v1/maps/{name}/pcd` → React
+Maps. Gateway forwards the descriptor's map ID, content epoch, and frame in
+HTTP headers; previewing does not activate that map. `/map/viewer` redirects
+to the product page. Display styles and recording-only export configuration
+belong to the UI/tools, not to map save or navigation activation.
 
 Live mapping:
 
@@ -32,11 +40,13 @@ SLAM /slam/map_observation
 
 `MapCollisionLayer` carries three packed 3D bitmaps with one geometry and
 generation: inflated collision, measured occupancy, and known free space.
-Neither measured bit means unknown. Evidence-only changes advance generation
-even if inflation is unchanged. SCAN consumes these immutable snapshots for
-body collision and calibrated ground-support queries; the display surface
-projection does not authorize motion. Rebuild/deploy mapd and navd together
-when changing this final DDS type.
+When neither measured bit is set, the cell is unknown. Evidence-only changes
+advance generation even if inflation is unchanged. SCAN queries the inflated
+bitmap for body collision: a clear collision query does not assert observed
+free space or ground support. OctoPlanner checks the autonomous route's 3D
+support and unknown-space evidence in the saved map; the display surface
+projection does not authorize motion. See the [local collision contract](../nav/cpp/planning/local/scan/README.md).
+Rebuild/deploy mapd and navd together when changing this DDS type.
 
 Saving a map:
 
@@ -91,6 +101,35 @@ The `map` Product starts LiDAR, IMU, SLAM, maps, navigation, driver, camera, and
 Host because mapping needs those dependencies. The `maps` / `mapd` process owns
 live map state and saved-map lifecycle.
 
+### Saved point-cloud subset edits
+
+The Web editor submits ordered inclusive XYZ boxes to native
+`save_edited_source` through Gateway's `POST /api/v1/maps/{name}/save_as`.
+`delete_inside` removes points in a box; `keep_inside` removes points outside it.
+mapd checks the source content epoch under its map lock and transactionally saves
+the complete filtered XYZ cloud under a new name. The source stays unchanged;
+retained points keep their coordinates without downsampling.
+
+An empty ordered edit list copies the source unchanged for resolution comparison.
+New mapping sessions save a 10 cm OctoMap by default. The Web map-status panel
+offers 5, 6, 10 and 20 cm for a named copy, with 10 cm preselected. It
+then rebuilds the actual OctoMap using the copied point cloud and measured rays.
+The source map stays intact and the target is loaded through normal ProductControl
+activation. This does not change the independent live local collision resolution.
+
+Only a complete measured-ray bundle is copied unchanged: poses, patches,
+`patch_bundle.manifest`, and `scan_origin.txt`. Incomplete evidence and old derived
+artifacts are not copied. The new source starts invalidated; a separate OctoMap
+build uses the returned `build_options`. Rebuild failure leaves the saved source
+available for retry. The saved-ray builder still checks hits against retained
+geometry, so deleting points does not invent free space beyond measured returns.
+
+An identical lost-response retry can confirm the saved target while it remains
+invalidated with reason `edited_source`. The source identity/epoch and ordered
+operations must match; an unrelated existing target remains a conflict. Saving
+and rebuilding do not activate a map or authorize motion. See the
+[API contract](../../docs/api.md#saved-point-cloud-subset-editing).
+
 ### Saved ground and obstacle projection
 
 `occupancy.npz` / `map.pgm` use 0.20 m cells. The exporter fits observed local
@@ -104,7 +143,7 @@ This projection has no sensor rays and therefore does not declare free cells.
 It is distinct from the native 3D OctoMap used for navigation; producing valid
 files does not prove localization, body clearance, or footprint support.
 
-The navigation OctoMap has its own evidence contract:
+The navigation OctoMap records its build evidence for diagnostics:
 
 - When a save keeps `poses.txt`, `scan_origin.txt`, and `patches/`, the builder
   replays each saved scan from its sensor origin. An endpoint matches retained
@@ -121,42 +160,68 @@ The navigation OctoMap has its own evidence contract:
   beside one in the same layer: near its endpoint a ray grazing a floor stays
   within one voxel of the surface, and OctoMap would mark those surface cells
   (and 5 cm holes in the sampled floor) free although the ray never passed
-  below the surface; the planner reads such a free cell as a drop. The rest of
-  the ray still clears them, so a person the dynamic filter missed is carved
-  away by later rays through where they stood. Every occupied voxel is a
+  below the surface; the planner reads such a free cell as a drop. Beyond this
+  near-end guard, retained voxels already hit by saved scans can use a local
+  measured surface: a miss is skipped only when the ray segment inside that
+  voxel stays wholly on one side, outside the surface tolerance. Actual
+  crossings and uncertain fits still clear the voxel. Fits select the surface
+  near the measured hit height, preserving distinct floors at the same XY.
+  Every occupied voxel is a
   measured hit; a guarded cell no endpoint reached stays unknown. Evidence
   counts and fixed-input offline results are recorded in
   [the 2026-09-27 validation record](../../docs/operations/maps-evidence-20260927.md).
   An offline route is not field-motion acceptance.
 - Without those files the builder marks occupied voxels from sampled points and
-  adds the configured free envelope above supports. That artifact is a preview.
+  adds the configured free envelope above supports. The metadata labels that
+  source as a preview, but it is still a usable OctoMap artifact; route
+  feasibility is decided by the 3D planner rather than by the source label.
 - `octomap.ot` is written with OctoMap's full encoding, never `writeBinary()`,
   which would reduce every voxel to occupied/free. `metadata.json` records
   `artifacts.octomap.encoding: full_log_odds`, the `sensor_model` the build used
   (OctoMap's defaults, which is what every reader applies), and
-  `navigation_ready`: `true` only for a saved-ray build. Reuse requires
-  `full_log_odds`, the current builder version (`0.3.1`), and complete saved-ray
-  statistics. The version change rebuilds old exact-key-only artifacts; it does
-  not rerun cleanup or restore missing source geometry.
+  `navigation_ready`: `true` only for a saved-ray build, as a diagnostic
+  provenance field. Reuse requires `full_log_odds`, the current builder version
+  (`0.3.2`), and matching build inputs; saved-ray statistics are checked when
+  the source actually contains saved rays. The version change rebuilds old
+  ray artifacts without the local surface guard; it does not rerun cleanup or restore missing source
+  geometry.
 - The build claims saved rays only when the scans are complete: `poses.txt`
   and `scan_origin.txt` are present and, when SLAM wrote a
   `patch_bundle.manifest`, no patch was dropped. A replay missing scans would
-  leave their surfaces without ray evidence.
-- MapStore activation accepts only a saved-ray map: `evidence_source` is
-  `saved_rays`, `navigation_ready` is `true`, `build_mode` is `native_octomap`,
-  and the saved scans are still complete. A preview, or an artifact built
-  before this evidence contract, is refused with a blocker.
-- A map without saved scans, such as an imported PCD, stays a preview
-  (`evidence_source: sampled_points`, `navigation_ready: false`). It can be
-  viewed and used for localization; navigation needs a map saved from a
-  mapping run, because a point cloud carries no observed free space. `list_maps`
-  reports `map_evidence`: `saved_rays`, `preview`, or `none`.
+  leave their surfaces without ray evidence. A complete bundle covers selected
+  keyframes, not every incoming scan. The fused PCD can contain surfaces absent
+  from those keyframes; PCD-only points do not become saved-ray occupancy.
+  The [dataset diagnosis](../../build/dataset-planning-fix-20261021/README.md)
+  records this coverage gap and the grazing-ray fix. That direct replay-save
+  experiment did not run the Product SaveService prune phase.
+- MapStore activation checks the map lifecycle, metadata identity, and a valid
+  full `octomap.ot` artifact (`full_log_odds`). It does not reject a map because
+  its provenance is `sampled_points` or because `navigation_ready` is false.
+  `OctoPlanner3D` decides whether the 3D geometry admits a route, and SCAN
+  performs the live collision check before motion. A point-cloud source may
+  still fail planning when it contains unknown space; that is a planner result,
+  not a separate evidence gate. `list_maps` keeps `map_evidence` as a
+  diagnostic label: `saved_rays`, `preview`, or `none`.
 - PCD import reads `ascii`, `binary`, and PCL `binary_compressed` (LZF) data.
 - A voxel edit (`edit_octomap_voxels`, the workbench zone marker) sets each
   voxel in the zone to the clamped occupied or free value, keeps the evidence of
   every other voxel, and reports `changed_voxels` next to `edited_voxels`.
   `occupied`/`preblocked` mark occupied; `free`/`traversable`/`clear` mark free.
   An edit keeps the artifact's evidence provenance.
+  Shapes are a 3D `sphere` or an axis-aligned cube (`box`), both using a
+  center and one radius; independent wall length, thickness, and height are
+  not supported. `clear` writes known free space; it does not remove an edit
+  and restore the original sensor evidence.
+- Voxel edits persist in the saved OctoMap and `voxel_edits.jsonl`. Reopening
+  that artifact retains them, but rebuilding from PCD or saved rays does not
+  replay the journal and replaces their occupancy effect. Some source-edit
+  operations also remove the journal with other derived artifacts.
+- Editing a saved OctoMap does not refresh a running navigation process's
+  private map snapshot or inject the edit into mapd's live collision bitmap.
+  Global planning can consume the edited artifact after loading it; local
+  SCAN and final braking checks still consume the live bitmap. These edits
+  are therefore not complete glass-wall collision support. The remaining
+  work is tracked in the [map-editing queue](../../docs/roadmap.md#地图编辑与人工障碍约束2026-10-21).
 
 Deploy `mapd`, `lingtu-mapctl`, and `prune` together. The save transaction must
 preserve `scan_origin.txt`, poses, patches, and `map.pcd.preclean` for calibrated
@@ -182,11 +247,16 @@ interpreting a successful save as a successful global optimization.
 ## Live Publication Timing
 
 The low-rate mapd query protocol and Python client allow JSON responses up to
-4 MiB, enough for the Web's 80,000-point saved-map preview at native XYZ
-precision. Oversized replies still fail with `response_too_large`. A custom
-`--query-max-json-bytes` setting below that budget can reject a valid Web
-preview. Full PCD downloads use the artifact stream instead; this query limit
-does not change live DDS publication or saved map contents.
+4 MiB. SceneView requests up to 30,000 points through
+`/api/v1/maps/{name}/points`, bound to the active map and live scene identity.
+Oversized replies fail with `response_too_large`; a smaller custom
+`--query-max-json-bytes` can reject an otherwise valid preview.
+
+MapView reads the original PCD through `/api/v1/maps/{name}/pcd` and samples
+it in the browser: up to 500,000 points for binary PCD or 300,000 for ASCII.
+This artifact stream is independent of the JSON response limit. Neither
+display sampling nor the query limit changes live DDS publication or saved
+map contents.
 
 The SDK writes PCD downloads to a temporary file and verifies the advertised
 HTTP byte count before replacing the destination. An early EOF, including an
@@ -226,6 +296,11 @@ compatibility samples on the non-control layer channels, including the live and
 voxel clouds embedded in `/maps/scene`. Saved-map artifacts
 remain built by the SaveMap pipeline and are unaffected by this runtime choice.
 
+The accumulated cloud integrates sensor rays. A new hit at the same XY does
+not erase surfaces at other heights: ray misses lower the cells they traverse,
+and the existing configured decay still applies. This inspection layer does
+not supply the saved map or the local collision bitmap.
+
 The rolling 3-D occupancy keeps compact observed/occupied bit indexes. Collision
 snapshots and window rolls therefore visit active cells instead of rescanning
 the full grid. Generic map profiles may also enable time-based decay. The SCAN
@@ -243,6 +318,9 @@ worker is busy, a newer observation replaces the pending one so stale geometry
 cannot build a backlog. `replaced_observations` is the overload signal: after
 the sparse-map changes it should remain near zero under field load; growing
 values call for profiling or input-rate reduction, not an unbounded queue.
+Only `MAPPING` and `TRACKING` observations enter this queue. `LOCALIZING`,
+`DEGRADED`, and other pose states are rejected at submission, before they can
+replace a pending usable observation.
 
 `/maps/local_collision` is reliable but volatile, keeps only one sample, and
 expires after 500 ms. `navd` also rejects collision geometry older than 500 ms.
@@ -277,18 +355,20 @@ Save and list APIs are map-data operations, not a second Product lifecycle.
 
 ```text
 src/maps/
-  include/lingtu/maps/   native public contracts
-  cpp/mapd/              live process, DDS, activation, query socket
-  cpp/layers/            realtime map layers
-  cpp/build/             saved-map artifact builders
-  cpp/store.cpp          saved-map persistence
+  include/lingtu/maps/   native public contracts; see its README.md catalogue
+  cpp/mapd/              live process, DDS, activation, save handoff, UDS queries
+  cpp/layers/            realtime 3D layers, local and exploration projections
+  cpp/build/             saved-map build orchestration and grid artifacts
+  cpp/io/                JSON, PCD, saved scans, and patch-bundle I/O
+  cpp/storage/           saved-map persistence, locks, health, maintenance, save transaction
+  cpp/semantic/          semantic occupancy, taxonomy, persistence, and Unity import
+  cpp/graph.cpp          persisted POI/portal graph and routing
   cpp/service.cpp        native queries and artifact validation
   cpp/service_places.cpp POI and map graph
   cpp/service_lifecycle.cpp map create/delete/rename/retire operations
   cpp/service_jobs.cpp   save, build, and maintenance operations
-  cpp/save.cpp           save job
   prune/                 save-time dynamic-object cleanup
-  tests/                 native C++ tests
+  ../../tests/maps/cpp/  native maps tests (repository-level)
 ```
 
 Python does not live in this tree. The stateless UDS endpoint is

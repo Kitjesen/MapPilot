@@ -251,6 +251,7 @@ def test_thunder_install_services_and_runtime_order():
     assert thunder_install_services("field-cpp") == (
         "lidar",
         "camera",
+        "video",
         "slam",
         "maps",
         "traversability",
@@ -262,6 +263,7 @@ def test_thunder_install_services_and_runtime_order():
     assert thunder_runtime_services() == (
         "lidar",
         "camera",
+        "video",
         "slam",
         "maps",
         "traversability",
@@ -273,6 +275,7 @@ def test_thunder_install_services_and_runtime_order():
     assert thunder_runtime_units() == (
         "lt-lidar.service",
         "lt-camera.service",
+        "lt-video.service",
         "lt-slam.service",
         "lt-maps.service",
         "lt-terrain.service",
@@ -283,6 +286,7 @@ def test_thunder_install_services_and_runtime_order():
     )
     assert thunder_runtime_status_files() == {
         "camera": "/dev/shm/lingtu/camera_status.json",
+        "video": "/dev/shm/lingtu/video_status.json",
         "slam": "/tmp/lingtu_slam_status.json",
         "maps": "/dev/shm/lingtu/mapd_status.json",
         "traversability": "/dev/shm/lingtu/traversability_status.json",
@@ -305,6 +309,11 @@ def test_thunder_install_services_and_runtime_order():
             "service": "camera",
             "env": "LINGTU_ORBBEC_CAPTURE_BIN",
             "path": "/opt/lingtu/current/bin/orbbec_capture",
+        },
+        "camera_webrtc": {
+            "service": "video",
+            "env": "LINGTU_VIDEO_BIN",
+            "path": "/opt/lingtu/current/bin/lingtu_camera_webrtc",
         },
         "slam_dds": {
             "service": "slam",
@@ -419,6 +428,7 @@ def test_thunder_catalog_cli_exports_field_readiness_targets(capsys):
     assert capsys.readouterr().out.splitlines() == [
         "lidar",
         "camera",
+        "video",
         "slam",
         "maps",
         "traversability",
@@ -452,6 +462,7 @@ def test_thunder_catalog_cli_exports_field_readiness_targets(capsys):
     assert capsys.readouterr().out.splitlines() == [
         "lidar",
         "camera",
+        "video",
         "slam",
         "maps",
         "traversability",
@@ -465,6 +476,7 @@ def test_thunder_catalog_cli_exports_field_readiness_targets(capsys):
     assert capsys.readouterr().out.splitlines() == [
         "lt-lidar.service",
         "lt-camera.service",
+        "lt-video.service",
         "lt-slam.service",
         "lt-maps.service",
         "lt-terrain.service",
@@ -484,6 +496,7 @@ def test_thunder_catalog_cli_exports_field_readiness_targets(capsys):
     assert _main(["thunder", "status-files"]) == 0
     assert capsys.readouterr().out.splitlines() == [
         "camera=/dev/shm/lingtu/camera_status.json",
+        "video=/dev/shm/lingtu/video_status.json",
         "slam=/tmp/lingtu_slam_status.json",
         "maps=/dev/shm/lingtu/mapd_status.json",
         "traversability=/dev/shm/lingtu/traversability_status.json",
@@ -508,6 +521,7 @@ def test_thunder_catalog_cli_exports_field_readiness_targets(capsys):
         "livox_dds=lidar|LINGTU_LIVOX_BIN|/opt/lingtu/current/bin/livox_sdk2_stream",
         "camera_dds=camera|LINGTU_CAMERA_DDS_BIN|/opt/lingtu/current/bin/lingtu_camera_dds",
         "orbbec_capture=camera|LINGTU_ORBBEC_CAPTURE_BIN|/opt/lingtu/current/bin/orbbec_capture",
+        "camera_webrtc=video|LINGTU_VIDEO_BIN|/opt/lingtu/current/bin/lingtu_camera_webrtc",
         "slam_dds=slam|LINGTU_SLAM_BIN|/opt/lingtu/current/bin/slamd",
         "mapd=maps|LINGTU_MAPD_BIN|/opt/lingtu/current/bin/mapd",
         "traversability_dds=traversability|LINGTU_TRAVERSABILITY_DDS_BIN|/opt/lingtu/current/bin/lingtu_traversability_dds",

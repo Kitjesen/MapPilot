@@ -33,7 +33,7 @@ build/sam-review-20260925/deploy72-evidence.tar.gz.
 4. Use GTSAM block Huber noise on loop BetweenFactors, retaining Gaussian
    continuous-odometry factors and full SE(3). The synthetic false-loop test
    compares the production noise function against ordinary Gaussian noise.
-5. `slamd` now links `lingtu_online_mapping`, built from opt/online. It does not
+5. `slamd` now links `lingtu_online_mapping`, built from map_optimization/online. It does not
    configure Cargo, the Rust kernel, or lt_pgo. Solver-independent pose and cloud
    readers moved into poses.hpp/cloud_io.cpp without changing their parsing
    behavior. The separate opt build retains supported legacy offline tools.

@@ -1,0 +1,552 @@
+{
+  "cards": [
+    {
+      "asset_class": "movable_object",
+      "capabilities": {
+        "qualified_visual": false,
+        "runnable": false,
+        "selectable_for_review": true
+      },
+      "description": "车身与四个独立轮组，已修复轮胎破面。支持转轮、转向视觉演示；未接驾驶物理。",
+      "evidence": [
+        {
+          "bytes": 13874696,
+          "path": "sim/library/industrial/box_truck/2.0.0/model.glb",
+          "role": "conditioned_mesh",
+          "sha256": "7bfcee5e374784dfc6e03fabe7387d3f55be865b705088ddb335a1d7cacff690"
+        },
+        {
+          "bytes": 2336,
+          "path": "sim/library/industrial/box_truck/2.0.0/repair-report.json",
+          "role": "conditioning_report",
+          "sha256": "108846a2729d07287715b70280df7072d5dc44bd75e8e497e71ee400bf3f3b4e"
+        }
+      ],
+      "id": "box_truck",
+      "order": 0,
+      "render_policy": {
+        "physics_authority": "mujoco",
+        "purpose": "presentation_review_only",
+        "qualified_visual": false,
+        "runnable": false,
+        "unreal_collision_profile": "NoCollision",
+        "unreal_simulate_physics": false
+      },
+      "review": {
+        "disposition": "quarantined",
+        "reason": "已归档供素材审阅；尚未完成 UE 导入、尺寸、碰撞及许可验证。",
+        "stage": "conditioned_review"
+      },
+      "tags": [
+        "industrial",
+        "pbr",
+        "vehicle"
+      ],
+      "title": "厢式货车"
+    },
+    {
+      "asset_class": "movable_object",
+      "capabilities": {
+        "qualified_visual": false,
+        "runnable": false,
+        "selectable_for_review": true
+      },
+      "description": "黄色平衡重叉车，带 PBR 贴图。车轮、门架、货叉尚未拆分。",
+      "evidence": [
+        {
+          "bytes": 10975132,
+          "path": "sim/library/industrial/forklift/1.0.0/model.glb",
+          "role": "source_model",
+          "sha256": "48d594c85b8edb7615d9629acb1b6d7c22e6effd6cd6440808395caa3fc10526"
+        },
+        {
+          "bytes": 1257,
+          "path": "sim/library/industrial/forklift/1.0.0/asset.json",
+          "role": "source_task",
+          "sha256": "31ff8d8cb393eaeb22b4ad9c6fc844c9f17a1769f6542f98ce9c80db0edf500a"
+        }
+      ],
+      "id": "forklift",
+      "order": 1,
+      "render_policy": {
+        "physics_authority": "mujoco",
+        "purpose": "presentation_review_only",
+        "qualified_visual": false,
+        "runnable": false,
+        "unreal_collision_profile": "NoCollision",
+        "unreal_simulate_physics": false
+      },
+      "review": {
+        "disposition": "quarantined",
+        "reason": "已归档供素材审阅；尚未完成 UE 导入、尺寸、碰撞及许可验证。",
+        "stage": "source_review"
+      },
+      "tags": [
+        "industrial",
+        "pbr",
+        "vehicle"
+      ],
+      "title": "工业叉车"
+    },
+    {
+      "asset_class": "movable_object",
+      "capabilities": {
+        "qualified_visual": false,
+        "runnable": false,
+        "selectable_for_review": true
+      },
+      "description": "室外设备区素材，保留散热片、风扇护网与检修门。风扇尚不能转动。",
+      "evidence": [
+        {
+          "bytes": 12570892,
+          "path": "sim/library/industrial/hvac/1.0.0/model.glb",
+          "role": "source_model",
+          "sha256": "1083b659f66dc5189c9ca94282c90c1571e05d1f00d5a582b1d0c4336bf6faa7"
+        },
+        {
+          "bytes": 1269,
+          "path": "sim/library/industrial/hvac/1.0.0/asset.json",
+          "role": "source_task",
+          "sha256": "5c8241f2c1540e03f172aa7d3a080f2ac4b8e53d64c69c90976772ae681d8a0f"
+        }
+      ],
+      "id": "hvac",
+      "order": 2,
+      "render_policy": {
+        "physics_authority": "mujoco",
+        "purpose": "presentation_review_only",
+        "qualified_visual": false,
+        "runnable": false,
+        "unreal_collision_profile": "NoCollision",
+        "unreal_simulate_physics": false
+      },
+      "review": {
+        "disposition": "quarantined",
+        "reason": "已归档供素材审阅；尚未完成 UE 导入、尺寸、碰撞及许可验证。",
+        "stage": "source_review"
+      },
+      "tags": [
+        "equipment",
+        "industrial",
+        "pbr"
+      ],
+      "title": "双风扇空调机组"
+    },
+    {
+      "asset_class": "movable_object",
+      "capabilities": {
+        "qualified_visual": false,
+        "runnable": false,
+        "selectable_for_review": true
+      },
+      "description": "落地式电气柜，带门缝、把手、通风口。柜门尚不能开合。",
+      "evidence": [
+        {
+          "bytes": 12833468,
+          "path": "sim/library/industrial/electrical_cabinet/1.0.0/model.glb",
+          "role": "source_model",
+          "sha256": "43b1cb7e996c1027c906cc6395cf9893a8c3f9dfeb9eb89b4ace27a41c2c0224"
+        },
+        {
+          "bytes": 1268,
+          "path": "sim/library/industrial/electrical_cabinet/1.0.0/asset.json",
+          "role": "source_task",
+          "sha256": "84e9abb257d7e06137170295ebce20caa7a0b67572de204516ffa704712ad97c"
+        }
+      ],
+      "id": "electrical_cabinet",
+      "order": 3,
+      "render_policy": {
+        "physics_authority": "mujoco",
+        "purpose": "presentation_review_only",
+        "qualified_visual": false,
+        "runnable": false,
+        "unreal_collision_profile": "NoCollision",
+        "unreal_simulate_physics": false
+      },
+      "review": {
+        "disposition": "quarantined",
+        "reason": "已归档供素材审阅；尚未完成 UE 导入、尺寸、碰撞及许可验证。",
+        "stage": "source_review"
+      },
+      "tags": [
+        "equipment",
+        "industrial",
+        "pbr"
+      ],
+      "title": "双门配电柜"
+    },
+    {
+      "asset_class": "movable_object",
+      "capabilities": {
+        "qualified_visual": false,
+        "runnable": false,
+        "selectable_for_review": true
+      },
+      "description": "红色铸铁地上消防栓，适合道路边及消防巡检点。盖帽和链条为静态结构。",
+      "evidence": [
+        {
+          "bytes": 13542840,
+          "path": "sim/library/industrial/fire_hydrant/1.0.0/model.glb",
+          "role": "source_model",
+          "sha256": "c3b3df6a36084c2c27710b63e4089edc74d11de1ec9e9825985f8f79d58e243d"
+        },
+        {
+          "bytes": 1284,
+          "path": "sim/library/industrial/fire_hydrant/1.0.0/asset.json",
+          "role": "source_task",
+          "sha256": "7bb2c98d964b625d57ae06fa12c3d05f5204c13e5eee91a8aca1ef68d9cc9ec6"
+        }
+      ],
+      "id": "fire_hydrant",
+      "order": 4,
+      "render_policy": {
+        "physics_authority": "mujoco",
+        "purpose": "presentation_review_only",
+        "qualified_visual": false,
+        "runnable": false,
+        "unreal_collision_profile": "NoCollision",
+        "unreal_simulate_physics": false
+      },
+      "review": {
+        "disposition": "quarantined",
+        "reason": "已归档供素材审阅；尚未完成 UE 导入、尺寸、碰撞及许可验证。",
+        "stage": "source_review"
+      },
+      "tags": [
+        "fire_safety",
+        "industrial",
+        "pbr"
+      ],
+      "title": "室外消防栓"
+    },
+    {
+      "asset_class": "movable_object",
+      "capabilities": {
+        "qualified_visual": false,
+        "runnable": false,
+        "selectable_for_review": true
+      },
+      "description": "镀锌钢板箱体、绿色顶盖与脚轮。顶盖、轮子尚未拆分。",
+      "evidence": [
+        {
+          "bytes": 14527584,
+          "path": "sim/library/industrial/waste_container/1.0.0/model.glb",
+          "role": "source_model",
+          "sha256": "5aad01bb335a437ba547fc55d71d216716c8ccfa8872396efde581e2e2cc4477"
+        },
+        {
+          "bytes": 1277,
+          "path": "sim/library/industrial/waste_container/1.0.0/asset.json",
+          "role": "source_task",
+          "sha256": "0c6bc164f69d8d85621e588d02adc25b622e0ed680bbd508b33a32b4c41cbd0b"
+        }
+      ],
+      "id": "waste_container",
+      "order": 5,
+      "render_policy": {
+        "physics_authority": "mujoco",
+        "purpose": "presentation_review_only",
+        "qualified_visual": false,
+        "runnable": false,
+        "unreal_collision_profile": "NoCollision",
+        "unreal_simulate_physics": false
+      },
+      "review": {
+        "disposition": "quarantined",
+        "reason": "已归档供素材审阅；尚未完成 UE 导入、尺寸、碰撞及许可验证。",
+        "stage": "source_review"
+      },
+      "tags": [
+        "environment",
+        "industrial",
+        "pbr"
+      ],
+      "title": "带轮工业垃圾箱"
+    },
+    {
+      "asset_class": "movable_object",
+      "capabilities": {
+        "qualified_visual": false,
+        "runnable": false,
+        "selectable_for_review": true
+      },
+      "description": "蓝色管段、红色手轮与支座，适合设备区巡检。手轮尚不能旋转。",
+      "evidence": [
+        {
+          "bytes": 12173920,
+          "path": "sim/library/industrial/pipe_valve/1.0.0/model.glb",
+          "role": "source_model",
+          "sha256": "f237f391a213a0b61417bdba5bda19b3db0b641dd9570c2faa4c2477efb7ffc0"
+        },
+        {
+          "bytes": 1267,
+          "path": "sim/library/industrial/pipe_valve/1.0.0/asset.json",
+          "role": "source_task",
+          "sha256": "2ec564bcfe104813d899d8d4e873fbf78d2673e5dc66d9b2efdbee47f07ace24"
+        }
+      ],
+      "id": "pipe_valve",
+      "order": 6,
+      "render_policy": {
+        "physics_authority": "mujoco",
+        "purpose": "presentation_review_only",
+        "qualified_visual": false,
+        "runnable": false,
+        "unreal_collision_profile": "NoCollision",
+        "unreal_simulate_physics": false
+      },
+      "review": {
+        "disposition": "quarantined",
+        "reason": "已归档供素材审阅；尚未完成 UE 导入、尺寸、碰撞及许可验证。",
+        "stage": "source_review"
+      },
+      "tags": [
+        "equipment",
+        "industrial",
+        "pbr"
+      ],
+      "title": "管道闸阀组件"
+    },
+    {
+      "asset_class": "movable_object",
+      "capabilities": {
+        "qualified_visual": false,
+        "runnable": false,
+        "selectable_for_review": true
+      },
+      "description": "固定机座、独立挡杆，0–90°限位。附 MuJoCo 电机与碰撞模型。",
+      "evidence": [
+        {
+          "bytes": 366064,
+          "path": "sim/library/industrial/boom_barrier/1.0.1/model.glb",
+          "role": "source_model",
+          "sha256": "8742fee3ceaa05703447459690d3c357a941e7f24d80a763796512db07cc8f36"
+        },
+        {
+          "bytes": 1450,
+          "path": "sim/library/industrial/boom_barrier/1.0.1/asset.json",
+          "role": "source_task",
+          "sha256": "4d6b6d899489f47c5643fb81d6fc10672b970bc5c26cc6e9fd7832bfbc98006f"
+        }
+      ],
+      "id": "boom_barrier",
+      "order": 7,
+      "render_policy": {
+        "physics_authority": "mujoco",
+        "purpose": "presentation_review_only",
+        "qualified_visual": false,
+        "runnable": false,
+        "unreal_collision_profile": "NoCollision",
+        "unreal_simulate_physics": false
+      },
+      "review": {
+        "disposition": "quarantined",
+        "reason": "单体 MuJoCo 机构通过；UE 部件绑定、场景接触和操控验收未完成。",
+        "stage": "source_review"
+      },
+      "tags": [
+        "articulated",
+        "equipment",
+        "industrial"
+      ],
+      "title": "电动道闸"
+    },
+    {
+      "asset_class": "movable_object",
+      "capabilities": {
+        "qualified_visual": false,
+        "runnable": false,
+        "selectable_for_review": true
+      },
+      "description": "固定门框、左右独立门板，0–110°限位。附 MuJoCo 铰链、阻尼与碰撞模型。",
+      "evidence": [
+        {
+          "bytes": 444988,
+          "path": "sim/library/industrial/service_door/1.0.1/model.glb",
+          "role": "source_model",
+          "sha256": "381f20e6361d1f5778fa813700f05fa5691a9a8d6ea53dec89c55fad9dd6256b"
+        },
+        {
+          "bytes": 1584,
+          "path": "sim/library/industrial/service_door/1.0.1/asset.json",
+          "role": "source_task",
+          "sha256": "4d37eadfe78e8a1a3a6a18fe4c7cc9385521c5ccd28071fc9da184eda622db67"
+        }
+      ],
+      "id": "service_door",
+      "order": 8,
+      "render_policy": {
+        "physics_authority": "mujoco",
+        "purpose": "presentation_review_only",
+        "qualified_visual": false,
+        "runnable": false,
+        "unreal_collision_profile": "NoCollision",
+        "unreal_simulate_physics": false
+      },
+      "review": {
+        "disposition": "quarantined",
+        "reason": "单体 MuJoCo 机构通过；UE 部件绑定、场景接触和操控验收未完成。",
+        "stage": "source_review"
+      },
+      "tags": [
+        "articulated",
+        "equipment",
+        "industrial"
+      ],
+      "title": "双开检修门"
+    },
+    {
+      "asset_class": "movable_object",
+      "capabilities": {
+        "qualified_visual": false,
+        "runnable": false,
+        "selectable_for_review": true
+      },
+      "description": "蓝色桶体与金属盖，2K PBR；附可推碰圆柱代理，桶盖未拆分。",
+      "evidence": [
+        {
+          "bytes": 1182156,
+          "path": "sim/library/industrial/ph_barrel/1.0.0/model.glb",
+          "role": "source_model",
+          "sha256": "7fe0d8f519514d7b4a5286a03c1271aacb63a644fa7ca7cac7a9362ce87b5a41"
+        },
+        {
+          "bytes": 2534,
+          "path": "sim/library/industrial/ph_barrel/1.0.0/asset.json",
+          "role": "source_task",
+          "sha256": "fee9e8fad46373adb2961ce4ea2333be57061acd3075aae51619e29ac66aacf6"
+        }
+      ],
+      "id": "ph_barrel",
+      "order": 9,
+      "render_policy": {
+        "physics_authority": "mujoco",
+        "purpose": "presentation_review_only",
+        "qualified_visual": false,
+        "runnable": false,
+        "unreal_collision_profile": "NoCollision",
+        "unreal_simulate_physics": false
+      },
+      "review": {
+        "disposition": "quarantined",
+        "reason": "来源与贴图已核对；UE 绑定、机构拆分和场景交互未验收。",
+        "stage": "source_review"
+      },
+      "tags": [
+        "cc0",
+        "environment",
+        "industrial",
+        "pbr"
+      ],
+      "title": "工业储料桶"
+    },
+    {
+      "asset_class": "movable_object",
+      "capabilities": {
+        "qualified_visual": false,
+        "runnable": false,
+        "selectable_for_review": true
+      },
+      "description": "金属工作推车，2K PBR；车轮和双门仍在同一网格，待拆分绑定。",
+      "evidence": [
+        {
+          "bytes": 8152416,
+          "path": "sim/library/industrial/ph_storage_cart/1.0.0/model.glb",
+          "role": "source_model",
+          "sha256": "0a501b47b806fa69391dbf9c35e395a4fce46e8f53d9f7b2a8f34ef50f9cb1ad"
+        },
+        {
+          "bytes": 2693,
+          "path": "sim/library/industrial/ph_storage_cart/1.0.0/asset.json",
+          "role": "source_task",
+          "sha256": "2b5a1cf5855630559dd187a9cd1865c58e197adb9344cc794464f54df872f900"
+        }
+      ],
+      "id": "ph_storage_cart",
+      "order": 10,
+      "render_policy": {
+        "physics_authority": "mujoco",
+        "purpose": "presentation_review_only",
+        "qualified_visual": false,
+        "runnable": false,
+        "unreal_collision_profile": "NoCollision",
+        "unreal_simulate_physics": false
+      },
+      "review": {
+        "disposition": "quarantined",
+        "reason": "来源与贴图已核对；UE 绑定、机构拆分和场景交互未验收。",
+        "stage": "source_review"
+      },
+      "tags": [
+        "cc0",
+        "equipment",
+        "industrial",
+        "pbr"
+      ],
+      "title": "工业仓储推车"
+    },
+    {
+      "asset_class": "movable_object",
+      "capabilities": {
+        "qualified_visual": false,
+        "runnable": false,
+        "selectable_for_review": true
+      },
+      "description": "8 个独立管路模块、两组 2K PBR；阀门手轮仍待独立拆分。",
+      "evidence": [
+        {
+          "bytes": 16627276,
+          "path": "sim/library/industrial/ph_industrial_pipes/1.0.0/model.glb",
+          "role": "source_model",
+          "sha256": "7b660146815a5a4fcb57d079c03dbaf797243840ecc848bca35082b27b8f6623"
+        },
+        {
+          "bytes": 3618,
+          "path": "sim/library/industrial/ph_industrial_pipes/1.0.0/asset.json",
+          "role": "source_task",
+          "sha256": "9b87c09b8b012af9cd4dcba023bc1c0d00941f6d2cdd4449ef495a370052092a"
+        }
+      ],
+      "id": "ph_industrial_pipes",
+      "order": 11,
+      "render_policy": {
+        "physics_authority": "mujoco",
+        "purpose": "presentation_review_only",
+        "qualified_visual": false,
+        "runnable": false,
+        "unreal_collision_profile": "NoCollision",
+        "unreal_simulate_physics": false
+      },
+      "review": {
+        "disposition": "quarantined",
+        "reason": "来源与贴图已核对；UE 绑定、机构拆分和场景交互未验收。",
+        "stage": "source_review"
+      },
+      "tags": [
+        "cc0",
+        "equipment",
+        "industrial",
+        "pbr"
+      ],
+      "title": "模块化工业管道"
+    }
+  ],
+  "coverage": {
+    "qualified_movable_object_visual": {
+      "available": false,
+      "reason": "no qualified movable-object visual is registered"
+    }
+  },
+  "digest": "13829839f0d56af265a0961d3b3d197b16ecffc828022df6d3d7cc4b1a3ee4bd",
+  "policy": {
+    "physics_authority": "mujoco",
+    "purpose": "presentation_review_only",
+    "qualified_visual": false,
+    "runnable": false,
+    "unreal_collision_profile": "NoCollision",
+    "unreal_simulate_physics": false
+  },
+  "schema": "lingtu.sim.game-asset-review-catalog.v1",
+  "title": "灵途工业素材库"
+}

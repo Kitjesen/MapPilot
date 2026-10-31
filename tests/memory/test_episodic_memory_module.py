@@ -38,7 +38,7 @@ class TestEpisodicMemoryInstantiation(unittest.TestCase):
     """Test EpisodicMemoryModule creation and configuration."""
 
     def _make(self, **kw):
-        from memory.modules.episodic_module import EpisodicMemoryModule
+        from memory.modules.episodic import EpisodicMemoryModule
         return EpisodicMemoryModule(**kw)
 
     def test_default_creation(self):
@@ -64,7 +64,7 @@ class TestEpisodicMemoryPorts(unittest.TestCase):
     """Test that In/Out ports exist with correct types."""
 
     def _make(self, **kw):
-        from memory.modules.episodic_module import EpisodicMemoryModule
+        from memory.modules.episodic import EpisodicMemoryModule
         return EpisodicMemoryModule(**kw)
 
     def test_input_ports_exist(self):
@@ -93,7 +93,7 @@ class TestEpisodicMemorySetup(unittest.TestCase):
     """Test lifecycle and property access."""
 
     def _make(self, **kw):
-        from memory.modules.episodic_module import EpisodicMemoryModule
+        from memory.modules.episodic import EpisodicMemoryModule
         return EpisodicMemoryModule(**kw)
 
     def test_setup_runs_without_error(self):
@@ -122,7 +122,7 @@ class TestEpisodicMemoryRecording(unittest.TestCase):
     """Test recording from scene graph events."""
 
     def _make(self, **kw):
-        from memory.modules.episodic_module import EpisodicMemoryModule
+        from memory.modules.episodic import EpisodicMemoryModule
         m = EpisodicMemoryModule(**kw)
         m.setup()
         return m
@@ -201,7 +201,7 @@ class TestEpisodicMemorySkills(unittest.TestCase):
     """Test @skill-exposed methods."""
 
     def _make(self, **kw):
-        from memory.modules.episodic_module import EpisodicMemoryModule
+        from memory.modules.episodic import EpisodicMemoryModule
         m = EpisodicMemoryModule(**kw)
         m.setup()
         return m

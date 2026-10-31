@@ -1,0 +1,110 @@
+{
+  "dataset": "GEODE Stairs_Alpha",
+  "source": "https://thisparticle.github.io/geode/",
+  "updated_at": "2026-10-20",
+  "sensors": [
+    "Velodyne VLP-16",
+    "Xsens MTi-30"
+  ],
+  "scenario": "handheld multi-level staircase",
+  "official_duration_s": 345,
+  "official_distance_m": 301.06,
+  "files": [
+    {
+      "path": "raw/stairs_alpha.bag",
+      "bytes": 3975025551,
+      "expected_bytes": 3975025551,
+      "url": "https://drive.usercontent.google.com/download?id=1kXVkfnGLTBvPtYQ4vBozdV5yvXsDGU1c&export=download&confirm=t",
+      "status": "downloaded"
+    },
+    {
+      "path": "ground_truth/stairs_alpha.txt",
+      "bytes": 502174,
+      "expected_bytes": 502174,
+      "url": "https://drive.usercontent.google.com/download?id=1UqteQIoxJH8u4UAcjbnLvWqZ7jAWPsmp&export=download&confirm=t",
+      "status": "downloaded"
+    },
+    {
+      "path": "calibration/alpha_config.yaml",
+      "bytes": 4801,
+      "expected_bytes": 4801,
+      "url": "https://drive.usercontent.google.com/download?id=1o-8QruxzEFKFX97cV3ZaSDPsI_RJeF5q&export=download&confirm=t",
+      "status": "downloaded"
+    },
+    {
+      "path": "metadata/upstream-README.md",
+      "bytes": 11543,
+      "expected_bytes": null,
+      "url": "https://raw.githubusercontent.com/PengYu-Team/GEODE_dataset/main/README.md",
+      "status": "downloaded"
+    },
+    {
+      "path": "metadata/official-page.html",
+      "bytes": 116234,
+      "expected_bytes": null,
+      "url": "https://thisparticle.github.io/geode/",
+      "status": "downloaded"
+    }
+  ],
+  "download_complete": true,
+  "license": "No explicit data license identified in checked official page or repository README; commercial use/redistribution not inferred",
+  "ground_truth": {
+    "file": "ground_truth/stairs_alpha.txt",
+    "rows": 3447,
+    "columns": "TUM t x y z qx qy qz qw",
+    "method": "PALoc scan-to-Leica-RTC360-reference-map localization; not independent motion tracking",
+    "first_timestamp_s": 1705542304.08553,
+    "last_timestamp_s": 1705542648.66169,
+    "duration_s": 344.57615995407104,
+    "xyz_min_m": [
+      -53.1955106363058,
+      -28.4856310477417,
+      -23.3918824280673
+    ],
+    "xyz_max_m": [
+      -9.80158219121312,
+      15.2297182005444,
+      0.233135837193481
+    ],
+    "path_length_m": 301.05954108878154
+  },
+  "not_downloaded": [
+    {
+      "file": "stairs.las",
+      "bytes": 15633240915,
+      "url": "https://drive.usercontent.google.com/download?id=1hxAQe_rPNWHD1WaEjrKEB6r5EeI0-lmR&export=download&confirm=t",
+      "reason": "15.63GB reference map deferred; current sequence has author-provided derived trajectory"
+    }
+  ],
+  "evaluation_status": "not_run",
+  "validation": {
+    "status": "passed",
+    "report": "metadata/bag-inspection-20261020.json",
+    "scope": "complete index plus first 2 cloud/200 IMU records; no full payload scan or estimator replay",
+    "duration_s": 345.527792229,
+    "connections": [
+      {
+        "topic": "/imu/data",
+        "type": "sensor_msgs/Imu",
+        "messages": 34556
+      },
+      {
+        "topic": "/velodyne_points",
+        "type": "sensor_msgs/PointCloud2",
+        "messages": 3456
+      },
+      {
+        "topic": "/right_camera/compressed",
+        "type": "sensor_msgs/CompressedImage",
+        "messages": 3455
+      },
+      {
+        "topic": "/left_camera/compressed",
+        "type": "sensor_msgs/CompressedImage",
+        "messages": 3455
+      }
+    ],
+    "initial_acc_norm_median": 9.767244147504272,
+    "imu_interval_ns_median": 9762257.0
+  }
+}

@@ -30,13 +30,16 @@ PYTHON_BIN="$(resolve_lingtu_python)"
 export LINGTU_PYTHON="${PYTHON_BIN}"
 
 cd "${REPO}"
-configured_backend="$(PYTHONPATH="${REPO}/src:${PYTHONPATH:-}" "${PYTHON_BIN}" - <<'PY'
+read -r configured_backend configured_camera_driver < <(
+    PYTHONPATH="${REPO}/src:${PYTHONPATH:-}" "${PYTHON_BIN}" - <<'PY'
 from runtime.config import load_config
-print(load_config().driver.backend)
+config = load_config()
+print(config.driver.backend, config.camera.capture_driver)
 PY
-)"
+)
+export LINGTU_CAMERA_DRIVER="${configured_camera_driver}"
 ROBOT="${LINGTU_DEPLOY_ROBOT:-$(PYTHONPATH="${REPO}/src:${PYTHONPATH:-}" "${PYTHON_BIN}" - <<'PY'
-from lingtu.assembly.products.configuration import resolve_env_spec
+from lingtu.assembly.config.product import resolve_env_spec
 print(resolve_env_spec("real").robot)
 PY
 )}"
@@ -48,13 +51,17 @@ if [ "${BACKEND}" != "${configured_backend}" ]; then
 fi
 
 mapfile -t NATIVE_BUILD_SCRIPTS < <(
-    PYTHONPATH="${REPO}/src:${PYTHONPATH:-}" "${PYTHON_BIN}" - "${PRODUCT}" <<'PY'
+    PYTHONPATH="${REPO}/src:${PYTHONPATH:-}" "${PYTHON_BIN}" - "${PRODUCT}" "${LINGTU_CAMERA_DRIVER}" "$@" <<'PY'
+import argparse
 import sys
 
-from lingtu.assembly.deployment import product_native_build_scripts
+from lingtu.assembly.build_scripts import product_native_build_scripts
 
 product = sys.argv[1]
-scripts = product_native_build_scripts(product)
+parser = argparse.ArgumentParser(add_help=False)
+parser.add_argument("--variant")
+args, _ = parser.parse_known_args(sys.argv[3:])
+scripts = product_native_build_scripts(product, product_variant=args.variant, camera_driver=sys.argv[2])
 sys.stdout.write("\n".join(scripts))
 if scripts:
     sys.stdout.write("\n")
@@ -81,16 +88,16 @@ if [ "${LINGTU_DEPLOY_PLAN_ONLY:-0}" = "1" ]; then
 fi
 
 if [ "${LINGTU_DEPLOY_UPDATE:-0}" = "1" ]; then
-    echo "[1/6] Updating repository with git pull --ff-only..."
+    echo "[1/5] Updating repository with git pull --ff-only..."
     git fetch origin
     git pull --ff-only
     echo "  revision: $(git log --oneline -1)"
 else
-    echo "[1/6] Repository update skipped (set LINGTU_DEPLOY_UPDATE=1 to enable)."
+    echo "[1/5] Repository update skipped (set LINGTU_DEPLOY_UPDATE=1 to enable)."
     echo "  revision: $(git log --oneline -1 2>/dev/null || echo unknown)"
 fi
 
-echo "[2/6] Provisioning the robot-facing network..."
+echo "[2/5] Provisioning the robot-facing network..."
 if [ "${BACKEND}" = "go2" ]; then
     read -r GO2_INTERFACE GO2_ADDRESS GO2_PROBE_IP < <(
         PYTHONPATH="${REPO}/src:${PYTHONPATH:-}" "${PYTHON_BIN}" - <<'PY'
@@ -106,18 +113,7 @@ else
     echo "  skipped: ${BACKEND} does not use the Go2 wired subnet"
 fi
 
-echo "[3/6] Building dashboard when Node.js is available..."
-if command -v node >/dev/null 2>&1 && [ -d "${REPO}/web" ]; then
-    (
-        cd "${REPO}/web"
-        npm ci --silent
-        npm run build
-    )
-else
-    echo "  skipped: Node.js or web/ is unavailable"
-fi
-
-echo "[4/6] Building native runtimes selected by the Product..."
+echo "[3/5] Building native runtimes selected by the Product..."
 if [ "${LINGTU_DEPLOY_BUILD_NATIVE:-1}" = "1" ]; then
     for build_script in "${NATIVE_BUILD_SCRIPTS[@]}"; do
         echo "  -> ${build_script}"
@@ -131,7 +127,7 @@ else
     echo "  skipped: set LINGTU_DEPLOY_BUILD_NATIVE=1 to enable native builds"
 fi
 
-echo "[5/6] Installing field services when requested..."
+echo "[4/5] Installing field services when requested..."
 if [ "${LINGTU_DEPLOY_INSTALL_SERVICES:-0}" = "1" ]; then
     LINGTU_DRIVER_BACKEND="${BACKEND}" \
         bash "${REPO}/scripts/deploy/thunder/install_services.sh" \
@@ -140,7 +136,7 @@ else
     echo "  skipped: set LINGTU_DEPLOY_INSTALL_SERVICES=1 to install systemd units"
 fi
 
-echo "[6/6] Activation through ProductControl..."
+echo "[5/5] Activation through ProductControl..."
 args=()
 if [ -n "${LINGTU_DEPLOY_MAP:-}" ]; then
     args+=(--map "${LINGTU_DEPLOY_MAP}")

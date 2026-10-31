@@ -34,7 +34,8 @@ struct InputGateConfig {
   double odom_max_age_s{0.25};
   double tf_max_age_s{0.25};
   double cloud_max_age_s{0.35};
-  std::uint32_t recovery_frames{3};
+  // Retained in config/status; current valid inputs admit motion without a frame-count gate.
+  std::uint32_t recovery_frames{1};
   double future_tolerance_s{0.05};
   bool require_odom{true};
   bool require_cloud{true};
@@ -158,7 +159,7 @@ inline bool manualModeMayBypassInputGate(const InputGateState &state) noexcept {
   };
   return state.ready || reason == "recovering" || starts_with("odom_") ||
           starts_with("tf_") || starts_with("cloud_") ||
-          starts_with("traversability_") || starts_with("local_collision_") ||
+          starts_with("traversability_") || localCollisionInputHold(state.reason) ||
           starts_with("localization_") || starts_with("simulation_clock_");
 }
 
@@ -167,28 +168,12 @@ class InputGate {
   explicit InputGate(InputGateConfig config = {});
 
   InputGateState evaluate(const InputSnapshot &inputs);
-  void reset();
-  void beginRecoveryFrom(const InputSnapshot &inputs);
 
  private:
-  struct InputGenerations {
-    std::uint64_t odom{0};
-    std::uint64_t tf{0};
-    std::uint64_t cloud{0};
-    std::uint64_t traversability{0};
-    std::uint64_t local_collision{0};
-    std::uint64_t localization_health{0};
-    std::uint64_t driver_control{0};
-  };
-
-  static InputGenerations generations(const InputSnapshot &inputs);
-  bool allRequiredInputsAdvanced(const InputSnapshot &inputs) const;
   static double age(double now_s, double last_s);
   static double receiveOrSource(double receive_s, double source_s);
 
   InputGateConfig config_{};
-  std::uint32_t fresh_frames_{0};
-  InputGenerations recovery_generations_{};
 };
 
 }  // namespace lingtu::nav::endpoint

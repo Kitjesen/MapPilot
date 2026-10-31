@@ -3,7 +3,7 @@
 import threading
 import unittest
 
-from runtime import Blueprint, In, Module, Out
+from runtime import HostBuilder, In, Module, Out
 
 
 class SimpleSource(Module, layer=1):
@@ -83,7 +83,7 @@ class TestReferenceCleanup(unittest.TestCase):
 
     def test_system_stop_clears_modules(self):
         handle = (
-            Blueprint()
+            HostBuilder()
             .add(SimpleSource)
             .add(SimpleSink)
             .auto_wire()
@@ -97,7 +97,7 @@ class TestReferenceCleanup(unittest.TestCase):
     def test_data_flow_works_before_stop_breaks_after(self):
         """After stop(), publishing no longer reaches the sink."""
         handle = (
-            Blueprint()
+            HostBuilder()
             .add(SimpleSource)
             .add(SimpleSink)
             .auto_wire()

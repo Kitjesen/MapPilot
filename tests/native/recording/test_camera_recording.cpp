@@ -11,6 +11,7 @@
 
 #include "lingtu/recording/camera_recording.hpp"
 #include "mcap/reader.hpp"
+#include "mcap/writer.hpp"
 
 namespace {
 
@@ -118,6 +119,7 @@ void test_segment_rotation_mcap_index_verify_and_extract() {
   CameraSegmentRecorder recorder(options, source, encoder);
   const auto written = recorder.record();
   require(written.size() == 2, "recorder did not rotate the segment");
+  require(written[0].nominal_fps == 30 && written[0].frame_timestamps_ns == std::vector<std::uint64_t>({100,150}), "source frame timestamps or encoding FPS missing");
   require(written[0].frame_count == 2, "first segment frame count is wrong");
   require(written[0].first_sequence == 1 && written[0].last_sequence == 2,
           "first segment sequence range is wrong");
@@ -155,7 +157,39 @@ void test_segment_rotation_mcap_index_verify_and_extract() {
   raw_reader.close();
 
   const auto loaded = lingtu::recording::read_camera_segment_index(index_path);
+  const auto json = lingtu::recording::camera_segment_index_json(index_path, 0);
+  const auto compact = lingtu::recording::camera_segment_index_json(index_path);
+  require(compact.find("frame_timestamps_ns") == std::string::npos && compact.find("frame_timestamp_index") != std::string::npos, "camera catalog included unbounded frame arrays");
+  require(json.find("\"frame_timestamps_ns\":[\"100\",\"150\"]") != std::string::npos && json.find("frame_timestamp_index") != std::string::npos, "camera JSON lost exact string timestamps");
   require(loaded == written, "camera index did not round-trip segment metadata");
+  // Existing completed recordings have no frame timestamps or encoding FPS.
+  const auto legacy_path = session / "legacy_camera.mcap";
+  mcap::McapReader current_reader;
+  require(current_reader.open(index_path.string()).ok(), "cannot read source index for legacy contract");
+  mcap::McapWriter legacy_writer;
+  require(legacy_writer.open(legacy_path.string(), mcap::McapWriterOptions(lingtu::recording::kCameraMcapProfile)).ok(), "cannot write legacy index fixture");
+  bool initialized=false;
+  mcap::Schema legacy_schema;
+  mcap::Channel legacy_channel;
+  for(const auto &view:current_reader.readMessages()) {
+    if(!initialized) {
+      legacy_schema=*view.schema;legacy_writer.addSchema(legacy_schema);
+      legacy_channel=*view.channel;legacy_channel.schemaId=legacy_schema.id;legacy_writer.addChannel(legacy_channel);
+      initialized=true;
+    }
+    std::string payload(reinterpret_cast<const char*>(view.message.data), view.message.dataSize);
+    const auto optional=payload.find(",\"nominal_fps\":");
+    require(optional!=std::string::npos,"new index fixture missing optional timing fields");
+    payload=payload.substr(0,optional)+"}";
+    auto message=view.message;message.channelId=legacy_channel.id;
+    message.data=reinterpret_cast<const std::byte*>(payload.data());message.dataSize=payload.size();
+    require(legacy_writer.write(message).ok(),"cannot write legacy segment message");
+  }
+  legacy_writer.close();current_reader.close();
+  const auto legacy=lingtu::recording::read_camera_segment_index(legacy_path);
+  require(legacy.size()==written.size()&&legacy[0].nominal_fps==0&&legacy[0].frame_timestamps_ns.empty(),"legacy camera index rejected or invented exact timestamps");
+  require(lingtu::recording::camera_segment_index_json(legacy_path).find("segment_cfr_estimate")!=std::string::npos,"legacy timing approximation was not declared");
+
   require(lingtu::recording::verify_camera_segments(index_path).empty(),
           "valid camera session did not verify");
 

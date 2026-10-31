@@ -55,6 +55,16 @@ file(TO_CMAKE_PATH "${_dependency_prefix}" _dependency_prefix)
 file(TO_CMAKE_PATH "${_cyclonedds_prefix}" _cyclonedds_prefix)
 file(TO_CMAKE_PATH "${_cyclonedds_receipt}" _cyclonedds_receipt)
 string(TOLOWER "${_dependency_prefix}/" _dependency_prefix_lower)
+set(_runtime_search_directories "${_dependency_prefix}/bin" "${_cyclonedds_prefix}/bin")
+if(DEFINED GTSAM_PREFIX AND NOT "${GTSAM_PREFIX}" STREQUAL "")
+  if(NOT IS_ABSOLUTE "${GTSAM_PREFIX}" OR NOT IS_DIRECTORY "${GTSAM_PREFIX}")
+    message(FATAL_ERROR "GTSAM_PREFIX must be an explicit absolute SDK directory")
+  endif()
+  file(REAL_PATH "${GTSAM_PREFIX}" _gtsam_prefix)
+  file(TO_CMAKE_PATH "${_gtsam_prefix}" _gtsam_prefix)
+  string(TOLOWER "${_gtsam_prefix}/" _gtsam_prefix_lower)
+  list(APPEND _runtime_search_directories "${_gtsam_prefix}/bin")
+endif()
 string(TOLOWER "${_cyclonedds_prefix}/" _cyclonedds_prefix_lower)
 string(TOLOWER "${_cyclonedds_receipt}" _cyclonedds_receipt_lower)
 string(FIND "${_cyclonedds_receipt_lower}" "${_cyclonedds_prefix_lower}" _receipt_prefix_index)
@@ -384,7 +394,7 @@ endforeach()
 
 file(GET_RUNTIME_DEPENDENCIES
   EXECUTABLES "${SLAMD_EXECUTABLE}" "${SLAMCTL_EXECUTABLE}"
-  DIRECTORIES "${_dependency_prefix}/bin" "${_cyclonedds_prefix}/bin"
+  DIRECTORIES ${_runtime_search_directories}
   RESOLVED_DEPENDENCIES_VAR _resolved
   UNRESOLVED_DEPENDENCIES_VAR _unresolved
   CONFLICTING_DEPENDENCIES_PREFIX _conflicts
@@ -472,10 +482,14 @@ foreach(_runtime IN LISTS _resolved)
     continue()
   endif()
   string(FIND "${_runtime_lower}" "${_dependency_prefix_lower}" _dependency_index)
+  set(_gtsam_index -1)
+  if(DEFINED _gtsam_prefix_lower)
+    string(FIND "${_runtime_lower}" "${_gtsam_prefix_lower}" _gtsam_index)
+  endif()
   string(FIND "${_runtime_lower}" "${_cyclonedds_prefix_lower}" _cyclone_index)
   string(FIND "${_runtime_lower}" "${_slamd_dir_lower}" _slamd_index)
   string(FIND "${_runtime_lower}" "${_slamctl_dir_lower}" _slamctl_index)
-  if(NOT _dependency_index EQUAL 0 AND NOT _cyclone_index EQUAL 0 AND
+  if(NOT _dependency_index EQUAL 0 AND NOT _gtsam_index EQUAL 0 AND NOT _cyclone_index EQUAL 0 AND
      NOT _slamd_index EQUAL 0 AND NOT _slamctl_index EQUAL 0)
     message(FATAL_ERROR "Runtime dependency is outside the approved closure: ${_runtime_real}")
   endif()
@@ -533,6 +547,10 @@ foreach(_runtime IN LISTS _resolved)
   elseif(_cyclone_index EQUAL 0)
     set(_package "CycloneDDS")
     set(_version "${CYCLONEDDS_VERSION}")
+    set(_authoritative_runtime "${_runtime_real}")
+  elseif(_gtsam_index EQUAL 0)
+    set(_package "GTSAM")
+    set(_version "4.3.0")
     set(_authoritative_runtime "${_runtime_real}")
   else()
     set(_package "LingTu")

@@ -1,0 +1,31 @@
+diff --git a/include/ufo/map/integration/integration_impl.hpp b/include/ufo/map/integration/integration_impl.hpp
+index ef36ae4..a9517fc 100644
+--- a/include/ufo/map/integration/integration_impl.hpp
++++ b/include/ufo/map/integration/integration_impl.hpp
+@@ -475,7 +475,7 @@ void integrateMisses(Map& map, Misses misses, IntegrationParams const& params)
+ 
+ 	logit_t prob{};
+ 	if constexpr (IsOccupancyMap<Map>) {
+-		auto prob = map.toOccupancyChangeLogit(params.occupancy_miss);
++		prob = map.toOccupancyChangeLogit(params.occupancy_miss);
+ 	}
+ 
+ 	params.timing[6][2].start();
+@@ -490,7 +490,7 @@ void integrateMisses(Map& map, Misses misses, IntegrationParams const& params)
+ 					              map.setModified(node);
+ 
+ 					              if constexpr (IsOccupancyMap<Map>) {
+-						              map.decreaseOccupancyLogit(node, prob);
++						              map.updateOccupancyLogit(node, -prob);
+ 					              }
+ 
+ 					              if constexpr (IsTimeMap<Map>) {
+@@ -524,7 +524,7 @@ void integrateMisses(Map& map, Misses misses, IntegrationParams const& params)
+ 					map.setModified(node);
+ 
+ 					if constexpr (IsOccupancyMap<Map>) {
+-						map.decreaseOccupancyLogit(node, prob);
++						map.updateOccupancyLogit(node, -prob);
+ 					}
+ 
+ 					if constexpr (IsTimeMap<Map>) {

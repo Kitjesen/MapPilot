@@ -9,7 +9,6 @@ PolynomialTraj PolynomialTraj::minSnapTraj(const Eigen::MatrixXd &Pos, const Eig
 {
   int seg_num = Time.size();
   Eigen::MatrixXd poly_coeff(seg_num, 3 * 6);
-  Eigen::VectorXd Px(6 * seg_num), Py(6 * seg_num), Pz(6 * seg_num);
 
   int num_f, num_p; // number of fixed and free variables
   int num_d;        // number of all segments' derivatives
@@ -59,19 +58,22 @@ PolynomialTraj PolynomialTraj::minSnapTraj(const Eigen::MatrixXd &Pos, const Eig
   }
 
   /* ---------- Mapping Matrix A ---------- */
-  Eigen::MatrixXd Ab;
-  Eigen::MatrixXd A = Eigen::MatrixXd::Zero(seg_num * 6, seg_num * 6);
+  using SegmentMatrix = Eigen::Matrix<double, 6, 6>;
+  std::vector<SegmentMatrix> inverse_mapping;
+  inverse_mapping.reserve(seg_num);
 
   for (int k = 0; k < seg_num; k++)
   {
-    Ab = Eigen::MatrixXd::Zero(6, 6);
+    SegmentMatrix Ab = SegmentMatrix::Zero();
     for (int i = 0; i < 3; i++)
     {
       Ab(2 * i, i) = Factorial(i);
       for (int j = i; j < 6; j++)
         Ab(2 * i + 1, j) = Factorial(j) / Factorial(j - i) * pow(Time(k), j - i);
     }
-    A.block(k * 6, k * 6, 6, 6) = Ab;
+    // A is block diagonal. Invert each endpoint mapping once rather than
+    // repeatedly factoring the complete 6N by 6N matrix for each axis.
+    inverse_mapping.push_back(Ab.inverse());
   }
 
   /* ---------- Produce Selection Matrix C' ---------- */
@@ -107,64 +109,49 @@ PolynomialTraj PolynomialTraj::minSnapTraj(const Eigen::MatrixXd &Pos, const Eig
 
   C = Ct.transpose();
 
-  Eigen::VectorXd Dx1 = C * Dx;
-  Eigen::VectorXd Dy1 = C * Dy;
-  Eigen::VectorXd Dz1 = C * Dz;
+  Eigen::MatrixXd derivatives(num_f + num_p, 3);
+  derivatives.col(0) = C * Dx;
+  derivatives.col(1) = C * Dy;
+  derivatives.col(2) = C * Dz;
 
   /* ---------- minimum snap matrix ---------- */
-  Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(seg_num * 6, seg_num * 6);
+  Eigen::MatrixXd R = Eigen::MatrixXd::Zero(num_f + num_p, num_f + num_p);
 
   for (int k = 0; k < seg_num; k++)
   {
+    SegmentMatrix Q = SegmentMatrix::Zero();
     for (int i = 3; i < 6; i++)
     {
       for (int j = 3; j < 6; j++)
       {
-        Q(k * 6 + i, k * 6 + j) =
+        Q(i, j) =
             i * (i - 1) * (i - 2) * j * (j - 1) * (j - 2) / (i + j - 5) * pow(Time(k), (i + j - 5));
       }
     }
+    const SegmentMatrix cost = inverse_mapping[k].transpose() * Q * inverse_mapping[k];
+    Eigen::Index selected[6];
+    for (int i = 0; i < 6; ++i)
+      Ct.row(k * 6 + i).maxCoeff(&selected[i]);
+    // Each row of Ct selects one endpoint derivative. Scatter the segment's
+    // contribution to the same reduced objective without dense zero blocks.
+    for (int i = 0; i < 6; ++i)
+      for (int j = 0; j < 6; ++j)
+        R(selected[i], selected[j]) += cost(i, j);
   }
 
-  /* ---------- R matrix ---------- */
-  Eigen::MatrixXd R = C * A.transpose().inverse() * Q * A.inverse() * Ct;
-
-  Eigen::VectorXd Dxf(2 * seg_num + 4), Dyf(2 * seg_num + 4), Dzf(2 * seg_num + 4);
-
-  Dxf = Dx1.segment(0, 2 * seg_num + 4);
-  Dyf = Dy1.segment(0, 2 * seg_num + 4);
-  Dzf = Dz1.segment(0, 2 * seg_num + 4);
-
-  Eigen::MatrixXd Rff(2 * seg_num + 4, 2 * seg_num + 4);
-  Eigen::MatrixXd Rfp(2 * seg_num + 4, 2 * seg_num - 2);
-  Eigen::MatrixXd Rpf(2 * seg_num - 2, 2 * seg_num + 4);
-  Eigen::MatrixXd Rpp(2 * seg_num - 2, 2 * seg_num - 2);
-
-  Rff = R.block(0, 0, 2 * seg_num + 4, 2 * seg_num + 4);
-  Rfp = R.block(0, 2 * seg_num + 4, 2 * seg_num + 4, 2 * seg_num - 2);
-  Rpf = R.block(2 * seg_num + 4, 0, 2 * seg_num - 2, 2 * seg_num + 4);
-  Rpp = R.block(2 * seg_num + 4, 2 * seg_num + 4, 2 * seg_num - 2, 2 * seg_num - 2);
-
-  /* ---------- close form solution ---------- */
-
-  Eigen::VectorXd Dxp(2 * seg_num - 2), Dyp(2 * seg_num - 2), Dzp(2 * seg_num - 2);
-  Dxp = -(Rpp.inverse() * Rfp.transpose()) * Dxf;
-  Dyp = -(Rpp.inverse() * Rfp.transpose()) * Dyf;
-  Dzp = -(Rpp.inverse() * Rfp.transpose()) * Dzf;
-
-  Dx1.segment(2 * seg_num + 4, 2 * seg_num - 2) = Dxp;
-  Dy1.segment(2 * seg_num + 4, 2 * seg_num - 2) = Dyp;
-  Dz1.segment(2 * seg_num + 4, 2 * seg_num - 2) = Dzp;
-
-  Px = (A.inverse() * Ct) * Dx1;
-  Py = (A.inverse() * Ct) * Dy1;
-  Pz = (A.inverse() * Ct) * Dz1;
+  /* ---------- close form solution, shared by XYZ ---------- */
+  const Eigen::MatrixXd Rfp = R.block(0, num_f, num_f, num_p);
+  const Eigen::MatrixXd Rpp = R.block(num_f, num_f, num_p, num_p);
+  const Eigen::PartialPivLU<Eigen::MatrixXd> solver(Rpp);
+  derivatives.bottomRows(num_p) =
+      solver.solve((-Rfp.transpose() * derivatives.topRows(num_f)).eval());
 
   for (int i = 0; i < seg_num; i++)
   {
-    poly_coeff.block(i, 0, 1, 6) = Px.segment(i * 6, 6).transpose();
-    poly_coeff.block(i, 6, 1, 6) = Py.segment(i * 6, 6).transpose();
-    poly_coeff.block(i, 12, 1, 6) = Pz.segment(i * 6, 6).transpose();
+    const Eigen::Matrix<double, 6, 3> coefficients =
+        inverse_mapping[i] * Ct.middleRows(i * 6, 6) * derivatives;
+    for (int axis = 0; axis < 3; ++axis)
+      poly_coeff.block(i, axis * 6, 1, 6) = coefficients.col(axis).transpose();
   }
 
   /* ---------- use polynomials ---------- */

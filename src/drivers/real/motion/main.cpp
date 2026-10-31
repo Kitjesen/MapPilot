@@ -83,6 +83,8 @@ int main(int argc, char **argv) {
     lingtu::driver::DdsReader dds(config.domain_id);
     lingtu::driver::CmdVelWriterGate cmd_vel_writer_gate;
     lingtu::driver::Core core(config.limits, dds.hostBootId());
+    lingtu::driver::ProfileSwitch profile_switch(config.stairs_up_profile, config.stairs_down_profile);
+    auto last_zero_command = Clock::time_point{};
     lingtu::driver::RuntimeStats stats;
     stats.capabilities = body->capabilities();
 
@@ -367,20 +369,50 @@ int main(int argc, char **argv) {
         }
         cmd_vel_writer_fault_active = false;
 
-        if ((!stats.ready && now >= next_probe) || (stats.ready && now >= next_lease_refresh)) {
-          refresh_control(now);
-        }
-
         const auto read = dds.takeLatest();
         stats.dds_samples += read.valid_samples;
+        std::optional<Action> command_action;
         if (read.latest) {
           stats.last_receive_s = epochSeconds();
           const auto command = core.accept(read.latest->freshnessInput(), read.latest->frame,
                                            read.latest->vx, read.latest->vy, read.latest->wz);
           lingtu::driver::recordFreshnessDecision(stats, command.freshness);
-          if (command.action) {
+          command_action = command.action;
+          if (command.freshness.accepted && command.action &&
+              command.action->reason == ActionReason::Command &&
+              isZeroVelocity(command.action->velocity)) {
+            last_zero_command = now;
+          } else {
+            last_zero_command = Clock::time_point{};
+          }
+        }
+        if (const auto request = dds.takeProfileRequest(epochSeconds())) {
+          profile_switch.request(*request, now);
+        }
+        const bool held_before = profile_switch.holdsMotion();
+        profile_switch.step(*body, now, last_zero_command != Clock::time_point{} &&
+                            now - last_zero_command <= config.limits.command_timeout);
+        const bool profile_hold = profile_switch.holdsMotion();
+        if (profile_hold) {
+          if (!held_before) (void)body->stop();
+          // A planned body/profile handoff has no velocity output and does not
+          // acquire a walking lease while the platform is Grounded.
+          stats.ready = false;
+          stats.control.ready = false;
+          stats.control.control_assured = false;
+          stats.control.lease_valid = false;
+          stats.control.reason = "profile_transition";
+          stats.body = body->state();
+          stats.output_ack.invalidate();
+          core.reset();
+        } else {
+          if (held_before) next_probe = now;
+          if ((!stats.ready && now >= next_probe) || (stats.ready && now >= next_lease_refresh)) {
+            refresh_control(now);
+          }
+          if (read.latest && command_action) {
             if (stats.ready) {
-              if (send(*command.action, now,
+              if (send(*command_action, now,
                        SequencedOutputIdentity{read.latest->producer_boot_id,
                                                read.latest->output_seq})) {
                 next_control_state = now;
@@ -391,22 +423,22 @@ int main(int argc, char **argv) {
               stats.output_ack.invalidate();
               next_control_state = now;
             }
-          } else {
+          } else if (read.latest) {
             stats.output_ack.invalidate();
             next_control_state = now;
           }
-        }
-
-        if (stats.ready) {
-          if (const auto stop = core.poll(now)) {
-            (void)send(*stop, now, std::nullopt);
-            stats.output_ack.invalidate();
-            next_control_state = now;
+          if (stats.ready) {
+            if (const auto stop = core.poll(now)) {
+              (void)send(*stop, now, std::nullopt);
+              stats.output_ack.invalidate();
+              next_control_state = now;
+            }
           }
         }
 
         if (now >= next_control_state) {
           (void)publish_control_state();
+          (void)dds.writeProfileState(profile_switch.status(), epochSeconds());
           next_control_state = now + kControlStatePeriod;
         }
         if (now >= next_status) {

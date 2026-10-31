@@ -1,4 +1,5 @@
 #include "navigation/recovery.hpp"
+#include "navigation/recovery_search.hpp"
 #include "planning/local/scan/grid.hpp"
 
 #include <algorithm>
@@ -20,32 +21,33 @@ double normalizeAngle(double angle) {
   return std::remainder(angle, 2.0 * M_PI);
 }
 
-const char* safetyFailureName(nav_kernel::SafetyFailure failure) {
+const char* safetyFailureName(detail::RecoverySafetyFailure failure) {
   switch (failure) {
-    case nav_kernel::SafetyFailure::None:
+    case detail::RecoverySafetyFailure::None:
       return "none";
-    case nav_kernel::SafetyFailure::InvalidInput:
+    case detail::RecoverySafetyFailure::InvalidInput:
       return "invalid_input";
-    case nav_kernel::SafetyFailure::ObstacleCollision:
+    case detail::RecoverySafetyFailure::ObstacleCollision:
       return "obstacle_collision";
-    case nav_kernel::SafetyFailure::TraversabilityUnavailable:
+    case detail::RecoverySafetyFailure::TraversabilityUnavailable:
       return "traversability_unavailable";
-    case nav_kernel::SafetyFailure::TraversabilityOutOfBounds:
+    case detail::RecoverySafetyFailure::TraversabilityOutOfBounds:
       return "traversability_out_of_bounds";
-    case nav_kernel::SafetyFailure::TraversabilityNonFinite:
+    case detail::RecoverySafetyFailure::TraversabilityNonFinite:
       return "traversability_non_finite";
-    case nav_kernel::SafetyFailure::TraversabilityInvalidValue:
+    case detail::RecoverySafetyFailure::TraversabilityInvalidValue:
       return "traversability_invalid_value";
-    case nav_kernel::SafetyFailure::TraversabilityBlocked:
+    case detail::RecoverySafetyFailure::TraversabilityBlocked:
       return "traversability_blocked";
   }
   return "invalid_input";
 }
 
-nav_kernel::RecoveryPlannerParams recoveryPlannerParams(
+detail::RecoverySearchParams recoverySearchParams(
     const nav_kernel::LocalPlannerParams& params,
+    const nav_kernel::LocalPlannerCapabilities& capabilities,
     const RecoveryConfig& config) {
-  nav_kernel::RecoveryPlannerParams recovery;
+  detail::RecoverySearchParams recovery;
   recovery.vehicleLength = params.vehicleLength;
   recovery.vehicleWidth = params.vehicleWidth;
   recovery.footprintPadding = params.footprintPadding;
@@ -54,8 +56,7 @@ nav_kernel::RecoveryPlannerParams recoveryPlannerParams(
   recovery.checkObstacles = params.checkObstacle;
   // SCAN consumes the 3D collision map. Its map-frame requests deliberately
   // omit the odom-only 2D traversability view, just like normal SCAN planning.
-  recovery.requireTraversability =
-      params.backend != nav_kernel::LocalPlannerBackend::Scan && params.useTraversabilityCost;
+  recovery.requireTraversability = capabilities.consumesTraversability;
   recovery.traversabilityHardCost = params.traversabilityHardCost;
 
   const double configured_range =
@@ -102,7 +103,8 @@ class Recovery::Impl {
   Impl(nav_kernel::LocalPlannerParams params, RecoveryConfig config)
       : params_(std::move(params)),
         config_(normalizeRecoveryConfig(std::move(config))),
-        planner_(recoveryPlannerParams(params_, config_)) {}
+        capabilities_(nav_kernel::plannerCapabilities(params_)),
+        search_(recoverySearchParams(params_, capabilities_, config_)) {}
 
   RecoveryOutput step(const nav_kernel::LocalPlanRequest& request) {
     RecoveryOutput output;
@@ -121,12 +123,12 @@ class Recovery::Impl {
       return output;
     }
 
-    nav_kernel::RecoveryPlannerInput planner_input =
-        makePlannerInput(request, goal_direction_body_rad);
+    detail::RecoverySearchInput search_input =
+        makeSearchInput(request, goal_direction_body_rad);
     if (state_ != 0) {
       std::string failure_reason;
       const Update update =
-          updateActive(request, planner_input, output, &failure_reason);
+          updateActive(request, search_input, output, &failure_reason);
       if (update == Update::Active || update == Update::Completed) {
         populate(output);
         return output;
@@ -138,12 +140,12 @@ class Recovery::Impl {
         populate(output);
         return output;
       }
-      planner_input = makePlannerInput(request, goal_direction_body_rad);
+      search_input = makeSearchInput(request, goal_direction_body_rad);
     }
 
     session_active_ = true;
-    const CandidateSelection selection = selectCandidate(planner_input);
-    const nav_kernel::RecoveryPlanResult& candidate = selection.result;
+    const CandidateSelection selection = selectCandidate(search_input);
+    const detail::RecoverySearchResult& candidate = selection.result;
     candidate_count_ = selection.candidate_count;
     if (!candidate.found() || !activate(candidate, request)) {
       advanceBehavior(selection.behavior_index);
@@ -152,17 +154,15 @@ class Recovery::Impl {
                 safetyFailureName(candidate.safetyFailure);
       if (cycle_count_ >= max_attempts) {
         markExhausted(output, reason_ + "_exhausted");
-      } else {
-        output.observation_refresh_required = true;
       }
       populate(output);
       return output;
     }
     behavior_index_ = selection.behavior_index;
 
-    planner_input = makePlannerInput(request, goal_direction_body_rad);
+    search_input = makeSearchInput(request, goal_direction_body_rad);
     std::string failure_reason;
-    if (updateActive(request, planner_input, output, &failure_reason) ==
+    if (updateActive(request, search_input, output, &failure_reason) ==
         Update::Failed) {
       rejectActive(failure_reason);
       if (cycle_count_ >= max_attempts) {
@@ -201,7 +201,7 @@ class Recovery::Impl {
   enum class Update { Active, Completed, Failed };
 
   struct CandidateSelection {
-    nav_kernel::RecoveryPlanResult result{};
+    detail::RecoverySearchResult result{};
     int candidate_count{0};
     int behavior_index{-1};
   };
@@ -221,18 +221,16 @@ class Recovery::Impl {
     obstacle_y_.clear();
     obstacle_height_.clear();
     const nav_kernel::LocalRouteView* route = request.route();
-    const bool collision_authoritative =
-        params_.backend == nav_kernel::LocalPlannerBackend::Scan;
+    const bool collision_authoritative = capabilities_.consumesCollisionMap;
 
     if (route == nullptr || !route->valid() ||
         !finitePoint(request.robot.pose.position) ||
         !std::isfinite(request.robot.pose.yaw) ||
         !std::isfinite(request.clock.timestampS) ||
         request.clock.timestampS < 0.0 ||
-        (!collision_authoritative &&
-         (request.environment.obstacles.count < 0 ||
-          (request.environment.obstacles.count > 0 &&
-           request.environment.obstacles.xyzh == nullptr)))) {
+        (request.environment.obstacles.count < 0 ||
+         (request.environment.obstacles.count > 0 &&
+          request.environment.obstacles.xyzh == nullptr))) {
       *failure_reason = "recovery_invalid_input";
       return false;
     }
@@ -250,13 +248,13 @@ class Recovery::Impl {
         -s * target_dx + c * target_dy,
         c * target_dx + s * target_dy);
 
-    const nav_kernel::RecoveryPlannerParams& planner_params = planner_.params();
+    const detail::RecoverySearchParams& search_params = search_.params();
     const double half_length =
-        0.5 * planner_params.vehicleLength + planner_params.footprintPadding;
+        0.5 * search_params.vehicleLength + search_params.footprintPadding;
     const double half_width =
-        0.5 * planner_params.vehicleWidth + planner_params.footprintPadding;
+        0.5 * search_params.vehicleWidth + search_params.footprintPadding;
     const double obstacle_range =
-        planner_params.searchRadius + std::hypot(half_length, half_width);
+        search_params.searchRadius + std::hypot(half_length, half_width);
     const double obstacle_range_sq = obstacle_range * obstacle_range;
 
     const auto append_planning_obstacle =
@@ -274,112 +272,50 @@ class Recovery::Impl {
       return true;
     };
 
-    if (params_.checkObstacle) {
-      if (!collision_authoritative) {
-        for (int index = 0; index < request.environment.obstacles.count;
-             ++index) {
-          const float* point = request.environment.obstacles.xyzh + index * 4;
-          if (!append_planning_obstacle(point[0], point[1], point[3])) {
-            *failure_reason = "recovery_obstacle_nonfinite";
-            return false;
-          }
+    if (params_.checkObstacle || request.body || request.observedBody) {
+      // The point cloud is the direct DDS-derived live observation and is a
+      // useful recovery fallback when the optional packed collision snapshot
+      // is between publications. Keep it for SCAN too; a valid 3D Grid still
+      // takes precedence and preserves SCAN's exact collision semantics.
+      for (int index = 0; index < request.environment.obstacles.count;
+           ++index) {
+        const float* point = request.environment.obstacles.xyzh + index * 4;
+        if (!append_planning_obstacle(point[0], point[1], point[3])) {
+          *failure_reason = "recovery_obstacle_nonfinite";
+          return false;
         }
       }
 
-      if (collision_authoritative) {
-        if (!validateCollisionMap(request, obstacle_range, failure_reason)) {
-          return false;
-        }
-        // Mapd already applied the cylinder radius and vertical clearance.
-        // Keep the 3D view instead of projecting and inflating it a second time.
+      if (collision_authoritative && (request.body || request.observedBody ||
+                                     request.environment.collision.valid())) {
+        // Recovery checks its candidate's actual heading with the same body.
+        // A missing body bitmap cannot fall back to a different 2D footprint.
         auto collision_request = request;
         collision_request.objective = nav_kernel::RouteTarget{*route};
+        collision_request.bodyHeading.reset();
         collision_grid_.emplace(params_, collision_request);
         if (!collision_grid_->valid()) {
-          *failure_reason = "recovery_" + collision_grid_->reason();
-          return false;
+          if (request.body || request.observedBody) {
+            *failure_reason = "recovery_" + collision_grid_->reason();
+            return false;
+          }
+          collision_grid_.reset();
         }
       }
     }
 
     if (obstacle_x_.size() >
-        static_cast<std::size_t>(planner_params.maxObstaclePoints)) {
+        static_cast<std::size_t>(search_params.maxObstaclePoints)) {
       *failure_reason = "recovery_obstacle_capacity_exceeded";
       return false;
     }
     return true;
   }
 
-  bool validateCollisionMap(const nav_kernel::LocalPlanRequest& request,
-                            double obstacle_range,
-                            std::string* failure_reason) const {
-    const nav_kernel::LocalCollisionMapView& collision =
-        request.environment.collision;
-    const bool structural_valid = collision.valid() &&
-        collision.resetEpoch > 0 && collision.observationSequence > 0 &&
-        collision.generation > 0 && std::isfinite(collision.stampS) &&
-        collision.stampS > 0.0 &&
-        std::isfinite(collision.receiveStampS) &&
-        collision.receiveStampS >= 0.0;
-    if (!structural_valid) {
-      *failure_reason = "recovery_collision_map_invalid";
-      return false;
-    }
-    if (!collision.complete) {
-      *failure_reason = "recovery_collision_map_incomplete";
-      return false;
-    }
-    if (!collision.live) {
-      *failure_reason = "recovery_collision_map_not_live";
-      return false;
-    }
-    const double freshness_stamp =
-        collision.receiveStampS > 0.0
-            ? collision.receiveStampS
-            : collision.stampS;
-    const double age = request.clock.timestampS - freshness_stamp;
-    if (!std::isfinite(age) || age < -0.10 ||
-        age > params_.localCollisionMaxAge) {
-      *failure_reason = "recovery_collision_map_stale";
-      return false;
-    }
-
-    const double lower =
-        params_.backend == nav_kernel::LocalPlannerBackend::Scan
-            ? std::max(0.0, params_.scan.bodyClearanceBelow)
-            : std::max(0.0, -params_.minRelZ);
-    const double upper =
-        params_.backend == nav_kernel::LocalPlannerBackend::Scan
-            ? std::max(0.0, params_.scan.bodyClearanceAbove)
-            : std::max(0.0, params_.maxRelZ);
-    const double tolerance = collision.resolution;
-    const nav_kernel::Vec3 required_min{
-        request.robot.pose.position.x - obstacle_range,
-        request.robot.pose.position.y - obstacle_range,
-        request.robot.pose.position.z - lower,
-    };
-    const nav_kernel::Vec3 required_max{
-        request.robot.pose.position.x + obstacle_range,
-        request.robot.pose.position.y + obstacle_range,
-        request.robot.pose.position.z + upper,
-    };
-    for (const double x : {required_min.x, required_max.x}) {
-      for (const double y : {required_min.y, required_max.y}) {
-        for (const double z : {required_min.z, required_max.z}) {
-          if (!collision.covers({x, y, z}, tolerance)) {
-            *failure_reason = "recovery_collision_map_roi_uncovered";
-            return false;
-          }
-        }
-      }
-    }
-    return true;
-  }
-
-  nav_kernel::RecoveryPlannerInput makePlannerInput(
+  detail::RecoverySearchInput makeSearchInput(
       const nav_kernel::LocalPlanRequest& request,
       double goal_direction_body_rad) const {
-    nav_kernel::RecoveryPlannerInput recovery;
+    detail::RecoverySearchInput recovery;
     recovery.vehiclePose = request.robot.pose;
     recovery.collisionGrid = collision_grid_ ? &*collision_grid_ : nullptr;
     if (!obstacle_x_.empty()) {
@@ -388,7 +324,7 @@ class Recovery::Impl {
       recovery.obstacleHeight = obstacle_height_.data();
       recovery.obstacleCount = static_cast<int>(obstacle_x_.size());
     }
-    if (params_.backend != nav_kernel::LocalPlannerBackend::Scan &&
+    if (capabilities_.consumesTraversability &&
         request.environment.traversability.valid()) {
       recovery.traversabilityGrid = request.environment.traversability.values;
       recovery.traversabilityRows = request.environment.traversability.rows;
@@ -407,21 +343,21 @@ class Recovery::Impl {
   }
 
   CandidateSelection selectCandidate(
-      const nav_kernel::RecoveryPlannerInput& base_input) const {
+      const detail::RecoverySearchInput& base_input) const {
     CandidateSelection selection;
     const std::size_t behavior_count = config_.behavior_order.size();
     for (std::size_t offset = 0; offset < behavior_count; ++offset) {
       const std::size_t index =
           (behavior_cursor_ + offset) % behavior_count;
       const nav_kernel::RecoveryAction action = config_.behavior_order[index];
-      nav_kernel::RecoveryPlannerInput input = base_input;
+      detail::RecoverySearchInput input = base_input;
       if (action == nav_kernel::RecoveryAction::Translate) {
         input.rejectedRotationDirectionMask |= 0x3;
       } else {
         input.rejectedTranslationDirectionMask |= 0xFFFFU;
       }
 
-      nav_kernel::RecoveryPlanResult candidate = planner_.plan(input);
+      detail::RecoverySearchResult candidate = search_.plan(input);
       selection.candidate_count +=
           candidate.diagnostics.candidateCount +
           candidate.diagnostics.rotationCandidateCount;
@@ -430,7 +366,7 @@ class Recovery::Impl {
       if (selection.result.found()) {
         return selection;
       }
-      if (selection.result.status == nav_kernel::PlanStatus::InvalidInput) {
+      if (selection.result.status == detail::RecoverySearchStatus::InvalidInput) {
         return selection;
       }
     }
@@ -563,7 +499,7 @@ class Recovery::Impl {
       const nav_kernel::Pose& vehicle,
       std::size_t segment_index) const {
     const std::vector<nav_kernel::Vec3> body =
-        nav_kernel::RecoveryPlanner::worldPathToBody(world_path_, vehicle);
+        detail::RecoverySearch::worldPathToBody(world_path_, vehicle);
     std::vector<nav_kernel::Vec3> remaining;
     remaining.reserve(body.size() + 1);
     remaining.push_back({0.0, 0.0, 0.0});
@@ -578,7 +514,7 @@ class Recovery::Impl {
     return remaining;
   }
 
-  bool activate(const nav_kernel::RecoveryPlanResult& candidate,
+  bool activate(const detail::RecoverySearchResult& candidate,
                 const nav_kernel::LocalPlanRequest& request) {
     if (!candidate.found()) return false;
 
@@ -591,7 +527,7 @@ class Recovery::Impl {
     if (candidate.action == nav_kernel::RecoveryAction::Translate) {
       world_path_ = candidate.pathWorld;
       if (world_path_.empty()) {
-        world_path_ = nav_kernel::RecoveryPlanner::bodyPathToWorld(
+        world_path_ = detail::RecoverySearch::bodyPathToWorld(
             candidate.pathBody, request.robot.pose);
       }
       if (world_path_.empty() ||
@@ -626,7 +562,7 @@ class Recovery::Impl {
   }
 
   Update updateActive(const nav_kernel::LocalPlanRequest& request,
-                      const nav_kernel::RecoveryPlannerInput& planner_input,
+                      const detail::RecoverySearchInput& search_input,
                       RecoveryOutput& output,
                       std::string* failure_reason) {
     if (last_progress_time_ > request.clock.timestampS) {
@@ -649,20 +585,19 @@ class Recovery::Impl {
       }
 
       const double completion_distance =
-          std::max(0.08, planner_.params().latticeResolution * 1.25);
+          std::max(0.08, search_.params().latticeResolution * 1.25);
       if (path_length_ - projection.along_distance <= completion_distance &&
           nav_kernel::distance2D(request.robot.pose.position, world_path_.back()) <=
               completion_distance) {
-        output.observation_refresh_required = true;
         finish(request.clock.timestampS, "recovery_translation_complete");
         return Update::Completed;
       }
 
       std::vector<nav_kernel::Vec3> remaining =
           remainingPathBody(request.robot.pose, projection.segment_index);
-      nav_kernel::SafetyFailure failure = nav_kernel::SafetyFailure::None;
+      detail::RecoverySafetyFailure failure = detail::RecoverySafetyFailure::None;
       if (remaining.size() < 2 ||
-          !planner_.validateBodyPath(planner_input, remaining, &failure)) {
+          !search_.validateBodyPath(search_input, remaining, &failure)) {
         *failure_reason = std::string("recovery_translation_unsafe_") +
                           safetyFailureName(failure);
         return Update::Failed;
@@ -699,16 +634,15 @@ class Recovery::Impl {
       const double remaining_magnitude =
           std::max(0.0, target - std::max(0.0, signed_travel));
       if (remaining_magnitude <= 0.05) {
-        output.observation_refresh_required = true;
         finish(request.clock.timestampS, "recovery_rotation_complete");
         return Update::Completed;
       }
 
       const double remaining_delta =
           static_cast<double>(rotation_direction_) * remaining_magnitude;
-      nav_kernel::SafetyFailure failure = nav_kernel::SafetyFailure::None;
-      if (!planner_.validateRotation(
-              planner_input, remaining_delta, &failure)) {
+      detail::RecoverySafetyFailure failure = detail::RecoverySafetyFailure::None;
+      if (!search_.validateRotation(
+              search_input, remaining_delta, &failure)) {
         *failure_reason = std::string("recovery_rotation_unsafe_") +
                           safetyFailureName(failure);
         return Update::Failed;
@@ -734,7 +668,8 @@ class Recovery::Impl {
 
   nav_kernel::LocalPlannerParams params_;
   RecoveryConfig config_;
-  nav_kernel::RecoveryPlanner planner_;
+  nav_kernel::LocalPlannerCapabilities capabilities_;
+  detail::RecoverySearch search_;
   std::optional<nav_kernel::local::scan::Grid> collision_grid_;
   std::vector<float> obstacle_x_;
   std::vector<float> obstacle_y_;
@@ -761,9 +696,9 @@ class Recovery::Impl {
   std::string reason_;
 };
 
-Recovery::Recovery(const nav_kernel::LocalPlannerParams& planner_params,
+Recovery::Recovery(const nav_kernel::LocalPlannerParams& search_params,
                    const RecoveryConfig& config)
-    : impl_(std::make_unique<Impl>(planner_params, config)) {}
+    : impl_(std::make_unique<Impl>(search_params, config)) {}
 
 Recovery::~Recovery() = default;
 Recovery::Recovery(Recovery&&) noexcept = default;

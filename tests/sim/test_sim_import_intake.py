@@ -653,3 +653,33 @@ def test_provenance_requires_real_license_file(tmp_path: Path) -> None:
     assert normalized["license_file"] == "LICENSE.txt"
     assert normalized["third_party_assets"] == []
     assert json.loads(json.dumps(normalized, sort_keys=True)) == normalized
+
+
+def test_gnu_long_name_still_rejects_parent_traversal(tmp_path: Path) -> None:
+    archive = tmp_path / "gnu-escape.tar.gz"
+    member = tarfile.TarInfo("../" + ("nested/" * 16) + "outside.xml")
+    member.size = 1
+    with tarfile.open(archive, "w:gz", format=tarfile.GNU_FORMAT) as stream:
+        stream.addfile(member, io.BytesIO(b"x"))
+
+    destination = tmp_path / "intake"
+    with pytest.raises(ImportFailure) as failure:
+        SourceIntake().materialize(archive, destination)
+
+    assert _code(failure.value) == "SIMIMPORT_UNSAFE_ARCHIVE"
+    assert not destination.exists()
+    assert not (tmp_path / "nested").exists()
+
+
+def test_gnu_long_name_without_a_following_member_is_rejected(tmp_path: Path) -> None:
+    member = tarfile.TarInfo(("nested/" * 16) + "model.xml")
+    encoded_headers = member.tobuf(format=tarfile.GNU_FORMAT)
+    archive = tmp_path / "dangling-name.tar.gz"
+    archive.write_bytes(gzip.compress(encoded_headers[:-512] + bytes(1024)))
+
+    destination = tmp_path / "intake"
+    with pytest.raises(ImportFailure) as failure:
+        SourceIntake().materialize(archive, destination)
+
+    assert _code(failure.value) == "SIMIMPORT_UNSAFE_ARCHIVE"
+    assert not destination.exists()

@@ -365,6 +365,7 @@ def handle_agent_message(gw: Any, msg: Any) -> None:
                 "role": str(payload.get("role", "assistant")),
                 "text": str(payload.get("text", "")),
                 "phase": str(payload.get("phase", "")),
+                "run_id": str(payload.get("run_id") or ""),
                 "ts": float(payload.get("ts", time.time())),
             }
         )

@@ -4,13 +4,13 @@ import sys
 
 import pytest
 
-from lingtu.assembly.compiler import compile_run_plan
-from lingtu.assembly.plugins import BASE_PLUGIN_MODULES
-from lingtu.assembly.products import resolve_product_host_runtime
-from lingtu.assembly.stacks.slam import slam
-from lingtu.assembly.wires import full_stack as full_stack_wires
-from lingtu.assembly.wires.full_stack import full_stack_wire_specs
-from runtime.blueprint import Blueprint
+from lingtu.assembly.compile_plan import compile_run_plan
+from lingtu.assembly.config.product import resolve_product_host_runtime
+from lingtu.assembly.host.plugin_catalog import BASE_PLUGIN_MODULES
+from lingtu.assembly.host.stacks.localization import slam
+from lingtu.assembly.host.wiring import connect as full_stack_wires
+from lingtu.assembly.host.wiring.connect import full_stack_wire_specs
+from runtime.host import HostBuilder
 from runtime.module import Module
 from runtime.stream import In, Out
 from runtime.wiring import WireSpec
@@ -69,7 +69,7 @@ def test_full_stack_has_no_python_sensor_feeds_into_slam_adapter() -> None:
 
 
 def test_full_stack_rejects_a_selected_wire_with_a_missing_port(monkeypatch) -> None:
-    bp = Blueprint().add(_WireSource, alias="source").add(_WireSink, alias="sink")
+    bp = HostBuilder().add(_WireSource, alias="source").add(_WireSink, alias="sink")
     invalid = WireSpec("source", "missing", "sink", "input")
     monkeypatch.setattr(
         full_stack_wires,

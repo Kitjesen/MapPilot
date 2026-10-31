@@ -86,6 +86,48 @@ def test_class_mismatch_does_not_reuse_track_id() -> None:
     assert int(person[0, 4]) != int(bicycle[0, 4])
 
 
+def test_over_gate_pairs_cannot_hide_a_valid_low_confidence_match() -> None:
+    tracker = NativeByteTracker(track_high_thresh=0.5, new_track_thresh=0.5)
+    first = tracker.update(
+        _results(
+            ([208.788, 39.569, 298.543, 100.239], 0.9, 0),
+            ([149.391, 27.863, 269.586, 129.022], 0.9, 0),
+        )
+    )
+
+    recovered = tracker.update(
+        _results(
+            ([115.536, 52.779, 268.963, 141.201], 0.2, 0),
+            ([146.803, 18.714, 226.918, 179.597], 0.2, 0),
+        )
+    )
+
+    assert recovered.shape == (1, 8)
+    assert int(recovered[0, 4]) == int(first[1, 4])
+    assert int(recovered[0, 7]) == 0
+
+
+def test_partial_assignment_prefers_exact_match_over_two_weak_matches() -> None:
+    tracker = NativeByteTracker(track_high_thresh=0.5, new_track_thresh=0.5)
+    first = tracker.update(
+        _results(
+            ([0, 20, 100, 120], 0.9, 0),
+            ([20, 20, 120, 120], 0.9, 0),
+        )
+    )
+
+    recovered = tracker.update(
+        _results(
+            ([20, 20, 120, 120], 0.2, 0),
+            ([20, 40, 120, 140], 0.2, 0),
+        )
+    )
+
+    assert recovered.shape == (1, 8)
+    assert int(recovered[0, 4]) == int(first[1, 4])
+    assert int(recovered[0, 7]) == 0
+
+
 class _Detector:
     def detect(self, _frame, _prompt):
         return [

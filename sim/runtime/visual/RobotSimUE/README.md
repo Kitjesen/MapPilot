@@ -9,6 +9,25 @@ RGB/depth render sensors and the exact runtime sensor evidence path are implemen
 the fresh end-to-end playable qualification and a cooked Windows package remain in
 progress.
 
+## Current factory inspection work — 2026-10-21
+
+The selected site is the licensed **Factory Environment Collection** production
+line, not the older FactoryPark map or the separate native factory_workshop.
+The product home already uses its real UE render. Migration into a drivable
+world, matched MuJoCo collision, and inspection qualification remain unfinished.
+The [factory integration README](../../../tools/worlds/factory_environment_collection/README.md)
+records completed items, loading evidence, the three-point route, ownership,
+and the remaining gates. The [product checklist](../../../../docs/design/product-progress.md)
+tracks the wider delivery.
+
+The current UI-only flow passed home → robot → category → 3D inspection → map
+selection at 1920×1080, with natural exit and no session confirmation. Initialization
+was 109.80 s versus the prior 191.51 s; this is still too slow, and differing
+cache/memory conditions prevent attributing the whole difference to the plugin change.
+Runtime-only Editor launches now omit six authoring/tool-server plugins while
+normal editor authoring and packaged launches keep their existing configuration.
+
+
 ## Boundary decisions
 
 - The native runtime is the only physics and simulation-clock authority.
@@ -18,16 +37,16 @@ progress.
 - One project and one plugin support every robot package; package IDs never create robot-specific Runtime branches.
 - UE never writes an Actor transform as physics truth; it applies immutable snapshots for presentation.
 
-## Blueprint presentation status
+## HostBuilder presentation status
 
-Blueprint presentation logic can obtain the world's
-`LingTu Sim Blueprint Status` subsystem, call `Get Latest Status` for the initial
+HostBuilder presentation logic can obtain the world's
+`LingTu Sim HostBuilder Status` subsystem, call `Get Latest Status` for the initial
 snapshot, and bind `On Runtime Status Changed` for later updates. The adapter is
 read-only: it samples the centralized Session/UI/Visual status at 10 Hz and broadcasts
 one structured payload only when that projected status changes.
 
 The payload deliberately keeps requested operator axes, control-admitted velocity, and
-observed MuJoCo truth in separate fields. Blueprint widgets and presentation effects may
+observed MuJoCo truth in separate fields. HostBuilder widgets and presentation effects may
 react to these values, but the subsystem does not publish control requests, mutate robot
 Actors as physics truth, or create another runtime authority.
 
@@ -58,8 +77,10 @@ The Web Inspection Workbench (`web/src/components/InspectionWorkbench.tsx`) is t
 current operator path for saved-route selection, native task start/pause/resume/cancel,
 evidence review, and report acceptance. Its task state and report come from Gateway's
 inspection APIs. Do not infer native point completion or evidence acceptance from an
-Unreal Actor, the HUD, or a control-command ACK. In the UE viewport, `Shift` with
-`W/A/S/D/Q/E` sends robot motion intent, `C` changes camera, `R` requests recording,
+Unreal Actor, the HUD, or a control-command ACK. In a focused Drive viewport,
+`W/S` sends forward/backward intent, `A/D` lateral intent, and `Q/E` turn intent,
+without holding Shift. Releasing the last movement key, leaving Drive, or losing
+focus releases motion; gamepad movement still requires LB. `C` changes camera, `R` requests recording,
 `Tab` opens Tactical, and `Esc` opens the menu; the menu does not pause MuJoCo.
 
 ## Compiled artifact boundary
@@ -82,6 +103,15 @@ other source manifests at runtime. Pixel Streaming, when added, will remain a
 presentation/input adapter and not an algorithm sensor interface.
 
 ## Windows validation state
+
+The 2026-10-12 refactor/input adaptation rebuilt `RobotSimUEEditor` successfully
+and passed all 50 `LingTuSim.UI.Runtime` Automation tests under NullRHI. The
+reports are `build/unreal-tests/no-shift-20261012/green-build.log` and
+`build/unreal-tests/no-shift-20261012/automation-green/report/index.json` at the
+repository root. These verify input mapping/UI contracts, not rendering,
+current MuJoCo motion, or a packaged game. The optional Tripo editor bridge is
+disabled because its source build requires the absent IXWebSocket library;
+existing bridge files and imported assets remain intact.
 
 The current camera/Session/Visual/UI/Sensors worktree was rebuilt on 2026-08-12 with
 Unreal Engine 5.8.1, Visual Studio 2022 17.14/MSVC 14.44, and Windows SDK

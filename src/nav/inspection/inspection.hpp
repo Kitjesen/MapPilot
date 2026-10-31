@@ -43,6 +43,7 @@ struct Route {
   std::int64_t map_content_epoch{0};
   std::uint64_t revision{1};
   std::uint32_t loop_count{1};
+  double loop_interval_s{0.0};
   FailurePolicy failure_policy{FailurePolicy::kStop};
   std::uint32_t max_retries{0};
   std::vector<Point> points;
@@ -62,24 +63,20 @@ struct ArrivalSample {
 
 struct ActionRequest {
   std::string request_id;
-  // task_id is the product identity; run_id remains for legacy evidence
-  // workers that have not yet moved to the task vocabulary.
   std::string task_id;
-  std::string run_id;
   std::string route_id;
   std::uint64_t route_revision{0};
   std::size_t point_index{0};
-  std::string point_id;
   std::string action;
 };
 
 struct RunStatus {
   RunState state{RunState::kIdle};
-  // task_id is immutable for one operator-visible inspection task. run_id is
-  // an intentional compatibility mirror until the v1 DDS/status surfaces are
-  // retired; new code must correlate through task_id.
+  // One task identity and one latest command identity are enough for route
+  // execution. Route revision pins the immutable route content; point_index
+  // is progress. Action/evidence IDs exist only while an optional point
+  // action is being recorded and are never alternate task identities.
   std::string task_id;
-  std::string run_id;
   // The latest accepted task-control request. It is deliberately distinct
   // from task_id because retries and pause/resume/cancel each get a new ID.
   std::string request_id;
@@ -91,7 +88,6 @@ struct RunStatus {
   std::size_t point_count{0};
   std::uint32_t loop_index{0};
   std::uint32_t retry_count{0};
-  std::string point_id;
   std::string action;
   std::string action_request_id;
   std::string evidence_id;
@@ -125,7 +121,7 @@ struct TaskEventValidationResult {
 struct RestartTaskEventResult {
   bool ok{false};
   bool replayed_terminal{false};
-  bool synthesized_failure{false};
+  bool synthesized_transition{false};
   TaskEvent event;
   std::string reason;
 };
@@ -212,9 +208,6 @@ class Executor {
   static constexpr double kStableAngularSpeedRadps = 0.10;
   static constexpr double kStableDurationS = 0.50;
   static constexpr std::size_t kStableSampleCount = 3U;
-  static constexpr double kPlanningTimeoutS = 30.0;
-  static constexpr double kNavigationTimeoutS = 45.0;
-  static constexpr double kNavigationMinProgressM = 0.10;
   static constexpr double kSettlingTimeoutS = 10.0;
   static constexpr double kActionTimeoutS = 30.0;
 
@@ -230,11 +223,17 @@ class Executor {
   // while all field traffic migrates through the task-aware command path.
   bool Start(
       Route route,
-      std::string run_id,
+      std::string task_id,
       const std::string& active_map_id,
       std::int64_t active_map_content_epoch,
       double now_s,
       std::string* error);
+  // A restarted endpoint retains progress but never resumes old motion or
+  // evidence requests. Resume replans the unfinished point from a fresh pose.
+  RestartTaskEventResult Restore(
+      Route route,
+      const TaskEvent& checkpoint,
+      double now_s);
   // A native motion authority must call the matching Commit* only after it
   // has proven the final zero output. Direct Pause/Cancel remain for legacy
   // in-process safety callers.
@@ -260,7 +259,6 @@ class Executor {
   std::optional<Point> PendingGoal() const;
   bool OnPlanningStarted(double now_s);
   bool OnPlanReady(double now_s);
-  bool OnNavigationProgress(double remaining_distance_m, double now_s);
   void OnLegFailed(const std::string& reason, double now_s);
   bool OnNavigationFailed(const std::string& reason, double now_s);
   void OnGoalReached(double now_s);
@@ -304,12 +302,14 @@ class Executor {
       const std::string& request_id = {});
   bool SelectCurrentPoint();
   bool BeginPlanning(double now_s, std::string reason);
+  bool BeginLoopWait(double now_s, double remaining_s);
   void BeginDwell(double now_s);
   void BeginAction(double now_s);
   void HandlePointFailure(std::string reason, double now_s);
   void ResetArrivalStability();
   void ResetPointPhase();
-  void AdvanceOrFinish(double now_s);
+  bool AdvancePoint();
+  void AdvanceOrFinish(double now_s, bool completed = true);
   void Fail(std::string reason, double now_s = 0.0);
 
   Route route_;
@@ -322,9 +322,9 @@ class Executor {
   std::size_t stable_sample_count_{0U};
   std::uint64_t action_request_serial_{0U};
   bool action_started_{false};
-  double best_remaining_distance_m_{0.0};
-  bool has_navigation_progress_{false};
   std::string pending_stop_reason_;
+  bool waiting_next_loop_{false};
+  double loop_wait_remaining_s_{0.0};
   std::deque<TaskEvent> task_events_;
   std::uint64_t next_task_event_sequence_{1U};
 };

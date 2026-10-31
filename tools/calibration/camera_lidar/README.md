@@ -120,15 +120,6 @@ These vendored tools are kept for field comparison and special calibration setup
 - **Strengths**: official Livox support.
 - **Boundary**: MIT-licensed vendored snapshot for offline use; requires a physical calibration board, typically around 1 x 1.5 m.
 
-### mlcc (HKU-MARS — Multi-LiDAR/Camera)
-
-[mlcc](https://github.com/hku-mars/mlcc) provides targetless extrinsic calibration for multiple LiDARs and cameras using adaptive voxelization.
-
-- **Use case**: S100P upgrades with additional LiDARs or cameras.
-- **Supports**: multi-LiDAR extrinsic, multi-LiDAR-camera extrinsic, single LiDAR-camera.
-- **Prerequisites**: ROS1, Ceres, OpenCV, PCL, Eigen.
-- **Boundary**: GPL-2.0-only vendored reference/offline tool; do not merge or bundle it into the product runtime/release.
-
 ## Important Notes
 
 - Livox Mid-360 is a non-repetitive scan LiDAR. Keep the robot stationary during recording for good point cloud accumulation.

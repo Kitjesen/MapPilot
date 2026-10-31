@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "input/frame.hpp"
+#include "collision/body.hpp"
 
 namespace lingtu::nav::endpoint {
 
@@ -40,6 +41,10 @@ void InputProjector::apply(SensorBatch batch, TimingDiagnostics &timing) {
   }
   if (batch.driver_control) {
     projectDriverControl(*batch.driver_control, batch.receive_steady_s);
+  }
+  if (batch.motion_profile) {
+    state_.motion_profile = std::move(batch.motion_profile);
+    state_.motion_profile_receive_s = batch.receive_steady_s;
   }
   if (batch.exploration_grid && actions_.on_execution_grid) {
     actions_.on_execution_grid(std::move(*batch.exploration_grid));
@@ -116,12 +121,11 @@ void InputProjector::projectTf(const InputSample<TransformSample> &sample,
   state_.last_tf_s = transform.stamp_s;
   state_.last_tf_receive_s = receive_steady_s;
   ++state_.tf_generation;
-  if (!map_frame_jump && state_.odom_body) {
-    state_.map_body = transformPose(*state_.map_odom_tf, *state_.odom_body);
-  }
-  if (!map_frame_jump && state_.odom_body_transform) {
+  if (!map_frame_jump && state_.odom_requires_tf && state_.odom_body_transform) {
     state_.map_body_transform = composeTransforms(*state_.map_odom_tf, *state_.odom_body_transform);
+    state_.map_body = transformPose(*state_.map_body_transform, nav_kernel::Pose{});
   }
+  updateBodyGeometry();
   ++state_.tf_count;
 }
 
@@ -202,23 +206,39 @@ void InputProjector::projectOdometry(const InputSample<OdometrySample> &sample,
   state_.last_odom_receive_s = receive_steady_s;
   state_.map_body_transform = map_body;
   state_.map_body = map_frame ? *state_.odom_body : transformPose(*map_body, nav_kernel::Pose{});
+  updateBodyGeometry();
   pose_buffer_.push(stamp_s, *map_body);
   ++state_.odom_generation;
   ++state_.odom_count;
 }
 
+void InputProjector::updateBodyGeometry() {
+  if (!config_.navigation_body || !state_.map_body_transform) {
+    state_.body_geometry.reset();
+    return;
+  }
+  const auto& transform = *state_.map_body_transform;
+  const Quaternion inverse_yaw{0, 0, -std::sin(transform.yaw * .5), std::cos(transform.yaw * .5)};
+  const auto attitude = multiplyQuaternions(inverse_yaw, transform.rotation);
+  auto body = std::make_shared<collision::Body>(*config_.navigation_body);
+  // Collision Pose already applies map yaw; bake only the remaining attitude.
+  for (auto& part : body->parts) {
+    const auto center = rotatePoint(attitude, {part.center.x, part.center.y, part.center.z});
+    part.center = {center.x, center.y, center.z};
+    for (int axis = 0; axis < 3; ++axis) {
+      const auto rotated = rotatePoint(attitude,
+          {part.rotation[axis], part.rotation[3 + axis], part.rotation[6 + axis]});
+      part.rotation[axis] = rotated.x;
+      part.rotation[3 + axis] = rotated.y;
+      part.rotation[6 + axis] = rotated.z;
+    }
+  }
+  state_.body_geometry = std::move(body);
+}
+
 void InputProjector::resetEpoch(double epoch_start_s, const std::string &reason,
                                 bool clear_motion) {
   ++state_.frame_epoch;
-
-  InputSnapshot boundary;
-  boundary.odom_generation = state_.odom_generation;
-  boundary.tf_generation = state_.tf_generation;
-  boundary.cloud_generation = state_.cloud_generation;
-  boundary.traversability_generation = state_.traversability_generation;
-  boundary.localization_health_generation = state_.localization_health_generation;
-  boundary.driver_control_generation = state_.driver_control_generation;
-  gate_.beginRecoveryFrom(boundary);
 
   pose_buffer_.clear();
   map_odom_buffer_.clear();
@@ -227,6 +247,7 @@ void InputProjector::resetEpoch(double epoch_start_s, const std::string &reason,
   state_.odom_body_transform.reset();
   state_.map_body.reset();
   state_.map_body_transform.reset();
+  state_.body_geometry.reset();
   clearPlanState();
   obstacles_.clear();
   state_.latest_dynamic_clusters.clear();

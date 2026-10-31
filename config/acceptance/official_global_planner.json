@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "dataset": {
+    "name": "OctoPlanner3D official sample point clouds",
+    "repository": "https://github.com/JackJu-HIT/OctoPlanner3D",
+    "raw_url_template": "https://raw.githubusercontent.com/JackJu-HIT/OctoPlanner3D/{commit}/{path}",
+    "commit": "9a9cc431ea905a5878975cc6fbbce6c9618b31a4",
+    "license": "MIT",
+    "license_path": "LICENSE"
+  },
+  "map_profiles": {
+    "geometry_only": {
+      "resolution_m": 0.2,
+      "support_dilation_cells": 0,
+      "free_layers_above": 0,
+      "free_dilation_cells": 0
+    },
+    "modeled_surface_free": {
+      "resolution_m": 0.2,
+      "support_dilation_cells": 0,
+      "free_layers_above": 5,
+      "free_dilation_cells": 0
+    }
+  },
+  "planner_options": {
+    "robot_radius": 0.155,
+    "body_clearance_below_m": 0.1,
+    "body_clearance_above_m": 0.1,
+    "max_iterations": 500000,
+    "snap_search_radius_cells": 2,
+    "ground_support": true,
+    "direct_support_only": false,
+    "support_radius_cells": 1,
+    "support_depth_cells": 2,
+    "support_height_m": 0.35,
+    "support_height_tolerance_m": 0.05,
+    "max_step_height": 0.45,
+    "max_slope": 0.57735,
+    "terminal_goal_tolerance_m": 0.2,
+    "terminal_goal_xy_tolerance_m": 0.2,
+    "terminal_goal_z_tolerance_m": 0.2
+  },
+  "assertions": {
+    "start_snap_tolerance_m": 0.45,
+    "goal_tolerance_m": 0.2
+  },
+  "cases": [
+    {
+      "id": "building_cross_building_modeled",
+      "pcd": "octomap/pcd_files/building2_9.pcd",
+      "map_profile": "modeled_surface_free",
+      "start": [9.3, 0.5, 0.3],
+      "goal": [-6.1, -1.5, 0.3],
+      "expected": {"ok": true}
+    },
+    {
+      "id": "building_stairs_modeled",
+      "pcd": "octomap/pcd_files/building2_9.pcd",
+      "map_profile": "modeled_surface_free",
+      "start": [7.9, -2.7, 0.3],
+      "goal": [2.5, -0.3, 13.7],
+      "expected": {"ok": true}
+    },
+    {
+      "id": "plaza_traverse_modeled",
+      "pcd": "octomap/pcd_files/plaza3_10.pcd",
+      "map_profile": "modeled_surface_free",
+      "start": [-10.0, 0.0, 0.4],
+      "goal": [10.0, 0.0, 0.4],
+      "expected": {"ok": true}
+    },
+    {
+      "id": "building_stairs_geometry_only_rejected",
+      "pcd": "octomap/pcd_files/building2_9.pcd",
+      "map_profile": "geometry_only",
+      "start": [7.9, -2.7, 0.3],
+      "goal": [2.5, -0.3, 13.7],
+      "expected": {"ok": false, "error": "start_snap_exhausted"}
+    },
+    {
+      "id": "plaza_occupied_goal_rejected",
+      "pcd": "octomap/pcd_files/plaza3_10.pcd",
+      "map_profile": "modeled_surface_free",
+      "start": [-10.0, 0.0, 0.4],
+      "goal": [10.0, 0.0, 0.4],
+      "map_edits": [
+        {
+          "state": "occupied",
+          "shape": "box",
+          "x": 10.0,
+          "y": 0.0,
+          "z": 0.4,
+          "radius_m": 1.0
+        }
+      ],
+      "expected": {"ok": false, "error": "goal_snap_exhausted"}
+    },
+    {
+      "id": "plaza_unsupported_goal_rejected",
+      "pcd": "octomap/pcd_files/plaza3_10.pcd",
+      "map_profile": "modeled_surface_free",
+      "start": [-10.0, 0.0, 0.4],
+      "goal": [10.0, 0.0, 0.4],
+      "map_edits": [
+        {
+          "state": "free",
+          "shape": "box",
+          "x": 10.0,
+          "y": 0.0,
+          "z": 0.4,
+          "radius_m": 1.0
+        }
+      ],
+      "expected": {"ok": false, "error": "goal_snap_exhausted"}
+    }
+  ]
+}

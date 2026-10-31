@@ -45,6 +45,9 @@ class GeometryConfig:
     collision_hard_margin: float = 0.15
     collision_clearance_below: float = 0.25
     collision_clearance_above: float = 0.35
+    # Optional offline-exported BODY2 collision model selected by RobotConfig.
+    # Native navigation consumes the fixed collision primitives, not URDF XML.
+    navigation_body_file: str = ""
     # Nominal standing body-origin height above support; zero means uncalibrated.
     support_height: float = 0.0
     support_height_tolerance: float = 0.0
@@ -72,6 +75,8 @@ class DriverConfig:
     tls_cert_file: str = ""
     tls_key_file: str = ""
     tls_server_name: str = ""
+    stairs_up_profile: str = ""
+    stairs_down_profile: str = ""
 
 
 @dataclass
@@ -207,7 +212,7 @@ class GnssFusionRuntime:
     Keys are passed with a ``gnss_`` prefix by the SLAM stack.
     """
 
-    backend: str = "fastlio2_gnss"  # reserved for future factor-graph backends
+    backend: str = "ltlio_gnss"  # reserved for future factor-graph backends
     factor_weight_fix: float = 1.0
     factor_weight_float: float = 0.3
     factor_weight_single: float = 0.05

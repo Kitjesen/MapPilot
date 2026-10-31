@@ -62,7 +62,7 @@ def _exec_start_lines(unit_text: str) -> list[str]:
 
 def test_generic_deploy_script_owns_flow() -> None:
     text = _read("scripts/deploy/deploy_robot.sh")
-    build_plan = _read("src/lingtu/assembly/deployment.py")
+    build_plan = _read("src/lingtu/assembly/build_scripts.py")
 
     assert "LINGTU_DEPLOY_PRODUCT" in text
     assert 'PRODUCT="${LINGTU_DEPLOY_PRODUCT:-}"' in text
@@ -275,7 +275,7 @@ def test_field_driver_service_is_native_product_entrypoint() -> None:
     assert "${LINGTU_REPO}/bin/lingtu_driver" in runner
     assert 'exec "${BIN}"' in runner
     assert "find_package(CycloneDDS REQUIRED)" in cmake
-    assert "find_package(BrainstemClient CONFIG REQUIRED)" in cmake
+    assert "find_package(BrainstemClient 0.6 CONFIG REQUIRED)" in cmake
     assert "brainstem::client" in cmake
     assert "test_driver_core" in cmake
     assert "test_driver_io" in cmake
@@ -347,7 +347,7 @@ def test_thunder_slam_dds_service_runs_cpp_runtime() -> None:
     assert "lt-lidar.service" not in text
     assert "robot-lidar.service" not in text
     assert "Environment=LINGTU_SLAM_BIN=" not in text
-    assert "LINGTU_SLAM_BACKEND=fastlio2" in text
+    assert "LINGTU_SLAM_BACKEND=ltlio" in text
     assert "LINGTU_SLAM_MODE=localization" in text
     assert "NAV_MAP_DIR=" not in text
     assert "LINGTU_SLAM_MAP=" not in text
@@ -473,6 +473,7 @@ def test_native_mapd_service_is_packaged_as_a_strict_cpp_boundary() -> None:
     assert "packager accepted a mapd bundle without prune" in package_release
     assert "native-release/build/prune/prune" in package_release
     assert "octoplanner3d_pcd_to_octomap" not in package_release
+    assert "build/octoplanner3d_headless" not in package_release
     assert "live/voxel/local-collision rate limit" in main
     assert "const bool scene_pending = publications.scene.Pending(state);" in main
     assert "if (scene_pending && now >= next_scene)" in main
@@ -881,7 +882,7 @@ def test_thunder_camera_dds_service_is_optional_and_fails_without_native_publish
 
 def test_thunder_nav_dds_service_enables_bounded_local_planner_diagnostics() -> None:
     text = _read("scripts/deploy/thunder/lt-nav.service")
-    config = _read("src/nav/cpp/endpoint/nav/runtime/config/parse.cpp")
+    config = _read("src/nav/cpp/endpoint/nav/app/config/parse.cpp")
 
     assert "LINGTU_INSPECTION_DIR=/var/lib/lingtu/inspection" in text
     assert "LINGTU_NAV_STATUS_S=0.2" in text
@@ -923,7 +924,7 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     text = _read("scripts/deploy/thunder/lt-nav.service")
     runner = _read("scripts/deploy/thunder/run_nav_dds.sh")
     endpoint_bootstrap = _read("src/nav/cpp/endpoint/nav/main.cpp")
-    endpoint_loop = _read("src/nav/cpp/endpoint/nav/runtime/loop.cpp")
+    endpoint_loop = _read("src/nav/cpp/endpoint/nav/app/loop.cpp")
     input_projector = "\n".join(
         _read(f"src/nav/cpp/endpoint/nav/input/{name}")
         for name in ("pose.cpp", "map.cpp", "health.cpp", "motion_worker.cpp")
@@ -936,11 +937,11 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
             _read("src/nav/cpp/endpoint/nav/safety/command.cpp"),
             _read("src/nav/cpp/endpoint/nav/input/planner.hpp"),
             _read("src/nav/cpp/endpoint/nav/input/planner.cpp"),
-            _read("src/nav/cpp/endpoint/nav/runtime/time.hpp"),
-            _read("src/nav/cpp/endpoint/nav/runtime/config/build.cpp"),
+            _read("src/nav/cpp/endpoint/nav/app/time.hpp"),
+            _read("src/nav/cpp/endpoint/nav/app/config/build.cpp"),
         ]
     )
-    config_source = _read("src/nav/cpp/endpoint/nav/runtime/config/parse.cpp")
+    config_source = _read("src/nav/cpp/endpoint/nav/app/config/parse.cpp")
     dds_codec = _read("src/nav/cpp/endpoint/nav/dds/codec.cpp")
 
     assert "Description=LingTu native navigation DDS endpoint" in text
@@ -1017,7 +1018,7 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     assert "timing.motion_update_last_ms" in source
     assert "InputGate input_gate" in endpoint_bootstrap
     assert "state_.input_gate_state = gate_.evaluate(input);" in input_projector
-    assert "path_active_for_tick && !input_gate_state.ready" in endpoint_loop
+    assert "input.path_active && !input.input_gate.ready" in source
     navigation_state_publish = endpoint_loop.split(
         "navigation_state.sample(NavigationStateContext{", 1
     )[1].split("});", 1)[0]
@@ -1031,7 +1032,7 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     assert "motion_layer" in status
     assert "last_sensor_origin" in status
     assert "dynamic_objects" in status
-    assert "active_path_blockage_overlay" in status
+    assert "scan_local_collision" in status
     assert "local_planner_footprint" not in status
     assert "obstacle_snapshot_last" in status
     assert "motion_update_last" in status
@@ -1053,10 +1054,10 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
 
 
 def test_native_endpoint_accepts_only_typed_command_and_operator_motion_inputs() -> None:
-    loop = _read("src/nav/cpp/endpoint/nav/runtime/loop.cpp")
+    loop = _read("src/nav/cpp/endpoint/nav/app/loop.cpp")
     runtime = _read("src/nav/cpp/endpoint/nav/dds/runtime.cpp")
     runtime_h = _read("src/nav/cpp/endpoint/nav/dds/runtime.hpp")
-    config = _read("src/nav/cpp/endpoint/nav/runtime/config/parse.cpp")
+    config = _read("src/nav/cpp/endpoint/nav/app/config/parse.cpp")
     status = _read("src/nav/cpp/endpoint/nav/status/nav_status_writer.cpp")
     runner = _read("scripts/deploy/thunder/run_nav_dds.sh")
 
@@ -1089,8 +1090,8 @@ def test_native_endpoint_accepts_only_typed_command_and_operator_motion_inputs()
 
 def test_native_endpoint_navigation_runtime_orders_ticketed_terminal_lifecycle() -> None:
     bootstrap = _read("src/nav/cpp/endpoint/nav/main.cpp")
-    loop = _read("src/nav/cpp/endpoint/nav/runtime/loop.cpp")
-    controller = _read("src/nav/cpp/endpoint/nav/runtime/navigation.cpp")
+    loop = _read("src/nav/cpp/endpoint/nav/app/loop.cpp")
+    controller = _read("src/nav/cpp/endpoint/nav/app/navigation.cpp")
     terminal_transaction = _read("src/nav/cpp/endpoint/nav/status/goal_terminal_transaction.cpp")
     cmake = _read("src/nav/cpp/endpoint/CMakeLists.txt")
 
@@ -1106,7 +1107,7 @@ def test_native_endpoint_navigation_runtime_orders_ticketed_terminal_lifecycle()
     assert "dds.writeNavigationGoalStatus" not in bootstrap
     assert "nav/status/navigation_goal_status_outbox.cpp" in cmake
     assert "nav/status/goal_terminal_status_delivery.cpp" in cmake
-    assert "nav/runtime/navigation.cpp" in cmake
+    assert "nav/app/navigation.cpp" in cmake
     assert "NavigationRuntimeController navigation_runtime_controller" in loop
 
     for old_bypass in (
@@ -1137,7 +1138,7 @@ def test_native_endpoint_navigation_runtime_orders_ticketed_terminal_lifecycle()
         "actions.run_autonomy(pre_autonomy_goal_snapshot)",
         "goal_replan_runtime_.handleAutonomyOutcome(",
         "actions.apply_autonomy_outputs(runtime_outcome)",
-        "completeTerminal(terminal_candidate)",
+        "completeTerminal(runtime_outcome)",
         "goal_replan_runtime_.drainPendingCycle(frame)",
     )
     cursor = 0
@@ -1178,7 +1179,7 @@ def test_native_endpoint_navigation_runtime_orders_ticketed_terminal_lifecycle()
 
 
 def test_native_endpoint_terminal_barrier_gates_ingress_and_stages_inspection_goals() -> None:
-    loop = _read("src/nav/cpp/endpoint/nav/runtime/loop.cpp")
+    loop = _read("src/nav/cpp/endpoint/nav/app/loop.cpp")
     terminal_transaction = _read("src/nav/cpp/endpoint/nav/status/goal_terminal_transaction.cpp")
 
     assert "evaluateGoalTerminalIngress" in loop
@@ -1302,7 +1303,7 @@ def test_retired_localization_units_are_stop_only_field_tombstones() -> None:
 
     assert not (ROOT / "integrations/super_lio").exists()
 
-    real_env = _read("config/runtime_graph/envs/real.yaml").lower()
+    real_env = _read("config/system/envs/real.yaml").lower()
     processes = real_env.split("processes:", 1)[1].split("conflicts:", 1)[0]
     assert "super_lio" not in processes
     assert "super-lio" not in processes
@@ -1324,8 +1325,8 @@ def test_retired_localization_units_are_stop_only_field_tombstones() -> None:
     assert "super_lio" not in installer
     assert "super-lio" not in installer
 
-    from lingtu.assembly.compiler import compile_run_plan
-    from lingtu.assembly.products import resolve_product_host_runtime
+    from lingtu.assembly.compile_plan import compile_run_plan
+    from lingtu.assembly.config.product import resolve_product_host_runtime
 
     resolved = resolve_product_host_runtime("nav", "real", robot="unitree/go2")
     plan = compile_run_plan(resolved.product, resolved.env, robot="unitree/go2")
@@ -1497,7 +1498,7 @@ def test_native_motion_publishers_use_canonical_body_frame() -> None:
 def test_retired_ota_tree_is_absent_and_native_release_is_canonical() -> None:
     package_script = _read("scripts/deploy/package_native_release.sh")
     installer = _read("scripts/deploy/install_native_release.sh")
-    release_guide = _read("docs/operations.md")
+    release_guide = _read("scripts/deploy/README.md")
     scripts_index = _read("scripts/README.md")
     component_build_guide = _read("scripts/build/README.md")
     build_guide = _read("docs/getting-started.md")
@@ -1505,7 +1506,7 @@ def test_retired_ota_tree_is_absent_and_native_release_is_canonical() -> None:
 
     assert not (ROOT / "scripts" / "ota").exists()
     assert 'INSTALLER_SOURCE="${SCRIPT_ROOT}/scripts/deploy/install_native_release.sh"' in package_script
-    assert "python3 -m lingtu.control" in installer
+    assert '"${PYTHON_BIN}" -m lingtu.control' in installer
     assert "scripts/deploy/package_native_release.sh" in release_guide
     assert "scripts/ota/" not in scripts_index
     for retired in ("build_nav_package.sh", "deploy_to_robot.sh", "generate_manifest.py"):
@@ -1515,7 +1516,7 @@ def test_retired_ota_tree_is_absent_and_native_release_is_canonical() -> None:
     assert "--packages-select fastlio2 local_planner" not in combined
     assert "--packages-select local_planner" not in combined
     assert "local_planner terrain_analysis terrain_analysis_ext" not in combined
-    assert "[`scripts/build/README.md`](../scripts/build/README.md)" in build_guide
+    assert "(../scripts/build/README.md)" in build_guide
     assert "bash scripts/build/build_octoplanner3d.sh" in component_build_guide
     assert "Product default: native planner kernels, no ROS2" in component_build_guide
     assert "ROS 2 Humble Desktop is optional" in component_build_guide
@@ -1545,8 +1546,8 @@ def test_robot_ops_is_a_thin_product_control_adapter() -> None:
 
 
 def test_native_endpoint_uses_and_reports_compiled_product_motion_parameters() -> None:
-    config = _read("src/nav/cpp/endpoint/nav/runtime/config/parse.cpp")
-    endpoint_config = _read("src/nav/cpp/endpoint/nav/runtime/config/build.cpp")
+    config = _read("src/nav/cpp/endpoint/nav/app/config/parse.cpp")
+    endpoint_config = _read("src/nav/cpp/endpoint/nav/app/config/build.cpp")
     status = _read("src/nav/cpp/endpoint/nav/status/nav_status_writer.cpp")
 
     for key in (
@@ -1585,6 +1586,7 @@ def test_field_mode_units_require_one_valid_transient_product_session() -> None:
         "scripts/deploy/thunder/lt-nav.service": "nav",
         "scripts/deploy/thunder/lt-explore.service": "explore",
         "scripts/deploy/thunder/lt-camera.service": "camera",
+        "scripts/deploy/thunder/lt-video.service": "video",
         "scripts/deploy/thunder/lt-host.service": "host",
     }
     for relative, role in expected_roles.items():

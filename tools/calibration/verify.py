@@ -8,12 +8,13 @@ Usage:
     python tools/calibration/verify.py
     python tools/calibration/verify.py --verbose
     python tools/calibration/verify.py --config /path/to/robot_config.yaml \
-        --slam-config /path/to/mid360_fastlio2.yaml
+        --slam-config /path/to/mid360_ltlio.yaml
 """
 
 import argparse
 import logging
 import sys
+from math import sqrt
 from pathlib import Path
 
 import numpy as np
@@ -24,14 +25,14 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ROBOT_CONFIG = REPO_ROOT / "config" / "robots" / "unitree" / "go2" / "robot.yaml"
-FASTLIO2_CONFIG = (
+LTLIO_CONFIG = (
     REPO_ROOT
     / "config"
     / "robots"
     / "unitree"
     / "go2"
     / "sensors"
-    / "mid360_fastlio2.yaml"
+    / "mid360_ltlio.yaml"
 )
 
 # ANSI colors
@@ -203,12 +204,12 @@ def check_imu(result: CheckResult, verbose: bool) -> None:
 
     checked = False
 
-    if FASTLIO2_CONFIG.exists():
-        lio = load_yaml(FASTLIO2_CONFIG)
+    if LTLIO_CONFIG.exists():
+        lio = load_yaml(LTLIO_CONFIG)
         na = lio.get("na", 0.01)
-        ng = lio.get("ng", 0.01)
-        nba = lio.get("nba", 0.0001)
-        nbg = lio.get("nbg", 0.0001)
+        ng = lio.get("ng", sqrt(1e-5))
+        nba = lio.get("nba", 0.001)
+        nbg = lio.get("nbg", 0.001)
 
         # Typical ranges for MEMS IMU
         if na <= 0 or ng <= 0:
@@ -216,20 +217,20 @@ def check_imu(result: CheckResult, verbose: bool) -> None:
         elif na > 0.1 or ng > 0.1:
             result.warn(f"High noise values: na={na}, ng={ng} — consider re-calibrating")
         else:
-            result.ok(f"Fast-LIO2: na={na}, ng={ng}, nba={nba}, nbg={nbg}")
+            result.ok(f"LTLIO: na={na}, ng={ng}, nba={nba}, nbg={nbg}")
 
         # Check LiDAR-IMU extrinsics in SLAM config
         r_il = lio.get("r_il")
         t_il = lio.get("t_il")
         if t_il:
-            result.ok(f"Fast-LIO2 t_il: {t_il}")
+            result.ok(f"LTLIO t_il: {t_il}")
         if r_il and verbose:
             R = np.array(r_il).reshape(3, 3)
             det = np.linalg.det(R)
             if abs(det - 1.0) > 0.01:
                 result.fail(f"r_il determinant = {det:.4f} (expected 1.0)")
             else:
-                result.ok(f"Fast-LIO2 r_il determinant: {det:.6f}")
+                result.ok(f"LTLIO r_il determinant: {det:.6f}")
 
         # Gravity alignment
         gravity_align = lio.get("gravity_align", False)
@@ -262,8 +263,8 @@ def check_consistency(cfg: dict, result: CheckResult) -> None:
 
     # Check the composed SLAM transforms match the fixed mechanical mount:
     # T_body_lidar = T_body_imu * T_imu_lidar.
-    if FASTLIO2_CONFIG.exists() and lidar:
-        lio = load_yaml(FASTLIO2_CONFIG)
+    if LTLIO_CONFIG.exists() and lidar:
+        lio = load_yaml(LTLIO_CONFIG)
         required = (
             "r_il",
             "t_il",
@@ -272,7 +273,7 @@ def check_consistency(cfg: dict, result: CheckResult) -> None:
         )
         missing = [name for name in required if lio.get(name) is None]
         if missing:
-            result.fail(f"Fast-LIO2 transform chain missing: {', '.join(missing)}")
+            result.fail(f"LTLIO transform chain missing: {', '.join(missing)}")
             return
 
         try:
@@ -287,7 +288,7 @@ def check_consistency(cfg: dict, result: CheckResult) -> None:
                 dtype=np.float64,
             ).reshape(3)
         except (TypeError, ValueError) as exc:
-            result.fail(f"Invalid Fast-LIO2 transform chain: {exc}")
+            result.fail(f"Invalid LTLIO transform chain: {exc}")
             return
 
         r_composed = r_body_imu @ r_il
@@ -463,18 +464,18 @@ def check_lidar_camera_projection(cfg: dict, result: CheckResult, verbose: bool)
 
 
 def main() -> int:
-    global FASTLIO2_CONFIG
+    global LTLIO_CONFIG
 
     parser = argparse.ArgumentParser(description="Verify sensor calibration")
     parser.add_argument("--config", default=str(ROBOT_CONFIG), help="Path to robot_config.yaml")
     parser.add_argument(
         "--slam-config",
-        default=str(FASTLIO2_CONFIG),
-        help="Robot-specific Fast-LIO2 MID-360 config",
+        default=str(LTLIO_CONFIG),
+        help="Robot-specific LTLIO MID-360 config",
     )
     parser.add_argument("--verbose", "-v", action="store_true", help="Show additional checks")
     args = parser.parse_args()
-    FASTLIO2_CONFIG = Path(args.slam_config)
+    LTLIO_CONFIG = Path(args.slam_config)
 
     try:
         cfg = load_yaml(Path(args.config))

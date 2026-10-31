@@ -44,6 +44,8 @@ def test_dependency_preflight_reports_pinned_plan_without_writes(tmp_path: Path)
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "9e593bb18ea69cc5095e012465dcd675a822ed0d" in completed.stdout
     assert "x64-windows" in completed.stdout
+    assert "GTSAM 4.3.0" in completed.stdout
+    assert "overlay-ports" in completed.stdout
     assert not vcpkg_root.exists()
     assert not install_root.exists()
     assert not binary_cache.exists()
@@ -169,6 +171,10 @@ def test_dependency_prepare_checks_out_and_installs_exact_target_and_host(
     assert "checkout" not in commands
     assert "bootstrap-vcpkg.bat -disableMetrics" in commands
     assert "--triplet=x64-windows --host-triplet=x64-windows" in commands
+    manifest_root = ROOT / "scripts/build/vcpkg/slam-windows"
+    assert f"--x-manifest-root={manifest_root}" in commands
+    assert (manifest_root / "vcpkg-configuration.json").is_file()
+    assert "--overlay-ports" not in commands
     assert f"files,{binary_cache},readwrite" in commands
     assert "target=x64-windows host=x64-windows" in commands
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,11 +23,11 @@ from sim.compat.engine.mujoco.engine import MuJoCoEngine, resolve_scene_asset_pa
 from sim.scripts.mujoco import native_navigation_acceptance as native
 
 from decision.modules.visual_servo import VisualServoModule
-from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan
 from perception.backends import RgbdObservationSource
 from perception.detection.detector_base import Detection2D
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
-from runtime.msgs.semantic import Detection3D
+from runtime.msgs.semantic import Detection3D, SemanticObservation
 from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -51,15 +52,50 @@ def camera_optical_transform(data, camera_id):
     return transform
 
 
-def project_selected_goal(frame, map_from_camera, robot_pose, bbox):
+def project_selected_goal(
+    frame,
+    map_from_camera,
+    robot_pose,
+    bbox,
+    *,
+    product_session_id,
+    map_id,
+    content_epoch,
+):
     """Use the same RGB-D projection and standoff calculation as the Host."""
+    if not product_session_id or not map_id or int(content_epoch) <= 0:
+        raise ValueError("visual_goal_requires_product_map_identity")
     height, width = frame.depth.shape
     fx, fy, cx, cy = frame.intrinsics
-    stamp = 1.0
+    stamp = time.time()
+    color = Image(
+        data=frame.rgb,
+        format=ImageFormat.RGB,
+        ts=stamp,
+        source_generation=1,
+        source_sequence=1,
+    )
+    depth = Image(
+        data=frame.depth,
+        format=ImageFormat.DEPTH_F32,
+        ts=stamp,
+        source_generation=1,
+        source_sequence=1,
+    )
+    camera_info = CameraIntrinsics(
+        fx=fx,
+        fy=fy,
+        cx=cx,
+        cy=cy,
+        width=width,
+        height=height,
+        source_generation=1,
+        source_sequence=1,
+    )
     observation = SimpleNamespace(
-        color=Image(data=frame.rgb, format=ImageFormat.RGB, ts=stamp),
-        depth=Image(data=frame.depth, format=ImageFormat.DEPTH_F32, ts=stamp),
-        intrinsics=CameraIntrinsics(fx=fx, fy=fy, cx=cx, cy=cy, width=width, height=height),
+        color=color,
+        depth=depth,
+        intrinsics=camera_info,
         map_from_camera=map_from_camera,
     )
     source = RgbdObservationSource(
@@ -76,27 +112,45 @@ def project_selected_goal(frame, map_from_camera, robot_pose, bbox):
     if len(detections) != 1:
         raise ValueError("selected_region_has_no_valid_depth")
     target = detections[0]
-    servo = VisualServoModule()
+    servo = VisualServoModule(product_session_id=product_session_id)
     servo.setup()
     goals = []
     servo.goal_pose._add_callback(goals.append)
     try:
-        servo.robot_pose._deliver(robot_pose)
         servo._on_servo_target("find:selected_target")
-        servo.detections_3d._deliver(
-            [
-                Detection3D(
-                    label=target.label,
-                    confidence=target.score,
-                    position=Vector3(*map(float, target.position)),
-                    bbox_2d=list(map(float, bbox)),
+        servo.observation._deliver(
+            SemanticObservation(
+                product_session_id=product_session_id,
+                sequence=1,
+                source_ts=stamp,
+                completed_ts=time.time(),
+                source_generation=1,
+                map_id=map_id,
+                content_epoch=int(content_epoch),
+                status="positive",
+                image=color,
+                depth=depth,
+                camera_info=camera_info,
+                robot_pose=PoseStamped(
+                    pose=robot_pose.pose,
+                    frame_id=robot_pose.frame_id,
                     ts=stamp,
-                )
-            ]
+                ),
+                map_from_camera=np.asarray(map_from_camera, dtype=np.float64).copy(),
+                detections=(
+                    Detection3D(
+                        label=target.label,
+                        confidence=target.score,
+                        position=Vector3(*map(float, target.position)),
+                        bbox_2d=list(map(float, bbox)),
+                        ts=stamp,
+                    ),
+                ),
+            )
         )
         if len(goals) != 1:
             raise ValueError("visual_servo_did_not_publish_one_goal")
-        return target, goals[0]
+        return target, goals[0].goal
     finally:
         servo.stop()
 
@@ -137,7 +191,21 @@ def prepare(out: Path, map_dir: Path, case: str, bbox):
             frame_id="map",
             ts=1.0,
         )
-        target, goal = project_selected_goal(frame, transform, pose, bbox)
+        identity = native._native_map_identity(
+            paths={"map_dir": map_dir, "metadata": map_dir / "metadata.json"},
+            phase=f"rgbd-goal-{case}",
+            domain_id=0,
+            session_root=out,
+        )
+        target, goal = project_selected_goal(
+            frame,
+            transform,
+            pose,
+            bbox,
+            product_session_id=identity["LINGTU_PRODUCT_SESSION_ID"],
+            map_id=identity["LINGTU_MAP_ID"],
+            content_epoch=int(identity["LINGTU_MAP_CONTENT_EPOCH"]),
+        )
         cv2.imwrite(str(out / "camera-rgb.png"), cv2.cvtColor(frame.rgb, cv2.COLOR_RGB2BGR))
         annotated = cv2.cvtColor(frame.rgb, cv2.COLOR_RGB2BGR)
         x1, y1, x2, y2 = map(int, bbox)

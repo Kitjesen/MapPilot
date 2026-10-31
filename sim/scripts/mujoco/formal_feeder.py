@@ -25,7 +25,7 @@ import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Iterator, Mapping, Sequence, cast
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Mapping, Sequence, cast
 
 
 def _prepare_direct_script_import_path() -> None:
@@ -45,6 +45,7 @@ from sim.compat.engine.core.sensor import CameraConfig
 from sim.compat.engine.mujoco.engine import resolve_scene_asset_paths
 from sim.runtime.coordinator.atomic_file import replace_file_with_retry
 from sim.runtime.scenario.runtime import ScenarioClock, ScenarioRuntime
+from sim.runtime.sensors.contracts import SensorStreamPlan
 from sim.runtime.windows_timing import deadline_waiter
 from sim.scripts.mujoco.driver_bridge_session import (
     DriverBridgeCommand,
@@ -62,6 +63,10 @@ from sim.scripts.mujoco.evidence import (
     publish_feeder_status,
     publish_motion_evidence,
 )
+from sim.scripts.mujoco.formal_gnss import FormalGnss, planned_gnss
+
+if TYPE_CHECKING:
+    from sim.scripts.mujoco.formal_measurements import FormalMeasurements, PlannedMeasurements
 from sim.scripts.mujoco.native_runtime_endpoint import (
     CAMERA_ROLE,
     IMU_ROLE,
@@ -74,6 +79,7 @@ from sim.scripts.mujoco.native_sensor_records import (
     encode_camera_depth,
     encode_camera_intrinsics,
     encode_camera_rgb,
+    encode_gnss,
     encode_imu,
     encode_odom_prior,
     encode_registered_cloud,
@@ -111,6 +117,18 @@ _PROCESS_NAME = "mujoco_feeder"
 _READINESS_NAME = "mujoco_feeder.ready.json"
 _MOTION_EVIDENCE_NAME = "mujoco_feeder.motion.json"
 _ENDPOINT_TIMEOUT_S = 2.0
+
+
+def _visual_startup_timeout_s() -> float:
+    raw = os.environ.get("LINGTU_VISUAL_STARTUP_TIMEOUT_S", "45")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 45.0
+    return value if math.isfinite(value) and value > 0.0 else 45.0
+
+
+_VISUAL_STARTUP_TIMEOUT_S = _visual_startup_timeout_s()
 _HEARTBEAT_PERIOD_S = 0.05
 _SCENARIO_SNAPSHOT_NAME = "scenario.current.json"
 _SCENARIO_SNAPSHOT_PERIOD_NS = 50_000_000
@@ -303,6 +321,37 @@ class _Services:
     """Small dependency boundary for platform I/O and deterministic tests."""
 
     @staticmethod
+    def create_camera_relay(**kwargs: Any) -> Any:
+        from sim.scripts.mujoco.formal_camera_relay import FormalCameraRelay
+
+        return FormalCameraRelay(**kwargs)
+
+    @staticmethod
+    def create_visual(*, plan: RunPlan, session_root: Path, product_session_id: str,
+                      engine: Any, config: _RuntimeConfig) -> Any:
+        from sim.scripts.mujoco.formal_visual import FormalVisual
+
+        # ``mujoco_feeder`` is a support process and intentionally provides no
+        # Product role.  RunPlan.process() resolves roles, so using it here
+        # raises KeyError exactly when UE presentation is first enabled.  The
+        # visual bridge needs the selected process identity instead.
+        feeder = next(
+            (
+                process
+                for process in plan.processes
+                if process.name == _PROCESS_NAME or process.target == _PROCESS_NAME
+            ),
+            None,
+        )
+        command = feeder.command if feeder is not None else None
+        editor = dict(command.env).get("LINGTU_UNREAL_EDITOR") if command is not None else None
+        if not editor:
+            raise FormalFeederError("Unreal presentation requires LINGTU_UNREAL_EDITOR in the RunPlan feeder command")
+        return FormalVisual(plan, session_root, product_session_id, engine.measurement_state,
+            editor=Path(editor), repo_root=_REPOSITORY_ROOT,
+            model_generation=config.model_generation, reset_generation=config.reset_generation)
+
+    @staticmethod
     def resolve_artifact(value: str) -> Path:
         candidate = (_REPOSITORY_ROOT / value).resolve()
         try:
@@ -375,6 +424,8 @@ class _Services:
         retain_world_visuals: bool = True,
     ) -> tuple[Path, Path, Path]:
         required = {config.world, config.robot.policy}
+        for _, artifact, manifest in config.robot.policy_profiles:
+            required.update((artifact, manifest))
         world_source = cls.resolve_artifact(config.world)
         world_xml = ET.parse(world_source)
         stripped_world = None
@@ -383,7 +434,7 @@ class _Services:
         resolve_scene_asset_paths(world_xml.getroot(), world_source)
         for asset in world_xml.findall("./asset/*[@file]"):
             required.add(Path(asset.attrib["file"]).relative_to(_REPOSITORY_ROOT).as_posix())
-        snapshot_root = session_root / (f".formal-feeder-artifacts-{secrets.token_hex(16)}")
+        snapshot_root = session_root / (f".feeder-{secrets.token_hex(16)}")
         snapshot_root.mkdir(mode=0o700 if os.name != "nt" else 0o777)
         package_relative = PurePosixPath(config.robot.package_root)
         model_relative = PurePosixPath(config.robot.model)
@@ -507,12 +558,21 @@ class _Services:
         *,
         stream_kind: StreamKind,
         slot_capacity: int,
+        source_generation: int,
     ) -> ShmFrameWriter:
         return ShmFrameWriter(
             path,
             stream_kind=stream_kind,
             slot_capacity=slot_capacity,
+            source_generation=source_generation,
         )
+
+    @staticmethod
+    def connect_measurement_control(*, product_session_id: str, session_id: str):
+        from drivers.sim.measurement.control_bridge import NativeSensorControlBridge
+
+        return NativeSensorControlBridge(domain_id=int(os.environ.get("LINGTU_DDS_DOMAIN_ID", "0")),
+            product_session_id=product_session_id, session_id=session_id, owner_mode=True)
 
     @staticmethod
     def create_session(
@@ -709,6 +769,9 @@ class _Status:
         product: str,
         started_s: float,
         streams: Mapping[str, _StreamStats],
+        gnss: FormalGnss | None = None,
+        measurements: FormalMeasurements | None = None,
+        measurement_tx: _StreamStats | None = None,
     ) -> None:
         self._services = services
         self._session_root = session_root
@@ -716,6 +779,9 @@ class _Status:
         self._product = product
         self._started_s = started_s
         self._streams = dict(streams)
+        self._gnss = gnss
+        self._measurements = measurements
+        self._measurement_tx = measurement_tx
         self._sequence = 0
         self._next_publish_s = started_s
         self._window_s: float | None = None
@@ -751,6 +817,15 @@ class _Status:
             "window_s": window_s,
             "streams": {name: stats.payload(window_s) for name, stats in sorted(self._streams.items())},
         }
+        if self._gnss is not None:
+            payload["gnss"] = self._gnss.evidence()
+        if self._measurements is not None:
+            payload["measurements"] = self._measurements.status()
+        if self._measurement_tx is not None:
+            payload["measurement_transport"] = {
+                key: value for key, value in self._measurement_tx.payload(window_s).items()
+                if key in {"scheduled_count", "published_count", "dropped_count"}
+            }
         try:
             self._services.publish_status(session_root=self._session_root, payload=payload)
         except Exception as exc:
@@ -846,7 +921,11 @@ def _require_stable_pose(state: Any, clearance_m: float) -> tuple[float, float, 
         or abs_roll > MAX_ABS_TILT_RAD
         or abs_pitch > MAX_ABS_TILT_RAD
     ):
-        raise FormalFeederError("MuJoCo base pose is outside the stability gate")
+        raise FormalFeederError(
+            "MuJoCo base pose is outside the stability gate; "
+            f"clearance_m={height:.6f} abs_roll_rad={abs_roll:.6f} "
+            f"abs_pitch_rad={abs_pitch:.6f} position_m={tuple(float(v) for v in state.position)}"
+        )
     return height, abs_roll, abs_pitch
 
 
@@ -888,42 +967,134 @@ class _PhysicalMotionEvidence:
     entity_contact_steps: int = 0
     first_contact_geom: str = ""
     first_contact: dict[str, Any] | None = None
+    support_normal_disagreements: int = 0
+    first_support_normal_disagreement: dict[str, Any] | None = None
+    _contact_model: Any = field(default=None, init=False, repr=False, compare=False)
+    _contact_base_body: str = field(default="", init=False, repr=False, compare=False)
+    _contact_base_id: int = field(default=-1, init=False, repr=False, compare=False)
+    _contact_geoms: list[tuple[bool, str, str, bool, bool]] = field(
+        default_factory=list, init=False, repr=False, compare=False,
+    )
+
+    @staticmethod
+    def _box_support_contact(model: Any, data: Any, environment: int,
+                             robot: int, point: Any) -> bool | None:
+        import mujoco
+
+        if model.geom_type[environment] != mujoco.mjtGeom.mjGEOM_BOX:
+            return None
+        rotation = data.geom_xmat[environment].reshape(3, 3)
+        local = rotation.T @ (point - data.geom_xpos[environment])
+        size = model.geom_size[environment]
+        faces = sorted((abs(float(local[axis]) - sign * float(size[axis])), axis, sign)
+                       for axis in range(3) for sign in (-1, 1))
+        rounding = 8 * math.ulp(max(1.0, *map(abs, local), *size))
+        if faces[1][0] - faces[0][0] <= rounding:
+            return None
+        _, axis, sign = faces[0]
+        if any(abs(local[other]) > size[other] + rounding for other in range(3) if other != axis):
+            return None
+        normal_z = sign * float(rotation[2, axis])
+        robot_local = rotation.T @ (data.geom_xpos[robot] - data.geom_xpos[environment])
+        return normal_z > .5 and sign * float(robot_local[axis]) > float(size[axis])
+
+    def _contact_snapshot(self, model: Any, data: Any, index: int) -> dict[str, Any]:
+        import numpy as np
+
+        import mujoco
+
+        contact = data.contact[index]
+        a, b = int(contact.geom1), int(contact.geom2)
+        robot = a if self._contact_geoms[a][0] else b
+        environment = b if robot == a else a
+        force = np.zeros(6)
+        mujoco.mj_contactForce(model, data, index, force)
+        geoms = [{
+            "id": geom, "name": self._contact_geoms[geom][1], "type": int(model.geom_type[geom]),
+            "size": [float(value) for value in model.geom_size[geom]],
+            "position_m": [float(value) for value in data.geom_xpos[geom]],
+            "rotation": [float(value) for value in data.geom_xmat[geom]],
+        } for geom in (a, b)]
+        return {
+            "sim_time_s": float(data.time),
+            "robot_geom": self._contact_geoms[robot][1],
+            "robot_body": self._contact_geoms[robot][2],
+            "environment_geom": self._contact_geoms[environment][1],
+            "normal_to_robot_xyz": [float(value) * (-1 if robot == a else 1)
+                                    for value in contact.frame[:3]],
+            "position_m": [float(value) for value in contact.pos],
+            "distance_m": float(contact.dist),
+            "robot_position_m": [float(value) for value in data.xpos[self._contact_base_id]],
+            "raw_contact": {
+                "contact_index": index, "geom1": geoms[0], "geom2": geoms[1],
+                "raw_normal_xyz": [float(value) for value in contact.frame[:3]],
+                "efc_address": int(contact.efc_address),
+                "force_local_6d": force.tolist(), "normal_force_n": float(force[0]),
+                "qpos": [float(value) for value in data.qpos],
+            },
+        }
 
     def observe_contacts(self, model: Any, data: Any, base_body: str = "base_link") -> None:
-        """Count robot/environment contacts, excluding floor support and self contact."""
+        """Count non-support contacts and retain geometry/solver disagreements."""
         import mujoco
 
         if not data.ncon:
             return
-        base_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, base_body)
-        robot_root = int(model.body_rootid[base_id])
-        for contact in data.contact[:data.ncon]:
+        if self._contact_model is not model or self._contact_base_body != base_body:
+            base_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, base_body)
+            robot_root = int(model.body_rootid[base_id])
+            geoms = []
+            for geom_id in range(model.ngeom):
+                body_id = int(model.geom_bodyid[geom_id])
+                name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, geom_id) or ""
+                body_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id) or ""
+                # The cart's passive support spheres are attached directly to its base.
+                support_part = bool({"foot", "wheel"}.intersection(body_name.lower().split("_"))) or (
+                    name in {"front_support", "rear_support"}
+                )
+                support_surface = (
+                    name.startswith(("ground", "floor", "fw_r2_site_paving_", "step_"))
+                    or name.endswith("_landing")
+                    or name in {"road_spine", "road_cross", "fw_r2_ground_floor", "fw_r2_site_ground"}
+                )
+                geoms.append((
+                    int(model.body_rootid[body_id]) == robot_root,
+                    name, body_name, support_part, support_surface,
+                ))
+            self._contact_model = model
+            self._contact_base_body = base_body
+            self._contact_base_id = base_id
+            self._contact_geoms = geoms
+        collision = False
+        for index, contact in enumerate(data.contact[:data.ncon]):
             a, b = int(contact.geom1), int(contact.geom2)
-            root_a = int(model.body_rootid[model.geom_bodyid[a]])
-            root_b = int(model.body_rootid[model.geom_bodyid[b]])
-            if (root_a == robot_root) == (root_b == robot_root):
+            geom_a, geom_b = self._contact_geoms[a], self._contact_geoms[b]
+            if geom_a[0] == geom_b[0]:
                 continue
-            world_geom = b if root_a == robot_root else a
-            name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, world_geom) or ""
-            # Support surfaces in the shipped IndustrialPark and factory scenes.
-            if name.startswith(("ground", "floor", "fw_r2_site_paving_")) or name in {
-                "road_spine", "road_cross", "fw_r2_ground_floor", "fw_r2_site_ground",
-            }:
-                continue
+            robot_geom = a if geom_a[0] else b
+            _, name, _, _, support_surface = geom_b if geom_a[0] else geom_a
+            _, _, _, support_part, _ = geom_a if geom_a[0] else geom_b
+            # MuJoCo's contact normal points from geom1 to geom2. Orient it toward
+            # the robot so tread support is distinct from striking a stair riser.
+            support_normal_z = float(contact.frame[2]) * (-1 if robot_geom == a else 1)
+            if support_part and support_surface:
+                normal_support = support_normal_z > 0.5
+                geometric_support = self._box_support_contact(
+                    model, data, b if robot_geom == a else a, robot_geom, contact.pos)
+                if geometric_support is not None and geometric_support != normal_support:
+                    self.support_normal_disagreements += 1
+                    if self.first_support_normal_disagreement is None:
+                        self.first_support_normal_disagreement = self._contact_snapshot(model, data, index)
+                support = geometric_support if geometric_support is not None else normal_support
+                if support:
+                    continue
             if contact.dist <= 0:
-                self.entity_contact_steps += 1
+                collision = True
                 if self.first_contact is None:
                     self.first_contact_geom = name
-                    robot_geom = a if root_a == robot_root else b
-                    self.first_contact = {
-                        "sim_time_s": float(data.time),
-                        "robot_geom": mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, robot_geom) or "",
-                        "environment_geom": name,
-                        "position_m": [float(value) for value in contact.pos],
-                        "distance_m": float(contact.dist),
-                        "robot_position_m": [float(value) for value in data.xpos[base_id]],
-                    }
-                break
+                    self.first_contact = self._contact_snapshot(model, data, index)
+        if collision:
+            self.entity_contact_steps += 1
 
     def record_trace(self, state: Any, step_seq: int, *, force: bool = False) -> None:
         position = _position(state)
@@ -1093,7 +1264,6 @@ class _LidarFrame:
     wall_s: float
     sequence: int
     registered_sequence: int | None
-    schedule_lateness_s: float = 0.0
     captured_at_s: float = field(default_factory=time.monotonic)
 
 
@@ -1114,6 +1284,118 @@ class _RobotRuntimeConfig:
     policy: str
     policy_hz: float
     actuator_names: tuple[str, ...]
+    policy_profiles: tuple[tuple[str, str, str], ...] = ()
+
+
+class _PolicyProfiles:
+    """Run a requested controller transition on the existing physics thread."""
+
+    def __init__(self, engine: Any, policy_path: Path, config: _RobotRuntimeConfig) -> None:
+        self.engine = engine
+        snapshot_root = policy_path
+        for _ in PurePosixPath(config.policy).parts:
+            snapshot_root = snapshot_root.parent
+        self.paths = {
+            requirement: (snapshot_root / Path(*PurePosixPath(artifact).parts)).resolve()
+            for requirement, artifact, _ in config.policy_profiles
+        }
+        self.labels = {str(policy_path.resolve()): config.policy}
+        self.labels.update({
+            str(self.paths[requirement]): artifact
+            for requirement, artifact, _ in config.policy_profiles
+        })
+        self.task_id = ""
+        self.requirement = ""
+        self.phase = ""
+        self.reason = ""
+        self.target = ""
+        self.previous = ""
+        self.quiet_since: float | None = None
+        self.last_publish_s = -math.inf
+        self.events: list[dict[str, Any]] = []
+        self._last_event: tuple[str, ...] | None = None
+
+    def request(self, task_id: str, requirement: str) -> None:
+        if requirement == "hold":
+            if task_id != self.task_id:
+                return
+            self.requirement = requirement
+            self.phase, self.reason = "waiting", "profile_paused"
+            self.quiet_since = None
+            return
+        if (task_id, requirement) == (self.task_id, self.requirement):
+            return
+        if task_id != self.task_id:
+            self.previous = "" if requirement == "restore" else self.engine.active_policy_path
+        self.task_id, self.requirement = task_id, requirement
+        self.quiet_since = None
+        self.reason = "waiting_for_stop"
+        if requirement == "restore":
+            self.target = self.previous
+        else:
+            self.target = str(self.paths.get(requirement, ""))
+        self.phase = "waiting"
+        if not self.target:
+            self.phase = "unsupported"
+            self.reason = "previous_profile_unknown" if requirement == "restore" else "profile_not_configured"
+        elif self.target == self.engine.active_policy_path:
+            self.phase, self.reason = "ready", "policy_already_active"
+
+    def step(self, session: Any, velocity: VelocityCommand, state: Any, now_s: float) -> bool:
+        request = session.take_profile_request()
+        if request is not None:
+            self.request(request["task_id"], request["requirement"])
+        if not self.task_id:
+            return False
+        actual = self.engine.active_policy_path
+        sim_time = float(self.engine.sim_time)
+        if self.requirement != "hold":
+            if self.phase in {"waiting", "switching"}:
+                quiet = (
+                    max(abs(velocity.linear_x), abs(velocity.linear_y), abs(velocity.angular_z)) <= 1e-4
+                    and float(np.linalg.norm(state.linear_velocity)) <= 0.04
+                    and float(np.linalg.norm(state.angular_velocity)) <= 0.12
+                )
+                self.quiet_since = (
+                    sim_time if quiet and self.quiet_since is None else self.quiet_since if quiet else None
+                )
+            settled = self.quiet_since is not None and sim_time - self.quiet_since >= 0.2
+            if self.phase == "switching":
+                if actual != self.target:
+                    self.phase, self.reason = "unsupported", "profile_readback_mismatch"
+                elif settled:
+                    self.phase, self.reason = "ready", ""
+            elif self.phase == "waiting":
+                if settled:
+                    try:
+                        changed = self.engine.switch_policy(self.target)
+                        self.phase = "switching"
+                        self.reason = "policy_loaded" if changed else "policy_already_active"
+                        if changed:
+                            # A new standing pose/PD can move the body after loading.
+                            # Observe its physical settling before releasing the bridge.
+                            self.quiet_since = None
+                    except Exception as exc:
+                        self.phase, self.reason = "unsupported", f"policy_load_failed:{type(exc).__name__}"
+        actual = self.engine.active_policy_path
+        requested_label = self.labels.get(self.target, self.target)
+        active_label = self.labels.get(actual, actual)
+        event = (self.task_id, self.requirement, self.phase, requested_label, active_label, self.reason)
+        event_changed = bool(event != self._last_event)
+        if event_changed:
+            self.events.append(dict(
+                task_id=self.task_id, requirement=self.requirement, phase=self.phase,
+                requested_profile=requested_label, active_profile=active_label,
+                reason=self.reason, sim_time_s=sim_time,
+            ))
+            self._last_event = event
+        if event_changed or now_s - self.last_publish_s >= 0.05:
+            session.publish_profile_state(
+                task_id=self.task_id, requirement=self.requirement, phase=self.phase,
+                requested_profile=requested_label, active_profile=active_label, reason=self.reason,
+            )
+            self.last_publish_s = now_s
+        return event_changed
 
 
 @dataclass(frozen=True)
@@ -1146,6 +1428,11 @@ class _RuntimeConfig:
     robot: _RobotRuntimeConfig
     scenario_plan: Mapping[str, Any] | None
     kinematic_entities: tuple[_KinematicEntityConfig, ...]
+    gnss: SensorStreamPlan | None = None
+    measurements: PlannedMeasurements | None = None
+    camera_stream_rates: Mapping[str, float] | None = None
+    visual_enabled: bool = False
+    camera_source: str = "mujoco_camera"
 
 
 class _ScenarioFeed:
@@ -1212,13 +1499,25 @@ class _CameraIntrinsics:
     cy: float
 
 
+@dataclass(frozen=True)
+class _CameraTask:
+    snapshot: Any
+    wall_s: float
+    counted: bool
+    completed: threading.Event | None = None
+    kinds: tuple[str, ...] | None = None
+    pending_stats: dict[str, _StreamStats] = field(default_factory=dict)
+
+
 class _CameraPipeline:
-    """One Product-gated RGB-D stream on the existing native seam."""
+    """Selected camera streams sharing one bounded render queue and native seam."""
 
     _NAME = "front_camera"
     _FRAME_ID = "camera_link"
     _WIDTH = 640
     _HEIGHT = 480
+    _STOP = object()
+    _SHUTDOWN_TIMEOUT_S = 4.0
 
     def __init__(
         self,
@@ -1231,6 +1530,8 @@ class _CameraPipeline:
         started_wall_s: float,
         rate_hz: float,
         stats: _StreamStats | None = None,
+        stream_rates: Mapping[str, float] | None = None,
+        stream_stats: Mapping[str, _StreamStats] | None = None,
     ) -> None:
         if not math.isfinite(started_s):
             raise FormalFeederError("camera monotonic clock is invalid")
@@ -1238,37 +1539,78 @@ class _CameraPipeline:
             raise FormalFeederError("camera wall clock is invalid")
         self._client = client
         self._engine = engine
+        cameras = getattr(engine, "_cameras", None)
+        camera = cameras.get(self._NAME) if isinstance(cameras, Mapping) else None
+        if camera is None or not callable(getattr(camera, "render_snapshot", None)):
+            raise FormalFeederError("MuJoCo snapshot camera is unavailable")
+        self._camera: Any = camera
         self._started_s = started_s
         self._started_wall_s = started_wall_s
         self._period_s = 1.0 / _positive_finite(rate_hz, "camera rate_hz")
         self._stats = stats or _StreamStats(expected_hz=rate_hz)
+        self._kinds = tuple(stream_rates) if stream_rates is not None else ("rgb", "depth")
+        self._stream_stats = (
+            {kind: (stream_stats or {}).get(kind) or _StreamStats(rate) for kind, rate in stream_rates.items()}
+            if stream_rates is not None else None
+        )
+        self._periods = {
+            kind: 1.0 / _positive_finite(rate, f"camera {kind} rate_hz")
+            for kind, rate in (stream_rates or {}).items()
+        }
+        self._next_due = {kind: started_s + period for kind, period in self._periods.items()}
         self._next_due_s = started_s + self._period_s
         self._sequence = 0
         self._intrinsics_published = False
         self._writers: dict[str, ShmFrameWriter] = {}
+        self._tasks: queue.Queue[_CameraTask | object] = queue.Queue(maxsize=1)
+        self._failure_lock = threading.Lock()
+        self._failure: BaseException | None = None
+        self._closed = False
+        source_generation = time.time_ns()
         try:
-            self._writers["color"] = services.create_camera_writer(
-                session_root / "camera_color.shm",
-                stream_kind=StreamKind.COLOR,
-                slot_capacity=self._WIDTH * self._HEIGHT * 3,
-            )
-            self._writers["depth"] = services.create_camera_writer(
-                session_root / "camera_depth.shm",
-                stream_kind=StreamKind.DEPTH,
-                slot_capacity=self._WIDTH * self._HEIGHT * 2,
-            )
+            if "rgb" in self._kinds:
+                self._writers["color"] = services.create_camera_writer(
+                    session_root / "camera_color.shm",
+                    stream_kind=StreamKind.COLOR,
+                    slot_capacity=self._WIDTH * self._HEIGHT * 3,
+                    source_generation=source_generation,
+                )
+            if "depth" in self._kinds:
+                self._writers["depth"] = services.create_camera_writer(
+                    session_root / "camera_depth.shm",
+                    stream_kind=StreamKind.DEPTH,
+                    slot_capacity=self._WIDTH * self._HEIGHT * 2,
+                    source_generation=source_generation,
+                )
             self._writers["info"] = services.create_camera_writer(
                 session_root / "camera_info.shm",
                 stream_kind=StreamKind.INFO,
                 slot_capacity=1,
+                source_generation=source_generation,
             )
         except Exception:
             for writer in self._writers.values():
                 writer.close()
             raise
+        self._thread = threading.Thread(
+            target=self._run,
+            name="mujoco-camera-publisher",
+            daemon=True,
+        )
+        self._thread.start()
 
     def publish_initial(self) -> None:
-        self._publish(self._started_wall_s)
+        completed = threading.Event()
+        self._submit(
+            _CameraTask(
+                snapshot=self._engine.capture_state(),
+                wall_s=self._started_wall_s,
+                counted=False,
+                completed=completed,
+            )
+        )
+        completed.wait()
+        self._raise_if_failed()
 
     def begin(self, *, started_s: float, started_wall_s: float) -> None:
         if not math.isfinite(started_s):
@@ -1278,6 +1620,7 @@ class _CameraPipeline:
         self._started_s = started_s
         self._started_wall_s = started_wall_s
         self._next_due_s = started_s + self._period_s
+        self._next_due = {kind: started_s + period for kind, period in self._periods.items()}
 
     def publish_due(
         self,
@@ -1285,11 +1628,30 @@ class _CameraPipeline:
         monotonic_s: float,
         observed_s: float | None = None,
     ) -> None:
+        self._raise_if_failed()
         if not math.isfinite(monotonic_s) or monotonic_s < self._started_s:
             raise FormalFeederError("camera monotonic time is invalid")
         observed = monotonic_s if observed_s is None else observed_s
         if not math.isfinite(observed) or observed < self._started_s:
             raise FormalFeederError("camera observation time is invalid")
+        if self._stream_stats is not None:
+            due_stats = {}
+            for kind, period in self._periods.items():
+                deadline = self._next_due[kind]
+                if monotonic_s + 1e-12 < deadline:
+                    continue
+                skipped = max(0, math.floor((monotonic_s - deadline) / period))
+                stats = self._stream_stats[kind]
+                stats.due(count=skipped + 1, dropped=skipped, lateness_s=monotonic_s - deadline)
+                self._next_due[kind] += (skipped + 1) * period
+                due_stats[kind] = stats
+            if due_stats:
+                self._submit(_CameraTask(
+                    snapshot=self._engine.capture_state(),
+                    wall_s=self._started_wall_s + (observed - self._started_s),
+                    counted=True, kinds=tuple(due_stats), pending_stats=due_stats,
+                ))
+            return
         if monotonic_s + 1e-12 < self._next_due_s:
             return
         skipped = max(
@@ -1303,26 +1665,28 @@ class _CameraPipeline:
         )
         self._next_due_s += (skipped + 1) * self._period_s
         wall_s = self._started_wall_s + (observed - self._started_s)
-        try:
-            self._publish(wall_s)
-        except Exception:
-            self._stats.drop_current()
-            raise
-        self._stats.published()
+        self._submit(
+            _CameraTask(
+                snapshot=self._engine.capture_state(),
+                wall_s=wall_s,
+                counted=True,
+            )
+        )
 
-    def _publish(self, wall_s: float) -> None:
-        frame = self._engine.get_camera_data(self._NAME)
+    def _publish(self, task: _CameraTask) -> None:
+        kinds = self._kinds if task.kinds is None else task.kinds
+        frame = self._camera.render_snapshot(task.snapshot)
         if frame is None:
             raise FormalFeederError("MuJoCo camera returned no RGB-D frame")
         try:
-            rgb = np.asarray(frame.rgb)
-            depth = np.asarray(frame.depth)
+            rgb = np.asarray(frame.rgb) if "rgb" in kinds else None
+            depth = np.asarray(frame.depth) if "depth" in kinds else None
             fx, fy, cx, cy = (float(value) for value in frame.intrinsics)
         except (AttributeError, TypeError, ValueError) as exc:
             raise FormalFeederError("MuJoCo camera frame is invalid") from exc
-        if rgb.shape != (self._HEIGHT, self._WIDTH, 3):
+        if rgb is not None and rgb.shape != (self._HEIGHT, self._WIDTH, 3):
             raise FormalFeederError("MuJoCo camera RGB shape drifted")
-        if depth.shape != (self._HEIGHT, self._WIDTH):
+        if depth is not None and depth.shape != (self._HEIGHT, self._WIDTH):
             raise FormalFeederError("MuJoCo camera depth shape drifted")
         intrinsics = _CameraIntrinsics(
             self._WIDTH,
@@ -1338,28 +1702,32 @@ class _CameraPipeline:
             if not self._intrinsics_published:
                 info = encode_camera_intrinsics(
                     intrinsics,
-                    timestamp_s=wall_s,
+                    timestamp_s=task.wall_s,
                     sequence=next_sequence,
                 )
                 next_sequence = _next_sequence(next_sequence, "camera")
-            rgb_record = encode_camera_rgb(
-                rgb,
-                intrinsics=intrinsics,
-                timestamp_s=wall_s,
-                sequence=next_sequence,
-            )
-            next_sequence = _next_sequence(next_sequence, "camera")
-            depth_record = encode_camera_depth(
-                depth,
-                intrinsics=intrinsics,
-                timestamp_s=wall_s,
-                sequence=next_sequence,
-            )
-            next_sequence = _next_sequence(next_sequence, "camera")
+            rgb_record = None
+            if rgb is not None:
+                rgb_record = encode_camera_rgb(
+                    rgb,
+                    intrinsics=intrinsics,
+                    timestamp_s=task.wall_s,
+                    sequence=next_sequence,
+                )
+                next_sequence = _next_sequence(next_sequence, "camera")
+            depth_record = None
+            if depth is not None:
+                depth_record = encode_camera_depth(
+                    depth,
+                    intrinsics=intrinsics,
+                    timestamp_s=task.wall_s,
+                    sequence=next_sequence,
+                )
+                next_sequence = _next_sequence(next_sequence, "camera")
         except (TypeError, ValueError) as exc:
             raise FormalFeederError(f"MuJoCo camera frame is invalid: {exc}") from exc
-        timestamp_ns = int(wall_s * 1_000_000_000)
-        calibration = {
+        timestamp_ns = int(task.wall_s * 1_000_000_000)
+        calibration: dict[str, Any] = {
             "timestamp_ns": timestamp_ns,
             "width": self._WIDTH,
             "height": self._HEIGHT,
@@ -1379,23 +1747,127 @@ class _CameraPipeline:
                 payload=b"",
             )
             self._intrinsics_published = True
-        self._client.write(rgb_record.wire)
-        self._client.write(depth_record.wire)
-        self._writers["color"].publish(
-            **calibration,
-            stride=self._WIDTH * 3,
-            encoding="rgb8",
-            payload=rgb_record.payload[CAMERA_RECORD_HEADER.size :],
-        )
-        self._writers["depth"].publish(
-            **calibration,
-            stride=self._WIDTH * 2,
-            encoding="16UC1",
-            payload=depth_record.payload[CAMERA_RECORD_HEADER.size :],
-        )
+        if rgb_record is not None:
+            self._client.write(rgb_record.wire)
+        if depth_record is not None and self._stream_stats is None:
+            self._client.write(depth_record.wire)
+        if rgb_record is not None:
+            self._writers["color"].publish(
+                **calibration,
+                stride=self._WIDTH * 3,
+                encoding="rgb8",
+                payload=rgb_record.payload[CAMERA_RECORD_HEADER.size :],
+            )
+            if task.counted and self._stream_stats is not None:
+                task.pending_stats.pop("rgb").published()
+        if depth_record is not None:
+            if self._stream_stats is not None:
+                self._client.write(depth_record.wire)
+            self._writers["depth"].publish(
+                **calibration,
+                stride=self._WIDTH * 2,
+                encoding="16UC1",
+                payload=depth_record.payload[CAMERA_RECORD_HEADER.size :],
+            )
+            if task.counted and self._stream_stats is not None:
+                task.pending_stats.pop("depth").published()
         self._sequence = next_sequence
 
+    def _submit(self, task: _CameraTask) -> None:
+        if self._closed:
+            raise FormalFeederError("camera pipeline is closed")
+        self._raise_if_failed()
+        try:
+            self._tasks.put_nowait(task)
+            return
+        except queue.Full:
+            try:
+                previous = self._tasks.get_nowait()
+            except queue.Empty:
+                self._tasks.put_nowait(task)
+                return
+            self._tasks.task_done()
+            if not isinstance(previous, _CameraTask):
+                raise FormalFeederError("camera worker stop is already pending") from None
+            if previous.counted:
+                self._drop_task(previous)
+            if previous.completed is not None:
+                previous.completed.set()
+        self._tasks.put_nowait(task)
+
+    def _run(self) -> None:
+        try:
+            while True:
+                queued = self._tasks.get()
+                try:
+                    if queued is self._STOP:
+                        return
+                    assert isinstance(queued, _CameraTask)
+                    try:
+                        self._publish(queued)
+                    except BaseException as exc:
+                        if queued.counted:
+                            self._drop_task(queued)
+                        self._set_failure(exc)
+                        self._drop_queued_tasks()
+                        return
+                    if queued.counted and self._stream_stats is None:
+                        self._stats.published()
+                finally:
+                    if isinstance(queued, _CameraTask) and queued.completed is not None:
+                        queued.completed.set()
+                    self._tasks.task_done()
+        finally:
+            try:
+                self._camera.close()
+            except BaseException as exc:
+                self._set_failure(exc)
+
+    def _drop_queued_tasks(self) -> None:
+        while True:
+            try:
+                queued = self._tasks.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                if isinstance(queued, _CameraTask):
+                    if queued.counted:
+                        self._drop_task(queued)
+                    if queued.completed is not None:
+                        queued.completed.set()
+            finally:
+                self._tasks.task_done()
+
+    def _drop_task(self, task: _CameraTask) -> None:
+        stats = tuple(task.pending_stats.values()) if self._stream_stats is not None else (self._stats,)
+        for stream in stats:
+            stream.drop_current()
+        task.pending_stats.clear()
+
+    def _set_failure(self, exc: BaseException) -> None:
+        with self._failure_lock:
+            if self._failure is None:
+                self._failure = exc
+
+    def _raise_if_failed(self) -> None:
+        with self._failure_lock:
+            failure = self._failure
+        if failure is not None:
+            raise FormalFeederError(f"camera worker failed: {failure}") from failure
+
     def close(self) -> None:
+        if self._closed:
+            self._raise_if_failed()
+            return
+        self._closed = True
+        if self._thread.is_alive():
+            try:
+                self._tasks.put(self._STOP, timeout=self._SHUTDOWN_TIMEOUT_S)
+            except queue.Full as exc:
+                raise FormalFeederError("camera worker queue did not drain") from exc
+            self._thread.join(timeout=self._SHUTDOWN_TIMEOUT_S)
+        if self._thread.is_alive():
+            raise FormalFeederError("camera worker did not stop")
         failed = False
         for writer in self._writers.values():
             try:
@@ -1404,6 +1876,7 @@ class _CameraPipeline:
                 failed = True
         if failed:
             raise FormalFeederError("camera SHM writer cleanup failed")
+        self._raise_if_failed()
 
 
 class _RecordPublisher:
@@ -1445,7 +1918,7 @@ class _RecordPublisher:
                 raise FormalFeederError(f"{self._name} publisher is closed")
             self.raise_if_failed()
             if self._latest_only:
-                # Truth-mode samples supersede unsent samples. Fast-LIO2 IMU
+                # Truth-mode samples supersede unsent samples. LTLIO IMU
                 # records use the ordered queue instead.
                 try:
                     self._records.get_nowait()
@@ -1631,7 +2104,7 @@ class _LidarPublisher:
                 return
 
     def _publish_frame(self, task: _LidarFrame) -> None:
-        if task.schedule_lateness_s + time.monotonic() - task.captured_at_s > self._max_frame_age_s:
+        if time.monotonic() - task.captured_at_s > self._max_frame_age_s:
             self._stats.drop_current()
             return
         world_points = _bounded_xyzi(
@@ -1676,7 +2149,7 @@ class _LidarPublisher:
                 )[0],
             ).wire
         with self._write_lock:
-            if task.schedule_lateness_s + time.monotonic() - task.captured_at_s > self._max_frame_age_s:
+            if time.monotonic() - task.captured_at_s > self._max_frame_age_s:
                 self._stats.drop_current()
                 return
             if registered_wire is not None:
@@ -1684,7 +2157,7 @@ class _LidarPublisher:
                 # from the physics thread while this scan was raycast.
                 self._client.write(encode_odom_prior(
                     task.state, timestamp_s=task.wall_s,
-                    sequence=task.registered_sequence,
+                    sequence=cast(int, task.registered_sequence),
                 ).wire)
             self._client.write(scan_wire)
             if registered_wire is not None:
@@ -1713,11 +2186,13 @@ class _SensorPipeline:
         imu_stats: _StreamStats | None = None,
         lidar_stats: _StreamStats | None = None,
         max_frame_age_s: float = 0.6,
+        gnss: FormalGnss | None = None,
     ) -> None:
         self._services = services
         self._lidar = lidar
         self._imu = imu
         self._engine = engine
+        self._gnss = gnss
         self._imu_period_s = 1.0 / imu_hz
         self._lidar_period_s = 1.0 / lidar_hz
         self._imu_stats = imu_stats or _StreamStats(expected_hz=imu_hz)
@@ -1758,7 +2233,7 @@ class _SensorPipeline:
         if not math.isfinite(monotonic_s) or monotonic_s < self._started_s:
             raise FormalFeederError("sensor monotonic time is invalid")
         # Each deadline advances exactly one fixed physics step, including
-        # catch-up ticks. Delivery jitter must not change Fast-LIO's integration dt.
+        # catch-up ticks. Delivery jitter must not change LTLIO's integration dt.
         wall_s = self._started_wall_s + (monotonic_s - self._started_s)
         imu = Imu(
             orientation=Quaternion(
@@ -1784,7 +2259,12 @@ class _SensorPipeline:
         clock_wire = encode_simulation_clock(
             float(self._engine.sim_time), sequence=self._simulation_clock_sequence,
         ).wire
-        self._imu_publisher.enqueue(clock_wire + encode_imu(imu, sequence=self._imu_sequence).wire)
+        wire = clock_wire + encode_imu(imu, sequence=self._imu_sequence).wire
+        if self._gnss is not None:
+            sample = self._gnss.sample(self._engine, float(self._engine.sim_time))
+            if sample is not None:
+                wire += encode_gnss(sample).wire
+        self._imu_publisher.enqueue(wire)
         self._simulation_clock_sequence = _next_sequence(
             self._simulation_clock_sequence, "simulation clock",
         )
@@ -1820,7 +2300,6 @@ class _SensorPipeline:
         except Exception:
             self._lidar_stats.drop_current()
             raise
-        capture_completed_s = self._services.monotonic()
         self._lidar_publisher.enqueue_frame(
             _LidarFrame(
                 snapshot=snapshot,
@@ -1833,7 +2312,6 @@ class _SensorPipeline:
                     if self._publish_registered_cloud_fixture
                     else None
                 ),
-                schedule_lateness_s=max(0.0, capture_completed_s - tick.due_s),
             )
         )
         self._lidar_sequence = _next_sequence(self._lidar_sequence, "LiDAR")
@@ -2045,6 +2523,17 @@ def _single_robot_config(
     if controller.get("instance_id") != instance_id:
         raise FormalFeederError("RunPlan controller does not own the physics robot")
     policy = _required_mapping(controller.get("policy"), "control_plan controller policy")
+    profiles = _required_mapping(policy.get("profiles", {}), "controller policy profiles")
+    if set(profiles) - {"stairs_up", "stairs_down"}:
+        raise FormalFeederError("controller policy profiles must name stairs_up or stairs_down")
+    policy_profiles = []
+    for requirement, raw_profile in profiles.items():
+        profile = _required_mapping(raw_profile, f"controller policy profiles.{requirement}")
+        policy_profiles.append((
+            requirement,
+            _required_text(profile.get("artifact"), "profile artifact"),
+            _required_text(profile.get("manifest"), "profile manifest"),
+        ))
     timing = _required_mapping(controller.get("timing"), "control_plan controller timing")
     actuators = controller.get("actuator_channels")
     if (
@@ -2142,6 +2631,7 @@ def _single_robot_config(
             "controller timing.inference_hz",
         ),
         actuator_names=tuple(actuators),
+        policy_profiles=tuple(policy_profiles),
     )
 
 
@@ -2222,8 +2712,8 @@ def _run_plan_runtime_config(
             raise FormalFeederError("RunPlan scenario generations are invalid")
         model_generation = raw_model_generation
         reset_generation = raw_reset_generation
-        runtime = ScenarioRuntime.from_plan(scenario)
-        bindings = dict(runtime.mujoco_kinematic_bindings)
+        scenario_runtime = ScenarioRuntime.from_plan(scenario)
+        bindings = dict(scenario_runtime.mujoco_kinematic_bindings)
         raw_entities = physics_plan.get("kinematic_entities", [])
         if not isinstance(raw_entities, list):
             raise FormalFeederError("physics_plan kinematic_entities must be a list")
@@ -2284,7 +2774,35 @@ def _run_plan_runtime_config(
     camera_provider = plan.has_process("camera")
     if camera_setting and not camera_provider:
         raise FormalFeederError("host_config enable_camera requires a camera process provider")
-    if camera_setting:
+    if not any(sensor_plan.get("streams", {}).get(kind) for kind in ("rgb", "depth")):
+        camera_setting = False
+    camera_stream_rates: dict[str, float] | None = None
+    camera_source = "mujoco_camera"
+    if camera_setting and any(
+        any(key in stream for key in ("owner", "source", "transport"))
+        for kind in ("rgb", "depth") for stream in sensor_plan.get("streams", {}).get(kind, [])
+    ):
+        camera_stream_rates = {}
+        for kind in ("rgb", "depth"):
+            if not sensor_plan.get("streams", {}).get(kind):
+                continue
+            stream, rate = _single_sensor_stream(sensor_plan, kind)
+            route = (stream.get("owner"), stream.get("source"), stream.get("transport"))
+            if route == ("visual", "unreal_camera", "camera_shm") and runtime_mode == "unreal":
+                source = "unreal_camera"
+            elif route == ("sensor_runtime", "mujoco_camera", "camera_shm"):
+                source = "mujoco_camera"
+            else:
+                raise FormalFeederError(
+                    f"unsupported formal camera route for {kind}: {'/'.join(map(str, route))}; "
+                    "requires sensor_runtime/mujoco_camera/camera_shm or explicit Unreal presentation"
+                )
+            if camera_stream_rates and source != camera_source:
+                raise FormalFeederError("Product RGB-D endpoint cannot mix camera source owners")
+            camera_source = source
+            camera_stream_rates[kind] = rate
+        camera_hz = max(camera_stream_rates.values())
+    elif camera_setting:
         _, rgb_hz = _single_sensor_stream(sensor_plan, "rgb")
         _, depth_hz = _single_sensor_stream(sensor_plan, "depth")
         if rgb_hz != depth_hz:
@@ -2294,9 +2812,12 @@ def _run_plan_runtime_config(
         camera_hz = None
     if plan.has_process("slam") and not sensors_enabled:
         raise FormalFeederError("simulation truth localization requires lidar")
+    measurements_requested = any(
+        sensor_plan.get("streams", {}).get(kind) for kind in ("thermal", "acoustic", "semantic")
+    )
     required_roles = (
         *((LIDAR_ROLE, IMU_ROLE) if sensors_enabled else ()),
-        *((CAMERA_ROLE,) if camera_setting else ()),
+        *((CAMERA_ROLE,) if camera_setting or measurements_requested else ()),
     )
     process_names = {process.name for process in plan.processes}
     missing_roles = [role for role in required_roles if role not in process_names]
@@ -2304,7 +2825,7 @@ def _run_plan_runtime_config(
         raise FormalFeederError("RunPlan is missing required sensor endpoint: " + ", ".join(missing_roles))
     truth_localization = bool(
         plan.has_process("slam")
-        and "--navigation-fixture" in plan.process("slam").command.argv
+        and "--navigation-fixture" in cast(Any, plan.process("slam").command).argv
     )
     publish_odom_prior = truth_localization
     robot = _single_robot_config(
@@ -2321,6 +2842,26 @@ def _run_plan_runtime_config(
         imu_hz = None
         lidar_hz = None
         step_period_s = physics_timestep_s
+    if camera_stream_rates is not None and any(rate > 1.0 / step_period_s for rate in camera_stream_rates.values()):
+        raise FormalFeederError("selected camera rate exceeds physical sampling rate; no implicit downsampling")
+    try:
+        gnss = planned_gnss(
+            sensor_plan, instance_id=robot.instance_id, max_hz=imu_hz,
+            body_names={frame["name"] for frame in physics_plan["robots"][0]["frames"]
+                        if frame.get("role") == "body"},
+        )
+    except ValueError as exc:
+        raise FormalFeederError(f"invalid GNSS plan: {exc}") from exc
+    measurements = None
+    if measurements_requested:
+        from sim.scripts.mujoco.formal_measurements import planned_measurements
+
+        try:
+            measurements = planned_measurements(sensor_plan, instance_id=robot.instance_id,
+                body_names={frame["name"] for frame in physics_plan["robots"][0]["frames"]},
+                max_hz=1.0 / step_period_s, camera_endpoint_available=CAMERA_ROLE in required_roles)
+        except ValueError as exc:
+            raise FormalFeederError(f"invalid measurement plan: {exc}") from exc
     return _RuntimeConfig(
         session_id=session_id,
         model_generation=model_generation,
@@ -2340,6 +2881,11 @@ def _run_plan_runtime_config(
         robot=robot,
         scenario_plan=(None if scenario_plan is None else scenario),
         kinematic_entities=kinematic_entities,
+        gnss=gnss,
+        measurements=measurements,
+        camera_stream_rates=camera_stream_rates,
+        visual_enabled=runtime_mode == "unreal",
+        camera_source=camera_source,
     )
 
 
@@ -2489,13 +3035,20 @@ def _execute(
     engine: Any | None = None
     viewer: Any | None = None
     viewer_input: ViewerInput | None = None
+    visual: Any | None = None
     sensors: dict[str, SensorPublisherClient] = {}
-    camera: _CameraPipeline | None = None
+    camera: Any | None = None
+    ue_camera = False
     sensor_pipeline: _SensorPipeline | None = None
+    measurements: FormalMeasurements | None = None
+    measurement_publisher: _RecordPublisher | None = None
+    measurement_control: Any | None = None
+    measurement_archive: Any | None = None
     scenario: _ScenarioFeed | None = None
     status: _Status | None = None
     driver: DriverBridgeClient | None = None
     session: DriverBridgeSession | None = None
+    profiles: _PolicyProfiles | None = None
     current_velocity: VelocityCommand | None = None
     current_command: DriverBridgeCommand | None = None
     previous_state: Any | None = None
@@ -2511,16 +3064,22 @@ def _execute(
     result = 1
     try:
         config = _run_plan_runtime_config(args, plan)
+        ue_camera = config.camera_enabled and config.camera_source == "unreal_camera"
+        gnss = (FormalGnss(config.gnss, product_session_id, config.model_generation, config.reset_generation)
+                if config.gnss is not None else None)
         period_s = config.step_period_s
         viewer_requested = args.viewer
         if viewer_requested is None:
             viewer_requested = config.viewer_enabled
+        if config.visual_enabled and viewer_requested:
+            raise FormalFeederError("Unreal presentation cannot also open a MuJoCo viewer")
         world_path, robot_path, policy_path = services.snapshot_artifacts(
             session_root,
             config,
             retain_world_visuals=(
                 viewer_requested
                 or config.camera_enabled
+                or config.measurements is not None
                 or args.lidar_backend != "mujoco_lidar"
                 or args.mujoco_lidar_backend != "cpu"
             ),
@@ -2554,14 +3113,15 @@ def _execute(
                         width=640,
                         height=480,
                         fovy=60.0,
-                        render_depth=True,
+                        render_depth=(config.camera_stream_rates is None or "depth" in config.camera_stream_rates),
                         fps=float(cast(float, config.camera_hz)),
                     )
                 ]
-                if config.camera_enabled
+                if config.camera_enabled and not ue_camera
                 else None
             ),
         )
+        profiles = _PolicyProfiles(engine, policy_path, config.robot)
         if config.scenario_plan is not None:
             scenario = _ScenarioFeed(
                 engine=engine,
@@ -2574,7 +3134,7 @@ def _execute(
         if viewer_requested:
             viewer_input = viewer_input_from_run_plan(
                 plan,
-                client_type=NativeOperatorMotionClient,
+                client_type=cast(Any, NativeOperatorMotionClient),
             )
             viewer = LiveViewer(
                 engine.model, engine.capture_state(), config.robot.position_m,
@@ -2616,7 +3176,34 @@ def _execute(
         if config.camera_enabled:
             if config.camera_hz is None:
                 raise FormalFeederError("enabled camera pipeline has no RunPlan rate")
-            streams["camera_rgbd"] = _StreamStats(float(config.camera_hz))
+            if config.camera_stream_rates is None:
+                streams["camera_rgbd"] = _StreamStats(float(config.camera_hz))
+            else:
+                streams.update({
+                    f"camera_{kind}": _StreamStats(rate) for kind, rate in config.camera_stream_rates.items()
+                })
+        measurement_tx = None
+        if config.measurements is not None:
+            from sim.runtime.recording.measurement_archive import MeasurementArchive
+            from sim.scripts.mujoco.formal_measurements import FormalMeasurements
+
+            measurement_tx = _StreamStats(0)
+            measurement_publisher = _RecordPublisher(name="measurements", client=sensors[CAMERA_ROLE],
+                                                       stats=measurement_tx, latest_only=True)
+
+            def enqueue_measurements(wire: bytes) -> None:
+                assert measurement_tx is not None and measurement_publisher is not None
+                measurement_tx.due(count=1, dropped=0, lateness_s=0)
+                measurement_publisher.enqueue(wire)
+
+            measurement_archive = MeasurementArchive(session_root / "measurements", product_session_id=product_session_id,
+                session_id=config.measurements.sensor_plan["session_id"], sensor_ids=list(config.measurements.configurations))
+            measurements = FormalMeasurements(config.measurements, product_session_id=product_session_id,
+                read_state=engine.measurement_state, enqueue=enqueue_measurements,
+                model_generation=config.model_generation, reset_generation=config.reset_generation,
+                on_record=measurement_archive.append)
+            measurement_control = services.connect_measurement_control(product_session_id=product_session_id,
+                session_id=config.measurements.sensor_plan["session_id"])
         status = _Status(
             services=services,
             session_root=session_root,
@@ -2624,8 +3211,11 @@ def _execute(
             product=plan.product,
             started_s=started_s,
             streams=streams,
+            gnss=gnss,
+            measurements=measurements,
+            measurement_tx=measurement_tx,
         )
-        if config.camera_enabled:
+        if config.camera_enabled and not ue_camera:
             camera = _CameraPipeline(
                 services=services,
                 client=sensors[CAMERA_ROLE],
@@ -2633,8 +3223,11 @@ def _execute(
                 session_root=session_root,
                 started_s=started_s,
                 started_wall_s=started_wall_s,
-                rate_hz=streams["camera_rgbd"].expected_hz,
-                stats=streams["camera_rgbd"],
+                rate_hz=cast(float, config.camera_hz),
+                stats=streams.get("camera_rgbd"),
+                stream_rates=config.camera_stream_rates,
+                stream_stats={kind: streams[f"camera_{kind}"] for kind in config.camera_stream_rates}
+                if config.camera_stream_rates is not None else None,
             )
             camera.publish_initial()
 
@@ -2643,6 +3236,36 @@ def _execute(
             # Finish it before starting the physical heartbeat/READY deadlines.
             # ProductControl owns the startup deadline and signals cancellation.
             viewer.wait_until_initialized(stop_event)
+
+        if config.visual_enabled:
+            visual = services.create_visual(plan=plan, session_root=session_root,
+                product_session_id=product_session_id, engine=engine, config=config)
+            visual.start()
+            if ue_camera:
+                camera = services.create_camera_relay(
+                    sensor_plan=dict(plan.simulation["sensor_plan"]), allocation=visual.allocation,
+                    product_session_id=product_session_id, model_generation=config.model_generation,
+                    reset_generation=config.reset_generation, client=sensors[CAMERA_ROLE], services=services,
+                    session_root=session_root,
+                    stream_stats={kind: streams[f"camera_{kind}"] for kind in config.camera_stream_rates or {}},
+                )
+            visual_deadline_s = services.monotonic() + _VISUAL_STARTUP_TIMEOUT_S
+            startup_snapshot = None
+            startup_epoch_s = services.wall_time()
+            while True:
+                if stop_event.is_set():
+                    raise FormalFeederError("Unreal presentation startup cancelled")
+                snapshot = visual.republish() if ue_camera and startup_snapshot is not None else visual.publish()
+                if ue_camera:
+                    assert camera is not None
+                    startup_snapshot = snapshot
+                    camera.observe_truth(snapshot, epoch_s=startup_epoch_s)
+                    camera.publish_due(monotonic_s=services.monotonic())
+                if visual.ready() and (not ue_camera or (camera is not None and camera.ready())):
+                    break
+                if services.monotonic() >= visual_deadline_s:
+                    raise FormalFeederError("Unreal presentation startup timed out before visual/camera ACTIVE")
+                services.wait(stop_event, 0.05)
 
         activation = session.activate()
         current_velocity = _velocity(
@@ -2699,6 +3322,8 @@ def _execute(
         next_motion_evidence_s = started_s
         motion_evidence_write_failures = 0
         next_heartbeat_s = started_s + _HEARTBEAT_PERIOD_S
+        next_visual_s = started_s
+        visual_period_s = 1.0 / max(30.0, *(config.camera_stream_rates or {"default": 30.0}).values())
         sensor_pipeline = (
             _SensorPipeline(
                 services=services,
@@ -2717,8 +3342,9 @@ def _execute(
                 started_wall_s=started_wall_s,
                 imu_stats=streams["imu"],
                 lidar_stats=streams["lidar"],
+                gnss=gnss,
                 max_frame_age_s=float(
-                    dict(plan.process("nav").command.env).get("LINGTU_NAV_CLOUD_MAX_AGE_S", 0.6)
+                    dict(cast(Any, plan.process("nav").command).env).get("LINGTU_NAV_CLOUD_MAX_AGE_S", 0.6)
                 ) if plan.has_process("nav") else 0.6,
             )
             if config.sensors_enabled
@@ -2754,6 +3380,14 @@ def _execute(
                     viewer.observe_pose(
                         started_wall_s + (tick.now_s - started_s), state.position, state.orientation,
                     )
+                if visual is not None and tick.now_s + 1e-12 >= next_visual_s:
+                    snapshot = visual.publish()
+                    if ue_camera:
+                        assert camera is not None
+                        camera.observe_truth(snapshot, epoch_s=started_wall_s + tick.now_s - started_s)
+                    # Keep the fractional remainder: now+period at 200 Hz
+                    # quantizes a 30 Hz request down to 28.57 Hz.
+                    next_visual_s += (math.floor((tick.now_s - next_visual_s) / visual_period_s + 1e-9) + 1) * visual_period_s
                 if command is not None:
                     session.complete_step(command, step_seq=step_seq)
                     pending_ready = True
@@ -2764,6 +3398,14 @@ def _execute(
                         pending_ready = not session.confirm_ready(
                             input_available=lambda: services.driver_input_available(driver),
                         )
+                if profiles.step(session, current_velocity, state, tick.now_s):
+                    _publish_session_bytes(
+                        session_root, "mujoco_feeder.profiles.json",
+                        json.dumps({
+                            "product_session_id": product_session_id,
+                            "events": profiles.events,
+                        }, allow_nan=False).encode(),
+                    )
                 motion.observe(
                     current_command,
                     before=previous_state,
@@ -2787,6 +3429,7 @@ def _execute(
                                 "monotonic_s": tick.now_s,
                                 "path_length_xy_m": motion.path_length_xy_m,
                                 "entity_contact_steps": motion.entity_contact_steps,
+                                "support_normal_disagreements": motion.support_normal_disagreements,
                                 "first_contact_geom": motion.first_contact_geom,
                                 "write_failures": motion_evidence_write_failures,
                                 "scenario_write_failures": scenario.write_failures if scenario is not None else 0,
@@ -2815,6 +3458,13 @@ def _execute(
                         monotonic_s=tick.due_s,
                         observed_s=tick.now_s,
                     )
+                if measurements is not None:
+                    assert measurement_publisher is not None
+                    measurement_publisher.raise_if_failed()
+                    measurements.apply_commands(measurement_control, now_s=services.wall_time(),
+                        sim_time_ns=round(float(engine.sim_time) * 1e9))
+                    measurements.sample(sim_time_s=float(engine.sim_time),
+                        mapped_epoch_s=started_wall_s + tick.now_s - started_s, physics_sequence=step_seq)
                 status.running(tick.now_s)
 
         measurement_end_s = services.monotonic()
@@ -2840,11 +3490,25 @@ def _execute(
                 "complete": True,
                 "entity_contact_steps": motion.entity_contact_steps,
                 "first_contact_geom": motion.first_contact_geom,
+                "first_contact": motion.first_contact,
+                "support_normal_disagreements": motion.support_normal_disagreements,
+                "first_support_normal_disagreement": motion.first_support_normal_disagreement,
                 "step_seq": step_seq,
             }, allow_nan=False).encode(),
         )
         if sensor_pipeline is not None:
             sensor_pipeline.close()
+        if camera is not None:
+            camera.close()
+            if ue_camera:
+                relay_evidence = camera.evidence()
+                camera = None
+                _publish_session_bytes(session_root, "camera_relay.evidence.json",
+                    json.dumps(relay_evidence, allow_nan=False).encode())
+        if measurements is not None:
+            measurements.close()
+        if measurement_publisher is not None:
+            measurement_publisher.close()
         status.finish("stopped", measurement_end_s)
         services.publish_evidence(
             session_root=session_root,
@@ -2909,9 +3573,42 @@ def _execute(
         result = 1
     finally:
         cleanup_failed = False
+        if ue_camera and camera is not None:
+            try:
+                camera.close()
+            except Exception as camera_exc:
+                _report_failure(FormalFeederError(f"UE camera relay cleanup failed: {camera_exc}"))
+                cleanup_failed = True
+            # close settles queued samples before rethrowing a worker failure.
+            # Save the settled evidence independently; do not lose the failure
+            # counters simply because close reported the original error.
+            try:
+                _publish_session_bytes(session_root, "camera_relay.evidence.json",
+                    json.dumps(camera.evidence(), allow_nan=False).encode())
+            except Exception as camera_exc:
+                _report_failure(FormalFeederError(f"UE camera relay evidence failed: {camera_exc}"))
+                cleanup_failed = True
+            finally:
+                camera = None
+        if visual is not None:
+            try:
+                visual.close()
+            except Exception as visual_exc:
+                _report_failure(FormalFeederError(f"Unreal presentation cleanup failed: {visual_exc}"))
+                cleanup_failed = True
         if viewer_input is not None:
             try:
                 viewer_input.close()
+            except Exception:
+                cleanup_failed = True
+        if measurement_control is not None:
+            try:
+                measurement_control.close()
+            except Exception:
+                cleanup_failed = True
+        if measurement_archive is not None:
+            try:
+                measurement_archive.close()
             except Exception:
                 cleanup_failed = True
         if viewer is not None:
@@ -2937,6 +3634,16 @@ def _execute(
         if camera is not None:
             try:
                 camera.close()
+            except Exception:
+                cleanup_failed = True
+        if measurements is not None:
+            try:
+                measurements.close()
+            except Exception:
+                cleanup_failed = True
+        if measurement_publisher is not None:
+            try:
+                measurement_publisher.close()
             except Exception:
                 cleanup_failed = True
         for sensor in sensors.values():

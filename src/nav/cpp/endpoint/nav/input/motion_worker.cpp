@@ -1,11 +1,57 @@
 #include "input/motion_worker.hpp"
 
 #include <exception>
+#include <cmath>
+#include <map>
 #include <utility>
 
-#include "runtime/time.hpp"
+#include "app/time.hpp"
+#include "collision/terrain.hpp"
 
 namespace lingtu::nav::endpoint {
+
+namespace {
+
+std::vector<float> dynamicHeights(MotionObservation &observation) {
+  std::optional<collision::TerrainSurface> ground_reference;
+  if (observation.terrain && observation.ground_layer_z) {
+    ground_reference = observation.terrain->classificationSurface(
+        {observation.body_position.x, observation.body_position.y, *observation.ground_layer_z},
+        observation.ground_tolerance_m, 8 * observation.terrain->resolution());
+  }
+  std::map<std::pair<int, int>, std::optional<collision::TerrainSurface>> ground_columns;
+  std::vector<float> dynamic_heights(observation.xyzh.size() / 4);
+  for (std::size_t i = 0; i < observation.xyzh.size(); i += 4) {
+    auto &height = observation.xyzh[i + 3];
+    auto &dynamic_height = dynamic_heights[i / 4];
+    dynamic_height = height;
+    if (std::isfinite(height)) continue;
+    const double x = observation.xyzh[i], y = observation.xyzh[i + 1];
+    const double z = observation.xyzh[i + 2];
+    height = static_cast<float>(z - observation.body_position.z);
+    dynamic_height = height;
+    if (observation.terrain && observation.ground_layer_z) {
+      // Calibration selects a layer; only observed geometry supplies ground.
+      const double resolution = observation.terrain->resolution();
+      const std::pair<int, int> key{static_cast<int>(std::floor(x / resolution)),
+                                    static_cast<int>(std::floor(y / resolution))};
+      auto [column, inserted] = ground_columns.try_emplace(key);
+      if (inserted) {
+        const double cx = (key.first + .5) * resolution;
+        const double cy = (key.second + .5) * resolution;
+        const double expected_z = ground_reference ? ground_reference->heightAt(cx, cy)
+                                                     : *observation.ground_layer_z;
+        column->second = observation.terrain->classificationSurface(
+            {cx, cy, expected_z}, observation.ground_tolerance_m, 2 * resolution);
+      }
+      if (column->second)
+        dynamic_height = static_cast<float>(z - column->second->heightAt(x, y));
+    }
+  }
+  return dynamic_heights;
+}
+
+}  // namespace
 
 MotionWorker::MotionWorker(MotionLayer layer, std::size_t max_points, bool snapshots_enabled)
     : layer_(std::move(layer)),
@@ -82,7 +128,9 @@ void MotionWorker::run() {
     result.origin = observation->origin;
     try {
       const auto update_start = SteadyClock::now();
-      layer_.updateFromScan(observation->origin, observation->xyzh, observation->stamp_s);
+      const auto dynamic_heights = dynamicHeights(*observation);
+      layer_.updateFromScan(observation->origin, observation->xyzh, observation->stamp_s,
+                            &dynamic_heights);
       result.clusters = layer_.dynamicClusters(32, observation->stamp_s);
       result.update_ms = elapsedMs(update_start);
       const auto snapshot_start = SteadyClock::now();

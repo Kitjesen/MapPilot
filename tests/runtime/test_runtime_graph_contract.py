@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan
+from lingtu.assembly.config.product import resolve_product_host_runtime
+from lingtu.assembly.config.validation import validate_product
 from lingtu.assembly.graph import (
     RuntimeGraph,
     load_runtime_graph,
@@ -17,8 +19,6 @@ from lingtu.assembly.graph import (
 )
 from lingtu.assembly.graph.loader import product_requirements, resolve_product_variant_spec
 from lingtu.assembly.graph.processes import ProcessArtifact
-from lingtu.assembly.products import resolve_product_host_runtime
-from lingtu.assembly.validation import validate_product
 from message.topics import TOPICS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -202,6 +202,20 @@ def test_nav_acceptance_selects_local_planner_without_creating_another_product()
     assert mujoco["local_planners"] == ["cmu", "scan"]
 
 
+def test_inspection_reuses_scan_navigation_without_traversability_process() -> None:
+    graph = load_runtime_graph()
+    inspection = graph.products["inspection"]
+
+    assert inspection["native_nav"]["global_planner"] == "octoplanner3d"
+    assert inspection["native_nav"]["local_planner"] == "scan"
+    assert "local_planners" not in inspection["native_nav"]
+    assert inspection["native_nav"]["use_traversability_cost"] is False
+    assert "local_planner_collision_scoring" in inspection["capabilities"]
+    assert "local_planner_collision_and_traversability_scoring" not in inspection["capabilities"]
+    assert "/nav/traversability" not in inspection["topics"]
+    assert "traversability" not in inspection["processes"]
+
+
 @pytest.mark.parametrize("mutation", ("missing", "unknown", "ambiguous"))
 def test_sim_process_platform_schema_is_strict(mutation: str) -> None:
     graph = load_runtime_graph()
@@ -295,7 +309,7 @@ def test_runtime_graph_has_no_second_sensor_catalog() -> None:
     graph = load_runtime_graph()
 
     assert not hasattr(graph, "sensors")
-    assert not (REPO_ROOT / "config/runtime_graph/sensors.yaml").exists()
+    assert not (REPO_ROOT / "config/system/sensors.yaml").exists()
     assert "sensor_profiles" not in graph.envs["sim"]["backends"]["mujoco"]
     declared = "\n".join(graph.topic_contracts)
     for undeclared_sensor in (
@@ -330,7 +344,7 @@ def test_runtime_graph_rejects_an_unknown_product_schema() -> None:
     assert "product_schema_invalid" in {issue.code for issue in validate_runtime_graph(broken)}
 
 
-def test_product_variant_must_declare_its_complete_host() -> None:
+def test_product_variant_may_inherit_host_but_must_resolve_one() -> None:
     graph = load_runtime_graph()
     products = deepcopy(graph.products)
     del products["explore"]["variants"]["map"]["host"]
@@ -341,7 +355,7 @@ def test_product_variant_must_declare_its_complete_host() -> None:
         envs=graph.envs,
     )
 
-    assert "product_variant_host_missing" in {
+    assert "product_host_missing" in {
         issue.code for issue in validate_runtime_graph(broken)
     }
 
@@ -511,7 +525,6 @@ def test_sim_process_resolution_requires_an_explicit_supported_backend(
         "map", "sim", env_config={"backend": "mujoco"}
     )
     assert [process.name for process in map_selected] == [
-        "camera_publisher",
         "driver_bridge",
         "imu_publisher",
         "lidar_publisher",
@@ -526,12 +539,12 @@ def test_sim_process_resolution_requires_an_explicit_supported_backend(
     assert map_support == ("mujoco_feeder",)
     slam = next(process for process in map_selected if process.name == "slam_runtime")
     windows_map = next(process for process in map_selected if process.name == "map_runtime")
-    assert "--disable-query" in windows_map.command.argv
+    assert "--disable-query" not in windows_map.command.argv
     assert slam.command.artifact.path == ("build/slam-core-windows-x64/stage/bin/slamd.exe")
     assert len(slam.command.dependencies) == 19
 
     map_platforms = load_runtime_graph().envs["sim"]["backends"]["mujoco"]["processes"]["map_runtime"]["platforms"]
-    assert "--disable-query" in map_platforms["windows"]["argv"]
+    assert "--disable-query" not in map_platforms["windows"]["argv"]
     assert "--disable-query" not in map_platforms["linux"]["argv"]
     with pytest.raises(ValueError, match="unknown backend 'cmu_unity'"):
         resolve_processes(
@@ -1556,7 +1569,7 @@ def test_real_products_compile_against_runtime_graph(product: str) -> None:
 
 
 def test_real_product_rejects_noncanonical_or_duplicate_driver() -> None:
-    from lingtu.assembly.products import resolve_product_host_config
+    from lingtu.assembly.config.product import resolve_product_host_config
 
     graph = load_runtime_graph()
     broken = dict(

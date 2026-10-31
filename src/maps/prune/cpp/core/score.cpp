@@ -33,7 +33,6 @@ CellKey instanceCell(const PointXYZI &pt, float grid_m) {
 MovingScoreSummary
 scoreMovingInstances(const std::vector<PointXYZI> &source_map,
                      const std::unordered_map<VoxelKey, VoxelEvidence, VoxelKeyHash> &evidence,
-                     const std::vector<bool> &ground_evidence,
                      const StaticCleanerOptions &options) {
   std::map<CellKey, MovingInstanceScore> cells;
   const float grid_m = std::max(options.instance_grid_m, options.voxel_size_m);
@@ -48,7 +47,7 @@ scoreMovingInstances(const std::vector<PointXYZI> &source_map,
 
     const VoxelKey key = voxelKey(pt, options.voxel_size_m);
     auto found = evidence.find(key);
-    const bool protected_point = ground_evidence[index] || found == evidence.end() ||
+    const bool protected_point = found == evidence.end() ||
                                  isProtected(found->second, options);
     if (protected_point) {
       ++score.protected_points;

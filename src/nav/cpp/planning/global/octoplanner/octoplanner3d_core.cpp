@@ -1,4 +1,5 @@
 #include "octoplanner3d_core.hpp"
+#include "surface_graph.hpp"
 
 #include <octomap/AbstractOcTree.h>
 #include <octomap/OcTree.h>
@@ -10,17 +11,17 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <mutex>
-#include <queue>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "global_planner.h"
+#include "surface.hpp"
 
 #if defined(OCTOPLANNER3D_ENABLE_PCD)
 #include "pcd2octomap_converter.h"
@@ -31,6 +32,9 @@ namespace {
 
 constexpr std::size_t kMaxTemporaryBlockedRegions = 64U;
 constexpr double kMaxTemporaryOverlayRasterCells = 500000.0;
+// OctoMap path points are floats; preserve inclusive metric bounds when the
+// runtime compares them with double-precision request coordinates.
+constexpr double kMetricToleranceEpsilonM = 1e-6;
 
 global_planner::PointPose toPlannerPoint(const Point & point)
 {
@@ -250,6 +254,8 @@ double nonnegativeOrDefault(double value, double fallback)
 global_planner::PlannerConfig plannerConfig(const PlannerOptions & options)
 {
   global_planner::PlannerConfig config;
+  config.search_resolution_m = nonnegativeOrDefault(options.search_resolution_m, 0.10);
+  config.surface_closing_radius_m = nonnegativeOrDefault(options.surface_closing_radius_m, 0.20);
   if (std::isfinite(options.robot_radius) && options.robot_radius > 0.0) {
     config.robot_radius = options.robot_radius;
   }
@@ -272,12 +278,12 @@ global_planner::PlannerConfig plannerConfig(const PlannerOptions & options)
   config.terminal_goal_xy_tolerance_m = nonnegativeOrDefault(
     options.terminal_goal_xy_tolerance_m, config.terminal_goal_tolerance_m);
   config.terminal_goal_z_tolerance_m = nonnegativeOrDefault(options.terminal_goal_z_tolerance_m, 0.75);
-  config.require_ground_support = options.require_ground_support;
-  config.strict_direct_ground_support = options.strict_direct_ground_support;
-  config.ground_support_xy_radius_cells =
-    std::max(0, options.ground_support_xy_radius_cells);
-  config.ground_support_depth_cells =
-    std::max(1, options.ground_support_depth_cells);
+  config.ground_support = options.ground_support;
+  config.direct_support_only = options.direct_support_only;
+  config.support_radius_cells =
+    std::max(0, options.support_radius_cells);
+  config.support_depth_cells =
+    std::max(1, options.support_depth_cells);
   config.support_height_m =
     std::isfinite(options.support_height_m) && options.support_height_m > 0.0
     ? options.support_height_m
@@ -323,15 +329,17 @@ global_planner::PlannerConfig plannerConfig(const PlannerOptions & options)
 
 bool sameOptions(const PlannerOptions & lhs, const PlannerOptions & rhs)
 {
-  return lhs.robot_radius == rhs.robot_radius &&
+  return lhs.search_resolution_m == rhs.search_resolution_m &&
+         lhs.surface_closing_radius_m == rhs.surface_closing_radius_m &&
+         lhs.robot_radius == rhs.robot_radius &&
          lhs.body_clearance_below_m == rhs.body_clearance_below_m &&
          lhs.body_clearance_above_m == rhs.body_clearance_above_m &&
          lhs.max_iterations == rhs.max_iterations &&
          lhs.snap_search_radius_cells == rhs.snap_search_radius_cells &&
-         lhs.require_ground_support == rhs.require_ground_support &&
-         lhs.strict_direct_ground_support == rhs.strict_direct_ground_support &&
-         lhs.ground_support_xy_radius_cells == rhs.ground_support_xy_radius_cells &&
-         lhs.ground_support_depth_cells == rhs.ground_support_depth_cells &&
+         lhs.ground_support == rhs.ground_support &&
+         lhs.direct_support_only == rhs.direct_support_only &&
+         lhs.support_radius_cells == rhs.support_radius_cells &&
+         lhs.support_depth_cells == rhs.support_depth_cells &&
          lhs.support_height_m == rhs.support_height_m &&
          lhs.support_height_tolerance_m == rhs.support_height_tolerance_m &&
          lhs.support_patch_radius_cells == rhs.support_patch_radius_cells &&
@@ -421,9 +429,17 @@ std::string endpointResolutionFailureReason(
   using Failure = global_planner::OctoPlanner3D::EndpointResolutionInfo::Failure;
   switch (resolution.failure) {
     case Failure::StartSnapExhausted:
-      return resolution.start_raw_outside_bounds
-        ? "start_outside_static_map"
-        : "start_snap_exhausted";
+      if (resolution.start_raw_outside_bounds) return "start_outside_static_map";
+      switch (resolution.start_failure) {
+        case global_planner::OctoPlanner3D::TraversabilityFailure::OccupiedBody:
+          return "start_occupied";
+        case global_planner::OctoPlanner3D::TraversabilityFailure::GroundSupport:
+          return "start_unsupported";
+        case global_planner::OctoPlanner3D::TraversabilityFailure::ExternalPreblockedBelow:
+        case global_planner::OctoPlanner3D::TraversabilityFailure::ExternalPreblockedBody:
+          return "start_temporary_obstacle";
+        default: return "start_snap_exhausted";
+      }
     case Failure::GoalSnapExhausted:
       return resolution.goal_raw_outside_bounds
         ? "goal_outside_static_map"
@@ -447,9 +463,33 @@ PlanResult runPreparedPlanner(
   const auto goal = toPlannerPoint(request.goal);
 
   std::vector<global_planner::PointPose> native_path;
+  planner.setObservedOccupiedCheck(request.observed_occupied
+      ? std::function<bool(const global_planner::PointPose &, double, double, double, bool)>(
+          [check=request.observed_occupied](const auto &point, double radius, double below,
+                                          double above, bool hemisphere) {
+            return check({point.x,point.y,point.z},radius,below,above,hemisphere);
+          }) : std::function<bool(const global_planner::PointPose &, double, double, double, bool)>{});
+  planner.setObservedFreeCheck(
+      [start, options=request.options, check=request.observed_free](const auto &point, double size) {
+        const double half=size*.5;
+        if (check && check({{point.x,point.y,point.z},{half,half,half}})) return true;
+        const bool explicit_body=options.body_clearance_below_m>0 || options.body_clearance_above_m>0;
+        const bool body_center=options.support_height_m>0 && !options.lowest_traversable_only;
+        const double below=explicit_body ? options.body_clearance_below_m : (body_center ? size : 0.0);
+        const double above=explicit_body ? options.body_clearance_above_m : (body_center ? size : options.robot_radius);
+        if (point.z+half<=start.z-below || point.z-half>=start.z+above) return false;
+        const double dx=std::max(0.0,std::abs(point.x-start.x)-half);
+        const double dy=std::max(0.0,std::abs(point.y-start.y)-half);
+        const double dz=!explicit_body && !body_center ? std::max(0.0,point.z-half-start.z) : 0.0;
+        // The actual start is already occupied by the robot; only saved cells
+        // overlapping that initial envelope are exempt. Current hits win upstream.
+        return dx*dx+dy*dy+dz*dz<=options.robot_radius*options.robot_radius;
+      });
   planner.setCancelCheck(cancel_check);
   planner.makePlan(start, goal);
   planner.getPlannerResults(native_path);
+  planner.setObservedFreeCheck({});
+  planner.setObservedOccupiedCheck({});
   const auto endpoint_resolution = planner.endpointResolution();
   const auto search_info = planner.searchInfo();
 
@@ -462,8 +502,9 @@ PlanResult runPreparedPlanner(
     return cancelledResult(request, started);
   }
   result.path.reserve(native_path.size());
-  for (const auto & point : native_path) {
-    result.path.push_back(fromPlannerPoint(point));
+  for (std::size_t i = 0; i < native_path.size(); ++i) {
+    auto point = fromPlannerPoint(native_path[i]);
+    result.path.push_back(point);
   }
   if (native_path.empty()) {
     result.failure_reason = endpointResolutionFailureReason(endpoint_resolution);
@@ -476,6 +517,12 @@ PlanResult runPreparedPlanner(
     result.failure_reason = "empty_path";
   }
   if (!result.path.empty()) {
+    if (request.options.ground_support && request.options.support_height_m > 0) {
+      const int neighbors=request.options.direct_support_only ? 0 : std::max(0,request.options.support_radius_cells);
+      result.support_surface = [surface=planner.supportSurface(),neighbors](const auto &expected, double tolerance) {
+        return surface->height({expected.x,expected.y,expected.z},tolerance,neighbors);
+      };
+    }
     result.goal_error_m = distanceToGoal(result.path.back(), request.goal);
     result.goal_xy_error_m = xyDistanceToGoal(result.path.back(), request.goal);
     result.goal_z_error_m = zDistanceToGoal(result.path.back(), request.goal);
@@ -488,9 +535,9 @@ PlanResult runPreparedPlanner(
     // All configured bounds constrain the snapped endpoint, as in FAR.
     // An in-tolerance 3D distance must not override a tighter XY or Z bound.
     result.reached_goal =
-      result.goal_error_m <= terminal_tolerance &&
-      result.goal_xy_error_m <= terminal_xy_tolerance &&
-      result.goal_z_error_m <= terminal_z_tolerance;
+      result.goal_error_m <= terminal_tolerance + kMetricToleranceEpsilonM &&
+      result.goal_xy_error_m <= terminal_xy_tolerance + kMetricToleranceEpsilonM &&
+      result.goal_z_error_m <= terminal_z_tolerance + kMetricToleranceEpsilonM;
   }
 
   const auto finished = std::chrono::steady_clock::now();
@@ -516,7 +563,11 @@ PlanResult runWithLoadedMap(
   planner.setConfig(plannerConfig(request.options));
   planner.setCancelCheck(cancel_check);
   planner.setExternalPreblockedRegions(toPlannerBlockedRegions(request.temporary_overlay));
-  planner.setOctomap(map);
+  try {
+    planner.setOctomap(map);
+  } catch (const global_planner::SurfaceGraph::Cancelled &) {
+    return cancelledResult(request,started);
+  }
   return runPreparedPlanner(planner, request, cancel_check, started);
 }
 
@@ -551,12 +602,65 @@ struct PlannerSession::Impl {
   lingtu::nav::plan::GlobalPlanTemporaryOverlay overlay;
   std::size_t map_load_count{0};
   std::size_t prepare_count{0};
+
+  void loadMap(const std::filesystem::path & path,
+               const lingtu::nav::plan::MapIdentity & identity)
+  {
+    if (map && lingtu::nav::plan::sameMapIdentity(map_identity, identity)) {
+      return;
+    }
+    auto loaded = loadOctomap(path.string());
+    map = std::move(loaded);
+    map_identity = identity;
+    planner.reset();
+    ++map_load_count;
+  }
+
+  bool preparePlanner(const PlannerOptions & requested_options,
+                      const lingtu::nav::plan::GlobalPlanTemporaryOverlay & requested_overlay,
+                      const CancelCheck & cancel_check = {})
+  {
+    if (planner && sameOptions(options, requested_options)) {
+      if (!sameOverlay(overlay, requested_overlay)) {
+        planner->setExternalPreblockedRegions(toPlannerBlockedRegions(requested_overlay));
+        overlay=requested_overlay;
+      }
+      return true;
+    }
+    auto prepared = std::make_unique<global_planner::OctoPlanner3D>();
+    prepared->setConfig(plannerConfig(requested_options));
+    prepared->setCancelCheck(cancel_check);
+    try {
+      prepared->setOctomap(map);
+    } catch (const global_planner::SurfaceGraph::Cancelled &) {
+      return false;
+    }
+    prepared->setExternalPreblockedRegions(toPlannerBlockedRegions(requested_overlay));
+    planner = std::move(prepared);
+    options = requested_options;
+    overlay = requested_overlay;
+    ++prepare_count;
+    return true;
+  }
 };
 
 PlannerSession::PlannerSession()
 : impl_(std::make_unique<Impl>()) {}
 
 PlannerSession::~PlannerSession() = default;
+
+void PlannerSession::prepare(
+  const std::filesystem::path & map_path,
+  const lingtu::nav::plan::MapIdentity & map_identity,
+  const PlannerOptions & options)
+{
+  if (map_path.empty() || !map_identity.valid()) {
+    throw std::runtime_error("planner preparation requires an active map identity");
+  }
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  impl_->loadMap(map_path, map_identity);
+  impl_->preparePlanner(options, {});
+}
 
 PlanResult PlannerSession::run(
   const std::filesystem::path & map_path,
@@ -583,33 +687,17 @@ PlanResult PlannerSession::run(
   }
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  const bool map_changed = !impl_->map || !lingtu::nav::plan::sameMapIdentity(
-    impl_->map_identity, map_identity);
-  if (map_changed) {
-    impl_->map = loadOctomap(map_path.string());
-    impl_->map_identity = map_identity;
-    ++impl_->map_load_count;
-  }
+  impl_->loadMap(map_path, map_identity);
   const std::string overlay_map_error = validateTemporaryOverlayForMap(impl_->map, request);
   if (!overlay_map_error.empty()) {
     auto result = invalidTemporaryOverlayResult(request, overlay_map_error, started);
     result.map_identity = map_identity;
     return result;
   }
-  const bool prepare = map_changed || !impl_->planner ||
-    !sameOptions(impl_->options, request.options) ||
-    !sameOverlay(impl_->overlay, request.temporary_overlay);
-  if (prepare) {
-    auto planner = std::make_unique<global_planner::OctoPlanner3D>();
-    planner->setConfig(plannerConfig(request.options));
-    planner->setCancelCheck(cancel_check);
-    planner->setExternalPreblockedRegions(
-      toPlannerBlockedRegions(request.temporary_overlay));
-    planner->setOctomap(impl_->map);
-    impl_->planner = std::move(planner);
-    impl_->options = request.options;
-    impl_->overlay = request.temporary_overlay;
-    ++impl_->prepare_count;
+  if (!impl_->preparePlanner(request.options, request.temporary_overlay, cancel_check)) {
+    auto result=cancelledResult(request,started);
+    result.map_identity=map_identity;
+    return result;
   }
   auto result = runPreparedPlanner(*impl_->planner, request, cancel_check, started);
   result.map_identity = map_identity;
@@ -632,23 +720,9 @@ PlanningMapProjection PlannerSession::project(
     throw std::runtime_error("planning projection requires an active map identity");
   }
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  const bool map_changed = !impl_->map ||
-    !lingtu::nav::plan::sameMapIdentity(impl_->map_identity, map_identity);
-  if (map_changed) {
-    impl_->map = loadOctomap(map_path.string());
-    impl_->map_identity = map_identity;
-    ++impl_->map_load_count;
-  }
-  if (map_changed || !impl_->planner || !sameOptions(impl_->options, options) ||
-      !impl_->overlay.empty()) {
-    auto planner = std::make_unique<global_planner::OctoPlanner3D>();
-    planner->setConfig(plannerConfig(options));
-    planner->setOctomap(impl_->map);
-    impl_->planner = std::move(planner);
-    impl_->options = options;
-    impl_->overlay = {};
-    ++impl_->prepare_count;
-  }
+  impl_->loadMap(map_path, map_identity);
+  if (!impl_->preparePlanner(options, {}, cancel_check))
+    return {false,"cancelled",map_identity};
   impl_->planner->setCancelCheck(cancel_check);
   auto slice = impl_->planner->projectPlanningSlice(reference_z);
   return {slice.available, std::move(slice.reason), map_identity, slice.resolution,

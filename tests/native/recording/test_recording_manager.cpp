@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstddef>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -12,6 +13,7 @@
 #include <vector>
 
 #include "lingtu/recording/recording_manager.hpp"
+#include "lingtu/recording/camera_recording.hpp"
 
 namespace {
 
@@ -34,7 +36,52 @@ std::string read_text(const std::filesystem::path &path) {
   return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
 }
 
+class OneFrameSource final : public recording::CameraFrameSource {
+ public:
+  bool next(recording::CameraFrame &frame) override {
+    if (done_) return false;
+    done_ = true;
+    frame.sequence = 1;
+    frame.timestamp_ns = 100;
+    frame.width = 2;
+    frame.height = 1;
+    frame.stride = 6;
+    frame.encoding = "rgb8";
+    frame.frame_id = "camera_color_optical_frame";
+    frame.payload.assign(6, std::byte{1});
+    return true;
+  }
+ private:
+  bool done_{false};
+};
+class FakeCameraEncoder final : public recording::CameraSegmentEncoder {
+ public:
+  std::string codec() const override { return "fixture"; }
+  std::string container_extension() const override { return ".mkv"; }
+  void begin(const std::filesystem::path &path, const recording::CameraStreamDescription &) override {
+    output_.open(path, std::ios::binary);
+  }
+  void write(const recording::CameraFrame &frame) override {
+    output_.write(reinterpret_cast<const char *>(frame.payload.data()),
+                  static_cast<std::streamsize>(frame.payload.size()));
+  }
+  void finish() override { output_.close(); }
+  void abort() noexcept override { output_.close(); }
+ private:
+  std::ofstream output_;
+};
+
 void write_artifact(const std::filesystem::path &path) {
+  if (path.filename() == "camera_color.mcap") {
+    OneFrameSource source;
+    FakeCameraEncoder encoder;
+    recording::CameraRecordingOptions options;
+    options.session_directory = path.parent_path();
+    recording::CameraSegmentRecorder recorder(options, source, encoder);
+    recorder.record();
+    return;
+  }
+
   std::filesystem::create_directories(path.parent_path());
   std::ofstream output(path, std::ios::binary);
   output << "recorded";
@@ -469,6 +516,11 @@ void test_stop_completes_only_after_required_artifacts_exist() {
   const auto status = manager.stop(std::chrono::milliseconds(10));
   require(status.state == recording::RecordingState::kCompleted,
           "valid recording artifacts did not complete the session");
+  const auto &artifacts = status.children.at(1).artifacts;
+  require(artifacts.size() == 2 && artifacts.at(1) == "camera_color/000000.mkv",
+          "completed camera session omitted the video segment from downloadable artifacts");
+  require(read_text(root / "session.json").find("camera_color/000000.mkv") != std::string::npos,
+          "durable session manifest omitted the camera video segment");
   require(status.ended_at_unix_ns >= status.started_at_unix_ns,
           "completed session has an invalid time range");
   require(factory.processes.front()->stop_requested() && factory.processes.back()->stop_requested(),
@@ -476,6 +528,25 @@ void test_stop_completes_only_after_required_artifacts_exist() {
   require(read_text(root / "session.json").find("\"state\":\"completed\"") != std::string::npos,
           "completed state was not persisted");
 
+  std::filesystem::remove_all(root);
+}
+
+void test_camera_session_fails_if_an_indexed_segment_is_missing() {
+  const auto root = unique_directory("missing-camera-segment");
+  FakeProcessFactory factory;
+  recording::RecordingManager manager(factory);
+  recording::RecordingSpec spec;
+  spec.session_directory = root;
+  spec.session_id = "missing-camera-segment";
+  spec.children = {{"camera_color", {"lingtu_camera_recorder"}, true, {"camera_color.mcap"}}};
+  manager.start(spec);
+  write_artifact(root / "camera_color.mcap");
+  std::filesystem::remove(root / "camera_color" / "000000.mkv");
+  const auto status = manager.stop(std::chrono::milliseconds(10));
+  require(status.state == recording::RecordingState::kFailed,
+          "camera recording completed with a missing indexed video segment");
+  require(status.error.find("000000.mkv") != std::string::npos,
+          "missing camera segment was not identified");
   std::filesystem::remove_all(root);
 }
 
@@ -496,6 +567,29 @@ void test_stop_fails_when_required_artifact_is_missing() {
   require(status.error.find("dds/sensors.mcap") != std::string::npos,
           "missing artifact was not identified");
 
+  std::filesystem::remove_all(root);
+}
+
+void test_failed_capture_preserves_partial_mcap_and_worker_logs() {
+  const auto root = unique_directory("failed-evidence");
+  FakeProcessFactory factory;
+  recording::RecordingManager manager(factory);
+  recording::RecordingSpec spec;
+  spec.session_directory = root;
+  spec.session_id = "failed-evidence";
+  spec.children = {{"dds", {"lingtu_dds_recorder"}, true, {"dds/sensors.mcap"}}};
+  manager.start(spec);
+  write_artifact(root / "dds/sensors.mcap.tmp");
+  write_artifact(root / "logs/dds.stdout.log");
+  write_artifact(root / "logs/dds.stderr.log");
+  const auto status = manager.stop(std::chrono::milliseconds(10));
+  require(status.state == recording::RecordingState::kFailed,
+          "retained partial capture was falsely marked complete");
+  require(status.children[0].artifacts == std::vector<std::filesystem::path>{
+      "dds/sensors.mcap.tmp", "logs/dds.stdout.log", "logs/dds.stderr.log"},
+      "failed session did not declare actual partial evidence and worker logs");
+  require(!std::filesystem::exists(root / "dds/sensors.mcap"),
+          "failed evidence was promoted to a successful MCAP");
   std::filesystem::remove_all(root);
 }
 
@@ -642,7 +736,9 @@ int main() {
     test_failed_start_rolls_back_started_recorders_and_persists_truth();
     test_failed_start_cleanup_does_not_snapshot_after_successful_wait();
     test_stop_completes_only_after_required_artifacts_exist();
+    test_camera_session_fails_if_an_indexed_segment_is_missing();
     test_stop_fails_when_required_artifact_is_missing();
+    test_failed_capture_preserves_partial_mcap_and_worker_logs();
     test_stop_fails_when_required_artifact_is_not_a_regular_file();
     test_optional_recorder_exit_is_visible_without_failing_required_recording();
     test_stop_grace_period_is_one_session_deadline();

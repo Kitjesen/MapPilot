@@ -10,9 +10,9 @@ import pytest
 
 from gateway.services.loc_cache import LocCache
 from gateway.services.odometry import handle_odometry
-from lingtu.assembly.compiler import blueprint_for_resolved_product
-from lingtu.assembly.products import resolve_product_host_config
-from lingtu.assembly.stacks.slam import slam
+from lingtu.assembly.compile_plan import host_builder_for_resolved_product
+from lingtu.assembly.config.product import resolve_product_host_config
+from lingtu.assembly.host.stacks.localization import slam
 from localization.adapters.resolver import localization_adapter_module
 from localization.adapters.status import (
     STATUS_SNAPSHOT_HEALTH_SOURCE,
@@ -46,7 +46,8 @@ def test_snapshot_forwards_changing_linear_velocity_in_body_axes(yaw) -> None:
         pose = payload["odometry"]["pose"]
         pose.update({"qx": orientation.x, "qy": orientation.y,
                      "qz": orientation.z, "qw": orientation.w})
-        payload["fastlio_velocity"] = orientation.rotate_vector(Vector3(*body_velocity)).to_dict()
+        payload["ltlio_velocity"] = orientation.rotate_vector(Vector3(*body_velocity)).to_dict()
+        payload["map_odometry"]["twist"].update(dict(zip(("vx", "vy", "vz"), body_velocity)))
         adapter._publish_status_snapshot(payload)
         assert seen[-1].twist.linear.to_tuple() == pytest.approx(body_velocity)
         assert seen[-1].ts == 123.0 + index
@@ -87,7 +88,7 @@ def test_cpp_slam_status_adapter_reads_cpp_status_snapshot(tmp_path) -> None:
     assert status_seen[-1]["health_source"] == STATUS_SNAPSHOT_HEALTH_SOURCE
     assert status_seen[-1]["runtime_instance_id"] == "slam-test-runtime"
     assert status_seen[-1]["source_epoch"] == 1
-    assert status_seen[-1]["backend"] == "fastlio2"
+    assert status_seen[-1]["backend"] == "ltlio"
     assert status_seen[-1]["mode"] == "mapping"
     assert status_seen[-1]["status_target_hz"] == 10.0
     assert status_seen[-1]["imu_input_hz"] == 196.0
@@ -111,7 +112,6 @@ def test_cpp_slam_status_adapter_reads_cpp_status_snapshot(tmp_path) -> None:
     ] == pytest.approx(292 / 298)
     assert tf_seen[-1]["child_frame_id"] == "odom"
     assert tf_seen[-1]["tx"] == 0.1
-    assert adapter._frame_tree.lookup("map", "odom", ts=123.0).translation.x == 0.1
     assert gnss_seen[-1]["last_fix_type"] == "RTK_FIXED"
     assert scene_seen[-1] == "outdoor"
     health = adapter.health()
@@ -211,13 +211,7 @@ def test_cpp_slam_status_adapter_resets_map_odom_history_at_source_boundary(
     assert jump_seen[-1]["type"] == "map_frame_jump"
     assert jump_seen[-1]["reason"] == expected_reason
     assert jump_seen[-1]["reset"] is True
-    edge = next(
-        edge
-        for edge in tree.snapshot()["edges"]
-        if edge["parent"] == "map" and edge["child"] == "odom"
-    )
-    assert edge["sample_count"] == 1
-    assert edge["translation"][0] == 2.0
+    assert not tree.snapshot()["edges"]  # Adapter no longer owns a second TF history.
 
 
 def test_cpp_slam_status_adapter_reads_cloud_snapshots(tmp_path) -> None:
@@ -296,19 +290,20 @@ def test_cpp_slam_status_adapter_pairs_registered_scan_with_exact_pose() -> None
     adapter.map_observation.subscribe(observations.append)
     status = _status_payload()
     status["observation_sequence"] = 9
-    status["state_estimation_at_scan"] = {
+    status["map_scan_pose"] = {
         "stamp_s": 123.0,
-        "frame_id": "odom",
+        "frame_id": "map",
         "child_frame_id": "body",
         "pose": {
-            "x": 1.0,
-            "y": 2.0,
+            "x": 1.1,
+            "y": 2.2,
             "z": 0.3,
             "qx": 0.0,
             "qy": 0.0,
             "qz": 0.0,
             "qw": 1.0,
         },
+        "sensor_origin": {"x": 1.26, "y": 2.2, "z": 0.42},
     }
 
     adapter._publish_status_snapshot(status)
@@ -319,9 +314,9 @@ def test_cpp_slam_status_adapter_pairs_registered_scan_with_exact_pose() -> None
     assert len(observations) == 1
     frame = observations[0]
     assert frame.sequence == 9
-    assert frame.sensor_origin.x == pytest.approx(1.1)
+    assert frame.sensor_origin.x == pytest.approx(1.26)
     assert frame.sensor_origin.y == pytest.approx(2.2)
-    assert frame.sensor_origin.z == pytest.approx(0.3)
+    assert frame.sensor_origin.z == pytest.approx(0.42)
     assert frame.to_map_pointcloud2().points[0, :3].tolist() == pytest.approx([2.1, 2.2, 0.3])
 
 
@@ -331,11 +326,12 @@ def test_cpp_slam_status_adapter_rejects_unpaired_registered_scan() -> None:
     adapter.map_observation.subscribe(observations.append)
     status = _status_payload()
     status["observation_sequence"] = 10
-    status["state_estimation_at_scan"] = {
+    status["map_scan_pose"] = {
         "stamp_s": 123.0,
-        "frame_id": "odom",
+        "frame_id": "map",
         "child_frame_id": "body",
         "pose": status["odometry"]["pose"],
+        "sensor_origin": {"x": 1.26, "y": 2.2, "z": 0.42},
     }
     adapter._publish_status_snapshot(status)
     adapter._latest_registered_cloud = PointCloud2(points=[[1.0, 0.0, 0.0]], ts=123.1, frame_id="body")
@@ -345,17 +341,18 @@ def test_cpp_slam_status_adapter_rejects_unpaired_registered_scan() -> None:
     assert observations == []
 
 
-def test_cpp_slam_status_adapter_rejects_map_transform_from_another_scan() -> None:
+def test_cpp_slam_status_adapter_ignores_diagnostic_tf_time_for_resolved_scan() -> None:
     adapter = CppSlamStatusAdapterModule()
     observations: list[MapObservationFrame] = []
     adapter.map_observation.subscribe(observations.append)
     status = _status_payload()
     status["observation_sequence"] = 10
-    status["state_estimation_at_scan"] = {
+    status["map_scan_pose"] = {
         "stamp_s": 123.0,
-        "frame_id": "odom",
+        "frame_id": "map",
         "child_frame_id": "body",
         "pose": status["odometry"]["pose"],
+        "sensor_origin": {"x": 1.26, "y": 2.2, "z": 0.42},
     }
     status["map_odom_tf"]["ts"] = 122.9
     adapter._publish_status_snapshot(status)
@@ -365,21 +362,21 @@ def test_cpp_slam_status_adapter_rejects_map_transform_from_another_scan() -> No
 
     adapter._publish_map_observation_if_ready()
 
-    assert observations == []
-    assert adapter.health()["decode_errors"]["map_observation"] == 1
+    assert len(observations) == 1
 
 
-def test_cpp_slam_status_adapter_requires_map_transform_to_match_cloud() -> None:
+def test_cpp_slam_status_adapter_resolved_scan_does_not_pair_diagnostic_tf() -> None:
     adapter = CppSlamStatusAdapterModule()
     observations: list[MapObservationFrame] = []
     adapter.map_observation.subscribe(observations.append)
     status = _status_payload()
     status["observation_sequence"] = 10
-    status["state_estimation_at_scan"] = {
+    status["map_scan_pose"] = {
         "stamp_s": 123.0,
-        "frame_id": "odom",
+        "frame_id": "map",
         "child_frame_id": "body",
         "pose": status["odometry"]["pose"],
+        "sensor_origin": {"x": 1.26, "y": 2.2, "z": 0.42},
     }
     status["map_odom_tf"]["ts"] = 122.99991
     adapter._publish_status_snapshot(status)
@@ -389,8 +386,7 @@ def test_cpp_slam_status_adapter_requires_map_transform_to_match_cloud() -> None
 
     adapter._publish_map_observation_if_ready()
 
-    assert observations == []
-    assert adapter.health()["decode_errors"]["map_observation"] == 1
+    assert len(observations) == 1
 
 
 @pytest.mark.parametrize(
@@ -416,11 +412,12 @@ def test_cpp_slam_status_adapter_rejects_malformed_scan_pose(pose) -> None:
     adapter.map_observation.subscribe(observations.append)
     status = _status_payload()
     status["observation_sequence"] = 10
-    status["state_estimation_at_scan"] = {
+    status["map_scan_pose"] = {
         "stamp_s": 123.0,
-        "frame_id": "odom",
+        "frame_id": "map",
         "child_frame_id": "body",
         "pose": pose,
+        "sensor_origin": {"x": 1.26, "y": 2.2, "z": 0.42},
     }
     adapter._publish_status_snapshot(status)
     adapter._latest_registered_cloud = PointCloud2(
@@ -443,7 +440,7 @@ def test_cpp_slam_status_adapter_rejects_malformed_scan_pose(pose) -> None:
     ),
     ids=("incomplete", "non_finite", "zero_quaternion", "defaulted_stamp"),
 )
-def test_cpp_slam_status_adapter_rejects_malformed_map_transform(
+def test_cpp_slam_status_adapter_resolved_scan_does_not_recompute_invalid_tf(
     updates: dict[str, float], missing: str | None
 ) -> None:
     adapter = CppSlamStatusAdapterModule()
@@ -451,11 +448,12 @@ def test_cpp_slam_status_adapter_rejects_malformed_map_transform(
     adapter.map_observation.subscribe(observations.append)
     status = _status_payload()
     status["observation_sequence"] = 10
-    status["state_estimation_at_scan"] = {
+    status["map_scan_pose"] = {
         "stamp_s": 123.0,
-        "frame_id": "odom",
+        "frame_id": "map",
         "child_frame_id": "body",
         "pose": status["odometry"]["pose"],
+        "sensor_origin": {"x": 1.26, "y": 2.2, "z": 0.42},
     }
     status["map_odom_tf"].update(updates)
     if missing is not None:
@@ -467,8 +465,7 @@ def test_cpp_slam_status_adapter_rejects_malformed_map_transform(
 
     adapter._publish_map_observation_if_ready()
 
-    assert observations == []
-    assert adapter.health()["decode_errors"]["map_observation"] == 1
+    assert len(observations) == 1
 
 
 def test_cpp_slam_status_adapter_marks_stale_snapshot(tmp_path) -> None:
@@ -517,11 +514,12 @@ def test_cpp_slam_status_adapter_marks_rewritten_but_stalled_source_stale(tmp_pa
     adapter.alive.subscribe(alive_seen.append)
     payload = _status_payload()
     payload["observation_sequence"] = 4
-    payload["state_estimation_at_scan"] = {
+    payload["map_scan_pose"] = {
         "stamp_s": 123.0,
-        "frame_id": "odom",
+        "frame_id": "map",
         "child_frame_id": "body",
         "pose": payload["odometry"]["pose"],
+        "sensor_origin": {"x": 1.26, "y": 2.2, "z": 0.42},
     }
 
     adapter.setup()
@@ -554,7 +552,7 @@ def test_cpp_slam_status_adapter_marks_rewritten_but_stalled_source_stale(tmp_pa
 
         payload["observation_sequence"] = 5
         payload["stamp_s"] = 124.0
-        payload["state_estimation_at_scan"]["stamp_s"] = 124.0
+        payload["map_scan_pose"]["stamp_s"] = 124.0
         path.write_text(json.dumps(payload), encoding="utf-8")
         deadline = time.time() + 1.0
         while time.time() < deadline and status_seen[-1]["state"] != "TRACKING":
@@ -612,7 +610,7 @@ def test_slam_stack_can_select_cpp_slam_status_adapter() -> None:
         ("explore", "map"),
     ),
 )
-def test_real_product_blueprints_use_cpp_slam_status_adapter(
+def test_real_product_host_builders_use_cpp_slam_status_adapter(
     product: str,
     product_variant: str | None,
 ) -> None:
@@ -622,7 +620,7 @@ def test_real_product_blueprints_use_cpp_slam_status_adapter(
         robot="unitree/go2",
         product_variant=product_variant,
     )
-    bp = blueprint_for_resolved_product(product, config)
+    bp = host_builder_for_resolved_product(product, config)
     slam_entry = next(entry for entry in bp._entries if entry.name == "SlamAdapterModule")
 
     assert "_selection_kind" not in config
@@ -673,11 +671,12 @@ def test_cpp_slam_status_adapter_resets_observation_cursor_for_new_runtime() -> 
 
     first = _status_payload()
     first["observation_sequence"] = 10
-    first["state_estimation_at_scan"] = {
+    first["map_scan_pose"] = {
         "stamp_s": 123.0,
-        "frame_id": "odom",
+        "frame_id": "map",
         "child_frame_id": "body",
         "pose": first["odometry"]["pose"],
+        "sensor_origin": {"x": 1.26, "y": 2.2, "z": 0.42},
     }
     adapter._latest_registered_cloud = PointCloud2(points=[[1.0, 0.0, 0.0]], ts=123.0, frame_id="body")
     adapter._publish_status_snapshot(first)
@@ -687,7 +686,7 @@ def test_cpp_slam_status_adapter_resets_observation_cursor_for_new_runtime() -> 
     second["source_epoch"] = 2
     second["observation_sequence"] = 1
     second["stamp_s"] = 200.0
-    second["state_estimation_at_scan"]["stamp_s"] = 200.0
+    second["map_scan_pose"]["stamp_s"] = 200.0
     second["map_odom_tf"]["ts"] = 200.0
     adapter._latest_registered_cloud = PointCloud2(points=[[2.0, 0.0, 0.0]], ts=200.0, frame_id="body")
     adapter._publish_status_snapshot(second)
@@ -708,11 +707,12 @@ def test_cpp_slam_status_adapter_recovers_after_same_runtime_source_epoch_reset(
     first = _status_payload()
     first["source_epoch"] = 7
     first["observation_sequence"] = 10
-    first["state_estimation_at_scan"] = {
+    first["map_scan_pose"] = {
         "stamp_s": 123.0,
-        "frame_id": "odom",
+        "frame_id": "map",
         "child_frame_id": "body",
         "pose": first["odometry"]["pose"],
+        "sensor_origin": {"x": 1.26, "y": 2.2, "z": 0.42},
     }
     adapter._latest_registered_cloud = PointCloud2(
         points=[[1.0, 0.0, 0.0]], ts=123.0, frame_id="body"
@@ -728,7 +728,7 @@ def test_cpp_slam_status_adapter_recovers_after_same_runtime_source_epoch_reset(
     recovered["observation_sequence"] = 1
     recovered["stamp_s"] = 10.0
     recovered["scan_end_s"] = 10.0
-    recovered["state_estimation_at_scan"]["stamp_s"] = 10.0
+    recovered["map_scan_pose"]["stamp_s"] = 10.0
     recovered["map_odom_tf"]["ts"] = 10.0
     adapter._latest_registered_cloud = PointCloud2(
         points=[[2.0, 0.0, 0.0]], ts=10.0, frame_id="body"
@@ -741,7 +741,7 @@ def test_cpp_slam_status_adapter_recovers_after_same_runtime_source_epoch_reset(
     assert [frame.sequence for frame in observations] == [10, 1]
 
 
-def test_cpp_slam_status_adapter_rejects_runaway_fastlio_velocity() -> None:
+def test_cpp_slam_status_adapter_rejects_runaway_ltlio_velocity() -> None:
     adapter = CppSlamStatusAdapterModule()
     odometry_seen = []
     status_seen = []
@@ -751,7 +751,7 @@ def test_cpp_slam_status_adapter_rejects_runaway_fastlio_velocity() -> None:
     adapter.alive.subscribe(alive_seen.append)
 
     payload = _status_payload()
-    payload["fastlio_velocity"] = {
+    payload["ltlio_velocity"] = {
         "x": -58.9,
         "y": 58.1,
         "z": -2804.8,
@@ -760,10 +760,62 @@ def test_cpp_slam_status_adapter_rejects_runaway_fastlio_velocity() -> None:
 
     assert odometry_seen == []
     assert status_seen[-1]["state"] == "DIVERGED"
-    assert status_seen[-1]["reason"] == "fastlio_velocity_out_of_bounds"
-    assert status_seen[-1]["fastlio_speed_mps"] > 2800.0
+    assert status_seen[-1]["reason"] == "ltlio_velocity_out_of_bounds"
+    assert status_seen[-1]["ltlio_speed_mps"] > 2800.0
     assert status_seen[-1]["alive"] is False
     assert alive_seen[-1] is False
+
+
+def test_cpp_slam_status_adapter_preserves_ltlio_weak_modes() -> None:
+    adapter = CppSlamStatusAdapterModule()
+    payload = _status_payload()
+    payload["ltlio_degeneracy"] = {
+        "available": True,
+        "detected": True,
+        "degenerate_dof_count": 2,
+        "condition_number": 12.0,
+        "min_eigenvalue": 0.1,
+        "max_eigenvalue": 1.2,
+        "effective_ratio": 0.5,
+        "pos_cov_trace": 0.2,
+        "iter_num": 3,
+        "converged": True,
+        "direction_frame": "imu",
+        "rotation_scale_m": 0.5,
+        "eigenvalues": [1.0, 0.9, 0.8, 0.1, 0.05, 0.01],
+        "principal_directions": [[float(i == j) for i in range(6)] for j in range(6)],
+        "categories": ["OBSERVABLE", "PARTIAL", "UNOBSERVABLE", "OBSERVABLE", "PARTIAL", "UNOBSERVABLE"],
+        "support_ratios": [1.0, 0.8, 0.0, 0.9, 0.7, 0.1],
+        "update_applied": False,
+        "guidance": "turn_or_retrace_for_features",
+    }
+    seen = []
+    adapter.localization_status.subscribe(seen.append)
+    adapter._publish_status_snapshot(payload)
+    diag = seen[-1]["ltlio_degeneracy"]
+    assert seen[-1]["degeneracy"] == "SEVERE"
+    assert diag["direction_frame"] == "imu"
+    assert diag["categories"][2] == "UNOBSERVABLE"
+    assert diag["update_applied"] is False
+
+
+def test_cpp_slam_status_adapter_marks_unavailable_ltlio_diagnostics_unknown() -> None:
+    adapter = CppSlamStatusAdapterModule()
+    payload = _status_payload()
+    payload["ltlio_degeneracy"] = {"available": False, "guidance": "awaiting_lidar_geometry"}
+    seen = []
+    adapter.localization_status.subscribe(seen.append)
+    adapter._publish_status_snapshot(payload)
+    assert seen[-1]["degeneracy"] == "UNKNOWN"
+    assert seen[-1]["ltlio_degeneracy"]["available"] is False
+    assert seen[-1]["ltlio_degeneracy"]["condition_number"] is None
+    assert seen[-1]["ltlio_degeneracy"]["eigenvalues"] is None
+
+
+def test_unavailable_ltlio_diagnostics_override_legacy_degeneracy() -> None:
+    from runtime.contracts.localization import degeneracy_level
+
+    assert degeneracy_level({"degeneracy": "NONE", "ltlio_degeneracy": {"available": False}}) == "UNKNOWN"
 
 
 def _status_payload() -> dict:
@@ -772,7 +824,7 @@ def _status_payload() -> dict:
         "runtime_instance_id": "slam-test-runtime",
         "source_epoch": 1,
         "source": "cpp_cyclone_slam",
-        "backend": "fastlio2",
+        "backend": "ltlio",
         "mode": "mapping",
         "state": "TRACKING",
         "reason": "tracking",
@@ -836,6 +888,11 @@ def _status_payload() -> dict:
             "qw": 1.0,
             "ts": 123.0,
         },
+        "map_odometry": {
+            "frame_id": "map", "child_frame_id": "body",
+            "pose": {"x": 1.0, "y": 2.0, "z": 0.3, "qx": 0.0, "qy": 0.0, "qz": 0.0, "qw": 1.0},
+            "twist": {"vx": 0.0, "vy": 0.0, "vz": 0.0, "wx": 0.0, "wy": 0.0, "wz": 0.0},
+        },
         "odometry": {
             "frame_id": "odom",
             "child_frame_id": "body",
@@ -850,3 +907,57 @@ def _status_payload() -> dict:
             },
         },
     }
+
+
+def test_native_map_pose_is_not_recomputed_from_diagnostic_tf() -> None:
+    adapter = CppSlamStatusAdapterModule()
+    seen = []
+    adapter.odometry.subscribe(seen.append)
+    payload = _status_payload()
+    payload["map_odometry"]["pose"]["x"] = 42.0
+    payload["map_odometry"]["twist"]["wz"] = 0.7
+    payload["map_odom_tf"]["tx"] = -100.0
+    adapter._publish_status_snapshot(payload)
+    assert seen[-1].x == 42.0
+    assert seen[-1].frame_id == "map"
+    assert seen[-1].twist.angular.z == 0.7
+
+
+def test_missing_native_map_pose_does_not_fall_back_to_raw_odometry() -> None:
+    adapter = CppSlamStatusAdapterModule()
+    seen = []
+    adapter.odometry.subscribe(seen.append)
+    payload = _status_payload()
+    payload["map_odometry"] = None
+    adapter._publish_status_snapshot(payload)
+    assert seen == []
+
+
+@pytest.mark.parametrize("native_distance", [None, 12.5])
+def test_native_distance_reaches_gateway_without_map_pose_recount(native_distance) -> None:
+    adapter = CppSlamStatusAdapterModule()
+    seen = []
+    events = []
+    gateway = SimpleNamespace(
+        _frame_tree=FrameTree(), _state_lock=Lock(), _runtime_cache=LocCache(),
+        _blackbox=SimpleNamespace(record=lambda *_: None),
+        push_event=events.append, _slam_status_throttle=0,
+    )
+    adapter.odometry.subscribe(seen.append)
+    adapter.odometry.subscribe(lambda odom: handle_odometry(gateway, odom))
+    for index, map_x in enumerate([0.0, 0.4, 0.0]):
+        payload = _status_payload()
+        payload["stamp_s"] += index
+        payload["scan_end_s"] += index
+        payload["map_odometry"]["pose"]["x"] = map_x
+        if native_distance is not None:
+            payload["map_odometry"].update(
+                session_distance_m=native_distance, session_distance_source="slam_odom",
+            )
+        adapter._publish_status_snapshot(payload)
+        assert seen[-1].session_distance_m == native_distance
+        assert type(seen[-1]).from_dict(seen[-1].to_dict()).session_distance_m == native_distance
+        assert events[-1]["data"]["session_distance_m"] == native_distance
+        assert gateway._runtime_cache._odom["session_distance_m"] == native_distance
+        expected_source = "slam_odom" if native_distance is not None else None
+        assert events[-1]["data"]["session_distance_source"] == expected_source

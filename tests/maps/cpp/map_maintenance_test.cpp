@@ -1,6 +1,6 @@
-#include "lingtu/maps/maintenance.hpp"
+#include "lingtu/maps/storage/maintenance.hpp"
 
-#include "lingtu/maps/lock.hpp"
+#include "lingtu/maps/storage/lock.hpp"
 
 #include <cassert>
 #include <chrono>

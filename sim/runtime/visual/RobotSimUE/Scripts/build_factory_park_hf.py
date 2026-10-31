@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import math
 import os
 import re
+import sys
 import time
 import traceback
 from pathlib import Path
@@ -93,6 +95,18 @@ TERRAIN_MESH_NAME = "SM_FactoryPark_HF_Terrain"
 TERRAIN_MESH_PATH = f"{TERRAIN_MESH_DESTINATION}/{TERRAIN_MESH_NAME}.{TERRAIN_MESH_NAME}"
 BLENDER_MESH_DESTINATION = f"{WORLD_ASSET_ROOT}/Meshes"
 MATERIAL_ASSET_ROOT = f"{WORLD_ASSET_ROOT}/Materials/IndustrialRealismV2"
+MATERIAL_TEXTURE_ASSET_ROOT = f"{MATERIAL_ASSET_ROOT}/Textures"
+MATERIAL_TEXTURE_SOURCE_ROOT = EVIDENCE_ROOT / "material-textures"
+MATERIAL_DETAIL_TEXTURE_SPECS = {
+    "asphalt_worn": {
+        "detail": "T_FP_AsphaltWorn_Detail",
+        "normal": "T_FP_AsphaltWorn_Normal",
+    },
+    "concrete_weathered": {
+        "detail": "T_FP_ConcreteWeathered_Detail",
+        "normal": "T_FP_ConcreteWeathered_Normal",
+    },
+}
 MASTER_MATERIAL_NAME = "M_FactoryPark_IndustrialRealismV2"
 MASTER_MATERIAL_PATH = f"{MATERIAL_ASSET_ROOT}/{MASTER_MATERIAL_NAME}.{MASTER_MATERIAL_NAME}"
 FBX_IMPORT_UNIFORM_SCALE = 1.0
@@ -1774,6 +1788,176 @@ def _configure_master_material_usages(
     return evidence
 
 
+def _configure_texture_import_task(source: Path, asset_name: str) -> object:
+    task = unreal.AssetImportTask()
+    task.set_editor_property("filename", str(source))
+    task.set_editor_property("destination_path", MATERIAL_TEXTURE_ASSET_ROOT)
+    task.set_editor_property("destination_name", asset_name)
+    task.set_editor_property("automated", True)
+    task.set_editor_property("replace_existing", True)
+    task.set_editor_property("replace_existing_settings", True)
+    task.set_editor_property("save", True)
+    task.set_editor_property("async_", False)
+    return task
+
+
+def _configure_imported_detail_texture(texture: object, *, channel: str) -> dict[str, object]:
+    if channel not in {"detail", "normal"}:
+        raise RuntimeError(f"unsupported FactoryPark_HF detail texture channel {channel}")
+    normal = channel == "normal"
+    expected = {
+        "srgb": False,
+        "compression_settings": (
+            unreal.TextureCompressionSettings.TC_NORMALMAP
+            if normal
+            else unreal.TextureCompressionSettings.TC_DEFAULT
+        ),
+        "address_x": unreal.TextureAddress.TA_WRAP,
+        "address_y": unreal.TextureAddress.TA_WRAP,
+        "mip_gen_settings": unreal.TextureMipGenSettings.TMGS_FROM_TEXTURE_GROUP,
+        "lod_group": (
+            unreal.TextureGroup.TEXTUREGROUP_WORLD_NORMAL_MAP
+            if normal
+            else unreal.TextureGroup.TEXTUREGROUP_WORLD
+        ),
+    }
+    for property_name, value in expected.items():
+        texture.set_editor_property(property_name, value)
+    readback = {
+        property_name: texture.get_editor_property(property_name)
+        for property_name in expected
+    }
+    if any(readback[name] != value for name, value in expected.items()):
+        raise RuntimeError(
+            f"texture import settings readback failed for {texture.get_path_name()}"
+        )
+    unreal.EditorAssetLibrary.save_loaded_asset(texture, only_if_is_dirty=False)
+    return {
+        "asset": str(texture.get_path_name()),
+        "channel": channel,
+        "srgb": False,
+        "compression_settings": str(expected["compression_settings"]),
+        "normal_compression": normal,
+        "address_x": str(expected["address_x"]),
+        "address_y": str(expected["address_y"]),
+        "mip_gen_settings": str(expected["mip_gen_settings"]),
+        "lod_group": str(expected["lod_group"]),
+        "verified": True,
+    }
+
+
+def _load_material_texture_authoring_module() -> object:
+    module_name = "lingtu_factory_park_hf_material_textures"
+    existing = sys.modules.get(module_name)
+    if existing is not None:
+        return existing
+    source = (
+        REPO_ROOT
+        / "sim"
+        / "tools"
+        / "worlds"
+        / "factory_park_hf"
+        / "material_textures.py"
+    )
+    spec = importlib.util.spec_from_file_location(module_name, source)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load FactoryPark_HF texture authoring helper {source}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _build_surface_detail_texture_library() -> tuple[
+    dict[str, dict[str, object]],
+    dict[str, object],
+]:
+    authoring = _load_material_texture_authoring_module()
+    generated = authoring.generate_surface_texture_set()
+    authored_paths = authoring.author_surface_textures(MATERIAL_TEXTURE_SOURCE_ROOT)
+    tasks: list[tuple[str, str, str, Path, object]] = []
+    for profile, channels in MATERIAL_DETAIL_TEXTURE_SPECS.items():
+        if profile not in generated or profile not in authored_paths:
+            raise RuntimeError(f"texture authoring omitted required profile {profile}")
+        for channel, asset_name in channels.items():
+            source = authored_paths[profile][channel]
+            tasks.append(
+                (
+                    profile,
+                    channel,
+                    asset_name,
+                    source,
+                    _configure_texture_import_task(source, asset_name),
+                )
+            )
+    unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks(
+        [task for _, _, _, _, task in tasks]
+    )
+
+    textures: dict[str, dict[str, object]] = {}
+    import_evidence: list[dict[str, object]] = []
+    for profile, channel, asset_name, source, task in tasks:
+        imported = list(task.get_objects())
+        textures_2d = [asset for asset in imported if isinstance(asset, unreal.Texture2D)]
+        if len(textures_2d) != 1:
+            raise RuntimeError(
+                f"expected one imported Texture2D for {profile}.{channel}, got {len(textures_2d)}"
+            )
+        texture = textures_2d[0]
+        expected_asset_path = (
+            f"{MATERIAL_TEXTURE_ASSET_ROOT}/{asset_name}.{asset_name}"
+        )
+        if str(texture.get_path_name()) != expected_asset_path:
+            raise RuntimeError(
+                f"texture import path mismatch for {profile}.{channel}: "
+                f"expected={expected_asset_path} actual={texture.get_path_name()}"
+            )
+        settings_evidence = _configure_imported_detail_texture(texture, channel=channel)
+        texture_set = textures.setdefault(
+            profile,
+            {"tile_size_cm": float(generated[profile].tile_size_cm)},
+        )
+        texture_set[channel] = texture
+        import_evidence.append(
+            {
+                "profile": profile,
+                "channel": channel,
+                "source_path": str(source),
+                "source_bytes": source.stat().st_size,
+                **settings_evidence,
+            }
+        )
+    return textures, {
+        "generator": "stdlib_periodic_height_to_rgb_png_v1",
+        "external_assets_used": False,
+        "external_dependencies_used": False,
+        "deterministic": True,
+        "bounded_resolution": [256, 256],
+        "tile_seams_closed": True,
+        "normal_maps_derived_from_periodic_height": True,
+        "world_position_noise_used": False,
+        "mapping": "world_aligned_triplanar_cm",
+        "rendered_validation_performed": False,
+        "profiles": {
+            profile: {
+                "tile_size_cm": float(texture_set["tile_size_cm"]),
+                "channels": ["detail", "normal"],
+            }
+            for profile, texture_set in textures.items()
+        },
+        "generated_file_count": len(tasks),
+        "imported_texture_count": len(import_evidence),
+        "imports": import_evidence,
+        "all_import_settings_verified": True,
+    }
+
+
+def _set_material_function_checked(expression: object, asset_path: str) -> None:
+    material_function = unreal.load_asset(asset_path)
+    if material_function is None or not expression.set_material_function(material_function):
+        raise RuntimeError(f"could not configure Unreal material function {asset_path}")
+
+
 def _build_master_pbr_material() -> tuple[object, dict[str, object]]:
     material = _create_or_load_asset(
         MATERIAL_ASSET_ROOT,
@@ -1815,6 +1999,98 @@ def _build_master_pbr_material() -> tuple[object, dict[str, object]]:
     )
     specular.set_editor_property("parameter_name", unreal.Name("Specular"))
     specular.set_editor_property("default_value", 0.5)
+    detail_enabled = library.create_material_expression(
+        material,
+        unreal.MaterialExpressionScalarParameter,
+        -780,
+        360,
+    )
+    detail_enabled.set_editor_property("parameter_name", unreal.Name("DetailEnabled"))
+    detail_enabled.set_editor_property("default_value", 0.0)
+    tile_size = library.create_material_expression(
+        material,
+        unreal.MaterialExpressionVectorParameter,
+        -780,
+        500,
+    )
+    tile_size.set_editor_property("parameter_name", unreal.Name("DetailTileSizeCm"))
+    tile_size.set_editor_property("default_value", unreal.LinearColor(200.0, 200.0, 200.0, 1.0))
+    default_color_texture = unreal.load_asset(
+        "/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture"
+    )
+    default_normal_texture = unreal.load_asset(
+        "/Engine/EngineMaterials/DefaultNormal.DefaultNormal"
+    )
+    if default_color_texture is None or default_normal_texture is None:
+        raise RuntimeError("could not load UE default detail textures for the PBR master")
+    detail_roughness = library.create_material_expression(
+        material,
+        unreal.MaterialExpressionTextureObjectParameter,
+        -780,
+        -420,
+    )
+    detail_roughness.set_editor_property(
+        "parameter_name", unreal.Name("DetailRoughnessTexture")
+    )
+    detail_roughness.set_editor_property("texture", default_color_texture)
+    detail_roughness.set_editor_property(
+        "sampler_type", unreal.MaterialSamplerType.SAMPLERTYPE_COLOR
+    )
+    detail_normal = library.create_material_expression(
+        material,
+        unreal.MaterialExpressionTextureObjectParameter,
+        -780,
+        -280,
+    )
+    detail_normal.set_editor_property("parameter_name", unreal.Name("DetailNormalTexture"))
+    detail_normal.set_editor_property("texture", default_normal_texture)
+    detail_normal.set_editor_property("sampler_type", unreal.MaterialSamplerType.SAMPLERTYPE_NORMAL)
+    world_aligned_roughness = library.create_material_expression(
+        material,
+        unreal.MaterialExpressionMaterialFunctionCall,
+        -500,
+        -420,
+    )
+    _set_material_function_checked(
+        world_aligned_roughness,
+        "/Engine/Functions/Engine_MaterialFunctions01/Texturing/WorldAlignedTexture.WorldAlignedTexture",
+    )
+    world_aligned_normal = library.create_material_expression(
+        material,
+        unreal.MaterialExpressionMaterialFunctionCall,
+        -500,
+        -280,
+    )
+    _set_material_function_checked(
+        world_aligned_normal,
+        "/Engine/Functions/Engine_MaterialFunctions01/Texturing/WorldAlignedNormal.WorldAlignedNormal",
+    )
+    roughness_channel = library.create_material_expression(
+        material,
+        unreal.MaterialExpressionComponentMask,
+        -220,
+        -420,
+    )
+    roughness_channel.set_editor_property("r", True)
+    roughness_blend = library.create_material_expression(
+        material,
+        unreal.MaterialExpressionLinearInterpolate,
+        260,
+        80,
+    )
+    flat_normal = library.create_material_expression(
+        material,
+        unreal.MaterialExpressionConstant3Vector,
+        20,
+        300,
+    )
+    flat_normal.set_editor_property("constant", unreal.LinearColor(0.0, 0.0, 1.0, 1.0))
+    normal_blend = library.create_material_expression(
+        material,
+        unreal.MaterialExpressionLinearInterpolate,
+        260,
+        260,
+    )
     roughness_saturate = library.create_material_expression(
         material,
         unreal.MaterialExpressionSaturate,
@@ -1823,14 +2099,44 @@ def _build_master_pbr_material() -> tuple[object, dict[str, object]]:
     )
     expression_connections = (
         ("roughness_to_saturate", roughness, "", roughness_saturate, ""),
+        (
+            "detail_roughness_object",
+            detail_roughness,
+            "",
+            world_aligned_roughness,
+            "TextureObject",
+        ),
+        (
+            "detail_roughness_size_cm",
+            tile_size,
+            "",
+            world_aligned_roughness,
+            "TextureSize",
+        ),
+        ("detail_normal_object", detail_normal, "", world_aligned_normal, "TextureObject"),
+        ("detail_normal_size_cm", tile_size, "", world_aligned_normal, "TextureSize"),
+        (
+            "detail_roughness_channel",
+            world_aligned_roughness,
+            "XYZ Texture",
+            roughness_channel,
+            "",
+        ),
+        ("flat_roughness", roughness_saturate, "", roughness_blend, "A"),
+        ("detailed_roughness", roughness_channel, "", roughness_blend, "B"),
+        ("detail_roughness_enabled", detail_enabled, "", roughness_blend, "Alpha"),
+        ("flat_normal", flat_normal, "", normal_blend, "A"),
+        ("detailed_normal", world_aligned_normal, "XYZ Texture", normal_blend, "B"),
+        ("detail_normal_enabled", detail_enabled, "", normal_blend, "Alpha"),
     )
     for connection in expression_connections:
         _connect_material_expression_checked(library, *connection)
     property_connections = (
         ("base_color", base_color, unreal.MaterialProperty.MP_BASE_COLOR),
         ("metallic", metallic, unreal.MaterialProperty.MP_METALLIC),
-        ("roughness", roughness_saturate, unreal.MaterialProperty.MP_ROUGHNESS),
+        ("roughness", roughness_blend, unreal.MaterialProperty.MP_ROUGHNESS),
         ("specular", specular, unreal.MaterialProperty.MP_SPECULAR),
+        ("normal", normal_blend, unreal.MaterialProperty.MP_NORMAL),
     )
     for label, expression, property_ in property_connections:
         connected = library.connect_material_property(expression, "", property_)
@@ -1851,6 +2157,8 @@ def _build_master_pbr_material() -> tuple[object, dict[str, object]]:
     return material, {
         "roughness_path": "clamped_parameter",
         "world_position_noise_used": False,
+        "surface_detail_mapping": "world_aligned_triplanar_cm",
+        "surface_detail_default": "flat_via_detail_enabled_zero",
         "expression_connections": [connection[0] for connection in expression_connections],
         "expression_connection_count": len(expression_connections),
         "material_outputs": [connection[0] for connection in property_connections],
@@ -1871,9 +2179,105 @@ def _srgb_channel_to_linear(channel: float) -> float:
     return channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
 
 
+def _apply_surface_detail_parameters(
+    instance: object,
+    surface: Mapping[str, object],
+    detail_textures: Mapping[str, Mapping[str, object]],
+    library: object | None = None,
+) -> dict[str, object]:
+    material_library = library or unreal.MaterialEditingLibrary
+    profile = str(surface["profile"])
+    enabled = profile in detail_textures
+    enabled_value = 1.0 if enabled else 0.0
+    material_library.set_material_instance_scalar_parameter_value(
+        instance,
+        unreal.Name("DetailEnabled"),
+        enabled_value,
+    )
+    enabled_readback = float(
+        material_library.get_material_instance_scalar_parameter_value(
+            instance,
+            unreal.Name("DetailEnabled"),
+        )
+    )
+    if not math.isclose(enabled_readback, enabled_value, rel_tol=0.0, abs_tol=1.0e-6):
+        raise RuntimeError(f"DetailEnabled readback mismatch for material profile {profile}")
+    if not enabled:
+        return {
+            "enabled": False,
+            "profile": profile,
+            "flat_material_preserved": True,
+        }
+
+    texture_set = detail_textures[profile]
+    tile_size_cm = float(texture_set["tile_size_cm"])
+    expected_tile = unreal.LinearColor(tile_size_cm, tile_size_cm, tile_size_cm, 1.0)
+    material_library.set_material_instance_vector_parameter_value(
+        instance,
+        unreal.Name("DetailTileSizeCm"),
+        expected_tile,
+    )
+    actual_tile = material_library.get_material_instance_vector_parameter_value(
+        instance,
+        unreal.Name("DetailTileSizeCm"),
+    )
+    actual_tile_values = [
+        float(actual_tile.r),
+        float(actual_tile.g),
+        float(actual_tile.b),
+        float(actual_tile.a),
+    ]
+    if not all(
+        math.isclose(actual, expected, rel_tol=0.0, abs_tol=1.0e-6)
+        for actual, expected in zip(
+            actual_tile_values,
+            [tile_size_cm, tile_size_cm, tile_size_cm, 1.0],
+            strict=True,
+        )
+    ):
+        raise RuntimeError(f"DetailTileSizeCm readback mismatch for material profile {profile}")
+
+    texture_evidence: dict[str, object] = {}
+    for parameter, channel in (
+        ("DetailRoughnessTexture", "detail"),
+        ("DetailNormalTexture", "normal"),
+    ):
+        texture = texture_set[channel]
+        api_return = material_library.set_material_instance_texture_parameter_value(
+            instance,
+            unreal.Name(parameter),
+            texture,
+        )
+        readback = material_library.get_material_instance_texture_parameter_value(
+            instance,
+            unreal.Name(parameter),
+        )
+        expected_path = str(texture.get_path_name())
+        actual_path = "" if readback is None else str(readback.get_path_name())
+        if actual_path != expected_path:
+            raise RuntimeError(
+                f"{parameter} readback mismatch for material profile {profile}: "
+                f"expected={expected_path} actual={actual_path}"
+            )
+        texture_evidence[parameter] = {
+            "api_return": bool(api_return),
+            "asset": actual_path,
+            "verified": True,
+        }
+    return {
+        "enabled": True,
+        "profile": profile,
+        "mapping": "world_aligned_triplanar_cm",
+        "tile_size_cm": tile_size_cm,
+        "textures": texture_evidence,
+        "readbacks_verified": True,
+    }
+
+
 def _create_pbr_material_instance(
     master: object,
     surface: Mapping[str, object],
+    detail_textures: Mapping[str, Mapping[str, object]] | None = None,
 ) -> tuple[object, dict[str, object]]:
     name = _material_instance_name(
         str(surface["source_material"]),
@@ -1944,6 +2348,12 @@ def _create_pbr_material_instance(
             "actual": actual,
             "verified": True,
         }
+    detail_evidence = _apply_surface_detail_parameters(
+        instance,
+        surface,
+        detail_textures or {},
+        library,
+    )
     library.update_material_instance(instance)
     unreal.EditorAssetLibrary.set_metadata_tag(
         instance, "LingTu.SourceMaterial", str(surface["source_material"])
@@ -1966,6 +2376,7 @@ def _create_pbr_material_instance(
             }
         },
         "scalars": scalar_evidence,
+        "surface_detail": detail_evidence,
     }
 
 
@@ -1986,13 +2397,18 @@ def _build_native_pbr_material_library(
     authoring: Mapping[str, object],
     realism: Mapping[str, object],
 ) -> tuple[dict[tuple[str, str], object], object, dict[str, object]]:
+    detail_textures, detail_texture_evidence = _build_surface_detail_texture_library()
     master, master_graph = _build_master_pbr_material()
     identities = _native_pbr_identities(authoring)
     instances: dict[tuple[str, str], object] = {}
     evidence: list[dict[str, object]] = []
     for source_material, semantic_class in sorted(identities):
         surface = _resolve_pbr_surface(source_material, semantic_class, realism)
-        instance, parameter_write_evidence = _create_pbr_material_instance(master, surface)
+        instance, parameter_write_evidence = _create_pbr_material_instance(
+            master,
+            surface,
+            detail_textures,
+        )
         instances[(source_material, semantic_class)] = instance
         linear_color = [
             _srgb_channel_to_linear(channel)
@@ -2020,6 +2436,11 @@ def _build_native_pbr_material_library(
         "parameter_readback_verified_count": len(instances),
         "parameter_write_contract": "verified_by_getter_readback_due_ue58_false_return_value",
         "base_color_policy": "manifest_material_swatch_then_neutral_identity_fallback",
+        "surface_detail_textures": detail_texture_evidence,
+        "surface_detail_binding_count": sum(
+            record["parameter_write_evidence"]["surface_detail"]["enabled"] is True
+            for record in evidence
+        ),
         "materials": evidence,
     }
 

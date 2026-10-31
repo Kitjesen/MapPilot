@@ -8,7 +8,7 @@ NAV_ENDPOINT = ENDPOINT / "nav"
 CONTROL = NAV_ENDPOINT / "control"
 
 ENDPOINT_BOOTSTRAP = NAV_ENDPOINT / "main.cpp"
-ENDPOINT_LOOP = NAV_ENDPOINT / "runtime" / "loop.cpp"
+ENDPOINT_LOOP = NAV_ENDPOINT / "app" / "loop.cpp"
 GUARD_HEADER = CONTROL / "guard.hpp"
 GUARD_SOURCE = CONTROL / "guard.cpp"
 GUARD_TEST = ROOT / "tests/nav/cpp/endpoint/test_control_loop_runtime_guard.cpp"
@@ -106,7 +106,7 @@ def test_navd_evaluates_completed_health_before_motion_tick_work() -> None:
     assert loop.index("control_loop_guard.observe") < loop.index("RollingSegmentBeginTick")
 
 
-def test_hold_decision_latches_takeover_and_clears_motion_before_autonomy_work() -> None:
+def test_scheduler_hold_preserves_route_without_taking_operator_control() -> None:
     loop_source = _read(ENDPOINT_LOOP)
     loop = _block_after(loop_source, "while (running) {", "const auto input_start")
     hold_block = _block_after(
@@ -115,8 +115,9 @@ def test_hold_decision_latches_takeover_and_clears_motion_before_autonomy_work()
         "(void)rolling_segment_effect_coordinator.apply",
     )
 
-    assert "control_authority.holdOperatorTakeover()" in hold_block
-    assert "operator_resume_required = true" in hold_block
+    assert "control_authority.holdOperatorTakeover()" not in hold_block
+    assert "operator_resume_required = true" not in hold_block
+    assert "inspection_executor.Pause" not in hold_block
     assert '"control_loop_unhealthy:"' in loop
     assert re.search(
         r"hold_reason\s*=.*loop_guard_decision\.reason",
@@ -124,13 +125,15 @@ def test_hold_decision_latches_takeover_and_clears_motion_before_autonomy_work()
         re.DOTALL,
     )
     assert re.search(
-        r"motion_stop\.clearEndpointMotion\s*\(\s*hold_reason\s*\)",
+        r"motion_stop\.holdEndpointMotion\s*\(\s*hold_reason\s*\)",
         hold_block,
     )
-    assert hold_block.index("control_authority.holdOperatorTakeover") < hold_block.index(
-        "operator_resume_required = true"
-    )
-    assert hold_block.index("operator_resume_required = true") < hold_block.index("motion_stop.clearEndpointMotion")
+    assert "clearEndpointMotion" not in hold_block
+
+
+def test_autonomous_scheduler_recovery_uses_default_automatic_resume() -> None:
+    assert "bool auto_resume{true}" in _read(GUARD_HEADER)
+    assert "control_loop_guard_config.auto_resume =" not in _read(ENDPOINT_BOOTSTRAP)
 
 
 def test_latched_guard_ticks_keep_zero_fresh_without_reentering_autonomy() -> None:
@@ -145,6 +148,19 @@ def test_latched_guard_ticks_keep_zero_fresh_without_reentering_autonomy() -> No
     assert "else if (!motion_stop.keepZeroFresh())" in hold_block
     assert "autonomy_tick.tick" not in hold_block
     assert "teleop_tick.tick" not in hold_block
+
+
+def test_transient_driver_loss_holds_the_retained_route_in_the_endpoint_loop() -> None:
+    loop = _read(ENDPOINT_LOOP)
+    transition = _block_after(
+        loop,
+        "if (driver_authority_previous && !driver_authority_now && !profile_transition)",
+        "driver_authority_previous = driver_authority_now;",
+    )
+    assert "GoalReplanRuntimeInterruption::kDriverAuthorityLost" in transition
+    assert 'motion_stop.holdEndpointMotion("driver_control_lost:" + driver_blocker)' in transition
+    assert "clearEndpointMotion" not in transition
+    assert "!driver_authority_now && !motion_stop.keepZeroFresh()" in transition
 
 
 def test_every_motion_admission_checks_runtime_guard_latch() -> None:
@@ -232,11 +248,9 @@ def test_operator_resume_required_clears_only_after_accepted_guard_resume() -> N
     assert "motion_stop_actions.clear_operator_resume_required" in motion_actions
     assert "control_loop_guard.completeResume" in resume_block
     assert re.search(
-        r"const\s+auto\s+resume_result\s*=\s*control_loop_guard\.completeResume\s*\(\s*result\.accepted\s*\)",
-        resume_block,
-    )
-    assert re.search(
-        r"if\s*\(\s*resume_result\.resume_completed\s*\).*operator_resume_required\s*=\s*false",
+        r"if\s*\(\s*!result\.pending\s*&&\s*control_loop_guard\.completeResume\s*"
+        r"\(\s*result\.accepted\s*\)\.resume_completed\s*\)\s*"
+        r"\{\s*operator_resume_required\s*=\s*false",
         resume_block,
         re.DOTALL,
     )

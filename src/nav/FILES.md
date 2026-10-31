@@ -8,13 +8,13 @@ This is a short index of the current navigation implementation.
 | Host goal/cancel/stop entry | `services/goals.py`, `commands/module.py` |
 | Agent/MCP navigation surface | `skills/skills_module.py` |
 | Native client boundary | `adapters/native/` |
-| Inspection | `inspection/service.py`, `cpp/inspection/`, `cpp/endpoint/nav/runtime/inspection/` |
+| Inspection | `inspection/service.py`, `cpp/inspection/`, `cpp/endpoint/nav/app/inspection/` |
 | Global planning | `cpp/planning/global/` |
 | Local planning | `cpp/planning/local/` |
 | CMU path bank | `cpp/planning/local/cmu/paths/` |
 | Tracking and route execution | `cpp/tracking/`, `cpp/navigation/` |
 | Final safety and authority | `cpp/endpoint/nav/safety/`, `cpp/endpoint/nav/control/` |
-| DDS process boundary | `cpp/endpoint/nav/dds/`, `cpp/endpoint/nav/runtime/` |
+| DDS process boundary | `cpp/endpoint/nav/dds/`, `cpp/endpoint/nav/app/` |
 | Native command client | `cpp/client/` |
 | Tests | `../../tests/nav/`, `../../tests/explore/` |
 

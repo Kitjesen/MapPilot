@@ -1,3 +1,4 @@
+import ctypes
 import re
 from pathlib import Path
 
@@ -72,6 +73,44 @@ def test_native_inspection_c_api_exports_store_abi_version() -> None:
 
     assert "lingtu_inspection_store_abi_version" in header
     assert "lingtu_inspection_store_abi_version" in source
+
+
+def test_native_inspection_put_marshals_loop_interval(monkeypatch, tmp_path) -> None:
+    library = _FakeInspectionLibrary(abi_version=native_inspection.NATIVE_INSPECTION_STORE_ABI_VERSION)
+    monkeypatch.setattr(native_inspection, "_load_library", lambda: library)
+    captured = {}
+
+    def put(_handle, pointer):
+        route = ctypes.cast(pointer, ctypes.POINTER(native_inspection._Route)).contents
+        captured["loop_interval_s"] = route.loop_interval_s
+        captured["loop_count"] = route.loop_count
+        return 0
+
+    library.lingtu_inspection_store_put = put
+    monkeypatch.setattr(native_inspection.NativeInspectionStore, "get", lambda *_args: captured)
+    with native_inspection.NativeInspectionStore(tmp_path) as store:
+        result = store.put({"id": "route-a", "map_id": "map-a", "loop_count": 2,
+                            "loop_interval_s": 42.125, "points": [{"id": "point-a"}]})
+    assert result == {"loop_interval_s": 42.125, "loop_count": 2}
+
+
+@pytest.mark.parametrize("interval", [-1.0, float("nan"), float("inf")])
+def test_route_schema_rejects_unusable_loop_interval(interval) -> None:
+    from gateway.schemas import InspectionRouteRequest
+
+    with pytest.raises(ValueError):
+        InspectionRouteRequest(id="route-a", map_id="map-a", revision=1,
+                               loop_interval_s=interval,
+                               points=[{"id": "point-a", "x": 0.0, "y": 0.0}])
+
+
+def test_route_schema_defaults_old_routes_to_no_wait() -> None:
+    from gateway.schemas import InspectionRouteRecord, InspectionRouteRequest
+
+    request = InspectionRouteRequest(id="route-a", map_id="map-a", revision=1,
+                                     points=[{"id": "point-a", "x": 0.0, "y": 0.0}])
+    assert request.loop_interval_s == 0.0
+    assert InspectionRouteRecord(id="route-a").loop_interval_s == 0.0
 
 
 def _c_function_body(source: str, function_name: str) -> str:

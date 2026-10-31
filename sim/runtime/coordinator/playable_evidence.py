@@ -30,7 +30,7 @@ PLAYABLE_PRODUCT: Mapping[str, str] = MappingProxyType(
         "robot_package": "thunderv4@1.0.3",
         "robot_instance_id": "thunder_01",
         "robot_color": "black_graphite",
-        "controller_package": "thunderv4_locomotion@1.0.0",
+        "controller_package": "thunderv4_cts_moe@1.0.0",
     }
 )
 
@@ -113,23 +113,20 @@ _CAMERA_STREAMS = frozenset(
 )
 _WIDTH = 1920
 _HEIGHT = 1080
-_CONTROLLER_MANIFEST_PATH = "sim/packages/controllers/doso/thunder_v4/locomotion/controller.package.yaml"
+_CONTROLLER_MANIFEST_PATH = "sim/packages/controllers/doso/thunder_v4/cts_moe/controller.package.yaml"
 _CONTROLLER_COMMAND_CALIBRATION: Mapping[str, Any] = {
     "schema": "lingtu.sim.controller-command-calibration.v1",
-    "scope": "quadruped_him_observation_only",
+    "scope": "thunder_cts_moe_si_commands",
     "provenance": {
-        "source_id": "factory_park_turn_truth_qa_20260809",
-        "audit_note": (
-            "Source identifier records the calibration rationale only; no warehouse "
-            "artifact is claimed as yaw-turn qualification proof."
-        ),
+        "source_id": "cts_moe_v39_runtime_contract",
+        "audit_note": ("CTS v39 receives SI base twist without a separate yaw gain; this is not motion qualification."),
         "qualification_claim": False,
     },
     "external_yaw_cap_radps": 0.35,
-    "policy_yaw_observation_gain": 1.2857142857142858,
-    "policy_yaw_observation_limit_radps": 0.45,
+    "policy_yaw_observation_gain": 1.0,
+    "policy_yaw_observation_limit_radps": 0.35,
     "leaves_base_twist_unchanged": True,
-    "affected_axes": ["angular_z"],
+    "affected_axes": [],
 }
 
 
@@ -277,7 +274,7 @@ class PinnedPlayableMediaToolchain:
         self._require_unchanged()
         path = self.paths[name]
         try:
-            completed = subprocess.run(  # noqa: S603 - exact hash-pinned argv.
+            completed = subprocess.run(  # Exact hash-pinned argv.
                 [str(path), *arguments],
                 check=False,
                 capture_output=True,
@@ -526,7 +523,7 @@ def _controller_calibration_document(identity: _Identity) -> dict[str, Any]:
     return {
         "schema": "lingtu.sim.playable-controller-calibration.v1",
         **identity.fields(),
-        "controller_package_id": "thunderv4_locomotion",
+        "controller_package_id": "thunderv4_cts_moe",
         "controller_package_version": "1.0.0",
         "controller_manifest_path": _CONTROLLER_MANIFEST_PATH,
         "command_calibration": _CONTROLLER_COMMAND_CALIBRATION,

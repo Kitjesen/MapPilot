@@ -129,8 +129,8 @@ def test_core_message_defaults_use_runtime_frame_helpers() -> None:
     assert Image().frame_id == camera_frame_id()
 
 
-def test_fastlio2_adapter_exposes_native_odometry_source() -> None:
-    assert adapter_source_for_target("fastlio2", TOPICS.odometry) == "/Odometry"
+def test_ltlio_adapter_exposes_native_odometry_source() -> None:
+    assert adapter_source_for_target("ltlio", TOPICS.odometry) == "/Odometry"
 
 
 def _safe_report() -> dict:

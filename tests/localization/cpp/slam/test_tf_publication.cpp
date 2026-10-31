@@ -132,6 +132,62 @@ void testReturnedTfPublishesOwnedValues() {
       if (!received) std::this_thread::sleep_for(std::chrono::milliseconds(5));
     } while (!received && std::chrono::steady_clock::now() < deadline);
     testRequire(received, "global mapping snapshot did not reach native DDS");
+    const auto geometry_topic=checked(dds_create_topic(participant,&lingtu_dds_SlamMapGeometrySnapshot_desc,
+        lingtu::message::kSlamMapGeometrySnapshot.dds_topic.data(),nullptr,nullptr),"geometry topic");
+    const auto geometry_qos=make_qos(QosProfile::SystemStatus);
+    // Publish before discovery: transient metadata must reach a late reader.
+    lingtu::slam::MapGeometrySnapshot geometry{101,12,345,"map","/tmp/frozen-geometry",15};
+    geometry.captured_stamp_ns=123456789000LL;
+    geometry.map_body={100,2,3,0,0,std::sqrt(.5),std::sqrt(.5)};
+    geometry.sensor_origin_z_m=3.2;
+    publisher.writeGeometrySnapshot(geometry);
+    const auto geometry_reader=checked(dds_create_reader(participant,geometry_topic,geometry_qos.get(),nullptr),
+                                      "geometry reader");
+    const auto geometry_deadline=std::chrono::steady_clock::now()+std::chrono::seconds(3);
+    bool geometry_received=false;
+    do {
+      void* samples[1]{};
+      dds_sample_info_t infos[1]{};
+      const auto count=checked(dds_take(geometry_reader,samples,infos,1,1),"geometry take");
+      if (count>0) {
+        if (infos[0].valid_data) {
+          const auto& sample=*static_cast<lingtu_dds_SlamMapGeometrySnapshot*>(samples[0]);
+          testRequire(sample.reset_epoch==101 && sample.graph_revision==12 && sample.captured_sequence==345 &&
+              sample.keyframe_count==15 && sample.captured_stamp_ns==123456789000LL,
+              "production geometry identity/source stamp changed");
+          testRequire(std::string(sample.frozen_dir)==geometry.frozen_dir && std::string(sample.frame_id)=="map",
+              "production geometry strings changed");
+          requireNear(sample.map_body.position.x,100,"geometry anchor x changed");
+          requireNear(sample.map_body.orientation.z,std::sqrt(.5),"geometry anchor rotation changed");
+          requireNear(sample.sensor_origin_z_m,3.2,"geometry physical origin height changed");
+          geometry_received=true;
+        }
+        checked(dds_return_loan(geometry_reader,samples,count),"geometry return loan");
+      }
+      if (!geometry_received) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    } while (!geometry_received && std::chrono::steady_clock::now()<geometry_deadline);
+    testRequire(geometry_received,"production geometry snapshot did not reach late reader");
+    const auto ack_topic=checked(dds_create_topic(participant,&lingtu_dds_SlamMapGeometryApplied_desc,
+        lingtu::message::kSlamMapGeometryApplied.dds_topic.data(),nullptr,nullptr),"geometry ack topic");
+    const auto ack_qos=make_qos(QosProfile::CommandAck);
+    const auto ack_writer=checked(dds_create_writer(participant,ack_topic,ack_qos.get(),nullptr),"geometry ack writer");
+    lingtu_dds_SlamMapGeometryApplied ack{};
+    ack.reset_epoch=101;
+    ack.graph_revision=12;
+    ack.success=true;
+    ack.message=const_cast<char*>("applied");
+    checked(dds_write(ack_writer,&ack),"geometry ack publish");
+    bool ack_received=false;
+    const auto ack_deadline=std::chrono::steady_clock::now()+std::chrono::seconds(3);
+    do {
+      publisher.drainGeometryApplied([&](const lingtu_dds_SlamMapGeometryApplied& sample) {
+        testRequire(sample.reset_epoch==101 && sample.graph_revision==12 && sample.success &&
+            std::string(sample.message)=="applied","production geometry ack changed");
+        ack_received=true;
+      });
+      if (!ack_received) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    } while (!ack_received && std::chrono::steady_clock::now()<ack_deadline);
+    testRequire(ack_received,"production geometry applied reader did not receive receipt");
   }
   checked(dds_delete(participant), "test dds_delete participant");
   checked(dds_delete(domain), "test dds_delete domain");

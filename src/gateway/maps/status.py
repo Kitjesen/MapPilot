@@ -24,14 +24,6 @@ class _SceneSnapshot:
     elevation_identity_valid: bool
 
 
-@dataclass(frozen=True)
-class _DynamicResidualSnapshot:
-    source_stamp_s: float | None
-    product_session_id: str | None
-    reset_epoch: int | None
-    ready: bool
-
-
 def _as_mapping(value: Any) -> Mapping[str, Any] | None:
     if isinstance(value, Mapping):
         return value
@@ -99,9 +91,8 @@ class EnvironmentMapFeedback:
     """Retain one small, identity-checked view of the current MapScene.
 
     The public interface deliberately exposes operator states rather than wire
-    identity fields.  Producer/epoch/sequence metadata is checked here so a
-    later full risk layer can join the same scene without teaching callers
-    those internal details.
+    identity fields. Producer/epoch/sequence metadata only determines whether
+    displayed layers are current; this feedback does not authorize navigation.
     """
 
     def __init__(self, *, freshness_limit_s: float = _DEFAULT_FRESHNESS_LIMIT_S) -> None:
@@ -110,7 +101,6 @@ class EnvironmentMapFeedback:
         self._freshness_limit_s = freshness_limit_s
         self._lock = threading.Lock()
         self._scene: _SceneSnapshot | None = None
-        self._dynamic_residual: _DynamicResidualSnapshot | None = None
         self._reset_pending = False
 
     def observe_scene(self, frame: Any) -> None:
@@ -159,123 +149,12 @@ class EnvironmentMapFeedback:
             self._scene = scene
             self._reset_pending = False
 
-    def observe_dynamic_residual(self, evidence: Any) -> None:
-        """Retain explicit residual-clearance evidence for inspection admission."""
-
-        raw = _as_mapping(evidence)
-        snapshot = None
-        if raw is not None:
-            product_session_id = str(raw.get("product_session_id") or "").strip() or None
-            snapshot = _DynamicResidualSnapshot(
-                source_stamp_s=_finite_float(raw.get("ts")),
-                product_session_id=product_session_id,
-                reset_epoch=_positive_int_or_none(raw.get("reset_epoch")),
-                ready=raw.get("ready") is True,
-            )
-        with self._lock:
-            self._dynamic_residual = snapshot
-
     def clear(self) -> None:
         """Drop the old coordinate era before the next MapScene is accepted."""
 
         with self._lock:
             self._scene = None
-            self._dynamic_residual = None
             self._reset_pending = True
-
-    def inspection_admission(
-        self,
-        *,
-        map_readiness_checked: bool,
-        map_readiness_reason: str | None,
-        product_session_id: str | None,
-        now_s: float | None = None,
-    ) -> dict[str, Any]:
-        """Compose mapd readiness with scene-bound residual evidence.
-
-        ``map_readiness_reason`` remains owned by HostBus. This method does not
-        reconstruct mapd state; it only binds that verdict to the scene seen by
-        Gateway and to separately supplied dynamic-residual evidence.
-        """
-
-        now = time.time() if now_s is None else now_s
-        if not math.isfinite(now):
-            raise ValueError("now_s must be finite")
-        with self._lock:
-            scene = self._scene
-            dynamic_residual = self._dynamic_residual
-            reset_pending = self._reset_pending
-
-        scene_layer, _elevation_layer = self._scene_layers(
-            scene,
-            reset_pending=reset_pending,
-            now_s=now,
-        )
-        blockers: list[str] = []
-        if scene_layer["state"] != "ready":
-            blockers.append(str(scene_layer["message_code"]))
-
-        normalized_map_reason = str(map_readiness_reason or "").strip() or None
-        if not map_readiness_checked:
-            blockers.append(normalized_map_reason or "map_readiness_evidence_missing")
-        elif normalized_map_reason is not None:
-            blockers.append(normalized_map_reason)
-
-        expected_session_id = str(product_session_id or "").strip() or None
-        if expected_session_id is None:
-            blockers.append("product_session_id_missing")
-
-        residual_fresh: bool | None = None
-        residual_session_matches: bool | None = None
-        residual_reset_matches: bool | None = None
-        if dynamic_residual is None:
-            blockers.append("dynamic_residual_evidence_missing")
-        else:
-            if dynamic_residual.source_stamp_s is None:
-                blockers.append("dynamic_residual_timestamp_missing")
-            else:
-                residual_fresh = (
-                    0.0 <= now - dynamic_residual.source_stamp_s <= self._freshness_limit_s
-                )
-                if not residual_fresh:
-                    blockers.append("dynamic_residual_stale")
-            if not dynamic_residual.ready:
-                blockers.append("dynamic_residual_not_ready")
-            residual_session_matches = bool(
-                expected_session_id is not None
-                and dynamic_residual.product_session_id == expected_session_id
-            )
-            if not residual_session_matches:
-                blockers.append("dynamic_residual_session_mismatch")
-            residual_reset_matches = bool(
-                scene is not None
-                and scene.reset_epoch is not None
-                and dynamic_residual.reset_epoch == scene.reset_epoch
-            )
-            if not residual_reset_matches:
-                blockers.append("dynamic_residual_reset_mismatch")
-
-        blockers = list(dict.fromkeys(blockers))
-        return {
-            "ready": not blockers,
-            "blockers": blockers,
-            "scene": {
-                "state": scene_layer["state"],
-                "message_code": scene_layer["message_code"],
-            },
-            "mapd": {
-                "readiness_checked": map_readiness_checked,
-                "ready": map_readiness_checked and normalized_map_reason is None,
-                "reason": normalized_map_reason,
-            },
-            "dynamic_residual": {
-                "present": dynamic_residual is not None,
-                "ready": dynamic_residual.ready if dynamic_residual is not None else False,
-                "fresh": residual_fresh,
-                "session_matches": residual_session_matches,
-                "reset_matches": residual_reset_matches,
-            },
-        }
 
     def snapshot(
         self,

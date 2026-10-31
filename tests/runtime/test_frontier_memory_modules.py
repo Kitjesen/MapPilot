@@ -2,9 +2,9 @@
 
 import pytest
 
-from memory.modules.episodic_module import EpisodicMemoryModule
-from memory.modules.tagged_locations_module import TaggedLocationsModule
-from memory.modules.topological_module import TopologicalMemoryModule
+from memory.modules.episodic import EpisodicMemoryModule
+from memory.modules.locations import TaggedLocationsModule
+from memory.modules.topology import TopologicalMemoryModule
 from runtime import Module, Out, autoconnect
 from runtime.msgs.geometry import Pose, PoseStamped, Vector3
 from runtime.msgs.nav import Odometry
@@ -284,8 +284,8 @@ class TestAutoconnectPerceptionMemory:
     def test_autoconnect_topo_memory(self):
         SourceModule = self._make_source_module()
         system = autoconnect(
-            SourceModule.blueprint(),
-            TopologicalMemoryModule.blueprint(new_node_distance=1.0),
+            SourceModule.compose(),
+            TopologicalMemoryModule.compose(new_node_distance=1.0),
         ).build()
         system.start()
         src = system.get_module("SourceModule")
@@ -299,8 +299,8 @@ class TestAutoconnectPerceptionMemory:
     def test_autoconnect_episodic_memory(self):
         SourceModule = self._make_source_module()
         system = autoconnect(
-            SourceModule.blueprint(),
-            EpisodicMemoryModule.blueprint(min_distance_m=0.1),
+            SourceModule.compose(),
+            EpisodicMemoryModule.compose(min_distance_m=0.1),
         ).build()
         system.start()
         src = system.get_module("SourceModule")
@@ -314,9 +314,9 @@ class TestAutoconnectPerceptionMemory:
     def test_autoconnect_multiple_memory_modules(self):
         SourceModule = self._make_source_module()
         system = autoconnect(
-            SourceModule.blueprint(),
-            TopologicalMemoryModule.blueprint(new_node_distance=1.0),
-            EpisodicMemoryModule.blueprint(min_distance_m=0.1),
+            SourceModule.compose(),
+            TopologicalMemoryModule.compose(new_node_distance=1.0),
+            EpisodicMemoryModule.compose(min_distance_m=0.1),
         ).build()
         system.start()
         src = system.get_module("SourceModule")

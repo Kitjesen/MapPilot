@@ -36,7 +36,7 @@ python -m lingtu.control stop --robot doso/thunder_v4 --env sim
 
 The `nav` command requires a built saved map named `factory_workshop_v2` in
 the configured map root. It must not reuse the old industrial-park map. The
-current CLI uses the repository's Fast-LIO2 default; changing the world does
+current CLI uses the repository's LTLIO default; changing the world does
 not change localization. The campus startup check uses the existing explicit
 truth-localization option through the public ProductControl API instead:
 
@@ -50,7 +50,7 @@ control = ProductControl(
 control.switch("nav", map_name="factory_workshop_v2", local_planner="scan")
 ```
 
-This is the diagnostic truth path, not Fast-LIO2 qualification. Mapd and Navd
+This is the diagnostic truth path, not LTLIO qualification. Mapd and Navd
 must be built from the same current message contract; an older Mapd binary
 can publish collision messages that the newer Navd cannot deserialize.
 

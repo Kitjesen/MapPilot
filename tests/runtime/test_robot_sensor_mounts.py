@@ -12,14 +12,14 @@ from drivers.real.camera.module import _default_camera_config
 from runtime.tf.mounts import lidar_extrinsic
 
 ROOT = Path(__file__).resolve().parents[2]
-GO2_OFFICIAL_MID360_XYZ = (
-    0.16143,
+GO2_RAISED_MID360_XYZ = (
+    0.24,
     0.0,
-    0.12262,
+    0.20262,
 )
-GO2_OFFICIAL_MID360_RPY = (
+GO2_RAISED_MID360_RPY = (
     0.0,
-    math.radians(13.0),
+    math.radians(35.0),
     0.0,
 )
 THUNDER_V4_MID360_XYZ = (
@@ -62,11 +62,11 @@ def test_mid360_contract_keeps_go2_and_thunder_mounts_distinct() -> None:
     lidar = robot["lidar"]
     authoritative_xyz = (lidar["offset_x"], lidar["offset_y"], lidar["offset_z"])
     authoritative_rpy = (lidar["roll"], lidar["pitch"], lidar["yaw"])
-    assert authoritative_xyz == pytest.approx(GO2_OFFICIAL_MID360_XYZ)
-    assert authoritative_rpy == pytest.approx(GO2_OFFICIAL_MID360_RPY)
+    assert authoritative_xyz == pytest.approx(GO2_RAISED_MID360_XYZ)
+    assert authoritative_rpy == pytest.approx(GO2_RAISED_MID360_RPY)
 
     expected = {
-        "go2_mid360": (GO2_OFFICIAL_MID360_XYZ, GO2_OFFICIAL_MID360_RPY),
+        "go2_mid360": (GO2_RAISED_MID360_XYZ, GO2_RAISED_MID360_RPY),
         "thunder_v4_mid360": (THUNDER_V4_MID360_XYZ, THUNDER_V4_MID360_RPY),
     }
     for profile, (xyz, rpy) in expected.items():
@@ -83,11 +83,11 @@ def test_mid360_contract_keeps_go2_and_thunder_mounts_distinct() -> None:
 @pytest.mark.parametrize(
     ("model_id", "expected_xyz"),
     (
-        ("unitree/go2", GO2_OFFICIAL_MID360_XYZ),
+        ("unitree/go2", GO2_RAISED_MID360_XYZ),
         ("doso/thunder_v4", THUNDER_V4_MID360_XYZ),
     ),
 )
-def test_robot_specific_fastlio_config_reconstructs_its_lidar_mount(
+def test_robot_specific_ltlio_config_reconstructs_its_lidar_mount(
     model_id: str,
     expected_xyz: tuple[float, float, float],
 ) -> None:
@@ -96,7 +96,7 @@ def test_robot_specific_fastlio_config_reconstructs_its_lidar_mount(
         (model_dir / "model.yaml").read_text(encoding="utf-8")
     )
     config = yaml.safe_load(
-        (model_dir / model["sensors"]["mid360"]["fastlio2_config"]).read_text(
+        (model_dir / model["sensors"]["mid360"]["ltlio_config"]).read_text(
             encoding="utf-8"
         )
     )
@@ -121,5 +121,8 @@ def test_go2_config_does_not_claim_thunder_camera_calibration() -> None:
         )
     )
 
-    assert "camera" not in config
+    assert config["calibration"]["camera"]["status"] == "unverified"
+    assert config["camera"]["capture_driver"] == "realsense_native"
+    assert "extrinsics" not in config["camera"]
+    assert "rotate" not in config["camera"]
     assert "rotate" not in _default_camera_config()

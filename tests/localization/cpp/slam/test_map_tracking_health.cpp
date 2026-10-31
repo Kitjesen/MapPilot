@@ -60,6 +60,29 @@ int main() {
   Require(stale_result.reason == "map_tracking_stale", "stale_reason");
   Require(stale_result.confidence == 0.0, "stale_confidence_nonzero");
 
+  auto transport = stale;
+  transport.transport_active = true;
+  transport.last_success_age_s = 120.0;
+  const auto riding = ProjectMapTrackingHealth(
+      SlamState::Tracking, 0.8, "tracking", transport);
+  Require(riding.state == SlamState::Tracking && !riding.degraded,
+          "transport_wait_false_stale");
+  Require(riding.confidence == 0.8, "transport_wait_lost_confidence");
+  auto failed_transport = transport;
+  failed_transport.consecutive_failures = 3;
+  Require(ProjectMapTrackingHealth(SlamState::Tracking, 0.8, "tracking", failed_transport).reason ==
+              "map_tracking_repeated_failures", "transport_masked_actual_failure");
+  failed_transport.successes = 0;
+  failed_transport.consecutive_failures = 0;
+  Require(ProjectMapTrackingHealth(SlamState::Tracking, 0.8, "tracking", failed_transport).state ==
+              SlamState::Localizing, "transport_invented_initial_alignment");
+  transport.transport_active = false;
+  Require(ProjectMapTrackingHealth(SlamState::Tracking, 0.8, "tracking", transport).reason ==
+              "map_tracking_stale", "exit_did_not_restore_map_health_check");
+  transport.transport_active = true;
+  Require(ProjectMapTrackingHealth(SlamState::Lost, 0.0, "backend_lost", transport).state ==
+              SlamState::Lost, "transport_masked_backend_loss");
+
   const auto lost = ProjectMapTrackingHealth(
       SlamState::Lost, 0.0, "backend_lost", stale);
   Require(lost.state == SlamState::Lost, "terminal_backend_state_overridden");

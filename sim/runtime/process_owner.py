@@ -40,6 +40,7 @@ if os.name == "nt":
     _JOB_OBJECT_LIMIT_AFFINITY = 0x00000010
     _JOB_OBJECT_LIMIT_PRIORITY_CLASS = 0x00000020
     _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS = 9
+    _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION_CLASS = 1
     _PROCESS_TERMINATE = 0x0001
     _PROCESS_SET_QUOTA = 0x0100
     _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
@@ -64,6 +65,18 @@ if os.name == "nt":
             ("ReadTransferCount", ctypes.c_uint64),
             ("WriteTransferCount", ctypes.c_uint64),
             ("OtherTransferCount", ctypes.c_uint64),
+        ]
+
+    class _BasicAccountingInformation(ctypes.Structure):
+        _fields_ = [
+            ("TotalUserTime", ctypes.c_int64),
+            ("TotalKernelTime", ctypes.c_int64),
+            ("ThisPeriodTotalUserTime", ctypes.c_int64),
+            ("ThisPeriodTotalKernelTime", ctypes.c_int64),
+            ("TotalPageFaultCount", wintypes.DWORD),
+            ("TotalProcesses", wintypes.DWORD),
+            ("ActiveProcesses", wintypes.DWORD),
+            ("TotalTerminatedProcesses", wintypes.DWORD),
         ]
 
     class _BasicLimitInformation(ctypes.Structure):
@@ -267,6 +280,24 @@ if os.name == "nt":
             if self._handle is not None and not _KERNEL32.TerminateJobObject(self._handle, 1):
                 raise ctypes.WinError(ctypes.get_last_error())
 
+        def wait_empty(self, timeout_s: float) -> None:
+            deadline = time.monotonic() + timeout_s
+            while self._handle is not None:
+                accounting = _BasicAccountingInformation()
+                if not _KERNEL32.QueryInformationJobObject(
+                    self._handle,
+                    _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION_CLASS,
+                    ctypes.byref(accounting),
+                    ctypes.sizeof(accounting),
+                    None,
+                ):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                if accounting.ActiveProcesses == 0:
+                    return
+                if time.monotonic() >= deadline:
+                    raise ProcessOwnershipError("Windows process Job remained alive after termination")
+                time.sleep(0.01)
+
         def close(self) -> None:
             handle = self._handle
             self._handle = None
@@ -406,6 +437,7 @@ class ProcessTreeOwner:
             if self._job is not None:
                 self._job.terminate()
                 self._wait_direct(process, timeout_s)
+                self._job.wait_empty(timeout_s)
             elif self._process_group is not None and os.name == "posix":
                 self._terminate_posix_group(process, timeout_s)
             else:
@@ -417,7 +449,10 @@ class ProcessTreeOwner:
         """Release an exited direct child and remove lingering descendants."""
 
         try:
-            if self._process_group is not None and os.name == "posix":
+            if self._job is not None:
+                self._job.terminate()
+                self._job.wait_empty(5.0)
+            elif self._process_group is not None and os.name == "posix":
                 self._signal_group(signal.SIGTERM)
                 self._wait_group_empty(0.5)
                 self._signal_group(signal.SIGKILL)  # type: ignore[attr-defined]

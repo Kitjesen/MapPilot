@@ -124,6 +124,8 @@ def _attached_children(
     children: dict[str, SimChildRecord] = {}
     for name in _ATTACHED_PROCESSES:
         process = next((item for item in plan.processes if item.name == name), None)
+        if name == "camera_publisher" and process is None:
+            continue
         if process is None:
             raise RuntimeError(f"map RunPlan does not declare {name}")
         records = [item for item in snapshot.children if item.target == process.target]
@@ -149,6 +151,8 @@ def _readiness(
         "map_runtime",
     ):
         process = next((item for item in plan.processes if item.name == name), None)
+        if name == "camera_publisher" and process is None:
+            continue
         if process is None or process.command is None or process.command.readiness is None:
             raise RuntimeError(f"map RunPlan does not declare {name} readiness")
         readiness = process.command.readiness
@@ -253,11 +257,18 @@ def _run_attached_acceptance(
     children = _attached_children(plan, state_root, session_id)
     readiness = _readiness(plan, state_root, children, session_id)
     child_identity_before = _revalidate_children(children)
-    before = _camera(state_root, children["mujoco_feeder"].started_wall_ns)
+    before = (
+        _camera(state_root, children["mujoco_feeder"].started_wall_ns)
+        if "camera_publisher" in children else None
+    )
     saved, save_started_ns = _map_save(plan, session_id, timeout_s)
     child_identity_after = _revalidate_children(children)
-    after = _camera(state_root, children["mujoco_feeder"].started_wall_ns)
-    _require_camera_advanced(before, after, save_started_ns)
+    after = (
+        _camera(state_root, children["mujoco_feeder"].started_wall_ns)
+        if "camera_publisher" in children else None
+    )
+    if before is not None and after is not None:
+        _require_camera_advanced(before, after, save_started_ns)
     if _attached_context(plan, run_plan_path) != (state_root, session_id, current_before):
         raise RuntimeError("strict map acceptance current identity changed during Gateway save")
     report: dict[str, Any] = {
@@ -276,10 +287,11 @@ def _run_attached_acceptance(
             "after_save": child_identity_after,
         },
         "readiness": {name: dict(value) for name, value in readiness.items()},
-        "camera": {"before": before, "after": after},
         "map_save": dict(saved),
         "blockers": [],
     }
+    if before is not None:
+        report["camera"] = {"before": before, "after": after}
     report.update(
         classify_evidence(manifest.get("acceptance_scope"), run_plan_verified=True, acceptance_evaluated=True, ok=True)
     )

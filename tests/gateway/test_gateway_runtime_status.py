@@ -28,8 +28,8 @@ def _payload(response_or_payload):
 
 
 def _field_manifest(profile: str, *, variant: str | None = None, local_planner: str | None = None):
-    from lingtu.assembly.compiler import compile_run_plan
-    from lingtu.assembly.products import resolve_product_host_runtime
+    from lingtu.assembly.compile_plan import compile_run_plan
+    from lingtu.assembly.config.product import resolve_product_host_runtime
 
     resolved = resolve_product_host_runtime(
         profile,
@@ -98,9 +98,9 @@ def _write_active_same_source_octomap(map_root):
                 "schema_version": "lingtu.saved_map_artifacts.v1",
                 "source_profile": "thunder",
                 "data_source": "field",
-                "slam_source": "fastlio2",
-                "localization_source": "fastlio2",
-                "mapping_source": "fastlio2",
+                "slam_source": "ltlio",
+                "localization_source": "ltlio",
+                "mapping_source": "ltlio",
                 "frame_id": "map",
                 "created_at": "2026-05-25T00:00:00Z",
                 "artifacts": {
@@ -108,7 +108,7 @@ def _write_active_same_source_octomap(map_root):
                         "path": "map.pcd",
                         "source_profile": "thunder",
                         "data_source": "field",
-                        "slam_source": "fastlio2",
+                        "slam_source": "ltlio",
                         "frame_id": "map",
                         "point_count": 1,
                     },
@@ -252,7 +252,7 @@ def test_localization_status_covers_product_states():
             "state": "TRACKING",
             "confidence": 0.66,
             "quality": 0.66,
-            "backend": "fastlio2",
+            "backend": "ltlio",
             "health_source": "slam_runtime",
             "pose_fresh": True,
             "has_odom": True,
@@ -275,7 +275,7 @@ def test_localization_status_covers_product_states():
     assert payload["ready"] is True
     assert payload["algorithm_healthy"] is True
     assert payload["backend"] == "native_dds"
-    assert payload["algorithm_profile"] == "fastlio2"
+    assert payload["algorithm_profile"] == "ltlio"
     assert payload["health_source"] == "slam_runtime"
     assert payload["has_map_odom_tf"] is True
 
@@ -288,7 +288,7 @@ def test_localization_status_covers_product_states():
     assert payload["ready"] is True
     with gateway._state_lock:
         gateway._localization_status = {
-            "backend": "fastlio2",
+            "backend": "ltlio",
             "health_source": "slam_runtime",
             "state": "DEGRADED",
             "confidence": 0.4,
@@ -339,7 +339,7 @@ def test_localization_status_covers_product_states():
 
     with gateway._state_lock:
         gateway._localization_status = {
-            "backend": "fastlio2",
+            "backend": "ltlio",
             "health_source": "slam_runtime",
             "state": "LOST",
             "confidence": 0.0,
@@ -631,7 +631,7 @@ def test_native_slam_status_separates_runtime_identity_algorithm_and_mode():
 
     gateway._on_localization_status(
         {
-            "backend": "fastlio2",
+            "backend": "ltlio",
             "health_source": "slam_runtime",
             "mode": "localization",
             "state": "TRACKING",
@@ -639,7 +639,7 @@ def test_native_slam_status_separates_runtime_identity_algorithm_and_mode():
     )
 
     assert gateway._localization_status["backend"] == "native_dds"
-    assert gateway._localization_status["algorithm_profile"] == "fastlio2"
+    assert gateway._localization_status["algorithm_profile"] == "ltlio"
     assert gateway._localization_status["slam_mode"] == "localization"
     assert gateway._localization_status["saved_map_relocalization_supported"] is True
 
@@ -788,7 +788,7 @@ def test_slam_profile_prefers_live_native_dds_status_over_stopped_session():
     gateway._session_slam_profile = "stopped"
     gateway._cached_slam_profile = "stopped"
     gateway._localization_status = {
-        "backend": "fastlio2",
+        "backend": "ltlio",
         "state": "TRACKING",
         "confidence": 0.95,
         "pose_fresh": True,
@@ -814,7 +814,7 @@ def test_slam_profile_keeps_native_dds_runtime_profile():
     assert (
         GatewayModule._slam_profile_from_status(
             {
-                "backend": "fastlio2",
+                "backend": "ltlio",
                 "health_source": "slam_runtime",
                 "mode": "mapping",
                 "state": "MAPPING",
@@ -825,7 +825,7 @@ def test_slam_profile_keeps_native_dds_runtime_profile():
     assert (
         GatewayModule._slam_profile_from_status(
             {
-                "backend": "fastlio2",
+                "backend": "ltlio",
                 "health_source": "slam_runtime",
                 "mode": "localization",
                 "state": "TRACKING",
@@ -836,7 +836,7 @@ def test_slam_profile_keeps_native_dds_runtime_profile():
     assert (
         GatewayModule._slam_profile_from_status(
             {
-                "backend": "fastlio2",
+                "backend": "ltlio",
                 "health_source": "slam_runtime",
                 "mode": "localization",
                 "state": "FAILED",
@@ -849,7 +849,7 @@ def test_slam_profile_keeps_native_dds_runtime_profile():
 @pytest.mark.parametrize(
     "rejected_backend",
     (
-        "fastlio2",
+        "ltlio",
         "pointlio",
         "genz",
         "localizer",
@@ -878,7 +878,7 @@ def test_slam_profile_accepts_only_native_runtime_identity():
     assert (
         GatewayModule._slam_profile_from_status(
             {
-                "backend": "fastlio2",
+                "backend": "ltlio",
                 "backend_profile": "native_dds",
                 "health_source": "dds_endpoint",
                 "state": "TRACKING",
@@ -1031,7 +1031,7 @@ def test_gateway_navigation_state_pushes_navigation_status_update():
         unsubscribe(gateway, queue)
 
     assert [event["type"] for event in events] == ["navigation_status"]
-    assert events[0]["data"]["task"]["state"] == "UNKNOWN"
+    assert events[0]["data"]["task"]["state"] == "EXECUTING"
     assert set(events[0]["data"]) == {
         "schema_version",
         "task",
@@ -1362,7 +1362,7 @@ def test_localizer_health_topic_recovered_marks_gateway_ready_when_icp_quality_i
     with gateway._state_lock:
         gateway._odom = {"x": 0.0}
         gateway._localization_status = {
-            "backend": "fastlio2",
+            "backend": "ltlio",
             "health_source": "slam_runtime",
             "state": "TRACKING",
             "confidence": 0.91,
@@ -1386,7 +1386,7 @@ def test_localizer_health_topic_recovered_marks_gateway_ready_when_icp_quality_i
     assert payload["ready"] is True
     assert payload["algorithm_healthy"] is True
     assert payload["backend"] == "native_dds"
-    assert payload["algorithm_profile"] == "fastlio2"
+    assert payload["algorithm_profile"] == "ltlio"
     assert payload["localizer_health"] == "RECOVERED"
     assert payload["localizer_health_source"] == "localizer_health_topic"
     assert payload["localizer_health_fitness"] == 0.0215

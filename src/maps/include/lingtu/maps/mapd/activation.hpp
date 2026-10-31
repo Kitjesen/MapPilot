@@ -5,7 +5,7 @@
 #include <utility>
 #include <vector>
 
-#include "lingtu/maps/store.hpp"
+#include "lingtu/maps/storage/store.hpp"
 
 namespace lingtu::maps::mapd {
 

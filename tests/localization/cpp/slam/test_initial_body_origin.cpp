@@ -20,7 +20,7 @@ ImuSample stationaryImu(double stamp_s) {
   ImuSample sample;
   sample.stamp_s = stamp_s;
   sample.qw = 1.0;
-  sample.az = 1.0;
+  sample.az = 9.80665;
   return sample;
 }
 
@@ -65,6 +65,7 @@ int main() {
       std::filesystem::temp_directory_path() / "lingtu_initial_body_origin.yaml";
   {
     std::ofstream config(config_path);
+    config << "imu_init_num: 20\nlidar_filter_num: 1\nelevator_mode: off\n";
     config << "reject_nonconverged_update: false\n";
     config << "reject_degenerate_nonconverged_update: true\n";
     config << "max_update_translation_m: 10.0\n";
@@ -77,12 +78,12 @@ int main() {
               "0.707106781186548, 0.0, -0.707106781186548]\n";
   }
 
-  auto backend = makeFastLioBackend();
-  require(backend != nullptr, "fastlio backend missing");
+  auto backend = makeLtlioBackend();
+  require(backend != nullptr, "ltlio backend missing");
   SlamConfig slam_config;
-  slam_config.backend = "fastlio2";
+  slam_config.backend = "ltlio";
   slam_config.config_path = config_path.string();
-  require(backend->configure(slam_config).ok, "fastlio configure failed");
+  require(backend->configure(slam_config).ok, "ltlio configure failed");
   require(backend->setMode(SlamMode::Mapping, "").ok, "mapping mode failed");
 
   for (int i = 0; i <= 60; ++i) {
@@ -90,9 +91,10 @@ int main() {
         backend->feedImu(stationaryImu(static_cast<double>(i) * 0.01)).ok,
         "stationary IMU feed failed");
   }
-  require(backend->feedLidar(structuredScan(0.20, 0.0F)).ok, "first scan failed");
-  require(backend->feedLidar(structuredScan(0.30, 0.02F)).ok, "second scan failed");
-  for (int i = 0; i < 4; ++i) {
+  for (int frame = 0; frame < 6; ++frame)
+    require(backend->feedLidar(structuredScan(0.20 + frame * 0.02, 0.0F)).ok,
+            "initial map scan failed");
+  for (int i = 0; i < 8; ++i) {
     require(backend->tick().ok, "initialization tick failed");
   }
 

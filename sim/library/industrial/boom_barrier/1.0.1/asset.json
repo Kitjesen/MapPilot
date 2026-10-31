@@ -1,0 +1,49 @@
+{
+  "category": "equipment",
+  "category_label": "设备",
+  "description": "固定机座、独立挡杆，0–90°限位。附 MuJoCo 电机与碰撞模型。",
+  "geometry": {
+    "animations": 0,
+    "bytes": 366064,
+    "embedded_images": 0,
+    "materials": 5,
+    "meshes": 29,
+    "normals": true,
+    "tangents": false,
+    "triangles": 6412,
+    "uv": true
+  },
+  "id": "boom_barrier",
+  "new_in_batch": true,
+  "notes": "PBR 材质参数与几何细节，无位图贴图。已通过单体 MuJoCo 机构测试，尚未在 UE 联动。 v1.0.1 转轴移至机箱侧面，补验无输入静置及回程；v1.0.0 已退役。",
+  "physics": "physics.xml",
+  "preview": "preview.png",
+  "qualification": {
+    "collision_ready": false,
+    "license_reviewed": false,
+    "physics_model_tested": true,
+    "physics_ready": false,
+    "status": "quarantined",
+    "ue_imported": false
+  },
+  "reference": "open.png",
+  "reference_label": "查看展开结构",
+  "scale_note": "米制机构设计；质量、摩擦、力矩为仿真假设，非实测标定",
+  "source": {
+    "credits_consumed": 0,
+    "provider": "LingTu procedural Blender authoring",
+    "source_script": "sim/tools/assets/author_interactive_props.py"
+  },
+  "title": "电动道闸",
+  "variants": [
+    {
+      "file": "model.glb",
+      "label": "静态结构"
+    },
+    {
+      "file": "open-close.glb",
+      "label": "机构行程预览"
+    }
+  ],
+  "version": "1.0.1"
+}

@@ -1,4 +1,5 @@
 #pragma once
+#include "lingtu/maps/layers/elevation.hpp"
 
 #include <algorithm>
 #include <cmath>

@@ -68,13 +68,15 @@ lingtu_dds_InspectionTaskEvent *inspection_event(std::uint64_t event_sequence, s
   event->kind = kind;
   event->task_id = text("inspection-task-1");
   event->request_id = text("request-1");
-  event->command_request_id = text("command-1");
   event->state = state;
   event->map_id = text("map-a");
   event->map_content_epoch = 4;
   event->route_id = text("route-a");
   event->route_revision = 9;
-  event->point_id = text("");
+  event->point_index = 2;
+  event->point_count = 3;
+  event->loop_index = 1;
+  event->retry_count = 2;
   event->action = text("");
   event->action_request_id = text("");
   event->evidence_id = text("");
@@ -266,6 +268,74 @@ int main(int argc, char **argv) {
   require(report.terminal_state == 9, "portable CDR timeline lost terminal state");
   require(report.confirmed_output_sequence == 71,
           "portable CDR timeline lost driver stop confirmation");
+
+  lingtu::recording::InspectionTimelineCapture recovered_capture;
+  recovered_capture.observe(*event_binding, accepted_message);
+  auto *before_restart = inspection_event(42, 2, 3);
+  auto before_restart_message = capture_sample(participant, *event_binding, before_restart, 200, sequence);
+  lingtu_dds_InspectionTaskEvent_free(before_restart, static_cast<dds_free_op_t>(DDS_FREE_ALL_BIT));
+  recovered_capture.observe(*event_binding, before_restart_message);
+  auto *restarted = inspection_event(43, 2, 5);
+  dds_free(restarted->boot_id);
+  restarted->boot_id = text("nav-boot-2");
+  dds_free(restarted->reason);
+  restarted->reason = text("restart_resume_required");
+  auto restart_message = capture_sample(participant, *event_binding, restarted, 300, sequence);
+  lingtu_dds_InspectionTaskEvent_free(restarted, static_cast<dds_free_op_t>(DDS_FREE_ALL_BIT));
+  recovered_capture.observe(*event_binding, restart_message);
+  auto *resumed = inspection_event(44, 2, 2);
+  dds_free(resumed->boot_id);
+  resumed->boot_id = text("nav-boot-2");
+  dds_free(resumed->request_id);
+  resumed->request_id = text("resume-request-2");
+  dds_free(resumed->reason);
+  resumed->reason = text("resumed_replan_current_leg");
+  auto resume_message = capture_sample(participant, *event_binding, resumed, 400, sequence);
+  lingtu_dds_InspectionTaskEvent_free(resumed, static_cast<dds_free_op_t>(DDS_FREE_ALL_BIT));
+  recovered_capture.observe(*event_binding, resume_message);
+  auto *resumed_output = lingtu_dds_FinalVelocityCommand__alloc();
+  *resumed_output = {};
+  resumed_output->host_boot_id = text("host-boot-1");
+  resumed_output->producer_boot_id = text("nav-boot-2");
+  resumed_output->output_seq = 7;
+  auto resumed_output_message = capture_sample(participant, *output_binding, resumed_output, 450, sequence);
+  lingtu_dds_FinalVelocityCommand_free(resumed_output, static_cast<dds_free_op_t>(DDS_FREE_ALL_BIT));
+  recovered_capture.observe(*output_binding, resumed_output_message);
+  auto *resumed_driver = lingtu_dds_DriverControlState__alloc();
+  *resumed_driver = {};
+  set_header(resumed_driver->header);
+  resumed_driver->connected = true;
+  resumed_driver->accepted_producer_boot_id = text("nav-boot-2");
+  resumed_driver->accepted_output_sequence = 7;
+  resumed_driver->last_command_accepted = true;
+  resumed_driver->fsm = text("ready");
+  resumed_driver->owner = text("nav");
+  resumed_driver->owner_id = text("nav-boot-2");
+  resumed_driver->reason = text("");
+  auto resumed_driver_message = capture_sample(participant, *driver_binding, resumed_driver, 475, sequence);
+  lingtu_dds_DriverControlState_free(resumed_driver, static_cast<dds_free_op_t>(DDS_FREE_ALL_BIT));
+  recovered_capture.observe(*driver_binding, resumed_driver_message);
+  auto *completed_resume = inspection_event(45, 2, 7);
+  dds_free(completed_resume->boot_id);
+  completed_resume->boot_id = text("nav-boot-2");
+  dds_free(completed_resume->request_id);
+  completed_resume->request_id = text("resume-request-2");
+  completed_resume->point_index = 3;
+  auto completed_resume_message = capture_sample(participant, *event_binding, completed_resume, 500, sequence);
+  lingtu_dds_InspectionTaskEvent_free(completed_resume, static_cast<dds_free_op_t>(DDS_FREE_ALL_BIT));
+  recovered_capture.observe(*event_binding, completed_resume_message);
+  require(recovered_capture.verify("inspection-task-1").ok,
+          "portable CDR timeline rejected a checkpoint pause and explicit resume");
+
+  lingtu::recording::InspectionTimelineCapture stale_recovery_ack;
+  for (const auto& message : {accepted_message, before_restart_message, restart_message,
+                              resume_message, completed_resume_message}) {
+    stale_recovery_ack.observe(*event_binding, message);
+  }
+  stale_recovery_ack.observe(*output_binding, resumed_output_message);
+  stale_recovery_ack.observe(*driver_binding, driver_message);
+  require(!stale_recovery_ack.verify("inspection-task-1").ok,
+          "portable CDR timeline used a pre-restart driver ACK for the new stop");
 
   const std::string event_wire_topic(event_binding->contract->dds_topic);
   const dds_entity_t drain_topic = dds_create_topic(

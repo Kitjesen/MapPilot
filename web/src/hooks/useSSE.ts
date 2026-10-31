@@ -158,6 +158,10 @@ function snapshotOdometry(snapshot: StateResponse): OdometryEvent | null {
       ? raw.orientation as [number, number, number, number] : null,
     vx: finiteNumber(raw.vx),
     wz: finiteNumber(raw.wz),
+    session_distance_m: finiteNumber(raw.session_distance_m),
+    session_distance_source: typeof raw.session_distance_source === 'string'
+      ? raw.session_distance_source
+      : null,
     frame_id: optionalString(raw.frame_id),
     child_frame_id: optionalString(raw.child_frame_id),
     ts: finiteNumber(raw.ts),

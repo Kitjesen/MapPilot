@@ -17,7 +17,7 @@ def main() -> int:
     """Execute one bounded Physics Runtime smoke session."""
 
     parser = argparse.ArgumentParser(
-        description="Run a resolved LingTu simulation bundle with the C++ MuJoCo host."
+        description="Run a Physics smoke test with zero actuator output; policy models are not loaded."
     )
     parser.add_argument("bundle", type=Path, help="ResolvedSessionBundle directory")
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())

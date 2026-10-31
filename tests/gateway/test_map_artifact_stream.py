@@ -8,7 +8,13 @@ import pytest
 pytest.importorskip("fastapi")
 
 
-def test_pcd_download_streams_mapd_descriptor_without_legacy_path_lookup(tmp_path) -> None:
+@pytest.mark.parametrize("route,capability,filename", [
+    ("pcd", "source_pointcloud", "map.pcd"),
+    ("octomap", "global_planning_3d", "octomap.ot"),
+])
+def test_map_download_streams_mapd_descriptor_without_legacy_path_lookup(
+    tmp_path, route, capability, filename,
+) -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -27,7 +33,12 @@ def test_pcd_download_streams_mapd_descriptor_without_legacy_path_lookup(tmp_pat
             self.calls.append((map_id, capability))
             descriptor = os.open(path, os.O_RDONLY)
             return ArtifactHandle(
-                metadata={"success": True, "map_id": map_id},
+                metadata={
+                    "success": True,
+                    "map_id": map_id,
+                    "content_epoch": 17,
+                    "frame_id": "map",
+                },
                 size_bytes=len(payload),
                 filename="map.pcd",
                 _descriptor=descriptor,
@@ -38,14 +49,18 @@ def test_pcd_download_streams_mapd_descriptor_without_legacy_path_lookup(tmp_pat
     app = FastAPI()
     register_map_routes(app, gateway)
 
-    response = TestClient(app).get("/api/v1/maps/yard/pcd")
+    response = TestClient(app).get(f"/api/v1/maps/yard/{route}")
 
     assert response.status_code == 200
     assert response.content == payload
     assert response.headers["content-length"] == str(len(payload))
-    assert response.headers["content-disposition"] == 'attachment; filename="map.pcd"'
+    assert response.headers["content-disposition"] == f'attachment; filename="{filename}"'
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-lingtu-map-id"] == "yard"
+    assert response.headers["x-lingtu-content-epoch"] == "17"
+    assert response.headers["x-lingtu-frame-id"] == "map"
     assert "etag" not in response.headers
-    assert map_client.calls == [("yard", "source_pointcloud")]
+    assert map_client.calls == [("yard", capability)]
 
 
 def test_pcd_download_reports_native_missing_map_as_404() -> None:

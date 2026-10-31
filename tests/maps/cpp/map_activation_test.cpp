@@ -10,10 +10,10 @@
 #include <vector>
 
 #include "lingtu/maps/build/occupancy_snapshot.hpp"
-#include "lingtu/maps/build/pcd.hpp"
+#include "lingtu/maps/io/pcd.hpp"
 #include "lingtu/maps/build/pipeline.hpp"
 #include "lingtu/maps/build/process.hpp"
-#include "lingtu/maps/json.hpp"
+#include "lingtu/maps/io/json.hpp"
 #include "lingtu/maps/mapd/activation.hpp"
 
 #if defined(_WIN32)

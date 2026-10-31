@@ -49,7 +49,7 @@ bool FRuntimeUIActionPolicy::ResolveKey(const ERuntimeUIMode Mode, const FKey &K
     return true;
   }
   if (Mode == ERuntimeUIMode::Pause && Key == EKeys::X) {
-    OutAction = ERuntimeUIAction::Exit;
+    OutAction = ERuntimeUIAction::OpenQuitConfirmation;
     return true;
   }
   return false;
@@ -80,6 +80,7 @@ void FRuntimeUIModeController::ToggleTactical() {
 }
 
 void FRuntimeUIModeController::TogglePause() {
+  bDriveHelpVisible = false;
   if (Mode == ERuntimeUIMode::Pause) {
     Mode = ModeBeforePause;
     return;
@@ -89,6 +90,22 @@ void FRuntimeUIModeController::TogglePause() {
 }
 
 void FRuntimeUIModeController::ToggleExclusive(const ERuntimeUIMode RequestedMode) {
+  bDriveHelpVisible = false;
   Mode = Mode == RequestedMode ? ERuntimeUIMode::Drive : RequestedMode;
+}
+
+bool FRuntimeUIModeController::SetLiveMenuView(bool bVisible) {
+  const auto Expected = bVisible ? ERuntimeUIMode::Pause : ERuntimeUIMode::Tactical;
+  if (Mode != Expected) return false;
+  bDriveHelpVisible = false;
+  Mode = bVisible ? ERuntimeUIMode::Tactical : ERuntimeUIMode::Pause;
+  return true;
+}
+
+bool FRuntimeUIModeController::SetDriveHelpVisible(const bool bVisible) {
+  const bool bNext = bVisible && Mode == ERuntimeUIMode::Drive;
+  if (bDriveHelpVisible == bNext) return false;
+  bDriveHelpVisible = bNext;
+  return true;
 }
 }  // namespace LingTuSim::UI

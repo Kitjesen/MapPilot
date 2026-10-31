@@ -1,5 +1,5 @@
-#include "localization/opt/online_mapping.hpp"
-#include "localization/sam/config_yaml.hpp"
+#include "localization/map_optimization/online_mapping.hpp"
+#include "localization/online_mapping/config_yaml.hpp"
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -12,7 +12,7 @@
 #include <sys/resource.h>
 #endif
 
-namespace opt = lingtu::localization::opt;
+namespace map_optimization = lingtu::localization::map_optimization;
 int main(int argc, char** argv) {
   if (argc != 3) {
     std::cerr << "Usage: lt_mapping_replay MAP_DIRECTORY REPORT_JSON\n";
@@ -22,7 +22,7 @@ int main(int argc, char** argv) {
     const auto root = std::filesystem::path(argv[1]);
     if (!std::filesystem::is_regular_file(root / "poses.raw.txt"))
       throw std::runtime_error("poses.raw.txt is required; optimized poses are not odometry");
-    const auto poses = opt::read_poses(root / "poses.raw.txt");
+    const auto poses = map_optimization::read_poses(root / "poses.raw.txt");
     if (poses.empty()) throw std::runtime_error("raw LIO keyframes are required; optimized poses are not odometry");
     std::ifstream timestamps(root / "keyframes.timestamps.txt");
     if (!timestamps) throw std::runtime_error("recorded keyframe timestamps are required");
@@ -40,26 +40,26 @@ int main(int argc, char** argv) {
     for (const auto* suffix : {"", ".loops.json", ".poses.txt"})
       if (std::filesystem::exists(std::string(argv[2])+suffix))
         throw std::runtime_error("replay output already exists");
-    opt::OnlineMappingOptions options;
+    map_optimization::OnlineMappingOptions options;
     const auto evidence_path = root / "sam_loops.json";
     if (std::filesystem::is_regular_file(evidence_path)) {
       const auto evidence=YAML::LoadFile(evidence_path.string());
       if (evidence["schema"].as<std::string>()!="lingtu.sam_loops.v1" || !evidence["config"])
         throw std::runtime_error("unsupported SAM evidence configuration");
-      options.sam=lingtu::localization::sam::readConfig(evidence["config"]);
+      options.online_mapping=lingtu::localization::online_mapping::readConfig(evidence["config"]);
     }
-    opt::OnlineMapping mapper(options);
+    map_optimization::OnlineMapping mapper(options);
     mapper.reset(1);
-    std::shared_ptr<const opt::OnlineMappingSnapshot> snapshot;
+    std::shared_ptr<const map_optimization::OnlineMappingSnapshot> snapshot;
     const auto started = std::chrono::steady_clock::now();
     double worst_ms = 0;
     double worst_worker_ms = 0, worst_preview_ms = 0;
     std::size_t peak_cloud_bytes = 0;
     std::vector<double> latency;
     for (std::size_t i = 0; i < poses.size(); ++i) {
-      opt::MappingFrame frame;
+      map_optimization::MappingFrame frame;
       frame.keyframe = poses[i]; frame.stamp_s = stamps[i];
-      frame.body_cloud = opt::read_point_cloud(root / "patches" / poses[i].patch_name);
+      frame.body_cloud = map_optimization::read_point_cloud(root / "patches" / poses[i].patch_name);
       const auto tick = std::chrono::steady_clock::now();
       if (!mapper.enqueue(std::move(frame)).ok) throw std::runtime_error("frame rejected");
       do {
@@ -85,7 +85,7 @@ int main(int argc, char** argv) {
     if (!snapshot) return 3;
     const std::filesystem::path report_path(argv[2]);
     std::ofstream loops(report_path.string()+".loops.json");
-    lingtu::localization::sam::writeLoopEvidence(loops,snapshot->sam_config,snapshot->loop_records);
+    lingtu::localization::online_mapping::writeLoopEvidence(loops,snapshot->online_mapping_config,snapshot->loop_records);
     loops.close();
     if (!loops) throw std::runtime_error("cannot finish loop evidence");
     std::ofstream corrected(report_path.string()+".poses.txt");

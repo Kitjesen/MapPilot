@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <string>
 
 #include "nav_kernel/velocity_smoother.hpp"
@@ -23,6 +24,8 @@ struct FinalInput {
   bool limited_before_final{false};
   bool publish{false};
   double now_s{0.0};
+  double direct_yaw_accel_rad_s2{0.0};
+  double nominal_dt_s{0.01};
 };
 
 struct FinalResult {
@@ -51,6 +54,8 @@ class FinalControl {
 
  private:
   FinalActions actions_;
+  double applied_yaw_rate_{0.0};
+  std::optional<double> applied_yaw_stamp_s_;
 };
 
 }  // namespace lingtu::nav::endpoint

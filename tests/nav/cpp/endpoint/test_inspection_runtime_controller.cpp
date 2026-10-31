@@ -6,7 +6,7 @@
 #include <string>
 #include <utility>
 
-#include "runtime/inspection/inspection_runtime_controller.hpp"
+#include "app/inspection/inspection_runtime_controller.hpp"
 
 namespace {
 
@@ -15,7 +15,6 @@ using lingtu::nav::endpoint::InspectionRuntimeController;
 using lingtu::nav::endpoint::InspectionRuntimeEvidenceResult;
 using lingtu::nav::endpoint::InspectionRuntimeIntentKind;
 using lingtu::nav::endpoint::InspectionRuntimeMapIdentity;
-using lingtu::nav::endpoint::InspectionRuntimeRobotPosition;
 using lingtu::nav::endpoint::InspectionRuntimeTickInput;
 using lingtu::nav::inspection::Executor;
 using lingtu::nav::inspection::FailurePolicy;
@@ -92,8 +91,6 @@ void reachActionPending(Executor &executor, InspectionRuntimeController &runtime
   startNavigation(executor, runtime);
   auto moving = inputAt(1.1);
   moving.odom_generation = 10U;
-  moving.path_active = true;
-  moving.robot_position = InspectionRuntimeRobotPosition{0.0, 0.0};
   (void)runtime.tick(moving);
 
   runtime.onGoalReached(1.2);
@@ -194,7 +191,7 @@ void testStatusCadenceAndValidation() {
   require(rejected_status_interval, "non-positive status cadence is rejected");
 }
 
-void testGoalDispatchAndProgress() {
+void testGoalDispatchWaitsForNavigation() {
   Executor executor;
   start(executor, makeRoute());
   InspectionRuntimeController runtime(executor);
@@ -203,14 +200,10 @@ void testGoalDispatchAndProgress() {
   require(runtime.activePoint().has_value(), "controller owns the active point");
   require(&runtime.executor() == &executor, "controller operates the endpoint-owned executor");
 
-  const double initial_deadline = executor.status().deadline_s;
-  auto progress = inputAt(2.0);
-  progress.odom_generation = 4U;
-  progress.path_active = true;
-  progress.robot_position = InspectionRuntimeRobotPosition{0.0, 0.0};
-  (void)runtime.tick(progress);
-  require(executor.status().deadline_s > initial_deadline,
-          "navigation progress refreshes the stall deadline");
+  const auto result = runtime.tick(inputAt(300.0));
+  require(result.ordered_intents.empty() && executor.status().state == RunState::kNavigating,
+          "route must wait for the navigation executor, not time a second progress watchdog");
+  require(executor.status().deadline_s == 0.0, "route added a navigation deadline");
 
   runtime.clearActivePoint();
   require(!runtime.activePoint().has_value(), "external goal clears active point");
@@ -256,8 +249,10 @@ void testGoalDispatchFailureFeedback() {
     const auto tick = runtime.tick(inputAt(1.1));
     require(tick.goal_dispatch.has_value(), "late completion setup emits goal");
     const auto completion = runtime.completeGoalDispatch(true, "accepted", 31.0);
-    require(completion.clear_motion_reason == std::optional<std::string>{"planning_timeout"},
-            "late planning start requests fail-closed motion clear");
+    require(completion.consumed && !completion.clear_motion_reason &&
+                executor.status().state == RunState::kPlanning,
+            "waiting for dispatch must not consume a separate route planning timeout");
+    require(executor.OnPlanReady(100.0), "late planner result must still activate navigation");
   }
 }
 
@@ -457,12 +452,13 @@ void testTimeoutAndMapChangeIntents() {
     Executor executor;
     start(executor, makeRoute(), 1.0);
     InspectionRuntimeController runtime(executor);
-    auto timed_out = inputAt(31.0);
-    const auto result = runtime.tick(timed_out);
+    startNavigation(executor, runtime);
+    runtime.onGoalReached(2.0);
+    const auto result = runtime.tick(inputAt(2.0 + Executor::kSettlingTimeoutS));
     require(result.ordered_intents.size() == 1U &&
                 result.ordered_intents.front().kind == InspectionRuntimeIntentKind::kClearMotion &&
-                result.ordered_intents.front().reason == "planning_timeout",
-            "planning timeout emits exact fail-closed reason");
+                result.ordered_intents.front().reason == "settling_timeout",
+            "unconfirmed arrival still emits the settling timeout stop");
   }
 
   {
@@ -503,7 +499,7 @@ void testTimeoutAndMapChangeIntents() {
 int runTests() {
   testWaypointsAndResumeReuseTaskIdentity();
   testStatusCadenceAndValidation();
-  testGoalDispatchAndProgress();
+  testGoalDispatchWaitsForNavigation();
   testGoalDispatchFailureFeedback();
   testMissingMapSnapshotDoesNotFailTask();
   testOnlyPostArrivalOdometrySettles();

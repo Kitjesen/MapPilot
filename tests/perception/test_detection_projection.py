@@ -5,7 +5,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from perception.tracking.projection import bbox_median_depth_to_detection3d
+from perception.tracking.projection import (
+    bbox_median_depth_to_detection3d,
+    mask_to_pointcloud,
+)
 from runtime.msgs.sensor import CameraIntrinsics
 
 INTRINSICS = CameraIntrinsics(fx=600.0, fy=600.0, cx=320.0, cy=240.0, width=640, height=480)
@@ -65,3 +68,22 @@ def test_confidence_reflects_valid_pixel_ratio():
     result = _project(depth)
     assert result is not None
     assert result.confidence_3d == pytest.approx(0.5, abs=0.02)
+
+
+def test_mask_projection_rejects_invalid_focal_lengths():
+    invalid = CameraIntrinsics(
+        fx=0.0,
+        fy=600.0,
+        cx=5.0,
+        cy=5.0,
+        width=10,
+        height=10,
+    )
+
+    with pytest.raises(ValueError, match="focal"):
+        mask_to_pointcloud(
+            mask=np.ones((10, 10), dtype=bool),
+            depth_image=np.full((10, 10), 2000, dtype=np.uint16),
+            intrinsics=invalid,
+            tf_camera_to_world=np.eye(4),
+        )

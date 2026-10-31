@@ -12,13 +12,13 @@ from .contracts import (
     GenerationStamp,
     SafeStopReason,
 )
-from .fake import DeterministicFakeAdapter, DeterministicFakePolicy, FakeObservation
 from .factory import (
-    ControllerComponentRegistry,
     PRODUCTION_CONTROLLER_COMPONENTS,
+    ControllerComponentRegistry,
     create_production_components,
 )
-from .physics import ControllerPhysicsBridge, PhysicsActuatorHost
+from .fake import DeterministicFakeAdapter, DeterministicFakePolicy, FakeObservation
+from .physics_bridge import ControllerPhysicsBridge, PhysicsActuatorHost
 from .plan import (
     ActuatorLayout,
     AdapterSpec,
@@ -30,9 +30,10 @@ from .plan import (
     load_control_plan,
 )
 from .runtime import ControllerRuntime
-from .thunderv4 import create_thunderv4_components, create_thunderv4_onnx_components
+from .thunder.legacy_controller import create_thunderv4_components, create_thunderv4_onnx_components
 
 __all__ = [
+    "PRODUCTION_CONTROLLER_COMPONENTS",
     "ActuatorCommand",
     "ActuatorLayout",
     "AdapterSpec",
@@ -55,11 +56,10 @@ __all__ = [
     "FakeObservation",
     "GenerationStamp",
     "PhysicsActuatorHost",
-    "PRODUCTION_CONTROLLER_COMPONENTS",
     "PolicySpec",
     "SafeStopReason",
+    "create_production_components",
     "create_thunderv4_components",
     "create_thunderv4_onnx_components",
-    "create_production_components",
     "load_control_plan",
 ]

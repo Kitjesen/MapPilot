@@ -127,7 +127,7 @@ def _canonical_request(command: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     arguments: dict[str, Any] = {}
     map_id = str(command.get("map_id") or "")
     map_actions = {
-        "delete_map", "rename_map", "import_pcd", "crop_pcd", "get_record",
+        "delete_map", "rename_map", "import_pcd", "crop_pcd", "save_edited_source", "get_record",
         "get_bundle", "get_map_points", "validate_artifacts",
         "get_voxel_edits", "edit_octomap_voxels", "build_occupancy_snapshot",
         "build_octomap_artifact",
@@ -139,6 +139,19 @@ def _canonical_request(command: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             map_id=map_id,
             request_id=str(command.get("request_id") or uuid.uuid4()),
         )
+    elif action == "save_edited_source":
+        arguments.update(
+            new_map_id=command.get("new_map_id"),
+            expected_source_content_epoch=command.get("expected_source_content_epoch"),
+            operations=command.get("operations"),
+        )
+    elif action == "build_octomap_artifact":
+        if "inherit_saved_metadata" in command:
+            arguments["inherit_saved_metadata"] = command["inherit_saved_metadata"]
+        for key in ("resolution", "frame_id", "source_profile", "data_source", "slam_source",
+                    "localization_source", "mapping_source"):
+            if key in command:
+                arguments[f"octomap_{key}"] = command[key]
     elif action == "rename_map":
         arguments["new_map_id"] = str(command.get("new_map_id") or "")
     elif action in {"get_save_map_status", "cancel_save_map", "retry_save_map"}:

@@ -2,13 +2,16 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <limits>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "input/motion_worker.hpp"
-#include "runtime/time.hpp"
+#include "app/time.hpp"
+#include "collision/terrain.hpp"
 
 using namespace lingtu::nav::endpoint;
 
@@ -157,6 +160,195 @@ void testMovingTargetWithSkippedFrames() {
           "a lost target must not leave a moving prediction beyond TTL");
 }
 
+std::shared_ptr<const lingtu::nav::collision::Terrain> ground(double elevation,
+                                                           double slope = 0.0,
+                                                           bool lower_floor = false,
+                                                           bool reference_noise = false) {
+  std::vector<lingtu::nav::collision::Vec3> points;
+  for (int x = -10; x <= 45; ++x) for (int y = -10; y <= 30; ++y) {
+    const double px = x * .1 + .05, py = y * .1 + .05;
+    const double local_noise = reference_noise && std::hypot(px, py) < .24 ? .12 * px : 0.0;
+    points.push_back({px, py, elevation + slope * px + local_noise});
+    if (lower_floor) points.push_back({px, py, 0.0});
+  }
+  return std::make_shared<lingtu::nav::collision::Terrain>(std::move(points), .1);
+}
+
+void testMissingHeightUsesObservedGround() {
+  const float missing = std::numeric_limits<float>::quiet_NaN();
+  MotionLayerConfig config;
+  config.inflation_radius_m = 0;
+  config.ray_clearing_enabled = false;
+  MotionWorker worker(MotionLayer(config), 2000);
+  MotionObservation input{{1.05f, .05f, .2f, missing,
+                            1.05f, .15f, 0.0f, missing,
+                            1.05f, .25f, .2f, .7f}, {}, 1.0, 101.0};
+  input.body_position.z = .45;
+  input.terrain = ground(0);
+  input.ground_layer_z = 0.0;
+  input.ground_tolerance_m = .11;
+  worker.submit(input);
+  auto result = waitForResult(worker);
+  require(result.obstacles.size() == 12, "ground normalization must retain every measured hit");
+  for (std::size_t i = 0; i < result.obstacles.size(); i += 4) {
+    const auto y = result.obstacles[i + 1], height = result.obstacles[i + 3];
+    if (y < .1f) require(std::abs(height + .25f) < 1e-5f, "measured low-point height must keep body datum");
+    else if (y < .2f) require(std::abs(height + .45f) < 1e-5f, "measured floor must keep body datum");
+    else require(height == .7f, "explicit source height must remain unchanged");
+  }
+
+  worker.clear();
+  input.xyzh = {2.05f, .05f, 1.3845f, missing};
+  input.body_position.z = 1.45;
+  input.terrain = ground(1.0, .09, true);
+  input.ground_layer_z = 1.0;
+  input.stamp_s = 2.0;
+  worker.submit(input);
+  result = waitForResult(worker);
+  require(result.obstacles.size() == 4 && std::abs(result.obstacles[3] + .0655f) < 1e-5f,
+          "measured upper-layer height must keep body datum");
+  const auto surface = input.terrain->classificationSurface({2.05, .05, 1.1845}, .11, .2);
+  require(surface && std::abs(surface->heightAt(2.05, .05) - 1.1845) < 1e-5,
+          "classification must retain slope and choose upper observed layer");
+
+  worker.clear();
+  input.xyzh = {1.05f, .05f, .2f, missing};
+  input.body_position.z = .45;
+  input.ground_layer_z = 3.0;
+  input.stamp_s = 3.0;
+  worker.submit(input);
+  result = waitForResult(worker);
+  require(result.obstacles.size() == 4 && std::abs(result.obstacles[3] + .25f) < 1e-5f,
+          "absent observed ground must preserve legacy height and measured geometry");
+  worker.clear();
+  input.terrain.reset();
+  input.ground_layer_z = 0.0;
+  input.stamp_s = 4.0;
+  worker.submit(input);
+  result = waitForResult(worker);
+  require(result.obstacles.size() == 4 && std::abs(result.obstacles[3] + .25f) < 1e-5f,
+          "a calibration hint alone must not invent ground");
+
+  worker.clear();
+  input.terrain = ground(0.0);
+  input.ground_layer_z.reset();
+  input.stamp_s = 5.0;
+  worker.submit(input);
+  result = waitForResult(worker);
+  require(result.obstacles.size() == 4 && std::abs(result.obstacles[3] + .25f) < 1e-5f,
+          "CMU without SCAN ground calibration must preserve body-relative height");
+}
+
+void testLowMovingTargetAndGroundSeparation(double elevation = 0.0, double slope = 0.0,
+                                          bool lower_floor = false, bool reference_noise = false,
+                                          double sensor_x = 0.0) {
+  const float missing = std::numeric_limits<float>::quiet_NaN();
+  MotionLayerConfig config;
+  config.voxel_size_m = .1;
+  config.decay_s = 10;
+  config.inflation_radius_m = 0;
+  config.ray_clearing_interval_s = 0;
+  config.ray_clear_max_range_m = 6;
+  config.dynamic_min_cells = 3;
+  MotionWorker worker(MotionLayer(config), 2000);
+  MotionLayer reference(config);
+  const SensorOrigin origin{sensor_x, 0, elevation + .5, true};
+  const auto terrain = ground(elevation, slope, lower_floor, reference_noise);
+  auto submit = [&](const std::vector<float> &points, double stamp) {
+    MotionObservation input{points, origin, stamp, 100 + stamp};
+    input.body_position.z = elevation + .45;
+    input.terrain = terrain;
+    input.ground_layer_z = elevation;
+    input.ground_tolerance_m = .05;
+    worker.submit(std::move(input));
+    auto expected = points;
+    std::vector<float> dynamic_heights;
+    for (std::size_t i = 0; i < expected.size(); i += 4) {
+      expected[i + 3] = static_cast<float>(static_cast<double>(expected[i + 2]) - (elevation + .45));
+      dynamic_heights.push_back(static_cast<float>(expected[i + 2] - elevation - slope * expected[i]));
+    }
+    reference.updateFromScan(origin, expected, stamp, &dynamic_heights);
+    (void)reference.dynamicClusters(32, stamp);
+    return waitForResult(worker);
+  };
+  std::vector<float> rays;
+  for (int frame = 0; frame < 8; ++frame) {
+    const float x = 1.05f + .2f * frame;
+    for (int cell = 0; cell < 4; ++cell) {
+      // A ray to observed floor physically crosses the later low target cell.
+      const double scale = (.5 - slope * sensor_x) / (.3 - slope * sensor_x);
+      const float floor_x = static_cast<float>(sensor_x + (x - sensor_x) * scale);
+      rays.insert(rays.end(), {floor_x, static_cast<float>((.05f + .1f * cell) * scale),
+                              static_cast<float>(elevation + slope * floor_x), missing});
+    }
+  }
+  for (int frame = 1; frame <= 3; ++frame) {
+    const auto result = submit(rays, frame * .1);
+    require(result.clusters.empty(), "floor returns must not seed moving-object clusters");
+  }
+  for (int frame = 0; frame < 8; ++frame) {
+    std::vector<float> points;
+    const float x = 1.05f + .2f * frame;
+    for (int cell = 0; cell < 4; ++cell)
+      points.insert(points.end(), {x, .05f + .1f * cell,
+                                  static_cast<float>(elevation + slope * x + .2), missing});
+    const double stamp = 1 + .2 * frame;
+    const auto result = submit(points, stamp);
+    require(result.obstacles == reference.snapshot(2000, stamp),
+            "observed-ground heights must match explicit ground-relative heights");
+    if (frame >= 3) {
+      require(result.clusters.size() == 1 && !result.predictions.empty(),
+              "low moving returns must produce a confirmed prediction");
+      require(result.clusters.front().min_z < elevation + slope * x + .21 &&
+                  result.clusters.front().min_z > elevation + slope * x + .19 &&
+                  result.clusters.front().vx > .5,
+              "prediction must retain the observed lower part and target motion");
+    }
+  }
+}
+
+void testClassificationNoiseDoesNotRelaxCollisionSurface() {
+  using lingtu::nav::collision::Vec3;
+  using lingtu::nav::collision::Terrain;
+  std::vector<Vec3> points;
+  for (int x = -3; x <= 3; ++x) for (int y = -3; y <= 3; ++y)
+    points.push_back({x * .05 + .025, y * .05 + .025, (x + y) % 2 ? .02 : -.02});
+  Terrain terrain(std::move(points), .05);
+  require(!terrain.surface({.025, .025, 0}, .11, .1),
+          "height classification must not weaken strict collision surface fit");
+  const auto classified = terrain.classificationSurface({.025, .025, 0}, .11, .1);
+  require(classified && std::abs(classified->heightAt(.025, .025)) < .02,
+          "observed ground noise needs a separate classification fit");
+}
+
+void testGroundClassificationKeepsNoisyStaticSceneStatic() {
+  MotionWorker worker(MotionLayer{}, 2000);
+  std::mt19937 random(123);
+  std::normal_distribution<float> noise(0, .015f);
+  const float missing = std::numeric_limits<float>::quiet_NaN();
+  const auto terrain = ground(0);
+  for (int frame = 0; frame < 20; ++frame) {
+    const float sensor_x = .1f * frame;
+    std::vector<float> points;
+    for (int x = 0; x < 40; ++x) for (int z = 0; z < 8; ++z)
+      points.insert(points.end(), {sensor_x - 1 + .06f * x + noise(random),
+          -1.45f + noise(random), .15f + .12f * z + noise(random), missing});
+    for (int x = 0; x < 30; ++x) for (int y = 0; y < 12; ++y)
+      points.insert(points.end(), {sensor_x - 1 + .1f * x, -.9f + .1f * y,
+                                  noise(random), missing});
+    MotionObservation input{std::move(points), {sensor_x, -.4, .5, true},
+                            1 + .1 * frame, 101 + .1 * frame};
+    input.body_position.z = .45;
+    input.terrain = terrain;
+    input.ground_layer_z = 0.0;
+    input.ground_tolerance_m = .11;
+    worker.submit(std::move(input));
+    const auto result = waitForResult(worker);
+    require(result.clusters.empty(), "ground normalization must not turn noisy walls or floor dynamic");
+    require(!result.obstacles.empty(), "static-scene hits must remain measured obstacles");
+  }
+}
+
 double percentile(std::vector<double> values, double fraction) {
   std::sort(values.begin(), values.end());
   return values[static_cast<std::size_t>((values.size() - 1) * fraction)];
@@ -205,6 +397,13 @@ int main(int argc, char **argv) {
       testMatchesSynchronousGeometry();
       testLatestFrameAndClear();
       testMovingTargetWithSkippedFrames();
+      testMissingHeightUsesObservedGround();
+      testLowMovingTargetAndGroundSeparation();
+      testLowMovingTargetAndGroundSeparation(1.0, .09, true);
+      testLowMovingTargetAndGroundSeparation(0.0, 0.0, false, true);
+      testLowMovingTargetAndGroundSeparation(2.0, -.36, true, false, .3);
+      testClassificationNoiseDoesNotRelaxCollisionSurface();
+      testGroundClassificationKeepsNoisyStaticSceneStatic();
       std::cout << "test_motion_worker passed\n";
     }
     return 0;

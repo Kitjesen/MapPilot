@@ -20,7 +20,7 @@ from gateway.gateway_module import GatewayModule
 from gateway.maps.locations import register_location_routes
 from gateway.mcp_server import MCPServerModule
 from lingtu.sdk import LingTuClient
-from memory.modules.tagged_locations_module import TaggedLocationsModule
+from memory.modules.locations import TaggedLocationsModule
 
 
 @pytest.fixture

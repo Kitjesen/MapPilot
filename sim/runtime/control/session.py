@@ -15,7 +15,7 @@ from .contracts import (
     ControllerRuntimeError,
     GenerationStamp,
 )
-from .physics import ControllerPhysicsBridge, PhysicsActuatorHost
+from .physics_bridge import ControllerPhysicsBridge, PhysicsActuatorHost
 from .plan import ControllerSpec, ControlPlan
 from .runtime import ControllerRuntime
 
@@ -62,6 +62,12 @@ class SessionControlRuntime:
         self._factory = component_factory
         self._repo_root = Path(repo_root).resolve()
         self._bindings: dict[str, _ControllerBinding] = {}
+
+    @property
+    def command_timeout_ns(self) -> int:
+        """Return the command timeout from the compiled control plan."""
+
+        return self._plan.stale_timeout_ns
 
     @property
     def controller_ids(self) -> tuple[str, ...]:

@@ -28,103 +28,46 @@ lingtu::nav::endpoint::InputSnapshot input(double now_s, double odom_s, double t
   return out;
 }
 
-void testRequiresConsecutiveFreshFrames() {
+void testValidInputsAreReadyWithoutGenerationRecovery() {
   lingtu::nav::endpoint::InputGate gate({0.25, 0.25, 0.35, 3});
-  auto state = gate.evaluate(input(1.0, 1.0, 1.0, 1.0, true, 1));
-  require(state.recovering, "first fresh frame must remain in recovery");
-  state = gate.evaluate(input(1.05, 1.05, 1.05, 1.05, true, 2));
-  require(state.recovering, "second fresh frame must remain in recovery");
-  state = gate.evaluate(input(1.10, 1.10, 1.10, 1.10, true, 3));
-  require(state.ready, "third consecutive fresh frame must open the gate");
+  auto inputs = input(10.0, 10.0, 10.0, 10.0, true, 0);
+  require(gate.evaluate(inputs).ready,
+          "valid current inputs must admit motion on the first tick without generation recovery");
+  inputs.now_s = 10.01;
+  require(gate.evaluate(inputs).ready,
+          "independent source generations must not be a second readiness gate");
+  inputs.now_s = 10.5;
+  require(!gate.evaluate(inputs).ready, "expired real inputs must still hold motion");
+  inputs = input(10.6, 10.6, 10.6, 10.6, true, 0);
+  require(gate.evaluate(inputs).ready, "fresh real inputs must reopen motion on the same tick");
 }
 
-void testRecoveryAdvancesOnlyAfterEveryRequiredInputHasANewGeneration() {
+void testAuxiliaryHealthOnlyBlocksCurrentHardLocalizationFailure() {
   lingtu::nav::endpoint::InputGateConfig cfg;
-  cfg.recovery_frames = 2;
-  cfg.require_traversability = true;
   cfg.require_localization_health = true;
   lingtu::nav::endpoint::InputGate gate(cfg);
-
-  lingtu::nav::endpoint::InputSnapshot inputs;
-  inputs.now_s = 10.0;
-  inputs.odom_stamp_s = 10.0;
-  inputs.tf_stamp_s = 10.0;
-  inputs.cloud_stamp_s = 10.0;
-  inputs.traversability_stamp_s = 10.0;
+  auto inputs = input(10.0, 10.0, 10.0, 10.0, true, 0);
+  require(gate.evaluate(inputs).ready,
+          "valid pose and obstacle inputs must not wait for auxiliary health telemetry");
   inputs.localization_health_stamp_s = 10.0;
-  inputs.odom_generation = 1;
-  inputs.tf_generation = 1;
-  inputs.cloud_generation = 1;
-  inputs.traversability_generation = 1;
-  inputs.localization_health_generation = 1;
-  inputs.localization_healthy = true;
-
-  auto state = gate.evaluate(inputs);
-  require(state.recovering && state.fresh_frames == 1,
-          "first complete DDS generation set must start recovery");
-
-  inputs.now_s = 10.01;
-  state = gate.evaluate(inputs);
-  require(state.recovering && state.fresh_frames == 1,
-          "re-evaluating the same DDS generations must not advance recovery");
-
-  ++inputs.odom_generation;
-  inputs.odom_stamp_s = inputs.now_s;
-  state = gate.evaluate(inputs);
-  require(state.recovering && state.fresh_frames == 1,
-          "one faster DDS input must not advance recovery by itself");
-
-  ++inputs.tf_generation;
-  ++inputs.cloud_generation;
-  ++inputs.traversability_generation;
-  ++inputs.localization_health_generation;
-  inputs.tf_stamp_s = inputs.now_s;
-  inputs.cloud_stamp_s = inputs.now_s;
-  inputs.traversability_stamp_s = inputs.now_s;
-  inputs.localization_health_stamp_s = inputs.now_s;
-  state = gate.evaluate(inputs);
-  require(state.ready && state.fresh_frames == 2,
-          "all required DDS inputs advancing must complete recovery");
-
-  inputs.now_s = 10.02;
-  state = gate.evaluate(inputs);
-  require(state.ready, "an open gate must stay open while its inputs remain fresh");
-}
-
-void testCoordinateEpochForcesFreshDdsRecovery() {
-  lingtu::nav::endpoint::InputGateConfig cfg;
-  cfg.recovery_frames = 2;
-  lingtu::nav::endpoint::InputGate gate(cfg);
-
-  lingtu::nav::endpoint::InputSnapshot inputs;
-  inputs.now_s = 10.0;
-  inputs.odom_stamp_s = 10.0;
-  inputs.tf_stamp_s = 10.0;
-  inputs.cloud_stamp_s = 10.0;
-  inputs.odom_generation = 1;
-  inputs.tf_generation = 1;
-  inputs.cloud_generation = 1;
-  require(gate.evaluate(inputs).recovering, "first input set must start recovery");
-  ++inputs.odom_generation;
-  ++inputs.tf_generation;
-  ++inputs.cloud_generation;
-  require(gate.evaluate(inputs).ready, "second input set must open the gate");
-
-  gate.beginRecoveryFrom(inputs);
-  auto state = gate.evaluate(inputs);
-  require(state.recovering && state.fresh_frames == 0,
-          "an epoch boundary must immediately close an already-open gate");
-
-  ++inputs.tf_generation;
-  state = gate.evaluate(inputs);
-  require(state.recovering && state.fresh_frames == 0,
-          "a new map transform alone must not count as a complete recovery set");
-
-  ++inputs.odom_generation;
-  ++inputs.cloud_generation;
-  state = gate.evaluate(inputs);
-  require(state.recovering && state.fresh_frames == 1,
-          "all required post-epoch inputs must start recovery from frame one");
+  inputs.localization_healthy = false;
+  inputs.localization_state = "INITIALIZING";
+  require(gate.evaluate(inputs).ready,
+          "a soft auxiliary health state must not overrule valid current motion inputs");
+  inputs.localization_state = "LOST";
+  require(gate.evaluate(inputs).reason == "localization_not_tracking",
+          "a current explicit LOST state must still hold motion");
+  inputs.localization_health_stamp_s = 9.0;
+  require(gate.evaluate(inputs).ready,
+          "an expired LOST report must not latch over newer valid position inputs");
+  inputs.localization_health_stamp_s = 10.0;
+  inputs.localization_state = "TRACKING";
+  inputs.localization_reason = "ltlio_state_nonfinite";
+  require(gate.evaluate(inputs).reason == "localization_catastrophic",
+          "current catastrophic estimator evidence must still hold motion");
+  inputs.localization_reason.clear();
+  require(gate.evaluate(inputs).ready,
+          "current valid localization must resume without another recovery window");
 }
 
 void testStaleCloudStopsImmediatelyAndRequiresRecoveryAgain() {
@@ -138,7 +81,7 @@ void testStaleCloudStopsImmediatelyAndRequiresRecoveryAgain() {
   require(stale.reason == "cloud_stale", "stale cloud reason must be explicit");
 
   const auto recovering = gate.evaluate(input(1.7, 1.7, 1.7, 1.7, true, 4));
-  require(recovering.recovering, "one fresh frame after a stop must not reopen motion");
+  require(recovering.ready, "fresh required inputs must reopen motion without another recovery wait");
 }
 
 void testMapFrameOdometryDoesNotRequireMapOdomTf() {
@@ -195,14 +138,26 @@ void testOdometryAndCloudCanBeOptionalForPureTeleop() {
 void testScanRequiresFreshLocalCollisionGeometry() {
   lingtu::nav::endpoint::InputGateConfig cfg;
   cfg.recovery_frames = 1;
-  cfg.require_odom = false;
   cfg.require_cloud = false;
   cfg.require_local_collision = true;
+  cfg.require_localization_health = true;
+  cfg.require_driver_control = true;
   cfg.local_collision_max_age_s = 0.5;
   lingtu::nav::endpoint::InputGate gate(cfg);
 
   lingtu::nav::endpoint::InputSnapshot inputs;
   inputs.now_s = 10.0;
+  inputs.odom_stamp_s = 10.0;
+  inputs.odom_generation = 1;
+  inputs.tf_stamp_s = 10.0;
+  inputs.tf_generation = 1;
+  inputs.localization_health_stamp_s = 10.0;
+  inputs.localization_health_generation = 1;
+  inputs.localization_healthy = true;
+  inputs.localization_state = "TRACKING";
+  inputs.driver_control_stamp_s = 10.0;
+  inputs.driver_control_generation = 1;
+  inputs.driver_control_ready = true;
   auto state = gate.evaluate(inputs);
   require(!state.ready && state.reason == "local_collision_missing",
           "SCAN must wait for Mapd local collision input");
@@ -212,9 +167,19 @@ void testScanRequiresFreshLocalCollisionGeometry() {
   inputs.local_collision_stamp_s = 10.0;
   inputs.local_collision_receive_s = 10.0;
   inputs.local_collision_sequence = 1;
+  ++inputs.odom_generation;
+  ++inputs.tf_generation;
+  ++inputs.localization_health_generation;
+  ++inputs.driver_control_generation;
   state = gate.evaluate(inputs);
   require(state.ready,
-          "a fresh collision bitmap must not be rejected by a transport completeness flag");
+          "fresh authoritative collision and required motion inputs must admit SCAN without cloud");
+
+  inputs.cloud_stamp_s = 9.0;
+  inputs.cloud_generation = 1;
+  state = gate.evaluate(inputs);
+  require(state.ready,
+          "stale optional registered cloud must not block fresh authoritative SCAN collision");
 
   inputs.local_collision_complete = true;
   inputs.local_collision_stamp_s = 9.0;
@@ -222,10 +187,16 @@ void testScanRequiresFreshLocalCollisionGeometry() {
   state = gate.evaluate(inputs);
   require(!state.ready && state.reason == "collision_stale",
           "SCAN must reject a stale collision snapshot");
+  require(lingtu::nav::endpoint::manualModeMayBypassInputGate(state),
+          "manual escape must remain available while SCAN collision input is stale");
 
   inputs.local_collision_stamp_s = 10.0;
   inputs.local_collision_receive_s = 10.0;
   ++inputs.local_collision_sequence;
+  ++inputs.odom_generation;
+  ++inputs.tf_generation;
+  ++inputs.localization_health_generation;
+  ++inputs.driver_control_generation;
   state = gate.evaluate(inputs);
   require(state.ready, "complete fresh Mapd collision input must open the SCAN gate");
 }
@@ -241,34 +212,41 @@ void testLocalCollisionHoldDoesNotMaskPlanningInputs() {
                                       collision_case == 1 ? 11.0 :
                                       collision_case == 2 ? 9.0 : 10.0;
     inputs.local_collision_complete = collision_case != 3;
+    inputs.local_collision_sequence = 1;
     inputs.localization_health_stamp_s = 10.0;
     inputs.localization_health_generation = 1;
     inputs.localization_healthy = true;
     inputs.localization_state = "TRACKING";
     lingtu::nav::endpoint::InputGate gate(cfg);
     auto state = gate.evaluate(inputs);
-    require(!state.ready && lingtu::nav::endpoint::localCollisionInputHold(state.reason),
-            "healthy localization must leave a local collision hold eligible for global planning");
+    if (collision_case == 3) {
+      require(state.ready,
+              "fresh collision geometry and healthy localization must not require complete telemetry");
+    } else {
+      require(!state.ready && lingtu::nav::endpoint::localCollisionInputHold(state.reason),
+              "healthy localization must leave a local collision hold eligible for global planning");
+    }
+    const auto collision_reason = state.reason;
     inputs.localization_healthy = false;
     inputs.localization_state = "LOST";
     state = gate.evaluate(inputs);
     require(state.reason == "localization_not_tracking",
             "local collision hold must not hide LOST localization from goal admission");
     inputs.localization_state = "TRACKING";
-    require(gate.evaluate(inputs).reason == "localization_unhealthy",
-            "local collision hold must not hide unhealthy localization");
+    require(gate.evaluate(inputs).reason == collision_reason,
+            "soft health telemetry must not add an independent motion hold");
     inputs.localization_health_stamp_s = 0.0;
-    require(gate.evaluate(inputs).reason == "localization_health_missing",
-            "local collision hold must not hide missing localization");
+    require(gate.evaluate(inputs).reason == collision_reason,
+            "missing auxiliary health must not mask actual collision readiness");
     inputs.localization_health_stamp_s = 9.0;
-    require(gate.evaluate(inputs).reason == "localization_health_stale",
-            "local collision hold must not hide stale localization");
+    require(gate.evaluate(inputs).reason == collision_reason,
+            "stale auxiliary health must not mask actual collision readiness");
     inputs.localization_health_stamp_s = 11.0;
-    require(gate.evaluate(inputs).reason == "localization_health_future",
-            "local collision hold must not hide invalid localization time");
+    require(gate.evaluate(inputs).reason == collision_reason,
+            "future auxiliary health cannot overrule current position and collision evidence");
     inputs.localization_health_stamp_s = 10.0;
     inputs.localization_healthy = true;
-    inputs.localization_reason = "fastlio_state_nonfinite";
+    inputs.localization_reason = "ltlio_state_nonfinite";
     require(gate.evaluate(inputs).reason == "localization_catastrophic",
             "local collision hold must not hide catastrophic localization");
   }
@@ -306,8 +284,7 @@ void testTeleopAvoidRequiresFreshTraversabilityAndHealthyLocalization() {
   inputs.traversability_stamp_s = 9.8;
   inputs.localization_healthy = false;
   state = gate.evaluate(inputs);
-  require(!state.ready && state.reason == "localization_unhealthy",
-          "unhealthy localization must close the gate");
+  require(state.ready, "soft localization health must not block otherwise valid motion inputs");
 }
 
 void testDivergentOdometryVelocityClosesTheGate() {
@@ -546,10 +523,10 @@ void testLocalizationStateAndCatastrophicReasonCloseTheGate() {
           "true");
 
   inputs.localization_state = "TRACKING";
-  inputs.localization_reason = "fastlio_velocity_out_of_bounds";
+  inputs.localization_reason = "ltlio_velocity_out_of_bounds";
   state = lingtu::nav::endpoint::InputGate(cfg).evaluate(inputs);
   require(!state.ready && state.reason == "localization_catastrophic",
-          "a catastrophic Fast-LIO reason must override a TRACKING state");
+          "a catastrophic LTLIO reason must override a TRACKING state");
 }
 
 void testSafetyInputsUseSourceTimestamps() {
@@ -575,13 +552,11 @@ void testSafetyInputsUseSourceTimestamps() {
   inputs.traversability_stamp_s = 20.0;
   inputs.localization_health_stamp_s = 20.1;
   state = lingtu::nav::endpoint::InputGate(cfg).evaluate(inputs);
-  require(state.reason == "localization_health_future",
-          "future health source stamp must fail closed");
+  require(state.ready, "future auxiliary health is ignored while required motion inputs are valid");
 
   inputs.localization_health_stamp_s = 19.0;
   state = lingtu::nav::endpoint::InputGate(cfg).evaluate(inputs);
-  require(state.reason == "localization_health_stale",
-          "stale health source stamp must fail closed");
+  require(state.ready, "expired auxiliary health must not block current valid motion inputs");
 }
 
 void testDriverControlMustBeFreshAndReady() {
@@ -605,6 +580,8 @@ void testDriverControlMustBeFreshAndReady() {
   state = gate.evaluate(inputs);
   require(!state.ready && state.reason == "driver_control_stale",
           "stale Brainstem readiness must close the motion gate");
+  require(!lingtu::nav::endpoint::manualModeMayBypassInputGate(state),
+          "manual escape must retain the driver readiness requirement");
 
   inputs.driver_control_stamp_s = 10.0;
   inputs.driver_control_ready = false;
@@ -682,10 +659,10 @@ void testLocalizationHealthJsonCarriesSourceStateAndStamp() {
   require(std::abs(sample.stamp_s - 42.125) < 1e-12, "health source timestamp must decode");
 
   const auto catastrophic = lingtu::nav::endpoint::decodeLocalizationHealth(
-      R"({"state":"TRACKING","reason":"fastlio_state_nonfinite","ts":42.126})");
+      R"({"state":"TRACKING","reason":"ltlio_state_nonfinite","ts":42.126})");
   require(catastrophic.valid, "catastrophic health JSON must still decode");
   require(!catastrophic.healthy, "catastrophic reason must override TRACKING health");
-  require(catastrophic.reason == "fastlio_state_nonfinite", "health reason must be preserved");
+  require(catastrophic.reason == "ltlio_state_nonfinite", "health reason must be preserved");
 
   const auto missing_stamp =
       lingtu::nav::endpoint::decodeLocalizationHealth(R"({"state":"TRACKING"})");
@@ -701,9 +678,8 @@ void testLocalizationHealthJsonCarriesSourceStateAndStamp() {
 
 int main() {
   try {
-  testRequiresConsecutiveFreshFrames();
-  testRecoveryAdvancesOnlyAfterEveryRequiredInputHasANewGeneration();
-  testCoordinateEpochForcesFreshDdsRecovery();
+  testValidInputsAreReadyWithoutGenerationRecovery();
+  testAuxiliaryHealthOnlyBlocksCurrentHardLocalizationFailure();
   testStaleCloudStopsImmediatelyAndRequiresRecoveryAgain();
   testMapFrameOdometryDoesNotRequireMapOdomTf();
   testFutureInputsCloseTheGate();

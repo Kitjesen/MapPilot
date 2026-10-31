@@ -65,7 +65,9 @@ bool ControlLoopHealth::observe(ControlLoopSample sample) {
   }
   const double work_ms = std::max(0.0, sample.loop_ms - sample.sleep_ms);
   const StoredSample stored{work_ms, sample.loop_ms, sample.overrun_ms,
-                            sample.overrun_ms > 0.0, sample.stages_ms};
+                            sample.overrun_ms > 0.0, sample.stages_ms,
+                            sample.nav_tick_ms, sample.final_control_ms,
+                            sample.sensor_take_ms, sample.sensor_apply_ms, sample.thread_cpu_ms};
   window_.push_back(stored);
   if (window_.size() > config_.window_size) {
     window_.pop_front();
@@ -91,7 +93,9 @@ ControlLoopHealthSnapshot ControlLoopHealth::withHistory(bool include_history) c
     for (const auto &sample : window_) {
       history.overruns_ms.push_back(sample.overrun_ms);
       if (sample.deadline_miss) {
-        history.overruns.push_back({sequence, sample.work_ms, sample.stages_ms});
+        history.overruns.push_back({sequence, sample.work_ms, sample.stages_ms,
+                                   sample.nav_tick_ms, sample.final_control_ms,
+                                   sample.sensor_take_ms, sample.sensor_apply_ms, sample.thread_cpu_ms});
       }
       ++sequence;
     }

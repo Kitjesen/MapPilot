@@ -157,6 +157,38 @@ class Commands(Module, layer=3):
         )
 
     @rpc
+    def query_semantic_views(
+        self,
+        boot_id: str,
+        map_id: str,
+        map_content_epoch: int,
+        camera_range_m: float,
+        camera_horizontal_fov_rad: float,
+        frame_id: str = "map",
+        frame_epoch: int = 0,
+        reference_z: float = 0.0,
+        views: list[dict[str, object]] | None = None,
+        timeout_ms: int = 3000,
+    ) -> dict[str, object]:
+        """Query native 3D observation candidates without authorizing motion."""
+
+        client = get_native_navigation_client(required=True)
+        if client is None:
+            raise RuntimeError("native navigation command boundary is unavailable")
+        return client.query_semantic_views(
+            boot_id=str(boot_id),
+            map_id=str(map_id),
+            map_content_epoch=int(map_content_epoch),
+            frame_id=str(frame_id or "map"),
+            frame_epoch=int(frame_epoch),
+            reference_z=float(reference_z),
+            camera_range_m=float(camera_range_m),
+            camera_horizontal_fov_rad=float(camera_horizontal_fov_rad),
+            views=list(views or []),
+            timeout_ms=max(1, int(timeout_ms)),
+        )
+
+    @rpc
     def send_goal(
         self,
         x: float,

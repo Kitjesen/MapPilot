@@ -64,6 +64,8 @@ using lingtu::sim::driver_bridge::HelloMessage;
 using lingtu::sim::driver_bridge::MujocoDriverBridgeCore;
 using lingtu::sim::driver_bridge::NavCommand;
 using lingtu::sim::driver_bridge::ProtocolError;
+using lingtu::sim::driver_bridge::ProfileRequest;
+using lingtu::sim::driver_bridge::ProfileState;
 using lingtu::sim::driver_bridge::ReadyMessage;
 using lingtu::sim::driver_bridge::StopMessage;
 using lingtu::sim::driver_bridge::TimePoint;
@@ -620,6 +622,14 @@ class DdsEndpoint final {
       auto state_qos = lingtu::dds::make_qos(lingtu::dds::qos_for_topic(state_contract.dds_topic));
       state_writer_ = checked(dds_create_writer(publisher, state_topic, state_qos.get(), nullptr),
                               "dds_create_writer(driver_control_state)");
+      const auto request_topic = checked(dds_create_topic(participant_, &lingtu_dds_MotionProfileRequest_desc,
+          lingtu::message::kMotionProfileRequest.dds_topic.data(), nullptr, nullptr), "profile request topic");
+      auto request_qos = lingtu::dds::make_qos(lingtu::dds::qos_for_topic(lingtu::message::kMotionProfileRequest.dds_topic));
+      profile_reader_ = checked(dds_create_reader(subscriber, request_topic, request_qos.get(), nullptr), "profile reader");
+      const auto profile_topic = checked(dds_create_topic(participant_, &lingtu_dds_MotionProfileState_desc,
+          lingtu::message::kMotionProfileState.dds_topic.data(), nullptr, nullptr), "profile state topic");
+      auto profile_qos = lingtu::dds::make_qos(lingtu::dds::qos_for_topic(lingtu::message::kMotionProfileState.dds_topic));
+      profile_writer_ = checked(dds_create_writer(publisher, profile_topic, profile_qos.get(), nullptr), "profile writer");
     } catch (...) {
       dds_delete(participant_);
       participant_ = 0;
@@ -684,7 +694,43 @@ class DdsEndpoint final {
     return latest;
   }
 
-  void publishControlState(const BridgeStatus &status) {
+  std::optional<ProfileRequest> takeProfileRequest() {
+    void *samples[16]{};
+    dds_sample_info_t infos[16]{};
+    const auto count = dds_take(profile_reader_, samples, infos, 16, 16);
+    checked(count, "take profile request");
+    std::optional<ProfileRequest> latest;
+    const double now = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+    for (dds_return_t index = 0; index < count; ++index) {
+      if (!infos[index].valid_data || !samples[index]) continue;
+      const auto &message = *static_cast<lingtu_dds_MotionProfileRequest *>(samples[index]);
+      const double age = now - (message.header.stamp.sec + message.header.stamp.nanosec * 1e-9);
+      const std::string task = message.task_id ? message.task_id : "";
+      const std::string requirement = message.requirement ? message.requirement : "";
+      if (age < -0.1 || age > 1.0 || !lingtu::sim::driver_bridge::validProducerToken(task)) continue;
+      if (requirement == "stairs_up" || requirement == "stairs_down" || requirement == "restore" || requirement == "hold")
+        latest = ProfileRequest{task, requirement};
+    }
+    if (count > 0) checked(dds_return_loan(profile_reader_, samples, count), "return profile loan");
+    return latest;
+  }
+
+  void publishProfileState(const ProfileState &state) {
+    lingtu_dds_MotionProfileState message{};
+    const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    message.header.stamp.sec = static_cast<std::int32_t>(ns / 1'000'000'000LL);
+    message.header.stamp.nanosec = static_cast<std::uint32_t>(ns % 1'000'000'000LL);
+    message.header.frame_id = const_cast<char *>("base_link");
+    message.task_id = const_cast<char *>(state.task_id.c_str());
+    message.requirement = const_cast<char *>(state.requirement.c_str());
+    message.phase = const_cast<char *>(state.phase.c_str());
+    message.requested_profile = const_cast<char *>(state.requested_profile.c_str());
+    message.active_profile = const_cast<char *>(state.active_profile.c_str());
+    message.reason = const_cast<char *>(state.reason.c_str());
+    checked(dds_write(profile_writer_, &message), "write profile state");
+  }
+
+  void publishControlState(const BridgeStatus &status, bool profile_transition) {
     lingtu_dds_DriverControlState message{};
     const auto wall_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                              std::chrono::system_clock::now().time_since_epoch())
@@ -703,6 +749,7 @@ class DdsEndpoint final {
 
     const bool terminal = status.lifecycle == BridgeLifecycle::Stopped ||
                           status.lifecycle == BridgeLifecycle::FaultClosed;
+    profile_transition = profile_transition && !terminal;
     const bool connected = !status.controller_boot_id.empty() && !terminal;
     const auto output_ack = status.output_ack;
     const bool walking = status.applied_walk.x != 0.0 || status.applied_walk.y != 0.0 ||
@@ -714,16 +761,17 @@ class DdsEndpoint final {
     const std::string reason =
         status.fault != BridgeFaultCode::None
             ? lingtu::sim::driver_bridge::faultCodeName(status.fault)
+            : profile_transition ? "profile_transition"
             : (status.stop_cause != BridgeStopCause::None
                    ? lingtu::sim::driver_bridge::bridgeStopCauseName(status.stop_cause)
                    : (status.ready ? "" : lifecycleName(status.lifecycle)));
 
     message.connected = connected;
-    message.ready = status.ready;
+    message.ready = status.ready && !profile_transition;
     message.motors_enabled = status.ready;
     message.critical_fault = status.fault != BridgeFaultCode::None;
-    message.control_assured = status.lease_valid;
-    message.lease_valid = status.lease_valid;
+    message.control_assured = status.lease_valid && !profile_transition;
+    message.lease_valid = status.lease_valid && !profile_transition;
     message.lease_remaining_ms = status.lease_remaining_ms;
     message.accepted_sequence = status.accepted_sequence;
     message.accepted_producer_boot_id = const_cast<char *>(output_ack.producerBootId().c_str());
@@ -740,6 +788,8 @@ class DdsEndpoint final {
   dds_entity_t participant_{0};
   dds_entity_t command_reader_{0};
   dds_entity_t state_writer_{0};
+  dds_entity_t profile_reader_{0};
+  dds_entity_t profile_writer_{0};
 };
 
 void emitCommand(ControllerTransport &transport, const std::optional<BridgeCommand> &command) {
@@ -761,6 +811,8 @@ std::optional<BridgeCommand> dispatch(MujocoDriverBridgeCore &core,
           return core.onHeartbeat(typed, now);
         } else if constexpr (std::is_same_v<Message, DeactivateMessage>) {
           return core.onDeactivate(typed, now);
+        } else {
+          return std::nullopt;
         }
       },
       message);
@@ -795,6 +847,8 @@ int run(const Config &config) {
   std::uint64_t last_ready_sequence = 0;
   bool fault_emitted = false;
   bool signal_stop_started = false;
+  bool profile_transition = false;
+  std::optional<ProfileRequest> profile_request;
   std::uint64_t signal_zero_sequence = 0;
   const auto emit_runtime_command = [&](const std::optional<BridgeCommand> &command) {
     if (signal_stop_started && command.has_value() &&
@@ -802,6 +856,19 @@ int run(const Config &config) {
       signal_zero_sequence = command->bridge_command_seq;
     }
     emitCommand(controller, command);
+  };
+  const auto emit_ready = [&]() {
+    const auto status = core.status(bridgeNow());
+    if (!status.ready || status.accepted_sequence == last_ready_sequence) return false;
+    controller.writeLine(lingtu::sim::driver_bridge::serializeReady(ReadyMessage{
+        config.bridge_boot_id,
+        status.controller_boot_id,
+        status.accepted_sequence,
+        status.output_ack.producerBootId(),
+        status.output_ack.outputSequence(),
+    }));
+    last_ready_sequence = status.accepted_sequence;
+    return true;
   };
 
   while (true) {
@@ -820,9 +887,37 @@ int run(const Config &config) {
     try {
       const InputBatch input = controller.readAvailable();
       for (const auto &line : input.lines) {
-        const auto action =
-            dispatch(core, lingtu::sim::driver_bridge::parseControllerLine(line), bridgeNow());
+        const auto message = lingtu::sim::driver_bridge::parseControllerLine(line);
+        if (const auto *profile = std::get_if<ProfileState>(&message)) {
+          if (profile->bridge_boot_id != config.bridge_boot_id ||
+              profile->controller_boot_id != core.status(bridgeNow()).controller_boot_id)
+            throw ProtocolError("profile controller identity mismatch");
+          if (!profile_request || profile->task_id != profile_request->task_id ||
+              profile->requirement != profile_request->requirement) continue;
+          auto observed = *profile;
+          if (observed.phase == "ready" && (observed.requested_profile.empty() ||
+              observed.requested_profile != observed.active_profile)) {
+            observed.phase = "waiting";
+            observed.reason = "profile_not_confirmed";
+          }
+          // Hold pauses model work; it does not revoke an already confirmed
+          // controller. Keep an unfinished switch interlocked until resumed.
+          const bool transitioning = observed.requirement == "hold"
+              ? profile_transition
+              : observed.phase != "ready" && observed.phase != "unsupported";
+          if (transitioning && !profile_transition)
+            emit_runtime_command(core.requestSafetyStop(bridgeNow()));
+          profile_transition = transitioning;
+          dds.publishProfileState(observed);
+          publish_now = true;
+          continue;
+        }
+        const auto action = dispatch(core, message, bridgeNow());
         emit_runtime_command(action);
+        // Complete this physical ACK before a later event requests a stop.
+        // Otherwise an issued next Nav waits for APPLIED while the controller
+        // is still waiting for the preceding Nav's READY.
+        (void)emit_ready();
         publish_now = true;
       }
       if (input.eof) {
@@ -837,8 +932,21 @@ int run(const Config &config) {
       publish_now = true;
     }
 
+    if (const auto request = dds.takeProfileRequest(); request && !before_input.controller_boot_id.empty()) {
+      controller.writeLine(lingtu::sim::driver_bridge::serializeProfileRequest(*request,
+          config.bridge_boot_id, before_input.controller_boot_id));
+      if (!profile_request || request->task_id != profile_request->task_id ||
+          request->requirement != profile_request->requirement) {
+        if (request->requirement != "hold") profile_transition = true;
+        emit_runtime_command(core.requestSafetyStop(bridgeNow()));
+        publish_now = true;
+      }
+      profile_request = request;
+    }
+
     if (const auto nav = dds.takeLatest(); nav.has_value()) {
-      const auto action = core.submitNav(*nav);
+      const auto action = profile_transition && (nav->vx != 0.0 || nav->vy != 0.0 || nav->wz != 0.0)
+          ? core.requestSafetyStop(bridgeNow()) : core.submitNav(*nav);
       emit_runtime_command(action);
       publish_now = true;
     }
@@ -856,20 +964,10 @@ int run(const Config &config) {
 
     const auto status_now = bridgeNow();
     const auto status = core.status(status_now);
-    if (status.ready && status.accepted_sequence != last_ready_sequence) {
-      controller.writeLine(lingtu::sim::driver_bridge::serializeReady(ReadyMessage{
-          config.bridge_boot_id,
-          status.controller_boot_id,
-          status.accepted_sequence,
-          status.output_ack.producerBootId(),
-          status.output_ack.outputSequence(),
-      }));
-      last_ready_sequence = status.accepted_sequence;
-      publish_now = true;
-    }
+    publish_now = emit_ready() || publish_now;
 
     if (publish_now || status_now >= next_control_state) {
-      dds.publishControlState(status);
+      dds.publishControlState(status, profile_transition);
       next_control_state = status_now + kControlStatePeriod;
     }
 

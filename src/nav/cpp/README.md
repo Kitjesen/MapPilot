@@ -72,11 +72,11 @@ require an extra DDS boundary.
 | Directory | Responsibility |
 | --- | --- |
 | `planning/global/` | Global planner contract and OctoPlanner3D/FAR adapters |
-| `planning/local/` | Backend-neutral local planner plus CMU, SCAN, and candidate recovery search |
+| `planning/local/` | Backend-neutral local planner plus CMU and SCAN |
+| `navigation/` | Route slicing, frame conversion, recovery state and private candidate search, Planner-to-Follower sequencing |
 | `planning/rolling/` | Portable observed-free rolling-map prefix planning and revalidation |
 | `trajectory/` | Shared uniform B-spline representation and exact evaluation |
 | `tracking/` | Geometric-path and exact B-spline tracking; bounded velocity shaping |
-| `navigation/` | Route slicing, frame conversion, recovery lifecycle, Planner-to-Follower sequencing |
 | `endpoint/` | DDS, readiness, goal lifecycle, command boundary, authority, and process lifecycle; `RollingSegmentEffectCoordinator` applies transport-free rolling effects |
 | `client/` | Native client and C ABI for endpoint commands/status |
 | `bindings/` | Nanobind access to portable native kernels used by focused development tools and tests |
@@ -103,12 +103,13 @@ not contain planner or follower algorithms.
 backend-neutral request and result contract. The normal field backend is
 OctoPlanner3D; FAR is optional. Map artifact validation and asynchronous goal
 identity checks belong to `endpoint/nav/input/active/` and
-`endpoint/nav/runtime/goal/`, not to the planner interface.
+`endpoint/nav/app/goal/`, not to the planner interface.
 
 ### Local planning
 
 [`planning/local/planner.hpp`](planning/local/planner.hpp) exposes one
-`local::Planner` configured with one backend.
+`nav_kernel::LocalPlanner` configured with one backend. `LocalPlanner` is the
+module name; SCAN and CMU identify its algorithms, not separate execution owners.
 
 Both backends consume the same `LocalPlanRequest`, including the objective,
 robot state, local environment, identity, and clock. Their executable targets
@@ -170,6 +171,14 @@ terminal yaw alignment, verified recovery rotation, and fail-closed stopping are
 the intentional exceptions. See
 [`navigation/README.md`](navigation/README.md).
 
+The endpoint retains an accepted goal through ordinary local obstruction. Local
+recovery exhaustion requests a stopped global replacement search. A no-path
+replacement holds zero output and retries after 0.5 s, with one search in flight;
+it does not exhaust a lifetime retry allowance. A successful replacement returns
+to Executor and local tracking. Pause suspends this cycle; cancel and explicit
+interruption retain their own handling. See the
+[runtime contract](../../../docs/runtime.md) for task and motion boundaries.
+
 ## Product and Host boundary
 
 Both `real` and `sim` Products select the native navigation endpoint as the
@@ -203,7 +212,7 @@ cmake --build --preset linux-x64-nav-portable
 ctest --preset linux-x64-nav-portable
 ```
 
-### S100P / Linux aarch64
+### Linux aarch64 target
 
 The aarch64 preset is native-on-target; it is not a cross-compilation preset.
 

@@ -24,6 +24,8 @@ add_library(prune_core STATIC
 
 target_include_directories(prune_core PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(prune_core PRIVATE cxx_std_20)
+target_include_directories(prune_core PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 
 add_executable(prune
   prune.cpp)
@@ -92,14 +94,17 @@ else()
   endif()
 endif()
 
-include(CTest)
-if(BUILD_TESTING)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  include(CTest)
+endif()
+if(BUILD_TESTING AND CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   add_test(NAME prune_help COMMAND prune --help)
+  add_test(NAME prune_legacy_ground_option COMMAND prune --ground-z-threshold -0.45 --help)
   add_executable(prune_test "${CMAKE_CURRENT_SOURCE_DIR}/../../../../tests/maps/cpp/prune_test.cpp")
   target_link_libraries(prune_test PRIVATE prune_core)
   foreach(test_case report dry_run empty_apply repeat_apply output_aliases truncated_source bad_threshold
       visibility endpoint_confirmation local_ground calibrated_origin ground mixed_ground pose_order
-      missing_origin surface)
+      missing_origin surface expired_surface)
     add_test(NAME prune_${test_case} COMMAND prune_test ${test_case})
   endforeach()
   if(LINGTU_PRUNE_ERASOR2)

@@ -1,4 +1,6 @@
 #include "LingTuSimRuntimeUIWorldSubsystem.h"
+#include "LingTuSimPlayerSettings.h"
+#include "HAL/IConsoleManager.h"
 
 #include "Engine/GameInstance.h"
 #include "Engine/GameViewportClient.h"
@@ -10,6 +12,10 @@
 #include "HAL/PlatformMisc.h"
 #include "HAL/PlatformTime.h"
 #include "HttpModule.h"
+#include "LingTuSimMeasurementClient.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "LingTuSimControlTransport.h"
 #include "LingTuSimGameSelection.h"
 #include "LingTuSimHudScreenshotContract.h"
@@ -117,6 +123,45 @@ bool IsCaptureReadyForTarget(const LingTuSim::UI::FHudScreenshotTarget &Target,
 }
 }  // namespace
 
+#if WITH_DEV_AUTOMATION_TESTS && !UE_BUILD_SHIPPING
+static FAutoConsoleCommandWithWorldAndArgs FieldUIPreviewCommand(
+    TEXT("LingTu.UI.PreviewMode"), TEXT("Unbound UI render: drive, tactical, or menu."),
+    FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World) {
+      if (World != nullptr && Args.Num() == 1) {
+        if (auto* UI = World->GetSubsystem<ULingTuSimRuntimeUIWorldSubsystem>()) UI->PreviewRuntimeInterface(Args[0]);
+      }
+    }));
+
+void ULingTuSimRuntimeUIWorldSubsystem::PreviewRuntimeInterface(const FString& Mode) {
+  FString SessionId;
+  uint64 Generation = 0;
+  LingTuSim::FControlTransportBinding Control;
+  if (!FParse::Param(FCommandLine::Get(), TEXT("LingTuDevRuntimeUIRender")) || bGameSelector ||
+      !ModeController.IsValid() || LingTuSim::FSessionService::GetBoundSession(SessionId, Generation) ||
+      LingTuSim::FSessionService::GetControlTransportBinding(Control)) {
+    UE_LOG(LogLingTuSimUI, Warning, TEXT("LINGTU_UI_PREVIEW_REJECTED requires_unbound_render_scope"));
+    return;
+  }
+  if (Mode == TEXT("graphics_probe") || Mode == TEXT("graphics_verify")) {
+    if (RuntimeHUDWidget.IsValid()) RuntimeHUDWidget->ProbeGraphicsPreview(Mode == TEXT("graphics_verify"));
+    return;
+  }
+  if (Mode != TEXT("drive") && Mode != TEXT("tactical") && Mode != TEXT("menu") &&
+      Mode != TEXT("settings") && Mode != TEXT("quit") && Mode != TEXT("controls") && Mode != TEXT("interface") && Mode != TEXT("audio") && Mode != TEXT("journal") && Mode != TEXT("library") && Mode != TEXT("settings_exit")) return;
+  if (ModeController->GetMode() == LingTuSim::UI::ERuntimeUIMode::Pause) ModeController->TogglePause();
+  if (ModeController->GetMode() == LingTuSim::UI::ERuntimeUIMode::Build) ModeController->ToggleBuild();
+  if (ModeController->GetMode() == LingTuSim::UI::ERuntimeUIMode::Tactical) ModeController->ToggleTactical();
+  if (Mode == TEXT("tactical")) ModeController->ToggleTactical();
+  if (Mode == TEXT("menu") || Mode == TEXT("settings") || Mode == TEXT("quit") || Mode == TEXT("controls") || Mode == TEXT("interface") || Mode == TEXT("audio") || Mode == TEXT("journal") || Mode == TEXT("library") || Mode == TEXT("settings_exit")) {
+    ModeController->TogglePause();
+    if (RuntimeHUDWidget.IsValid()) RuntimeHUDWidget->PreviewPlayerMenuPage(Mode);
+  }
+  LocalState->ActualUIMode = LingTuSim::UI::RuntimeUIModeWireName(ModeController->GetMode());
+  SynchronizePlayerInputMode(true);
+  UE_LOG(LogLingTuSimUI, Display, TEXT("LINGTU_UI_PREVIEW_MODE=%s physics=unbound"), *Mode);
+}
+#endif
+
 bool ULingTuSimRuntimeUIWorldSubsystem::ShouldCreateSubsystem(UObject *Outer) const {
   if (!Super::ShouldCreateSubsystem(Outer)) {
     return false;
@@ -180,10 +225,20 @@ void ULingTuSimRuntimeUIWorldSubsystem::OnWorldBeginPlay(UWorld &InWorld) {
 
   ModeController = MakeShared<LingTuSim::UI::FRuntimeUIModeController>();
   LocalState = MakeShared<LingTuSim::UI::FRuntimeUILocalState>();
+  PlayerSettings = MakeShared<LingTuSim::UI::FPlayerSettings>();
+  PlayerSettings->Load();
   FrontEndLoginModel = MakeShared<LingTuSim::UI::FFrontEndLoginModel>();
   GameSelectionModel = MakeShared<LingTuSim::UI::FGameSelectionModel>();
   AssetReviewModel = MakeShared<LingTuSim::UI::FAssetReviewModel>();
   InspectionProjection = MakeShared<LingTuSim::UI::FInspectionProjection>();
+  Measurements = MakeShared<LingTuSim::UI::FMeasurementClient>();
+  FParse::Value(FCommandLine::Get(), TEXT("LingTuMeasurementProductSessionId="), MeasurementProductSessionId);
+  FParse::Value(FCommandLine::Get(), TEXT("LingTuMeasurementGatewayUrl="), MeasurementGatewayUrl);
+  if (MeasurementProductSessionId.IsEmpty())
+    FParse::Value(FCommandLine::Get(), TEXT("LingTuInspectionExpectedProductSessionId="), MeasurementProductSessionId);
+  if (MeasurementGatewayUrl.IsEmpty())
+    FParse::Value(FCommandLine::Get(), TEXT("LingTuInspectionGatewayUrl="), MeasurementGatewayUrl);
+  if (MeasurementGatewayUrl.IsEmpty()) MeasurementGatewayUrl = TEXT("http://127.0.0.1:5050");
   GameSelectionFeedback = MakeShared<FString>();
   InitializeGameSelectionFromCommandLine();
   InitializeInspectionProjectionFromCommandLine();
@@ -198,10 +253,12 @@ void ULingTuSimRuntimeUIWorldSubsystem::OnWorldBeginPlay(UWorld &InWorld) {
           .World(&InWorld)
           .ModeController(ModeController)
           .LocalState(LocalState)
+          .PlayerSettings(PlayerSettings)
           .LoginModel(FrontEndLoginModel)
           .SelectionModel(GameSelectionModel)
           .AssetReviewModel(AssetReviewModel)
           .InspectionProjection(InspectionProjection)
+          .Measurements(Measurements)
           .SelectionFeedback(GameSelectionFeedback)
           .FrontEndLoginRequired(bGameSelector)
           .SelectionIntentConfigured(!GameSelectionIntentPath.IsEmpty())
@@ -214,7 +271,24 @@ void ULingTuSimRuntimeUIWorldSubsystem::OnWorldBeginPlay(UWorld &InWorld) {
           .OnAssetReviewPrevious(FSimpleDelegate::CreateUObject(
               this, &ULingTuSimRuntimeUIWorldSubsystem::HandlePreviousAssetReview))
           .OnAssetReviewNext(FSimpleDelegate::CreateUObject(
-              this, &ULingTuSimRuntimeUIWorldSubsystem::HandleNextAssetReview));
+              this, &ULingTuSimRuntimeUIWorldSubsystem::HandleNextAssetReview))
+          .OnToggleRecording(FSimpleDelegate::CreateWeakLambda(this, [this]() {
+            HandleUIAction(LingTuSim::UI::ERuntimeUIAction::ToggleRecording);
+          }))
+          .OnCycleCamera(FSimpleDelegate::CreateWeakLambda(this, [this]() {
+            HandleUIAction(LingTuSim::UI::ERuntimeUIAction::CycleCamera);
+          }))
+          .OnInspectionPause(FSimpleDelegate::CreateWeakLambda(this, [this]() { RequestInspectionControl(TEXT("pause")); }))
+          .OnInspectionResume(FSimpleDelegate::CreateWeakLambda(this, [this]() { RequestInspectionControl(TEXT("resume")); }))
+          .OnInspectionCancel(FSimpleDelegate::CreateWeakLambda(this, [this]() { RequestInspectionControl(TEXT("cancel")); }))
+          .OnRequestExit(FSimpleDelegate::CreateWeakLambda(this, [this]() {
+            // Selector-only exit owns no running simulation and never fabricates a stop ACK.
+            if (bGameSelector) {
+              if (GameSelectionModel.IsValid() && !GameSelectionModel->IsConfirmed()) FPlatformMisc::RequestExit(false);
+              return;
+            }
+            HandleUIAction(LingTuSim::UI::ERuntimeUIAction::Exit);
+          }));
   RuntimeHUDWidget = RuntimeHUD;
   HUDWidget = RuntimeHUD;
   Viewport->AddViewportWidgetContent(HUDWidget.ToSharedRef(), 1000);
@@ -344,7 +418,25 @@ void ULingTuSimRuntimeUIWorldSubsystem::OnWorldBeginPlay(UWorld &InWorld) {
       },
       [WeakHUD = TWeakPtr<LingTuSim::UI::SLingTuSimRuntimeHUD>(RuntimeHUD)]() {
         const TSharedPtr<LingTuSim::UI::SLingTuSimRuntimeHUD> HUD = WeakHUD.Pin();
-        return HUD.IsValid() && HUD->IsOperatorNameEditing();
+        return HUD.IsValid() && HUD->IsTextEntryEditing();
+      },
+      [WeakThis = TWeakObjectPtr<ULingTuSimRuntimeUIWorldSubsystem>(this)](
+          const LingTuSim::UI::FRuntimeCameraInput& Input) {
+        if (auto* Subsystem = WeakThis.Get()) Subsystem->HandleMouseCameraInput(Input);
+      },
+      [WeakHUD = TWeakPtr<LingTuSim::UI::SLingTuSimRuntimeHUD>(RuntimeHUD)]() {
+        const auto HUD = WeakHUD.Pin();
+        return HUD.IsValid() && HUD->HandleRuntimeMenuBack();
+      }, PlayerSettings,
+      [WeakHUD = TWeakPtr<LingTuSim::UI::SLingTuSimRuntimeHUD>(RuntimeHUD)](const FKeyEvent& Event) {
+        const auto HUD = WeakHUD.Pin();
+        return HUD.IsValid() && HUD->HandleKeyBindingCapture(Event);
+      },
+      [WeakHUD = TWeakPtr<LingTuSim::UI::SLingTuSimRuntimeHUD>(RuntimeHUD)]() {
+        if (const auto HUD = WeakHUD.Pin()) HUD->CancelKeyBindingCapture();
+      },
+      [WeakHUD = TWeakPtr<LingTuSim::UI::SLingTuSimRuntimeHUD>(RuntimeHUD)]() {
+        if (const auto HUD = WeakHUD.Pin()) HUD->RestoreSelectionFocus();
       });
   bInputProcessorRegistered = FSlateApplication::Get().RegisterInputPreProcessor(InputProcessor, 0);
   if (!bInputProcessorRegistered) {
@@ -360,6 +452,7 @@ void ULingTuSimRuntimeUIWorldSubsystem::OnWorldBeginPlay(UWorld &InWorld) {
 
 void ULingTuSimRuntimeUIWorldSubsystem::Tick(const float DeltaTime) {
   check(IsInGameThread());
+  if (RuntimeHUDWidget.IsValid()) RuntimeHUDWidget->TickGraphicsPreview();
   if (HUDWidget.IsValid()) {
     ++HudFramesSinceAttach;
   }
@@ -383,6 +476,17 @@ void ULingTuSimRuntimeUIWorldSubsystem::Tick(const float DeltaTime) {
     }
   }
   SynchronizePlayerInputMode();
+  if (Measurements.IsValid()) {
+    const auto Snapshot = ReadStatusSnapshot();
+    LingTuSim::UI::FMeasurementBinding Binding;
+    if (Snapshot.bSessionAvailable && Snapshot.bIdentityCoherent) {
+      Binding.ProductSessionId = MeasurementProductSessionId;
+      Binding.SessionId = Snapshot.SessionId;
+      Binding.ModelGeneration = Snapshot.ModelGeneration;
+      Binding.ResetGeneration = Snapshot.ResetGeneration;
+    }
+    Measurements->Configure(MeasurementGatewayUrl, Binding);
+  }
   TickInspectionProjection(DeltaTime);
   TickPendingExit();
 #if WITH_DEV_AUTOMATION_TESTS && !UE_BUILD_SHIPPING
@@ -422,6 +526,8 @@ void ULingTuSimRuntimeUIWorldSubsystem::Deinitialize() {
   InspectionPollElapsedSeconds = 0.0F;
   LastSuccessfulInspectionTaskResponseSeconds = 0.0;
   InspectionExpectedBinding = {};
+  MeasurementProductSessionId.Reset();
+  MeasurementGatewayUrl.Reset();
   HudScreenshotCaptures.Reset();
   Super::Deinitialize();
 }
@@ -435,6 +541,10 @@ void ULingTuSimRuntimeUIWorldSubsystem::DetachRuntimeUI() {
   }
   bInputProcessorRegistered = false;
   InputProcessor.Reset();
+  // Invalidate the HTTP consumer before cancellation can invoke its callback.
+  if (Measurements.IsValid()) Measurements->Shutdown();
+  Measurements.Reset();
+  InspectionProjection.Reset();
   if (InspectionRequest.IsValid()) {
     InspectionRequest->CancelRequest();
   }
@@ -458,6 +568,7 @@ void ULingTuSimRuntimeUIWorldSubsystem::DetachRuntimeUI() {
   HUDWidget.Reset();
   ModeController.Reset();
   LocalState.Reset();
+  PlayerSettings.Reset();
   FrontEndLoginModel.Reset();
   GameSelectionModel.Reset();
   AssetReviewModel.Reset();
@@ -471,6 +582,7 @@ void ULingTuSimRuntimeUIWorldSubsystem::InitializeInspectionProjectionFromComman
   FParse::Value(FCommandLine::Get(), TEXT("LingTuInspectionTaskId="), InspectionTaskId);
   InspectionTaskId = InspectionTaskId.TrimStartAndEnd();
   InspectionProjection->TaskId = InspectionTaskId;
+  FParse::Value(FCommandLine::Get(), TEXT("LingTuInspectionExpectedProductSessionId="), InspectionExpectedBinding.ProductSessionId);
   InspectionProjection->bBound = !InspectionTaskId.IsEmpty();
   if (InspectionTaskId.IsEmpty()) {
     return;
@@ -608,6 +720,12 @@ void ULingTuSimRuntimeUIWorldSubsystem::HandleInspectionTaskResponse(
     Parsed.bReportVerified = true;
     Parsed.bReportStale = true;
   }
+  Parsed.CommandFeedback = InspectionProjection->CommandFeedback;
+  if (Parsed.TaskId == InspectionProjection->TaskId && Parsed.RouteId == InspectionProjection->RouteId &&
+      Parsed.RouteRevision == InspectionProjection->RouteRevision && Parsed.MapId == InspectionProjection->MapId &&
+      Parsed.MapContentEpoch == InspectionProjection->MapContentEpoch &&
+      Parsed.CurrentPointId == InspectionProjection->CurrentPointId &&
+      Parsed.Phase == InspectionProjection->Phase) Parsed.Guidance = InspectionProjection->Guidance;
   *InspectionProjection = MoveTemp(Parsed);
   if (!InspectionProjection->bTaskAvailable || !InspectionProjection->bExecutionConfirmed ||
       !InspectionProjection->bHistoryComplete ||
@@ -615,7 +733,82 @@ void ULingTuSimRuntimeUIWorldSubsystem::HandleInspectionTaskResponse(
     bInspectionRequestInFlight = false;
     return;
   }
+  RequestInspectionGuidance();
+}
+
+void ULingTuSimRuntimeUIWorldSubsystem::RequestInspectionGuidance() {
+  InspectionRequest = FHttpModule::Get().CreateRequest();
+  InspectionRequest->SetVerb(TEXT("GET"));
+  InspectionRequest->SetTimeout(3.0F);
+  InspectionRequest->SetURL(FString::Printf(TEXT("%s/api/v1/inspection/tasks/%s/guidance"),
+      *InspectionGatewayUrl, *FGenericPlatformHttp::UrlEncode(InspectionTaskId)));
+  const TWeakObjectPtr<ULingTuSimRuntimeUIWorldSubsystem> WeakThis(this);
+  InspectionRequest->OnProcessRequestComplete().BindLambda(
+      [WeakThis](FHttpRequestPtr, FHttpResponsePtr Response, bool bOk) {
+        if (auto* Self = WeakThis.Get()) Self->HandleInspectionGuidanceResponse(
+          bOk && Response.IsValid(), Response.IsValid() ? Response->GetResponseCode() : 0,
+          Response.IsValid() ? Response->GetContentAsString() : FString());
+      });
+  if (!InspectionRequest->ProcessRequest()) HandleInspectionGuidanceResponse(false, 0, FString());
+}
+
+void ULingTuSimRuntimeUIWorldSubsystem::HandleInspectionGuidanceResponse(
+    bool bTransportOk, int32 ResponseCode, FString Body) {
+  InspectionRequest.Reset();
+  if (!InspectionProjection.IsValid()) { bInspectionRequestInFlight = false; return; }
+  LingTuSim::UI::FInspectionGuidance Guidance;
+  FString Error;
+  if (bTransportOk && ResponseCode >= 200 && ResponseCode < 300 &&
+      LingTuSim::UI::FInspectionGuidance::Parse(Body, *InspectionProjection, Guidance, Error)) {
+    Guidance.ReceivedSeconds = FPlatformTime::Seconds();
+    const auto Status = ReadStatusSnapshot();
+    Guidance.SimAnchorPose.bAvailable = Status.bIdentityCoherent && Status.bObservedBasePoseAvailable &&
+      Status.bFullStatusFresh && Status.bFullStatusIdentityCoherent;
+    Guidance.SimAnchorPose.PositionMeters = Status.ObservedBasePositionMeters;
+    Guidance.SimAnchorPose.Rotation = Status.ObservedBaseRotation;
+  } else Guidance.Reason = Error.IsEmpty() ? TEXT("guidance_transport_unavailable") : Error;
+  InspectionProjection->Guidance = MoveTemp(Guidance);
   RequestInspectionReport();
+}
+
+void ULingTuSimRuntimeUIWorldSubsystem::RequestInspectionControl(const FString& Action) {
+  if (!InspectionProjection.IsValid() || !InspectionProjection->CanRequestControl(Action)) return;
+  if (bInspectionRequestInFlight) {
+    InspectionProjection->CommandFeedback = TEXT("状态刷新中 · 请稍后重试"); return;
+  }
+  bInspectionRequestInFlight = true;
+  InspectionProjection->bCommandPending = true;
+  InspectionProjection->CommandFeedback = TEXT("请求发送中 · 等待原生确认");
+  InspectionRequest = FHttpModule::Get().CreateRequest();
+  InspectionRequest->SetVerb(TEXT("POST")); InspectionRequest->SetTimeout(3.0F);
+  InspectionRequest->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+  const auto Payload = MakeShared<FJsonObject>();
+  Payload->SetStringField(TEXT("reason"), TEXT("operator"));
+  Payload->SetStringField(TEXT("request_id"), TEXT("ue-") + FGuid::NewGuid().ToString(EGuidFormats::Digits));
+  Payload->SetStringField(TEXT("expected_env"), TEXT("sim"));
+  Payload->SetStringField(TEXT("expected_product_session_id"), InspectionProjection->ProductSessionId);
+  FString Json;
+  FJsonSerializer::Serialize(Payload, TJsonWriterFactory<>::Create(&Json));
+  InspectionRequest->SetContentAsString(Json);
+  InspectionRequest->SetURL(FString::Printf(TEXT("%s/api/v1/inspection/tasks/%s/%s"),
+      *InspectionGatewayUrl, *FGenericPlatformHttp::UrlEncode(InspectionTaskId), *Action));
+  const TWeakObjectPtr<ULingTuSimRuntimeUIWorldSubsystem> WeakThis(this);
+  InspectionRequest->OnProcessRequestComplete().BindLambda(
+      [WeakThis](FHttpRequestPtr, FHttpResponsePtr Response, bool bOk) {
+        if (auto* Self = WeakThis.Get()) {
+          Self->InspectionRequest.Reset(); Self->bInspectionRequestInFlight = false;
+          if (!Self->InspectionProjection.IsValid()) return;
+          Self->InspectionProjection->bCommandPending = false;
+          Self->InspectionProjection->CommandFeedback = bOk && Response.IsValid() && Response->GetResponseCode() >= 200 && Response->GetResponseCode() < 300
+            ? TEXT("请求已提交 · 执行状态以原生回报为准") : TEXT("任务请求失败 · 未更改任务状态");
+          Self->InspectionPollElapsedSeconds = 1.0F;
+        }
+      });
+  if (!InspectionRequest->ProcessRequest()) {
+    InspectionRequest.Reset(); bInspectionRequestInFlight = false;
+    InspectionProjection->bCommandPending = false;
+    InspectionProjection->CommandFeedback = TEXT("任务请求未发出");
+  }
 }
 
 void ULingTuSimRuntimeUIWorldSubsystem::RequestInspectionReport() {
@@ -670,7 +863,12 @@ void ULingTuSimRuntimeUIWorldSubsystem::HandleInspectionReportResponse(
 
 void ULingTuSimRuntimeUIWorldSubsystem::InitializeGameSelectionFromCommandLine() {
   check(GameSelectionModel.IsValid());
-  bGameSelector = FParse::Param(FCommandLine::Get(), TEXT("LingTuGameSelector"));
+  FString BoundSessionId;
+  uint64 BoundGeneration = 0;
+  LingTuSim::FControlTransportBinding BoundControl;
+  bGameSelector = LingTuSim::UI::FRuntimeUIPolicy::ShouldStartFrontEnd(FCommandLine::Get(),
+      LingTuSim::FSessionService::GetBoundSession(BoundSessionId, BoundGeneration),
+      LingTuSim::FSessionService::GetControlTransportBinding(BoundControl));
   bGameSelectorExitOnConfirm =
       bGameSelector && FParse::Param(FCommandLine::Get(), TEXT("LingTuGameSelectorExitOnConfirm"));
   GameSelectionIntentPath.Reset();
@@ -828,7 +1026,8 @@ void ULingTuSimRuntimeUIWorldSubsystem::SynchronizePlayerInputMode(const bool bF
   if (PlayerController == nullptr) {
     return;
   }
-  if (CurrentMode == LingTuSim::UI::ERuntimeUIMode::Pause) {
+  if (CurrentMode == LingTuSim::UI::ERuntimeUIMode::Pause ||
+      (RuntimeHUDWidget.IsValid() && RuntimeHUDWidget->IsMeasurementPageOpen())) {
     FInputModeGameAndUI InputMode;
     InputMode.SetWidgetToFocus(HUDWidget);
     InputMode.SetHideCursorDuringCapture(false);
@@ -836,6 +1035,7 @@ void ULingTuSimRuntimeUIWorldSubsystem::SynchronizePlayerInputMode(const bool bF
     PlayerController->SetInputMode(InputMode);
     PlayerController->bShowMouseCursor = true;
     FSlateApplication::Get().SetKeyboardFocus(HUDWidget, EFocusCause::SetDirectly);
+    if (RuntimeHUDWidget.IsValid()) RuntimeHUDWidget->RestoreSelectionFocus();
   } else {
     PlayerController->SetInputMode(FInputModeGameOnly());
     PlayerController->bShowMouseCursor = false;
@@ -895,6 +1095,9 @@ void ULingTuSimRuntimeUIWorldSubsystem::HandleUIAction(
   }
   FString Error;
   switch (Action) {
+    case LingTuSim::UI::ERuntimeUIAction::OpenQuitConfirmation:
+      if (RuntimeHUDWidget.IsValid()) RuntimeHUDWidget->OpenQuitConfirmation();
+      return;
     case LingTuSim::UI::ERuntimeUIAction::SelectPreviousGame:
       if (ModeController->GetMode() == LingTuSim::UI::ERuntimeUIMode::Pause) {
         HandlePreviousGameSelection();
@@ -917,7 +1120,10 @@ void ULingTuSimRuntimeUIWorldSubsystem::HandleUIAction(
       return;
     case LingTuSim::UI::ERuntimeUIAction::ConfirmGameSelection:
       if (ModeController->GetMode() == LingTuSim::UI::ERuntimeUIMode::Pause) {
-        HandleGameSelectionConfirm();
+        if (bGameSelector) {
+          if (RuntimeHUDWidget.IsValid()) RuntimeHUDWidget->AdvanceFrontEndSelection();
+          else if (GameSelectionFeedback.IsValid()) *GameSelectionFeedback = TEXT("选择界面尚未就绪");
+        } else HandleGameSelectionConfirm();
       }
       return;
     case LingTuSim::UI::ERuntimeUIAction::ReturnFromFrontEnd:
@@ -984,14 +1190,43 @@ void ULingTuSimRuntimeUIWorldSubsystem::HandleUIAction(
       if (ModeController->GetMode() != LingTuSim::UI::ERuntimeUIMode::Pause) {
         return;
       }
+      if (LocalState->bExitRequestPending) return;
+      LocalState->ExitRequestError.Reset();
       if (PublishRuntimeRequest(LingTuSim::EOperatorRuntimeRequestType::Exit, TEXT("exit"),
                                 Error)) {
         PendingExitEventId = LocalState->LatestRuntimeRequestEventId;
+        PendingExitStartedSeconds = FPlatformTime::Seconds();
+        LocalState->bExitRequestPending = true;
         bEngineExitRequested = false;
+      } else {
+        LocalState->ExitRequestError = Error;
       }
       return;
     default:
       return;
+  }
+}
+
+void ULingTuSimRuntimeUIWorldSubsystem::HandleMouseCameraInput(
+    const LingTuSim::UI::FRuntimeCameraInput& Input) {
+  if (bGameSelector || !ModeController.IsValid() || !LocalState.IsValid() ||
+      ModeController->GetMode() != LingTuSim::UI::ERuntimeUIMode::Drive) return;
+  auto* Visual = GetWorld() ? GetWorld()->GetSubsystem<ULingTuSimVisualWorldSubsystem>() : nullptr;
+  const FVector2D Look = PlayerSettings.IsValid()
+      ? LingTuSim::UI::FPlayerSettings::ApplyMouseLook(
+          FVector2D(Input.YawDeltaDegrees, Input.PitchDeltaDegrees), *PlayerSettings)
+      : FVector2D(Input.YawDeltaDegrees, Input.PitchDeltaDegrees);
+  FString Error;
+  if (!Visual || !Visual->AdjustRuntimeCamera(Look.X, Look.Y,
+                                             Input.ZoomSteps, Error)) {
+    UE_LOG(LogLingTuSimUI, Verbose, TEXT("LINGTU_RUNTIME_UI_MOUSE_CAMERA_REJECTED reason=%s"), *Error);
+    return;
+  }
+  const FString ActualMode = Visual->GetRuntimeCameraModeName();
+  if (ActualMode != LocalState->ActualCameraMode) {
+    LocalState->ActualCameraMode = ActualMode;
+    bInitialCameraEchoPublished = PublishRuntimeRequest(
+        LingTuSim::EOperatorRuntimeRequestType::UIStateUpdate, TEXT("ui_state_update"), Error);
   }
 }
 
@@ -1004,8 +1239,16 @@ void ULingTuSimRuntimeUIWorldSubsystem::TickPendingExit() {
   FString Blocker;
   if (!LingTuSim::UI::FRuntimeUIExitPolicy::CanRequestEngineExit(
           PendingExitEventId, bEngineExitRequested, Status, Blocker)) {
+    FString FailureReason;
+    if (LingTuSim::UI::FRuntimeUIExitPolicy::ShouldEndPendingRequest(
+        PendingExitEventId, FPlatformTime::Seconds() - PendingExitStartedSeconds, Status, FailureReason)) {
+      LocalState->bExitRequestPending = false;
+      LocalState->ExitRequestError = FailureReason;
+      PendingExitEventId.Reset();
+    }
     return;
   }
+  LocalState->bExitRequestPending = false;
   bEngineExitRequested = true;
   UE_LOG(LogLingTuSimUI, Display,
          TEXT("LINGTU_RUNTIME_UI_EXIT_CONFIRMED event_id=%s source_epoch=%llu source_sequence=%llu "

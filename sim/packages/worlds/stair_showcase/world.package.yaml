@@ -1,0 +1,20 @@
+schema: lingtu.sim.world-package.v1
+id: stair_showcase
+version: 1.0.0
+kind: world
+description: Existing 12-step Thunder showcase, 6 cm nominal rise, for physics regression.
+physics:
+  mjcf: ../../../compat/engine/worlds/thunderv4_stair_showcase.xml
+  global_policy:
+    timestep_s: 0.005
+    integrator: rk4
+    solver: newton
+    iterations: 100
+    gravity_mps2:
+    - 0.0
+    - 0.0
+    - -9.81
+visual:
+  binding: WorldVisual:StairShowcase
+  level: /Game/RobotSim/Maps/ThunderV4_RuntimePreview
+entities: []

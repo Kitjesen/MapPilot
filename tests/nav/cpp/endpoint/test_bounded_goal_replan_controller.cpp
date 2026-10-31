@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "runtime/goal/retry.hpp"
+#include "app/goal/retry.hpp"
 
 namespace {
 
@@ -52,7 +52,6 @@ int main() {
                "confirmed stop did not arm backoff");
   require(controller.snapshot().state == BoundedGoalReplanState::kBackoffPending,
           "arm did not enter backoff pending");
-  require(controller.snapshot().budget_consumed, "arm did not consume budget");
   require(std::abs(controller.snapshot().deadline_s - 1.5) < 1e-9,
           "default backoff deadline is not exactly 0.5s");
   expectAction(controller.tick(active, 1.499).action, BoundedGoalReplanAction::kHold,
@@ -61,7 +60,28 @@ int main() {
                "tick at exact deadline did not start");
   expectAction(controller.tick(active, 1.6).action, BoundedGoalReplanAction::kNone,
                "repeated tick emitted a second start");
-  require(controller.snapshot().start_emitted, "snapshot did not record emitted start");
+  require(controller.snapshot().state == BoundedGoalReplanState::kReplanInFlight,
+          "snapshot did not record an in-flight attempt");
+  for (int attempt = 0; attempt < 10; ++attempt) {
+    const double completed_at = 2.0 + attempt;
+    expectAction(controller.completeReplan(active, completed_at, true).action,
+                 BoundedGoalReplanAction::kNone, "successful replan did not complete");
+    expectAction(controller.armAfterConfirmedStop(active, completed_at, true).action,
+                 BoundedGoalReplanAction::kHold, "later blockage terminated the same goal");
+    expectAction(controller.tick(active, completed_at + 0.5).action,
+                 BoundedGoalReplanAction::kStart, "same goal could not retry after success");
+  }
+
+  BoundedGoalReplanController no_path;
+  (void)no_path.observeGoal(active, 1.0);
+  (void)no_path.armAfterConfirmedStop(active, 1.0, true);
+  (void)no_path.tick(active, 1.5);
+  expectAction(no_path.completeReplan(active, 1.6, false).action,
+               BoundedGoalReplanAction::kHold, "no path terminated the retained goal");
+  expectAction(no_path.tick(active, 2.099).action, BoundedGoalReplanAction::kHold,
+               "failed search retried before backoff");
+  expectAction(no_path.tick(active, 2.1).action, BoundedGoalReplanAction::kStart,
+               "failed search could not retry at backoff deadline");
 
   BoundedGoalReplanController zero_backoff({0.0});
   (void)zero_backoff.observeGoal(active, 1.0);
@@ -82,33 +102,32 @@ int main() {
   BoundedGoalReplanController unconfirmed;
   (void)unconfirmed.observeGoal(active, 3.0);
   expectAction(unconfirmed.armAfterConfirmedStop(active, 3.0, false).action,
-               BoundedGoalReplanAction::kConsume,
-               "unconfirmed stop did not consume budget fail-closed");
+               BoundedGoalReplanAction::kHold,
+               "unconfirmed stop did not wait");
+  expectAction(unconfirmed.tick(active, 3.05).action, BoundedGoalReplanAction::kNone,
+               "unconfirmed stop started a search");
   expectAction(unconfirmed.armAfterConfirmedStop(active, 3.1, true).action,
-               BoundedGoalReplanAction::kReject,
-               "consumed budget allowed a second arm");
+               BoundedGoalReplanAction::kHold,
+               "confirmed stop could not arm after waiting");
 
-  BoundedGoalReplanController epoch_budget;
-  (void)epoch_budget.observeGoal(active, 4.0);
-  (void)epoch_budget.armAfterConfirmedStop(active, 4.0, true);
-  (void)epoch_budget.tick(active, 4.5);
-  (void)epoch_budget.completeReplan(active, 4.6, true);
+  BoundedGoalReplanController epochs;
+  (void)epochs.observeGoal(active, 4.0);
+  (void)epochs.armAfterConfirmedStop(active, 4.0, true);
+  (void)epochs.tick(active, 4.5);
+  (void)epochs.completeReplan(active, 4.6, true);
   const auto same_request_new_epoch = goal("task-a", "req-a", 2U, mapIdentity());
-  expectAction(epoch_budget.observeGoal(same_request_new_epoch, 4.7).action,
+  expectAction(epochs.observeGoal(same_request_new_epoch, 4.7).action,
                BoundedGoalReplanAction::kNone,
-               "consumed same request epoch advance returned cancel");
-  require(epoch_budget.snapshot().reason == "active_goal_epoch_advanced_budget_retained" &&
-              epoch_budget.snapshot().budget_consumed,
-          "consumed same request epoch advance did not retain budget state");
-  expectAction(epoch_budget.armAfterConfirmedStop(same_request_new_epoch, 4.8, true).action,
-               BoundedGoalReplanAction::kReject,
-               "same task/request got a second replan budget after epoch advance");
+               "same request epoch advance returned cancel");
+  require(epochs.snapshot().reason == "active_goal_epoch_advanced",
+          "same goal epoch advance was not observed");
+  expectAction(epochs.armAfterConfirmedStop(same_request_new_epoch, 4.8, true).action,
+               BoundedGoalReplanAction::kHold,
+               "same goal could not retry after an epoch advance");
 
   const auto other_request = goal("task-a", "req-b", 1U, mapIdentity());
-  expectAction(epoch_budget.observeGoal(other_request, 5.0).action, BoundedGoalReplanAction::kNone,
-               "new request after consumed did not observe passively");
-  require(!epoch_budget.snapshot().budget_consumed,
-          "new task/request did not restore budget");
+  expectAction(epochs.observeGoal(other_request, 5.0).action, BoundedGoalReplanAction::kCancel,
+               "new request did not replace the waiting goal");
 
   BoundedGoalReplanController pending_supersede;
   (void)pending_supersede.observeGoal(active, 5.5);
@@ -117,9 +136,8 @@ int main() {
   expectAction(pending_supersede.observeGoal(other_task, 5.6).action,
                BoundedGoalReplanAction::kCancel,
                "new goal did not cancel pending old goal");
-  require(pending_supersede.snapshot().task_id == "task-b" &&
-              !pending_supersede.snapshot().budget_consumed,
-          "new goal did not bind fresh budget after superseding pending");
+  require(pending_supersede.snapshot().task_id == "task-b",
+          "new goal did not supersede pending goal");
 
   BoundedGoalReplanController inflight_supersede;
   (void)inflight_supersede.observeGoal(active, 5.7);
@@ -128,9 +146,8 @@ int main() {
   expectAction(inflight_supersede.observeGoal(other_task, 6.3).action,
                BoundedGoalReplanAction::kCancel,
                "new goal did not cancel in-flight old goal");
-  require(inflight_supersede.snapshot().task_id == "task-b" &&
-              !inflight_supersede.snapshot().budget_consumed,
-          "new goal did not bind fresh budget after superseding in-flight");
+  require(inflight_supersede.snapshot().task_id == "task-b",
+          "new goal did not supersede in-flight goal");
 
   BoundedGoalReplanController stale_cases;
   (void)stale_cases.observeGoal(active, 7.0);
@@ -159,8 +176,7 @@ int main() {
                BoundedGoalReplanAction::kIgnore,
                "old completion polluted new goal");
   require(old_completion.snapshot().task_id == "task-b" &&
-              old_completion.snapshot().request_id == "req-c" &&
-              !old_completion.snapshot().budget_consumed,
+              old_completion.snapshot().request_id == "req-c",
           "old completion changed new goal snapshot");
 
   BoundedGoalReplanController cancel_case;
@@ -169,9 +185,13 @@ int main() {
   expectAction(cancel_case.cancel(active, 10.1, "operator_cancelled").action,
                BoundedGoalReplanAction::kCancel,
                "cancel did not cancel pending replan");
-  require(cancel_case.snapshot().state == BoundedGoalReplanState::kAttemptConsumed &&
+  require(cancel_case.snapshot().state == BoundedGoalReplanState::kCancelled &&
               cancel_case.snapshot().reason == "operator_cancelled",
-          "cancel did not consume attempt with reason");
+          "cancel did not stop retries with reason");
+  expectAction(cancel_case.armAfterConfirmedStop(active, 10.2, true).action,
+               BoundedGoalReplanAction::kReject, "cancelled goal resumed without user input");
+  expectAction(cancel_case.tick(active, 10.7).action, BoundedGoalReplanAction::kNone,
+               "cancelled goal kept retrying");
 
   BoundedGoalReplanController invalid_goal;
   expectAction(invalid_goal.observeGoal(goal("", "req", 1U, mapIdentity()), 10.2).action,
@@ -194,8 +214,8 @@ int main() {
                    .action,
                BoundedGoalReplanAction::kReject,
                "NaN time did not fail closed");
-  require(invalid_time.snapshot().budget_consumed,
-          "NaN time did not consume current budget");
+  require(invalid_time.snapshot().state == BoundedGoalReplanState::kCancelled,
+          "NaN time did not stop current retry");
 
   BoundedGoalReplanController infinite_time;
   (void)infinite_time.observeGoal(active, 12.0);
@@ -208,7 +228,7 @@ int main() {
   expectAction(clock_regression.armAfterConfirmedStop(active, 12.9, true).action,
                BoundedGoalReplanAction::kReject,
                "clock regression did not fail closed");
-  require(clock_regression.snapshot().reason == "clock_regression_budget_consumed",
+  require(clock_regression.snapshot().reason == "clock_regression",
           "clock regression reason changed");
 
   BoundedGoalReplanController overflow({1.0});
@@ -217,7 +237,7 @@ int main() {
                    .action,
                BoundedGoalReplanAction::kReject,
                "deadline overflow did not fail closed");
-  require(overflow.snapshot().reason == "deadline_overflow_budget_consumed",
+  require(overflow.snapshot().reason == "deadline_overflow",
           "deadline overflow reason changed");
 
   bool threw_negative = false;

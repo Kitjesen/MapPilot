@@ -1,4 +1,5 @@
 #include "native/navigation_fixture_observation.hpp"
+#include "truth_status_snapshot.hpp"
 
 #include <cstdint>
 #include <exception>
@@ -52,6 +53,16 @@ int main() {
       require(std::abs(velocity[0] - 0.75) < 1e-9, "truth world velocity was not rotated to body x");
       require(std::abs(velocity[1] - 0.2) < 1e-9, "truth world velocity was not rotated to body y");
       require(std::abs(velocity[2] - 0.1) < 1e-9, "truth vertical velocity changed under yaw");
+      const auto snapshot = lingtu::sim::dds_adapter::truthStatusSnapshot(
+          1700000000125000000ULL, truth, "product-test", 7, 3);
+      require(snapshot.find("\"backend\":\"mujoco_truth\"") != std::string::npos,
+              "truth snapshot did not identify its actual source");
+      require(snapshot.find("\"frame_id\":\"map\"") != std::string::npos,
+              "truth snapshot omitted map odometry");
+      require(snapshot.find("\"x\":1,\"y\":2,\"z\":0.4") != std::string::npos,
+              "truth snapshot changed actual pose");
+      require(snapshot.find("\"wx\":0,\"wy\":0,\"wz\":0") != std::string::npos,
+              "truth snapshot differs from source DDS angular twist");
     }
     NavigationFixtureObservationState state;
     requireThrows(

@@ -1,6 +1,6 @@
 """Plugin registry — register implementations by category + name.
 
-Modules self-register via @register decorator. Blueprints look up by name.
+Modules self-register via @register decorator. HostBuilders look up by name.
 Zero if/else, zero hardcoded imports.
 
 Usage:
@@ -13,9 +13,9 @@ Usage:
     class UnitreeGo2Module(Module, layer=1):
         ...
 
-    # Look up (in blueprint)
+    # Look up (in host_builder)
     DriverCls = get("driver", "thunder")
-    handle = autoconnect(DriverCls.blueprint(), ...).build()
+    handle = autoconnect(DriverCls.compose(), ...).build()
 
     # List available
     list_plugins("driver")  # ["thunder", "sim_mujoco", "stub"]

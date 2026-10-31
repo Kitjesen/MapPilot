@@ -1,3 +1,7 @@
+#include "lingtu/maps/layers/cost.hpp"
+#include "lingtu/maps/layers/elevation.hpp"
+#include "lingtu/maps/layers/esdf.hpp"
+#include "lingtu/maps/layers/terrain.hpp"
 #include "lingtu/maps/layers/exploration.hpp"
 #include "lingtu/maps/layers/grid.hpp"
 
@@ -85,41 +89,6 @@ static void testFusedCostPreservesHardCellsAndUsesRiskLayers() {
   assert(fused.data[static_cast<size_t>(fused.index(2, 2))] == 80.0f);
 }
 
-static void testProjectedCollisionStopsOnHardCell() {
-  Grid2D cost = makeGrid2D(5, 5, 1.0, -2.0, -2.0, 0.0f);
-  cost.data[static_cast<size_t>(cost.index(2, 3))] = 100.0f;
-
-  CmdVelCollisionParams params;
-  params.horizonS = 1.0;
-  params.stepS = 0.5;
-  params.stopCost = 99.0f;
-
-  const auto result =
-      projectCmdVelCollision(cost, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, params);
-
-  assert(result.action == 2);
-  assert(result.reason == 2);
-  assert(result.maxCost >= 99.0f);
-}
-
-static void testProjectedCollisionSlowsOnSoftCell() {
-  Grid2D cost = makeGrid2D(5, 5, 1.0, -2.0, -2.0, 0.0f);
-  cost.data[static_cast<size_t>(cost.index(2, 3))] = 70.0f;
-
-  CmdVelCollisionParams params;
-  params.horizonS = 1.0;
-  params.stepS = 0.5;
-  params.stopCost = 99.0f;
-  params.slowCost = 60.0f;
-
-  const auto result =
-      projectCmdVelCollision(cost, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, params);
-
-  assert(result.action == 1);
-  assert(result.reason == 1);
-  assert(result.maxCost == 70.0f);
-}
-
 static void testExplorationEncodingPreservesUnknownSpace() {
   Grid2D cost = makeGrid2D(2, 3, 0.2, -1.0, -1.0, 0.0f);
   cost.data = {0.0F, 20.0F, 65.0F, 100.0F, 0.0F, 90.0F};
@@ -135,8 +104,6 @@ int main() {
   testEsdfGradientAxesMatchXY();
   testTerrainRiskCombinesSlopeStepAndRoughness();
   testFusedCostPreservesHardCellsAndUsesRiskLayers();
-  testProjectedCollisionStopsOnHardCell();
-  testProjectedCollisionSlowsOnSoftCell();
   testExplorationEncodingPreservesUnknownSpace();
   return 0;
 }

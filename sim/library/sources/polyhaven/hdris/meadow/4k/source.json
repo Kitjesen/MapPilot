@@ -1,0 +1,14 @@
+{
+  "provider": "Poly Haven",
+  "asset_id": "meadow",
+  "name": "Meadow",
+  "authors": {
+    "Sergej Majboroda": "All"
+  },
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "source_url": "https://polyhaven.com/a/meadow",
+  "resolution": "4k",
+  "file": "meadow_4k.exr",
+  "bytes": 28141587
+}

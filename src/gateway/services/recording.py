@@ -8,6 +8,7 @@ projects its bounded, versioned JSON response into Gateway models.
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -51,6 +52,12 @@ _ERROR_STATUS = {
     "invalid_recording_capture_profile": 422,
     "invalid_recording_camera": 422,
     "invalid_recording_minimum_free_gib": 422,
+    "invalid_recording_topics": 422,
+    "recording_series_invalid_query": 422,
+    "recording_series_unsupported_topic": 422,
+    "recording_series_unsupported_field": 422,
+    "recording_series_invalid_window": 422,
+    "recording_series_unreadable": 422,
 }
 
 
@@ -119,9 +126,9 @@ class RecordingSnapshot:
         }
 
 
-def _exact_inspection_recording_identity(
+def _committed_host_recording_identity(
     environment: Mapping[str, str], state_dir: Path
-) -> tuple[str, str]:
+) -> tuple[RunPlan, str]:
     run_plan_path = Path(str(environment.get("LINGTU_RUN_PLAN") or "").strip()).expanduser()
     if not run_plan_path.is_absolute():
         raise RuntimeError("LINGTU_RUN_PLAN must be an absolute path")
@@ -136,17 +143,22 @@ def _exact_inspection_recording_identity(
     )._current_plan_and_path(state_dir)
     if committed_path.resolve() != run_plan_path.resolve():
         raise RuntimeError("Host RunPlan does not match committed current")
-    if plan.product != "inspection":
-        raise RuntimeError(
-            "evidence recording requires the committed inspection Product"
-        )
     if committed_session_id != expected_session_id:
         raise RuntimeError("Host Product session does not match committed current")
-    return plan.product, expected_session_id
+    return plan, expected_session_id
+
+
+def _exact_inspection_recording_identity(
+    environment: Mapping[str, str], state_dir: Path
+) -> tuple[str, str]:
+    plan, session_id = _committed_host_recording_identity(environment, state_dir)
+    if plan.product != "inspection":
+        raise RuntimeError("evidence recording requires the committed inspection Product")
+    return plan.product, session_id
 
 
 class NativeRecordingService:
-    """Stateless adapter over the native recording control contract."""
+    """Native recording adapter with an optional read-only stream monitor."""
 
     def __init__(
         self,
@@ -161,6 +173,26 @@ class NativeRecordingService:
         self._run = runner or subprocess.run
         self._startup_timeout_s = startup_timeout_s
         self._lock = threading.RLock()
+        self._stream_monitor: Any | None = None
+
+    def streams(self) -> dict[str, Any]:
+        """Read observed DDS samples independently of recording selection."""
+        from gateway.services.recording_streams import NativeStreamMonitor
+
+        with self._lock:
+            if self._stream_monitor is None:
+                self._stream_monitor = NativeStreamMonitor(
+                    recorder_binary=self._binary, environ=self._environ
+                )
+            monitor = self._stream_monitor
+        return monitor.snapshot()
+
+    def close_streams(self) -> None:
+        """Release the optional diagnostic child on Gateway shutdown."""
+        with self._lock:
+            monitor = self._stream_monitor
+        if monitor is not None:
+            monitor.close()
 
     def _root(self) -> Path:
         value = self._environ.get("LINGTU_RECORDING_ROOT", "~/data/lingtu/recordings")
@@ -168,18 +200,21 @@ class NativeRecordingService:
 
     def _binary_candidates(self) -> tuple[Path, ...]:
         paths: list[Path] = []
+        filename = "lingtu_recorder.exe" if os.name == "nt" else "lingtu_recorder"
         exact = str(self._environ.get("LINGTU_RECORDING_BIN", "")).strip()
         if exact:
             paths.append(Path(exact).expanduser())
         configured = str(self._environ.get("LINGTU_RECORDING_BIN_DIR", "")).strip()
         if configured:
-            paths.append(Path(configured).expanduser() / "lingtu_recorder")
-        paths.extend(
-            (
-                Path("/opt/lingtu/current/bin/lingtu_recorder"),
-                self._repository_root / "build" / "native-recording" / "lingtu_recorder",
-            )
-        )
+            paths.append(Path(configured).expanduser() / filename)
+        if os.name == "nt":
+            paths.extend((
+                self._repository_root / "build/native-recording/windows-x64/Release" / filename,
+                self._repository_root / "build/native-recording/Release" / filename,
+            ))
+        else:
+            paths.append(Path("/opt/lingtu/current/bin/lingtu_recorder"))
+        paths.append(self._repository_root / "build/native-recording" / filename)
         discovered = shutil.which("lingtu_recorder")
         if discovered:
             paths.append(Path(discovered))
@@ -371,6 +406,7 @@ class NativeRecordingService:
         result: subprocess.CompletedProcess[str],
         *,
         operation: str,
+        version_key: str = "control_version",
     ) -> dict[str, Any]:
         """Decode a bounded native catalog response without owning its state."""
         output = result.stdout if isinstance(result.stdout, str) else ""
@@ -390,7 +426,7 @@ class NativeRecordingService:
                 status_code=503,
                 detail={"operation": operation, "exit_code": result.returncode},
             ) from exc
-        if not isinstance(payload, dict) or payload.get("control_version") != _CONTROL_VERSION:
+        if not isinstance(payload, dict) or payload.get(version_key) != _CONTROL_VERSION:
             raise NativeRecordingError(
                 "native_recorder_protocol_error",
                 "native recording catalog version is missing or unsupported",
@@ -412,10 +448,138 @@ class NativeRecordingService:
             raise NativeRecordingError(
                 code,
                 message,
-                status_code=_ERROR_STATUS.get(code, 503),
+                status_code=_ERROR_STATUS.get(code, 422 if code.startswith(("recording_scene_", "recording_camera_")) else 503),
                 detail={"operation": operation, "exit_code": result.returncode},
             )
         return payload
+
+    def catalog(self) -> dict[str, Any]:
+        """Expose the installed native topic catalog, not a Python duplicate."""
+        binary = self._binary()
+        payload = self._decode_json_control(
+            self._command([str(binary), "topics", "--json"], timeout_s=5.0),
+            operation="topics",
+        )
+        if not isinstance(payload.get("topics"), list) or not isinstance(payload.get("presets"), list):
+            raise NativeRecordingError(
+                "native_recorder_protocol_error",
+                "native recording topic catalog is missing topics or presets",
+                status_code=503,
+            )
+        return {
+            "topics": payload["topics"],
+            "presets": payload["presets"],
+            "camera": {
+                "supported": os.name != "nt",
+                "label": "相机视频",
+                "source": "color_shared_memory",
+            },
+        }
+
+    def _player_binary(self) -> Path:
+        recorder = self._binary()
+        filename = "lingtu_dds_player.exe" if os.name == "nt" else "lingtu_dds_player"
+        player = recorder.parent / filename
+        if not player.is_file() or not os.access(player, os.X_OK):
+            raise NativeRecordingError(
+                "native_player_unavailable", "native recording player is not installed", status_code=503
+            )
+        return player
+
+    def inspect_artifact(self, artifact: Path, *, validate: bool = False) -> dict[str, Any]:
+        """Read or validate a resolved DDS artifact without creating a publisher."""
+        player = self._player_binary()
+        arguments = (
+            [str(player), str(artifact), "--dry-run", "--json"]
+            if validate
+            else [str(player), "--info", str(artifact), "--json"]
+        )
+        result = self._command(arguments, timeout_s=60.0 if validate else 10.0)
+        if result.returncode != 0:
+            raise NativeRecordingError(
+                "recording_validation_failed" if validate else "recording_summary_failed",
+                "native player could not validate the recording" if validate else "native player could not inspect the recording",
+                status_code=422,
+            )
+        return self._decode_json_control(
+            result, operation="validate" if validate else "info", version_key="version"
+        )
+
+    def series_artifact(
+        self,
+        artifact: Path,
+        *,
+        topic: str,
+        field: str | None = None,
+        start: float = 0.0,
+        end: float | None = None,
+        max_points: int = 2000,
+    ) -> dict[str, Any]:
+        """Read a bounded numeric series using native decoding, without DDS replay."""
+        if not topic or not 16 <= max_points <= 10000:
+            raise NativeRecordingError(
+                "recording_series_invalid_query",
+                "topic is required; max_points must be between 16 and 10000",
+                status_code=422,
+            )
+        if not math.isfinite(start) or start < 0 or (
+            end is not None and (not math.isfinite(end) or end < start)
+        ):
+            raise NativeRecordingError(
+                "recording_series_invalid_window",
+                "start and end must be finite seconds with 0 <= start <= end",
+                status_code=422,
+            )
+        arguments = [
+            str(self._player_binary()), "--series", str(artifact), "--topic", topic,
+            "--start", str(start), "--max-points", str(max_points), "--json",
+        ]
+        if field is not None:
+            arguments.extend(["--field", field])
+        if end is not None:
+            arguments.extend(["--end", str(end)])
+        result = self._command(arguments, timeout_s=60.0)
+        payload = self._decode_json_control(result, operation="series", version_key="version")
+        if result.returncode != 0 or payload.get("mode") != "series":
+            raise NativeRecordingError(
+                "native_recorder_protocol_error",
+                "native recording player did not return a numeric series",
+                status_code=503,
+            )
+        return payload
+
+    def scene_artifact(
+        self, artifact: Path, *, info: bool = False, start: float = 0.0, end: float = 5.0,
+        max_frames: int = 32, max_points: int = 2048, max_poses: int = 2000,
+        cloud_topic: str | None = None, pose_topic: str | None = None,
+        path_topics: tuple[str, ...] = (),
+    ) -> dict[str, Any]:
+        arguments = [str(self._player_binary()), "--scene-info" if info else "--scene", str(artifact), "--json"]
+        if not info:
+            arguments.extend([
+                "--start", str(start), "--end", str(end), "--max-frames", str(max_frames),
+                "--max-points", str(max_points), "--max-poses", str(max_poses),
+            ])
+            for option, value in (("--cloud-topic", cloud_topic), ("--pose-topic", pose_topic)):
+                if value is not None:
+                    arguments.extend([option, value])
+            for topic in path_topics:
+                arguments.extend(["--path-topic", topic])
+        result = self._command(arguments, timeout_s=60.0)
+        return self._decode_json_control(result, operation="scene-info" if info else "scene", version_key="version")
+
+    def camera_index_artifact(self, artifact: Path, *, segment: int | None = None) -> dict[str, Any]:
+        filename = "lingtu_camera_player.exe" if os.name == "nt" else "lingtu_camera_player"
+        player = self._binary().parent / filename
+        if not player.is_file() or not os.access(player, os.X_OK):
+            raise NativeRecordingError(
+                "native_camera_player_unavailable", "native camera reader is not installed", status_code=503,
+            )
+        arguments = [str(player), str(artifact), "--json"]
+        if segment is not None:
+            arguments.extend(["--segment", str(segment)])
+        result = self._command(arguments, timeout_s=10.0)
+        return self._decode_json_control(result, operation="camera-info", version_key="version")
 
     @staticmethod
     def _validate_session_id(session_id: str) -> str:
@@ -538,6 +702,7 @@ class NativeRecordingService:
         duration: int,
         prefix: str,
         capture_profile: str = "sensors",
+        topics: list[str] | None = None,
         task_id: str | None = None,
         camera: bool = False,
         minimum_free_gib: int = 5,
@@ -601,6 +766,22 @@ class NativeRecordingService:
                 status_code=422,
             )
         binary = self._binary()
+        if topics is not None:
+            if (
+                not isinstance(topics, list)
+                or (not topics and (not camera or capture_profile == "evidence"))
+                or any(not isinstance(topic, str) for topic in topics)
+            ):
+                raise NativeRecordingError(
+                    "invalid_recording_topics", "select DDS topics or enable camera-only sensor recording", status_code=422
+                )
+            if topics:
+                supported = {item["topic"] for item in self.catalog()["topics"]}
+                if any(topic not in supported for topic in topics):
+                    raise NativeRecordingError(
+                        "invalid_recording_topics", "selected topic is outside the native catalog", status_code=422
+                    )
+            topics = list(dict.fromkeys(topics))
         try:
             with ProductControlLock(
                 environment=self._environ,
@@ -608,6 +789,7 @@ class NativeRecordingService:
             ) as product_lock:
                 product: str | None = None
                 product_session_id: str | None = None
+                robot_id: str | None = None
                 if capture_profile == "evidence":
                     try:
                         product, product_session_id = (
@@ -619,6 +801,19 @@ class NativeRecordingService:
                         raise NativeRecordingError(
                             "inspection_recording_identity_required",
                             "evidence recording requires the exact committed inspection Product identity",
+                            status_code=409,
+                        ) from exc
+                elif self._environ.get("LINGTU_RUN_PLAN"):
+                    try:
+                        plan, product_session_id = _committed_host_recording_identity(
+                            self._environ, product_lock.state_dir
+                        )
+                        product = plan.product
+                        robot_id = self._environ.get("LINGTU_ROBOT_ID") or None
+                    except RuntimeError as exc:
+                        raise NativeRecordingError(
+                            "recording_product_identity_invalid",
+                            "recording Host identity does not match the committed Product",
                             status_code=409,
                         ) from exc
                 with self._lock:
@@ -634,20 +829,27 @@ class NativeRecordingService:
                         "--seconds",
                         str(duration),
                         "--dds",
-                        "on",
-                        "--dds-preset",
-                        preset,
+                        "off" if topics == [] else "on",
                         "--camera",
                         "on" if camera else "off",
                         "--min-free-gib",
                         str(minimum_free_gib),
                     ]
+                    if topics != []:
+                        arguments.extend((
+                            "--dds-preset", preset,
+                            "--dds-domain", str(self._environ.get("LINGTU_DDS_DOMAIN_ID", "0")),
+                        ))
                     if normalized_task_id is not None:
                         arguments.extend(("--inspection-task-id", normalized_task_id))
+                    for topic in topics or []:
+                        arguments.extend(("--dds-topic", topic))
                     if product is not None:
                         arguments.extend(("--product", product))
                     if product_session_id is not None:
                         arguments.extend(("--product-session-id", product_session_id))
+                    if robot_id is not None:
+                        arguments.extend(("--robot-id", robot_id))
                     result = self._command(
                         arguments,
                         timeout_s=self._startup_timeout_s + 2.0,

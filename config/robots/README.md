@@ -8,13 +8,13 @@ config/robots/<vendor>/<model>/
 ├── model.yaml
 ├── robot.yaml        # physical configuration used by real, when available
 └── sensors/
-    └── mid360_fastlio2.yaml
+    └── mid360_ltlio.yaml
 ```
 
 Robot and Env are independent selections. `model.yaml` describes the model and
 its sensor configuration; it does not allow or forbid `real` or `sim`.
 Physical network and driver values live in the adjacent `robot.yaml`. The
-simulation session is selected by `config/runtime_graph/envs/sim.yaml`.
+simulation session is selected by `config/system/envs/sim.yaml`.
 
 Repository-owned path segments use lowercase `snake_case`. Vendor and model
 identifiers are stable catalog keys, so rename them only together with their

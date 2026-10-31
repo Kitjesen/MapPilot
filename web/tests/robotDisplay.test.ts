@@ -78,7 +78,8 @@ test('official Go2 preserves the full URDF tree and anchors standing feet below 
   assert.equal(model.userData.jointPose, 'nominal-standing')
   assert.deepEqual(model.position.toArray(), [0, 0, 0])
   assert.deepEqual(model.scale.toArray(), [1, 1, 1])
-  assert.equal(requested.length, 7, 'shared official meshes load only once per model')
+  const uniqueMeshes = new Set(GO2_URDF.links.flatMap(link => link.visuals.map(visual => visual.mesh)))
+  assert.equal(requested.length, uniqueMeshes.size, 'shared robot and mount meshes load only once per model')
   for (const link of GO2_URDF.links) assert.ok(model.getObjectByName(`go2:link:${link.name}`))
   for (const joint of GO2_URDF.joints) {
     const frame = model.getObjectByName(`go2:joint:${joint.name}`)!

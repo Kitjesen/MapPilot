@@ -7,7 +7,7 @@
 #include <vector>
 #include <filesystem>
 #include <fstream>
-#include "lingtu/maps/build/pcd.hpp"
+#include "lingtu/maps/io/pcd.hpp"
 
 #include "lingtu/maps/mapd/engine.hpp"
 
@@ -224,21 +224,16 @@ void TestMalformedObservationRejectedBeforeQueue() {
 void TestUnsafePoseStateRejected() {
   LiveMapEngine engine(TestConfig());
   engine.Start();
-  auto lost =
-      MakeObservation(1U, 1U, 0.0, 0.0, 0.0, {1.0F, 0.0F, 0.0F});
-  lost.pose_state = "LOST";
-  const auto lost_result = engine.Submit(std::move(lost));
-  assert(lost_result.code == SubmitCode::kInvalid);
-
-  Config strict = TestConfig();
-  strict.accept_degraded_pose = false;
-  LiveMapEngine strict_engine(strict);
-  strict_engine.Start();
-  auto degraded =
-      MakeObservation(1U, 1U, 0.0, 0.0, 0.0, {1.0F, 0.0F, 0.0F});
-  degraded.pose_state = "DEGRADED";
-  assert(strict_engine.Submit(std::move(degraded)).code == SubmitCode::kInvalid);
-  strict_engine.Stop();
+  for (const char* state : {"LOCALIZING", "DEGRADED", "LOST"}) {
+    auto observation =
+        MakeObservation(1U, 1U, 0.0, 0.0, 0.0, {1.0F, 0.0F, 0.0F});
+    observation.pose_state = state;
+    assert(engine.Submit(std::move(observation)).code == SubmitCode::kInvalid);
+  }
+  const auto state = engine.GetState();
+  assert(state.invalid_observations == 3U);
+  assert(state.accepted_observations == 0U);
+  assert(state.processed_observations == 0U);
   engine.Stop();
 }
 
@@ -341,7 +336,7 @@ void TestColumnCarvingDoesNotClearAdjacentFloorHeight() {
   engine.Stop();
 }
 
-void TestSurfaceHitsDoNotClearUnobservedHeights() {
+void TestSurfaceAndAccumulatedHitsDoNotClearUnobservedHeights() {
   // A return in the same XY cell does not observe the lower surface. Cover
   // returns both inside and above the height band used by column carving.
   for (const float upper_z : {1.2F, 2.2F}) {
@@ -374,8 +369,7 @@ void TestSurfaceHitsDoNotClearUnobservedHeights() {
     assert(carved.voxel_cloud.point_count == 1U);
     assert(carved.voxel_cloud.z.front() > 1.0F);
 
-    // Surface retention must not change the independent ray occupancy or
-    // accumulated map, whose existing column-clearing policy is unchanged.
+    // Surface retention must not change the independent ray occupancy.
     assert(snapshot.collision.occupied_cells > 0U);
     assert(snapshot.collision.occupied_bits == carved.collision.occupied_bits);
     assert(snapshot.occupancy.data == carved.occupancy.data);
@@ -384,8 +378,18 @@ void TestSurfaceHitsDoNotClearUnobservedHeights() {
     assert(snapshot.accumulated_cloud.iz == carved.accumulated_cloud.iz);
     assert(snapshot.accumulated_cloud.occupancy_probability ==
            carved.accumulated_cloud.occupancy_probability);
-    assert(config.accumulated_column_carving);
-    assert(lingtu::maps::layers::VoxelLayerConfig{}.column_carving);
+    const auto has_accumulated_hit = [](const auto& cloud, const auto& height) {
+      for (std::size_t index = 0U; index < cloud.Size(); ++index) {
+        if (cloud.hit_count[index] > 0U && height(cloud.center_z_m[index])) {
+          return true;
+        }
+      }
+      return false;
+    };
+    assert(has_accumulated_hit(
+        snapshot.accumulated_cloud, [](float z) { return z < 0.0F; }));
+    assert(has_accumulated_hit(
+        snapshot.accumulated_cloud, [](float z) { return z > 1.0F; }));
     engine.Stop();
     carved_engine.Stop();
   }
@@ -626,12 +630,21 @@ void TestRealtimeAndCompleteSnapshotsAreBuiltOnDemand() {
   assert(engine.WaitUntilProcessed(1U, 1U, std::chrono::seconds(2)));
 
   auto state = engine.GetState();
+  assert(state.process_timing.samples == 1U);
+  assert(state.process_timing.last_ms > 0.0);
+  assert(state.process_timing.max_sequence == 1U);
+  assert(state.process_timing.max_generation == state.generation);
+  assert(state.occupancy_update_timing.samples == state.processed_observations);
+  assert(state.occupancy_update_timing.last_ms <= state.process_timing.last_ms);
   assert(state.realtime_snapshot_builds == 0U);
   assert(state.complete_snapshot_builds == 0U);
   assert(state.realtime_snapshot_generation == 0U);
   assert(state.complete_snapshot_generation == 0U);
 
   const auto realtime = engine.GetView(SnapshotDetail::kRealtime);
+  assert(realtime.state.view_timing.samples == 1U);
+  assert(realtime.state.view_timing.last_ms > 0.0);
+  assert(realtime.state.collision_build_timing.samples == 1U);
   assert(realtime.snapshot.generation == state.generation);
   assert(realtime.snapshot.voxel_cloud.point_count == 1U);
   assert(realtime.snapshot.collision.occupied_cells == 1U);
@@ -647,6 +660,8 @@ void TestRealtimeAndCompleteSnapshotsAreBuiltOnDemand() {
   assert(realtime.state.complete_snapshot_generation == 0U);
 
   const auto repeated_realtime = engine.GetView(SnapshotDetail::kRealtime);
+  assert(repeated_realtime.state.view_timing.samples == 2U);
+  assert(repeated_realtime.state.collision_build_timing.samples == 1U);
   assert(repeated_realtime.state.realtime_snapshot_builds == 1U);
   assert(repeated_realtime.state.complete_snapshot_builds == 0U);
 
@@ -909,7 +924,294 @@ void TestSavedMapDoesNotSeedLiveCollision() {
 
 }  // namespace
 
+void TestCorrectedGeometryReplacesHistoryAndRequiresFreshScan() {
+  using lingtu::maps::mapd::GeometrySnapshot;
+  const auto directory =
+      std::filesystem::temp_directory_path() / ("lingtu-geometry-" + std::to_string(WallTimeNs()));
+  std::filesystem::create_directories(directory / "patches");
+  std::ofstream(directory / "scan_origin.txt") << "lidar_origin_in_patch 1.25 .25 .25\n";
+  std::string error;
+  for (const auto *name : {"a.pcd", "b.pcd"})
+    assert(lingtu::maps::WriteBinaryXyzPcd(directory / "patches" / name, {{3.25F, .25F, .25F}},
+                                           &error));
+  std::ofstream(directory / "poses.txt") << "a.pcd 0 0 0 1 0 0 0\nb.pcd 4 0 0 1 0 0 0\n";
+  auto config = TestConfig();
+  config.occupancy_update_period = std::chrono::milliseconds(5);
+  LiveMapEngine engine(config);
+  engine.Start();
+  assert(engine.Submit(MakeObservation(101, 1, 0, 0, 0, {3.25F, .25F, .25F})).accepted());
+  assert(engine.WaitUntilProcessed(101, 1, std::chrono::seconds(2)));
+  const auto await_ack = [&](std::uint64_t revision) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    do {
+      for (const auto &ack : engine.TakeGeometryAcks()) {
+        assert(ack.success);
+        if (ack.graph_revision == revision)
+          return;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    } while (std::chrono::steady_clock::now() < deadline);
+    assert(false && "geometry installation timeout");
+  };
+  GeometrySnapshot geometry{101, 1, 1, "map", directory.string(), 2};
+  assert(engine.SubmitGeometry(geometry).accepted());
+  await_ack(1);
+  const auto has = [](const auto &snapshot, float x, float y) {
+    const auto &cells = snapshot.accumulated_cloud;
+    for (std::size_t i = 0; i < cells.Size(); ++i)
+      if (std::abs(cells.center_x_m[i] - x) < .01F && std::abs(cells.center_y_m[i] - y) < .01F)
+        return true;
+    return false;
+  };
+  assert(has(engine.GetSnapshot(), 3.25F, .25F));
+  assert(has(engine.GetSnapshot(), 7.25F, .25F));
+  // Independent historical pose changes cannot be represented by a rigid map shift.
+  std::ofstream(directory / "poses.txt") << "a.pcd 0 8 0 0 0 0 1\nb.pcd 8 0 0 1 0 0 0\n";
+  geometry.graph_revision = 2;
+  assert(engine.Submit(MakeObservation(101, 2, 0, 0, 0, {2.25F, .25F, .25F})).accepted());
+  const auto before = engine.GetState().generation;
+  assert(engine.SubmitGeometry(geometry).accepted());
+  await_ack(2);
+  const auto view = engine.GetView();
+  assert(view.state.generation > before);
+  assert(view.state.generation == view.snapshot.generation);
+  assert(!view.state.live && view.state.voxel_cells == 0);
+  assert(view.snapshot.live_cloud.point_count == 0);
+  assert(view.snapshot.collision.occupied_cells == 0);
+  assert(!has(view.snapshot, 3.25F, .25F));
+  assert(!has(view.snapshot, 7.25F, .25F));
+  assert(has(view.snapshot, -3.25F, 7.75F));
+  assert(has(view.snapshot, 11.25F, .25F));
+  assert(has(view.snapshot, -1.25F, 7.75F));  // rotated physical ray origin
+  assert(!has(view.snapshot, -.25F, 7.75F));  // unobserved space before that origin
+  assert(engine.Submit(MakeObservation(101, 2, 0, 0, 0, {2.25F, .25F, .25F})).code ==
+         SubmitCode::kStale);
+  assert(!engine.GetState().live);
+  geometry.graph_revision = 1;
+  assert(engine.SubmitGeometry(geometry).code == SubmitCode::kStale);
+  assert(engine.Submit(MakeObservation(101, 3, 0, 0, 0, {1.25F, .25F, .25F})).accepted());
+  assert(engine.WaitUntilProcessed(101, 3, std::chrono::seconds(2)));
+  assert(engine.GetState().live);
+  assert(engine.GetSnapshot().collision.occupied_cells > 0);
+  assert(engine.Submit(MakeObservation(102, 1, 0, 0, 0, {1.25F, .25F, .25F})).accepted());
+  assert(engine.WaitUntilProcessed(102, 1, std::chrono::seconds(2)));
+  assert(engine.SubmitGeometry(geometry).code == SubmitCode::kStale);
+  assert(!has(engine.GetSnapshot(), -3.25F, 7.75F));
+  engine.Stop();
+  std::filesystem::remove_all(directory);
+}
+
+void TestGeometryBuildDoesNotBlockLiveScansAndRejectsLateEpoch() {
+  const auto directory = std::filesystem::temp_directory_path() /
+                         ("lingtu-geometry-background-" + std::to_string(WallTimeNs()));
+  std::filesystem::create_directories(directory / "patches");
+  std::ofstream(directory / "scan_origin.txt") << "lidar_origin_in_patch .25 .25 .25\n";
+  std::ofstream(directory / "poses.txt") << "a.pcd 0 0 0 1 0 0 0\n";
+  std::string error;
+  std::vector<lingtu::maps::PointXyz> points(100000, {20.25F, .25F, .25F});
+  assert(lingtu::maps::WriteBinaryXyzPcd(directory / "patches/a.pcd", points, &error));
+  auto config = TestConfig();
+  config.occupancy_update_period = std::chrono::milliseconds(5);
+  LiveMapEngine engine(config);
+  engine.Start();
+  assert(engine.Submit(MakeObservation(201, 1, 0, 0, 0, {1.25F, .25F, .25F})).accepted());
+  assert(engine.WaitUntilProcessed(201, 1, std::chrono::seconds(2)));
+  assert(engine.SubmitGeometry({201, 1, 1, "map", directory.string(), 1}).accepted());
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  assert(engine.Submit(MakeObservation(201, 2, 0, 0, 0, {4.25F, 3.25F, .25F})).accepted());
+  assert(engine.WaitUntilProcessed(201, 2, std::chrono::milliseconds(500)));
+  assert(engine.TakeGeometryAcks().empty());  // Local integration advances during reconstruction.
+  bool applied = false;
+  const auto first_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (!applied && std::chrono::steady_clock::now() < first_deadline) {
+    for (const auto &ack : engine.TakeGeometryAcks()) {
+      assert(ack.success);
+      applied = true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  assert(applied && !engine.GetState().live);
+  const auto rebuilt = engine.GetSnapshot();
+  bool unique_hit = false;
+  for (std::size_t i = 0; i < rebuilt.accumulated_cloud.Size(); ++i)
+    unique_hit |= std::abs(rebuilt.accumulated_cloud.center_x_m[i] - 4.25F) < .01F &&
+                  std::abs(rebuilt.accumulated_cloud.center_y_m[i] - 3.25F) < .01F;
+  assert(unique_hit);  // A one-time surface seen during reconstruction survives installation.
+  assert(engine.SubmitGeometry({201, 2, 2, "map", directory.string(), 1}).accepted());
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  assert(engine.Submit(MakeObservation(202, 1, 0, 0, 0, {1.25F, .25F, .25F})).accepted());
+  assert(engine.WaitUntilProcessed(202, 1, std::chrono::milliseconds(500)));
+  const auto generation = engine.GetState().generation;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  bool rejected = false;
+  while (!rejected && std::chrono::steady_clock::now() < deadline) {
+    for (const auto &ack : engine.TakeGeometryAcks()) {
+      assert(ack.reset_epoch == 201 && !ack.success && ack.message == "geometry_source_superseded");
+      rejected = true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  assert(rejected && engine.GetState().reset_epoch == 202 && engine.GetState().live);
+  assert(engine.GetState().generation == generation);
+  engine.Stop();
+  std::filesystem::remove_all(directory);
+}
+
+void TestGeometryFiltersOutOfRangeAndInactiveSavedMapReceivesTerminalAck() {
+  const auto directory = std::filesystem::temp_directory_path() /
+                         ("lingtu-geometry-filter-" + std::to_string(WallTimeNs()));
+  std::filesystem::create_directories(directory / "patches");
+  std::ofstream(directory / "scan_origin.txt") << "lidar_origin_in_patch .25 .25 .25\n";
+  std::ofstream(directory / "poses.txt") << "a.pcd 0 0 0 1 0 0 0\n";
+  std::string error;
+  assert(lingtu::maps::WriteBinaryXyzPcd(
+      directory / "patches/a.pcd",
+      {{20.25F, .25F, .25F}, {.25F, 1.25F, 20.25F}, {1.25F, .25F, .25F}}, &error));
+  auto config = TestConfig();
+  config.max_range_m = 5;
+  config.max_height_from_sensor_m = 2;
+  config.occupancy_update_period = std::chrono::milliseconds(5);
+  LiveMapEngine engine(config);
+  engine.Start();
+  lingtu::maps::mapd::MapIdentity saved;
+  saved.present = true;
+  saved.map_id = "old-map";
+  saved.content_epoch = 1;
+  engine.SetReferenceMap(saved);
+  const lingtu::maps::mapd::GeometrySnapshot geometry{301, 1, 1, "map", directory.string(), 1};
+  assert(engine.SubmitGeometry(geometry).code == SubmitCode::kInvalid);
+  auto acks = engine.TakeGeometryAcks();
+  assert(acks.size() == 1 && !acks[0].success && acks[0].message == "saved_map_active");
+  auto mapping = MakeObservation(301, 1, 0, 0, 0, {1.25F, .25F, .25F});
+  mapping.pose_state = "MAPPING";
+  assert(engine.Submit(mapping).accepted());
+  assert(engine.WaitUntilProcessed(301, 1, std::chrono::seconds(2)));
+  assert(
+      engine.SubmitGeometry(geometry).accepted());  // Mapping can supersede an old activated map.
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (acks.empty() || !acks.back().success) {
+    acks = engine.TakeGeometryAcks();
+    assert(std::chrono::steady_clock::now() < deadline);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  const auto snapshot = engine.GetSnapshot();
+  for (std::size_t i = 0; i < snapshot.accumulated_cloud.Size(); ++i) {
+    assert(snapshot.accumulated_cloud.center_x_m[i] < 2);
+    assert(snapshot.accumulated_cloud.center_z_m[i] < 2);
+  }
+  engine.Stop();
+  std::filesystem::remove_all(directory);
+}
+
+void TestGeometryLateReaderUsesCapturedStampAndAnchor() {
+  const auto directory = std::filesystem::temp_directory_path() /
+                         ("lingtu-geometry-anchor-" + std::to_string(WallTimeNs()));
+  std::filesystem::create_directories(directory / "patches");
+  std::ofstream(directory / "scan_origin.txt") << "lidar_origin_in_patch .25 .25 .25\n";
+  std::ofstream(directory / "poses.txt") << "a.pcd 100 0 0 1 0 0 0\n";
+  std::string error;
+  assert(
+      lingtu::maps::WriteBinaryXyzPcd(directory / "patches/a.pcd", {{1.25F, .25F, .25F}}, &error));
+  auto config = TestConfig();
+  config.occupancy_update_period = std::chrono::milliseconds(5);
+  LiveMapEngine engine(config);
+  engine.Start();
+  lingtu::maps::mapd::GeometrySnapshot geometry{401, 1, 20, "map", directory.string(), 1};
+  geometry.captured_stamp_ns = 123456789000LL;
+  geometry.map_body.x = 100;
+  geometry.sensor_origin_z_m = .25;
+  assert(engine.SubmitGeometry(geometry).accepted());
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  bool applied = false;
+  while (!applied) {
+    for (const auto &ack : engine.TakeGeometryAcks())
+      applied = ack.success;
+    assert(std::chrono::steady_clock::now() < deadline);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  const auto snapshot = engine.GetSnapshot();
+  assert(snapshot.stamp_ns == geometry.captured_stamp_ns && snapshot.map_sensor.x == 100);
+  assert(snapshot.sensor_origin_z_m == .25 && snapshot.sequence == 20);
+  assert(snapshot.accumulated_cloud.Size() > 0 && !engine.GetState().live);
+  assert(snapshot.accumulated_cloud.stamp_ns == geometry.captured_stamp_ns);
+  engine.Stop();
+  std::filesystem::remove_all(directory);
+}
+
+void TestRecentGeometrySuffixCoversExportDelayAndFailsOnEviction() {
+  const auto directory = std::filesystem::temp_directory_path() /
+                         ("lingtu-geometry-recent-" + std::to_string(WallTimeNs()));
+  std::filesystem::create_directories(directory / "patches");
+  std::ofstream(directory / "scan_origin.txt") << "lidar_origin_in_patch .25 .25 .25\n";
+  std::ofstream(directory / "poses.txt") << "a.pcd 0 0 0 1 0 0 0\n";
+  std::string error;
+  assert(
+      lingtu::maps::WriteBinaryXyzPcd(directory / "patches/a.pcd", {{1.25F, .25F, .25F}}, &error));
+  auto config = TestConfig();
+  config.occupancy_update_period = std::chrono::milliseconds(5);
+  LiveMapEngine engine(config);
+  engine.Start();
+  for (std::uint64_t seq = 1; seq <= 2; ++seq) {
+    // Sequence 2 is processed before the frozen descriptor arrives.
+    assert(engine.Submit(MakeObservation(501, seq, 0, 0, 0, {seq == 1 ? 1.25F : 4.25F, .25F, .25F}))
+               .accepted());
+    assert(engine.WaitUntilProcessed(501, seq, std::chrono::seconds(2)));
+  }
+  const lingtu::maps::mapd::GeometrySnapshot geometry{501, 1, 1, "map", directory.string(), 1};
+  assert(engine.SubmitGeometry(geometry).accepted());
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  bool applied = false;
+  while (!applied) {
+    for (const auto &ack : engine.TakeGeometryAcks()) {
+      assert(ack.success);
+      applied = true;
+    }
+    assert(std::chrono::steady_clock::now() < deadline);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  const auto snapshot = engine.GetSnapshot();
+  bool suffix_present = false;
+  for (std::size_t i = 0; i < snapshot.accumulated_cloud.Size(); ++i)
+    suffix_present |= std::abs(snapshot.accumulated_cloud.center_x_m[i] - 4.25F) < .01F;
+  assert(suffix_present && !engine.GetState().live);
+  std::vector<float> dense;
+  for (int i = 0; i < 1000; ++i)
+    dense.insert(dense.end(), {2.25F, .25F, .25F});
+  for (std::uint64_t seq = 3; seq <= 7; ++seq) {
+    assert(engine.Submit(MakeObservation(501, seq, 0, 0, 0, dense)).accepted());
+    assert(engine.WaitUntilProcessed(501, seq, std::chrono::seconds(2)));
+  }
+  auto too_old = geometry;
+  too_old.graph_revision = 2;
+  assert(engine.SubmitGeometry(geometry).accepted());
+  auto already = engine.TakeGeometryAcks();
+  assert(already.size() == 1 && already[0].success && already[0].message == "already_applied");
+  assert(engine.GetState().last_error.empty());
+  const auto generation = engine.GetState().generation;
+  assert(engine.SubmitGeometry(too_old).code == SubmitCode::kInvalid);
+  auto acks = engine.TakeGeometryAcks();
+  assert(acks.size() == 1 && !acks[0].success &&
+         acks[0].message.find("recent processed scans unavailable") != std::string::npos);
+  assert(engine.GetState().generation == generation && engine.GetState().live);
+  // A duplicate failed immutable revision receives its cached terminal result.
+  assert(engine.SubmitGeometry(too_old).code == SubmitCode::kInvalid);
+  assert(engine.TakeGeometryAcks().size() == 1);
+  assert(!engine.GetState().last_error.empty());
+  engine.Stop();
+  std::filesystem::remove_all(directory);
+}
+
 int main() {
+  lingtu::maps::mapd::Timing timing;
+  timing.Observe(5.0, 12U, 8U);
+  timing.Observe(2.0, 13U, 9U);
+  assert(timing.samples == 2U && timing.last_ms == 2.0 && timing.total_ms == 7.0);
+  assert(timing.max_ms == 5.0 && timing.max_sequence == 12U && timing.max_generation == 8U);
+  TestRecentGeometrySuffixCoversExportDelayAndFailsOnEviction();
+  TestGeometryLateReaderUsesCapturedStampAndAnchor();
+  TestGeometryBuildDoesNotBlockLiveScansAndRejectsLateEpoch();
+  TestGeometryFiltersOutOfRangeAndInactiveSavedMapReceivesTerminalAck();
+  TestCorrectedGeometryReplacesHistoryAndRequiresFreshScan();
   TestSavedMapDoesNotSeedLiveCollision();
   TestGroundModelIsIndependentOfDisplayPointCap();
   TestGroundModelConsumesSoaSnapshotAndResetsWithEpoch();
@@ -918,11 +1220,11 @@ int main() {
   TestIdentityGateAndEpochReset();
   TestIndependentDecayWithoutNewObservations();
   TestMalformedObservationRejectedBeforeQueue();
+  TestSurfaceAndAccumulatedHitsDoNotClearUnobservedHeights();
   TestUnsafePoseStateRejected();
   TestVoxelSnapshotHasHardPointAndRoiBounds();
   TestColumnCarvingDoesNotClearAdjacentFloorHeight();
   TestSurfaceRetentionAndCapacityRecovery();
-  TestSurfaceHitsDoNotClearUnobservedHeights();
   TestRuntimeMapCapacityLimitsFailClosed();
   TestRayClearedSurfaceDoesNotLeaveGhosts();
   TestCollisionSnapshotCompletenessAndAabb();

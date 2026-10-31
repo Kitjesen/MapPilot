@@ -1,372 +1,446 @@
 # Operations
 
-**Status:** Current deployment, release, and robot operations guide
-**Audience:** Release engineers, field operators, and robot maintainers
+**Status:** Current field mapping, navigation, and recovery runbook
+**Audience:** Field operators and robot maintainers
 **Runs on:** Linux field releases and supported robot targets
 
-Product operations use `switch / status / stop` through ProductControl. Build,
-packaging, installation, service diagnosis, and Product lifecycle remain
-separate responsibilities.
+This page covers an already installed robot: **build a map -> save and clean
+it -> reload and localize -> navigate -> stop or continue after intervention**.
+For first installation, read [Getting started](getting-started.md); release
+packaging, installation, and rollback are owned by
+[Deployment](../scripts/deploy/README.md). Product scope and acceptance are
+owned by [Product scope](product.md) and [Testing](testing.md).
 
-调试速查：[Go2/NX 连接与当前交接](operations/go2-offline-mapping.md) ·
-[早期 Go2 连接记录](../config/robots/unitree/go2/README.md#连接-nx-与网络核对) ·
-[MuJoCo SCAN 时钟修复记录](#mujoco-scan-clock-debugging-status)。
+Use the actual RobotConfig throughout. The commands below use `unitree/go2` as
+an example, not a claim that other profiles have passed field tests. Commands
+run on the robot computer from the installed `/opt/lingtu/current` release.
+Use the configured absolute `LINGTU_PYTHON` interpreter for Python commands.
+For simulation, use [Simulation](simulation.md) instead of this Linux runbook.
 
-## Production layout
+## Before each session
 
-```text
-/opt/lingtu/
-  current -> releases/<version>/
-  releases/<version>/
-    bin/
-    lib/
-    etc/lingtu/
-    share/lingtu/
-  config/                 mutable machine configuration
-  logs/
-
-/var/lib/lingtu/maps/     mutable saved maps
-```
-
-Services execute from `/opt/lingtu/current`. They do not execute a developer
-`build/` tree. Credentials, machine network settings, logs, and mutable maps
-stay outside the immutable release.
-
-## Build, package, install
-
-The three steps are explicit:
-
-```text
-make build
-  -> build/
-
-scripts/deploy/package_native_release.sh
-  -> install/linux-<arch>/Release/{bin,lib,etc,share}
-  -> dist/
-
-install_native_release.sh
-  -> /opt/lingtu/releases/<version>/
-  -> /opt/lingtu/current
-```
-
-Build a complete release input set:
+Keep the robot stationary while switching modes. Check the current mode, map,
+and release before starting; save any mapping session that must be retained
+before a switch, restart, or shutdown:
 
 ```bash
-LINGTU_DRIVER_BACKEND=go2 make build BUILD_TYPE=Release
-bash scripts/deploy/package_native_release.sh vX.Y.Z dist
+bash /opt/lingtu/current/scripts/lingtu status --robot unitree/go2 --env real --json
+PYTHONPATH=/opt/lingtu/current/src "$LINGTU_PYTHON" -m diagnostics.field.doctor --non-motion --json --strict
 ```
 
-Use `LINGTU_DRIVER_BACKEND=doso` for Thunder. `deploy_robot.sh` is a separate,
-Product-scoped checkout workflow; its build output is not a complete release
-package input.
+Use the selected map, fresh localization and odometry, navigation readiness,
+and driver stop confirmation to judge readiness. A connected Web page or
+`TRACKING` label alone is insufficient. The corresponding no-motion and
+supervised-motion procedures are in [Testing](testing.md#field-no-motion-order).
 
-The OTA packager targets Linux field releases. Windows x64 validates the same
-`bin/lib/etc/share` shape through CMake install under
-`install/windows-x64/Release`; it is not passed through the Linux OTA script.
+ProductControl owns `switch`, `status`, and lifecycle `stop`. Web submits the
+same lifecycle requests; `systemctl` and `journalctl` are diagnostic tools,
+not an alternative startup sequence.
 
-## Install and activate
+## Build, save, and reload a map
 
-After transferring and extracting the package:
+### 1. Start mapping
+
+In the Scene floating controls, choose **开始建图**, or use:
 
 ```bash
-sudo bash /tmp/lingtu-X.Y.Z-aarch64-native-release/install_nav.sh
+bash /opt/lingtu/current/scripts/lingtu switch map --robot unitree/go2 --env real
+bash /opt/lingtu/current/scripts/lingtu status --robot unitree/go2 --env real --json
 ```
 
-The installer validates the package, stages a versioned release, atomically
-switches `current`, and rolls back on failure. If a Product was active, it
-reapplies the same Product and map through ProductControl rather than manually
-starting a service list.
+Wait for mapping readiness before moving. Open **遥控** in the Scene controls
+to collect the area; **累计地图** shows the scans collected in this session.
+Mapping uses direct checked teleoperation, so the operator must actively avoid
+obstacles. It is not autonomous navigation around the room.
 
-On a first install, install the unit catalog before switching a Product:
+### 2. Save and inspect
+
+Stop manual input, keep the robot stationary, and use **保存地图**. Choose a
+name that does not overwrite a map needed by an active session. Wait for the
+durable save operation to reach `SUCCEEDED`, then inspect the saved map. An
+accepted save request is not completion, and saving does not activate the map.
+Do not switch modes or power off while the save is pending.
+
+The save transaction processes source data, builds navigation artifacts
+(including OctoMap), validates them, and commits the saved version. Dynamic
+object cleanup is configured inside that transaction; there is no separate Web
+**清理地图** action. Check the save result's cleanup summary: missing trajectory
+data, an unavailable tool, or a cleanup failure can leave this step skipped or
+failed even when non-required cleanup allows the save to succeed. Do not treat
+`SUCCEEDED` as proof that all dynamic objects were removed.
+
+Use **查看完整地图** or **已存地图** to inspect the result. Cropping or editing a
+saved map is a separate maintenance operation and can invalidate derived
+navigation artifacts; rebuild and check readiness before using it. It is not
+an extra required step after every save. Map processing details belong to
+[Maps](../src/maps/README.md).
+
+The saved artifact is the input for subsequent localization and planning.
+Display height filtering and layer visibility do not change that artifact or
+the planner's three-dimensional map. Preserve the saved source data when
+investigating a gap; a visually empty patch is not evidence that it is free.
+
+### 3. Load for navigation
+
+In **已存地图**, check that the selected map shows **导航数据齐全** and has no
+activation blocker, then choose **使用此地图导航**, or switch explicitly:
 
 ```bash
-export LINGTU_PYTHON=/ABSOLUTE/PATH/TO/LINGTU_VENV/bin/python
-bash /opt/lingtu/current/scripts/deploy/thunder/install_services.sh field-cpp
-bash /opt/lingtu/current/scripts/lingtu \
-  --robot unitree/go2 --env real switch nav --map MAP_NAME
+bash /opt/lingtu/current/scripts/lingtu switch nav --robot unitree/go2 --env real --map MAP_NAME
+bash /opt/lingtu/current/scripts/lingtu status --robot unitree/go2 --env real --json
 ```
 
-## Canonical-layout transition
+Use the exact saved-map name. Loading ends the current mapping session; save
+recent scans first. Wait for that map to be active, a valid map-frame robot
+pose, fresh localization, and navigation readiness before selecting a goal.
+Loading a saved point cloud for display is not this activation step.
 
-The temporary dual-layout transition has three release stages:
+The switch dialog can use automatic localization or a specified map-frame
+initial pose (`x/y/z/yaw`). If the automatic result is unavailable or incorrect,
+keep the robot stationary and use the supported initial-pose or global
+relocalization controls before sending a goal. A seed helps localization; it
+is not a substitute for a confirmed pose.
 
-1. Keep the old units installed and activate a dual-layout release.
-2. Publish and activate the next dual-layout release while the old units still
-   run, making the first dual-layout release the rollback target. Then install
-   canonical units with `scripts/deploy/thunder/install_services.sh`. The
-   installer rejects missing, legacy-only, and canonical-only `current` trees.
-3. After the dual-layout release leaves the rollback window, stop including
-   the legacy `build/` copy in later packages.
+An active map cannot be overwritten, deleted, renamed, or rebuilt. Save a new
+map or switch away before modifying the old one. After a reboot, select the
+saved map explicitly and repeat the readiness checks; an old display or
+in-memory pose is not a newly localized session.
 
-Current units execute the canonical install tree. The legacy packaged copy
-exists only to keep rollback to an older unit set atomic during the defined
-window.
+## Navigate
 
-## Product operations
+**单点** keeps one draft destination. Each click replaces the draft and
+automatically previews a path; check the path and click **开始导航** to submit
+motion. **同层选点** uses the current body height. For a different three-dimensional
+surface, choose **三维表面** or hold Alt while clicking, then check the target
+height. A preview does not move the robot or prove that it will arrive.
 
-The robot-side adapter executes `python -m lingtu.control`:
+**连续点** appends numbered points in click order. Reorder or delete points
+before starting; use at least two points, or choose **单点** for one destination.
+The connector shows edit order, not a planned route. **开始路线** saves the
+current route snapshot and starts one native task; navigation plans each leg
+when it becomes current. Web does not submit the next point itself. The active
+map identity binds the draft, and changing maps clears it. An executing route
+snapshot is read-only.
+
+Use task status for progress, arrival, and the final outcome. Start, pause,
+resume, and cancellation acknowledgements mean that a request was accepted;
+wait for the corresponding robot state. The task card provides **暂停**,
+**继续导航**, and cancellation for a single navigation task; the continuous
+route card provides its own **暂停**, **恢复**, and **取消路线** controls.
+
+Current Product profiles resolve planar navigation to a **sqrt(2) m/s norm
+budget (about 1.414 m/s)** with independent **1.0 m/s x/y axis limits**. A
+lower single-goal speed applies to that goal; continuous routes use the active
+Product limit. Session overrides can lower these defaults, so inspect the
+active session rather than assuming an old deployment uses the new limit.
+Source changes take effect on the next ProductControl switch.
+
+### Manual takeover during navigation
+
+Open **人工接管** from the fixed toolbar at the top right of the Scene map
+while the `nav` Product is active. In a teleoperation or mapping Product, the
+same visible entry is labelled **遥控**. It remains available when the top-left
+operation dock is collapsed. The opened control bar contains **遥控限速**;
+select the desired speed there before moving.
+All operator Products use the same per-axis contract. Holding forward and
+strafe together can request `(vx, vy) = (1, 1)` m/s, a total of approximately
+1.414 m/s. Planning and tracking derive that total-speed budget from the input
+limit; SCAN and the final command boundary still cap each output axis at 1.0
+m/s and check the actual command's 3D braking space. An explicit lower
+total-speed override still applies. Ordinary translation acceleration is now
+**4.0 m/s²** across Products, for both SCAN planning and tracking. CMU retains
+this same resolved value; direct teleoperation and mapping use it through their
+existing velocity smoother. Turning acceleration is **4.0 rad/s²**. Product
+motion defaults are resolved once rather than maintained separately in each
+backend. The configured braking deceleration is **4.0 m/s²** for the same
+contract; it remains a command/trajectory parameter and is not a measured
+robot stopping distance.
+Recovery translation and rotation candidates use **0.50 m/s** and **0.80
+rad/s** by default, with the same 4.0 m/s² linear acceleration contract.
+The web selector offers the backend limit as well as lower speed choices; it
+initially selects 1.0 m/s per axis, capped by the backend.
+Turning remains capped at 1 rad/s. These are configured command/trajectory
+limits, not measured robot acceleration or stopping performance. Existing
+robot sessions keep their resolved settings until the updated Product is
+installed and switched through ProductControl.
+Ordinary SCAN tracking and pure assisted rotation now use the existing motion
+acceleration settings for command continuity. Replanning retains the command
+history, while final braking reductions update that history before motion can
+speed up again. Releasing input and safety stops still request immediate zero;
+these changes do not establish measured stopping distance or hard jerk limits.
+Opening the panel only connects the input adapter. A fresh keyboard command or
+deliberate gamepad input pauses the current navigation task and uses the same
+native checked motion path; it does not switch Products or replace the goal.
+Release the input to request a Hold. Use the task card's **继续导航** to continue
+the retained target from the measured robot position. Closing the panel releases
+its manual authority and does not automatically resume the task.
+Closing the panel before any manual input was admitted leaves the current
+navigation running; it does not insert a stop merely to close the input source.
+
+For **键盘**, hold W/S to move forward/back, A/D to move sideways, or Q/E to
+turn. Shift requests slower motion; Space holds and Esc exits the panel. Fresh
+input is required after focus returns; an old held key is not replayed.
+
+The input selector chooses **键盘** or **手柄**; they cannot send commands at the
+same time. For a USB/Bluetooth gamepad connected to the browser computer, select
+the device, release L1/LB and center its sticks first. Hold **L1/LB** while using
+the left stick for forward/lateral movement and the right stick for turning.
+Release the shoulder button or center the sticks to hold. A disconnected
+gamepad, hidden page, lost focus, or input-mode change clears the previous
+intent. Restore focus, release L1/LB and center the sticks before moving again.
+The existing speed selector and native final motion limits still apply.
+
+Only the browser's `standard` gamepad mapping is supported; an unknown layout is
+shown as unavailable rather than assigned guessed controls. Browser permission
+and device support must be checked on the operator computer. Local callback
+tests do not establish compatibility with a physical gamepad or field motion.
+
+Go2's factory handheld remote is a separate vendor control path. It is not yet
+routed through this panel or the native operator-input protocol. Its supported
+handoff requires disabling competing firmware joystick motion while preserving
+the intended stop behavior and obtaining usable remote input after that change.
+See the [driver control boundary](../src/drivers/real/motion/README.md#control-assurance-and-vendor-leases).
+Do not treat factory motion outside LingTu as a tested navigation takeover.
+
+## Stop and recovery
+
+Choose the action for the situation; stopping motion and shutting down the
+Product are different operations:
+
+| Action | Effect and next step |
+| --- | --- |
+| Task **暂停** | Retains the task. Wait for paused/stop confirmation; **继续导航** resumes the single navigation task. |
+| Exit manual input | Holds motion and releases the manual source. It does not resume a paused task. |
+| **解除控制暂停** | Releases a control hold after robot confirmation. It does not continue a paused task. |
+| Cancel the task | Requests a terminal cancellation. Wait for the final cancelled state and stop confirmation. |
+| Web **停止** or SDK `stop` | Requests software emergency stop. **解除急停** releases its latch only after confirmation; it does not replay the old task. |
+| ProductControl `stop` | Ends the active Product and its managed processes. Save needed mapping data first. |
+
+For emergency stop without changing the Product, or to end the session:
 
 ```bash
-bash scripts/lingtu --robot unitree/go2 --env real status --json
-bash scripts/lingtu --robot unitree/go2 --env real switch map
-bash scripts/lingtu --robot unitree/go2 --env real switch nav --map MAP_NAME
-bash scripts/lingtu --robot unitree/go2 --env real stop
+PYTHONPATH=/opt/lingtu/current/src "$LINGTU_PYTHON" -m lingtu.sdk.cli --host 127.0.0.1 --port 5050 stop
+bash /opt/lingtu/current/scripts/lingtu stop --robot unitree/go2 --env real
 ```
 
-ProductControl validates the resolved RunPlan, stops conflicting motion,
-stages map/session state, starts declared processes in dependency order, checks
-readiness, and commits only on success.
+Confirm terminal zero output and driver acknowledgement before treating the
+robot as stopped. A `HELD` command or a successful request alone does not
+confirm physical settling. Use task pause/cancel for normal task control;
+ending a completed task does not require shutting down the whole Product.
 
-Native processes 可按各自角色独立观测；它们的启动、停止、回滚和当前状态由当前 RunPlan 与 ProductControl 统一拥有。
-`systemctl` is for diagnosis, not a second Product startup path.
+If a switch fails, inspect ProductControl's report and current status first. It
+either restores the previous committed Product or leaves no committed Product;
+do not guess by starting individual units.
+
+If navigation reports `motion.permission=HELD` with
+`localization_not_tracking`, the robot is withholding autonomous commands while
+saved-map localization recovers. Local escape motion also waits for valid
+localization. Check `motion.stop_confirmation` for physical stop evidence; a
+held command alone does not prove that the robot has stopped. Inspect the
+current task before deciding whether continuation or a new goal is needed;
+task resume does not repair missing localization. If recovery does not restore
+a valid pose, inspect `/api/v1/localization/status`, verify the active map and
+robot position, and use the existing relocalization interface. Do not repeatedly
+submit the same goal or raise correction limits to hide the problem.
 
 ## Web mapping and navigation switches
 
-The Web controls are **开始建图 → 累计地图 → 保存地图 → 使用此地图导航**.
-Saving opens the saved PCD preview. Loading a map ends the current mapping
-session; save any recent scans before confirming. A successful switch does not
-send a motion goal: the existing map, localization, and navigation readiness
-checks still gate goal selection and execution. `?observe=1` remains read-only.
-
-The new controls require `lt-control.service` alongside the existing Host. This
-service is outside the Product's process set and remains running during Host
-replacement. It only listens on robot loopback port 5051; Gateway forwards the
-three `/api/v1/product-control` routes. No extra laptop software or internet
-connection is required. A running Host is needed to access these Web routes.
-
-After installing a release containing the new service, configure the fixed
-robot in `/etc/lingtu/control.env` on the robot:
-
-```ini
-LINGTU_ROBOT=unitree/go2
-# Set only when the deployed map/nav Products should include the camera:
-# LINGTU_CONTROL_VARIANT=camera
-```
-
-Use the actual robot profile for other platforms. Install the optional
-transport and start it once; it does not start or switch a Product by itself:
-
-```bash
-sudo bash /opt/lingtu/current/scripts/deploy/thunder/install_catalog_service.sh control
-sudo systemctl enable --now lt-control.service
-curl http://127.0.0.1:5051/status
-```
-
-The service and CLI must use the same current-run directory (`/run/lingtu` in
-the field unit). On Windows simulation the equivalent standalone process is
-`uv run --locked python -m lingtu.control serve --robot unitree/go2 --env sim
---backend mujoco --state-dir PATH_TO_EXISTING_SESSION_ROOT`, using the actual
-session path. Keep the existing simulation supervisor as process owner.
-
-The browser retains a request ID before submission. After a Host disconnect it
-queries that request instead of repeating the switch. A service restart marks
-unfinished requests `interrupted`; inspect the current Product before retrying.
-Receipts are kept in `web-control-operations.json` under the state directory
-(latest 32 requests; `/run` is not durable across a robot reboot). If Host cannot
-recover, inspect `http://127.0.0.1:5051/operations/REQUEST_ID` on the robot and use
-the normal ProductControl CLI; the Web must not report success from a timeout.
-
-This transport has local contract coverage. Deployment, complete browser
-interaction, and robot mapping/navigation acceptance are separate gates.
-
-## Service roles
-
-| Unit | Role |
-| --- | --- |
-| `lt-lidar` | Native MID-360/IMU ingestion |
-| `lt-slam` | Native mapping/localization |
-| `lt-maps` | Live map state and saved-map operations |
-| `lt-terrain` | Unique native traversability writer |
-| `lt-nav` | Navigation state and final logical command owner |
-| `lt-driver` | Unique physical robot command writer |
-| `lt-camera` | Native camera capture and publication |
-| `lt-explore` | Native exploration policy when declared |
-| `lt-host` | Python Host with Gateway, Agent, MCP, and adapters |
-| `lt-control` | Optional Host-independent transport for ProductControl; not a Product process |
-
-There is no separate Gateway unit; Gateway runs inside `lt-host`. Unit
-liveness alone does not prove Product readiness.
+Web mode switching requires the optional `lt-control` transport configured at
+[first installation](getting-started.md#enable-web-mode-switching).
+Gateway forwards the Product-control routes; this service listens on loopback
+and invokes ProductControl. It does not bypass localization or motion checks.
+After a disconnect, query the retained request ID before retrying. An interrupted
+request requires a fresh status check. Receipts in `/run/lingtu` do not survive
+a reboot.
 
 ## No-motion diagnosis
 
-Start from read-only state:
+These checks can reveal a wrong release, missing device, stale stream, map
+identity mismatch, or an unready process without requesting motion:
 
 ```bash
-bash scripts/lingtu status
-PYTHONPATH=src python -m diagnostics.field.doctor --non-motion --json --strict
-PYTHONPATH=src python -m diagnostics.field.soak \
+bash /opt/lingtu/current/scripts/lingtu status --robot unitree/go2 --env real --json
+PYTHONPATH=/opt/lingtu/current/src "$LINGTU_PYTHON" -m diagnostics.field.soak \
   --duration 120 --interval 2 --json --strict
 ```
 
-Inspect a role only after Product status identifies it as declared:
+Use the status report to choose relevant logs, for example:
 
 ```bash
-journalctl -u lt-host.service -n 80 --no-pager
 journalctl -u lt-slam.service -n 80 --no-pager
-journalctl -u lt-lidar.service -n 80 --no-pager
+journalctl -u lt-nav.service -n 80 --no-pager
 journalctl -u lt-driver.service -n 80 --no-pager
 ```
 
-For saved-map navigation, `TRACKING` alone is insufficient. Verify exact map
-identity, valid `map -> odom`, fresh odometry, navigation readiness, zero
-barriers, and driver state.
+The selected Product declares the required services. For service owners and
+native dataflow, use [Runtime](runtime.md); do not start or restart individual
+services to bypass a failed Product switch.
 
 ## Recording and replay
 
-Record native DDS to MCAP without a camera:
+In Web, open **操作 → 数据流与录制**. The same workbench has **实时 / 录制 /
+历史回看** tabs. Live view includes the current camera video and shows actual received frequency, serialized-payload
+throughput, sample age, selectable numeric-field curves and bounded latest fields. Inspecting
+a stream does not start recording. Its separate checkbox selects capture data;
+the topic/camera choices persist when the panel closes or tabs change.
+
+The live camera uses the existing WebRTC/JPEG stream and labels only fresh
+decoded frames as current video. An unloaded camera, an unavailable service and
+stopped frame updates have separate states. Viewing the camera does not start a
+Product, capture or motion. Saved-session media belongs to **历史回看** and is
+explicitly marked **录制回看 · 非实时**. A local recording-fixture page does not
+provide a robot camera unless it connects to a running robot Gateway.
+
+For an immediate numeric trend, select a stream in **实时**, then select a
+physical field such as `position_rad[0]`, `angular_velocity_rad_s.x` or
+`pose.position.x`. The browser samples distinct latest-message updates; this
+trend is not the full sensor-rate recording. When updates stop, retained
+history is marked as stale instead of being extended with repeated values.
+
+In **录制**, choose data groups and individual streams, set a duration/name,
+and start recording. The choices come
+from the installed native recorder; they are supported contracts, not a live
+publisher-discovery list. Color video is a separate option on Linux. Depth
+images and camera intrinsics are independent DDS choices.
+
+After stopping, select the session to compare selected topics with actual
+message counts, check the file/type/CDR envelope offline, download individual
+artifacts or export the complete declared data set as TAR. A quiet optional
+event stream may have zero samples without failing an ordinary capture. A
+missing required sensor, no received samples, or an invalid inspection evidence
+chain must remain visible as a failure. Retain failed recordings for diagnosis;
+starting another recording does not require deleting the previous evidence.
+
+For historical inspection, open a saved session under **历史回看** and use its
+shared timeline. Select the data stream and numeric field, click the chart or drag
+the playhead, then play/pause or change the viewing speed. The time-window
+controls zoom around the playhead and restore the full range. No DDS messages
+are published by these controls.
+
+Choose a second session in **对比 B** to compare the same field on a shared
+axis. Both recordings start at elapsed zero by default; their wall-clock dates
+do not have to match. A positive **B 偏移** moves B later, a negative offset
+moves it earlier, and **重置对齐** restores zero offset. The legend retains
+source A/B identity and source-local cursor times. The displayed `B − A`
+difference uses available retained samples, not interpolated ground truth.
+Missing spans and times outside either source remain empty. Numeric values
+are unchanged; matching units and coordinate/joint meanings are necessary
+before interpreting their difference. Full source timestamps remain available
+in the time-source details.
+
+Large historical curves use peak-preserving min/max reduction, identified
+below the chart. Zoom in to read a narrower range at greater detail. The
+underlying MCAP remains complete; the chart's selected samples and observed
+gaps do not establish lossless capture or exact sensor synchronization.
+
+Recorded camera, point-cloud frames and trajectory share this same playhead.
+Play, pause, rate, scrub and B offset affect all views together. Wide layouts
+can show A/B sources side by side; the embedded sidebar selects a source on
+the same shared timeline. The image and scene labels retain their actual
+sample time and age, so a reduced display rate is not mistaken for the full
+recorded sensor rate. Paused image seeks select the last indexed frame at or
+before the cursor. Time outside camera coverage remains empty.
+
+Camera reads run one at a time. During playback the next read follows the latest
+cursor instead of canceling a decoder that is still working. The last completed
+image remains visible with its actual time and age while updating. The viewport
+distinguishes the first read, an update, a failed read with retry, the next
+available segment and the end of a recording. A no-frame response does not stay
+in a loading state. Coverage ends are exclusive; the exact end of the source is
+shown as ended rather than extending its last image indefinitely.
+
+Cloud and odometry/path data keep their recorded coordinate frames. Only
+matching known frames overlay; otherwise choose a frame to inspect separately.
+The trajectory shows the past portion of the current buffered window. Stored
+planned paths are visually distinct and may extend into the future; they are
+recorded plans, not proof of actual movement. A later empty path clears the
+previous plan. No transform, motion or route is inferred by the viewer.
+
+New native color recordings retain each encoded frame's acquisition timestamp
+inside the segment index. Older segment-only indexes use an explicitly labelled
+frame-order time estimate. Recorded source timing and DDS receive/log timing
+remain distinct; the interface does not certify hardware synchronization.
+The native scene reader supplies bounded time windows with display-only cloud
+sampling, while the selected original CDR remains in the MCAP. Camera-only
+sessions also have a timeline without requiring a fabricated DDS stream.
+
+The compiled catalog includes robot joint states (position, velocity and
+estimated torque), sensor inputs, localization/TF/GNSS, navigation paths and
+states, control requests/acknowledgments, and inspection events. A platform
+must actually publish the selected contracts. Motor current/temperature,
+battery and foot-contact telemetry are not captured merely because the SDK
+could expose them. See the [native catalog](../src/native/recording/README.md)
+and [source-backed design/gaps](research/recording.md).
+
+For terminal operation, record native DDS without a camera, then inspect or
+dry-run the result:
 
 ```bash
+/opt/lingtu/current/bin/lingtu_recorder topics --json
 /opt/lingtu/current/bin/lingtu_recorder record \
-  --output-dir SESSION_DIR --dds on --camera off
+  --output-dir SESSION_DIR --dds on --camera off \
+  --dds-topic /imu/raw --dds-topic /lidar/raw_frame \
+  --dds-topic /robot/joint_states --dds-topic /slam/odometry
+/opt/lingtu/current/bin/lingtu_recorder status SESSION_DIR
+/opt/lingtu/current/bin/lingtu_dds_player --info SESSION_DIR/dds/sensors.mcap --json
+/opt/lingtu/current/bin/lingtu_dds_player \
+  SESSION_DIR/dds/sensors.mcap --dry-run --json
 ```
 
-Inspect or dry-run replay:
+Load the installed native command environment once in an operator shell, then
+use the short command:
 
 ```bash
-/opt/lingtu/current/bin/lingtu_recorder status
-/opt/lingtu/current/bin/lingtu_dds_player SESSION_DIR/dds/sensors.mcap --info
-/opt/lingtu/current/bin/lingtu_dds_player \
-  SESSION_DIR/dds/sensors.mcap --dry-run
+source /opt/lingtu/current/scripts/deploy/thunder/runtime-env.sh
+ltplay SESSION_DIR
+ltplay SESSION_ID -r 2
+ltplay --info SESSION_DIR --json
+ltplay --series SESSION_DIR --topic /robot/joint_states \
+  --field 'position_rad[0]' --start 0 --end 5 --max-points 2000 --json
 ```
 
-Recording does not authorize motion and never becomes a new runtime authority.
+`ltplay` accepts a session directory, MCAP file or bare session ID. Bare IDs use
+`LINGTU_RECORDING_ROOT` or `~/data/lingtu/recordings`. The default remains
+isolated domain 84 and rate 1. When raw IMU/LiDAR inputs are present, the short
+entry replays those inputs by default; otherwise it replays recorded sensor
+streams for inspection. Explicit `--topic` overrides this choice, for example
+`ltplay SESSION_DIR --topic /robot/joint_states`. The established
+`lingtu_dds_player` retains its prior default selection. The two names compile
+the same player implementation.
+
+Recording does not authorize motion. Recording and replay provide evidence;
+neither owns Product lifecycle. Web's offline check does not launch timed
+playback or fully decode the semantic fields of every message. The native
+player republishes selected sensor streams; commands, task requests and motion
+mode switches are record-only. Configure downstream consumers for the replay
+domain and recorded timestamps. Web's numeric timeline is a read-only viewer;
+automatic replacement of live Product inputs is separate from this interface.
+
+DDS recordings use MCAP profile `lingtu.dds.v1`; the final
+`.mcap` is published only after clean closure, while an interrupted session
+keeps its temporary file for inspection. Implementation details live in
+[`src/native/recording/README.md`](../src/native/recording/README.md).
 
 ## Robot and credential boundaries
 
-Robot addresses, interfaces, devices, and calibration come from RobotConfig and
-machine configuration. Product source does not embed them.
-
-Thunder remote Brainstem access requires its deployed mTLS files and explicit
-source-IP allowlist. Go2 uses the declared network interface. Never store
-credentials in `docs/`, Product YAML, or release defaults.
-
-The optional go2rtc service is a machine-level media sidecar outside
-ProductControl and readiness. See [Architecture](./architecture.md) for the WHEP
-and JPEG fallback contract.
+Addresses, interfaces, devices, geometry, and calibration come from RobotConfig
+and machine configuration. Preserve these boundaries for every supported robot.
+Never store credentials in documentation, Product YAML, or release defaults.
 
 ## Go2 connection and debug records
 
-记录核对日期：2026-09-10。以下区分当前配置、历史调试记录和待验证结果，
-不代表设备现在在线，也不构成本轮实机运动授权。
+Current Go2 connection topology, SSH paths, calibration status, and dated field
+evidence live with the robot profile and field handoff:
 
-连接拓扑、地址、SSH 直连／跳板命令和只读网络核对统一维护在
-[Go2 README：连接 NX 与网络核对](../config/robots/unitree/go2/README.md#连接-nx-与网络核对)。
-下面保留运动链路与历史调试结论，当前 Product 状态按前面的运维流程核对。
+- [Go2 RobotConfig notes](../config/robots/unitree/go2/README.md)
+- [Go2/NX operations](operations/go2-offline-mapping.md)
 
-运动链路：
+The dated records in `docs/operations/` preserve operational context. They are
+not current operating instructions or proof that this release passed field
+motion acceptance; the Go2/NX handoff is their index.
 
-```text
-操作页面 / 导航目标
-  -> Gateway
-  -> Navd：规划、最终速度仲裁
-  -> lingtu-driver
-  -> Unitree SDK2 SportClient
-  -> Go2
-```
-
-当前 [Go2 Driver](../src/drivers/real/motion/robots/unitree/go2/go2.cpp)
-使用 `ChannelFactory::Init(0, network_interface)`，由所选网卡进行 DDS 发现；
-运动调用 `SportClient::Move(vx, vy, wz)`，零速调用 `StopMove()`。
-RobotConfig 的控制频率为 `50 Hz`，`auto_enable`、`auto_standup` 均为 `false`。
-不要绕过 Navd 和 Driver，直接运行 SDK 运动示例来检查网络。
-
-### What the earlier Go2 debugging established
-
-历史来源：[go2 任务](codex://threads/01a0149a-ca4f-7a90-a1b1-60571f7eaad4)。
-此链接需要能访问原 Codex 任务；以下摘要便于离线阅读。
-
-| 记录 | 已知事实 | 不应据此宣称 |
-| --- | --- | --- |
-| NX 接入 | 曾在 NX 上编译、部署并调试 Go2；Sunrise 仅作为临时开发桥 | 当前候选版本已经部署到 NX 或通过实机验收 |
-| MID-360 / SLAM | 当前配置保留 2026-08-23 无运动证据：`TRACKING`、零丢包/零速度、地面倾角约 `0.65°`、RMS `4.3 mm` | 所有传感器已标定；相机仍为 `unverified`；更换支架后无需复核 |
-| 按 W 不动 | 历史采样确认非零遥控意图到达 Navd，但出现 `obstacle_stop`、`obstacle_distance_m=0` 和最终输出归零 | 所有“不动”都由键盘、网络或同一个安全条件引起 |
-| 近身硬栅格 | 曾记录机器人周围 1 m 内有 31 个硬栅格，格宽 0.20 m；调查涉及自体点、自滤接线和足迹参数 | 这是 31 个独立物体，或已经证明所有占据均为自体误检 |
-| 验收状态 | 旧记录包含连接、调试和局部修复证据 | 最新 SCAN 长程导航和实机运动已经整体通过 |
-
-旧任务中的安全参数、直接重启服务和临时构建路径属于历史调试过程，
-不作为当前操作步骤。当前启停、地图切换和回滚统一走 ProductControl。
-
-## MuJoCo SCAN clock debugging status
-
-以下记录对应本地 `codex/scan-nav-integration` 分支截至 2026-09-05 的修复，
-不是对主分支、已安装版本或当前 Viewer 的部署确认。
-
-| 提交 | 修改内容 | 验证边界 |
-| --- | --- | --- |
-| `b37577cd` | `REFERENCE_PATH` 重规划从本次测量位置、速度重新初始化，不继续沿用旧 spline 的预定起点 | 这是明确记录的 LingTu 行为差异，不声称与官方该分支输出等价 |
-| `755460e2` | 区分单调时钟与外部物理时钟；Task、PlannerManager 不再把排队/计算的电脑耗时加到仿真轨迹时间上 | 已有 Task 和 Follower 定向回归；整体 Native 回归为 117/118，CMU `RollsPastBoxWithPhysicalClearance` 仍未通过 |
-| `cc6194d8` | 正式 MuJoCo feeder 将 `engine.sim_time` 经现有传感器记录管道、DDS `/sim/clock` 送到 Navd | 已有记录解析、发布进程、DDS、输入门和 RunPlan 定向验证；不等于长程动态通过 |
-
-确定修复的错误：物理仿真变慢时，机器人世界尚未前进相同时间，
-旧轨迹时间却按电脑时间推进，造成参考目标抢跑。现在 SCAN 和 Follower
-使用同一物理时间；相同时间样本不会因等待或重复调用而使执行进度前进。
-上一轮测试覆盖了物理时间保持 `1.0 s`，随后仅随新样本推进到 `1.05 s`。
-
-Driver / 传感器新鲜度、最终控制超时及 A* 的 `0.2 s` 计算截止仍使用
-单调时钟。物理时钟缺失或过期会暂停规划运动；物理时间回退要求重新启动
-Product，不能继续执行旧世界的 spline。实机仍使用单调执行时间，不依赖
-`/sim/clock`。这项修复不会让渲染或物理计算本身变快。
-
-绿色预览显示的是已提交 spline，不是每个渲染帧从机器人重新画出的一条线。
-应分别核对“轨迹起点与规划时测量位置”和“当前参考点与当前实际位置”；
-不能通过移动显示线掩盖跟踪误差。转弯振荡和明显落后是否消失，仍需动态验证。
-
-下一次复验按以下顺序记录同一条时间线，不降低验收阈值：
-
-1. 确认实际运行的 RunPlan、二进制版本、真值定位和仿真时钟选择。
-2. 短程直道、转弯、约半速物理仿真：对齐物理时间、规划起点、trajectory ID、
-   执行时间、参考点、实际位姿、最终指令、实际速度和停止原因。
-3. 短程通过后运行同源工业园长程：起点 XY `(3,4)`、目标 XY `(56,32)`，
-   实际行走至少 50 m、`REACHED`、终点误差不超过 0.5 m、无实体碰撞、终态零速确认。
-
-截至本次记录，新时钟版本尚未完成上述带窗口长程复验，也没有由此产生的实机证据。
-详细实现说明随这三个提交保存在 SCAN 的 `upstream/UPSTREAM.md` 和
-`sim/scripts/README.md`；验证层级见 [Testing](./testing.md)。
-
-## Motion boundary
-
-Field motion is a separately approved, supervised action after no-motion gates
-pass. Gateway, MCP, Web, and semantic code submit intent; native navigation
-retains final arbitration and `lingtu-driver` remains the only hardware writer.
-
-An API or navigation ACK does not prove actuator motion. Stop evidence includes
-terminal zero output and driver acknowledgement. Follow
-[Testing](./testing.md) before any motion-capable procedure.
-
-## 动态避障的运动证据采集
-
-默认 SCAN 使用测量占据图和独立的短时运动预测。状态快照的
-`last_local.dynamic_avoidance` 区分等待、寻找绕行、绕行、观测过期和超时；
-`prediction_count` 是当前参与查询的预测体数量，不是识别到的人数。
-
-在另一个终端启动只读采集，再通过正常控制页面进行已经确认场地条件的测试：
-
-```powershell
-python tools/diagnostics/navigation_motion_evidence.py --platform go2-nx --url http://127.0.0.1:15052 --seconds 30 --output build/dynamic-avoidance-run-01
-```
-
-输出目录需使用新的名字，原始记录不会被覆盖。`samples.jsonl` 保留完整状态；
-`summary.json` 分开统计最终指令、同一输出序号的驱动确认及新鲜里程计运动。
-此工具只发送 GET，不申请控制权、不发送目标。驱动确认不等于机身已运动；
-安静的单个里程计样本也不等于停车距离达标。横穿、迎面、堵路、观测断流的验收仍需
-结合场景录像、距离和连续停车证据；Go2/NX、S100P、原生仿真分别保存结果。
-
-## 导航控制周期与后台点云处理
-
-`navd` 的主线程仍按 RunPlan 配置的周期运行，使用单调时钟和 deadline sleep。
-动态障碍更新、跟踪与障碍快照由 C++ `MotionWorker` 独立线程计算；主线程负责
-接收完整结果、输入新鲜度检查、命令仲裁和最终停车检查。
-
-后台最多保留一帧待处理点云；新帧替换尚未开始的旧帧，避免处理队列越来越落后。
-正在处理的一帧会完成，但地图/坐标纪元重置或地图清理后，其结果不能重新进入规划。
-只有完成的结果才推进 `cloud_generation`。结果沿用原始接收时间，后台延迟会消耗
-新鲜度预算，不能以“刚处理完”为由恢复运动许可。
-
-查看耗时时注意：`timing_ms.motion_update_last` 和 `obstacle_snapshot_last` 是最近
-完成的后台任务耗时；`control_loop_health.work_ms` 才是主控制线程每轮工作耗时。
-后台计算与主循环同时进行，不应将两者相加当作控制周期。健康统计复用缓冲区和
-同一样本的结果；每个新样本仍立即更新健康判定，阈值保持不变。
-
-MuJoCo 组件验收可通过 manifest 的 `navigation_runtime.tick_hz` 指定被测频率，
-默认保留原组件基线 20 Hz。测试正式导航的 100 Hz 时必须检查报告中的实际
-`period_ms = 10`，20 Hz 通过不能替代 100 Hz 或实机时序验收。
+For supervised motion and evidence collection, follow
+[Testing](testing.md#supervised-motion). Native navigation retains final motion
+arbitration and the driver is the only hardware command writer. A source or
+simulation pass does not establish that the installed release has passed on
+the current robot, map, or route.

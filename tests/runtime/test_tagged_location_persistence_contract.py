@@ -5,16 +5,16 @@ from pathlib import Path
 
 import pytest
 
-from lingtu.assembly.stacks.memory import memory
+from lingtu.assembly.host.stacks.memory import memory
 from memory.spatial.tagged_locations import TaggedLocationStore
 
 
 def test_memory_stack_persists_tagged_locations_under_semantic_directory(tmp_path: Path) -> None:
-    blueprint = memory(save_dir=str(tmp_path))
+    host_builder = memory(save_dir=str(tmp_path))
 
     tagged = next(
         entry
-        for entry in blueprint._entries
+        for entry in host_builder._entries
         if entry.alias == "TaggedLocationsModule"
     )
 

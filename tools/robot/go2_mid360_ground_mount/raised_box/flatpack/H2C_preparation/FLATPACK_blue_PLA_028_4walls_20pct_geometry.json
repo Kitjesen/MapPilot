@@ -1,0 +1,98 @@
+[
+  {
+    "name": "left_side",
+    "size_mm": [
+      120.21552276611328,
+      97.45433044433594,
+      16.0
+    ],
+    "watertight": true,
+    "winding_consistent": true,
+    "volume_mm3": 31491.880984781426,
+    "center_xy": [
+      77,
+      205
+    ],
+    "orientation": "source print orientation preserved; XY translation and bed drop only"
+  },
+  {
+    "name": "right_side",
+    "size_mm": [
+      120.21552276611328,
+      97.45433044433594,
+      16.0
+    ],
+    "watertight": true,
+    "winding_consistent": true,
+    "volume_mm3": 31491.881177750747,
+    "center_xy": [
+      225,
+      205
+    ],
+    "orientation": "source print orientation preserved; XY translation and bed drop only"
+  },
+  {
+    "name": "lid",
+    "size_mm": [
+      110.0,
+      100.0,
+      5.0
+    ],
+    "watertight": true,
+    "winding_consistent": true,
+    "volume_mm3": 50179.224310874706,
+    "center_xy": [
+      77,
+      75
+    ],
+    "orientation": "source print orientation preserved; XY translation and bed drop only"
+  },
+  {
+    "name": "base",
+    "size_mm": [
+      110.0,
+      101.0,
+      4.0
+    ],
+    "watertight": true,
+    "winding_consistent": true,
+    "volume_mm3": 36439.99817040167,
+    "center_xy": [
+      225,
+      75
+    ],
+    "orientation": "source print orientation preserved; XY translation and bed drop only"
+  },
+  {
+    "name": "left_foot",
+    "size_mm": [
+      70.0,
+      14.0,
+      16.00438117980957
+    ],
+    "watertight": true,
+    "winding_consistent": true,
+    "volume_mm3": 11325.357036813512,
+    "center_xy": [
+      77,
+      290
+    ],
+    "orientation": "source print orientation preserved; XY translation and bed drop only"
+  },
+  {
+    "name": "right_foot",
+    "size_mm": [
+      70.0,
+      14.0,
+      15.700418472290039
+    ],
+    "watertight": true,
+    "winding_consistent": true,
+    "volume_mm3": 11288.35627717075,
+    "center_xy": [
+      225,
+      290
+    ],
+    "orientation": "source print orientation preserved; XY translation and bed drop only"
+  }
+]

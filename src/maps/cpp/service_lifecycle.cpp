@@ -1,8 +1,8 @@
 #include "lingtu/maps/service.hpp"
-#include "lingtu/maps/json.hpp"
+#include "lingtu/maps/io/json.hpp"
 
-#include "lingtu/maps/lock.hpp"
-#include "lingtu/maps/map_graph.hpp"
+#include "lingtu/maps/storage/lock.hpp"
+#include "lingtu/maps/graph.hpp"
 
 #include <algorithm>
 #include <sstream>

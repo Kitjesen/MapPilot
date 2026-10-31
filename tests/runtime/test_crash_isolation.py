@@ -6,7 +6,7 @@ the publisher and other modules continue operating normally.
 
 import unittest
 
-from runtime import Blueprint, In, Module, Out
+from runtime import HostBuilder, In, Module, Out
 
 
 class SafetyController(Module, layer=0):
@@ -53,7 +53,7 @@ class TestCrashIsolationCallback(unittest.TestCase):
 
     def test_callback_crash_is_caught(self):
         """Direct callback: exception is caught by Out.publish(), publisher survives."""
-        bp = Blueprint()
+        bp = HostBuilder()
         bp.add(RobotDriver)
         bp.add(Perception)
         bp.auto_wire()
@@ -87,7 +87,7 @@ class TestCrashIsolationTransport(unittest.TestCase):
 
     def test_transport_isolates_crash(self):
         """Transport-mediated: subscriber crash doesn't affect publisher at all."""
-        bp = Blueprint()
+        bp = HostBuilder()
         bp.add(RobotDriver)
         bp.add(Perception)
         bp.wire("RobotDriver", "odometry", "Perception", "odometry",
@@ -117,7 +117,7 @@ class TestThreeTierWiring(unittest.TestCase):
     """Full 3-tier wiring: safety(callback) + control(callback) + semantic(transport)."""
 
     def test_three_tier_decoupling(self):
-        bp = Blueprint()
+        bp = HostBuilder()
         bp.add(SafetyController)
         bp.add(RobotDriver)
         bp.add(Perception)
@@ -168,7 +168,7 @@ class TestTransportDataIntegrity(unittest.TestCase):
     """Verify data arrives correctly through transport, not just callback."""
 
     def test_data_round_trip_through_transport(self):
-        bp = Blueprint()
+        bp = HostBuilder()
         bp.add(Perception)
         bp.add(Planner)
         bp.wire("Perception", "scene_graph", "Planner", "scene_graph",

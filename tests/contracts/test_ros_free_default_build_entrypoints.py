@@ -2,6 +2,7 @@
 
 
 
+import shlex
 from pathlib import Path
 
 import yaml
@@ -97,6 +98,9 @@ def test_makefile_exposes_the_native_product_workflow() -> None:
     assert "if [ -f scripts/build/build_mapd.sh ]" in makefile
     assert "npm --prefix web ci --silent" in makefile
     assert "npm --prefix web run build" in makefile
+    native_build = makefile.split("\nbuild:\n", 1)[1].split("\nbuild-web:", 1)[0]
+    assert "npm" not in native_build
+    assert "package-web: build-web" in makefile
     assert "$(PYTHON) -m pytest" in makefile
     assert "scripts/deploy/thunder/install_services.sh field-cpp" in makefile
     assert "$(PYTHON) -m lingtu.control switch map" in makefile
@@ -117,8 +121,7 @@ def test_active_ci_and_tag_release_use_native_aarch64_artifacts() -> None:
     assert "third_party/research_localization/small_gicp/include/**" in slam_workflow
     assert "bash scripts/build/build_slam_core.sh" in slam_workflow
     assert "runs-on: ubuntu-22.04-arm" in release_workflow
-    assert "actions/setup-node@v7" in release_workflow
-    assert "node-version: '24'" in release_workflow
+    assert "actions/setup-node" not in release_workflow
     assert "make build PYTHON=python3" in release_workflow
     assert "bash scripts/deploy/package_native_release.sh --self-test" in release_workflow
     assert "dist/*native-release*" in release_workflow
@@ -130,8 +133,8 @@ def test_active_ci_and_tag_release_use_native_aarch64_artifacts() -> None:
     assert "build/dds_probe/lingtu_dds_probe" in package_script_text
     assert "git -C \"${ROOT}\" ls-files --error-unmatch" in package_script_text
     assert "build/maps/mapd" in package_script_text
-    assert "Native release dashboard is missing" in package_script_text
-    assert '"${ROOT}/web/dist/index.html"' in package_script_text
+    assert "--exclude='/web/'" in package_script_text
+    assert '"${ROOT}/web/dist' not in package_script_text
     assert "build/maps/liblingtu_maps.so" not in package_script_text
     assert 'INSTALLER_SOURCE="${SCRIPT_ROOT}/scripts/deploy/install_native_release.sh"' in package_script_text
     assert "Active Product requires maps/mapd" in installer_script_text
@@ -144,11 +147,11 @@ def test_active_ci_and_tag_release_use_native_aarch64_artifacts() -> None:
     assert "reapply" not in installer_script_text
     assert '--state-dir "${STATE_DIR}"' in installer_script_text
     assert "restore_previous_release" in installer_script_text
-    assert "python3 -m lingtu.control" in installer_script_text
+    assert '"${PYTHON_BIN}" -m lingtu.control' in installer_script_text
     assert "systemctl" not in installer_script_text
     assert 'git -C "${source_root}" ls-files --cached -z' in package_script_text
     assert "--others --exclude-standard -z" in package_script_text
-    assert "src/localization/fastlio2/config/self-test.yaml" in package_script_text
+    assert "src/localization/ltlio/config/self-test.yaml" in package_script_text
     assert '"install_script": "install_nav.sh"' in package_script_text
 
 
@@ -161,7 +164,57 @@ def test_development_containers_reuse_the_native_build_seam() -> None:
 
     assert "RUN make build PYTHON=python3" in dockerfile
     assert "/app/build/dds_probe" in dockerfile
-    assert "'.[gateway]'" in dockerfile
-    assert "'/tmp/lingtu[dev]'" in dev_dockerfile
+    assert "--extra gateway" in dockerfile
+    assert "--project /tmp/lingtu" in dev_dockerfile
+    assert "--extra dev" in dev_dockerfile
     compose_dev_model = yaml.safe_load(compose_dev)
     assert compose_dev_model["services"]["build-only"]["command"] == ["make", "build", "PYTHON=python3"]
+
+
+def test_python_ci_installs_locked_extras_and_runs_the_synced_environment() -> None:
+    """Keep required extras and Python 3.10 when CI consumes the lockfile."""
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/test-python.yml").read_text(encoding="utf-8"))
+    triggers = workflow.get("on", workflow.get(True))
+    assert "uv.lock" in triggers["push"]["paths"]
+    assert "docker/**" in triggers["push"]["paths"]
+    for job_name, expected_extras in {
+        "test": {"dev", "sim-recording", "nlp"},
+        "windows-toolchain": {"dev"},
+    }.items():
+        steps = workflow["jobs"][job_name]["steps"]
+        setup = next(step for step in steps if step.get("uses", "").startswith("actions/setup-python@"))
+        assert setup["with"]["python-version"] == "3.10"
+        commands = [shlex.split(step["run"]) for step in steps if "run" in step]
+        sync = next(command for command in commands if command[:2] == ["uv", "sync"])
+        assert "--locked" in sync
+        assert sync[sync.index("--python") + 1] == "3.10"
+        extras = {sync[index + 1] for index, token in enumerate(sync) if token == "--extra"}
+        assert extras == expected_extras
+        test = next(command for command in commands if "pytest" in command)
+        assert test[test.index("uv"):test.index("python")] == ["uv", "run", "--locked", "--no-sync"]
+
+
+def test_container_installs_are_locked_and_survive_source_cleanup() -> None:
+    """A mounted/deleted checkout must not remove the installed environment."""
+
+    for filename in ("Dockerfile", "Dockerfile.dev"):
+        source = (ROOT / "docker" / filename).read_text(encoding="utf-8")
+        logical_lines = source.replace("\\\n", " ").splitlines()
+        syncs = [shlex.split(line[line.index("uv sync"):].split("&&", 1)[0])
+                 for line in logical_lines if "uv sync" in line]
+        assert syncs
+        extras = [{sync[index + 1] for index, token in enumerate(sync) if token == "--extra"}
+                  for sync in syncs]
+        assert extras == ([{"dev"}] if filename == "Dockerfile.dev" else
+                          [{"dev"}, {"gateway"}, {"gateway", "dev"}])
+        for sync in syncs:
+            assert "--locked" in sync
+            assert "--no-editable" in sync
+            assert sync[sync.index("--python") + 1] == "/usr/bin/python3"
+        assert "UV_PROJECT_ENVIRONMENT=/opt/lingtu-venv" in source
+        assert "PATH=/opt/lingtu-venv/bin:${PATH}" in source
+        assert "UV_PYTHON_DOWNLOADS=never" in source
+        assert "pip install" not in source
+        if filename == "Dockerfile.dev":
+            assert source.index("uv sync") < source.index("rm -rf /tmp/lingtu")

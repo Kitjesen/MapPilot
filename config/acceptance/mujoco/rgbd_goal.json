@@ -10,10 +10,10 @@
   "planner_constraints": {
     "robot_radius_m": 0.95,
     "max_iterations": 300000,
-    "require_ground_support": true,
-    "strict_ground_support": true,
-    "ground_support_xy_radius_cells": 0,
-    "ground_support_depth_cells": 2,
+    "ground_support": true,
+    "direct_support_only": true,
+    "support_radius_cells": 0,
+    "support_depth_cells": 2,
     "support_height_m": 0.3,
     "support_height_tolerance_m": 0.11,
     "enable_preblocked_costmap": false,
@@ -21,9 +21,9 @@
     "lowest_traversable_only": true,
     "same_floor_preference": true,
     "same_floor_z_tolerance_m": 0.4,
-    "max_same_floor_z_excursion_m": 0.8,
     "obstacle_clearance_radius_cells": 0,
     "obstacle_clearance_weight": 0.0,
+    "terminal_goal_tolerance_m": 0.25,
     "terminal_goal_xy_tolerance_m": 0.6,
     "terminal_goal_z_tolerance_m": 0.4
   },
@@ -90,6 +90,6 @@
   "acceptance_scope": {
     "coverage": "component",
     "claims": ["rendered RGB-D image selection, native navigation, physical contacts, arrival and terminal stop"],
-    "excluded_claims": ["automatic object recognition", "Fast-LIO2 localization", "traversability service qualification", "ProductControl/Gateway integration", "Go2 gait", "field motion"]
+    "excluded_claims": ["automatic object recognition", "LTLIO localization", "traversability service qualification", "ProductControl/Gateway integration", "Go2 gait", "field motion"]
   }
 }

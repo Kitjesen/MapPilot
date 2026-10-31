@@ -99,6 +99,35 @@ class NativeNavigationClient:
             acceptance_radius_m=acceptance_radius_m,
         )
 
+    def query_semantic_views(
+        self,
+        *,
+        boot_id: str,
+        map_id: str,
+        map_content_epoch: int,
+        frame_id: str = "map",
+        frame_epoch: int = 0,
+        reference_z: float = 0.0,
+        camera_range_m: float,
+        camera_horizontal_fov_rad: float,
+        views: list[dict[str, object]] | None = None,
+        timeout_ms: int = 3000,
+    ) -> dict[str, object]:
+        """Return native 3D semantic observation candidates without moving."""
+
+        return self._session.query_semantic_views(
+            boot_id=str(boot_id),
+            map_id=str(map_id),
+            map_content_epoch=int(map_content_epoch),
+            frame_id=str(frame_id or "map"),
+            frame_epoch=int(frame_epoch),
+            reference_z=float(reference_z),
+            camera_range_m=float(camera_range_m),
+            camera_horizontal_fov_rad=float(camera_horizontal_fov_rad),
+            views=list(views or []),
+            timeout_ms=max(1, int(timeout_ms)),
+        )
+
     def cancel_task(
         self,
         task_id: str,

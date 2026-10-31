@@ -17,7 +17,7 @@ LingTu 已有 RGB-D 投影、人员跟踪和视觉目标到原生导航的链路
 
 | 核对对象 | 当前实际情况 | 实施含义 |
 | --- | --- | --- |
-| `config/runtime_graph/products/tracking.yaml` | 有 `PerceptionModule`、`VisualServoModule`、相机和原生导航；需要已存地图；禁止 `SemanticPlannerModule` | 使用 tracking 的明确选人入口；语音意图接入必须显式配置，不能假定 nav 已有全部语义能力 |
+| `config/runtime/products/tracking.yaml` | 有 `PerceptionModule`、`VisualServoModule`、相机和原生导航；需要已存地图；禁止 `SemanticPlannerModule` | 使用 tracking 的明确选人入口；语音意图接入必须显式配置，不能假定 nav 已有全部语义能力 |
 | `src/perception/frames.py` | RGB/深度时间匹配、内参检查、邻近时刻里程计和 map→odom 组合已有实现 | 保留同步入口；尚不能把“邻近采样”写成“位姿插值” |
 | `src/perception/backends.py` | 已有注册式 detector provider、RGB-D 投影；BPU 可接二维跟踪器 | 扩展现有 provider，避免独立巡检相机循环 |
 | `src/perception/tracking/bpu_tracker.py` | 有 BoT-SORT/ByteTrack 接口和依赖较少的本地实现；BoT-SORT 配置关闭 ReID | 二维 track ID 不等于可靠的跨遮挡人员身份 |

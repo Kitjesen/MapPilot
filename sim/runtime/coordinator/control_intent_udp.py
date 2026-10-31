@@ -539,12 +539,6 @@ class UdpLoopbackControlAckPublisher:
         self.close()
 
 
-# The complete status publisher shares the same loopback socket and strict
-# schema-switch implementation.  Keep the ACK name above for runner/API
-# compatibility while giving new code the product-accurate name.
-UdpLoopbackControlStatusPublisher = UdpLoopbackControlAckPublisher
-
-
 def decode_operator_intent_datagram(
     payload: bytes,
     *,

@@ -13,7 +13,7 @@ the interfaces in `sim/runtime/`; protocol conversion belongs in
 | Path | Responsibility |
 | --- | --- |
 | `core/` | Engine abstractions: `SimEngine` (ABC), `SimWorld`, `WorldConfig`, `RobotConfig`, sensor configs (`CameraConfig`, `LidarConfig`, `IMUConfig`), and data types (`RobotState`, `CameraData`, `VelocityCommand`). |
-| `mujoco/` | MuJoCo engine implementation: `MuJoCoEngine` (physics stepping, ONNX policy to joint control), `MuJoCoCamera`, `MuJoCoLidar`, `PolicyRunner`. |
+| `mujoco/` | MuJoCo engine implementation: `MuJoCoEngine` (physics stepping, ONNX policy to joint control), `MuJoCoCamera`, `MuJoCoLidar`, `HistoryPolicy`. |
 | `worlds/` | `WorldRegistry` scene XML lookup, alias registration, empty-world fallback. |
 
 Gazebo compatibility adapters live under `sim/adapters/gazebo/`.

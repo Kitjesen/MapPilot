@@ -1,5 +1,8 @@
 # Test and benchmark targets are owned by this directory.
 if(LINGTU_NAV_CPP_BUILD_TESTS)
+  add_executable(test_body_contact "${LINGTU_NAV_TESTS_DIR}/test_body_contact.cpp")
+  target_link_libraries(test_body_contact PRIVATE lingtu_nav_body)
+  add_test(NAME test_body_contact COMMAND test_body_contact)
   add_executable(test_platform_runtime
     "${LINGTU_NAV_TESTS_DIR}/test_platform_runtime.cpp")
   target_include_directories(test_platform_runtime PRIVATE
@@ -62,6 +65,12 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
         test_far_c_api
         test_far_planner
         test_scan_planner
+        test_scan_polynomial
+        test_scan_search_metrics
+        test_scan_elevation
+        test_scan_refine_solver
+        test_scan_body
+        test_body_terrain
         test_scan_spline_velocity_bounds
         test_local_plan_task
         test_recovery_rotation
@@ -70,6 +79,17 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
       lingtu_add_nav_gtest(${test_name} "${test_name}.cpp")
     endforeach()
 
+    lingtu_add_nav_gtest(test_scan_failure_snapshot test_scan_failure_snapshot.cpp)
+    target_sources(test_scan_failure_snapshot PRIVATE
+      "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/nav_status_writer.cpp"
+      "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/status_snapshot_file_writer.cpp"
+      "${LINGTU_SRC_ROOT}/maps/cpp/io/json.cpp")
+    target_include_directories(test_scan_failure_snapshot PRIVATE
+      "${LINGTU_SRC_ROOT}"
+      "${LINGTU_SRC_ROOT}/maps/include"
+      "${LINGTU_NAV_CPP_ROOT}/endpoint"
+      "${LINGTU_NAV_CPP_ROOT}/endpoint/nav")
+
     target_include_directories(test_terrain_core PRIVATE
       "${LINGTU_SRC_ROOT}/maps/include")
     target_include_directories(test_benchmark PRIVATE
@@ -77,6 +97,8 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
 
     target_link_libraries(test_far_planner PRIVATE lingtu_nav_far)
     target_link_libraries(test_far_c_api PRIVATE lingtu_nav_far_c_api)
+    target_link_libraries(test_recovery_rotation PRIVATE lingtu_nav_navigation)
+    target_link_libraries(test_local_planner_core PRIVATE lingtu_nav_navigation)
     set_target_properties(test_far_c_api PROPERTIES
       RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
@@ -84,6 +106,10 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
     target_compile_definitions(test_executor PRIVATE
       LINGTU_TEST_PATH_LIBRARY="${LINGTU_NAV_ROOT}/cpp/planning/local/cmu/paths/go2")
     target_link_libraries(test_executor PRIVATE lingtu_nav_navigation)
+    lingtu_add_nav_gtest(test_pose_route test_pose_route.cpp)
+    target_link_libraries(test_pose_route PRIVATE lingtu_nav_navigation)
+    lingtu_add_nav_gtest(test_stairs test_stairs.cpp)
+    target_link_libraries(test_stairs PRIVATE lingtu_nav_navigation)
     lingtu_add_nav_gtest(test_cmu_teleop test_cmu_teleop.cpp)
     target_compile_definitions(test_cmu_teleop PRIVATE
       LINGTU_TEST_GO2_PATH_LIBRARY="${LINGTU_NAV_ROOT}/cpp/planning/local/cmu/paths/go2"
@@ -115,3 +141,69 @@ if(LINGTU_NAV_CPP_BUILD_BENCHMARKS
 endif()
 
 add_subdirectory(endpoint)
+
+if(LINGTU_NAV_CPP_BUILD_BENCHMARKS)
+  add_executable(benchmark_scan_braking
+    "${LINGTU_NAV_TESTS_DIR}/benchmark_scan_braking.cpp")
+  target_link_libraries(benchmark_scan_braking PRIVATE
+    lingtu_nav_local_planner)
+  lingtu_nav_enable_performance(benchmark_scan_braking)
+endif()
+
+option(LINGTU_NAV_CPP_BUILD_SAVED_ROUTE_BENCHMARK
+  "Build the saved-map component probe with native OctoMap dependencies" OFF)
+
+if(LINGTU_NAV_CPP_BUILD_BENCHMARKS
+    AND LINGTU_NAV_CPP_BUILD_SAVED_ROUTE_BENCHMARK
+    AND NOT TARGET octoplanner3d_runtime)
+  add_subdirectory(
+    "${LINGTU_NAV_CPP_ROOT}/planning/global/octoplanner"
+    "${CMAKE_BINARY_DIR}/saved_route_octoplanner" EXCLUDE_FROM_ALL)
+endif()
+
+if(LINGTU_NAV_CPP_BUILD_BENCHMARKS
+    AND LINGTU_NAV_CPP_BUILD_SAVED_ROUTE_BENCHMARK)
+  add_executable(benchmark_saved_route
+    "${LINGTU_NAV_TESTS_DIR}/benchmark_saved_route.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/config/parse.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/config/build.cpp")
+  target_include_directories(benchmark_saved_route PRIVATE
+    "${LINGTU_NAV_TESTS_DIR}"
+    "${LINGTU_NAV_CPP_ROOT}"
+    "${LINGTU_NAV_CPP_ROOT}/include"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav"
+    "${LINGTU_SRC_ROOT}"
+    "${LINGTU_SRC_ROOT}/explore/cpp"
+    "${LINGTU_SRC_ROOT}/maps/include")
+  target_link_libraries(benchmark_saved_route PRIVATE
+    lingtu_nav_navigation lingtu_nav_far octoplanner3d_runtime
+    octoplanner3d_global_planner octomap_vendor octomath_vendor)
+  target_compile_options(benchmark_saved_route PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+  lingtu_nav_enable_performance(benchmark_saved_route)
+
+  add_executable(benchmark_body_execution
+    "${LINGTU_NAV_TESTS_DIR}/benchmark_body_execution.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/config/parse.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/config/build.cpp")
+  target_include_directories(benchmark_body_execution PRIVATE
+    "${LINGTU_NAV_CPP_ROOT}/endpoint"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav"
+    "${LINGTU_SRC_ROOT}"
+    "${LINGTU_SRC_ROOT}/explore/cpp"
+    "${LINGTU_SRC_ROOT}/maps/include")
+  target_compile_options(benchmark_body_execution PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+  target_link_libraries(benchmark_body_execution PRIVATE
+    lingtu_nav_navigation lingtu_nav_far octoplanner3d_runtime
+    octoplanner3d_global_planner octomap_vendor octomath_vendor)
+  lingtu_nav_enable_performance(benchmark_body_execution)
+endif()
+
+if(LINGTU_NAV_CPP_BUILD_TESTS AND TARGET octoplanner3d_runtime
+    AND TARGET GTest::gtest_main)
+  lingtu_add_nav_gtest(test_body_support_map test_body_support_map.cpp)
+  target_link_libraries(test_body_support_map PRIVATE
+    octoplanner3d_runtime octoplanner3d_global_planner octomap_vendor octomath_vendor)
+endif()

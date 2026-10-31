@@ -22,7 +22,7 @@ measurement of transmission delay.
 PCD points stay in their reported frames: no alignment or fusion is performed.
 Exit 2 means at least one cloud topic produced no sample; 1 means an error.
 
-An optional final argument accepts the existing Fast-LIO cloud snapshot path
+An optional final argument accepts the existing LTLIO cloud snapshot path
 (normally `/dev/shm/lingtu_slam/registered_cloud.bin`). A readable snapshot is
 copied immediately after freezing the captured clouds and before DDS shutdown.
 Use an appropriately privileged diagnostic terminal if access is required.

@@ -1,5 +1,6 @@
-import { Ban, Clock3, Navigation2, Pause, Play, X } from 'lucide-react'
+import { Ban, Ellipsis, Navigation2, Pause, Play, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useCurrentNavigationTask } from '../hooks/useCurrentNavigationTask'
 import { text, type Locale } from '../i18n'
 import * as api from '../services/api'
@@ -8,13 +9,15 @@ import {
   isTaskControlAwaitingConfirmation,
   type NavigationTaskControlRequest,
 } from '../services/navigationTaskLifecycle'
-import { navigationTaskLabel } from '../services/navigationStatus'
+import { navigationTaskLabel, navigationTaskReasonMessage, operatorReasonMessage } from '../services/navigationStatus'
 import type { ToastKind } from '../types'
 import styles from './CurrentTaskCard.module.css'
 
 interface CurrentTaskCardProps {
+  container?: HTMLElement | null
   locale: Locale
   showToast: (message: string, kind?: ToastKind) => void
+  taskName?: string
   resumeAllowed?: boolean
   resumeBlockedReason?: string
 }
@@ -48,9 +51,73 @@ function formatAge(timestamp: number, now: number, locale: Locale): string {
   return text(locale, `${hours}h ago`, `${hours} 小时前`)
 }
 
+function nextActionLabel(
+  state: string,
+  locale: Locale,
+  options: {
+    terminal: boolean
+    stale: boolean
+    snapshotFound: boolean
+    waitingForRoute: boolean
+    pendingAction: 'pause' | 'resume' | null
+    pendingState: 'idle' | 'requesting' | 'requested'
+    cancelState: 'idle' | 'requesting' | 'requested'
+    resumeAllowed: boolean
+    resumeBlockedReason: string
+  },
+): string {
+  if (options.terminal) {
+    switch (state) {
+      case 'SUCCESS':
+        return text(locale, 'Task complete', '任务已完成')
+      case 'FAILED':
+        return text(locale, 'Review the reason and choose another target', '查看原因并重新选择目标')
+      case 'CANCELLED':
+        return text(locale, 'Task cancelled', '任务已取消')
+      default:
+        return text(locale, 'Task ended', '任务已结束')
+    }
+  }
+  if (options.stale) return text(locale, 'Waiting for task status to reconnect', '等待任务状态恢复连接')
+  if (options.cancelState !== 'idle') {
+    return options.cancelState === 'requested'
+      ? text(locale, 'Waiting for the robot to confirm it has stopped', '等待机器人确认停车')
+      : text(locale, 'Sending the cancellation request', '正在发送取消请求')
+  }
+  if (options.pendingAction === 'pause') {
+    return options.pendingState === 'requested'
+      ? text(locale, 'Waiting for the robot to confirm it has stopped', '等待机器人确认停稳')
+      : text(locale, 'Sending the pause request', '正在发送暂停请求')
+  }
+  if (options.pendingAction === 'resume') {
+    return options.pendingState === 'requested'
+      ? text(locale, 'Waiting for the robot to confirm continuation', '等待机器人确认继续导航')
+      : text(locale, 'Sending the continuation request', '正在发送继续请求')
+  }
+  if (!options.snapshotFound) return text(locale, 'Waiting for the robot to confirm the task', '等待机器人确认任务')
+  if (options.waitingForRoute) return text(locale, 'Waiting for a new executable route', '等待新的可执行路线')
+
+  switch (state) {
+    case 'PLANNING':
+      return text(locale, 'Waiting for route planning to finish', '等待路线规划完成')
+    case 'EXECUTING':
+      return text(locale, 'Waiting for the robot to reach the target', '等待机器人到达目标')
+    case 'PAUSED':
+      return options.resumeAllowed
+        ? text(locale, 'Continue navigation or cancel this task', '继续导航或取消任务')
+        : options.resumeBlockedReason || text(locale, 'Waiting until navigation can continue', '等待导航恢复到可继续状态')
+    case 'RECOVERING':
+      return text(locale, 'Waiting for the recovery result', '等待恢复结果')
+    default:
+      return text(locale, 'Waiting for a valid navigation state', '等待有效的导航状态')
+  }
+}
+
 export function CurrentTaskCard({
+  container,
   locale,
   showToast,
+  taskName = '',
   resumeAllowed = true,
   resumeBlockedReason = '',
 }: CurrentTaskCardProps) {
@@ -101,23 +168,39 @@ export function CurrentTaskCard({
   const knownState = STATE_LABELS[task.state]
 
   const terminal = task.terminal
-  const state = !snapshot && stale
-    ? { label: text(locale, 'Status unavailable', '状态不可用'), tone: 'danger' as StateTone }
-    : !snapshot
-      ? { label: text(locale, 'Submitted', '已提交'), tone: 'waiting' as StateTone }
-      : !snapshot.found || !status
-        ? { label: text(locale, 'Waiting for native status', '等待原生状态'), tone: 'waiting' as StateTone }
-        : knownState
-          ? { label: navigationTaskLabel(task.state, locale), tone: knownState.tone }
-          : { label: text(locale, 'Unknown', '未知'), tone: 'muted' as StateTone }
-  const reason = cleanText(status?.reason)
+  const rawReason = cleanText(status?.reason)
     || cleanText(snapshot?.reason)
-    || (loading ? text(locale, 'Awaiting the first lifecycle update', '等待首个生命周期更新') : '-')
-  const showReason = reason !== '-' && (
+    || (loading ? text(locale, 'Waiting for task feedback', '等待任务状态更新') : '-')
+  const waitingForRoute = !terminal && ['EXECUTING', 'RECOVERING'].includes(task.state)
+    && rawReason === 'replan_waiting'
+  const state = stale
+    ? { label: text(locale, 'Task feedback interrupted', '任务反馈中断'), tone: 'waiting' as StateTone }
+    : !snapshot
+      ? { label: text(locale, 'Awaiting robot confirmation', '等待机器人确认'), tone: 'waiting' as StateTone }
+      : !snapshot.found || !status
+        ? { label: text(locale, 'Awaiting robot confirmation', '等待机器人确认'), tone: 'waiting' as StateTone }
+        : knownState
+          ? { label: navigationTaskLabel(task.state, locale, rawReason), tone: waitingForRoute ? 'waiting' as StateTone : knownState.tone }
+          : { label: text(locale, 'Unknown', '未知'), tone: 'muted' as StateTone }
+  const reason = operatorReasonMessage(navigationTaskReasonMessage(rawReason), locale)
+  const showReason = !waitingForRoute && reason !== '-' && Boolean(reason) && (
     stale || !snapshot?.found || ['PAUSED', 'RECOVERING', 'FAILED', 'UNKNOWN'].includes(task.state)
   )
   const updatedAt = Number(status?.ts ?? snapshot?.ts ?? identity.submitted_at)
   const freshness = formatAge(updatedAt, now, locale)
+  const snapshotSource = cleanText((snapshot as { source?: unknown } | null)?.source)
+  const evidenceStatus = cleanText((snapshot as { evidence_status?: unknown } | null)?.evidence_status)
+  const nextAction = nextActionLabel(task.state, locale, {
+    terminal,
+    stale,
+    snapshotFound: Boolean(snapshot?.found && status),
+    waitingForRoute,
+    pendingAction,
+    pendingState,
+    cancelState,
+    resumeAllowed,
+    resumeBlockedReason,
+  })
 
   const requestPause = async () => {
     if (!task.canPause || pendingAction !== null || cancelState !== 'idle') return
@@ -159,15 +242,15 @@ export function CurrentTaskCard({
     if (!task.canResume || pendingAction !== null || cancelState !== 'idle') return
     if (!resumeAllowed) {
       showToast(
-        resumeBlockedReason || text(locale, 'Robot state cannot safely resume motion', '当前状态不能安全恢复运动'),
+        resumeBlockedReason || text(locale, 'Robot state cannot safely resume motion', '当前状态暂不能继续导航'),
         'error',
       )
       return
     }
     if (!window.confirm(text(
       locale,
-      'Resume this paused task? The robot may begin moving after native validation succeeds.',
-      '恢复这个已暂停任务？原生校验通过后，机器人可能开始移动。',
+      'Continue this paused navigation task? The robot may begin moving after confirmation.',
+      '继续这个已暂停的导航任务？机器人确认后可能开始移动。',
     ))) return
 
     setControlRequest({
@@ -179,7 +262,7 @@ export function CurrentTaskCard({
       const response = await api.resumeNavigationTask(identity.task_id)
       if (!response.ok || response.status !== 'resume_requested') {
         setControlRequest(null)
-        showToast(api.formatCommandAck(response, text(locale, 'Task resume', '恢复任务')), 'error')
+        showToast(api.formatCommandAck(response, text(locale, 'Task resume', '继续导航')), 'error')
         return
       }
       setControlRequest({
@@ -190,15 +273,15 @@ export function CurrentTaskCard({
       showToast(
         text(
           locale,
-          'Resume accepted; rechecking localization, map, and safety',
-          '恢复请求已受理，正在重新检查定位、地图和安全状态',
+          'Continuation requested; waiting for the robot to confirm',
+          '继续请求已受理，等待机器人确认',
         ),
         'info',
       )
     } catch (resumeError: unknown) {
       setControlRequest(null)
       showToast(
-        api.formatCommandError(resumeError, text(locale, 'Task resume failed', '恢复任务失败')),
+        api.formatCommandError(resumeError, text(locale, 'Task resume failed', '继续导航失败')),
         'error',
       )
     }
@@ -237,123 +320,112 @@ export function CurrentTaskCard({
     }
   }
 
-  return (
+  const displayLabel = !stale && !terminal && cancelState !== 'idle'
+    ? text(locale, 'Awaiting stop confirmation', '等待停车确认')
+    : !stale && !terminal && pendingAction === 'pause'
+      ? text(locale, 'Awaiting pause confirmation', '等待停稳确认')
+      : !stale && !terminal && pendingAction === 'resume'
+        ? text(locale, 'Awaiting continuation', '等待继续确认')
+        : state.label
+  const displayTaskName = cleanText(taskName) || text(locale, 'Navigation task', '导航任务')
+
+  const card = (
     <aside
-      className={`${styles.card} ${stale ? styles.cardStale : ''}`}
+      className={`${styles.card} ${container ? styles.embedded : styles.floating}`}
       aria-label={text(locale, 'Current navigation task', '当前导航任务')}
     >
-      <header className={styles.header}>
-        <div className={styles.heading}>
-          <span className={styles.icon} aria-hidden="true">
-            <Navigation2 size={15} strokeWidth={2} />
-          </span>
-          <span>{text(locale, 'Current navigation task', '当前导航任务')}</span>
-        </div>
-        {terminal && (
-          <button
-            type="button"
-            className={styles.dismiss}
-            onClick={dismiss}
-            aria-label={text(locale, 'Dismiss completed task', '关闭已结束任务')}
-            title={text(locale, 'Dismiss', '关闭')}
-          >
-            <X size={15} />
-          </button>
-        )}
-      </header>
-
-      <div className={styles.stateRow} aria-live="polite">
-        <span className={`${styles.stateDot} ${styles[state.tone]}`} aria-hidden="true" />
-        <span className={styles.stateLabel}>{state.label}</span>
-        {stale && (
-          <span
-            className={styles.staleBadge}
-            title={error || text(locale, 'The latest refresh failed', '最近一次刷新失败')}
-          >
-            {text(locale, 'STALE', '已过期')}
-          </span>
-        )}
+      <div className={styles.taskIdentity}>
+        <span className={styles.taskIcon} aria-hidden="true">
+          <Navigation2 size={17} className={styles[state.tone]} aria-hidden="true" />
+        </span>
+        <span className={styles.taskCopy}>
+          <strong className={styles.taskName}>{displayTaskName}</strong>
+          <span className={styles.stateLabel} aria-live="polite">{displayLabel}</span>
+        </span>
       </div>
 
-      {showReason && (
-        <div className={styles.reasonRow}>
-          <span className={styles.label}>{text(locale, 'Reason', '原因')}</span>
-          <span className={styles.reason}>{reason}</span>
-        </div>
+      {!terminal && task.canPause && (
+        <button
+          type="button"
+          className={styles.primaryControl}
+          onClick={() => void requestPause()}
+          disabled={pendingAction !== null || cancelState !== 'idle'}
+          aria-label={text(locale, 'Pause task', '暂停任务')}
+          title={text(locale, 'Pause task', '暂停任务')}
+        >
+          <Pause size={19} aria-hidden="true" />
+        </button>
+      )}
+      {!terminal && task.canResume && (
+        <button
+          type="button"
+          className={styles.primaryControl}
+          onClick={() => void requestResume()}
+          disabled={pendingAction !== null || cancelState !== 'idle' || !resumeAllowed}
+          aria-label={text(locale, 'Continue navigation', '继续导航')}
+          title={resumeAllowed
+            ? text(locale, 'Continue navigation', '继续导航')
+            : resumeBlockedReason || text(locale, 'Resume is blocked by robot state', '机器人状态暂不支持继续导航')}
+        >
+          <Play size={19} fill="currentColor" aria-hidden="true" />
+        </button>
       )}
 
-      {!terminal && task.canResume && !resumeAllowed && (
-        <div className={styles.reasonRow} role="status">
-          <span className={styles.label}>{text(locale, 'Resume blocked', '暂不能恢复')}</span>
-          <span className={styles.reason}>
-            {resumeBlockedReason || text(locale, 'Resume is blocked by robot state', '机器人状态阻止恢复')}
-          </span>
-        </div>
-      )}
-
-      {!terminal && (
-        <div className={styles.actions}>
-          {task.canPause && (
-            <button
-              type="button"
-              className={styles.pauseButton}
-              onClick={() => void requestPause()}
-              disabled={pendingAction !== null || cancelState !== 'idle'}
-              title={text(locale, 'Request a confirmed stop while keeping this task resumable', '请求确认停车，并保留任务以便恢复')}
-            >
-              <Pause size={13} aria-hidden="true" />
-              {pendingAction !== 'pause'
-                ? text(locale, 'Pause', '暂停')
-                : pendingState === 'requested'
-                  ? text(locale, 'Waiting for stop confirmation...', '等待停稳确认...')
-                  : text(locale, 'Requesting pause...', '正在请求暂停...')}
-            </button>
+      <details key={identity.task_id} className={styles.disclosure}>
+        <summary className={styles.moreButton} title={text(locale, 'Task details', '查看任务详情')}>
+          <Ellipsis size={21} aria-hidden="true" />
+          <span className={styles.srOnly}>{text(locale, 'Task details', '查看任务详情')}</span>
+        </summary>
+        <section className={styles.panel} aria-label={text(locale, 'Task details', '任务详情')}>
+          <p className={styles.guidance}>{nextAction}</p>
+          {showReason && !stale && snapshot?.found && reason !== nextAction && (
+            <p className={styles.reason}>{reason}</p>
           )}
-          {task.canResume && (
-            <button
-              type="button"
-              className={styles.resumeButton}
-              onClick={() => void requestResume()}
-              disabled={pendingAction !== null || cancelState !== 'idle' || !resumeAllowed}
-              title={resumeAllowed
-                ? text(locale, 'Resume the same task after native validation', '通过原生校验后恢复同一任务')
-                : resumeBlockedReason || text(locale, 'Resume is blocked by robot state', '机器人状态阻止恢复')}
-            >
-              <Play size={13} aria-hidden="true" />
-              {pendingAction !== 'resume'
-                ? text(locale, 'Resume', '恢复')
-                : pendingState === 'requested'
-                  ? text(locale, 'Rechecking safety...', '正在重新检查安全状态...')
-                  : text(locale, 'Requesting resume...', '正在请求恢复...')}
-            </button>
+          {!terminal && task.canResume && !resumeAllowed && resumeBlockedReason && nextAction !== resumeBlockedReason && (
+            <p className={styles.reason}>{resumeBlockedReason}</p>
           )}
-          <button
-            type="button"
-            className={styles.cancelButton}
-            onClick={() => void requestCancel()}
-            disabled={cancelState !== 'idle'}
-          >
-            <Ban size={13} aria-hidden="true" />
-            {cancelState === 'requested'
-              ? text(locale, 'Waiting for stop...', '等待停车确认...')
-              : cancelState === 'requesting'
-                ? text(locale, 'Requesting...', '请求中...')
-                : text(locale, 'Cancel task', '取消任务')}
-          </button>
-        </div>
-      )}
-
-      <details className={styles.details}>
-        <summary>{text(locale, 'Task details', '任务详情')}</summary>
-        <div className={styles.meta}>
-          <span>{text(locale, 'Task ID', '任务 ID')} <code>{identity.task_id}</code></span>
-          <span className={styles.freshness}>
-            <Clock3 size={11} aria-hidden="true" />
-            {text(locale, 'Updated', '更新于')} {freshness}
-          </span>
-          <span>{text(locale, 'Raw reason', '原始原因')} <code>{reason}</code></span>
-        </div>
+          <dl className={styles.meta}>
+            <div><dt>{text(locale, 'Updated', '最近更新')}</dt><dd>{freshness}</dd></div>
+            <div><dt>{text(locale, 'Task ID', '任务 ID')}</dt><dd><code>{identity.task_id}</code></dd></div>
+            {identity.request_id && (
+              <div><dt>{text(locale, 'Request ID', '请求 ID')}</dt><dd><code>{identity.request_id}</code></dd></div>
+            )}
+            {snapshotSource && (
+              <div><dt>{text(locale, 'Status source', '状态来源')}</dt><dd><code>{snapshotSource}</code></dd></div>
+            )}
+            {evidenceStatus && (
+              <div><dt>{text(locale, 'Evidence', '状态证据')}</dt><dd><code>{evidenceStatus}</code></dd></div>
+            )}
+            <div><dt>{text(locale, 'Raw reason', '原始原因')}</dt><dd><code>{rawReason}</code></dd></div>
+            {error && <div><dt>{text(locale, 'Connection', '连接信息')}</dt><dd>{error}</dd></div>}
+          </dl>
+          {!terminal && task.canCancel && (
+            <div className={styles.panelActions}>
+              <button
+                type="button"
+                className={styles.cancelButton}
+                onClick={() => void requestCancel()}
+                disabled={cancelState !== 'idle'}
+              >
+                <Ban size={15} aria-hidden="true" />
+                <span>{text(locale, 'Cancel task', '取消任务')}</span>
+              </button>
+            </div>
+          )}
+        </section>
       </details>
+      {terminal && (
+        <button
+          type="button"
+          className={styles.moreButton}
+          onClick={dismiss}
+          aria-label={text(locale, 'Dismiss completed task', '关闭已结束任务')}
+          title={text(locale, 'Dismiss', '关闭')}
+        >
+          <X size={16} aria-hidden="true" />
+        </button>
+      )}
     </aside>
   )
+  return createPortal(card, container ?? document.body)
 }

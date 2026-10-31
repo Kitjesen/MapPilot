@@ -6,11 +6,12 @@ endpoint catalogue. Physical teleoperation uses ``/ws/teleop`` and native DDS.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import TYPE_CHECKING, Any, Callable
 
 from fastapi.responses import JSONResponse
@@ -64,6 +65,7 @@ from gateway.services.init_state import (
 from gateway.services.inspection_task_lifecycle import ensure_inspection_task_timeline
 from gateway.services.lifecycle import start_background_threads, stop_background_threads
 from gateway.services.localization_status import handle_localization_status
+from gateway.services.measurements import LatestMeasurements
 from gateway.services.module_refs import attach_module_refs
 from gateway.services.native_control import teleop_active as native_teleop_active
 from gateway.services.odometry import handle_odometry
@@ -123,12 +125,15 @@ from gateway.services.viewer_events import (
     handle_native_traversability,
     xyz_point,
 )
+from runtime.config import get_config
 from runtime.module import Module
 
 if TYPE_CHECKING:
     from runtime.status_provider import RuntimeStatusProvider
+from runtime.contracts.sensor_control import SensorControlResult
 from runtime.msgs.geometry import Twist
 from runtime.msgs.map import MapObservationFrame, MapSceneFrame
+from runtime.msgs.measurement import AcousticMeasurement, SemanticMeasurement, ThermalMeasurement
 from runtime.msgs.nav import (
     ExplorationRunEvent,
     InspectionTaskEvent,
@@ -206,7 +211,6 @@ class GatewayModule(Module, layer=6):
             "_odom",
             "_last_invalid_odometry",
             "_odom_timestamps",
-            "_T_map_odom",
             "_has_map_odom_tf",
         }
     )
@@ -246,6 +250,10 @@ class GatewayModule(Module, layer=6):
     localization_status: In[dict]  # from SLAM health (cov_trace, iter_num, ...)
     tare_stats: In[dict]  # from TAREExplorerModule -exploration diag
     supervisor_state: In[dict]  # from ExplorationSupervisorModule -watchdog
+    thermal: In[ThermalMeasurement]
+    acoustic: In[AcousticMeasurement]
+    semantic: In[SemanticMeasurement]
+    sensor_control_state: In[SensorControlResult]
 
     # -- Outputs (client commands ->modules) --------------------------------
     instruction: Out[str]
@@ -262,6 +270,8 @@ class GatewayModule(Module, layer=6):
         run_plan: Any | None = None,
         product_session_id: str | None = None,
         frame_tree: Any | None = None,
+        measurement_sensor_ids: Collection[str] = (),
+        measurement_stale_timeout_s: float = 1.0,
         **kw,
     ):
         if kw:
@@ -270,6 +280,7 @@ class GatewayModule(Module, layer=6):
                 + ", ".join(sorted(kw))
             )
         super().__init__()
+        self._measurements = LatestMeasurements(measurement_sensor_ids, measurement_stale_timeout_s)
         self._port = port
         self._host = host
         self._compiled_run_plan = run_plan
@@ -361,6 +372,14 @@ class GatewayModule(Module, layer=6):
             "LINGTU_GO2RTC_URL",
             "http://127.0.0.1:1984",
         )
+        self._webrtc_upstream = os.environ.get("LINGTU_WEBRTC_URL", "")
+        self._webrtc_status_file = os.environ.get("LINGTU_VIDEO_STATUS_FILE", "")
+        self._webrtc_rotation = int(get_config().camera.rotate)
+        self._webrtc_ice_servers = json.loads(os.environ.get("LINGTU_WEBRTC_ICE_SERVERS", "[]"))
+        if not isinstance(self._webrtc_ice_servers, list) or not all(
+            isinstance(server, dict) and "urls" in server for server in self._webrtc_ice_servers
+        ):
+            raise ValueError("LINGTU_WEBRTC_ICE_SERVERS must be a JSON list of ICE server objects")
 
         init_runtime_status_state(
             self,
@@ -425,6 +444,12 @@ class GatewayModule(Module, layer=6):
     def setup(self) -> None:
         refresh_session_projection(self)
         reconcile_native_explore(self)
+        # These shared modality ports carry multiple sensors. Do not coalesce
+        # different sensor IDs in a single latest-delivery mailbox.
+        self.thermal.subscribe(self._measurements.observe)
+        self.acoustic.subscribe(self._measurements.observe)
+        self.semantic.subscribe(self._measurements.observe)
+        self.sensor_control_state.subscribe(self._measurements.apply_control)
         setup_subscriptions(self)
 
     def start(self) -> None:
@@ -461,6 +486,7 @@ class GatewayModule(Module, layer=6):
 
     def stop(self) -> None:
         stop_background_threads(self)
+        self._recording.close_streams()
         shutdown_teleop(self)
         super().stop()
 

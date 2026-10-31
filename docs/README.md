@@ -4,95 +4,69 @@
 **Audience:** Developers, integrators, operators, and reviewers
 **Runs on:** Local development, `env=sim`, and `env=real`
 
-LingTu is an autonomous-navigation system for quadruped robots.
-
-The documentation is intentionally flat: ten maintained pages describe the
-current system, while code, configuration, schemas, and package READMEs remain
-the detailed sources of truth.
+Start with [Product](product.md): what LingTu delivers, how an operator uses it,
+and which capabilities still need qualification. The shared delivery workflow is
+**mapping -> map save/reload -> localization -> autonomous navigation -> safe stop**.
 
 ## Choose one page
 
-| Need | Page |
+| Task | Read |
 | --- | --- |
-| Install dependencies, choose a Product, or make a first run | [Getting started](./getting-started.md) |
-| Understand ownership, layers, messages, and repository shape | [Architecture](./architecture.md) |
-| Understand Products, RunPlans, processes, maps, and motion flow | [Runtime](./runtime.md) |
-| Work with packages, sessions, MuJoCo, RobotSimUE, or simulation gates | [Simulation](./simulation.md) |
-| Change code, configuration, schemas, or generated outputs | [Development](./development.md) |
-| Deploy, update, diagnose, record, or operate a robot | [Operations](./operations.md) |
-| Integrate through REST, MCP, SDK, SSE, or camera transport | [API](./api.md) |
-| Select the right local, simulation, or field validation level | [Testing](./testing.md) |
-| See open work, non-goals, and release gates | [Roadmap](./roadmap.md) |
+| Understand product scope, user workflow, and delivery limits | [Product](product.md) |
+| Install and make a first run | [Getting started](getting-started.md) |
+| Map, save/reload, navigate, take over, and stop | [Operations](operations.md) |
+| Test the current dialogue/follow work on this workstation and Go2 | [Dialogue test entry, 2026-10-21](operations/dialogue-test-20261021.md) |
+| Decide whether the workflow has passed | [Testing](testing.md) |
+| Run MuJoCo or inspect simulation evidence | [Simulation](simulation.md) |
+| Inspect the fresh navigation physics tests and the unresolved crossing failure | [MuJoCo navigation, 2026-10-26](operations/mujoco-navigation-20261026.md) |
+| Find a responsibility and its source of truth | [Architecture](architecture.md) |
+| Find what each design document records and when to use it | [Design document index](design/README.md) |
+| Understand compound collision models, upstream references, turning posture and decision history | [Collision model and motion posture](design/navigation-body-model-and-motion-posture.md) |
+| Trace confirmed navigation errors, their dates, fixes and deployment limits | [Error record](operations/error_record.md) |
+| Follow Product lifecycle and native dataflow | [Runtime](runtime.md) |
+| Change code or simplify a directory | [Development](development.md) |
+| Integrate REST, MCP, or SDK clients | [API](api.md) |
+| See the current task, next action, evidence and delivery gates | [Roadmap](roadmap.md#current-delivery-cycle) |
+| Understand persistent semantic mapping and paper references | [Persistent semantic mapping](research/semantic-map.md) |
+| Design the camera, semantic-task, and motion handoffs | [Camera-to-motion design](design/autonomy.md) |
 
-## The four axes
+For an operator, read **Product -> Getting started -> Operations**. For delivery,
+continue with **Testing -> Roadmap**. Developers use Architecture, Runtime,
+Development and API as references; simulation procedures belong in Simulation.
 
-Do not infer runtime meaning from directory names alone.
+## Sources of truth
 
-| Axis | Meaning |
-| --- | --- |
-| `src/` | Product and domain source, organized by functional owner |
-| `sim/` | Simulation workspace and the `sim.*` Python namespace |
-| `env=real|sim` | The outer runtime environment selected when resolving a Product |
-| `build/`, `install/`, `dist/` | Development builds, standard install trees, and release packages |
-
-The repository does not duplicate algorithms under root-level `real/` and
-`sim/` trees. It also does not commit a root `bin/` directory. Native
-executables enter `bin/` only inside a CMake install prefix or installed
-release.
-
-## Runtime in one line
-
-```text
-RobotConfig + Product + env(real | sim)
-                 -> RunPlan
-                 -> ProductControl
-                 -> real/systemd | sim/direct children
-```
-
-A Product is immutable and env-independent. ProductControl is the only public
-Product lifecycle entry for `switch`, `status`, and `stop`. Blueprint owns the
-Module graph inside one Python Host; it does not orchestrate native processes.
-
-## Authority order
-
-When prose and implementation disagree, fix the stale prose. Use these sources
-in this order:
-
-1. Typed schemas and machine-validated configuration.
-2. `config/runtime_graph/`, RobotConfig, and the Product compiler.
-3. Runtime and domain code under `src/` and `sim/`.
-4. Package-local READMEs and these ten documents.
-5. Plans, issue discussions, historical commits, and old evidence.
-
-Current Products, roles, topics, and environment mappings are defined in
-[`config/runtime_graph/`](../config/runtime_graph/README.md). Import boundaries
-are enforced by
-[`config/architecture_layers.yaml`](../config/architecture_layers.yaml).
-
-## Evidence boundaries
-
-- A dry run proves Product resolution only.
-- A local test does not prove simulation or field behavior.
-- A component pass does not prove a complete Product.
-- Windows and Linux/WSL evidence are independent.
-- Simulation never proves S100P motion safety.
-- A running process is not navigation readiness.
-
-Use [Testing](./testing.md) before making a capability claim.
+Schemas, validated configuration, and owning code define behavior. These
+pages explain how to use it; package READMEs hold implementation detail.
+Start from [runtime declarations](../config/system/README.md),
+[source ownership](../src/README.md), [simulation](../sim/README.md), or
+[build/deploy scripts](../scripts/README.md).
 
 ## Documentation policy
 
-The `docs/` tree contains exactly these ten Markdown pages plus referenced
-assets. It has no archive, worklog, research, plan, or dated-run subtree.
+The root pages form the maintained handbook and are bundled into the Web
+`/guide/`. FastAPI `/docs` remains the live OpenAPI interface. The directory
+boundaries are:
 
-Current conclusions from useful older pages are consolidated here. Superseded
-designs, dated evidence, and implementation diaries remain available through
-Git history rather than competing with current guidance.
+| Location | Purpose | Update when |
+| --- | --- | --- |
+| Root handbook | Current product scope, procedures, contracts and qualification policy | Supported behavior or operator workflow changes |
+| [Roadmap](roadmap.md#current-delivery-cycle) | One current task, remaining work and delivery gates | Evidence or priorities change |
+| `operations/` | Dated field incidents, handoffs and experiment records | A named run needs its context recorded |
+| [Design](design/README.md) | Design decisions and proposed interactions; history is marked separately | A design is considered or revised |
+| [Research](research/README.md) | External references, comparisons and experiments | Research evidence changes |
+| Package READMEs | Implementation, build and configuration details owned by that package | The owning package changes |
 
-Detailed instructions stay beside their owner when that reduces duplication,
-for example [`src/README.md`](../src/README.md),
-[`sim/README.md`](../sim/README.md), and
-[`scripts/README.md`](../scripts/README.md).
+Historical records and design notes are not proof of current readiness and are
+not bundled as handbook chapters. Published capabilities must refer to the
+relevant evidence, not simply to a design document or an old successful run.
 
-The Web guide renders this maintained set at `/guide/`. FastAPI keeps `/docs`
-for its live OpenAPI interface.
+Keep one explanation per responsibility and link to it. Keep generated API
+inventories in sync with source. Store new run output in `artifacts/` or an
+external evidence store, and preserve active field records when simplifying.
+Generated evidence kept only in local `build/` or `artifacts/` directories is
+listed as a code-formatted repository path, rather than a checkout-local link.
+Retain its provenance and evidence limits; a path alone is not published proof.
+Use [evidence levels](testing.md#evidence-levels) for every capability claim.
+Before publishing, review the local material and obtain confirmation as recorded
+in [the current delivery rules](roadmap.md#current-delivery-cycle).

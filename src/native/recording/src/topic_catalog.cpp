@@ -57,6 +57,17 @@ void *allocate_gnss_status() {
 void free_gnss_status(void *sample) {
   lingtu_dds_GnssStatus_free(sample, kFreeAll);
 }
+#define RECORDING_SAMPLE(name, type)                         \
+  void *allocate_##name() { return lingtu_dds_##type##__alloc(); } \
+  void free_##name(void *sample) { lingtu_dds_##type##_free(sample, kFreeAll); }
+RECORDING_SAMPLE(joint_state, JointState)
+RECORDING_SAMPLE(image, Image)
+RECORDING_SAMPLE(camera_info, CameraInfo)
+RECORDING_SAMPLE(motion_profile_request, MotionProfileRequest)
+RECORDING_SAMPLE(motion_profile_state, MotionProfileState)
+RECORDING_SAMPLE(relocalization_request, RelocalizationRequest)
+RECORDING_SAMPLE(relocalization_response, RelocalizationResponse)
+#undef RECORDING_SAMPLE
 void *allocate_text() {
   return lingtu_dds_Text__alloc();
 }
@@ -186,6 +197,15 @@ std::string canonical_topic(std::string topic) {
 
 const std::vector<TopicBinding> &sensor_topic_catalog() {
   static const std::vector<TopicBinding> bindings{
+      {&lingtu::message::kRobotJointStates, &lingtu_dds_JointState_desc,
+       lingtu::dds::QosProfile::SensorStream, "sensor_stream", allocate_joint_state,
+       free_joint_state, ReplayPolicy::Replayable},
+      {&lingtu::message::kCameraDepth, &lingtu_dds_Image_desc,
+       lingtu::dds::QosProfile::CameraStream, "camera_stream", allocate_image,
+       free_image, ReplayPolicy::Replayable},
+      {&lingtu::message::kCameraInfo, &lingtu_dds_CameraInfo_desc,
+       lingtu::dds::QosProfile::CameraInfo, "camera_info", allocate_camera_info,
+       free_camera_info, ReplayPolicy::Replayable},
       {&lingtu::message::kTf, &lingtu_dds_TFMessage_desc, lingtu::dds::QosProfile::TfDynamic,
        "tf_dynamic", allocate_tf_message, free_tf_message, ReplayPolicy::Replayable},
       {&lingtu::message::kTfStatic, &lingtu_dds_TFMessage_desc, lingtu::dds::QosProfile::TfStatic,
@@ -232,6 +252,18 @@ const std::vector<TopicBinding> &recording_topic_catalog() {
     result.insert(
         result.end(),
         {
+            {&lingtu::message::kMotionProfileRequest, &lingtu_dds_MotionProfileRequest_desc,
+             lingtu::dds::QosProfile::ControlCommand, "control_command",
+             allocate_motion_profile_request, free_motion_profile_request},
+            {&lingtu::message::kMotionProfileState, &lingtu_dds_MotionProfileState_desc,
+             lingtu::dds::QosProfile::SystemStatus, "system_status",
+             allocate_motion_profile_state, free_motion_profile_state},
+            {&lingtu::message::kSlamRelocalizationRequest, &lingtu_dds_RelocalizationRequest_desc,
+             lingtu::dds::QosProfile::CommandRequest, "command_request",
+             allocate_relocalization_request, free_relocalization_request},
+            {&lingtu::message::kSlamRelocalizationResponse, &lingtu_dds_RelocalizationResponse_desc,
+             lingtu::dds::QosProfile::CommandAck, "command_ack",
+             allocate_relocalization_response, free_relocalization_response},
             {&lingtu::message::kDriverControlState, &lingtu_dds_DriverControlState_desc,
              lingtu::dds::QosProfile::SystemStatus, "system_status", allocate_driver_control_state,
              free_driver_control_state},

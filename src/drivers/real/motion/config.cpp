@@ -121,6 +121,8 @@ std::chrono::milliseconds checkedMilliseconds(double value, const char *name) {
 Config loadConfig(int argc, char **argv) {
   Config cfg;
   cfg.robot = envString("LINGTU_DRIVER_BACKEND", "");
+  cfg.stairs_up_profile = envString("LINGTU_DRIVER_STAIRS_UP_PROFILE", "");
+  cfg.stairs_down_profile = envString("LINGTU_DRIVER_STAIRS_DOWN_PROFILE", "");
   cfg.domain_id = static_cast<int>(envLong("LINGTU_DDS_DOMAIN_ID", 0));
   cfg.network_interface = envString("LINGTU_DRIVER_NETWORK_INTERFACE", "");
   cfg.tilt_limit_deg = envDouble("LINGTU_DRIVER_TILT_LIMIT_DEG", 30.0);
@@ -156,7 +158,11 @@ Config loadConfig(int argc, char **argv) {
       }
       return argv[++i];
     };
-    if (arg == "--robot") {
+    if (arg == "--stairs-up-profile") {
+      cfg.stairs_up_profile = next();
+    } else if (arg == "--stairs-down-profile") {
+      cfg.stairs_down_profile = next();
+    } else if (arg == "--robot") {
       cfg.robot = next();
     } else if (arg == "--network-interface") {
       cfg.network_interface = next();
@@ -198,6 +204,8 @@ const char *usage() noexcept {
   return "usage: lingtu_driver [options]\n"
          "  --robot NAME          doso or go2\n"
          "  --network-interface IFACE  Go2 DDS discovery interface\n"
+         "  --stairs-up-profile NAME    installed ascent controller profile\n"
+         "  --stairs-down-profile NAME  installed descent controller profile\n"
          "  --domain-id N          CycloneDDS domain\n"
          "  --host HOST            Brainstem gRPC host\n"
          "  --port PORT            Brainstem gRPC port\n"

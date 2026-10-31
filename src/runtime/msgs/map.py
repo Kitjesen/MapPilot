@@ -312,7 +312,11 @@ class MapCloudFrame:
 
 @dataclass
 class MapObservationFrame:
-    """Accepted incremental LiDAR scan with its exact map-frame sensor pose."""
+    """Scan-frame pose and physical ray origin, both resolved by the producer.
+
+    Body-frame scans retain the mounted LiDAR origin; that origin need not equal
+    the translation of the scan-frame transform.
+    """
 
     msg_name: ClassVar[str] = "map.MapObservationFrame"
 
@@ -425,11 +429,10 @@ class MapObservationFrame:
         transform_quaternion /= transform_norm
         pose_quaternion /= pose_norm
         if not (
-            np.allclose(origin, translation, atol=1e-5)
-            and np.allclose(pose_translation, translation, atol=1e-5)
+            np.allclose(pose_translation, translation, atol=1e-5)
             and abs(float(np.dot(transform_quaternion, pose_quaternion))) >= 1.0 - 1e-5
         ):
-            raise ValueError("sensor origin, pose, and transform must describe one transform")
+            raise ValueError("scan pose and transform must describe one transform")
 
         if not is_numpy_array(self.points):
             if self.points or numpy_import_is_safe():

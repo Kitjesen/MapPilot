@@ -2,7 +2,7 @@
 # run_allan_variance.sh — one-shot Allan Variance calibration for Livox Mid-360 IMU.
 #
 # Background:
-#   The Fast-LIO2 IMU noise params (na/ng/nba/nbg) ship at
+#   The LTLIO IMU noise params (na/ng/nba/nbg) ship at
 #   conservative defaults (na=0.01, ng=0.01). Mid-360's built-in IMU is
 #   the TDK InvenSense ICM-40609-D, whose typical gyro noise is
 #   ~6.6e-5 rad/s/√Hz — i.e. the default ng is ~150x too high, causing
@@ -13,7 +13,7 @@
 # Phases (run individually or via `all`):
 #   record   ros2 bag record /livox/imu (default 3h, IEEE 952-1997 minimum)
 #   analyze  ros2 run allan_variance_ros2 + scripts/analysis.py → imu.yaml
-#   apply    tools/calibration/apply_calibration.py → selected Fast-LIO2 YAML
+#   apply    tools/calibration/apply_calibration.py → selected LTLIO YAML
 #
 # Usage:
 #   bash tools/calibration/imu/run_allan_variance.sh all              # 3h end-to-end
@@ -104,7 +104,7 @@ phase_analyze() {
 phase_apply() {
   local imu_yaml="${1:-$OUT_DIR/imu.yaml}"
   [[ -f "$imu_yaml" ]] || fatal "imu yaml not found: $imu_yaml"
-  log "Applying $imu_yaml → selected Fast-LIO2 YAML (apply_calibration.py runs sanity checks)"
+  log "Applying $imu_yaml → selected LTLIO YAML (apply_calibration.py runs sanity checks)"
   python3 "$REPO_ROOT/tools/calibration/apply_calibration.py" --imu "$imu_yaml"
   log "Apply complete. Reminder: re-run python -m pytest tests/runtime/test_calibration_check.py"
 }

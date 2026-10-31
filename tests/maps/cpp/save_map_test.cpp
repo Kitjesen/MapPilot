@@ -1,5 +1,6 @@
 #include "lingtu/maps/save.hpp"
-#include "lingtu/maps/json.hpp"
+#include "lingtu/maps/io/json.hpp"
+#include "lingtu/maps/octomap/io.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -557,6 +558,9 @@ int main() {
             lingtu::maps::JsonObjectNumberAtPath(skip_report, {"loop_count"}) == 0.0,
         "SaveMap without a complete patch bundle did not publish the exact PGO skip contract");
     Require(std::filesystem::is_regular_file(status.map_dir / "octomap.ot"), "octomap missing");
+    const auto saved_octomap = lingtu::maps::LoadOctomapTree(status.map_dir / "octomap.ot");
+    Require(saved_octomap && saved_octomap->getResolution() == 0.10,
+            "default SaveMap did not persist a 10 cm OctoMap");
     Require(!std::filesystem::exists(status.map_dir / "occupancy.npz"),
             "default 3D SaveMap unexpectedly built a 2D projection");
     Require(!std::filesystem::exists(status.map_dir / "esdf.npz"),

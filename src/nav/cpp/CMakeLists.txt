@@ -69,7 +69,7 @@ lingtu_nav_enable_performance(lingtu_nav_velocity_smoother)
 set(_LINGTU_ROLLING_PLAN_DIR
   "${CMAKE_CURRENT_SOURCE_DIR}/planning/rolling")
 set(_LINGTU_ROLLING_ENDPOINT_DIR
-  "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/nav/runtime/rolling")
+  "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/nav/app/rolling")
 set(_LINGTU_EXPLORE_CPP_DIR
   "${LINGTU_SRC_ROOT}/explore/cpp")
 

@@ -1,14 +1,15 @@
 .panel {
   display: grid;
   align-content: start;
-  gap: 14px;
+  gap: 18px;
   height: 100%;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px;
+  padding: 20px;
   border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--glass);
+  border-radius: var(--r-lg);
+  background: var(--bg-layer-1);
+  box-shadow: var(--shadow-sm);
 }
 
 .header,
@@ -29,14 +30,15 @@
 .title h2 {
   margin: 0;
   font-size: var(--t-title-size);
+  font-weight: 550;
   line-height: var(--leading-heading);
 }
 
 .iconButton,
 .action {
-  border: 1px solid var(--border);
+  border: 0;
   color: var(--text);
-  background: transparent;
+  background: var(--bg-layer-2);
   cursor: pointer;
 }
 
@@ -45,22 +47,21 @@
   width: 30px;
   height: 30px;
   place-items: center;
-  border-radius: 8px;
+  border-radius: var(--r-full);
 }
 
 .grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px 18px;
 }
 
 .grid div {
   display: grid;
   gap: 4px;
   min-width: 0;
-  padding: 9px 10px;
-  border-radius: 9px;
-  background: var(--bg-layer-2);
+  padding: 2px 0 10px;
+  border-bottom: 1px solid var(--border);
 }
 
 .grid span {
@@ -71,6 +72,7 @@
 .grid strong {
   overflow: hidden;
   font-size: var(--t-body-em-size);
+  font-weight: 550;
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -111,8 +113,9 @@
 .action {
   justify-content: center;
   gap: 7px;
-  min-height: 36px;
-  border-radius: 9px;
+  min-height: 38px;
+  border-radius: var(--r-full);
+  font-weight: 500;
 }
 
 .iconButton:disabled,
@@ -127,8 +130,8 @@
 
 .visualServo {
   display: grid;
-  gap: 8px;
-  padding-top: 12px;
+  gap: 10px;
+  padding-top: 16px;
   border-top: 1px solid var(--border);
 }
 
@@ -157,10 +160,10 @@
 
 .targetInput {
   min-width: 0;
-  height: 34px;
-  padding: 0 10px;
+  height: 38px;
+  padding: 0 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-md);
   color: var(--text);
   background: var(--bg-layer-2);
 }
@@ -176,27 +179,30 @@
 }
 
 .personCandidates button {
-  padding: 5px 8px;
+  min-height: 32px;
+  padding: 5px 10px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--r-full);
   color: var(--text);
   background: transparent;
   cursor: pointer;
 }
 
 .personCandidates button[data-selected='true'] {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--text);
+  color: var(--bg-layer-1);
+  background: var(--text);
 }
 
 .visualActions button {
   flex: 1;
-  min-height: 32px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  min-height: 36px;
+  border: 0;
+  border-radius: var(--r-full);
   color: var(--text);
-  background: transparent;
+  background: var(--bg-layer-2);
   cursor: pointer;
+  font-weight: 500;
 }
 
 .visualActions button:disabled,
@@ -211,9 +217,9 @@
 
 .followStatus {
   display: grid;
-  gap: 7px;
-  padding: 9px 10px;
-  border-radius: 9px;
+  gap: 9px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
   background: var(--bg-layer-2);
 }
 
@@ -232,6 +238,7 @@
 
 .followStatus strong {
   font-size: var(--t-body-em-size);
+  font-weight: 550;
   text-align: right;
 }
 

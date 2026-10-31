@@ -5,6 +5,10 @@ from __future__ import annotations
 import ast
 import json
 import os
+import signal
+import subprocess
+import sys
+import textwrap
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -176,9 +180,69 @@ def test_signal_handler_only_sets_stop_event(monkeypatch: pytest.MonkeyPatch) ->
 
     host_process._install_signal_handlers(event)
 
-    assert len(installed) == 2
-    installed[0][1](installed[0][0], object())
-    assert event.is_set()
+    expected = [signal.SIGINT, signal.SIGTERM]
+    if hasattr(signal, "SIGBREAK"):
+        expected.append(signal.SIGBREAK)
+    assert [signum for signum, _handler in installed] == expected
+    for signum, handler in installed:
+        event.clear()
+        handler(signum, object())
+        assert event.is_set()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows CTRL_BREAK_EVENT")
+def test_windows_ctrl_break_runs_host_cleanup_and_exits_zero() -> None:
+    child_code = textwrap.dedent(
+        """
+        from pathlib import Path
+
+        import lingtu.sim.host as host
+
+
+        class FakeSystem:
+            def start(self):
+                print("STARTED", flush=True)
+
+            def stop(self):
+                print("STOPPED", flush=True)
+
+
+        class FakePlan:
+            product = "inspection"
+
+            def build(self):
+                return FakeSystem()
+
+            def process(self, name):
+                assert name == "host"
+                return type("Process", (), {"name": "host_runtime"})()
+
+
+        host._load_plan = lambda environment: (FakePlan(), Path.cwd(), "product-" + "a" * 32)
+        host.publish_host_readiness = lambda *args, **kwargs: None
+        raise SystemExit(host.main())
+        """
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", child_code],
+        cwd=Path(__file__).resolve().parents[3],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+    )
+    try:
+        assert process.stdout is not None
+        assert process.stdout.readline().strip() == "STARTED"
+        process.send_signal(signal.CTRL_BREAK_EVENT)
+        stdout, stderr = process.communicate(timeout=5.0)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5.0)
+
+    assert process.returncode == 0, stderr
+    assert stdout.splitlines() == ["STOPPED"]
 
 
 @pytest.mark.parametrize(

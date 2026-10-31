@@ -379,15 +379,15 @@ ARTIFACT_FORMATS = {
 }
 
 ALGORITHM_INTERFACES = {
-    "fastlio_mapping": AlgorithmInterface(
-        name="fastlio_mapping",
+    "ltlio_mapping": AlgorithmInterface(
+        name="ltlio_mapping",
         inputs=(TOPICS.lidar_scan, TOPICS.imu),
         outputs=(TOPICS.odometry, TOPICS.registered_cloud, TOPICS.map_cloud),
         owner="slam",
         map_dependency="none_live_canonical_sensor_slam",
     ),
-    "fastlio_raw_validation": AlgorithmInterface(
-        name="fastlio_raw_validation",
+    "ltlio_raw_validation": AlgorithmInterface(
+        name="ltlio_raw_validation",
         inputs=(TOPICS.lidar_scan, TOPICS.imu),
         outputs=(TOPICS.odometry, TOPICS.registered_cloud, TOPICS.map_cloud),
         owner="slam_sim_validation",
@@ -471,8 +471,8 @@ ALGORITHM_INTERFACES = {
 
 RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES = {
     "slam_or_relayed_localization_map": (
-        "fastlio_mapping",
-        "fastlio_raw_validation",
+        "ltlio_mapping",
+        "ltlio_raw_validation",
     ),
     "map_layers_and_exploration": ("exploration_strategy",),
     "tare_exploration": ("tare_exploration",),
@@ -516,7 +516,7 @@ DATA_SOURCE_CONTRACTS = {
         algorithm_context_outputs=(),
         # The selected Robot model supplies its own physical LiDAR mount.
         lidar_extrinsic_profile=None,
-        slam_source="lingtu_fastlio_or_external_robot_slam",
+        slam_source="lingtu_ltlio_or_external_robot_slam",
         localization_source="slam_localizer",
         mapping_source="slam_map_cloud",
     ),
@@ -558,8 +558,8 @@ DATA_SOURCE_CONTRACTS = {
         localization_source="mujoco_sim_odometry",
         mapping_source="mujoco_rendered_lidar_map_cloud",
     ),
-    "mujoco_fastlio2_live": DataSourceContract(
-        name="mujoco_fastlio2_live",
+    "mujoco_ltlio_live": DataSourceContract(
+        name="mujoco_ltlio_live",
         provider="mujoco",
         owns=("physics", "mid360_pattern_lidar", "imu"),
         normalized_outputs=(TOPICS.lidar_scan, TOPICS.imu),
@@ -568,9 +568,9 @@ DATA_SOURCE_CONTRACTS = {
         algorithm_entry_outputs=(TOPICS.odometry, TOPICS.registered_cloud, TOPICS.map_cloud),
         algorithm_context_outputs=(),
         lidar_extrinsic_profile="mujoco_thunder_v3",
-        slam_source="lingtu_fastlio2",
-        localization_source="fastlio2_odometry",
-        mapping_source="fastlio2_map_cloud",
+        slam_source="lingtu_ltlio",
+        localization_source="ltlio_odometry",
+        mapping_source="ltlio_map_cloud",
     ),
 }
 

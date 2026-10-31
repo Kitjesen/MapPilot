@@ -42,7 +42,7 @@ def test_native_odom_local_risk_wiring_preserves_map_safety_authority() -> None:
     producer = _read("src/nav/cpp/endpoint/traversability/main.cpp")
     projector = _read("src/nav/cpp/endpoint/nav/input/map.cpp")
     dds = _read("src/nav/cpp/endpoint/nav/dds/runtime.cpp")
-    loop = _read("src/nav/cpp/endpoint/nav/runtime/loop.cpp")
+    loop = _read("src/nav/cpp/endpoint/nav/app/loop.cpp")
     navd = _read("src/nav/cpp/endpoint/nav/main.cpp")
     decoder = _read("src/nav/cpp/endpoint/nav/dds/codec.cpp")
 

@@ -149,8 +149,13 @@ Executor::SegmentTarget Executor::buildSegment(
 
   const nav_kernel::Vec3 projection_planning =
       planning_route_point(projection);
-  if (nav_kernel::distance3D(
-          segment.back(), projection_planning) > 1e-4) {
+  const double projection_distance=nav_kernel::distance3D(segment.back(),projection_planning);
+  // A pose-stage boundary already reached within its declared tolerance does
+  // not need a millimetre-scale sideways return before the forward reference.
+  // Keep the measured first point and check the resulting candidate in 3D.
+  const bool reached_pose_projection=!pose_stages_.empty() &&
+      projection_distance<=active_goal_reached_m_;
+  if (projection_distance>1e-4 && !reached_pose_projection) {
     segment.push_back(projection_planning);
   }
 
@@ -209,6 +214,15 @@ void Executor::buildReference(
   // Progress changes only the short segment, not the full map-frame reference.
   if (config_.planning_frame == PlanningFrame::Map && !reference.empty()) return;
   reference = segment;
+  // A moving terminal spline still needs a two-point reference at the endpoint.
+  if (target.reachesGoal && reference.size() < 2 && route.size() > 1) {
+    reference.clear();
+    for (std::size_t index = route.size() - 2; index < route.size(); ++index) {
+      auto point = route[index];
+      point.z += height_offset_.value_or(0.0);
+      reference.push_back(map_from_odom.odomPointFromMap(point));
+    }
+  }
   if (target.reachesGoal || route.empty() || !height_offset_) return;
 
   const std::size_t first = std::min(target.index, route.size() - 1);
@@ -330,8 +344,10 @@ nav_kernel::LocalPlannerDebugSnapshot Executor::debugSnapshotToMap(
 
 bool Executor::atGoal(const nav_kernel::Pose& odom_map_body) const {
   if (route.empty()) return false;
-  nav_kernel::Vec3 goal = route.back();
-  goal.z += height_offset_.value_or(0.0);
+  const bool task_goal = requested_goal_ &&
+      (pose_stages_.empty() || pose_stage_ + 1 == pose_stages_.size());
+  nav_kernel::Vec3 goal = task_goal ? *requested_goal_ : route.back();
+  if (!task_goal) goal.z += height_offset_.value_or(0.0);
   const double planar_distance =
       std::hypot(goal.x - odom_map_body.position.x, goal.y - odom_map_body.position.y);
   return planar_distance <= active_goal_reached_m_ &&

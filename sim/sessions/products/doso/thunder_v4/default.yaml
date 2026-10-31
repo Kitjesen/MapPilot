@@ -6,8 +6,12 @@ world: factory_workshop@2.0.0
 robots:
   - instance_id: thunder_01
     package: thunderv4@1.0.3
-    sensor_rig: thunderv4_headless_navigation@1.0.0
-    controller: thunderv4_locomotion@1.0.0
+    sensor_rig: thunderv4_headless_navigation@1.1.0
+    sensor_overrides:
+      front_thermal: {enabled: false}
+      front_semantic: {enabled: false}
+      microphone: {enabled: false}
+      gnss: {enabled: false}
     spawn:
       position_m: [61.0, 16.5, 0.02]
       quaternion_wxyz: [0.7071067811865476, 0.0, 0.0, 0.7071067811865476]

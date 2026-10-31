@@ -59,8 +59,7 @@ void ControlAuthority::cancel() {
 }
 
 void ControlAuthority::stop() {
-  clearMotion();
-  operator_takeover_latched_ = false;
+  cancel();
 }
 
 void ControlAuthority::latchEstop(std::string reason) {

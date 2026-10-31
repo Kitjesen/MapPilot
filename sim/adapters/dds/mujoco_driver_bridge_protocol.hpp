@@ -110,8 +110,24 @@ struct StopMessage {
   BridgeCommandKind kind{BridgeCommandKind::DeactivateZero};
 };
 
+struct ProfileRequest {
+  std::string task_id;
+  std::string requirement;
+};
+
+struct ProfileState {
+  std::string bridge_boot_id;
+  std::string controller_boot_id;
+  std::string task_id;
+  std::string requirement;
+  std::string phase;
+  std::string requested_profile;
+  std::string active_profile;
+  std::string reason;
+};
+
 using ControllerMessage =
-    std::variant<ActivateMessage, AppliedMessage, HeartbeatMessage, DeactivateMessage>;
+    std::variant<ActivateMessage, AppliedMessage, HeartbeatMessage, DeactivateMessage, ProfileState>;
 
 [[nodiscard]] bool validBootId(std::string_view value) noexcept;
 [[nodiscard]] bool validProducerToken(std::string_view value) noexcept;
@@ -124,5 +140,8 @@ using ControllerMessage =
 [[nodiscard]] std::string serializeReady(const ReadyMessage &ready);
 [[nodiscard]] std::string serializeFault(const FaultMessage &fault);
 [[nodiscard]] std::string serializeStopped(const StopMessage &stopped);
+[[nodiscard]] std::string serializeProfileRequest(const ProfileRequest &request,
+                                                 std::string_view bridge_boot_id,
+                                                 std::string_view controller_boot_id);
 
 }  // namespace lingtu::sim::driver_bridge

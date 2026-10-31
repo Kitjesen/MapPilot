@@ -6,7 +6,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-BUILD_DIR="${LINGTU_MAP_OPT_BUILD_DIR:-${ROOT}/build/map_opt}"
+BUILD_DIR="${LINGTU_MAP_OPT_BUILD_DIR:-${ROOT}/build/map_optimization}"
 BUILD_TYPE="${CMAKE_BUILD_TYPE:-Release}"
 JOBS="${LINGTU_BUILD_JOBS:-$(nproc 2>/dev/null || echo 4)}"
 PGO_BIN="${BUILD_DIR}/lt_pgo"
@@ -21,7 +21,7 @@ if [[ -n "${LINGTU_POSE_GRAPH_OPT_LIBRARY:-}" ]]; then
   )
 fi
 
-cmake -S "${ROOT}/src/localization/opt" -B "${BUILD_DIR}" \
+cmake -S "${ROOT}/src/localization/map_optimization" -B "${BUILD_DIR}" \
   "${CMAKE_ARGS[@]}"
 cmake --build "${BUILD_DIR}" \
   --target \

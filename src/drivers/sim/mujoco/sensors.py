@@ -216,6 +216,7 @@ def navigation_fixture_registered_body_points(
     *,
     max_points: int,
     raw_overlay_enabled: bool = True,
+    synthetic_ground_enabled: bool = True,
     ground_resolution_m: float = NAVIGATION_FIXTURE_GROUND_RESOLUTION_M,
     ground_y_half_m: float = NAVIGATION_FIXTURE_GROUND_Y_HALF_M,
 ) -> tuple[np.ndarray, dict[str, Any]]:
@@ -256,12 +257,12 @@ def navigation_fixture_registered_body_points(
     if orientation.size != 4 or not bool(np.isfinite(orientation).all()):
         raise ValueError("body orientation must contain finite XYZW")
     rotation_body_to_world = quat_xyzw_to_matrix(orientation)
-    ground = navigation_fixture_ground_body_points(
+    ground = (navigation_fixture_ground_body_points(
         robot_z,
         orientation_xyzw=orientation,
         resolution_m=ground_resolution_m,
         y_half_m=ground_y_half_m,
-    )
+    ) if synthetic_ground_enabled else np.zeros((0, 4), dtype=np.float32))
     ground_count = int(ground.shape[0])
     if max_points < ground_count:
         raise ValueError(
@@ -482,7 +483,7 @@ def projected_gravity_body(state: Any) -> np.ndarray:
 
 
 def sensor_specific_force_body(state: Any) -> np.ndarray:
-    """Return MuJoCo IMU accelerometer data as Fast-LIO specific force.
+    """Return MuJoCo IMU accelerometer data as LTLIO specific force.
 
     Dynamic MuJoCo policy mode exposes a proper accelerometer signal with
     gravity magnitude already present. Kinematic mode advances poses with

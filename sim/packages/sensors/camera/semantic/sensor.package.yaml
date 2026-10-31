@@ -1,0 +1,23 @@
+schema: lingtu.sim.sensor-package.v1
+id: semantic_camera
+version: 1.0.0
+kind: sensor
+description: Experimental 64x48 calibrated semantic ground-truth camera; explicit physical-geometry labels, not learned perception.
+sensor_type: semantic_camera
+outputs: [semantic]
+timing: {rate_hz: 10}
+interface:
+  transport: typed_dds
+  message_type: lingtu.dds.SemanticImage
+configuration:
+  measurement:
+    body_frame_id: base_link
+    camera:
+      model: pinhole
+      width: 64
+      height: 48
+      fx_px: 32.0
+      fy_px: 32.0
+      cx_px: 32.0
+      cy_px: 24.0
+    noise: {unit: label, enabled: false, stddev: 0.0, seed: 0}

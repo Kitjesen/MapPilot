@@ -39,6 +39,7 @@ typedef struct lingtu_inspection_route {
   uint32_t max_retries;
   const lingtu_inspection_point* points;
   uint64_t point_count;
+  double loop_interval_s;
 } lingtu_inspection_route;
 
 LINGTU_INSPECTION_API uint32_t lingtu_inspection_store_abi_version(void);

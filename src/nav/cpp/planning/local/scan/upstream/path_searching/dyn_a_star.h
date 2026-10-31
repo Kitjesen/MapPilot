@@ -1,7 +1,7 @@
 #pragma once
 
 // Ported from SCAN-Planner path_searching/dyn_a_star.h at commit 348e8a5.
-// ROS logging/time were replaced at the module seam; search behavior is kept.
+// ROS logging/time were replaced; queue entries retain immutable priorities.
 // SPDX-License-Identifier: Apache-2.0
 
 #include <Eigen/Eigen>
@@ -40,10 +40,15 @@ struct GridNode {
   GridNodePtr cameFrom{nullptr};
 };
 
+struct OpenSetEntry {
+  GridNodePtr node;
+  double fScore;
+};
+
 class NodeComparator {
  public:
-  bool operator()(GridNodePtr node1, GridNodePtr node2) const {
-    return node1->fScore > node2->fScore;
+  bool operator()(const OpenSetEntry &entry1, const OpenSetEntry &entry2) const {
+    return entry1.fScore > entry2.fScore;
   }
 };
 
@@ -86,7 +91,7 @@ class AStar {
   static constexpr double kTieBreaker = 1.0 + 1.0 / 10000.0;
   std::vector<GridNodePtr> gridPath_{};
   GridNodePtr ***gridNodeMap_{nullptr};
-  std::priority_queue<GridNodePtr, std::vector<GridNodePtr>, NodeComparator>
+  std::priority_queue<OpenSetEntry, std::vector<OpenSetEntry>, NodeComparator>
       openSet_{};
   int rounds_{0};
   int expandedNodes_{0};

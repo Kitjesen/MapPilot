@@ -1,9 +1,9 @@
 #include "lingtu/maps/build/pipeline.hpp"
 #include "lingtu/maps/cloud.hpp"
-#include "lingtu/maps/layers/semantic_occupancy.hpp"
+#include "lingtu/maps/semantic/occupancy.hpp"
 #include "lingtu/maps/layers/voxel.hpp"
 #include "lingtu/maps/model.hpp"
-#include "lingtu/maps/store.hpp"
+#include "lingtu/maps/storage/store.hpp"
 
 int main() {
   lingtu::maps::MapRecord record;

@@ -10,10 +10,10 @@
 #include <unordered_map>
 
 #include "lingtu/maps/build/pipeline.hpp"
-#include "lingtu/maps/health.hpp"
-#include "lingtu/maps/maintenance.hpp"
+#include "lingtu/maps/storage/health.hpp"
+#include "lingtu/maps/storage/maintenance.hpp"
 #include "lingtu/maps/save.hpp"
-#include "lingtu/maps/store.hpp"
+#include "lingtu/maps/storage/store.hpp"
 
 namespace lingtu::maps {
 
@@ -50,6 +50,11 @@ class MapsServiceCore {
                          double z_m, double yaw_rad, bool has_yaw, const std::string &frame_id,
                          const std::string &tags_json);
   std::string DeletePoiJson(const std::string &map_id, const std::string &name);
+  std::string ListStairsJson(const std::string &map_id) const;
+  std::string SetStairJson(const std::string &map_id, const std::string &stair_id,
+                           const std::string &annotation_json);
+  std::string DeleteStairJson(const std::string &map_id, const std::string &stair_id,
+                              std::uint64_t content_epoch);
   std::string ListMapGraphJson() const;
   std::string SetMapEdgeJson(const std::string &from_map_id, const std::string &to_map_id,
                              const std::string &edge_type, bool bidirectional);
@@ -67,6 +72,10 @@ class MapsServiceCore {
                                     const SourceCommitOptions &options);
   std::string CropPcdJson(const std::string &map_id, const PcdBounds &bounds, bool invert,
                           double voxel_size);
+  std::string SaveEditedSourceJson(
+      const std::string &source_map_id, const std::string &target_map_id,
+      std::uint64_t expected_source_content_epoch,
+      const std::vector<SourceEditOperation> &operations);
   std::string BuildOccupancySnapshotJson(const std::string &map_id);
   std::string BuildOctomapArtifactJson(const std::string &map_id,
                                        const OctomapBuildOptions &options);

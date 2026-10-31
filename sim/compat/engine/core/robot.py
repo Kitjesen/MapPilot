@@ -198,7 +198,7 @@ class RobotConfig:
         """Return current Thunder simulation config (paths resolved at runtime)."""
         cfg = cls()
         cfg.robot_xml = "packages/robots/doso/thunder_v4/mjcf/thunderv4.xml"
-        cfg.policy_onnx = (
-            "packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998.onnx"
-        )
+        from sim.catalog import resolve_robot_default_policy
+
+        cfg.policy_onnx = str(resolve_robot_default_policy(Path(__file__).resolve().parents[4])["artifact"])
         return cfg

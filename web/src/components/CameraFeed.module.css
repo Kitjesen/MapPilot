@@ -30,7 +30,12 @@
 }
 
 .imgWhep {
-  transform: rotate(180deg);
+  position: absolute;
+}
+
+.videoPending {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .placeholder {

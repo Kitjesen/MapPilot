@@ -18,6 +18,8 @@ RECORD_REGISTERED_CLOUD = 4
 RECORD_CAMERA = 5
 RECORD_SIMULATION_CLOCK = 6
 RECORD_REGISTERED_CLOUD_WITH_ORIGIN = 7
+RECORD_GNSS = 8
+RECORD_MEASUREMENT = 9
 MID360_ACCEL_MPS2_PER_G = 9.80665
 
 HEADER = struct.Struct("<4sB3xQIII")
@@ -92,6 +94,8 @@ def encode_record(
         RECORD_CAMERA,
         RECORD_SIMULATION_CLOCK,
         RECORD_REGISTERED_CLOUD_WITH_ORIGIN,
+        RECORD_GNSS,
+        RECORD_MEASUREMENT,
     }:
         raise ValueError(f"unsupported LTU1 record_type: {encoded_type}")
     encoded_timestamp = _unsigned_int("timestamp_ns", timestamp_ns, _UINT64_MAX)
@@ -111,6 +115,17 @@ def encode_record(
         len(encoded_payload),
     )
     return EncodedSensorRecord(encoded_type, header, encoded_payload)
+
+
+def encode_gnss(sample: Any) -> EncodedSensorRecord:
+    """Carry the canonical stamped LTGN record on the owned LTU1 endpoint."""
+    from sim.runtime.sensors.gnss_dds import encode_gnss_sample
+
+    payload = encode_gnss_sample(sample)
+    return encode_record(
+        RECORD_GNSS, timestamp_ns=sample.stamp.sim_time_ns,
+        sequence=sample.stamp.sequence, count=1, payload=payload,
+    )
 
 
 def _camera_header(

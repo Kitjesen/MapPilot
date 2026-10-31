@@ -190,7 +190,7 @@ def _slam_payload(*, mode: str = "mapping") -> dict[str, object]:
         "schema_version": SLAM_STATUS_SCHEMA,
         "runtime_instance_id": "slam-runtime",
         "source": "cpp_cyclone_slam",
-        "backend": "fastlio2",
+        "backend": "ltlio",
         "mode": mode,
         "state": "TRACKING" if localization else "MAPPING",
         "reason": "healthy",
@@ -1046,6 +1046,7 @@ def test_mapd_readiness_distinguishes_startup_from_broken_output(tmp_path: Path)
     with pytest.raises(SimReadinessError, match="active error") as caught:
         _load_mapd(path)
     assert not isinstance(caught.value, SimReadinessPending)
+    assert "output_error=scene:dds_write_failed" in str(caught.value)
 
 
 @pytest.mark.parametrize(

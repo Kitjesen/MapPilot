@@ -6,65 +6,24 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+from lingtu.sdk.async_domains import (
+    AsyncLocalizationClient,
+    AsyncMapClient,
+    AsyncNavigationClient,
+    AsyncObservationClient,
+    AsyncSystemClient,
+    AsyncTaskClient,
+)
 from lingtu.sdk.client import (
     CommandResult,
     HealthStatus,
     LingTuClient,
     MapList,
     NavigationStatus,
-    Pose2D,
     Position,
     RobotState,
     SessionInfo,
 )
-
-
-class AsyncLocalizationClient:
-    """Non-blocking adapter for the synchronous localization facade."""
-
-    def __init__(self, client: LingTuClient) -> None:
-        self._client = client
-
-    async def relocalize(
-        self,
-        map_name: str,
-        *,
-        initial_pose: Pose2D,
-        request_id: str | None = None,
-    ) -> CommandResult:
-        """Relocalize from a caller-provided pose seed."""
-        return await asyncio.to_thread(
-            self._client.localization.relocalize,
-            map_name,
-            initial_pose=initial_pose,
-            request_id=request_id,
-        )
-
-    async def global_relocalize(
-        self,
-        map_name: str,
-        *,
-        request_id: str | None = None,
-    ) -> CommandResult:
-        """Relocalize without a pose seed."""
-        return await asyncio.to_thread(
-            self._client.localization.global_relocalize,
-            map_name,
-            request_id=request_id,
-        )
-
-    async def start_map_tracking(
-        self,
-        map_name: str,
-        *,
-        request_id: str | None = None,
-    ) -> CommandResult:
-        """Start continuous alignment against the active map."""
-        return await asyncio.to_thread(
-            self._client.localization.start_map_tracking,
-            map_name,
-            request_id=request_id,
-        )
 
 
 class AsyncLingTuClient:
@@ -80,8 +39,33 @@ class AsyncLingTuClient:
         self._client = LingTuClient(host, port, api_key=api_key, timeout=timeout)
 
     @property
+    def navigation(self) -> AsyncNavigationClient:
+        """Navigation, localization and exploration."""
+        return AsyncNavigationClient(self._client)
+
+    @property
+    def map(self) -> AsyncMapClient:
+        """Saved maps, artifacts and named places."""
+        return AsyncMapClient(self._client)
+
+    @property
+    def tasks(self) -> AsyncTaskClient:
+        """Instructions, follow and inspection tasks."""
+        return AsyncTaskClient(self._client)
+
+    @property
+    def observations(self) -> AsyncObservationClient:
+        """Scene, camera, history and native recording."""
+        return AsyncObservationClient(self._client)
+
+    @property
+    def system(self) -> AsyncSystemClient:
+        """System status, diagnostics and operator control."""
+        return AsyncSystemClient(self._client)
+
+    @property
     def localization(self) -> AsyncLocalizationClient:
-        """Access localization operations without exposing backend names."""
+        """Compatibility entry for the original localization commands."""
         return AsyncLocalizationClient(self._client)
 
     async def __aenter__(self) -> AsyncLingTuClient:
@@ -115,13 +99,125 @@ class AsyncLingTuClient:
         """Navigate by semantic target."""
         return await asyncio.to_thread(self._client.go_to, target)
 
-    async def follow_person(self, target_id: str) -> CommandResult:
-        """Follow the person currently published with ``target_id``."""
-        return await asyncio.to_thread(self._client.follow_person, target_id)
+    async def send_instruction(
+        self,
+        text: str,
+        *,
+        run_id: str | None = None,
+        control_only: bool = False,
+        request_id: str | None = None,
+        client_id: str = "sdk",
+    ) -> CommandResult:
+        """Submit text or scoped controls through the synchronous HTTP client."""
+        return await asyncio.to_thread(
+            self._client.send_instruction,
+            text,
+            run_id=run_id,
+            control_only=control_only,
+            request_id=request_id,
+            client_id=client_id,
+        )
 
-    async def stop_following(self) -> CommandResult:
-        """Stop the active person-following task."""
-        return await asyncio.to_thread(self._client.stop_following)
+    async def get_agent_run(self, run_id: str) -> dict[str, Any]:
+        """Read the referenced run without inferring a terminal state."""
+        return await asyncio.to_thread(self._client.get_agent_run, run_id)
+
+    async def cancel_agent_run(
+        self,
+        run_id: str,
+        *,
+        request_id: str | None = None,
+        client_id: str = "sdk",
+    ) -> CommandResult:
+        """Request cancellation of only the referenced Agent run."""
+        return await asyncio.to_thread(
+            self._client.cancel_agent_run,
+            run_id,
+            request_id=request_id,
+            client_id=client_id,
+        )
+
+    async def start_follow(
+        self,
+        *,
+        description: str | None = None,
+        target_id: str | None = None,
+        request_id: str | None = None,
+        client_id: str = "sdk",
+    ) -> CommandResult:
+        """Start one owned Follow execution."""
+        return await asyncio.to_thread(
+            self._client.start_follow,
+            description=description,
+            target_id=target_id,
+            request_id=request_id,
+            client_id=client_id,
+        )
+
+    async def get_follow_task(
+        self,
+        follow_task_id: str,
+        product_session_id: str,
+    ) -> dict[str, Any]:
+        """Read one Follow execution using its stable owner identity."""
+        return await asyncio.to_thread(
+            self._client.get_follow_task,
+            follow_task_id,
+            product_session_id,
+        )
+
+    async def cancel_follow_task(
+        self,
+        follow_task_id: str,
+        product_session_id: str,
+        *,
+        reason: str = "operator_cancel",
+        request_id: str | None = None,
+        client_id: str = "sdk",
+    ) -> CommandResult:
+        """Cancel exactly one Follow in its original Product run."""
+        return await asyncio.to_thread(
+            self._client.cancel_follow_task,
+            follow_task_id,
+            product_session_id,
+            reason=reason,
+            request_id=request_id,
+            client_id=client_id,
+        )
+
+    async def follow_person(
+        self,
+        target_id: str,
+        *,
+        request_id: str | None = None,
+        client_id: str = "sdk",
+    ) -> CommandResult:
+        """Start owned Follow for the published person ``target_id``."""
+        return await asyncio.to_thread(
+            self._client.follow_person,
+            target_id,
+            request_id=request_id,
+            client_id=client_id,
+        )
+
+    async def stop_following(
+        self,
+        follow_task_id: str,
+        product_session_id: str,
+        *,
+        reason: str = "operator_cancel",
+        request_id: str | None = None,
+        client_id: str = "sdk",
+    ) -> CommandResult:
+        """Cancel one referenced Follow execution."""
+        return await asyncio.to_thread(
+            self._client.stop_following,
+            follow_task_id,
+            product_session_id,
+            reason=reason,
+            request_id=request_id,
+            client_id=client_id,
+        )
 
     async def stop(self) -> CommandResult:
         """Stop robot motion."""

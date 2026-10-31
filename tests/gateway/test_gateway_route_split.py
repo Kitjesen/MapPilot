@@ -210,13 +210,26 @@ def test_save_map_fails_closed_when_slam_profile_is_unavailable(monkeypatch):
     assert payload["reason_code"] == "slam_profile_unavailable"
 
 
-def test_map_viewer_serves_static_file_without_gateway_snapshot():
+@pytest.mark.parametrize(
+    ("map_name", "expected_location"),
+    [
+        ("", "/?tab=map"),
+        ("903-room.v6", "/?tab=map&map=903-room.v6"),
+    ],
+)
+def test_map_viewer_redirects_to_product_map_without_gateway_snapshot(map_name, expected_location):
     from fastapi import FastAPI
-    from fastapi.responses import FileResponse
+    from fastapi.responses import RedirectResponse
 
-    from gateway.maps.routes import MAP_VIEWER_TEMPLATE, register_map_routes
+    from gateway.maps.routes import register_map_routes
+
+    class MapClient:
+        def service(self, *_args, **_kwargs):
+            raise AssertionError("viewer redirect must not query or activate a map")
 
     class Gateway:
+        _map_client = MapClient()
+
         def _generate_viewer_live(self):
             raise AssertionError("map viewer route must not snapshot live map")
 
@@ -227,16 +240,30 @@ def test_map_viewer_serves_static_file_without_gateway_snapshot():
     register_map_routes(app, Gateway())
 
     route = next(route for route in app.routes if route.path == "/map/viewer")
-    response = asyncio.run(route.endpoint())
+    response = asyncio.run(route.endpoint(map=map_name))
 
-    assert isinstance(response, FileResponse)
-    assert Path(response.path) == MAP_VIEWER_TEMPLATE
-    assert response.headers["cache-control"] == "public, max-age=300"
-    html = MAP_VIEWER_TEMPLATE.read_text(encoding="utf-8")
-    assert "{coords}" not in html
-    assert "{n*3}" not in html
-    assert "{robot_visible}" not in html
-    assert "_connectCloudWs()" in html
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 307
+    assert response.headers["location"] == expected_location
+
+
+def test_map_viewer_rejects_invalid_map_without_calling_map_service():
+    from fastapi import FastAPI
+
+    from gateway.maps.routes import register_map_routes
+
+    class MapClient:
+        def service(self, *_args, **_kwargs):
+            raise AssertionError("viewer redirect must not query or activate a map")
+
+    app = FastAPI()
+    register_map_routes(app, SimpleNamespace(_map_client=MapClient()))
+
+    route = next(route for route in app.routes if route.path == "/map/viewer")
+    with pytest.raises(fastapi.HTTPException) as exc_info:
+        asyncio.run(route.endpoint(map="../yard"))
+
+    assert exc_info.value.status_code == 400
 
 
 def test_map_voxel_overlay_route_reads_saved_edits(monkeypatch, tmp_path):
@@ -425,7 +452,7 @@ def test_camera_snapshot_uses_camera_relay_one_shot_encoder(monkeypatch):
     teleop = Teleop()
     app = FastAPI()
     gw = SimpleNamespace(
-        _latest_jpeg=None,
+        _latest_jpeg=b"\xff\xd8\xffcached",
         _jpeg_lock=threading.Lock(),
         _camera_module=teleop,
     )
@@ -761,8 +788,8 @@ def test_diagnostic_runtime_contract_route_exposes_canonical_manifest():
         "child": "lidar_link",
         "required": True,
     }
-    assert manifest["data_sources"]["mujoco_fastlio2_live"]["command_sink"] == ("mujoco_velocity_adapter")
-    mujoco_flow = {stage["name"]: stage for stage in manifest["resolved_runtime_data_flow"]["mujoco_fastlio2_live"]}
+    assert manifest["data_sources"]["mujoco_ltlio_live"]["command_sink"] == ("mujoco_velocity_adapter")
+    mujoco_flow = {stage["name"]: stage for stage in manifest["resolved_runtime_data_flow"]["mujoco_ltlio_live"]}
     assert list(mujoco_flow["command_boundary"]["outputs"]) == ["mujoco_velocity_adapter"]
 
     app = FastAPI()

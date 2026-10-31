@@ -4,6 +4,7 @@ import development from '../../../docs/development.md?raw'
 import gettingStarted from '../../../docs/getting-started.md?raw'
 import docsHome from '../../../docs/README.md?raw'
 import operations from '../../../docs/operations.md?raw'
+import product from '../../../docs/product.md?raw'
 import roadmap from '../../../docs/roadmap.md?raw'
 import runtime from '../../../docs/runtime.md?raw'
 import simulation from '../../../docs/simulation.md?raw'
@@ -23,7 +24,6 @@ export type GuideDocument = {
   audience: string
   runsOn: string
   operation: OperationBoundary
-  lastVerified: string
   group: string
 }
 
@@ -32,21 +32,30 @@ export type GuideGroup = {
   ids: string[]
 }
 
-const verifiedToday = '2026-09-03'
-
 export const guideDocuments: GuideDocument[] = [
   {
     id: 'home',
     title: 'LingTu 文档',
-    description: '十篇维护中的文档，覆盖上手、架构、运行、开发、运维和验证。',
+    description: '按产品使用、开发集成和验证交付组织的当前手册。',
     sourcePath: 'docs/README.md',
     content: docsHome,
     status: 'Current',
     audience: '开发者、集成者与机器人操作员',
     runsOn: '本地、仿真和受支持的现场机器人',
     operation: 'Read-only',
-    lastVerified: verifiedToday,
     group: 'home',
+  },
+  {
+    id: 'product',
+    title: '产品说明',
+    description: '产品用途、操作流程、机器人支持与尚待验收的交付范围。',
+    sourcePath: 'docs/product.md',
+    content: product,
+    status: 'Current',
+    audience: '产品负责人、操作员与交付工程师',
+    runsOn: '真实与仿真环境',
+    operation: 'Read-only',
+    group: '产品与使用',
   },
   {
     id: 'getting-started',
@@ -58,8 +67,7 @@ export const guideDocuments: GuideDocument[] = [
     audience: '首次使用 LingTu 的开发者和集成者',
     runsOn: '本地、仿真和受监督的现场机器人',
     operation: 'Motion-capable',
-    lastVerified: verifiedToday,
-    group: '开始使用',
+    group: '产品与使用',
   },
   {
     id: 'architecture',
@@ -71,8 +79,7 @@ export const guideDocuments: GuideDocument[] = [
     audience: '架构师、后端和原生端开发者',
     runsOn: '所有 LingTu 环境',
     operation: 'Read-only',
-    lastVerified: verifiedToday,
-    group: '理解系统',
+    group: '开发与集成',
   },
   {
     id: 'runtime',
@@ -84,8 +91,7 @@ export const guideDocuments: GuideDocument[] = [
     audience: '运行时、导航和驱动开发者',
     runsOn: '真实与仿真环境',
     operation: 'Motion-capable',
-    lastVerified: verifiedToday,
-    group: '理解系统',
+    group: '开发与集成',
   },
   {
     id: 'simulation',
@@ -95,10 +101,9 @@ export const guideDocuments: GuideDocument[] = [
     content: simulation,
     status: 'Current',
     audience: '仿真、算法和验证开发者',
-    runsOn: 'MuJoCo、Gazebo 与 Windows SimStudio',
+    runsOn: 'Windows 与 Linux/WSL 的原生 MuJoCo；可选 UE 展示',
     operation: 'State-changing',
-    lastVerified: verifiedToday,
-    group: '理解系统',
+    group: '验证与交付',
   },
   {
     id: 'development',
@@ -110,21 +115,19 @@ export const guideDocuments: GuideDocument[] = [
     audience: 'LingTu 开发者',
     runsOn: '本地开发主机',
     operation: 'State-changing',
-    lastVerified: verifiedToday,
-    group: '构建与运行',
+    group: '开发与集成',
   },
   {
     id: 'operations',
-    title: '部署与运维',
-    description: '发布、安装、回滚、诊断和受监督现场操作。',
+    title: '现场操作',
+    description: '建图、保存重载、定位、导航、人工接管、停止与诊断。',
     sourcePath: 'docs/operations.md',
     content: operations,
     status: 'Current',
     audience: '部署工程师、现场操作员与值守工程师',
     runsOn: '受支持的现场机器人与部署主机',
     operation: 'Motion-capable',
-    lastVerified: verifiedToday,
-    group: '构建与运行',
+    group: '产品与使用',
   },
   {
     id: 'api',
@@ -136,8 +139,7 @@ export const guideDocuments: GuideDocument[] = [
     audience: 'SDK、REST 与 MCP 客户端作者',
     runsOn: 'Gateway 或 MCPServerModule 可用的环境',
     operation: 'Motion-capable',
-    lastVerified: verifiedToday,
-    group: '参考与计划',
+    group: '开发与集成',
   },
   {
     id: 'testing',
@@ -149,29 +151,26 @@ export const guideDocuments: GuideDocument[] = [
     audience: '开发者、验证工程师与发布负责人',
     runsOn: '本地、仿真和现场',
     operation: 'Motion-capable',
-    lastVerified: verifiedToday,
-    group: '参考与计划',
+    group: '验证与交付',
   },
   {
     id: 'roadmap',
     title: '路线图',
-    description: '当前能力缺口、优先级、许可边界和下一步工作。',
+    description: '当前交付任务、未完成工作、验收进展与发布条件。',
     sourcePath: 'docs/roadmap.md',
     content: roadmap,
     status: 'Plan',
     audience: '维护者、架构师与产品负责人',
     runsOn: '不适用',
     operation: 'Read-only',
-    lastVerified: verifiedToday,
-    group: '参考与计划',
+    group: '验证与交付',
   },
 ]
 
 export const guideGroups: GuideGroup[] = [
-  { label: '开始使用', ids: ['getting-started'] },
-  { label: '理解系统', ids: ['architecture', 'runtime', 'simulation'] },
-  { label: '构建与运行', ids: ['development', 'operations'] },
-  { label: '参考与计划', ids: ['api', 'testing', 'roadmap'] },
+  { label: '产品与使用', ids: ['product', 'getting-started', 'operations'] },
+  { label: '开发与集成', ids: ['architecture', 'runtime', 'development', 'api'] },
+  { label: '验证与交付', ids: ['simulation', 'testing', 'roadmap'] },
 ]
 
 export const documentsById = new Map(guideDocuments.map((document) => [document.id, document]))

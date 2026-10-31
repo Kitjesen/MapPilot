@@ -4,6 +4,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -19,6 +20,8 @@
 #include <vector>
 
 #include "dds_domain.hpp"
+#include "gnss_dds_writer.hpp"
+#include "measurement_dds_writer.hpp"
 #include "dds/dds.h"
 #include "messages.h"
 #include "local_endpoint_server.hpp"
@@ -28,6 +31,8 @@
 #include "replay_deadline_restamper.hpp"
 #include "run_plan_process_environment.hpp"
 #include "sensor_record_protocol.hpp"
+#include "truth_status_snapshot.hpp"
+#include "native/snapshot_file.hpp"
 
 #ifdef _WIN32
 #include <fcntl.h>
@@ -72,6 +77,46 @@ dds_entity_t checked(dds_return_t value, const char *what) {
   return static_cast<dds_entity_t>(value);
 }
 
+std::string required_environment_value(const char *name) {
+#ifdef _WIN32
+  char *raw_value = nullptr;
+  std::size_t raw_size = 0;
+  if (_dupenv_s(&raw_value, &raw_size, name) != 0 || raw_value == nullptr) {
+    std::free(raw_value);
+    throw std::runtime_error(std::string("missing navigation fixture environment: ") + name);
+  }
+  const std::string value(raw_value, raw_size > 0 ? raw_size - 1 : 0);
+  std::free(raw_value);
+#else
+  const char *const raw_value = std::getenv(name);
+  if (raw_value == nullptr) {
+    throw std::runtime_error(std::string("missing navigation fixture environment: ") + name);
+  }
+  const std::string value(raw_value);
+#endif
+  if (value.empty()) {
+    throw std::runtime_error(std::string("empty navigation fixture environment: ") + name);
+  }
+  return value;
+}
+
+lidar::NavigationFixtureMapIdentity navigation_fixture_map_identity() {
+  lidar::NavigationFixtureMapIdentity identity;
+  identity.map_id = required_environment_value("LINGTU_MAP_ID");
+  identity.frame_id = required_environment_value("LINGTU_MAP_FRAME");
+  const std::string epoch = required_environment_value("LINGTU_MAP_CONTENT_EPOCH");
+  std::size_t parsed_characters = 0;
+  try {
+    identity.content_epoch = std::stoll(epoch, &parsed_characters);
+  } catch (const std::exception &) {
+    throw std::runtime_error("invalid navigation fixture environment: LINGTU_MAP_CONTENT_EPOCH");
+  }
+  if (parsed_characters != epoch.size() || identity.content_epoch <= 0) {
+    throw std::runtime_error("invalid navigation fixture environment: LINGTU_MAP_CONTENT_EPOCH");
+  }
+  return identity;
+}
+
 struct CliConfig {
   bool show_help{false};
   bool dds{false};
@@ -91,6 +136,8 @@ struct CliConfig {
   std::string lidar_frame{"lidar_link"};
   std::string imu_frame{"imu_link"};
   std::string camera_frame{"camera_link"};
+  std::string measurement_product_session_id;
+  std::string measurement_session_id;
   std::filesystem::path ready_file;
 };
 
@@ -101,13 +148,15 @@ constexpr const char *kUsage =
     "[--sim-lidar-raw-frame] "
     "[--restamp-stdin-records] [--replay-rate RATE] "
     "[--scan-window SEC|--publish-freq HZ] [--imu-publish-freq HZ] "
-    "[--ready-file PATH] [--stream lidar|imu|camera]\n"
+    "[--ready-file PATH] [--stream lidar|imu|camera] "
+    "[--measurement-product-session-id ID] [--measurement-session-id ID]\n"
     "       lingtu_mujoco_sensor_publisher --local-endpoint --dds "
     "--stream lidar|imu|camera "
     "[--domain-id N] [--lidar-frame FRAME] [--imu-frame FRAME] "
     "[--camera-frame FRAME] "
     "[--navigation-fixture] "
-    "[--scan-window SEC|--publish-freq HZ] [--imu-publish-freq HZ]\n";
+    "[--scan-window SEC|--publish-freq HZ] [--imu-publish-freq HZ] "
+    "[--measurement-session-id ID]\n";
 
 volatile std::sig_atomic_t g_stop_requested = 0;
 
@@ -164,6 +213,10 @@ CliConfig parse_args(int argc, const char *const argv[]) {
       config.imu_frame = next_arg(i, argc, argv);
     } else if (arg == "--camera-frame") {
       config.camera_frame = next_arg(i, argc, argv);
+    } else if (arg == "--measurement-product-session-id") {
+      config.measurement_product_session_id = next_arg(i, argc, argv);
+    } else if (arg == "--measurement-session-id") {
+      config.measurement_session_id = next_arg(i, argc, argv);
     } else if (arg == "--ready-file") {
       config.ready_file = std::filesystem::path(next_arg(i, argc, argv));
     } else if (arg == "--replay-rate") {
@@ -193,6 +246,9 @@ CliConfig parse_args(int argc, const char *const argv[]) {
     return config;
   }
   if (config.local_endpoint_records) {
+    if (!config.measurement_product_session_id.empty()) {
+      throw std::runtime_error("local measurement product identity comes from authenticated endpoint, not CLI");
+    }
     if (config.stdin_records || config.validate_records) {
       throw std::runtime_error("--local-endpoint cannot be combined with stdin record mode");
     }
@@ -669,9 +725,11 @@ bool accepts(const Stream stream, const adapter::SensorRecordType type) {
              type == adapter::SensorRecordType::RegisteredCloudWithOrigin;
     case Stream::Imu:
       return type == adapter::SensorRecordType::Imu ||
+             type == adapter::SensorRecordType::Gnss ||
              type == adapter::SensorRecordType::SimulationClock;
     case Stream::Camera:
-      return type == adapter::SensorRecordType::Camera;
+      return type == adapter::SensorRecordType::Camera ||
+             type == adapter::SensorRecordType::Measurement;
   }
   return false;
 }
@@ -679,7 +737,8 @@ bool accepts(const Stream stream, const adapter::SensorRecordType type) {
 int run_records(const CliConfig &config, lidar::DdsModule *dds,
                 SimLidarRawFramePublisher *sim_lidar, CameraDdsPublisher *camera_dds,
                 SimulationClockDdsPublisher *simulation_clock, std::istream &input,
-                const bool require_stop_for_eof = false) {
+                const bool require_stop_for_eof = false,
+                const std::string &endpoint_product_session_id = {}) {
   adapter::SensorRecordStats stats;
   std::optional<std::uint64_t> first_timestamp_ns;
   std::chrono::steady_clock::time_point replay_start;
@@ -690,7 +749,22 @@ int run_records(const CliConfig &config, lidar::DdsModule *dds,
                                   : 0ULL;
   std::uint64_t last_imu_publish_ns = 0;
   bool has_camera_intrinsics = false;
+  std::uint64_t last_truth_snapshot_attempt_ns = 0;
+  std::uint64_t truth_source_epoch = 0;
+  std::uint64_t truth_sequence = 0;
+  std::filesystem::path truth_snapshot;
+  std::string truth_runtime_id;
+  if (config.navigation_fixture && config.local_endpoint_records) {
+    truth_snapshot = std::filesystem::path(required_environment_value("LINGTU_SESSION_ROOT")) / "slam.status.json";
+    truth_runtime_id = required_environment_value("LINGTU_PRODUCT_SESSION_ID");
+  }
   std::unique_ptr<CameraDdsPublisher> all_camera_dds;
+  std::unique_ptr<adapter::GnssDdsWriter> gnss_dds;
+  std::optional<adapter::GnssStreamValidator> gnss_validator;
+  std::unique_ptr<adapter::MeasurementDdsWriter> measurement_dds;
+  adapter::MeasurementStreamValidator measurement_validator(
+      config.local_endpoint_records ? endpoint_product_session_id : config.measurement_product_session_id,
+      config.measurement_session_id);
 
   auto finish = [&](int code) {
     if (dds != nullptr) {
@@ -701,12 +775,14 @@ int run_records(const CliConfig &config, lidar::DdsModule *dds,
     std::fprintf(
         stderr,
         "sensor records: clouds=%llu imu=%llu odom=%llu registered_clouds=%llu camera=%llu "
-        "simulation_clocks=%llu bytes=%llu mode=%s\n",
+        "simulation_clocks=%llu gnss=%llu measurements=%llu bytes=%llu mode=%s\n",
         static_cast<unsigned long long>(stats.clouds), static_cast<unsigned long long>(stats.imu),
         static_cast<unsigned long long>(stats.odom_priors),
         static_cast<unsigned long long>(stats.registered_clouds),
         static_cast<unsigned long long>(stats.camera),
         static_cast<unsigned long long>(stats.simulation_clocks),
+        static_cast<unsigned long long>(stats.gnss),
+        static_cast<unsigned long long>(stats.measurements),
         static_cast<unsigned long long>(stats.bytes), config.validate_records ? "validate" : "replay");
     return code;
   };
@@ -741,6 +817,40 @@ int run_records(const CliConfig &config, lidar::DdsModule *dds,
     if (!accepts(config.stream, record.header.type)) {
       std::fputs("sensor record does not belong to selected --stream\n", stderr);
       return finish(2);
+    }
+    if (record.header.type == adapter::SensorRecordType::Gnss) {
+      const auto gnss = adapter::decode_gnss_payload(record);
+      if (!gnss_validator) {
+        gnss_validator.emplace(config.local_endpoint_records
+            ? required_environment_value("LINGTU_PRODUCT_SESSION_ID") : gnss.session_id);
+      }
+      if (!gnss_validator->accept(gnss, error)) {
+        std::fprintf(stderr, "GNSS input rejected: %s\n", error.c_str());
+        return finish(2);
+      }
+      if (!config.validate_records) {
+        if (!gnss_dds) gnss_dds = std::make_unique<adapter::GnssDdsWriter>(config.domain_id);
+        gnss_dds->write(gnss);
+      }
+      continue;
+    }
+    if (record.header.type == adapter::SensorRecordType::Measurement) {
+      const auto measurement = adapter::decode_measurement_payload(record);
+      if (sim_lidar != nullptr) {
+        std::fputs("sim MID-360 publisher accepts cloud records only\n", stderr);
+        return finish(2);
+      }
+      if (!measurement_validator.accept(measurement, error)) {
+        std::fprintf(stderr, "measurement input rejected: %s\n", error.c_str());
+        return finish(2);
+      }
+      if (!config.validate_records) {
+        if (!measurement_dds)
+          measurement_dds = std::make_unique<adapter::MeasurementDdsWriter>(config.domain_id);
+        measurement_dds->write(measurement);
+      }
+      // Source identity and time bypass the generic replay restamper/pacing path.
+      continue;
     }
     if (record.header.type == adapter::SensorRecordType::SimulationClock) {
       if (config.validate_records) {
@@ -815,13 +925,34 @@ int run_records(const CliConfig &config, lidar::DdsModule *dds,
         }
         break;
       }
-      case adapter::SensorRecordType::OdomPrior:
+      case adapter::SensorRecordType::OdomPrior: {
         if (sim_lidar != nullptr) {
           std::fprintf(stderr, "sim MID-360 publisher accepts cloud records only\n");
           return finish(2);
         }
-        dds->publish_odom_prior(timestamp_ns, adapter::decode_odom_prior_payload(record));
+        const auto prior = adapter::decode_odom_prior_payload(record);
+        dds->publish_odom_prior(timestamp_ns, prior);
+        if (!truth_snapshot.empty() && timestamp_ns > last_truth_snapshot_attempt_ns &&
+            (last_truth_snapshot_attempt_ns == 0 || timestamp_ns - last_truth_snapshot_attempt_ns >= 50000000ULL)) {
+          last_truth_snapshot_attempt_ns = timestamp_ns;
+          if (truth_source_epoch == 0) truth_source_epoch = timestamp_ns;
+          const auto temporary = truth_snapshot.string() + ".tmp";
+          {
+            std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+            output << adapter::truthStatusSnapshot(timestamp_ns, prior, truth_runtime_id,
+                                                   truth_source_epoch, ++truth_sequence);
+            output.flush();
+            if (!output) throw std::runtime_error("truth status snapshot write failed");
+          }
+          std::error_code snapshot_error;
+          if (!lingtu::native::replaceSnapshotFile(temporary, truth_snapshot, &snapshot_error)) {
+            // Keep the previous snapshot stale while the live DDS stream continues.
+            std::fprintf(stderr, "truth status snapshot publish failed: error=%d %s\n",
+                         snapshot_error.value(), snapshot_error.message().c_str());
+          }
+        }
         break;
+      }
       case adapter::SensorRecordType::RegisteredCloud:
       case adapter::SensorRecordType::RegisteredCloudWithOrigin:
         if (sim_lidar != nullptr) {
@@ -847,6 +978,10 @@ int run_records(const CliConfig &config, lidar::DdsModule *dds,
         (camera_dds != nullptr ? camera_dds : all_camera_dds.get())
             ->publish(timestamp_ns, std::move(*camera));
         break;
+      case adapter::SensorRecordType::SimulationClock:
+      case adapter::SensorRecordType::Gnss:
+      case adapter::SensorRecordType::Measurement:
+        break;  // Handled above without replay restamping.
     }
   }
   return finish(0);
@@ -897,9 +1032,14 @@ int main(int argc, const char *const argv[]) {
                               ? lidar::DdsOutput::Lidar
                               : config.stream == Stream::Imu ? lidar::DdsOutput::Imu
                                                               : lidar::DdsOutput::All;
+      std::optional<lidar::NavigationFixtureMapIdentity> map_identity;
+      if (config.navigation_fixture) {
+        map_identity = navigation_fixture_map_identity();
+      }
       dds = std::make_unique<lidar::DdsModule>(config.domain_id, config.lidar_frame,
                                                 config.imu_frame, config.navigation_fixture,
-                                                output, !config.local_endpoint_records);
+                                                output, !config.local_endpoint_records,
+                                                std::move(map_identity));
     } else if (config.dds) {
       camera_dds =
           std::make_unique<CameraDdsPublisher>(config.domain_id, config.camera_frame);
@@ -933,7 +1073,7 @@ int main(int argc, const char *const argv[]) {
       EndpointStreamBuf buffer(std::move(*stream));
       std::istream input(&buffer);
       return run_records(config, dds.get(), sim_lidar.get(), camera_dds.get(),
-                         simulation_clock.get(), input, true);
+                         simulation_clock.get(), input, true, process_environment->product_session_id);
     }
     return run_records(config, dds.get(), sim_lidar.get(), camera_dds.get(),
                        simulation_clock.get(), std::cin);

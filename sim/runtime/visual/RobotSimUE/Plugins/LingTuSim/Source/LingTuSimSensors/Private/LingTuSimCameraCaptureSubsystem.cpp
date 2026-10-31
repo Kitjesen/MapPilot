@@ -563,6 +563,11 @@ namespace LingTuSim::Sensors::Camera
             OutError = TEXT("deferred capture wall-clock age is invalid");
             return EDeferredCaptureAction::Fail;
         }
+        if (CurrentFrame > SubmittedFrame
+            && PendingReadbackCount < MaxPendingReadbackCount)
+        {
+            return EDeferredCaptureAction::Promote;
+        }
         if (AgeSeconds >= TimeoutSeconds)
         {
             OutError = FString::Printf(
@@ -572,12 +577,7 @@ namespace LingTuSim::Sensors::Camera
                 TimeoutSeconds);
             return EDeferredCaptureAction::Fail;
         }
-        if (CurrentFrame == SubmittedFrame
-            || PendingReadbackCount >= MaxPendingReadbackCount)
-        {
-            return EDeferredCaptureAction::Wait;
-        }
-        return EDeferredCaptureAction::Promote;
+        return EDeferredCaptureAction::Wait;
     }
 
     bool ShouldRenderCameraCaptureInMainRenderer(
@@ -648,6 +648,11 @@ namespace LingTuSim::Sensors::Camera
             const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
             if (!(*StreamsObject)->TryGetArrayField(KindName, Values))
             {
+                if ((*StreamsObject)->HasField(KindName))
+                {
+                    OutError = FString::Printf(TEXT("stream '%s' must be an array"), KindName);
+                    return false;
+                }
                 continue;
             }
             for (const TSharedPtr<FJsonValue>& Value : *Values)
@@ -660,6 +665,20 @@ namespace LingTuSim::Sensors::Camera
                 }
                 FStreamPlan Stream;
                 Stream.SessionId = OutPlan.SessionId;
+                const FString Source = SafeField(*StreamObject, TEXT("source"));
+                const FString Owner = SafeField(*StreamObject, TEXT("owner"));
+                const FString Transport = SafeField(*StreamObject, TEXT("transport"));
+                if (Source == TEXT("mujoco_camera")
+                    && Owner == TEXT("sensor_runtime") && Transport == TEXT("camera_shm"))
+                {
+                    // This backend owns its camera payload and readiness, not UE.
+                    continue;
+                }
+                if ((*StreamObject)->HasField(TEXT("owner")) && Owner != TEXT("visual"))
+                {
+                    OutError = TEXT("camera route must be visual/unreal_camera/camera_shm or sensor_runtime/mujoco_camera/camera_shm");
+                    return false;
+                }
                 if (!ParseStream(*StreamObject, KindName, Stream, OutError))
                 {
                     return false;
@@ -672,11 +691,6 @@ namespace LingTuSim::Sensors::Camera
                 }
                 OutPlan.Streams.Add(MoveTemp(Stream));
             }
-        }
-        if (OutPlan.Streams.Num() == 0 || OutPlan.TotalStreamCount == 0)
-        {
-            OutError = TEXT("sensor plan contains no Unreal camera streams");
-            return false;
         }
         return true;
     }
@@ -1872,6 +1886,13 @@ bool ULingTuSimCameraCaptureSubsystem::BindFromCommandLine(FString& OutError)
         OutError = TEXT("camera plan, RunAllocation, and SessionBundle digest mismatch");
         return false;
     }
+    if (Plan.Streams.IsEmpty())
+    {
+        UE_LOG(LogLingTuSimCamera, Display,
+            TEXT("LINGTU_CAMERA_NO_UE_CAPTURES session_id=%s external cameras/no UE captures; presentation only, no camera SHM or readiness evidence"),
+            *Plan.SessionId);
+        return true;
+    }
     if (Allocation.EvidenceDirectory.IsEmpty())
     {
         OutError = TEXT("RunAllocation.log_dir is required for owned readiness evidence");
@@ -2310,6 +2331,10 @@ bool ULingTuSimCameraCaptureSubsystem::PublishCompletedReadback(
     // independently latched TruthSample below is the authoritative simulation
     // clock join; mixing these two clock domains would break SHM stale checks.
     Metadata.TimestampNs = LingTuSim::Sensors::CameraShm::UnixTimeNs();
+    Metadata.bHasSimulationTruth = true;
+    Metadata.TruthSequence = Readback.TruthSample.TruthSequence;
+    Metadata.ResetGeneration = Readback.TruthSample.ResetGeneration;
+    Metadata.SimTimeNs = Readback.TruthSample.SimTimeNs;
     Metadata.Width = State.Plan.Width;
     Metadata.Height = State.Plan.Height;
     Metadata.FrameId = State.Plan.FrameId;

@@ -8,9 +8,9 @@ from typing import Any
 import pytest
 from sim.catalog import CatalogResolver
 
-from lingtu.assembly.compiler import compile_run_plan
-from lingtu.assembly.products import resolve_product_host_runtime
-from lingtu.assembly.simulation import compile_simulation_snapshot
+from lingtu.assembly.compile_plan import compile_run_plan
+from lingtu.assembly.config.product import resolve_product_host_runtime
+from lingtu.assembly.config.simulation import compile_simulation_snapshot
 from lingtu.run_plan import RunPlan
 
 pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
@@ -24,7 +24,7 @@ SIM_ROBOT = "doso/thunder_v4"
 
 
 def test_assembly_does_not_reauthor_catalog_generation_fields() -> None:
-    assembly_source = REPO_ROOT / "src" / "lingtu" / "assembly" / "simulation.py"
+    assembly_source = REPO_ROOT / "src" / "lingtu" / "assembly" / "config" / "simulation.py"
     tree = ast.parse(assembly_source.read_text(encoding="utf-8"))
     string_literals = {
         node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)
@@ -112,6 +112,32 @@ def test_actual_catalog_snapshot_roundtrips_through_run_plan() -> None:
     assert restored == plan
     assert restored.simulation == _catalog_snapshot()
     assert restored.as_dict()["launch"]["simulation"] == plan.simulation
+
+
+def test_explicit_stair_session_is_resolved_with_real_policy_bindings(tmp_path: Path) -> None:
+    from sim.runtime.control.plan import load_control_plan
+
+    source = "sim/sessions/examples/thunderv4_stairs/session.yaml"
+    plan = compile_run_plan("nav", "sim", robot=SIM_ROBOT, env_config={
+        "backend": "mujoco", "localization": "truth", "session": source,
+    })
+    assert plan.simulation["session_source"] == source
+    assert plan.simulation["session"]["world"] == "stair_showcase@1.0.0"
+    saved = tmp_path / "control.json"
+    saved.write_text(json.dumps(plan.simulation["control_plan"]), encoding="utf-8")
+    policy = load_control_plan(saved).controllers[0].policy
+    assert policy.artifact.endswith("policy_cts_moe_v39_61128.onnx")
+    assert policy.manifest.endswith("policy_v39_manifest.json")
+    assert policy.profiles["stairs_up"] == {"artifact": policy.artifact, "manifest": policy.manifest}
+    assert policy.profiles["stairs_down"] == policy.profiles["stairs_up"]
+    assert RunPlan.from_dict(plan.as_dict()) == plan
+
+
+def test_sim_session_cannot_change_real_platform_selection() -> None:
+    with pytest.raises(ValueError, match=r"real Env does not accept env_config\.session"):
+        compile_run_plan("nav", "real", robot=REAL_ROBOT, env_config={
+            "session": "sim/sessions/examples/thunderv4_stairs/session.yaml",
+        })
 
 
 def test_assembly_compiles_complete_catalog_bundle_without_runtime_generation() -> None:

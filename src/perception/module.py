@@ -1,9 +1,11 @@
-"""Blueprint-facing RGB-D scene-perception runtime adapter."""
+"""HostBuilder-facing RGB-D scene-perception runtime adapter."""
 
 from __future__ import annotations
 
 import logging
+import os
 import threading
+import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -14,8 +16,8 @@ from perception.frames import FrameDrop, FrameResult, FrameSynchronizer, Synchro
 from perception.pipeline import PerceptionOutcome, PerceptionPipeline, PerceptionSettings
 from runtime.module import Module
 from runtime.msgs.geometry import PoseStamped
-from runtime.msgs.nav import Odometry
-from runtime.msgs.semantic import SceneGraph
+from runtime.msgs.nav import NavigationState, Odometry
+from runtime.msgs.semantic import SceneGraph, SemanticObservation
 from runtime.msgs.sensor import CameraIntrinsics, Image
 from runtime.registry import register
 from runtime.stream import In, Out
@@ -34,7 +36,9 @@ class PerceptionModule(Module, layer=3):
     camera_info: In[CameraIntrinsics]
     odometry: In[Odometry]
     map_odom_tf: In[dict]
+    navigation_state: In[NavigationState]
 
+    observation: Out[SemanticObservation]
     scene_graph: Out[SceneGraph]
     detections_3d: Out[list]
     robot_pose: Out[PoseStamped]
@@ -50,6 +54,7 @@ class PerceptionModule(Module, layer=3):
         max_rgbd_skew_s: float,
         max_odom_age_s: float,
         max_map_odom_age_s: float,
+        product_session_id: str = "",
         **config: Any,
     ) -> None:
         super().__init__(**config)
@@ -64,11 +69,19 @@ class PerceptionModule(Module, layer=3):
             max_map_odom_age_s=max_map_odom_age_s,
         )
         self._pipeline = PerceptionPipeline(settings, detector)
+        self._product_session_id = str(
+            product_session_id or os.getenv("LINGTU_PRODUCT_SESSION_ID", "")
+        )
 
         self._condition = threading.Condition()
         self._publish_lock = threading.RLock()
-        self._stop_lock = threading.Lock()
+        self._stop_lock = threading.RLock()
         self._pending: SynchronizedFrame | None = None
+        self._latest_accepted_ts: float | None = None
+        self._latest_published_ts: float | None = None
+        self._context_revision = self._synchronizer.context_revision()
+        self._observation_sequence = 0
+        self._spatial_reset_pending = False
         self._worker: threading.Thread | None = None
         self._accepting = False
         self._shutdown = False
@@ -96,6 +109,7 @@ class PerceptionModule(Module, layer=3):
             self.camera_info.subscribe(self._on_camera_info)
             self.odometry.subscribe(self._on_odometry)
             self.map_odom_tf.subscribe(self._on_map_odom)
+            self.navigation_state.subscribe(self._on_navigation_state)
         except Exception:
             self._close_pipeline_once()
             raise
@@ -127,6 +141,7 @@ class PerceptionModule(Module, layer=3):
             if self._stop_started:
                 return
             self._stop_started = True
+            self._publish_unavailable("perception_stopped", source_ts=time.time())
             with self._publish_lock:
                 self._accepting = False
                 super().stop()
@@ -233,36 +248,102 @@ class PerceptionModule(Module, layer=3):
         return info
 
     def _on_color(self, image: Image) -> None:
-        self._accept_results(self._synchronizer.push_color(image))
+        self._accept_sync_results(self._synchronizer.push_color(image))
 
     def _on_depth(self, image: Image) -> None:
-        self._accept_results(self._synchronizer.push_depth(image))
+        self._accept_sync_results(self._synchronizer.push_depth(image))
 
     def _on_camera_info(self, intrinsics: CameraIntrinsics) -> None:
-        self._accept_results(self._synchronizer.push_camera_info(intrinsics))
+        self._accept_sync_results(self._synchronizer.push_camera_info(intrinsics))
 
     def _on_odometry(self, odometry: Odometry) -> None:
-        self._accept_results(self._synchronizer.push_odometry(odometry))
+        self._accept_sync_results(self._synchronizer.push_odometry(odometry))
 
     def _on_map_odom(self, transform: Mapping[str, Any]) -> None:
-        self._accept_results(self._synchronizer.push_map_odom(transform))
+        self._accept_sync_results(self._synchronizer.push_map_odom(transform))
+
+    def _on_navigation_state(self, state: NavigationState) -> None:
+        self._accept_sync_results(self._synchronizer.push_navigation_state(state))
+
+    def _accept_sync_results(self, results: tuple[FrameResult, ...]) -> None:
+        revision = self._synchronizer.context_revision()
+        invalidation_reason = ""
+        with self._condition:
+            if revision != self._context_revision:
+                previous = self._context_revision
+                self._context_revision = revision
+                self._pending = None
+                self._latest_accepted_ts = None
+                self._latest_published_ts = None
+                invalidation_reason = "context_changed"
+                if any(
+                    isinstance(result, FrameDrop)
+                    and result.reason in {"map_changed", "camera_restarted"}
+                    for result in results
+                ):
+                    self._spatial_reset_pending = True
+                if any(
+                    isinstance(result, FrameDrop) and result.reason == "map_changed"
+                    for result in results
+                ):
+                    invalidation_reason = "map_changed"
+                elif any(
+                    isinstance(result, FrameDrop)
+                    and result.reason == "camera_restarted"
+                    for result in results
+                ):
+                    invalidation_reason = "camera_restarted"
+                logger.info(
+                    "Perception context changed from revision %s to %s: %s",
+                    previous,
+                    revision,
+                    invalidation_reason,
+                )
+        if invalidation_reason:
+            timestamp = next(
+                (
+                    result.timestamp
+                    for result in results
+                    if isinstance(result, FrameDrop)
+                    and result.reason in {"map_changed", "camera_restarted"}
+                ),
+                time.time(),
+            )
+            self._publish_unavailable(invalidation_reason, source_ts=timestamp)
+        self._accept_results(results)
 
     def _accept_results(self, results: tuple[FrameResult, ...]) -> None:
         for result in results:
             if isinstance(result, FrameDrop):
                 with self._condition:
                     self._last_outcome_reason = result.reason
+                if _drop_invalidates_current_observation(result.reason):
+                    self._publish_unavailable(result.reason, source_ts=result.timestamp)
                 continue
             self._submit(result)
 
     def _submit(self, frame: SynchronizedFrame) -> None:
+        stale_reason = ""
         with self._condition:
             if not self._accepting or self._shutdown:
                 return
-            if self._pending is not None:
-                self._coalesced_frames += 1
-            self._pending = frame
-            self._condition.notify()
+            if frame.context_revision != self._context_revision:
+                stale_reason = "context_changed"
+            elif (
+                self._latest_accepted_ts is not None
+                and frame.timestamp <= self._latest_accepted_ts
+            ):
+                stale_reason = "stale_frame"
+            if stale_reason:
+                self._last_outcome_reason = stale_reason
+            else:
+                self._latest_accepted_ts = float(frame.timestamp)
+                if self._pending is not None:
+                    self._coalesced_frames += 1
+                self._pending = frame
+                self._condition.notify()
+        if stale_reason:
+            self._record_failure(stale_reason)
 
     def _worker_main(self) -> None:
         try:
@@ -276,15 +357,34 @@ class PerceptionModule(Module, layer=3):
                     self._pending = None
                 assert frame is not None
 
+                with self._condition:
+                    reset_spatial_context = self._spatial_reset_pending
+                    self._spatial_reset_pending = False
+                if reset_spatial_context:
+                    self._pipeline.reset_spatial_context()
+
                 try:
                     outcome = self._pipeline.process(frame)
                 except Exception as exc:
                     logger.exception("Perception frame processing failed")
                     self._record_outcome("failed", type(exc).__name__)
+                    if not self._frame_stale_reason(frame):
+                        self._publish_unavailable(
+                            type(exc).__name__,
+                            source_ts=frame.timestamp,
+                        )
                     continue
 
                 self._record_outcome(outcome.status, outcome.reason)
+                stale_reason = self._frame_stale_reason(frame)
+                if stale_reason:
+                    self._record_failure(stale_reason)
+                    continue
                 if outcome.status not in _PUBLISHABLE_OUTCOMES:
+                    self._publish_unavailable(
+                        outcome.reason or outcome.status,
+                        source_ts=frame.timestamp,
+                    )
                     continue
                 payload = _complete_payload(outcome)
                 if payload is None:
@@ -293,27 +393,53 @@ class PerceptionModule(Module, layer=3):
 
                 robot_pose, runtime_detections, scene_graph = payload
                 detections = list(runtime_detections)
+                stale_reason = self._frame_stale_reason(frame)
+                if stale_reason:
+                    self._record_failure(stale_reason)
+                    continue
                 with self._condition:
                     self._last_valid_frame_ts = float(frame.timestamp)
                     self._valid_frames += 1
                     self._latest_detections = len(detections)
-                self._publish_outputs(robot_pose, detections, scene_graph, frame.color)
+                self._publish_outputs(
+                    frame,
+                    outcome,
+                    robot_pose,
+                    detections,
+                    scene_graph,
+                )
         finally:
             self._close_pipeline_once()
 
     def _publish_outputs(
         self,
+        frame: SynchronizedFrame,
+        outcome: PerceptionOutcome,
         robot_pose: PoseStamped,
         detections: list[Any],
         scene_graph: SceneGraph,
-        observation_image: Image,
     ) -> None:
         with self._publish_lock:
             if not self._can_publish():
                 return
-            self.observation_image.publish(observation_image)
+            stale_reason = self._frame_stale_reason(frame)
+            if stale_reason:
+                self._record_failure(stale_reason)
+                return
+            observation = self._new_observation(
+                status=outcome.status,
+                reason=outcome.reason,
+                frame=frame,
+                robot_pose=robot_pose,
+                detections=tuple(detections),
+                scene_graph=scene_graph,
+            )
+            with self._condition:
+                self._latest_published_ts = float(frame.timestamp)
+            self.observation.publish(observation)
             if not self._can_publish():
                 return
+            self.observation_image.publish(frame.color)
             self.robot_pose.publish(robot_pose)
             if not self._can_publish():
                 return
@@ -321,6 +447,68 @@ class PerceptionModule(Module, layer=3):
             if not self._can_publish():
                 return
             self.scene_graph.publish(scene_graph)
+
+    def _frame_stale_reason(self, frame: SynchronizedFrame) -> str:
+        if frame.context_revision != self._synchronizer.context_revision():
+            return "context_changed"
+        with self._condition:
+            if frame.context_revision != self._context_revision:
+                return "context_changed"
+            if (
+                self._latest_published_ts is not None
+                and frame.timestamp <= self._latest_published_ts
+            ):
+                return "stale_frame"
+        return ""
+
+    def _publish_unavailable(self, reason: str, *, source_ts: float) -> None:
+        with self._publish_lock:
+            if not self._can_publish():
+                return
+            self.observation.publish(
+                self._new_observation(
+                    status="unavailable",
+                    reason=reason,
+                    source_ts=source_ts,
+                )
+            )
+
+    def _new_observation(
+        self,
+        *,
+        status: str,
+        reason: str,
+        source_ts: float = 0.0,
+        frame: SynchronizedFrame | None = None,
+        robot_pose: PoseStamped | None = None,
+        detections: tuple[Any, ...] = (),
+        scene_graph: SceneGraph | None = None,
+    ) -> SemanticObservation:
+        self._observation_sequence += 1
+        source_generation, map_id, content_epoch = self._synchronizer.context_token()
+        if frame is not None:
+            source_ts = frame.timestamp
+            source_generation, map_id, content_epoch = frame.context_token
+        return SemanticObservation(
+            product_session_id=self._product_session_id,
+            sequence=self._observation_sequence,
+            source_ts=float(source_ts),
+            completed_ts=time.time(),
+            source_generation=source_generation,
+            map_id=map_id,
+            content_epoch=content_epoch,
+            status=status,
+            reason=reason,
+            image=frame.color if frame is not None else None,
+            depth=frame.depth if frame is not None else None,
+            camera_info=frame.intrinsics if frame is not None else None,
+            robot_pose=robot_pose,
+            map_from_camera=frame.map_from_camera if frame is not None else None,
+            detections=detections,
+            scene_graph=scene_graph,
+            odometry_ts=frame.odometry_ts if frame is not None else 0.0,
+            map_odom_ts=frame.map_odom_ts if frame is not None else 0.0,
+        )
 
     def _can_publish(self) -> bool:
         return self._accepting and self.running
@@ -357,6 +545,20 @@ def _complete_payload(
     if robot_pose is None or detections is None or scene_graph is None:
         return None
     return robot_pose, detections, scene_graph
+
+
+def _drop_invalidates_current_observation(reason: str) -> bool:
+    if reason in {
+        "camera_restarted",
+        "map_changed",
+        "stale_camera_generation",
+        "stale_camera_sample",
+        "stale_context_sample",
+        "stale_frame",
+        "stale_navigation_state",
+    }:
+        return False
+    return not reason.endswith(("_expired", "_buffer_overflow"))
 
 
 __all__ = ["PerceptionModule"]

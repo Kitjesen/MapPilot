@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from diagnostics.field.teleop_avoid_preflight import evaluate_teleop_avoid_preflight
-from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan
 from lingtu.run_plan import CURRENT_RUN_SCHEMA, RUN_PLAN_SCHEMA, RunPlan
 
 ROOT = Path(__file__).resolve().parents[2]

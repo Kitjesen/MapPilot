@@ -180,26 +180,64 @@ driver watchdog remain the final command owners.
 
 ## Camera Transport
 
-The dashboard prefers go2rtc WHEP for low-latency H.264 video and falls back
-to Gateway JPEG-over-WebSocket at `/ws/camera`. The browser probes
-`GET /api/v1/webrtc/go2rtc/status` before posting SDP to
-`POST /api/v1/webrtc/whep`. Bootstrap metadata describes WHEP support; the
-status endpoint reports whether the optional sidecar is currently available.
+Scene's default-open camera preview and Console `CameraFeed` share the WHEP
+lifecycle. Both show JPEG from `/ws/camera` until a WebRTC frame is decoded,
+then display H.264. Opening or closing a preview manages browser subscriptions;
+it does not start a Product, a camera process or recording.
 
-Install and check the sidecar with:
+The `map/camera` and `nav/camera` Products explicitly own `lt-video.service`.
+Their RunPlan/session provides `LINGTU_WEBRTC_URL` and `LINGTU_VIDEO_STATUS_FILE`.
+The native program reads existing color SHM and owns encoding/media; Gateway
+only proxies SDP, status and session deletion. Video startup/readiness may
+degrade without rolling back healthy core processes. Camera acquisition and
+Follow observation requirements are unchanged.
 
-```bash
-sudo bash scripts/deploy/thunder/install_go2rtc.sh
-sudo systemctl restart go2rtc
-curl -s http://localhost:5050/api/v1/webrtc/go2rtc/status
-```
+`GET /api/v1/webrtc/status` separates `whep_available` from `source_ready`.
+Managed runs require a fresh native status snapshot as well as a reachable
+WHEP endpoint before reporting `available=true`. A foreground reference without
+a status-file setting returns `source_ready=null`; endpoint availability alone
+does not establish fresh camera evidence. Actual browser decoding remains a
+separate client fact. No viewer is required for Product activation.
 
-The template is `config/go2rtc.yaml`; it keeps the go2rtc API on loopback so
-browsers use the Gateway proxy. Snapshot clients should continue using
-`GET /api/v1/camera/snapshot`, which is independent of dashboard streaming.
-If WHEP fails, inspect the status endpoint and `go2rtc` service log; for an
-established peer with no video, verify the camera device and inspect
-`chrome://webrtc-internals/`.
+The real JPEG path is native camera → SHM frame ring → Host camera Module →
+`CameraJpegRelayModule` → Gateway latest-frame cache → `/ws/camera` → `useCamera`.
+RGB-D pixels use SHM at the native/Host boundary; the module named
+`DdsCameraModule` does not mean raw browser video is sent over DDS or WebRTC.
+Depth and camera intrinsics stay in the perception path, not in the browser JPEG.
+
+The relay defaults to JPEG quality 60 and a 10 FPS encoding limit, without
+resizing the source frame. It encodes for connected media clients and keeps
+only the latest raw frame. Gateway checks its latest JPEG every 100 ms, skips
+an unchanged sequence and limits each socket send to two seconds. The browser
+decodes before displaying, drops arriving frames while decoding, reconnects
+after three seconds, and clears video when no fresh decoded frame has arrived
+for three seconds. These are configured limits, not measured field performance;
+TCP buffering can still add delay on a constrained connection.
+
+| Endpoint | Payload / role |
+| --- | --- |
+| `/ws/camera` | Binary JPEG frames for Scene and the Console fallback |
+| `GET /api/v1/camera/status` | Source availability, color/depth rates and stale age, JPEG cache metadata |
+| `GET /api/v1/camera/snapshot` | One JPEG image |
+| `GET /api/v1/webrtc/status` | Selected backend, WHEP/source availability, native snapshot, ICE and rotation |
+| `GET /api/v1/webrtc/go2rtc/status` | Reference go2rtc availability |
+| `POST /api/v1/webrtc/whep?src=cam` | SDP offer/answer signalling, not the video bytes |
+| `DELETE /api/v1/webrtc/sessions/{resource_path}` | Release the returned media session |
+
+Two current boundaries remain: snapshot prioritizes an existing JPEG cache
+before checking source freshness, so callers needing current evidence must
+also inspect camera status; and bare WebSocket JPEG messages do not carry the
+capture timestamp, so browser receipt age does not measure end-to-end latency.
+
+For managed video, configure the target's exact encoder and prebuilt runtime
+using `config/video.env.example`, then use the existing ProductControl entry.
+Inspect media status and `lt-video.service` logs if unavailable. A stale source
+withdraws old media and waits for fresh frames; fatal errors remain visible.
+The native process does not restart the camera, navigation or Host.
+
+`config/go2rtc.yaml` remains an Annex-B reference consumer of the same color
+SHM branch, not another physical camera owner. It is not needed by the native
+WHEP chain. Snapshot clients continue to use `GET /api/v1/camera/snapshot`.
 
 ## Boundary Rule
 

@@ -58,8 +58,8 @@ void DecisionReport() {
   const auto r = cleanStaticMap(f.options);
   Require(r.success && !r.applied && !r.dry_run, "preview should write comparison outputs only");
   Require(r.source_points == 6 && r.kept_points == 5 && r.removed_points == 1, "wrong point split");
-  Require(r.kept_ground_points == 1 && r.kept_multi_frame_points == 1 &&
-      r.kept_hit_support_points == 1 && r.kept_without_evidence_points == 1 && r.kept_unconfirmed_points == 1,
+  Require(r.kept_ground_points == 0 && r.kept_multi_frame_points == 1 &&
+      r.kept_hit_support_points == 1 && r.kept_without_evidence_points == 1 && r.kept_unconfirmed_points == 2,
       "decision counts must partition the kept points");
   Require(r.patch_count == 5 && r.unmatched_patch_count == 1, "missing trajectory coverage report");
   Require(Read(f.root / "map.pcd") == original, "preview changed source");
@@ -187,6 +187,44 @@ void EndpointConfirmationRadius() {
   evidence.observe({{2, 0, 0}}, {});
   Require(!evidence.contradicted(0), "confirmed endpoint did not reset its source point");
   Require(evidence.contradicted(1), "endpoint confirmation leaked beyond five centimeters");
+
+  // A confirmed endpoint may be across the coarse evidence voxel boundary.
+  Fixture f;
+  writePcd(f.root / "map.pcd", {{1.999F, .1F, .1F}});
+  writePcd(f.root / "patches/a.pcd", {{2.001F, .1F, .1F}});
+  writePcd(f.root / "patches/b.pcd", {});
+  for (const auto* name : {"c.pcd", "d.pcd", "e.pcd"})
+    writePcd(f.root / "patches" / name, {{3.998F, .2F, .2F}});
+  f.options.dry_run = true;
+  const auto result = cleanStaticMap(f.options);
+  Require(result.success && result.free_space_candidate_points == 1,
+      "boundary fixture did not establish a point-level contradiction");
+  Require(result.removed_points == 1 && result.kept_without_evidence_points == 0,
+      "coarse voxel lookup discarded confirmed cross-voxel free evidence");
+
+  // A coarse hit in the source voxel is not a point-level confirmation.
+  // Even three later free observations must retain this never-seen point.
+  writePcd(f.root / "patches/a.pcd", {{1.90F, .1F, .1F}});
+  const auto unseen = cleanStaticMap(f.options);
+  Require(unseen.success && unseen.free_space_candidate_points == 0 &&
+      unseen.removed_points == 0 && unseen.kept_unconfirmed_points == 1,
+      "free rays deleted an unconfirmed point with coarse voxel statistics");
+
+  // Point-level contradictions still pass through stable surface protection
+  // when the exact source voxel has no hit statistics.
+  const PointXYZI center{1.999F, .1F, .1F};
+  std::vector<PointXYZI> supported{center};
+  for (int u = -1; u <= 1; ++u)
+    for (const int v : {-1, 1})
+      supported.push_back({center.x + .3F*u, center.y + .3F*v, center.z});
+  writePcd(f.root / "map.pcd", supported);
+  supported.front().x = 2.001F;
+  writePcd(f.root / "patches/a.pcd", supported);
+  writePcd(f.root / "patches/b.pcd", supported);
+  const auto surface = cleanStaticMap(f.options);
+  Require(surface.success && surface.free_space_candidate_points == 1 &&
+      surface.removed_points == 0 && surface.kept_supported_surface_points == 1,
+      "cross-voxel contradiction bypassed stable surface protection");
 }
 
 void LocalGroundEvidence() {
@@ -199,10 +237,10 @@ void LocalGroundEvidence() {
       transformPoint(local_ground, pose), transformPoint(local_body, pose)};
   VisibilityEvidence evidence(map, options);
   evidence.observe({local_ground, local_body}, pose);
-  Require(evidence.groundProtected(0),
-      "tilted ground point was not classified from its own scan-local height");
-  Require(!evidence.groundProtected(1),
-      "map-frame low point was incorrectly classified as scan-local ground");
+  Require(!evidence.onSupportedSurface(0),
+      "one tilted low point was accepted as a supported surface");
+  Require(!evidence.onSupportedSurface(1),
+      "isolated map-frame low point was accepted as a supported surface");
 }
 
 void CalibratedOrigin() {
@@ -225,6 +263,7 @@ void CalibratedOrigin() {
 
 void GroundProtection() {
   Fixture f;
+  f.options.ground_z_threshold = 100.F;
   const PointXYZI ground{1, 0, -.6F};
   writePcd(f.root / "map.pcd", {ground});
   writePcd(f.root / "patches/a.pcd", {ground});
@@ -233,8 +272,8 @@ void GroundProtection() {
     writePcd(f.root / "patches" / name, {{2, 0, -1.2F}});
   f.options.dry_run = true;
   const auto r = cleanStaticMap(f.options);
-  Require(r.success && r.free_space_candidate_points == 1 && r.kept_ground_points == 1 &&
-      r.removed_points == 0, "low ground safeguard was overridden by free rays");
+  Require(r.success && r.free_space_candidate_points == 1 && r.kept_ground_points == 0 &&
+      r.removed_points == 1, "isolated low ghost retained height-only ground immunity");
 }
 
 void MixedVoxelGroundProtection() {
@@ -250,9 +289,9 @@ void MixedVoxelGroundProtection() {
   const auto r = cleanStaticMap(f.options);
   Require(r.success && r.source_points == 2 && r.free_space_candidate_points == 2,
       "mixed-voxel fixture did not establish two contradicted points");
-  Require(r.kept_points == 1 && r.removed_points == 1 && r.kept_ground_points == 1,
-      "ground evidence protected an entire voxel instead of one confirmed point");
-  Require(r.score_candidate_points == 1 && r.dynamic_candidate_voxels == 1,
+  Require(r.kept_points == 0 && r.removed_points == 2 && r.kept_ground_points == 0,
+      "two isolated low ghosts retained height-only ground immunity");
+  Require(r.score_candidate_points == 2 && r.dynamic_candidate_voxels == 1,
       "instance and voxel reports disagree with point-level ground decisions");
 }
 
@@ -284,7 +323,10 @@ void SurfaceProtection() {
     writePcd(f.root / "map.pcd", initial);
     writePcd(f.root / "patches/a.pcd", initial);
     writePcd(f.root / "patches/b.pcd", initial);
-    auto later = surface;
+    // Keep the neighboring surface evidence from the first two frames. The
+    // later ray is deliberately isolated so same-frame occlusion does not
+    // mask the plane-preservation rule under test.
+    auto later = orientation == 3 ? surface : std::vector<PointXYZI>{};
     later.push_back({4, 0, -.60F});
     for (const auto* name : {"c.pcd", "d.pcd", "e.pcd"})
       writePcd(f.root / "patches" / name, later);
@@ -308,6 +350,45 @@ void MissingOrigin() {
   f.options.dry_run = true;
   Require(cleanStaticMap(f.options).success, "explicit origin cannot process older maps");
 }
+
+void ExpiredSurfaceProtection() {
+  Fixture f;
+  const PointXYZI center{2, 0, -.6F};
+  std::vector<PointXYZI> map{center};
+  for (int x = -3; x <= 3; x += 2)
+    for (int y : {-1, 1}) map.push_back({2 + .1F * x, .35F * y, -.6F});
+  std::vector<PointXYZI> floor;
+  for (int x = -60; x <= 60; ++x)
+    for (int y = -60; y <= 60; ++y) {
+      const float px = .05F * x, py = .05F * y;
+      const float radius2 = px * px + py * py;
+      if (radius2 >= .25F && radius2 <= 16.F) floor.push_back({px, py, -.6F});
+    }
+  writePcd(f.root / "map.pcd", map);
+  writePcd(f.root / "patches/a.pcd", floor);
+  writePcd(f.root / "patches/b.pcd", floor);
+  // First contradict the center while its surrounding plane is still supported.
+  for (const auto* name : {"c.pcd", "d.pcd", "e.pcd"})
+    writePcd(f.root / "patches" / name, {{4, 0, -1.2F}});
+  // Then contradict the neighbors with rays that never touch the center.
+  // The center must lose protection when its supporting neighbors disappear.
+  std::ofstream poses(f.root / "poses.txt");
+  for (char name = 'a'; name <= 'e'; ++name)
+    poses << name << ".pcd 0 0 0 1 0 0 0\n";
+  for (std::size_t i = 1; i < map.size(); ++i)
+    for (int frame = 0; frame < 3; ++frame) {
+      const auto name = "support_" + std::to_string(i) + "_" + std::to_string(frame) + ".pcd";
+      writePcd(f.root / "patches" / name, {{0, 0, -1.2F}});
+      poses << name << ' ' << map[i].x << ' ' << map[i].y << " 0 1 0 0 0\n";
+    }
+  poses.close();
+  f.options.dry_run = true;
+  const auto result = cleanStaticMap(f.options);
+  Require(result.success && result.free_space_candidate_points == map.size(),
+      "expired-surface fixture did not contradict all nine points");
+  Require(result.kept_points == 0 && result.removed_points == map.size(),
+      "old ground label kept a contradicted point after its plane support disappeared");
+}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -329,6 +410,7 @@ int main(int argc, char** argv) {
     else if (name == "pose_order") PoseOrder();
     else if (name == "missing_origin") MissingOrigin();
     else if (name == "surface") SurfaceProtection();
+    else if (name == "expired_surface") ExpiredSurfaceProtection();
     else throw std::runtime_error("unknown test case");
     return 0;
   } catch (const std::exception& error) {

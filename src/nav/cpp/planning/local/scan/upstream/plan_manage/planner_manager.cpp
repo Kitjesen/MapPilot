@@ -8,10 +8,37 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <utility>
 
 namespace nav_kernel::local::scan::upstream {
 namespace {
+
+Eigen::VectorXd referenceDurations(const std::vector<Eigen::Vector3d> &points,
+    const Eigen::Vector3d &startVelocity, const Eigen::Vector3d &endVelocity,
+    double maxVelocity, double maxAcceleration) {
+  const std::size_t count=points.size();
+  std::vector<double> distance(count-1),speed(count,maxVelocity);
+  for (std::size_t i=0;i+1<count;++i) distance[i]=(points[i+1]-points[i]).norm();
+  speed.front()=std::min(maxVelocity,startVelocity.norm());
+  speed.back()=std::min(maxVelocity,endVelocity.norm());
+  for (std::size_t i=1;i<count;++i)
+    speed[i]=std::min(speed[i],std::sqrt(speed[i-1]*speed[i-1]+2*maxAcceleration*distance[i-1]));
+  for (std::size_t i=count-1;i>0;--i)
+    speed[i-1]=std::min(speed[i-1],std::sqrt(speed[i]*speed[i]+2*maxAcceleration*distance[i-1]));
+  Eigen::VectorXd times(count-1);
+  for (std::size_t i=0;i+1<count;++i) {
+    const double peak=std::min(maxVelocity,std::sqrt(maxAcceleration*distance[i]+
+        .5*(speed[i]*speed[i]+speed[i+1]*speed[i+1])));
+    const double ramps=(2*peak*peak-speed[i]*speed[i]-speed[i+1]*speed[i+1])/(2*maxAcceleration);
+    times(i)=(2*peak-speed[i]-speed[i+1])/maxAcceleration+
+        std::max(0.0,distance[i]-ramps)/maxVelocity;
+    const double nominal=distance[i]/maxVelocity*(i==0 ? 2.0 : 1.0)*
+        (i+2==count ? 2.0 : 1.0);
+    times(i)=std::max(times(i),nominal);
+  }
+  return times;
+}
 
 void setMotionIntentBoundary(Eigen::MatrixXd &controls, const double interval,
                              const Eigen::Vector3d &start,
@@ -40,123 +67,18 @@ double motionIntentTimeRatio(const UniformBspline &position,
   // bounded by the inner derivative controls. Include the actual endpoints;
   // the extrapolated first/last controls can exceed the curve's speed limit.
   const Eigen::MatrixXd velocity_controls = velocity.getControlPoint();
-  const double velocity_bound = std::max({
-      velocity.evaluateDeBoorT(0.0).norm(),
-      velocity.evaluateDeBoorT(position.getTimeSum()).norm(),
-      velocity_controls.middleCols(1, velocity_controls.cols() - 2)
-          .colwise().norm().maxCoeff()});
+  double velocity_ratio = std::max(
+      params.speedRatio(velocity.evaluateDeBoorT(0.0)),
+      params.speedRatio(velocity.evaluateDeBoorT(position.getTimeSum())));
+  for (Eigen::Index i = 1; i + 1 < velocity_controls.cols(); ++i)
+    velocity_ratio = std::max(velocity_ratio, params.speedRatio(velocity_controls.col(i)));
   const double acceleration_bound =
       acceleration.getControlPoint().colwise().norm().maxCoeff();
-  return std::max({1.0, velocity_bound / params.max_vel_,
+  return std::max({1.0, velocity_ratio,
                    std::sqrt(acceleration_bound / params.max_acc_)});
 }
 
-bool retimeZeroAccelerationMotionIntent(
-    UniformBspline &position, const PlanParameters &params,
-    const Eigen::Vector3d &start, const Eigen::Vector3d &target,
-    const std::vector<Eigen::Vector3d> &derivatives, double &interval) {
-  constexpr double kRatioEpsilon = 1e-9;
-  if (motionIntentTimeRatio(position, params) <= 1.0 + kRatioEpsilon)
-    return true;
-
-  Eigen::MatrixXd base = position.getControlPoint();
-  Eigen::MatrixXd slope = Eigen::MatrixXd::Zero(base.rows(), base.cols());
-  const Eigen::Index last = base.cols() - 1;
-
-  base.col(0) = start;
-  base.col(1) = start;
-  base.col(2) = start;
-  slope.col(0) = -derivatives[0];
-  slope.col(2) = derivatives[0];
-  base.col(last - 2) = target;
-  base.col(last - 1) = target;
-  base.col(last) = target;
-  slope.col(last - 2) = -derivatives[1];
-  slope.col(last) = derivatives[1];
-
-  // With zero endpoint acceleration every control is B + h*L. Therefore the
-  // derivative controls are dB/h + dL and d2B/h^2 + d2L/h. These triangle
-  // bounds for acceleration and exact velocity roots produce a duration that
-  // is strictly feasible for every control.
-  double feasible_high = interval;
-  for (Eigen::Index index = 0; index < base.cols() - 1; ++index) {
-    const Eigen::Vector3d intercept =
-        base.col(index + 1) - base.col(index);
-    const Eigen::Vector3d asymptotic =
-        slope.col(index + 1) - slope.col(index);
-    const double intercept_squared = intercept.squaredNorm();
-    const double asymptotic_norm = asymptotic.norm();
-    if (intercept_squared == 0.0) {
-      if (asymptotic_norm > params.max_vel_) return false;
-      continue;
-    }
-    if (asymptotic_norm > params.max_vel_) return false;
-    const double margin_squared =
-        (params.max_vel_ - asymptotic_norm) *
-        (params.max_vel_ + asymptotic_norm);
-    const double dot = intercept.dot(asymptotic);
-    double required_interval = 0.0;
-    if (margin_squared > 0.0) {
-      const double root =
-          std::sqrt(dot * dot + margin_squared * intercept_squared);
-      required_interval = dot < 0.0
-                              ? intercept_squared / (root - dot)
-                              : (dot + root) / margin_squared;
-    } else if (dot < 0.0) {
-      required_interval = intercept_squared / (-2.0 * dot);
-    } else {
-      return false;
-    }
-    feasible_high = std::max(feasible_high, required_interval);
-  }
-  for (Eigen::Index index = 0; index < base.cols() - 2; ++index) {
-    const double intercept =
-        (base.col(index + 2) - 2.0 * base.col(index + 1) +
-         base.col(index))
-            .norm();
-    const double linear =
-        (slope.col(index + 2) - 2.0 * slope.col(index + 1) +
-         slope.col(index))
-            .norm();
-    feasible_high = std::max(
-        feasible_high,
-        (linear + std::sqrt(linear * linear +
-                            4.0 * params.max_acc_ * intercept)) /
-            (2.0 * params.max_acc_));
-  }
-  if (!std::isfinite(feasible_high)) return false;
-
-  const auto splineAt = [&](const double candidate_interval) {
-    return UniformBspline(base + candidate_interval * slope, 3,
-                          candidate_interval);
-  };
-  UniformBspline feasible = splineAt(feasible_high);
-  if (motionIntentTimeRatio(feasible, params) > 1.0 + kRatioEpsilon)
-    return false;
-
-  double infeasible_low = interval;
-  const double target_width = interval * 1e-6;
-  const double initial_width = feasible_high - infeasible_low;
-  const int steps = initial_width > target_width
-                        ? static_cast<int>(
-                              std::ceil(std::log2(initial_width / target_width)))
-                        : 0;
-  for (int step = 0; step < steps; ++step) {
-    const double middle = 0.5 * (infeasible_low + feasible_high);
-    UniformBspline candidate = splineAt(middle);
-    if (motionIntentTimeRatio(candidate, params) <= 1.0 + kRatioEpsilon) {
-      feasible_high = middle;
-      feasible = std::move(candidate);
-    } else {
-      infeasible_low = middle;
-    }
-  }
-  interval = feasible_high;
-  position = std::move(feasible);
-  return true;
-}
-
-bool motionIntentSeed(const PlanParameters &params,
+bool boundedVelocitySeed(const PlanParameters &params,
                       const Eigen::Vector3d &start,
                       const Eigen::Vector3d &start_velocity,
                       const Eigen::Vector3d &start_acceleration,
@@ -169,28 +91,52 @@ bool motionIntentSeed(const PlanParameters &params,
   // polynomial initializer, including all measured boundary derivatives.
   const double speed = params.max_vel_;
   if (start_acceleration.squaredNorm() != 0.0 ||
-      start_velocity.norm() > speed || target_velocity.norm() > speed)
+      start_velocity.norm() > speed + 1e-9 ||
+      target_velocity.norm() > speed + 1e-9)
     return false;
 
-  const auto ramp_time = [&](const Eigen::Vector3d &velocity) {
-    // |v_cruise - velocity| <= speed + |velocity|, including lateral motion.
-    const double delta = speed + velocity.norm();
+  const auto ramp_time = [&](const Eigen::Vector3d &velocity,
+                             const Eigen::Vector3d &cruise_velocity) {
+    const double delta = (cruise_velocity - velocity).norm();
+    if (delta <= 1e-9)
+      return 0.0;
     return std::max(1.5 * delta / params.max_acc_,
                     std::sqrt(6.0 * delta / params.max_jerk_));
   };
-  const double accelerate_time = ramp_time(start_velocity);
-  const double brake_time = ramp_time(target_velocity);
-  const Eigen::Vector3d cruise_displacement =
-      target - start - 0.5 * accelerate_time * start_velocity -
-      0.5 * brake_time * target_velocity;
+  Eigen::Vector3d cruise_velocity = (target - start).normalized() * speed;
+  double accelerate_time = 0.0;
+  double brake_time = 0.0;
+  Eigen::Vector3d cruise_displacement;
+  bool converged = false;
+  // Ramp displacement is T*(v_boundary + v_cruise)/2. Solve its
+  // direction together with the actual vector velocity changes; equal
+  // boundary and cruise velocities require no acceleration ramp.
+  for (int iteration = 0; iteration < 64; ++iteration) {
+    accelerate_time = ramp_time(start_velocity, cruise_velocity);
+    brake_time = ramp_time(target_velocity, cruise_velocity);
+    cruise_displacement =
+        target - start - 0.5 * accelerate_time * start_velocity -
+        0.5 * brake_time * target_velocity;
+    if (cruise_displacement.norm() <=
+        0.5 * speed * (accelerate_time + brake_time))
+      return false;
+    const Eigen::Vector3d next_velocity =
+        cruise_displacement.normalized() * speed;
+    if ((next_velocity - cruise_velocity).norm() <= 1e-9) {
+      cruise_velocity = next_velocity;
+      converged = true;
+      break;
+    }
+    cruise_velocity = (cruise_velocity + next_velocity).normalized() * speed;
+  }
+  if (!converged)
+    return false;
   const double cruise_equivalent_time = cruise_displacement.norm() / speed;
   const double cruise_time =
       cruise_equivalent_time - 0.5 * (accelerate_time + brake_time);
   if (cruise_time <= 0.0)
     return false;
 
-  const Eigen::Vector3d cruise_velocity =
-      cruise_displacement / cruise_equivalent_time;
   const Eigen::Vector3d cruise_start =
       start + 0.5 * accelerate_time * (start_velocity + cruise_velocity);
   const Eigen::Vector3d cruise_end =
@@ -199,6 +145,8 @@ bool motionIntentSeed(const PlanParameters &params,
                           const Eigen::Vector3d &v0,
                           const Eigen::Vector3d &p1,
                           const Eigen::Vector3d &v1, const double time) {
+    if (time == 0.0)
+      return;
     auto segment = PolynomialTraj::one_segment_traj_gen(
         p0, v0, Eigen::Vector3d::Zero(), p1, v1,
         Eigen::Vector3d::Zero(), time);
@@ -211,8 +159,12 @@ bool motionIntentSeed(const PlanParameters &params,
   append(cruise_end, cruise_velocity, target, target_velocity, brake_time);
   trajectory.init();
   duration = accelerate_time + cruise_time + brake_time;
-  // A cubic spline needs samples within each ramp, even at a low speed cap.
-  interval = std::min(interval, std::min(accelerate_time, brake_time) / 3.0);
+  // Resolve a full acceleration ramp even at a low speed cap. A nearly
+  // unchanged boundary velocity must not force vanishing sample intervals.
+  const double full_ramp_time =
+      std::max(1.5 * speed / params.max_acc_,
+               std::sqrt(6.0 * speed / params.max_jerk_));
+  interval = std::min(interval, full_ramp_time / 3.0);
   return true;
 }
 
@@ -244,6 +196,97 @@ void applyLinearZReference(std::vector<Eigen::Vector3d> &points,
 
   points.front()(2) = start_z;
   points.back()(2) = target_z;
+}
+
+bool applyReferenceSeed(std::vector<Eigen::Vector3d> &points, double &interval,
+                        GlobalTrajData &reference,
+                        const std::pair<double,double> &window,
+                        const Eigen::Vector3d &start, const Eigen::Vector3d &target,
+                        const double spacing,
+                        const std::vector<Eigen::Vector3d> *planarReference,
+                        double &referenceProgress) {
+  if (window.second <= window.first || points.size() < 2) return false;
+  const int samples=std::max(6,static_cast<int>(std::ceil(
+      (window.second-window.first)/.05)));
+  std::vector<Eigen::Vector3d> guide;
+  std::vector<double> guide_length;
+  guide.reserve(samples+1);
+  guide_length.reserve(samples+1);
+  if(planarReference && planarReference->size()>1) {
+    std::vector<double> progress(planarReference->size(),0.0);
+    for(std::size_t i=1;i<progress.size();++i)
+      progress[i]=progress[i-1]+((*planarReference)[i]-(*planarReference)[i-1]).norm();
+    const auto project=[&](const Eigen::Vector3d& point,double minimum) {
+      std::pair<double,Eigen::Vector3d> result{minimum,planarReference->back()};
+      double best=std::numeric_limits<double>::infinity();
+      for(std::size_t i=1;i<progress.size();++i) {
+        const double span=progress[i]-progress[i-1];
+        if(span<=1e-12 || progress[i]<minimum) continue;
+        const Eigen::Vector3d direction=(*planarReference)[i]-(*planarReference)[i-1];
+        const double lower=std::clamp((minimum-progress[i-1])/span,0.0,1.0);
+        const double fraction=std::clamp((point-(*planarReference)[i-1]).dot(direction)/(span*span),lower,1.0);
+        const Eigen::Vector3d candidate=(*planarReference)[i-1]+fraction*direction;
+        const double distance=(candidate-point).squaredNorm();
+        if(distance<best-1e-12) {best=distance;result={progress[i-1]+fraction*span,candidate};}
+      }
+      return result;
+    };
+    const auto first=project(start,referenceProgress),last=project(target,first.first);
+    if(last.first-first.first<=1e-9) return false;
+    referenceProgress=first.first;
+    guide.push_back(first.second);
+    for(std::size_t i=1;i<progress.size();++i)
+      if(progress[i]>first.first+1e-9 && progress[i]<last.first-1e-9)
+        guide.push_back((*planarReference)[i]);
+    guide.push_back(last.second);
+  } else {
+    for(int sample=0;sample<=samples;++sample)
+      guide.push_back(reference.getPosition(window.first+
+          (window.second-window.first)*sample/samples));
+  }
+  guide_length.push_back(0.0);
+  for(std::size_t i=1;i<guide.size();++i)
+    guide_length.push_back(guide_length.back()+(guide[i]-guide[i-1]).norm());
+  const double length=guide_length.back();
+  if(length<=1e-9) return false;
+  bool curved_reference=false;
+  for(std::size_t i=1;i+1<guide.size();++i) {
+    const double ratio=guide_length[i]/length;
+    const Eigen::Vector3d deviation=guide[i]-
+        ((1-ratio)*guide.front()+ratio*guide.back());
+    curved_reference=curved_reference || std::abs(deviation(2))>1e-5 ||
+        (planarReference && deviation.head<2>().norm()>1e-5);
+  }
+  if(!curved_reference) return false;
+
+  // Preserve the reference's 3-D progress, including distinct surfaces at the
+  // same XY. The old seed contributes its acceleration/cruise timing only.
+  std::vector<double> seed_length(points.size(),0.0);
+  for(std::size_t i=1;i<points.size();++i)
+    seed_length[i]=seed_length[i-1]+(points[i]-points[i-1]).norm();
+  const int old_intervals=static_cast<int>(points.size())-1;
+  const int intervals=std::max(old_intervals,static_cast<int>(std::ceil(length/spacing)));
+  std::vector<Eigen::Vector3d> result;
+  result.reserve(intervals+1);
+  std::size_t segment=0;
+  for(int sample=0;sample<=intervals;++sample) {
+    const double phase=static_cast<double>(sample)*old_intervals/intervals;
+    const int seed=std::min(old_intervals-1,static_cast<int>(phase));
+    const double fraction=phase-seed;
+    const double progress=seed_length.back()>1e-9 ?
+        ((1-fraction)*seed_length[seed]+fraction*seed_length[seed+1])/seed_length.back() :
+        static_cast<double>(sample)/intervals;
+    const double distance=progress*length;
+    while(segment+2<guide.size() && guide_length[segment+1]<=distance) ++segment;
+    const double span=guide_length[segment+1]-guide_length[segment];
+    const double along=span>1e-12 ? (distance-guide_length[segment])/span : 0.0;
+    const Eigen::Vector3d point=(1-along)*guide[segment]+along*guide[segment+1];
+    result.push_back(point+(1-progress)*(start-guide.front())+
+                           progress*(target-guide.back()));
+  }
+  interval*=static_cast<double>(old_intervals)/intervals;
+  points=std::move(result);
+  return true;
 }
 
 }  // namespace
@@ -282,7 +325,8 @@ bool SCANPlannerManager::reboundReplan(
     Eigen::Vector3d start_pt, Eigen::Vector3d start_vel,
     Eigen::Vector3d start_acc, Eigen::Vector3d local_target_pt,
     Eigen::Vector3d local_target_vel, bool flag_polyInit,
-    bool flag_randomPolyTraj, double nowS) {
+    bool flag_randomPolyTraj, double nowS,
+    std::optional<std::pair<double,double>> referenceInterval) {
   const std::uint64_t attemptId = rebound_debug_.attemptId + 1U;
   rebound_debug_ = {};
   rebound_debug_.attemptId = attemptId;
@@ -295,6 +339,7 @@ bool SCANPlannerManager::reboundReplan(
   rebound_debug_.targetVelocity = local_target_vel;
   rebound_debug_.polyInit = flag_polyInit;
   rebound_debug_.randomPolyInit = flag_randomPolyTraj;
+  const bool preserveBoundary = pp_.motion_intent_ || pp_.preserve_boundary_;
   if ((start_pt - local_target_pt).norm() < 1e-3) {
     rebound_debug_.reason = "target_too_close";
     ++continuous_failures_count_;
@@ -326,11 +371,39 @@ bool SCANPlannerManager::reboundReplan(
                         pp_.max_vel_ +
                     2 * pp_.max_vel_ / pp_.max_acc_;
 
+      const double stopToStopTime = time;
+      if (preserveBoundary && dist > pp_.max_vel_ * pp_.max_vel_ / pp_.max_acc_) {
+        // A moving C2 handoff must not turn a lateral or reversing tangent
+        // into extra forward travel time. Only the velocity projected along
+        // this segment contributes to the ramp; a negative projection means
+        // zero forward progress and falls back to the existing baseline.
+        const Eigen::Vector3d direction = (local_target_pt - start_pt) / dist;
+        const double initial = std::clamp(start_vel.dot(direction), 0.0, pp_.max_vel_);
+        const double terminal = std::clamp(local_target_vel.dot(direction), 0.0, pp_.max_vel_);
+        const double initial_deficit = pp_.max_vel_ - initial;
+        const double terminal_deficit = pp_.max_vel_ - terminal;
+        time = std::min(stopToStopTime,
+                        dist / pp_.max_vel_ +
+                            (initial_deficit * initial_deficit +
+                             terminal_deficit * terminal_deficit) /
+                                (2.0 * pp_.max_acc_ * pp_.max_vel_));
+      }
+
       if (!flag_randomPolyTraj) {
-        if (!pp_.motion_intent_ ||
-            !motionIntentSeed(pp_, start_pt, start_vel, start_acc,
-                              local_target_pt, local_target_vel, gl_traj,
-                              time, ts)) {
+        // A long low-speed route needs a bounded acceleration ramp as well.
+        // One quintic spanning its entire duration restarts an unnecessarily
+        // slow acceleration phase on every local replan.
+        if (!boundedVelocitySeed(pp_, start_pt, start_vel, start_acc,
+                                 local_target_pt, local_target_vel, gl_traj,
+                                 time, ts)) {
+          if (start_vel.squaredNorm() == 0.0 && start_acc.squaredNorm() == 0.0 &&
+              local_target_vel.squaredNorm() == 0.0) {
+            // Exact peak bounds of the rest-to-rest quintic; a higher speed
+            // cap must not force a short segment into an infeasible seed.
+            time = std::max({time, 1.875 * dist / pp_.max_vel_,
+                std::sqrt((10.0 * std::sqrt(3.0) / 3.0) * dist / pp_.max_acc_),
+                std::cbrt(60.0 * dist / pp_.max_jerk_)});
+          }
           gl_traj = PolynomialTraj::one_segment_traj_gen(
               start_pt, start_vel, start_acc, local_target_pt, local_target_vel,
               Eigen::Vector3d::Zero(), time);
@@ -360,15 +433,16 @@ bool SCANPlannerManager::reboundReplan(
             Eigen::Vector3d::Zero(), segment_time);
       }
 
-      double t;
+      double t = 0.0;
       bool flag_too_far;
-      ts *= 1.5;
       do {
-        ts /= 1.5;
+        const int intervals = std::max(6, static_cast<int>(std::ceil(time / ts)));
+        ts = time / intervals;
         point_set.clear();
         flag_too_far = false;
         Eigen::Vector3d last_pt = gl_traj.evaluate(0);
-        for (t = 0; t < time; t += ts) {
+        for (int i = 0; i <= intervals; ++i) {
+          t = i == intervals ? time : i * ts;
           const Eigen::Vector3d pt = gl_traj.evaluate(t);
           if ((last_pt - pt).norm() > pp_.ctrl_pt_dist * 1.5) {
             flag_too_far = true;
@@ -377,14 +451,15 @@ bool SCANPlannerManager::reboundReplan(
           last_pt = pt;
           point_set.push_back(pt);
         }
+        if (flag_too_far)
+          ts /= 1.5;
       } while (flag_too_far || point_set.size() < 7);
-      t -= ts;
       start_end_derivatives.push_back(gl_traj.evaluateVel(0));
       start_end_derivatives.push_back(local_target_vel);
       start_end_derivatives.push_back(gl_traj.evaluateAcc(0));
-      // MotionIntent ends at the actual target with the polynomial's desired
-      // zero acceleration, not at the last sample before that endpoint.
-      start_end_derivatives.push_back(pp_.motion_intent_
+      // Exact-boundary segments use the target's desired zero acceleration,
+      // rather than the last sample before that endpoint.
+      start_end_derivatives.push_back(preserveBoundary
                                          ? Eigen::Vector3d::Zero().eval()
                                          : gl_traj.evaluateAcc(t));
     } else {
@@ -475,7 +550,7 @@ bool SCANPlannerManager::reboundReplan(
     }
   } while (flag_regenerate);
 
-  if (pp_.motion_intent_) {
+  if (preserveBoundary) {
     // Preserve the caller's physical boundary exactly. Evaluating the fitted
     // seed can leave a nonzero round-off acceleration and select the wrong
     // retiming model even though the measured boundary acceleration is zero.
@@ -484,12 +559,17 @@ bool SCANPlannerManager::reboundReplan(
     start_end_derivatives[2] = start_acc;
     start_end_derivatives[3].setZero();
   }
-  applyLinearZReference(point_set, start_pt(2), local_target_pt(2));
+  double referenceProgress=reference_progress_;
+  if (!referenceInterval || !applyReferenceSeed(point_set,ts,global_data_,
+      *referenceInterval,start_pt,local_target_pt,pp_.ctrl_pt_dist,
+      !pp_.motion_intent_ ? &reference_waypoints_ : nullptr,
+      referenceProgress))
+    applyLinearZReference(point_set, start_pt(2), local_target_pt(2));
 
   Eigen::MatrixXd ctrl_pts;
   UniformBspline::parameterizeToBspline(ts, point_set,
                                         start_end_derivatives, ctrl_pts);
-  if (pp_.motion_intent_)
+  if (preserveBoundary)
     setMotionIntentBoundary(ctrl_pts, ts, start_pt, local_target_pt,
                             start_end_derivatives);
 
@@ -528,26 +608,39 @@ bool SCANPlannerManager::reboundReplan(
   };
 
   bool flag_step_2_success = true;
-  if (pp_.motion_intent_) {
+  if (preserveBoundary) {
     if (start_end_derivatives[2].squaredNorm() == 0.0 &&
-        start_end_derivatives[3].squaredNorm() == 0.0) {
-      flag_step_2_success = retimeZeroAccelerationMotionIntent(
-          pos, pp_, start_pt, local_target_pt, start_end_derivatives, ts);
+        start_end_derivatives[3].squaredNorm() == 0.0 &&
+        start_end_derivatives[0].squaredNorm() == 0.0 &&
+        start_end_derivatives[1].squaredNorm() == 0.0) {
+      // With zero endpoint velocity and acceleration, dilation preserves all
+      // boundary controls and scales velocity by 1/h and acceleration by 1/h^2.
+      ts *= motionIntentTimeRatio(pos, pp_);
+      pos = UniformBspline(pos.getControlPoint(), 3, ts);
     } else {
-      // Uniform dilation preserves the interior curve. Restore exact physical
-      // endpoint P/V/A, which can change the endpoint geometry for nonzero V/A.
-      // Those restored controls change the next ratio. Allow convergence;
-      // three passes reject feasible moving starts while still near the limit.
+      // A moving endpoint changes its boundary controls when time is dilated.
+      // Refit the interior at every interval; keeping it fixed can put P2 past
+      // P3 and create a new backwards segment that was absent from the seed.
       flag_step_2_success =
           start_end_derivatives[0].norm() <= pp_.max_vel_ + 1e-9 &&
           start_end_derivatives[1].norm() <= pp_.max_vel_ + 1e-9 &&
           start_end_derivatives[2].norm() <= pp_.max_acc_ + 1e-9 &&
           start_end_derivatives[3].norm() <= pp_.max_acc_ + 1e-9;
-      for (int pass = 0; flag_step_2_success && pass < 64; ++pass) {
+      const UniformBspline reference = pos;
+      const int reference_segments =
+          static_cast<int>(reference.getControlPoint().cols()) - 3;
+      bspline_optimizer_rebound_->ref_pts_.clear();
+      for (int segment = 0; segment <= reference_segments; ++segment) {
+        bspline_optimizer_rebound_->ref_pts_.push_back(reference.evaluateDeBoorT(
+            reference.getTimeSum() * segment / reference_segments));
+      }
+      for (int pass = 0; flag_step_2_success && pass < 16; ++pass) {
         const double ratio = motionIntentTimeRatio(pos, pp_);
         if (ratio <= 1.0 + 1e-9)
           break;
-        const double next_interval = ts * ratio;
+        // The refiner uses soft derivative costs. Give it finite time slack
+        // rather than approaching the strict acceptance bound asymptotically.
+        const double next_interval = ts * std::max(ratio, 1.01);
         if (!std::isfinite(ratio) || !std::isfinite(next_interval)) {
           flag_step_2_success = false;
           break;
@@ -559,8 +652,21 @@ bool SCANPlannerManager::reboundReplan(
           flag_step_2_success = false;
           break;
         }
+        const UniformBspline stretched(adjusted_controls, 3, next_interval);
+        if (motionIntentTimeRatio(stretched, pp_) <= 1.0 + 1e-9 &&
+            bspline_optimizer_rebound_->checkTrajectoryCollisionFree(stretched)) {
+          ts = next_interval;
+          pos = stretched;
+          break;
+        }
+        Eigen::MatrixXd refined_controls;
+        flag_step_2_success = bspline_optimizer_rebound_->BsplineOptimizeTrajRefine(
+            adjusted_controls, next_interval, refined_controls);
+        static_cast<OptimizationDebug &>(rebound_debug_) =
+            bspline_optimizer_rebound_->optimizationDebug();
+        rebound_debug_.stage = "refine_optimization";
         ts = next_interval;
-        pos = UniformBspline(adjusted_controls, 3, ts);
+        pos = UniformBspline(refined_controls, 3, ts);
       }
     }
     if (!flag_step_2_success ||
@@ -597,6 +703,7 @@ bool SCANPlannerManager::reboundReplan(
     return false;
   }
 
+  reference_progress_=referenceProgress;
   updateTrajInfo(pos, currentTimeS(nowS));
   continuous_failures_count_ = 0;
   rebound_debug_.success = true;
@@ -604,6 +711,60 @@ bool SCANPlannerManager::reboundReplan(
   rebound_debug_.reason = "accepted";
   rebound_debug_.collisionValid = false;
   rebound_debug_.dynamicViolationValid = false;
+  return true;
+}
+
+bool SCANPlannerManager::decelerate(const Eigen::Vector3d &position,
+                                    const Eigen::Vector3d &velocity,
+                                    const Eigen::Vector3d &acceleration,
+                                    double cruiseTimeS, double nowS,
+                                    double &transitionEndS) {
+  const double initialSpeed = velocity.head<2>().norm();
+  if (!grid_map_ || !position.allFinite() || !velocity.allFinite() ||
+      !acceleration.allFinite() || initialSpeed <= 1e-6 ||
+      acceleration.norm() > pp_.max_acc_ + 1e-9)
+    return false;
+  Eigen::Vector3d target = velocity;
+  target.head<2>() *= std::min(1.0, pp_.max_vel_ / initialSpeed);
+  // The vertical reference belongs to the mapped surface; body heave is not
+  // an instruction to climb. Bring that derivative smoothly to a quiet tail.
+  target.z() = 0.0;
+  target /= std::max(1.0, pp_.speedRatio(target));
+  const Eigen::Vector3d delta = target - velocity;
+  const double interval = std::max({0.05,
+      delta.norm() / (pp_.max_acc_ - 0.5 * acceleration.norm()),
+      (1.5 * acceleration.norm() + std::sqrt(
+          2.25 * acceleration.squaredNorm() + 4.0 * pp_.max_jerk_ * delta.norm())) /
+          (2.0 * pp_.max_jerk_)});
+  const Eigen::Vector3d middleAcceleration = delta / interval - 0.5 * acceleration;
+  const int cruiseSpans = std::max(1, static_cast<int>(std::ceil(cruiseTimeS / interval)));
+  Eigen::MatrixXd controls(3, 5 + cruiseSpans);
+  const double squaredInterval = interval * interval;
+  controls.col(0) = position - interval * velocity + squaredInterval * acceleration / 3.0;
+  controls.col(1) = position - squaredInterval * acceleration / 6.0;
+  controls.col(2) = position + interval * velocity + squaredInterval * acceleration / 3.0;
+  for (Eigen::Index index = 1; index + 2 < controls.cols(); ++index) {
+    const Eigen::Vector3d a = index == 1 ? middleAcceleration : Eigen::Vector3d::Zero();
+    controls.col(index + 2) = squaredInterval * a +
+        2.0 * controls.col(index + 1) - controls.col(index);
+  }
+  UniformBspline curve(controls, 3, interval);
+  const UniformBspline derivative = curve.getDerivative();
+  Eigen::Vector3d lastTangent = velocity;
+  for (double time = 0.0; time < curve.getTimeSum(); time += 0.01) {
+    const double next = std::min(time + 0.01, curve.getTimeSum());
+    Eigen::Vector3d tangent = derivative.evaluateDeBoorT(time);
+    if (tangent.head<2>().norm() <= 0.03) tangent = lastTangent;
+    Eigen::Vector3d nextTangent = derivative.evaluateDeBoorT(next);
+    if (nextTangent.head<2>().norm() <= 0.03) nextTangent = tangent;
+    if (grid_map_->getTrajectoryOccupancySegment(
+            curve.evaluateDeBoorT(time), tangent, curve.evaluateDeBoorT(next),
+            nextTangent, time, next) != 0)
+      return false;
+    lastTangent = nextTangent;
+  }
+  transitionEndS = 2.0 * interval;
+  updateTrajInfo(curve, nowS);
   return true;
 }
 
@@ -659,12 +820,11 @@ bool SCANPlannerManager::planGlobalTrajWaypoints(
     pos.col(i) = inter_points[i];
   }
 
-  Eigen::VectorXd time(pt_num - 1);
-  for (int i = 0; i < pt_num - 1; ++i) {
-    time(i) = (pos.col(i + 1) - pos.col(i)).norm() / pp_.max_vel_;
-  }
-  time(0) *= 2.0;
-  time(time.rows() - 1) *= 2.0;
+  // A real start-to-route connector may be submillimetric. Distance/speed
+  // timing would force a resting boundary through it in a fraction of a
+  // millisecond and inject metre-scale excursions into the reference fit.
+  const Eigen::VectorXd time=referenceDurations(
+      inter_points,start_vel,end_vel,pp_.max_vel_,pp_.max_acc_);
 
   PolynomialTraj gl_traj;
   if (pos.cols() >= 3) {
@@ -679,6 +839,8 @@ bool SCANPlannerManager::planGlobalTrajWaypoints(
   }
 
   global_data_.setGlobalTraj(gl_traj, currentTimeS(nowS));
+  reference_waypoints_=inter_points;
+  reference_progress_=0.0;
   return true;
 }
 
@@ -730,6 +892,8 @@ bool SCANPlannerManager::planGlobalTraj(
   }
 
   global_data_.setGlobalTraj(gl_traj, currentTimeS(nowS));
+  reference_waypoints_.clear();
+  reference_progress_=0.0;
   return true;
 }
 

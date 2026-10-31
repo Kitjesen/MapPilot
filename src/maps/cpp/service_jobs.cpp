@@ -1,5 +1,5 @@
 #include <algorithm>
-#include "lingtu/maps/json.hpp"
+#include "lingtu/maps/io/json.hpp"
 #include <cstdlib>
 #include <filesystem>
 #include <sstream>
@@ -56,6 +56,14 @@ std::string MapsServiceCore::CommitSavedSourceJson(const std::string &map_id,
 std::string MapsServiceCore::CropPcdJson(const std::string &map_id, const PcdBounds &bounds,
                                          bool invert, double voxel_size) {
   return pipeline_.CropPcdJson(map_id, bounds, invert, voxel_size);
+}
+
+std::string MapsServiceCore::SaveEditedSourceJson(
+    const std::string &source_map_id, const std::string &target_map_id,
+    std::uint64_t expected_source_content_epoch,
+    const std::vector<SourceEditOperation> &operations) {
+  return pipeline_.SaveEditedSourceJson(source_map_id, target_map_id,
+                                        expected_source_content_epoch, operations);
 }
 
 std::string MapsServiceCore::BuildOccupancySnapshotJson(const std::string &map_id) {

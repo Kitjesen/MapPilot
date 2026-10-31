@@ -9,6 +9,8 @@
 #include <vector>
 
 #include "camera_record.hpp"
+#include "gnss_protocol.hpp"
+#include "measurement_protocol.hpp"
 #include "native/module.hpp"
 
 namespace lingtu::sim::dds_adapter {
@@ -21,6 +23,8 @@ enum class SensorRecordType : std::uint8_t {
   Camera = 5,
   SimulationClock = 6,
   RegisteredCloudWithOrigin = 7,
+  Gnss = 8,
+  Measurement = 9,
 };
 
 struct SensorRecordHeader {
@@ -48,6 +52,8 @@ struct SensorRecordStats {
   std::uint64_t registered_clouds{0};
   std::uint64_t camera{0};
   std::uint64_t simulation_clocks{0};
+  std::uint64_t gnss{0};
+  std::uint64_t measurements{0};
   std::uint64_t bytes{0};
 };
 
@@ -74,6 +80,10 @@ lingtu::drivers::lidar::ImuSample decode_imu_payload(const SensorRecord &record)
 lingtu::drivers::lidar::OdomPrior decode_odom_prior_payload(const SensorRecord &record);
 
 CameraRecord decode_camera_payload(const SensorRecord &record);
+
+GnssRecord decode_gnss_payload(const SensorRecord &record);
+
+MeasurementRecord decode_measurement_payload(const SensorRecord &record);
 
 void accumulate_sensor_record_stats(const SensorRecord &record, SensorRecordStats &stats);
 

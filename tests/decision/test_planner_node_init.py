@@ -13,7 +13,8 @@ from decision.modules.semantic_planner import SemanticPlannerModule
 from decision.tasks.agent import AGENT_TOOLS, AgentLoop
 from runtime.module import Module, skill
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
-from runtime.msgs.semantic import Detection3D, SceneGraph
+from runtime.msgs.semantic import Detection3D, SceneGraph, SemanticObservation
+from runtime.msgs.sensor import Image
 from runtime.stream import In, Out
 
 # ---------------------------------------------------------------------------
@@ -72,9 +73,8 @@ class TestSemanticPlannerInit:
     def test_in_ports(self):
         mod = SemanticPlannerModule()
         assert isinstance(mod.instruction, In)
-        assert isinstance(mod.scene_graph, In)
-        assert isinstance(mod.robot_pose, In)
-        assert isinstance(mod.detections, In)
+        assert isinstance(mod.observation, In)
+        assert not {"scene_graph", "robot_pose", "detections", "observation_image"} & mod.ports_in.keys()
         assert isinstance(mod.navigation_state, In)
 
     def test_out_ports(self):
@@ -106,6 +106,51 @@ class TestSemanticPlannerInit:
             assert mod._goal_resolver._primary.config.backend == "mock"
         finally:
             mod.stop()
+
+    @pytest.mark.parametrize("backend", ("kimi", "qwen"))
+    def test_goal_resolver_receives_complete_llm_config(self, monkeypatch, backend):
+        captured = []
+
+        def create_client(config):
+            captured.append(config)
+            return SimpleNamespace(config=config)
+
+        monkeypatch.setattr("decision.goals.resolver.create_llm_client", create_client)
+        mod = SemanticPlannerModule(
+            llm_backend=backend,
+            llm_model="selected-model",
+            llm_base_url="https://example.invalid/v1",
+            llm_api_key_env="TEST_LLM_KEY",
+            llm_timeout_sec=7.5,
+        )
+        mod._init_backends()
+
+        assert mod._goal_resolver is not None
+        config = captured[0]
+        assert config.backend == backend
+        assert config.model == "selected-model"
+        assert config.base_url == "https://example.invalid/v1"
+        assert config.api_key_env == "TEST_LLM_KEY"
+        assert config.timeout_sec == 7.5
+
+    def test_direct_goal_resolver_keeps_llm_config_defaults(self, monkeypatch):
+        captured = []
+
+        def create_client(config):
+            captured.append(config)
+            return SimpleNamespace(config=config)
+
+        monkeypatch.setattr("decision.goals.resolver.create_llm_client", create_client)
+        mod = SemanticPlannerModule()
+        mod._init_backends()
+
+        assert mod._goal_resolver is not None
+        config = captured[0]
+        assert config.backend == "kimi"
+        assert config.model == ""
+        assert config.base_url == ""
+        assert config.api_key_env == "OPENAI_API_KEY"
+        assert config.timeout_sec == 10.0
 
     def test_setup_does_not_crash(self):
         mod = _make_module()
@@ -145,10 +190,25 @@ class TestSemanticPlannerStateUpdate:
         self.mod._on_scene_graph(sg)
         assert self.mod._latest_sg is not None
 
-    def test_detections_cached(self):
-        dets = [Detection3D(id="99", label="box", position=Vector3(1, 1, 0))]
+    def test_common_observation_installs_scene_pose_and_image(self):
+        captured = time.time()
+        dets = [Detection3D(id="99", label="box", position=Vector3(1, 1, 0), ts=captured)]
+        scene = SceneGraph(objects=dets, ts=captured, frame_id="map", map_id="map-a", content_epoch=1)
+        pose = PoseStamped(Pose(position=Vector3(3, 4, 0)), frame_id="map", ts=captured)
+        image = Image(ts=captured)
+        observation = SemanticObservation(
+            product_session_id=self.mod._product_session_id,
+            sequence=1, source_ts=captured, completed_ts=captured,
+            source_generation=1, map_id="map-a", content_epoch=1, status="positive",
+            image=image, robot_pose=pose, detections=tuple(dets), scene_graph=scene,
+        )
 
-        self.mod._on_detections(dets)
+        self.mod.observation._deliver(observation)
+
+        assert self.mod._current_scene_graph is scene
+        assert self.mod._current_scene_graph.objects[0].id == "99"
+        assert self.mod._current_robot_pose is pose
+        assert self.mod._observation_image is image
 
     def test_scene_graph_does_not_republish_same_goal(self):
         class _Result:

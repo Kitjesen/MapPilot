@@ -39,6 +39,7 @@ GoalTerminalIngressVerdict evaluateGoalTerminalIngress(
     case GoalTerminalIngressKind::kTypedClientClockSync:
       return {GoalTerminalIngressDecision::kAllow, "clock_synchronized"};
     case GoalTerminalIngressKind::kTypedStop:
+    case GoalTerminalIngressKind::kTypedTaskCancel:
       return {GoalTerminalIngressDecision::kSafetyStop,
               "safety_stop_preserve_goal_terminal"};
     case GoalTerminalIngressKind::kTypedEstop:
@@ -48,18 +49,18 @@ GoalTerminalIngressVerdict evaluateGoalTerminalIngress(
       return {GoalTerminalIngressDecision::kReject,
               "operator_motion_sample_goal_terminal_pending"};
     case GoalTerminalIngressKind::kTypedGoal:
-    case GoalTerminalIngressKind::kTypedTaskCancel:
     case GoalTerminalIngressKind::kTypedTaskPause:
     case GoalTerminalIngressKind::kTypedTaskResume:
     case GoalTerminalIngressKind::kTypedClearEstop:
     case GoalTerminalIngressKind::kTypedResumeAutonomy:
-    case GoalTerminalIngressKind::kOperatorClaim:
-    case GoalTerminalIngressKind::kOperatorHold:
-    case GoalTerminalIngressKind::kOperatorRelease:
     case GoalTerminalIngressKind::kInspectionCommand:
     case GoalTerminalIngressKind::kInspectionGoalDispatch:
     case GoalTerminalIngressKind::kRollingCommand:
       return {GoalTerminalIngressDecision::kReject, "goal_terminal_pending"};
+    case GoalTerminalIngressKind::kOperatorClaim:
+    case GoalTerminalIngressKind::kOperatorHold:
+    case GoalTerminalIngressKind::kOperatorRelease:
+      return {GoalTerminalIngressDecision::kAllow, "goal_terminal_pending"};
     case GoalTerminalIngressKind::kUnknown:
     case GoalTerminalIngressKind::kCount:
       break;

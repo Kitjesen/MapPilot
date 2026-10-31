@@ -1,7 +1,7 @@
-#include "lingtu/maps/build/octomap_io.hpp"
+#include "lingtu/maps/octomap/io.hpp"
 #include "lingtu/maps/build/pipeline.hpp"
-#include "lingtu/maps/build/ray_octomap.hpp"
-#include "lingtu/maps/json.hpp"
+#include "lingtu/maps/octomap/rays.hpp"
+#include "lingtu/maps/io/json.hpp"
 
 #include <octomap/OcTree.h>
 

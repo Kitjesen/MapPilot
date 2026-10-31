@@ -1,13 +1,17 @@
 #include "LingTuSimRuntimeUIInputProcessor.h"
 
 #include "Framework/Application/SlateApplication.h"
+#include "Framework/Application/SlateUser.h"
 #include "Input/Events.h"
 #include "LingTuSimRuntimeUIModel.h"
+#include "LingTuSimPlayerSettings.h"
+#include "SLingTuSimShowroomInput.h"
 #include "Widgets/SWidget.h"
 
 namespace LingTuSim::UI {
 namespace {
-constexpr float PublishIntervalSeconds = 1.0f / 30.0f;
+constexpr float PublishIntervalSeconds = 1.0f / 50.0f;
+constexpr float MouseLookDegreesPerPixel = 0.16f;
 
 bool IsRuntimeUIKey(const FKey &Key) {
   return Key == EKeys::B || Key == EKeys::Tab || Key == EKeys::Escape ||
@@ -17,20 +21,40 @@ bool IsRuntimeUIKey(const FKey &Key) {
 bool IsConfirmKey(const FKey &Key) {
   return Key == EKeys::Enter || Key == EKeys::Gamepad_FaceButton_Bottom;
 }
+
+bool IsDriveHelpKey(const FKey& Key) {
+  return Key == EKeys::F1 || Key == EKeys::Gamepad_Special_Left;
+}
+
+bool IsMenuNavigationKey(const FKey &Key) {
+  return Key == EKeys::Up || Key == EKeys::Down || Key == EKeys::Left || Key == EKeys::Right ||
+         Key == EKeys::Gamepad_DPad_Up || Key == EKeys::Gamepad_DPad_Down ||
+         Key == EKeys::Gamepad_DPad_Left || Key == EKeys::Gamepad_DPad_Right ||
+         Key == EKeys::Gamepad_LeftShoulder || Key == EKeys::Gamepad_RightShoulder;
+}
 }  // namespace
 
 FLingTuSimRuntimeUIInputProcessor::FLingTuSimRuntimeUIInputProcessor(
     TSharedRef<FRuntimeUIModeController> InModeController, TWeakPtr<SWidget> InHUDWidget,
     TWeakPtr<SWidget> InViewportWidget, FRobotDriveInputPublisher InPublisher,
     FRuntimeUIActionPublisher InActionPublisher, FRuntimeUIFrontEndLockQuery InFrontEndLockQuery,
-    FRuntimeUITextEntryFocusQuery InTextEntryFocusQuery)
+    FRuntimeUITextEntryFocusQuery InTextEntryFocusQuery,
+    FRuntimeCameraInputPublisher InCameraPublisher, TFunction<bool()> InMenuBackHandler,
+    TSharedPtr<FPlayerSettings> InPlayerSettings,
+    TFunction<bool(const FKeyEvent&)> InKeyCaptureHandler,
+    TFunction<void()> InCancelKeyCapture, TFunction<void()> InRestoreMenuFocus)
     : ModeController(MoveTemp(InModeController)),
       HUDWidget(MoveTemp(InHUDWidget)),
       ViewportWidget(MoveTemp(InViewportWidget)),
       Publisher(MoveTemp(InPublisher)),
       ActionPublisher(MoveTemp(InActionPublisher)),
       FrontEndLockQuery(MoveTemp(InFrontEndLockQuery)),
-      TextEntryFocusQuery(MoveTemp(InTextEntryFocusQuery)) {
+      TextEntryFocusQuery(MoveTemp(InTextEntryFocusQuery)),
+      CameraPublisher(MoveTemp(InCameraPublisher)), MenuBackHandler(MoveTemp(InMenuBackHandler)),
+      PlayerSettings(MoveTemp(InPlayerSettings)), KeyCaptureHandler(MoveTemp(InKeyCaptureHandler)),
+      CancelKeyCapture(MoveTemp(InCancelKeyCapture)), RestoreMenuFocus(MoveTemp(InRestoreMenuFocus)) {
+  if (PlayerSettings.IsValid()) DriveInput.SetKeyBindings(PlayerSettings->DriveKeys);
+  PublishedMode = ModeController->GetMode();
   DriveInput.SetDriveMode(ModeController->GetMode() == ERuntimeUIMode::Drive);
 }
 
@@ -63,9 +87,24 @@ bool FLingTuSimRuntimeUIInputProcessor::HandleKeyDownEvent(FSlateApplication &Sl
   if (!DriveInput.GetSnapshot().bViewportFocused) {
     return false;
   }
+  // Capture precedes menu shortcuts and action policy, so R cannot start a
+  // recording and Escape cancels the binding rather than closing the menu.
+  if (ModeController->GetMode() == ERuntimeUIMode::Pause &&
+      KeyCaptureHandler && KeyCaptureHandler(KeyEvent)) {
+    InvalidateHUD();
+    return true;
+  }
+  if ((Key == EKeys::Escape || Key == EKeys::Gamepad_FaceButton_Right) &&
+      MenuBackHandler) {
+    if (KeyEvent.IsRepeat()) return true;
+    if (MenuBackHandler()) { InvalidateHUD(); return true; }
+  }
   ERuntimeUIAction Action = ERuntimeUIAction::ToggleRecording;
   const TSharedPtr<SWidget> FocusedWidget = SlateApplication.GetKeyboardFocusedWidget();
   const TSharedPtr<SWidget> HUD = HUDWidget.Pin();
+  if (FrontEndLockQuery && FrontEndLockQuery() && FocusedWidget.IsValid() &&
+      FocusedWidget->GetTag() == TEXT("LingTu.Selection.Model") &&
+      SLingTuSimShowroomInput::IsViewKey(Key)) return false;
   if (IsConfirmKey(Key) && HUD.IsValid() && FocusedWidget.IsValid() && FocusedWidget != HUD &&
       FocusedWidget->GetVisibility().IsVisible() && HUD->HasFocusedDescendants()) {
     // Let the focused SButton handle keyboard or gamepad accept through Slate's
@@ -76,6 +115,18 @@ bool FLingTuSimRuntimeUIInputProcessor::HandleKeyDownEvent(FSlateApplication &Sl
   if (TextEntryFocusQuery && TextEntryFocusQuery()) {
     // Text editing owns cursor, deletion, and commit keys. Do not reinterpret
     // them as hidden session or asset navigation.
+    return false;
+  }
+  if (IsDriveHelpKey(Key) && !bTeardownReleasePublished && DriveInput.IsEligible() &&
+      !(FrontEndLockQuery && FrontEndLockQuery()) && !KeyEvent.IsAltDown() &&
+      !KeyEvent.IsControlDown() && !KeyEvent.IsCommandDown()) {
+    if (!KeyEvent.IsRepeat() && ModeController->SetDriveHelpVisible(true)) InvalidateHUD();
+    return true;
+  }
+  if (ModeController->GetMode() == ERuntimeUIMode::Pause && IsMenuNavigationKey(Key)) {
+    // Focused controls own navigation in both the runtime menu and selector.
+    if (FrontEndLockQuery && FrontEndLockQuery() &&
+        !(HUD.IsValid() && HUD->HasFocusedDescendants()) && RestoreMenuFocus) RestoreMenuFocus();
     return false;
   }
   if (FRuntimeUIActionPolicy::ResolveKey(ModeController->GetMode(), Key, Action)) {
@@ -99,6 +150,7 @@ bool FLingTuSimRuntimeUIInputProcessor::HandleKeyDownEvent(FSlateApplication &Sl
     }
     if (!KeyEvent.IsRepeat()) {
       ModeController->HandleKey(Key);
+      if (ModeController->GetMode() != ERuntimeUIMode::Drive) bMouseLooking = false;
       const ERobotDriveInputUpdate ModeUpdate =
           DriveInput.SetDriveMode(ModeController->GetMode() == ERuntimeUIMode::Drive);
       if (ModeUpdate == ERobotDriveInputUpdate::Handled) {
@@ -118,6 +170,7 @@ bool FLingTuSimRuntimeUIInputProcessor::HandleKeyDownEvent(FSlateApplication &Sl
     return true;
   }
 
+  if (KeyEvent.IsAltDown() || KeyEvent.IsControlDown() || KeyEvent.IsCommandDown()) return false;
   const ERobotDriveInputUpdate Update = DriveInput.HandleKeyDown(Key, KeyEvent.IsRepeat());
   if (Update == ERobotDriveInputUpdate::Unhandled) {
     return false;
@@ -129,6 +182,10 @@ bool FLingTuSimRuntimeUIInputProcessor::HandleKeyDownEvent(FSlateApplication &Sl
 bool FLingTuSimRuntimeUIInputProcessor::HandleKeyUpEvent(FSlateApplication &SlateApplication,
                                                          const FKeyEvent &KeyEvent) {
   PublishForUpdate(SynchronizeContext(SlateApplication));
+  if (IsDriveHelpKey(KeyEvent.GetKey())) {
+    if (ModeController->SetDriveHelpVisible(false)) InvalidateHUD();
+    return ModeController->GetMode() == ERuntimeUIMode::Drive;
+  }
   if (!DriveInput.GetSnapshot().bViewportFocused) {
     return false;
   }
@@ -161,11 +218,103 @@ bool FLingTuSimRuntimeUIInputProcessor::HandleAnalogInputEvent(
   return true;
 }
 
+bool FLingTuSimRuntimeUIInputProcessor::CanAdjustCamera() const {
+  return !bTeardownReleasePublished && DriveInput.IsEligible() && !(FrontEndLockQuery && FrontEndLockQuery()) &&
+      !(TextEntryFocusQuery && TextEntryFocusQuery());
+}
+
+bool FLingTuSimRuntimeUIInputProcessor::ViewportOwnsMouseCapture(FSlateApplication& App) const {
+  const auto Viewport = ViewportWidget.Pin();
+  const auto User = App.GetCursorUser();
+  return Viewport.IsValid() && User.IsValid() && User->HasCursorCapture() &&
+      User->GetCursorCaptorPath().ContainsWidget(Viewport.Get());
+}
+
+bool FLingTuSimRuntimeUIInputProcessor::OwnsMousePointer(
+    FSlateApplication& App, const FPointerEvent& Event) const {
+  const auto Viewport = ViewportWidget.Pin();
+  const auto User = App.GetCursorUser();
+  if (!Viewport.IsValid() || !User.IsValid()) return false;
+  if (User->HasCursorCapture()) return ViewportOwnsMouseCapture(App);
+  return App.LocateWindowUnderMouse(Event.GetScreenSpacePosition(),
+      App.GetInteractiveTopLevelWindows(), false, Event.GetUserIndex()).ContainsWidget(Viewport.Get());
+}
+
+bool FLingTuSimRuntimeUIInputProcessor::HandleMouseButtonDownEvent(
+    FSlateApplication& App, const FPointerEvent& Event) {
+  PublishForUpdate(SynchronizeContext(App));
+  if (!CanAdjustCamera() || !OwnsMousePointer(App, Event)) return false;
+  if (Event.GetEffectingButton() == EKeys::RightMouseButton && CameraPublisher) {
+    bMouseLooking = true;
+    // The first uncaptured click must still reach SViewport's normal capture path.
+    return ViewportOwnsMouseCapture(App);
+  }
+  if (Event.GetEffectingButton() == EKeys::MiddleMouseButton && ActionPublisher) {
+    bMouseLooking = false;
+    ActionPublisher(ERuntimeUIAction::CycleCamera);
+    InvalidateHUD();
+    return true;
+  }
+  return false;
+}
+
+bool FLingTuSimRuntimeUIInputProcessor::HandleMouseButtonDoubleClickEvent(
+    FSlateApplication& App, const FPointerEvent& Event) {
+  return HandleMouseButtonDownEvent(App, Event);
+}
+
+bool FLingTuSimRuntimeUIInputProcessor::HandleMouseButtonUpEvent(
+    FSlateApplication& App, const FPointerEvent& Event) {
+  const bool bWasLooking = bMouseLooking;
+  PublishForUpdate(SynchronizeContext(App));
+  if (Event.GetEffectingButton() == EKeys::RightMouseButton) {
+    bMouseLooking = false;
+    return bWasLooking && CanAdjustCamera() && ViewportOwnsMouseCapture(App);
+  }
+  return false;
+}
+
+bool FLingTuSimRuntimeUIInputProcessor::HandleMouseMoveEvent(
+    FSlateApplication& App, const FPointerEvent& Event) {
+  PublishForUpdate(SynchronizeContext(App));
+  if (!CanAdjustCamera() || !bMouseLooking || !CameraPublisher || !ViewportOwnsMouseCapture(App)) {
+    bMouseLooking = false;
+    return false;
+  }
+  if (!Event.IsMouseButtonDown(EKeys::RightMouseButton)) {
+    bMouseLooking = false;
+    return false;
+  }
+  const FVector2D Delta = Event.GetCursorDelta();
+  if (!FMath::IsFinite(Delta.X) || !FMath::IsFinite(Delta.Y)) return true;
+  FRuntimeCameraInput Input;
+  Input.YawDeltaDegrees = FMath::Clamp(static_cast<float>(Delta.X) * MouseLookDegreesPerPixel, -90.0f, 90.0f);
+  Input.PitchDeltaDegrees = FMath::Clamp(static_cast<float>(-Delta.Y) * MouseLookDegreesPerPixel, -90.0f, 90.0f);
+  if (!FMath::IsNearlyZero(Input.YawDeltaDegrees) || !FMath::IsNearlyZero(Input.PitchDeltaDegrees))
+    CameraPublisher(Input);
+  return true;
+}
+
+bool FLingTuSimRuntimeUIInputProcessor::HandleMouseWheelOrGestureEvent(
+    FSlateApplication& App, const FPointerEvent& Event, const FPointerEvent* Gesture) {
+  PublishForUpdate(SynchronizeContext(App));
+  if (Gesture != nullptr || !CanAdjustCamera() || !CameraPublisher || !OwnsMousePointer(App, Event)) return false;
+  const float Wheel = Event.GetWheelDelta();
+  if (!FMath::IsFinite(Wheel) || FMath::IsNearlyZero(Wheel)) return false;
+  FRuntimeCameraInput Input;
+  Input.ZoomSteps = FMath::Clamp(Wheel, -5.0f, 5.0f);
+  CameraPublisher(Input);
+  return true;
+}
+
 void FLingTuSimRuntimeUIInputProcessor::ReleaseInput() {
   if (bTeardownReleasePublished) {
     return;
   }
   bTeardownReleasePublished = true;
+  ModeController->SetDriveHelpVisible(false);
+  bMouseLooking = false;
+  if (CancelKeyCapture) CancelKeyCapture();
   DriveInput.ReleaseAll();
   Publish(ERobotDrivePublishReason::Release);
 }
@@ -180,17 +329,24 @@ FLingTuSimRuntimeUIInputProcessor::SynchronizeContext(FSlateApplication &SlateAp
       Viewport.IsValid() &&
       (Viewport->HasKeyboardFocus() || Viewport->HasFocusedDescendants() ||
        Viewport->HasUserFocus(0).IsSet() || Viewport->HasUserFocusedDescendants(0));
-  const bool bMenuOwnsFocus = ModeController->GetMode() == ERuntimeUIMode::Pause && HUD.IsValid() &&
+  const bool bMenuOwnsFocus = (ModeController->GetMode() == ERuntimeUIMode::Pause ||
+                              (TextEntryFocusQuery && TextEntryFocusQuery())) && HUD.IsValid() &&
                               (HUD->HasKeyboardFocus() || HUD->HasFocusedDescendants() ||
                                HUD->HasUserFocus(0).IsSet() || HUD->HasUserFocusedDescendants(0));
   const bool bViewportFocused =
       SlateApplication.IsActive() && (bViewportOwnsFocus || bMenuOwnsFocus);
   const ERobotDriveInputUpdate FocusUpdate = DriveInput.SetViewportFocused(bViewportFocused);
+  const ERobotDriveInputUpdate BindingUpdate = PlayerSettings.IsValid()
+      ? DriveInput.SetKeyBindings(PlayerSettings->DriveKeys) : ERobotDriveInputUpdate::Handled;
+  if ((!bViewportFocused || ModeController->GetMode() != ERuntimeUIMode::Pause) && CancelKeyCapture) CancelKeyCapture();
+  if ((!DriveInput.IsEligible() || (FrontEndLockQuery && FrontEndLockQuery()) ||
+       (TextEntryFocusQuery && TextEntryFocusQuery())) && ModeController->SetDriveHelpVisible(false)) InvalidateHUD();
+  if (!CanAdjustCamera() || !ViewportOwnsMouseCapture(SlateApplication)) bMouseLooking = false;
   if (ModeUpdate == ERobotDriveInputUpdate::Released ||
-      FocusUpdate == ERobotDriveInputUpdate::Released) {
+      FocusUpdate == ERobotDriveInputUpdate::Released || BindingUpdate == ERobotDriveInputUpdate::Released) {
     return ERobotDriveInputUpdate::Released;
   }
-  if (ModeUpdate == ERobotDriveInputUpdate::Changed ||
+  if (ModeController->GetMode() != PublishedMode || ModeUpdate == ERobotDriveInputUpdate::Changed ||
       FocusUpdate == ERobotDriveInputUpdate::Changed) {
     return ERobotDriveInputUpdate::Changed;
   }
@@ -206,10 +362,11 @@ void FLingTuSimRuntimeUIInputProcessor::PublishForUpdate(const ERobotDriveInputU
 }
 
 void FLingTuSimRuntimeUIInputProcessor::Publish(const ERobotDrivePublishReason Reason) {
+  PublishedMode = ModeController->GetMode();
   if (Publisher) {
     Publisher(DriveInput.GetSnapshot(), Reason);
   }
-  PublishAccumulatorSeconds = 0.0f;
+  if (Reason != ERobotDrivePublishReason::Periodic) PublishAccumulatorSeconds = 0.0f;
   InvalidateHUD();
 }
 

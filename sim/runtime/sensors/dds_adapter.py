@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import struct
@@ -13,7 +14,13 @@ from typing import TYPE_CHECKING, Any, BinaryIO
 
 from sim.runtime.process_owner import ProcessTreeOwner
 
-from .samples import ImuSample, Mid360FrameSample, TruthOdometrySample
+from .samples import (
+    ImuSample,
+    LivoxPointSample,
+    Mid360FrameSample,
+    SensorSampleStamp,
+    TruthOdometrySample,
+)
 
 # Compatibility-boundary assertion: from .samples import TruthOdometrySample
 
@@ -213,6 +220,77 @@ def encode_mid360_frame_sample(sample: Mid360FrameSample) -> bytes:
     ) + bytes(payload)
 
 
+def decode_mid360_frame_record(
+    record: bytes,
+    *,
+    stamp: SensorSampleStamp,
+    scan_time_profile: str,
+) -> Mid360FrameSample:
+    """Decode one native LTU1 cloud record using its external frame identity.
+
+    LTU1 is the bounded stdin transport for the native publisher. The session,
+    frame and model/reset generations remain in the caller's SensorSampleStamp;
+    they are intentionally not inferred from an external PointCloud2 layout.
+    """
+
+    if not isinstance(record, bytes):
+        raise TypeError("record must be bytes")
+    if not isinstance(stamp, SensorSampleStamp):
+        raise TypeError("stamp must be a SensorSampleStamp")
+    if len(record) < _LTU1_HEADER.size:
+        raise ValueError("LTU1 record is truncated before its header")
+    magic, record_type, timestamp_ns, sequence, count, payload_bytes = _LTU1_HEADER.unpack_from(record)
+    if magic != b"LTU1":
+        raise ValueError("LTU1 record has invalid magic")
+    if record[5:8] != b"\0\0\0":
+        raise ValueError("LTU1 reserved header bytes must be zero")
+    if record_type != _LTU1_CLOUD_RECORD:
+        raise ValueError("LTU1 record is not a cloud record")
+    if timestamp_ns != stamp.sim_time_ns:
+        raise ValueError("LTU1 timestamp does not match the SensorSampleStamp")
+    if sequence != stamp.sequence:
+        raise ValueError("LTU1 sequence does not match the SensorSampleStamp")
+    expected_payload_bytes = count * _LIVOX_POINT_PAYLOAD.size
+    if payload_bytes != expected_payload_bytes:
+        raise ValueError("LTU1 cloud payload size does not match its point count")
+    if len(record) != _LTU1_HEADER.size + payload_bytes:
+        raise ValueError("LTU1 cloud record has a truncated or trailing payload")
+    if count == 0 or count > 1_000_000:
+        raise ValueError("LTU1 cloud point count is outside the supported range")
+
+    points: list[LivoxPointSample] = []
+    previous_offset = -1
+    for index in range(count):
+        x, y, z, intensity, offset_time_ns, tag, line, flags = _LIVOX_POINT_PAYLOAD.unpack_from(
+            record, _LTU1_HEADER.size + index * _LIVOX_POINT_PAYLOAD.size
+        )
+        if flags != 0:
+            raise ValueError("LTU1 cloud point flags are reserved and must be zero")
+        if not all(math.isfinite(value) for value in (x, y, z, intensity)):
+            raise ValueError("LTU1 cloud point contains non-finite values")
+        if not 0.0 <= intensity <= 255.0 or not intensity.is_integer():
+            raise ValueError("LTU1 cloud intensity cannot represent a reflectivity byte")
+        if offset_time_ns < previous_offset:
+            raise ValueError("LTU1 cloud point offsets must be non-decreasing")
+        previous_offset = offset_time_ns
+        points.append(
+            LivoxPointSample(
+                x=x,
+                y=y,
+                z=z,
+                reflectivity=int(intensity),
+                offset_time_ns=offset_time_ns,
+                tag=tag,
+                line=line,
+            )
+        )
+    return Mid360FrameSample(
+        stamp=stamp,
+        points=tuple(points),
+        scan_time_profile=scan_time_profile,
+    )
+
+
 def _frame(value: str, field: str) -> str:
     if (
         not isinstance(value, str)
@@ -308,7 +386,7 @@ class TruthOdometryDdsAdapter:
         )
         self._process_owner = ProcessTreeOwner()
         try:
-            self._process = subprocess.Popen(  # noqa: S603 - fixed executable and argv
+            self._process = subprocess.Popen(
                 command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
@@ -476,7 +554,7 @@ class ImuDdsAdapter:
         )
         self._process_owner = ProcessTreeOwner()
         try:
-            self._process = subprocess.Popen(  # noqa: S603 - fixed executable and argv
+            self._process = subprocess.Popen(
                 command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
@@ -657,7 +735,7 @@ class Mid360DdsAdapter:
         )
         self._process_owner = ProcessTreeOwner()
         try:
-            self._process = subprocess.Popen(  # noqa: S603 - fixed executable and argv
+            self._process = subprocess.Popen(
                 command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,

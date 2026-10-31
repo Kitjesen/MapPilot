@@ -1,0 +1,73 @@
+{
+  "status": "geometry_checks_only_not_load_qualification",
+  "parts": {
+    "box": {
+      "size_mm": [
+        124.24,
+        127.34,
+        102.0
+      ],
+      "solid_mass_g": 318.1,
+      "watertight_edge_counts": true,
+      "connected_components": 1
+    },
+    "lid": {
+      "size_mm": [
+        110.0,
+        100.0,
+        8.0
+      ],
+      "solid_mass_g": 106.6,
+      "watertight_edge_counts": true,
+      "connected_components": 1
+    },
+    "left_pad": {
+      "size_mm": [
+        110.0,
+        16.0,
+        13.83
+      ],
+      "solid_mass_g": 3.3,
+      "watertight_edge_counts": true,
+      "connected_components": 1
+    },
+    "right_pad": {
+      "size_mm": [
+        110.0,
+        16.0,
+        13.52
+      ],
+      "solid_mass_g": 3.3,
+      "watertight_edge_counts": true,
+      "connected_components": 1
+    },
+    "hole_gauge": {
+      "size_mm": [
+        16.0,
+        76.0,
+        2.0
+      ],
+      "solid_mass_g": 3.0,
+      "watertight_edge_counts": true,
+      "connected_components": 1
+    }
+  },
+  "seat_mount_mm": [
+    23.041907491500837,
+    0.0,
+    63.11985391841739
+  ],
+  "optical_mount_mm": [
+    50.0,
+    0.0,
+    101.62
+  ],
+  "sub_grid_csg_specks_removed": 1,
+  "minimum_nominal_scan_cone_clearance_mm": 38.17817823112789,
+  "ground_example": {
+    "13": 1.381,
+    "25": 0.804,
+    "30": 0.667,
+    "35": 0.558
+  }
+}

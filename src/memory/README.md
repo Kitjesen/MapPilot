@@ -1,55 +1,87 @@
-# Memory — 长期记忆与语义地点
+# Memory
 
-## 概述
+`memory/` stores semantic context around a robot run. It answers questions
+such as “what did we see here?”, “what is this place called?”, and “what
+objects were observed recently?”. It helps semantic tasks, operator queries,
+inspection review, and exploration heuristics.
 
-Memory 为机器人提供空间记忆、事件追溯和语义检索，供决策层解释任务。
-这里的 Python 代码处理名称、别名和记忆；实机点云、地形、地图保存和路径规划由各自的 C++ 服务负责。
-项目层级以 [`config/architecture_layers.yaml`](../../config/architecture_layers.yaml) 为准。
+It is not the robot's geometric map. LiDAR accumulation, map save/reload,
+localization, traversability, global planning, and final motion remain owned by
+the native map, SLAM, and navigation services. A memory result can suggest or
+resolve a semantic target; it cannot authorize motion or replace OctoPlanner3D
+and the local planner.
 
-## 两种地点入口尚未统一
+The product design for a future map-bound `object_memory`, including stable
+object identity, relations, map epochs, and the LLM boundary, is documented in
+[`docs/research/semantic-map.md`](../../docs/research/semantic-map.md).
+That design does not mean the persistent object artifact is implemented yet.
 
-| 实现 | 保存在哪里 | 当前调用者 |
+## What is active today
+
+The memory stack is created by
+[`src/lingtu/assembly/host/stacks/memory.py`](../lingtu/assembly/host/stacks/memory.py)
+only when the resolved Host enables semantic planning. The standard `map` and
+`nav` Products therefore do not depend on this directory for the core
+建图 → 保存/重载 → 定位 → 自主导航 path.
+
+| Runtime module | What it remembers | Where it is used |
 | --- | --- | --- |
-| `spatial/tagged_locations.py` | Host 的 `tagged_locations.json`，按名称索引 | 网页“常用位置”、`/api/v1/locations`、名称目标、标签命令 |
-| `spatial/places.py` | 不自建数据库；通过 mapd 读取每张地图的 `pois.tsv` | `/api/v1/places`、语义地点解析 |
+| `modules/semantic.py` | Room/object knowledge and a semantic topology graph derived from `SceneGraph` | Semantic planner room summaries, object queries, and exploration hints |
+| `modules/episodic.py` | Recent scene observations with pose/time context | MCP history queries and post-run inspection |
+| `modules/locations.py` | Operator-named poses and aliases in `tagged_locations.json` | Named-goal resolution and location APIs when the module is present |
+| `modules/vector.py` | Embedding-indexed scene observations | Fuzzy semantic lookup; a result is only a candidate |
+| `modules/temporal.py` | Time-indexed object sightings in SQLite | Temporal gateway queries |
 
-两者目前不会自动同步。前者还依赖可选的 `TaggedLocationsModule`，当前标准 `map/nav` Product 没有装配该模块。
-因此，某个文件存在或某个独立测试通过，不代表该功能已在标准产品中可用。
-后续应统一到 mapd 的地图地点数据，具体缺口和迁移顺序见[地图与地点归属审查](../../docs/roadmap.md#map-and-place-ownership-review--2026-09-17)。
+These modules are optional Host components. Their unit tests prove their local
+contracts; they do not prove that a `map`/`nav` field RunPlan loads them or that
+their output is safe to execute as a motion command.
 
-现有 JSON 存储仅在写盘成功后更新内存；写入失败会保留旧地点并向调用者报告错误。
-这项修复解决保存结果失真，不代表两套地点数据已经合并。
+Vector retrieval has an additional admission rule: a stored observation is a
+semantic candidate only when its scene, pose, and navigation-state snapshot
+are fresh and bound to the active map/version. Older or unbound observations
+remain useful for history queries, but they are not sent directly to the motion
+stack. Changing maps re-evaluates candidate eligibility without deleting the
+history.
 
-## modules/ — 核心记忆模块
+## The four code areas
 
-| 模块 | 职责 |
-|------|------|
-| `semantic_mapper_module.py` | 语义地图：SceneGraph -> RoomObjectKG + TopologySemGraph |
-| `episodic_module.py` | 情景记忆：事件序列记录与回放 |
-| `tagged_locations_module.py` | 地标位置：命名/模糊匹配 Tag 位置 |
-| `vector_memory_module.py` | 向量记忆：CLIP + ChromaDB 语义向量检索，备用 numpy 暴力搜索 |
-| `temporal_memory_module.py` | 时序记忆 |
-| `topological_module.py` | 拓扑图记忆（已注册但**未**加入 `memory()` stack factory，当前非生产路径；场景级拓扑由 `semantic_mapper_module.py` 的 `TopologySemGraph` 负责） |
-| `mission_logger_module.py` | 任务日志记录 |
+The folders describe implementation responsibility rather than four different
+“memory products”:
 
-## knowledge/
+| Folder | Owns | Important entry points |
+| --- | --- | --- |
+| `modules/` | Host adapters, subscriptions, skills, and outputs | The five modules listed above |
+| `spatial/` | Places, named locations, episodes, room inference, and semantic topology data structures | `places.py`, `tagged_locations.py`, `episodic.py`, `topology_graph.py` |
+| `knowledge/` | Industrial knowledge graph, room/object relations, semantic priors, and optional belief inference | `knowledge_graph.py`, `room_object_kg.py`, `semantic_prior.py`, `belief/` |
+| `storage/` | Persistence used by active consumers | `temporal_store.py` and the SQLite backend used by episodic memory |
 
-语义知识库：`knowledge_graph.py`、`room_object_kg.py`、`belief/`、`semantic_prior.py`
+`scheduling/voi_scheduler.py` is an offline/research exploration helper. It is
+tested independently but is not added by the `memory()` Host stack. It should
+not be treated as part of the core navigation loop until a Product explicitly
+wires it.
 
-## spatial/
+## Two location stores that still need one owner
 
-空间记忆子模块：`topology_graph.py`、`topological.py`、`episodic.py`、`room_manager.py`、`tagged_locations.py`、`places.py`
+There are two intentionally visible location entry points:
 
-向量记忆的位置与观测同步保存：`PerceptionModule.robot_pose` 提供地图位姿，
-`host.bus.navigation_state` 提供当前地图及内容版本。只有位姿和场景同帧、数据新鲜且地图绑定完整的
-快照，才可作为语义导航候选。原始里程计和没有绑定的历史记录仍可查询，但不能直接下发运动。
-切换地图或地图版本后会重新判断候选资格；不会删除历史记录。持久化快照使用独立 ID，避免重启覆盖旧记录。
-这些约束已做本地模块和接线回归，尚未构成实机验证。
+- `spatial/tagged_locations.py` stores operator tags in a Host JSON file.
+- `spatial/places.py` reads canonical map-bound POIs from mapd `pois.tsv` and
+  serves the `/api/v1/places` APIs.
 
-## storage/
+They do not synchronize automatically. The map-bound POI path is the durable
+direction for productization; the JSON tag path remains a compatibility layer
+until name/alias migration and map-change behavior are complete. See
+[`docs/roadmap.md`](../../docs/roadmap.md#map-bound-places).
 
-持久化存储层：`sqlite_store.py`、`temporal_store.py`、`timeseries_store.py`
+## What is deliberately not here
 
-## scheduling/
+- Point-cloud or occupancy-map ownership
+- SLAM or `map ← odom` correction
+- Relocalization health and degraded-state transitions
+- OctoPlanner3D global paths, local collision checks, or `cmd_vel`
 
-记忆管理调度：`voi_scheduler.py` — Value-of-Information 调度器，决定何时更新/检索/压缩记忆
+Keeping these boundaries explicit prevents semantic history from being used as
+navigation truth. The next useful memory work is to finish the map-bound place
+ownership migration, then decide which optional semantic modules deserve a
+field RunPlan; adding more storage abstractions or an unconnected mission
+logger does not advance the core navigation product.

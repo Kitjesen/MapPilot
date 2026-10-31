@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <utility>
 
-#include "lingtu/maps/lock.hpp"
+#include "lingtu/maps/storage/lock.hpp"
 
 namespace lingtu::maps::mapd {
 namespace {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -45,7 +46,7 @@ enum class SlamState {
 };
 
 struct SlamConfig {
-  std::string backend = "fastlio2";
+  std::string backend = "ltlio";
   std::string config_path;
   std::string map_frame = "map";
   std::string odom_frame = "odom";
@@ -148,7 +149,7 @@ struct GnssFusionHealth {
   int relock_count = 0;
 };
 
-struct FastLioLidarUpdateDiagnostics {
+struct LtlioLidarUpdateDiagnostics {
   bool attempted = false;
   bool accepted = false;
   std::uint64_t attempt_sequence = 0U;
@@ -157,6 +158,11 @@ struct FastLioLidarUpdateDiagnostics {
   std::uint64_t consecutive_rejections = 0U;
   std::uint64_t downsampled_points = 0U;
   std::uint64_t effective_points = 0U;
+  std::uint64_t plane_matches = 0U;
+  std::uint64_t point_matches = 0U;
+  std::uint64_t mapping_points = 0U;
+  double sampling_leaf_size_m = 0.0;
+  double sampling_scale_m = 0.0;
 
   double candidate_translation_m = 0.0;
   double candidate_rotation_rad = 0.0;
@@ -176,6 +182,19 @@ struct FastLioLidarUpdateDiagnostics {
   bool posterior_covariance_evaluated = false;
   bool posterior_covariance_finite = false;
   bool posterior_covariance_positive_diagonal = false;
+};
+
+struct ElevatorStatus {
+  std::string mode = "off";
+  std::string phase = "idle";
+  bool active = false;
+  double height_m = 0.0;
+  double velocity_mps = 0.0;
+  double acceleration_mps2 = 0.0;
+  double range_quantile_m = -1.0;
+  double velocity_variance = 0.0;
+  std::uint64_t entries = 0;
+  std::uint64_t exits = 0;
 };
 
 struct SlamOutputs {
@@ -254,19 +273,40 @@ struct SlamOutputs {
   int odom_prior_map_points = 0;
 
   // Filter diagnostics retain the internal odom-frame velocity.
-  double fastlio_velocity_x = 0.0;
-  double fastlio_velocity_y = 0.0;
-  double fastlio_velocity_z = 0.0;
-  bool fastlio_degeneracy_detected = false;
-  int fastlio_degenerate_dof_count = 0;
-  double fastlio_condition_number = 0.0;
-  double fastlio_min_eigenvalue = 0.0;
-  double fastlio_max_eigenvalue = 0.0;
-  double fastlio_effective_ratio = 0.0;
-  double fastlio_pos_cov_trace = 0.0;
-  int fastlio_iter_num = 0;
-  bool fastlio_converged = true;
-  FastLioLidarUpdateDiagnostics fastlio_lidar_update;
+  double ltlio_velocity_x = 0.0;
+  double ltlio_velocity_y = 0.0;
+  double ltlio_velocity_z = 0.0;
+  bool ltlio_degeneracy_detected = false;
+  bool ltlio_geometry_available = false;
+  double ltlio_rotation_scale_m = 0.0;
+  std::array<double, 6> ltlio_geometry_eigenvalues{};
+  std::array<std::array<double, 6>, 6> ltlio_principal_directions{};
+  std::array<std::string, 6> ltlio_geometry_categories{};
+  std::array<double, 6> ltlio_geometry_support_ratios{};
+  bool ltlio_geometry_update_applied = false;
+  std::string ltlio_geometry_guidance = "awaiting_lidar_geometry";
+  int ltlio_degenerate_dof_count = 0;
+  double ltlio_condition_number = 0.0;
+  double ltlio_min_eigenvalue = 0.0;
+  double ltlio_max_eigenvalue = 0.0;
+  double ltlio_effective_ratio = 0.0;
+  double ltlio_pos_cov_trace = 0.0;
+  int ltlio_iter_num = 0;
+  bool ltlio_converged = true;
+  LtlioLidarUpdateDiagnostics ltlio_lidar_update;
+  ElevatorStatus elevator;
+};
+
+struct MapGeometrySnapshot {
+  std::uint64_t reset_epoch = 0;
+  std::uint64_t graph_revision = 0;
+  std::uint64_t captured_sequence = 0;
+  std::string frame_id;
+  std::string frozen_dir;
+  std::uint64_t keyframe_count = 0;
+  std::int64_t captured_stamp_ns = 0;
+  Pose3d map_body;
+  double sensor_origin_z_m = 0.0;
 };
 
 class ISlamBackend {
@@ -275,6 +315,8 @@ class ISlamBackend {
 
   virtual Status configure(const SlamConfig&) = 0;
   virtual Status setMode(SlamMode mode, const std::string& map_path) = 0;
+  // Estimator transport mode. This does not command the robot or an elevator.
+  virtual Status setElevator(bool) { return Status::Error("elevator_unsupported"); }
 
   virtual Status feedImu(const ImuSample&) = 0;
   virtual Status feedLidar(const LidarFrame&) = 0;
@@ -309,6 +351,8 @@ class ISlamBackend {
   virtual std::optional<Status> pollSaveMapAsync() { return std::nullopt; }
   virtual Status loadMap(const std::string& pcd_path) = 0;
   virtual SlamOutputs outputs() const = 0;
+  virtual std::optional<MapGeometrySnapshot> mapGeometrySnapshot() { return std::nullopt; }
+  virtual void acknowledgeMapGeometry(std::uint64_t, std::uint64_t, bool, const std::string& = {}) {}
   virtual Status reset() = 0;
 };
 
@@ -318,6 +362,6 @@ std::string toString(SlamMode mode);
 
 std::uint64_t newSourceEpoch() noexcept;
 std::unique_ptr<ISlamBackend> makeContractBackend(std::string backend_name);
-std::unique_ptr<ISlamBackend> makeFastLioBackend();
+std::unique_ptr<ISlamBackend> makeLtlioBackend();
 
 }  // namespace lingtu::slam

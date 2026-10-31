@@ -10,7 +10,7 @@
 #include "input/planner.hpp"
 #include "navigation/executor.hpp"
 #include "nav_kernel/velocity_smoother.hpp"
-#include "runtime/goal/trigger.hpp"
+#include "app/goal/trigger.hpp"
 #include "input/gate.hpp"
 #include "input/active/identity.hpp"
 #include "status/nav_status_writer.hpp"
@@ -68,6 +68,7 @@ struct AutonomyTickCounterDelta {
 struct AutonomyTickTimingDelta {
   bool nav_tick_measured{false};
   double nav_tick_ms{0.0};
+  double final_control_ms{0.0};
 };
 
 struct AutonomyTickPublishIntents {

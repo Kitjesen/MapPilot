@@ -3,7 +3,7 @@
 #include <cstddef>
 
 #include "safety/stop.hpp"
-#include "runtime/goal/runtime.hpp"
+#include "app/goal/runtime.hpp"
 
 namespace lingtu::nav::endpoint {
 
@@ -90,10 +90,10 @@ bool GoalTerminalStatusDelivery::sameTicket(const GoalPlanTerminalDeliveryTicket
 bool GoalTerminalStatusDelivery::sameStatus(const GoalPlanStatus &left,
                                             const GoalPlanStatus &right) {
   return left.task_id == right.task_id && left.request_id == right.request_id &&
-         left.goal_epoch == right.goal_epoch && left.state == right.state &&
+         left.goal_epoch == right.goal_epoch && left.origin == right.origin &&
+         left.state == right.state &&
          left.reason == right.reason &&
-         left.project_to_navigation_state == right.project_to_navigation_state &&
-         left.origin == right.origin;
+         left.project_to_navigation_state == right.project_to_navigation_state;
 }
 
 bool GoalTerminalStatusDelivery::ticketDelivered(

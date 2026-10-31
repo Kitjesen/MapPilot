@@ -1,0 +1,13 @@
+{
+  "displacement_m": 0.5527598739142003,
+  "engine": "3.10.0",
+  "force_duration_s": 0.24,
+  "force_n": 400,
+  "ground_contact_passed": true,
+  "mass_kg": 20,
+  "parameters": "design assumptions, not measured",
+  "passed": true,
+  "reset_passed": true,
+  "scope": "standalone cylinder collision proxy; no UE binding",
+  "ue_validated": false
+}

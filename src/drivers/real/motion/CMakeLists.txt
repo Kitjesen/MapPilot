@@ -20,12 +20,17 @@ endif()
 add_library(lingtu_driver_core STATIC
   cmd_vel_writer_gate.cpp
   command_freshness_gate.cpp
+  profile_switch.cpp
   core.cpp
   config.cpp)
 target_include_directories(lingtu_driver_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_options(lingtu_driver_core PRIVATE ${_LINGTU_DRIVER_WARNINGS})
 
 if(BUILD_TESTING)
+  add_executable(test_profile_switch "${_LINGTU_DRIVER_TEST_DIR}/test_profile_switch.cpp")
+  target_link_libraries(test_profile_switch PRIVATE lingtu_driver_core)
+  target_compile_options(test_profile_switch PRIVATE ${_LINGTU_DRIVER_WARNINGS})
+  add_test(NAME test_profile_switch COMMAND test_profile_switch)
   add_executable(test_go2_acquisition
     "${_LINGTU_DRIVER_TEST_DIR}/test_go2_acquisition.cpp"
     robots/unitree/go2/go2.cpp)
@@ -121,7 +126,7 @@ if(LINGTU_DRIVER_BUILD_RUNTIME)
     if(LINGTU_BRAINSTEM_CLIENT_PREFIX)
       list(PREPEND CMAKE_PREFIX_PATH "${LINGTU_BRAINSTEM_CLIENT_PREFIX}")
     endif()
-    find_package(BrainstemClient CONFIG REQUIRED)
+    find_package(BrainstemClient 0.6 CONFIG REQUIRED)
 
     target_sources(lingtu_driver_io PRIVATE robots/doso/doso.cpp)
     target_include_directories(lingtu_driver_io PUBLIC

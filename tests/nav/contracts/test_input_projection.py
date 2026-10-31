@@ -4,7 +4,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 ENDPOINT_ROOT = REPO_ROOT / "src/nav/cpp/endpoint"
 ENDPOINT_DIR = ENDPOINT_ROOT / "nav"
 MAIN_PATH = ENDPOINT_DIR / "main.cpp"
-LOOP_PATH = ENDPOINT_DIR / "runtime" / "loop.cpp"
+LOOP_PATH = ENDPOINT_DIR / "app" / "loop.cpp"
 CMAKE_PATH = ENDPOINT_ROOT / "CMakeLists.txt"
 ENDPOINT_BUILD_SCRIPT = REPO_ROOT / "scripts/build/build_nav_endpoint.sh"
 NATIVE_MOTION_WORKFLOW = REPO_ROOT / ".github/workflows/native-motion-build.yml"
@@ -75,7 +75,7 @@ def test_navd_build_wires_input_projector_and_endpoint_loop() -> None:
     navd_target = _block_after(cmake, "add_executable(navd", "target_link_libraries(navd")
     for source in ("input/pose.cpp", "input/map.cpp", "input/health.cpp"):
         assert source in navd_target
-    assert "runtime/loop.cpp" in navd_target
+    assert "app/loop.cpp" in navd_target
 
 
 def test_linux_endpoint_build_requires_input_projector_regression_test() -> None:
@@ -112,7 +112,11 @@ def test_endpoint_loop_batches_dds_input_before_runtime_work() -> None:
 
 def test_sensor_batch_delegates_projection_to_input_projector() -> None:
     sensors = _sensor_drain_stage()
-    assert "inputs.apply(dds.takeSensors(steadySeconds()), timing);" in sensors
+    _assert_in_order(sensors, [
+        "auto batch = dds.takeSensors(steadySeconds());",
+        "ctx.observe_stop_inputs(batch)",
+        "inputs.apply(std::move(batch), timing);",
+    ])
     assert "dds.drain" not in sensors
 
 
@@ -171,17 +175,21 @@ def test_epoch_reset_keeps_synchronous_external_side_effects_in_main() -> None:
     assert "path_echo" not in main
 
 
-def test_stop_confirm_loop_reuses_driver_projection_without_full_odometry_projection() -> None:
+def test_stop_confirm_loop_observes_driver_ack_and_keeps_sensor_inputs_current() -> None:
     main = _read(MAIN_PATH)
     stop_block = _block_after(
         main,
-        "auto wait_for_stop_confirmation =",
+        "auto poll_stop_confirmation =",
         "MotionStopActions motion_stop_actions;",
     )
 
-    assert "OdometrySpeedMonitor stop_speed_monitor" in stop_block
-    assert "const StopConfirmationState confirmation_state = confirmation.state();" in stop_block
-    assert "projectDriverControl" in stop_block
+    assert "stop_speed_monitor = OdometrySpeedMonitor" in stop_block
+    assert "const auto confirmation_state = stop_confirmation->state();" in stop_block
+    assert "stop_confirmation->observeDriverAck" in stop_block
+    _assert_in_order(stop_block, ["observeQuietOdometry", "observeDriverAck"])
+    loop = _read(LOOP_PATH)
+    _assert_in_order(loop, ["ctx.observe_stop_inputs(batch)", "inputs.apply(std::move(batch)"])
+    assert "loop_ctx.observe_stop_inputs = observe_stop_inputs" in main
     assert "projectOdometry" not in stop_block
 
 

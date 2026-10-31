@@ -29,17 +29,25 @@ SUPPORTED_ACTIONS = frozenset(
         "capture:parking",
         "capture:bin_full",
         "capture:plate_ocr",
+        "capture:indicator_on",
+        "capture:indicator_off",
+        "capture:indicator_green",
+        "capture:indicator_red",
+        "capture:indicator_yellow",
+        "capture:door_open",
+        "capture:door_closed",
+        "capture:thermal",
+        "capture:acoustic",
     }
 )
 
 _REQUEST_FIELDS = frozenset(
     {
-        "run_id",
+        "task_id",
         "route_id",
         "route_revision",
         "map_id",
         "map_content_epoch",
-        "point_id",
         "point_index",
         "request_id",
         "action",
@@ -57,6 +65,13 @@ _MEDIA_EXTENSIONS = {
     "application/x-raw-rgb": ".rgb",
 }
 _PARKING_VERDICTS = frozenset({"violation", "clear", "inconclusive"})
+_VISUAL_EXPECTATIONS = {
+    "capture:indicator_on": "on", "capture:indicator_off": "off",
+    "capture:indicator_green": "green", "capture:indicator_red": "red",
+    "capture:indicator_yellow": "yellow", "capture:door_open": "open",
+    "capture:door_closed": "closed",
+}
+_MEASUREMENT_ACTIONS = {"capture:thermal": "thermal", "capture:acoustic": "acoustic"}
 
 
 class InspectionEvidenceError(RuntimeError):
@@ -126,6 +141,55 @@ def _canonical_json_bytes(value: Any, *, field_name: str) -> bytes:
     return (text + "\n").encode("utf-8")
 
 
+def _validate_measurement_metadata(metadata: Any, sensor_id: str, modality: str) -> bytes:
+    """Validate the declared envelope, never decode or interpret sensor arrays.
+
+    The source stamp retains the complete generation/clock identity supplied
+    by current measurement producers. Calibration contents and units are
+    producer-owned; this boundary requires explicit declarations, not estimates.
+    """
+    if not isinstance(metadata, Mapping):
+        raise EvidenceValidationError("measurement metadata must be a JSON object")
+    encoded = _canonical_json_bytes(dict(metadata), field_name="measurement.metadata")
+    units = metadata.get("units")
+    if not isinstance(units, Mapping) or not units or any(
+        not isinstance(key, str) or not key.strip()
+        or not isinstance(value, str) or not value.strip()
+        for key, value in units.items()
+    ):
+        raise EvidenceValidationError("measurement metadata requires explicit units")
+    if "modality" in metadata and metadata["modality"] != modality:
+        raise EvidenceValidationError("measurement modality does not match metadata")
+    stamp = metadata.get("stamp", metadata.get("source_stamp"))
+    if not isinstance(stamp, Mapping):
+        raise EvidenceValidationError("measurement metadata requires a full source_stamp")
+    for key in ("session_id", "instance_id", "sensor_id", "frame_id"):
+        if not isinstance(stamp.get(key), str) or not stamp[key].strip():
+            raise EvidenceValidationError(f"measurement source_stamp requires {key}")
+    for key in ("model_generation", "reset_generation", "sequence", "sim_time_ns"):
+        _validate_integer(f"measurement.source_stamp.{key}", stamp.get(key), minimum=0)
+    if stamp["sensor_id"] != sensor_id:
+        raise EvidenceValidationError("measurement sensor_id does not match source_stamp")
+    # Producers retain their own metadata layout, including the raw NPZ codec's
+    # per-modality calibration fields. An explicit null records uncalibrated
+    # acoustic data; it is not silently promoted to calibrated measurement.
+    calibration_container = metadata
+    calibration_key = "calibration"
+    if calibration_key not in calibration_container:
+        if modality == "semantic":
+            calibration_container = metadata.get("configuration", {})
+        else:
+            calibration_container = metadata.get("frame_metadata", {})
+            calibration_key = "camera_calibration" if modality == "thermal" else "calibration"
+    if (not isinstance(calibration_container, Mapping)
+            or calibration_key not in calibration_container
+            or (calibration_container[calibration_key] is not None
+                and (not isinstance(calibration_container[calibration_key], Mapping)
+                     or not calibration_container[calibration_key]))):
+        raise EvidenceValidationError("measurement metadata requires explicit calibration")
+    return encoded
+
+
 def _write_bytes_fsync(path: Path, payload: bytes) -> None:
     """Create one file, flush Python buffers, then flush the file descriptor."""
 
@@ -163,16 +227,52 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+@dataclass(frozen=True, init=False)
+class MeasurementArtifact:
+    """Immutable raw sensor bytes and an isolated, finite JSON metadata snapshot.
+
+    Payload encoding (including NPZ arrays) belongs to the sensor producer.
+    Reading ``metadata`` returns a copy so nested caller mutations cannot alter
+    the artifact that will be committed.
+    """
+
+    modality: str
+    sensor_id: str
+    payload: bytes
+    media_type: str
+    _metadata_json: bytes = field(repr=False)
+
+    def __init__(
+        self, *, modality: str, sensor_id: str, payload: bytes,
+        media_type: str, metadata: Mapping[str, Any],
+    ) -> None:
+        if modality not in {"thermal", "acoustic", "semantic"}:
+            raise EvidenceValidationError("measurement modality must be thermal, acoustic or semantic")
+        _validate_identifier("measurement.sensor_id", sensor_id)
+        if not isinstance(payload, bytes) or not payload:
+            raise EvidenceValidationError("measurement payload must be non-empty bytes")
+        if not isinstance(media_type, str) or not media_type.strip():
+            raise EvidenceValidationError("measurement media_type is required")
+        object.__setattr__(self, "modality", modality)
+        object.__setattr__(self, "sensor_id", sensor_id)
+        object.__setattr__(self, "payload", payload)
+        object.__setattr__(self, "media_type", media_type)
+        object.__setattr__(self, "_metadata_json", _validate_measurement_metadata(metadata, sensor_id, modality))
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return dict(json.loads(self._metadata_json))
+
+
 @dataclass(frozen=True)
 class InspectionEvidenceRequest:
     """Complete audit identity and time window for one inspection capture."""
 
-    run_id: str
+    task_id: str
     route_id: str
     route_revision: int
     map_id: str
     map_content_epoch: int
-    point_id: str
     point_index: int
     request_id: str
     action: str
@@ -180,7 +280,7 @@ class InspectionEvidenceRequest:
     deadline_s: float
 
     def __post_init__(self) -> None:
-        _validate_identifier("run_id", self.run_id)
+        _validate_identifier("task_id", self.task_id)
         _validate_identifier("route_id", self.route_id)
         _validate_integer(
             "route_revision",
@@ -190,7 +290,6 @@ class InspectionEvidenceRequest:
         )
         _validate_identifier("map_id", self.map_id)
         _validate_integer("map_content_epoch", self.map_content_epoch, minimum=0)
-        _validate_identifier("point_id", self.point_id)
         _validate_integer("point_index", self.point_index, minimum=0, maximum=_UINT32_MAX)
         _validate_identifier("request_id", self.request_id)
         if self.action not in SUPPORTED_ACTIONS:
@@ -217,24 +316,29 @@ class InspectionEvidenceRequest:
             return value
         if not isinstance(value, Mapping):
             raise EvidenceValidationError("request must be InspectionEvidenceRequest or a mapping")
-        unknown = set(value) - _REQUEST_FIELDS
-        missing = _REQUEST_FIELDS - set(value)
+        # Read existing manifests using the current task identity. Older
+        # point_id is redundant with the pinned route and point_index.
+        normalized = dict(value)
+        normalized.pop("point_id", None)
+        if "run_id" in normalized:
+            normalized.setdefault("task_id", normalized.pop("run_id"))
+        unknown = set(normalized) - _REQUEST_FIELDS
+        missing = _REQUEST_FIELDS - set(normalized)
         if unknown:
             raise EvidenceValidationError(f"unknown request fields: {sorted(unknown)}")
         if missing:
             raise EvidenceValidationError(f"missing request fields: {sorted(missing)}")
-        return cls(**{name: value[name] for name in _REQUEST_FIELDS})
+        return cls(**{name: normalized[name] for name in _REQUEST_FIELDS})
 
     def to_dict(self) -> dict[str, Any]:
         """Return the stable request representation written to the manifest."""
 
         return {
-            "run_id": self.run_id,
+            "task_id": self.task_id,
             "route_id": self.route_id,
             "route_revision": self.route_revision,
             "map_id": self.map_id,
             "map_content_epoch": self.map_content_epoch,
-            "point_id": self.point_id,
             "point_index": self.point_index,
             "request_id": self.request_id,
             "action": self.action,
@@ -292,6 +396,76 @@ class TrustedParkingObservation:
 
 
 @dataclass(frozen=True)
+class InspectionFinding:
+    """Caller observation, not an inference performed by the evidence store.
+
+    Visual actions compare states. Thermal/acoustic actions accept an explicit
+    verdict only with the matching modality and identified model provenance.
+    """
+
+    observed_state: str
+    source: str
+    reason: str = ""
+    details: Mapping[str, Any] = field(default_factory=dict)
+    modality: str | None = None
+    model_provenance: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if self.modality is not None:
+            if self.modality not in {"thermal", "acoustic"} or self.observed_state not in {
+                "normal", "anomaly", "inconclusive",
+            }:
+                raise EvidenceValidationError("measurement findings require thermal/acoustic and an explicit verdict")
+            if not isinstance(self.model_provenance, Mapping) or any(
+                not isinstance(self.model_provenance.get(key), str) or not self.model_provenance[key].strip()
+                for key in ("model_id", "model_version")
+            ):
+                raise EvidenceValidationError("measurement findings require model_id and model_version provenance")
+            _canonical_json_bytes(dict(self.model_provenance), field_name="finding.model_provenance")
+        elif self.observed_state not in {"on", "off", "red", "green", "yellow", "open", "closed", "unknown"}:
+            raise EvidenceValidationError("unknown visual inspection state")
+        if not isinstance(self.source, str) or not self.source.strip():
+            raise EvidenceValidationError("visual observation source is required")
+        if not isinstance(self.reason, str) or not isinstance(self.details, Mapping):
+            raise EvidenceValidationError("invalid visual observation details")
+        _canonical_json_bytes(dict(self.details), field_name="finding.details")
+
+    def analysis(self, action: str) -> dict[str, Any]:
+        if action in _MEASUREMENT_ACTIONS:
+            if self.modality != _MEASUREMENT_ACTIONS[action]:
+                raise EvidenceValidationError("finding modality does not match inspection action")
+            self.__post_init__()
+            return {
+                "support": "measurement_observation", "verdict": self.observed_state,
+                "reason": self.reason or "caller_provided_finding",
+                "observation": {
+                    "modality": self.modality, "observed_state": self.observed_state,
+                    "source": self.source, "details": dict(self.details),
+                    "model_provenance": dict(self.model_provenance or {}),
+                },
+            }
+        if action not in _VISUAL_EXPECTATIONS or self.modality is not None:
+            raise EvidenceValidationError("visual findings require a visual inspection action")
+        expected = _VISUAL_EXPECTATIONS[action]
+        observed = self.observed_state
+        if expected in {"open", "closed"}:
+            comparable = observed in {"open", "closed"}
+            matched = observed == expected
+        else:
+            comparable = observed in {"on", "off", "red", "green", "yellow"}
+            matched = observed == expected or (expected == "on" and observed in {"red", "green", "yellow"})
+            if expected in {"red", "green", "yellow"} and observed == "on":
+                comparable = False
+        verdict = ("normal" if matched else "anomaly") if comparable else "inconclusive"
+        return {
+            "support": "visual_observation", "verdict": verdict,
+            "reason": self.reason or ("matched" if verdict == "normal" else "state_mismatch" if comparable else "not_observed"),
+            "observation": {"expected_state": expected, "observed_state": observed,
+                            "source": self.source, "details": dict(self.details)},
+        }
+
+
+@dataclass(frozen=True)
 class InspectionEvidenceResult:
     """Verified view of one committed evidence directory."""
 
@@ -330,6 +504,8 @@ class InspectionEvidenceStore:
         pose: Mapping[str, Any] | None = None,
         detections: Mapping[str, Any] | Sequence[Any] | None = None,
         trusted_observation: TrustedParkingObservation | None = None,
+        finding: InspectionFinding | None = None,
+        measurements: tuple[MeasurementArtifact, ...] = (),
     ) -> InspectionEvidenceResult:
         """Persist one request, or return the previously committed result.
 
@@ -338,6 +514,9 @@ class InspectionEvidenceStore:
         """
 
         normalized_request = InspectionEvidenceRequest.from_value(request)
+        final_dir = self._final_directory(normalized_request.request_id)
+        if final_dir.exists():
+            return self._load_matching(final_dir, normalized_request)
         self._validate_payload(
             normalized_request,
             rgb_bytes=rgb_bytes,
@@ -345,11 +524,9 @@ class InspectionEvidenceStore:
             pose=pose,
             detections=detections,
             trusted_observation=trusted_observation,
+            finding=finding,
+            measurements=measurements,
         )
-        final_dir = self._final_directory(normalized_request.request_id)
-        if final_dir.exists():
-            return self._load_matching(final_dir, normalized_request)
-
         self.cleanup_staging()
         staging_dir = self.requests_dir / (
             f".staging-{normalized_request.request_id}-{uuid.uuid4().hex}"
@@ -395,6 +572,21 @@ class InspectionEvidenceStore:
                     )
                 )
 
+            for measurement in measurements:
+                extension = ".npz" if measurement.media_type in {
+                    "application/x-npz", "application/vnd.lingtu.measurement+npz",
+                } else ".bin"
+                record = self._write_artifact(
+                    staging_dir,
+                    name=f"measurement-{measurement.sensor_id}{extension}",
+                    kind="measurement",
+                    media_type=measurement.media_type,
+                    payload=measurement.payload,
+                )
+                record.update(modality=measurement.modality, sensor_id=measurement.sensor_id,
+                              metadata=measurement.metadata)
+                artifacts.append(record)
+
             manifest = {
                 "schema_version": SCHEMA_VERSION,
                 "evidence_id": normalized_request.request_id,
@@ -404,7 +596,7 @@ class InspectionEvidenceStore:
                     "committed_at": _utc_now(),
                     "artifacts": artifacts,
                 },
-                "analysis": self._analysis_for(normalized_request.action, trusted_observation),
+                "analysis": self._analysis_for(normalized_request.action, trusted_observation, finding),
             }
             manifest_bytes = _canonical_json_bytes(manifest, field_name="manifest")
             _write_bytes_fsync(staging_dir / "manifest.json", manifest_bytes)
@@ -430,6 +622,47 @@ class InspectionEvidenceStore:
 
         safe_request_id = _validate_identifier("request_id", request_id)
         return self._load_committed(self._final_directory(safe_request_id))
+
+    def review(self, request_id: str, *, verdict: str, note: str = "") -> InspectionEvidenceResult:
+        """Record a human finding without rewriting the captured observation."""
+
+        if verdict not in {"normal", "anomaly", "inconclusive"}:
+            raise EvidenceValidationError("review verdict must be normal, anomaly or inconclusive")
+        if not isinstance(note, str) or len(note) > 2000:
+            raise EvidenceValidationError("review note must be a string of at most 2000 characters")
+        result = self.get(request_id)
+        history = self._read_reviews(result.evidence_dir)
+        if history and history[-1]["verdict"] == verdict and history[-1]["note"] == note:
+            return result
+        history.append({"verdict": verdict, "note": note, "reviewed_at": _utc_now()})
+        target = result.evidence_dir / "reviews.json"
+        temporary = result.evidence_dir / f".reviews-{uuid.uuid4().hex}"
+        try:
+            _write_bytes_fsync(temporary, _canonical_json_bytes(history, field_name="reviews"))
+            os.replace(temporary, target)
+            _fsync_directory(result.evidence_dir)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return self.get(request_id)
+
+    @staticmethod
+    def _read_reviews(directory: Path) -> list[dict[str, str]]:
+        path = directory / "reviews.json"
+        if not path.exists():
+            return []
+        try:
+            history = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(history, list):
+                raise ValueError("review history must be an array")
+            for item in history:
+                if (not isinstance(item, dict)
+                        or item.get("verdict") not in {"normal", "anomaly", "inconclusive"}
+                        or not isinstance(item.get("note"), str)
+                        or not isinstance(item.get("reviewed_at"), str)):
+                    raise ValueError("invalid review record")
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise EvidenceIntegrityError(f"invalid review history: {exc}") from exc
+        return history
 
     def cleanup_staging(self, *, now: float | None = None) -> list[Path]:
         """Remove staging directories older than the configured TTL."""
@@ -491,7 +724,22 @@ class InspectionEvidenceStore:
         pose: Mapping[str, Any] | None,
         detections: Mapping[str, Any] | Sequence[Any] | None,
         trusted_observation: TrustedParkingObservation | None,
+        finding: InspectionFinding | None,
+        measurements: tuple[MeasurementArtifact, ...],
     ) -> None:
+        if not isinstance(measurements, tuple) or any(
+            not isinstance(item, MeasurementArtifact) for item in measurements
+        ):
+            raise EvidenceValidationError("measurements must be a tuple of MeasurementArtifact")
+        sensor_ids = [item.sensor_id for item in measurements]
+        if len(set(sensor_ids)) != len(sensor_ids):
+            raise EvidenceValidationError("duplicate measurement sensor_id")
+        required_modality = _MEASUREMENT_ACTIONS.get(request.action)
+        if required_modality is not None:
+            if not any(item.modality == required_modality for item in measurements):
+                raise EvidenceValidationError(f"{request.action} requires a matching measurement")
+            if not rgb_bytes or not pose:
+                raise EvidenceValidationError(f"{request.action} requires non-empty RGB and pose evidence")
         if rgb_bytes is None and media_type is not None:
             raise EvidenceValidationError("media_type requires rgb_bytes")
         if rgb_bytes is not None:
@@ -524,12 +772,25 @@ class InspectionEvidenceStore:
                 raise EvidenceValidationError(
                     "TrustedParkingObservation is valid only for capture:parking"
                 )
+        if finding is not None:
+            if not isinstance(finding, InspectionFinding):
+                raise EvidenceValidationError("finding must be InspectionFinding")
+            finding.analysis(request.action)
 
     def _analysis_for(
         self,
         action: str,
         trusted_observation: TrustedParkingObservation | None,
+        finding: InspectionFinding | None = None,
     ) -> dict[str, Any]:
+        if action in _MEASUREMENT_ACTIONS:
+            if finding is not None:
+                return finding.analysis(action)
+            return {"support": "unavailable", "verdict": "inconclusive", "reason": "analyzer_not_integrated"}
+        if action in _VISUAL_EXPECTATIONS:
+            if finding is not None:
+                return finding.analysis(action)
+            return {"support": "unavailable", "verdict": "inconclusive", "reason": "visual_reader_unavailable"}
         if action == "capture:overview":
             return {
                 "support": "not_applicable",
@@ -608,7 +869,7 @@ class InspectionEvidenceStore:
             artifacts = persistence["artifacts"]
             if not isinstance(artifacts, list):
                 raise EvidenceIntegrityError("manifest artifacts must be an array")
-            self._verify_artifacts(directory, artifacts)
+            self._verify_artifacts(directory, artifacts, action=request.action)
             support = analysis["support"]
             verdict = analysis["verdict"]
             if not isinstance(support, str) or not isinstance(verdict, str):
@@ -618,6 +879,9 @@ class InspectionEvidenceStore:
         except (EvidenceValidationError, KeyError, TypeError, AttributeError) as exc:
             raise EvidenceIntegrityError(f"manifest contract is invalid: {exc}") from exc
 
+        reviews = self._read_reviews(directory)
+        if reviews:
+            manifest["review"] = reviews[-1]
         return InspectionEvidenceResult(
             request=request,
             evidence_dir=directory,
@@ -628,8 +892,11 @@ class InspectionEvidenceStore:
             analysis_verdict=verdict,
         )
 
-    def _verify_artifacts(self, directory: Path, artifacts: list[Any]) -> None:
+    def _verify_artifacts(self, directory: Path, artifacts: list[Any], *, action: str) -> None:
         seen: set[str] = set()
+        measurement_sensors: set[str] = set()
+        modalities: set[str] = set()
+        nonempty_kinds: set[str] = set()
         for record in artifacts:
             if not isinstance(record, dict):
                 raise EvidenceIntegrityError("artifact record must be an object")
@@ -660,6 +927,26 @@ class InspectionEvidenceStore:
             media_type = record.get("media_type")
             if not isinstance(media_type, str) or not media_type:
                 raise EvidenceIntegrityError(f"artifact media type is invalid: {name}")
+            if expected_bytes > 0 and isinstance(record.get("kind"), str):
+                nonempty_kinds.add(record["kind"])
+            if record.get("kind") == "measurement":
+                sensor_id = _validate_identifier("measurement.sensor_id", record.get("sensor_id"))
+                if sensor_id in measurement_sensors:
+                    raise EvidenceIntegrityError("duplicate measurement sensor_id")
+                measurement_sensors.add(sensor_id)
+                modality = record.get("modality")
+                if modality not in {"thermal", "acoustic", "semantic"}:
+                    raise EvidenceIntegrityError("invalid measurement modality")
+                if expected_bytes == 0:
+                    raise EvidenceIntegrityError("measurement payload must be non-empty")
+                _validate_measurement_metadata(record.get("metadata"), sensor_id, modality)
+                modalities.add(modality)
+        required_modality = _MEASUREMENT_ACTIONS.get(action)
+        if required_modality is not None:
+            if required_modality not in modalities:
+                raise EvidenceIntegrityError(f"{action} requires a matching measurement")
+            if not {"rgb", "pose"} <= nonempty_kinds:
+                raise EvidenceIntegrityError(f"{action} requires non-empty RGB and pose evidence")
 
 
 def _is_safe_artifact_name(value: str) -> bool:

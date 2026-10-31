@@ -63,7 +63,7 @@ _CHECK_NAMES = (
 _SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}\Z")
 _FRAME_RE = re.compile(r"frame_([0-9]{6})\.png\Z")
-_THUNDERV4_CONTROLLER_MANIFEST_PATH = "sim/packages/controllers/doso/thunder_v4/locomotion/controller.package.yaml"
+_THUNDERV4_CONTROLLER_MANIFEST_PATH = "sim/packages/controllers/doso/thunder_v4/cts_moe/controller.package.yaml"
 
 _ALLOCATION_FIELDS = frozenset(
     {
@@ -788,7 +788,7 @@ class _PlayableVerifier:
                     raise PlayableQualificationError("final zero trace is not the natural cleared:exit command")
                 self._final_zero = item
                 continue
-            if item.get("controller_id") != "thunder_01.thunderv4_locomotion":
+            if item.get("controller_id") != "thunder_01.thunderv4_cts_moe":
                 raise PlayableQualificationError("accepted command does not target the production ThunderV4 controller")
             if item.get("channel_id") != "thunder_01.control.base_twist":
                 raise PlayableQualificationError("accepted command does not target the production base_twist channel")
@@ -1305,7 +1305,7 @@ class _PlayableVerifier:
             "robot_package": "thunderv4@1.0.3",
             "robot_instance_id": "thunder_01",
             "robot_color": "black_graphite",
-            "controller_package": "thunderv4_locomotion@1.0.0",
+            "controller_package": "thunderv4_cts_moe@1.0.0",
         }
         if dict(product) != expected_product:
             raise PlayableQualificationError(
@@ -1438,27 +1438,24 @@ class _PlayableVerifier:
         )
         self._verify_document_identity(document, "recording/controller-calibration.json")
         if (
-            document.get("controller_package_id") != "thunderv4_locomotion"
+            document.get("controller_package_id") != "thunderv4_cts_moe"
             or document.get("controller_package_version") != "1.0.0"
             or document.get("controller_manifest_path") != _THUNDERV4_CONTROLLER_MANIFEST_PATH
         ):
             raise PlayableQualificationError("controller calibration package provenance is stale")
         expected_calibration = {
             "schema": "lingtu.sim.controller-command-calibration.v1",
-            "scope": "quadruped_him_observation_only",
+            "scope": "thunder_cts_moe_si_commands",
             "provenance": {
-                "source_id": "factory_park_turn_truth_qa_20260809",
-                "audit_note": (
-                    "Source identifier records the calibration rationale only; no warehouse "
-                    "artifact is claimed as yaw-turn qualification proof."
-                ),
+                "source_id": "cts_moe_v39_runtime_contract",
+                "audit_note": ("CTS v39 receives SI base twist without a separate yaw gain; this is not motion qualification."),
                 "qualification_claim": False,
             },
             "external_yaw_cap_radps": 0.35,
-            "policy_yaw_observation_gain": 1.2857142857142858,
-            "policy_yaw_observation_limit_radps": 0.45,
+            "policy_yaw_observation_gain": 1.0,
+            "policy_yaw_observation_limit_radps": 0.35,
             "leaves_base_twist_unchanged": True,
-            "affected_axes": ["angular_z"],
+            "affected_axes": [],
         }
         calibration = _mapping(
             document.get("command_calibration"),
@@ -2708,7 +2705,7 @@ def _probe_video_with_ffmpeg(
         str(path),
     ]
     try:
-        completed = subprocess.run(  # noqa: S603 - argv only; executable is hash-pinned.
+        completed = subprocess.run(  # Argv only; executable is hash-pinned.
             probe_command,
             check=False,
             capture_output=True,
@@ -2750,7 +2747,7 @@ def _probe_video_with_ffmpeg(
         "-",
     ]
     try:
-        decoded = subprocess.run(  # noqa: S603 - argv only; executable is hash-pinned.
+        decoded = subprocess.run(  # Argv only; executable is hash-pinned.
             decode_command,
             check=False,
             stdout=subprocess.DEVNULL,

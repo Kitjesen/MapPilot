@@ -1,399 +1,44 @@
-"""Synchronous HTTP client for the LingTu robot Gateway.
+"""Gateway connection settings with named domain clients.
 
-Provides typed convenience methods for every major Gateway REST endpoint.
-Uses only the Python stdlib -- no third-party dependencies.
-
-Usage::
-
-    from lingtu.sdk import LingTuClient
-
-    robot = LingTuClient("192.168.66.190", 5050)
-    robot.go(10.0, 5.0, yaw=1.57)
-    print(robot.position())
+Prefer robot.navigation, robot.map, robot.tasks, robot.observations and robot.system.
+Existing flat methods remain available and delegate to the same implementation.
+Each request uses urllib; the root owns settings, not a persistent TCP session.
+Uses only the Python standard library.
 """
 
 from __future__ import annotations
 
 import json
-import secrets
-import tempfile
-import time
 import urllib.error
 import urllib.request
-from collections.abc import Mapping
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
-from urllib.parse import quote, urlencode
-
-_CONNECTION_ERROR = "robot not reachable"
-_ULID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-
-
-def _connection_error_payload(path: str, exc: BaseException) -> dict[str, Any]:
-    """Return a stable SDK error payload for offline or unreachable robots."""
-
-    return {
-        "ok": False,
-        "success": False,
-        "error": _CONNECTION_ERROR,
-        "detail": str(exc),
-        "path": path,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Typed response models
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class Position:
-    """Robot position in the map frame."""
-
-    x: float = 0.0
-    y: float = 0.0
-    z: float = 0.0
-    yaw: float = 0.0
-
-
-@dataclass(frozen=True)
-class Pose2D:
-    """Planar pose used as a localization seed."""
-
-    x: float
-    y: float
-    yaw: float
-
-
-@dataclass
-class HealthStatus:
-    """System health overview."""
-
-    modules_ok: int = 0
-    modules_fail: int = 0
-    modules_total: int = 0
-    slam_rate: float = 0.0
-    mode: str = ""
-    session: str = ""
-    raw: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class NavigationTask:
-    """Current navigation task lifecycle."""
-
-    state: str = "UNKNOWN"
-    task_id: str = ""
-    reason: str = ""
-
-
-@dataclass
-class NavigationGoalAdmission:
-    """Whether the Gateway can accept or replace a navigation goal."""
-
-    state: str = "UNKNOWN"
-    reason: str = ""
-
-
-@dataclass
-class NavigationControlState:
-    """Current navigation control authority."""
-
-    authority: str = "UNKNOWN"
-    resume_required: bool = False
-    reason: str = ""
-
-
-@dataclass
-class NavigationMotionState:
-    """Motion permission, observation, and stop-confirmation evidence."""
-
-    permission: str = "UNKNOWN"
-    observation: str = "UNKNOWN"
-    stop_confirmation: str = "UNKNOWN"
-    reason: str = ""
-
-
-@dataclass
-class NavigationStatus:
-    """The four public navigation state axes."""
-
-    task: NavigationTask = field(default_factory=NavigationTask)
-    goal_admission: NavigationGoalAdmission = field(default_factory=NavigationGoalAdmission)
-    control: NavigationControlState = field(default_factory=NavigationControlState)
-    motion: NavigationMotionState = field(default_factory=NavigationMotionState)
-    raw: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class MapInfo:
-    """Summary of a single saved map."""
-
-    name: str = ""
-    has_pcd: bool = False
-    is_active: bool = False
-    size_bytes: int = 0
-    raw: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class MapList:
-    """Response from the maps endpoint."""
-
-    maps: list[MapInfo] = field(default_factory=list)
-    active_map: str | None = None
-    raw: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class SessionInfo:
-    """Current robot session state."""
-
-    mode: str = "idle"
-    active_map: str | None = None
-    slam_profile: str | None = None
-    raw: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class CommandResult:
-    """Command admission receipt (not mission-completion evidence)."""
-
-    ok: bool = False
-    message: str = ""
-    raw: dict[str, Any] = field(default_factory=dict)
-    operation_id: str | None = None
-    accepted: bool = False
-    request_id: str | None = None
-    stage: str = ""
-    task_id: str | None = None
-
-
-@dataclass
-class RobotState:
-    """Full robot state snapshot."""
-
-    mode: str = ""
-    odometry: Position = field(default_factory=Position)
-    mission: NavigationStatus = field(default_factory=NavigationStatus)
-    safety_level: str = ""
-    raw: dict[str, Any] = field(default_factory=dict)
-
-
-_NAVIGATION_FAILURE_STATES = frozenset({"FAILED", "CANCELLED"})
-
-
-def _mapping(value: Any) -> Mapping[str, Any]:
-    return value if isinstance(value, Mapping) else {}
-
-
-def _validate_save_request_identity(payload: Mapping[str, Any], expected: str) -> None:
-    operation = _mapping(payload.get("operation"))
-    for container in (payload, operation):
-        returned = str(container.get("request_id") or "").strip()
-        if returned and returned != expected:
-            raise RuntimeError(f"Map save request identity mismatch: expected {expected}, got {returned}")
-
-
-def _validate_save_operation_identity(payload: Mapping[str, Any], expected: str) -> None:
-    operation = _mapping(payload.get("operation"))
-    for container in (payload, operation):
-        returned = str(container.get("operation_id") or "").strip()
-        if returned and returned != expected:
-            raise RuntimeError(f"Map save operation identity mismatch: expected {expected}, got {returned}")
-
-
-def _save_operation_failure_reason(
-    payload: Mapping[str, Any],
-    fallback: str = "",
-) -> str:
-    operation = _mapping(payload.get("operation"))
-    return str(
-        operation.get("reason_code")
-        or operation.get("message")
-        or operation.get("error")
-        or operation.get("detail")
-        or payload.get("reason_code")
-        or payload.get("message")
-        or payload.get("error")
-        or fallback
-        or payload.get("detail")
-        or "unknown reason"
-    )
-
-
-def _save_response_is_connection_unknown(
-    payload: Mapping[str, Any],
-    fallback: str = "",
-) -> bool:
-    operation = _mapping(payload.get("operation"))
-    candidates = (
-        operation.get("error"),
-        operation.get("reason_code"),
-        payload.get("error"),
-        payload.get("reason_code"),
-        fallback,
-    )
-    return any(str(value or "").strip().lower() == _CONNECTION_ERROR for value in candidates)
-
-
-def _validated_map_save_receipt(
-    receipt: CommandResult,
-    expected_request_id: str,
-) -> tuple[str, bool]:
-    """Validate a map-save receipt and return its operation identity."""
-    _validate_save_request_identity(receipt.raw, expected_request_id)
-    if receipt.request_id and receipt.request_id != expected_request_id:
-        raise RuntimeError(
-            f"Map save request identity mismatch: expected {expected_request_id}, got {receipt.request_id}"
-        )
-
-    operation_id = str(receipt.operation_id or "").strip()
-    if operation_id:
-        _validate_save_operation_identity(receipt.raw, operation_id)
-
-    submission_unknown = _save_response_is_connection_unknown(
-        receipt.raw,
-        receipt.message,
-    )
-    if (not receipt.ok or not receipt.accepted) and not submission_unknown:
-        reason = _save_operation_failure_reason(receipt.raw, receipt.message)
-        raise RuntimeError(f"Map save request rejected: {reason}")
-    return operation_id, submission_unknown
-
-
-def _new_request_id() -> str:
-    """Return a canonical 26-character uppercase ULID."""
-    timestamp_ms = (time.time_ns() // 1_000_000) & ((1 << 48) - 1)
-    value = (timestamp_ms << 80) | secrets.randbits(80)
-    encoded = ["0"] * 26
-    for index in range(25, -1, -1):
-        encoded[index] = _ULID_ALPHABET[value & 0x1F]
-        value >>= 5
-    return "".join(encoded)
-
-
-def _parse_navigation_status(raw: dict[str, Any]) -> NavigationStatus:
-    task = _mapping(raw.get("task"))
-    admission = _mapping(raw.get("goal_admission"))
-    control = _mapping(raw.get("control"))
-    motion = _mapping(raw.get("motion"))
-    return NavigationStatus(
-        task=NavigationTask(
-            state=str(task.get("state") or "UNKNOWN"),
-            task_id=str(task.get("task_id") or ""),
-            reason=str(task.get("reason") or ""),
-        ),
-        goal_admission=NavigationGoalAdmission(
-            state=str(admission.get("state") or "UNKNOWN"),
-            reason=str(admission.get("reason") or ""),
-        ),
-        control=NavigationControlState(
-            authority=str(control.get("authority") or "UNKNOWN"),
-            resume_required=control.get("resume_required") is True,
-            reason=str(control.get("reason") or ""),
-        ),
-        motion=NavigationMotionState(
-            permission=str(motion.get("permission") or "UNKNOWN"),
-            observation=str(motion.get("observation") or "UNKNOWN"),
-            stop_confirmation=str(motion.get("stop_confirmation") or "UNKNOWN"),
-            reason=str(motion.get("reason") or ""),
-        ),
-        raw=dict(raw),
-    )
-
-
-def _parse_command_result(raw: dict[str, Any]) -> CommandResult:
-    command = _mapping(raw.get("command"))
-    accepted_signal = command.get("accepted", raw.get("accepted"))
-    if accepted_signal is None:
-        accepted = raw.get("ok") is True or raw.get("success") is True
-    else:
-        accepted = accepted_signal is True
-
-    if "ok" in raw:
-        response_ok = raw.get("ok") is True
-    elif "success" in raw:
-        response_ok = raw.get("success") is True
-    else:
-        response_ok = accepted
-
-    request_id = str(command.get("request_id") or raw.get("request_id") or "").strip() or None
-    task_id = str(command.get("task_id") or raw.get("task_id") or "").strip() or None
-    stage = str(raw.get("stage") or raw.get("status") or command.get("stage") or "")
-    operation_id = str(command.get("operation_id") or raw.get("operation_id") or "").strip() or None
-    return CommandResult(
-        ok=response_ok and accepted,
-        accepted=accepted,
-        message=str(raw.get("message", raw.get("reason", raw.get("error", ""))) or ""),
-        request_id=request_id,
-        task_id=task_id,
-        stage=stage,
-        raw=raw,
-        operation_id=operation_id,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Client
-# ---------------------------------------------------------------------------
-
-
-class LocalizationClient:
-    """Domain facade for localization commands."""
-
-    def __init__(self, client: LingTuClient) -> None:
-        self._client = client
-
-    def relocalize(
-        self,
-        map_name: str,
-        *,
-        initial_pose: Pose2D,
-        request_id: str | None = None,
-    ) -> CommandResult:
-        """Relocalize on the active map from a caller-provided pose seed."""
-        body: dict[str, Any] = {
-            "mode": "seeded",
-            "map_name": map_name,
-            "initial_pose": {
-                "x": initial_pose.x,
-                "y": initial_pose.y,
-                "yaw": initial_pose.yaw,
-            },
-        }
-        if request_id is not None:
-            body["request_id"] = request_id
-        return self._client._command("/api/v1/localization/relocalizations", body)
-
-    def global_relocalize(
-        self,
-        map_name: str,
-        *,
-        request_id: str | None = None,
-    ) -> CommandResult:
-        """Relocalize on the active map without a pose seed."""
-        body: dict[str, Any] = {"mode": "global", "map_name": map_name}
-        if request_id is not None:
-            body["request_id"] = request_id
-        return self._client._command("/api/v1/localization/relocalizations", body)
-
-    def start_map_tracking(
-        self,
-        map_name: str,
-        *,
-        request_id: str | None = None,
-    ) -> CommandResult:
-        """Start continuous alignment against the active map."""
-        body: dict[str, Any] = {"map_name": map_name}
-        if request_id is not None:
-            body["request_id"] = request_id
-        return self._client._command("/api/v1/localization/map-tracking", body)
+from typing import Any, cast
+
+from ._common import _connection_error_payload
+from .localization import LocalizationClient as LocalizationClient
+from .maps import MapClient as MapClient
+from .models import CommandResult as CommandResult
+from .models import HealthStatus as HealthStatus
+from .models import MapInfo as MapInfo
+from .models import MapList as MapList
+from .models import NavigationControlState as NavigationControlState
+from .models import NavigationGoalAdmission as NavigationGoalAdmission
+from .models import NavigationMotionState as NavigationMotionState
+from .models import NavigationStatus as NavigationStatus
+from .models import NavigationTask as NavigationTask
+from .models import Pose2D as Pose2D
+from .models import Position as Position
+from .models import RobotState as RobotState
+from .models import SessionInfo as SessionInfo
+from .models import _parse_command_result
+from .navigation import NavigationClient as NavigationClient
+from .observations import ObservationClient as ObservationClient
+from .system import SystemClient as SystemClient
+from .tasks import TaskClient as TaskClient
 
 
 class LingTuClient:
-    """Synchronous client for LingTu robot control and state inspection."""
+    """Shared Gateway configuration and access to the public domain clients."""
 
     def __init__(
         self,
@@ -402,30 +47,51 @@ class LingTuClient:
         api_key: str | None = None,
         timeout: float = 10.0,
     ) -> None:
-        """Connect to a LingTu robot Gateway."""
         self.base_url = f"http://{host}:{port}"
         self._api_key = api_key
         self._timeout = timeout
+        self._navigation = NavigationClient(self)
+        self._map = MapClient(self)
         self._localization = LocalizationClient(self)
+        self._observations = ObservationClient(self)
+        self._system = SystemClient(self)
+        self._tasks = TaskClient(self)
+
+    @property
+    def navigation(self) -> NavigationClient:
+        """Navigation, localization, execution evidence and exploration."""
+        return self._navigation
+
+    @property
+    def map(self) -> MapClient:
+        """Saved maps, durable save operations, artifacts and named places."""
+        return self._map
 
     @property
     def localization(self) -> LocalizationClient:
-        """Access localization operations without exposing backend names."""
+        """Legacy localization commands; prefer navigation for new callers."""
         return self._localization
 
-    # ------------------------------------------------------------------
-    # Context manager
-    # ------------------------------------------------------------------
+    @property
+    def observations(self) -> ObservationClient:
+        """Current observations, retained history and native data recording."""
+        return self._observations
+
+    @property
+    def system(self) -> SystemClient:
+        """System state, diagnostics, emergency stop and operator control leases."""
+        return self._system
+
+    @property
+    def tasks(self) -> TaskClient:
+        """Instructions, follow and inspection with explicit task identities."""
+        return self._tasks
 
     def __enter__(self) -> LingTuClient:
         return self
 
     def __exit__(self, *args: object) -> None:
         self.close()
-
-    # ------------------------------------------------------------------
-    # Navigation
-    # ------------------------------------------------------------------
 
     def go(
         self,
@@ -435,42 +101,119 @@ class LingTuClient:
         *,
         request_id: str | None = None,
     ) -> CommandResult:
-        """Navigate to map coordinates."""
-        resolved_request_id = str(request_id or "").strip() or _new_request_id()
-        result = self._command(
-            "/api/v1/goal",
-            {"x": x, "y": y, "yaw": yaw, "request_id": resolved_request_id},
-        )
-        if result.request_id is None:
-            result.request_id = resolved_request_id
-        return result
+        """Compatibility alias for navigation.go()."""
+        return self.navigation.go(x, y, yaw, request_id=request_id)
 
     def go_to(self, target: str) -> CommandResult:
         """Navigate by semantic label or natural-language instruction."""
-        return self._command("/api/v1/instruction", {"text": target})
+        return self.send_instruction(target)
 
-    def follow_person(self, target_id: str) -> CommandResult:
-        """Follow the person currently published with ``target_id``."""
-        return self._command(
-            "/api/v1/visual_servo",
-            {"mode": "follow", "target_id": target_id},
+    def send_instruction(
+        self,
+        text: str,
+        *,
+        run_id: str | None = None,
+        control_only: bool = False,
+        request_id: str | None = None,
+        client_id: str = "sdk",
+    ) -> CommandResult:
+        """Compatibility alias for tasks.send_instruction()."""
+        return self.tasks.send_instruction(
+            text, run_id=run_id, control_only=control_only, request_id=request_id, client_id=client_id
         )
 
-    def stop_following(self) -> CommandResult:
-        """Stop the active person-following task without issuing an emergency stop."""
-        return self._command("/api/v1/visual_servo", {"mode": "stop"})
+    def get_agent_run(self, run_id: str) -> dict[str, Any]:
+        """Compatibility alias for tasks.get_agent_run()."""
+        return self.tasks.get_agent_run(run_id)
+
+    def cancel_agent_run(
+        self,
+        run_id: str,
+        *,
+        request_id: str | None = None,
+        client_id: str = "sdk",
+    ) -> CommandResult:
+        """Compatibility alias for tasks.cancel_agent_run()."""
+        return self.tasks.cancel_agent_run(run_id, request_id=request_id, client_id=client_id)
+
+    def start_follow(
+        self,
+        *,
+        description: str | None = None,
+        target_id: str | None = None,
+        request_id: str | None = None,
+        client_id: str = "sdk",
+    ) -> CommandResult:
+        """Compatibility alias for tasks.start_follow()."""
+        return self.tasks.start_follow(
+            description=description, target_id=target_id, request_id=request_id, client_id=client_id
+        )
+
+    def get_follow_task(
+        self,
+        follow_task_id: str,
+        product_session_id: str,
+    ) -> dict[str, Any]:
+        """Compatibility alias for tasks.get_follow_task()."""
+        return self.tasks.get_follow_task(follow_task_id, product_session_id)
+
+    def cancel_follow_task(
+        self,
+        follow_task_id: str,
+        product_session_id: str,
+        *,
+        reason: str = "operator_cancel",
+        request_id: str | None = None,
+        client_id: str = "sdk",
+    ) -> CommandResult:
+        """Compatibility alias for tasks.cancel_follow_task()."""
+        return self.tasks.cancel_follow_task(
+            follow_task_id, product_session_id, reason=reason, request_id=request_id, client_id=client_id
+        )
+
+    def follow_person(
+        self,
+        target_id: str,
+        *,
+        request_id: str | None = None,
+        client_id: str = "sdk",
+    ) -> CommandResult:
+        """Start owned Follow for the published person ``target_id``."""
+        return self.start_follow(
+            target_id=target_id,
+            request_id=request_id,
+            client_id=client_id,
+        )
+
+    def stop_following(
+        self,
+        follow_task_id: str,
+        product_session_id: str,
+        *,
+        reason: str = "operator_cancel",
+        request_id: str | None = None,
+        client_id: str = "sdk",
+    ) -> CommandResult:
+        """Cancel one referenced Follow without issuing an emergency stop."""
+        return self.cancel_follow_task(
+            follow_task_id,
+            product_session_id,
+            reason=reason,
+            request_id=request_id,
+            client_id=client_id,
+        )
 
     def stop(self) -> CommandResult:
-        """Emergency stop -- immediately halt all motion."""
-        return self._command("/api/v1/stop")
+        """Compatibility alias for system.emergency_stop()."""
+        return self.system.emergency_stop()
 
     def cancel(self, reason: str = "client_cancel") -> CommandResult:
-        """Gracefully cancel the current navigation mission."""
-        return self._command("/api/v1/navigation/cancel", {"reason": reason})
+        """Compatibility alias for navigation.cancel()."""
+        return self.navigation.cancel(reason)
 
     def navigate_click(self, x: float, y: float, yaw: float = 0.0) -> CommandResult:
-        """Navigate to a map-viewer click point."""
-        return self._command("/api/v1/navigate/click", {"x": x, "y": y, "yaw": yaw})
+        """Compatibility alias for navigation.go_to_click()."""
+        return self.navigation.go_to_click(x, y, yaw)
 
     def wait_until_arrived(
         self,
@@ -478,148 +221,44 @@ class LingTuClient:
         timeout: float = 120.0,
         poll_interval: float = 0.5,
     ) -> NavigationStatus:
-        """Block until a navigation task completes.
-
-        A task identity uses the task ledger. Without one, only the current v3
-        task state is observed; no goal or legacy-status correlation is used.
-        """
-        normalized_task_id = str(task_id or "").strip()
-        if normalized_task_id:
-            return self._wait_for_navigation_task(
-                normalized_task_id,
-                timeout=timeout,
-                poll_interval=poll_interval,
-            )
-
-        deadline = time.monotonic() + timeout
-        last_state = "UNKNOWN"
-        while time.monotonic() < deadline:
-            result = self.navigation_status()
-            last_state = result.task.state.upper()
-            if last_state == "SUCCESS":
-                return result
-            if last_state in _NAVIGATION_FAILURE_STATES:
-                raise RuntimeError(
-                    f"Navigation {last_state}: {result.task.reason or 'unknown reason'}"
-                )
-            time.sleep(poll_interval)
-
-        raise TimeoutError(
-            f"Navigation did not complete within {timeout}s (state={last_state})"
-        )
-
-    def _wait_for_navigation_task(
-        self,
-        task_id: str,
-        *,
-        timeout: float,
-        poll_interval: float,
-    ) -> NavigationStatus:
-        deadline = time.monotonic() + timeout
-        last_state = "UNKNOWN"
-        while time.monotonic() < deadline:
-            payload = self.navigation_task_status(task_id)
-            status_payload = _mapping(payload.get("status"))
-            observed_task_id = str(status_payload.get("task_id") or payload.get("task_id") or "").strip()
-            identity_matches = observed_task_id == task_id
-            if payload.get("found") is True and status_payload and identity_matches:
-                last_state = str(
-                    status_payload.get("lifecycle_state_name") or status_payload.get("state_name") or "UNKNOWN"
-                ).upper()
-                result = NavigationStatus(
-                    task=NavigationTask(
-                        state=last_state,
-                        task_id=task_id,
-                        reason=str(
-                            status_payload.get("failure_reason")
-                            or status_payload.get("reason")
-                            or payload.get("reason")
-                            or ""
-                        ),
-                    ),
-                    raw=dict(payload),
-                )
-                if last_state == "SUCCESS":
-                    return result
-                if last_state in _NAVIGATION_FAILURE_STATES:
-                    reason = str(
-                        status_payload.get("failure_reason")
-                        or status_payload.get("reason")
-                        or payload.get("reason")
-                        or "unknown reason"
-                    )
-                    raise RuntimeError(f"Navigation {last_state}: {reason}")
-            time.sleep(poll_interval)
-
-        raise TimeoutError(f"Navigation task {task_id} did not complete within {timeout}s (state={last_state})")
-
-    # ------------------------------------------------------------------
-    # State
-    # ------------------------------------------------------------------
+        """Compatibility alias for navigation.wait_until_arrived()."""
+        return self.navigation.wait_until_arrived(task_id, timeout, poll_interval)
 
     def state(self) -> RobotState:
-        """Get full robot state: odometry, mission, safety, mode, etc."""
-        raw = self._get("/api/v1/state")
-        return self._parse_state(raw)
+        """Compatibility alias for system.state()."""
+        return self.system.state()
 
     def health(self) -> HealthStatus:
-        """Get system health overview (modules, sensors, SLAM rate, etc.)."""
-        raw = self._get("/api/v1/health")
-        return HealthStatus(
-            modules_ok=raw.get("modules_ok", 0),
-            modules_fail=raw.get("modules_fail", 0),
-            modules_total=raw.get("modules_ok", 0) + raw.get("modules_fail", 0),
-            slam_rate=raw.get("slam_rate", 0.0),
-            mode=raw.get("mode", ""),
-            session=raw.get("session", ""),
-            raw=raw,
-        )
+        """Compatibility alias for system.health()."""
+        return self.system.health()
 
     def position(self) -> Position:
-        """Get current position."""
-        return self.state().odometry
+        """Compatibility alias for navigation.position()."""
+        return self.navigation.position()
 
     def session(self) -> SessionInfo:
-        """Get current session state (mode, SLAM profile, active map, etc.)."""
-        raw = self._get("/api/v1/session")
-        return SessionInfo(
-            mode=raw.get("mode", "idle"),
-            active_map=raw.get("active_map"),
-            slam_profile=raw.get("slam_profile"),
-            raw=raw,
-        )
+        """Compatibility alias for system.session()."""
+        return self.system.session()
 
     def navigation_status(self) -> NavigationStatus:
-        """Get current navigation mission status."""
-        raw = self._get("/api/v1/navigation/status")
-        return _parse_navigation_status(raw)
+        """Compatibility alias for navigation.status()."""
+        return self.navigation.status()
 
     def navigation_task_status(self, task_id: str) -> dict[str, Any]:
-        """Get lifecycle evidence for one stable navigation task identity."""
-        normalized = str(task_id or "").strip()
-        if not normalized:
-            raise ValueError("task_id is required")
-        return self._get(f"/api/v1/navigation/tasks/{quote(normalized, safe='')}")
+        """Compatibility alias for navigation.task()."""
+        return self.navigation.task(task_id)
 
     def localization_status(self) -> dict[str, Any]:
-        """Get localization health: alignment, residual, fix quality."""
-        return self._get("/api/v1/localization/status")
+        """Compatibility alias for navigation.localization_status()."""
+        return self.navigation.localization_status()
 
     def path(self) -> dict[str, Any]:
-        """Get the latest planned global path as a list of poses."""
-        return self._get("/api/v1/path")
-
-    # ------------------------------------------------------------------
-    # Inspection
-    # ------------------------------------------------------------------
+        """Compatibility alias for navigation.path()."""
+        return self.navigation.path()
 
     def inspection_routes(self, map_id: str | None = None) -> dict[str, Any]:
-        """List stored inspection routes, optionally for one map."""
-        path = "/api/v1/inspection/routes"
-        normalized_map_id = str(map_id or "").strip()
-        if normalized_map_id:
-            path = f"{path}?{urlencode({'map_id': normalized_map_id})}"
-        return self._get(path)
+        """Compatibility alias for tasks.inspection_routes()."""
+        return self.tasks.inspection_routes(map_id)
 
     def start_inspection(
         self,
@@ -629,28 +268,12 @@ class LingTuClient:
         revision: int = 0,
         request_id: str | None = None,
     ) -> CommandResult:
-        """Submit a stored route for native inspection execution."""
-        normalized_route_id = str(route_id or "").strip()
-        if not normalized_route_id:
-            raise ValueError("route_id is required")
-        resolved_request_id = str(request_id or "").strip() or _new_request_id()
-        body: dict[str, Any] = {
-            "route_id": normalized_route_id,
-            "revision": revision,
-            "request_id": resolved_request_id,
-        }
-        normalized_map_id = str(map_id or "").strip()
-        if normalized_map_id:
-            body["map_id"] = normalized_map_id
-        result = self._command("/api/v1/inspection/tasks", body)
-        if result.request_id is None:
-            result.request_id = resolved_request_id
-        return result
+        """Compatibility alias for tasks.start_inspection()."""
+        return self.tasks.start_inspection(route_id, map_id=map_id, revision=revision, request_id=request_id)
 
     def inspection_task(self, task_id: str) -> dict[str, Any]:
-        """Read the fact-backed state of one inspection task."""
-        encoded_task_id = self._inspection_task_id(task_id)
-        return self._get(f"/api/v1/inspection/tasks/{encoded_task_id}")
+        """Compatibility alias for tasks.inspection_task()."""
+        return self.tasks.inspection_task(task_id)
 
     def pause_inspection(
         self,
@@ -659,8 +282,8 @@ class LingTuClient:
         reason: str = "operator_pause",
         request_id: str | None = None,
     ) -> CommandResult:
-        """Request a pause for one inspection task."""
-        return self._control_inspection(task_id, "pause", reason, request_id)
+        """Compatibility alias for tasks.pause_inspection()."""
+        return self.tasks.pause_inspection(task_id, reason=reason, request_id=request_id)
 
     def resume_inspection(
         self,
@@ -669,8 +292,8 @@ class LingTuClient:
         reason: str = "operator_resume",
         request_id: str | None = None,
     ) -> CommandResult:
-        """Request resumption of one paused inspection task."""
-        return self._control_inspection(task_id, "resume", reason, request_id)
+        """Compatibility alias for tasks.resume_inspection()."""
+        return self.tasks.resume_inspection(task_id, reason=reason, request_id=request_id)
 
     def cancel_inspection(
         self,
@@ -679,49 +302,16 @@ class LingTuClient:
         reason: str = "operator_cancel",
         request_id: str | None = None,
     ) -> CommandResult:
-        """Request cancellation of one inspection task."""
-        return self._control_inspection(task_id, "cancel", reason, request_id)
+        """Compatibility alias for tasks.cancel_inspection()."""
+        return self.tasks.cancel_inspection(task_id, reason=reason, request_id=request_id)
 
     def inspection_report(self, task_id: str) -> dict[str, Any]:
-        """Read the business report for one inspection task."""
-        encoded_task_id = self._inspection_task_id(task_id)
-        return self._get(f"/api/v1/inspection/tasks/{encoded_task_id}/report")
-
-    def _control_inspection(
-        self,
-        task_id: str,
-        action: str,
-        reason: str,
-        request_id: str | None,
-    ) -> CommandResult:
-        encoded_task_id = self._inspection_task_id(task_id)
-        resolved_request_id = str(request_id or "").strip() or _new_request_id()
-        result = self._command(
-            f"/api/v1/inspection/tasks/{encoded_task_id}/{action}",
-            {
-                "reason": str(reason or "").strip() or f"operator_{action}",
-                "request_id": resolved_request_id,
-            },
-        )
-        if result.request_id is None:
-            result.request_id = resolved_request_id
-        return result
-
-    @staticmethod
-    def _inspection_task_id(task_id: str) -> str:
-        normalized = str(task_id or "").strip()
-        if not normalized:
-            raise ValueError("task_id is required")
-        return quote(normalized, safe="")
-
-    # ------------------------------------------------------------------
-    # Maps
-    # ------------------------------------------------------------------
+        """Compatibility alias for tasks.inspection_report()."""
+        return self.tasks.inspection_report(task_id)
 
     def maps(self) -> MapList:
-        """List saved maps on the robot."""
-        raw = self._get("/api/v1/slam/maps")
-        return self._parse_map_list(raw)
+        """Compatibility alias for map.list()."""
+        return self.map.list()
 
     def save_map(
         self,
@@ -729,15 +319,8 @@ class LingTuClient:
         *,
         request_id: str | None = None,
     ) -> CommandResult:
-        """Queue a durable save of the current SLAM map."""
-        resolved_request_id = str(request_id or "").strip() or _new_request_id()
-        body: dict[str, Any] = {"request_id": resolved_request_id}
-        if name:
-            body["name"] = name
-        result = self._command("/api/v1/map/save", body)
-        if result.request_id is None:
-            result.request_id = resolved_request_id
-        return result
+        """Compatibility alias for map.save()."""
+        return self.map.save(name, request_id=request_id)
 
     def save_map_and_wait(
         self,
@@ -747,140 +330,52 @@ class LingTuClient:
         timeout: float = 300.0,
         poll_interval: float = 1.0,
     ) -> dict[str, Any]:
-        """Save the current map and wait for its durable terminal result."""
-        deadline = time.monotonic() + timeout
-        resolved_request_id = str(request_id or "").strip() or _new_request_id()
-        while True:
-            receipt = self.save_map(
-                name,
-                request_id=resolved_request_id,
-            )
-            operation_id, submission_unknown = _validated_map_save_receipt(
-                receipt,
-                resolved_request_id,
-            )
-            if receipt.ok and receipt.accepted and operation_id:
-                break
-            if not submission_unknown:
-                raise RuntimeError("Map save response did not include operation_id")
-            if time.monotonic() >= deadline:
-                raise TimeoutError("Map save admission remained unknown until the timeout")
-            time.sleep(poll_interval)
-        state = ""
-        while time.monotonic() < deadline:
-            response = self.get_map_operation(operation_id)
-            _validate_save_operation_identity(response, operation_id)
-            operation = _mapping(response.get("operation"))
-            state = str(operation.get("state") or "").strip().upper()
-            if state == "SUCCEEDED":
-                return response
-            if state in {"FAILED", "CANCELLED", "CANCELED"}:
-                raise RuntimeError(f"Map save {state}: {_save_operation_failure_reason(response)}")
-            reason_code = str(operation.get("reason_code") or response.get("reason_code") or "").strip().lower()
-            transient = reason_code == "operation_not_found" or _save_response_is_connection_unknown(response)
-            explicit_error = (
-                response.get("ok") is False
-                or response.get("success") is False
-                or response.get("error") is not None
-                or response.get("detail") is not None
-                or operation.get("error") is not None
-                or operation.get("detail") is not None
-                or state in {"ERROR", "REJECTED", "NOT_FOUND"}
-            )
-            if explicit_error and not transient:
-                raise RuntimeError(f"Map save status query failed: {_save_operation_failure_reason(response)}")
-            time.sleep(poll_interval)
-        raise TimeoutError(f"Map save did not complete within {timeout}s (state={state or 'UNKNOWN'})")
+        """Compatibility alias for map.save_and_wait()."""
+        return self.map.save_and_wait(name, request_id=request_id, timeout=timeout, poll_interval=poll_interval)
 
     def get_map_operation(self, operation_id: str) -> dict[str, Any]:
-        """Return the durable state of one map-save operation."""
-        encoded_operation_id = quote(operation_id, safe="")
-        return self._get(f"/api/v1/maps/operations/{encoded_operation_id}")
+        """Compatibility alias for map.operation()."""
+        return self.map.operation(operation_id)
 
     def cancel_map_operation(self, operation_id: str) -> CommandResult:
-        """Request cancellation of one map-save operation."""
-        encoded_operation_id = quote(operation_id, safe="")
-        return self._command(f"/api/v1/maps/operations/{encoded_operation_id}/cancel")
+        """Compatibility alias for map.cancel_operation()."""
+        return self.map.cancel_operation(operation_id)
 
     def retry_map_operation(self, operation_id: str) -> CommandResult:
-        """Retry one failed map-save operation."""
-        encoded_operation_id = quote(operation_id, safe="")
-        return self._command(f"/api/v1/maps/operations/{encoded_operation_id}/retry")
+        """Compatibility alias for map.retry_operation()."""
+        return self.map.retry_operation(operation_id)
 
     def download_map_pcd(self, name: str, target: str | Path) -> Path:
-        """Stream a saved map PCD artifact to ``target`` atomically."""
-        destination = Path(target)
-        encoded_name = quote(name, safe="")
-        request = urllib.request.Request(self.base_url + f"/api/v1/maps/{encoded_name}/pcd")
-        if self._api_key:
-            request.add_header("X-API-Key", self._api_key)
-        temporary_path: Path | None = None
-        try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as response:
-                content_length = response.headers.get("Content-Length")
-                expected_bytes = int(content_length) if content_length is not None else None
-                received_bytes = 0
-                with tempfile.NamedTemporaryFile(
-                    mode="wb",
-                    dir=destination.parent,
-                    prefix=f".{destination.name}.",
-                    suffix=".part",
-                    delete=False,
-                ) as output:
-                    temporary_path = Path(output.name)
-                    while True:
-                        chunk = response.read(1024 * 1024)
-                        if not chunk:
-                            break
-                        output.write(chunk)
-                        received_bytes += len(chunk)
-                    if expected_bytes is not None and received_bytes != expected_bytes:
-                        raise OSError(
-                            f"Incomplete map download: expected {expected_bytes} bytes, "
-                            f"received {received_bytes}"
-                        )
-            temporary_path.replace(destination)
-        except BaseException:
-            if temporary_path is not None:
-                temporary_path.unlink(missing_ok=True)
-            raise
-        return destination
+        """Compatibility alias for map.download_pcd()."""
+        return self.map.download_pcd(name, target)
 
     def rename_map(self, old_name: str, new_name: str) -> CommandResult:
-        """Rename a saved map."""
-        return self._command("/api/v1/map/rename", {"old_name": old_name, "new_name": new_name})
+        """Compatibility alias for map.rename()."""
+        return self.map.rename(old_name, new_name)
 
     def reset_map_cloud(self) -> CommandResult:
-        """Clear the accumulated map cloud (visualisation only)."""
-        return self._command("/api/v1/map_cloud/reset")
+        """Compatibility alias for map.reset_cloud()."""
+        return self.map.reset_cloud()
 
     def map_points(self) -> dict[str, Any]:
-        """Get current live map point cloud as JSON."""
-        return self._get("/api/v1/map/points")
+        """Compatibility alias for map.points()."""
+        return self.map.points()
 
     def saved_map_points(self, name: str) -> dict[str, Any]:
-        """Get a saved map point cloud as JSON."""
-        return self._get(f"/api/v1/maps/{name}/points")
-
-    # ------------------------------------------------------------------
-    # Mode
-    # ------------------------------------------------------------------
+        """Compatibility alias for map.saved_points()."""
+        return self.map.saved_points(name)
 
     def set_mode(self, mode: str) -> CommandResult:
-        """Set robot operating mode."""
-        return self._command("/api/v1/mode", {"mode": mode})
-
-    # ------------------------------------------------------------------
-    # Perception
-    # ------------------------------------------------------------------
+        """Compatibility alias for system.set_mode()."""
+        return self.system.set_mode(mode)
 
     def scene(self) -> dict[str, Any]:
-        """Get the current scene graph (detected objects, relations, regions)."""
-        return self._get("/api/v1/scene_graph")
+        """Compatibility alias for observations.scene()."""
+        return self.observations.scene()
 
     def locations(self) -> dict[str, Any]:
-        """List tagged navigation locations."""
-        return self._get("/api/v1/locations")
+        """Compatibility alias for map.locations()."""
+        return self.map.locations()
 
     def tag_location(
         self,
@@ -890,60 +385,32 @@ class LingTuClient:
         yaw: float | None = None,
         use_current_pose: bool = False,
     ) -> CommandResult:
-        """Create or update a tagged navigation location."""
-        body: dict[str, Any] = {"name": name, "use_current_pose": use_current_pose}
-        if x is not None:
-            body["x"] = x
-        if y is not None:
-            body["y"] = y
-        if yaw is not None:
-            body["yaw"] = yaw
-        return self._command("/api/v1/locations", body)
+        """Compatibility alias for map.tag_location()."""
+        return self.map.tag_location(name, x, y, yaw, use_current_pose)
 
     def delete_location(self, name: str) -> CommandResult:
-        """Delete a tagged navigation location."""
-        return self._command(f"/api/v1/locations/{quote(name, safe='')}", method="DELETE")
-
-    # ------------------------------------------------------------------
-    # Camera
-    # ------------------------------------------------------------------
+        """Compatibility alias for map.delete_location()."""
+        return self.map.delete_location(name)
 
     def camera_snapshot(self) -> bytes:
-        """Fetch a JPEG camera snapshot from the robot."""
-        url = self.base_url + "/api/v1/camera/snapshot"
-        req = urllib.request.Request(url)
-        if self._api_key:
-            req.add_header("X-API-Key", self._api_key)
-        with urllib.request.urlopen(req, timeout=self._timeout) as r:
-            return r.read()
-
-    # ------------------------------------------------------------------
-    # SLAM
-    # ------------------------------------------------------------------
+        """Compatibility alias for observations.camera_snapshot()."""
+        return self.observations.camera_snapshot()
 
     def slam_status(self) -> dict[str, Any]:
-        """Get SLAM service status."""
-        return self._get("/api/v1/slam/status")
-
-    # ------------------------------------------------------------------
-    # Exploration
-    # ------------------------------------------------------------------
+        """Compatibility alias for system.slam_status()."""
+        return self.system.slam_status()
 
     def explore_start(self) -> CommandResult:
-        """Start autonomous frontier exploration."""
-        return self._command("/api/v1/explore/start")
+        """Compatibility alias for navigation.start_exploration()."""
+        return self.navigation.start_exploration()
 
     def explore_stop(self) -> CommandResult:
-        """Stop autonomous frontier exploration."""
-        return self._command("/api/v1/explore/stop")
+        """Compatibility alias for navigation.stop_exploration()."""
+        return self.navigation.stop_exploration()
 
     def explore_status(self) -> dict[str, Any]:
-        """Get exploration status."""
-        return self._get("/api/v1/explore/status")
-
-    # ------------------------------------------------------------------
-    # Native MCAP recording
-    # ------------------------------------------------------------------
+        """Compatibility alias for navigation.exploration_status()."""
+        return self.navigation.exploration_status()
 
     def recording_start(
         self,
@@ -955,110 +422,70 @@ class LingTuClient:
         camera: bool | None = None,
         minimum_free_gib: int | None = None,
     ) -> CommandResult:
-        """Start a native MCAP recording session with safe capture choices."""
-        body: dict[str, Any] = {"duration": duration}
-        if prefix:
-            body["prefix"] = prefix
-        if capture_profile is not None:
-            body["capture_profile"] = capture_profile
-        if task_id is not None:
-            body["task_id"] = task_id
-        if camera is not None:
-            body["camera"] = camera
-        if minimum_free_gib is not None:
-            body["minimum_free_gib"] = minimum_free_gib
-        return self._command("/api/v1/recordings/start", body)
+        """Compatibility alias for observations.start_recording()."""
+        return self.observations.start_recording(
+            prefix,
+            duration=duration,
+            capture_profile=capture_profile,
+            task_id=task_id,
+            camera=camera,
+            minimum_free_gib=minimum_free_gib,
+        )
 
     def recording_stop(self) -> CommandResult:
-        """Stop the active native MCAP recording session."""
-        return self._command("/api/v1/recordings/stop")
+        """Compatibility alias for observations.stop_recording()."""
+        return self.observations.stop_recording()
 
     def recording_status(self) -> dict[str, Any]:
-        """Get native MCAP recording status."""
-        return self._get("/api/v1/recordings/status")
-
-    # ------------------------------------------------------------------
-    # Temporal memory
-    # ------------------------------------------------------------------
+        """Compatibility alias for observations.recording_status()."""
+        return self.observations.recording_status()
 
     def memory_temporal(self) -> dict[str, Any]:
-        """Query temporal entity observations."""
-        return self._get("/api/v1/memory/temporal")
+        """Compatibility alias for observations.temporal_memory()."""
+        return self.observations.temporal_memory()
 
     def memory_temporal_semantic(self, query: str) -> dict[str, Any]:
-        """Semantic similarity search over temporal observations."""
-        return self._request_json("/api/v1/memory/temporal/semantic", {"query": query})
-
-    # ------------------------------------------------------------------
-    # Lease (control ownership)
-    # ------------------------------------------------------------------
+        """Compatibility alias for observations.search_memory()."""
+        return self.observations.search_memory(query)
 
     def acquire_lease(self, client_id: str, ttl: float = 30.0) -> CommandResult:
-        """Acquire the control lease."""
-        return self._command(
-            "/api/v1/lease",
-            {
-                "action": "acquire",
-                "client_id": client_id,
-                "ttl": ttl,
-            },
-        )
+        """Compatibility alias for system.acquire_lease()."""
+        return self.system.acquire_lease(client_id, ttl)
 
     def release_lease(self, client_id: str) -> CommandResult:
-        """Release the control lease."""
-        return self._command(
-            "/api/v1/lease",
-            {
-                "action": "release",
-                "client_id": client_id,
-            },
-        )
+        """Compatibility alias for system.release_lease()."""
+        return self.system.release_lease(client_id)
 
     def renew_lease(self, client_id: str, ttl: float = 30.0) -> CommandResult:
-        """Renew the control lease before it expires."""
-        return self._command(
-            "/api/v1/lease",
-            {
-                "action": "renew",
-                "client_id": client_id,
-                "ttl": ttl,
-            },
-        )
-
-    # ------------------------------------------------------------------
-    # App / system info
-    # ------------------------------------------------------------------
+        """Compatibility alias for system.renew_lease()."""
+        return self.system.renew_lease(client_id, ttl)
 
     def capabilities(self) -> dict[str, Any]:
-        """Get the API capability manifest from the robot."""
-        return self._get("/api/v1/app/capabilities")
+        """Compatibility alias for system.capabilities()."""
+        return self.system.capabilities()
 
     def bootstrap(self) -> dict[str, Any]:
-        """Get the bootstrap snapshot (full system state for web clients)."""
-        return self._get("/api/v1/app/bootstrap")
+        """Compatibility alias for system.bootstrap()."""
+        return self.system.bootstrap()
 
     def readiness(self) -> dict[str, Any]:
-        """Get client readiness snapshot."""
-        return self._get("/api/v1/readiness")
-
-    # ------------------------------------------------------------------
-    # Diagnostics
-    # ------------------------------------------------------------------
+        """Compatibility alias for system.readiness()."""
+        return self.system.readiness()
 
     def field_check(self) -> CommandResult:
-        """Run a read-only product field readiness check."""
-        return self._command("/api/v1/diagnostics/field-check")
+        """Compatibility alias for system.field_check()."""
+        return self.system.field_check()
 
     def runtime_contract(self) -> dict[str, Any]:
-        """Get the canonical runtime interface contract."""
-        return self._get("/api/v1/diagnostics/runtime-contract")
-
-    # ------------------------------------------------------------------
-    # Internal HTTP helpers
-    # ------------------------------------------------------------------
+        """Compatibility alias for system.runtime_contract()."""
+        return self.system.runtime_contract()
 
     def _command(
-        self, path: str, data: dict[str, Any] | None = None, *, method: str = "POST",
+        self,
+        path: str,
+        data: dict[str, Any] | None = None,
+        *,
+        method: str = "POST",
     ) -> CommandResult:
         raw = self._request_json(path, data, method=method)
         return _parse_command_result(raw)
@@ -1070,7 +497,7 @@ class LingTuClient:
             req.add_header("X-API-Key", self._api_key)
         try:
             with urllib.request.urlopen(req, timeout=self._timeout) as r:
-                return json.loads(r.read())
+                return cast(dict[str, Any], json.loads(r.read()))
         except urllib.error.HTTPError as exc:
             body = exc.read()
             try:
@@ -1082,7 +509,11 @@ class LingTuClient:
             raise ConnectionError(f"GET {path} failed: {exc}") from exc
 
     def _request_json(
-        self, path: str, data: dict[str, Any] | None = None, *, method: str = "POST",
+        self,
+        path: str,
+        data: dict[str, Any] | None = None,
+        *,
+        method: str = "POST",
     ) -> dict[str, Any]:
         url = self.base_url + path
         body = json.dumps(data or {}).encode("utf-8")
@@ -1096,53 +527,15 @@ class LingTuClient:
             req.add_header("X-API-Key", self._api_key)
         try:
             with urllib.request.urlopen(req, timeout=self._timeout) as r:
-                return json.loads(r.read())
+                return cast(dict[str, Any], json.loads(r.read()))
         except urllib.error.HTTPError as exc:
             err_body = exc.read()
             try:
-                return json.loads(err_body)
+                return cast(dict[str, Any], json.loads(err_body))
             except json.JSONDecodeError:
                 return {"error": f"HTTP {exc.code}", "detail": err_body.decode(errors="replace")}
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             return _connection_error_payload(path, exc)
-
-    @staticmethod
-    def _parse_state(raw: dict[str, Any]) -> RobotState:
-        o = raw.get("odometry", {})
-        navigation = raw.get("navigation", {})
-        navigation_payload = dict(navigation) if isinstance(navigation, Mapping) else {}
-        return RobotState(
-            mode=raw.get("mode", ""),
-            odometry=Position(
-                x=o.get("x", 0.0),
-                y=o.get("y", 0.0),
-                z=o.get("z", 0.0),
-                yaw=o.get("yaw", 0.0),
-            ),
-            mission=_parse_navigation_status(navigation_payload),
-            safety_level=raw.get("safety_level", raw.get("safety", {}).get("level", "")),
-            raw=raw,
-        )
-
-    @staticmethod
-    def _parse_map_list(raw: dict[str, Any]) -> MapList:
-        active = raw.get("active", raw.get("active_map"))
-        maps_raw = raw.get("maps", [])
-        maps: list[MapInfo] = []
-        for m in maps_raw:
-            if isinstance(m, str):
-                maps.append(MapInfo(name=m, raw={"name": m}))
-            elif isinstance(m, dict):
-                maps.append(
-                    MapInfo(
-                        name=m.get("name", ""),
-                        has_pcd=m.get("has_pcd", False),
-                        is_active=m.get("is_active", False) or m.get("name") == active,
-                        size_bytes=m.get("size_bytes", 0),
-                        raw=m,
-                    )
-                )
-        return MapList(maps=maps, active_map=active, raw=raw)
 
     def close(self) -> None:
         """Close any held resources (no-op for the stdlib client)."""

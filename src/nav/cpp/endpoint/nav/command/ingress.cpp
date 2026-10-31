@@ -206,7 +206,7 @@ CommandIngressResult CommandIngressController::handle(const CommandIngressReques
   }
 
   CommandAck ack = dispatch(kind, request.payload);
-  const bool cacheable = ack.accepted;
+  const bool cacheable = ack.accepted && !ack.pending;
   if (cacheable) {
     business_journal_.remember(identity, ack, timestamp);
   }
@@ -216,7 +216,7 @@ CommandIngressResult CommandIngressController::handle(const CommandIngressReques
 CommandIngressResult CommandIngressController::finish(std::string task_id, std::string request_id,
                                                       CommandKind kind, CommandAck ack,
                                                       bool replayed, bool dispatched) {
-  if (!ack.accepted) {
+  if (!ack.accepted && !ack.pending) {
     ++diagnostics_.rejected;
   }
   diagnostics_.last_task_id = task_id;
@@ -227,6 +227,16 @@ CommandIngressResult CommandIngressController::finish(std::string task_id, std::
   return {
       std::move(task_id), std::move(request_id), kind, std::move(ack), replayed, dispatched,
   };
+}
+
+CommandIngressResult CommandIngressController::complete(const CommandIngressRequest &request,
+                                                        CommandAck ack) {
+  const auto kind = static_cast<CommandKind>(request.raw_kind);
+  if (ack.accepted) {
+    business_journal_.remember({request.client_id, request.request_id, request.task_id, kind,
+                               request.payload.canonical()}, ack);
+  }
+  return finish(request.task_id, request.request_id, kind, std::move(ack), false, false);
 }
 
 void CommandIngressController::recordAckPublication(bool published) noexcept {

@@ -43,7 +43,7 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
     if (!std::isfinite(options.ground_z_threshold) || !std::isfinite(options.instance_grid_m)
         || options.instance_grid_m <= 0 || !std::isfinite(options.moving_score_threshold)
         || options.moving_score_threshold < 0 || options.moving_score_threshold > 1) {
-      return fail("bad_threshold", "ground and score thresholds must be finite and in range");
+      return fail("bad_threshold", "legacy ground, instance and score thresholds must be finite and in range");
     }
     if (options.dry_run && options.apply_to_map) {
       return fail("conflicting_mode", "--dry-run cannot be combined with --apply");
@@ -184,7 +184,7 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
     kept.reserve(source_map.size());
 
     const MovingScoreSummary score_summary =
-        scoreMovingInstances(source_map, evidence, visibility.groundEvidence(), options);
+        scoreMovingInstances(source_map, evidence, options);
 
     std::uint64_t dynamic_voxels = 0;
     for (const auto &entry : evidence) {
@@ -199,19 +199,16 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
       if (visibility.contradicted(index)) ++result.free_space_candidate_points;
       const VoxelKey key = voxelKey(pt, options.voxel_size_m);
       auto found = evidence.find(key);
-      if (visibility.groundProtected(index)) {
-        ++result.kept_ground_points;
-        kept.push_back(pt);
-      } else if (found == evidence.end()) {
-        ++result.kept_without_evidence_points;
-        kept.push_back(pt);
-      } else if (visibility.contradicted(index)) {
+      if (visibility.contradicted(index)) {
         if (visibility.onSupportedSurface(index)) {
           ++result.kept_supported_surface_points;
           kept.push_back(pt);
         } else {
           removed.push_back(pt);
         }
+      } else if (found == evidence.end()) {
+        ++result.kept_without_evidence_points;
+        kept.push_back(pt);
       } else if (found->second.frame_count >= options.min_frame_support) {
         ++result.kept_multi_frame_points;
         kept.push_back(pt);
@@ -288,7 +285,7 @@ std::string toJson(const StaticCleanerResult &result) {
   out << "  \"removed_fraction\": " << (result.source_points
       ? static_cast<double>(result.removed_points) / result.source_points : 0.0) << ",\n";
   out << "  \"decision_counts\": {\n";
-  out << "    \"kept_ground_threshold\": " << result.kept_ground_points << ",\n";
+  out << "    \"kept_ground_geometry\": " << result.kept_ground_points << ",\n";
   out << "    \"kept_multi_frame\": " << result.kept_multi_frame_points << ",\n";
   out << "    \"kept_hit_support\": " << result.kept_hit_support_points << ",\n";
   out << "    \"kept_without_evidence\": " << result.kept_without_evidence_points << ",\n";
@@ -303,10 +300,10 @@ std::string toJson(const StaticCleanerResult &result) {
   out << "  \"moving_instances\": " << result.moving_instances << ",\n";
   out << "  \"score_candidate_points\": " << result.score_candidate_points << ",\n";
   out << "  \"max_moving_score\": " << result.max_moving_score << ",\n";
-  out << "  \"algorithm\": \"prune.visibility_v2\",\n";
+  out << "  \"algorithm\": \"prune.visibility_surface_v4\",\n";
   out << "  \"flow\": " << flowJson() << ",\n";
-  out << "  \"license_boundary\": \"LingTu-owned clean-room implementation; does not include or "
-         "link ERASOR2 code\"\n";
+  out << "  \"license_boundary\": \"LingTu visibility and local-surface core; "
+         "does not include or link ERASOR2 code\"\n";
   out << "}\n";
   return out.str();
 }

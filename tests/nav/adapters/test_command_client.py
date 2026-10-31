@@ -33,6 +33,7 @@ _DEFAULT_CAPABILITIES = (
     | native_abi.NATIVE_COMMAND_CAP_NAVIGATION_COMMAND_RECEIPT
     | native_abi.NATIVE_COMMAND_CAP_NAVIGATION_TASK_STATUS
     | native_abi.NATIVE_COMMAND_CAP_PLAN_PREVIEW
+    | native_abi.NATIVE_COMMAND_CAP_SEMANTIC_VIEW_QUERY
 )
 
 
@@ -108,6 +109,9 @@ class _Library:
             self._resume_autonomy_with_receipt
         )
         self.lingtu_nav_client_preview_plan_v2 = _Function(self._preview_plan)
+        self.lingtu_nav_client_query_semantic_views_v1 = _Function(
+            self._query_semantic_views
+        )
         self.lingtu_nav_client_operator_motion_claim = _Function(self._operator_motion_claim)
         self.lingtu_nav_client_operator_motion_claim_with_receipt_v1 = _Function(
             self._operator_motion_claim_with_receipt
@@ -130,6 +134,53 @@ class _Library:
 
     def _destroy(self, handle):
         self.calls.append(("destroy", handle))
+
+    def _query_semantic_views(
+        self,
+        handle,
+        boot_id,
+        map_id,
+        map_content_epoch,
+        frame_id,
+        frame_epoch,
+        reference_z,
+        camera_range_m,
+        camera_horizontal_fov_rad,
+        views,
+        view_count,
+        timeout_ms,
+        result,
+    ):
+        output = ctypes.cast(
+            result,
+            ctypes.POINTER(native_abi._NativeSemanticViewResultV1),
+        ).contents
+        output.abi_version = native_abi.NATIVE_SEMANTIC_VIEW_ABI_VERSION
+        output.struct_size = ctypes.sizeof(native_abi._NativeSemanticViewResultV1)
+        output.timestamp_s = 42.5
+        output.frame_id = frame_id
+        output.request_id = b"semantic-view-1"
+        output.boot_id = boot_id
+        output.map_id = map_id
+        output.map_content_epoch = map_content_epoch
+        output.frame_epoch = frame_epoch + 1
+        output.reference_z = reference_z
+        output.available = 1
+        output.geometry_exhausted = 0
+        output.reason = b"ok"
+        output.candidate_count = 1
+        output.candidates[0].x = 1.25
+        output.candidates[0].y = -0.5
+        output.candidates[0].z = 0.8
+        output.candidates[0].yaw = 0.3
+        output.candidates[0].score = 0.9
+        output.candidates[0].route_cost_m = 2.4
+        output.candidates[0].visible_cells = 17
+        first_range = views[0].range_m if view_count else None
+        self.calls.append(
+            ("semantic_views", handle, view_count, timeout_ms, first_range)
+        )
+        return 0
 
     def _navigation_command_receipt(
         self,
@@ -903,7 +954,6 @@ def test_native_session_reads_ordered_inspection_task_event(tmp_path):
         event.kind = 2
         event.task_id = b"inspection-task-42"
         event.request_id = b"start-request-42"
-        event.command_request_id = b"pause-request-43"
         event.state = 12
         event.map_id = b"field-map"
         event.map_content_epoch = 7
@@ -913,7 +963,6 @@ def test_native_session_reads_ordered_inspection_task_event(tmp_path):
         event.point_count = 4
         event.loop_index = 2
         event.retry_count = 1
-        event.point_id = b"checkpoint-b"
         event.action = b"capture:overview"
         event.action_request_id = b"evidence-request-44"
         event.evidence_id = b"evidence-45"
@@ -934,7 +983,6 @@ def test_native_session_reads_ordered_inspection_task_event(tmp_path):
         "kind": 2,
         "task_id": "inspection-task-42",
         "request_id": "start-request-42",
-        "command_request_id": "pause-request-43",
         "state": 12,
         "map_id": "field-map",
         "map_content_epoch": 7,
@@ -944,7 +992,6 @@ def test_native_session_reads_ordered_inspection_task_event(tmp_path):
         "point_count": 4,
         "loop_index": 2,
         "retry_count": 1,
-        "point_id": "checkpoint-b",
         "action": "capture:overview",
         "action_request_id": "evidence-request-44",
         "evidence_id": "evidence-45",
@@ -1576,3 +1623,95 @@ def test_goal_limits_cross_ctypes_boundary(tmp_path):
         assert received == [(0.2, 0.3)]
     finally:
         client.close()
+
+
+def test_semantic_view_query_crosses_ctypes_boundary_without_motion(tmp_path):
+    library = _Library()
+    client = NativeNavigationClient(tmp_path / "client.so", library=library)
+    try:
+        result = client.query_semantic_views(
+            boot_id="boot-7",
+            map_id="903room",
+            map_content_epoch=12,
+            frame_epoch=0,
+            reference_z=0.72,
+            camera_range_m=4.0,
+            camera_horizontal_fov_rad=1.1,
+            views=[{"x": 1.0, "y": 2.0, "yaw": 0.4}],
+            timeout_ms=3000,
+        )
+    finally:
+        client.close()
+
+    assert result == {
+        "timestamp_s": 42.5,
+        "frame_id": "map",
+        "request_id": "semantic-view-1",
+        "boot_id": "boot-7",
+        "map_id": "903room",
+        "map_content_epoch": 12,
+        "frame_epoch": 1,
+        "reference_z": 0.72,
+        "available": True,
+        "geometry_exhausted": False,
+        "reason": "ok",
+        "candidates": [
+            {
+                "x": 1.25,
+                "y": -0.5,
+                "z": 0.8,
+                "yaw": 0.3,
+                "score": 0.9,
+                "route_cost_m": 2.4,
+                "visible_cells": 17,
+            }
+        ],
+    }
+    assert ("semantic_views", 41, 1, 3000, 4.0) in library.calls
+
+
+def test_semantic_view_query_keeps_native_handle_alive_until_call_finishes(tmp_path):
+    library = _Library()
+    query_started = threading.Event()
+    release_query = threading.Event()
+    close_returned = threading.Event()
+    original_query = library._query_semantic_views
+
+    def blocked_query(*args):
+        query_started.set()
+        assert release_query.wait(timeout=1.0)
+        return original_query(*args)
+
+    library.lingtu_nav_client_query_semantic_views_v1 = _Function(blocked_query)
+    client = NativeNavigationClient(tmp_path / "client.so", library=library)
+    query_result: list[dict[str, object]] = []
+    query_thread = threading.Thread(
+        target=lambda: query_result.append(
+            client.query_semantic_views(
+                boot_id="boot-7",
+                map_id="903room",
+                map_content_epoch=12,
+                camera_range_m=4.0,
+                camera_horizontal_fov_rad=1.1,
+            )
+        )
+    )
+    close_thread = threading.Thread(
+        target=lambda: (client.close(), close_returned.set())
+    )
+
+    query_thread.start()
+    assert query_started.wait(timeout=0.5)
+    close_thread.start()
+    assert not close_returned.wait(timeout=0.05)
+    assert ("destroy", 41) not in library.calls
+
+    release_query.set()
+    query_thread.join(timeout=1.0)
+    close_thread.join(timeout=1.0)
+
+    assert not query_thread.is_alive()
+    assert not close_thread.is_alive()
+    assert close_returned.is_set()
+    assert query_result[0]["request_id"] == "semantic-view-1"
+    assert library.calls[-1] == ("destroy", 41)

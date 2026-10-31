@@ -1,4 +1,4 @@
-#include "runtime/semantic/view_query.hpp"
+#include "app/semantic/view_query.hpp"
 #include "dds/runtime.hpp"
 #include "dds/dds.h"
 #include "messages.h"
@@ -138,7 +138,7 @@ int main() {
     auto gate = std::make_shared<lingtu::nav::endpoint::ActiveOctomapGate>(identity);
     lingtu::nav::plan::GlobalPlannerOptions options;
     options.robot_radius = 0.1;
-    options.ground_support_depth_cells = 2;
+    options.support_depth_cells = 2;
     SemanticViewQuery worker(gate, fixture.map_path.string(), options);
     SemanticViewContext context;
     context.map = identity;

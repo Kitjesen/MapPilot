@@ -5,14 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import pathlib
 import re
 import time
 from datetime import datetime
 from typing import Any, Literal
+from urllib.parse import quote
 
 from fastapi import HTTPException
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 
 from gateway.maps.status import EnvironmentMapFeedback
 from gateway.maps.transport import (
@@ -47,7 +47,6 @@ from runtime.tf.frames import normalize_frame_id
 from runtime.utils.sanitize import sanitize_dict
 
 logger = logging.getLogger(__name__)
-MAP_VIEWER_TEMPLATE = pathlib.Path(__file__).resolve().parents[1] / "templates" / "map_viewer.html"
 _PUBLIC_MAP_STATES = frozenset(
     {
         "CREATED",
@@ -349,7 +348,8 @@ def _map_mutation_status_code(resp: dict[str, Any], *, default: int = 400) -> in
     reason_code = str(resp.get("reason_code") or "")
     if reason_code == "map_not_found":
         return 404
-    if reason_code in {"active_map_conflict", "active_map_state_invalid"}:
+    if reason_code in {"active_map_conflict", "active_map_state_invalid", "target_exists",
+                       "source_epoch_mismatch", "build_in_progress"}:
         return 409
     return default
 
@@ -541,9 +541,12 @@ def register_map_routes(app, gw) -> None:
                         message="Native mapd returned invalid can_activate.",
                     ).model_dump(mode="json"),
                 )
+            record = item.get("record")
+            content_epoch = record.get("content_epoch") if isinstance(record, dict) else None
             maps.append(
                 {
                     "name": name,
+                    "content_epoch": content_epoch,
                     "has_pcd": bool(item.get("has_pcd")),
                     "has_occupancy": bool(item.get("has_occupancy")),
                     "has_octomap": bool(item.get("has_octomap")),
@@ -666,6 +669,40 @@ def register_map_routes(app, gw) -> None:
         )
 
     @app.post(
+        "/api/v1/maps/{name}/save_as",
+        summary="Copy a saved source, optionally applying point-cloud subset edits",
+    )
+    async def save_edited_map_as(name: str, body: dict[str, Any]):
+        target = body.get("name")
+        for candidate in (name, target):
+            error = public_map_name_error(candidate)
+            if error is not None:
+                return _map_lifecycle_response(False, status_code=400, message=error)
+        epoch = body.get("expected_source_content_epoch")
+        operations = body.get("operations")
+        if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch <= 0:
+            return _map_lifecycle_response(False, status_code=400,
+                                           message="A positive source content epoch is required.")
+        if not isinstance(operations, list):
+            return _map_lifecycle_response(False, status_code=400,
+                                           message="Edit operations must be a list; an empty list copies the source.")
+        resp = await asyncio.to_thread(
+            _mapd_http_request, gw,
+            {"action": "save_edited_source", "map_id": name, "new_map_id": target,
+             "expected_source_content_epoch": epoch, "operations": operations},
+        )
+        return _customer_map_lifecycle_response(
+            resp, name=target, status_code=_map_mutation_status_code(resp),
+            success_message="Edited map saved. Navigation data must be rebuilt.",
+            failure_message="Edited map could not be saved.",
+            **{key: resp[key] for key in (
+                "map_id", "source_map_id", "content_epoch", "source_content_epoch", "frame_id",
+                "point_count", "removed_points", "saved_rays_preserved", "build_options", "replayed",
+            ) if key in resp},
+            activation_ready=False,
+        )
+
+    @app.post(
         "/api/v1/maps/{name}/crop",
         summary="Crop a saved map point cloud and invalidate derived artifacts",
         response_model=MapLifecycleResponse,
@@ -785,14 +822,20 @@ def register_map_routes(app, gw) -> None:
         summary="Build OctoPlanner3D octomap.ot from saved map.pcd",
         response_model=MapLifecycleResponse,
     )
-    async def build_saved_map_octomap(name: str):
+    async def build_saved_map_octomap(name: str, body: dict[str, Any] | None = None):
         err = public_map_name_error(name)
         if err is not None:
             return _map_lifecycle_response(False, message=err, status_code=400)
-        resp = await asyncio.to_thread(
-            _mapd_http_request, gw, {"action": "build_octomap_artifact", "map_id": name}
-        )
+        command = {"action": "build_octomap_artifact", "map_id": name}
+        if body is not None:
+            command.update({key: body[key] for key in (
+                "resolution", "frame_id", "source_profile", "data_source", "slam_source",
+                "localization_source", "mapping_source",
+            ) if key in body})
+        resp = await asyncio.to_thread(_mapd_http_request, gw, command)
         ok = resp.get("success") is True
+        artifact = resp.get("octomap_result") or {}
+        report = artifact.get("report", artifact)
         return _customer_map_lifecycle_response(
             resp,
             name=name,
@@ -800,6 +843,7 @@ def register_map_routes(app, gw) -> None:
             success_message="OctoMap built.",
             failure_message="OctoMap could not be built.",
             octomap_ok=ok,
+            **{key: report[key] for key in ("resolution", "frame_id") if key in report},
         )
 
     @app.post(
@@ -834,6 +878,16 @@ def register_map_routes(app, gw) -> None:
         responses={200: {"content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}}},
     )
     async def get_map_pcd(name: str):
+        return await stream_map_artifact(name, "source_pointcloud", "map.pcd")
+
+    @app.get(
+        "/api/v1/maps/{name}/octomap",
+        summary="Serve the native navigation OctoMap for inline preview",
+    )
+    async def get_map_octomap(name: str):
+        return await stream_map_artifact(name, "global_planning_3d", "octomap.ot")
+
+    async def stream_map_artifact(name: str, capability: str, filename: str):
         error = public_map_name_error(name)
         if error is not None:
             raise HTTPException(
@@ -848,7 +902,7 @@ def register_map_routes(app, gw) -> None:
                 open_artifact,
                 gw,
                 name,
-                "source_pointcloud",
+                capability,
             )
         except MapClientError as exc:
             not_found = {
@@ -899,9 +953,19 @@ def register_map_routes(app, gw) -> None:
             ) from exc
 
         headers = {
+            "Cache-Control": "no-store",
             "Content-Length": str(artifact.size_bytes),
-            "Content-Disposition": 'attachment; filename="map.pcd"',
+            "Content-Disposition": f'attachment; filename="{filename}"',
         }
+        artifact_map_id = artifact.metadata.get("map_id")
+        if isinstance(artifact_map_id, str) and artifact_map_id:
+            headers["X-Lingtu-Map-Id"] = artifact_map_id
+        content_epoch = artifact.metadata.get("content_epoch")
+        if isinstance(content_epoch, int) and not isinstance(content_epoch, bool) and content_epoch > 0:
+            headers["X-Lingtu-Content-Epoch"] = str(content_epoch)
+        frame_id = artifact.metadata.get("frame_id")
+        if isinstance(frame_id, str) and frame_id:
+            headers["X-Lingtu-Frame-Id"] = frame_id
         try:
             body = artifact.iter_bytes()
         except Exception:
@@ -1102,17 +1166,16 @@ def register_map_routes(app, gw) -> None:
             message="Accumulated map cloud cleared",
         )
 
-    @app.get("/map/viewer", summary="Interactive 3D map viewer")
+    @app.get("/map/viewer", summary="Open the product map page", status_code=307, response_class=RedirectResponse)
     async def map_viewer(map: str = ""):
         if map:
             error = public_map_name_error(map)
             if error is not None:
                 raise HTTPException(status_code=400, detail=error)
-        return FileResponse(
-            MAP_VIEWER_TEMPLATE,
-            media_type="text/html; charset=utf-8",
-            headers={"Cache-Control": "public, max-age=300"},
-        )
+        location = "/?tab=map"
+        if map:
+            location += f"&map={quote(map, safe='')}"
+        return RedirectResponse(location)
 
     @app.post(
         "/api/v1/map/rename",

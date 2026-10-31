@@ -787,6 +787,15 @@ std::string makePlanRequestId() {
       std::to_string(ticks) + "-" + std::to_string(++sequence);
 }
 
+std::string makeSemanticViewRequestId() {
+  static std::atomic<std::uint64_t> sequence{0};
+  const auto ticks = std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
+  return "semantic-view-" +
+      std::to_string(lingtu::nav::platform::processId()) + "-" +
+      std::to_string(ticks) + "-" + std::to_string(++sequence);
+}
+
 std::string makeTaskId(CommandKind kind) {
   static std::atomic<std::uint64_t> sequence{0};
   const auto ticks = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -901,7 +910,7 @@ struct Client::Impl {
     double local_receive_wall_s{0.0};
     SteadyClock::time_point received_steady{};
     double round_trip_s{0.0};
-    std::string run_id;
+    std::string exploration_run_id;
     bool duplicate{false};
     bool correlation_valid{true};
   };
@@ -941,6 +950,10 @@ struct Client::Impl {
     std::optional<PlanResult> result;
   };
 
+  struct PendingSemanticViewResult {
+    std::optional<SemanticViewResult> result;
+  };
+
   explicit Impl(int domain_id) {
     participant = checked(
         dds_create_participant(
@@ -969,6 +982,14 @@ struct Client::Impl {
           lingtu::message::kNavPlanResult,
           &lingtu_dds_PlanResult_desc,
           "nav_plan_result");
+      semantic_view_writer = createWriter(
+          lingtu::message::kNavSemanticViewRequest,
+          &lingtu_dds_SemanticViewRequest_desc,
+          "semantic_view_request");
+      semantic_view_result_reader = createReader(
+          lingtu::message::kNavSemanticViewResult,
+          &lingtu_dds_SemanticViewResult_desc,
+          "semantic_view_result");
       exploration_writer = createWriter(
           lingtu::message::kNavExplorationCommand,
           &lingtu_dds_ExplorationCommandRequest_desc,
@@ -1225,6 +1246,7 @@ struct Client::Impl {
   using InspectionPending = std::shared_ptr<PendingInspectionAck>;
   using OperatorMotionPending = std::shared_ptr<PendingOperatorMotionAck>;
   using PlanPending = std::shared_ptr<PendingPlanResult>;
+  using SemanticViewPending = std::shared_ptr<PendingSemanticViewResult>;
 
   PlanPending registerPlan(const std::string& request_id) const {
     auto pending = std::make_shared<PendingPlanResult>();
@@ -1263,6 +1285,50 @@ struct Client::Impl {
     }
     if (!ready) {
       throw std::runtime_error("timed out waiting for plan result: " + request_id);
+    }
+    if (!pending->result) {
+      throw std::runtime_error(ack_receiver_error);
+    }
+    return std::move(*pending->result);
+  }
+
+  SemanticViewPending registerSemanticView(const std::string& request_id) const {
+    auto pending = std::make_shared<PendingSemanticViewResult>();
+    std::lock_guard<std::mutex> lock(ack_mutex);
+    if (!ack_receiver_error.empty()) {
+      throw std::runtime_error(ack_receiver_error);
+    }
+    if (!pending_semantic_views.emplace(request_id, pending).second) {
+      throw std::runtime_error("duplicate in-flight semantic view request id: " + request_id);
+    }
+    return pending;
+  }
+
+  void unregisterSemanticView(
+      const std::string& request_id,
+      const SemanticViewPending& pending) const {
+    std::lock_guard<std::mutex> lock(ack_mutex);
+    const auto it = pending_semantic_views.find(request_id);
+    if (it != pending_semantic_views.end() && it->second == pending) {
+      pending_semantic_views.erase(it);
+    }
+  }
+
+  SemanticViewResult waitForSemanticView(
+      const std::string& request_id,
+      const SemanticViewPending& pending,
+      int timeout_ms) const {
+    std::unique_lock<std::mutex> lock(ack_mutex);
+    const bool ready = ack_cv.wait_for(
+        lock,
+        std::chrono::milliseconds(std::max(1, timeout_ms)),
+        [&]() { return pending->result.has_value() || !ack_receiver_error.empty(); });
+    const auto it = pending_semantic_views.find(request_id);
+    if (it != pending_semantic_views.end() && it->second == pending) {
+      pending_semantic_views.erase(it);
+    }
+    if (!ready) {
+      throw std::runtime_error("timed out waiting for semantic view result: " + request_id);
     }
     if (!pending->result) {
       throw std::runtime_error(ack_receiver_error);
@@ -1669,7 +1735,6 @@ struct Client::Impl {
             received_steady,
             std::chrono::duration<double>(
                 received_steady - pending.sent_steady).count(),
-            text(ack.run_id),
         };
         if (ack.kind != static_cast<std::int32_t>(pending.kind)) {
           observation.accepted = false;
@@ -1818,6 +1883,63 @@ struct Client::Impl {
     if (matched) {
       ack_cv.notify_all();
     }
+    return count > 0;
+  }
+
+  bool takeSemanticViewResults() {
+    constexpr std::size_t kMaxSamples = 8U;
+    void* samples[kMaxSamples]{};
+    dds_sample_info_t infos[kMaxSamples]{};
+    const dds_return_t count = dds_take(
+        semantic_view_result_reader, samples, infos, kMaxSamples, kMaxSamples);
+    if (count < 0) {
+      throw std::runtime_error(
+          std::string("dds_take(semantic_view_result): ") + dds_strretcode(-count));
+    }
+    bool matched = false;
+    try {
+      std::lock_guard<std::mutex> lock(ack_mutex);
+      for (dds_return_t i = 0; i < count; ++i) {
+        if (!infos[i].valid_data) continue;
+        const auto& message = *static_cast<lingtu_dds_SemanticViewResult*>(samples[i]);
+        const std::string request_id = text(message.request_id);
+        const auto it = pending_semantic_views.find(request_id);
+        if (it == pending_semantic_views.end() || it->second->result) continue;
+        const std::size_t candidate_count = message.candidates._length;
+        if (candidate_count > 16U ||
+            (candidate_count > 0U && message.candidates._buffer == nullptr)) continue;
+        SemanticViewResult result;
+        result.timestamp_s = stampSeconds(message.header.stamp);
+        result.frame_id = text(message.header.frame_id);
+        result.request_id = request_id;
+        result.boot_id = text(message.boot_id);
+        result.map_id = text(message.map_id);
+        result.map_content_epoch = message.map_content_epoch;
+        result.frame_epoch = message.frame_epoch;
+        result.reference_z = message.reference_z;
+        result.available = message.available;
+        result.geometry_exhausted = message.geometry_exhausted;
+        result.reason = text(message.reason);
+        result.candidates.reserve(candidate_count);
+        for (std::size_t index = 0U; index < candidate_count; ++index) {
+          const auto& candidate = message.candidates._buffer[index];
+          result.candidates.push_back({
+              {candidate.position.x, candidate.position.y, candidate.position.z},
+              candidate.yaw, candidate.score, candidate.route_cost_m,
+              candidate.visible_cells});
+        }
+        it->second->result = std::move(result);
+        matched = true;
+      }
+    } catch (...) {
+      if (count > 0) dds_return_loan(semantic_view_result_reader, samples, count);
+      throw;
+    }
+    if (count > 0) {
+      checked(dds_return_loan(semantic_view_result_reader, samples, count),
+              "dds_return_loan(semantic_view_result)");
+    }
+    if (matched) ack_cv.notify_all();
     return count > 0;
   }
 
@@ -2003,13 +2125,12 @@ struct Client::Impl {
         const std::string boot_id = text(event.boot_id);
         const std::string task_id = text(event.task_id);
         const std::string request_id = text(event.request_id);
-        const std::string command_request_id = text(event.command_request_id);
         const std::string map_id = text(event.map_id);
         const std::string route_id = text(event.route_id);
         const bool known_kind = event.kind >= 1 && event.kind <= 5;
-        const bool known_state = event.state >= 0 && event.state <= 13;
+        const bool known_state = event.state >= 0 && event.state <= 14;
         if (boot_id.empty() || task_id.empty() || request_id.empty() ||
-            command_request_id.empty() || map_id.empty() || route_id.empty() ||
+            map_id.empty() || route_id.empty() ||
             event.event_sequence == 0U || event.route_revision == 0U ||
             event.map_content_epoch < 0 || !known_kind || !known_state) {
           continue;
@@ -2027,7 +2148,6 @@ struct Client::Impl {
             event.kind,
             task_id,
             request_id,
-            command_request_id,
             event.state,
             map_id,
             event.map_content_epoch,
@@ -2037,7 +2157,6 @@ struct Client::Impl {
             event.point_count,
             event.loop_index,
             event.retry_count,
-            text(event.point_id),
             text(event.action),
             text(event.action_request_id),
             text(event.evidence_id),
@@ -2518,6 +2637,7 @@ struct Client::Impl {
         const bool received =
             takeNavigationAcks() | takeExplorationAcks() |
             takePlanResults() |
+            takeSemanticViewResults() |
             takeInspectionTaskAcks() |
             takeOperatorMotionAcks() |
             takeNavigationGoalStatuses() | takeInspectionTaskEvents() |
@@ -2603,7 +2723,7 @@ struct Client::Impl {
     return ExplorationCommandReceipt{
         observation.accepted,
         observation.request_id,
-        observation.run_id,
+        observation.exploration_run_id,
         observation.reason,
         observation.duplicate,
     };
@@ -2650,7 +2770,6 @@ struct Client::Impl {
         observation.accepted,
         observation.kind,
         observation.reason,
-        observation.run_id,
         observation.endpoint_stamp_s,
         "",
     };
@@ -3073,6 +3192,86 @@ struct Client::Impl {
     return waitForPlan(request_id, pending, timeout_ms);
   }
 
+  SemanticViewResult querySemanticViews(
+      const std::string& boot_id,
+      const std::string& map_id,
+      std::int64_t map_content_epoch,
+      const std::string& frame_id,
+      std::uint64_t frame_epoch,
+      double reference_z,
+      double camera_range_m,
+      double camera_horizontal_fov_rad,
+      const std::vector<SemanticCameraView>& views,
+      int timeout_ms) const {
+    if (boot_id.empty()) throw std::invalid_argument("semantic view boot_id is required");
+    if (map_id.empty()) throw std::invalid_argument("semantic view map_id is required");
+    if (frame_id.empty()) throw std::invalid_argument("semantic view frame_id is required");
+    if (views.size() > 256U) throw std::invalid_argument("semantic view history exceeds 256 views");
+    requireFinite(reference_z, "semantic view reference_z");
+    requireFinite(camera_range_m, "semantic view camera_range_m");
+    requireFinite(camera_horizontal_fov_rad, "semantic view camera_horizontal_fov_rad");
+    std::vector<lingtu_dds_SemanticCameraView> samples;
+    samples.reserve(views.size());
+    for (const auto& view : views) {
+      requireFinite(view.x, "semantic view x");
+      requireFinite(view.y, "semantic view y");
+      requireFinite(view.yaw, "semantic view yaw");
+      requireFinite(view.range_m, "semantic view range_m");
+      requireFinite(view.horizontal_fov_rad, "semantic view horizontal_fov_rad");
+      samples.push_back({view.x, view.y, view.yaw, view.range_m, view.horizontal_fov_rad});
+    }
+    const std::string request_id = makeSemanticViewRequestId();
+    const auto operation_deadline =
+        SteadyClock::now() + std::chrono::milliseconds(std::max(1, timeout_ms));
+    const auto remaining_timeout_ms = [&]() {
+      const auto now = SteadyClock::now();
+      if (now >= operation_deadline) {
+        throw std::runtime_error(
+            "timed out waiting for semantic view result: " + request_id);
+      }
+      const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+          operation_deadline - now).count();
+      return static_cast<int>(std::max<long long>(1, remaining));
+    };
+    waitForReader(
+        semantic_view_writer,
+        "semantic_view_request",
+        remaining_timeout_ms());
+    waitForWriter(
+        semantic_view_result_reader,
+        "semantic_view_result",
+        remaining_timeout_ms());
+    lingtu_dds_SemanticViewRequest message{};
+    fillHeader(message.header, nowSeconds(), frame_id.c_str());
+    message.request_id = const_cast<char*>(request_id.c_str());
+    message.boot_id = const_cast<char*>(boot_id.c_str());
+    message.map_id = const_cast<char*>(map_id.c_str());
+    message.map_content_epoch = map_content_epoch;
+    message.frame_epoch = frame_epoch;
+    message.reference_z = reference_z;
+    message.camera_range_m = camera_range_m;
+    message.camera_horizontal_fov_rad = camera_horizontal_fov_rad;
+    message.views._maximum = message.views._length = static_cast<std::uint32_t>(samples.size());
+    message.views._buffer = samples.data();
+    message.views._release = false;
+    const auto pending = registerSemanticView(request_id);
+    try {
+      checked(dds_write(semantic_view_writer, &message), "dds_write(semantic_view_request)");
+    } catch (...) {
+      unregisterSemanticView(request_id, pending);
+      throw;
+    }
+    try {
+      return waitForSemanticView(
+          request_id,
+          pending,
+          remaining_timeout_ms());
+    } catch (...) {
+      unregisterSemanticView(request_id, pending);
+      throw;
+    }
+  }
+
   mutable std::mutex ack_mutex;
   mutable std::condition_variable ack_cv;
   mutable std::unordered_map<std::string, NavigationPending>
@@ -3084,6 +3283,7 @@ struct Client::Impl {
   mutable std::unordered_map<std::string, OperatorMotionPending>
       pending_operator_motion_acks;
   mutable std::unordered_map<std::string, PlanPending> pending_plans;
+  mutable std::unordered_map<std::string, SemanticViewPending> pending_semantic_views;
   mutable std::string ack_receiver_error;
   mutable std::mutex navigation_state_mutex;
   std::optional<NavigationStateSnapshot> latest_navigation_state;
@@ -3138,6 +3338,8 @@ struct Client::Impl {
   dds_entity_t ack_reader{0};
   dds_entity_t plan_writer{0};
   dds_entity_t plan_result_reader{0};
+  dds_entity_t semantic_view_writer{0};
+  dds_entity_t semantic_view_result_reader{0};
   dds_entity_t exploration_writer{0};
   dds_entity_t exploration_ack_reader{0};
   dds_entity_t exploration_run_event_reader{0};
@@ -3174,6 +3376,22 @@ Client::Client(int domain_id)
       operator_motion_(*this) {}
 
 Client::~Client() = default;
+
+SemanticViewResult Client::querySemanticViews(
+    const std::string& boot_id,
+    const std::string& map_id,
+    std::int64_t map_content_epoch,
+    const std::string& frame_id,
+    std::uint64_t frame_epoch,
+    double reference_z,
+    double camera_range_m,
+    double camera_horizontal_fov_rad,
+    const std::vector<SemanticCameraView>& views,
+    int timeout_ms) {
+  return impl_->querySemanticViews(
+      boot_id, map_id, map_content_epoch, frame_id, frame_epoch, reference_z,
+      camera_range_m, camera_horizontal_fov_rad, views, timeout_ms);
+}
 
 std::optional<NavigationStateSnapshot> Client::latestNavigationState() const {
   std::lock_guard<std::mutex> lock(impl_->navigation_state_mutex);

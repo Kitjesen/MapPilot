@@ -125,7 +125,7 @@ struct Fixture {
     loop_health.max_utilization = 0.98;
     loop_health.history.first_sequence = 139;
     loop_health.history.overruns_ms = {5.5, 0.0};
-    loop_health.history.overruns = {{139, 55.5, {1.0, 2.0, 0.0, 50.0, 1.0}}};
+    loop_health.history.overruns = {{139, 55.5, {1.0, 2.0, 0.0, 50.0, 1.0},25.0,17.0,.4,.6,12.5}};
 
     state.has_odom = true;
     state.has_map_odom_tf = true;
@@ -347,7 +347,7 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
   const std::string autonomy = fixture.writes.back();
   require(contains(autonomy, "\"product_session_id\": \"product-session-test\""),
           "status must expose the Product session identity");
-  require(contains(autonomy, "\"owner\": \"active_path_blockage_overlay\"") &&
+  require(contains(autonomy, "\"owner\": \"scan_local_collision\"") &&
               !contains(autonomy, "local_planner_footprint"),
           "live obstacle overlay diagnostics must not claim robot footprint ownership");
   require(!contains(autonomy, "config_fingerprint"),
@@ -457,7 +457,13 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
           "JSON snapshot must expose top-level control-loop health state");
   require(contains(autonomy, "\"first_sequence\": 139, \"overruns_ms\": [5.500000,0.000000]") &&
               contains(autonomy, "\"sequence\":139,\"work_ms\":55.500000") &&
-              contains(autonomy, "\"runtime_ms\":50.000000"),
+              contains(autonomy, "\"runtime_ms\":50.000000") &&
+              contains(autonomy, "\"nav_tick_ms\":25.000000") &&
+              contains(autonomy, "\"final_control_ms\":17.000000") &&
+              contains(autonomy, "\"sensor_take_ms\":0.400000") &&
+              contains(autonomy, "\"sensor_apply_ms\":0.600000") &&
+              contains(autonomy, "\"thread_cpu_ms\":12.500000") &&
+              contains(autonomy, "\"final_control\": 0.000000"),
           "publication must preserve intermediate overruns and their own stage context");
   require(contains(autonomy,
                    "\"far_input\": {\"required\": false, \"ready\": true, \"reason\": \"not_required\"") &&
@@ -889,6 +895,8 @@ void testScanFailureCaptureAndSafetyReasonSurviveStatusReset() {
   auto failure = std::make_shared<nav_kernel::ScanFailureSnapshot>();
   failure->sequence = 7U;
   failure->clock.timestampS = 12.0;
+  failure->params.maxBodyVx = .75;
+  failure->params.maxBodyVy = .375;
   failure->attempt.attempted = true;
   failure->attempt.attemptId = 3U;
   failure->attempt.stage = "dynamic_feasibility";
@@ -940,6 +948,9 @@ void testScanFailureCaptureAndSafetyReasonSurviveStatusReset() {
   publisher.flush();
   require(failure_writes.size() == 1U, "first failure must write a separate snapshot");
   const auto &saved = failure_writes.front();
+  require(contains(saved, "\"maxBodyVx\": 0.75") &&
+              contains(saved, "\"maxBodyVy\": 0.375"),
+          "failure snapshot must preserve the executor body-axis speed capabilities");
   require(contains(saved, "\"product_session_id\": \"product-session-test\"") &&
               contains(saved, "\"coordinate_frame\": \"request_planning_frame\"") &&
               contains(saved, "\"grid_from_planning_translation\": [3, 4, 1]") &&
@@ -1000,12 +1011,15 @@ void testScanFailureCaptureAndSafetyReasonSurviveStatusReset() {
 
 void testScanFailureNonfiniteValueIsJsonNull() {
   nav_kernel::ScanFailureSnapshot failure;
+  failure.bodyHeading = 0.5;
   failure.attempt.attempted = true;
   failure.attempt.dynamicViolationValid = true;
   failure.attempt.dynamicValue = std::numeric_limits<double>::quiet_NaN();
   failure.attempt.collisionValid = true;
   failure.attempt.collisionPosition.x = std::numeric_limits<double>::quiet_NaN();
   const auto json = lingtu::nav::endpoint::scanFailureSnapshotJson(failure, "test");
+  require(contains(json, "\"body_heading\": 0.5"),
+          "failure evidence must retain the body heading used for candidate collision checks");
   require(contains(json, "\"value\": null") && contains(json, "\"position\": [null, 0, 0]") &&
               !contains(json, ": nan"),
           "nonfinite optimizer evidence must remain valid JSON without becoming a measured zero");

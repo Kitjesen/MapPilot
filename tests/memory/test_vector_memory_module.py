@@ -43,7 +43,7 @@ class TestVectorMemoryInstantiation(unittest.TestCase):
     """Test VectorMemoryModule creation and configuration."""
 
     def _make(self, **kw):
-        from memory.modules.vector_memory_module import VectorMemoryModule
+        from memory.modules.vector import VectorMemoryModule
         return VectorMemoryModule(**kw)
 
     def test_default_persist_dir(self):
@@ -95,7 +95,7 @@ class TestVectorMemoryPorts(unittest.TestCase):
     """Test that In/Out ports exist with correct types."""
 
     def _make(self, **kw):
-        from memory.modules.vector_memory_module import VectorMemoryModule
+        from memory.modules.vector import VectorMemoryModule
         return VectorMemoryModule(**kw)
 
     def test_input_ports_exist(self):
@@ -126,7 +126,7 @@ class TestVectorMemoryState(unittest.TestCase):
     """Test state tracking and helper methods."""
 
     def _make(self, **kw):
-        from memory.modules.vector_memory_module import VectorMemoryModule
+        from memory.modules.vector import VectorMemoryModule
         return VectorMemoryModule(**kw)
 
     def test_on_odom_updates_position(self):
@@ -155,19 +155,19 @@ class TestVectorMemoryState(unittest.TestCase):
         self.assertEqual(m._latest_labels, ["chair", "table"])
 
     def test_hash_embedding_deterministic(self):
-        from memory.modules.vector_memory_module import VectorMemoryModule
+        from memory.modules.vector import VectorMemoryModule
         v1 = VectorMemoryModule._hash_embedding("hello world")
         v2 = VectorMemoryModule._hash_embedding("hello world")
         np.testing.assert_array_equal(v1, v2)
 
     def test_hash_embedding_normalized(self):
-        from memory.modules.vector_memory_module import VectorMemoryModule
+        from memory.modules.vector import VectorMemoryModule
         v = VectorMemoryModule._hash_embedding("backpack bench tree")
         norm = float(np.linalg.norm(v))
         self.assertAlmostEqual(norm, 1.0, places=5)
 
     def test_hash_embedding_stop_words_filtered(self):
-        from memory.modules.vector_memory_module import VectorMemoryModule
+        from memory.modules.vector import VectorMemoryModule
         v1 = VectorMemoryModule._hash_embedding("find the backpack")
         v2 = VectorMemoryModule._hash_embedding("backpack")
         np.testing.assert_array_equal(v1, v2)
@@ -187,7 +187,7 @@ class TestVectorMemoryState(unittest.TestCase):
 
 class TestVectorMemoryEncoderSelection(unittest.TestCase):
     def _module(self):
-        from memory.modules.vector_memory_module import VectorMemoryModule
+        from memory.modules.vector import VectorMemoryModule
 
         return VectorMemoryModule()
 
@@ -207,7 +207,7 @@ class TestVectorMemoryEncoderSelection(unittest.TestCase):
 
         with (
             patch("runtime.plugin_seed.seed_registered_plugins"),
-            patch("memory.modules.vector_memory_module.get", return_value=provider),
+            patch("memory.modules.vector.get", return_value=provider),
         ):
             module._init_encoder()
 
@@ -223,7 +223,7 @@ class TestVectorMemoryEncoderSelection(unittest.TestCase):
         with (
             patch("runtime.plugin_seed.seed_registered_plugins"),
             patch(
-                "memory.modules.vector_memory_module.get",
+                "memory.modules.vector.get",
                 side_effect=lambda _kind, backend: {"mobileclip": mobileclip, "clip": clip}[backend],
             ),
         ):
@@ -247,7 +247,7 @@ class TestVectorMemoryEncoderSelection(unittest.TestCase):
         sentence_transformers.SentenceTransformer = SentenceTransformer
         with (
             patch("runtime.plugin_seed.seed_registered_plugins"),
-            patch("memory.modules.vector_memory_module.get", side_effect=KeyError),
+            patch("memory.modules.vector.get", side_effect=KeyError),
             patch.dict(sys.modules, {"sentence_transformers": sentence_transformers}),
         ):
             module._init_encoder()
@@ -270,7 +270,7 @@ class TestVectorMemoryEncoderSelection(unittest.TestCase):
 
         with (
             patch("runtime.plugin_seed.seed_registered_plugins"),
-            patch("memory.modules.vector_memory_module.get", side_effect=KeyError),
+            patch("memory.modules.vector.get", side_effect=KeyError),
             patch("builtins.__import__", side_effect=block_sentence_transformers),
         ):
             module._init_encoder()
@@ -286,7 +286,7 @@ class TestVectorMemoryNumpyStore(unittest.TestCase):
     """Test numpy fallback store and query operations."""
 
     def _make(self, **kw):
-        from memory.modules.vector_memory_module import VectorMemoryModule
+        from memory.modules.vector import VectorMemoryModule
         m = VectorMemoryModule(**kw)
         m._use_chromadb = False
         m._encoder = None
@@ -352,7 +352,7 @@ class TestVectorMemorySkills(unittest.TestCase):
     """Test @skill-exposed methods."""
 
     def _make(self, **kw):
-        from memory.modules.vector_memory_module import VectorMemoryModule
+        from memory.modules.vector import VectorMemoryModule
         m = VectorMemoryModule(**kw)
         m._use_chromadb = False
         m._encoder = None

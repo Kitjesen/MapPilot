@@ -36,6 +36,4 @@ cargo run --release --manifest-path src/kernels/slam/pose_graph_opt/Cargo.toml -
 ```
 
 The benchmark emits `pgo_loop` and `hba_full_info` cases for each pose count.
-Use `tools/bench/pose_graph_opt_compare.py` when a C++/GTSAM baseline JSON is
-available from a Linux robot/dev machine. The Rust benchmark itself does not
-require GTSAM.
+The Rust benchmark itself does not require GTSAM.

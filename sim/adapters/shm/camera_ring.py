@@ -23,6 +23,8 @@ SHM_SCHEMA_VERSION = 1
 SHM_SCHEMA = "lingtu.camera.shm_frame.v1"
 SUPERBLOCK = struct.Struct("<8sHHHHIIIIQQQQ")
 SLOT_HEADER = struct.Struct("<QQQIIIIIIIIHHHH16s64s10d24sQ")
+SIMULATION_TRUTH_FLAG = 1
+SIMULATION_TRUTH = struct.Struct("<QQq")
 
 
 class StreamKind(IntEnum):
@@ -97,6 +99,9 @@ class FrameMetadata:
     dist_p1: float = 0.0
     dist_p2: float = 0.0
     dist_k3: float = 0.0
+    truth_sequence: int | None = None
+    reset_generation: int | None = None
+    sim_time_ns: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +128,10 @@ class FrameSnapshot:
     dist_p1: float = 0.0
     dist_p2: float = 0.0
     dist_k3: float = 0.0
+    model_generation: int | None = None
+    truth_sequence: int | None = None
+    reset_generation: int | None = None
+    sim_time_ns: int | None = None
 
 
 class InMemoryMappingBackend:
@@ -175,12 +184,31 @@ class WindowsNamedMappingBackend:
         """Open an existing Windows named mapping for read access."""
 
         self._require_windows()
-        return mmap.mmap(
-            -1,
-            allocation.mapping_size,
-            tagname=allocation.name,
-            access=mmap.ACCESS_READ,
-        )
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenFileMappingW.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR)
+        kernel32.OpenFileMappingW.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        handle = kernel32.OpenFileMappingW(0x0004, False, allocation.name)  # FILE_MAP_READ
+        if not handle:
+            error = ctypes.get_last_error()
+            if error == 2:  # ERROR_FILE_NOT_FOUND
+                raise CameraShmNotReady(f"camera SHM mapping is unavailable: {allocation.name}")
+            raise ctypes.WinError(error)
+        try:
+            # mmap(tagname=...) can create a missing object. Keep the existing
+            # mapping alive until mmap has acquired its own handle and view.
+            return mmap.mmap(
+                -1,
+                allocation.mapping_size,
+                tagname=allocation.name,
+                access=mmap.ACCESS_READ,
+            )
+        finally:
+            kernel32.CloseHandle(handle)
 
     @staticmethod
     def _require_windows() -> None:
@@ -197,12 +225,16 @@ class CameraShmWriter:
         allocation: CameraShmAllocation,
         *,
         now_ns: Callable[[], int] = time.time_ns,
+        model_generation: int = 0,
     ) -> None:
         if len(mapping) != allocation.mapping_size:
             raise CameraShmCorrupt("camera SHM mapping size does not match allocation")
         self._mapping = mapping
         self.allocation = allocation
         self._now_ns = now_ns
+        if type(model_generation) is not int or not 0 <= model_generation <= (1 << 64) - 1:
+            raise ValueError("camera model_generation must be uint64")
+        self._model_generation = model_generation
         self._last_sequence: int = 0
         self._initialize_or_validate()
 
@@ -240,6 +272,9 @@ class CameraShmWriter:
             metadata.dist_p2,
             metadata.dist_k3,
         )
+        truth = (metadata.truth_sequence, metadata.reset_generation, metadata.sim_time_ns)
+        has_truth = metadata.truth_sequence is not None
+        extension = SIMULATION_TRUTH.pack(*truth) if has_truth else bytes(24)
 
         writable_mapping = cast(Any, self._mapping)
         SLOT_HEADER.pack_into(
@@ -254,7 +289,7 @@ class CameraShmWriter:
             len(payload_bytes),
             self.allocation.slot_capacity,
             zlib.crc32(payload_bytes) & 0xFFFFFFFF if payload_bytes else 0,
-            0,
+            SIMULATION_TRUTH_FLAG if has_truth else 0,
             0,
             int(metadata.stream_kind),
             len(encoding),
@@ -263,7 +298,7 @@ class CameraShmWriter:
             encoding.ljust(16, b"\0"),
             frame_id.ljust(64, b"\0"),
             *calibration,
-            bytes(24),
+            extension,
             0,
         )
         payload_offset = slot_offset + SLOT_HEADER.size
@@ -295,15 +330,25 @@ class CameraShmWriter:
                 0,
                 created_ns,
                 created_ns,
-                0,
+                self._model_generation,
             )
         header = _parse_superblock(cast(Any, self._mapping), self.allocation)
+        if header.model_generation != self._model_generation:
+            raise CameraShmCorrupt("existing camera SHM model_generation does not match writer")
         self._last_sequence = header.published_sequence
 
     def _slot_offset(self, index: int) -> int:
         return SUPERBLOCK.size + index * (SLOT_HEADER.size + self.allocation.slot_capacity)
 
     def _validate_frame(self, metadata: FrameMetadata, payload_size: int) -> None:
+        truth = (metadata.truth_sequence, metadata.reset_generation, metadata.sim_time_ns)
+        if any(value is not None for value in truth):
+            for name, value, limit in zip(
+                ("truth_sequence", "reset_generation", "sim_time_ns"), truth,
+                ((1 << 64) - 1, (1 << 64) - 1, (1 << 63) - 1), strict=True,
+            ):
+                if type(value) is not int or not 0 <= value <= limit:
+                    raise ValueError(f"camera {name} must be a complete nonnegative simulation stamp")
         try:
             stream_kind = StreamKind(metadata.stream_kind)
         except ValueError as exc:
@@ -425,6 +470,11 @@ class CameraShmReader:
             raise CameraShmCorrupt("camera SHM payload CRC mismatch")
         _validate_timestamp(timestamp_ns, now_ns, self.max_age_s, self.max_future_skew_s)
         calibration = tuple(float(value) for value in slot[17:27])
+        truth: tuple[int | None, int | None, int | None] = (None, None, None)
+        if int(slot[9]) & SIMULATION_TRUTH_FLAG:
+            truth = SIMULATION_TRUTH.unpack(slot[27])
+            if truth[2] < 0:
+                raise CameraShmCorrupt("camera simulation time must be nonnegative")
         return FrameSnapshot(
             schema_version=int(slot[13]),
             sequence=sequence,
@@ -446,6 +496,8 @@ class CameraShmReader:
             dist_p1=calibration[7],
             dist_p2=calibration[8],
             dist_k3=calibration[9],
+            model_generation=header.model_generation if truth[0] is not None else None,
+            truth_sequence=truth[0], reset_generation=truth[1], sim_time_ns=truth[2],
         )
 
 
@@ -455,6 +507,7 @@ class _Superblock:
     slot_capacity: int
     active_slot: int
     published_sequence: int
+    model_generation: int
 
 
 def _parse_superblock(
@@ -477,7 +530,7 @@ def _parse_superblock(
         raise CameraShmCorrupt("camera SHM mapping geometry does not match allocation")
     if int(values[10]) <= 0:
         raise CameraShmCorrupt("camera SHM generation timestamp is not positive")
-    return _Superblock(slot_count, slot_capacity, int(values[6]), int(values[9]))
+    return _Superblock(slot_count, slot_capacity, int(values[6]), int(values[9]), int(values[12]))
 
 
 def _validate_payload(

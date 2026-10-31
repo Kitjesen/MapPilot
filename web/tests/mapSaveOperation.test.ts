@@ -235,7 +235,7 @@ test('both save callbacks continue the pending operation without resubmitting or
       mapSaveElapsedMs, mapSaveProgressValue,
       saveStartedAt: { current: 0 }, setSaveTiming: noOp, setSaveClock: noOp, setSaveProgress: noOp,
       savePreviewSession: { current: 'mapping-session' }, hasAutoSelected: { current: false },
-      setSelectedMap: noOp, setLibraryOpen: noOp, setGoalPickingMap: noOp, loadMaps: noOp,
+      setSelectedMap: noOp, setLibraryOpen: noOp, setPreviewRefresh: noOp, setGoalPickingMap: noOp, loadMaps: noOp,
     }
     const confirm = runInNewContext(ts.transpileModule(`const ${callback.getText(ast)}; ${callbackName};`, {
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },

@@ -423,14 +423,24 @@ def test_receiver_only_enqueues_and_owner_pumps_before_advance() -> None:
     )
     session.prepare()
 
-    receiver = threading.Thread(target=pump.receive, args=({"linear_x": 1.0},))
-    receiver.start()
-    receiver.join()
+    received, release = threading.Event(), threading.Event()
 
-    session.start()
-    assert coordinator.advance_seen.wait(1.0)
-    session.pause()
-    session.stop()
+    def receive():
+        pump.receive({"linear_x": 1.0})
+        received.set()
+        release.wait()
+
+    receiver = threading.Thread(target=receive)
+    receiver.start()
+    try:
+        assert received.wait(1.0)
+        session.start()
+        assert coordinator.advance_seen.wait(1.0)
+        session.pause()
+    finally:
+        session.stop()
+        release.set()
+        receiver.join()
 
     names = [name for name, _thread_id in coordinator.calls]
     first_advance = names.index("advance")
@@ -707,7 +717,7 @@ def test_session_host_exposes_submit_and_hold_owner_seams() -> None:
         payload={"linear_x": 0.1},
     )
 
-    result = host.submit_controller_command("thunder_01.thunderv4_locomotion", command)
+    result = host.submit_controller_command("thunder_01.thunderv4_cts_moe", command)
     host.hold_controller_commands()
 
     assert result is CommandSubmitResult.ACCEPTED

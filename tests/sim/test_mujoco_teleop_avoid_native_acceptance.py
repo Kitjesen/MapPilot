@@ -35,7 +35,7 @@ def test_manifest_uses_scan_with_live_mapd_collision() -> None:
     )
 
     assert manifest["navigation_runtime"]["local_planner"] == "scan"
-    assert manifest["slam_runtime"]["provider"] == "fastlio2"
+    assert manifest["slam_runtime"]["provider"] == "ltlio"
     assert manifest["sensor_runtime"]["scan_time_profile"] == "physical_rolling"
     assert manifest["sensor_runtime"]["publish_odom_prior"] is False
     assert "path_library" not in manifest["paths"]
@@ -265,24 +265,45 @@ def test_binary_provenance_includes_slam_build_contract(tmp_path: Path) -> None:
     slam = tmp_path / "slamd"
     slam.write_bytes(b"slam")
 
-    provenance, _blockers = _binary_source_provenance({"slam": slam})
+    provenance, blockers = _binary_source_provenance({"slam": slam})
 
     normalized_specs = [Path(spec).as_posix() for spec in provenance["slam"]["source_specs"]]
-    assert any(spec.endswith("src/localization/slam/cpp/CMakeLists.txt") for spec in normalized_specs)
+    for suffix in (
+        "src/localization/slam/cpp/CMakeLists.txt",
+        "src/localization/ltlio/frontend.hpp",
+        "src/localization/ltlio/frontend.cpp",
+        "src/localization/ltlio/detail",
+        "src/localization/ltlio/CMakeLists.txt",
+    ):
+        assert any(spec.endswith(suffix) for spec in normalized_specs)
+    assert not any(spec.endswith("src/localization/ltlio/src") for spec in normalized_specs)
+    assert "missing_source_specs" not in provenance["slam"]
+    assert not any(blocker.startswith("native_source_spec_missing:slam:") for blocker in blockers)
 
 
-def test_binary_provenance_tracks_vendored_small_gicp_changes(
+@pytest.mark.parametrize("changed_source", (
+    "third_party/research_localization/small_gicp/include/small_gicp/pcl/pcl_registration.hpp",
+    "src/localization/ltlio/frontend.hpp",
+    "src/localization/ltlio/frontend.cpp",
+    "src/localization/ltlio/detail/ESEKF.cpp",
+    "src/localization/ltlio/CMakeLists.txt",
+))
+def test_binary_provenance_tracks_slam_core_and_dependency_changes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    changed_source: str,
 ) -> None:
     fake_root = tmp_path / "source-root"
     source_files = (
         fake_root / "src/localization/slam/cpp/slam.cpp",
         fake_root / "src/localization/slam/cpp/CMakeLists.txt",
-        fake_root / "src/localization/fastlio2/src/fastlio.cpp",
-        fake_root / "src/localization/localizer/src/localizers/icp_localizer.cpp",
-        fake_root / "src/maps/cpp/semantic_map_persistence.cpp",
-        fake_root / "src/maps/include/lingtu/maps/semantic_map_persistence.hpp",
+        fake_root / "src/localization/ltlio/frontend.hpp",
+        fake_root / "src/localization/ltlio/frontend.cpp",
+        fake_root / "src/localization/ltlio/detail/ESEKF.cpp",
+        fake_root / "src/localization/ltlio/CMakeLists.txt",
+        fake_root / "src/localization/relocalization/src/localizers/icp_localizer.cpp",
+        fake_root / "src/maps/cpp/semantic/store.cpp",
+        fake_root / "src/maps/include/lingtu/maps/semantic/store.hpp",
         fake_root / "src/native/snapshot_file.hpp",
         fake_root / "src/message/idl/messages.idl",
         fake_root / "src/message/topics/core.yaml",
@@ -299,7 +320,7 @@ def test_binary_provenance_tracks_vendored_small_gicp_changes(
     small_gicp_header.parent.mkdir(parents=True)
     small_gicp_header.write_text("header", encoding="utf-8")
     future_ns = time.time_ns() + 1_000_000_000
-    os.utime(small_gicp_header, ns=(future_ns, future_ns))
+    os.utime(fake_root / changed_source, ns=(future_ns, future_ns))
     slam = tmp_path / "slamd"
     slam.write_bytes(b"slam")
     monkeypatch.setattr(acceptance, "ROOT", fake_root)
@@ -753,7 +774,7 @@ def test_native_teleop_wsl_command_keeps_env_wrapper_for_linux_child(monkeypatch
     assert env == {}
 
 
-@pytest.mark.parametrize("state_provider", ["mujoco_navigation_fixture", "fastlio2"])
+@pytest.mark.parametrize("state_provider", ["mujoco_navigation_fixture", "ltlio"])
 def test_prepare_runtime_state_override_aligns_sensor_inputs_and_localization_scope(
     tmp_path: Path,
     monkeypatch,
@@ -770,13 +791,13 @@ def test_prepare_runtime_state_override_aligns_sensor_inputs_and_localization_sc
         "world": str(world),
         "product_contract": {
             "product": "teleop_avoid",
-            "source": "config/runtime_graph/products/teleop_avoid.yaml",
+            "source": "config/system/products/teleop_avoid.yaml",
             "native_control_mode": "teleop_avoid",
             "slam_mode": "mapping",
             "requires_map": False,
         },
         "slam_runtime": {
-            "provider": "fastlio2" if state_provider == "mujoco_navigation_fixture" else "mujoco_navigation_fixture",
+            "provider": "ltlio" if state_provider == "mujoco_navigation_fixture" else "mujoco_navigation_fixture",
             "mode": "mapping",
         },
         "sensor_runtime": {
@@ -803,7 +824,7 @@ def test_prepare_runtime_state_override_aligns_sensor_inputs_and_localization_sc
         "sensor_runner": tmp_path / "sensor.py",
         "policy": tmp_path / "policy.onnx",
     }
-    if state_provider == "fastlio2":
+    if state_provider == "ltlio":
         binaries["slam"] = tmp_path / "slamd"
     monkeypatch.setattr(native, "_load_manifest", lambda _path: dict(manifest))
     monkeypatch.setattr(
@@ -846,7 +867,7 @@ def test_prepare_runtime_state_override_aligns_sensor_inputs_and_localization_sc
     sensor_runtime = prepared["manifest"]["sensor_runtime"]
     assert sensor_runtime["scan_time_profile"] == ("instantaneous" if fixture else "physical_rolling")
     assert sensor_runtime["publish_odom_prior"] is fixture
-    assert ("Fast-LIO state estimation" in prepared["details"]["acceptance_scope"].get("excluded_claims", [])) is fixture
+    assert ("LTLIO state estimation" in prepared["details"]["acceptance_scope"].get("excluded_claims", [])) is fixture
     effective_scope = prepared["details"]["acceptance_scope"]
     if fixture:
         assert effective_scope["coverage"] == "component"
@@ -972,6 +993,7 @@ def test_scan_teleop_preflight_does_not_require_cmu_path_library(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
     from sim.scripts.mujoco import native_navigation_acceptance as native
 
     world = tmp_path / "scene.xml"
@@ -982,12 +1004,12 @@ def test_scan_teleop_preflight_does_not_require_cmu_path_library(
         "world": str(world),
         "product_contract": {
             "product": "teleop_avoid",
-            "source": "config/runtime_graph/products/teleop_avoid.yaml",
+            "source": "config/system/products/teleop_avoid.yaml",
             "native_control_mode": "teleop_avoid",
             "slam_mode": "mapping",
             "requires_map": False,
         },
-        "slam_runtime": {"provider": "fastlio2", "mode": "mapping"},
+        "slam_runtime": {"provider": "ltlio", "mode": "mapping"},
         "navigation_runtime": {"local_planner": "scan"},
         "asset_builder": {"kind": "scene_only"},
         "binaries": {},
@@ -1047,6 +1069,7 @@ def test_product_preflight_requires_native_mapd_binary(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    monkeypatch.setattr(acceptance, "os", _platform_os("nt"))
     from sim.scripts.mujoco import native_navigation_acceptance as native
 
     world = tmp_path / "scene.xml"
@@ -1057,12 +1080,12 @@ def test_product_preflight_requires_native_mapd_binary(
         "world": str(world),
         "product_contract": {
             "product": "teleop_avoid",
-            "source": "config/runtime_graph/products/teleop_avoid.yaml",
+            "source": "config/system/products/teleop_avoid.yaml",
             "native_control_mode": "teleop_avoid",
             "slam_mode": "mapping",
             "requires_map": False,
         },
-        "slam_runtime": {"provider": "fastlio2", "mode": "mapping"},
+        "slam_runtime": {"provider": "ltlio", "mode": "mapping"},
         "navigation_runtime": {"local_planner": "scan"},
         "asset_builder": {"kind": "scene_only"},
         "binaries": {},

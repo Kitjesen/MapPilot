@@ -223,6 +223,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     _make_robot_readable(model, base_id)
 
     renderer = mujoco.Renderer(model, height=args.height, width=args.width, max_geom=30000)
+    # The robot package keeps its geoms in collision/visual groups 3 and 5.
+    # Enable every group in the render option only; model groups remain
+    # untouched so LiDAR ray filtering and physics keep their product values.
+    scene_option = mujoco.MjvOption()
+    scene_option.geomgroup[:] = 1
     camera = mujoco.MjvCamera()
     camera.type = mujoco.mjtCamera.mjCAMERA_FREE
     writer = cv2.VideoWriter(
@@ -288,7 +293,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             camera.distance = float(args.camera_distance)
             camera.azimuth = float(args.camera_azimuth)
             camera.elevation = float(args.camera_elevation)
-            renderer.update_scene(data, camera=camera)
+            renderer.update_scene(data, camera=camera, scene_option=scene_option)
             shown_sizes.append(_draw_scan_hits(renderer.scene, scan, max_points=int(args.max_visual_points)))
             _draw_trail(renderer.scene, trail)
 
@@ -370,7 +375,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "imu_state_available_in_engine": bool(imu_gyro_values and imu_gravity_values),
             "runtime_raw_imu_topic_available": True,
             "ready_for_direct_slam": False,
-            "reason": "MuJoCo IMU is available through MujocoDriverModule. Direct Fast-LIO SLAM still needs an explicit raw LiDAR frame/time-sync feed from the sim driver or portable DDS adapter.",
+            "reason": "MuJoCo IMU is available through MujocoDriverModule. Direct LTLIO SLAM still needs an explicit raw LiDAR frame/time-sync feed from the sim driver or portable DDS adapter.",
         },
         "shown_points_mean": float(np.mean(shown_sizes) if shown_sizes else 0.0),
         "lidar_backend": backend,

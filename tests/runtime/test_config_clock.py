@@ -75,7 +75,7 @@ class TestLoadConfigFromYAML:
         assert cfg.speed.max_speed == 0.875
         assert cfg.geometry.vehicle_length == 0.76
         assert cfg.geometry.vehicle_width == 0.31
-        assert cfg.geometry.collision_hard_margin == 0.10
+        assert cfg.geometry.collision_hard_margin == 0.05
         assert cfg.driver.dog_host == "127.0.0.1"
         assert cfg.safety.obstacle_height_thre == 0.2
         assert cfg.lidar.lidar_ip == "192.168.123.20"

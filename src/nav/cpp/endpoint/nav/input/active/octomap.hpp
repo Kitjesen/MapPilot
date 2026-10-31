@@ -21,14 +21,19 @@ class ValidatedOctomap {
   const std::filesystem::path &loadPath() const { return load_path_; }
   const lingtu::nav::plan::MapIdentity &identity() const { return identity_; }
   const std::string &mapId() const { return identity_.map_id; }
+  const std::shared_ptr<const collision::Terrain> &terrain() const;
 
  private:
   friend class ActiveOctomapGate;
 
-  ValidatedOctomap(std::filesystem::path load_path, lingtu::nav::plan::MapIdentity identity);
+  ValidatedOctomap(std::filesystem::path load_path, lingtu::nav::plan::MapIdentity identity,
+                   std::filesystem::path source_path);
 
   std::filesystem::path load_path_;
   lingtu::nav::plan::MapIdentity identity_;
+  std::filesystem::path source_path_;
+  mutable std::once_flag terrain_once_;
+  mutable std::shared_ptr<const collision::Terrain> terrain_;
 };
 
 struct ActiveOctomapGateResult {

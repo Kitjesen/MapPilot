@@ -10,6 +10,85 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
+
+
+@pytest.mark.parametrize("entry_id", ["factory_park_patrol", "open_field_patrol"])
+def test_repository_runnable_choices_match_current_session_packages(entry_id: str) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    spec = yaml.safe_load(
+        (repo_root / "sim/sessions/game-selection.v1.yaml").read_text(encoding="utf-8")
+    )
+    entry = next(item for item in spec["entries"] if item["id"] == entry_id)
+    session = yaml.safe_load(
+        (repo_root / entry["session_spec"]).read_text(encoding="utf-8")
+    )
+
+    assert entry["availability"]["state"] == "runnable"
+    assert len(session["robots"]) == 1
+    for kind, reference in (
+        ("robot", session["robots"][0]["package"]),
+        ("world", session["world"]),
+    ):
+        declared = entry["presentation"][kind]
+        assert f"{declared['id']}@{declared['version']}" == reference
+    assert entry["presentation"]["mode"] == session["runtime"]["mode"]
+
+
+def test_repository_catalog_exposes_honest_omni_cart_factory_preview() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    spec = yaml.safe_load(
+        (repo_root / "sim/sessions/game-selection.v1.yaml").read_text(encoding="utf-8")
+    )
+    entry = next(
+        item for item in spec["entries"] if item["id"] == "omni_cart_factory_park"
+    )
+
+    assert entry["session_spec"] == (
+        "sim/sessions/examples/omni_cart_factory_park_hf/session.yaml"
+    )
+    assert entry["availability"] == {
+        "state": "preview_only",
+        "reason": "仅预览：Unreal 会话未绑定控制器；OmniCart 可控模式目前仅支持 MuJoCo headless",
+    }
+    assert entry["presentation"] == {
+        "robot": {
+            "id": "omni_cart",
+            "version": "1.0.0",
+            "label": "OmniCart",
+            "category": "wheeled",
+        },
+        "world": {
+            "id": "factory_park_hf",
+            "version": "1.1.0",
+            "label": "高保真工业园区",
+        },
+        "scenario": None,
+        "mode": "unreal",
+    }
+
+
+def test_repository_catalog_uses_friendly_chinese_robot_and_world_labels() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    spec = yaml.safe_load(
+        (repo_root / "sim/sessions/game-selection.v1.yaml").read_text(encoding="utf-8")
+    )
+    expected_robot_labels = {
+        "thunderv4": "雷霆 V4",
+        "omni_cart": "OmniCart",
+    }
+    expected_world_labels = {
+        "factory_park_hf": "高保真工业园区",
+        "open_field_hf": "高保真开放场地",
+        "forest_hf": "高保真森林（2 公里）",
+        "open_field": "开放场地",
+    }
+
+    for entry in spec["entries"]:
+        robot = entry["presentation"]["robot"]
+        world = entry["presentation"]["world"]
+        assert robot["label"] == expected_robot_labels[robot["id"]]
+        assert world["label"] == expected_world_labels[world["id"]]
 
 
 def _module() -> Any:
@@ -218,6 +297,12 @@ def _asset_review_catalog(
     return path
 
 
+def _robot_library(path: Path, robots: list[dict[str, Any]]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"robots": robots}), encoding="utf-8")
+    return path
+
+
 def test_build_compiles_runnable_choice_into_selectable_catalog(
     tmp_path: Path,
     catalog_module: Any,
@@ -292,6 +377,103 @@ def test_build_compiles_runnable_choice_into_selectable_catalog(
         "digest": catalog["digest"],
     }
     assert catalog["digest"] == _canonical_digest(catalog)
+
+
+def test_robot_library_is_copied_into_digest_without_creating_runnable_entries(
+    tmp_path: Path,
+    catalog_module: Any,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    robots = [
+        {"id": "thunderv4", "version": "1.0.3", "label": "Thunder V4 source"},
+        {"id": "unitree_go2", "version": "robotlab-2.3.2", "label": "Unitree Go2", "category": "quadruped"},
+    ]
+    library_path = _robot_library(repo_root / "build" / "robot-library.json", robots)
+
+    catalog = catalog_module.build_game_selection_catalog(
+        repo_root,
+        selection_spec=_selection_spec(
+            _selection_entry("preview", order=1, state="preview_only")
+        ),
+        output_root=repo_root / "build" / "game-selection",
+        robot_library_path=library_path,
+    )
+
+    assert catalog["robot_library"] == robots
+    assert catalog["digest"] == _canonical_digest(catalog)
+    assert catalog["entries"][0]["availability"]["state"] == "preview_only"
+    assert catalog["entries"][0]["bundle"] is None
+    assert _RecordingResolver.repository_calls == []
+    assert _RecordingResolver.resolve_calls == []
+    assert not (repo_root / "build" / "game-selection" / "bundles").exists()
+
+
+@pytest.mark.parametrize(
+    ("robots", "message"),
+    [
+        ([{"id": "go2", "version": "1.0.0"}], "invalid fields"),
+        (
+            [
+                {"id": "go2", "version": "1.0.0", "label": "Go2"},
+                {"id": "go2", "version": "2.0.0", "label": "Go2 v2"},
+            ],
+            "duplicate id",
+        ),
+        ([{"id": "go2", "version": "bad version", "label": "Go2"}], "safe identity"),
+        ([{"id": "go2", "version": "1.0.0", "label": "Go2", "category": "flying_dog"}], "category"),
+        ([{"id": "go2", "version": "1.0.0", "label": "Go2", "category": None}], "category"),
+    ],
+)
+def test_robot_library_rejects_invalid_package_metadata(
+    robots: list[dict[str, Any]],
+    message: str,
+    tmp_path: Path,
+    catalog_module: Any,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    library_path = _robot_library(repo_root / "build" / "robot-library.json", robots)
+
+    with pytest.raises(ValueError, match=message):
+        catalog_module.build_game_selection_catalog(
+            repo_root,
+            selection_spec=_selection_spec(
+                _selection_entry("preview", order=1, state="preview_only")
+            ),
+            output_root=repo_root / "build" / "game-selection",
+            robot_library_path=library_path,
+        )
+
+
+def test_category_is_presentation_metadata_on_a_runnable_choice(tmp_path: Path, catalog_module: Any) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_session_specs(repo, "factory")
+    entry = _selection_entry("factory", order=1)
+    entry["presentation"]["robot"]["category"] = "wheeled_legged"
+    result = catalog_module.build_game_selection_catalog(
+        repo, selection_spec=_selection_spec(entry), output_root=repo / "build/catalog"
+    )
+    assert result["entries"][0]["robot"]["category"] == "wheeled_legged"
+    assert result["entries"][0]["bundle"]["session_id"] == "factory"
+    assert result["entries"][0]["availability"]["state"] == "runnable"
+
+
+def test_repository_robot_categories_cover_all_29_choices() -> None:
+    from collections import Counter
+    repo = Path(__file__).resolve().parents[2]
+    library = json.loads((repo / "sim/sessions/robot-library.v1.json").read_text(encoding="utf-8"))
+    spec = yaml.safe_load((repo / "sim/sessions/game-selection.v1.yaml").read_text(encoding="utf-8"))
+    robots = {entry["id"]: entry for entry in library["robots"]}
+    for entry in spec["entries"]:
+        robot = entry["presentation"]["robot"]
+        robots[robot["id"]] = robot
+    assert Counter(robot["category"] for robot in robots.values()) == {
+        "quadruped": 9, "wheeled_legged": 7, "humanoid": 10, "wheeled": 1, "manipulator": 2
+    }
+    assert robots["thunderv4"]["category"] == "wheeled_legged"
+    assert robots["ddtrobot_tita"]["category"] == "wheeled_legged"
 
 
 def test_selection_spec_requires_at_least_one_entry(

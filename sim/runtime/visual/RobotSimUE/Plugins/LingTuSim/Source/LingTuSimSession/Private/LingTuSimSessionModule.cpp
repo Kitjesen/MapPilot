@@ -23,6 +23,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogLingTuSimSession, Log, All);
 namespace
 {
     constexpr uint32 MaxSnapshotDatagramBytes = 60'000;
+    constexpr int32 MaxIPv4UdpPayloadBytes = 65'507;
     using FSnapshotDatagram = TSharedPtr<FArrayReader, ESPMode::ThreadSafe>;
 
     class FLingTuSnapshotReceiver final : public FRunnable
@@ -87,12 +88,12 @@ namespace
                 while (!bStopping.load(std::memory_order_acquire)
                     && Socket.HasPendingData(PendingBytes))
                 {
-                    const bool bOversized = PendingBytes > MaxSnapshotDatagramBytes;
                     FSnapshotDatagram Data =
                         MakeShared<FArrayReader, ESPMode::ThreadSafe>(true);
-                    Data->SetNumUninitialized(static_cast<int32>(FMath::Min(
-                        PendingBytes,
-                        MaxSnapshotDatagramBytes)));
+                    // Windows FIONREAD reports all queued UDP bytes, not the
+                    // size of the next datagram. Receive one complete IPv4
+                    // datagram, then enforce the snapshot limit on BytesRead.
+                    Data->SetNumUninitialized(MaxIPv4UdpPayloadBytes);
 
                     TSharedRef<FInternetAddr> Sender =
                         SocketSubsystem->CreateInternetAddr();
@@ -103,13 +104,13 @@ namespace
                             BytesRead,
                             *Sender))
                     {
-                        if (bOversized)
+                        if (BytesRead > static_cast<int32>(MaxSnapshotDatagramBytes))
                         {
                             UE_LOG(
                                 LogLingTuSimSession,
                                 Warning,
-                                TEXT("Rejected oversized snapshot datagram: %u bytes"),
-                                PendingBytes);
+                                TEXT("Rejected oversized snapshot datagram: %d bytes"),
+                                BytesRead);
                             continue;
                         }
                         Data->RemoveAt(

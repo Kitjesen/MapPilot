@@ -21,11 +21,12 @@ bool sameDouble(double left, double right) noexcept {
   return left != 0.0 || std::signbit(left) == std::signbit(right);
 }
 
-BridgeWalk toBridgeWalk(const lingtu::driver::Velocity &velocity) noexcept {
+BridgeWalk toBridgeWalk(const lingtu::driver::Velocity &velocity,
+                        const lingtu::driver::Limits &limits) noexcept {
   return {
-      velocity.vx_mps == 0.0 ? 0.0 : velocity.vx_mps,
-      velocity.vy_mps == 0.0 ? 0.0 : velocity.vy_mps,
-      velocity.yaw_rps == 0.0 ? 0.0 : velocity.yaw_rps,
+      velocity.vx_mps == 0.0 ? 0.0 : velocity.vx_mps / limits.max_linear_mps,
+      velocity.vy_mps == 0.0 ? 0.0 : velocity.vy_mps / limits.max_linear_mps,
+      velocity.yaw_rps == 0.0 ? 0.0 : velocity.yaw_rps / limits.max_angular_rps,
   };
 }
 
@@ -187,7 +188,7 @@ std::optional<BridgeCommand> MujocoDriverBridgeCore::onActivate(const ActivateMe
   has_controller_arrival_ = true;
   lifecycle_ = BridgeLifecycle::ActivatingZero;
   const auto action = motion_core_.forceStop(lingtu::driver::ActionReason::ConnectProbe);
-  return issue(BridgeCommandKind::ActivationZero, {}, 0, toBridgeWalk(action.velocity), now);
+  return issue(BridgeCommandKind::ActivationZero, {}, 0, toBridgeWalk(action.velocity, config_.limits), now);
 }
 
 bool MujocoDriverBridgeCore::appliedMatches(const AppliedMessage &message,
@@ -374,7 +375,7 @@ std::optional<BridgeCommand> MujocoDriverBridgeCore::submitNav(const NavCommand 
   }
 
   QueuedNav queued{
-      command.producer_boot_id, command.output_sequence, toBridgeWalk(result.action->velocity),
+      command.producer_boot_id, command.output_sequence, toBridgeWalk(result.action->velocity, config_.limits),
       command.source_time,      command.arrival_time,
   };
   if (pending_.has_value()) {

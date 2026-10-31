@@ -1,0 +1,46 @@
+#pragma once
+
+#include "localization/map_optimization/graph.hpp"
+#include "localization/map_optimization/loop_constraints.hpp"
+#include "localization/map_optimization/map.hpp"
+
+#include <filesystem>
+#include <string>
+#include <vector>
+
+namespace lingtu::localization::map_optimization {
+
+namespace detail {
+
+std::vector<GeometricConstraint> merge_pose_graph_constraints(
+    const std::vector<GeometricConstraint> &sequential,
+    std::vector<GeometricConstraint> loops);
+
+}  // namespace detail
+
+struct PoseGraphConstraintAssembly {
+  bool ready = false;
+  bool evidence_insufficient = false;
+  std::string code;
+  std::string message;
+  std::size_t pose_count = 0;
+  std::size_t sequential_count = 0;
+  std::size_t loop_count = 0;
+  std::vector<GeometricConstraint> constraints;
+};
+
+PoseGraphConstraintAssembly assemble_pose_graph_constraints(
+    const Map &map, const LoopConstraintOptions &options = {});
+
+// Measure the adjacent edge and up to three recent bridges across rejected edges.
+// Returns the adjacent result; constraints receives only verified measurements.
+SequentialConstraintResult extend_sequential_graph(
+    const PatchCloudSource& cloud_at, const std::vector<Keyframe>& keyframes,
+    std::size_t to_index, std::vector<GeometricConstraint>& constraints,
+    const LoopConstraintOptions& options);
+
+bool write_pose_graph_constraints_atomic(const std::filesystem::path &path,
+                                         const std::vector<GeometricConstraint> &constraints,
+                                         std::string *error = nullptr);
+
+}  // namespace lingtu::localization::map_optimization

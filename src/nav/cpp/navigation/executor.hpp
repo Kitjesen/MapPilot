@@ -27,8 +27,9 @@ struct ExecutorConfig {
   double goal_height_tolerance_m{0.35};
   double goal_yaw_tolerance_rad{0.08726646259971647};
   double goal_yaw_kp{1.5};
+  double goal_yaw_min_rate{0.2};
   double goal_yaw_max_rate{0.6};
-  double max_speed{0.5};
+  double max_speed{nav_kernel::kDefaultLinearSpeedMps};
   double teleop_intent_horizon_m{3.5};
   double teleop_intent_max_deviation_deg{90.0};
   RecoveryConfig recovery{};
@@ -36,6 +37,8 @@ struct ExecutorConfig {
   double slow_rate_2{0.5};
   double slow_rate_3{0.75};
   nav_kernel::FollowerParams follower{};
+  StairTraversalConfig stairs{};
+  std::shared_ptr<const collision::Body> body{};
 };
 
 struct ExecutionOutput {
@@ -45,6 +48,11 @@ struct ExecutionOutput {
   bool near_field_stop{false};
   bool trajectory_frozen{false};
   bool recovery_exhausted{false};
+  // Public failure names are owned by the producing boundary:
+  // local_no_path/local_blocked/local_near_field_stop come from the local
+  // planner; execution_stalled is emitted only after Executor observes that
+  // an issued command produced no measured motion. "active" and "inactive"
+  // in recovery_trigger are lifecycle markers, not failure causes.
   std::string reason{"not_configured"};
   int slow_down{0};
   int recovery_state{0};
@@ -53,7 +61,6 @@ struct ExecutionOutput {
   int recovery_candidate_count{0};
   double recovery_rotation_target_rad{0.0};
   bool recovery_verified{false};
-  bool recovery_observation_refresh_required{false};
   double recovery_progress{0.0};
   std::string recovery_trigger{"inactive"};
   std::string recovery_reason{"inactive"};
@@ -66,6 +73,10 @@ struct ExecutionOutput {
   nav_kernel::Twist cmd_vel{};
   nav_kernel::FollowerTracking tracking{};
   std::size_t prediction_count{0};
+  StairTraversalOutput stairs{};
+  std::size_t pose_stage_index{0};
+  std::size_t pose_stage_count{0};
+  std::uint64_t route_generation{0};
 };
 
 struct ExecutionObservation {
@@ -78,6 +89,7 @@ struct ExecutionObservation {
   nav_kernel::Vec3 body_linear_velocity{};
   double body_yaw_rate{0.0};
   bool body_velocity_valid{false};
+  std::shared_ptr<const collision::Body> body_geometry{};
   nav_kernel::LocalCollisionMapView collision{};
   nav_kernel::PlanClockMode clock_mode{nav_kernel::PlanClockMode::Steady};
   nav_kernel::PredictionView predictions{};
@@ -122,23 +134,31 @@ struct ExecutionInput {
   TraversabilityGridView traversability{};
   ExecutionObservation observation{};
   nav_kernel::Twist motionIntent{};
+  StairProfileFeedback stairProfile{};
 };
 
 class Executor {
  public:
-  Executor(ExecutorConfig config, nav_kernel::local::Planner planner);
+  Executor(ExecutorConfig config, nav_kernel::LocalPlanner planner);
 
   void setRoute(Route route);
   void clear();
   ExecutionOutput tick(const ExecutionInput &input);
 
   [[nodiscard]] bool hasRoute() const;
+  [[nodiscard]] bool hasStairTransition() const { return stairs_.pending(); }
+  StairTraversalOutput tickStairTransition(const nav_kernel::Pose& body,
+      const ExecutionObservation& observation, double timestamp_s,
+      const StairProfileFeedback& feedback);
   [[nodiscard]] double activeMaxSpeedMps() const { return active_max_speed_mps_; }
+  [[nodiscard]] std::shared_ptr<const collision::Body> body() const { return config_.body; }
   void pauseLinearMotion();
+  void commitAppliedCommand(const nav_kernel::Twist &command);
   void reportFinalMotionBlocked(bool blocked, double timestamp_s);
   void replanTeleop();
   void stopLinearMotion();
   void suspendAutonomy();
+  void resumeRoute();
 
  private:
   struct SegmentTarget {
@@ -207,22 +227,39 @@ class Executor {
   double slowFactor(int slow_down) const;
   bool atGoal(const nav_kernel::Pose &odom_map_body) const;
   double goalYawError(const nav_kernel::Pose &odom_map_body) const;
-  bool autonomyMotionStalled(const nav_kernel::Pose &odom_map_body, double timestamp_s);
+  bool autonomyMotionStalled(const nav_kernel::Pose &odom_map_body, double timestamp_s,
+                            bool planning_pending);
   void setAutonomyMotionExpected(const nav_kernel::Twist &command,
                                  const nav_kernel::Pose &odom_map_body,
                                  double timestamp_s);
   void resetAutonomyProgress();
-  bool recoveryObservationAdvanced(const ExecutionObservation &observation) const;
-  void clearRecoveryObservationWait();
 
   ExecutorConfig config_;
-  nav_kernel::local::Planner local_planner_;
+  nav_kernel::LocalPlanner local_planner_;
   Recovery recovery_;
   Recovery teleop_recovery_;
+  StairTraversal stairs_;
+  StairTraversalOutput stair_step_;
   nav_kernel::Follower follower_{};
   std::optional<double> last_scan_tick_s_;
   nav_kernel::Follower recovery_follower_{};
   std::vector<nav_kernel::Vec3> route;
+  std::vector<PoseRouteStage> pose_stages_;
+  std::size_t pose_stage_{0};
+  std::shared_ptr<const collision::Body> route_body_{};
+  std::optional<double> pose_final_tolerance_;
+  std::optional<double> pose_final_yaw_tolerance_;
+  std::optional<double> pose_requested_final_yaw_;
+  std::optional<double> pose_max_speed_;
+  std::optional<std::uint64_t> pose_epoch_;
+  void activatePoseStage();
+  void tryBlendPoseStage(double grid_resolution_m);
+  bool pose_blending_allowed_{false};
+  std::optional<double> pose_support_height_m_;
+  std::optional<double> pose_support_tolerance_m_;
+  bool pose_blend_checked_{false};
+  std::optional<PoseRouteBlend> pose_blend_;
+  std::vector<PoseRouteStage> pose_blend_original_;
   std::vector<nav_kernel::Vec3> segment;
   std::vector<nav_kernel::Vec3> reference;
   std::optional<std::uint64_t> reference_epoch;
@@ -234,20 +271,22 @@ class Executor {
   std::uint64_t committed_route_generation_{0};
   double committed_local_path_time_s_{-1.0};
   std::optional<double> final_yaw_;
+  bool goal_heading_active_{false};
+  std::optional<nav_kernel::Vec3> requested_goal_;
+  collision::SupportQuery support_surface_;
   std::optional<double> height_offset_;
   double active_goal_reached_m_{0.35};
-  double active_max_speed_mps_{0.5};
+  double active_max_speed_mps_{nav_kernel::kDefaultLinearSpeedMps};
   double active_goal_height_tolerance_m_{0.35};
   double active_goal_yaw_tolerance_rad_{0.08726646259971647};
   double goal_quiet_since_s_{-1.0};
   double goal_last_odom_s_{-1.0};
+  nav_kernel::Pose goal_settle_pose_{};
   std::size_t progress{0};
   std::vector<float> obstacle_xyzh_odom_scratch_;
   std::vector<nav_kernel::PredictedObstacle> predictions_odom_scratch_;
   int recovery_action_{0};
   int recovery_attempt_{-1};
-  bool recovery_observation_waiting_{false};
-  ExecutionObservation recovery_observation_baseline_{};
   bool autonomy_motion_expected_{false};
   bool autonomy_stall_stop_{false};
   bool autonomy_progress_valid_{false};

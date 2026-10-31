@@ -3,18 +3,19 @@
 
 #include <gtest/gtest.h>
 
-#include "planning/local/recovery.hpp"
+#include "navigation/recovery.hpp"
+#include "navigation/recovery_search.hpp"
 
 namespace {
 
-using nav_kernel::PlanStatus;
+using lingtu::nav::navigation::detail::RecoverySearchStatus;
 using nav_kernel::RecoveryAction;
-using nav_kernel::RecoveryPlanner;
-using nav_kernel::RecoveryPlannerInput;
-using nav_kernel::RecoveryPlannerParams;
+using lingtu::nav::navigation::detail::RecoverySearch;
+using lingtu::nav::navigation::detail::RecoverySearchInput;
+using lingtu::nav::navigation::detail::RecoverySearchParams;
 
-RecoveryPlannerParams rotationParams() {
-  RecoveryPlannerParams params;
+RecoverySearchParams rotationParams() {
+  RecoverySearchParams params;
   params.vehicleLength = 0.80;
   params.vehicleWidth = 0.60;
   params.footprintPadding = 0.10;
@@ -32,13 +33,13 @@ RecoveryPlannerParams rotationParams() {
 TEST(RecoveryRotation, SelectsAngleNearestGoalWhenCorridorReachIsEqual) {
   auto params = rotationParams();
   params.checkObstacles = false;
-  RecoveryPlannerInput input;
+  RecoverySearchInput input;
   input.goalDirectionBodyRad = 1.0;
   input.rejectedTranslationDirectionMask = 0xFFFFU;
 
-  const auto result = RecoveryPlanner(params).plan(input);
+  const auto result = RecoverySearch(params).plan(input);
 
-  ASSERT_EQ(result.status, PlanStatus::RotationReady);
+  ASSERT_EQ(result.status, RecoverySearchStatus::RotationReady);
   ASSERT_EQ(result.action, RecoveryAction::Rotate);
   EXPECT_NEAR(result.rotationDeltaRad, 1.0, 1e-9);
   EXPECT_NEAR(result.diagnostics.selectedRotationRad, 1.0, 1e-9);
@@ -50,13 +51,13 @@ TEST(RecoveryRotation, IncludesMaximumAngleWhenStepDoesNotLandOnIt) {
   params.checkObstacles = false;
   params.maxRotationRad = 1.10;
   params.rotationCandidateStepRad = 0.20;
-  RecoveryPlannerInput input;
+  RecoverySearchInput input;
   input.goalDirectionBodyRad = 1.10;
   input.rejectedTranslationDirectionMask = 0xFFFFU;
 
-  const auto result = RecoveryPlanner(params).plan(input);
+  const auto result = RecoverySearch(params).plan(input);
 
-  ASSERT_EQ(result.status, PlanStatus::RotationReady);
+  ASSERT_EQ(result.status, RecoverySearchStatus::RotationReady);
   EXPECT_NEAR(result.rotationDeltaRad, 1.10, 1e-9);
   EXPECT_NEAR(result.diagnostics.selectedRotationRad, 1.10, 1e-9);
 }
@@ -72,7 +73,7 @@ TEST(RecoveryRotation, ChoosesLargerAngleThatOpensForwardCorridor) {
     obstacle_height.push_back(1.0F);
   }
 
-  RecoveryPlannerInput input;
+  RecoverySearchInput input;
   input.obstacleX = obstacle_x.data();
   input.obstacleY = obstacle_y.data();
   input.obstacleHeight = obstacle_height.data();
@@ -80,9 +81,9 @@ TEST(RecoveryRotation, ChoosesLargerAngleThatOpensForwardCorridor) {
   input.goalDirectionBodyRad = 0.0;
   input.rejectedTranslationDirectionMask = 0xFFFFU;
 
-  const auto result = RecoveryPlanner(params).plan(input);
+  const auto result = RecoverySearch(params).plan(input);
 
-  ASSERT_EQ(result.status, PlanStatus::RotationReady);
+  ASSERT_EQ(result.status, RecoverySearchStatus::RotationReady);
   EXPECT_GT(std::abs(result.rotationDeltaRad), 0.35);
   EXPECT_GT(result.diagnostics.selectedForwardReachM, 0.80);
   EXPECT_GT(result.diagnostics.rotationCandidateCount, 2);

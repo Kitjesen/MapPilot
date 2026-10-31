@@ -25,6 +25,8 @@ class Doso final : public Body {
   BodyState state() const override;
   HealthState health() const override;
   AdapterDiagnostics diagnostics() const override;
+  ProfileState readProfile() override;
+  Result switchProfile(const std::string &name) override;
 
  private:
   struct Impl;

@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "lingtu/maps/block_grid.hpp"
+#include "lingtu/maps/layers/block_grid.hpp"
 
 namespace {
 
@@ -160,6 +160,19 @@ void TestRayCapacityRejectionIsAtomic() {
   assert(grid.OccupancyProbability(3.2F, 0.0F, 0.0F) == 0.5F);
 }
 
+void TestRayMissesClearPreviouslyOccupiedCell() {
+  PersistentBlockGrid grid;
+  grid.InsertHit(1.25F, 0.05F, 0.05F);
+  assert(grid.Contains(1.25F, 0.05F, 0.05F));
+
+  // One miss is weaker than one hit under the production log-odds. A second
+  // observed-free ray crossing the same voxel moves it below the threshold.
+  grid.InsertRay(0.05F, 0.05F, 0.05F, 2.25F, 0.05F, 0.05F);
+  assert(grid.Contains(1.25F, 0.05F, 0.05F));
+  grid.InsertRay(0.05F, 0.05F, 0.05F, 2.25F, 0.05F, 0.05F);
+  assert(!grid.Contains(1.25F, 0.05F, 0.05F));
+}
+
 void TestSaveRejectsArtifactAbovePersistedLimit() {
   auto root = TempDir();
   const auto artifact = root / "too_large.ltbg";
@@ -190,6 +203,7 @@ int main() {
   TestBatchedBandClearAndDeterministicCap();
   TestMalformedBinaryRejected();
   TestRayCapacityRejectionIsAtomic();
+  TestRayMissesClearPreviouslyOccupiedCell();
   TestSaveRejectsArtifactAbovePersistedLimit();
   return 0;
 }

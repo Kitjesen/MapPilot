@@ -20,8 +20,8 @@ product-b19d160addbb40b985def2763189a958。不是整套原始 ROS LIO-SAM 已部
 移植 upstream 的 addOdomFactor、iSAM2 更新顺序、距离/时间回环候选、
 历史子图拼接、PCL ICP、回环 BetweenFactor、全历史位姿更新。直接使用 GTSAM
 Pose3/PriorFactor/BetweenFactor/iSAM2 和 PCL ICP，不再在线调用自研四自由度
-配准、描述子与 batch LM。改动位于 src/localization/sam/backend.*；
-与固定源码对应及所有适配差异见 sam/upstream/UPSTREAM.md。
+配准、描述子与 batch LM。改动位于 src/localization/online_mapping/backend.*；
+与固定源码对应及所有适配差异见 online_mapping/upstream/UPSTREAM.md。
 
 保留当前 MID-360 Fast-LIO 前端、校准、DDS、ProductControl 和三维导航。
 输入改接未修正的连续 LIO body 位姿与去畸变 body-local 点云；没有引入原始

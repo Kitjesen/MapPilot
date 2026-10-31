@@ -24,6 +24,13 @@ test('overlapping floors select the visible upper floor regardless of PCD order 
   }
 })
 
+test('height clipping excludes the hidden upper floor from picking', () => {
+  const points = new Float32Array([0, 0, -0.5, 0, 0, 0.5])
+  assert.deepEqual(pickVisiblePcdPoint(points, topView, 100, 100, 50, 50, 18, PCD_POINT_SIZE_CSS, 0),
+    { x: 0, y: 0, z: -0.5 })
+  assert.equal(pickVisiblePcdPoint(points, topView, 100, 100, 50, 50, 18, PCD_POINT_SIZE_CSS, -1), null)
+})
+
 test('a nearer point away from the cursor cannot steal the clicked visible point', () => {
   for (const dpr of [1, 2]) {
     for (const points of [[0, 0, -0.5, 0.2, 0, 0.5], [0.2, 0, 0.5, 0, 0, -0.5]]) {

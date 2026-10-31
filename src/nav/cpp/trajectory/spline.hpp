@@ -15,6 +15,7 @@ class SplineView {
   [[nodiscard]] double interval() const noexcept;
   [[nodiscard]] Vec3 position(double timeFromStartS) const;
   [[nodiscard]] Vec3 velocity(double timeFromStartS) const;
+  [[nodiscard]] double speedBound() const;
 
  private:
   local::scan::upstream::UniformBspline position_{};

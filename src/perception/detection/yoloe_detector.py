@@ -55,6 +55,7 @@ class YOLOEDetector(DetectorBase):
 
         self._model = None
         self._current_classes: list[str] | None = None
+        self._open_vocabulary = True
 
         self._detect_count = 0
         self._total_detect_time = 0.0
@@ -78,6 +79,8 @@ class YOLOEDetector(DetectorBase):
             )
 
             self._model = YOLO(model_name)
+            self._open_vocabulary = True
+            self._current_classes = None
 
             if self.tensorrt:
                 self._export_tensorrt(model_name)
@@ -93,6 +96,8 @@ class YOLOEDetector(DetectorBase):
                 fallback = f"yolov8{self.model_size}-seg.pt"
                 logger.info("Fallback: loading %s", fallback)
                 self._model = YOLO(fallback)
+                self._open_vocabulary = False
+                self._current_classes = None
                 logger.info("Fallback seg model loaded")
             except Exception as e2:
                 logger.error("Fallback also failed: %s", e2)
@@ -134,10 +139,12 @@ class YOLOEDetector(DetectorBase):
             return []
 
         if classes != self._current_classes:
-            try:
-                self._model.set_classes(classes)
-            except AttributeError:
-                pass
+            if self._open_vocabulary:
+                set_classes = getattr(self._model, "set_classes", None)
+                if set_classes is None:
+                    self._open_vocabulary = False
+                else:
+                    set_classes(classes)
             self._current_classes = classes
 
         try:
@@ -159,6 +166,7 @@ class YOLOEDetector(DetectorBase):
             result = results[0]
             boxes = result.boxes
             masks = result.masks
+            allowed_labels = {label.casefold() for label in classes}
 
             if boxes is not None and len(boxes) > 0:
                 h, w = rgb.shape[:2]
@@ -169,7 +177,17 @@ class YOLOEDetector(DetectorBase):
                     conf = float(box.conf[0])
                     cls_id = int(box.cls[0])
 
-                    label = classes[cls_id] if cls_id < len(classes) else f"class_{cls_id}"
+                    if self._open_vocabulary:
+                        label = classes[cls_id] if cls_id < len(classes) else f"class_{cls_id}"
+                    else:
+                        # Fixed-class model IDs belong to its vocabulary, never the prompt.
+                        names = result.names
+                        if isinstance(names, dict):
+                            label = names.get(cls_id, f"class_{cls_id}")
+                        else:
+                            label = names[cls_id] if cls_id < len(names) else f"class_{cls_id}"
+                        if label.casefold() not in allowed_labels:
+                            continue
 
                     instance_mask = None
                     if masks is not None and i < len(masks):

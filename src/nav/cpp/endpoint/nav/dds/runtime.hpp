@@ -141,6 +141,11 @@ struct FinalVelocityOutput {
   nav_kernel::Twist command{};
 };
 
+struct MotionProfileRequestOutput {
+  std::string task_id;
+  std::string requirement;
+};
+
 struct CommandAckOutput {
   std::string task_id;
   std::string request_id;
@@ -163,7 +168,6 @@ struct InspectionTaskAckOutput {
   lingtu::nav::inspection::CommandKind kind{lingtu::nav::inspection::CommandKind::kStart};
   bool accepted{false};
   std::string reason;
-  std::string run_id;
 };
 
 struct InspectionStatusOutput {
@@ -179,6 +183,7 @@ struct InspectionEvidenceRequestOutput {
 
 using OutputEvent =
     std::variant<LocalPathOutput, GlobalPathOutput, WaypointOutput, FinalVelocityOutput,
+                 MotionProfileRequestOutput,
                  OperatorMotionAckSample, OperatorMotionStatusSample, CommandAckOutput,
                  PlanResultSample, semantic::ViewResult, GeofenceCommandAckSample, GeofenceAlertSample,
                  NavigationGoalStatusOutput, NavigationStateSample, ExplorationSegmentAck,
@@ -370,6 +375,7 @@ class Dds {
                                                      std::forward<Handler>(handler));
   }
 
+  bool writeMotionProfileRequest(const std::string &task_id, const std::string &requirement);
   bool writeLocalPath(const std::vector<nav_kernel::Vec3> &path);
   bool writeGlobalPath(const std::vector<nav_kernel::Vec3> &path, double stamp_s);
   bool writeWayPoint(const nav_kernel::Vec3 &point);
@@ -393,7 +399,7 @@ class Dds {
 
   [[nodiscard]] bool writeInspectionTaskAck(const char *task_id, const char *request_id,
                                             lingtu::nav::inspection::CommandKind kind,
-                                            bool accepted, const char *reason, const char *run_id);
+                                            bool accepted, const char *reason);
   bool writeInspectionStatus(const lingtu::nav::inspection::RunStatus &status);
   [[nodiscard]] bool writeInspectionTaskEvent(const InspectionTaskEventEnvelope &event);
   bool inspectionEvidenceWorkerMatched() const noexcept;
@@ -467,6 +473,8 @@ class Dds {
   dds_entity_t local_collision_reader_{0};
   dds_entity_t localization_health_reader_{0};
   dds_entity_t driver_control_state_reader_{0};
+  dds_entity_t motion_profile_state_reader_{0};
+  dds_entity_t motion_profile_request_writer_{0};
   dds_entity_t map_clearing_reader_{0};
   dds_entity_t cloud_clearing_reader_{0};
   dds_entity_t command_request_reader_{0};

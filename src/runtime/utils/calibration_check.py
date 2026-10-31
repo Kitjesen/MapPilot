@@ -1,6 +1,6 @@
 """Startup calibration self-check — validates sensor calibration before system start.
 
-Called automatically by product blueprints when native SLAM or camera is enabled.
+Called automatically by product host_builders when native SLAM or camera is enabled.
 Returns structured results so callers can block startup on FAIL-level issues.
 
 Usage::
@@ -22,14 +22,14 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-FASTLIO2_CONFIG = (
+LTLIO_CONFIG = (
     REPO_ROOT
     / "config"
     / "robots"
     / "unitree"
     / "go2"
     / "sensors"
-    / "mid360_fastlio2.yaml"
+    / "mid360_ltlio.yaml"
 )
 
 # Plausible LiDAR↔IMU clock offset range (seconds). Hardware-synchronised systems
@@ -328,14 +328,14 @@ def _check_depth_scale(config, report: CalibrationReport) -> None:
 
 
 def _check_lidar_imu_consistency(config, report: CalibrationReport, required: bool) -> None:
-    """Cross-check the composed Fast-LIO body-to-LiDAR mount transform."""
-    if not FASTLIO2_CONFIG.exists():
+    """Cross-check the composed LTLIO body-to-LiDAR mount transform."""
+    if not LTLIO_CONFIG.exists():
         return
 
     try:
         import yaml
 
-        with open(FASTLIO2_CONFIG, encoding="utf-8") as f:
+        with open(LTLIO_CONFIG, encoding="utf-8") as f:
             lio = yaml.safe_load(f) or {}
     except Exception:
         return
@@ -356,20 +356,20 @@ def _check_lidar_imu_consistency(config, report: CalibrationReport, required: bo
         t_il = [float(value) for value in t_il_raw]
         t_bi = [float(value) for value in lio.get("navigation_body_from_imu_translation", [0.0, 0.0, 0.0])]
     except (TypeError, ValueError):
-        report.errors.append("Fast-LIO LiDAR/IMU translations must be numeric xyz vectors")
+        report.errors.append("LTLIO LiDAR/IMU translations must be numeric xyz vectors")
         return
     if len(t_il) != 3 or len(t_bi) != 3:
-        report.errors.append("Fast-LIO LiDAR/IMU translations must contain exactly 3 values")
+        report.errors.append("LTLIO LiDAR/IMU translations must contain exactly 3 values")
         return
 
-    identity = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0]
+    identity = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
     r_il = _matrix3(lio.get("r_il", identity))
     r_bi = _matrix3(lio.get("navigation_body_from_imu_rotation", identity))
     if r_il is None or r_bi is None:
-        report.errors.append("Fast-LIO LiDAR/IMU rotations must be 3x3 matrices")
+        report.errors.append("LTLIO LiDAR/IMU rotations must be 3x3 matrices")
         return
 
-    # Fast-LIO uses p_imu = R_il * p_lidar + t_il. The public navigation
+    # LTLIO uses p_imu = R_il * p_lidar + t_il. The public navigation
     # contract uses p_body = R_bi * p_imu + t_bi, so compose both transforms
     # before comparing with robot_config's T_body_lidar mount.
     r_bl = _matmul3(r_bi, r_il)
@@ -384,42 +384,48 @@ def _check_lidar_imu_consistency(config, report: CalibrationReport, required: bo
 
     mismatches: list[str] = []
     if not _allclose(t_bl, t_cfg, atol=0.002):
-        mismatches.append(f"LiDAR mount translation mismatch: robot_config={t_cfg} vs composed Fast-LIO={t_bl}")
+        mismatches.append(f"LiDAR mount translation mismatch: robot_config={t_cfg} vs composed LTLIO={t_bl}")
     rotation_delta = _matrix_max_delta(r_bl, r_cfg)
     if rotation_delta > 0.002:
         mismatches.append(
             "LiDAR mount rotation mismatch: "
             f"robot_config RPY={[lidar.roll, lidar.pitch, lidar.yaw]} vs composed "
-            f"Fast-LIO rotation (max matrix delta={rotation_delta:.6f})"
+            f"LTLIO rotation (max matrix delta={rotation_delta:.6f})"
         )
 
     if mismatches:
         destination = report.errors if required else report.warnings
         destination.extend(mismatches)
     else:
-        report.info.append("LiDAR body-to-lidar mount matches composed Fast-LIO IMU/LiDAR transforms")
+        report.info.append("LiDAR body-to-lidar mount matches composed LTLIO IMU/LiDAR transforms")
 
-    # Check IMU noise parameters are sensible
-    na = lio.get("na", 0)
-    ng = lio.get("ng", 0)
-    if na <= 0 or ng <= 0:
-        report.errors.append(f"SLAM IMU noise non-positive: na={na}, ng={ng}")
-    elif na > 0.5 or ng > 0.5:
-        report.warnings.append(f"High IMU noise: na={na}, ng={ng} — consider Allan variance calibration")
+    # Omitted densities keep the native LTLIO defaults; validate only overrides.
+    for name in ("na", "ng"):
+        if name not in lio:
+            continue
+        try:
+            noise = float(lio[name])
+        except (TypeError, ValueError):
+            report.errors.append(f"SLAM IMU noise must be numeric: {name}={lio[name]}")
+            continue
+        if not math.isfinite(noise) or noise <= 0:
+            report.errors.append(f"SLAM IMU noise must be finite and positive: {name}={noise}")
+        elif noise > 0.5:
+            report.warnings.append(f"High IMU noise: {name}={noise} — consider Allan variance calibration")
 
 
 def _check_time_offset(report: CalibrationReport, required: bool) -> None:
-    """Validate the Fast-LIO2 LiDAR↔IMU time offset physical range."""
+    """Validate the LTLIO LiDAR↔IMU time offset physical range."""
     import yaml
 
     lio_offset = None
-    if FASTLIO2_CONFIG.exists():
+    if LTLIO_CONFIG.exists():
         try:
-            with open(FASTLIO2_CONFIG, encoding="utf-8") as f:
+            with open(LTLIO_CONFIG, encoding="utf-8") as f:
                 lio = yaml.safe_load(f) or {}
             lio_offset = lio.get("time_diff_lidar_to_imu")
         except (OSError, UnicodeError, yaml.YAMLError, AttributeError) as exc:
-            message = f"Cannot read Fast-LIO2 calibration data: {exc}"
+            message = f"Cannot read LTLIO calibration data: {exc}"
             if required:
                 report.errors.append(message)
             else:
@@ -446,13 +452,13 @@ def _check_time_offset(report: CalibrationReport, required: bool) -> None:
 
 def _check_rotation_validity(report: CalibrationReport) -> None:
     """Validate rotation matrices in SLAM config are proper rotations."""
-    if not FASTLIO2_CONFIG.exists():
+    if not LTLIO_CONFIG.exists():
         return
 
     try:
         import yaml
 
-        with open(FASTLIO2_CONFIG, encoding="utf-8") as f:
+        with open(LTLIO_CONFIG, encoding="utf-8") as f:
             lio = yaml.safe_load(f) or {}
     except Exception:
         return

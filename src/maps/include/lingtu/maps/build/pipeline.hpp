@@ -4,8 +4,8 @@
 #include <functional>
 #include <string>
 
-#include "lingtu/maps/build/pcd.hpp"
-#include "lingtu/maps/store.hpp"
+#include "lingtu/maps/io/pcd.hpp"
+#include "lingtu/maps/storage/store.hpp"
 
 namespace lingtu::maps {
 
@@ -23,7 +23,8 @@ struct OctomapSensorModel {
 inline constexpr OctomapSensorModel kSavedMapSensorModel{};
 
 struct OctomapBuildOptions {
-  double resolution{0.05};
+  double resolution{0.10};
+  bool inherit_saved_metadata{false};
   int support_dilation_cells{0};
   int free_layers_above{0};
   int free_dilation_cells{0};
@@ -34,6 +35,11 @@ struct OctomapBuildOptions {
   std::string localization_source{"unknown"};
   std::string mapping_source{"lingtu_maps_pipeline"};
   std::function<bool()> cancel_requested;
+};
+
+struct SourceEditOperation {
+  std::string operation;
+  PcdBounds bounds;
 };
 
 struct SourceCommitOptions {
@@ -74,6 +80,10 @@ class MapPipelineCore {
       const PcdBounds& bounds,
       bool invert,
       double voxel_size);
+  std::string SaveEditedSourceJson(
+      const std::string& source_map_id, const std::string& target_map_id,
+      std::uint64_t expected_source_content_epoch,
+      const std::vector<SourceEditOperation>& operations);
   std::string BuildOccupancySnapshotJson(const std::string& map_id);
   std::string BuildOctomapArtifactJson(
       const std::string& map_id,
@@ -105,7 +115,8 @@ class MapPipelineCore {
   bool RecoverInterruptedBuild(const std::string& map_id) const;
   BuildLockResult TryCreateBuildLock(
       const std::string& map_id,
-      const std::string& metadata) const;
+      const std::string& metadata,
+      const MapLock* existing_lock = nullptr) const;
   std::filesystem::path LatestPath(const std::string& map_id) const;
   std::filesystem::path StatusPath(const std::string& map_id, const std::string& build_id) const;
 

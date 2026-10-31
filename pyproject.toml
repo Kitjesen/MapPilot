@@ -24,7 +24,7 @@ sim-mujoco = [
     "onnxruntime>=1.17,<1.24; python_version == '3.10'",
     "onnxruntime>=1.24; python_version >= '3.11'",
 ]
-gateway = ["fastapi", "uvicorn", "websockets"]
+gateway = ["fastapi", "uvicorn", "websockets", "httpx"]
 vision = ["opencv-python-headless>=4.5"]
 sim-recording = ["lingtu[sim-mujoco,vision]", "imageio>=2.31"]
 ml = ["scikit-learn>=1.0"]
@@ -84,6 +84,7 @@ message = ["topics/*.yaml", "idl/*.idl"]
 target-version = "py310"
 line-length = 120
 src = ["src"]
+cache-dir = "build/ruff-cache"
 exclude = ["**/legacy/*"]
 
 [tool.ruff.lint]
@@ -150,6 +151,7 @@ known-first-party = [
 
 [tool.mypy]
 python_version = "3.10"
+cache_dir = "build/mypy-cache"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false  # gradual adoption

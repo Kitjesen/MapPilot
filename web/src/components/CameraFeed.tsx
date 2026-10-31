@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react'
 import { Camera, ChevronDown, RefreshCw, LockOpen } from 'lucide-react'
 import { useCamera } from '../hooks/useCamera'
 import { useWHEP } from '../hooks/useWHEP'
+import { useVideoFrame } from '../hooks/useVideoFrame'
+import { useRotatedVideoLayout } from '../hooks/useRotatedVideoLayout'
 import { CameraHud } from './CameraHud'
 import type { SSEState } from '../types'
 import { text, type Locale } from '../i18n'
@@ -30,28 +32,36 @@ export function CameraFeed({
   locale,
 }: CameraFeedProps) {
   // Show the native JPEG stream while WHEP negotiates. An absent optional
-  // go2rtc service must not delay an already available camera by eight seconds.
+  // WebRTC publisher must not delay an already available camera.
   const whep = useWHEP()
-  const jpeg = useCamera(whep.connected ? '' : '/ws/camera')
-  const source: Source = whep.connected ? 'whep' : 'jpeg'
-
+  const whepConnected = whep.connected
+  const whepReconnect = whep.reconnect
+  const whepStream = whep.stream
+  const viewportRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
-  const liveStream = source === 'whep' ? whep.stream : null
+  const videoFrame = useVideoFrame(videoRef, whepStream, whepConnected)
+  const videoLayout = useRotatedVideoLayout(
+    viewportRef,
+    videoRef,
+    whep.rotationDegrees,
+    whepStream != null,
+  )
+  const useWebRTC = whepConnected && videoFrame.hasFrame && videoLayout.ready
+  const jpeg = useCamera(useWebRTC ? '' : '/ws/camera')
+  const source: Source = useWebRTC ? 'whep' : 'jpeg'
+  const liveStream = whepStream
   useEffect(() => {
-    if (!videoRef.current) return
-    if (liveStream && videoRef.current.srcObject !== liveStream) {
-      videoRef.current.srcObject = liveStream
-    }
-  }, [liveStream])
+    if (videoFrame.stalled && whepConnected) whepReconnect()
+  }, [videoFrame.stalled, whepConnected, whepReconnect])
 
   const hasVideo =
-    source === 'whep' ? whep.connected :
+    source === 'whep' ? whepConnected :
     jpeg.imgSrc != null
   const isConnected =
-    source === 'whep' ? whep.connected :
+    source === 'whep' ? whepConnected :
     jpeg.connected
   const onReconnect =
-    source === 'whep' ? whep.reconnect :
+    source === 'whep' ? whepReconnect :
     jpeg.reconnect
 
   const cameraHealth: CameraHealth = hasVideo
@@ -70,21 +80,23 @@ export function CameraFeed({
   if (source === 'jpeg') {
     sourceLabel = jpeg.imgSrc ? '相机图传 · 已连接' : '相机图传 · 等待画面'
   } else {
-    sourceLabel = whep.connected ? '图传 · Go2RTC · H.264' : '图传 · Go2RTC (建立中…)'
+    sourceLabel = whepConnected ? '相机图传 · WebRTC · H.264' : '相机图传 · WebRTC 建立中'
   }
 
   return (
     <div className={styles.cameraFeed}>
-      <div className={styles.viewport}>
-        {source === 'whep' ? (
+      <div ref={viewportRef} className={styles.viewport}>
+        {liveStream && (
           <video
             ref={videoRef}
-            className={`${styles.img} ${styles.imgWhep}`}
+            className={`${styles.img} ${styles.imgWhep} ${!useWebRTC ? styles.videoPending : ''}`}
+            style={videoLayout.style}
             autoPlay
             muted
             playsInline
           />
-        ) : jpeg.imgSrc ? (
+        )}
+        {source === 'jpeg' && jpeg.imgSrc ? (
           <img className={styles.img} alt="机器人相机画面" src={jpeg.imgSrc} />
         ) : null}
 

@@ -37,8 +37,8 @@ export function useCamera(url: string = '/ws/camera'): CameraState {
       prevBlobRef.current = null
     }
 
-    // Empty url signals "stay idle" while the WHEP path is in charge.
-    // This avoids opening a duplicate camera WebSocket.
+    // An empty URL keeps a hidden preview or a WHEP consumer idle,
+    // without opening an unnecessary camera WebSocket.
     if (!url) return
 
     // Build absolute ws URL from current location + path

@@ -6,7 +6,6 @@ world: open_field@1.0.0
 robots:
   - instance_id: thunder_01
     package: thunderv4@1.0.3
-    controller: thunderv4_locomotion@1.0.0
     sensor_rig: null
     spawn:
       position_m: [0.0, 0.0, 0.0]

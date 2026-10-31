@@ -109,6 +109,28 @@ class TestFastResolve(unittest.TestCase):
         result = self.resolver.fast_resolve("go to chair", "{}")
         self.assertIsNone(result)
 
+    def test_near_reference_selects_related_instance(self):
+        objects = [
+            {"id": "other-box", "label": "box", "position": [1, 0, 0], "score": 1.0, "detection_count": 5},
+            {"id": "target-box", "label": "box", "position": [8, 0, 0], "score": 0.8, "detection_count": 3},
+            {"id": "table", "label": "table", "position": [8, 1, 0], "score": 0.9, "detection_count": 5},
+            {"id": "wall", "label": "wall", "position": [1, 1, 0], "score": 0.9, "detection_count": 5},
+        ]
+        for instruction in ("找到桌子旁边的箱子", "box near table"):
+            for field in ("predicate", "relation"):
+                for reverse in (False, True):
+                    with self.subTest(instruction=instruction, field=field, reverse=reverse):
+                        target, reference = ("table", "target-box") if reverse else ("target-box", "table")
+                        sg = _make_scene_graph(objects, relations=[
+                            {"subject_id": "other-box", field: "near", "object_id": "wall"},
+                            {"subject_id": "other-box", field: "larger than", "object_id": "table"},
+                            {"subject_id": target, field: "near", "object_id": reference},
+                        ])
+                        result = self.resolver.fast_resolve(instruction, sg, robot_position={"x": 0, "y": 0})
+                        self.assertIsNotNone(result)
+                        self.assertEqual(result.candidate_id, "target-box")
+                        self.assertIn("spatial=1.0", result.reasoning)
+
     def test_invalid_json(self):
         result = self.resolver.fast_resolve("go to chair", "not json")
         self.assertIsNone(result)

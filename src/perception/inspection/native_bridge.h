@@ -21,6 +21,7 @@ extern "C" {
 #endif
 
 enum {
+  LINGTU_INSPECTION_EVIDENCE_ABI_VERSION = 2,
   LINGTU_INSPECTION_EVIDENCE_ID_CAP = 128,
   LINGTU_INSPECTION_EVIDENCE_ACTION_CAP = 64,
   LINGTU_INSPECTION_EVIDENCE_REASON_CAP = 256,
@@ -29,13 +30,12 @@ enum {
 typedef struct LingtuInspectionEvidenceRequest {
   double requested_at_s;
   char request_id[LINGTU_INSPECTION_EVIDENCE_ID_CAP];
-  char run_id[LINGTU_INSPECTION_EVIDENCE_ID_CAP];
+  char task_id[LINGTU_INSPECTION_EVIDENCE_ID_CAP];
   char route_id[LINGTU_INSPECTION_EVIDENCE_ID_CAP];
   uint64_t route_revision;
   char map_id[LINGTU_INSPECTION_EVIDENCE_ID_CAP];
   int64_t map_content_epoch;
   uint32_t point_index;
-  char point_id[LINGTU_INSPECTION_EVIDENCE_ID_CAP];
   char action[LINGTU_INSPECTION_EVIDENCE_ACTION_CAP];
   double deadline_s;
 } LingtuInspectionEvidenceRequest;
@@ -49,6 +49,7 @@ typedef struct LingtuInspectionEvidenceResult {
   char analysis_verdict[LINGTU_INSPECTION_EVIDENCE_REASON_CAP];
 } LingtuInspectionEvidenceResult;
 
+LINGTU_INSPECTION_EVIDENCE_BRIDGE_API uint32_t lingtu_inspection_evidence_bridge_abi_version(void);
 LINGTU_INSPECTION_EVIDENCE_BRIDGE_API void* lingtu_inspection_evidence_bridge_create(
     int32_t domain_id);
 LINGTU_INSPECTION_EVIDENCE_BRIDGE_API void lingtu_inspection_evidence_bridge_destroy(

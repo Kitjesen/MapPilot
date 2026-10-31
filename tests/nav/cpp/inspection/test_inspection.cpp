@@ -2,6 +2,7 @@
 #include "store.hpp"
 
 #include <cassert>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -64,7 +65,6 @@ inspection::TaskEvent MakeTaskEvent(
   event.request_id = "request-start-42";
   event.status.state = state;
   event.status.task_id = "inspection-task-42";
-  event.status.run_id = event.status.task_id;
   event.status.request_id = "request-start-42";
   event.status.map_id = "factory";
   event.status.map_content_epoch = 7;
@@ -74,7 +74,6 @@ inspection::TaskEvent MakeTaskEvent(
   event.status.point_count = 2U;
   event.status.loop_index = 1U;
   event.status.retry_count = 1U;
-  event.status.point_id = "camera_b";
   event.status.action = "capture:overview";
   event.status.action_request_id = "inspection-task-42-action-1";
   event.status.evidence_id = "evidence-42";
@@ -94,7 +93,6 @@ void AssertSameTaskEvent(
   assert(actual.request_id == expected.request_id);
   assert(actual.status.state == expected.status.state);
   assert(actual.status.task_id == expected.status.task_id);
-  assert(actual.status.run_id == expected.status.run_id);
   assert(actual.status.request_id == expected.status.request_id);
   assert(actual.status.map_id == expected.status.map_id);
   assert(actual.status.map_content_epoch == expected.status.map_content_epoch);
@@ -104,7 +102,6 @@ void AssertSameTaskEvent(
   assert(actual.status.point_count == expected.status.point_count);
   assert(actual.status.loop_index == expected.status.loop_index);
   assert(actual.status.retry_count == expected.status.retry_count);
-  assert(actual.status.point_id == expected.status.point_id);
   assert(actual.status.action == expected.status.action);
   assert(actual.status.action_request_id == expected.status.action_request_id);
   assert(actual.status.evidence_id == expected.status.evidence_id);
@@ -147,6 +144,7 @@ void TestStore() {
   inspection::Store store(root);
   auto route = MakeRoute();
   route.revision = 1U;
+  route.loop_interval_s = 42.125;
   assert(store.Put(route).ok);
   assert(store.RoutePath(route.map_id, route.id) ==
          root / "routes" / route.map_id / "north_loop.ltroute");
@@ -159,13 +157,14 @@ void TestStore() {
   assert(loaded->revision == 2U);
   assert(loaded->points.size() == 2U);
   assert(loaded->points[0].dwell_s == 1.5);
+  assert(loaded->loop_interval_s == 42.125);
+  assert(inspection::RouteToJson(*loaded).find("\"loop_interval_s\":42.125") !=
+         std::string::npos);
   assert(store.List("factory").size() == 1U);
   inspection::RunStatus status;
   status.state = inspection::RunState::kNavigating;
-  status.run_id = "run-1";
   status.route_id = route.id;
   status.point_count = 2U;
-  status.point_id = "camera_a";
   status.action = "capture:overview";
   status.evidence_id = "evidence-1";
   status.phase_started_at_s = 12.5;
@@ -182,6 +181,24 @@ void TestStore() {
   assert(status_json.find("\"phase_started_at\":12.5") != std::string::npos);
   assert(status_json.find("\"stable_since\":12.75") != std::string::npos);
   assert(status_json.find("\"deadline\":13.5") != std::string::npos);
+  std::string header;
+  std::string route_line;
+  std::string point_lines;
+  {
+    std::ifstream in(store.RoutePath(route.map_id, route.id), std::ios::binary);
+    std::getline(in, header);
+    std::getline(in, route_line);
+    point_lines.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  }
+  {
+    std::ofstream out(store.RoutePath(route.map_id, route.id), std::ios::binary | std::ios::trunc);
+    out << header << '\n' << route_line.substr(0, route_line.rfind('\t')) << '\n'
+        << point_lines;
+  }
+  const auto legacy = store.Get(route.map_id, route.id);
+  assert(legacy.has_value());
+  assert(legacy->loop_interval_s == 0.0);
+  assert(legacy->points.size() == loaded->points.size());
   assert(store.Delete("factory", "north_loop").ok);
   assert(!store.Get("factory", "north_loop").has_value());
   std::filesystem::remove_all(root, ec);
@@ -345,11 +362,11 @@ void TestRestartReconciliationAndExecutorSequence() {
   assert(checkpoint.event->status.state == inspection::RunState::kPlanning);
   const auto recovery =
       inspection::ReconcileTaskEventAfterRestart(*checkpoint.event, 200.0);
-  assert(recovery.ok && recovery.synthesized_failure && !recovery.replayed_terminal);
+  assert(recovery.ok && recovery.synthesized_transition && !recovery.replayed_terminal);
   assert(recovery.event.sequence == checkpoint.event->sequence + 1U);
   assert(recovery.event.kind == inspection::TaskEventKind::kStateChanged);
-  assert(recovery.event.status.state == inspection::RunState::kFailed);
-  assert(recovery.event.status.reason == "native_endpoint_restarted");
+  assert(recovery.event.status.state == inspection::RunState::kPaused);
+  assert(recovery.event.status.reason == "restart_resume_required");
   assert(recovery.event.status.action_request_id.empty());
   assert(store.PutTaskEventCheckpoint(recovery.event).ok);
 
@@ -360,12 +377,311 @@ void TestRestartReconciliationAndExecutorSequence() {
   assert(!fresh.SetNextTaskEventSequence(0U));
   assert(!fresh.SetNextTaskEventSequence(recovery.event.sequence));
 
-  const auto terminal = store.LoadTaskEventCheckpoint();
-  assert(terminal.loaded());
-  const auto replay = inspection::ReconcileTaskEventAfterRestart(*terminal.event, 300.0);
-  assert(replay.ok && replay.replayed_terminal && !replay.synthesized_failure);
-  AssertSameTaskEvent(replay.event, *terminal.event);
+  const auto saved_pause = store.LoadTaskEventCheckpoint();
+  assert(saved_pause.loaded());
+  inspection::Executor restored;
+  const auto restored_result = restored.Restore(MakeRoute(), *saved_pause.event, 300.0);
+  assert(restored_result.ok);
+  assert(restored.active() && restored.status().state == inspection::RunState::kPaused);
+  assert(!restored.PendingGoal() && !restored.PendingAction());
+  restored.Tick(500.0);
+  assert(restored.status().state == inspection::RunState::kPaused);
+  assert(!restored.Resume("factory", 8, 501.0, "request-wrong-map"));
+  assert(restored.Resume("factory", 7, 502.0, "request-resume"));
+  assert(restored.PendingGoal()->id == "camera_a");
+  assert(restored.Cancel("operator_cancel"));
+  const auto terminal = restored.TakeTaskEvents().back();
+  const auto replay = inspection::ReconcileTaskEventAfterRestart(terminal, 600.0);
+  assert(replay.ok && replay.replayed_terminal && !replay.synthesized_transition);
+  AssertSameTaskEvent(replay.event, terminal);
   std::filesystem::remove_all(root, ec);
+}
+
+void TestRestartPreservesUnfinishedPointAndLoops() {
+  auto route = MakeRoute();
+  route.points[0].dwell_s = 0.0;
+  inspection::Executor previous;
+  std::string error;
+  assert(previous.Start(route, "task-progress", "request-start-progress",
+                        "factory", 7, 1.0, &error));
+  PlanAndReach(previous, 2.0);
+  FeedSettled(previous, 2.1);
+  previous.Tick(2.7);
+  assert(previous.PendingGoal()->id == "camera_b");
+  assert(previous.OnPlanningStarted(3.0));
+  assert(previous.OnPlanReady(3.1));
+  const auto checkpoint = previous.TakeTaskEvents().back();
+
+  inspection::Executor restored;
+  const auto recovery = restored.Restore(route, checkpoint, 20.0);
+  assert(recovery.ok && recovery.event.status.point_index == 1U);
+  assert(restored.status().loop_index == 0U);
+  assert(!restored.PendingGoal());
+  assert(restored.Resume("factory", 7, 21.0, "request-resume-progress"));
+  assert(restored.PendingGoal()->id == "camera_b");
+  assert(restored.OnPlanningStarted(21.1));
+  assert(restored.OnPlanReady(21.2));
+  restored.OnGoalReached(22.0);
+  FeedSettled(restored, 22.1);
+  restored.Tick(22.7);
+  assert(restored.status().loop_index == 1U);
+  assert(restored.PendingGoal()->id == "camera_a");
+  const auto events = restored.TakeTaskEvents();
+  std::size_t completed = 0U;
+  for (const auto& event : events) {
+    if (event.status.reason == "point_completed") {
+      ++completed;
+      assert(event.status.point_index == 1U && event.status.loop_index == 0U);
+    }
+  }
+  assert(completed == 1U);
+}
+
+void TestRestartInvalidatesPendingEvidenceAndHonorsRecordedEvidence() {
+  auto route = MakeRoute();
+  route.loop_count = 1U;
+  route.points[0].dwell_s = 0.0;
+  route.points[0].action = "capture:overview";
+  inspection::Executor previous;
+  std::string error;
+  assert(previous.Start(route, "task-evidence-restart", "request-evidence-start",
+                        "factory", 7, 1.0, &error));
+  PlanAndReach(previous, 2.0);
+  FeedSettled(previous, 2.1);
+  previous.Tick(2.7);
+  const auto old_action = *previous.PendingAction();
+  assert(previous.OnActionStarted(old_action.request_id, 2.8));
+  const auto waiting = previous.TakeTaskEvents().back();
+
+  inspection::Executor restored;
+  assert(restored.Restore(route, waiting, 20.0).ok);
+  assert(!restored.PendingAction());
+  assert(!restored.OnActionResult(old_action.request_id, true, old_action.request_id, "", 20.1));
+  assert(restored.Resume("factory", 7, 21.0, "request-evidence-resume"));
+  PlanAndReach(restored, 22.0);
+  FeedSettled(restored, 22.1);
+  restored.Tick(22.7);
+  const auto new_action = *restored.PendingAction();
+  assert(new_action.request_id != old_action.request_id);
+  assert(restored.OnActionStarted(new_action.request_id, 22.8));
+  assert(!restored.OnActionResult(old_action.request_id, true, old_action.request_id, "", 22.9));
+  assert(restored.OnActionResult(new_action.request_id, true, new_action.request_id, "", 23.0));
+  assert(!restored.OnActionResult(new_action.request_id, true, new_action.request_id, "", 23.1));
+  const auto events = restored.TakeTaskEvents();
+  std::size_t recorded_count = 0U;
+  for (const auto& event : events) {
+    if (event.kind == inspection::TaskEventKind::kEvidenceRecorded) {
+      ++recorded_count;
+      inspection::Executor after_record;
+      const auto recovered = after_record.Restore(route, event, 30.0);
+      assert(recovered.ok && recovered.event.status.point_index == 1U);
+      assert(after_record.status().evidence_id == new_action.request_id);
+      assert(!after_record.PendingAction() && !after_record.PendingGoal());
+      assert(after_record.Resume("factory", 7, 31.0, "request-after-record"));
+      assert(after_record.PendingGoal()->id == "camera_b");
+    }
+  }
+  assert(recorded_count == 1U);
+}
+
+void TestRestartRetainsPauseCancelAndTerminalStates() {
+  for (const auto state : {inspection::RunState::kPaused, inspection::RunState::kPausing,
+                           inspection::RunState::kCancelling, inspection::RunState::kSucceeded,
+                           inspection::RunState::kFailed, inspection::RunState::kCancelled}) {
+    auto checkpoint = MakeTaskEvent(20U, state);
+    auto route = MakeRoute();
+    inspection::Executor restored;
+    const auto recovery = restored.Restore(route, checkpoint, 200.0);
+    assert(recovery.ok);
+    assert(!restored.PendingGoal() && !restored.PendingAction());
+    if (inspection::IsTerminalRunState(state)) {
+      AssertSameTaskEvent(recovery.event, checkpoint);
+      assert(!restored.active());
+    } else if (state == inspection::RunState::kCancelling) {
+      assert(restored.status().state == inspection::RunState::kCancelled);
+      assert(!restored.Resume("factory", 7, 201.0, "request-after-cancel"));
+    } else {
+      assert(restored.status().state == inspection::RunState::kPaused);
+      assert(restored.status().point_index == checkpoint.status.point_index);
+      assert(restored.status().loop_index == checkpoint.status.loop_index);
+    }
+  }
+  auto checkpoint = MakeTaskEvent(20U);
+  auto changed = MakeRoute();
+  ++changed.revision;
+  inspection::Executor restored;
+  assert(!restored.Restore(changed, checkpoint, 200.0).ok);
+  assert(!restored.active() && restored.route() == nullptr);
+}
+
+void TestPointCompletionAndSkipFactsAdvanceExactlyOnce() {
+  auto route = MakeRoute();
+  route.points[0].dwell_s = 0.0;
+  route.failure_policy = inspection::FailurePolicy::kSkip;
+  inspection::Executor previous;
+  std::string error;
+  assert(previous.Start(route, "task-point-facts", "request-point-facts",
+                        "factory", 7, 1.0, &error));
+  previous.OnLegFailed("no_path", 2.0);
+  assert(previous.PendingGoal()->id == "camera_b");
+  PlanAndReach(previous, 3.0);
+  FeedSettled(previous, 3.1);
+  previous.Tick(3.7);
+  assert(previous.status().loop_index == 1U);
+  assert(previous.PendingGoal()->id == "camera_a");
+  const auto events = previous.TakeTaskEvents();
+  std::size_t skipped = 0U;
+  std::size_t completed = 0U;
+  for (const auto& event : events) {
+    const bool is_skip = event.status.reason == "point_skipped:no_path";
+    const bool is_completion = event.status.reason == "point_completed";
+    if (!is_skip && !is_completion) continue;
+    assert(event.kind == inspection::TaskEventKind::kMilestone);
+    skipped += is_skip;
+    completed += is_completion;
+    inspection::Executor restored;
+    const auto recovery = restored.Restore(route, event, 100.0);
+    assert(recovery.ok && restored.status().state == inspection::RunState::kPaused);
+    assert(restored.status().loop_index == (is_skip ? 0U : 1U));
+    assert(restored.status().point_index == (is_skip ? 1U : 0U));
+    assert(!restored.PendingGoal());
+    assert(restored.Resume("factory", 7, 101.0, "request-facts-resume"));
+    assert(restored.PendingGoal()->id == (is_skip ? "camera_b" : "camera_a"));
+  }
+  assert(skipped == 1U && completed == 1U);
+
+  route.loop_count = 1U;
+  auto last_completed = MakeTaskEvent(30U, inspection::RunState::kDwelling);
+  last_completed.kind = inspection::TaskEventKind::kMilestone;
+  last_completed.status.loop_index = 0U;
+  last_completed.status.reason = "point_completed";
+  inspection::Executor finished;
+  const auto recovery = finished.Restore(route, last_completed, 200.0);
+  assert(recovery.ok && finished.status().state == inspection::RunState::kSucceeded);
+  assert(!finished.PendingGoal() && !finished.Resume("factory", 7, 201.0, "request-finished"));
+}
+
+inspection::Route MakeIntervalRoute() {
+  auto route = MakeRoute();
+  route.points.resize(1U);
+  route.points[0].dwell_s = 0.0;
+  route.loop_interval_s = 10.0;
+  return route;
+}
+
+void FinishIntervalLoop(inspection::Executor& executor, double reached_s) {
+  PlanAndReach(executor, reached_s);
+  FeedSettled(executor, reached_s + 0.1);
+  executor.Tick(reached_s + 0.7);
+}
+
+void TestLoopIntervalWaitsAndFinalLoopFinishes() {
+  auto route = MakeIntervalRoute();
+  inspection::Executor executor;
+  std::string error;
+  assert(executor.Start(route, "task-interval", "request-interval",
+                        "factory", 7, 1.0, &error));
+  FinishIntervalLoop(executor, 2.0);
+  assert(executor.status().state == inspection::RunState::kWaitingNextLoop);
+  assert(executor.active() && executor.status().loop_index == 1U);
+  assert(!executor.PendingGoal() && !executor.PendingAction());
+  const double deadline = executor.status().deadline_s;
+  assert(std::abs(deadline - 12.7) < 1e-9);
+  executor.Tick(deadline - 0.01);
+  assert(!executor.PendingGoal());
+  executor.Tick(deadline);
+  assert(executor.PendingGoal()->id == "camera_a");
+  assert(executor.status().loop_index == 1U);
+  FinishIntervalLoop(executor, 15.0);
+  assert(executor.status().state == inspection::RunState::kSucceeded);
+  assert(!executor.PendingGoal() && executor.status().deadline_s == 0.0);
+  executor.Tick(100.0);
+  assert(executor.status().state == inspection::RunState::kSucceeded);
+
+  route.loop_interval_s = -1.0;
+  assert(!inspection::ValidateRoute(route).ok);
+  route.loop_interval_s = std::numeric_limits<double>::infinity();
+  assert(!inspection::ValidateRoute(route).ok);
+  route.loop_interval_s = std::numeric_limits<double>::quiet_NaN();
+  assert(!inspection::ValidateRoute(route).ok);
+  route.loop_interval_s = 0.0;
+  assert(inspection::ValidateRoute(route).ok);
+}
+
+void TestPauseFreezesRemainingLoopIntervalAndCancelStopsIt() {
+  auto route = MakeIntervalRoute();
+  inspection::Executor executor;
+  std::string error;
+  assert(executor.Start(route, "task-interval-pause", "request-interval-start",
+                        "factory", 7, 1.0, &error));
+  FinishIntervalLoop(executor, 2.0);
+  const double deadline = executor.status().deadline_s;
+  assert(executor.RequestPause("operator_pause", "request-interval-pause", deadline - 8.0));
+  assert(executor.CommitPause(deadline - 7.8));
+  executor.Tick(100.0);
+  assert(executor.status().state == inspection::RunState::kPaused);
+  assert(executor.Resume("factory", 7, 200.0, "request-interval-resume"));
+  assert(executor.status().state == inspection::RunState::kWaitingNextLoop);
+  assert(executor.status().deadline_s == 208.0);
+  executor.Tick(207.99);
+  assert(!executor.PendingGoal());
+  executor.Tick(208.0);
+  assert(executor.PendingGoal());
+
+  inspection::Executor cancelling;
+  assert(cancelling.Start(route, "task-interval-cancel", "request-interval-cancel-start",
+                          "factory", 7, 1.0, &error));
+  FinishIntervalLoop(cancelling, 2.0);
+  assert(cancelling.RequestCancel("operator_cancel", "request-interval-cancel", 4.0));
+  assert(cancelling.CommitCancel(4.1));
+  cancelling.Tick(100.0);
+  assert(cancelling.status().state == inspection::RunState::kCancelled);
+  assert(!cancelling.PendingGoal() && !cancelling.Resume("factory", 7, 101.0));
+}
+
+void TestRestartLoopWaitStartsFreshIntervalOnlyAfterResume() {
+  const auto route = MakeIntervalRoute();
+  inspection::Executor previous;
+  std::string error;
+  assert(previous.Start(route, "task-interval-restart", "request-interval-restart",
+                        "factory", 7, 1.0, &error));
+  FinishIntervalLoop(previous, 2.0);
+  const auto completed_events = previous.TakeTaskEvents();
+  for (const auto& checkpoint : completed_events) {
+    if (checkpoint.status.state != inspection::RunState::kWaitingNextLoop &&
+        checkpoint.status.reason != "point_completed") continue;
+    inspection::Executor restored;
+    const auto recovery = restored.Restore(route, checkpoint, 1000.0);
+    assert(recovery.ok && restored.status().state == inspection::RunState::kPaused);
+    assert(restored.status().loop_index == 1U);
+    assert(restored.status().reason == "restart_loop_wait_resume_required");
+    assert(restored.status().deadline_s == 0.0);
+    restored.Tick(2000.0);
+    assert(!restored.PendingGoal());
+    assert(restored.Resume("factory", 7, 2000.0, "request-restart-loop-resume"));
+    assert(restored.status().deadline_s == 2010.0);
+    restored.Tick(2009.99);
+    assert(!restored.PendingGoal());
+    restored.Tick(2010.0);
+    assert(restored.PendingGoal());
+  }
+
+  assert(previous.RequestPause("operator_pause", "request-loop-pause", 4.7));
+  previous.MarkStopConfirmationFailed("driver_not_stopped", 4.8);
+  const auto pausing = previous.TakeTaskEvents().back();
+  inspection::Executor after_pausing;
+  assert(after_pausing.Restore(route, pausing, 1000.0).ok);
+  assert(after_pausing.Resume("factory", 7, 1100.0, "request-pausing-resume"));
+  assert(after_pausing.status().deadline_s == 1110.0);
+  assert(previous.CommitPause(4.9));
+  const auto paused = previous.TakeTaskEvents().back();
+  inspection::Executor after_paused;
+  const auto recovery = after_paused.Restore(route, paused, 1000.0);
+  assert(recovery.ok);
+  inspection::Executor repeated_restart;
+  assert(repeated_restart.Restore(route, recovery.event, 1050.0).ok);
+  assert(repeated_restart.Resume("factory", 7, 1100.0, "request-paused-resume"));
+  assert(repeated_restart.status().deadline_s == 1110.0);
 }
 
 void TestTaskEventOutboxRecoveryCursorAndRetry() {
@@ -478,6 +794,9 @@ void TestRunStateCompatibility() {
   assert(static_cast<std::int32_t>(inspection::RunState::kCancelled) == 9);
   assert(static_cast<std::int32_t>(inspection::RunState::kSettling) == 10);
   assert(static_cast<std::int32_t>(inspection::RunState::kActionPending) == 11);
+  assert(static_cast<std::int32_t>(inspection::RunState::kWaitingNextLoop) == 14);
+  assert(std::string(inspection::RunStateName(inspection::RunState::kWaitingNextLoop)) ==
+         "waiting_next_loop");
   assert(std::string(inspection::RunStateName(inspection::RunState::kSettling)) ==
          "settling");
   assert(std::string(inspection::RunStateName(inspection::RunState::kActionPending)) ==
@@ -503,7 +822,6 @@ void TestTaskIdentityAndOrderedLifecycleEvents() {
   assert(started[0].timestamp_s == 10.0);
   assert(started[0].request_id == "request-start-42");
   assert(started[0].status.task_id == "inspection-task-42");
-  assert(started[0].status.run_id == "inspection-task-42");
   assert(started[0].status.request_id == "request-start-42");
   assert(started[0].status.map_id == "factory");
   assert(started[0].status.map_content_epoch == 7);
@@ -642,7 +960,6 @@ void TestActionHandshakeAndEvidence() {
   const auto request = executor.PendingAction();
   assert(request.has_value());
   assert(request->action == "capture:bin_full");
-  assert(request->point_id == "camera_a");
   assert(!executor.OnActionStarted("wrong-request", 1.9));
   assert(!executor.OnActionResult(
       request->request_id, true, "evidence-1", "", 1.9));
@@ -732,7 +1049,7 @@ void TestPointFailurePoliciesAndTimeouts() {
   }
 }
 
-void TestPlanningTimeoutUsesRouteFailurePolicy() {
+void TestPlanningWaitsForPlannerResult() {
   auto route = MakeRoute();
   route.loop_count = 1;
   route.failure_policy = inspection::FailurePolicy::kRetry;
@@ -740,44 +1057,39 @@ void TestPlanningTimeoutUsesRouteFailurePolicy() {
 
   inspection::Executor executor;
   std::string error;
-  assert(executor.Start(route, "run-planning-timeout", "factory", 7, 10.0, &error));
-  assert(executor.status().phase_started_at_s == 10.0);
-  assert(
-      executor.status().deadline_s ==
-      10.0 + inspection::Executor::kPlanningTimeoutS);
-
-  executor.Tick(10.0 + inspection::Executor::kPlanningTimeoutS);
+  assert(executor.Start(route, "run-planner-result", "factory", 7, 10.0, &error));
+  executor.Tick(100.0);
+  assert(executor.status().state == inspection::RunState::kPlanning);
+  assert(executor.status().retry_count == 0U);
+  assert(executor.status().deadline_s == 0.0);
+  assert(executor.OnPlanningStarted(101.0));
+  executor.Tick(200.0);
+  assert(executor.status().state == inspection::RunState::kPlanning);
+  executor.OnLegFailed("global_search_limit", 201.0);
   assert(executor.status().state == inspection::RunState::kPlanning);
   assert(executor.status().retry_count == 1U);
-  assert(executor.status().reason == "planning_timeout");
-  assert(
-      executor.status().deadline_s ==
-      10.0 + 2.0 * inspection::Executor::kPlanningTimeoutS);
-
-  executor.Tick(10.0 + 2.0 * inspection::Executor::kPlanningTimeoutS);
+  assert(executor.OnPlanningStarted(202.0));
+  executor.OnLegFailed("global_search_limit", 203.0);
   assert(executor.status().state == inspection::RunState::kFailed);
-  assert(executor.status().reason == "planning_timeout");
+  assert(executor.status().reason == "global_search_limit");
 }
 
-void TestNavigationTimeoutStopsTheRoute() {
+void TestNavigationWaitsForExecutorResult() {
   auto route = MakeRoute();
   route.loop_count = 1;
   route.failure_policy = inspection::FailurePolicy::kStop;
 
   inspection::Executor executor;
   std::string error;
-  assert(executor.Start(route, "run-navigation-timeout", "factory", 7, 0.0, &error));
+  assert(executor.Start(route, "run-navigation-result", "factory", 7, 0.0, &error));
   assert(executor.OnPlanningStarted(0.1));
   assert(executor.OnPlanReady(0.2));
-  assert(executor.status().phase_started_at_s == 0.2);
-  assert(
-      executor.status().deadline_s ==
-      0.2 + inspection::Executor::kNavigationTimeoutS);
-
-  executor.Tick(0.2 + inspection::Executor::kNavigationTimeoutS);
-  assert(executor.status().state == inspection::RunState::kFailed);
-  assert(executor.status().reason == "navigation_stalled");
+  executor.Tick(300.0);
+  assert(executor.status().state == inspection::RunState::kNavigating);
   assert(executor.status().deadline_s == 0.0);
+  assert(executor.OnNavigationFailed("local_recovery_exhausted", 301.0));
+  assert(executor.status().state == inspection::RunState::kFailed);
+  assert(executor.status().reason == "local_recovery_exhausted");
 }
 
 void TestActionFailureUsesRoutePolicy() {
@@ -918,44 +1230,21 @@ void TestNavigationFailureUsesRoutePolicy() {
 }
 
 
-void TestNavigationProgressExtendsDeadlineWithoutKillingLongLegs() {
+void TestLongNavigationCanStillReach() {
   auto route = MakeRoute();
   route.loop_count = 1;
-  route.failure_policy = inspection::FailurePolicy::kStop;
-
   inspection::Executor executor;
   std::string error;
   assert(executor.Start(route, "run-long-leg", "factory", 7, 0.0, &error));
   assert(executor.OnPlanningStarted(0.1));
   assert(executor.OnPlanReady(0.2));
-
-  double now_s = 1.0;
-  double remaining_m = 100.0;
-  assert(executor.OnNavigationProgress(remaining_m, now_s));
-  for (int step = 0; step < 20; ++step) {
-    now_s += 20.0;
-    remaining_m -= 0.2;
-    assert(executor.OnNavigationProgress(remaining_m, now_s));
-    executor.Tick(now_s);
+  for (int step = 1; step <= 20; ++step) {
+    executor.Tick(step * 20.0);
     assert(executor.status().state == inspection::RunState::kNavigating);
   }
-  assert(now_s > 300.0);
-  assert(
-      executor.status().deadline_s ==
-      now_s + inspection::Executor::kNavigationTimeoutS);
-
-  executor.Tick(executor.status().deadline_s);
-  assert(executor.status().state == inspection::RunState::kFailed);
-  assert(executor.status().reason == "navigation_stalled");
-
-  inspection::Executor expired;
-  assert(expired.Start(route, "run-expired-progress", "factory", 7, 0.0, &error));
-  assert(expired.OnPlanningStarted(0.1));
-  assert(expired.OnPlanReady(0.2));
-  const double expired_deadline = expired.status().deadline_s;
-  assert(!expired.OnNavigationProgress(10.0, expired_deadline));
-  assert(expired.status().state == inspection::RunState::kFailed);
-  assert(expired.status().reason == "navigation_stalled");
+  executor.OnGoalReached(401.0);
+  assert(executor.status().state == inspection::RunState::kSettling);
+  assert(executor.status().deadline_s == 401.0 + inspection::Executor::kSettlingTimeoutS);
 }
 
 int main() {
@@ -965,6 +1254,13 @@ int main() {
   TestTaskEventCheckpointCorruptionFailsClosed();
   TestCheckpointWriteFailureRetainsExecutorHead();
   TestRestartReconciliationAndExecutorSequence();
+  TestRestartPreservesUnfinishedPointAndLoops();
+  TestRestartInvalidatesPendingEvidenceAndHonorsRecordedEvidence();
+  TestRestartRetainsPauseCancelAndTerminalStates();
+  TestPointCompletionAndSkipFactsAdvanceExactlyOnce();
+  TestLoopIntervalWaitsAndFinalLoopFinishes();
+  TestPauseFreezesRemainingLoopIntervalAndCancelStopsIt();
+  TestRestartLoopWaitStartsFreshIntervalOnlyAfterResume();
   TestTaskEventOutboxRecoveryCursorAndRetry();
 #ifdef _WIN32
   TestFailedReplacementPreservesPublishedFiles();
@@ -978,9 +1274,9 @@ int main() {
   TestPointFailurePoliciesAndTimeouts();
   TestTaskIdentityAndOrderedLifecycleEvents();
   TestTaskEventDeliveryRetainsRejectedHead();
-  TestPlanningTimeoutUsesRouteFailurePolicy();
-  TestNavigationTimeoutStopsTheRoute();
-  TestNavigationProgressExtendsDeadlineWithoutKillingLongLegs();
+  TestPlanningWaitsForPlannerResult();
+  TestNavigationWaitsForExecutorResult();
+  TestLongNavigationCanStillReach();
   TestNavigationFailureUsesRoutePolicy();
   TestActionFailureUsesRoutePolicy();
   TestActionRequestIdsDoNotRepeatAcrossRuns();

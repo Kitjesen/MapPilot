@@ -68,7 +68,7 @@ Web 点选局部投影可查看同一 MapScene 的拟合高度、残差及细 XY
 
 代码：`src/maps/include/lingtu/maps/layers/ground_surface.hpp`；
 证据与复现程序：`build/terrain-ground-model/`。
-[实际点云拟合诊断图](../../../../build/terrain-ground-model/terrain-ground-before/terrain-ground-review.png)。
+实际点云拟合诊断图 (`build/terrain-ground-model/terrain-ground-before/terrain-ground-review.png`)。
 
 参考 [CMU terrainAnalysis](https://github.com/jizhang-cmu/ground_based_autonomy_basic/blob/noetic/src/terrain_analysis/src/terrainAnalysis.cpp)
 的地形历史与障碍相对高度思想，以及
@@ -87,7 +87,7 @@ Web 点选局部投影可查看同一 MapScene 的拟合高度、残差及细 XY
 截图的细黄色格与此不一致。已请求在停车后刷新核对，尚未确认旧标签页或其他叠加图层
 是否为原因。浏览器检查接口不可用，不能宣称网页现场已验收。
 
-同帧对比：[原始占据与当前地面相对投影](../../../../build/go2-surface-projection/footprint-projection-comparison.png)。
+同帧对比：原始占据与当前地面相对投影 (`build/go2-surface-projection/footprint-projection-comparison.png`)。
 输入：`build/go2-surface-projection/footprint-live.sse` 和 `footprint-scene.json`。
 本次没有修改分类阈值、清除机身周边占据、重启服务或发送运动目标；问题仍待定位，
 不能记录为已修复。
@@ -105,7 +105,7 @@ session.active_map 为空。地图目录保留的旧 active 名称不代表已�
 - mapd 局部投影：本帧 51×51 格、20 cm 分辨率，307 格支撑候选、233 格高度带占据、
   2061 格未确认。约 10 m 的滚动窗口不代表整趟建图范围；绿色不是运动许可。
 
-实测图：[当前点云与投影](../../../../build/go2-surface-projection/mapping-current-views.png)。
+实测图：当前点云与投影 (`build/go2-surface-projection/mapping-current-views.png`)。
 左侧点云时间 22:22:10，右侧投影时间 22:18:02，不能按同帧逐点配准比较。
 输入与绘图脚本在 `build/go2-surface-projection/comparison-*` 和
 `plot_mapping_comparison.py`。这次没有保存、切换地图或发送运动目标。
@@ -252,13 +252,13 @@ NX 源码与备份：`/home/unitree/lingtu-source-20260910/build/surface-project
   证据：`build/go2-audit-20260915-ten/projection-elevation.sse`。
 
 `model.yaml` describes the Go2 and its MID-360 configuration at
-`sensors/mid360_fastlio2.yaml`. Robot selection does not choose `real` or
+`sensors/mid360_ltlio.yaml`. Robot selection does not choose `real` or
 `sim`; the adjacent `robot.yaml` supplies the physical configuration when the
 selected Env is `real`.
 
 `robot.yaml` intentionally does not contain Gateway ports, Product policy,
 local-planner tuning, map settings, or lifecycle controls. Those values belong
-to the Host/deployment or `config/runtime_graph/`. Its small
+to the Host/deployment or `config/system/`. Its small
 `perception.default_classes` entry is the only current per-robot Host override;
 all other perception values use the typed runtime defaults.
 
@@ -266,9 +266,9 @@ all other perception values use the typed runtime defaults.
 | --- | --- |
 | Motion | `src/drivers/real/motion/robots/unitree/go2/` |
 | Physical configuration | `config/robots/unitree/go2/robot.yaml` |
-| MID-360 / Fast-LIO2 | `config/robots/unitree/go2/sensors/mid360_fastlio2.yaml` |
+| MID-360 / LTLIO | `config/robots/unitree/go2/sensors/mid360_ltlio.yaml` |
 | Deployment | `scripts/deploy/` |
-| Products | `config/runtime_graph/products/` |
+| Products | `config/system/products/` |
 
 `unitree/go2 + real` has runnable configuration. The simulation environment
 does not yet bind a Go2 session and robot assets, so `unitree/go2 + sim`
@@ -551,7 +551,7 @@ native 配置控制频率 100 Hz，空闲循环均值约 10.09 ms，健康状态
    在规划返回后执行，不等于能在耗时的同步计算内部抢占停车。
 
 代码在 `src/maps/cpp/layers/rolling_occupancy.cpp` 和
-`src/nav/cpp/endpoint/nav/runtime/loop.cpp`，没有增加地图所有者或旁路驱动命令。
+`src/nav/cpp/endpoint/nav/app/loop.cpp`，没有增加地图所有者或旁路驱动命令。
 历史概率层暂时显示 Free 时，未解除的命中仍可能令实时碰撞层 Blocked；实际运动
 应以 `/maps/local_collision` 为依据，不能以概率层或显示点云推断一定可以通行。
 
@@ -627,9 +627,10 @@ X 方向，不能直接覆盖 Go2 全向侧移恢复；清空 costmap 也不能�
 - `nav`：在保存地图中定位并执行目标；配置启用有界平移/旋转恢复。具有代码机制
   不等于所有原卡点已实机通过。
 
-nav 还已有持续局部堵塞升级为全局改道、搜索忙时替换待处理目标，以及定位/点云/
-碰撞图失效后的输入门控。`ActivePathBlockagePolicy` 等待持续阻挡和新观测，局部
-已有可执行绕行时不抢占；`InputGate` 要求必需输入实际更新后才推进恢复。项目也有
+nav 还已有局部恢复耗尽后的有界重规划、搜索忙时替换待处理目标，以及定位/点云/
+碰撞图失效后的输入门控。实时局部碰撞不会再被升级成全局临时禁行区；SCAN
+自己负责局部绕行和停止，恢复耗尽后才由目标运行时请求一次普通全局重规划。
+`InputGate` 要求必需输入实际更新后才推进恢复。项目也有
 预测障碍输入，但默认 SCAN 的 collision bitmap 路径尚未消费预测点，不能据此宣称
 SCAN 已接通行人运动预测。本轮建议是验收和修正这些已有能力，
 不是另建一套全局重规划或控制权状态机。
@@ -637,7 +638,7 @@ SCAN 已接通行人运动预测。本轮建议是验收和修正这些已有能
 因此持续 W、前方阻挡且只有后方能退时，当前辅助模式不会擅自把输入改成自主后退。
 若要辅助模式也自动后退，需要明确允许的动作范围及持续操作者输入约束；松键停车
 不能被恢复动作覆盖。自主导航则应在正确定位与有效碰撞数据下选择可行的恢复方向。
-模式声明见 `config/runtime_graph/products/{map,teleop_avoid,nav}.yaml`，具体执行分支
+模式声明见 `config/system/products/{map,teleop_avoid,nav}.yaml`，具体执行分支
 在 native nav 的 `Executor::tickIntent` 与自主执行路径。
 
 ### 导航常见问题及我们需要的处理
@@ -661,7 +662,8 @@ SCAN 已接通行人运动预测。本轮建议是验收和修正这些已有能
 （2026-09-26 已处理）OctoMap 构建模式不再分叉：外部转换器路径已删除，
 OctoMap 只由 mapd 进程内构建；无射线时的采样点路径与离线工具共用
 `sampled_octomap.hpp` 的支撑/净空逻辑。有保存扫描时按射线回放并保留 log-odds，
-`octomap.ot` 以无损格式保存，只有射线构建（`navigation_ready: true`）的地图可激活。
+`octomap.ot` 以无损格式保存。`navigation_ready: true` 仅记录射线来源；激活只要求完整
+OctoMap 制品和一致的元数据，能否通行交给 OctoPlanner3D 和 SCAN 的三维检查。
 语义与验证见 `src/maps/README.md`。
 
 优先顺序：先统一支撑/净空与地图转换语义、核对实际阻挡来源；再验收自主恢复和
@@ -1285,7 +1287,7 @@ vx=vy=0、wz=-1 rad/s，驱动回执 command_accepted。这属于行进轨迹朝
 暂停轨迹时钟；该快照不能量出整个对齐持续时间或实际转速。
 
 随后 10 秒原生+SLAM 侧录又捕获 `recovery_translation_active`，指令约 0.15 m/s，
-再转 `persistent_path_obstruction_replan`，约三秒后 `replan_budget_consumed`。
+随后进入局部恢复重规划，约三秒后 `replan_budget_consumed`。
 这说明等待还涉及脱困和全局重规划的切换，尚未隔离具体障碍及是否提前中断恢复。
 不能简单归因于全局 A* 慢或加速度小，也没有因此放宽碰撞检查。
 证据：`build/go2-live-validation-20260913/delayed-start-native.json`、
@@ -1374,7 +1376,7 @@ Scene3D 和该实图侧录验证红/绿格点击坐标及原因。点云视图�
 
 保存失败位图 `state-recovery-scan-failure.json`，机身地图位置
 (-4.443469, 3.570156, -0.101332)，yaw=-1.238782。前查询点占据、后查询点空闲。
-直接调用原生 Grid/RecoveryPlanner 对同一完整位图回放：16 个方向中 8 个有安全出口，
+直接调用原生 Grid/Recovery 的内部候选搜索对同一完整位图回放：16 个方向中 8 个有安全出口，
 选中 bin 11，固定朝向机身位移 (-0.133939, -0.323358, 0)，长度 0.35 m，
 `verified=true`、TranslationReady、无需旋转。记录与回放工具保存在
 `build/go2-live-validation-20260913/` 下 `state-recovery-*` 和 `replay_recovery_bitmap.cpp`。
@@ -2595,7 +2597,7 @@ Thunder 固定障碍场景，定位来源为 Fast-LIO2 估计器，没有真值 
 以及候选轨迹末段碰撞漏检。已通过正式发布流程安装 `.5`，现场运动验收尚未通过。
 
 - `backend.cpp` 把 MotionIntent 已声明的最大偏离角传给 FSM。
-  `SCANReplanFSM::getLocalTarget()` 在直线参考目标或到它的连接被占用时，寻找可达的左右目标。
+  `PlannerFsm::getLocalTarget()` 在直线参考目标或到它的连接被占用时，寻找可达的左右目标。
   默认在意图方向两侧 90 度以内，以不超过 30 度的角度间隔、逐级缩短的距离搜索；
   3.5 m 视野最多增加 24 次机身扫掠查询。目标沿用至到达、失效或原参考重新直达，
   避免每次重规划左右切换。新参考重置目标，松键仍由现有执行器释放与停车。
@@ -2774,7 +2776,7 @@ healthy，导航和驱动输出均为零。里程计/碰撞帧龄 P95 分别为 
 
 - `src/nav/cpp/navigation/executor.cpp` 将持续方向输入变成约 3.5 m 的两点直线
   参考，并沿原方向推进目标；这不是先在局部地图中求得的绕障引导路径。
-- `SCANReplanFSM::getLocalTarget()` 只在这条参考曲线上向前/向后寻找自由目标。
+- `PlannerFsm::getLocalTarget()` 只在这条参考曲线上向前/向后寻找自由目标。
   没有可用点时直接置 `localTargetBlocked_`；`Backend::run()` 返回
   `scan_local_target_blocked`，该次不会进入 rebound/DynAStar 优化。
 - `.4` 的 SCAN 接收的 `maxDirectionDeviationDeg=90` 只参与有效性/参考身份判断，
@@ -3476,7 +3478,7 @@ Product 服务停止，没有追加运动。此次分析明确区分两件事：
 代替未保存的历史帧。
 
 已有几何和命令时间线可在本地
-[历史回看页面](../../../../build/go2-deploy-20260910/forward-analysis.html) 查看；
+历史回看页面 (`build/go2-deploy-20260910/forward-analysis.html`) 查看；
 页面不含控制接口。分项分析为同一 build 目录的
 `forward-analysis-initialization.md`、`forward-analysis-timing.md` 和
 `forward-analysis-behavior.md`；追加 journal 在 `forward-analysis-evidence/`。
@@ -3827,7 +3829,7 @@ exploration 的 Release 测试缺少启用断言选项也已补上，启用后�
 非零输出、`control_loop_hold=false`，也不能将告警直接当作停车原因。
 
 已确认的输入错误位于
-[`fastlio.cpp`](../../../../src/localization/slam/cpp/fastlio.cpp) 与
+[`ltlio.cpp`](../../../../src/localization/slam/cpp/ltlio.cpp)（原 `fastlio.cpp`）与
 [`cyclone_runtime.cpp`](../../../../src/localization/slam/cpp/cyclone_runtime.cpp)：
 滤波器的世界系速度原先被直接填入 `/slam/odometry`、`/slam/state_at_scan` 的
 `child_frame_id=body` twist。导航按机身系消费后再旋转，机器人转向时会得到错误的
@@ -4377,20 +4379,49 @@ SLAM 当时保留的数据为准，并非无限历史：Go2 Fast-LIO 配置为 `
 
 ## Navigation collision geometry
 
-The real Go2 RobotConfig keeps each horizontal safety quantity under one owner:
+The documented multi-shape representation is the **组合碰撞模型（Compound Collision
+Model）**: several collision primitives linked by body-relative transforms.
+URDF supplies geometry; `Body` is the C++ container and `BODY2` is a legacy
+internal serialization magic. The checked Go2 real configuration selects the
+nominal compound asset below.
+The `parts` physics benchmark uses Thunder and does not qualify a Go2 sim preset. See the
+[maintained model design](../../../../docs/design/navigation-body-model-and-motion-posture.md).
 
-- Physical envelope: `0.76 x 0.31 m`, using Unitree's larger published crouching length.
-- CMU and final safety: the physical rectangle plus one `0.10 m` hard margin per side.
-- SCAN: the Go2-tuned heading-aligned double cylinder, `radius=0.25 m` and
-  `offset=0.18 m`, with no additional footprint padding.
-- `live_obstacle_inflation_radius_m` belongs to active-path blockage overlay
-  diagnostics. It is not added to the robot hard footprint.
+The real RobotConfig selects [`body/go2_raised_nominal.body2`](body/go2_raised_nominal.body2)
+for OctoPlanner3D, SCAN and final body/braking queries. It contains 16 upper-body collision
+primitives from `go2_mid360_raised_frame.urdf`, including the raised 35-degree
+MID-360 mount, plus one explicitly named conservative upper payload cover.
+The metadata records its source and every nominal joint angle.
 
-The vertical clearances are defined relative to LingTu's `body` origin. The
-current `0.35 m` above and `0.25 m` below values match the Thunder/runtime defaults;
-no measurements of this Go2 and its installed payload support them yet. A fixed
-bare-Go2 model does not represent that payload and cannot justify shrinking the
-clearances. Upstream SCAN obstacle Z inflation does not validate those dimensions.
+The symmetric standing pose is fitted to the existing `support_height=0.35 m`:
+hip=0, thigh approximately 0.69674 rad and calf approximately -1.39347 rad.
+This is a nominal height fit, not measured joint telemetry or a gait envelope.
+Lower legs and feet are excluded from the navigation collision set: their fixed
+nominal poses do not describe stepping motion. The source URDF and physical
+simulation still contain them. This model does not certify foot/low-obstacle
+clearance; the existing global ground-support check is retained.
+
+`collision_hard_margin=0.05 m` remains separate from the raw primitives and is
+applied once in world-horizontal axes at runtime. The historical double-cylinder
+parameters are not the selected navigation shape. The former single OBB is no
+longer selected by this RobotConfig.
+
+The D435i and its bracket have no measured collision CAD in the source URDF.
+The named `unmeasured_payload_cover` preserves only the previously declared
+upper envelope: X/Y size `0.76 x 0.31 m`, body-relative Z `[0.057, 0.24] m`.
+It does not prove that the actual camera, cables and bracket fit inside that
+range. The metadata therefore retains `installation_qualified=false` and the
+missing-camera declaration; this source default has not been field-qualified.
+
+Regenerate both platforms' selected assets using the existing development
+MuJoCo environment:
+
+```bash
+python tools/robot/export_navigation_bodies.py
+```
+
+MuJoCo performs offline export only; native field navigation reads the exported
+primitives without a MuJoCo dependency or mandatory live joint FK.
 
 The deployment host address is site state and is intentionally not part of the
 model. SDK2 motion discovery uses `driver.network_interface` from
@@ -4406,7 +4437,7 @@ Before starting the `nav` Product on the expansion Linux computer:
    target architecture.
 3. Validate the nominal body-to-LiDAR composite derived from the official Go2
    URDF plus the archived MID-360 interface mirror. Update both
-   `robot.yaml` and `sensors/mid360_fastlio2.yaml` if the installed
+   `robot.yaml` and `sensors/mid360_ltlio.yaml` if the installed
    bracket differs, and change `calibration.status` only after the calibration
    check passes.
 4. Verify the MID-360 host/device addresses and obtain a fresh map with the

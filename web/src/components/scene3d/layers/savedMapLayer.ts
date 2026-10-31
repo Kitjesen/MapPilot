@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import type { MapSceneEvent, MapSceneLayer } from '../../../types'
 import { DEFAULT_POINT_SIZE, pointSizeToWorld } from './liveCloudLayer.ts'
 import { lingtuToThree } from '../../../services/coordinateFrame.ts'
+import { cloudHeightRange, writeCloudHeightColor } from '../../../services/cloudHeightColor.ts'
 
 export const SAVED_MAP_Z_FLOOR = Number.NEGATIVE_INFINITY
 export const SAVED_MAP_Z_CEIL = Number.POSITIVE_INFINITY
@@ -28,28 +29,6 @@ function fallbackLabelColor(label: number): [number, number, number] {
   return [0.75, 0.18, x]
 }
 
-const HEIGHT_STOPS: Array<[number, number, number]> = [
-  [0.95, 0.18, 0.24],
-  [1.00, 0.55, 0.06],
-  [0.66, 0.96, 0.10],
-  [0.08, 0.88, 0.84],
-  [0.66, 0.20, 0.96],
-]
-
-function heightColor(z: number, zMin: number, zMax: number): [number, number, number] {
-  const normalized = Math.max(0, Math.min(1, (z - zMin) / Math.max(1e-6, zMax - zMin)))
-  const scaled = normalized * (HEIGHT_STOPS.length - 1)
-  const index = Math.min(HEIGHT_STOPS.length - 2, Math.floor(scaled))
-  const t = scaled - index
-  const start = HEIGHT_STOPS[index]
-  const end = HEIGHT_STOPS[index + 1]
-  return [
-    start[0] + (end[0] - start[0]) * t,
-    start[1] + (end[1] - start[1]) * t,
-    start[2] + (end[2] - start[2]) * t,
-  ]
-}
-
 function semanticPointLayer(mapScene: MapSceneEvent | null | undefined, pointCount: number): MapSceneLayer | null {
   const layers = mapScene?.layers ?? []
   for (const layer of layers) {
@@ -67,54 +46,48 @@ export function createSavedMapLayer(
   zCeil: number,
   mapScene?: MapSceneEvent | null,
   pointSize = DEFAULT_POINT_SIZE,
+  colorMode: 'height' | 'semantic' = 'height',
 ): THREE.Points | null {
   if (!savedMapFlat || savedMapFlat.length < 3) return null
 
-  const maxSavedPoints = 80_000
   const totalTriples = Math.floor(savedMapFlat.length / 3)
-  const stride = totalTriples > maxSavedPoints ? Math.ceil(totalTriples / maxSavedPoints) : 1
-  const semantic = semanticPointLayer(mapScene, totalTriples)
-  const positions: number[] = []
-  const colors: number[] = []
-  const heights: number[] = []
-  let zMin = Number.POSITIVE_INFINITY
-  let zMax = Number.NEGATIVE_INFINITY
-  const step = stride * 3
+  const semantic = colorMode === 'semantic' ? semanticPointLayer(mapScene, totalTriples) : null
+  const positions = new Float32Array(totalTriples * 3)
+  const colors = new Float32Array(totalTriples * 3)
+  const heightRange = cloudHeightRange(savedMapFlat)
+  let length = 0
 
-  for (let i = 0; i + 2 < savedMapFlat.length; i += step) {
+  for (let i = 0; i + 2 < savedMapFlat.length; i += 3) {
     const wx = savedMapFlat[i]
     const wy = savedMapFlat[i + 1]
     const wz = savedMapFlat[i + 2]
     if (!Number.isFinite(wx) || !Number.isFinite(wy) || !Number.isFinite(wz)) continue
     if (wz < zFloor || wz > zCeil) continue
-    positions.push(...lingtuToThree([wx, wy, wz]))
-    heights.push(wz)
-    zMin = Math.min(zMin, wz)
-    zMax = Math.max(zMax, wz)
+    positions.set(lingtuToThree([wx, wy, wz]), length)
     if (semantic?.labels) {
       const label = semantic.labels[Math.floor(i / 3)] ?? 0
       const paletteColor = parseHexColor(semantic.palette?.[String(label)]?.color)
-      colors.push(...(paletteColor ?? fallbackLabelColor(label)))
+      colors.set(paletteColor ?? fallbackLabelColor(label), length)
+    } else if (heightRange) {
+      writeCloudHeightColor(wz, colors, length, heightRange.min, heightRange.max)
     }
+    length += 3
   }
-  if (positions.length === 0) return null
-  if (!semantic && heights.length > 0) {
-    for (const height of heights) colors.push(...heightColor(height, zMin, zMax))
-  }
+  if (length === 0) return null
+  const vertexColors = Boolean(semantic || heightRange)
 
   const geo = new THREE.BufferGeometry()
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-  if (colors.length === positions.length) {
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
-  }
+  geo.setAttribute('position', new THREE.BufferAttribute(positions.subarray(0, length), 3))
+  if (vertexColors) geo.setAttribute('color', new THREE.BufferAttribute(colors.subarray(0, length), 3))
   const mat = new THREE.PointsMaterial({
     size: pointSizeToWorld(pointSize) * 2,
-    color: colors.length === positions.length ? 0xffffff : 0x7896af,
-    vertexColors: colors.length === positions.length,
+    color: vertexColors ? 0xffffff : 0x7896af,
+    vertexColors,
     sizeAttenuation: true,
     opacity: 0.95,
     transparent: true,
     depthWrite: false,
+    toneMapped: false,
   })
   return new THREE.Points(geo, mat)
 }

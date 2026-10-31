@@ -1,5 +1,5 @@
-# 3d_NAV C++ Code Style
-# Based on Google style with ROS2-friendly adjustments
+# LingTu C++ code style
+# Based on Google style with project-specific include grouping
 ---
 Language: Cpp
 BasedOnStyle: Google
@@ -22,14 +22,13 @@ AllowShortLoopsOnASingleLine: false
 IncludeBlocks: Regroup
 IncludeCategories:
   # Project headers
-  - Regex: '^"remote_monitoring/'
+  - Regex: '^"lingtu/'
     Priority: 1
-  - Regex: '^"interface/'
+  - Regex: '^"nav_kernel/'
     Priority: 2
-  # ROS2 headers
-  - Regex: '^"rclcpp/'
+  - Regex: '^"(message|transport)/'
     Priority: 3
-  - Regex: '^"(nav_msgs|sensor_msgs|geometry_msgs|std_msgs|tf2)/'
+  - Regex: '^"(nav|navigation|planning|runtime|input|command|control|safety|status|tracking|trajectory|platform|dds)/'
     Priority: 4
   # Protobuf generated
   - Regex: '\.pb\.h"$'

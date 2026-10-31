@@ -94,10 +94,10 @@ Eigen::Vector3d AStar::indexToCoordinate(
 
 bool AStar::coordinateToIndex(const Eigen::Vector3d &point,
                               Eigen::Vector3i &index) const {
-  index = ((point - center_) * inverseStepSize_ +
-           Eigen::Vector3d(0.5, 0.5, 0.5))
-              .cast<int>() +
-          centerIndex_;
+  // Truncating (offset + .5) moves negative offsets toward the centre.
+  for (int axis = 0; axis < 3; ++axis)
+    index(axis) = static_cast<int>(std::round(
+        (point(axis) - center_(axis)) * inverseStepSize_)) + centerIndex_(axis);
   return index.x() >= 0 && index.x() < poolSize_.x() && index.y() >= 0 &&
          index.y() < poolSize_.y() && index.z() >= 0 &&
          index.z() < poolSize_.z();
@@ -166,6 +166,7 @@ AStarResult AStar::search(double stepSize, Eigen::Vector3d start,
   const double started = nowS();
   ++rounds_;
   expandedNodes_ = 0;
+  gridPath_.clear();
   stepSize_ = stepSize;
   inverseStepSize_ = 1.0 / stepSize;
   center_ = (start + end) / 2.0;
@@ -192,15 +193,14 @@ AStarResult AStar::search(double stepSize, Eigen::Vector3d start,
         (sampleXY - searchStartXY).dot(searchDeltaXY) / searchLengthSquared;
     ratio = std::clamp(ratio, 0.0, 1.0);
     const double z = searchStart.z() + ratio * (searchEnd.z() - searchStart.z());
-    return static_cast<int>((z - center_.z()) * inverseStepSize_ + 0.5) +
+    return static_cast<int>(std::round((z - center_.z()) * inverseStepSize_)) +
            centerIndex_.z();
   };
 
   GridNodePtr startNode =
       gridNodeMap_[startIndex.x()][startIndex.y()][startIndex.z()];
   GridNodePtr endNode = gridNodeMap_[endIndex.x()][endIndex.y()][endIndex.z()];
-  std::priority_queue<GridNodePtr, std::vector<GridNodePtr>, NodeComparator>
-      empty;
+  decltype(openSet_) empty;
   openSet_.swap(empty);
 
   endNode->index = endIndex;
@@ -210,11 +210,16 @@ AStarResult AStar::search(double stepSize, Eigen::Vector3d start,
   startNode->fScore = getHeuristic(startNode, endNode);
   startNode->state = GridNode::State::OpenSet;
   startNode->cameFrom = nullptr;
-  openSet_.push(startNode);
+  openSet_.push({startNode, startNode->fScore});
 
   while (!openSet_.empty()) {
-    GridNodePtr current = openSet_.top();
+    const OpenSetEntry entry = openSet_.top();
     openSet_.pop();
+    GridNodePtr current = entry.node;
+    if (current->state == GridNode::State::ClosedSet ||
+        entry.fScore != current->fScore) {
+      continue;
+    }
     ++expandedNodes_;
 
     if (current->index == endNode->index) {
@@ -257,11 +262,12 @@ AStarResult AStar::search(double stepSize, Eigen::Vector3d start,
           neighbor->cameFrom = current;
           neighbor->gScore = tentativeScore;
           neighbor->fScore = tentativeScore + getHeuristic(neighbor, endNode);
-          openSet_.push(neighbor);
+          openSet_.push({neighbor, neighbor->fScore});
         } else if (tentativeScore < neighbor->gScore) {
           neighbor->cameFrom = current;
           neighbor->gScore = tentativeScore;
           neighbor->fScore = tentativeScore + getHeuristic(neighbor, endNode);
+          openSet_.push({neighbor, neighbor->fScore});
         }
       }
     }

@@ -1,0 +1,79 @@
+# V7 nominal candidate, NOT installed or field verified.
+robot:
+  id: go2_001
+  hw_id: unitree_go2
+  firmware_version: unknown
+calibration:
+  slam:
+    status: unverified
+    reason: V7 raised-box CAD nominal; install, measure and validate before field
+      use
+  camera:
+    status: unverified
+    reason: Go2 camera calibration has not been measured; Thunder V4 legacy values
+      must not be used as Go2 evidence
+camera:
+  capture_driver: realsense_native
+  serial_number: '419522073370'
+geometry:
+  vehicle_height: 0.5
+  vehicle_width: 0.31
+  vehicle_length: 0.76
+  collision_cylinder_radius: 0.25
+  collision_cylinder_offset: 0.19
+  collision_hard_margin: 0.1
+  collision_clearance_below: 0.1
+  collision_clearance_above: 0.1
+  support_height: 0.35
+  support_height_tolerance: 0.05
+  sensor_offset_x: 0.3
+  sensor_offset_y: 0.0
+speed:
+  max_linear: 1.0
+  max_angular: 1.0
+  max_speed: 0.875
+  autonomy_speed: 0.875
+safety:
+  obstacle_height_thre: 0.2
+  ground_height_thre: 0.1
+  stop_distance: 0.8
+  slow_distance: 2.0
+  deadman_timeout_ms: 300.0
+  cmd_vel_timeout_ms: 200.0
+  tilt_limit_deg: 30.0
+driver:
+  backend: go2
+  target: ''
+  network_interface: eth0
+  network_address: 192.168.123.18/24
+  probe_ip: 192.168.123.161
+  dog_host: 127.0.0.1
+  dog_port: 13145
+  control_rate: 50.0
+  auto_enable: false
+  auto_standup: false
+  reconnect_interval: 3.0
+  slam_reset_interval: 5.0
+  tls_ca_file: ''
+  tls_cert_file: ''
+  tls_key_file: ''
+  tls_server_name: ''
+lidar:
+  frame_id: livox_frame
+  publish_freq: 10.0
+  network_interface: eth0
+  lidar_ip: 192.168.123.20
+  host_ip: 192.168.123.18
+  offset_x: 0.24
+  offset_y: 0.0
+  offset_z: 0.20262
+  roll: 0.0
+  pitch: 0.6108652381980153
+  yaw: 0.0
+  camera_offset_z: 0.0
+perception:
+  default_classes: door . window . stairs . elevator . exit sign . fire extinguisher
+    . safety cone . barrier . chair . desk . table . shelf . cabinet . monitor . laptop
+    . keyboard . phone . sink . toilet . refrigerator . trash can . bottle . cup .
+    car . truck . bicycle . motorcycle . person . dog . cat . forklift . pallet .
+    pipe . valve . control panel . switch . button . obstacle . rock . pole . backpack

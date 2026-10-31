@@ -9,8 +9,9 @@
 #include <utility>
 #include <vector>
 
+#include "command/cancel.hpp"
 #include "safety/stop.hpp"
-#include "runtime/goal/runtime.hpp"
+#include "app/goal/runtime.hpp"
 #include "status/goal_terminal_status_delivery.hpp"
 #include "status/goal_terminal_transaction.hpp"
 #include "status/navigation_goal_status_outbox.hpp"
@@ -263,6 +264,39 @@ void testStopConfirmationFailureKeepsTerminalPendingAndFailsClosed() {
           "stop-confirmation failure did not report the exact fail-closed reason");
 }
 
+void testPendingStopConfirmationHasNoTerminalOrInspectionSideEffects() {
+  Fixture fixture;
+  fixture.activateGoal();
+  const std::size_t observed_before_terminal = fixture.observed.size();
+  fixture.confirmation = StopConfirmationState::Pending;
+  const GoalReplanRuntimeResult terminal = fixture.terminalIntent();
+
+  const auto pending = fixture.transaction.advance(terminal);
+  require(!pending.action_committed && !pending.delivery_acknowledged &&
+              pending.reason == "stop_confirmation_pending",
+          "pending terminal stop was reported as committed or failed");
+  require(fixture.coordinator.terminalPending() && fixture.diagnostic_syncs == 0U &&
+              fixture.inspection_pauses.empty() && fixture.reported_errors.empty() &&
+              fixture.observed.size() == observed_before_terminal &&
+              !fixture.delivery.isCommitted(terminal.terminal_intent_id),
+          "pending terminal stop published state, paused inspection, or marked delivery committed");
+
+  fixture.confirmation = StopConfirmationState::Confirmed;
+  const auto stop_confirmed = fixture.motion_stop.poll();
+  require(stop_confirmed && stop_confirmed->accepted && !stop_confirmed->pending,
+          "pending terminal stop did not complete after ACK");
+  require(!fixture.delivery.isCommitted(terminal.terminal_intent_id) &&
+              fixture.diagnostic_syncs == 0U,
+          "physical stop completion bypassed the terminal transaction owner");
+
+  const auto committed = fixture.transaction.advance(fixture.coordinator.replayPendingTerminal());
+  require(committed.action_committed && committed.delivery_acknowledged &&
+              committed.reason == "goal_terminal_acknowledged" &&
+              fixture.diagnostic_syncs == 1U && fixture.reported_errors.empty() &&
+              fixture.inspection_pauses.empty(),
+          "terminal replay did not commit and acknowledge exactly once after stop ACK");
+}
+
 void testMissingAndShutdownTerminalsAreRejectedByOrdinaryTransaction() {
   Fixture fixture;
   const auto missing = fixture.transaction.advance(GoalReplanRuntimeResult{});
@@ -382,13 +416,44 @@ void testConstructorRejectsIncompleteActions() {
   require(rejected, "GoalTerminalTransaction accepted incomplete actions");
 }
 
+void testTaskCancelAcceptsPendingStopWithoutEarlyTerminal() {
+  Fixture fixture;
+  fixture.activateGoal();
+  fixture.confirmation = StopConfirmationState::Pending;
+  lingtu::nav::endpoint::GoalTaskCancelRouter router(
+      fixture.goal_plan, fixture.coordinator,
+      [&](const GoalReplanRuntimeResult &result) {
+        const auto serviced = fixture.transaction.advance(result);
+        return lingtu::nav::endpoint::GoalTaskCancelTerminalServiceResult{
+            serviced.action_committed, serviced.reason, fixture.motion_stop.confirmationPending()};
+      }, [] {});
+  const auto receipt = router.handle({"task-a", "cancel-request", "operator_cancel", 2.0});
+  require(receipt.accepted && receipt.reason == "cancel_requested",
+          "accepted cancellation was rejected while the zero ACK was pending");
+  require(fixture.coordinator.terminalPending() &&
+              fixture.goal_plan.snapshot().active_task_id == "task-a",
+          "pending cancellation committed the task early");
+  fixture.confirmation = StopConfirmationState::Confirmed;
+  require(fixture.motion_stop.poll()->accepted, "cancellation zero did not confirm");
+  const auto done = fixture.transaction.advance(fixture.coordinator.replayPendingTerminal());
+  require(done.action_committed && done.delivery_acknowledged &&
+              !fixture.coordinator.terminalPending(), "confirmed cancellation did not deliver its ticket");
+  std::size_t cancelled = 0U;
+  for (const auto &status : fixture.observed) {
+    if (status.task_id == "task-a" && status.state == lingtu::message::NavigationGoalState::Cancelled) ++cancelled;
+  }
+  require(cancelled == 1U, "cancellation delivered its terminal more than once");
+}
+
 }  // namespace
 
 int main() {
   try {
+    testTaskCancelAcceptsPendingStopWithoutEarlyTerminal();
     testSuccessfulTerminalTransactionCommitsDeliversAndAcknowledges();
     testPendingDeliveryReplayAcknowledgesWithoutRepeatingCommit();
     testStopConfirmationFailureKeepsTerminalPendingAndFailsClosed();
+    testPendingStopConfirmationHasNoTerminalOrInspectionSideEffects();
     testMissingAndShutdownTerminalsAreRejectedByOrdinaryTransaction();
     testSafetyStopCommitsExactPendingTerminalWithoutAcknowledgingIt();
     testSafetyEstopPreservesTerminalAndUsesExactReason();

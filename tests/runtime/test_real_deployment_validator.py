@@ -118,17 +118,17 @@ def test_validate_real_deployment_uses_native_command_service_chain() -> None:
         env="real",
         process_env={},
     )._resolve("nav")
-    blueprint = validator.blueprint_for_resolved_product(
+    host_builder = validator.host_builder_for_resolved_product(
         plan.product,
         dict(plan.host_config),
     )
     entries = {
         entry.name: getattr(entry.module_cls, "__name__", "")
-        for entry in blueprint._entries
+        for entry in host_builder._entries
     }
     wires = {
         f"{wire.out_module}.{wire.out_port}->{wire.in_module}.{wire.in_port}"
-        for wire in blueprint._wires
+        for wire in host_builder._wires
     }
 
     assert entries["nav.goals"] == "GoalService"
@@ -139,7 +139,7 @@ def test_validate_real_deployment_uses_native_command_service_chain() -> None:
 def test_validate_real_deployment_rejects_ros_compat_graph_module(
     monkeypatch,
 ) -> None:
-    original = validator.blueprint_for_resolved_product
+    original = validator.host_builder_for_resolved_product
 
     class FakeROSBridge:
         pass
@@ -151,7 +151,7 @@ def test_validate_real_deployment_rejects_ros_compat_graph_module(
         bp.add(FakeROSBridge, alias="FakeROSBridge")
         return bp
 
-    monkeypatch.setattr(validator, "blueprint_for_resolved_product", _with_ros_bridge)
+    monkeypatch.setattr(validator, "host_builder_for_resolved_product", _with_ros_bridge)
 
     result = validator.validate()
 

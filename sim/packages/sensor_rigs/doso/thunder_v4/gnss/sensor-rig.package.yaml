@@ -1,0 +1,26 @@
+schema: lingtu.sim.sensor-rig-package.v1
+id: thunderv4_gnss
+version: 1.0.0
+kind: sensor_rig
+description: Opt-in experimental GNSS with synthetic WGS84 zero origin, NOT an actual site georeference; NO_FIX by default.
+sensors:
+  - id: gnss
+    package: gnss@1.0.0
+    parent_frame: payload_top
+    runtime: {owner: physics, source: mujoco_gnss}
+    frequency_hz: 10
+    configuration:
+      gnss:
+        # Synthetic test origin only. Altitude is WGS84 ellipsoidal, not MSL.
+        origin_latitude_deg: 0.0
+        origin_longitude_deg: 0.0
+        origin_altitude_m: 0.0
+        body_frame_id: base_link
+        antenna_offset_m: [0.0, 0.0, 0.0]
+        world_origin_m: [0.0, 0.0, 0.0]
+        world_to_enu_yaw_deg: 0.0
+        noise_enabled: false
+        horizontal_std_m: 0.0
+        vertical_std_m: 0.0
+        seed: 0
+        fix_available: false

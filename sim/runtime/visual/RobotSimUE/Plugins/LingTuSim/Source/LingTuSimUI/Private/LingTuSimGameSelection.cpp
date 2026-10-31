@@ -1,4 +1,5 @@
 #include "LingTuSimGameSelection.h"
+#include "LingTuSimSensorSelection.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -213,13 +214,27 @@ bool ReadObject(const TSharedPtr<FJsonObject> &Parent, const TCHAR *Field,
   return true;
 }
 
+bool ReadCategory(const TSharedPtr<FJsonObject>& Object, FString& OutCategory, FString& OutError) {
+  OutCategory = TEXT("other");
+  if (!Object->HasField(TEXT("category"))) return true;
+  if (!Object->TryGetStringField(TEXT("category"), OutCategory) ||
+      !(OutCategory == TEXT("quadruped") || OutCategory == TEXT("wheeled_legged") ||
+        OutCategory == TEXT("humanoid") || OutCategory == TEXT("wheeled") ||
+        OutCategory == TEXT("manipulator") || OutCategory == TEXT("other"))) {
+    OutError = TEXT("unsupported robot category");
+    return false;
+  }
+  return true;
+}
+
 bool ReadPackage(const TSharedPtr<FJsonObject> &Parent, const TCHAR *Field,
                  FGameSelectionPackageSummary &OutPackage, FString &OutError) {
   TSharedPtr<FJsonObject> Object;
   return ReadObject(Parent, Field, Object, OutError) &&
          ReadRequiredString(Object, TEXT("id"), OutPackage.Id, OutError) &&
          ReadRequiredString(Object, TEXT("version"), OutPackage.Version, OutError) &&
-         ReadRequiredString(Object, TEXT("label"), OutPackage.Label, OutError);
+         ReadRequiredString(Object, TEXT("label"), OutPackage.Label, OutError) &&
+         ReadCategory(Object, OutPackage.Category, OutError);
 }
 
 bool ReadAuthoritativePackage(const TSharedPtr<FJsonObject> &Parent, const TCHAR *Field,
@@ -421,6 +436,15 @@ bool ParseOption(const TSharedPtr<FJsonObject> &Object, const FString &CatalogDi
   }
 
   TSharedPtr<FJsonObject> Availability;
+  if (Object->HasField(TEXT("sensor_setup"))) {
+    TSharedPtr<FJsonObject> Setup;
+    FSensorSetup Parsed;
+    if (!ReadObject(Object, TEXT("sensor_setup"), Setup, OutError) ||
+        !ReadRequiredString(Object, TEXT("session_source"), OutOption.SessionSource, OutError) ||
+        !FSensorSelectionModel::ParseSetup(Setup, Parsed, OutError)) return false;
+    OutOption.SensorSelection = MakeShared<FSensorSelectionModel>();
+    OutOption.SensorSelection->Configure(MoveTemp(Parsed));
+  }
   FString AvailabilityState;
   if (!ReadObject(Object, TEXT("availability"), Availability, OutError) ||
       !ReadRequiredString(Availability, TEXT("state"), AvailabilityState, OutError) ||
@@ -506,6 +530,16 @@ const TCHAR *GameSelectionAvailabilityName(const EGameSelectionAvailability Avai
   }
 }
 
+const TCHAR* RobotCategoryLabel(const FString& Category) {
+  if (Category == TEXT("all")) return TEXT("全部");
+  if (Category == TEXT("quadruped")) return TEXT("四足");
+  if (Category == TEXT("wheeled_legged")) return TEXT("轮足");
+  if (Category == TEXT("humanoid")) return TEXT("人形");
+  if (Category == TEXT("wheeled")) return TEXT("轮式");
+  if (Category == TEXT("manipulator")) return TEXT("机械臂");
+  return TEXT("其他");
+}
+
 bool FGameSelectionOption::IsRunnable() const {
   return Availability == EGameSelectionAvailability::Runnable && !Id.IsEmpty() &&
          !Title.IsEmpty() && Robot.IsValid() && World.IsValid() && !BundleDirectory.IsEmpty() &&
@@ -569,6 +603,28 @@ bool FGameSelectionCatalogLoader::LoadFromFile(const FString &CatalogPath,
     return false;
   }
 
+  if (Root->HasField(TEXT("robot_library"))) {
+    const TArray<TSharedPtr<FJsonValue>>* Robots = nullptr;
+    if (!Root->TryGetArrayField(TEXT("robot_library"), Robots) || Robots == nullptr) {
+      OutError = TEXT("robot_library must be an array");
+      return false;
+    }
+    TSet<FString> RobotIds;
+    for (const auto& Value : *Robots) {
+      FGameSelectionPackageSummary Robot;
+      const auto Object = Value.IsValid() && Value->Type == EJson::Object ? Value->AsObject() : nullptr;
+      if (!Object.IsValid() || !ReadRequiredString(Object, TEXT("id"), Robot.Id, OutError) ||
+          !ReadRequiredString(Object, TEXT("version"), Robot.Version, OutError) ||
+          !ReadRequiredString(Object, TEXT("label"), Robot.Label, OutError) ||
+          !ReadCategory(Object, Robot.Category, OutError) || RobotIds.Contains(Robot.Id)) {
+        if (OutError.IsEmpty()) OutError = TEXT("robot_library requires unique, complete robot summaries");
+        return false;
+      }
+      RobotIds.Add(Robot.Id);
+      Candidate.RobotLibrary.Add(MoveTemp(Robot));
+    }
+  }
+
   Candidate.SourcePath = CanonicalCatalogPath;
   Candidate.CatalogDirectory = FPaths::GetPath(CanonicalCatalogPath);
   FPaths::NormalizeDirectoryName(Candidate.CatalogDirectory);
@@ -600,9 +656,37 @@ bool FGameSelectionCatalogLoader::LoadFromFile(const FString &CatalogPath,
 }
 
 void FGameSelectionModel::SetCatalog(FGameSelectionCatalog InCatalog) {
+  // A robot's unchanged mounting arrangement keeps its draft across map choices.
+  // Different rig defaults remain distinct; never transfer incompatible settings.
+  const auto SameSetup = [](const FSensorSetup& A, const FSensorSetup& B) {
+    if (A.InstanceId != B.InstanceId || A.RigId != B.RigId || A.RigVersion != B.RigVersion || A.Sensors.Num() != B.Sensors.Num()) return false;
+    for (int32 I = 0; I < A.Sensors.Num(); ++I) {
+      const auto& X = A.Sensors[I]; const auto& Y = B.Sensors[I];
+      if (X.Id != Y.Id || X.Package != Y.Package || X.ParentFrame != Y.ParentFrame || X.Modality != Y.Modality ||
+          X.FrequencyHz != Y.FrequencyHz || X.bEnabled != Y.bEnabled || X.bRequired != Y.bRequired ||
+          X.PhysicsTimestepS != Y.PhysicsTimestepS || X.Notice != Y.Notice || X.UnavailableReason != Y.UnavailableReason ||
+          X.CameraPreset != Y.CameraPreset || X.PanDeg != Y.PanDeg || X.TiltDeg != Y.TiltDeg ||
+          X.PanLimitsDeg != Y.PanLimitsDeg || X.TiltLimitsDeg != Y.TiltLimitsDeg ||
+          X.FixedFrequencyHz != Y.FixedFrequencyHz || X.GnssFixAvailable != Y.GnssFixAvailable) return false;
+    }
+    return true;
+  };
+  for (int32 I = 0; I < InCatalog.Options.Num(); ++I) {
+    auto& Option = InCatalog.Options[I];
+    if (!Option.SensorSelection) continue;
+    for (int32 J = 0; J < I; ++J) {
+      const auto& Previous = InCatalog.Options[J];
+      if (Previous.SensorSelection && Option.Robot.Id == Previous.Robot.Id && Option.Robot.Version == Previous.Robot.Version &&
+          SameSetup(Option.SensorSelection->GetSetup(), Previous.SensorSelection->GetSetup())) {
+        Option.SensorSelection = Previous.SensorSelection; break;
+      }
+    }
+  }
   Catalog = MoveTemp(InCatalog);
   SelectedIndex = Catalog.Options.IsEmpty() ? INDEX_NONE : 0;
   ConfirmedOptionId.Reset();
+  RequestedRobotId = SelectedIndex == INDEX_NONE ? FString() : Catalog.Options[SelectedIndex].Robot.Id;
+  RequestedWorldId = SelectedIndex == INDEX_NONE ? FString() : Catalog.Options[SelectedIndex].World.Id;
 }
 
 const FGameSelectionOption *FGameSelectionModel::GetSelectedOption() const {
@@ -613,16 +697,16 @@ bool FGameSelectionModel::SelectNext() {
   if (Catalog.Options.IsEmpty() || IsConfirmed()) {
     return false;
   }
-  SelectedIndex = (SelectedIndex + 1 + Catalog.Options.Num()) % Catalog.Options.Num();
-  return true;
+  return SelectById(Catalog.Options[(SelectedIndex + 1 + Catalog.Options.Num()) % Catalog.Options.Num()].Id);
 }
 
 bool FGameSelectionModel::SelectPrevious() {
   if (Catalog.Options.IsEmpty() || IsConfirmed()) {
     return false;
   }
-  SelectedIndex = (SelectedIndex - 1 + Catalog.Options.Num()) % Catalog.Options.Num();
-  return true;
+  const int32 Previous = SelectedIndex == INDEX_NONE ? Catalog.Options.Num() - 1
+      : (SelectedIndex - 1 + Catalog.Options.Num()) % Catalog.Options.Num();
+  return SelectById(Catalog.Options[Previous].Id);
 }
 
 bool FGameSelectionModel::SelectById(const FString &OptionId) {
@@ -635,7 +719,60 @@ bool FGameSelectionModel::SelectById(const FString &OptionId) {
     return false;
   }
   SelectedIndex = Index;
+  RequestedRobotId = Catalog.Options[Index].Robot.Id;
+  RequestedWorldId = Catalog.Options[Index].World.Id;
   return true;
+}
+
+TArray<FGameSelectionPackageSummary> FGameSelectionModel::GetRobotChoices() const {
+  TArray<FGameSelectionPackageSummary> Choices;
+  for (const auto& Option : Catalog.Options) {
+    if (!Choices.ContainsByPredicate([&](const auto& Choice) { return Choice.Id == Option.Robot.Id; }))
+      Choices.Add(Option.Robot);
+  }
+  for (const auto& Robot : Catalog.RobotLibrary) {
+    if (!Choices.ContainsByPredicate([&](const auto& Choice) { return Choice.Id == Robot.Id; }))
+      Choices.Add(Robot);
+  }
+  return Choices;
+}
+
+TArray<FGameSelectionPackageSummary> FGameSelectionModel::GetWorldChoices() const {
+  TArray<FGameSelectionPackageSummary> Choices;
+  for (const auto& Option : Catalog.Options) {
+    if (!Choices.ContainsByPredicate([&](const auto& Choice) { return Choice.Id == Option.World.Id; }))
+      Choices.Add(Option.World);
+  }
+  return Choices;
+}
+
+bool FGameSelectionModel::SelectRobotById(const FString& RobotId) {
+  if (IsConfirmed() || !GetRobotChoices().ContainsByPredicate([&](const auto& Robot) { return Robot.Id == RobotId; }))
+    return false;
+  RequestedRobotId = RobotId;
+  ResolveRequestedPair();
+  return true;
+}
+
+bool FGameSelectionModel::SelectWorldById(const FString& WorldId) {
+  if (IsConfirmed() || !Catalog.Options.ContainsByPredicate([&](const auto& Option) { return Option.World.Id == WorldId; }))
+    return false;
+  RequestedWorldId = WorldId;
+  ResolveRequestedPair();
+  return true;
+}
+
+void FGameSelectionModel::ResolveRequestedPair() {
+  const auto* Current = GetSelectedOption();
+  if (Current && Current->Robot.Id == RequestedRobotId && Current->World.Id == RequestedWorldId) return;
+  SelectedIndex = INDEX_NONE;
+  int32 MatchCount = 0;
+  for (int32 Index = 0; Index < Catalog.Options.Num(); ++Index) {
+    const auto& Option = Catalog.Options[Index];
+    if (Option.Robot.Id != RequestedRobotId || Option.World.Id != RequestedWorldId) continue;
+    if (++MatchCount > 1) { SelectedIndex = INDEX_NONE; return; }
+    SelectedIndex = Index;
+  }
 }
 
 bool FGameSelectionModel::CanConfirm(FString &OutBlocker) const {
@@ -687,6 +824,8 @@ bool FGameSelectionIntentWriter::WriteNew(const FString &IntentPath,
   Root->SetStringField(TEXT("selection_id"), Option.Id);
   Root->SetStringField(TEXT("bundle_directory"), Option.BundleDirectory);
   Root->SetStringField(TEXT("session_id"), Option.SessionId);
+  if (Option.SensorSelection && Option.SensorSelection->HasChanges())
+    Root->SetObjectField(TEXT("sensor_selection"), Option.SensorSelection->ToSelectionJson());
   FString Json;
   const TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> Writer =
       TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&Json);

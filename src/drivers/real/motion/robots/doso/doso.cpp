@@ -119,6 +119,7 @@ struct Doso::Impl {
     last_body.posture = last_body.fresh ? posture(source.state.body.kind) : Posture::Unknown;
     last_body.velocity = {};
     last_body.velocity_available = false;
+    last_body.odometry_position_available = false;
     return result(source);
   }
 
@@ -176,6 +177,37 @@ HealthState Doso::health() const {
                             ? "critical_motor_fault"
                             : (impl_->last_control.motors_enabled ? "healthy" : "motors_disabled"));
   return state;
+}
+
+ProfileState Doso::readProfile() {
+  ProfileState state;
+  state.requires_grounded = true;
+  const auto profile = impl_->client.getProfile();
+  state.supported = profile.result.state.reason != "protocol_incompatible";
+  if (!profile.result.ok) {
+    impl_->last_body.fresh = false;
+    state.reason = profile.result.error;
+    return state;
+  }
+  const auto body = impl_->client.getBodyState();
+  if (!body.result.ok) {
+    impl_->last_body.fresh = false;
+    state.supported = body.result.state.reason != "protocol_incompatible";
+    state.reason = body.result.error;
+    return state;
+  }
+  impl_->last_body.fresh = true;
+  impl_->last_body.posture = posture(body.value.kind);
+  state.fresh = true;
+  state.grounded = body.value.kind == brainstem::BodyStateKind::Grounded;
+  state.current = profile.value.current;
+  state.available = profile.value.available;
+  state.reason.clear();
+  return state;
+}
+
+Result Doso::switchProfile(const std::string &name) {
+  return impl_->remember(impl_->client.switchProfile(name).result);
 }
 
 AdapterDiagnostics Doso::diagnostics() const {

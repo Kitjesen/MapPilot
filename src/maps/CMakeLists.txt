@@ -30,40 +30,58 @@ target_include_directories(
 )
 target_compile_features(lingtu_maps_contract INTERFACE cxx_std_17)
 
+# Runtime consumers such as navd only need to read the compact occupancy
+# artifact. Keep that reader separate from map lifecycle, storage, and mapd.
+add_library(lingtu_maps_artifacts STATIC
+  cpp/build/grids.cpp
+  cpp/io/json.cpp
+  cpp/storage/stairs.cpp
+)
+target_link_libraries(lingtu_maps_artifacts PUBLIC lingtu_maps_contract)
+set_target_properties(lingtu_maps_artifacts PROPERTIES
+  POSITION_INDEPENDENT_CODE ON
+)
+
 add_library(lingtu_maps STATIC
-  cpp/block_grid.cpp
-  cpp/health.cpp
-  cpp/lock.cpp
-  cpp/maintenance.cpp
-  cpp/map_graph.cpp
-  cpp/json.cpp
-  cpp/semantic_taxonomy.cpp
-  cpp/build/grid_artifacts.cpp
+  cpp/layers/block_grid.cpp
+  cpp/storage/health.cpp
+  cpp/storage/lock.cpp
+  cpp/storage/maintenance.cpp
+  cpp/graph.cpp
+  cpp/semantic/taxonomy.cpp
+  cpp/semantic/stairs.cpp
   cpp/build/occupancy_snapshot.cpp
-  cpp/build/pcd.cpp
-  cpp/build/saved_scans.cpp
+  cpp/io/pcd.cpp
+  cpp/io/scans.cpp
   cpp/build/pipeline.cpp
   cpp/build/process.cpp
-  cpp/semantic_map_persistence.cpp
-  cpp/patch_bundle.cpp
+  cpp/semantic/store.cpp
+  cpp/io/patch_bundle.cpp
   cpp/save.cpp
   cpp/service.cpp
   cpp/service_jobs.cpp
   cpp/service_lifecycle.cpp
   cpp/service_places.cpp
-  cpp/store.cpp
+  cpp/storage/store.cpp
   cpp/layers/rolling_occupancy.cpp
   cpp/layers/exploration_projection.cpp
-  cpp/layers/semantic_occupancy.cpp
+  cpp/semantic/occupancy.cpp
   cpp/layers/voxel.cpp
   cpp/mapd/activation.cpp
   cpp/mapd/engine.cpp
-  cpp/mapd/query_core.cpp
-  cpp/mapd/query_server.cpp
-  cpp/mapd/save_coordinator.cpp
-  cpp/mapd/service_dispatch.cpp
+  cpp/mapd/query.cpp
+  cpp/mapd/server.cpp
+  cpp/mapd/save.cpp
+  cpp/mapd/dispatch.cpp
 )
-target_link_libraries(lingtu_maps PUBLIC lingtu_maps_contract Threads::Threads)
+target_link_libraries(
+  lingtu_maps
+  PUBLIC lingtu_maps_contract
+  PRIVATE lingtu_maps_artifacts Threads::Threads
+)
+if(WIN32)
+  target_link_libraries(lingtu_maps PRIVATE ws2_32)
+endif()
 if(octomap_FOUND)
   target_compile_definitions(lingtu_maps PRIVATE LINGTU_MAPS_HAS_OCTOMAP=1)
   if(DEFINED OCTOMAP_INCLUDE_DIRS)
@@ -180,10 +198,10 @@ if(LINGTU_MAPS_BUILD_TOOLS)
   add_executable(
     lingtu_maps_import_unity
     cpp/tools/import_unity_semantics.cpp
-    cpp/sources/unity_scene.cpp
-    cpp/json.cpp
-    cpp/semantic_taxonomy.cpp
-    cpp/semantic_map_persistence.cpp
+    cpp/semantic/unity.cpp
+    cpp/io/json.cpp
+    cpp/semantic/taxonomy.cpp
+    cpp/semantic/store.cpp
   )
   target_link_libraries(
     lingtu_maps_import_unity
@@ -207,6 +225,10 @@ if(BUILD_TESTING)
   add_executable(lingtu_maps_grid_layers_test ${_LINGTU_MAPS_TEST_DIR}/grid_layers_test.cpp)
   target_link_libraries(lingtu_maps_grid_layers_test PRIVATE lingtu_maps)
   add_test(NAME lingtu_maps_grid_layers_test COMMAND lingtu_maps_grid_layers_test)
+
+  add_executable(lingtu_maps_stair_geometry_test ${_LINGTU_MAPS_TEST_DIR}/stair_geometry_test.cpp)
+  target_link_libraries(lingtu_maps_stair_geometry_test PRIVATE lingtu_maps)
+  add_test(NAME lingtu_maps_stair_geometry_test COMMAND lingtu_maps_stair_geometry_test)
 
   add_executable(lingtu_maps_voxel_layer_test ${_LINGTU_MAPS_TEST_DIR}/voxel_layer_test.cpp)
   target_link_libraries(lingtu_maps_voxel_layer_test PRIVATE lingtu_maps)
@@ -250,10 +272,10 @@ if(BUILD_TESTING)
   add_executable(
     lingtu_maps_unity_semantic_import_test
     ${_LINGTU_MAPS_TEST_DIR}/unity_semantic_import_test.cpp
-    cpp/sources/unity_scene.cpp
-    cpp/json.cpp
-    cpp/semantic_taxonomy.cpp
-    cpp/semantic_map_persistence.cpp
+    cpp/semantic/unity.cpp
+    cpp/io/json.cpp
+    cpp/semantic/taxonomy.cpp
+    cpp/semantic/store.cpp
   )
   target_link_libraries(
     lingtu_maps_unity_semantic_import_test
@@ -396,7 +418,7 @@ if(BUILD_TESTING)
     )
   endif()
 
-  if(UNIX AND NOT APPLE)
+  if((UNIX AND NOT APPLE) OR WIN32)
     add_executable(
       lingtu_maps_mapd_uds_test
       ${_LINGTU_MAPS_TEST_DIR}/mapd_uds_test.cpp
@@ -428,6 +450,16 @@ if(BUILD_TESTING)
     target_compile_definitions(lingtu_maps_save_map_test PRIVATE LINGTU_MAPS_HAS_OCTOMAP=1)
   endif()
   add_test(NAME lingtu_maps_save_map_test COMMAND lingtu_maps_save_map_test)
+
+  # Explicit binary argument keeps this native integration test from using a stale PATH tool.
+  add_executable(lingtu_maps_real_pgo_save_reload_test ${_LINGTU_MAPS_TEST_DIR}/real_pgo_save_reload_test.cpp)
+  target_link_libraries(lingtu_maps_real_pgo_save_reload_test PRIVATE lingtu_maps)
+  set(LINGTU_MAPS_TEST_PGO_EXECUTABLE "" CACHE FILEPATH "Current PGO executable for the native save/reload test")
+  if(LINGTU_MAPS_TEST_PGO_EXECUTABLE)
+    add_test(NAME lingtu_maps_real_pgo_save_reload
+      COMMAND lingtu_maps_real_pgo_save_reload_test "${LINGTU_MAPS_TEST_PGO_EXECUTABLE}")
+    set_tests_properties(lingtu_maps_real_pgo_save_reload PROPERTIES TIMEOUT 180)
+  endif()
 
   add_executable(
     lingtu_maps_grid_artifact_io_test
@@ -491,10 +523,13 @@ if(BUILD_TESTING)
   if(octomap_FOUND)
     list(APPEND LINGTU_MAPS_TEST_TARGETS lingtu_maps_ray_test)
   endif()
-  if(UNIX AND NOT APPLE)
+  if((UNIX AND NOT APPLE) OR WIN32)
     list(APPEND LINGTU_MAPS_TEST_TARGETS lingtu_maps_mapd_uds_test)
   endif()
   foreach(test_target IN LISTS LINGTU_MAPS_TEST_TARGETS)
+    if(test_target MATCHES "^lingtu_maps_mapd_(service_dispatch|save_coordinator|uds)_test$")
+      target_include_directories(${test_target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cpp)
+    endif()
     if(MSVC)
       target_compile_options(${test_target} PRIVATE /UNDEBUG /FS)
     else()

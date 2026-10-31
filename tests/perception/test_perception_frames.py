@@ -8,29 +8,51 @@ import pytest
 from perception.frames import FrameDrop, FrameSynchronizer, SynchronizedFrame
 from perception.tracking.projection import project_to_3d
 from runtime.msgs.geometry import Pose
-from runtime.msgs.nav import Odometry
+from runtime.msgs.nav import NavigationState, Odometry
 from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat
 
 
-def _color(ts: float, *, frame_id: str = "camera_link") -> Image:
+def _color(
+    ts: float,
+    *,
+    frame_id: str = "camera_link",
+    generation: int = 0,
+    sequence: int = 0,
+) -> Image:
     return Image(
         data=np.zeros((2, 2, 3), dtype=np.uint8),
         format=ImageFormat.BGR,
         ts=ts,
         frame_id=frame_id,
+        source_generation=generation,
+        source_sequence=sequence,
     )
 
 
-def _depth(ts: float, *, frame_id: str = "camera_link") -> Image:
+def _depth(
+    ts: float,
+    *,
+    frame_id: str = "camera_link",
+    generation: int = 0,
+    sequence: int = 0,
+) -> Image:
     return Image(
         data=np.ones((2, 2), dtype=np.uint16),
         format=ImageFormat.DEPTH_U16,
         ts=ts,
         frame_id=frame_id,
+        source_generation=generation,
+        source_sequence=sequence,
     )
 
 
-def _intrinsics(ts: float = 1.0, *, frame_id: str = "camera_link") -> CameraIntrinsics:
+def _intrinsics(
+    ts: float = 1.0,
+    *,
+    frame_id: str = "camera_link",
+    generation: int = 0,
+    sequence: int = 0,
+) -> CameraIntrinsics:
     return CameraIntrinsics(
         fx=100.0,
         fy=100.0,
@@ -41,6 +63,8 @@ def _intrinsics(ts: float = 1.0, *, frame_id: str = "camera_link") -> CameraIntr
         depth_scale=0.001,
         ts=ts,
         frame_id=frame_id,
+        source_generation=generation,
+        source_sequence=sequence,
     )
 
 
@@ -67,6 +91,22 @@ def _map_odom(ts: float, *, x: float = 0.0) -> dict[str, object]:
         "qw": 1.0,
         "ts": ts,
     }
+
+
+def _nav_state(
+    *,
+    sequence: int,
+    map_id: str,
+    content_epoch: int,
+    ts: float = 10.0,
+) -> NavigationState:
+    return NavigationState(
+        ts=ts,
+        boot_id="nav-boot",
+        sequence=sequence,
+        map_id=map_id,
+        map_content_epoch=content_epoch,
+    )
 
 
 def _synchronizer(**overrides: object) -> FrameSynchronizer:
@@ -191,6 +231,131 @@ def test_rgbd_waits_for_late_camera_info_and_odometry() -> None:
 
     assert len(results) == 1
     assert isinstance(results[0], SynchronizedFrame)
+
+
+def test_camera_restart_clears_old_streams_and_freezes_new_generation() -> None:
+    sync = _synchronizer()
+    sync.push_camera_info(_intrinsics(10.0, generation=10, sequence=1))
+    sync.push_odometry(_odom(10.0))
+    assert sync.push_color(_color(10.0, generation=10, sequence=2)) == ()
+
+    restarted = sync.push_depth(_depth(11.0, generation=20, sequence=1))
+
+    assert restarted == (FrameDrop(reason="camera_restarted", timestamp=11.0),)
+    assert sync.context_token() == (20, "", 0)
+    sync.push_camera_info(_intrinsics(11.0, generation=20, sequence=2))
+    sync.push_odometry(_odom(11.0))
+    result = sync.push_color(_color(11.0, generation=20, sequence=3))
+    frame = next(value for value in result if isinstance(value, SynchronizedFrame))
+    assert frame.source_generation == 20
+    assert frame.context_revision == 1
+
+
+def test_late_old_camera_generation_is_rejected_without_rebinding() -> None:
+    sync = _synchronizer()
+    sync.push_camera_info(_intrinsics(10.0, generation=20, sequence=1))
+
+    result = sync.push_color(_color(9.0, generation=10, sequence=99))
+
+    assert result == (FrameDrop(reason="stale_camera_generation", timestamp=9.0),)
+    assert sync.context_token() == (20, "", 0)
+    assert sync.health()["buffer_sizes"]["color"] == 0
+
+
+def test_late_color_timestamp_is_rejected_before_it_can_trigger_rgbd_failure() -> None:
+    sync = _synchronizer()
+    _prime(sync, ts=10.0)
+    sync.push_depth(_depth(10.0))
+    assert isinstance(sync.push_color(_color(10.0))[0], SynchronizedFrame)
+
+    result = sync.push_color(_color(9.0))
+
+    assert result == (FrameDrop(reason="stale_camera_sample", timestamp=9.0),)
+    assert sync.health()["last_drop_reason"] == "stale_camera_sample"
+
+
+def test_map_switch_clears_old_rgbd_and_freezes_new_map_identity() -> None:
+    sync = _synchronizer()
+    sync.push_navigation_state(_nav_state(sequence=1, map_id="map-a", content_epoch=1))
+    sync.push_camera_info(_intrinsics(10.0))
+    sync.push_odometry(_odom(10.0))
+    assert sync.push_color(_color(10.0)) == ()
+
+    changed = sync.push_navigation_state(
+        _nav_state(sequence=2, map_id="map-b", content_epoch=4, ts=10.1)
+    )
+
+    assert changed == (FrameDrop(reason="map_changed", timestamp=10.1),)
+    sync.push_odometry(_odom(10.2))
+    assert sync.push_depth(_depth(10.2)) == ()
+    result = sync.push_color(_color(10.2))
+    frame = next(value for value in result if isinstance(value, SynchronizedFrame))
+    assert frame.map_id == "map-b"
+    assert frame.content_epoch == 4
+    assert frame.context_revision == 2
+
+
+def test_delayed_samples_from_before_map_switch_cannot_enter_new_map() -> None:
+    sync = _synchronizer()
+    sync.push_navigation_state(
+        _nav_state(sequence=1, map_id="map-a", content_epoch=1, ts=10.0)
+    )
+    sync.push_camera_info(_intrinsics(10.0))
+    sync.push_navigation_state(
+        _nav_state(sequence=2, map_id="map-b", content_epoch=1, ts=20.0)
+    )
+
+    assert sync.push_odometry(_odom(15.0)) == (
+        FrameDrop(reason="stale_context_sample", timestamp=15.0),
+    )
+    assert sync.push_depth(_depth(15.0)) == (
+        FrameDrop(reason="stale_context_sample", timestamp=15.0),
+    )
+    assert sync.push_color(_color(15.0)) == (
+        FrameDrop(reason="stale_context_sample", timestamp=15.0),
+    )
+    assert sync.health()["matched_frames"] == 0
+
+
+def test_map_can_legitimately_switch_back_with_new_state_and_samples() -> None:
+    sync = _synchronizer()
+    sync.push_navigation_state(
+        _nav_state(sequence=1, map_id="map-a", content_epoch=1, ts=10.0)
+    )
+    sync.push_navigation_state(
+        _nav_state(sequence=2, map_id="map-b", content_epoch=1, ts=20.0)
+    )
+    changed = sync.push_navigation_state(
+        _nav_state(sequence=3, map_id="map-a", content_epoch=2, ts=30.0)
+    )
+    assert changed == (FrameDrop(reason="map_changed", timestamp=30.0),)
+
+    sync.push_camera_info(_intrinsics(30.0))
+    sync.push_odometry(_odom(30.0))
+    sync.push_depth(_depth(30.0))
+    frame = next(
+        value
+        for value in sync.push_color(_color(30.0))
+        if isinstance(value, SynchronizedFrame)
+    )
+    assert (frame.map_id, frame.content_epoch) == ("map-a", 2)
+
+
+def test_late_navigation_state_does_not_restore_an_old_map_context() -> None:
+    sync = _synchronizer()
+    sync.push_navigation_state(
+        _nav_state(sequence=1, map_id="map-a", content_epoch=1, ts=10.0)
+    )
+    sync.push_navigation_state(
+        _nav_state(sequence=2, map_id="map-b", content_epoch=1, ts=20.0)
+    )
+
+    result = sync.push_navigation_state(
+        _nav_state(sequence=1, map_id="map-a", content_epoch=1, ts=10.0)
+    )
+
+    assert result == (FrameDrop(reason="stale_navigation_state", timestamp=10.0),)
+    assert sync.context_token()[1:] == ("map-b", 1)
 
 
 @pytest.mark.parametrize(
@@ -475,7 +640,7 @@ def test_invalid_map_transform_is_reported_without_entering_buffer() -> None:
 def test_buffers_have_hard_caps(stream: str, limit: int, reason: str) -> None:
     sync = _synchronizer()
     push = {
-        "color": lambda index: sync.push_color(_color(10.0)),
+        "color": lambda index: sync.push_color(_color(10.0 + index)),
         "depth": lambda index: sync.push_depth(_depth(10.0)),
         "odometry": lambda index: sync.push_odometry(_odom(10.0)),
         "map_odom": lambda index: sync.push_map_odom(_map_odom(10.0)),

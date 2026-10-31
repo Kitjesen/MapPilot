@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { parsePcd, pcdCameraDistance } from '../src/services/pcdPreview.ts'
+import { parsePcd, pcdCameraDistance, pcdPointCount } from '../src/services/pcdPreview.ts'
 
 test('whole-map camera fits all bounding-box corners in wide and narrow viewports', () => {
   const halfSize = [30, 5, 22]
@@ -69,11 +69,13 @@ function pcdFixture(format: 'ascii' | 'binary', count: number): ArrayBuffer {
 }
 
 for (const [format, budget] of [['ascii', 300_000], ['binary', 500_000]] as const) {
-  test(`${format} preview samples both map regions within its point budget`, () => {
+  test(`${format} preview preserves every point above the former display budget`, () => {
     const total = budget * 2 + 7
-    const points = parsePcd(pcdFixture(format, total))
+    const fixture = pcdFixture(format, total)
+    const points = parsePcd(fixture)
+    assert.equal(pcdPointCount(fixture), total)
     assert.ok(points)
-    assert.equal(points.length / 3, budget)
+    assert.equal(points.length / 3, total)
     assert.deepEqual(Array.from(points.slice(0, 3)), [0, -1000, 3])
     assert.deepEqual(Array.from(points.slice(-3)), [total - 1, 1000, 3])
 
@@ -88,9 +90,9 @@ for (const [format, budget] of [['ascii', 300_000], ['binary', 500_000]] as cons
         maxGap = Math.max(maxGap, gap)
       }
     }
-    assert.ok(Math.abs(tailRegionCount - budget / 2) <= 1)
-    assert.ok(minGap >= 1)
-    assert.ok(maxGap <= Math.ceil(total / budget))
+    assert.equal(tailRegionCount, Math.floor(total / 2))
+    assert.equal(minGap, 1)
+    assert.equal(maxGap, 1)
   })
 
   test(`${format} preview preserves all points below its budget`, () => {

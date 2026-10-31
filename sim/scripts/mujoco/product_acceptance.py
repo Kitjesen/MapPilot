@@ -43,7 +43,7 @@ from lingtu.switch_contracts import InitialPose, ProcessReport, SwitchFailed
 _BOOT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _LIFECYCLE_PRODUCTS = frozenset({"teleop", "teleop_avoid", "map", "explore", "nav"})
 _SENSOR_MIN_WINDOW_S = 3.0
-_SIM_TRUTH_SLAM_CONFIG = "src/localization/fastlio2/config/sim_mid360.yaml"
+_SIM_TRUTH_SLAM_CONFIG = "src/localization/ltlio/config/sim_mid360.yaml"
 
 
 @dataclass(frozen=True)
@@ -841,12 +841,33 @@ def _expected_sensor_rates(plan: RunPlan) -> dict[str, float]:
         expected["imu"] = _planned_rate(streams, "imu")
     if plan.has_process("lidar"):
         expected["lidar"] = _planned_rate(streams, "mid360")
-    if plan.has_process("camera"):
-        rgb_hz = _planned_rate(streams, "rgb")
-        depth_hz = _planned_rate(streams, "depth")
-        if rgb_hz != depth_hz:
-            raise RuntimeError("RunPlan RGB and depth rates differ")
-        expected["camera_rgbd"] = rgb_hz
+    if (
+        plan.has_process("camera")
+        and plan.host_config.get("enable_camera", False)
+        and any(streams.get(kind) for kind in ("rgb", "depth"))
+    ):
+        if any(
+            any(key in stream for key in ("owner", "source", "transport"))
+            for kind in ("rgb", "depth") for stream in streams.get(kind, [])
+        ):
+            for kind in ("rgb", "depth"):
+                if not streams.get(kind):
+                    continue
+                rate = _planned_rate(streams, kind)
+                declarations = streams[kind]
+                if len(declarations) != 1:
+                    raise RuntimeError(f"RunPlan must declare exactly one {kind} stream")
+                stream = declarations[0]
+                route = (stream.get("owner"), stream.get("source"), stream.get("transport"))
+                if route != ("sensor_runtime", "mujoco_camera", "camera_shm"):
+                    raise RuntimeError(f"unsupported formal camera route for {kind}: {route}")
+                expected[f"camera_{kind}"] = rate
+        else:
+            rgb_hz = _planned_rate(streams, "rgb")
+            depth_hz = _planned_rate(streams, "depth")
+            if rgb_hz != depth_hz:
+                raise RuntimeError("RunPlan RGB and depth rates differ")
+            expected["camera_rgbd"] = rgb_hz
     return expected
 
 
@@ -914,10 +935,10 @@ def _check_motion(
         or not math.isfinite(float(threshold))
         or threshold <= 0
     ):
-        raise RuntimeError("exact teleop physical motion threshold is missing")
+        raise RuntimeError(f"exact {plan.product} physical motion threshold is missing")
     feeder = next((child for child in children if child.target == "mujoco_feeder"), None)
     if feeder is None:
-        raise RuntimeError("exact teleop feeder launch identity is missing")
+        raise RuntimeError(f"exact {plan.product} feeder launch identity is missing")
     try:
         evidence = load_motion_evidence(
             session_root=state_root,
@@ -927,7 +948,7 @@ def _check_motion(
             launch_id=feeder.launch_id,
         )
     except SimMotionEvidenceError as exc:
-        raise RuntimeError("exact teleop physical motion evidence is invalid") from exc
+        raise RuntimeError(f"exact {plan.product} physical motion evidence is invalid: {exc}") from exc
     if (
         evidence.get("commanded_motion_observed") is not True
         or int(evidence.get("nonzero_command_count") or 0) <= 0
@@ -935,7 +956,7 @@ def _check_motion(
         or int(evidence.get("last_output_sequence") or 0) <= 0
         or float(evidence.get("path_length_xy_m") or 0.0) < float(threshold)
     ):
-        raise RuntimeError("exact teleop physical APPLIED ACK or path evidence is incomplete")
+        raise RuntimeError(f"exact {plan.product} physical APPLIED ACK or path evidence is incomplete")
     return dict(evidence)
 
 
@@ -1131,7 +1152,7 @@ def _teleop_avoid_obstacle(
     if not world_path.is_file():
         raise RuntimeError(f"exact teleop_avoid world MJCF is missing: {world_path}")
     try:
-        root = ElementTree.parse(world_path).getroot()  # noqa: S314 - repository-owned MJCF
+        root = ElementTree.parse(world_path).getroot()
     except (ElementTree.ParseError, OSError) as exc:
         raise RuntimeError("exact teleop_avoid world MJCF is invalid") from exc
     worldbody = root.find("worldbody")
@@ -1485,7 +1506,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(json.dumps(report, ensure_ascii=False, indent=2))
             return 0 if report["ok"] is True else 1
-        completed = subprocess.run(  # noqa: S603
+        completed = subprocess.run(
             command,
             check=False,
             env=_runner_environment(),
@@ -1671,20 +1692,39 @@ def _check_nav_goal(
     for name, evidence in (("contacts", contacts), ("stop", stopped)):
         if evidence.get("product_session_id") != session_id:
             raise RuntimeError(f"nav {name} evidence belongs to another Product session")
+    criteria = dict(scenario["criteria"])
+    legs = scenario.get("legs", [])
+    expected_goals = criteria.get("goals", [])
+    if expected_goals:
+        if len(legs) != len(expected_goals):
+            raise RuntimeError("nav sequence did not execute every requested goal")
+        for index, (leg, expected) in enumerate(zip(legs, expected_goals)):
+            if leg.get("goal") != expected["goal"]:
+                raise RuntimeError(f"nav leg {index} executed a different goal")
+            if navigation._product_goal_state(leg.get("terminal", {})) != "REACHED":
+                raise RuntimeError(f"nav leg {index} did not reach its goal")
+            if leg.get("terminal", {}).get("task_id") != leg.get("task_id"):
+                raise RuntimeError(f"nav leg {index} terminal identity does not match")
+            errors = leg.get("evidence", {}).get("physical_goal_error_m", [])
+            if not errors or errors[-1] > criteria["thresholds"]["max_goal_error_m"]:
+                raise RuntimeError(f"nav leg {index} physical arrival is not confirmed")
+        criteria["goal"] = expected_goals[-1]["goal"]
+        criteria["goal_world"] = expected_goals[-1].get("goal_world", criteria["goal"])
     blockers, error = navigation._product_goal_blockers(
-        scenario["criteria"], motion, contacts, scenario.get("goal_status", {}),
+        criteria, motion, contacts, scenario.get("goal_status", {}),
         stopped, float(scenario.get("ready_fraction", 0)),
     )
     if blockers:
         raise RuntimeError("nav goal evidence: " + ", ".join(blockers))
-    return {"motion": motion, "contacts": contacts, "terminal_stop": stopped, "goal_error_m": error}
+    return {"motion": motion, "contacts": contacts, "terminal_stop": stopped,
+            "goal_error_m": error, "legs": legs}
 
 
 def _runner_case(target: AcceptanceTarget) -> Scenario:
     """Run an existing attach-only Product runner."""
 
     def scenario(_plan: RunPlan, path: Path, _session_id: str) -> Mapping[str, Any]:
-        completed = subprocess.run(  # noqa: S603
+        completed = subprocess.run(
             command_for(replace(target, run_plan=path)),
             check=False,
             capture_output=True,

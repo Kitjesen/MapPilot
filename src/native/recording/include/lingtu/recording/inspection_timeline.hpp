@@ -19,6 +19,14 @@ struct InspectionTaskEventFact {
   std::string route_id;
   std::uint64_t route_revision{0};
   std::int32_t state{0};
+  std::uint32_t point_index{0};
+  std::uint32_t point_count{0};
+  std::uint32_t loop_index{0};
+  std::uint32_t retry_count{0};
+  std::string action;
+  std::string action_request_id;
+  std::string evidence_id;
+  std::string reason;
 };
 
 struct FinalOutputFact {

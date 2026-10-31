@@ -19,7 +19,7 @@ from runtime.msgs.nav import (
     NavigationGoalStatus,
     NavigationState,
 )
-from runtime.msgs.semantic import Detection3D, SceneGraph
+from runtime.msgs.semantic import Detection3D, SceneGraph, SemanticObservation
 from runtime.msgs.sensor import Image, ImageFormat
 
 
@@ -85,17 +85,31 @@ def harness(monkeypatch):
     module.planner_status.subscribe(status)
     module.navigation_state._deliver(NavigationState(boot_id="test-nav", sequence=1, map_id="map-a"))
 
+    observation_sequence = 0
+
     def observe(stamp, *, image_stamp=None, pose_stamp=None, object_stamp=None, object_x=2.0, bbox=None, label="chair",
-                robot_position=(1.5, 0, 0.3), object_id="chair-1", extra_objects=()):
+                robot_position=(1.5, 0, 0.3), object_id="chair-1", extra_objects=(),
+                generation=10, map_id="map-a", present=True, status=None):
+        nonlocal observation_sequence
+        observation_sequence += 1
         clock.now = stamp
         bgr = np.zeros((32, 32, 3), dtype=np.uint8)
         bgr[:, :, 2] = 255
-        module.observation_image._deliver(Image(data=bgr, format=ImageFormat.BGR, ts=stamp if image_stamp is None else image_stamp))
-        module.robot_pose._deliver(PoseStamped(Pose(Vector3(*robot_position)), frame_id="map", ts=stamp if pose_stamp is None else pose_stamp))
-        module.scene_graph._deliver(SceneGraph(frame_id="map", ts=stamp, objects=[Detection3D(
+        objects = [Detection3D(
             id=object_id, label=label, confidence=0.95, position=Vector3(object_x, 0, 1.0),
             bbox_2d=[4, 4, 28, 28] if bbox is None else bbox, ts=stamp if object_stamp is None else object_stamp,
-        ), *extra_objects]))
+        ), *extra_objects] if present else []
+        observation = SemanticObservation(
+            product_session_id=module._product_session_id, sequence=observation_sequence,
+            source_ts=stamp, source_generation=generation, map_id=map_id,
+            status=status or ("positive" if objects else "negative"),
+            image=Image(data=bgr, format=ImageFormat.BGR, ts=stamp if image_stamp is None else image_stamp),
+            robot_pose=PoseStamped(Pose(Vector3(*robot_position)), frame_id="map", ts=stamp if pose_stamp is None else pose_stamp),
+            scene_graph=SceneGraph(frame_id="map", ts=stamp, map_id=map_id, objects=objects),
+            detections=tuple(objects),
+        )
+        module.observation._deliver(observation)
+        return observation
 
     observe(100.0)
     module.instruction._deliver("find the red chair")
@@ -250,7 +264,7 @@ def test_positive_reply_requires_the_target_to_still_be_observed(harness, change
     elif change == "expired":
         h.clock.now = 102.0
     else:
-        h.module.scene_graph._deliver(SceneGraph(ts=100.2, frame_id="map"))
+        h.observe(100.2, present=False)
     h.reply()
     assert h.module._verification.confirmations == 0
     assert h.module._verification.evidence[-1]["verdict"] == "uncertain"

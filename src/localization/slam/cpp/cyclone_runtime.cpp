@@ -1,4 +1,7 @@
+#include "frames.hpp"
+#include "distance.hpp"
 #include "slam.hpp"
+#include "ltlio_geometry_json.hpp"
 #include "map_tracking_health.hpp"
 #include "manual_relocalization.hpp"
 #include "imu_frame_contract.hpp"
@@ -51,7 +54,7 @@ using lingtu::slam::SlamMode;
 using lingtu::slam::SlamOutputs;
 using lingtu::slam::Status;
 using lingtu::slam::Transform3d;
-using lingtu::slam::makeFastLioBackend;
+using lingtu::slam::makeLtlioBackend;
 using lingtu::slam::modeFromString;
 using lingtu::slam::toString;
 
@@ -122,8 +125,8 @@ void fillHeader(lingtu_dds_Header& header, double stamp_s, const char* frame_id)
 }
 
 std::unique_ptr<ISlamBackend> createBackend(const std::string& backend) {
-  if (backend == "fastlio2") {
-    return makeFastLioBackend();
+  if (backend == "ltlio") {
+    return makeLtlioBackend();
   }
   throw std::invalid_argument("unsupported SLAM backend: " + backend);
 }
@@ -198,49 +201,6 @@ lingtu_dds_Pose toDdsPose(const Pose3d& pose) {
   out.orientation.y = pose.qy;
   out.orientation.z = pose.qz;
   out.orientation.w = pose.qw;
-  return out;
-}
-
-Pose3d composePoses(const Pose3d& lhs, const Pose3d& rhs) {
-  auto normalized = [](double& x, double& y, double& z, double& w) {
-    const double norm = std::sqrt(x * x + y * y + z * z + w * w);
-    if (!std::isfinite(norm) || norm <= 1e-12) {
-      x = 0.0;
-      y = 0.0;
-      z = 0.0;
-      w = 1.0;
-      return;
-    }
-    x /= norm;
-    y /= norm;
-    z /= norm;
-    w /= norm;
-  };
-
-  double lx = lhs.qx;
-  double ly = lhs.qy;
-  double lz = lhs.qz;
-  double lw = lhs.qw;
-  double rx = rhs.qx;
-  double ry = rhs.qy;
-  double rz = rhs.qz;
-  double rw = rhs.qw;
-  normalized(lx, ly, lz, lw);
-  normalized(rx, ry, rz, rw);
-
-  const double tx = 2.0 * (ly * rhs.z - lz * rhs.y);
-  const double ty = 2.0 * (lz * rhs.x - lx * rhs.z);
-  const double tz = 2.0 * (lx * rhs.y - ly * rhs.x);
-
-  Pose3d out;
-  out.x = lhs.x + rhs.x + lw * tx + (ly * tz - lz * ty);
-  out.y = lhs.y + rhs.y + lw * ty + (lz * tx - lx * tz);
-  out.z = lhs.z + rhs.z + lw * tz + (lx * ty - ly * tx);
-  out.qx = lw * rx + lx * rw + ly * rz - lz * ry;
-  out.qy = lw * ry - lx * rz + ly * rw + lz * rx;
-  out.qz = lw * rz + lx * ry - ly * rx + lz * rw;
-  out.qw = lw * rw - lx * rx - ly * ry - lz * rz;
-  normalized(out.qx, out.qy, out.qz, out.qw);
   return out;
 }
 
@@ -392,11 +352,20 @@ struct MapObservationMessage {
   }
 };
 
+double projectedLocalizationQuality(
+    const SlamOutputs& out, const MapTrackingHealthProjection& health) {
+  return health.degraded || health.state == lingtu::slam::SlamState::Localizing
+      ? 0.0 : out.localization_quality;
+}
+
 std::optional<MapObservationMessage> toDdsMapObservation(
     const SlamOutputs& out,
     const Pose3d& body_sensor,
-    SlamMode mode) {
-  if (out.source_epoch == 0U || out.observation_sequence == 0U ||
+    SlamMode mode,
+    const MapTrackingHealthProjection& health) {
+  // A transported cabin is not static building geometry. Registered body
+  // scans still publish independently for local perception.
+  if (out.elevator.active || out.source_epoch == 0U || out.observation_sequence == 0U ||
       !(out.registered_cloud_body != nullptr) ||
       !out.state_estimation_at_scan.has_value() ||
       !out.map_odom_tf.has_value()) {
@@ -405,16 +374,16 @@ std::optional<MapObservationMessage> toDdsMapObservation(
 
   MapObservationMessage message;
   const Cloud& scan = *out.registered_cloud_body;
-  const Pose3d map_body =
-      composePoses(out.map_odom_tf->pose, *out.state_estimation_at_scan);
-  const Pose3d map_sensor = composePoses(map_body, body_sensor);
+  const auto frames = lingtu::slam::resolveMapFrames(out, body_sensor);
+  const Pose3d& map_body = *frames.scan_body;
+  const Pose3d& map_sensor = *frames.scan_lidar;
   message.map_frame =
       out.map_odom_tf->frame_id.empty() ? "map" : out.map_odom_tf->frame_id;
   message.sensor_frame = scan.frame_id.empty() ? "body" : scan.frame_id;
   // Tracking describes estimator health; mapping must not inherit a saved-map identity.
-  message.pose_state = mode == SlamMode::Mapping && out.state == lingtu::slam::SlamState::Tracking
-      ? "MAPPING" : toString(out.state);
-  message.pose_reason = out.reason;
+  message.pose_state = mode == SlamMode::Mapping && health.state == lingtu::slam::SlamState::Tracking
+      ? "MAPPING" : toString(health.state);
+  message.pose_reason = health.reason;
   message.scan = toDdsCloud(scan);
 
   fillHeader(message.msg.header, scan.stamp_s, message.map_frame.c_str());
@@ -433,8 +402,8 @@ std::optional<MapObservationMessage> toDdsMapObservation(
   message.msg.sensor_origin.x = map_sensor.x;
   message.msg.sensor_origin.y = map_sensor.y;
   message.msg.sensor_origin.z = map_sensor.z;
-  message.msg.pose_confidence = static_cast<float>(out.confidence);
-  message.msg.localization_quality = static_cast<float>(out.localization_quality);
+  message.msg.pose_confidence = static_cast<float>(health.confidence);
+  message.msg.localization_quality = static_cast<float>(projectedLocalizationQuality(out, health));
   message.bindStorage();
   return message;
 }
@@ -498,7 +467,8 @@ MapTrackingHealthProjection projectedHealth(
           tracking.consecutive_failures,
           tracking.successes,
           tracking.last_success_age_s,
-          3});
+          3,
+          out.elevator.active});
 }
 
 std::string healthJson(
@@ -624,8 +594,21 @@ std::string finiteJsonNumber(double value) {
   return std::isfinite(value) ? std::to_string(value) : "null";
 }
 
-std::string fastLioLidarUpdateJson(
-    const lingtu::slam::FastLioLidarUpdateDiagnostics& diagnostics) {
+std::string elevatorJson(const lingtu::slam::ElevatorStatus& value) {
+  return std::string("{\"mode\":\"") + jsonEscape(value.mode) +
+      "\",\"phase\":\"" + jsonEscape(value.phase) +
+      "\",\"active\":" + (value.active ? "true" : "false") +
+      ",\"height_m\":" + finiteJsonNumber(value.height_m) +
+      ",\"velocity_mps\":" + finiteJsonNumber(value.velocity_mps) +
+      ",\"acceleration_mps2\":" + finiteJsonNumber(value.acceleration_mps2) +
+      ",\"range_quantile_m\":" + finiteJsonNumber(value.range_quantile_m) +
+      ",\"velocity_variance\":" + finiteJsonNumber(value.velocity_variance) +
+      ",\"entries\":" + std::to_string(value.entries) +
+      ",\"exits\":" + std::to_string(value.exits) + "}";
+}
+
+std::string ltlioLidarUpdateJson(
+    const lingtu::slam::LtlioLidarUpdateDiagnostics& diagnostics) {
   return std::string("{") +
       "\"attempted\":" + (diagnostics.attempted ? "true" : "false") +
       ",\"accepted\":" + (diagnostics.accepted ? "true" : "false") +
@@ -703,12 +686,11 @@ std::string statusSnapshotJson(
     const std::string& mode,
     const RuntimeRates& rates,
     const RuntimeMapTrackingStatus& tracking,
-    const ImuFrameInputStatus& imu_frame_input) {
+    const ImuFrameInputStatus& imu_frame_input,
+    const Pose3d& body_sensor,
+    const lingtu::slam::TravelDistance& distance) {
   const MapTrackingHealthProjection health = projectedHealth(out, tracking);
-  const double localization_quality = health.degraded ||
-          health.state == lingtu::slam::SlamState::Localizing
-      ? 0.0
-      : out.localization_quality;
+  const double localization_quality = projectedLocalizationQuality(out, health);
   const int registered_points = (out.registered_cloud_body != nullptr)
       ? static_cast<int>(out.registered_cloud_body->points.size())
       : 0;
@@ -730,6 +712,23 @@ std::string statusSnapshotJson(
           ? out.map_odom_tf->frame_id
           : "");
   const Pose3d pose = out.odometry_odom_body.value_or(Pose3d{});
+  const auto frames = lingtu::slam::resolveMapFrames(out, body_sensor);
+  const auto& twist = out.odometry_twist_body;
+  const std::string map_odometry_json = frames.body && twist
+      ? std::string("{\"frame_id\":\"map\",\"child_frame_id\":\"body\",\"pose\":") +
+          poseJson(*frames.body) + ",\"twist\":{\"vx\":" + std::to_string(twist->vx) +
+          ",\"vy\":" + std::to_string(twist->vy) + ",\"vz\":" + std::to_string(twist->vz) +
+          ",\"wx\":" + std::to_string(twist->wx) + ",\"wy\":" + std::to_string(twist->wy) +
+          ",\"wz\":" + std::to_string(twist->wz) + "},\"session_distance_m\":" +
+          (distance.meters() ? std::to_string(*distance.meters()) : "null") +
+          ",\"session_distance_source\":\"slam_odom\"}"
+      : "null";
+  const std::string map_scan_json = frames.scan_body && out.registered_cloud_body
+      ? std::string("{\"stamp_s\":") + std::to_string(out.registered_cloud_body->stamp_s) +
+          ",\"frame_id\":\"map\",\"child_frame_id\":\"body\",\"pose\":" +
+          poseJson(*frames.scan_body) + ",\"sensor_origin\":" + poseJson(*frames.scan_lidar) + "}"
+      : "null";
+
   const std::string state_estimation_at_scan_json = out.state_estimation_at_scan.has_value()
       ? std::string("{\"stamp_s\":") +
           std::to_string((out.registered_cloud_body != nullptr)
@@ -773,21 +772,13 @@ std::string statusSnapshotJson(
       "\"odom_prior_age_s\":" + std::to_string(out.odom_prior_age_s) + "," +
       "\"odom_prior_error_xy_m\":" + std::to_string(out.odom_prior_error_xy_m) + "," +
       "\"odom_prior_map_points\":" + std::to_string(out.odom_prior_map_points) + "," +
-      "\"fastlio_velocity\":{\"x\":" + std::to_string(out.fastlio_velocity_x) +
-      ",\"y\":" + std::to_string(out.fastlio_velocity_y) +
-      ",\"z\":" + std::to_string(out.fastlio_velocity_z) + "}," +
-      "\"fastlio_degeneracy\":{\"detected\":" +
-      (out.fastlio_degeneracy_detected ? "true" : "false") +
-      ",\"degenerate_dof_count\":" + std::to_string(out.fastlio_degenerate_dof_count) +
-      ",\"condition_number\":" + std::to_string(out.fastlio_condition_number) +
-      ",\"min_eigenvalue\":" + std::to_string(out.fastlio_min_eigenvalue) +
-      ",\"max_eigenvalue\":" + std::to_string(out.fastlio_max_eigenvalue) +
-      ",\"effective_ratio\":" + std::to_string(out.fastlio_effective_ratio) +
-      ",\"pos_cov_trace\":" + std::to_string(out.fastlio_pos_cov_trace) +
-      ",\"iter_num\":" + std::to_string(out.fastlio_iter_num) +
-      ",\"converged\":" + (out.fastlio_converged ? "true" : "false") + "}," +
-      "\"fastlio_lidar_update\":" +
-      fastLioLidarUpdateJson(out.fastlio_lidar_update) + "," +
+      "\"ltlio_velocity\":{\"x\":" + std::to_string(out.ltlio_velocity_x) +
+      ",\"y\":" + std::to_string(out.ltlio_velocity_y) +
+      ",\"z\":" + std::to_string(out.ltlio_velocity_z) + "}," +
+      "\"ltlio_degeneracy\":" + ltlioGeometryJson(out) + "," +
+      "\"ltlio_lidar_update\":" +
+      ltlioLidarUpdateJson(out.ltlio_lidar_update) + "," +
+      "\"elevator\":" + elevatorJson(out.elevator) + "," +
       "\"status_target_hz\":" + std::to_string(rates.status_target_hz) + "," +
       "\"imu_input\":" + imuFrameInputJson(imu_frame_input) + "," +
       "\"imu_input_hz\":" + std::to_string(rates.imu_input_hz) + "," +
@@ -868,6 +859,8 @@ std::string statusSnapshotJson(
       "\"scene_mode\":\"" + jsonEscape(out.scene_mode) + "\"," +
       "\"gnss_fusion_health\":" + gnssFusionHealthJson(out.gnss_fusion_health) + "," +
       "\"map_odom_tf\":" + tf_json + "," +
+      "\"map_odometry\":" + map_odometry_json + "," +
+      "\"map_scan_pose\":" + map_scan_json + "," +
       "\"state_estimation_at_scan\":" + state_estimation_at_scan_json + "," +
       "\"odometry\":{\"frame_id\":\"odom\",\"child_frame_id\":\"body\"," +
       "\"pose\":{\"x\":" + std::to_string(pose.x) +
@@ -1202,7 +1195,9 @@ bool isTrackAgainstMapInputWait(const std::string& message) {
       message == "registered_cloud_stale" ||
       message == "waiting_for_scan" ||
       message == "waiting_for_odometry" ||
-      message == "odometry_unavailable";
+      message == "odometry_unavailable" ||
+      message == "waiting_for_elevator_exit" ||
+      message == "async_relocalization_transport_changed";
 }
 
 struct SlamMapSnapshotAckMessage {
@@ -1358,7 +1353,7 @@ RelocalizationResponseMessage relocalizationResponse(
 }
 
 struct CliConfig {
-  std::string backend = "fastlio2";
+  std::string backend = "ltlio";
   std::string mode = "mapping";
   std::string map_path;
   std::string config_path;
@@ -1458,7 +1453,7 @@ CliConfig parseArgs(int argc, char** argv) {
       cfg.track_against_map_initial_pose = pose;
     } else if (arg == "--help" || arg == "-h") {
       throw std::runtime_error(
-          "usage: slamd [--backend fastlio2] "
+          "usage: slamd [--backend ltlio] "
           "[--mode mapping|localization] [--map PATH] [--config PATH] "
           "[--domain-id N] [--tick-hz HZ] [--log-status-s SECONDS] "
           "[--status-json PATH] [--status-json-hz HZ] "
@@ -1628,6 +1623,12 @@ class DdsRuntime {
         &lingtu_dds_SlamMapSnapshotRequest_desc,
         "map_snapshot_request",
         QosProfile::CommandRequest);
+    geometry_applied_reader_ = reader<lingtu_dds_SlamMapGeometryApplied>(
+        lingtu::message::kSlamMapGeometryApplied.dds_topic.data(),
+        &lingtu_dds_SlamMapGeometryApplied_desc, "geometry_applied", QosProfile::CommandAck);
+    geometry_snapshot_writer_ = writer<lingtu_dds_SlamMapGeometrySnapshot>(
+        lingtu::message::kSlamMapGeometrySnapshot.dds_topic.data(),
+        &lingtu_dds_SlamMapGeometrySnapshot_desc, "geometry_snapshot", QosProfile::SystemStatus);
     relocalization_request_reader_ = reader<lingtu_dds_RelocalizationRequest>(
         lingtu::message::kSlamRelocalizationRequest.dds_topic.data(),
         &lingtu_dds_RelocalizationRequest_desc,
@@ -1729,6 +1730,42 @@ class DdsRuntime {
         map_snapshot_request_reader_,
         lingtu_dds_SlamMapSnapshotRequest_desc,
         std::forward<Handler>(handler));
+  }
+
+  template <typename Handler>
+  void drainGeometryApplied(Handler&& handler) {
+    drainReader<lingtu_dds_SlamMapGeometryApplied>(geometry_applied_reader_,
+        lingtu_dds_SlamMapGeometryApplied_desc, std::forward<Handler>(handler));
+  }
+
+  void writeGeometrySnapshot(const lingtu::slam::MapGeometrySnapshot& snapshot) {
+    const auto now = std::chrono::steady_clock::now();
+    if (geometry_published_epoch_ == snapshot.reset_epoch &&
+        geometry_published_revision_ == snapshot.graph_revision &&
+        now - geometry_published_at_ < std::chrono::seconds(1)) return;
+    lingtu_dds_SlamMapGeometrySnapshot message{};
+    message.reset_epoch = snapshot.reset_epoch;
+    message.graph_revision = snapshot.graph_revision;
+    message.captured_sequence = snapshot.captured_sequence;
+    message.frame_id = const_cast<char*>(snapshot.frame_id.c_str());
+    message.frozen_dir = const_cast<char*>(snapshot.frozen_dir.c_str());
+    message.keyframe_count = snapshot.keyframe_count;
+    message.captured_stamp_ns = snapshot.captured_stamp_ns;
+    message.map_body.position.x = snapshot.map_body.x;
+    message.map_body.position.y = snapshot.map_body.y;
+    message.map_body.position.z = snapshot.map_body.z;
+    message.map_body.orientation.x = snapshot.map_body.qx;
+    message.map_body.orientation.y = snapshot.map_body.qy;
+    message.map_body.orientation.z = snapshot.map_body.qz;
+    message.map_body.orientation.w = snapshot.map_body.qw;
+    message.sensor_origin_z_m = snapshot.sensor_origin_z_m;
+    const auto result = dds_write(geometry_snapshot_writer_, &message);
+    logDdsError(result, "dds_write(geometry_snapshot)");
+    if (result >= 0) {
+      geometry_published_epoch_ = snapshot.reset_epoch;
+      geometry_published_revision_ = snapshot.graph_revision;
+      geometry_published_at_ = now;
+    }
   }
 
   template <typename Handler>
@@ -1838,6 +1875,11 @@ class DdsRuntime {
   dds_entity_t imu_reader_ = DDS_RETCODE_ERROR;
   dds_entity_t odom_prior_reader_ = DDS_RETCODE_ERROR;
   dds_entity_t map_snapshot_request_reader_ = DDS_RETCODE_ERROR;
+  dds_entity_t geometry_applied_reader_ = DDS_RETCODE_ERROR;
+  dds_entity_t geometry_snapshot_writer_ = DDS_RETCODE_ERROR;
+  std::uint64_t geometry_published_epoch_ = 0U;
+  std::uint64_t geometry_published_revision_ = 0U;
+  std::chrono::steady_clock::time_point geometry_published_at_{};
   dds_entity_t relocalization_request_reader_ = DDS_RETCODE_ERROR;
   dds_entity_t tf_writer_ = DDS_RETCODE_ERROR;
   dds_entity_t odom_writer_ = DDS_RETCODE_ERROR;
@@ -1996,6 +2038,7 @@ int main(int argc, char** argv) {
       track_against_map_seed.reset();
     };
     lingtu::slam::ManualRelocalization manual_relocalization;
+    lingtu::slam::TravelDistance travel_distance;
     auto next_tick = std::chrono::steady_clock::now();
     while (g_running) {
       dds.drainImu([&](const lingtu_dds_Imu& msg) {
@@ -2439,6 +2482,12 @@ int main(int argc, char** argv) {
           }
         }
       }
+      travel_distance.update(out);
+      dds.drainGeometryApplied([&](const lingtu_dds_SlamMapGeometryApplied& ack) {
+        backend->acknowledgeMapGeometry(ack.reset_epoch, ack.graph_revision, ack.success,
+                                        ack.message ? ack.message : "");
+      });
+      if (auto geometry = backend->mapGeometrySnapshot()) dds.writeGeometrySnapshot(*geometry);
       const double tracking_status_t = nowSeconds();
       const RuntimeMapTrackingStatus tracking_status{
           track_against_map_enabled,
@@ -2452,6 +2501,7 @@ int main(int argc, char** argv) {
               ? std::max(0.0, tracking_status_t - last_track_against_map_success_s)
               : -1.0,
           backend->relocalizeAsyncInFlight()};
+      const MapTrackingHealthProjection health = projectedHealth(out, tracking_status);
       if (out.map_odom_tf.has_value()) {
         auto msg = toDdsTfMessage(*out.map_odom_tf, out.stamp_s);
         dds.writeTf(msg);
@@ -2496,7 +2546,7 @@ int main(int argc, char** argv) {
            out.observation_sequence > last_map_observation_sequence);
       if (out.source_epoch > 0U && out.observation_sequence > 0U &&
           observation_is_new) {
-        if (auto observation = toDdsMapObservation(out, body_sensor, runtime_mode); observation.has_value()) {
+        if (auto observation = toDdsMapObservation(out, body_sensor, runtime_mode, health); observation.has_value()) {
           if (track_against_map_path != observation_reference_path) {
             observation_reference_path = track_against_map_path;
             observation_reference_id.clear();
@@ -2573,7 +2623,7 @@ int main(int argc, char** argv) {
           }
         }
       }
-      dds.writeQuality(static_cast<float>(out.localization_quality));
+      dds.writeQuality(static_cast<float>(projectedLocalizationQuality(out, health)));
       dds.writeHealth(healthJson(out, tracking_status, imu_frame_input));
       if (!cli.status_json_path.empty() && status_json_period_s > 0.0) {
         const double t = nowSeconds();
@@ -2594,7 +2644,9 @@ int main(int argc, char** argv) {
                   toString(runtime_mode),
                   rates,
                   tracking_status,
-                  imu_frame_input));
+                  imu_frame_input,
+                  body_sensor,
+                  travel_distance));
         }
       }
       if (cli.log_status_s > 0.0) {

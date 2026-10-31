@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 
@@ -104,6 +105,23 @@ bool validatePlanResultBuffer(
   }
   if (result->struct_size < sizeof(*result)) {
     thread_error = std::string(operation) + " result struct is too small";
+    return false;
+  }
+  return true;
+}
+
+bool validateSemanticViewResultBuffer(
+    const lingtu_nav_semantic_view_result_v1* result) {
+  if (result == nullptr) {
+    thread_error = "semantic view result is null";
+    return false;
+  }
+  if (result->abi_version != LINGTU_NAV_SEMANTIC_VIEW_ABI_VERSION) {
+    thread_error = "semantic view result ABI version mismatch";
+    return false;
+  }
+  if (result->struct_size < sizeof(*result)) {
+    thread_error = "semantic view result struct is too small";
     return false;
   }
   return true;
@@ -234,6 +252,33 @@ void copyPlanResult(
   target->point_count = static_cast<unsigned long long>(source.path.size());
 }
 
+void copySemanticViewResult(
+    lingtu_nav_semantic_view_result_v1* target,
+    const lingtu::nav::commands::SemanticViewResult& source) {
+  std::memset(target, 0, sizeof(*target));
+  target->abi_version = LINGTU_NAV_SEMANTIC_VIEW_ABI_VERSION;
+  target->struct_size = sizeof(*target);
+  target->timestamp_s = source.timestamp_s;
+  copyString(target->frame_id, source.frame_id);
+  copyString(target->request_id, source.request_id);
+  copyString(target->boot_id, source.boot_id);
+  copyString(target->map_id, source.map_id);
+  target->map_content_epoch = source.map_content_epoch;
+  target->frame_epoch = source.frame_epoch;
+  target->reference_z = source.reference_z;
+  target->available = source.available ? 1 : 0;
+  target->geometry_exhausted = source.geometry_exhausted ? 1 : 0;
+  copyString(target->reason, source.reason);
+  target->candidate_count = static_cast<std::uint32_t>(source.candidates.size());
+  for (std::size_t index = 0U; index < source.candidates.size(); ++index) {
+    const auto& candidate = source.candidates[index];
+    target->candidates[index] = {
+        candidate.position.x, candidate.position.y, candidate.position.z,
+        candidate.yaw, candidate.score, candidate.route_cost_m,
+        candidate.visible_cells};
+  }
+}
+
 void copyOperatorMotionReceipt(
     lingtu_nav_operator_motion_receipt_v1* target,
     const lingtu::nav::commands::OperatorMotionCommandReceipt& source) {
@@ -297,7 +342,6 @@ void copyInspectionTaskEvent(
   target->kind = source.kind;
   copyString(target->task_id, source.task_id);
   copyString(target->request_id, source.request_id);
-  copyString(target->command_request_id, source.command_request_id);
   target->state = source.state;
   copyString(target->map_id, source.map_id);
   target->map_content_epoch = source.map_content_epoch;
@@ -307,7 +351,6 @@ void copyInspectionTaskEvent(
   target->point_count = source.point_count;
   target->loop_index = source.loop_index;
   target->retry_count = source.retry_count;
-  copyString(target->point_id, source.point_id);
   copyString(target->action, source.action);
   copyString(target->action_request_id, source.action_request_id);
   copyString(target->evidence_id, source.evidence_id);
@@ -612,7 +655,8 @@ uint64_t lingtu_nav_client_capabilities(void) {
       LINGTU_NAV_CLIENT_CAP_EXPLORATION_RUN_EVENTS |
       LINGTU_NAV_CLIENT_CAP_TRAVERSABILITY_GRID |
       LINGTU_NAV_CLIENT_CAP_JOINT_STATE |
-      LINGTU_NAV_CLIENT_CAP_PLAN_PREVIEW;
+      LINGTU_NAV_CLIENT_CAP_PLAN_PREVIEW |
+      LINGTU_NAV_CLIENT_CAP_SEMANTIC_VIEW_QUERY;
 }
 
 lingtu_nav_client_handle lingtu_nav_client_create(int domain_id) {
@@ -748,6 +792,46 @@ int lingtu_nav_client_preview_plan_v2(
     thread_error = "unknown native plan preview failure";
     return -1;
   }
+}
+
+int lingtu_nav_client_query_semantic_views_v1(
+    lingtu_nav_client_handle handle,
+    const char* boot_id,
+    const char* map_id,
+    int64_t map_content_epoch,
+    const char* frame_id,
+    unsigned long long frame_epoch,
+    double reference_z,
+    double camera_range_m,
+    double camera_horizontal_fov_rad,
+    const lingtu_nav_semantic_camera_view_v1* views,
+    uint32_t view_count,
+    int timeout_ms,
+    lingtu_nav_semantic_view_result_v1* result) {
+  if (!validateSemanticViewResultBuffer(result)) return -1;
+  if (boot_id == nullptr || *boot_id == '\0' || map_id == nullptr ||
+      *map_id == '\0' || frame_id == nullptr || *frame_id == '\0' ||
+      view_count > LINGTU_NAV_SEMANTIC_VIEW_MAX_VIEWS ||
+      (view_count > 0U && views == nullptr)) {
+    thread_error = "semantic view query received an invalid argument";
+    return -1;
+  }
+  return invoke(handle, [&](lingtu::nav::commands::Client& client) {
+    std::vector<lingtu::nav::commands::SemanticCameraView> query_views;
+    query_views.reserve(view_count);
+    for (std::uint32_t index = 0U; index < view_count; ++index) {
+      const auto& view = views[index];
+      query_views.push_back(
+          {view.x, view.y, view.yaw, view.range_m, view.horizontal_fov_rad});
+    }
+    const auto response = client.querySemanticViews(
+        boot_id, map_id, map_content_epoch, frame_id, frame_epoch, reference_z,
+        camera_range_m, camera_horizontal_fov_rad, query_views, timeout_ms);
+    if (response.candidates.size() > LINGTU_NAV_SEMANTIC_VIEW_MAX_CANDIDATES) {
+      throw std::runtime_error("semantic view result exceeds fixed candidate capacity");
+    }
+    copySemanticViewResult(result, response);
+  });
 }
 
 int lingtu_nav_client_cancel_task_with_receipt_v1(

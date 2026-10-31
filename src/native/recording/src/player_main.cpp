@@ -2,9 +2,11 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <iostream>
+#include <iomanip>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -17,6 +19,9 @@
 
 #include "dds/dds.h"
 #include "lingtu/recording/cyclone_cdr.hpp"
+#include "lingtu/recording/history_series.hpp"
+#include "lingtu/recording/recorded_scene.hpp"
+#include "lingtu/recording/message_preview.hpp"
 #include "lingtu/recording/inspection_timeline_cdr.hpp"
 #include "lingtu/recording/mcap_session.hpp"
 #include "lingtu/recording/recording_core.hpp"
@@ -34,20 +39,39 @@ struct Options {
   bool dry_run{false};
   bool list_topics{false};
   bool info{false};
+  bool series{false};
+  bool scene{false};
+  lingtu::recording::SceneQuery scene_query;
+  lingtu::recording::SeriesQuery series_query;
+  bool json{false};
+  bool prefer_raw_inputs{false};
   std::string inspection_task_id;
   std::vector<std::string> topics;
 };
 
 void print_help() {
-  std::cout << "usage: lingtu_dds_player FILE [options]\n"
+  std::cout << "usage: ltplay SESSION_DIR_OR_MCAP [options]\n"
+            << "       lingtu_dds_player FILE [options]\n"
             << "       lingtu_dds_player --list-topics\n"
             << "       lingtu_dds_player --info FILE\n\n"
+            << "  --scene-info FILE    List recorded cloud/pose/path streams offline\n"
+            << "  --scene FILE         Read a scene window up to 30 seconds offline\n"
+            << "  --max-frames N       Retain at most N cloud frames (1..32)\n"
+            << "  --cloud-topic TOPIC  Select a recorded point cloud stream\n"
+            << "  --pose-topic TOPIC   Select a recorded odometry stream\n"
+            << "  --path-topic TOPIC   Select a recorded plan stream; repeat up to twice\n"
+            << "  --max-poses N        Retain at most N trajectory poses (2..4000)\n"
+            << "  --series FILE        Read an offline numeric field curve (never publishes)\n"
+            << "  --field PATH         Numeric preview path, e.g. position_rad[0]\n"
+            << "  --start S --end S    Window in seconds from recording start\n"
+            << "  --max-points N       Curve samples (16..10000) or scene cloud points/frame (1..4096)\n"
             << "  --domain N           Isolated replay domain (default: 84)\n"
             << "  --rate N             Playback rate (default: 1.0)\n"
             << "  --topic TOPIC        Replay only this sensor topic; repeatable\n"
             << "  --dry-run            Check container/schema/CDR envelope without publishing\n"
             << "  --list-topics        List supported DDS topics without opening a file\n"
             << "  --info FILE          Show an offline MCAP topic summary\n"
+            << "  --json               Machine-readable --info or --dry-run result\n"
             << "  --verify-inspection-task ID\n"
             << "                       Verify one task timeline; requires --dry-run\n"
             << "  --allow-live-domain  Explicitly permit domain 0\n"
@@ -56,6 +80,7 @@ void print_help() {
 
 Options parse_options(int argc, char **argv) {
   Options options;
+  options.prefer_raw_inputs = std::filesystem::path(argv[0]).stem() == "ltplay";
   for (int index = 1; index < argc; ++index) {
     const std::string argument = argv[index];
     auto value = [&]() -> std::string {
@@ -66,7 +91,7 @@ Options parse_options(int argc, char **argv) {
     };
     if (argument == "--domain") {
       options.domain_id = std::stoi(value());
-    } else if (argument == "--rate") {
+    } else if (argument == "--rate" || argument == "-r") {
       options.rate = std::stod(value());
     } else if (argument == "--topic") {
       options.topics.push_back(value());
@@ -78,6 +103,37 @@ Options parse_options(int argc, char **argv) {
       options.dry_run = true;
     } else if (argument == "--list-topics") {
       options.list_topics = true;
+    } else if (argument == "--json") {
+      options.json = true;
+    } else if (argument == "--field") {
+      options.series_query.field = value();
+    } else if (argument == "--start") {
+      options.series_query.start_s = std::stod(value());
+      options.scene_query.start_s = options.series_query.start_s;
+    } else if (argument == "--end") {
+      options.series_query.end_s = std::stod(value());
+      options.scene_query.end_s = *options.series_query.end_s;
+    } else if (argument == "--max-points") {
+      options.series_query.max_points = std::stoull(value());
+      options.scene_query.max_points = options.series_query.max_points;
+    } else if (argument == "--max-frames") {
+      options.scene_query.max_frames = std::stoull(value());
+    } else if (argument == "--max-poses") {
+      options.scene_query.max_poses = std::stoull(value());
+    } else if (argument == "--cloud-topic") {
+      options.scene_query.cloud_topic = value();
+    } else if (argument == "--pose-topic") {
+      options.scene_query.pose_topic = value();
+    } else if (argument == "--path-topic") {
+      options.scene_query.path_topics.push_back(value());
+    } else if (argument == "--scene" || argument == "--scene-info") {
+      if (!options.input.empty()) throw std::invalid_argument("scene mode requires one input");
+      options.input = value(); options.scene = true;
+      options.scene_query.info = argument == "--scene-info";
+    } else if (argument == "--series") {
+      if (!options.input.empty()) throw std::invalid_argument("--series requires one input");
+      options.input = value();
+      options.series = true;
     } else if (argument == "--info") {
       if (!options.input.empty()) {
         throw std::invalid_argument("--info cannot be combined with a positional FILE");
@@ -106,10 +162,40 @@ Options parse_options(int argc, char **argv) {
   if (options.input.empty() && !options.list_topics) {
     throw std::invalid_argument("MCAP input file is required");
   }
+  if (options.prefer_raw_inputs && !options.input.empty() && !options.input.has_parent_path() &&
+      !std::filesystem::exists(options.input)) {
+    std::filesystem::path root;
+    if (const auto *configured = std::getenv("LINGTU_RECORDING_ROOT"); configured && *configured) {
+      root = configured;
+    } else if (const auto *home = std::getenv("HOME"); home && *home) {
+      root = std::filesystem::path(home) / "data/lingtu/recordings";
+    } else if (const auto *home = std::getenv("USERPROFILE"); home && *home) {
+      root = std::filesystem::path(home) / "data/lingtu/recordings";
+    }
+    const auto root_text = root.generic_string();
+    if (root_text == "~" || root_text.rfind("~/", 0) == 0) {
+      const char *home = std::getenv("HOME");
+      if (!home || !*home) home = std::getenv("USERPROFILE");
+      if (home && *home) root = std::filesystem::path(home) / root_text.substr(root_text == "~" ? 1 : 2);
+    }
+    if (!root.empty() && std::filesystem::is_directory(root / options.input)) {
+      options.input = root / options.input;
+    }
+  }
+  if (!options.input.empty() && std::filesystem::is_directory(options.input)) {
+    options.input /= "dds/sensors.mcap";
+  }
   if (options.list_topics && options.info) {
     throw std::invalid_argument("--list-topics and --info are mutually exclusive");
   }
-  if (!options.list_topics && !options.info) {
+  if (options.scene && (options.series || options.info || options.list_topics || options.dry_run))
+    throw std::invalid_argument("select one read mode");
+  if (options.series) {
+    if (options.list_topics || options.info || options.dry_run || options.topics.size() != 1)
+      throw std::invalid_argument("--series requires exactly one --topic and no other read mode");
+    options.series_query.topic = options.topics.front();
+  }
+  if (!options.list_topics && !options.info && !options.series && !options.scene) {
     const std::string domain_error =
         lingtu::recording::validate_replay_domain(options.domain_id, options.allow_live_domain);
     if (!domain_error.empty()) {
@@ -121,6 +207,9 @@ Options parse_options(int argc, char **argv) {
         throw std::invalid_argument("topic is not in the sensor replay allowlist: " + topic);
       }
     }
+  }
+  if (options.json && !options.info && !options.dry_run && !options.series && !options.scene) {
+    throw std::invalid_argument("--json requires --info or --dry-run");
   }
   if (!options.inspection_task_id.empty() && !options.dry_run) {
     throw std::invalid_argument("--verify-inspection-task requires --dry-run");
@@ -168,7 +257,7 @@ void print_topics() {
               << lingtu::recording::replay_policy_name(binding.replay_policy) << '\n';
   }
 }
-void print_info(const std::filesystem::path &input) {
+void print_info(const std::filesystem::path &input, bool json) {
   mcap::McapReader reader;
   const auto open_status = reader.open(input.string());
   if (!open_status.ok()) {
@@ -195,8 +284,16 @@ void print_info(const std::filesystem::path &input) {
       statistics->messageCount == 0 || statistics->messageEndTime < statistics->messageStartTime
           ? 0
           : statistics->messageEndTime - statistics->messageStartTime;
-  std::cout << "profile=" << reader.header()->profile << " messages=" << statistics->messageCount
-            << " duration_ns=" << duration_ns << '\n';
+  if (json) {
+    std::cout << "{\"version\":1,\"ok\":true,\"profile\":" << std::quoted(reader.header()->profile)
+              << ",\"message_count\":" << statistics->messageCount
+              << ",\"start_time_ns\":" << statistics->messageStartTime
+              << ",\"end_time_ns\":" << statistics->messageEndTime
+              << ",\"duration_ns\":" << duration_ns << ",\"topics\":[";
+  } else {
+    std::cout << "profile=" << reader.header()->profile << " messages=" << statistics->messageCount
+              << " duration_ns=" << duration_ns << '\n';
+  }
 
   std::vector<mcap::ChannelPtr> channels;
   for (const auto &[channel_id, channel] : reader.channels()) {
@@ -206,6 +303,7 @@ void print_info(const std::filesystem::path &input) {
   std::sort(channels.begin(), channels.end(), [](const auto &left, const auto &right) {
     return left->topic < right->topic;
   });
+  bool first_channel = true;
   for (const auto &channel : channels) {
     const auto *binding = lingtu::recording::find_recording_topic(channel->topic);
     if (binding == nullptr) {
@@ -215,10 +313,21 @@ void print_info(const std::filesystem::path &input) {
     const auto count_it = statistics->channelMessageCounts.find(channel->id);
     const std::uint64_t count =
         count_it == statistics->channelMessageCounts.end() ? 0 : count_it->second;
-    std::cout << "topic=" << binding->contract->topic << " dds_topic=" << channel->topic
-              << " count=" << count << " idl_type=" << binding->contract->idl_type
-              << " policy=" << lingtu::recording::replay_policy_name(binding->replay_policy) << '\n';
+    if (json) {
+      if (!first_channel) std::cout << ',';
+      first_channel = false;
+      std::cout << "{\"topic\":" << std::quoted(std::string(binding->contract->topic))
+                << ",\"dds_topic\":" << std::quoted(channel->topic)
+                << ",\"type_name\":" << std::quoted(std::string(binding->contract->idl_type))
+                << ",\"message_count\":" << count << ",\"replayable\":"
+                << (binding->replay_policy == lingtu::recording::ReplayPolicy::Replayable ? "true" : "false") << '}';
+    } else {
+      std::cout << "topic=" << binding->contract->topic << " dds_topic=" << channel->topic
+                << " count=" << count << " idl_type=" << binding->contract->idl_type
+                << " policy=" << lingtu::recording::replay_policy_name(binding->replay_policy) << '\n';
+    }
   }
+  if (json) std::cout << "]}\n";
   reader.close();
 }
 
@@ -241,13 +350,21 @@ struct Publisher {
 int main(int argc, char **argv) {
   dds_entity_t participant = DDS_RETCODE_ERROR;
   try {
-    const Options options = parse_options(argc, argv);
+    Options options = parse_options(argc, argv);
     if (options.list_topics) {
       print_topics();
       return 0;
     }
+    if (options.scene) {
+      std::cout << lingtu::recording::read_recorded_scene(options.input, options.scene_query).json() << "\n";
+      return 0;
+    }
+    if (options.series) {
+      std::cout << lingtu::recording::read_history_series(options.input, options.series_query).json() << "\n";
+      return 0;
+    }
     if (options.info) {
-      print_info(options.input);
+      print_info(options.input, options.json);
       return 0;
     }
     const auto idl_path = options.idl_path.empty()
@@ -272,6 +389,24 @@ int main(int argc, char **argv) {
                            [&](const mcap::Status &status) { parse_error = status.message; });
     if (!summary_status.ok()) {
       throw std::runtime_error("failed to read MCAP summary: " + summary_status.message);
+    }
+
+    // The short operator entry defaults to raw estimator inputs when present.
+    // Explicit topic choices still win; the established player entry retains
+    // its existing all-sensor behavior for callers that rely on it.
+    if (options.prefer_raw_inputs && options.topics.empty() && !options.dry_run) {
+      for (const auto *name : {"/imu/raw", "/lidar/raw_frame"}) {
+        const auto *binding = lingtu::recording::find_sensor_topic(name);
+        for (const auto &entry : reader.channels()) {
+          if (entry.second->topic == binding->contract->dds_topic) {
+            const auto &statistics = reader.statistics();
+            if (!statistics || (statistics->channelMessageCounts.count(entry.first) &&
+                statistics->channelMessageCounts.at(entry.first) > 0)) {
+              options.topics.emplace_back(name);
+            }
+          }
+        }
+      }
     }
 
     if (!options.dry_run) {
@@ -340,10 +475,9 @@ int main(int argc, char **argv) {
         if (!validation_error.empty()) {
           throw std::runtime_error(validation_error + ": " + view.channel->topic);
         }
+        ++skipped_record_only;
         if (options.dry_run) {
           ++replayed;
-        } else {
-          ++skipped_record_only;
         }
         continue;
       }
@@ -409,6 +543,18 @@ int main(int argc, char **argv) {
                                  inspection_report.summary());
       }
     }
+    if (options.json) {
+      std::cout << "{\"version\":1,\"ok\":true,\"mode\":\"validate\",\"validated_messages\":"
+                << replayed << ",\"skipped_record_only\":" << skipped_record_only
+                << ",\"domain\":" << options.domain_id << ",\"rate\":" << options.rate;
+      if (!options.inspection_task_id.empty()) {
+        std::cout << ",\"inspection_task_id\":" << std::quoted(options.inspection_task_id)
+                  << ",\"terminal_state\":" << inspection_report.terminal_state
+                  << ",\"confirmed_output_sequence\":" << inspection_report.confirmed_output_sequence;
+      }
+      std::cout << "}\n";
+      return 0;
+    }
     std::cout << (options.dry_run ? "validated=" : "replayed=") << replayed
               << " domain=" << options.domain_id << " rate=" << options.rate
               << " skipped_record_only=" << skipped_record_only;
@@ -423,7 +569,19 @@ int main(int argc, char **argv) {
     if (participant > 0) {
       dds_delete(participant);
     }
-    std::cerr << "lingtu_dds_player: " << error.what() << "\n";
+    bool series_json = false, series_arg = false, scene_arg = false, json_arg = false;
+    for (int index = 1; index < argc; ++index) {
+      series_arg |= std::string(argv[index]) == "--series";
+      scene_arg |= std::string(argv[index]) == "--scene" || std::string(argv[index]) == "--scene-info";
+      json_arg |= std::string(argv[index]) == "--json";
+    }
+    series_json = (series_arg || scene_arg) && json_arg;
+    if (series_json) {
+      const auto *typed = dynamic_cast<const lingtu::recording::SeriesError *>(&error);
+      std::cout << "{\"version\":1,\"ok\":false,\"error\":{\"code\":"
+                << lingtu::recording::json_quote(typed ? typed->code : (scene_arg ? "recording_scene_invalid_query" : "recording_series_invalid_query"))
+                << ",\"message\":" << lingtu::recording::json_quote(typed ? typed->what() : (scene_arg ? "Invalid recorded scene query." : "Invalid numeric series query.")) << "}}\n";
+    } else std::cerr << "lingtu_dds_player: " << error.what() << "\n";
     return 2;
   }
 }

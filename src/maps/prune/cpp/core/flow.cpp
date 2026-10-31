@@ -46,11 +46,11 @@ std::vector<StageSpec> productFlow() {
       },
       {
           "label",
-          "partial",
+          "unused",
           "posed scan frames",
-          "ground marks + future instance marks",
+          "no semantic labels",
           "prune_v2",
-          "Ground is currently a simple local-z threshold; instance labels are not product-ready.",
+          "Saved-map cleaning uses current multi-frame geometry; standalone ground segmentation is separate.",
       },
       {
           "submap",
@@ -65,7 +65,7 @@ std::vector<StageSpec> productFlow() {
           "evidence",
           "ready",
           "voxelized posed scans",
-          "voxel hits + frame_count and confirmed per-point ground evidence",
+          "voxel hits + frame_count and confirmed per-point free-space evidence",
           "prune_v2",
           "Counts later observed free rays once per frame; confirmed endpoints win within a frame.",
       },
@@ -75,8 +75,8 @@ std::vector<StageSpec> productFlow() {
           "voxel evidence",
           "protected static points and voxels",
           "prune_v2",
-          "Keeps unconfirmed, confirmed low-height and locally supported planar points. Missing "
-          "scans and occlusion are not free evidence; full terrain segmentation is not implemented.",
+          "Ground, walls and ramps use repeated local surface evidence evaluated at the final state. "
+          "Missing scans and occlusion are not free evidence.",
       },
       {
           "score",

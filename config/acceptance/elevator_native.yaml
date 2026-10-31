@@ -1,0 +1,18 @@
+# Complete pinned Elevator-LIO estimator through LingTu's native SLAM API.
+# Public dataset calibration only; not a deployed robot configuration.
+body_frame: dataset_body
+world_frame: odom
+acc_scale: 9.80665
+time_diff_lidar_to_imu: 0.0
+max_imu_gap_s: 0.25
+imu_init_num: 200
+lidar_filter_num: 2
+lidar_min_range: 0.8
+r_il: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+t_il: [-0.011, -0.02329, 0.04412]
+navigation_body_from_imu_rotation: [0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+navigation_body_from_imu_translation: [0.02329, -0.21100000000000002, 0.10588]
+elevator_mode: auto
+# Exclude loop candidates from a frontend numerical comparison.
+online_mapping:
+  min_time_s: 1000000000.0

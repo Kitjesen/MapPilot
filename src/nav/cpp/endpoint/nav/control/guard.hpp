@@ -18,7 +18,7 @@ struct ControlLoopRuntimeGuardConfig {
   std::size_t unhealthy_confirmation_samples{2};
   std::size_t recovery_confirmation_samples{20};
   std::size_t latch_miss_streak{20};
-  bool auto_resume{false};
+  bool auto_resume{true};
 };
 
 struct ControlLoopRuntimeGuardDecision {

@@ -2,8 +2,8 @@
 
 #include <utility>
 
-#include "runtime/goal/plan.hpp"
-#include "runtime/goal/runtime.hpp"
+#include "app/goal/plan.hpp"
+#include "app/goal/runtime.hpp"
 
 namespace lingtu::nav::endpoint {
 
@@ -65,8 +65,8 @@ CommandAck GoalTaskCancelRouter::handle(const GoalTaskCancelRequest &request) {
     if (request_status_) {
       request_status_();
     }
-    return {serviced.action_committed,
-            serviced.action_committed ? "cancel_requested" : serviced.reason};
+    const bool accepted = serviced.action_committed || serviced.pending;
+    return {accepted, accepted ? "cancel_requested" : serviced.reason};
   }
 
   return {false, "task_not_active"};

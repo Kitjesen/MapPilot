@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -27,7 +28,7 @@ from decision.modules.visual_servo import VisualServoModule
 from perception.backends import RgbdObservationSource
 from perception.detection.detector_base import Detection2D
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
-from runtime.msgs.semantic import Detection3D
+from runtime.msgs.semantic import Detection3D, SemanticObservation
 from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat
 
 
@@ -82,13 +83,23 @@ def observe_frame(source, frame, transform, stamp):
 class FollowController:
     def __init__(self, binary, domain_id, log, follow_distance=1.8, goal_deadband_m=0.25):
         self.binary, self.domain_id, self.log = binary, domain_id, log
+        self.product_session_id = os.environ.get("LINGTU_PRODUCT_SESSION_ID", "").strip()
+        self.map_id = os.environ.get("LINGTU_MAP_ID", "").strip()
+        self.content_epoch = int(os.environ.get("LINGTU_MAP_CONTENT_EPOCH", "0") or 0)
+        if not self.product_session_id or not self.map_id or self.content_epoch <= 0:
+            raise RuntimeError("rgbd_follow_requires_product_map_identity")
+        self.observation_sequence = 0
         self.goals = 0
         self.accepted = 0
         self.cancels = 0
         self.task = None
         self.pending = None
         self.cancel_reason = None
-        self.servo = VisualServoModule(follow_distance=follow_distance, goal_deadband_m=goal_deadband_m)
+        self.servo = VisualServoModule(
+            follow_distance=follow_distance,
+            goal_deadband_m=goal_deadband_m,
+            product_session_id=self.product_session_id,
+        )
         self.servo.setup()
         self.servo.goal_pose._add_callback(self.queue_goal)
         self.servo.goal_cancel._add_callback(self.queue_cancel)
@@ -156,27 +167,50 @@ class FollowController:
             }
         )
 
-    def update(self, row, color, detections):
-        self.servo.robot_pose._deliver(
-            PoseStamped(
-                pose=Pose(position=Vector3(row["x"], row["y"], row["z"]), orientation=Quaternion.from_yaw(row["yaw"])),
-                frame_id="map",
+    def update(self, row, color, detections, map_from_camera):
+        self.observation_sequence += 1
+        source_ts = float(row["t"])
+        image = Image(
+            data=color.data,
+            format=color.format,
+            frame_id=color.frame_id,
+            ts=source_ts,
+            source_generation=1,
+            source_sequence=self.observation_sequence,
+        )
+        runtime_detections = tuple(
+            Detection3D(
+                id="shirt_fixture",
+                label="person",
+                confidence=item.score,
+                position=Vector3(*map(float, item.position)),
+                bbox_2d=item.bbox_2d.tolist(),
                 ts=row["t"],
             )
+            for item in detections
         )
-        self.servo.color_image._deliver(color)
-        self.servo.detections_3d._deliver(
-            [
-                Detection3D(
-                    id="shirt_fixture",
-                    label="person",
-                    confidence=item.score,
-                    position=Vector3(*map(float, item.position)),
-                    bbox_2d=item.bbox_2d.tolist(),
-                    ts=row["t"],
-                )
-                for item in detections
-            ]
+        self.servo.observation._deliver(
+            SemanticObservation(
+                product_session_id=self.product_session_id,
+                sequence=self.observation_sequence,
+                source_ts=source_ts,
+                completed_ts=time.time(),
+                source_generation=1,
+                map_id=self.map_id,
+                content_epoch=self.content_epoch,
+                status="positive" if runtime_detections else "negative",
+                image=image,
+                robot_pose=PoseStamped(
+                    pose=Pose(
+                        position=Vector3(row["x"], row["y"], row["z"]),
+                        orientation=Quaternion.from_yaw(row["yaw"]),
+                    ),
+                    frame_id="map",
+                    ts=source_ts,
+                ),
+                map_from_camera=np.asarray(map_from_camera, dtype=np.float64).copy(),
+                detections=runtime_detections,
+            )
         )
         self.dispatch()
 
@@ -235,9 +269,8 @@ def run(args):
             last_seen = time.monotonic()
             restore_snapshot(engine, row)
             frame = engine.get_camera_data()
-            color, detections = observe_frame(
-                source, frame, camera_optical_transform(engine._data, camera_id), row["t"]
-            )
+            map_from_camera = camera_optical_transform(engine._data, camera_id)
+            color, detections = observe_frame(source, frame, map_from_camera, row["t"])
             samples += 1
             visible += bool(detections)
             annotated = cv2.cvtColor(frame.rgb, cv2.COLOR_RGB2BGR)
@@ -273,7 +306,7 @@ def run(args):
                 )
                 + "\n"
             )
-            controller.update(row, color, detections)
+            controller.update(row, color, detections, map_from_camera)
             time.sleep(0.10)
         else:
             error = "follow_worker_timeout"

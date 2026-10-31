@@ -521,10 +521,10 @@ NX 的 ext4 错误计数已到 52。已下载 8 份地图及配置的完整压�
 ## 9. 源码与验收依据
 
 - [原生巡检说明](../../src/nav/inspection/README.md)、[Point/Route 定义](../../src/nav/inspection/inspection.hpp)、[执行状态机](../../src/nav/inspection/inspection.cpp)。
-- [inspection Product](../../config/runtime_graph/products/inspection.yaml)、[tracking Product](../../config/runtime_graph/products/tracking.yaml)、[Host 组成](../../src/lingtu/assembly/stacks/composition.py)。
+- [inspection Product](../../config/runtime/products/inspection.yaml)、[tracking Product](../../config/runtime/products/tracking.yaml)、[Host 组成](../../src/lingtu/assembly/host/stacks/composition.py)。
 - [VisualServo](../../src/decision/modules/visual_servo.py)、[人员目标处理](../../src/decision/vision/person.py)、[RGB-D 时间与坐标处理](../../src/perception/frames.py)。
 - [检查证据桥](../../src/perception/inspection/bridge_module.py)、[证据动作契约](../../src/runtime/contracts/inspection_evidence.py)。
 - [巡检界面](../../web/src/components/InspectionWorkbench.tsx)、[现有地图/路径 API](../../src/gateway/maps/routes.py)。
 - [mapd 点位入口](../../src/gateway/maps/places.py)、[另一套 locations 入口](../../src/gateway/maps/locations.py)、[路线提交](../../src/gateway/routes/inspection.py)。
 - [巡检仿真验收范围](../../config/acceptance/mujoco/inspection.json)、[RGB-D 跟随场景](../../config/acceptance/mujoco/rgbd_follow.json)、[跟随仿真检测器](../../sim/scripts/mujoco/rgbd_follow_worker.py)。
-- [验证层级](../../docs/testing.md)、[当前路线图](../../docs/roadmap.md)、[全局建图后端计划](../../src/localization/opt/NEXT_STEPS.md)。
+- [验证层级](../../docs/testing.md)、[当前路线图](../../docs/roadmap.md)、[全局建图后端计划](../../docs/roadmap/localization-opt-next-steps.md)。

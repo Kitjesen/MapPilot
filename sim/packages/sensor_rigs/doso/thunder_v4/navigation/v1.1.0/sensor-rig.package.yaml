@@ -1,0 +1,106 @@
+schema: lingtu.sim.sensor-rig-package.v1
+id: thunderv4_navigation
+version: 1.1.0
+kind: sensor_rig
+description: Explicit nine-sensor suite; legacy navigation streams unchanged, optional experimental measurements and synthetic WGS84 zero-origin GNSS (NO_FIX, noise off).
+sensors:
+  - id: imu
+    package: imu@1.0.0
+    parent_frame: imu
+    runtime: {owner: physics, source: mujoco_sensor}
+    frequency_hz: 200
+  - id: mid360
+    package: mid360@1.0.0
+    parent_frame: lidar1_link
+    runtime: {owner: physics, source: mujoco_livox_model}
+    frequency_hz: 10
+    configuration:
+      raycast_frame: lidar1_link_site
+  - id: front_rgb
+    package: rgb_camera@1.0.0
+    parent_frame: front_camera
+    runtime: {owner: visual, source: unreal_camera}
+    frequency_hz: 30
+    extrinsic:
+      position_m: [0.423358800364963, -0.000496202974186816, 0.11370714960317]
+      quaternion_wxyz: [0.5, -0.5, 0.5, -0.5]
+    configuration:
+      width: 640
+      height: 480
+  - id: front_depth
+    package: depth_camera@1.0.0
+    parent_frame: front_camera
+    runtime: {owner: visual, source: unreal_camera}
+    frequency_hz: 30
+    extrinsic:
+      position_m: [0.423358800364963, -0.000496202974186816, 0.11370714960317]
+      quaternion_wxyz: [0.5, -0.5, 0.5, -0.5]
+    configuration:
+      width: 640
+      height: 480
+  - id: truth_odom
+    package: truth_odom@1.0.0
+    parent_frame: base_link
+    runtime: {owner: physics, source: mujoco_truth}
+    frequency_hz: 100
+  - id: front_thermal
+    package: thermal_camera@1.0.0
+    parent_frame: camera1_link
+    runtime: {owner: physics, source: mujoco_measurement}
+    frequency_hz: 10
+    # inverse(actual camera1_link MJCF quaternion) * base optical quaternion.
+    # Reference the optical carrier itself so its housing is excluded from rays.
+    extrinsic:
+      position_m: [0, 0, 0]
+      quaternion_wxyz: [0.9848077530061847, 0.17364817770109064, 9.000000189551827e-10, 1.9999998879249858e-10]
+    configuration:
+      measurement:
+        body_frame_id: camera1_link
+        camera: {model: pinhole, width: 64, height: 48, fx_px: 32.0, fy_px: 32.0, cx_px: 32.0, cy_px: 24.0}
+        thermal:
+          calibration_id: simulated-reference-v1
+          background_temperature_k: 293.15
+          atmospheric_temperature_k: 293.15
+          transmittance: 1.0
+          temperature_mode: apparent
+          min_temperature_k: 1.0
+          max_temperature_k: 2000.0
+        noise: {unit: K, enabled: false, stddev: 0.0, seed: 0}
+  - id: front_semantic
+    package: semantic_camera@1.0.0
+    parent_frame: camera1_link
+    runtime: {owner: physics, source: mujoco_measurement}
+    frequency_hz: 10
+    extrinsic:
+      position_m: [0, 0, 0]
+      quaternion_wxyz: [0.9848077530061847, 0.17364817770109064, 9.000000189551827e-10, 1.9999998879249858e-10]
+    configuration:
+      measurement:
+        body_frame_id: camera1_link
+        camera: {model: pinhole, width: 64, height: 48, fx_px: 32.0, fy_px: 32.0, cx_px: 32.0, cy_px: 24.0}
+        noise: {unit: label, enabled: false, stddev: 0.0, seed: 0}
+  - id: microphone
+    package: microphone@1.0.0
+    parent_frame: payload_top
+    runtime: {owner: physics, source: mujoco_measurement}
+    frequency_hz: 100
+  - id: gnss
+    package: gnss@1.0.0
+    parent_frame: payload_top
+    runtime: {owner: physics, source: mujoco_gnss}
+    frequency_hz: 10
+    configuration:
+      gnss:
+        # Synthetic test origin only. Altitude is WGS84 ellipsoidal, not MSL.
+        origin_latitude_deg: 0.0
+        origin_longitude_deg: 0.0
+        origin_altitude_m: 0.0
+        body_frame_id: base_link
+        antenna_offset_m: [0.0, 0.0, 0.0]
+        world_origin_m: [0.0, 0.0, 0.0]
+        world_to_enu_yaw_deg: 0.0
+        noise_enabled: false
+        horizontal_std_m: 0.0
+        vertical_std_m: 0.0
+        seed: 0
+        fix_available: false

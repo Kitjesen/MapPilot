@@ -9,8 +9,10 @@ from typing import Any
 
 from .contracts import SensorRoute, SensorStreamPlan
 from .dds_adapter import ImuDdsAdapter, Mid360DdsAdapter, TruthOdometryDdsAdapter
+from .gnss import GnssExtractor
+from .gnss_dds import GnssDdsAdapter
 from .mid360 import Mid360PatternCursor, Mid360RaycastExtractor
-from .session import SensorEndpoint, SensorEndpointFactory
+from .session import SensorEndpoint, SensorEndpointFactory, SensorSink
 
 _TRUTH_ODOMETRY_ROUTE = SensorRoute(
     owner="physics",
@@ -23,6 +25,40 @@ _MID360_ROUTE = SensorRoute(owner="physics", source="mujoco_livox_model", transp
 
 class SensorEndpointRoutingError(RuntimeError):
     """Raised when more than one runtime owns the same compiled stream."""
+
+
+@dataclass(frozen=True)
+class GnssEndpointFactory:
+    """Bind a native GNSS writer, or an explicit sink for contract tests."""
+
+    sink_factory: Callable[[SensorStreamPlan, Any], SensorSink] | None = None
+    source_id: str = "mujoco-gnss-experimental"
+    executable: Path | None = None
+
+    def __post_init__(self) -> None:
+        if (self.sink_factory is None) == (self.executable is None):
+            raise ValueError("GNSS endpoint requires exactly one native executable or sink factory")
+        if self.sink_factory is not None and not callable(self.sink_factory):
+            raise ValueError("GNSS sink_factory must be callable")
+
+    def __call__(self, stream: SensorStreamPlan, allocation: Any) -> SensorEndpoint | None:
+        if (stream.stream_kind != "gnss" or stream.message_type != "lingtu.dds.GnssFix"
+                or stream.route != SensorRoute("physics", "mujoco_gnss", "typed_dds")):
+            return None
+        if stream.gnss is None:
+            raise ValueError("GNSS requires compiled gnss configuration")
+        if self.sink_factory is not None:
+            sink = self.sink_factory(stream, allocation)
+        else:
+            assert self.executable is not None
+            sink = GnssDdsAdapter(
+                self.executable, allocation=allocation,
+                sensor_id=stream.sensor_id, frame_id=stream.frame_id,
+            )
+        return SensorEndpoint(
+            source_id=self.source_id, sink=sink,
+            extractor=GnssExtractor(stream.gnss),
+        )
 
 
 @dataclass(frozen=True)
@@ -186,11 +222,13 @@ class Mid360EndpointFactory:
                 process=self.process,
                 sensor_frame_id=stream.raycast_frame_stable_id,
                 cursor=self.cursor_factory(),
+                range_noise=stream.range_noise,
             ),
         )
 
 
 __all__ = [
+    "GnssEndpointFactory",
     "ImuEndpointFactory",
     "Mid360EndpointFactory",
     "SensorEndpointRouter",

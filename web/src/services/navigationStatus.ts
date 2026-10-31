@@ -36,6 +36,7 @@ export interface NavigationStatusPresentation {
   }
   goalAdmission: LabeledState<NavigationGoalAdmission> & {
     reason: string
+    message: string
   }
   control: LabeledState<NavigationControlAuthority> & {
     resumeRequired: boolean
@@ -44,6 +45,8 @@ export interface NavigationStatusPresentation {
     permission: LabeledState<NavigationMotionPermission>
     observation: LabeledState<NavigationMotionObservation>
     stopConfirmation: LabeledState<NavigationStopConfirmation>
+    reason: string
+    message: string
   }
 }
 
@@ -108,45 +111,84 @@ function normalizeTaskState(value: unknown): NavigationTaskState {
   return candidate in TASK_LABELS ? candidate as NavigationTaskState : 'UNKNOWN'
 }
 
+function localizationRecoveryMessage(
+  reason: string,
+  stopConfirmation: NavigationStopConfirmation,
+  locale: Locale,
+): string {
+  if (!reason.startsWith('localization_')) return ''
+  if (stopConfirmation === 'CONFIRMED') {
+    return locale === 'zh'
+      ? '定位恢复中，已确认机器人停稳'
+      : 'Localization recovery in progress; robot stop is confirmed'
+  }
+  if (stopConfirmation === 'PENDING') {
+    return locale === 'zh'
+      ? '定位恢复中，正在等待停稳确认'
+      : 'Localization recovery in progress; awaiting stop confirmation'
+  }
+  if (stopConfirmation === 'FAILED') {
+    return locale === 'zh'
+      ? '定位恢复中，停稳确认失败'
+      : 'Localization recovery in progress; stop confirmation failed'
+  }
+  return locale === 'zh'
+    ? '定位恢复中，运动指令已保持'
+    : 'Localization recovery in progress; motion commands are held'
+}
+
 export function navigationTaskLabel(
   state: NavigationTaskState,
   locale: Locale,
+  reason = '',
 ): string {
+  if (state === 'PLANNING' && reason === 'planning_waiting') {
+    return operatorReasonMessage(reason, locale)
+  }
+  if (['EXECUTING', 'RECOVERING'].includes(state) && reason === 'replan_waiting') {
+    return operatorReasonMessage(reason, locale)
+  }
   return TASK_LABELS[state][locale]
 }
 
-export function presentNavigationStatus(
-  status: NavigationStatusResponse | null | undefined,
-  locale: Locale,
-): NavigationStatusPresentation {
-  const state = normalizeTaskState(status?.task?.state)
-  const motion = status?.motion
-  const goalAdmission = status?.goal_admission
-  const control = status?.control
-
-  return {
-    task: { state, label: navigationTaskLabel(state, locale) },
-    goalAdmission: {
-      ...labelState(goalAdmission?.state ?? 'UNKNOWN', GOAL_ADMISSION_LABELS, locale),
-      reason: goalAdmission?.reason ?? '',
-    },
-    control: {
-      ...labelState(control?.authority ?? 'UNKNOWN', CONTROL_AUTHORITY_LABELS, locale),
-      resumeRequired: control?.resume_required === true,
-    },
-    motion: {
-      permission: labelState(motion?.permission ?? 'UNKNOWN', MOTION_PERMISSION_LABELS, locale),
-      observation: labelState(motion?.observation ?? 'UNKNOWN', MOTION_OBSERVATION_LABELS, locale),
-      stopConfirmation: labelState(motion?.stop_confirmation ?? 'UNKNOWN', STOP_CONFIRMATION_LABELS, locale),
-    },
-  }
+export function navigationTaskReasonMessage(reason: string): string {
+  // Localization gaps are a motion hold, not a terminal timeout.  Keep the
+  // native reason available to the generic operator copy instead of reviving
+  // the old timeout message for stale status records.
+  return reason
 }
 
+/**
+ * Convert native reason codes into the short message an operator needs.
+ * Known reasons explain the affected step; unknown values stay visible for diagnosis.
+ */
 export function operatorReasonMessage(reason: string, locale: Locale): string {
   const value = reason.trim()
   if (!value) return ''
 
   const messages: Array<[string, string, string]> = [
+    ['operator_pause', '任务已由操作者暂停。', 'The task was paused by the operator.'],
+    ['support_disconnected', '起点与目标之间的地面支撑尚未连通。', 'The observed ground support does not yet connect the start and goal.'],
+    ['start_body_occupied', '起点机身与地图障碍物相交。', 'The robot body intersects a mapped obstacle at the start.'],
+    ['goal_body_occupied', '目标位置的机身与地图障碍物相交。', 'The robot body intersects a mapped obstacle at the goal.'],
+    ['collision_stale', '等待实时雷达地图更新。', 'Waiting for the live LiDAR map to update.'],
+    ['local_collision_missing', '等待实时雷达地图。', 'Waiting for the live LiDAR map.'],
+    ['odom_missing', '等待有效位置数据。', 'Waiting for valid position data.'],
+    ['odom_stale', '等待位置数据更新。', 'Waiting for position data to update.'],
+    ['tf_missing', '等待地图与定位坐标对齐。', 'Waiting for the map and localization frames to align.'],
+    ['tf_stale', '等待坐标变换更新。', 'Waiting for the coordinate transform to update.'],
+    ['driver_control_missing', '等待驱动连接。', 'Waiting for the driver connection.'],
+    ['driver_control_stale', '等待驱动连接恢复。', 'Waiting for the driver connection to recover.'],
+    ['driver_control_not_ready', '等待驱动就绪。', 'Waiting for the driver to become ready.'],
+    ['driver_control_rejected', '驱动尚未允许接收运动指令。', 'The driver is not ready to accept motion commands.'],
+    ['operator_takeover_resume_required', '人工接管尚未退出，请恢复自主导航。', 'Manual takeover is still active; resume autonomous navigation.'],
+    ['control_hold', '运动暂时保持，等待控制恢复。', 'Motion is held while control recovers.'],
+    ['estop_latched', '急停仍处于锁定状态。', 'The emergency stop remains latched.'],
+    ['zero_barrier_pending', '等待前一个控制来源结束运动。', 'Waiting for the previous control source to finish motion.'],
+    ['authority_busy', '另一个操作端正在控制机器人。', 'Another operator is controlling the robot.'],
+    ['authority_lease_expired', '遥控连接已过期，请重新接管。', 'The manual control connection expired; take control again.'],
+    ['sample_stamp_stale', '遥控输入已过期，等待新输入。', 'The manual input expired; waiting for fresh input.'],
+    ['no_active_authority', '尚未取得人工控制权。', 'Manual control has not been claimed.'],
     ['stair_approach', '正在接近楼梯入口。', 'Approaching the stair entrance.'],
     ['stair_aligning', '正在对齐楼梯入口朝向。', 'Aligning with the stair entrance.'],
     ['stair_switching', '正在切换楼梯模式。', 'Switching to the stair motion profile.'],
@@ -164,6 +206,7 @@ export function operatorReasonMessage(reason: string, locale: Locale): string {
     ['profile_transition', '正在切换行走模式，运动指令暂时保持。', 'The motion profile is changing; motion commands are temporarily held.'],
     ['driver_control_profile_transition', '正在切换行走模式，运动指令暂时保持。', 'The motion profile is changing; motion commands are temporarily held.'],
     ['input_gate_driver_control_profile_transition', '正在切换行走模式，运动指令暂时保持。', 'The motion profile is changing; motion commands are temporarily held.'],
+    ['planning_waiting', '等待通路，自动重试规划', 'Waiting for a clear route; planning will retry automatically'],
     ['replan_waiting', '等待通路，自动继续', 'Waiting for a clear route; navigation will continue automatically'],
     ['replan_budget_consumed', '自动重试机会已用完。', 'Automatic retry attempts have been exhausted.'],
     ['replan_failed_budget_consumed', '重规划失败，自动重试机会已用完。', 'Replanning failed; automatic retry attempts have been exhausted.'],
@@ -171,19 +214,57 @@ export function operatorReasonMessage(reason: string, locale: Locale): string {
     ['local_blocked', '局部路线受阻。', 'The local route is blocked.'],
     ['local_near_field_stop', '检测到近场障碍，已请求停车。', 'A near-field obstacle was detected; a stop was requested.'],
     ['execution_stalled', '运动进展不足，请查看当前任务状态。', 'Motion progress is insufficient. Check the current task state.'],
-    ['local_recovery_exhausted', '当前路线无法脱困，请重新预览。', 'The current route could not recover. Preview it again.'],
-    ['empty_path', '没有生成可执行路线，请换一个目标。', 'No executable route was generated. Choose another goal.'],
+    ['local_recovery_exhausted', '局部恢复未找到可行运动，等待重新规划。', 'Local recovery found no feasible motion; waiting for replanning.'],
+    ['empty_path', '暂未生成可执行路线。', 'No executable route is available yet.'],
     ['localization_not_tracking', '定位尚未进入跟踪状态，运动指令已保持。', 'Localization is not tracking; motion commands are held.'],
     ['collision_at_trajectory_start', '轨迹起点存在碰撞，运动指令未获放行。', 'A collision exists at the trajectory start; motion was not authorized.'],
     ['visual_servo_target_lost', '目标人员已丢失，已请求取消跟随导航。', 'The target person was lost; cancellation of follow navigation was requested.'],
     ['visual_servo_perception_stale', '相机感知已过期，已请求取消视觉导航。', 'Camera perception is stale; cancellation of visual navigation was requested.'],
   ]
-  const match = messages.find(([code]) => value === code || value.startsWith(`${code}:`))
+  const nativeReason = value.startsWith('input_gate_') ? value.slice('input_gate_'.length) : value
+  const match = messages.find(([code]) => nativeReason === code || nativeReason.startsWith(`${code}:`))
   if (match) return locale === 'zh' ? match[1] : match[2]
 
-  // Bare snake-case values are implementation details, not operator copy.
   if (/^[a-z][a-z0-9_:-]*$/i.test(value)) {
-    return locale === 'zh' ? '当前导航条件未满足，请检查现场后重新预览。' : 'The navigation conditions are not met. Check the scene and preview again.'
+    return locale === 'zh' ? `导航状态：${value}` : `Navigation status: ${value}`
   }
   return value
+}
+
+export function presentNavigationStatus(
+  status: NavigationStatusResponse | null | undefined,
+  locale: Locale,
+): NavigationStatusPresentation {
+  const state = normalizeTaskState(status?.task?.state)
+  const motion = status?.motion
+  const goalAdmission = status?.goal_admission
+  const control = status?.control
+  const motionReason = motion?.reason ?? ''
+  const stopConfirmation = motion?.stop_confirmation ?? 'UNKNOWN'
+  const localizationRecovery = localizationRecoveryMessage(motionReason, stopConfirmation, locale)
+  const goalAdmissionReason = goalAdmission?.reason ?? ''
+
+  return {
+    task: { state, label: navigationTaskLabel(state, locale, status?.task?.reason) },
+    goalAdmission: {
+      ...labelState(goalAdmission?.state ?? 'UNKNOWN', GOAL_ADMISSION_LABELS, locale),
+      reason: goalAdmissionReason,
+      message: goalAdmissionReason.startsWith('localization_')
+        ? locale === 'zh'
+          ? '定位恢复中，新目标会排队等待输入恢复'
+          : 'Localization recovery in progress; new goals stay queued until inputs recover'
+        : '',
+    },
+    control: {
+      ...labelState(control?.authority ?? 'UNKNOWN', CONTROL_AUTHORITY_LABELS, locale),
+      resumeRequired: control?.resume_required === true,
+    },
+    motion: {
+      permission: labelState(motion?.permission ?? 'UNKNOWN', MOTION_PERMISSION_LABELS, locale),
+      observation: labelState(motion?.observation ?? 'UNKNOWN', MOTION_OBSERVATION_LABELS, locale),
+      stopConfirmation: labelState(stopConfirmation, STOP_CONFIRMATION_LABELS, locale),
+      reason: motionReason,
+      message: localizationRecovery,
+    },
+  }
 }

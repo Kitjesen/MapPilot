@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from runtime.blueprint import Blueprint
+from runtime.host import HostBuilder
 from runtime.module import Module
 from runtime.stream import In, Out
 
@@ -32,9 +32,9 @@ class ObjectTransport:
     backend_name = "object_transport"
 
 
-def test_blueprint_exports_portable_module_graph_without_building_modules():
+def test_host_builder_exports_portable_module_graph_without_building_modules():
     bp = (
-        Blueprint()
+        HostBuilder()
         .add(SourceModule, alias="Source", rate_hz=20, tags=("lidar", "portable"))
         .add(SinkModule)
         .wire(
@@ -69,7 +69,7 @@ def test_blueprint_exports_portable_module_graph_without_building_modules():
 
 
 def test_module_graph_export_does_not_instantiate_modules():
-    graph = Blueprint().add(ExplodingModule, answer=42).export_graph()
+    graph = HostBuilder().add(ExplodingModule, answer=42).export_graph()
 
     assert graph.module_names == ("ExplodingModule",)
     assert graph.modules[0].config == {"answer": 42}
@@ -78,7 +78,7 @@ def test_module_graph_export_does_not_instantiate_modules():
 def test_module_graph_marks_preinstantiated_modules():
     instance = SourceModule()
 
-    graph = Blueprint().add(instance, alias="ReadySource").export_graph()
+    graph = HostBuilder().add(instance, alias="ReadySource").export_graph()
 
     assert graph.module_names == ("ReadySource",)
     assert graph.modules[0].preinstantiated is True
@@ -86,7 +86,7 @@ def test_module_graph_marks_preinstantiated_modules():
 
 
 def test_module_graph_exposes_declared_ports_from_module_annotations():
-    graph = Blueprint().add(PortSourceModule).add(PortSinkModule).export_graph()
+    graph = HostBuilder().add(PortSourceModule).add(PortSinkModule).export_graph()
 
     assert graph.module_spec("PortSourceModule").declares_port("frames")
     assert graph.module_spec("PortSinkModule").declares_port("frames_in")
@@ -94,7 +94,7 @@ def test_module_graph_exposes_declared_ports_from_module_annotations():
 
 
 def test_module_graph_manifest_is_json_ready_for_object_transport():
-    bp = Blueprint().add(SourceModule, alias="Source").add(SinkModule)
+    bp = HostBuilder().add(SourceModule, alias="Source").add(SinkModule)
     bp.wire("Source", "frames", "SinkModule", "frames_in", delivery=ObjectTransport())
 
     manifest = bp.export_graph().to_manifest()
@@ -103,8 +103,8 @@ def test_module_graph_manifest_is_json_ready_for_object_transport():
     json.dumps(manifest)
 
 
-def test_blueprint_wire_records_delivery_mode():
-    bp = Blueprint().add(SourceModule, alias="Source").add(SinkModule)
+def test_host_builder_wire_records_delivery_mode():
+    bp = HostBuilder().add(SourceModule, alias="Source").add(SinkModule)
     bp.wire(
         "Source",
         "frames",
@@ -121,9 +121,9 @@ def test_blueprint_wire_records_delivery_mode():
 
 
 def test_module_graph_reflects_namespace_and_merge():
-    first = Blueprint().add(SourceModule, alias="Source")
+    first = HostBuilder().add(SourceModule, alias="Source")
     first.wire("Source", "frames", "SinkModule", "frames_in")
-    second = Blueprint().add(SinkModule)
+    second = HostBuilder().add(SinkModule)
 
     bp = first.namespace("robot_0").merge(second.namespace("robot_0"))
     graph = bp.export_graph()
@@ -135,7 +135,7 @@ def test_module_graph_reflects_namespace_and_merge():
 
 
 def test_module_graph_reports_dangling_wires_before_runtime_build():
-    bp = Blueprint().add(SourceModule, alias="Source")
+    bp = HostBuilder().add(SourceModule, alias="Source")
     bp.wire("Source", "frames", "MissingModule", "frames_in")
 
     graph = bp.export_graph()

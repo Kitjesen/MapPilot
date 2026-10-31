@@ -21,6 +21,12 @@ evaluateCommandSafety(const CommandSafetyConfig &cfg,
   }
 
   decision.cmd = raw_request;
+  for (double *axis : {&decision.cmd.vx, &decision.cmd.vy}) {
+    if (std::abs(*axis) > cfg.max_axis_speed_mps) {
+      *axis = std::copysign(cfg.max_axis_speed_mps, *axis);
+      decision.limited = true;
+    }
+  }
   const double speed = linearSpeed(decision.cmd);
   if (speed > cfg.max_speed_mps && speed > 1e-6) {
     const double scale = cfg.max_speed_mps / speed;

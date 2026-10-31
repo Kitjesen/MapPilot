@@ -1,0 +1,17 @@
+schema: lingtu.sim.sensor-rig-package.v1
+id: thunderv4_mid360_noise
+version: 1.0.0
+kind: sensor_rig
+description: Explicit MID-360 range-noise experiment; not a complete navigation rig.
+sensors:
+  - id: mid360
+    package: mid360@1.0.0
+    parent_frame: lidar1_link
+    runtime: {owner: physics, source: mujoco_livox_model}
+    frequency_hz: 10
+    configuration:
+      raycast_frame: lidar1_link_site
+      range_noise:
+        enabled: true
+        stddev_m: 0.02
+        seed: 17

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from lingtu.assembly.compiler import blueprint_from_run_plan, compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan, host_builder_from_run_plan
+from lingtu.assembly.config.native_navigation import compile_native_nav_config
+from lingtu.assembly.config.product import resolve_product_host_runtime
 from lingtu.assembly.graph import (
     ProcessArtifact,
     RuntimeGraph,
@@ -10,8 +12,6 @@ from lingtu.assembly.graph import (
     validate_runtime_graph,
 )
 from lingtu.assembly.graph.loader import resolve_product_variant_spec
-from lingtu.assembly.native_nav import compile_native_nav_config
-from lingtu.assembly.products import resolve_product_host_runtime
 from message.topics import TOPICS
 
 OPERATOR_MOTION_TOPICS = frozenset(
@@ -81,7 +81,7 @@ def test_teleop_avoid_compilation_uses_native_operator_motion_without_python_aut
         resolved.env,
         robot="unitree/go2",
     )
-    blueprint = blueprint_from_run_plan(plan)
+    host_builder = host_builder_from_run_plan(plan)
 
     assert plan.critical_modules == (
         "host.bus",
@@ -89,7 +89,7 @@ def test_teleop_avoid_compilation_uses_native_operator_motion_without_python_aut
         "nav.commands",
         "GatewayModule",
     )
-    assert blueprint.required_module_names == plan.critical_modules
+    assert host_builder.required_module_names == plan.critical_modules
     assert "operator.motion" not in plan.modules
     assert "maps.service" not in plan.modules
     assert "nav.commands" in plan.modules
@@ -129,9 +129,11 @@ def test_teleop_avoid_compiles_native_motion_settings() -> None:
 
 def test_only_raw_operator_motion_uses_native_velocity_smoothing() -> None:
     teleop = compile_run_plan("teleop", "real", robot="unitree/go2")
+    mapping = compile_run_plan("map", "real", robot="unitree/go2")
     assisted = compile_run_plan("teleop_avoid", "real", robot="unitree/go2")
 
     assert teleop.native_process_environment["LINGTU_NAV_SMOOTHER_ENABLED"] == "1"
+    assert mapping.native_process_environment["LINGTU_NAV_SMOOTHER_ENABLED"] == "1"
     assert assisted.native_process_environment["LINGTU_NAV_SMOOTHER_ENABLED"] == "0"
 
 
@@ -143,11 +145,16 @@ def test_nav_uses_practical_terminal_tolerances(monkeypatch) -> None:
     )
     plan = compile_run_plan("nav", "sim", robot="doso/thunder_v4")
 
-    assert plan.native_process_environment["LINGTU_NAV_GOAL_REACHED_M"] == "0.35"
-    assert (
-        plan.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_GOAL_TOLERANCE_M"]
-        == "0.2"
-    )
+    expected_tolerances = {
+        "LINGTU_NAV_GOAL_REACHED_M": "0.15",
+        "LINGTU_NAV_PATH_FOLLOWER_GOAL_TOLERANCE_M": "0.15",
+        "LINGTU_NAV_OCTO_TERMINAL_GOAL_TOLERANCE_M": "0.15",
+        "LINGTU_NAV_OCTO_TERMINAL_GOAL_XY_TOLERANCE_M": "0.15",
+        "LINGTU_NAV_OCTO_TERMINAL_GOAL_Z_TOLERANCE_M": "0.15",
+    }
+    assert {
+        name: plan.native_process_environment[name] for name in expected_tolerances
+    } == expected_tolerances
 
 
 def test_native_nav_compiles_follower_and_recovery_settings() -> None:
@@ -233,11 +240,11 @@ def test_compiled_operator_motion_products_make_host_adapters_startup_critical()
             resolved.env,
             robot="unitree/go2",
         )
-        blueprint = blueprint_from_run_plan(manifest)
+        host_builder = host_builder_from_run_plan(manifest)
 
         assert OPERATOR_MOTION_CRITICAL_MODULES <= set(manifest.modules)
         assert OPERATOR_MOTION_CRITICAL_MODULES <= set(manifest.critical_modules)
-        assert blueprint.required_module_names == manifest.critical_modules
+        assert host_builder.required_module_names == manifest.critical_modules
 
     explore = load_runtime_graph().products["explore"]
     assert "operator.motion" not in explore.get("critical_modules", ())
@@ -275,10 +282,14 @@ def test_validator_rejects_contract_without_operator_motion_topics_for_every_req
     issues = validate_runtime_graph(_with_products(graph, products))
 
     for product_name in PRODUCTS_REQUIRING_OPERATOR_MOTION:
+        expected_scope = f"product:{product_name}"
+        default_variant = products[product_name].get("default_variant")
+        if default_variant:
+            expected_scope += f":variant:{default_variant}"
         matching = [
             issue
             for issue in issues
-            if issue.code == "product_operator_motion_boundary_incomplete" and issue.scope == f"product:{product_name}"
+            if issue.code == "product_operator_motion_boundary_incomplete" and issue.scope == expected_scope
         ]
         assert len(matching) == 1
         assert all(topic in matching[0].message for topic in OPERATOR_MOTION_TOPICS)
@@ -297,10 +308,14 @@ def test_validator_rejects_contract_without_operator_motion_capabilities_for_eve
     issues = validate_runtime_graph(_with_products(graph, products))
 
     for product_name in PRODUCTS_REQUIRING_OPERATOR_MOTION:
+        expected_scope = f"product:{product_name}"
+        default_variant = products[product_name].get("default_variant")
+        if default_variant:
+            expected_scope += f":variant:{default_variant}"
         matching = [
             issue
             for issue in issues
-            if issue.code == "product_operator_motion_capability_missing" and issue.scope == f"product:{product_name}"
+            if issue.code == "product_operator_motion_capability_missing" and issue.scope == expected_scope
         ]
         assert len(matching) == 1
         assert all(capability in matching[0].message for capability in OPERATOR_MOTION_CAPABILITIES)
@@ -315,11 +330,15 @@ def test_validator_rejects_missing_critical_host_adapters_for_every_required_pro
     issues = validate_runtime_graph(_with_products(graph, products))
 
     for product_name in PRODUCTS_REQUIRING_OPERATOR_MOTION:
+        expected_scope = f"product:{product_name}"
+        default_variant = products[product_name].get("default_variant")
+        if default_variant:
+            expected_scope += f":variant:{default_variant}"
         matching = [
             issue
             for issue in issues
             if issue.code == "product_operator_motion_critical_adapter_missing"
-            and issue.scope == f"product:{product_name}"
+            and issue.scope == expected_scope
         ]
         assert len(matching) == 1
         assert all(module in matching[0].message for module in OPERATOR_MOTION_CRITICAL_MODULES)

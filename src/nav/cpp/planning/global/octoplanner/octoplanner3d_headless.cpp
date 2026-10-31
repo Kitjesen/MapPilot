@@ -359,22 +359,25 @@ void applyOptionsFromJson(PlannerOptions & options, const std::string & json)
     body,
     "snap_search_radius_cells",
     options.snap_search_radius_cells);
-  options.require_ground_support = optionalBool(
+  options.ground_support = optionalBool(
     body,
-    "require_ground_support",
-    options.require_ground_support);
-  options.strict_direct_ground_support = optionalBool(
+    "ground_support",
+    options.ground_support);
+  options.direct_support_only = optionalBool(
     body,
-    "strict_direct_ground_support",
-    options.strict_direct_ground_support);
-  options.ground_support_xy_radius_cells = optionalInt(
+    "direct_support_only",
+    options.direct_support_only);
+  options.support_radius_cells = optionalInt(
     body,
-    "ground_support_xy_radius_cells",
-    options.ground_support_xy_radius_cells);
-  options.ground_support_depth_cells = optionalInt(
+    "support_radius_cells",
+    options.support_radius_cells);
+  options.support_depth_cells = optionalInt(
     body,
-    "ground_support_depth_cells",
-    options.ground_support_depth_cells);
+    "support_depth_cells",
+    options.support_depth_cells);
+  options.search_resolution_m = optionalDouble(body, "search_resolution_m", options.search_resolution_m);
+  options.surface_closing_radius_m = optionalDouble(
+    body, "surface_closing_radius_m", options.surface_closing_radius_m);
   options.support_height_m = optionalDouble(
     body,
     "support_height_m",
@@ -470,14 +473,16 @@ void emitConstraints(const PlannerOptions & options)
             << "\"body_clearance_above_m\":" << options.body_clearance_above_m << ','
             << "\"max_iterations\":" << options.max_iterations << ','
             << "\"snap_search_radius_cells\":" << options.snap_search_radius_cells << ','
-            << "\"require_ground_support\":"
-            << (options.require_ground_support ? "true" : "false") << ','
-            << "\"strict_direct_ground_support\":"
-            << (options.strict_direct_ground_support ? "true" : "false") << ','
-            << "\"ground_support_xy_radius_cells\":"
-            << options.ground_support_xy_radius_cells << ','
-            << "\"ground_support_depth_cells\":"
-            << options.ground_support_depth_cells << ','
+            << "\"ground_support\":"
+            << (options.ground_support ? "true" : "false") << ','
+            << "\"direct_support_only\":"
+            << (options.direct_support_only ? "true" : "false") << ','
+            << "\"support_radius_cells\":"
+            << options.support_radius_cells << ','
+            << "\"support_depth_cells\":"
+            << options.support_depth_cells << ','
+            << "\"search_resolution_m\":" << options.search_resolution_m << ','
+            << "\"surface_closing_radius_m\":" << options.surface_closing_radius_m << ','
             << "\"support_height_m\":" << options.support_height_m << ','
             << "\"support_height_tolerance_m\":"
             << options.support_height_tolerance_m << ','

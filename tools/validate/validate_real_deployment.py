@@ -26,9 +26,9 @@ from diagnostics.runtime_contract import (
     FIELD_DATA_SOURCE,
     REAL_RUNTIME_CONTRACT,
 )
-from lingtu.assembly.compiler import blueprint_for_resolved_product
-from lingtu.assembly.plugins import install_builtin_plugin_catalog
-from lingtu.assembly.products import resolve_product_host_runtime
+from lingtu.assembly.compile_plan import host_builder_for_resolved_product
+from lingtu.assembly.config.product import resolve_product_host_runtime
+from lingtu.assembly.host.plugin_catalog import install_builtin_plugin_catalog
 from lingtu.control import ProductControl
 from message.topics import topic_spec
 
@@ -110,7 +110,7 @@ def validate(
 
     _validate_runtime_layers(plan, config, blockers)
     _validate_required_topics(plan, blockers)
-    _validate_blueprint_graph(
+    _validate_host_builder_graph(
         plan.product,
         config,
         blockers,
@@ -241,7 +241,7 @@ def _validate_core_field_product_graphs(
             if product_variant is not None
             else product
         )
-        _validate_blueprint_graph(
+        _validate_host_builder_graph(
             resolved.product,
             dict(resolved.config),
             blockers,
@@ -250,7 +250,7 @@ def _validate_core_field_product_graphs(
         )
 
 
-def _validate_blueprint_graph(
+def _validate_host_builder_graph(
     product: str,
     config: Mapping[str, Any],
     blockers: list[str],
@@ -261,7 +261,7 @@ def _validate_blueprint_graph(
     if graph_label in checked_graph_products:
         return
     checked_graph_products.add(graph_label)
-    bp = blueprint_for_resolved_product(product, config)
+    bp = host_builder_for_resolved_product(product, config)
     entry_classes = {entry.name: getattr(entry.module_cls, "__name__", str(entry.module_cls)) for entry in bp._entries}
     wires = {f"{wire.out_module}.{wire.out_port}->{wire.in_module}.{wire.in_port}" for wire in bp._wires}
 
@@ -425,7 +425,7 @@ def _validate_deploy_script(blockers: list[str], checked_files: set[str]) -> Non
     text = DEPLOY_PATH.read_text(encoding="utf-8-sig")
     required_markers = (
         "LINGTU_DEPLOY_PRODUCT",
-        "from lingtu.assembly.deployment import product_native_build_scripts",
+        "from lingtu.assembly.build_scripts import product_native_build_scripts",
         "scripts/build/build_driver.sh",
         "scripts/deploy/thunder/install_services.sh",
         'scripts/lingtu" --robot "${ROBOT}" --env real switch',

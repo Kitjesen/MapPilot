@@ -8,10 +8,10 @@ This is an offline calibration workflow. It may use ROS 2 and rosbag on a calibr
 
 | Parameter | Symbol | Unit | Used by |
 | --- | --- | --- | --- |
-| Accelerometer noise density | `na` | m/s^2/sqrt(Hz) | Fast-LIO2 |
-| Gyroscope noise density | `ng` | rad/s/sqrt(Hz) | Fast-LIO2 |
-| Accelerometer random walk | `nba` | m/s^3/sqrt(Hz) | Fast-LIO2 |
-| Gyroscope random walk | `nbg` | rad/s^2/sqrt(Hz) | Fast-LIO2 |
+| Accelerometer noise density | `na` | m/s^2/sqrt(Hz) | LTLIO |
+| Gyroscope noise density | `ng` | rad/s/sqrt(Hz) | LTLIO |
+| Accelerometer random walk | `nba` | m/s^3/sqrt(Hz) | LTLIO |
+| Gyroscope random walk | `nbg` | rad/s^2/sqrt(Hz) | LTLIO |
 
 ## Prerequisites
 
@@ -65,14 +65,32 @@ bash tools/calibration/imu/run_allan_variance.sh apply \
   "$HOME/data/imu_calib/$LINGTU_AV_TS/imu.yaml"
 ```
 
-This updates the robot-specific Fast-LIO2 file selected by `--slam-config`
+This updates the robot-specific LTLIO file selected by `--slam-config`
 (`na`, `ng`, `nba`, `nbg`) when present.
 
 IMU noise application does not write the model's `robot.yaml`.
+
+The four YAML values are continuous-time noise **densities**, not variances.
+LTLIO squares each provided value once when loading the configuration and uses
+it in the IMU propagation `U Q Uᵀ dt`. The calibration values already use the SI
+units above; they must not be multiplied by `acc_scale` again. That scale only
+converts incoming acceleration samples.
+
+An omitted key retains the official estimator's corresponding `Q` coefficient:
+
+| Key | Default `Q` coefficient | Equivalent density |
+| --- | --- | --- |
+| `na` | `1e-4` | `0.01` |
+| `ng` | `1e-5` | `sqrt(1e-5)` ≈ `0.00316228` |
+| `nba` | `1e-6` | `0.001` |
+| `nbg` | `1e-6` | `0.001` |
+
+These defaults preserve the upstream estimator; they are not measured sensor
+calibration. Negative or non-finite calibration values are rejected at load.
 
 ## Important Notes
 
 - Livox built-in IMU outputs acceleration in **g** (not m/s^2); the SLAM stack handles conversion.
 - `mean_acc_norm` in LiDAR_IMU_Init should be set to `1` for the Livox built-in IMU.
-- Default noise values (`na=0.01`, `ng=0.01`) are conservative; calibrated values are typically lower.
+- Use the measured SI densities from the calibration result; the table above only documents the estimator's fallback.
 - After applying the result, run `python tools/calibration/verify.py` and a short SLAM sanity check.

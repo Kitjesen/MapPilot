@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="604.8pt" height="180pt" viewBox="0 0 604.8 180" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-10-16T20:12:57.344081</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.10.8, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 180 
+L 604.8 180 
+L 604.8 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 16.3296 93.24 
+L 129.4272 93.24 
+Q 141.5232 93.24 141.5232 89.64 
+L 141.5232 14.76 
+Q 141.5232 11.16 129.4272 11.16 
+L 16.3296 11.16 
+Q 4.2336 11.16 4.2336 14.76 
+L 4.2336 89.64 
+Q 4.2336 93.24 16.3296 93.24 
+z
+" clip-path="url(#p195c4417e1)" style="fill: #f5f8f8; stroke: #a8b8bc; stroke-width: 0.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 169.344 93.24 
+L 282.4416 93.24 
+Q 294.5376 93.24 294.5376 89.64 
+L 294.5376 14.76 
+Q 294.5376 11.16 282.4416 11.16 
+L 169.344 11.16 
+Q 157.248 11.16 157.248 14.76 
+L 157.248 89.64 
+Q 157.248 93.24 169.344 93.24 
+z
+" clip-path="url(#p195c4417e1)" style="fill: #f5f8f8; stroke: #a8b8bc; stroke-width: 0.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 322.3584 93.24 
+L 435.456 93.24 
+Q 447.552 93.24 447.552 89.64 
+L 447.552 14.76 
+Q 447.552 11.16 435.456 11.16 
+L 322.3584 11.16 
+Q 310.2624 11.16 310.2624 14.76 
+L 310.2624 89.64 
+Q 310.2624 93.24 322.3584 93.24 
+z
+" clip-path="url(#p195c4417e1)" style="fill: #f5f8f8; stroke: #a8b8bc; stroke-width: 0.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 475.3728 93.24 
+L 588.4704 93.24 
+Q 600.5664 93.24 600.5664 89.64 
+L 600.5664 14.76 
+Q 600.5664 11.16 588.4704 11.16 
+L 475.3728 11.16 
+Q 463.2768 11.16 463.2768 14.76 
+L 463.2768 89.64 
+Q 463.2768 93.24 475.3728 93.24 
+z
+" clip-path="url(#p195c4417e1)" style="fill: #f5f8f8; stroke: #a8b8bc; stroke-width: 0.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 144.128004 52.2 
+Q 148.479121 52.2 151.712204 52.2 
+" clip-path="url(#p195c4417e1)" style="fill: none; stroke: #087f73; stroke-linecap: round"/>
+    <path d="M 147.712204 50.2 
+L 151.712204 52.2 
+L 147.712204 54.2 
+z
+" clip-path="url(#p195c4417e1)" style="fill: #087f73; stroke: #087f73; stroke-linecap: round"/>
+   </g>
+   <g id="patch_7">
+    <path d="M 297.142404 52.2 
+Q 301.493521 52.2 304.726604 52.2 
+" clip-path="url(#p195c4417e1)" style="fill: none; stroke: #087f73; stroke-linecap: round"/>
+    <path d="M 300.726604 50.2 
+L 304.726604 52.2 
+L 300.726604 54.2 
+z
+" clip-path="url(#p195c4417e1)" style="fill: #087f73; stroke: #087f73; stroke-linecap: round"/>
+   </g>
+   <g id="patch_8">
+    <path d="M 450.156804 52.2 
+Q 454.507921 52.2 457.741004 52.2 
+" clip-path="url(#p195c4417e1)" style="fill: none; stroke: #087f73; stroke-linecap: round"/>
+    <path d="M 453.741004 50.2 
+L 457.741004 52.2 
+L 453.741004 54.2 
+z
+" clip-path="url(#p195c4417e1)" style="fill: #087f73; stroke: #087f73; stroke-linecap: round"/>
+   </g>
+   <g id="patch_9">
+    <path d="M 182.6496 168.84 
+L 567.3024 168.84 
+Q 579.3984 168.84 579.3984 165.24 
+L 579.3984 133.56 
+Q 579.3984 129.96 567.3024 129.96 
+L 182.6496 129.96 
+Q 170.5536 129.96 170.5536 133.56 
+L 170.5536 165.24 
+Q 170.5536 168.84 182.6496 168.84 
+z
+" clip-path="url(#p195c4417e1)" style="fill: #ffffff; stroke: #a8b8bc; stroke-width: 0.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_10">
+    <path d="M 378.9072 127.600488 
+Q 378.9072 111.598427 378.9072 96.714401 
+" clip-path="url(#p195c4417e1)" style="fill: none; stroke: #087f73; stroke-linecap: round"/>
+    <path d="M 376.9072 100.714401 
+L 378.9072 96.714401 
+L 380.9072 100.714401 
+z
+" clip-path="url(#p195c4417e1)" style="fill: #087f73; stroke: #087f73; stroke-linecap: round"/>
+   </g>
+   <g id="text_1">
+    <text style="font-weight: 700; font-size: 10px; font-family: 'Arial'; text-anchor: middle; fill: #182c32" x="72.8784" y="38.592187" transform="rotate(-0 72.8784 38.592187)">Source PCD</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 10px; font-family: 'Arial'; fill: #42565e" transform="translate(38.414337 62.825391)">Building / Plaza</text>
+    <text style="font-size: 10px; font-family: 'Arial'; fill: #42565e" transform="translate(48.423712 75.666797)">XYZ points</text>
+   </g>
+   <g id="text_3">
+    <text style="font-weight: 700; font-size: 10px; font-family: 'Arial'; text-anchor: middle; fill: #182c32" x="225.8928" y="38.541406" transform="rotate(-0 225.8928 38.541406)">3D occupancy map</text>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 10px; font-family: 'Arial'; fill: #42565e" transform="translate(193.379519 62.737109)">Occupied cells</text>
+    <text style="font-size: 10px; font-family: 'Arial'; fill: #42565e" transform="translate(181.984988 75.644141)">Modeled free layers</text>
+   </g>
+   <g id="text_5">
+    <text style="font-weight: 700; font-size: 10px; font-family: 'Arial'; text-anchor: middle; fill: #182c32" x="378.9072" y="38.592187" transform="rotate(-0 378.9072 38.592187)">Native A*</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 10px; font-family: 'Arial'; fill: #42565e" transform="translate(335.827513 62.629297)">26-neighbor search</text>
+    <text style="font-size: 10px; font-family: 'Arial'; fill: #42565e" transform="translate(328.734544 75.653516)">Support + edge sweep</text>
+   </g>
+   <g id="text_7">
+    <text style="font-weight: 700; font-size: 10px; font-family: 'Arial'; text-anchor: middle; fill: #182c32" x="531.9216" y="38.526563" transform="rotate(-0 531.9216 38.526563)">Path + diagnostics</text>
+   </g>
+   <g id="text_8">
+    <text style="font-size: 10px; font-family: 'Arial'; fill: #42565e" transform="translate(509.413006 62.673047)">XYZ route</text>
+    <text style="font-size: 10px; font-family: 'Arial'; fill: #42565e" transform="translate(473.848944 75.580078)">Geometry / motion checks</text>
+   </g>
+   <g id="text_9">
+    <text style="font-size: 10px; font-family: 'Arial'; text-anchor: middle; fill: #42565e" x="374.976" y="151.9875" transform="rotate(-0 374.976 151.9875)">Start / goal  +  robot body, support and clearance settings</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p195c4417e1">
+   <rect x="0" y="0" width="604.8" height="180"/>
+  </clipPath>
+ </defs>
+</svg>

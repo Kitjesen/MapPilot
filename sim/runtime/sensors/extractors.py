@@ -128,7 +128,7 @@ def _validate_snapshot_identity(
     sim_time_ns = _integer(snapshot.get("sim_time_ns"), "snapshot.sim_time_ns")
     if sim_time_ns != scheduled.deadline_ns:
         raise SensorSampleError(
-            "IMU requires a snapshot at the exact scheduled deadline"
+            "sensor requires a snapshot at the exact scheduled deadline"
         )
     return sim_time_ns
 

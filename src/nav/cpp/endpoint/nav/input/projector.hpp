@@ -3,15 +3,18 @@
 #include <chrono>
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "input/samples.hpp"
-#include "runtime/state.hpp"
-#include "runtime/time.hpp"
+#include "app/state.hpp"
+#include "app/time.hpp"
 #include "nav_kernel/types.hpp"
 #include "input/gate.hpp"
 #include "input/obstacle.hpp"
 #include "input/motion_worker.hpp"
+#include "planning/global/contract.hpp"
 #include "status/nav_status_writer.hpp"
 #include "traversability/transform_buffer.hpp"
 
@@ -26,6 +29,9 @@ struct InputConfig {
   nav_kernel::Vec3 sensor_offset{};
   bool check_obstacle{true};
   std::size_t max_obstacle_points{20000};
+  std::shared_ptr<const collision::Body> navigation_body;
+  double support_height_m{0.0};
+  double support_tolerance_m{0.0};
 };
 
 struct InputActions {
@@ -61,6 +67,9 @@ class InputProjector {
                                   double receive_steady_s);
   void projectLocalCollision(InputSample<LocalCollisionMap> sample,
                              double receive_steady_s);
+  using SpaceQueries = std::pair<decltype(plan::GlobalPlanRequest{}.observed_free),
+                                decltype(plan::GlobalPlanRequest{}.observed_occupied)>;
+  SpaceQueries observedSpaceQueries(double now_s, double max_age_s) const;
   bool pollObstacles(TimingDiagnostics &timing);
 
   // Health and motion-readiness inputs.
@@ -75,6 +84,7 @@ class InputProjector {
                       TimingDiagnostics &timing, bool extended);
   void resetEpoch(double epoch_start_s, const std::string &reason, bool clear_motion);
   void clearPlanState();
+  void updateBodyGeometry();
 
   EndpointState &state_;
   InputGate &gate_;

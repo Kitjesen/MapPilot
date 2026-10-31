@@ -14,6 +14,10 @@ target_link_libraries(lingtu_inspection_test PRIVATE
   lingtu_inspection_core Threads::Threads)
 lingtu_configure_inspection_test(lingtu_inspection_test)
 
+add_executable(lingtu_inspection_three_point_capture_test test_three_point_capture.cpp)
+target_link_libraries(lingtu_inspection_three_point_capture_test PRIVATE lingtu_inspection_core)
+lingtu_configure_inspection_test(lingtu_inspection_three_point_capture_test)
+
 add_executable(lingtu_inspection_task_event_outbox_test
   "${CMAKE_CURRENT_LIST_DIR}/../endpoint/test_inspection_task_event_outbox.cpp")
 target_link_libraries(lingtu_inspection_task_event_outbox_test PRIVATE

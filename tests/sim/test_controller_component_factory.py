@@ -113,6 +113,11 @@ def test_production_registry_supports_shipped_controller_contracts() -> None:
         ),
         (
             "lingtu.sim.controller-adapter.v1",
+            "thunderv4_cts_moe",
+            "onnxruntime",
+        ),
+        (
+            "lingtu.sim.controller-adapter.v1",
             "thunderv4_flat53",
             "onnxruntime",
         ),

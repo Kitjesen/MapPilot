@@ -5,6 +5,8 @@ import json
 import os
 import socket
 import struct
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -101,6 +103,53 @@ def test_default_socket_follows_the_product_session(monkeypatch, tmp_path) -> No
     client = MapClient(connector=lambda: None)
 
     assert client.socket_path == str(tmp_path / "mapd.sock")
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows Winsock AF_UNIX")
+def test_windows_client_uses_native_unix_socket_for_map_record(monkeypatch) -> None:
+    import ctypes
+    import select
+
+    from runtime.endpoints.mapd import _receive_exact
+
+    # Exercise the address bridge used by Windows Python builds without AF_UNIX.
+    monkeypatch.delattr(socket, "AF_UNIX", raising=False)
+    winsock = ctypes.WinDLL("ws2_32.dll")
+    winsock.bind.argtypes = [ctypes.c_size_t, ctypes.c_void_p, ctypes.c_int]
+    winsock.bind.restype = ctypes.c_int
+    winsock.accept.argtypes = [ctypes.c_size_t, ctypes.c_void_p, ctypes.c_void_p]
+    winsock.accept.restype = ctypes.c_size_t
+    with tempfile.TemporaryDirectory(prefix="lt-mapd-") as directory:
+        socket_path = os.path.join(directory, "mapd.sock")
+        native_address = ctypes.create_string_buffer(struct.pack("H108s", 1, os.fsencode(socket_path)))
+        with socket.socket(1, socket.SOCK_STREAM) as listener:
+            listener.settimeout(2.0)
+            assert winsock.bind(listener.fileno(), native_address, 110) == 0
+            listener.listen(1)
+
+            def reply() -> dict:
+                assert select.select([listener], [], [], 2.0)[0]
+                descriptor = winsock.accept(listener.fileno(), None, None)
+                assert descriptor != ctypes.c_size_t(-1).value
+                with socket.socket(1, socket.SOCK_STREAM, fileno=descriptor) as connection:
+                    connection.settimeout(2.0)
+                    header = _receive_exact(connection, _REQUEST_HEADER.size)
+                    magic, version, opcode, flags, _, request_size, json_size = _REQUEST_HEADER.unpack(header)
+                    assert (magic, version, opcode, flags) == (b"LTMP", 2, 2, 0)
+                    _receive_exact(connection, request_size)
+                    body = json.loads(_receive_exact(connection, json_size))
+                    connection.sendall(_response({"success": True, "record": {"content_epoch": 7}}))
+                    return body
+
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                pending = executor.submit(reply)
+                try:
+                    result = MapClient(socket_path=socket_path).service("get_record", map_id="yard")
+                finally:
+                    body = pending.result(timeout=2.0)
+                assert result == {"success": True, "record": {"content_epoch": 7}}
+                assert body == {"action": "get_record", "map_id": "yard"}
+        os.unlink(socket_path)
+
 
 def test_saved_map_preview_accepts_the_web_80000_point_budget() -> None:
     payload = {"success": True, "map_id": "yard", "points": [[12.34567, -9.876543, 0.456789]] * 80000}

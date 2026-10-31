@@ -4,7 +4,8 @@
 
 import type { PlanPreviewResponse, SSEState } from '../types'
 import * as api from '../services/api'
-import { liveNavigationStatus, presentNavigationStatus } from '../services/navigationStatus'
+import { liveNavigationStatus, operatorReasonMessage, presentNavigationStatus } from '../services/navigationStatus'
+import { sceneGoalHeight } from '../services/navigationPreview'
 
 // ── Command registry — single source of truth for dropdown + help ──
 
@@ -25,7 +26,7 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   {
     name: '/go',
     usage: '/go <x> <y>',
-    description: '发送导航目标到指定世界坐标',
+    description: '发送同层导航目标到指定世界坐标',
     example: '/go 3.5 -1.2',
     group: '导航',
   },
@@ -73,7 +74,8 @@ function formatPlanPreviewFailure(
   error?: string | null,
 ): string {
   const safety = formatPlanSummary(preview)
-  const reason = reasons.slice(0, 3).join(' / ') || error || preview?.error || '目标预检未通过'
+  const reason = reasons.slice(0, 3).map(item => operatorReasonMessage(item, 'zh')).join(' / ')
+    || operatorReasonMessage(error || preview?.error || '目标预检未通过', 'zh')
   return safety ? `${reason} (${safety})` : reason
 }
 
@@ -145,10 +147,13 @@ export async function executeSlashCommand(raw: string, sseState: SSEState): Prom
     if (isNaN(x) || isNaN(y)) {
       return '用法：/go <x> <y>  （示例：/go 3.5 -1.2）'
     }
+    const z = sceneGoalHeight(sseState.odometry?.z)
+    if (z === null) return '等待有效定位高度，暂未提交导航目标。'
     try {
       const candidate = await api.constructGoalCandidate({
         x,
         y,
+        z,
         source: 'coordinate',
         target_type: 'coordinate',
         label: 'slash_go',
@@ -162,6 +167,7 @@ export async function executeSlashCommand(raw: string, sseState: SSEState): Prom
         return `目标不可达：${reason}`
       }
       const res = await api.sendGoal(x, y, {
+        z,
         source: 'coordinate',
         target_type: 'coordinate',
         label: 'slash_go',

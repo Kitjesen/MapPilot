@@ -43,7 +43,7 @@ struct alignas(64) SharedHeader {
   std::uint64_t published_sequence;
   std::uint64_t created_timestamp_ns;
   std::uint64_t writer_heartbeat_ns;
-  std::uint64_t reserved1;
+  std::uint64_t source_generation;
 };
 
 struct alignas(64) SlotHeader {
@@ -81,6 +81,7 @@ struct alignas(64) SlotHeader {
 static_assert(sizeof(SharedHeader) == 64, "camera SHM superblock must be 64 bytes");
 static_assert(sizeof(SlotHeader) == 256, "camera SHM slot header must be 256 bytes");
 static_assert(offsetof(SharedHeader, published_sequence) == 32);
+static_assert(offsetof(SharedHeader, source_generation) == 56);
 static_assert(offsetof(SlotHeader, encoding) == 64);
 static_assert(offsetof(SlotHeader, frame_id) == 80);
 static_assert(offsetof(SlotHeader, guard_end) == 248);
@@ -111,6 +112,7 @@ struct WriterConfig {
   std::uint32_t slot_capacity{kDefaultSlotCapacity};
   mode_t permissions{0660};
   bool unlink_on_destroy{false};
+  std::uint64_t source_generation{0};
 };
 
 inline std::uint64_t unixTimeNs() {
@@ -209,6 +211,10 @@ class FrameWriter {
     return last_sequence_;
   }
 
+  std::uint64_t sourceGeneration() const noexcept {
+    return source_generation_;
+  }
+
   const std::string& name() const noexcept {
     return config_.name;
   }
@@ -261,7 +267,12 @@ class FrameWriter {
     }
     mapping_size_ = expected_size;
     header_ = static_cast<SharedHeader*>(mapping_);
-    if (!compatibleHeader()) {
+    const bool compatible = compatibleHeader();
+    const std::uint64_t created_timestamp_ns =
+        compatible && header_->created_timestamp_ns > 0
+        ? header_->created_timestamp_ns
+        : unixTimeNs();
+    if (!compatible) {
       std::memset(mapping_, 0, mapping_size_);
       std::memcpy(header_->magic, kMagic, sizeof(kMagic));
       header_->schema_version = kSchemaVersion;
@@ -269,10 +280,14 @@ class FrameWriter {
       header_->slot_header_size = sizeof(SlotHeader);
       header_->slot_count = static_cast<std::uint16_t>(config_.slot_count);
       header_->slot_capacity = config_.slot_capacity;
-      header_->created_timestamp_ns = unixTimeNs();
+      header_->created_timestamp_ns = created_timestamp_ns;
     }
-    last_sequence_ = atomicLoad(&header_->published_sequence);
+    source_generation_ = config_.source_generation;
+    last_sequence_ = 0;
+    atomicStore(&header_->published_sequence, std::uint64_t{0});
+    atomicStore(&header_->active_slot, std::uint32_t{0});
     atomicStore(&header_->writer_heartbeat_ns, unixTimeNs());
+    atomicStore(&header_->source_generation, source_generation_);
   }
 
   bool compatibleHeader() const {
@@ -382,6 +397,7 @@ class FrameWriter {
   std::size_t mapping_size_{0};
   SharedHeader* header_{nullptr};
   std::uint64_t last_sequence_{0};
+  std::uint64_t source_generation_{0};
 };
 
 }  // namespace lingtu::drivers::camera::shm

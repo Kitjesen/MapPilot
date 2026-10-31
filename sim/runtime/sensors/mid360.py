@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import math
+import random
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -12,6 +14,7 @@ from runtime.msgs.numpy_compat import np
 
 from .contracts import DeadlinePolicy, ScheduledSensorSample
 from .dds_adapter import Mid360AdapterError
+from .noise import RangeNoiseConfig
 from .samples import LivoxPointSample, Mid360FrameSample, SensorSampleStamp
 
 DEFAULT_PATTERN_PATH = (
@@ -334,11 +337,14 @@ class Mid360RaycastExtractor:
     reflectivity_proxy: int = DEFAULT_REFLECTIVITY_PROXY
     unknown_line: int = 0
     scan_time_profile: str = "instantaneous_geometry/scheduled_offsets"
+    range_noise: RangeNoiseConfig = field(default_factory=RangeNoiseConfig)
     _last_generation: tuple[int, int] | None = field(default=None, init=False, repr=False)
     _last_sequence: int | None = field(default=None, init=False, repr=False)
     _last_sim_time_ns: int | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.range_noise, RangeNoiseConfig):
+            raise ValueError("range_noise must be a RangeNoiseConfig")
         if not callable(getattr(self.process, "raycast", None)):
             raise ValueError("process must provide raycast()")
         if not callable(getattr(self.cursor, "next_rays", None)):
@@ -350,6 +356,15 @@ class Mid360RaycastExtractor:
             or any(character.isspace() for character in self.sensor_frame_id)
         ):
             raise ValueError("sensor_frame_id must be one non-empty stable frame token")
+
+    def set_noise_enabled(self, enabled: bool) -> None:
+        """Toggle measurement noise on the owner thread, without changing truth.
+
+        Only subsequently extracted frames are affected. The immutable config
+        carried by each frame records the effective state for that sample.
+        """
+
+        self.range_noise = replace(self.range_noise, enabled=enabled)
 
     def __call__(
         self,
@@ -418,10 +433,35 @@ class Mid360RaycastExtractor:
             raycast_frame,
             scan_time_profile=self.scan_time_profile,
         )
+        sample = self._apply_range_noise(sample)
         self._last_generation = generation
         self._last_sequence = scheduled.sequence
         self._last_sim_time_ns = scheduled.deadline_ns
         return sample
+
+    def _apply_range_noise(self, sample: Mid360FrameSample) -> Mid360FrameSample:
+        config = self.range_noise
+        if not config.enabled or config.stddev_m == 0:
+            return sample if config == sample.range_noise else replace(sample, range_noise=config)
+        # Frame-local seeding makes drops and toggles independent of RNG history.
+        # The stream and both generations prevent accidental cross-stream reuse.
+        stamp = sample.stamp
+        rng = random.Random(json.dumps([
+            config.seed, stamp.session_id, stamp.sensor_id,
+            stamp.model_generation, stamp.reset_generation, stamp.sequence,
+        ]))
+        points: list[LivoxPointSample] = []
+        for point in sample.points:
+            distance = math.hypot(point.x, point.y, point.z)
+            if distance == 0:
+                points.append(point)
+                continue
+            measured_range = min(self.range_max_m, max(
+                self.range_min_m, distance + rng.gauss(0.0, config.stddev_m),
+            ))
+            scale = measured_range / distance
+            points.append(replace(point, x=point.x * scale, y=point.y * scale, z=point.z * scale))
+        return replace(sample, points=tuple(points), range_noise=config)
 
     def _require_physics_ready(self) -> None:
         if self.physics_state is None:

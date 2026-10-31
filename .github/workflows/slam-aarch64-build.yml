@@ -5,8 +5,13 @@ on:
     branches: [main]
     paths:
       - 'src/localization/slam/**'
-      - 'src/localization/fastlio2/src/**'
-      - 'src/localization/localizer/**'
+      - 'src/localization/online_mapping/**'
+      - 'src/localization/map_optimization/**'
+      - 'scripts/build/prepare_gtsam.sh'
+      - 'scripts/build/cmake/gtsam.cmake'
+      - 'scripts/build/locks/gtsam.json'
+      - 'src/localization/ltlio/src/**'
+      - 'src/localization/relocalization/**'
       - 'src/maps/include/**'
       - 'src/message/**'
       - 'third_party/3d_bbs/**'
@@ -17,8 +22,13 @@ on:
     branches: [main]
     paths:
       - 'src/localization/slam/**'
-      - 'src/localization/fastlio2/src/**'
-      - 'src/localization/localizer/**'
+      - 'src/localization/online_mapping/**'
+      - 'src/localization/map_optimization/**'
+      - 'scripts/build/prepare_gtsam.sh'
+      - 'scripts/build/cmake/gtsam.cmake'
+      - 'scripts/build/locks/gtsam.json'
+      - 'src/localization/ltlio/src/**'
+      - 'src/localization/relocalization/**'
       - 'src/maps/include/**'
       - 'src/message/**'
       - 'third_party/3d_bbs/**'
@@ -33,7 +43,7 @@ concurrency:
 
 jobs:
   native-slam-aarch64:
-    name: Native Fast-LIO2 and CycloneDDS runtime
+    name: Native LTLIO and CycloneDDS runtime
     runs-on: ubuntu-22.04-arm
     timeout-minutes: 40
     env:
@@ -41,7 +51,7 @@ jobs:
       LINGTU_BUILD_JOBS: '4'
       LINGTU_SLAM_BUILD_TESTS: 'ON'
       LINGTU_SLAM_BUILD_DDS_RUNTIME: 'ON'
-      LINGTU_SLAM_FASTLIO2: 'ON'
+      LINGTU_SLAM_LTLIO: 'ON'
 
     steps:
       - name: Checkout
@@ -62,6 +72,7 @@ jobs:
             build-essential \
             ccache \
             cmake \
+            curl \
             cyclonedds-dev \
             cyclonedds-tools \
             libeigen3-dev \
@@ -69,6 +80,11 @@ jobs:
             libyaml-cpp-dev \
             ninja-build \
             pkg-config
+
+      - name: Prepare the locked GTSAM CPU SDK
+        run: |
+          LINGTU_GTSAM_PREFIX="${RUNNER_TEMP}/gtsam" bash scripts/build/prepare_gtsam.sh
+          echo "CMAKE_PREFIX_PATH=${RUNNER_TEMP}/gtsam" >> "${GITHUB_ENV}"
 
       - name: Build and test native SLAM runtime
         run: |

@@ -1,0 +1,31 @@
+{
+  "schema_version": "lingtu.sim_policy_manifest.v1",
+  "asset": "policy_cts_moe_80708.onnx",
+  "format": "onnx",
+  "onnx": {
+    "inputs": [
+      {"name": "history", "shape": ["batch", 530]},
+      {"name": "single_obs", "shape": ["batch", 53]}
+    ],
+    "output_name": "actions",
+    "output_shape": ["batch", 16],
+    "policy_contract": "thunder_cts_moe_v1"
+  },
+  "contract": {
+    "observation_frame_dim": 53,
+    "history_frames": 10,
+    "history_layout": "term_major_oldest_first",
+    "action_dim": 16,
+    "inference_hz": 50,
+    "low_level_hz": 200,
+    "runtime_settings_source": "ONNX metadata runtime_contract",
+    "saved_contracts": ["actuator_contract", "training_context", "hip_contract", "runtime_contract"]
+  },
+  "source_note": "TorchScript CTS MoE blind student; exact contracts and numerical conversion evidence are retained beside this model.",
+  "qualification": {
+    "passed": false,
+    "reason": "Complete MuJoCo stair navigation and hardware behavior are not qualified."
+  },
+  "simulation_only": true,
+  "real_robot_motion": false
+}

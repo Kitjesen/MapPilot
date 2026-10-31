@@ -385,7 +385,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-plan", type=Path)
     parser.add_argument(
         "--state-provider",
-        choices=("fastlio2", "mujoco_navigation_fixture"),
+        choices=("ltlio", "mujoco_navigation_fixture"),
         default=None,
         help="Override the manifest state provider for isolated local-navigation acceptance.",
     )
@@ -539,10 +539,13 @@ def _binary_source_provenance(
         "slam": [
             ROOT / "src" / "localization" / "slam" / "cpp",
             ROOT / "src" / "localization" / "slam" / "cpp" / "CMakeLists.txt",
-            ROOT / "src" / "localization" / "fastlio2" / "src",
+            ROOT / "src" / "localization" / "ltlio" / "frontend.hpp",
+            ROOT / "src" / "localization" / "ltlio" / "frontend.cpp",
+            ROOT / "src" / "localization" / "ltlio" / "detail",
+            ROOT / "src" / "localization" / "ltlio" / "CMakeLists.txt",
             ROOT / "src" / "localization" / "localizer" / "src" / "localizers",
-            ROOT / "src" / "maps" / "cpp" / "semantic_map_persistence.cpp",
-            ROOT / "src" / "maps" / "include" / "lingtu" / "maps" / "semantic_map_persistence.hpp",
+            ROOT / "src" / "maps" / "cpp" / "semantic" / "store.cpp",
+            ROOT / "src" / "maps" / "include" / "lingtu" / "maps" / "semantic" / "store.hpp",
             snapshot_file,
             *optional_small_gicp_sources,
             *common_sources,
@@ -721,7 +724,7 @@ def _teleop_product_contract_evidence(
     lifecycle = product_lifecycle("teleop_avoid")
     canonical = {
         "product": lifecycle.product,
-        "source": "config/runtime_graph/products/teleop_avoid.yaml",
+        "source": "config/system/products/teleop_avoid.yaml",
         "native_control_mode": lifecycle.native_control_mode,
         "slam_mode": lifecycle.slam_mode,
         "requires_map": lifecycle.requires_map,
@@ -887,12 +890,12 @@ def prepare_runtime(args: argparse.Namespace) -> dict[str, Any]:
         sensor_runtime["scan_time_profile"] = "instantaneous" if fixture else "physical_rolling"
         sensor_runtime["publish_odom_prior"] = fixture
         manifest["sensor_runtime"] = sensor_runtime
-    state_provider = str((manifest.get("slam_runtime") or {}).get("provider") or "fastlio2").strip().lower()
+    state_provider = str((manifest.get("slam_runtime") or {}).get("provider") or "ltlio").strip().lower()
     scope = dict(manifest.get("acceptance_scope") or {})
     if state_provider == "mujoco_navigation_fixture":
         scope["coverage"] = "component"
         scope["claims"] = ["native local-navigation acceptance with MuJoCo truth localization and synthetic ground coverage"]
-        scope["excluded_claims"] = list(dict.fromkeys([*(scope.get("excluded_claims") or ()), "Fast-LIO state estimation"]))
+        scope["excluded_claims"] = list(dict.fromkeys([*(scope.get("excluded_claims") or ()), "LTLIO state estimation"]))
         manifest["description"] = "MuJoCo truth fixture for isolated native local-navigation acceptance."
         manifest["acceptance_scope"] = scope
 

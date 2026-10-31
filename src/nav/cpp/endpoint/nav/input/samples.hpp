@@ -8,8 +8,10 @@
 
 #include "input/frame.hpp"
 #include "nav_kernel/types.hpp"
-#include "runtime/rolling/contract.hpp"
+#include "app/rolling/contract.hpp"
 #include "safety/command.hpp"
+
+namespace lingtu::nav::collision { class Terrain; }
 
 namespace lingtu::nav::endpoint {
 
@@ -55,6 +57,7 @@ struct LocalCollisionMap {
   std::shared_ptr<const std::vector<std::uint8_t>> inflated_occupied_bits;
   std::shared_ptr<const std::vector<std::uint8_t>> measured_occupied_bits;
   std::shared_ptr<const std::vector<std::uint8_t>> known_free_bits;
+  std::shared_ptr<const lingtu::nav::collision::Terrain> terrain;
   int size_x{0};
   int size_y{0};
   int size_z{0};
@@ -88,6 +91,16 @@ struct DriverControlSample {
   bool last_command_accepted{false};
 };
 
+struct MotionProfileSample {
+  double stamp_s{0.0};
+  std::string task_id;
+  std::string requirement;
+  std::string phase;
+  std::string requested_profile;
+  std::string active_profile;
+  std::string reason;
+};
+
 enum class ClearSource {
   Map,
   Cloud,
@@ -105,6 +118,7 @@ struct SensorBatch {
   std::vector<InputSample<TransformSample>> transforms;
   std::vector<InputSample<OdometrySample>> odometry;
   std::optional<DriverControlSample> driver_control;
+  std::optional<MotionProfileSample> motion_profile;
   std::optional<RollingSegmentExecutionGrid> exploration_grid;
   std::optional<InputSample<PointCloudSample>> obstacles;
   std::optional<InputSample<PointCloudSample>> terrain;

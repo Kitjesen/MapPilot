@@ -12,7 +12,7 @@ Gateway usage::
 
     claude mcp add --transport http lingtu http://192.168.66.190:8090/mcp
 
-Module blueprint usage::
+Module host_builder usage::
 
     bp.add(MCPServerModule, port=8090)
 """
@@ -34,11 +34,13 @@ from gateway.navigation.commands import CommandBoundaryError
 from gateway.navigation.status import build_navigation_status
 from gateway.schemas import InstructionRequest, LocationUpsertRequest
 from gateway.services.control_commands import ControlCommandService
+from gateway.services.instructions import instruction_control, submit_instruction
 from gateway.services.native_control import estop as native_estop
 from runtime.module import Module, skill
 from runtime.msgs.nav import Odometry
 from runtime.msgs.semantic import SceneGraph
 from runtime.registry import register
+from runtime.skills import discover_skills
 from runtime.status_provider import RuntimeStatusProvider
 from runtime.stream import In, Out
 
@@ -72,9 +74,22 @@ def _ok(req_id: Any, result: Any) -> dict:
     return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
 
-def _text(req_id: Any, value: Any) -> dict:
+def _text(req_id: Any, value: Any, *, output_schema: dict | None = None) -> dict:
     text = json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
-    return _ok(req_id, {"content": [{"type": "text", "text": text}]})
+    result = {"content": [{"type": "text", "text": text}]}
+    structured = value if isinstance(value, dict) else None
+    if output_schema is not None and structured is None:
+        if not isinstance(value, str):
+            raise TypeError("declared object output must return an object or JSON object string")
+        try:
+            structured = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("declared object output returned invalid JSON") from exc
+        if not isinstance(structured, dict):
+            raise TypeError("declared object output returned non-object JSON")
+    if structured is not None:
+        result["structuredContent"] = structured
+    return _ok(req_id, result)
 
 
 def _tool_error(req_id: Any, text: str) -> dict:
@@ -175,12 +190,9 @@ class MCPServerModule(Module, layer=6):
     def on_system_modules(self, modules: dict[str, Any]) -> None:
         """Auto-discover every @skill method from every running module.
 
-        Called by Blueprint.build() after all modules are instantiated.
+        Called by HostBuilder.build() after all modules are instantiated.
         Builds _tool_list (MCP descriptors) and _tool_registry (call table).
         """
-        self._tool_registry = {}
-        self._tool_list = []
-        candidates: dict[str, dict[int, dict[str, Any]]] = {}
         self._all_modules = modules
         self._nav_commands = modules.get("nav.commands")
         # Grab module references for built-in tools
@@ -188,57 +200,11 @@ class MCPServerModule(Module, layer=6):
         self._vector_memory_mod = modules.get("VectorMemoryModule")
         self._episodic_mod = modules.get("EpisodicMemoryModule")
 
-        # Discover @skill from every module (including self)
-        for mod_name, mod in sorted(modules.items()):
-            if not hasattr(mod, "get_skill_infos"):
-                continue
-            try:
-                infos = mod.get_skill_infos()
-            except Exception as e:
-                logger.debug("failed to get skill infos from %s: %s", mod_name, e)
-                continue
-            for info in infos:
-                method = getattr(mod, info.func_name, None)
-                if method is None:
-                    continue
-                schema = json.loads(info.args_schema)
-                desc = schema.pop("description", "")
-                by_module = candidates.setdefault(info.func_name, {})
-                existing = by_module.get(id(mod))
-                if existing is not None:
-                    existing["module_names"].add(mod_name)
-                    continue
-                by_module[id(mod)] = {
-                    "module": mod,
-                    "module_names": {mod_name},
-                    "method": method,
-                    "tool": {
-                        "name": info.func_name,
-                        "description": f"[{info.class_name}] {desc}".strip(),
-                        "inputSchema": schema,
-                    },
-                }
-
-        tool_registry: dict[str, Any] = {}
-        tool_list: list[dict[str, Any]] = []
-        for tool_name in sorted(candidates):
-            entries = list(candidates[tool_name].values())
-            peer_entries = [entry for entry in entries if entry["module"] is not self]
-            self_entries = [entry for entry in entries if entry["module"] is self]
-
-            if len(entries) == 1:
-                selected = entries[0]
-            elif tool_name in _BUILTIN_FALLBACK_TOOLS and len(peer_entries) == 1 and len(self_entries) == 1:
-                selected = peer_entries[0]
-            else:
-                owners = sorted("/".join(sorted(entry["module_names"])) for entry in entries)
-                raise ValueError(f"duplicate MCP tool '{tool_name}' from modules: {', '.join(owners)}")
-
-            tool_registry[tool_name] = selected["method"]
-            tool_list.append(selected["tool"])
-
-        self._tool_registry = tool_registry
-        self._tool_list = tool_list
+        self._tool_registry, self._tool_list = discover_skills(
+            modules,
+            fallback_owner=self,
+            fallback_names=_BUILTIN_FALLBACK_TOOLS,
+        )
 
         logger.info(
             "MCP: %d tools from %d modules",
@@ -394,7 +360,7 @@ class MCPServerModule(Module, layer=6):
 
     @skill
     def get_scene_graph(self) -> str:
-        """Return the current scene graph -detected objects with positions and labels."""
+        """Return the current flat or hierarchical scene graph snapshot."""
         return self._sg_json
 
     @skill
@@ -517,12 +483,24 @@ class MCPServerModule(Module, layer=6):
         """Navigate to a described object or place using semantic understanding."""
         return self._submit_instruction_tool("navigate_to_object", instruction)
 
-    @skill
-    def send_instruction(self, text: str) -> str:
+    @skill(
+        description=(
+            "Submit a natural-language task to the Agent when it is loaded. Retain run_id and query "
+            "get_agent_status; cancel_agent_task(run_id) cancels that run only. Admission is not execution success. "
+            "A Host without Agent uses its semantic instruction stream."
+        ),
+        parameters={"text": "Robot task or current-task control instruction.",
+                    "run_id": "Optional current Agent run identity; stale controls are rejected.",
+                    "control_only": "Reject any instruction that would start a new task."},
+        read_only=False,
+    )
+    def send_instruction(self, text: str, run_id: str = "", control_only: bool = False) -> str:
         """Send a natural language instruction to the semantic planner."""
-        return self._submit_instruction_tool("send_instruction", text)
+        return self._submit_instruction_tool("send_instruction", text, run_id, control_only)
 
-    def _submit_instruction_tool(self, tool_name: str, text: str) -> str:
+    def _submit_instruction_tool(
+        self, tool_name: str, text: str, run_id: str = "", control_only: bool = False,
+    ) -> str:
         instruction = str(text or "").strip()
         if not instruction:
             return json.dumps(
@@ -541,46 +519,33 @@ class MCPServerModule(Module, layer=6):
             text=instruction,
             request_id=request_id,
             client_id="mcp",
+            run_id=run_id,
+            control_only=control_only,
         )
         gateway = (self._all_modules or {}).get("GatewayModule")
 
         if gateway is None:
-            self.instruction.publish(instruction)
-            return json.dumps(
-                {
-                    "ok": True,
-                    "accepted": True,
-                    "status": "submitted",
-                    "stage": "host_submitted",
-                    "tool": tool_name,
-                    "request_id": request_id,
-                    "client_id": "mcp",
-                    "instruction": instruction,
-                    "execution_confirmed": False,
-                    "motor_confirmed": False,
-                }
-            )
+            payload = submit_instruction(self, instruction, run_id, control_only)
+            payload.update(tool=tool_name, request_id=request_id, client_id="mcp")
+            if payload["accepted"] and payload["operation"] == "start":
+                payload["status"] = "submitted"
+                if payload["executor"] != "agent":
+                    payload["stage"] = "host_submitted"
+            return json.dumps(payload, ensure_ascii=False)
 
         command_service = ControlCommandService(gateway)
 
         def _submit() -> dict[str, Any]:
-            gateway.instruction.publish(instruction)
-            return {
-                "ok": True,
-                "accepted": True,
-                "status": "submitted",
-                "stage": "submitted",
-                "tool": tool_name,
-                "instruction": instruction,
-                "execution_confirmed": False,
-                "motor_confirmed": False,
-            }
+            payload = submit_instruction(gateway, instruction, run_id, control_only)
+            payload["tool"] = tool_name
+            if payload["accepted"] and payload["operation"] == "start":
+                payload["status"] = "submitted"
+            return payload
 
-        result = command_service.run_motion_guarded_command(
-            "instruction",
-            body,
-            _submit,
-        )
+        if control_only or instruction_control(gateway, instruction):
+            result = gateway._run_control_command("instruction", body, _submit)
+        else:
+            result = command_service.run_motion_guarded_command("instruction", body, _submit)
         if isinstance(result, JSONResponse):
             payload = json.loads(result.body.decode("utf-8"))
             payload.setdefault("execution_confirmed", False)
@@ -742,7 +707,14 @@ class MCPServerModule(Module, layer=6):
                         _aio.get_running_loop().run_in_executor(None, lambda: fn(**args)),
                         timeout=tool_timeout_s,
                     )
-                    return JSONResponse(_text(req_id, result if result is not None else "Done."))
+                    tool = next((item for item in mcp._tool_list if item["name"] == name), {})
+                    return JSONResponse(
+                        _text(
+                            req_id,
+                            result if result is not None else "Done.",
+                            output_schema=tool.get("outputSchema"),
+                        )
+                    )
                 except _aio.TimeoutError:
                     logger.warning("MCP tool timeout: %s (exceeded %ss)", name, tool_timeout_s)
                     return JSONResponse(_tool_error(req_id, f"Tool {name!r} timed out after {tool_timeout_s}s."))

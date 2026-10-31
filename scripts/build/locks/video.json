@@ -1,0 +1,30 @@
+{
+  "schema_version": "lingtu.video.dependencies.v1",
+  "gstreamer": {
+    "version": "1.28.8",
+    "repo": "https://gitlab.freedesktop.org/gstreamer/gstreamer.git",
+    "commit": "1b2a95a1b72787cda146b46df9605b168e5b683b"
+  },
+  "gst_plugin_webrtc": {
+    "version": "0.15.4",
+    "repo": "https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs.git",
+    "commit": "1afff3711855238433862c0ce3bf34918e500386",
+    "plugin": "whepserversink",
+    "cargo_lock": "video-cargo.lock"
+  },
+  "system": {
+    "build_target": "Ubuntu 24.04 x86_64",
+    "required_gstreamer_abi": "1.28",
+    "hardware_qualification": "pending target-board validation",
+    "development_prerequisites": {
+      "libsrtp2-dev": "2.5.0-3build1",
+      "libx264-dev": "2:0.164.3108+git31e19f9-1"
+    }
+  },
+  "build_tools": {
+    "meson": "1.9.1",
+    "ninja": "1.11.1.4",
+    "rust": "1.92.0",
+    "cargo_c": "0.10.21"
+  }
+}

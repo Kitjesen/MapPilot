@@ -134,6 +134,9 @@ bool MotionLayer::isStale(const Cell &cell, double now_s) const {
 void MotionLayer::markHit(const VoxelKey &key, const Cell &sample, double stamp_s) {
   auto &cell = cells_[key];
   const bool new_hit_frame = !sameFrame(cell.last_hit_s, stamp_s);
+  if (new_hit_frame && cell.free_observations > 0U && !isObstacle(cell.state)) {
+    cell.entered_free_space_s = stamp_s;
+  }
   if (cell.hits <= 0 || sample.height > cell.height || cell.state == CellState::Free ||
       cell.state == CellState::Cleared) {
     cell.x = sample.x;
@@ -142,6 +145,7 @@ void MotionLayer::markHit(const VoxelKey &key, const Cell &sample, double stamp_
     cell.height = sample.height;
   }
   cell.last_hit_s = stamp_s;
+  cell.dynamic_height = sample.dynamic_height;
   cell.last_update_s = stamp_s;
   cell.hits = std::min(cell.hits + 1, 1000000);
   if (new_hit_frame) {
@@ -219,7 +223,7 @@ void MotionLayer::update(const std::vector<float> &xyzh, double stamp_s) {
   cells_.reserve(cells_.size() + count);
   for (std::size_t i = 0; i < count; ++i) {
     const std::size_t base = i * 4;
-    const Cell sample{
+    Cell sample{
         xyzh[base + 0],
         xyzh[base + 1],
         xyzh[base + 2],
@@ -232,6 +236,7 @@ void MotionLayer::update(const std::vector<float> &xyzh, double stamp_s) {
         0,
         CellState::Occupied,
     };
+    sample.dynamic_height = sample.height;
     if (!std::isfinite(sample.x) || !std::isfinite(sample.y) || !std::isfinite(sample.z) ||
         !std::isfinite(sample.height)) {
       continue;
@@ -244,7 +249,7 @@ void MotionLayer::update(const std::vector<float> &xyzh, double stamp_s) {
 }
 
 void MotionLayer::updateFromScan(const SensorOrigin &origin, const std::vector<float> &xyzh,
-                                 double stamp_s) {
+                                 double stamp_s, const std::vector<float> *dynamic_heights) {
   if (origin.valid && std::isfinite(origin.x) && std::isfinite(origin.y) &&
       std::isfinite(origin.z)) {
     last_sensor_origin_ = origin;
@@ -271,8 +276,9 @@ void MotionLayer::updateFromScan(const SensorOrigin &origin, const std::vector<f
     }
     const auto key = makeKey(x, y, z);
     current_hit_keys_.insert(key);
-    markHit(key, Cell{x, y, z, height, stamp_s, -1.0, stamp_s, 1, 1, 0,
-                      CellState::Occupied}, stamp_s);
+    Cell sample{x, y, z, height, stamp_s, -1.0, stamp_s, 1, 1, 0, CellState::Occupied};
+    sample.dynamic_height = dynamic_heights ? (*dynamic_heights)[i] : height;
+    markHit(key, sample, stamp_s);
   }
 
   const std::size_t ray_stride =
@@ -320,9 +326,21 @@ void MotionLayer::updateFromScan(const SensorOrigin &origin, const std::vector<f
         std::unique(free_keys_scratch_.begin(), free_keys_scratch_.end()),
         free_keys_scratch_.end());
     stats_.raycast_voxels += free_keys_scratch_.size();
-    // Hits are already applied; ray clearing touches only non-hit cells.
+    // Grazing rays must not clear the quantization/noise band of this scan's surface.
     for (const auto &key : free_keys_scratch_) {
-      if (current_hit_keys_.find(key) != current_hit_keys_.end()) {
+      bool near_hit = false;
+      for (int dx = -1; dx <= 1 && !near_hit; ++dx) {
+        for (int dy = -1; dy <= 1 && !near_hit; ++dy) {
+          for (int dz = -1; dz <= 1; ++dz) {
+            if (current_hit_keys_.find({key.x + dx, key.y + dy, key.z + dz}) !=
+                current_hit_keys_.end()) {
+              near_hit = true;
+              break;
+            }
+          }
+        }
+      }
+      if (near_hit) {
         continue;
       }
       markFree(key, stamp_s);
@@ -688,8 +706,8 @@ std::vector<DynamicCluster> MotionLayer::dynamicClusters(std::size_t max_cluster
     }
     const Cell &cell = it->second;
     if (isObstacle(cell.state) && sameFrame(cell.last_hit_s, current_stamp_s_) &&
-        cell.height >= config_.dynamic_min_height_m &&
-        cell.height <= config_.dynamic_max_height_m) {
+        cell.dynamic_height >= config_.dynamic_min_height_m &&
+        cell.dynamic_height <= config_.dynamic_max_height_m) {
       candidate_cells.emplace(key, &cell);
     }
   }
@@ -730,7 +748,10 @@ std::vector<DynamicCluster> MotionLayer::dynamicClusters(std::size_t max_cluster
       sy += cell.y;
       sz += cell.z;
       candidate.keys.push_back(key);
-      if (cell.free_observations > 0U) ++candidate.prior_free_cells;
+      // Count a free-to-hit transition once, not on every later observation.
+      if (sameFrame(cell.entered_free_space_s, current_stamp_s_)) {
+        ++candidate.prior_free_cells;
+      }
       // Sparse scans may leave one voxel between returns on the same object.
       for (int dx = -2; dx <= 2; ++dx) {
         for (int dy = -2; dy <= 2; ++dy) {
@@ -769,7 +790,7 @@ std::vector<DynamicCluster> MotionLayer::dynamicClusters(std::size_t max_cluster
           std::max(candidate.cluster.radius_xy,
                    std::hypot(static_cast<double>(cell.x) - candidate.cluster.x,
                               static_cast<double>(cell.y) - candidate.cluster.y));
-      candidate.cluster.height = std::max(candidate.cluster.height, cell.height);
+      candidate.cluster.height = std::max(candidate.cluster.height, cell.dynamic_height);
       candidate.cluster.min_z = std::min(candidate.cluster.min_z, static_cast<double>(cell.z));
       candidate.cluster.max_z = std::max(candidate.cluster.max_z, static_cast<double>(cell.z));
     }
@@ -817,19 +838,27 @@ std::vector<DynamicCluster> MotionLayer::dynamicClusters(std::size_t max_cluster
       const double raw_vz = (cluster.z - previous.z) / dt;
       const double raw_speed = std::hypot(raw_vx, raw_vy);
       const double previous_speed = std::hypot(previous.vx, previous.vy);
+      cluster.vx = previous.observations > 1 ? 0.5 * previous.vx + 0.5 * raw_vx : raw_vx;
+      cluster.vy = previous.observations > 1 ? 0.5 * previous.vy + 0.5 * raw_vy : raw_vy;
+      cluster.vz = previous.observations > 1 ? 0.5 * previous.vz + 0.5 * raw_vz : raw_vz;
       const double direction_cos =
           previous_speed > 1e-6 && raw_speed > 1e-6
               ? (previous.vx * raw_vx + previous.vy * raw_vy) / (previous_speed * raw_speed)
               : 1.0;
-      const bool plausible_motion =
-          raw_speed >= config_.dynamic_min_speed_mps &&
+      const bool plausible_xy =
+          std::hypot(cluster.vx, cluster.vy) >= config_.dynamic_min_speed_mps &&
           raw_speed <= config_.dynamic_max_speed_mps &&
-          std::abs(raw_vz) <= config_.dynamic_max_z_speed_mps &&
           (previous.moving_frames == 0 || direction_cos >= config_.dynamic_min_dir_cos);
+      if (previous.confirmed && plausible_xy && raw_speed >= config_.dynamic_min_speed_mps &&
+          std::abs(raw_vz) > config_.dynamic_max_z_speed_mps) {
+        // A changed visible height is not a fresh velocity estimate. The
+        // existing unmatched-track TTL below retains, then expires, old motion.
+        matched[best_index] = false;
+        continue;
+      }
+      const bool plausible_motion = plausible_xy &&
+          std::abs(raw_vz) <= config_.dynamic_max_z_speed_mps;
       cluster.id = previous.id;
-      cluster.vx = previous.observations > 1 ? 0.5 * previous.vx + 0.5 * raw_vx : raw_vx;
-      cluster.vy = previous.observations > 1 ? 0.5 * previous.vy + 0.5 * raw_vy : raw_vy;
-      cluster.vz = previous.observations > 1 ? 0.5 * previous.vz + 0.5 * raw_vz : raw_vz;
       cluster.age_s = previous.age_s + dt;
       track.id = previous.id;
       track.age_s = cluster.age_s;

@@ -35,6 +35,7 @@ class MapIcp {
   explicit MapIcp(const ICPConfig &config = ICPConfig{});
 
   bool loadMap(const std::string &pcd_path);
+  bool setMap(std::size_t count, const std::function<PointType(std::size_t)> &point_at);
   bool loadSemanticMap(const std::string &semantic_map_path);
   bool hasMap() const;
   std::uint64_t mapGeneration() const;

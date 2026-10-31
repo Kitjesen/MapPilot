@@ -34,7 +34,8 @@ int GridMap::getTrajectoryOccupancySegment(const Eigen::Vector3d &start,
   if (grid_ == nullptr) return -1;
   return grid_->trajectoryOccupancy({start.x(), start.y(), start.z()},
       {velocity.x(), velocity.y(), velocity.z()}, {end.x(), end.y(), end.z()},
-      {endVelocity.x(), endVelocity.y(), endVelocity.z()}, startAheadS, endAheadS);
+      {endVelocity.x(), endVelocity.y(), endVelocity.z()},
+      startAheadS + trajectoryTimeOffsetS_, endAheadS + trajectoryTimeOffsetS_);
 }
 
 }  // namespace nav_kernel::local::scan::upstream

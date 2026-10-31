@@ -115,12 +115,14 @@ class EstopLatchStore {
 struct MotionStopResult {
   bool accepted{false};
   std::string reason;
+  bool pending{false};
 };
 
 struct MotionStopTerminalBarrierResult {
   bool accepted{false};
   std::string reason;
   bool terminal_committed{false};
+  bool pending{false};
 };
 
 struct ResumeAutonomyRequest {
@@ -140,6 +142,7 @@ struct ResumeTeleopRequest {
 struct FinalShutdownResult {
   bool success{false};
   std::optional<StopConfirmationState> confirmation_state;
+  bool pending{false};
 };
 
 using MotionStopTerminalCommit = std::function<void()>;
@@ -185,7 +188,16 @@ class MotionStopBarrier {
   // commit_terminal must be non-empty and copy-safe/idempotent across retries.
   MotionStopTerminalBarrierResult
   cancelPreservingGoalTerminal(MotionStopTerminalCommit commit_terminal) const;
-  MotionStopResult pauseTask(MotionStopTerminalCommit commit_paused) const;
+  MotionStopResult pauseTask(MotionStopTerminalCommit commit_paused,
+                            const std::string &identity = {}) const;
+  MotionStopResult resumeTask(MotionStopTerminalCommit commit_resumed, double source_stamp_s,
+                             const std::string &identity) const;
+  // Called by the ordinary endpoint frame, never by a blocking wait loop.
+  std::optional<MotionStopResult> poll() const;
+  bool confirmationPending() const noexcept;
+  std::string confirmationKey() const;
+  void resetAfterMotionStart() const;
+  void cancelPendingResume() const;
   MotionStopResult confirmGoalReplanStop(const std::string &reason) const;
   MotionStopResult commitGoalTerminalAfterStop(const std::string &reason,
                                                MotionStopTerminalCommit commit_terminal) const;
@@ -213,17 +225,41 @@ class MotionStopBarrier {
   FinalShutdownResult finalShutdown() const;
 
  private:
+  struct PendingConfirmation {
+    std::string key;
+    std::uint64_t output_sequence{0U};
+    std::string confirmed_reason;
+    std::string failure_suffix;
+    bool fail_closed{false};
+    bool retain_completion{false};
+    std::function<MotionStopResult()> commit;
+  };
+  struct CompletedConfirmation {
+    std::string key;
+    MotionStopResult result;
+  };
+  std::optional<MotionStopResult> replayConfirmation(const std::string &key) const;
+  MotionStopResult confirmTransition(const std::string &key,
+                                    const std::string &confirmed_reason,
+                                    const std::string &failure_suffix, bool fail_closed,
+                                    std::function<MotionStopResult()> commit,
+                                    std::optional<std::uint64_t> sequence = std::nullopt,
+                                    bool retain_completion = false) const;
+  void replaceConfirmation() const;
   bool clearMotionOutputs(const std::string &reason) const;
   MotionStopTerminalCommit deferGoalAbort(const std::string &reason) const;
   MotionStopResult failClosed(MotionStopResult result) const;
   MotionStopResult confirmAndCommitTerminal(MotionStopTerminalCommit commit_terminal,
                                             const std::string &confirmed_reason,
                                             const std::string &failure_suffix,
-                                            bool fail_closed) const;
+                                            bool fail_closed, bool retain_completion = true) const;
   MotionStopResult confirmLastZero(const std::string &confirmed_reason,
                                    const std::string &failure_suffix) const;
   MotionStopTerminalBarrierResult
-  runStopPipeline(std::optional<MotionStopTerminalCommit> commit_terminal) const;
+  runStopPipeline(std::optional<MotionStopTerminalCommit> commit_terminal,
+                  bool defer_goal_terminal = false) const;
+  MotionStopTerminalBarrierResult
+  runCancelPipeline(std::optional<MotionStopTerminalCommit> commit_terminal) const;
   MotionStopTerminalBarrierResult
   runEstopPipeline(const std::string &estop_reason,
                    std::optional<MotionStopTerminalCommit> commit_terminal,
@@ -233,6 +269,8 @@ class MotionStopBarrier {
 
   bool publish_cmd_vel_{false};
   MotionStopActions actions_;
+  mutable std::optional<PendingConfirmation> pending_confirmation_;
+  mutable std::optional<CompletedConfirmation> completed_confirmation_;
 };
 
 }  // namespace lingtu::nav::endpoint

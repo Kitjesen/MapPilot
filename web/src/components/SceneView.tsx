@@ -1,17 +1,20 @@
 import { isObservationMode } from '../services/observationMode.ts'
 import { parseInitialPose } from '../services/localizationInitialPose.ts'
-import { navigationPreviewIsCurrent, sceneGoalHeight } from '../services/navigationPreview.ts'
+import { navigationPreviewErrorMessage, navigationPreviewIsCurrent, sceneGoalHeight, navigationSupportHeightFromRunPlan } from '../services/navigationPreview.ts'
 import { resolveMappingObservation, mappingObservationPointAt } from '../services/mappingObservation.ts'
-import { estimateSceneTime, freshSource, projectScenePose, projectScenePath, scanCanStandAlone, currentNativeLocalPath, scenePoseEpoch, sceneTrailStorageKey, sceneRelocalizationSeed, activeMapRelocalizationTarget } from '../services/sceneTelemetry.ts'
+import { estimateSceneTime, freshSource, freshScenePose, projectScenePose, projectScenePath, scanCanStandAlone, currentNativeLocalPath, scenePoseEpoch, sceneTrailStorageKey, sceneRelocalizationSeed, activeMapRelocalizationTarget } from '../services/sceneTelemetry.ts'
 import { useRef, useEffect, useCallback, useMemo, useState, memo, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Grid3x3, Navigation, Route, Target, Bot,
   ArrowLeft, Save, Trash2, Pencil, X,
-  MapPinned, Cloud, Maximize2, Radio, Activity, LocateFixed, VideoOff, CircleDot,
-  RefreshCw, Gamepad2, Layers2, Camera, SlidersHorizontal, MoreHorizontal, Info, MousePointer2,
+  MapPinned, Cloud, Maximize2, Minimize2, Radio, Activity, LocateFixed, CircleDot,
+  RefreshCw, Gamepad2, Layers2, Camera, SlidersHorizontal, MoreHorizontal, Info,
+  ChevronUp, ChevronDown, Play, Pause,
 } from 'lucide-react'
 import type {
   SSEState,
+  AgentTaskStatusResponse,
   MapInfo,
   PathPoint,
   ToastKind,
@@ -22,6 +25,9 @@ import type {
   ExplorationStatusResponse,
   RecordingStatusResponse,
   CameraMediaStatus,
+  InspectionTaskStatusResponse,
+  InspectionRoute,
+  InspectionRouteRequest,
 } from '../types'
 import * as api from '../services/api'
 import { formatMapSaveProgress, pendingMapSaveStatus, savedMapStatus, mapSaveProgressValue, mapSaveElapsedMs, formatMapSaveElapsed, type MapSaveStatus } from '../services/mapSavePresentation.ts'
@@ -29,19 +35,33 @@ import {
   mapIsActivationReady,
   mapSaveBlockedReason,
 } from '../services/mapReadiness'
-import { liveNavigationStatus, presentNavigationStatus } from '../services/navigationStatus'
+import { liveNavigationStatus, operatorReasonMessage, presentNavigationStatus } from '../services/navigationStatus'
 import { useCamera } from '../hooks/useCamera'
+import { useWHEP } from '../hooks/useWHEP'
+import { useVideoFrame } from '../hooks/useVideoFrame'
+import { useRotatedVideoLayout } from '../hooks/useRotatedVideoLayout'
 import { useBinaryCloud } from '../hooks/useBinaryCloud'
+import { useOctomap } from '../hooks/useOctomap.ts'
+import { CLOUD_HEIGHT_GRADIENT, CLOUD_HEIGHT_MIN, CLOUD_HEIGHT_MAX, cloudColorRange } from '../services/cloudHeightColor.ts'
 import {
   cloudFramesShareCoordinateEpoch,
   savedMapNeedsSceneRebind,
 } from '../workers/cloudDecoderCore.ts'
 import { PromptModal, ConfirmModal } from './Modal'
 import { Scene3D, type Scene3DHandle } from './Scene3D'
+import type { GoalPickMode } from './scene3d/goalPicking.ts'
+import { StairEditor, type StairEditorHandle } from './StairEditor'
+import { MapEditor, type MapEditorHandle } from './MapEditor'
+import type { MapEditScene, MapEditView } from '../types/mapEdit.ts'
+import { HeightRangeControl } from './HeightRangeControl'
+import { CameraTargetOverlay } from './CameraTargetOverlay'
+import { deriveSceneTarget } from '../services/sceneTarget'
+import type { StairScene } from '../types/stairs'
 import { RobotJointStatus } from './RobotJointStatus.tsx'
 import { safetyEnvelopeFromRunPlan, type SafetyEnvelope } from './scene3d/layers/safetyEnvelope.ts'
 import { RecordingPanel } from './RecordingPanel'
 import { TeleopPanel } from './TeleopPanel'
+import { supportsWebTeleop } from '../services/teleopControl.ts'
 import type { Locale } from '../i18n'
 import styles from './SceneView.module.css'
 import {
@@ -61,8 +81,27 @@ import {
   resolveNativeTraversabilityLayer,
   type NativeTraversabilityLayerState,
 } from './scene3d/layers/traversabilityLayer.ts'
+import {
+  EMPTY_ROUTE_DRAFT,
+  appendRouteDraftPoint,
+  buildInspectionRouteRequest,
+  ensureRouteStartIntent,
+  moveRouteDraftPoint,
+  removeRouteDraftPoint,
+  resolveRouteDraftIdentity,
+  routeDraftSignature,
+  routeDraftFromSaved,
+  saveAndStartRouteDraft,
+  selectUniqueOpenRouteTask,
+  sameRouteDraftIdentity,
+  type RouteDraft,
+  type RouteDraftIdentity,
+  type RouteStartIntent,
+} from '../services/routeDraft.ts'
 
 interface SceneViewProps {
+  instructionStatus?: AgentTaskStatusResponse | null
+  onTaskPanelMount?: (node: HTMLDivElement | null) => void
   sseState:  SSEState
   showToast: (msg: string, kind?: ToastKind) => void
   locale: Locale
@@ -70,9 +109,13 @@ interface SceneViewProps {
   motionStartBlockedReason: string
   onElevationSubscriptionChange?: (enabled: boolean) => void
   onOpenSavedMap: (name: string | null) => void
+  initialRoute?: InspectionRoute | null
+  onRouteSaved?: (route: InspectionRoute) => void
+  onOpenInspection?: (routeId: string | null) => void
   onStartMapping: () => void
   productSwitchAllowed: boolean
   productSwitchReason: string
+  onMapEditorExitGuardChange?: (guard: ((proceed: () => void) => void) | null) => void
 }
 
 // ── Layer flags ────────────────────────────────────────────────
@@ -91,6 +134,22 @@ interface Layers {
 const TRAIL_MAX = 300
 const GOAL_SPEED_OPTIONS = [0.2, 0.25, 0.4, 0.5, 0.6]
 const GOAL_RADIUS_OPTIONS = [0.25, 0.45, 0.8]
+
+type NavigationSelectionMode = 'single' | 'route'
+
+function routeTaskStateLabel(status: InspectionTaskStatusResponse | null): string {
+  if (!status) return '等待任务状态'
+  const labels: Record<string, string> = {
+    ACCEPTED: '等待原生执行器确认',
+    RUNNING: '路线执行中',
+    PAUSED: '路线已暂停',
+    SUCCEEDED: '路线已完成',
+    COMPLETED: '路线已完成',
+    FAILED: '路线执行失败',
+    CANCELLED: '路线已取消',
+  }
+  return labels[status.current_state] ?? (status.current_state || '状态未知')
+}
 
 const MAP_GROUPS: Array<{ label: string; filter: (m: MapInfo) => boolean }> = [
   { label: '地图可激活', filter: mapIsActivationReady },
@@ -166,6 +225,12 @@ function formatTelemetryValue(value: number, digits: number): string {
   return normalizeDisplayZero(value, digits).toFixed(digits)
 }
 
+function normalizeGoalHeight(value: number | null | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  // Keep planner precision; only remove floating-point noise around the ground plane.
+  return normalizeDisplayZero(value, 2)
+}
+
 function shouldShowSavedMapForProduct(product: string | null | undefined): boolean {
   return product === 'nav'
     || product === 'tracking'
@@ -179,7 +244,8 @@ function formatPlanPreviewFailure(
   error?: string | null,
 ): string {
   const safety = formatPlanSummary(preview)
-  const reason = reasons.slice(0, 3).join(' / ') || error || preview?.error || 'plan preview rejected'
+  const reason = reasons.slice(0, 3).map(item => operatorReasonMessage(item, 'zh')).join(' / ')
+    || operatorReasonMessage(error || preview?.error || 'plan preview rejected', 'zh')
   return safety ? `${reason} (${safety})` : reason
 }
 
@@ -214,6 +280,8 @@ function showSceneDebugTools(): boolean {
 }
 
 function SceneViewComponent({
+  instructionStatus,
+  onTaskPanelMount,
   sseState,
   showToast,
   locale,
@@ -221,11 +289,35 @@ function SceneViewComponent({
   motionStartBlockedReason,
   onElevationSubscriptionChange,
   onOpenSavedMap,
+  initialRoute,
+  onRouteSaved,
+  onOpenInspection,
   onStartMapping,
   productSwitchAllowed,
   productSwitchReason,
+  onMapEditorExitGuardChange,
 }: SceneViewProps) {
   const scene3DRef = useRef<Scene3DHandle>(null)
+  const workspaceRef = useRef<HTMLDivElement>(null)
+  const navigationPanelsRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const workspace = workspaceRef.current
+    const panels = navigationPanelsRef.current
+    if (!workspace || !panels) return
+    const reserveTaskSpace = () => {
+      const inset = Math.max(0, workspace.getBoundingClientRect().bottom - panels.getBoundingClientRect().top) + 12
+      workspace.style.setProperty('--scene-task-inset', `${inset}px`)
+    }
+    // Task details and the instruction composer can change the bottom area's height.
+    const observer = new ResizeObserver(reserveTaskSpace)
+    observer.observe(workspace)
+    observer.observe(panels)
+    reserveTaskSpace()
+    return () => {
+      observer.disconnect()
+      workspace.style.removeProperty('--scene-task-inset')
+    }
+  }, [])
   const savePreviewSession = useRef<string | null>(null)
   useEffect(() => {
     savePreviewSession.current = sseState.session?.product_session_id ?? ''
@@ -242,6 +334,36 @@ function SceneViewComponent({
 
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(false)
+  const [sceneFullscreen, setSceneFullscreen] = useState(() => document.fullscreenElement === document.documentElement)
+  const fullscreenInspector = useRef<boolean | null>(null)
+  useEffect(() => {
+    const updateFullscreen = () => {
+      const active = document.fullscreenElement === document.documentElement
+      setSceneFullscreen(active)
+      if (!active && fullscreenInspector.current !== null) {
+        setInspectorOpen(fullscreenInspector.current)
+        fullscreenInspector.current = null
+      }
+    }
+    document.addEventListener('fullscreenchange', updateFullscreen)
+    return () => document.removeEventListener('fullscreenchange', updateFullscreen)
+  }, [])
+  const toggleSceneFullscreen = async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen()
+      } else {
+        fullscreenInspector.current = inspectorOpen
+        // Include the existing operator dock and Stop, as well as the map.
+        await document.documentElement.requestFullscreen()
+        setInspectorOpen(false)
+        setDrawerOpen(false)
+      }
+    } catch {
+      fullscreenInspector.current = null
+      showToast('浏览器未能切换全屏，请使用浏览器全屏或重试。', 'error')
+    }
+  }
   const [workspaceTool, setWorkspaceTool] = useState<'maps' | 'locations' | 'localization'>('maps')
   const [inspectorTab, setInspectorTab] = useState<'status' | 'layers' | 'tools'>('status')
   const inspectorTabs = [
@@ -257,11 +379,15 @@ function SceneViewComponent({
     if (tool === 'localization') setRelocOpen(true)
   }
   const [followRobot, setFollowRobot] = useState(true)
-  const [cameraPreference, setCameraPreference] = useState<boolean | null>(null)
-  const cameraVisible = cameraPreference ?? sseState.session?.product !== 'map'
+  const [cameraPreference, setCameraPreference] = useState(true)
+  const cameraVisible = cameraPreference
+  const [cameraExpanded, setCameraExpanded] = useState(false)
+  const cameraExpandRef = useRef<HTMLButtonElement>(null)
   const [cameraStatus, setCameraStatus] = useState<CameraMediaStatus | null>(null)
   const [saveModalOpen, setSaveModalOpen] = useState(false)
   const [recordingPanelOpen, setRecordingPanelOpen] = useState(false)
+  const [sensorDiagnosticsVisible, setSensorDiagnosticsVisible] = useState(false)
+  const [sceneDockTarget, setSceneDockTarget] = useState<HTMLElement | null>(null)
   const [teleopMode, setTeleopMode] = useState(false)
   const [resumePending, setResumePending] = useState(false)
   const [resumeError, setResumeError] = useState<string | null>(null)
@@ -279,12 +405,28 @@ function SceneViewComponent({
   const rasterNowS = estimateSceneTime(localNowS, sseState.stateSnapshot?.ts, sseState.stateSnapshotReceivedAt)
   const [localPlannerSnapshot, setLocalPlannerSnapshot] = useState<NavigationDdsSnapshotResponse | null>(null)
   const [safetyView, setSafetyView] = useState<'slice' | 'volume'>('slice')
-  const [envelopeConfig, setEnvelopeConfig] = useState<{ session: string; shape: SafetyEnvelope | null } | null>(null)
+  const [envelopeConfig, setEnvelopeConfig] = useState<{ session: string; shape: SafetyEnvelope | null; supportHeight: number | null } | null>(null)
   const [maps, setMaps] = useState<MapInfo[]>([])
   const [mapListStatus, setMapListStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const mapListRequestInFlight = useRef(false)
   const [pointSize, setPointSize] = useState(0.18)
+  const [cloudColorMode, setCloudColorMode] = useState<'height' | 'neutral'>('height')
+  const [mapRepresentation, setMapRepresentation] = useState<'points' | 'voxels'>('points')
+  const [voxelScale, setVoxelScale] = useState(2)
+  const [cloudHeightModePreference, setCloudHeightModePreference] = useState<'all' | 'follow' | 'fixed' | null>(null)
+  const [cloudHeightAboveBase, setCloudHeightAboveBase] = useState(1)
+  const [cloudHeightBelowBase, setCloudHeightBelowBase] = useState(1)
+  const [cloudHeightBase, setCloudHeightBase] = useState<{ epoch: string | null; z: number } | null>(null)
+  const [fixedCloudHeight, setFixedCloudHeight] = useState<{ epoch: string; z: number; input: string; below?: number; above?: number } | null>(null)
   const [savedMapCloud, setSavedMapCloud] = useState<api.SavedMapPointCloud | undefined>()
+  const [stairEditorOpen, setStairEditorOpen] = useState(false)
+  const [mapEditorKey, setMapEditorKey] = useState<string | null>(null)
+  const [mapEditState, setMapEditState] = useState<{ key: string; scene: MapEditScene } | null>(null)
+  const [mapEditAnchor, setMapEditAnchor] = useState<{ x: number; y: number } | null>(null)
+  const [mapEditFooter, setMapEditFooter] = useState<HTMLDivElement | null>(null)
+  const mapEditorRef = useRef<MapEditorHandle>(null)
+  const stairEditorRef = useRef<StairEditorHandle>(null)
+  const [stairScene, setStairScene] = useState<{ key: string; value: StairScene } | null>(null)
   const [savedMapLoadError, setSavedMapLoadError] = useState<string | null>(null)
   const savedMapFlat = savedMapCloud?.points
   const [relocOpen, setRelocOpen] = useState(false)
@@ -304,6 +446,9 @@ function SceneViewComponent({
   const saveStartedAt = useRef(0)
   const saveActive = saveStatus?.state === 'saving' || saveStatus?.state === 'pending'
   useEffect(() => {
+    setSceneDockTarget(document.getElementById('scene-actions-slot'))
+  }, [])
+  useEffect(() => {
     if (!saveActive) return
     const timer = window.setInterval(() => setSaveClock(Date.now()), 1000)
     return () => window.clearInterval(timer)
@@ -318,10 +463,24 @@ function SceneViewComponent({
   const [goalSendPending, setGoalSendPending] = useState(false)
   const [goalPreviewError, setGoalPreviewError] = useState<string | null>(null)
   const goalPreviewRequest = useRef(0)
+  const [navigationSelectionMode, setNavigationSelectionMode] = useState<NavigationSelectionMode>(initialRoute ? 'route' : 'single')
+  const [goalPickMode, setGoalPickMode] = useState<'plane' | 'surface'>('plane')
+  const [routeDraft, setRouteDraft] = useState<RouteDraft>(() => initialRoute ? routeDraftFromSaved(initialRoute) : EMPTY_ROUTE_DRAFT)
+  const [routeName, setRouteName] = useState(initialRoute?.name || '连续点路线')
+  const [savedDraftRoute, setSavedDraftRoute] = useState<{ signature: string; id: string; revision: number } | null>(() => initialRoute ? {
+    signature: routeDraftSignature(routeDraftFromSaved(initialRoute), 0.45, initialRoute.name || '连续点路线'),
+    id: initialRoute.id, revision: initialRoute.revision ?? 1,
+  } : null)
+  const [routeStartIntent, setRouteStartIntent] = useState<RouteStartIntent | null>(null)
+  const [routeTaskId, setRouteTaskId] = useState<string | null>(null)
+  const [routeTaskStatus, setRouteTaskStatus] = useState<InspectionTaskStatusResponse | null>(null)
+  const [routeTaskError, setRouteTaskError] = useState<string | null>(null)
+  const [routeActionPending, setRouteActionPending] = useState<'save' | 'start' | 'pause' | 'resume' | 'cancel' | null>(null)
   const [explorationStatus, setExplorationStatus] = useState<ExplorationStatusResponse | null>(null)
   const [explorationStatusLoading, setExplorationStatusLoading] = useState(false)
   const [directedExplorationBusy, setDirectedExplorationBusy] = useState(false)
   const [goalMaxSpeed, setGoalMaxSpeed] = useState(0.4)
+  const [goalYaw, setGoalYaw] = useState(0)
   const [goalAcceptanceRadius, setGoalAcceptanceRadius] = useState(0.45)
   const [locationName, setLocationName] = useState('')
   const [locationBusy, setLocationBusy] = useState<string | null>(null)
@@ -371,13 +530,51 @@ function SceneViewComponent({
     return () => window.clearInterval(timer)
   }, [])
 
-  const { imgSrc: cameraImgSrc, connected: cameraConnected, lastFrameAt: cameraLastFrameAt } = useCamera(cameraVisible ? '/ws/camera' : '')
-  const cameraPipRecovered = sseState.connected && cameraConnected && cameraImgSrc != null
+  const whep = useWHEP('/api/v1/webrtc/whep', 'cam', cameraVisible && sseState.connected)
+  const whepConnected = whep.connected
+  const whepReconnect = whep.reconnect
+  const whepRotationDegrees = whep.rotationDegrees
+  const whepStream = whep.stream
+  const cameraMediaRef = useRef<HTMLDivElement>(null)
+  const cameraVideoRef = useRef<HTMLVideoElement>(null)
+  const cameraVideoFrame = useVideoFrame(
+    cameraVideoRef,
+    whepStream,
+    cameraVisible && sseState.connected && whepConnected,
+  )
+  const cameraVideoLayout = useRotatedVideoLayout(
+    cameraMediaRef,
+    cameraVideoRef,
+    whepRotationDegrees,
+    whepStream != null,
+  )
+  const useWebRTCCamera = whepConnected && cameraVideoFrame.hasFrame && cameraVideoLayout.ready
+  const { imgSrc: cameraImgSrc, connected: cameraConnected, lastFrameAt: cameraLastFrameAt } = useCamera(
+    cameraVisible && !useWebRTCCamera ? '/ws/camera' : '',
+  )
+  const jpegCameraRecovered = cameraConnected && cameraImgSrc != null
     && cameraLastFrameAt != null && Date.now() - cameraLastFrameAt < 3000
-  const cameraPipLabel = cameraPipRecovered ? '实时画面'
-    : !sseState.connected ? '连接已断开'
-      : cameraStatus?.status === 'not_loaded' ? '相机未启用'
-        : cameraLastFrameAt ? '画面已暂停' : '等待相机画面'
+  const cameraPipRecovered = sseState.connected && (useWebRTCCamera || jpegCameraRecovered)
+  const sceneTarget = deriveSceneTarget({ task: instructionStatus, sseState,
+    nowS: localNowS, cameraLive: cameraPipRecovered })
+  useEffect(() => {
+    if (!cameraExpanded) return
+    const close = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      setCameraExpanded(false)
+      cameraExpandRef.current?.focus()
+    }
+    document.addEventListener('keydown', close, true)
+    return () => document.removeEventListener('keydown', close, true)
+  }, [cameraExpanded])
+  const cameraHasFrame = useWebRTCCamera || jpegCameraRecovered
+  const cameraPipLabel = cameraHasFrame ? '实时画面'
+    : cameraStatus?.status === 'not_loaded' ? '相机未启用'
+      : cameraLastFrameAt ? '画面已暂停' : '等待相机画面'
+  useEffect(() => {
+    if (cameraVideoFrame.stalled && whepConnected) whepReconnect()
+  }, [cameraVideoFrame.stalled, whepConnected, whepReconnect])
   useEffect(() => {
     if (!cameraVisible || !sseState.connected) return
     let disposed = false
@@ -429,7 +626,6 @@ function SceneViewComponent({
       : recordingStatus === null
         ? '正在获取原生录制状态'
       : '在场景中配置并管理原生数据录制'
-  const cameraPipDotClass = cameraPipRecovered ? styles.camDotLive : cameraConnected ? styles.camDotWait : styles.camDotOff
   // Binary point-cloud channel (replaces SSE JSON map_cloud).  The hook
   // owns the WebSocket + decoder worker; we just consume the latest frame.
   const scanOverlayEnabled = useMemo(() => {
@@ -486,13 +682,9 @@ function SceneViewComponent({
 
   const localization = sseState.stateSnapshot?.localization
   const poseEpoch = scenePoseEpoch(sseState.session?.product_session_id, sseState.slamDiag?.data ?? localization)
-  const sourceTransform = localization?.map_odom_tf
-  const transformStamp = sourceTransform && typeof sourceTransform === 'object'
-    ? (sourceTransform as Record<string, unknown>).ts : null
-  const mapFromOdom = freshSource(transformStamp, rasterNowS, 7) ? sourceTransform : null
   const odom = sseState.odometry
-  const telemetryFresh = sseState.connected && freshSource(odom?.ts, rasterNowS)
-  const mapOdom = telemetryFresh ? projectScenePose(odom, mapFromOdom) : null
+  const telemetryFresh = sseState.connected && freshScenePose(odom?.ts, rasterNowS, sseState.session?.env, localization)
+  const mapOdom = telemetryFresh ? projectScenePose(odom) : null
   const poseAvailable = mapOdom !== null
   const robotX = mapOdom?.x ?? 0
   const robotY = mapOdom?.y ?? 0
@@ -502,17 +694,27 @@ function SceneViewComponent({
   const displayRobotY = poseAvailable ? formatTelemetryValue(robotY, 2) : '--'
   const displayRobotZ = poseAvailable ? formatTelemetryValue(mapOdom.z ?? 0, 2) : '--'
   const displayYawDeg = poseAvailable ? `${formatTelemetryValue((yaw * 180) / Math.PI, 0)}°` : '--'
-  const displaySpeed = poseAvailable ? `${formatTelemetryValue(mapOdom.vx, 2)} m/s` : '-- m/s'
+  const displaySpeedValue = poseAvailable ? formatTelemetryValue(mapOdom.vx, 2) : '--'
+  const displaySessionDistance = poseAvailable && typeof odom?.session_distance_m === 'number'
+    ? formatTelemetryValue(odom.session_distance_m, 1)
+    : '—'
   const nativeStatus = localPlannerSnapshot?.nav_endpoint
   const nativeFresh = sseState.connected && freshSource(nativeStatus?.stamp_s, rasterNowS)
   const nativeProduct = nativeStatus?.native_product as { product_session_id?: string; session_id?: string } | undefined
   const nativeSession = nativeProduct?.product_session_id ?? nativeProduct?.session_id ?? ''
   const safetyEnvelope = nativeFresh && envelopeConfig?.session === nativeSession ? envelopeConfig.shape : null
+  const navigationSupportHeight = envelopeConfig?.session === nativeSession ? envelopeConfig.supportHeight : null
   useEffect(() => {
     if (!sseState.connected || !nativeSession) return
     let disposed = false
     void api.fetchRuntimeDataflow().then(data => {
-      if (!disposed) setEnvelopeConfig({ session: nativeSession, shape: safetyEnvelopeFromRunPlan(data.run_plan) })
+      if (disposed) return
+      if (data.runtime_boundary.product_session_id !== nativeSession) {
+        setEnvelopeConfig(null)
+        return
+      }
+      setEnvelopeConfig({ session: nativeSession, shape: safetyEnvelopeFromRunPlan(data.run_plan),
+        supportHeight: navigationSupportHeightFromRunPlan(data.run_plan) })
     }).catch(() => {
       if (!disposed) setEnvelopeConfig(null)
     })
@@ -523,16 +725,16 @@ function SceneViewComponent({
     if (!nativeFresh || !Array.isArray(value)) return []
     const points = value.map(p => Array.isArray(p) ? { x: p[0], y: p[1], z: p[2] ?? 0 } : p)
       .filter((p): p is PathPoint => p != null && Number.isFinite(p.x) && Number.isFinite(p.y))
-    return projectScenePath(points, nativeStatus?.planning_frame_id, mapFromOdom)
+    return projectScenePath(points, nativeStatus?.planning_frame_id)
   }
   const path = localPlannerDiagnosticsEnabled
     ? nativePath('global_path')
     : sseState.connected
-      ? projectScenePath(sseState.globalPath?.points ?? [], sseState.globalPath?.frame_id, mapFromOdom) : []
+      ? projectScenePath(sseState.globalPath?.points ?? [], sseState.globalPath?.frame_id) : []
   const localPathPts = localPlannerDiagnosticsEnabled
-    ? currentNativeLocalPath(nativeStatus, sseState.connected, rasterNowS, mapFromOdom)
+    ? currentNativeLocalPath(nativeStatus, sseState.connected, rasterNowS)
     : sseState.connected && freshSource(sseState.localPath?.stamp_s, rasterNowS)
-      ? projectScenePath(sseState.localPath?.points ?? [], sseState.localPath?.frame_id, mapFromOdom) : []
+      ? projectScenePath(sseState.localPath?.points ?? [], sseState.localPath?.frame_id) : []
   const mapSceneGraph = sseState.sceneGraph?.frame_id === 'map' ? sseState.sceneGraph : null
   const lastLocal = nativeStatus?.last_local as Record<string, unknown> | undefined
   const tracking = lastLocal?.tracking as Record<string, unknown> | undefined
@@ -560,6 +762,8 @@ function SceneViewComponent({
   }, [resumePending, navigationFresh, navigationView.control.resumeRequired])
   const missionState = navigationView.task.state
   const missionStateLabel = navigationView.task.label
+  const waitingForRoute = ['EXECUTING', 'RECOVERING'].includes(missionState)
+    && navigationStatus?.task.reason === 'replan_waiting'
   const hasGoal = ['PLANNING', 'EXECUTING', 'RECOVERING', 'PAUSED'].includes(missionState)
   const plannerLabel = !nativeFresh ? '规划未更新'
     : localPathPts.length > 1 && tracking?.active === true
@@ -570,12 +774,21 @@ function SceneViewComponent({
     && localPathPts.length < 2 && typeof lastLocal?.reason === 'string'
     && !['superseded_by_new_goal', 'local_plan_pending'].includes(lastLocal.reason)
     && lastLocal.path_found === false ? lastLocal.reason : null
-  const plannerIssueLabel = currentPlannerIssue === 'scan_initialization_failed' ? '局部规划初始化失败'
+  const plannerIssueLabel = currentPlannerIssue === 'local_no_path' ? '局部规划无路径'
+    : currentPlannerIssue === 'local_blocked' ? '局部目标被局部规划器阻挡'
+    : currentPlannerIssue === 'local_near_field_stop' ? '近场障碍停车请求'
+    : currentPlannerIssue === 'execution_stalled' ? '运动进展不足'
+    : currentPlannerIssue === 'invalid_input' ? '局部规划输入无效'
+    : currentPlannerIssue === 'scan_initialization_failed' ? '局部规划初始化失败'
     : currentPlannerIssue === 'local_trajectory_blocked_near_robot' ? '机器人附近路径受阻'
-      : currentPlannerIssue
+      : currentPlannerIssue ? operatorReasonMessage(currentPlannerIssue, locale) : null
   const motionHeld = navigationView.motion.permission.state === 'HELD'
     || navigationView.motion.permission.state === 'ESTOPPED'
-  const plannerAttention = missionState === 'FAILED' ? plannerIssueLabel : null
+  const motionHoldMessage = navigationView.motion.message
+    || (waitingForRoute && navigationView.motion.permission.state === 'HELD' ? missionStateLabel : '')
+    || navigationView.motion.permission.label
+  const motionHoldDetail = navigationView.goalAdmission.message || (motionHeld ? '查看控制详情' : '')
+  const plannerAttention = waitingForRoute ? missionStateLabel : missionState === 'FAILED' ? plannerIssueLabel : null
   const operatorAttention = navigationView.control.resumeRequired
     || navigationView.motion.permission.state === 'ESTOPPED' || !!plannerAttention
   const slamHz       = sseState.slamStatus?.slam_hz ?? 0
@@ -601,6 +814,24 @@ function SceneViewComponent({
   const currentProduct = session?.product
   const isExplorationSession = currentProduct === 'explore'
   const isMappingSession = currentProduct === 'map'
+  const cloudHeightKey = `${activeMap ?? ''}:${poseEpoch ?? ''}`
+  const cloudHeightMode = cloudHeightModePreference ?? 'all'
+  const lastCloudHeight = cloudHeightBase?.epoch === cloudHeightKey ? cloudHeightBase.z : null
+  const followedCloudHeight = poseAvailable ? robotZ : lastCloudHeight
+  const currentFixedHeight = fixedCloudHeight?.epoch === cloudHeightKey ? fixedCloudHeight : null
+  const displayHeight = cloudHeightMode === 'fixed' ? currentFixedHeight?.z ?? followedCloudHeight : followedCloudHeight
+  const cloudMinZ = cloudHeightMode !== 'all' && displayHeight !== null ? displayHeight - (cloudHeightMode === 'fixed' ? currentFixedHeight?.below ?? 1 : cloudHeightBelowBase) : null
+  const cloudMaxZ = cloudHeightMode !== 'all' && displayHeight !== null ? displayHeight + (cloudHeightMode === 'fixed' ? currentFixedHeight?.above ?? 1 : cloudHeightAboveBase) : null
+  useEffect(() => {
+    if (!poseAvailable) return
+    setCloudHeightBase(current => current?.epoch === cloudHeightKey && current.z === robotZ
+      ? current : { epoch: cloudHeightKey, z: robotZ })
+  }, [poseAvailable, cloudHeightKey, robotZ])
+  useEffect(() => {
+    if (cloudHeightMode !== 'fixed' || followedCloudHeight === null) return
+    setFixedCloudHeight(current => current?.epoch === cloudHeightKey ? current
+      : { epoch: cloudHeightKey, z: followedCloudHeight, input: followedCloudHeight.toFixed(2) })
+  }, [cloudHeightMode, cloudHeightKey, followedCloudHeight])
   const activeMapName = activeMap ?? null
   const showSavedMapInScene = Boolean(activeMapName && shouldShowSavedMapForProduct(currentProduct))
   const liveScanVisible = liveScanPreference ?? (!isMappingSession && !showSavedMapInScene)
@@ -608,6 +839,76 @@ function SceneViewComponent({
     && savedMapCloud?.mapName === activeMapName
     ? savedMapCloud
     : undefined
+  const stairMapKey = `${savedMapForScene?.mapName}:${savedMapForScene?.contentEpoch}`
+  const mapSourceKey = `${stairMapKey}:${savedMapForScene?.frameId}`
+  const mapEditing = mapEditorKey === mapSourceKey && !!savedMapForScene && !observe && !isMappingSession
+  const shownMapEdit = mapEditing && mapEditState?.key === mapSourceKey ? mapEditState.scene : null
+  const onMapEditSceneChange = useCallback((scene: MapEditScene) => {
+    setMapEditState({ key: mapSourceKey, scene })
+  }, [mapSourceKey])
+  const onMapEditView = useCallback((view: MapEditView) => { scene3DRef.current?.mapEditView(view) }, [])
+  const closeMapEditor = useCallback(() => {
+    setMapEditorKey(null)
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('[aria-label="视图设置"]')?.focus())
+  }, [])
+  const openMapEditor = () => {
+    setMapEditorKey(mapSourceKey); setStairEditorOpen(false); setInspectorOpen(false); setDrawerOpen(false)
+    setTeleopMode(false); setFollowRobot(false); setLayers(value => ({ ...value, cloud: true }))
+  }
+  useEffect(() => {
+    if (mapEditorKey && mapEditorKey !== mapSourceKey) showToast('地图来源已变化，旧草稿不会应用到新地图。', 'error')
+  }, [mapEditorKey, mapSourceKey, showToast])
+  const onStairSceneChange = useCallback((value: StairScene) => {
+    setStairScene({ key: stairMapKey, value })
+  }, [stairMapKey])
+  const stairEditing = stairEditorOpen && !!savedMapForScene && !observe && !isMappingSession
+  const shownStairs = stairEditing && stairScene?.key === stairMapKey ? stairScene.value : null
+  const showNavigationMap = mapRepresentation === 'voxels' && showSavedMapInScene && !mapEditing && !stairEditing
+  const navigationMap = useOctomap(savedMapForScene?.mapName, savedMapForScene?.contentEpoch,
+    savedMapForScene?.frameId ?? undefined, showNavigationMap && layers.cloud)
+  const navigationGeometry = navigationMap.status === 'ready' ? navigationMap.map : undefined
+  const mapColorHeightRange = useMemo(() => showNavigationMap && navigationGeometry
+    ? cloudColorRange(navigationGeometry.cells, 4)
+    : cloudColorRange(savedMapForScene?.points ?? []), [showNavigationMap, navigationGeometry, savedMapForScene?.points])
+  const colorHeightRange = useMemo(() => cloudMinZ !== null && cloudMaxZ !== null
+    ? { min: cloudMinZ, max: cloudMaxZ } : mapColorHeightRange, [cloudMinZ, cloudMaxZ, mapColorHeightRange])
+  const cloudHeightDomain = useMemo(() => {
+    let min = -3, max = 3
+    const points = savedMapForScene?.points ?? []
+    for (let i = 2; i < points.length; i += 3) {
+      if (Number.isFinite(points[i])) { min = Math.min(min, points[i] - 0.5); max = Math.max(max, points[i] + 0.5) }
+    }
+    return { min, max }
+  }, [savedMapForScene?.points])
+  const routeDraftIdentity = useMemo<RouteDraftIdentity | null>(() => {
+    const activeRecord = maps.find(map => map.name === activeMapName && map.is_active)
+    return resolveRouteDraftIdentity(
+      activeMapName,
+      activeRecord?.content_epoch,
+      savedMapForScene?.contentEpoch,
+    )
+  }, [activeMapName, maps, savedMapForScene?.contentEpoch])
+  const routeTaskOpen = Boolean(routeTaskId && !routeTaskStatus?.terminal)
+  const routeDraftLocked = routeTaskOpen || routeActionPending !== null
+  const normalizedRouteName = routeName.trim() || '连续点路线'
+  const currentRouteSignature = routeDraftSignature(routeDraft, goalAcceptanceRadius, normalizedRouteName)
+  const routeDraftSaved = savedDraftRoute?.signature === currentRouteSignature
+  const runningRouteMatchesDraft = Boolean(
+    routeTaskOpen
+      && savedDraftRoute
+      && routeTaskStatus?.identity.route_id === savedDraftRoute.id
+      && routeTaskStatus.identity.route_revision === savedDraftRoute.revision
+      && routeTaskStatus.identity.map_id === routeDraft.identity?.mapId
+      && routeTaskStatus.identity.map_content_epoch === routeDraft.identity?.contentEpoch,
+  )
+  const showRouteDraft = !routeTaskOpen || runningRouteMatchesDraft
+  const routeTaskPointCount = routeTaskStatus?.found
+    && routeTaskStatus.progress.point_count > 0
+    ? routeTaskStatus.progress.point_count
+    : null
+  const routePointCountLabel = routeTaskOpen
+    ? routeTaskPointCount === null ? '读取路线中' : `${routeTaskPointCount} 个点`
+    : `${routeDraft.points.length} 个点`
   const mappingObservation = useMemo(() => resolveMappingObservation(
     sseState.connected && isMappingSession ? sseState.mapScene : null, { nowS: rasterNowS },
   ), [sseState.connected, isMappingSession, sseState.mapScene, rasterNowS])
@@ -648,20 +949,33 @@ function SceneViewComponent({
   ), [layers.nativeTraversability, rasterNowS, savedMapForScene?.frameId, sseState.nativeTraversability, sseState.mapScene?.frame_id])
   const localPlannerSampleWarningText = localPlannerSampleWarning(localPlannerSnapshot)
   const goalDisabledReason =
-    observe ? '只读监控' : navigationView.control.resumeRequired ? '请先点击上方“恢复控制”' : !motionStartAllowed
+    observe ? '只读监控' : navigationView.control.resumeRequired ? '请先点击“解除控制暂停”' : !motionStartAllowed
       ? motionStartBlockedReason
       : canAcceptGoal
       ? ''
       : '导航暂未就绪'
   const canSendGoal = goalDisabledReason === ''
+  const robotStatusMessage = !sseState.connected ? '等待实时连接恢复'
+    : navigationView.control.resumeRequired ? '控制已暂停'
+      : motionHeld ? motionHoldMessage
+        : operatorAttention ? plannerAttention
+          : !observe && !isMappingSession && !canSendGoal ? goalDisabledReason : null
+  const routeStartHint = routeTaskOpen ? ''
+    : routeActionPending === 'start' ? '正在保存路线并提交启动请求…'
+      : routeDraft.points.length === 1 ? '再添加一个点即可开始路线'
+        : routeDraft.points.length === 0 ? '点击三维地图添加路线点位'
+          : !sseState.connected ? '实时连接已断开，恢复后可开始路线'
+            : !routeDraftIdentity ? '正在读取活动地图版本…'
+              : !canSendGoal ? goalDisabledReason
+                : '点位顺序确认后即可开始路线'
   const previewDisabledReason = !sseState.connected ? '连接断开，等待恢复'
     : !poseAvailable ? '等待有效定位' : ''
   const previewCurrent = navigationPreviewIsCurrent(pendingGoalPreview, mapOdom)
-  const pendingGoalPlanSummary = previewCurrent
-    ? `预览可达${typeof pendingGoalPreview?.distance_m === 'number' ? ` · 路程 ${pendingGoalPreview.distance_m.toFixed(1)} m` : ''}`
-    : ''
-  const pendingGoalDistance = pendingGoal && mapOdom
-    ? Math.hypot(pendingGoal.x - mapOdom.x, pendingGoal.y - mapOdom.y) : null
+  const goalPreviewMessage = goalPreviewError ? navigationPreviewErrorMessage(goalPreviewError) : null
+  const previewDistance = previewCurrent && typeof pendingGoalPreview?.distance_m === 'number'
+    && Number.isFinite(pendingGoalPreview.distance_m) ? pendingGoalPreview.distance_m : null
+  const selectedGoalDistance = previewDistance ?? (pendingGoal && poseAvailable && typeof pendingGoal.z === 'number'
+    ? Math.hypot(pendingGoal.x - robotX, pendingGoal.y - robotY, pendingGoal.z - robotZ) : null)
   const savedLocations = locationsOverride ?? sseState.locations?.locations ?? []
   const normalizedLocationName = locationName.trim()
   // Legacy SSE map_cloud now carries only metadata (count/seq) — points
@@ -683,11 +997,78 @@ function SceneViewComponent({
     }
   }, [])
 
-  useEffect(() => { if (!observe) void loadMaps() }, [loadMaps, observe])
+  useEffect(() => {
+    if (!observe) void loadMaps()
+  }, [activeMapName, loadMaps, observe, session?.product_session_id, sseState.connected])
 
   useEffect(() => {
     setLocationsOverride(null)
   }, [sseState.locations?.count, sseState.locations?.ts])
+
+  useEffect(() => {
+    if (!routeDraft.identity) return
+    const changed = !activeMapName || routeDraft.identity.mapId !== activeMapName
+      || Boolean(routeDraftIdentity && !sameRouteDraftIdentity(routeDraft.identity, routeDraftIdentity))
+    if (!changed) return
+    setRouteDraft(EMPTY_ROUTE_DRAFT)
+    setSavedDraftRoute(null)
+    setRouteStartIntent(null)
+    setRouteName('连续点路线')
+  }, [activeMapName, routeDraft.identity, routeDraftIdentity])
+
+  useEffect(() => {
+    setRouteStartIntent(null)
+  }, [goalAcceptanceRadius])
+
+  useEffect(() => {
+    if (!routeTaskId || !sseState.connected) return
+    let cancelled = false
+    const refresh = async () => {
+      try {
+        const status = await api.fetchInspectionTask(routeTaskId)
+        if (cancelled) return
+        setRouteTaskStatus(status)
+        setRouteTaskError(null)
+      } catch (error: unknown) {
+        if (!cancelled) setRouteTaskError(error instanceof Error ? error.message : String(error))
+      }
+    }
+    void refresh()
+    if (routeTaskStatus?.terminal) return () => { cancelled = true }
+    const timer = window.setInterval(() => void refresh(), 1500)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [routeTaskId, routeTaskStatus?.terminal, sseState.connected])
+
+  useEffect(() => {
+    if (navigationSelectionMode !== 'route' || !sseState.connected || !activeMapName) return
+    if (routeTaskId) return
+    let cancelled = false
+    api.fetchInspectionTasks({ mapId: activeMapName, includeTerminal: false, limit: 2 })
+      .then(result => {
+        if (cancelled) return
+        const selection = selectUniqueOpenRouteTask(result.tasks)
+        if (selection.kind === 'one') {
+          setRouteTaskId(selection.task.task_id)
+          setRouteTaskStatus(selection.task)
+          setRouteTaskError(null)
+        } else if (selection.kind === 'ambiguous') {
+          setRouteTaskError('存在多个未结束任务，请到巡检任务页选择要查看的任务')
+        }
+      })
+      .catch(error => {
+        if (!cancelled) setRouteTaskError(error instanceof Error ? error.message : String(error))
+      })
+    return () => { cancelled = true }
+  }, [
+    activeMapName,
+    navigationSelectionMode,
+    routeTaskId,
+    sseState.connected,
+    sseState.inspectionTaskEvent?.event_id,
+  ])
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -761,10 +1142,13 @@ function SceneViewComponent({
   }, [activeMapName, relocMap])
 
   useEffect(() => {
+    setPendingGoal(null)
+  }, [activeMapName, showSavedMapInScene, session?.product_session_id])
+
+  useEffect(() => {
     setSavedMapCloud(undefined)
     setSavedMapLoadError(null)
     ++goalPreviewRequest.current
-    setPendingGoal(null)
     setPendingGoalPreview(null)
     setGoalPreviewPending(false)
     setGoalPreviewError(null)
@@ -815,27 +1199,187 @@ function SceneViewComponent({
   ])
 
   // ── Handlers ──────────────────────────────────────────────────
+  const invalidatePendingGoalPreview = useCallback(() => {
+    ++goalPreviewRequest.current
+    setPendingGoalPreview(null)
+    setGoalPreviewPending(false)
+    setGoalPreviewError(null)
+  }, [])
+
+  const clearPendingGoal = useCallback(() => {
+    invalidatePendingGoalPreview()
+    setPendingGoal(null)
+  }, [invalidatePendingGoalPreview])
+
+  const selectNavigationMode = useCallback((mode: NavigationSelectionMode) => {
+    if (routeDraftLocked) return
+    setNavigationSelectionMode(mode)
+    if (mode === 'route') clearPendingGoal()
+  }, [clearPendingGoal, routeDraftLocked])
+
+  const handleRouteDraftPoint = useCallback((x: number, y: number, selectedZ?: number, mode: GoalPickMode = 'plane') => {
+    if (routeDraftLocked) return
+    if (!routeDraftIdentity) {
+      showToast('等待活动地图版本加载完成后再编辑连续点路线', 'error')
+      return
+    }
+    const z = sceneGoalHeight(undefined, selectedZ, mode, navigationSupportHeight)
+    if (z === null) {
+      showToast(mode === 'surface' ? '等待当前机器人支撑高度，请稍后重新选点' : '等待有效的目标高度，请确认定位已更新', 'error')
+      return
+    }
+    setRouteDraft(current => appendRouteDraftPoint(current, routeDraftIdentity, {
+      x,
+      y,
+      z,
+    }))
+    setSavedDraftRoute(null)
+    setRouteStartIntent(null)
+    setRouteTaskError(null)
+    setFollowRobot(false)
+  }, [routeDraftIdentity, routeDraftLocked, showToast, navigationSupportHeight])
+
+  const editRouteDraft = useCallback((edit: (draft: RouteDraft) => RouteDraft) => {
+    if (routeDraftLocked) return
+    setRouteDraft(edit)
+    setSavedDraftRoute(null)
+    setRouteStartIntent(null)
+    setRouteTaskError(null)
+  }, [routeDraftLocked])
+
+  const saveRouteRequest = useCallback(async (request: InspectionRouteRequest) => {
+    const saved = await api.saveInspectionRoute(request)
+    const savedDraft = routeDraftFromSaved(saved.route)
+    const signature = routeDraftSignature(savedDraft, goalAcceptanceRadius, normalizedRouteName)
+    setRouteDraft(savedDraft)
+    setSavedDraftRoute({ signature, id: saved.route.id, revision: saved.route.revision ?? 1 })
+    setRouteStartIntent(current => current?.signature === currentRouteSignature ? { ...current, signature } : current)
+    onRouteSaved?.(saved.route)
+    return saved
+  }, [goalAcceptanceRadius, normalizedRouteName, currentRouteSignature, onRouteSaved])
+
+  const saveRouteDraft = useCallback(async () => {
+    if (routeDraftLocked || routeDraftSaved || !routeDraft.identity || routeDraft.points.length < 2) return
+    const intent = ensureRouteStartIntent(routeStartIntent, currentRouteSignature,
+      () => api.makeRequestId('inspection_start'), () => `scene-${Date.now().toString(36)}`)
+    setRouteStartIntent(intent)
+    setRouteActionPending('save')
+    setRouteTaskError(null)
+    try {
+      await saveRouteRequest(buildInspectionRouteRequest(routeDraft, {
+        id: intent.routeId, name: normalizedRouteName, tolerance: goalAcceptanceRadius,
+      }))
+      showToast('路线已保存，可在巡检任务中继续编辑', 'success')
+    } catch (error: unknown) {
+      setRouteTaskError(api.formatCommandError(error, '保存路线失败'))
+    } finally {
+      setRouteActionPending(null)
+    }
+  }, [routeDraftLocked, routeDraftSaved, routeDraft, routeStartIntent, currentRouteSignature, saveRouteRequest,
+    normalizedRouteName, goalAcceptanceRadius, showToast])
+
+  const startRouteDraft = useCallback(async () => {
+    if (routeActionPending || routeTaskOpen) return
+    if (!routeDraft.identity || routeDraft.points.length < 2) {
+      setRouteTaskError('连续点路线至少需要两个点位')
+      return
+    }
+    if (!routeDraftIdentity || !sameRouteDraftIdentity(routeDraft.identity, routeDraftIdentity)) {
+      setRouteTaskError('活动地图已变化，请重新选择路线点位')
+      return
+    }
+    const signature = currentRouteSignature
+    const intent = ensureRouteStartIntent(
+      routeStartIntent,
+      signature,
+      () => api.makeRequestId('inspection_start'),
+      () => `scene-${Date.now().toString(36)}`,
+    )
+    setRouteStartIntent(intent)
+    setRouteActionPending('start')
+    setRouteTaskError(null)
+    try {
+      const saved = savedDraftRoute
+      let receipt
+      if (!saved || saved.signature !== signature) {
+        const request = buildInspectionRouteRequest(routeDraft, {
+          id: intent.routeId,
+          name: normalizedRouteName,
+          tolerance: goalAcceptanceRadius,
+        })
+        receipt = await saveAndStartRouteDraft(request, intent.requestId, {
+          save: saveRouteRequest,
+          start: api.startInspectionTask,
+        })
+      } else {
+        receipt = await api.startInspectionTask(saved.id, {
+          map_id: routeDraft.identity.mapId,
+          revision: saved.revision,
+          request_id: intent.requestId,
+        })
+      }
+      if (!receipt.accepted || !receipt.task_id) throw new Error('原生路线执行器未接受任务')
+      setRouteStartIntent(null)
+      setRouteTaskId(receipt.task_id)
+      setRouteTaskStatus(null)
+      showToast('路线命令已提交，等待原生任务确认', 'success')
+    } catch (error: unknown) {
+      setRouteTaskError(api.formatCommandError(error, '开始路线失败'))
+    } finally {
+      setRouteActionPending(null)
+    }
+  }, [goalAcceptanceRadius, routeActionPending, routeDraft, routeDraftIdentity, routeStartIntent, routeTaskOpen,
+    savedDraftRoute, currentRouteSignature, normalizedRouteName, saveRouteRequest, showToast])
+
+  const runRouteTaskAction = useCallback(async (action: 'pause' | 'resume' | 'cancel') => {
+    if (!routeTaskId || routeActionPending || !sseState.connected) return
+    setRouteActionPending(action)
+    setRouteTaskError(null)
+    try {
+      const receipt = action === 'pause' ? await api.pauseInspectionTask(routeTaskId)
+        : action === 'resume' ? await api.resumeInspectionTask(routeTaskId)
+          : await api.cancelInspectionTask(routeTaskId)
+      if (!receipt.accepted) throw new Error(`路线${action === 'pause' ? '暂停' : action === 'resume' ? '恢复' : '取消'}请求未被接受`)
+      const status = await api.fetchInspectionTask(routeTaskId)
+      setRouteTaskStatus(status)
+      showToast('路线命令已提交，等待原生任务确认', 'success')
+    } catch (error: unknown) {
+      setRouteTaskError(api.formatCommandError(error, '路线操作失败'))
+    } finally {
+      setRouteActionPending(null)
+    }
+  }, [routeActionPending, routeTaskId, showToast, sseState.connected])
+
   const handleResumeControl = useCallback(async () => {
     setResumePending(true)
     setResumeError(null)
     try {
       const response = await api.resumeNavigation()
       if (!response.ok) throw new Error(response.status || '恢复请求被拒绝')
+      showToast('解除控制暂停请求已受理，等待机器人确认', 'info')
     } catch (error: unknown) {
-      const message = api.formatCommandError(error, '恢复控制失败')
+      const message = api.formatCommandError(error, '解除控制暂停失败')
       setResumeError(message)
       setResumePending(false)
     }
-  }, [])
+  }, [showToast])
+
+  const selectPendingGoal = useCallback((x: number, y: number, selectedZ?: number, mode: GoalPickMode = 'plane') => {
+    invalidatePendingGoalPreview()
+    const z = normalizeGoalHeight(sceneGoalHeight(mapOdom?.z, selectedZ, mode, navigationSupportHeight))
+    setPendingGoal({ x, y, z: z ?? undefined })
+    setGoalPreviewError(z === null
+      ? mode === 'surface' ? '等待当前机器人支撑高度，请稍后重新选点' : '等待有效的三维定位高度' : null)
+    setFollowRobot(false)
+    if (z !== null) scene3DRef.current?.focusPoint(x, y, z)
+  }, [invalidatePendingGoalPreview, mapOdom?.z, navigationSupportHeight])
 
   const handlePendingGoal = useCallback(async (x: number, y: number, selectedZ?: number) => {
     const request = ++goalPreviewRequest.current
-    const z = sceneGoalHeight(mapOdom?.z, selectedZ)
-    setPendingGoal({ x, y, z: z ?? undefined })
+    const z = normalizeGoalHeight(selectedZ)
     setPendingGoalPreview(null)
     setGoalPreviewError(null)
     setGoalPreviewPending(false)
-    setFollowRobot(false)
     if (previewDisabledReason) {
       setGoalPreviewError(previewDisabledReason)
       return
@@ -850,6 +1394,7 @@ function SceneViewComponent({
         x,
         y,
         z,
+        yaw: goalYaw,
         source: 'map_click',
         target_type: 'map_point',
         label: 'scene_click',
@@ -858,22 +1403,56 @@ function SceneViewComponent({
       })
       if (request !== goalPreviewRequest.current) return
       if (!candidate.ok || candidate.preview?.feasible === false) {
-        const reason = candidate.reasons.slice(0, 3).join(' / ') || candidate.error || '目标预检未通过'
-        setGoalPreviewError(reason === 'empty_path'
-          ? '未找到连接当前位置的三维路径，请检查沿途支撑与障碍。'
-          : `路径预览未通过：${reason}`)
+        const rawReason = candidate.reasons[0] || candidate.error || '目标预检未通过'
+        const reason = operatorReasonMessage(rawReason, locale)
+        setGoalPreviewError(rawReason === 'empty_path'
+          ? '未找到可行路线'
+          : `无法生成路线：${reason}`)
         return
       }
       const target = candidate.target
-      setPendingGoal({ x: target?.x ?? x, y: target?.y ?? y, z: target?.z })
+      setPendingGoal({ x: target?.x ?? x, y: target?.y ?? y, z: normalizeGoalHeight(target?.z) ?? z })
       setPendingGoalPreview(candidate.preview ?? null)
     } catch (e: unknown) {
       if (request !== goalPreviewRequest.current) return
-      setGoalPreviewError(`预览失败：${e instanceof Error ? e.message : String(e)}`)
+      setGoalPreviewError(`规划失败：${e instanceof Error ? e.message : String(e)}`)
     } finally {
       if (request === goalPreviewRequest.current) setGoalPreviewPending(false)
     }
-  }, [previewDisabledReason, goalAcceptanceRadius, goalMaxSpeed, mapOdom?.z])
+  }, [previewDisabledReason, goalAcceptanceRadius, goalMaxSpeed, goalYaw, locale])
+
+  useEffect(() => {
+    if (!pendingGoal || previewCurrent || goalSendPending || isMappingSession || observe
+      || navigationSelectionMode !== 'single') return
+    if (typeof pendingGoal.z !== 'number' || !Number.isFinite(pendingGoal.z)) return
+    const timer = window.setTimeout(() => {
+      void handlePendingGoal(pendingGoal.x, pendingGoal.y, pendingGoal.z)
+    }, 220)
+    return () => window.clearTimeout(timer)
+  }, [
+    goalAcceptanceRadius,
+    goalMaxSpeed,
+    goalSendPending,
+    handlePendingGoal,
+    isMappingSession,
+    navigationSelectionMode,
+    observe,
+    pendingGoal,
+    previewCurrent,
+  ])
+
+  // Let keyboard users dismiss a selected target without reaching for the card.
+  useEffect(() => {
+    if (!pendingGoal || isMappingSession || observe) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || goalSendPending || document.fullscreenElement) return
+      const target = event.target as HTMLElement | null
+      if (target?.closest('input, select, textarea, [contenteditable="true"]')) return
+      clearPendingGoal()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [clearPendingGoal, goalSendPending, isMappingSession, observe, pendingGoal])
 
   const handleSceneRelocalize = useCallback(async (x: number, y: number) => {
     if (!savedMapRelocalizeSupported) {
@@ -913,6 +1492,7 @@ function SceneViewComponent({
     try {
       const res = await api.sendGoal(x, y, {
         z: pendingGoal.z,
+        yaw: goalYaw,
         source: 'map_click',
         target_type: 'map_point',
         label: 'scene_click',
@@ -922,13 +1502,13 @@ function SceneViewComponent({
       if (!res.ok) throw new Error(api.formatCommandAck(res, '导航请求'))
       setPendingGoal(null)
       setPendingGoalPreview(null)
-      showToast(api.formatCommandAck(res, `目标 (${x.toFixed(2)}, ${y.toFixed(2)})`), 'success')
+      showToast(api.formatCommandAck(res, `目标 (${x.toFixed(2)}, ${y.toFixed(2)})`), 'info')
     } catch (e: unknown) {
       setGoalPreviewError(api.formatCommandError(e, '发送目标失败'))
     } finally {
       setGoalSendPending(false)
     }
-  }, [canSendGoal, goalAcceptanceRadius, goalDisabledReason, goalMaxSpeed, pendingGoal, previewCurrent, goalPreviewPending, goalSendPending, showToast])
+  }, [canSendGoal, goalAcceptanceRadius, goalDisabledReason, goalMaxSpeed, goalYaw, pendingGoal, previewCurrent, goalPreviewPending, goalSendPending, showToast])
 
   const handleDirectedExploration = useCallback(async () => {
     if (!pendingGoal || !isExplorationSession || directedExplorationBusy) return
@@ -1430,13 +2010,6 @@ function SceneViewComponent({
     <button className={liveScanVisible ? styles.toolbarBtnSelected : styles.toolbarBtn}
       aria-pressed={liveScanVisible} onClick={() => setLiveScanPreference(!liveScanVisible)}
       title="只叠加当前扫描，不改变地图图层"><Radio size={15} /><span>当前扫描</span></button>
-    <button className={styles.toolbarBtn} aria-pressed={cameraVisible}
-      onClick={() => {
-        setCameraPreference(!cameraVisible)
-        if (isMappingSession && !cameraVisible) setInspectorOpen(true)
-      }} title="显示相机实时画面">
-      <Camera size={15} /><span>相机</span>
-    </button>
     <button className={followRobot ? styles.toolbarBtnSelected : styles.toolbarBtn}
       onClick={() => setFollowRobot(value => !value)} aria-pressed={followRobot}
       aria-label="跟随机器人" title="跟随机器人">
@@ -1452,15 +2025,63 @@ function SceneViewComponent({
       title={isMappingSession ? '查看当前数据全范围' : '查看完整保存地图'}><Maximize2 size={15} /><span>{isMappingSession && !showGlobalMapping ? '局部范围' : '适应全图'}</span></button>
   </>
 
+  const sceneDockControls = <>
+    {!observe && !isMappingSession && <details className={styles.mappingDisplayMenu} name="lingtu-menu">
+      <summary aria-label="选点方式" title="同层按当前机身高度选点；三维表面按所选地面和机器人支撑高度设置目标">
+        <Target size={15} /><span>{goalPickMode === 'plane' ? '同层选点' : '三维表面'}</span>
+      </summary>
+      <div className={styles.mappingDisplayOptions} onClick={event => {
+        if ((event.target as HTMLElement).closest('button')) event.currentTarget.parentElement?.removeAttribute('open')
+      }}>
+        <button type="button" className={goalPickMode === 'plane' ? styles.toolbarBtnSelected : styles.toolbarBtn}
+          aria-pressed={goalPickMode === 'plane'} title="在当前机身高度的水平面上选择目标位置"
+          onClick={() => setGoalPickMode('plane')}>同层</button>
+        <button type="button" className={goalPickMode === 'surface' ? styles.toolbarBtnSelected : styles.toolbarBtn}
+          aria-pressed={goalPickMode === 'surface'} title="选择目标地面，按当前机器人支撑高度设置机身目标；也可按住 Alt 点击"
+          onClick={() => setGoalPickMode('surface')}>三维表面</button>
+      </div>
+    </details>}
+    {!observe && !isMappingSession && <button className={styles.toolbarBtnPrimary}
+      disabled={!productSwitchAllowed} title={productSwitchReason || '停止当前任务并开始建图'}
+      onClick={onStartMapping}><MapPinned size={15} /><span>开始建图</span></button>}
+    {isMappingSession && <>
+      <button className={showGlobalMapping ? styles.toolbarBtnSelected : styles.toolbarBtn}
+        aria-pressed={showGlobalMapping} title="查看本次累计扫描"
+        onClick={() => { setMappingView('global'); setLayers(value => ({ ...value, cloud: true })) }}>
+        <MapPinned size={15} /><span>累计地图</span>
+      </button>
+      {!observe && <button className={styles.toolbarBtnPrimary} onClick={handleSaveMap}
+        disabled={Boolean(saveBlockedReason) || saveStatus?.state === 'saving' || saveStatus?.state === 'pending'}
+        title={saveBlockedReason || '保存当前建图结果后查看整图快照'}>
+        <Save size={15} /><span>{saveStatus?.state === 'saving' ? '保存中…' : '保存地图'}</span>
+      </button>}
+      <button className={styles.toolbarBtn} onClick={() => onOpenSavedMap(null)}
+        aria-label="已存地图" title="查看保存的完整地图"><MapPinned size={15} /><span className={styles.secondaryActionLabel}>已存地图</span></button>
+    </>}
+    {isMappingSession ? <details className={styles.mappingDisplayMenu} name="lingtu-menu">
+      <summary aria-label="地图视图" title="地图视图"><SlidersHorizontal size={15} /><span>视图</span></summary>
+      <div className={styles.mappingDisplayOptions} onClick={event => {
+        if ((event.target as HTMLElement).closest('button')) event.currentTarget.parentElement?.removeAttribute('open')
+      }}>{sceneDisplayControls}</div>
+    </details> : sceneDisplayControls}
+    {isMappingSession && <button className={inspectorOpen && !drawerOpen ? styles.toolbarBtnSelected : styles.toolbarBtn}
+      id="scene-inspector-toggle" aria-controls="scene-inspector" aria-expanded={inspectorOpen && !drawerOpen}
+      onClick={() => {
+        setInspectorOpen(!inspectorOpen || drawerOpen)
+        setDrawerOpen(false)
+      }} aria-label="状态、图层与操作" title="状态、图层与操作"><Activity size={15} /><span className={styles.secondaryActionLabel}>状态</span></button>}
+  </>
+
   return (
-    <div className={`${styles.sceneView} ${isMappingSession ? styles.mappingScene : ''}`}>
+    <div className={`${styles.sceneView} ${isMappingSession ? styles.mappingScene : ''} ${sceneFullscreen ? styles.sceneFullscreen : ''}`}>
+      {sceneDockTarget ? createPortal(sceneDockControls, sceneDockTarget) : null}
 
 
       {/* Workspace */}
-      <div className={[
+      <div ref={workspaceRef} className={[
         styles.workspace,
         drawerOpen && !observe ? styles.toolsWorkspace : '',
-        isMappingSession && !inspectorOpen && !(drawerOpen && !observe) ? styles.inspectorCollapsed : '',
+        !inspectorOpen && !(drawerOpen && !observe) ? styles.inspectorCollapsed : '',
       ].filter(Boolean).join(' ')}>
         {/* Tools open alongside the scene without replacing its live state. */}
         {!observe && drawerOpen && <>
@@ -1533,7 +2154,7 @@ function SceneViewComponent({
               </div>
             )}
             <details className={styles.mapWorkbench}>
-              <summary>地图编辑</summary>
+              <summary>地图产物工具</summary>
               <div className={styles.mapWorkbenchBody}>
                 <div className={styles.workbenchHeader}>
                   <span>编辑地图产物</span>
@@ -1886,76 +2507,16 @@ function SceneViewComponent({
               </div>
             )}
           </div>
-          <div className={styles.controlSummary}>
-            <div><span>控制权</span><strong>{navigationView.control.label}</strong></div>
-            <div><span>运动许可</span><strong>{navigationView.motion.permission.label}</strong></div>
-          </div>
         </div>
         </>}
 
         {/* Center: 3D scene */}
         <div className={`${styles.canvasArea} ${isMappingSession ? styles.mappingCanvasArea : ''}`}>
-          <div className={`${styles.canvasHeader} ${teleopMode ? styles.teleopHeader : ''}`}>
-            <span>{isMappingSession ? '建图' : <><Grid3x3 size={15} />现场地图</>}
-              <small>{isMappingSession
-                ? observe ? '只读' : session?.env === 'sim' ? '仿真' : '实时'
-                : `${observe ? '只读 · ' : session?.env === 'sim' ? '仿真 · ' : ''}${activeMapName || '当前环境'}`}</small>
-            </span>
-            <div className={styles.cameraActions}>
-              {!observe && !isMappingSession && <button className={styles.toolbarBtnPrimary}
-                disabled={!productSwitchAllowed} title={productSwitchReason || '停止当前任务并开始建图'}
-                onClick={onStartMapping}><MapPinned size={15} /><span>开始建图</span></button>}
-              {!observe && (currentProduct === 'teleop' || currentProduct === 'teleop_avoid' || currentProduct === 'map') && (
-                teleopMode && !drawerOpen ? <TeleopPanel key={currentProduct} sseState={sseState} showToast={showToast}
-                  onExit={() => setTeleopMode(false)} /> : <button className={teleopMode ? styles.toolbarBtnSelected : styles.toolbarBtn}
-                  aria-pressed={teleopMode} onClick={() => setTeleopMode(value => !value)}>
-                  <Gamepad2 size={15} /><span>{teleopMode ? '退出遥控' : isMappingSession ? '遥控' : '遥控模式'}</span>
-                </button>
-              )}
-              {isMappingSession && <>
-                <button className={showGlobalMapping ? styles.toolbarBtnSelected : styles.toolbarBtn}
-                  aria-pressed={showGlobalMapping} title="查看本次累计扫描"
-                  onClick={() => { setMappingView('global'); setLayers(value => ({ ...value, cloud: true })) }}>
-                  <MapPinned size={15} /><span>累计地图</span>
-                </button>
-                {!observe && <button className={styles.toolbarBtnPrimary} onClick={handleSaveMap}
-                  disabled={Boolean(saveBlockedReason) || saveStatus?.state === 'saving' || saveStatus?.state === 'pending'}
-                  title={saveBlockedReason || '保存当前建图结果后查看整图快照'}>
-                  <Save size={15} /><span>{saveStatus?.state === 'saving' ? '保存中…' : '保存地图'}</span>
-                </button>}
-                <button className={styles.toolbarBtn} onClick={() => onOpenSavedMap(null)}
-                  aria-label="已存地图" title="查看保存的完整地图"><MapPinned size={15} /><span className={styles.secondaryActionLabel}>已存地图</span></button>
-              </>}
-              {isMappingSession ? <details className={styles.mappingDisplayMenu} name="lingtu-menu">
-                <summary aria-label="地图视图" title="地图视图"><SlidersHorizontal size={15} /><span>视图</span></summary>
-                <div className={styles.mappingDisplayOptions} onClick={event => {
-                  if ((event.target as HTMLElement).closest('button')) event.currentTarget.parentElement?.removeAttribute('open')
-                }}>{sceneDisplayControls}</div>
-              </details> : sceneDisplayControls}
-              {isMappingSession && <button className={inspectorOpen && !drawerOpen ? styles.toolbarBtnSelected : styles.toolbarBtn}
-                id="scene-inspector-toggle" aria-controls="scene-inspector" aria-expanded={inspectorOpen && !drawerOpen}
-                onClick={() => {
-                  setInspectorOpen(!inspectorOpen || drawerOpen)
-                  setDrawerOpen(false)
-                }} aria-label="状态、图层与操作" title="状态、图层与操作"><Activity size={15} /><span className={styles.secondaryActionLabel}>状态</span></button>}
-            </div>
-          </div>
-        {(!isMappingSession || operatorAttention || motionHeld || !sseState.connected) && <div className={`${styles.sceneAlert} ${!operatorAttention ? styles.sceneAlertQuiet : ''}`} role="status">
-          <Info size={16} aria-hidden="true" />
-          <span className={styles.sceneAlertMessage} title={plannerAttention || navigationView.motion.permission.label}>{navigationView.control.resumeRequired ? '控制已暂停' : motionHeld || navigationView.motion.permission.state === 'ESTOPPED' ? navigationView.motion.permission.label : plannerAttention || (sseState.connected ? '连接正常' : '等待连接')}</span>
-          <span className={styles.sceneAlertDetail}>{resumePending ? '等待机器人确认，已选目标保留' : navigationView.control.resumeRequired && resumeError ? resumeError : isMappingSession ? '' : plannerAttention ? '检查周围障碍，或重新选点' : motionHeld ? '查看控制详情' : ''}</span>
-          {!observe && navigationView.control.resumeRequired && <button className={styles.toolbarBtn}
-            disabled={resumePending || !sseState.connected} onClick={handleResumeControl}
-            title="解除控制暂停，保留已选目标，仍需确认后开始导航">
-            {resumePending ? '恢复中…' : '恢复控制'}
-          </button>}
-          {isMappingSession && motionHeld && !navigationView.control.resumeRequired && <button className={styles.toolbarBtn}
-            onClick={() => { setInspectorOpen(true); setDrawerOpen(false); setInspectorTab('status') }}>控制详情</button>}
-        </div>}
           <div className={styles.canvasWrap}
-            onPointerDownCapture={() => {
-              // A canvas click closes menus before any map interaction.
-              const openMenus = document.querySelectorAll<HTMLDetailsElement>('details[name="lingtu-menu"][open]')
+            onPointerDownCapture={event => {
+              // Dismiss other menus without swallowing controls inside the open menu.
+              const openMenus = [...document.querySelectorAll<HTMLDetailsElement>('details[name="lingtu-menu"][open]')]
+                .filter(menu => !menu.contains(event.target as Node))
               dismissOnlyCanvasClick.current = openMenus.length > 0
               openMenus.forEach(menu => { menu.open = false })
             }}
@@ -1965,66 +2526,27 @@ function SceneViewComponent({
               event.preventDefault()
               event.stopPropagation()
             }}>
-            <Scene3D
-              ref={scene3DRef}
-              cloud={cloud}
-              scanCloud={alignedScanCloud}
-              scanVisible={liveScanVisible}
-              savedMapFlat={savedMapForScene?.points}
-              savedMapFrameId={savedMapForScene?.frameId}
-              savedMapEpoch={savedMapForScene?.epoch}
-              mappingObservation={mappingObservation}
-              mappingObservationVisible={showMappingObservation}
-              elevationState={elevationState}
-              nativeTraversabilityState={nativeTraversabilityState}
-              sceneGraph={mapSceneGraph}
-              robotX={robotX}
-              robotY={robotY}
-              robotZ={robotZ}
-              orientation={mapOdom?.orientation}
-              robotModel={robotModel}
-              jointTelemetry={sseState.jointTelemetry}
-              poseStampS={odom?.ts ?? null}
-              poseEpoch={poseEpoch}
-              followRobot={followRobot}
-              robotValid={poseAvailable}
-              yaw={yaw}
-              trail={trail}
-              path={hasGoal ? path : []}
-              localPath={hasGoal || requestedMotion ? localPathPts : []}
-                localPlannerSnapshot={nativeFresh ? localPlannerSnapshot : null}
-                safetyEnvelope={safetyEnvelope}
-                safetyView={safetyView}
-              layers={{ ...layers, cloud: layers.cloud && !savedMapForScene
-                && !showMappingObservation }}
-              pointSize={pointSize}
-              onPendingGoal={isMappingSession
-                ? canProbeMapping ? (x, y) => setMappingProbe({ x, y, epoch: poseEpoch }) : undefined
-                : observe || goalSendPending ? undefined : handlePendingGoal}
-              onRelocalize={!isMappingSession && !observe && workspaceTool === 'localization' && drawerOpen ? handleSceneRelocalize : undefined}
-              pendingGoal={isMappingSession ? currentMappingProbe && { ...currentMappingProbe,
-                z: mappingObservation.status === 'ready' ? mappingObservation.layer.origin[2] : 0 } : pendingGoal}
-              pendingGoalRadius={isMappingSession ? 0.15 : goalAcceptanceRadius}
-              pendingGoalLabel={isMappingSession ? '观测检查' : '待确认目标'}
-              previewPath={!isMappingSession && previewCurrent ? pendingGoalPreview?.path : undefined}
-            />
-            {!isMappingSession && !observe && workspaceTool === 'localization' && drawerOpen && <div className={styles.canvasOverlayTop}>
-              <span className={styles.scaleLabel}>Shift + 点击地图设置初始位置</span>
-            </div>}
-            {!sseState.connected && (
-              <div className={styles.sceneDisconnected} role="status">
-                <div className={styles.connectionIcon}><Radio size={26} strokeWidth={1.4} aria-hidden="true" /></div>
-                <strong>实时数据连接中断</strong>
-                <span>正在重连，请检查网络与监控服务</span>
+            <div className={styles.canvasControls}>
+            {!observe && supportsWebTeleop(currentProduct) && teleopMode && !drawerOpen && (
+              <div className={styles.canvasTeleopDock}>
+                <TeleopPanel key={currentProduct} sseState={sseState} showToast={showToast}
+                  onExit={() => setTeleopMode(false)} />
               </div>
             )}
-            {(showSavedMapInScene || layers.elevation || layers.nativeTraversability || layers.localPlanner) && (
+            {sseState.connected && (operatorAttention || motionHeld) && <div className={styles.sceneAlert} role="status">
+              <Info size={16} aria-hidden="true" />
+              <span className={styles.sceneAlertMessage} title={plannerAttention || motionHoldMessage}>{navigationView.control.resumeRequired ? '控制已暂停' : motionHeld || navigationView.motion.permission.state === 'ESTOPPED' ? motionHoldMessage : plannerAttention}</span>
+              <span className={styles.sceneAlertDetail}>{resumePending ? '等待机器人确认解除控制暂停' : navigationView.control.resumeRequired && resumeError ? resumeError : isMappingSession ? '' : waitingForRoute ? '已选目标保留；可暂停或取消任务' : plannerAttention ? navigationView.goalAdmission.message || '检查周围障碍，或重新选点' : motionHoldDetail}</span>
+              {!observe && navigationView.control.resumeRequired && <button className={styles.toolbarBtn}
+                disabled={resumePending || !sseState.connected} onClick={handleResumeControl}
+                title="解除控制暂停，等待机器人确认">
+                {resumePending ? '等待确认…' : '解除控制暂停'}
+              </button>}
+              {isMappingSession && motionHeld && !navigationView.control.resumeRequired && <button className={styles.toolbarBtn}
+                onClick={() => { setInspectorOpen(true); setDrawerOpen(false); setInspectorTab('status') }}>控制详情</button>}
+            </div>}
+            {(layers.elevation || layers.nativeTraversability || layers.localPlanner) && (
               <div className={styles.sceneLegendStack}>
-                {showSavedMapInScene && !layers.localPlanner && <div className={styles.mapReadingKey}>
-                  <strong>三维地图 · 保存点云</strong>
-                  <span>点：已扫描表面 · 空白不代表可走</span>
-                  <small>选点后由三维规划器预览路径</small>
-                </div>}
                 {layers.elevation && (
                   <div
                     className={sceneLayerLegendClass(elevationState.status)}
@@ -2084,6 +2606,198 @@ function SceneViewComponent({
                 )}
               </div>
             )}
+            </div>
+            {/* Keep one camera preview inside the map, including browser full screen. */}
+            {cameraVisible && <div
+              className={`${styles.cameraPip} ${cameraExpanded ? styles.cameraPipExpanded : ''} ${pendingGoal ? styles.cameraPipWithGoal : ''} ${!cameraHasFrame ? styles.cameraDockEmpty : ''}`}
+              aria-label="相机实时画面"
+              onPointerDown={event => event.stopPropagation()}
+            >
+              <div className={styles.cameraPipHeader}>
+                <span className={styles.cameraState} role="status" aria-label={cameraPipLabel}
+                  title={cameraStatus?.available
+                    ? `${cameraPipLabel} · 彩色 ${cameraStatus.color.fps.toFixed(0)} 帧/秒 · 深度 ${cameraStatus.depth.fps.toFixed(0)} 帧/秒`
+                    : cameraPipLabel}>
+                  <Camera size={16} aria-hidden="true" />
+                  {!cameraHasFrame && <span>{cameraPipLabel}</span>}
+                </span>
+                <div className={styles.cameraActions}>
+                  <button ref={cameraExpandRef} type="button" onClick={() => {
+                    if (!cameraExpanded) setInspectorOpen(false)
+                    setCameraExpanded(value => !value)
+                  }}
+                    aria-label={cameraExpanded ? '还原相机' : '放大相机'} title={cameraExpanded ? '还原相机' : '放大相机'} aria-pressed={cameraExpanded}>
+                    {cameraExpanded ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+                  </button>
+                  <button type="button" onClick={() => { setCameraExpanded(false); setCameraPreference(false); document.getElementById('scene-camera-toggle')?.focus() }} aria-label="收起相机" title="收起相机"><ChevronDown size={18} /></button>
+                </div>
+              </div>
+              {whepStream || (jpegCameraRecovered && cameraImgSrc)
+                ? <div ref={cameraMediaRef} className={styles.cameraPipMedia}>
+                  {whepStream && <video
+                    ref={cameraVideoRef}
+                    className={`${styles.cameraPipImg} ${!useWebRTCCamera ? styles.cameraPipVideoPending : ''}`}
+                    style={cameraVideoLayout.style}
+                    autoPlay muted playsInline
+                  />}
+                  {!useWebRTCCamera && jpegCameraRecovered && cameraImgSrc
+                    ? <img src={cameraImgSrc} className={styles.cameraPipImg} alt="机器人相机实时画面" draggable={false} />
+                    : null}
+                </div>
+                : null
+              }
+              <CameraTargetOverlay target={sceneTarget} />
+            </div>}
+            <div className={styles.mapTools} onPointerDown={event => event.stopPropagation()}>
+              {!observe && supportsWebTeleop(currentProduct) && (
+                <button type="button" className={`${styles.cameraToggle} ${styles.teleopToggle}`}
+                  aria-label={teleopMode ? '退出遥控' : currentProduct === 'nav' ? '人工接管' : '遥控'}
+                  title={teleopMode ? '退出遥控' : currentProduct === 'nav' ? '人工接管' : '遥控'}
+                  aria-pressed={teleopMode} onClick={() => {
+                    setDrawerOpen(false)
+                    setTeleopMode(value => !value)
+                  }}>
+                  <Gamepad2 size={19} aria-hidden="true" /><span>{teleopMode ? '退出遥控' : currentProduct === 'nav' ? '人工接管' : '遥控'}</span>
+                </button>
+              )}
+              <button type="button" className={styles.cameraToggle} aria-label="图层" title="图层"
+                aria-expanded={inspectorOpen && !drawerOpen && inspectorTab === 'layers'} aria-controls="scene-inspector"
+                onClick={() => {
+                  setInspectorOpen(!(inspectorOpen && !drawerOpen && inspectorTab === 'layers'))
+                  setInspectorTab('layers')
+                  setDrawerOpen(false)
+                }}>
+                <Layers2 size={19} aria-hidden="true" />
+              </button>
+              <details className={styles.viewMenu} name="lingtu-menu"
+                onKeyDown={event => {
+                  if (event.key === 'Escape') {
+                    event.currentTarget.open = false
+                    event.currentTarget.querySelector('summary')?.focus()
+                  }
+                }}>
+                <summary className={styles.cameraToggle} aria-label="视图设置" title="视图设置">
+                  <SlidersHorizontal size={19} aria-hidden="true" />
+                </summary>
+                <div className={styles.viewMenuPanel} onClick={event => {
+                  if ((event.target as HTMLElement).closest('button')) event.currentTarget.parentElement?.removeAttribute('open')
+                }}>
+                  <button type="button" className={styles.viewMenuItem} aria-controls="scene-inspector"
+                    aria-expanded={inspectorOpen && !drawerOpen && inspectorTab === 'status'}
+                    onClick={() => { setInspectorOpen(true); setInspectorTab('status'); setDrawerOpen(false) }}>
+                    <Bot size={17} aria-hidden="true" /><span>机器人状态</span>
+                  </button>
+              {!observe && !isMappingSession && !mapEditing && <button type="button" className={styles.viewMenuItem}
+                disabled={!savedMapForScene?.points.length || !savedMapForScene.contentEpoch}
+                title="整理保存地图，修改先保留为草稿" onClick={openMapEditor}><Pencil size={17} /><span>点云整理</span></button>}
+              <button type="button" className={styles.viewMenuItem}
+                aria-label={sceneFullscreen ? '退出全屏' : '全屏地图'}
+                title={sceneFullscreen ? '退出全屏' : '全屏地图'} aria-pressed={sceneFullscreen}
+                disabled={!document.fullscreenEnabled}
+                onClick={() => void toggleSceneFullscreen()}>
+                {sceneFullscreen ? <Minimize2 size={17} aria-hidden="true" /> : <Maximize2 size={17} aria-hidden="true" />}
+                <span>{sceneFullscreen ? '退出全屏' : '全屏地图'}</span>
+              </button>
+              <button type="button" id="scene-camera-toggle" className={styles.viewMenuItem} aria-label={cameraVisible ? '收起相机' : '显示相机'}
+                title={cameraVisible ? '收起相机' : '显示相机'} aria-pressed={cameraVisible}
+                onClick={() => setCameraPreference(!cameraVisible)}>
+                <Camera size={17} aria-hidden="true" /><span>{cameraVisible ? '收起相机' : '显示相机'}</span>
+              </button>
+            {!isMappingSession && !observe && !stairEditing && !mapEditing && !(workspaceTool === 'localization' && drawerOpen) && (
+              <div className={styles.navigationModeSwitch} role="tablist" aria-label="目标选择模式"
+                onPointerDown={event => event.stopPropagation()}>
+                <button type="button" role="tab" aria-selected={navigationSelectionMode === 'single'}
+                  className={navigationSelectionMode === 'single' ? styles.navigationModeActive : ''}
+                  disabled={routeDraftLocked}
+                  onClick={() => selectNavigationMode('single')}>
+                  <Target size={14} />单点
+                </button>
+                <button type="button" role="tab" aria-selected={navigationSelectionMode === 'route'}
+                  className={navigationSelectionMode === 'route' ? styles.navigationModeActive : ''}
+                  disabled={routeDraftLocked && navigationSelectionMode !== 'route'}
+                  onClick={() => selectNavigationMode('route')}>
+                  <Route size={14} />连续点{routeDraft.points.length > 0 ? ` ${routeDraft.points.length}` : ''}
+                </button>
+              </div>
+            )}
+                </div>
+              </details>
+            </div>
+            <Scene3D
+              ref={scene3DRef}
+              cloud={cloud}
+              scanCloud={alignedScanCloud}
+              scanVisible={liveScanVisible && !mapEditing}
+              savedMapFlat={savedMapForScene?.points}
+              savedMapFrameId={savedMapForScene?.frameId}
+              savedMapEpoch={savedMapForScene?.epoch}
+              savedMapVisible={layers.cloud && !showNavigationMap}
+              navigationMap={showNavigationMap && layers.cloud && navigationMap.status === 'ready' ? navigationMap.map : undefined}
+              voxelScale={voxelScale}
+              cloudColorRange={colorHeightRange}
+              mapEdit={mapEditing ? shownMapEdit ?? { selecting: false, selection: null, view: 'draft', operations: [], showDeleted: false } : null}
+              onMapEditBounds={bounds => mapEditorRef.current?.setBounds(bounds)}
+              onMapEditAnchor={setMapEditAnchor}
+              stairAnnotations={shownStairs?.annotations}
+              stairDraft={shownStairs?.draft}
+              stairTool={inspectorTab === 'tools' ? shownStairs?.tool : null}
+              onStairBounds={bounds => stairEditorRef.current?.setBounds(bounds)}
+              onStairPoint={point => stairEditorRef.current?.setPoint(point)}
+              cloudMaxZ={cloudMaxZ}
+              cloudMinZ={cloudMinZ}
+              cloudHeightStyle={cloudHeightMode === 'follow' ? 'fade' : 'clip'}
+              mappingObservation={mappingObservation}
+              mappingObservationVisible={showMappingObservation}
+              elevationState={elevationState}
+              nativeTraversabilityState={nativeTraversabilityState}
+              sceneGraph={mapEditing ? null : mapSceneGraph}
+              robotX={robotX}
+              robotY={robotY}
+              robotZ={robotZ}
+              orientation={mapOdom?.orientation}
+              robotModel={robotModel}
+              jointTelemetry={sseState.jointTelemetry}
+              poseStampS={odom?.ts ?? null}
+              poseEpoch={poseEpoch}
+              followRobot={followRobot && !stairEditing && !mapEditing}
+              robotValid={poseAvailable}
+              yaw={yaw}
+              trail={trail}
+              path={hasGoal ? path : []}
+              localPath={hasGoal || requestedMotion ? localPathPts : []}
+                localPlannerSnapshot={nativeFresh ? localPlannerSnapshot : null}
+                safetyEnvelope={safetyEnvelope}
+                safetyView={safetyView}
+              layers={{ ...layers, ...(mapEditing ? { trail: false, path: false, goal: false, robot: false, elevation: false, nativeTraversability: false, localPlanner: false } : {}), cloud: layers.cloud && !savedMapForScene
+                && !showMappingObservation }}
+              pointSize={pointSize}
+              cloudColorMode={cloudColorMode}
+              onPendingGoal={isMappingSession
+                ? canProbeMapping ? (x, y) => setMappingProbe({ x, y, epoch: poseEpoch }) : undefined
+                : observe || stairEditing || mapEditing || goalSendPending || routeDraftLocked ? undefined
+                  : navigationSelectionMode === 'route' ? handleRouteDraftPoint : selectPendingGoal}
+              goalPickMode={goalPickMode}
+              onRelocalize={!isMappingSession && !observe && !stairEditing && !mapEditing && workspaceTool === 'localization' && drawerOpen ? handleSceneRelocalize : undefined}
+              pendingGoal={stairEditing || mapEditing ? null : isMappingSession ? currentMappingProbe && { ...currentMappingProbe,
+                z: mappingObservation.status === 'ready' ? mappingObservation.layer.origin[2] : 0 }
+                : navigationSelectionMode === 'single' ? pendingGoal : null}
+              pendingGoalRadius={isMappingSession ? 0.15 : goalAcceptanceRadius}
+              pendingGoalYaw={isMappingSession ? undefined : goalYaw}
+              pendingGoalLabel={isMappingSession ? '观测检查' : '新目标'}
+              previewPath={!stairEditing && !mapEditing && !isMappingSession && previewCurrent ? pendingGoalPreview?.path : undefined}
+              routeDraftPoints={!stairEditing && !mapEditing && !isMappingSession && navigationSelectionMode === 'route' && showRouteDraft
+                ? routeDraft.points : undefined}
+            />
+            {mapEditing && savedMapForScene && savedMapForScene.contentEpoch != null && <MapEditor
+              key={mapSourceKey} ref={mapEditorRef}
+              source={{ name: savedMapForScene.mapName, contentEpoch: savedMapForScene.contentEpoch, frameId: savedMapForScene.frameId || 'map' }}
+              points={savedMapForScene.points} anchor={mapEditAnchor} footerTarget={mapEditFooter}
+              cameraExpanded={cameraExpanded} onExitGuardChange={onMapEditorExitGuardChange}
+              onSceneChange={onMapEditSceneChange} onView={onMapEditView} onClose={closeMapEditor}
+              onOpenMap={onOpenSavedMap} onMapsChanged={() => void loadMaps()} />}
+            {!isMappingSession && !observe && workspaceTool === 'localization' && drawerOpen && <div className={styles.canvasOverlayTop}>
+              <span className={styles.scaleLabel}>Shift + 点击地图设置初始位置</span>
+            </div>}
             {currentMappingProbe && <div className={`${styles.goalConfirmPanel} ${styles.mappingProbe}`} aria-label="观测位置检查"
               onPointerDown={event => event.stopPropagation()}>
               <div className={styles.goalConfirmHeader}>
@@ -2101,65 +2815,260 @@ function SceneViewComponent({
                 : '局部表面拟合不可用；这不是置信度或通行判定。'}</small>
               <small>仅检查地图，不发送运动目标</small>
             </div>}
-            {!isMappingSession && !observe && pendingGoal && (
-              <div className={styles.goalConfirmPanel} aria-label="导航目标" onPointerDown={event => event.stopPropagation()}>
+            <div ref={navigationPanelsRef} className={styles.navigationPanels} data-selection-mode={navigationSelectionMode} data-map-editing={mapEditing}>
+            {mapEditing && <div ref={setMapEditFooter} />}
+            {!isMappingSession && !observe && !stairEditing && !mapEditing && navigationSelectionMode === 'route' && (
+              <div className={`${styles.goalConfirmPanel} ${styles.routeDraftPanel}`} aria-label="连续点路线"
+                onPointerDown={event => event.stopPropagation()}>
                 <div className={styles.goalConfirmHeader}>
-                <span className={styles.goalConfirmLabel}>已选目标{pendingGoalDistance !== null ? ` · ${pendingGoalDistance.toFixed(1)} m` : ''}</span>
-                <span className={styles.goalConfirmCoords}>
-                  ({pendingGoal.x.toFixed(2)}, {pendingGoal.y.toFixed(2)})
-                </span>
+                  <span className={styles.goalConfirmLabel}>连续点路线 · {routePointCountLabel}</span>
+                  {onOpenInspection && <button type="button" className={styles.routeDetailsLink}
+                    disabled={routeActionPending !== null || (!routeTaskOpen && !routeDraftSaved)}
+                    onClick={() => onOpenInspection(routeTaskOpen
+                      ? routeTaskStatus?.identity.route_id ?? null : savedDraftRoute?.id ?? null)}
+                    title={routeTaskOpen || routeDraftSaved ? '查看点位动作、停留和任务记录' : '保存路线后可编辑点位动作与停留'}>任务设置</button>}
                 </div>
-                <div className={styles.goalControlGroup}>
-                  <label className={styles.goalControl}>
-                    <span>速度</span>
-                    <select
-                      className={styles.goalSelect}
-                      value={goalMaxSpeed}
-                      disabled={goalSendPending || goalPreviewPending}
-                      onChange={(e) => { setGoalMaxSpeed(Number(e.target.value)); setPendingGoalPreview(null); setGoalPreviewError(null) }}
-                    >
-                      {GOAL_SPEED_OPTIONS.map((speed) => (
-                        <option key={speed} value={speed}>{speed.toFixed(2)} m/s</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className={styles.goalControl}>
-                    <span>到点范围</span>
-                    <select
-                      className={styles.goalSelect}
-                      value={goalAcceptanceRadius}
-                      disabled={goalSendPending || goalPreviewPending}
-                      onChange={(e) => { setGoalAcceptanceRadius(Number(e.target.value)); setPendingGoalPreview(null); setGoalPreviewError(null) }}
-                    >
-                      {GOAL_RADIUS_OPTIONS.map((radius) => (
-                        <option key={radius} value={radius}>{radius.toFixed(2)} m</option>
-                      ))}
-                    </select>
-                  </label>
+                {!routeTaskOpen && <input className={styles.routeNameInput} aria-label="路线名称" value={routeName}
+                  maxLength={80} disabled={routeDraftLocked} placeholder="路线名称"
+                  onChange={event => { setRouteName(event.target.value); setRouteStartIntent(null) }} />}
+                {showRouteDraft && routeDraft.points.length > 0 ? (
+                  <ol className={styles.routeDraftList}>
+                    {routeDraft.points.map((point, index) => (
+                      <li key={`${index}:${point.x}:${point.y}:${point.z}`}>
+                        <button type="button" className={styles.routePointNumber} aria-label={`查看第 ${index + 1} 个点`}
+                          onClick={() => { setFollowRobot(false); scene3DRef.current?.focusPoint(point.x, point.y, point.z) }}>{index + 1}</button>
+                        <span className={styles.routePointCoords}>
+                          {routeTaskOpen && point.id && routeTaskStatus?.progress.current_point_id === point.id ? '当前 · ' : ''}
+                          {point.enabled === false ? '停用 · ' : ''}高度 {point.z.toFixed(2)} m
+                        </span>
+                        <span className={styles.routePointActions}>
+                          <button type="button" disabled={routeDraftLocked || index === 0}
+                            title={`上移第 ${index + 1} 个点`} aria-label={`上移第 ${index + 1} 个点`}
+                            onClick={() => editRouteDraft(draft => moveRouteDraftPoint(draft, index, -1))}>
+                            <ChevronUp size={15} />
+                          </button>
+                          <button type="button" disabled={routeDraftLocked || index === routeDraft.points.length - 1}
+                            title={`下移第 ${index + 1} 个点`} aria-label={`下移第 ${index + 1} 个点`}
+                            onClick={() => editRouteDraft(draft => moveRouteDraftPoint(draft, index, 1))}>
+                            <ChevronDown size={15} />
+                          </button>
+                          <button type="button" disabled={routeDraftLocked}
+                            title={`删除第 ${index + 1} 个点`} aria-label={`删除第 ${index + 1} 个点`}
+                            onClick={() => editRouteDraft(draft => removeRouteDraftPoint(draft, index))}>
+                            <X size={15} />
+                          </button>
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : routeTaskOpen ? (
+                  <div className={styles.routeDraftEmpty}>可在“巡检任务”页查看这项任务的完整路线</div>
+                ) : (
+                  <div className={styles.routeDraftEmpty}>点击地图添加第一个三维点位</div>
+                )}
+                {(routeTaskId || routeTaskError) && (
+                  <div className={styles.routeTaskStatus} role="status">
+                    <strong>{routeTaskError || routeTaskStateLabel(routeTaskStatus)}</strong>
+                    {routeTaskStatus?.found && routeTaskStatus.progress.known && (
+                      <span>
+                        已完成 {routeTaskStatus.progress.completed_points} / {routeTaskStatus.progress.point_count} 点
+                        {(routeTaskStatus.progress.current_point_number ?? 0) > 0 ? ` · 当前第 ${routeTaskStatus.progress.current_point_number} 点` : ''}
+                        {routeTaskStatus.reason ? ` · ${operatorReasonMessage(routeTaskStatus.reason, locale)}` : ''}
+                      </span>
+                    )}
+                    {!sseState.connected && routeTaskId && <span>连接中断，任务编号已保留；恢复后继续读取同一任务</span>}
+                    {routeActionPending && routeActionPending !== 'start' && routeActionPending !== 'save' && (
+                      <span>{routeActionPending === 'pause' ? '正在提交暂停请求…'
+                        : routeActionPending === 'resume' ? '正在提交恢复请求…'
+                          : '正在提交取消请求…'}</span>
+                    )}
+                  </div>
+                )}
+                <div className={styles.routeDraftActions}>
+                  {!routeTaskOpen && (
+                    <button type="button" className={styles.goalCancelBtn}
+                      disabled={routeDraftLocked || routeDraft.points.length === 0}
+                      onClick={() => editRouteDraft(() => EMPTY_ROUTE_DRAFT)}>
+                      清空
+                    </button>
+                  )}
+                  {!routeTaskOpen && (
+                    <button type="button" className={styles.goalCancelBtn}
+                      disabled={routeDraftLocked || routeDraftSaved || routeDraft.points.length < 2 || !routeDraftIdentity || !sseState.connected}
+                      onClick={() => void saveRouteDraft()}>
+                      {routeActionPending === 'save' ? '保存中…' : routeDraftSaved ? '已保存' : '保存路线'}
+                    </button>
+                  )}
+                  {!routeTaskOpen && (
+                    <button type="button" className={styles.goalConfirmBtn}
+                      disabled={routeActionPending !== null || routeDraft.points.length < 2
+                        || !routeDraftIdentity || !sseState.connected || !canSendGoal}
+                      title={!routeDraftIdentity ? '等待活动地图版本' : !canSendGoal ? goalDisabledReason : '保存路线并提交一次原生巡检任务'}
+                      onClick={() => void startRouteDraft()}>
+                      <Play size={16} />{routeActionPending === 'start' ? '提交中…' : '开始路线'}
+                    </button>
+                  )}
+                  {routeTaskOpen && routeTaskStatus?.can_pause && (
+                    <button type="button" className={styles.goalConfirmBtn}
+                      disabled={routeActionPending !== null || !sseState.connected}
+                      onClick={() => void runRouteTaskAction('pause')}>
+                      <Pause size={16} />{routeActionPending === 'pause' ? '暂停请求中…' : '暂停'}
+                    </button>
+                  )}
+                  {routeTaskOpen && routeTaskStatus?.can_resume && (
+                    <button type="button" className={styles.goalConfirmBtn}
+                      disabled={routeActionPending !== null || !sseState.connected}
+                      onClick={() => void runRouteTaskAction('resume')}>
+                      <Play size={16} />{routeActionPending === 'resume' ? '恢复请求中…' : '恢复'}
+                    </button>
+                  )}
+                  {routeTaskOpen && routeTaskStatus?.can_cancel && (
+                    <button type="button" className={styles.goalCancelBtn}
+                      disabled={routeActionPending !== null || !sseState.connected}
+                      onClick={() => void runRouteTaskAction('cancel')}>
+                      {routeActionPending === 'cancel' ? '取消请求中…' : '取消路线'}
+                    </button>
+                  )}
                 </div>
-                <div className={styles.goalFeedback} role="status">
-                  <span className={styles.goalPlanSummary}>
-                    {goalSendPending ? '正在提交导航…' : goalPreviewPending ? '正在预览路径…'
-                      : goalPreviewError || pendingGoalPlanSummary
-                        || (pendingGoalPreview?.feasible && !previewCurrent ? '当前位置已变化，请重新预览路径' : '')
-                        || '等待三维路径预览'}
+                {!routeTaskOpen && <div className={styles.routeActionHint} role="status">{routeStartHint}</div>}
+              </div>
+            )}
+            {!isMappingSession && !observe && !stairEditing && !mapEditing && navigationSelectionMode === 'single' && pendingGoal && (
+              <section className={`${styles.goalConfirmPanel} ${styles.singleGoalPanel}`} aria-label="导航目标" onPointerDown={event => event.stopPropagation()}>
+                <div className={styles.goalConfirmHeader}>
+                  <button type="button" className={`${styles.goalConfirmLabel} ${styles.goalFocusButton}`}
+                    aria-label="查看所选目标" title="将视角移到所选目标"
+                    disabled={typeof pendingGoal.z !== 'number'}
+                    onClick={() => {
+                      if (typeof pendingGoal.z !== 'number') return
+                      setFollowRobot(false)
+                      scene3DRef.current?.focusPoint(pendingGoal.x, pendingGoal.y, pendingGoal.z)
+                    }}><Target size={17} aria-hidden="true" />新目标</button>
+                  <button type="button" className={styles.goalDismissBtn} aria-label="清除目标"
+                    disabled={goalSendPending} onClick={clearPendingGoal}><X size={19} aria-hidden="true" /></button>
+                </div>
+                <div className={styles.goalMetrics}>
+                  <div><span>{previewDistance !== null ? '路程' : '直线距离'}</span>
+                    <strong>{selectedGoalDistance !== null ? selectedGoalDistance.toFixed(1) : '—'}<small>m</small></strong></div>
+                  <div><span title="目标机身在地图坐标中的高度">机身高度</span>
+                    <strong>{typeof pendingGoal.z === 'number' ? pendingGoal.z.toFixed(2) : '—'}<small>m</small></strong></div>
+                </div>
+                <div className={styles.goalFooter}>
+                  <span className={styles.goalPlanSummary} role="status" aria-live="polite" aria-atomic="true"
+                    data-state={goalPreviewError ? 'error' : previewCurrent && goalDisabledReason ? 'blocked' : previewCurrent ? 'ready' : 'pending'}>
+                    {goalSendPending ? '正在提交导航…' : goalPreviewPending ? '正在规划路线…'
+                      : goalPreviewMessage || (previewCurrent ? goalDisabledReason || '路线已就绪' : '')
+                        || (pendingGoalPreview?.feasible && !previewCurrent ? '起点已变化，正在更新路线…' : '')
+                        || '准备规划路线…'}
                   </span>
-                  <span className={styles.goalConfirmReason}>
-                    {previewCurrent && goalDisabledReason ? goalDisabledReason : '预览不会移动机器人，确认后才开始导航'}
-                  </span>
-                </div>
-                <div className={styles.goalConfirmActions}>
+                  <details className={styles.goalSettings} name="lingtu-menu"
+                    onKeyDown={event => {
+                      if (event.key === 'Escape') {
+                        event.currentTarget.open = false
+                        event.currentTarget.querySelector('summary')?.focus()
+                        event.stopPropagation()
+                      }
+                    }}>
+                    <summary>
+                      <span>调整</span>
+                      <ChevronDown className={styles.goalSettingsChevron} size={15} aria-hidden="true" />
+                    </summary>
+                    <div className={styles.goalSettingsBody}>
+                      <div className={styles.goalControlGroup}>
+                        {(['x', 'y'] as const).map(axis => (
+                          <label className={styles.goalControl} key={axis}>
+                            <span>位置 {axis.toUpperCase()}</span>
+                            <input key={`${axis}:${pendingGoal[axis]}`} type="number" step="0.1" className={styles.goalSelect}
+                              defaultValue={pendingGoal[axis].toFixed(2)} disabled={goalSendPending}
+                              aria-label={`目标 ${axis.toUpperCase()}（米）`}
+                              onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }}
+                              onBlur={event => {
+                                const value = event.currentTarget.valueAsNumber
+                                if (!Number.isFinite(value)) { event.currentTarget.value = pendingGoal[axis].toFixed(2); return }
+                                if (value === pendingGoal[axis]) return
+                                invalidatePendingGoalPreview()
+                                setPendingGoal({ ...pendingGoal, [axis]: value })
+                              }} />
+                          </label>
+                        ))}
+                        <label className={styles.goalControl}>
+                          <span>速度上限</span>
+                          <select className={styles.goalSelect} value={goalMaxSpeed} disabled={goalSendPending}
+                            onChange={(event) => { invalidatePendingGoalPreview(); setGoalMaxSpeed(Number(event.target.value)) }}>
+                            {GOAL_SPEED_OPTIONS.map((speed) => <option key={speed} value={speed}>{speed} m/s</option>)}
+                          </select>
+                        </label>
+                        <label className={styles.goalControl}>
+                          <span>到达范围</span>
+                          <select className={styles.goalSelect} value={goalAcceptanceRadius} disabled={goalSendPending}
+                            onChange={(event) => { invalidatePendingGoalPreview(); setGoalAcceptanceRadius(Number(event.target.value)) }}>
+                            {GOAL_RADIUS_OPTIONS.map((radius) => <option key={radius} value={radius}>{radius.toFixed(2)} m</option>)}
+                          </select>
+                        </label>
+                        <label className={styles.goalControl}>
+                          <span>机身高度</span>
+                          <input className={styles.goalSelect} type="number" step="0.05"
+                            value={typeof pendingGoal.z === 'number' ? pendingGoal.z.toFixed(2) : ''}
+                            disabled={goalSendPending} aria-label="目标高度（米）" placeholder="目标高度"
+                            onChange={(event) => {
+                              if (!event.target.value.trim()) {
+                                invalidatePendingGoalPreview()
+                                setPendingGoal({ ...pendingGoal, z: undefined })
+                                setGoalPreviewError('请输入目标高度')
+                                return
+                              }
+                              const z = Number(event.target.value)
+                              if (!Number.isFinite(z)) return
+                              invalidatePendingGoalPreview()
+                              setPendingGoal({ ...pendingGoal, z })
+                            }} />
+                        </label>
+                        <label className={styles.goalControl}>
+                          <span>目标朝向</span>
+                          <select className={styles.goalSelect} value={goalYaw} disabled={goalSendPending}
+                            onChange={event => { invalidatePendingGoalPreview(); setGoalYaw(Number(event.target.value)) }}>
+                            {[-180, -135, -90, -45, 0, 45, 90, 135, 180].map(degrees => (
+                              <option key={degrees} value={degrees * Math.PI / 180}>{degrees}°</option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      <div className={styles.goalSettingsFooter}>
+                        <span>圆圈为到达范围，箭头为目标朝向。</span>
+                        <button type="button" disabled={goalSendPending} onClick={() => {
+                          invalidatePendingGoalPreview(); setGoalMaxSpeed(0.4); setGoalAcceptanceRadius(0.45); setGoalYaw(0)
+                        }}>恢复默认</button>
+                      </div>
+                      {goalPreviewError && goalPreviewMessage !== goalPreviewError && (
+                        <details className={styles.goalErrorDetails}>
+                          <summary>详细原因</summary>
+                          <p>{goalPreviewError}</p>
+                        </details>
+                      )}
+                    </div>
+                  </details>
+                {goalPreviewError && !goalPreviewPending && !goalSendPending ? (
+                  <button className={styles.goalRetryBtn} type="button"
+                    disabled={!!previewDisabledReason || typeof pendingGoal.z !== 'number'}
+                    title={previewDisabledReason || (typeof pendingGoal.z !== 'number' ? '请输入目标高度' : '重新预览路线')}
+                    onClick={() => void handlePendingGoal(pendingGoal.x, pendingGoal.y, pendingGoal.z)}>
+                    <RefreshCw size={15} aria-hidden="true" />重试
+                  </button>
+                ) : (
                 <button
                   className={styles.goalConfirmBtn}
-                  onClick={previewCurrent ? handleConfirmGoal : () => void handlePendingGoal(pendingGoal.x, pendingGoal.y, pendingGoal.z)}
-                  disabled={goalSendPending || goalPreviewPending || (previewCurrent ? !canSendGoal : !!previewDisabledReason)}
-                  title={previewCurrent ? goalDisabledReason || '确认后开始导航' : previewDisabledReason || '仅预览，不移动机器人'}
+                  onClick={handleConfirmGoal}
+                  disabled={goalSendPending || goalPreviewPending || !previewCurrent || !canSendGoal}
+                  title={goalDisabledReason || (!previewCurrent ? '正在准备路线' : hasGoal ? '提交新目标，替换当前导航任务' : '开始导航')}
                 >
-                  <Navigation size={16} /> {goalSendPending ? '提交中…' : goalPreviewPending ? '规划中…' : previewCurrent ? '开始导航' : goalPreviewError || pendingGoalPreview ? '重新预览' : '预览路径'}
+                  <Navigation size={16} aria-hidden="true" />{goalSendPending ? '提交中…'
+                    : goalPreviewPending || !previewCurrent ? '规划中…' : hasGoal ? '切换到此目标' : '开始导航'}
                 </button>
+                )}
+                </div>
                 {isExplorationSession && (
                   <button
-                    className={styles.goalConfirmBtn}
+                    className={styles.goalSecondaryAction}
                     onClick={handleDirectedExploration}
                     disabled={directedExplorationBusy || explorationStatusLoading || !motionStartAllowed}
                     title={!motionStartAllowed
@@ -2171,60 +3080,18 @@ function SceneViewComponent({
                     <Route size={12} /> {directedExplorationBusy ? '引导中…' : '引导探索至此 (30 秒)'}
                   </button>
                 )}
-
-                <button
-                  className={styles.goalCancelBtn}
-                  disabled={goalSendPending}
-                  onClick={() => {
-                    ++goalPreviewRequest.current
-                    setPendingGoal(null)
-                    setPendingGoalPreview(null)
-                    setGoalPreviewPending(false)
-                    setGoalPreviewError(null)
-                  }}
-                >
-                  取消
-                </button>
-                </div>
-              </div>
+              </section>
             )}
 
-          </div>
-          <div className={`${styles.sceneFooter} ${isMappingSession ? styles.mappingFooter : ''}`}>
-            {isMappingSession ? <>
-              <div className={styles.mappingSourceStatus} role="status">
-                  <span>{showMappingObservation ? '局部投影' : showGlobalMapping ? '累计建图' : '局部地图'}</span>
-                  {!showMappingObservation && cloud.count > 0 && <span className={styles.cloudHeightLegend}
-                    title="地图高度：−1 至 2.5 米，超出范围保持端点颜色；不表示可通行或障碍分类">
-                    <span>低</span><i /><span>高</span>
-                  </span>}
-                  {showGlobalMapping && (cloud.mappingSummary?.droppedFrames ?? 0) > 0
-                    ? <span role="status">建图数据有缺失，请先保存原始记录</span>
-                    : showGlobalMapping && cloud.mappingSummary?.state === 'optimizer_quality_failed'
-                      ? <span role="status">本轮校正未收敛，保留上一版</span>
-                    : showGlobalMapping && (cloud.mappingSummary?.registrationRejections ?? 0) > 0
-                      ? <span title="部分关键帧几何配准不足，仍保留原始点云；这些区域的闭环校正尚未验证。">部分区域待校正</span>
-                    : showGlobalMapping && (cloud.mappingSummary?.optimizations ?? 0) > 0
-                      ? <span>闭环已校正</span> : null}
-                  {!showMappingObservation && cloud.count === 0 && <span>等待点云</span>}
-                  {showMappingObservation && mappingObservation.status !== 'ready' && <span role="status">观测未更新</span>}
-                  {!showMappingObservation && cloud.count > 0 && (!sseState.connected || (!showGlobalMapping && !freshSource(cloud.stampS, rasterNowS))) && <span role="status">缓存画面</span>}
-              </div>
-              <span className={styles.mappingSpeed} title={`实测前进速度 · ${poseLabel}`}>{displaySpeed}</span>
-            </> : <>
-              {showSavedMapInScene && <span role="status" title={savedMapLoadError ?? undefined}>
-                {savedMapForScene ? `三维地图 · ${Math.floor(savedMapForScene.points.length / 3).toLocaleString()} 点`
-                  : savedMapLoadError ? '地图加载失败，正在重试' : '正在加载三维地图…'}
-              </span>}
-              <span><i className={styles.routeKey} />执行轨迹 <i className={styles.globalKey} />全局路径 <i className={styles.trailKey} />已走轨迹</span>
-              <span className={styles.canvasHint}><MousePointer2 size={14} />{observe ? '拖动旋转 · 滚轮缩放' : '选点后确认导航'}</span>
-            </>}
+            <div ref={onTaskPanelMount} className={styles.taskPanelSlot}
+              onPointerDown={event => event.stopPropagation()} />
+            </div>
           </div>
         </div>
 
         {/* Right: side panel */}
         <aside className={styles.sidePanel} id="scene-inspector" aria-label="现场面板"
-          hidden={(drawerOpen && !observe) || (isMappingSession && !inspectorOpen)}>
+          hidden={(drawerOpen && !observe) || !inspectorOpen}>
           <div className={styles.inspectorTabs} role="tablist" aria-label="现场面板内容"
             onKeyDown={event => {
               if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
@@ -2242,73 +3109,77 @@ function SceneViewComponent({
               <item.icon size={16} />{item.label}
             </button>)}
           </div>
-            {/* Camera is optional and opens its stream only while visible. */}
-            {cameraVisible && <div
-              className={styles.cameraDock}
-              aria-label="相机实时画面"
-              onPointerDown={event => event.stopPropagation()}
-            >
-              <div className={styles.cameraPipHeader}>
-                <span className={cameraPipDotClass} />
-                {cameraPipLabel}
-                <button onClick={() => setCameraPreference(false)} aria-label="收起相机"><X size={16} /></button>
-              </div>
-              {cameraPipRecovered && cameraImgSrc
-                ? <img src={cameraImgSrc} className={styles.cameraPipImg} alt="机器人相机实时画面" draggable={false} />
-                : <div className={styles.cameraPipEmpty}><VideoOff size={24} /><span>{cameraStatus?.status === 'not_loaded'
-                  ? '当前运行模式未接入相机' : '收到新画面后自动显示'}</span></div>
-              }
-              {cameraPipRecovered && cameraStatus?.available && <div className={styles.cameraPipInfo}>
-                <span>彩色 {cameraStatus.color.fps.toFixed(0)} 帧/秒</span>
-                <span>深度 {cameraStatus.depth.fps.toFixed(0)} 帧/秒</span>
-              </div>}
-            </div>}
           <div className={styles.inspectorBody} role="tabpanel" id="scene-panel-status"
             aria-labelledby="scene-tab-status" hidden={inspectorTab !== 'status'} tabIndex={0}>
-          <section className={styles.statCard} aria-label="机器人位姿">
-            <div className={styles.statCardTitle}>{robotModel === 'go2' ? 'Go2' : robotModel === 'thunder_v4' ? 'Thunder v4' : '机器人'}<span role="status">{poseLabel}</span></div>
-            <div className={styles.speedOverview}>
-              <strong className={styles.robotSpeedValue}>{displaySpeed}</strong><span>实测前进速度</span>
+          <section className={`${styles.statCard} ${styles.connectionCard}`} aria-label="机器人状态">
+            <div className={styles.statCardTitle}>{robotModel === 'go2' ? 'Go2' : robotModel === 'thunder_v4' ? 'Thunder v4' : '机器人'}
+              <span className={styles.statusValue} data-state={sseState.connected ? 'CONFIRMED' : 'FAILED'}>
+                {sseState.connected ? '已连接' : '已断开'}
+              </span>
             </div>
-            {robotModel === 'go2' && <RobotJointStatus stream={sseState.jointTelemetry} />}
+            {robotStatusMessage && <div className={styles.robotNotice} role="status">
+              <p className={styles.statusLine}>{robotStatusMessage}</p>
+              {resumePending && <p className={styles.sourceNote}>等待机器人确认解除控制暂停</p>}
+              {navigationView.control.resumeRequired && resumeError && <p className={styles.issueLine}>{resumeError}</p>}
+              {!observe && navigationView.control.resumeRequired && <button className={styles.toolbarBtn}
+                disabled={resumePending || !sseState.connected} onClick={handleResumeControl}>
+                {resumePending ? '等待确认…' : '解除控制暂停'}
+              </button>}
+              {isMappingSession && motionHeld && !navigationView.control.resumeRequired && <button className={styles.toolbarBtn}
+                onClick={() => { setInspectorOpen(true); setDrawerOpen(false); setInspectorTab('status') }}>控制详情</button>}
+            </div>}
+            {isMappingSession && <div className={styles.metricRow}>
+              <span>地图视图</span>
+              <strong>{showMappingObservation ? '局部投影' : showGlobalMapping ? '累计建图' : '局部地图'}</strong>
+            </div>}
+            <div className={styles.robotLocalization} role="status"><span>定位</span><strong data-available={poseAvailable}>{poseLabel}</strong></div>
+            <div className={styles.speedOverview}>
+              <div><span>实测前进速度</span><strong className={styles.robotSpeedValue}>{displaySpeedValue}<small>m/s</small></strong></div>
+              <div title="本次定位进程基于 SLAM 连续里程计累计的平面距离估计，不计入全局地图位置修正">
+                <span>本次里程</span><strong>{displaySessionDistance}<small>m</small></strong>
+              </div>
+            </div>
             <details className={styles.statusDetails}>
-              <summary>位姿详情</summary>
+              <summary>位姿与控制详情</summary>
+              {robotModel === 'go2' && <RobotJointStatus stream={sseState.jointTelemetry} />}
             <div className={styles.poseGrid}>
               <div className={styles.statItem}><span className={styles.statLabel}>X · m</span><span className={`${styles.statValue} ${styles.robotPositionValue}`}>{displayRobotX}</span></div>
               <div className={styles.statItem}><span className={styles.statLabel}>Y · m</span><span className={`${styles.statValue} ${styles.robotPositionValue}`}>{displayRobotY}</span></div>
               <div className={styles.statItem}><span className={styles.statLabel}>Z · m</span><span className={styles.statValue}>{displayRobotZ}</span></div>
             </div>
             <div className={styles.metricRow}><span>朝向</span><strong className={styles.robotYawValue}>{displayYawDeg}</strong></div>
-            </details>
-          </section>
-
-          <section className={styles.statCard} aria-label="运动与规划">
-            <div className={styles.statCardTitle}>规划<span>{missionStateLabel}</span></div>
-            {sseState.connected && <p className={styles.statusLine} role="status">{plannerLabel}</p>}
+            <div className={styles.metricRow}><span>任务</span><strong>{sseState.connected ? missionStateLabel : '等待连接'}</strong></div>
+            {sseState.connected && <p className={styles.statusLine}>{plannerLabel}</p>}
             {!observe && sseState.connected && !canSendGoal && <p className={styles.statusLine}>{goalDisabledReason}</p>}
-            <details className={styles.statusDetails}>
-              <summary>控制详情</summary>
-            <table className={styles.commandTable} aria-label="请求与输出速度">
-              <thead><tr><th></th><th>前后</th><th>左右</th><th>转向</th></tr></thead>
-              <tbody>
-                <tr><th scope="row">请求</th>{commandValues(nativeFresh ? request : undefined).map((v, i) => <td key={i}>{v}</td>)}</tr>
-                <tr><th scope="row">输出</th>{commandValues(nativeFresh ? finalCommand : undefined).map((v, i) => <td key={i}>{v}</td>)}</tr>
-              </tbody>
-            </table>
-            <p className={styles.units}>平移 m/s · 转向 rad/s</p>
-            <div className={styles.metricRow}><span>当前运动</span><strong>{navigationView.motion.observation.label}</strong></div>
-              <div className={styles.metricRow}><span>导航准备</span><strong>{navigationView.goalAdmission.label}</strong></div>
-              <div className={styles.metricRow}><span>控制权</span><strong>{navigationView.control.label}</strong></div>
-              <div className={styles.metricRow}><span>运动许可</span><strong>{navigationView.motion.permission.label}</strong></div>
-              <div className={styles.metricRow}><span>停稳确认</span><strong>{navigationView.motion.stopConfirmation.label}</strong></div>
+            {!sseState.connected ? <div className={styles.statusWaiting} role="status">
+              <span className={styles.statusSignal} aria-hidden="true" />
+              <span><strong>等待连接</strong><small>连接后显示运动和导航状态</small></span>
+            </div> : <>
+              <table className={styles.commandTable} aria-label="请求与输出速度">
+                <thead><tr><th></th><th>前后</th><th>左右</th><th>转向</th></tr></thead>
+                <tbody>
+                  <tr><th scope="row">请求</th>{commandValues(nativeFresh ? request : undefined).map((v, i) => <td key={i}>{v}</td>)}</tr>
+                  <tr><th scope="row">输出</th>{commandValues(nativeFresh ? finalCommand : undefined).map((v, i) => <td key={i}>{v}</td>)}</tr>
+                </tbody>
+              </table>
+              <p className={styles.units}>平移 m/s · 转向 rad/s</p>
+              <div className={styles.metricRow}><span>运动</span><strong className={styles.statusValue} data-state={navigationView.motion.observation.state}>{navigationView.motion.observation.label}</strong></div>
+              <div className={styles.metricRow}><span>导航</span><strong className={styles.statusValue} data-state={navigationView.goalAdmission.state}>{navigationView.goalAdmission.label}</strong></div>
+              <details className={styles.metricDetails}>
+                <summary>安全细节</summary>
+                <div className={styles.metricRow}><span>控制权</span><strong className={styles.statusValue} data-state={navigationView.control.state}>{navigationView.control.label}</strong></div>
+                <div className={styles.metricRow}><span>运动许可</span><strong className={styles.statusValue} data-state={navigationView.motion.permission.state}>{navigationView.motion.permission.label}</strong></div>
+                <div className={styles.metricRow}><span>停稳确认</span><strong className={styles.statusValue} data-state={navigationView.motion.stopConfirmation.state}>{navigationView.motion.stopConfirmation.label}</strong></div>
+              </details>
               {sceneDebugTools && <p className={styles.units}>{String(lastLocal?.reason ?? '—')}</p>}
+            </>}
             </details>
           </section>
 
-          <section className={styles.statCard} aria-label="雷达与定位">
+          {sensorDiagnosticsVisible && <section className={styles.statCard} aria-label="雷达与定位">
             <div className={styles.statCardTitle}>雷达<span>{alignedScanCloud ? `${scanCloud.count.toLocaleString()} 点` : '未更新'}</span></div>
             <details className={styles.statusDetails}>
-              <summary>雷达详情</summary>
+              <summary>雷达数据</summary>
             <p className={styles.sourceNote}>当前扫描，非完整碰撞栅格。</p>
             <div className={styles.metricRow}><span>定位更新</span><strong>{telemetryFresh ? formatHz(processedScanHz) : '—'}</strong></div>
             <div className={styles.metricRow}><span>雷达输入</span><strong>{telemetryFresh ? formatHz(lidarInputHz) : '—'}</strong></div>
@@ -2316,13 +3187,152 @@ function SceneViewComponent({
             <div className={styles.metricRow}><span>局部地图点</span><strong>{cloud.count > 0 ? `${cloud.count.toLocaleString()} 点` : '当前未发布'}</strong></div>
             {sceneDebugTools && <div className={styles.metricRow}><span>后端地图点数</span><strong>{formatCount(displayedMapPoints)}</strong></div>}
             </details>
-          </section>
+          </section>}
 
           </div>
           <div className={`${styles.inspectorBody} ${styles.layerSettings}`} role="tabpanel" id="scene-panel-layers"
             aria-labelledby="scene-tab-layers" hidden={inspectorTab !== 'layers'} tabIndex={0}>
-                {isMappingSession && <details className={styles.mappingReadingKey} aria-label="建图显示图例">
-                  <summary>图例</summary>
+              {isMappingSession && showGlobalMapping && (cloud.mappingSummary?.droppedFrames ?? 0) > 0
+                ? <p className={styles.issueLine}>建图数据有缺失，请先保存原始记录</p>
+                : isMappingSession && showGlobalMapping && cloud.mappingSummary?.state === 'optimizer_quality_failed'
+                  ? <p className={styles.issueLine}>本轮校正未收敛，保留上一版</p>
+                  : isMappingSession && showGlobalMapping && (cloud.mappingSummary?.registrationRejections ?? 0) > 0
+                    ? <p className={styles.sourceNote}>部分区域待校正</p>
+                    : null}
+            <section className={styles.layerSection} aria-labelledby="scene-layer-title" aria-description="只影响当前三维视图">
+              <div className={styles.compactLayerHeader}>
+                <strong id="scene-layer-title">显示内容</strong>
+                <span title={savedMapLoadError ?? undefined}>{isMappingSession
+                  ? cloud.count > 0 ? `${cloud.count.toLocaleString()} 点` : '等待点云'
+                  : showNavigationMap ? navigationMap.status === 'ready' ? '导航占据地图'
+                    : navigationMap.status === 'error' ? '加载失败' : '正在加载…'
+                  : savedMapForScene ? `${Math.floor(savedMapForScene.points.length / 3).toLocaleString()} 点`
+                    : savedMapLoadError ? '加载失败' : '正在加载…'}</span>
+              </div>
+              <div className={styles.layerTileGrid}>
+                {isMappingSession ? <LayerButton active={mappingView === 'points'} icon={<Cloud size={13} />} label="空间点云"
+                  onClick={() => { setMappingView(value => value === 'points' ? 'coverage' : 'points'); setLayers(value => ({ ...value, cloud: true })) }} />
+                  : <LayerBtn k="cloud" icon={<Cloud size={13} />} label={showNavigationMap ? '导航体素' : '地图点云'} />}
+                <LayerButton active={liveScanVisible} icon={<Radio size={13} />} label="实时雷达"
+                  onClick={() => setLiveScanPreference(!liveScanVisible)} />
+                <LayerBtn k="path" icon={<Navigation size={13} />} label="规划路径" />
+                <LayerBtn k="goal" icon={<Target size={13} />} label="目标点" />
+              </div>
+            </section>
+            {!isMappingSession && showSavedMapInScene && <section className={styles.layerSection} aria-label="地图表示">
+              <div className={styles.cloudColorRow}>
+                <span>地图表示</span>
+                <div className={styles.colorModeSwitch} role="group" aria-label="地图表示">
+                  <button type="button" aria-pressed={mapRepresentation === 'points'} onClick={() => setMapRepresentation('points')}>点云</button>
+                  <button type="button" aria-pressed={mapRepresentation === 'voxels'} disabled={mapEditing || stairEditing}
+                    onClick={() => setMapRepresentation('voxels')}>导航体素</button>
+                </div>
+              </div>
+              {showNavigationMap && <p className={styles.sourceNote} role="status">{navigationMap.status === 'ready'
+                ? `原始 ${(navigationMap.map.resolution * 100).toFixed(0)} cm · 显示最小 ${(navigationMap.map.resolution * voxelScale * 100).toFixed(0)} cm · 共 ${(navigationMap.map.cells.length / 4).toLocaleString()} 个原始占据单元。显示附近 20 × 20 m。`
+                : navigationMap.status === 'error' ? navigationMap.message
+                  : layers.cloud ? '正在读取并解析导航体素…' : '地图显示已关闭'}</p>}
+              {showNavigationMap && navigationMap.status === 'ready' && <>
+                <div className={styles.cloudColorRow}>
+                  <span>显示粒度</span>
+                  <div className={`${styles.colorModeSwitch} ${styles.heightModeSwitch}`} role="group" aria-label="体素显示粒度">
+                    {[1, 2, 4].map(scale => <button key={scale} type="button" aria-pressed={voxelScale === scale}
+                      onClick={() => setVoxelScale(scale)}>{scale === 1 ? '原始' : `${(navigationMap.map.resolution * scale * 100).toFixed(0)} cm`}</button>)}
+                  </div>
+                </div>
+                <p className={styles.sourceNote}>合并显示不修改导航地图或选点高度。这里只显示原始占据，未叠加推断支撑面；空白也可能是自由或未观测空间。</p>
+                <button type="button" className={styles.workbenchButton} onClick={() => onOpenSavedMap(activeMapName ?? null)}>重建实际导航分辨率</button>
+              </>}
+            </section>}
+            <section className={styles.layerSection} aria-label="地图外观">
+              <div className={styles.cloudAppearance}>
+                <div className={styles.cloudColorRow}>
+                  <span>颜色</span>
+                  <div className={styles.colorModeSwitch} role="group" aria-label="点云颜色">
+                    <button type="button" aria-pressed={cloudColorMode === 'height'}
+                      onClick={() => setCloudColorMode('height')}>高度</button>
+                    <button type="button" aria-pressed={cloudColorMode === 'neutral'}
+                      onClick={() => setCloudColorMode('neutral')}>单色</button>
+                  </div>
+                </div>
+                {cloudColorMode === 'height' && <div className={styles.cloudHeightLegend}
+                  aria-label="地图 Z 高度配色，超出色阶沿用端点颜色，不删除点">
+                  <span>≤ {(colorHeightRange?.min ?? CLOUD_HEIGHT_MIN).toFixed(2)} m</span>
+                  <i style={{ background: CLOUD_HEIGHT_GRADIENT }} aria-hidden="true" />
+                  <span>≥ {(colorHeightRange?.max ?? CLOUD_HEIGHT_MAX).toFixed(2)} m</span>
+                  <small>{cloudMinZ !== null ? '当前高度范围' : mapColorHeightRange ? '主要高度 · 2–98%' : '实时 Z · 固定色阶'}</small>
+                </div>}
+                {!showNavigationMap && <label className={styles.pointSizeRow}>
+                  <span>大小</span>
+                  <output>{pointSize.toFixed(2)}</output>
+                  <input type="range" min={0.02} max={0.2} step={0.005} value={pointSize}
+                    onChange={e => setPointSize(parseFloat(e.target.value))} className={styles.pointSlider} aria-label="点云大小" />
+                </label>}
+                <div className={styles.cloudColorRow}>
+                  <span>高度视图</span>
+                  <div className={`${styles.colorModeSwitch} ${styles.heightModeSwitch}`} role="group" aria-label="点云高度范围">
+                    <button type="button" aria-pressed={cloudHeightMode === 'all'} title="所有高度"
+                      onClick={() => setCloudHeightModePreference('all')}>全图</button>
+                    <button type="button" aria-pressed={cloudHeightMode === 'follow'} title={showNavigationMap ? '跟随机器人高度，范围外隐藏' : '跟随机器人高度，远处渐隐'}
+                      onClick={() => setCloudHeightModePreference('follow')}>跟随</button>
+                    <button type="button" aria-pressed={cloudHeightMode === 'fixed'} title="固定高度范围"
+                      onClick={() => {
+                        if (!currentFixedHeight && displayHeight !== null) setFixedCloudHeight({ epoch: cloudHeightKey, z: displayHeight, input: displayHeight.toFixed(2) })
+                        setCloudHeightModePreference('fixed')
+                      }}>固定</button>
+                  </div>
+                </div>
+                {cloudHeightMode !== 'all' && <div className={styles.cloudHeightSettings}>
+                  {cloudHeightMode === 'fixed' && cloudMinZ !== null && cloudMaxZ !== null && <HeightRangeControl
+                    min={cloudMinZ} max={cloudMaxZ} domainMin={cloudHeightDomain.min} domainMax={cloudHeightDomain.max}
+                    robotZ={poseAvailable ? robotZ : null} goalZ={pendingGoal?.z}
+                    onChange={(min, max) => {
+                      const z = (min + max) / 2
+                      setFixedCloudHeight({ epoch: cloudHeightKey, z, input: z.toFixed(2), below: z - min, above: max - z })
+                    }} />}
+                  {cloudHeightMode === 'follow' && <><label className={styles.pointSizeRow}>
+                    <span>机身上方</span>
+                    <output>{cloudHeightAboveBase.toFixed(1)} m</output>
+                    <input type="range" min={0.3} max={3} step={0.1} value={cloudHeightAboveBase}
+                      onChange={event => setCloudHeightAboveBase(Number(event.target.value))}
+                      className={styles.pointSlider} aria-label="上方显示高度" />
+                  </label>
+                  <label className={styles.pointSizeRow}>
+                    <span>机身下方</span>
+                    <output>{cloudHeightBelowBase.toFixed(1)} m</output>
+                    <input type="range" min={0.3} max={3} step={0.1} value={cloudHeightBelowBase}
+                      onChange={event => setCloudHeightBelowBase(Number(event.target.value))}
+                      className={styles.pointSlider} aria-label="下方显示高度" />
+                  </label></>}
+                  <span className={styles.sourceNote}>{cloudMaxZ === null || cloudMinZ === null ? '等待定位 · 暂时显示全图'
+                    : `${cloudHeightMode === 'follow' ? '清晰范围' : '切片范围'} Z ${cloudMinZ.toFixed(2)} ~ ${cloudMaxZ.toFixed(2)} m${cloudHeightMode === 'follow' ? showNavigationMap ? ' · 范围外隐藏' : ' · 远处渐隐' : ''}`}</span>
+                  {cloudHeightMode === 'follow' && !poseAvailable && cloudMaxZ !== null
+                    && <span className={styles.sourceNote}>定位未更新 · 保持最近范围</span>}
+                </div>}
+              </div>
+            </section>
+            <details className={styles.advancedTools}>
+              <summary>更多选项</summary>
+              <div className={styles.extraLayerChoices}>
+                <LayerBtn k="trail" icon={<Route size={13} />} label="行走轨迹" />
+                <LayerBtn k="robot" icon={<Bot size={13} />} label="机器人" />
+                <LayerBtn k="grid" icon={<Grid3x3 size={13} />} label="参考网格" />
+              </div>
+              <details className={styles.layerDisclosure}>
+                <summary>图例与说明</summary>
+                <div className={styles.layerHelp}>
+                  {!isMappingSession && <div className={styles.layerPathLegend} aria-label="轨迹图例">
+                    <span><i className={styles.routeKey} />执行轨迹</span>
+                    <span><i className={styles.globalKey} />全局路径</span>
+                    <span><i className={styles.trailKey} />已走轨迹</span>
+                  </div>}
+                  <p className={styles.sourceNote}>{observe ? '拖动旋转 · 滚轮缩放'
+                    : navigationSelectionMode === 'route' ? '点击添加路线点位，确认后开始导航。'
+                      : '点击选择目标，确认后开始导航。'}</p>
+                  {!isMappingSession && <p className={styles.sourceNote}>{showNavigationMap
+                    ? '颜色表示高度；体素包括地面表面。空白未区分自由与未知，不代表可以通行。'
+                    : '点云空白不代表可通行'}</p>}
+                  {isMappingSession && <section aria-label="建图显示图例">
                   {showMappingObservation ? <>
                     <p className={styles.mappingTruth}>地面相对高度 · 不代表可通行</p>
                     <div className={styles.mappingObservationLegend}>
@@ -2345,70 +3355,47 @@ function SceneViewComponent({
                   </>}
                   {sceneDebugTools && <details><summary>诊断说明</summary>
                     <p>红格表示比附近支撑候选高 12–80 cm 的占据回波。地面回波保留在三维地图中，不再直接染红。</p>
-                    <p>二维投影不是地面高度。底图放在脚下便于观察，点云保留原始三维高度。</p>
+                    <p>二维投影不是地面高度，也不判断通行；导航使用三维地图。</p>
                     <p>点击格子可查看局部表面拟合高度、残差和细 XY 支撑数；缺失时不作推断。</p>
                     {mappingObservation.status === 'ready' && <>
                       <p>当前窗口 {(mappingObservation.layer.cols * mappingObservation.layer.resolution).toFixed(1)} × {(mappingObservation.layer.rows * mappingObservation.layer.resolution).toFixed(1)} m</p>
                     </>}
-                    <p>灰格缺少可靠的地面依据，可从不同位置和朝向补扫。窗口外不表示从未建图。</p>
-                    <p>蓝绿格是已观测支撑候选，灰格是缺少依据。20 cm 网格不检查机身净空；导航使用三维规划与碰撞检查。</p>
-                    <p>局部投影和局部地图显示当前窗口；整图显示本次累计建图的采样预览。保存地图保留完整数据，预览不代表可通行或建图完成百分比。</p>
+                    <p>灰格缺少依据，可换视角补扫。窗口外不表示从未建图；整图是累计点云的采样预览，不代表建图完成比例。</p>
                   </details>}
-                </details>}
-
-            {!isMappingSession && <div className={styles.dataExplanation}>
-              <Info size={16} aria-hidden="true" />
-              <p>点云空白 ≠ 可通行</p>
-            </div>}
-            <span className={styles.menuLabel}>显示图层</span>
-            <div className={styles.layerGroup}>
-              {isMappingSession ? <LayerButton active={mappingView === 'points'} icon={<Cloud size={13} />} label="空间点云"
-                onClick={() => { setMappingView(value => value === 'points' ? 'coverage' : 'points'); setLayers(value => ({ ...value, cloud: true })) }} />
-                : <LayerBtn k="cloud" icon={<Cloud size={13} />} label="在线地图点云" />}
-              <LayerButton active={liveScanVisible} icon={<Radio size={13} />} label="实时雷达"
-                onClick={() => setLiveScanPreference(!liveScanVisible)} />
-              <LayerBtn k="path" icon={<Navigation size={13} />} label="规划路径" />
-              <LayerBtn k="trail" icon={<Route size={13} />} label="行走轨迹" />
-              <LayerBtn k="goal" icon={<Target size={13} />} label="目标点" />
-              <LayerBtn k="robot" icon={<Bot size={13} />} label="机器人" />
-              <LayerBtn k="grid" icon={<Grid3x3 size={13} />} label="参考网格" />
-              <LayerBtn k="nativeTraversability" icon={<Activity size={13} />} label="局部风险栅格" />
-              <LayerButton active={cameraVisible} icon={<Camera size={13} />} label="相机画面"
-                onClick={() => setCameraPreference(!cameraVisible)} />
-            </div>
-            <div className={styles.diagnosticLayer}>
-              <LayerBtn k="localPlanner" icon={<Radio size={13} />} label="安全范围" />
-              {layers.localPlanner && <div className={styles.layerBtns}>
-                <LayerButton active={safetyView === 'slice'} icon={<Grid3x3 size={13} />} label="高度切片"
-                  onClick={() => { setSafetyView('slice'); scene3DRef.current?.topView() }} />
-                <LayerButton active={safetyView === 'volume'} icon={<Layers2 size={13} />} label="三维诊断"
-                  onClick={() => setSafetyView('volume')} />
-              </div>}
-              <p>采样显示，非完整碰撞栅格。</p>
-            </div>
-            <label className={styles.pointSizeRow}>
-              点云大小
-              <input type="range" min={0.02} max={0.2} step={0.005} value={pointSize}
-                onChange={e => setPointSize(parseFloat(e.target.value))} className={styles.pointSlider} />
-            </label>
-            <details className={styles.advancedTools}>
-              <summary>地形与诊断</summary>
-              <div className={styles.layerGroup}>
-              <LayerBtn k="elevation" icon={<MapPinned size={13} />} label="最低观测高程" />
-              </div>
-              {!observe && <div className={styles.toolGroup}>
-                <button onClick={handleClearTrail}><Trash2 size={14} /> 清除显示轨迹</button>
-                <button onClick={handleClearCloud} title="清除显示点云缓存，不修改底层定位"><Cloud size={14} /> 清除显示点云</button>
-              </div>}
-            </details>
-            <details className={styles.advancedTools}>
-              <summary>操作说明</summary>
-              <p className={styles.statusLine}>{observe ? '拖动旋转视角，滚轮缩放。' : '拖动旋转视角，滚轮缩放。点击选择目标，确认后才会开始导航。'}</p>
-              <p className={styles.statusLine}>机身跟随定位；Go2 腿部跟随实测关节角。无关节数据时显示站姿，断流后保留最后姿态。网格仅作坐标参考。</p>
+                  </section>}
+                </div>
+              </details>
+              <details className={styles.layerDisclosure}>
+                <summary>诊断与清理</summary>
+                <div className={styles.extraLayerChoices}>
+                  <LayerButton active={sensorDiagnosticsVisible} icon={<Radio size={13} />} label="雷达诊断"
+                    onClick={() => setSensorDiagnosticsVisible(value => !value)} />
+                  <LayerBtn k="elevation" icon={<MapPinned size={13} />} label="最低观测高程" />
+                  {sceneDebugTools && <>
+                    <LayerBtn k="nativeTraversability" icon={<Activity size={13} />} label="风险投影" />
+                    <LayerBtn k="localPlanner" icon={<Radio size={13} />} label="安全范围" />
+                  </>}
+                </div>
+                {sceneDebugTools && layers.localPlanner && <div className={styles.extraLayerChoices}>
+                  <LayerButton active={safetyView === 'slice'} icon={<Grid3x3 size={13} />} label="高度切片"
+                    onClick={() => { setSafetyView('slice'); scene3DRef.current?.topView() }} />
+                  <LayerButton active={safetyView === 'volume'} icon={<Layers2 size={13} />} label="三维诊断"
+                    onClick={() => setSafetyView('volume')} />
+                </div>}
+                <p className={styles.sourceNote}>仅供查看，不参与导航决策。</p>
+                {!observe && <div className={styles.layerCleanup}>
+                  <button onClick={handleClearTrail} aria-label="清除显示轨迹" title="仅清除画面中的行走轨迹"><Trash2 size={14} /> 清除轨迹</button>
+                  <button onClick={handleClearCloud} aria-label="清除显示点云" title="仅清除显示缓存，不修改地图或定位"><Cloud size={14} /> 清除点云</button>
+                </div>}
+              </details>
             </details>
           </div>
           {!observe && <div className={`${styles.inspectorBody} ${styles.operationSettings}`} role="tabpanel" id="scene-panel-tools"
             aria-labelledby="scene-tab-tools" hidden={inspectorTab !== 'tools'} tabIndex={0}>
+            {stairEditing && savedMapForScene?.contentEpoch != null ? <StairEditor
+              key={stairMapKey} ref={stairEditorRef} map={savedMapForScene.mapName}
+              epoch={savedMapForScene.contentEpoch} frame={savedMapForScene.frameId}
+              onSceneChange={onStairSceneChange} onClose={() => setStairEditorOpen(false)} /> : <>
             {recordingPanelOpen && inspectorTab === 'tools' && (
               <div id="scene-recording">
                 <RecordingPanel embedded showToast={showToast} locale={locale}
@@ -2418,23 +3405,26 @@ function SceneViewComponent({
             )}
               <div className={styles.toolGroup}>
                 <button onClick={() => openWorkspaceTool('maps')}><MapPinned size={14} /> 地图</button>
+                <button disabled={!savedMapForScene?.points.length || !savedMapForScene.contentEpoch || isMappingSession}
+                  onClick={openMapEditor}><Pencil size={14} />点云整理</button>
                 <button onClick={() => openWorkspaceTool('locations')}><Target size={14} /> 常用位置</button>
                 <button onClick={() => openWorkspaceTool('localization')}><LocateFixed size={14} /> 定位</button>
+                <button disabled={!savedMapForScene?.points.length || savedMapForScene.contentEpoch == null || isMappingSession}
+                  title="在保存的三维地图上标注楼梯范围与入口"
+                  onClick={() => { setStairEditorOpen(true); setTeleopMode(false); setFollowRobot(false); setLayers(value => ({ ...value, cloud: true })) }}>
+                  <Pencil size={14} /> 楼梯标注</button>
               </div>
               <div className={styles.toolGroup}>
                 <span className={styles.menuLabel}>数据记录</span>
                 <button onClick={() => {
                   setRecordingPanelOpen(open => !open)
                 }} aria-expanded={recordingPanelOpen} aria-controls="scene-recording" title={recordingToolbarTitle}>
-                  <CircleDot size={12} /> {recordingPanelOpen ? '收起录制' : '录制'}
+                  <CircleDot size={12} /> {recordingPanelOpen ? '收起数据' : '数据流与录制'}
                   {recordingToolbarState && <span className={styles.menuMeta}> · {recordingToolbarState}</span>}
                 </button>
               </div>
+            </>}
           </div>}
-          <div className={styles.controlSummary}>
-            <div><span>控制权</span><strong>{navigationView.control.label}</strong></div>
-            <div><span>运动许可</span><strong>{navigationView.motion.permission.label}</strong></div>
-          </div>
           {!observe && hasGoal && <div className={styles.motionActions}>
             <button className={styles.cancelNavBtn} onClick={handleCancelNavigation} title="取消当前导航任务">
               <X size={15} /> 取消导航

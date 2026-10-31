@@ -145,7 +145,9 @@ NativeRelocalizer::NativeRelocalizer() : impl_(std::make_unique<Impl>()) {}
 
 NativeRelocalizer::~NativeRelocalizer() = default;
 
-bool NativeRelocalizer::loadMap(const std::string& pcd_path, std::string* message) {
+bool NativeRelocalizer::loadMap(
+    const std::string& pcd_path, std::string* message, const Cloud* saved_cloud,
+    const std::string& semantic_map_path) {
   if (!impl_) {
     if (message) {
       *message = "native_relocalizer_not_initialized";
@@ -155,10 +157,21 @@ bool NativeRelocalizer::loadMap(const std::string& pcd_path, std::string* messag
   impl_->map_loaded.store(false, std::memory_order_release);
   impl_->global_supported.store(false, std::memory_order_release);
   const std::filesystem::path pcd(pcd_path);
-  const std::filesystem::path semantic_map = pcd.parent_path() / "semantic_map.bin";
+  const std::filesystem::path semantic_map = semantic_map_path.empty()
+      ? pcd.parent_path() / "semantic_map.bin" : std::filesystem::path(semantic_map_path);
   const bool has_semantic_map = std::filesystem::is_regular_file(semantic_map);
   const bool loaded = has_semantic_map
       ? impl_->map_icp.loadSemanticMap(semantic_map.string())
+      : saved_cloud
+      ? impl_->map_icp.setMap(saved_cloud->points.size(), [saved_cloud](std::size_t i) {
+          const auto& source = saved_cloud->points[i];
+          pcl::PointXYZI point;
+          point.x = source.x;
+          point.y = source.y;
+          point.z = source.z;
+          point.intensity = source.intensity;
+          return point;
+        })
       : impl_->map_icp.loadMap(pcd_path);
   if (!loaded) {
     if (message) {
@@ -172,9 +185,17 @@ bool NativeRelocalizer::loadMap(const std::string& pcd_path, std::string* messag
   impl_->saved_pose_candidates = savedPoseCandidates(pcd);
   impl_->bbs3d_map_loaded = false;
   if (impl_->bbs3d.available()) {
-    LocalizerCloud::Ptr cloud(new LocalizerCloud);
-    if (pcl::io::loadPCDFile<pcl::PointXYZI>(pcd_path, *cloud) >= 0) {
-      impl_->bbs3d_map_loaded = impl_->bbs3d.set_map(cloud);
+    if (saved_cloud) {
+      std::vector<Eigen::Vector3d> points;
+      points.reserve(saved_cloud->points.size());
+      for (const auto& point : saved_cloud->points)
+        if (std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z))
+          points.emplace_back(point.x, point.y, point.z);
+      impl_->bbs3d_map_loaded = impl_->bbs3d.set_map(points);
+    } else {
+      LocalizerCloud::Ptr cloud(new LocalizerCloud);
+      if (pcl::io::loadPCDFile<pcl::PointXYZI>(pcd_path, *cloud) >= 0)
+        impl_->bbs3d_map_loaded = impl_->bbs3d.set_map(cloud);
     }
   }
   impl_->global_supported.store(

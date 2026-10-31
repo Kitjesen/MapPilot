@@ -143,6 +143,12 @@ inline constexpr TopicContract kNavMapClearing{
 inline constexpr TopicContract kSlamMapCloud{
     "/slam/map_cloud", "rt/slam/map_cloud", "lingtu.dds.PointCloud2",
     dds::QosProfile::LidarPointcloud};
+inline constexpr TopicContract kSlamMapGeometryApplied{
+    "/slam/map_geometry_applied", "rt/slam/map_geometry_applied", "lingtu.dds.SlamMapGeometryApplied",
+    dds::QosProfile::CommandAck};
+inline constexpr TopicContract kSlamMapGeometrySnapshot{
+    "/slam/map_geometry_snapshot", "rt/slam/map_geometry_snapshot", "lingtu.dds.SlamMapGeometrySnapshot",
+    dds::QosProfile::SystemStatus};
 inline constexpr TopicContract kSlamMapObservation{
     "/slam/map_observation", "rt/slam/map_observation", "lingtu.dds.MapObservation",
     dds::QosProfile::LidarPointcloud};
@@ -179,6 +185,12 @@ inline constexpr TopicContract kMapsState{
 inline constexpr TopicContract kMapsVoxelCloud{
     "/maps/voxel_cloud", "rt/maps/voxel_cloud", "lingtu.dds.MapCloudLayer",
     dds::QosProfile::MapCloud};
+inline constexpr TopicContract kMotionProfileRequest{
+    "/driver/profile/request", "rt/driver/profile/request", "lingtu.dds.MotionProfileRequest",
+    dds::QosProfile::ControlCommand};
+inline constexpr TopicContract kMotionProfileState{
+    "/driver/profile/state", "rt/driver/profile/state", "lingtu.dds.MotionProfileState",
+    dds::QosProfile::SystemStatus};
 inline constexpr TopicContract kNavCommandAck{
     "/nav/command/ack", "rt/nav/command/ack", "lingtu.dds.NavigationCommandAck",
     dds::QosProfile::CommandAck};
@@ -239,6 +251,21 @@ inline constexpr TopicContract kNavSemanticViewRequest{
 inline constexpr TopicContract kNavSemanticViewResult{
     "/nav/semantic/views/result", "rt/nav/semantic/views/result", "lingtu.dds.SemanticViewResult",
     dds::QosProfile::CommandRequest};
+inline constexpr TopicContract kSensorAcoustic{
+    "/sensors/acoustic", "rt/sensors/acoustic", "lingtu.dds.AcousticBlock",
+    dds::QosProfile::SensorStream};
+inline constexpr TopicContract kSensorControlRequest{
+    "/sensors/control/request", "rt/sensors/control/request", "lingtu.dds.SensorControlRequest",
+    dds::QosProfile::CommandRequest};
+inline constexpr TopicContract kSensorControlResult{
+    "/sensors/control/result", "rt/sensors/control/result", "lingtu.dds.SensorControlResult",
+    dds::QosProfile::CommandAck};
+inline constexpr TopicContract kSensorSemantic{
+    "/sensors/semantic", "rt/sensors/semantic", "lingtu.dds.SemanticImage",
+    dds::QosProfile::CameraStream};
+inline constexpr TopicContract kSensorThermal{
+    "/sensors/thermal", "rt/sensors/thermal", "lingtu.dds.ThermalImage",
+    dds::QosProfile::CameraStream};
 inline constexpr TopicContract kSimClock{
     "/sim/clock", "rt/sim/clock", "lingtu.dds.Time",
     dds::QosProfile::SensorStream};
@@ -326,6 +353,8 @@ inline constexpr TopicContract kTopicContracts[] = {
     kSlamLocalizationQuality,
     kNavMapClearing,
     kSlamMapCloud,
+    kSlamMapGeometryApplied,
+    kSlamMapGeometrySnapshot,
     kSlamMapObservation,
     kMapsAccumulatedCloud,
     kMapsActivationAck,
@@ -338,6 +367,8 @@ inline constexpr TopicContract kTopicContracts[] = {
     kMapsScene,
     kMapsState,
     kMapsVoxelCloud,
+    kMotionProfileRequest,
+    kMotionProfileState,
     kNavCommandAck,
     kNavCommandRequest,
     kNavGoalStatus,
@@ -358,6 +389,11 @@ inline constexpr TopicContract kTopicContracts[] = {
     kNavSemanticInstruction,
     kNavSemanticViewRequest,
     kNavSemanticViewResult,
+    kSensorAcoustic,
+    kSensorControlRequest,
+    kSensorControlResult,
+    kSensorSemantic,
+    kSensorThermal,
     kSimClock,
     kSimImu,
     kSimLidarRawFrame,

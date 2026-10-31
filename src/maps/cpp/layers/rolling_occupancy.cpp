@@ -358,6 +358,7 @@ void RollingOccupancyGrid::Reset(
   std::unique_lock<std::shared_mutex> lock(mutex_);
   std::fill(cells_.begin(), cells_.end(),
             Cell{config_.min_log_odds - kUnknownLogOddsOffset});
+  hit_bounds_.clear();
   std::fill(ray_total_counts_.begin(), ray_total_counts_.end(), 0U);
   std::fill(ray_hit_counts_.begin(), ray_hit_counts_.end(), 0U);
   std::fill(observed_bits_.begin(), observed_bits_.end(), 0U);
@@ -477,13 +478,14 @@ void RollingOccupancyGrid::RefreshMembership(std::size_t physical_index) {
       cell.unresolved_hit || StateFor(cell) == OccupancyState::kOccupied;
   SetBit(observed_bits_, physical_index, cell.observed);
   const auto state = StateFor(cell);
-  const bool measured_occupied = state == OccupancyState::kOccupied;
+  const bool measured_occupied = is_occupied;
   const bool known_free = state == OccupancyState::kFree && !cell.unresolved_hit;
   collision_dirty_ = collision_dirty_ ||
       BitSet(measured_occupied_bits_, physical_index) != measured_occupied ||
       BitSet(known_free_bits_, physical_index) != known_free;
   SetBit(measured_occupied_bits_, physical_index, measured_occupied);
   SetBit(known_free_bits_, physical_index, known_free);
+  if (!is_occupied) hit_bounds_.erase(physical_index);
   if (was_occupied != is_occupied) {
     UpdateInflation(PhysicalToLogical(physical_index), is_occupied ? 1 : -1);
     SetBit(occupied_bits_, physical_index, is_occupied);
@@ -617,6 +619,7 @@ RollingOccupancyCellChunk RollingOccupancyGrid::RollByLocked(
   if (full_reset) {
     std::fill(cells_.begin(), cells_.end(),
               Cell{config_.min_log_odds - kUnknownLogOddsOffset});
+    hit_bounds_.clear();
     std::fill(ray_total_counts_.begin(), ray_total_counts_.end(), 0U);
     std::fill(ray_hit_counts_.begin(), ray_hit_counts_.end(), 0U);
     std::fill(observed_bits_.begin(), observed_bits_.end(), 0U);
@@ -635,6 +638,7 @@ RollingOccupancyCellChunk RollingOccupancyGrid::RollByLocked(
           (shift_z < 0 && logical.z >= config_.size_z + shift_z);
     };
     for (const std::size_t index : outgoing) {
+      hit_bounds_.erase(index);
       if (BitSet(occupied_bits_, index)) {
         const CellCoord occupied = PhysicalToLogical(index);
         for (const CellCoord& offset : inflation_offsets_) {
@@ -1033,6 +1037,21 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
     ++stats.accepted_points;
     const bool reached_hit = has_hit && endpoint_coord == hit_coord;
     const std::size_t endpoint = PhysicalIndex(endpoint_coord);
+    if (reached_hit) {
+      const CollisionHitBounds first{0U, hit_x, hit_y, hit_z, hit_x, hit_y, hit_z};
+      auto [it, inserted] = hit_bounds_.try_emplace(endpoint, first);
+      auto &bounds = it->second;
+      if (inserted || hit_x < bounds.min_x || hit_y < bounds.min_y || hit_z < bounds.min_z ||
+          hit_x > bounds.max_x || hit_y > bounds.max_y || hit_z > bounds.max_z) {
+        bounds.min_x = std::min(bounds.min_x, hit_x);
+        bounds.min_y = std::min(bounds.min_y, hit_y);
+        bounds.min_z = std::min(bounds.min_z, hit_z);
+        bounds.max_x = std::max(bounds.max_x, hit_x);
+        bounds.max_y = std::max(bounds.max_y, hit_y);
+        bounds.max_z = std::max(bounds.max_z, hit_z);
+        collision_dirty_ = true;
+      }
+    }
     record_ray_evidence(endpoint, reached_hit);
     if (!BitSet(ray_endpoint_bits, endpoint)) {
       SetBit(ray_endpoint_bits, endpoint, true);
@@ -1290,6 +1309,16 @@ RollingInflatedSnapshot RollingOccupancyGrid::InflatedSnapshot() const {
   pack(inflated_bits_, snapshot.occupied_bits);
   pack(measured_occupied_bits_, snapshot.measured_occupied_bits);
   pack(known_free_bits_, snapshot.known_free_bits);
+  snapshot.hit_bounds.reserve(hit_bounds_.size());
+  for (const auto &[physical, stored] : hit_bounds_) {
+    if (!BitSet(measured_occupied_bits_, physical)) continue;
+    const CellCoord logical = PhysicalToLogical(physical);
+    auto bounds = stored;
+    bounds.cell_index = static_cast<std::uint32_t>(
+        (static_cast<std::size_t>(logical.z) * config_.size_y + logical.y) *
+            config_.size_x + logical.x);
+    snapshot.hit_bounds.push_back(bounds);
+  }
   snapshot.Validate();
   return snapshot;
 }

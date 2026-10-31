@@ -38,8 +38,8 @@ The 64-byte superblock contains:
 - 8-byte magic `LTCSHM01`
 - schema version and encoded header sizes
 - slot count and per-slot payload capacity
-- active slot and published sequence
-- creation timestamp and writer heartbeat
+- active slot and per-stream published sequence
+- ring creation timestamp, writer heartbeat, and producer generation
 
 Every slot has a fixed 256-byte header followed by its fixed-capacity payload.
 The slot header contains:
@@ -59,11 +59,32 @@ when both header reads and both superblock reads are identical, guards match and
 are even, sequence values agree, payload length equals `stride * height`, CRC32
 matches, and the timestamp is inside the configured freshness window.
 
-The Python Module copies the validated visible pixels into its own NumPy array.
+One `lingtu_camera_dds` process assigns the same non-zero producer generation to
+its color, depth, and intrinsics writers. Each stream keeps its own sequence and
+starts again at sequence 1 after a producer restart. The Python reader resets
+its duplicate-frame state only when that generation changes, so a restarted
+camera can safely reuse sequence numbers without exposing an old slot as a new
+frame. Legacy producers leave the generation at zero; their frames remain
+readable, but they do not provide restart-isolation evidence.
+
+The capture child is not restarted inside `lingtu_camera_dds`: an ended or
+invalid capture stream makes the service process fail. The next service launch
+therefore creates one new generation for all three streams.
+
+`DdsCameraModule` copies the generation and sequence into `Image` and
+`CameraIntrinsics` as `source_generation` and `source_sequence`. The Python
+Module copies the validated visible pixels into its own NumPy array.
 This one post-validation copy is intentional: the C++ writer may reuse a ring
 slot immediately after the read completes.
 
 ## Runtime controls
+
+The optional [native video branch](native/video/README.md) consumes this same
+color SHM to produce H.264 through an external FFmpeg encoder. It is a foreground
+validation executable; ProductControl and the browser do not start it yet.
+It keeps the capture source generation and timestamp in JSONL, drops old raw
+frames before encoding, and does not acquire the device or block perception.
+Hardware encoding and WebRTC publication still require target validation.
 
 Native service options:
 

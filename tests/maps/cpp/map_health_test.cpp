@@ -1,4 +1,4 @@
-#include "lingtu/maps/health.hpp"
+#include "lingtu/maps/storage/health.hpp"
 
 #include <cassert>
 #include <thread>

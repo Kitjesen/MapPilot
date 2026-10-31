@@ -1,5 +1,5 @@
 #include <algorithm>
-#include "lingtu/maps/json.hpp"
+#include "lingtu/maps/io/json.hpp"
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -18,7 +18,7 @@
 #include "dds/dds.h"
 #include "lingtu/maps/build/pipeline.hpp"
 #include "lingtu/maps/mapd/activation.hpp"
-#include "lingtu/maps/store.hpp"
+#include "lingtu/maps/storage/store.hpp"
 #include "messages.h"
 #include "transport/dds/qos.hpp"
 #include "message/generated/topics.hpp"

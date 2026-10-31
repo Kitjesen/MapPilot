@@ -34,6 +34,7 @@ struct CommandIdentity {
 struct CommandAck {
   bool accepted{false};
   std::string reason;
+  bool pending{false};
 };
 
 enum class JournalDisposition {
@@ -126,6 +127,7 @@ class CommandIngressController {
 
   CommandIngressResult handle(const CommandIngressRequest &request, const Dispatcher &dispatch,
                               std::optional<Clock::time_point> now = std::nullopt);
+  CommandIngressResult complete(const CommandIngressRequest &request, CommandAck ack);
   void recordAckPublication(bool published) noexcept;
 
   const CommandDiagnostics &diagnostics() const noexcept { return diagnostics_; }

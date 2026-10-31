@@ -1,6 +1,6 @@
-"""Serializable Module graph exported from a Blueprint.
+"""Serializable Module graph exported from a HostBuilder.
 
-Blueprint remains the runtime builder. ModuleGraph is the declaration contract
+HostBuilder remains the runtime builder. ModuleGraph is the declaration contract
 used by validators, profile snapshots, deployment planning, and future
 portable runtime code generation.
 """
@@ -83,7 +83,7 @@ class GraphWireSpec:
 
 @dataclass(frozen=True)
 class ModuleGraph:
-    """Portable graph declaration exported by a Blueprint."""
+    """Portable graph declaration exported by a HostBuilder."""
 
     profile: str | None
     modules: tuple[ModuleSpec, ...]
@@ -128,8 +128,8 @@ class ModuleGraph:
         }
 
     @classmethod
-    def from_blueprint(cls, blueprint: Any, *, profile: str | None = None) -> ModuleGraph:
-        """Export a ModuleGraph from a Blueprint-like object."""
+    def from_host_builder(cls, host_builder: Any, *, profile: str | None = None) -> ModuleGraph:
+        """Export a ModuleGraph from a HostBuilder-like object."""
 
         modules = tuple(
             ModuleSpec(
@@ -143,7 +143,7 @@ class ModuleGraph:
                 _module_cls=entry.module_cls,
                 _instance=entry.instance,
             )
-            for entry in getattr(blueprint, "_entries", ())
+            for entry in getattr(host_builder, "_entries", ())
         )
         explicit_wires = tuple(
             GraphWireSpec(
@@ -155,15 +155,15 @@ class ModuleGraph:
                 topic=_topic_name(getattr(wire, "topic", None)),
                 delivery=_transport_name(getattr(wire, "delivery_spec", None)),
             )
-            for wire in getattr(blueprint, "_wires", ())
+            for wire in getattr(host_builder, "_wires", ())
         )
         return cls(
             profile=profile,
             modules=modules,
             explicit_wires=explicit_wires,
-            auto_wire=bool(getattr(blueprint, "_auto_wired", False)),
-            route=getattr(blueprint, "_route_name", None),
-            route_contract=getattr(blueprint, "_route_name", None),
+            auto_wire=bool(getattr(host_builder, "_auto_wired", False)),
+            route=getattr(host_builder, "_route_name", None),
+            route_contract=getattr(host_builder, "_route_name", None),
         )
 
 

@@ -1,9 +1,10 @@
 """Trusted external handoff from the RobotSimUE selector to a compiled session.
 
 RobotSimUE only displays a compiler-produced catalog and publishes one immutable
-selection intent.  This module validates that catalog and the selected
-:class:`ResolvedSessionBundle`, then constructs the existing playable coordinator
-command.  Planning is the default and starts no process.
+selection intent. This module validates the catalog and selected compiled bundle.
+Sensor changes are authored as a new SessionSpec for ProductControl, the sole
+resolve/start owner; unchanged legacy selections may use the existing playable
+coordinator. Planning is the default and starts no process.
 """
 
 from __future__ import annotations
@@ -20,11 +21,16 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Protocol
+from typing import Any
 
+import yaml
+from sim.catalog import CatalogResolver
 from sim.catalog.importers.contracts import canonical_json_bytes, digest_document
 from sim.runtime.coordinator import STATIC_PLAN_FILES, load_resolved_session_bundle
 from sim.runtime.coordinator.run_allocation import RunAllocationError
+from sim.runtime.coordinator.unreal_process import EDITOR_GAME_DISABLED_PLUGINS_ARGUMENT
+from sim.tools.game_selection_catalog import ROBOT_CATEGORIES
+from sim.tools.sensor_selection import build_sensor_setup, validate_sensor_selection, write_sensor_selection
 
 CATALOG_SCHEMA = "lingtu.sim.game-selection-catalog.v1"
 INTENT_SCHEMA = "lingtu.sim.game-selection-intent.v1"
@@ -34,9 +40,12 @@ PLAYABLE_COORDINATOR_MODULE = "sim.runtime.coordinator.playable_vertical_slice"
 
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}\Z")
 _IDENTITY_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
+_PACKAGE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
+_VERSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9+_.-]*\Z")
 _REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 _BUNDLE_FILES = ("session.yaml", *STATIC_PLAN_FILES)
 _CATALOG_KEYS = {"schema", "title", "asset_summary", "entries", "digest"}
+_CATALOG_OPTIONAL_KEYS = {"asset_review", "robot_library"}
 _INTENT_KEYS = {"schema", "selection_id", "bundle_directory", "session_id"}
 _FORBIDDEN_UNREAL_ARGUMENT_PREFIXES = (
     "-LingTuGameSelectionCatalog",
@@ -48,18 +57,6 @@ _FORBIDDEN_UNREAL_ARGUMENT_PREFIXES = (
 
 class GameSelectionLauncherError(RuntimeError):
     """The selector handoff cannot be proven safe and deterministic."""
-
-
-class ProcessRunner(Protocol):
-    """Synchronous process seam; returning proves the child naturally ended."""
-
-    def __call__(
-        self,
-        argv: tuple[str, ...],
-        *,
-        cwd: Path,
-        timeout: float | None = None,
-    ) -> int: ...
 
 
 @dataclass(frozen=True)
@@ -78,13 +75,15 @@ class SelectorLaunchPlan:
 
 @dataclass(frozen=True)
 class ValidatedGameSelection:
-    """Exact compiled bundle selected by UE and independently revalidated."""
+    """Revalidated compiled selection and optional authored sensor intent/source."""
 
     selection_id: str
     bundle_dir: Path
     session_id: str
     bundle_files: Mapping[str, str]
     evidence_path: Path
+    sensor_selection: dict[str, Any] | None = None
+    session_source: Path | None = None
 
 
 ProcessRunnerCallable = Callable[..., int]
@@ -171,13 +170,45 @@ def _identity(value: object, context: str) -> str:
     return value
 
 
+def _validate_robot_library(value: object) -> None:
+    if not isinstance(value, list):
+        raise GameSelectionLauncherError("game selection catalog robot_library must be a list")
+    seen: set[str] = set()
+    for index, robot in enumerate(value):
+        context = f"game selection catalog robot_library[{index}]"
+        if type(robot) is not dict or not {"id", "version", "label"}.issubset(robot) or not set(robot).issubset({"id", "version", "label", "category"}):
+            raise GameSelectionLauncherError(
+                f"{context} must contain id, version, label and optional category"
+            )
+        robot_id = robot.get("id")
+        if not isinstance(robot_id, str) or _PACKAGE_ID_RE.fullmatch(robot_id) is None:
+            raise GameSelectionLauncherError(f"{context}.id has an invalid identity")
+        version = robot.get("version")
+        if not isinstance(version, str) or _VERSION_RE.fullmatch(version) is None:
+            raise GameSelectionLauncherError(f"{context}.version has an invalid identity")
+        label = robot.get("label")
+        if not isinstance(label, str) or not label or label != label.strip():
+            raise GameSelectionLauncherError(f"{context}.label must be a trimmed string")
+        if "category" in robot and (not isinstance(robot["category"], str) or robot["category"] not in ROBOT_CATEGORIES):
+            raise GameSelectionLauncherError(f"{context}.category is unsupported")
+        if robot_id in seen:
+            raise GameSelectionLauncherError(
+                "game selection catalog robot_library ids must be unique"
+            )
+        seen.add(robot_id)
+
+
 def _read_catalog(path: Path) -> Mapping[str, Any]:
     try:
         payload = path.read_bytes()
     except OSError as exc:
         raise GameSelectionLauncherError("game selection catalog cannot be read") from exc
     document = _strict_json(payload, "game selection catalog")
-    if type(document) is not dict or set(document) != _CATALOG_KEYS:
+    if (
+        type(document) is not dict
+        or not _CATALOG_KEYS.issubset(document)
+        or not set(document).issubset(_CATALOG_KEYS | _CATALOG_OPTIONAL_KEYS)
+    ):
         raise GameSelectionLauncherError("game selection catalog must contain exactly the v1 fields")
     if document.get("schema") != CATALOG_SCHEMA:
         raise GameSelectionLauncherError("game selection catalog schema is unsupported")
@@ -185,6 +216,8 @@ def _read_catalog(path: Path) -> Mapping[str, Any]:
     body = {key: value for key, value in document.items() if key != "digest"}
     if digest_document(body) != observed_digest:
         raise GameSelectionLauncherError("game selection catalog digest does not match its canonical content")
+    if "robot_library" in document:
+        _validate_robot_library(document["robot_library"])
     entries = document.get("entries")
     if not isinstance(entries, list) or not entries:
         raise GameSelectionLauncherError("game selection catalog entries must be non-empty")
@@ -370,6 +403,7 @@ def create_selector_launch_plan(
             "-unattended",
             "-UnattendedInput",
             "-NoCompile",
+            EDITOR_GAME_DISABLED_PLUGINS_ARGUMENT,
             "-LingTuRuntimeUI",
             "-LingTuGameSelector",
             "-LingTuGameSelectorExitOnConfirm",
@@ -410,7 +444,7 @@ def _default_process_runner(
 ) -> int:
     process_environment = os.environ.copy()
     process_environment["UE_SKIP_UBT_SDK_SETUP"] = "1"
-    completed = subprocess.run(  # noqa: S603 - caller pins the executable/entrypoint.
+    completed = subprocess.run(
         argv,
         cwd=cwd,
         check=False,
@@ -441,7 +475,11 @@ def _read_intent(path: Path) -> Mapping[str, Any]:
     if not payload or len(payload) > 64 * 1024:
         raise GameSelectionLauncherError("selection intent has an invalid size")
     document = _strict_json(payload, "selection intent")
-    if type(document) is not dict or set(document) != _INTENT_KEYS:
+    if (
+        type(document) is not dict
+        or not _INTENT_KEYS.issubset(document)
+        or not set(document).issubset(_INTENT_KEYS | {"sensor_selection"})
+    ):
         raise GameSelectionLauncherError("selection intent must contain exactly the v1 fields")
     if document.get("schema") != INTENT_SCHEMA:
         raise GameSelectionLauncherError("selection intent schema is unsupported")
@@ -457,6 +495,34 @@ def _read_intent(path: Path) -> Mapping[str, Any]:
     ):
         raise GameSelectionLauncherError("selection intent bundle_directory must be an absolute path")
     return document
+
+
+def _selection_sensor_inputs(
+    plan: SelectorLaunchPlan, intent: Mapping[str, Any],
+) -> tuple[dict[str, Any] | None, Path | None]:
+    entry = _catalog_entry(plan.catalog_document, str(intent["selection_id"]))
+    source = None
+    if "session_source" in entry:
+        value = entry["session_source"]
+        if not isinstance(value, str) or not value or "\\" in value or ":" in value:
+            raise GameSelectionLauncherError("session_source must be repository-relative")
+        relative = PurePosixPath(value)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise GameSelectionLauncherError("session_source must be repository-relative")
+        source = _require_contained_link_free(
+            plan.repo_root.joinpath(*relative.parts), root=plan.repo_root, context="session_source",
+        )
+        source = _require_plain_file(source, context="session_source")
+    choice = intent.get("sensor_selection")
+    if "sensor_selection" in intent:
+        setup = entry.get("sensor_setup")
+        if not isinstance(setup, dict) or source is None:
+            raise GameSelectionLauncherError("sensor_selection requires catalog sensor_setup and session_source")
+        try:
+            validate_sensor_selection(setup, choice)
+        except ValueError as exc:
+            raise GameSelectionLauncherError(f"invalid sensor_selection: {exc}") from exc
+    return choice, source
 
 
 def _snapshot_bundle_files(
@@ -476,7 +542,7 @@ def _snapshot_bundle_files(
     if set(actual_paths) != set(expected):
         raise GameSelectionLauncherError("selected bundle top-level files do not exactly match catalog artifacts")
     result: dict[str, str] = {}
-    for filename, descriptor in sorted(expected.items()):
+    for filename in sorted(expected):
         result[filename] = str(actual_paths[filename])
     return result
 
@@ -563,6 +629,7 @@ def execute_selector(
         raise GameSelectionLauncherError("selection intent temporary file was not retired")
     intent = _read_intent(plan.intent_path)
     bundle_dir, session_id, bundle_files = _validate_selected_bundle(plan, intent)
+    sensor_selection, session_source = _selection_sensor_inputs(plan, intent)
     evidence_path = plan.run_dir / "selection.validated.json"
     _write_new_json(
         evidence_path,
@@ -575,6 +642,8 @@ def execute_selector(
             "bundle_directory": str(bundle_dir),
             "session_id": session_id,
             "bundle_files": bundle_files,
+            **({"sensor_selection": sensor_selection} if sensor_selection is not None else {}),
+            **({"session_source": str(session_source)} if session_source is not None else {}),
         },
         "validated selection evidence",
     )
@@ -584,7 +653,84 @@ def execute_selector(
         session_id=session_id,
         bundle_files=bundle_files,
         evidence_path=evidence_path,
+        sensor_selection=sensor_selection,
+        session_source=session_source,
     )
+
+
+def _validate_product_control_arguments(product: str, robot: str, map_name: str | None) -> None:
+    for name, value in (("product", product), ("robot", robot), ("map", map_name)):
+        if name == "map" and value is None:
+            continue
+        if (
+            not isinstance(value, str) or not value or value != value.strip()
+            or value.startswith("-") or any(character in value for character in "\x00\r\n")
+        ):
+            raise GameSelectionLauncherError(f"--{name} must be a non-empty explicit value")
+    if product in {"nav", "inspection"} and map_name is None:
+        raise GameSelectionLauncherError(f"--map is required for Product {product}")
+
+
+def build_product_control_argv(
+    plan: SelectorLaunchPlan,
+    selection: ValidatedGameSelection,
+    *,
+    product: str,
+    robot: str,
+    map_name: str | None = None,
+    python_executable: Path = Path(sys.executable),
+) -> tuple[str, ...]:
+    """Author explicit sensor changes and hand the sole resolve/start to ProductControl."""
+
+    _validate_product_control_arguments(product, robot, map_name)
+    python = _lexical_absolute(python_executable)
+    if not python.is_file():
+        raise GameSelectionLauncherError("python_executable must be a file")
+    if _read_catalog(plan.catalog_path) != plan.catalog_document:
+        raise GameSelectionLauncherError("game selection catalog changed before ProductControl handoff")
+    intent = _read_intent(plan.intent_path)
+    choice, source = _selection_sensor_inputs(plan, intent)
+    if (
+        intent["selection_id"] != selection.selection_id
+        or choice != selection.sensor_selection
+        or source != selection.session_source
+        or intent["session_id"] != selection.session_id
+        or _lexical_absolute(Path(intent["bundle_directory"])) != selection.bundle_dir
+    ):
+        raise GameSelectionLauncherError("validated selection changed before ProductControl handoff")
+    if source is None:
+        raise GameSelectionLauncherError("ProductControl handoff requires catalog session_source")
+    try:
+        source_session = yaml.safe_load(source.read_text(encoding="utf-8"))
+        # The game catalog copies the authored source over the resolver's dump.
+        saved_session = yaml.safe_load((selection.bundle_dir / "session.yaml").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise GameSelectionLauncherError("cannot compare session_source with the selected bundle") from exc
+    if not isinstance(source_session, Mapping) or source_session != saved_session:
+        raise GameSelectionLauncherError("session_source changed from the selected bundle; regenerate stale catalog")
+    entry = _catalog_entry(plan.catalog_document, selection.selection_id)
+    try:
+        if "sensor_setup" in entry:
+            # Catalog controls use the helper's default nav projection. The writer
+            # separately enforces dependencies of the requested Product.
+            fresh_setup = build_sensor_setup(CatalogResolver.from_repository(plan.repo_root), source)
+            if fresh_setup != entry["sensor_setup"]:
+                raise GameSelectionLauncherError("catalog sensor_setup changed; regenerate stale selector controls")
+        session = write_sensor_selection(
+            plan.repo_root, source, choice,
+            plan.repo_root / "sim/sessions/user_selection" / plan.run_dir.name,
+            product=product,
+        )
+    except ValueError as exc:
+        raise GameSelectionLauncherError(f"cannot author sensor_selection: {exc}") from exc
+    argv = [
+        str(python), "-m", "lingtu.control", "switch", product,
+        "--env", "sim", "--backend", "mujoco", "--robot", robot,
+        "--sim-session", session.relative_to(plan.repo_root).as_posix(),
+    ]
+    if map_name is not None:
+        argv.extend(("--map", map_name))
+    return (*argv, "--json")
 
 
 def build_playable_coordinator_argv(
@@ -597,7 +743,12 @@ def build_playable_coordinator_argv(
 
     if not isinstance(selection, ValidatedGameSelection):
         raise TypeError("selection must be ValidatedGameSelection")
-    python = _require_plain_file(python_executable, context="python_executable")
+    if selection.sensor_selection is not None:
+        raise GameSelectionLauncherError("sensor_selection requires the ProductControl handoff, not playable coordinator")
+    # Preserve interpreter links: resolving a venv's Python loses its environment.
+    python = _lexical_absolute(python_executable)
+    if not python.is_file():
+        raise GameSelectionLauncherError("python_executable must be a file")
     arguments: list[str] = []
     for argument in coordinator_arguments:
         if not isinstance(argument, str) or not argument or any(character in argument for character in "\x00\r\n"):
@@ -621,9 +772,13 @@ def execute_playable_coordinator(
 ) -> int:
     """Revalidate pinned inputs immediately before the existing coordinator starts."""
 
+    if selection.sensor_selection is not None:
+        raise GameSelectionLauncherError("sensor_selection requires the ProductControl handoff, not playable coordinator")
     if _read_catalog(plan.catalog_path) != plan.catalog_document:
         raise GameSelectionLauncherError("game selection catalog changed before coordinator start")
     intent = _read_intent(plan.intent_path)
+    if "sensor_selection" in intent:
+        raise GameSelectionLauncherError("sensor_selection requires the ProductControl handoff, not playable coordinator")
     entry = _catalog_entry(plan.catalog_document, selection.selection_id)
     bundle = entry.get("bundle")
     if not isinstance(bundle, Mapping):
@@ -668,20 +823,33 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--level")
     parser.add_argument("--unreal-arg", action="append", default=[])
     parser.add_argument("--execute-selector", action="store_true")
-    parser.add_argument("--execute-playable", action="store_true")
+    execution = parser.add_mutually_exclusive_group()
+    execution.add_argument("--execute-playable", action="store_true")
+    execution.add_argument("--execute-product", action="store_true")
+    parser.add_argument("--product")
+    parser.add_argument("--robot")
+    parser.add_argument("--map", dest="map_name")
     parser.add_argument("--selector-timeout-seconds", type=float, default=900.0)
     parser.add_argument("--python-executable", type=Path, default=Path(sys.executable))
     parser.add_argument("--coordinator-arg", action="append", default=[])
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    process_runner: ProcessRunnerCallable = _default_process_runner,
+) -> int:
     """Create a dry-run plan by default; execute only with explicit flags."""
 
     args = _parser().parse_args(argv)
     if args.execute_playable and not args.execute_selector:
         raise SystemExit("--execute-playable requires --execute-selector")
+    if args.execute_product and not args.execute_selector:
+        raise SystemExit("--execute-product requires --execute-selector")
     try:
+        if args.execute_product:
+            _validate_product_control_arguments(args.product, args.robot, args.map_name)
         plan = create_selector_launch_plan(
             repo_root=args.repo_root,
             catalog_path=args.catalog,
@@ -701,12 +869,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.execute_selector:
             selection = execute_selector(
                 plan,
+                process_runner=process_runner,
                 timeout_seconds=args.selector_timeout_seconds,
-            )
-            coordinator_argv = build_playable_coordinator_argv(
-                selection,
-                python_executable=args.python_executable,
-                coordinator_arguments=args.coordinator_arg,
             )
             result.update(
                 {
@@ -714,16 +878,40 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "selection": str(selection.evidence_path),
                     "bundle_directory": str(selection.bundle_dir),
                     "session_id": selection.session_id,
-                    "coordinator_argv": list(coordinator_argv),
                 }
             )
-            if args.execute_playable:
-                execute_playable_coordinator(
+            if args.execute_product:
+                product_argv = build_product_control_argv(
                     plan,
                     selection,
-                    coordinator_argv=coordinator_argv,
+                    product=args.product,
+                    robot=args.robot,
+                    map_name=args.map_name,
+                    python_executable=args.python_executable,
                 )
-                result["mode"] = "playable_complete"
+                returncode = process_runner(product_argv, cwd=plan.repo_root)
+                if isinstance(returncode, bool) or not isinstance(returncode, int):
+                    raise GameSelectionLauncherError("ProductControl process runner returned an invalid code")
+                if returncode != 0:
+                    raise GameSelectionLauncherError(f"ProductControl exited with code {returncode}")
+                result.update(mode="product_complete", product_control_argv=list(product_argv))
+            elif selection.sensor_selection is not None and not args.execute_playable:
+                result["handoff"] = "ProductControl"
+            else:
+                coordinator_argv = build_playable_coordinator_argv(
+                    selection,
+                    python_executable=args.python_executable,
+                    coordinator_arguments=args.coordinator_arg,
+                )
+                result["coordinator_argv"] = list(coordinator_argv)
+                if args.execute_playable:
+                    execute_playable_coordinator(
+                        plan,
+                        selection,
+                        coordinator_argv=coordinator_argv,
+                        process_runner=process_runner,
+                    )
+                    result["mode"] = "playable_complete"
     except (GameSelectionLauncherError, OSError, TypeError, ValueError) as exc:
         print(
             json.dumps(
@@ -747,6 +935,7 @@ __all__ = [
     "SelectorLaunchPlan",
     "ValidatedGameSelection",
     "build_playable_coordinator_argv",
+    "build_product_control_argv",
     "create_selector_launch_plan",
     "execute_playable_coordinator",
     "execute_selector",

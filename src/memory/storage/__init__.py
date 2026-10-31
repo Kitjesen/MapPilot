@@ -1,1 +1,1 @@
-"""memory.storage -- persistence backends (SQLite, time series)."""
+"""Persistence backends used by memory modules and gateway queries."""

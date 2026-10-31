@@ -16,6 +16,8 @@ struct Options {
   std::filesystem::path output_directory;
   Action action{Action::kList};
   bool action_selected{false};
+  bool json{false};
+  std::optional<std::size_t> segment;
   std::uint64_t start_time_ns{0};
   std::uint64_t end_time_ns{0};
 };
@@ -23,6 +25,8 @@ struct Options {
 void print_help() {
   std::cout << "usage: lingtu_camera_player INDEX [action]\n\n"
             << "Offline camera segment inspection/export only; never publishes DDS or SHM.\n\n"
+            << "  --segment N                    Include exact timestamps of one segment with --json\n"
+            << "  --json                         Read indexed camera metadata as JSON\n"
             << "  --list                         List indexed segments (default)\n"
             << "  --verify                       Verify every segment size and CRC32\n"
             << "  --extract-window START END     Copy overlapping segments by nanosecond time\n"
@@ -55,7 +59,11 @@ Options parse_options(int argc, char **argv) {
       options.action = action;
       options.action_selected = true;
     };
-    if (argument == "--list") {
+    if (argument == "--json") {
+      options.json = true;
+    } else if (argument == "--segment") {
+      options.segment = std::stoull(value());
+    } else if (argument == "--list") {
       select(Action::kList);
     } else if (argument == "--verify") {
       select(Action::kVerify);
@@ -93,6 +101,10 @@ Options parse_options(int argc, char **argv) {
 int main(int argc, char **argv) {
   try {
     const auto options = parse_options(argc, argv);
+    if (options.action == Action::kList && options.json) {
+      std::cout << lingtu::recording::camera_segment_index_json(options.index_path, options.segment) << "\n";
+      return 0;
+    }
     if (options.action == Action::kList) {
       const auto segments = lingtu::recording::read_camera_segment_index(options.index_path);
       for (const auto &segment : segments) {
@@ -126,7 +138,10 @@ int main(int argc, char **argv) {
     std::cout << "extracted=" << extracted.size() << "\n";
     return 0;
   } catch (const std::exception &error) {
-    std::cerr << "lingtu_camera_player: " << error.what() << "\n";
+    bool json = false;
+    for(int i=1;i<argc;++i) json |= std::string(argv[i]) == "--json";
+    if(json) std::cout << "{\"version\":1,\"ok\":false,\"error\":{\"code\":\"recording_camera_unreadable\",\"message\":\"Camera recording index could not be read.\"}}\n";
+    else std::cerr << "lingtu_camera_player: " << error.what() << "\n";
     return 2;
   }
 }

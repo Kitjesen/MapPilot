@@ -80,6 +80,9 @@ class MuJoCoLidar:
         self._backend = ""
         self._backend_error = ""
         self._self_geom_count = 0
+        self._optical_robot_geoms = np.zeros(int(model.ngeom), dtype=bool)
+        self._sensor_housing_geoms: tuple[int, ...] = ()
+        self._self_shadowed_points = 0
 
         self._geomgroup = self._geomgroup_from_config(config)
         requested = self._normalize_backend(config.backend)
@@ -177,12 +180,47 @@ class MuJoCoLidar:
         return int(site_id)
 
     def _exclude_robot_geoms(self) -> tuple[tuple[int, int], ...]:
-        """Keep robot collision and visual geometry in separate LiDAR-excluded groups."""
+        """Keep environment returns separate from the robot's optical surfaces."""
+
+        import mujoco
 
         root_body = int(self._exclude_body_id)
         if root_body <= 0:
             return ()
 
+        self._optical_robot_geoms = np.zeros(int(self._model.ngeom), dtype=bool)
+        site_id = self._resolve_site_id()
+        sensor_body = int(self._model.site_bodyid[site_id])
+        sensor_geoms = np.flatnonzero(self._model.geom_bodyid == sensor_body)
+        self._sensor_housing_geoms = (
+            tuple(int(geom) for geom in sensor_geoms)
+            if sensor_body != root_body and len(sensor_geoms) == 1 else ()
+        )
+        if sensor_body == root_body:
+            # Older models keep an alias site on the base at the fixed sensor
+            # body's origin. Exclude that housing, never the entire base.
+            colocated = []
+            for body in range(1, int(self._model.nbody)):
+                name = mujoco.mj_id2name(self._model, mujoco.mjtObj.mjOBJ_BODY, body) or ""
+                if not name.lower().startswith("lidar"):
+                    continue
+                if int(self._model.body_parentid[body]) != sensor_body or self._model.body_jntnum[body]:
+                    continue
+                if not np.allclose(self._model.body_pos[body], self._model.site_pos[site_id], atol=5e-6, rtol=0):
+                    continue
+                geoms = np.flatnonzero(self._model.geom_bodyid == body)
+                if len(geoms) == 1 and not (
+                    self._model.geom_contype[geoms[0]] or self._model.geom_conaffinity[geoms[0]]
+                ):
+                    colocated.append(int(geoms[0]))
+            if len(colocated) == 1:
+                self._sensor_housing_geoms = tuple(colocated)
+        visual_mesh_bodies = {
+            int(self._model.geom_bodyid[geom])
+            for geom in range(int(self._model.ngeom))
+            if int(self._model.geom_type[geom]) == int(mujoco.mjtGeom.mjGEOM_MESH)
+            and not (self._model.geom_contype[geom] or self._model.geom_conaffinity[geom])
+        }
         excluded = 0
         changed: list[tuple[int, int]] = []
         for geom_id in range(int(self._model.ngeom)):
@@ -196,16 +234,20 @@ class MuJoCoLidar:
                 int(self._model.geom_contype[geom_id])
                 or int(self._model.geom_conaffinity[geom_id])
             )
-            target_group = (
-                ROBOT_COLLISION_GEOM_GROUP if collidable else ROBOT_VISUAL_GEOM_GROUP
+            # Detailed meshes own optical shape; conservative contact proxies can
+            # enclose the laser origin. Collision-only bodies still block rays.
+            optical = geom_id not in self._sensor_housing_geoms and (
+                not collidable or int(self._model.geom_bodyid[geom_id]) not in visual_mesh_bodies
             )
+            self._optical_robot_geoms[geom_id] = optical
+            target_group = ROBOT_VISUAL_GEOM_GROUP if optical else ROBOT_COLLISION_GEOM_GROUP
             if previous_group != target_group:
                 changed.append((geom_id, previous_group))
             self._model.geom_group[geom_id] = target_group
             excluded += 1
 
-        # MuJoCo ray queries filter by geom group, while bodyexclude only skips
-        # one body. Both robot groups must stay outside the LiDAR mask.
+        # The first pass gets environment returns; a second optical-surface pass
+        # removes returns behind the robot before measurement noise is added.
         self._geomgroup[ROBOT_COLLISION_GEOM_GROUP] = 0
         self._geomgroup[ROBOT_VISUAL_GEOM_GROUP] = 0
         self._self_geom_count = excluded
@@ -258,6 +300,9 @@ class MuJoCoLidar:
             raise ValueError(f"ray_caster_lidar sensor not found: {self._config.sensor_name}")
         if int(self._model.sensor_plugin[sensor_id]) < 0:
             raise RuntimeError(f"MuJoCo sensor {self._config.sensor_name!r} is not backed by a loaded plugin")
+        self._body_id = self._resolve_body_id()
+        self._exclude_body_id = self._resolve_exclude_body_id()
+        self._exclude_robot_geoms()
         self._plugin_reader = read_plugin_lidar
 
     @staticmethod
@@ -534,7 +579,40 @@ class MuJoCoLidar:
         rot = np.asarray(self._mujoco_lidar.sensor_rotation, dtype=np.float32)
         pos = np.asarray(self._mujoco_lidar.sensor_position, dtype=np.float32)
         pts = pos + hit_local[valid] @ rot.T
-        return pts.astype(np.float32, copy=False)
+        return self._filter_self_occluded(pts.astype(np.float32, copy=False))
+
+    def _filter_self_occluded(self, points: np.ndarray) -> np.ndarray:
+        """Discard environment returns whose ray first meets the robot."""
+
+        if not len(points) or not getattr(self, "_self_geom_count", 0):
+            return points
+        import mujoco
+
+        origin = self._sensor_origin().astype(np.float64)
+        vectors = np.asarray(points, dtype=np.float64) - origin
+        ranges = np.linalg.norm(vectors, axis=1)
+        valid = np.isfinite(ranges) & (ranges > 1e-9)
+        if not np.any(valid):
+            return points[:0]
+        points = points[valid]
+        ranges = ranges[valid]
+        vectors = np.ascontiguousarray(vectors[valid] / ranges[:, None])
+        geom_ids = np.full(len(points), -1, dtype=np.int32)
+        distances = np.full(len(points), -1.0, dtype=np.float64)
+        optical_groups = np.zeros(6, dtype=np.uint8)
+        optical_groups[ROBOT_VISUAL_GEOM_GROUP] = 1
+        mujoco.mj_multiRay(
+            self._model, self._data, origin, vectors.ravel(), optical_groups,
+            True, -1, geom_ids, distances, None, len(points), float(self._config.range_max),
+        )
+        # Hits nearer than range_min still occlude; they must not expose the
+        # environment behind a leg or a nearby mounting bracket.
+        hits = geom_ids >= 0
+        robot_hits = np.zeros(len(points), dtype=bool)
+        robot_hits[hits] = self._optical_robot_geoms[geom_ids[hits]]
+        shadowed = robot_hits & (distances >= 0.0) & (distances <= ranges + 1e-6)
+        self._self_shadowed_points += int(np.count_nonzero(shadowed))
+        return points[~shadowed]
 
     def _scan_plugin(self) -> np.ndarray:
         if self._plugin_reader is None:
@@ -544,7 +622,7 @@ class MuJoCoLidar:
             return np.zeros((0, 3), dtype=np.float32)
         pts = np.asarray(pts, dtype=np.float32)
         valid = np.isfinite(pts).all(axis=1)
-        return pts[valid]
+        return self._filter_self_occluded(pts[valid])
 
     def update_data(self, data) -> None:
         """Update MjData reference after simulation reset."""
@@ -611,7 +689,12 @@ class MuJoCoLidar:
             "distance_dropout_prob_at_max": float(getattr(self._config, "distance_dropout_prob_at_max", 0.0)),
             "intensity_model": "distance_proxy_not_material_calibrated",
             "multi_return_model": "single_return",
-            "self_occlusion_mode": "robot_group" if self._self_geom_count else "backend_default",
+            "self_occlusion_mode": "optical_first_hit_filter" if self._self_geom_count else "backend_default",
+            "self_occlusion_filter_backend": "mujoco_mj_multiRay_cpu",
+            "self_occlusion_geometry": "visual_mesh_with_collision_only_body_fallback",
+            "self_optical_geoms": int(np.count_nonzero(self._optical_robot_geoms)),
+            "self_shadowed_returns": int(self._self_shadowed_points),
+            "sensor_housing_excluded_geoms": list(self._sensor_housing_geoms),
             "self_geom_group": ROBOT_VISUAL_GEOM_GROUP,
             "self_collision_geom_group": ROBOT_COLLISION_GEOM_GROUP,
             "self_geoms": int(self._self_geom_count),

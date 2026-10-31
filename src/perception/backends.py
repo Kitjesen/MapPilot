@@ -14,6 +14,7 @@ from perception.tracking.projection import (
     bbox_center_depth,
     depth_scale_for_image,
     mask_to_pointcloud,
+    person_depth_sample,
     pointcloud_centroid,
     project_to_3d,
     transform_point,
@@ -180,6 +181,7 @@ class RgbdObservationSource:
         center_depth = None
         points = None
         mask = getattr(detection, "mask", None)
+        is_person = str(getattr(detection, "label", "")).strip().casefold() == "person"
         if mask is not None:
             points = mask_to_pointcloud(
                 mask=mask,
@@ -196,22 +198,49 @@ class RgbdObservationSource:
                 # A supplied mask defines the target. Its missing depth cannot
                 # be replaced by unrelated background at the box centre.
                 return None
-            centroid = pointcloud_centroid(points)
-            center_depth = float(np.linalg.norm(centroid - transform[:3, 3]))
+            if is_person:
+                sample = person_depth_sample(
+                    depth,
+                    detection.bbox,
+                    mask=mask,
+                    depth_scale=depth_scale,
+                    min_depth=self._min_depth,
+                    max_depth=self._max_depth,
+                )
+                if sample is None:
+                    return None
+                u, v, center_depth = sample
+                camera_point = project_to_3d(u, v, center_depth, intrinsics, K=K, D=D)
+                centroid = transform_point(camera_point, transform)
+            else:
+                centroid = pointcloud_centroid(points)
+                center_depth = float(np.linalg.norm(centroid - transform[:3, 3]))
         else:
-            center_depth = bbox_center_depth(
-                depth,
-                detection.bbox,
-                depth_scale=depth_scale,
-            )
+            if is_person:
+                sample = person_depth_sample(
+                    depth,
+                    detection.bbox,
+                    depth_scale=depth_scale,
+                    min_depth=self._min_depth,
+                    max_depth=self._max_depth,
+                )
+                if sample is None:
+                    return None
+                cx, cy, center_depth = sample
+            else:
+                center_depth = bbox_center_depth(
+                    depth,
+                    detection.bbox,
+                    depth_scale=depth_scale,
+                )
+                cx = (detection.bbox[0] + detection.bbox[2]) / 2.0
+                cy = (detection.bbox[1] + detection.bbox[3]) / 2.0
             if (
                 center_depth is None
                 or center_depth < self._min_depth
                 or center_depth > self._max_depth
             ):
                 return None
-            cx = (detection.bbox[0] + detection.bbox[2]) / 2.0
-            cy = (detection.bbox[1] + detection.bbox[3]) / 2.0
             camera_point = project_to_3d(
                 cx,
                 cy,
@@ -343,6 +372,24 @@ class YOLOWorldDetectorProvider:
             confidence=spec.confidence,
             iou_threshold=spec.iou_threshold,
             device=spec.device,
+            model_path=spec.model_path or None,
+        )
+
+
+@register("detector", "yolo_trt", description="Robot-side fixed-person TensorRT YOLO")
+class YoloTensorRTDetectorProvider:
+    label = "YoloTensorRTDetector"
+
+    @staticmethod
+    def create(spec: DetectorSpec) -> Any:
+        from perception.detection.yolo_trt import YoloTensorRTDetector
+
+        return YoloTensorRTDetector(
+            model_path=spec.model_path,
+            confidence=spec.confidence,
+            iou_threshold=spec.iou_threshold,
+            max_detections=spec.max_detections,
+            min_box_size_px=spec.min_box_size_px,
         )
 
 

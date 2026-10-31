@@ -1,4 +1,4 @@
-# 3d_NAV clang-tidy configuration
+# LingTu clang-tidy configuration
 # Focused on catching real bugs, not style nitpicking
 ---
 Checks: >
@@ -31,11 +31,10 @@ WarningsAsErrors: >
 CheckOptions:
   - key: modernize-use-auto.MinTypeNameLength
     value: '5'
-  - key: performance-unnecessary-value-param.AllowedTypes
-    value: 'rclcpp::*'
 
-# Don't check generated or vendored code
-HeaderFilterRegex: 'include/remote_monitoring/.*\.hpp$'
+# Check project headers under src while skipping generated and imported trees.
+HeaderFilterRegex: '.*[\\/]src[\\/].*\.(h|hpp)$'
+ExcludeHeaderFilterRegex: '.*[\\/](deps|external|generated|refs|third_party|upstream|vendor)[\\/].*'
 
 # System headers are external
 SystemHeaders: false

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import configparser
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,14 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "sim" / "runtime" / "visual" / "RobotSimUE" / "Scripts" / "build_factory_park_hf.py"
 RUNNER_PATH = SCRIPT_PATH.with_name("run_factory_park_hf.ps1")
+
+
+def test_cached_lumen_exposure_covers_factory_physical_daylight() -> None:
+    config = configparser.ConfigParser(strict=False)
+    config.read(SCRIPT_PATH.parent.parent / "Config" / "DefaultEngine.ini", encoding="utf-8")
+    cached_ev = config.getfloat("ConsoleVariables", "r.EyeAdaptation.CachedLightingPreExposure")
+    # UE 5.8 PostProcessEyeAdaptation.cpp derives this FP16-safe cache range.
+    assert cached_ev - 12.0 <= 14.0 <= cached_ev + 8.0
 
 
 def _load_builder_module():

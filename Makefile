@@ -1,12 +1,13 @@
 # LingTu native Product build shortcuts
 
-.PHONY: help build build-debug test test-python test-native clean install health format lint py-lint py-format py-fix mapping navigation sync-version docker-build docker-run docker-stop docs check
+.PHONY: help build build-web package-web build-debug test test-python test-native clean install health format lint py-lint py-format py-fix mapping navigation sync-version docker-build docker-run docker-stop docs check
 
 .DEFAULT_GOAL := help
 
 PYTHON ?= python3
 BUILD_TYPE ?= Release
 NATIVE_TEST_BUILD_DIR ?= build/nav-cpp
+LINGTU_CAMERA_DRIVER ?= orbbec_native
 
 help:
 	@echo "LingTu — available targets"
@@ -14,6 +15,8 @@ help:
 	@echo "  Build:"
 	@echo "    make build       - build the native field Product ($(BUILD_TYPE))"
 	@echo "    make build-debug - build the native field Product in Debug mode"
+	@echo "    make build-web   - build the independent operator UI"
+	@echo "    make package-web - build and archive the operator UI under dist/"
 	@echo ""
 	@echo "  Test:"
 	@echo "    make test        - run Python and portable native C++ tests"
@@ -34,22 +37,33 @@ help:
 
 build:
 	@echo "Building native field Product ($(BUILD_TYPE))..."
-	@command -v npm >/dev/null 2>&1 || { echo "npm is required to build the field dashboard" >&2; exit 2; }
-	@npm --prefix web ci --silent
-	@npm --prefix web run build
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS=ON bash scripts/build/build_livox_sdk2_stream.sh
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" LINGTU_SLAM_BUILD_DDS_RUNTIME=ON bash scripts/build/build_slam_core.sh
 	@if [ -f scripts/build/build_mapd.sh ]; then CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_mapd.sh; fi
 	@if [ -f scripts/build/build_map_opt.sh ]; then CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_map_opt.sh; fi
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_dds_probe.sh
-	@if [ ! -d build/deps/orbbec-sdk/include/libobsensor ]; then bash scripts/build/fetch_orbbec_sdk.sh; fi
-	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_orbbec_native.sh
+	@case "$(LINGTU_CAMERA_DRIVER)" in \
+	  orbbec_native) \
+	    if [ ! -d build/deps/orbbec-sdk/include/libobsensor ]; then bash scripts/build/fetch_orbbec_sdk.sh; fi; \
+	    CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_orbbec_native.sh ;; \
+	  realsense_native) CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_realsense_native.sh ;; \
+	  *) echo "Unsupported camera driver: $(LINGTU_CAMERA_DRIVER)" >&2; exit 2 ;; \
+	esac
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_camera_dds.sh
+	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_camera_video.sh
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_gnss_dds.sh
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_nav_endpoint.sh
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_driver.sh
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" LINGTU_RECORDING_BUILD_DDS=ON bash scripts/build/build_native_recording.sh
 	@echo "Native field Product build complete."
+
+build-web:
+	@npm --prefix web ci --silent
+	@npm --prefix web run build
+
+package-web: build-web
+	@mkdir -p dist
+	@tar -czf "dist/lingtu-$$(cat VERSION)-web.tar.gz" -C web/dist .
 
 build-debug:
 	@$(MAKE) build BUILD_TYPE=Debug
@@ -101,18 +115,22 @@ navigation:
 	@$(PYTHON) -m lingtu.control switch nav --map "$(MAP)" --json
 
 sync-version:
-	@bash tools/release/sync_versions.sh
+	@bash scripts/deploy/sync_versions.sh
 
 docker-build:
 	@docker build -f docker/Dockerfile -t lingtu:latest .
 
 docker-run:
-	@docker-compose up -d
+	@docker compose -f docker-compose.dev.yml up -d dev
 
 docker-stop:
-	@docker-compose down
+	@docker compose -f docker-compose.dev.yml stop dev
 
 docs:
-	@doxygen Doxyfile 2>/dev/null || echo "Doxygen not installed, skipping."
+	@echo "LingTu documentation indexes:"
+	@echo "  docs/README.md"
+	@echo "  docs/architecture.md"
+	@echo "  config/system/README.md"
+	@echo "  src/lingtu/README.md"
 
 check: build test lint health

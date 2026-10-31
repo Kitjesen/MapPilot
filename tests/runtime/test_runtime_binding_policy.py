@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from lingtu.assembly.binding_policy import (
+from lingtu.assembly.config.endpoint_bindings import (
     endpoint_contract_for_config,
     endpoint_transport_for_config,
-    exploration_backend_for_config,
     localization_adapter_for_config,
 )
 
@@ -34,6 +33,3 @@ def test_runtime_binding_policy_requires_explicit_localization_adapter() -> None
     )
 
 
-def test_exploration_backend_for_config_defaults_to_none() -> None:
-    assert exploration_backend_for_config({}) == "none"
-    assert exploration_backend_for_config({"exploration_backend": "TARE"}) == "tare"

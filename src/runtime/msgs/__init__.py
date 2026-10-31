@@ -2,8 +2,8 @@
 
 All Module In/Out ports use these types. No ROS2 dependency.
 
-Every message class satisfies the :class:`LingtuMsg` protocol:
-``msg_name`` + ``encode()`` + ``decode()``.
+Wire messages satisfy :class:`LingtuMsg`: ``msg_name`` + ``encode()`` +
+``decode()``. Host-local observation bundles share references without encoding.
 """
 
 from .geometry import Pose, PoseStamped, Quaternion, Transform, Twist, TwistStamped, Vector3
@@ -47,6 +47,7 @@ from .semantic import (
     Region,
     Relation,
     SceneGraph,
+    SemanticObservation,
 )
 from .sensor import CameraIntrinsics, Image, ImageFormat, Imu, JointState, PointCloud2, PointField
 
@@ -92,6 +93,7 @@ __all__ = [
     "Relation",
     "SceneGraph",
     "SemanticLabelsFrame",
+    "SemanticObservation",
     "SemanticSaveRequest",
     "SemanticSaveResult",
     "Transform",

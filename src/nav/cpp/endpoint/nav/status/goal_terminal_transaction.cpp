@@ -4,7 +4,7 @@
 #include <utility>
 
 #include "safety/stop.hpp"
-#include "runtime/goal/runtime.hpp"
+#include "app/goal/runtime.hpp"
 #include "status/goal_terminal_status_delivery.hpp"
 
 namespace lingtu::nav::endpoint {
@@ -58,11 +58,13 @@ GoalTerminalTransaction::advance(const GoalReplanRuntimeResult &runtime_result,
         const MotionStopResult stopped =
             motion_stop_.commitGoalTerminalAfterStop(terminal.reason, terminal.commit);
         terminal_result =
-            MotionStopTerminalBarrierResult{stopped.accepted, stopped.reason, stopped.accepted};
+            MotionStopTerminalBarrierResult{stopped.accepted, stopped.reason, stopped.accepted,
+                                             stopped.pending};
         break;
       }
     }
 
+    if (terminal_result.pending) return {false, false, "stop_confirmation_pending"};
     if (!terminal_result.accepted) {
       const std::string failure = "goal_terminal_stop_unconfirmed:" + terminal_result.reason;
       actions_.pause_inspection(failure);

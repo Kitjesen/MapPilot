@@ -51,8 +51,8 @@ class _ThreadState:
 
 
 def _real_run_plan(product: str):
-    from lingtu.assembly.compiler import compile_run_plan
-    from lingtu.assembly.products import resolve_product_host_runtime
+    from lingtu.assembly.compile_plan import compile_run_plan
+    from lingtu.assembly.config.product import resolve_product_host_runtime
 
     resolved = resolve_product_host_runtime(product, "real", robot="unitree/go2")
     return compile_run_plan(
@@ -448,7 +448,7 @@ def test_readiness_snapshot_includes_runtime_boundary_blockers(monkeypatch):
     monkeypatch.setenv("LINGTU_ENV", "sim")
     monkeypatch.setenv("LINGTU_PRODUCT", "explore")
     monkeypatch.setenv("LINGTU_PRODUCT_SESSION_ID", "2" * 32)
-    monkeypatch.setenv("LINGTU_DATA_SOURCE", "mujoco_fastlio2_live")
+    monkeypatch.setenv("LINGTU_DATA_SOURCE", "mujoco_ltlio_live")
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
     monkeypatch.setenv("LINGTU_COMMAND_SINK", "driver")
 

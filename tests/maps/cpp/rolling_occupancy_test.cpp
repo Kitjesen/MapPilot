@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -115,11 +116,11 @@ void TestOfficialUnknownPriorRequiresRepeatedHits() {
   grid.Update(Frame(point, 20));
   assert(grid.StateAt(2.2F, 0.1F, 0.1F) == OccupancyState::kOccupied);
   assert(grid.InflatedContains(2.2F, 0.1F, 0.1F));
-  assert(grid.Generation() == first_generation + 1U);
+  assert(grid.Generation() == first_generation);
   grid.Update(Frame({}, 30));
   assert(grid.Contains(2.2F, 0.1F, 0.1F));
   assert(grid.InflatedContains(2.2F, 0.1F, 0.1F));
-  assert(grid.Generation() == first_generation + 1U);
+  assert(grid.Generation() == first_generation);
 }
 
 void TestRayFusionMatchesOfficialEndpointAndTraversalVotes() {
@@ -871,9 +872,67 @@ void TestConfiguredLocalUpdateRangeMatchesUpstreamFilter() {
   assert(stats.rejected_points == 1U);
 }
 
+void TestHitBoundsFollowTheRollingOccupancy() {
+  auto config = TestConfig();
+  config.auto_roll = false;
+  RollingOccupancyGrid grid(config);
+  grid.Reset("map", 0, 0, 0, 1);
+  grid.Update(Frame({2.2F, .1F, .1F}, 10));
+  auto snapshot = grid.InflatedSnapshot();
+  assert(snapshot.hit_bounds.size() == 1U);
+  const auto initial = snapshot.hit_bounds.front();
+  assert(std::fabs(initial.min_z - .1) < 1e-6);
+  const auto generation = snapshot.generation;
+  grid.Update(Frame({2.4F, .3F, .8F}, 20));
+  snapshot = grid.InflatedSnapshot();
+  assert(snapshot.generation > generation);
+  assert(snapshot.hit_bounds.size() == 1U);
+  assert(snapshot.hit_bounds.front().cell_index == initial.cell_index);
+  assert(std::fabs(snapshot.hit_bounds.front().min_z - .1) < 1e-6);
+  assert(std::fabs(snapshot.hit_bounds.front().max_z - .8) < 1e-6);
+  grid.Update(Frame({3.2F, .1F, .1F}, 30));
+  grid.Update(Frame({3.2F, .1F, .1F}, 40));
+  snapshot = grid.InflatedSnapshot();
+  assert(std::none_of(snapshot.hit_bounds.begin(), snapshot.hit_bounds.end(),
+                      [&](const auto &item) { return item.cell_index == initial.cell_index; }));
+  grid.Reset("map", 0, 0, 0, 50);
+  assert(grid.InflatedSnapshot().hit_bounds.empty());
+  grid.Update(Frame({2.2F,.1F,.1F}, 60));
+  const auto before_roll = grid.InflatedSnapshot();
+  grid.RollToCenter(3.2, 0, 0, 70);
+  const auto after_roll = grid.InflatedSnapshot();
+  assert(after_roll.hit_bounds.size() == 1U);
+  assert(after_roll.hit_bounds.front().cell_index != before_roll.hit_bounds.front().cell_index);
+  assert(std::fabs(after_roll.hit_bounds.front().min_x - 2.2) < 1e-6);
+  grid.RollToCenter(20.0, 0, 0, 80);
+  assert(grid.InflatedSnapshot().hit_bounds.empty());
+}
+
+void TestNewHitIsMeasuredEvenWithFreeSpaceHistory() {
+  auto config = TestConfig();
+  config.auto_roll = false;
+  config.hit_log_odds = 1.0;
+  config.miss_log_odds = 1.0;
+  config.min_log_odds = -5.0;
+  config.max_log_odds = 5.0;
+  RollingOccupancyGrid grid(config);
+  grid.Reset("map", 0, 0, 0, 1);
+  for (int stamp = 2; stamp < 10; ++stamp) grid.Update(Frame({3.2F,.1F,.1F}, stamp));
+  grid.Update(Frame({2.2F,.1F,.1F}, 10));
+  assert(grid.StateAt(2.2, .1, .1) == OccupancyState::kFree);
+  const auto snapshot = grid.InflatedSnapshot();
+  const auto found = std::find_if(snapshot.hit_bounds.begin(), snapshot.hit_bounds.end(),
+      [](const auto &item) { return std::fabs(item.min_x - 2.2) < 1e-6; });
+  assert(found != snapshot.hit_bounds.end());
+  assert(snapshot.measured_occupied_bits[found->cell_index / 8U] &
+         (1U << (found->cell_index % 8U)));
+}
+
 }  // namespace
 
 int main() {
+  TestHitBoundsFollowTheRollingOccupancy();
+  TestNewHitIsMeasuredEvenWithFreeSpaceHistory();
   TestNewObstacleInKnownFreeSpaceRequiresObservedClearing();
   TestEndpointMajorityPreservesHistoryUntilObservedFree();
   TestClippedEndpointContributesOneFreeVote();

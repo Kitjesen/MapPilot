@@ -45,18 +45,35 @@ test('resume does not claim success while authoritative control state is unknown
   await assert.rejects(resumeNavigation(), /控制状态仍未确认/)
 })
 
-test('resume reports the remaining blocker after the resume latch clears', async () => {
+for (const blocker of ['stale_collision_map', 'navigation_session_inactive']) {
+  test(`control resume succeeds independently of ${blocker}`, async () => {
+    const requests: string[] = []
+    globalThis.fetch = async (input, options) => {
+      requests.push(`${options?.method ?? 'GET'} ${String(input)}`)
+      return Response.json(options?.method === 'POST'
+        ? { ok: true, status: 'motion_resume_acknowledged' }
+        : {
+            control: { authority: 'NONE', resume_required: false },
+            goal_admission: { reason: blocker },
+            motion: { permission: 'HELD', reason: blocker },
+          })
+    }
+    assert.equal((await resumeNavigation()).ok, true)
+    assert.deepEqual(requests, [
+      'POST /api/v1/navigation/resume',
+      'GET /api/v1/navigation/status',
+    ])
+  })
+}
+
+test('control resume does not report success when emergency stop remains active', async () => {
   globalThis.fetch = async (_input, options) => Response.json(options?.method === 'POST'
     ? { ok: true, status: 'motion_resume_acknowledged' }
     : {
         control: { authority: 'NONE', resume_required: false },
-        goal_admission: { reason: 'stale_collision_map' },
-        motion: { permission: 'HELD', reason: 'stale_collision_map' },
+        motion: { permission: 'ESTOPPED', reason: 'estop_latched' },
       })
-  await assert.rejects(
-    resumeNavigation(),
-    /控制暂停已解除，但运动仍被阻止：stale_collision_map/,
-  )
+  await assert.rejects(resumeNavigation(), /急停仍在生效/)
 })
 
 test('resume rejection does not claim success or poll for it', async () => {

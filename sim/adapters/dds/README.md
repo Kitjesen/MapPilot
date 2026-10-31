@@ -37,6 +37,12 @@ MuJoCo sensor generator
   -> rt/lidar/raw_packet + rt/lidar/raw_frame + rt/imu/raw
 ```
 
+The LTU1 record is LingTu's internal process transport. The public sensor
+contract remains the generated native typed DDS IDL (`lingtu.dds.LivoxFrame`).
+External formats such as MATRiX's PointCloud2 must be converted by an explicit
+input Adapter before they reach this path; this publisher does not infer their
+field semantics.
+
 When the navigation fixture is explicitly enabled, the same process may also
 publish odometry prior, registered cloud, TF, and localization-health fixture
 data. Those are simulation truth inputs for native navigation acceptance; they
@@ -72,8 +78,52 @@ packed into this high-rate LiDAR/IMU process.
 | Registered cloud / TF / localization health | Optional navigation fixture | Canonical typed DDS, never claimed as SLAM evidence |
 | Final `cmd_vel` | Native navigation output | Physical driver bridge into MuJoCo; ACK after applied step |
 | Camera color/depth | MuJoCo camera renderer | Separate camera/SHM adapter |
-| GNSS | Not modeled by this bridge | Not covered |
+| GNSS | Optional Sensor Runtime WGS84 geometric measurement | `rt/gnss/fix` and `rt/gnss/status`; opt-in formal IMU endpoint support, experimental and off by default |
 | Battery and driver state | Simulation driver state | Separate driver/control boundary |
+
+## Optional GNSS boundary
+
+`GnssDdsAdapter` sends LTGN v1 records on stdin to `lingtu_gnss_publisher`:
+
+```text
+MuJoCo body snapshot -> Sensor Runtime GnssSample -> LTGN -> native DDS
+  -> rt/gnss/fix    (existing lingtu.dds.GnssFix)
+  -> rt/gnss/status (existing lingtu.dds.GnssStatus)
+```
+
+The executable requires `--dds-domain`, `--session-id`, and `--ready-file`.
+Readiness means both writers exist, not that a receiver has a valid fix.
+LTGN retains session, model/reset generations, sequence, frame and simulation
+nanoseconds. Its units are degrees/metres and covariance is ENU at the fix.
+Only SIMULATION (8) and NO_FIX (0) are accepted. NO_FIX carries invalid
+coordinates/covariance; satellite counts stay zero, HDOP and RTCM age unknown,
+and status never claims RTK. The clock is simulation time, not UTC.
+
+The parser rejects malformed or contradictory records, session/frame changes,
+backward generations and non-increasing time/sequence within a generation.
+New generations start at sequence zero and may restart simulation time.
+Closing stdin permits natural exit; malformed input exits non-zero. The Python
+endpoint owns readiness cleanup and the child process tree. Defaults and real
+GNSS hardware drivers are unchanged.
+
+Tests cover protocol rejection, actual native DDS receive, and the existing
+Thunder MJCF through the Python endpoint. Evidence and limitations are recorded
+in the [sensor runtime README](../../runtime/sensors/README.md). The observer's
+optional `--matched-file` proves reader-side discovery only, not a DDS delivery
+ACK; actual records are checked separately.
+
+The formal Product feeder now carries the same 300-byte LTGN record inside
+**LTU1 type 8**, count 1, on its existing authenticated IMU endpoint. Outer and
+inner timestamp/sequence must match exactly. Only IMU/All streams accept it;
+the local endpoint also checks the Product session. GNSS bypasses replay pacing
+and restamping, preserving the simulation clock. Its writer is created lazily;
+no-GNSS sessions retain the old processes, readiness, and writers. Standalone
+and formal publishers share `gnss_dds_writer`, not duplicate IDL conversions.
+
+Standalone stdin EOF exits normally. Formal endpoint premature disconnect
+retains the existing failure behavior; tests deliberately exercise this error
+and artifact cleanup. Full ProductControl lifecycle/inspection acceptance is
+separate from these native endpoint and Python wire interoperability tests.
 
 ## Windows build
 

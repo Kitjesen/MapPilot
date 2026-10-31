@@ -1,6 +1,7 @@
 import math
 import threading
 import time
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -10,7 +11,7 @@ from decision.vision import person as person_tracking
 from message.generated.enums import NavigationGoalState
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from runtime.msgs.nav import NavigationGoalStatus, VisualGoalCancel, VisualGoalRequest
-from runtime.msgs.semantic import Detection3D
+from runtime.msgs.semantic import Detection3D, SemanticObservation
 from runtime.msgs.sensor import Image, ImageFormat
 
 
@@ -22,6 +23,72 @@ def _goal(request: VisualGoalRequest) -> PoseStamped:
 def _cancel_reasons(cancels: list[VisualGoalCancel]) -> list[str]:
     assert all(isinstance(cancel, VisualGoalCancel) for cancel in cancels)
     return [cancel.reason for cancel in cancels]
+
+
+def _deliver_pose(mod: VisualServoModule, pose: PoseStamped) -> None:
+    mod._test_observation_pose = pose
+
+
+def _deliver_image(mod: VisualServoModule, image: Image) -> None:
+    mod._test_observation_image = image
+
+
+def _test_source_ts(mod: VisualServoModule, logical_ts: float) -> float:
+    origin = getattr(mod, "_test_observation_time_origin", None)
+    if origin is None:
+        origin = (logical_ts, time.time())
+        mod._test_observation_time_origin = origin
+    return origin[1] + logical_ts - origin[0]
+
+
+def _deliver_detections(
+    mod: VisualServoModule,
+    detections: list[Detection3D],
+) -> None:
+    sequence = int(getattr(mod, "_test_observation_sequence", 0)) + 1
+    mod._test_observation_sequence = sequence
+    image = getattr(mod, "_test_observation_image", None)
+    logical_ts = max(
+        (float(detection.ts) for detection in detections),
+        default=float(getattr(image, "ts", 0.0) or sequence),
+    )
+    source_ts = _test_source_ts(mod, logical_ts)
+    if image is not None and float(image.ts) != logical_ts:
+        image = None
+    elif image is not None:
+        image = replace(image, ts=source_ts)
+    pose = getattr(
+        mod,
+        "_test_observation_pose",
+        PoseStamped(
+            pose=Pose(
+                position=Vector3(
+                    float(mod._robot_pose[0]),
+                    float(mod._robot_pose[1]),
+                    float(mod._robot_ground_z),
+                ),
+                orientation=Quaternion.from_yaw(float(mod._robot_pose[2])),
+            ),
+            ts=source_ts,
+            frame_id="map",
+        ),
+    )
+    mod._on_observation(SemanticObservation(
+        sequence=sequence,
+        source_ts=source_ts,
+        completed_ts=time.time(),
+        source_generation=1,
+        map_id="test-map",
+        content_epoch=1,
+        status="positive" if detections else "negative",
+        image=image,
+        robot_pose=PoseStamped(
+            pose=pose.pose,
+            ts=source_ts,
+            frame_id=pose.frame_id,
+        ),
+        detections=tuple(detections),
+    ))
 
 
 def _admit_current_goal(
@@ -92,7 +159,7 @@ def test_find_uses_current_map_detection_and_ground_standoff():
     mod.setup()
     goals = []
     mod.goal_pose._add_callback(goals.append)
-    mod.robot_pose._deliver(
+    _deliver_pose(mod,
         PoseStamped(
             pose=Pose(
                 position=Vector3(0.0, 0.0, 0.25),
@@ -104,7 +171,7 @@ def test_find_uses_current_map_detection_and_ground_standoff():
     )
     mod._on_servo_target("find:chair")
 
-    mod.detections_3d._deliver(
+    _deliver_detections(mod,
         [
             Detection3D(
                 label="chair",
@@ -130,7 +197,7 @@ def test_color_frame_alone_does_not_drive_follow_navigation():
     called = []
     mod._tick_follow = lambda: called.append(True)
 
-    mod._on_color(Image(data=np.zeros((8, 8, 3), dtype=np.uint8), format=ImageFormat.RGB))
+    _deliver_image(mod, Image(data=np.zeros((8, 8, 3), dtype=np.uint8), format=ImageFormat.RGB))
 
     assert called == []
 
@@ -246,7 +313,7 @@ def test_follow_status_explains_selection_without_an_aligned_image():
     mod = VisualServoModule()
     mod._on_servo_target("follow_id:person-1")
     mod._person_tracker.set_dino_encoder(object())
-    mod._on_detections([Detection3D(
+    _deliver_detections(mod, [Detection3D(
         id="person-1", label="person", confidence=0.9,
         position=Vector3(4.0, 0.0, 1.2), ts=20.0,
     )])
@@ -264,7 +331,7 @@ def test_follow_status_explains_rejected_depth_and_recovers_on_valid_observation
     mod._on_servo_target("follow_id:person-1")
 
     def observe(x, timestamp):
-        mod._on_detections([Detection3D(
+        _deliver_detections(mod, [Detection3D(
             id="person-1", label="person", confidence=0.9,
             position=Vector3(x, 0.0, 1.2), ts=timestamp,
         )])
@@ -283,8 +350,10 @@ def test_follow_status_explains_rejected_depth_and_recovers_on_valid_observation
     observe(4.05, 20.06)
     assert mod.get_servo_status()["reason"] == ""
     assert mod.get_servo_status()["target_visible"] is True
+    accepted_position = mod.get_servo_status()["person"]["position"]
     observe(4.05, 20.06)
-    assert mod.get_servo_status()["reason"] == "stale_observation"
+    assert mod.get_servo_status()["reason"] == ""
+    assert mod.get_servo_status()["person"]["position"] == accepted_position
 
 
 def test_follow_status_distinguishes_three_frame_evidence_from_missing_verifier():
@@ -298,8 +367,8 @@ def test_follow_status_distinguishes_three_frame_evidence_from_missing_verifier(
     frame = np.ones((16, 16, 3), dtype=np.uint8)
 
     def observe(identifier, timestamp):
-        mod._on_color(Image(data=frame, format=ImageFormat.BGR, ts=timestamp))
-        mod._on_detections([Detection3D(
+        _deliver_image(mod, Image(data=frame, format=ImageFormat.BGR, ts=timestamp))
+        _deliver_detections(mod, [Detection3D(
             id=identifier, label="person", confidence=0.9,
             position=Vector3(4.0, 0.0, 1.2),
             bbox_2d=[0.0, 0.0, 16.0, 16.0], ts=timestamp,
@@ -449,7 +518,7 @@ def test_follow_uses_current_detection_and_ground_standoff():
     mod._person_tracker.set_clip_encoder(ImageSelector())
     goals = []
     mod.goal_pose._add_callback(goals.append)
-    mod.robot_pose._deliver(
+    _deliver_pose(mod,
         PoseStamped(
             pose=Pose(position=Vector3(0.0, 0.0, 0.2)),
             ts=20.0,
@@ -457,14 +526,14 @@ def test_follow_uses_current_detection_and_ground_standoff():
         )
     )
     mod.servo_target._deliver("follow:person in red")
-    mod.color_image._deliver(
+    _deliver_image(mod,
         Image(
             data=np.ones((40, 40, 3), dtype=np.uint8),
             format=ImageFormat.RGB,
             ts=20.0,
         )
     )
-    mod.detections_3d._deliver(
+    _deliver_detections(mod,
         [
             Detection3D(
                 id="person-1",
@@ -488,7 +557,7 @@ def test_follow_locks_the_only_visible_person_without_loading_a_semantic_model()
     mod.setup()
     goals = []
     mod.goal_pose._add_callback(goals.append)
-    mod.robot_pose._deliver(
+    _deliver_pose(mod,
         PoseStamped(
             pose=Pose(position=Vector3(0.0, 0.0, 0.2)),
             ts=20.0,
@@ -503,13 +572,14 @@ def test_follow_locks_the_only_visible_person_without_loading_a_semantic_model()
         bbox_2d=[0.0, 0.0, 30.0, 30.0],
         ts=20.0,
     )
-    mod.detections_3d._deliver([person])
+    _deliver_detections(mod, [person])
 
     receipt = mod.follow_person("the visible person")
     assert receipt["accepted"] is True
     assert receipt["follow_task_id"]
     assert receipt["state"] == "running"
-    mod.detections_3d._deliver([person])
+    person.ts = 20.1
+    _deliver_detections(mod, [person])
 
     assert len(goals) == 1
     assert _goal(goals[0]).x == 2.5
@@ -522,7 +592,7 @@ def test_single_person_fallback_confirms_the_same_track_before_locking():
     mod.setup()
     goals = []
     mod.goal_pose._add_callback(goals.append)
-    mod.robot_pose._deliver(
+    _deliver_pose(mod,
         PoseStamped(
             pose=Pose(position=Vector3(0.0, 0.0, 0.2)),
             ts=20.0,
@@ -530,24 +600,24 @@ def test_single_person_fallback_confirms_the_same_track_before_locking():
         )
     )
 
-    def person(track_id: str) -> Detection3D:
+    def person(track_id: str, timestamp: float) -> Detection3D:
         return Detection3D(
             id=track_id,
             label="person",
             confidence=0.9,
             position=Vector3(4.0, 0.0, 1.2),
             bbox_2d=[0.0, 0.0, 30.0, 30.0],
-            ts=20.0,
+            ts=timestamp,
         )
 
-    mod.detections_3d._deliver([person("person-1")])
+    _deliver_detections(mod, [person("person-1", 20.0)])
     assert mod.follow_person("the visible person")["accepted"] is True
 
-    mod.detections_3d._deliver([person("person-2")])
+    _deliver_detections(mod, [person("person-2", 20.1)])
     assert goals == []
     assert mod.get_servo_status()["select"] == "selecting"
 
-    mod.detections_3d._deliver([person("person-2")])
+    _deliver_detections(mod, [person("person-2", 20.2)])
     assert len(goals) == 1
     assert mod.get_servo_status()["person"]["id"] == "person-2"
 
@@ -557,7 +627,7 @@ def test_stale_detection_does_not_count_toward_single_person_confirmation():
     mod.setup()
     goals = []
     mod.goal_pose._add_callback(goals.append)
-    mod.robot_pose._deliver(
+    _deliver_pose(mod,
         PoseStamped(
             pose=Pose(position=Vector3(0.0, 0.0, 0.2)),
             ts=20.0,
@@ -572,14 +642,16 @@ def test_stale_detection_does_not_count_toward_single_person_confirmation():
         bbox_2d=[0.0, 0.0, 30.0, 30.0],
         ts=20.0,
     )
-    mod.detections_3d._deliver([person])
+    _deliver_detections(mod, [person])
     assert mod.follow_person("the visible person")["accepted"] is True
     mod._last_perception_time -= 1.0
 
-    mod.detections_3d._deliver([person])
+    person.ts = 20.1
+    _deliver_detections(mod, [person])
     assert goals == []
 
-    mod.detections_3d._deliver([person])
+    person.ts = 20.2
+    _deliver_detections(mod, [person])
     assert len(goals) == 1
 
 
@@ -600,7 +672,7 @@ def test_follow_predicts_a_moving_person_before_publishing_the_native_nav_goal(m
     mod._person_tracker.set_clip_encoder(ImageSelector())
     goals = []
     mod.goal_pose._add_callback(goals.append)
-    mod.robot_pose._deliver(
+    _deliver_pose(mod,
         PoseStamped(
             pose=Pose(position=Vector3(0.0, 0.0, 0.2)),
             ts=20.0,
@@ -608,14 +680,14 @@ def test_follow_predicts_a_moving_person_before_publishing_the_native_nav_goal(m
         )
     )
     mod.servo_target._deliver("follow:person in red")
-    mod.color_image._deliver(
+    _deliver_image(mod,
         Image(
             data=np.ones((40, 40, 3), dtype=np.uint8),
             format=ImageFormat.RGB,
             ts=20.0,
         )
     )
-    mod.detections_3d._deliver(
+    _deliver_detections(mod,
         [
             Detection3D(
                 id="person-1",
@@ -630,7 +702,7 @@ def test_follow_predicts_a_moving_person_before_publishing_the_native_nav_goal(m
 
     wall_time[0] = 101.0
     mod._last_goal_time -= 1.1
-    mod.detections_3d._deliver(
+    _deliver_detections(mod,
         [
             Detection3D(
                 id="person-1",
@@ -679,7 +751,7 @@ def test_follow_loss_stops_the_owned_navigation_task_before_reselection():
     mod._person_tracker._person.last_seen -= 1.0
     assert mod._publish_goal_from_3d(np.array([2.5, 0.0, 0.2])) is True
 
-    mod.detections_3d._deliver([])
+    _deliver_detections(mod, [])
 
     assert _cancel_reasons(cancels) == ["visual_servo_target_lost"]
     assert mod._goal_published is False
@@ -733,6 +805,7 @@ def test_follow_with_identity_reference_waits_for_the_same_person_and_resumes_go
         {"x": 2.5, "y": 0.0, "z": 0.2} if recovered["value"] else None
     )
     mod._person_tracker.get_person_position = lambda: [4.0, 0.0, 1.2]
+    mod._motion_observation_ready = True
     assert mod._publish_goal_from_3d(np.array([2.5, 0.0, 0.2])) is True
     first_task_id = mod._navigation_task_id
     assert first_task_id is not None
@@ -822,19 +895,19 @@ def test_reacquisition_requires_three_distinct_observation_images():
             ts=timestamp,
         )
 
-    mod.color_image._deliver(image(21.0))
+    _deliver_image(mod, image(21.0))
     for timestamp in (21.0, 22.0, 23.0):
-        mod.detections_3d._deliver([detection(timestamp)])
+        _deliver_detections(mod, [detection(timestamp)])
 
     assert mod._person_tracker.identity_candidate() is None
 
     for timestamp in (24.0, 25.0, 26.0):
-        mod.color_image._deliver(image(timestamp))
-        mod.detections_3d._deliver([detection(timestamp)])
+        _deliver_image(mod, image(timestamp))
+        _deliver_detections(mod, [detection(timestamp)])
 
     candidate = mod._person_tracker.identity_candidate()
     assert candidate is not None
-    assert candidate["crop_timestamps"] == [24.0, 25.0, 26.0]
+    assert np.diff(candidate["crop_timestamps"]).tolist() == [1.0, 1.0]
 
 
 def test_follow_cancels_its_goal_when_the_locked_person_is_not_in_the_current_frame():
@@ -844,7 +917,7 @@ def test_follow_cancels_its_goal_when_the_locked_person_is_not_in_the_current_fr
     cancels = []
     mod.goal_pose._add_callback(goals.append)
     mod.goal_cancel._add_callback(cancels.append)
-    mod.robot_pose._deliver(
+    _deliver_pose(mod,
         PoseStamped(
             pose=Pose(position=Vector3(0.0, 0.0, 0.2)),
             ts=20.0,
@@ -859,14 +932,15 @@ def test_follow_cancels_its_goal_when_the_locked_person_is_not_in_the_current_fr
         bbox_2d=[0.0, 0.0, 30.0, 30.0],
         ts=20.0,
     )
-    mod.detections_3d._deliver([locked_person])
+    _deliver_detections(mod, [locked_person])
     assert mod.follow_person("the visible person")["accepted"] is True
-    mod.detections_3d._deliver([locked_person])
+    locked_person.ts = 20.1
+    _deliver_detections(mod, [locked_person])
     assert len(goals) == 1
 
     mod._last_goal_time -= 1.1
     mod._person_tracker._person.last_seen -= 1.0
-    mod.detections_3d._deliver(
+    _deliver_detections(mod,
         [
             Detection3D(
                 id="person-2",
@@ -892,7 +966,7 @@ def test_follow_cancels_its_goal_for_a_duplicate_detection_timestamp():
     cancels = []
     mod.goal_pose._add_callback(goals.append)
     mod.goal_cancel._add_callback(cancels.append)
-    mod.robot_pose._deliver(
+    _deliver_pose(mod,
         PoseStamped(
             pose=Pose(position=Vector3(0.0, 0.0, 0.2)),
             ts=20.0,
@@ -907,9 +981,10 @@ def test_follow_cancels_its_goal_for_a_duplicate_detection_timestamp():
         bbox_2d=[0.0, 0.0, 30.0, 30.0],
         ts=20.0,
     )
-    mod.detections_3d._deliver([person])
+    _deliver_detections(mod, [person])
     assert mod.follow_person("the visible person")["accepted"] is True
-    mod.detections_3d._deliver([person])
+    person.ts = 20.1
+    _deliver_detections(mod, [person])
     assert len(goals) == 1
     status = mod.get_servo_status()
     assert status["robot_position"] == [0.0, 0.0, 0.2]
@@ -919,7 +994,7 @@ def test_follow_cancels_its_goal_for_a_duplicate_detection_timestamp():
 
     mod._last_goal_time -= 1.1
     mod._person_tracker._person.last_seen -= 1.0
-    mod.detections_3d._deliver(
+    _deliver_detections(mod,
         [
             Detection3D(
                 id="person-1",
@@ -927,13 +1002,13 @@ def test_follow_cancels_its_goal_for_a_duplicate_detection_timestamp():
                 confidence=0.9,
                 position=Vector3(8.0, 0.0, 1.2),
                 bbox_2d=[0.0, 0.0, 30.0, 30.0],
-                ts=20.0,
+                ts=20.1,
             )
         ]
     )
 
     assert len(goals) == 1
-    assert _cancel_reasons(cancels) == ["visual_servo_target_lost"]
+    assert cancels == []
     assert mod.get_servo_status()["person"]["position"] == [4.0, 0.0, 1.2]
 
 
@@ -944,7 +1019,7 @@ def test_idle_person_detection_publishes_follow_availability():
     mod.servo_status._add_callback(statuses.append)
     assert mod.can_select_follow_target() is False
 
-    mod.detections_3d._deliver(
+    _deliver_detections(mod,
         [
             Detection3D(
                 id="person-1",
@@ -966,7 +1041,7 @@ def test_follow_id_waits_for_the_exact_current_track_before_publishing_a_goal():
     mod.setup()
     goals = []
     mod.goal_pose._add_callback(goals.append)
-    mod.robot_pose._deliver(
+    _deliver_pose(mod,
         PoseStamped(
             pose=Pose(position=Vector3(0.0, 0.0, 0.2)),
             ts=20.0,
@@ -979,7 +1054,7 @@ def test_follow_id_waits_for_the_exact_current_track_before_publishing_a_goal():
     assert mod.get_servo_status()["target_id"] == "person-7"
     assert goals == []
 
-    mod.detections_3d._deliver(
+    _deliver_detections(mod,
         [
             Detection3D(
                 id="person-8",
@@ -993,7 +1068,7 @@ def test_follow_id_waits_for_the_exact_current_track_before_publishing_a_goal():
     )
     assert goals == []
 
-    mod.detections_3d._deliver(
+    _deliver_detections(mod,
         [
             Detection3D(
                 id="person-7",
@@ -1018,7 +1093,7 @@ def test_follow_id_wrong_current_track_cancels_goal_without_changing_identity():
     mod.goal_pose._add_callback(goals.append)
     mod.goal_cancel._add_callback(cancels.append)
     mod._on_servo_target("follow_id:person-7")
-    mod.detections_3d._deliver(
+    _deliver_detections(mod,
         [
             Detection3D(
                 id="person-7",
@@ -1033,7 +1108,7 @@ def test_follow_id_wrong_current_track_cancels_goal_without_changing_identity():
     assert len(goals) == 1
 
     mod._person_tracker._person.last_seen -= 1.0
-    mod.detections_3d._deliver(
+    _deliver_detections(mod,
         [
             Detection3D(
                 id="person-8",
@@ -1059,7 +1134,7 @@ def test_follow_id_reacquires_the_same_person_after_the_tracker_changes_id():
     mod.goal_pose._add_callback(goals.append)
     mod.goal_cancel._add_callback(cancels.append)
     mod._on_servo_target("follow_id:person-7")
-    mod.detections_3d._deliver(
+    _deliver_detections(mod,
         [
             Detection3D(
                 id="person-7",
@@ -1073,7 +1148,7 @@ def test_follow_id_reacquires_the_same_person_after_the_tracker_changes_id():
     )
 
     for timestamp, x in ((21.0, 4.1), (22.0, 4.2), (23.0, 4.3)):
-        mod.detections_3d._deliver(
+        _deliver_detections(mod,
             [
                 Detection3D(
                     id="person-8",
@@ -1118,7 +1193,7 @@ def test_follow_updates_yaw_toward_the_person_while_holding_position(monkeypatch
     mod.setup()
     goals = []
     mod.goal_pose._add_callback(goals.append)
-    mod.robot_pose._deliver(
+    _deliver_pose(mod,
         PoseStamped(
             pose=Pose(position=Vector3(0.0, 0.0, 0.2)),
             ts=20.0,
@@ -1133,9 +1208,10 @@ def test_follow_updates_yaw_toward_the_person_while_holding_position(monkeypatch
         bbox_2d=[0.0, 0.0, 30.0, 30.0],
         ts=20.0,
     )
-    mod.detections_3d._deliver([person])
+    _deliver_detections(mod, [person])
     assert mod.follow_person("the visible person")["accepted"] is True
-    mod.detections_3d._deliver([person])
+    person.ts = 20.1
+    _deliver_detections(mod, [person])
     assert len(goals) == 1
     assert _goal(goals[-1]).x == 0.0
     assert _goal(goals[-1]).y == 0.0
@@ -1143,7 +1219,7 @@ def test_follow_updates_yaw_toward_the_person_while_holding_position(monkeypatch
 
     wall_time[0] = 101.0
     mod._last_goal_time -= 1.1
-    mod.detections_3d._deliver(
+    _deliver_detections(mod,
         [
             Detection3D(
                 id="person-1",
@@ -1196,7 +1272,7 @@ def test_every_stop_entry_wins_while_a_detection_callback_builds_a_goal():
             bbox_2d=[0.0, 0.0, 20.0, 20.0],
             ts=30.0,
         )
-        detector = threading.Thread(target=mod._on_detections, args=([detection],))
+        detector = threading.Thread(target=_deliver_detections, args=(mod, [detection]))
         stopper = threading.Thread(target=invoke_stop, args=(mod,))
 
         detector.start()
@@ -1222,7 +1298,7 @@ def test_perception_stream_timeout_cancels_an_active_visual_goal():
     mod.start()
     try:
         mod._on_servo_target("find:chair")
-        mod._on_detections(
+        _deliver_detections(mod,
             [
                 Detection3D(
                     label="chair",

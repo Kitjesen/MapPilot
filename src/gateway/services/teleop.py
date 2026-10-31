@@ -75,6 +75,18 @@ def _require_operator_motion_receipt(
     return result
 
 
+def _operator_stop_completed(result: OperatorMotionReceipt) -> bool:
+    """Recognize source Hold/Release completion, never physical stop evidence."""
+    return result.final_output_published or (
+        result.source_accepted
+        and result.final_output_sequence == 0
+        and (
+            (result.action == OperatorMotionAction.HOLD and result.reason == "hold_no_motion")
+            or (result.action == OperatorMotionAction.RELEASE and result.reason == "release_no_motion")
+        )
+    )
+
+
 @dataclass(frozen=True)
 class _OperatorMotionSample:
     vx: float
@@ -229,7 +241,7 @@ class LatestNativeTeleopPublisher:
         reason: str = "operator_hold",
         timeout_s: float = 2.0,
     ) -> OperatorMotionReceipt | bool:
-        """Drop pending samples, finish the in-flight write, then await the hold ACK."""
+        """Drain pending writes, then await a zero Hold or source-only release."""
 
         request_id = str(request_id or f"{source_id}:hold:{int(sequence)}")
         deadline = time.monotonic() + max(0.1, float(timeout_s))
@@ -264,7 +276,7 @@ class LatestNativeTeleopPublisher:
                 )
             else:
                 raise CommandBoundaryError("native operator motion hold capability is unavailable")
-            if isinstance(result, OperatorMotionReceipt) and not result.final_output_published:
+            if not _operator_stop_completed(result):
                 error = result.reason or "operator motion hold did not publish final output"
             else:
                 error = None
@@ -475,7 +487,7 @@ class NativeTeleopSession:
         return TeleopSessionResult(True, "queued")
 
     def hold(self, *, request_id: str, reason: str = "web_operator_hold") -> TeleopSessionResult:
-        """Publish an ordered zero barrier for this session when it has control."""
+        """Hold active motion, or release a claim that never submitted motion."""
 
         if not self._opened:
             return TeleopSessionResult(False, "session_closed")
@@ -491,8 +503,13 @@ class NativeTeleopSession:
         )
         self._claim_before_move = True
         self._last_native_activity_s = time.monotonic()
-        if isinstance(receipt, OperatorMotionReceipt) and receipt.final_output_published:
-            return TeleopSessionResult(True, "held", final_output_confirmed=True)
+        if isinstance(receipt, OperatorMotionReceipt) and _operator_stop_completed(receipt):
+            self._owns_native_authority = receipt.final_output_published
+            return TeleopSessionResult(
+                True,
+                "held" if receipt.final_output_published else "already_idle",
+                final_output_confirmed=receipt.final_output_published,
+            )
         internal_reason = receipt.reason if isinstance(receipt, OperatorMotionReceipt) else "hold_failed"
         return TeleopSessionResult(False, internal_reason)
 
@@ -511,8 +528,10 @@ class NativeTeleopSession:
                 request_id=request_id,
                 reason="disconnect",
             )
-            if isinstance(receipt, OperatorMotionReceipt) and receipt.final_output_published:
-                return TeleopSessionResult(True, "disconnected", final_output_confirmed=True)
+            if isinstance(receipt, OperatorMotionReceipt) and _operator_stop_completed(receipt):
+                return TeleopSessionResult(
+                    True, "disconnected", final_output_confirmed=receipt.final_output_published
+                )
             internal_reason = (
                 receipt.reason if isinstance(receipt, OperatorMotionReceipt) else "disconnect_zero_failed"
             )
@@ -590,7 +609,7 @@ def init_teleop_state(
 
 
 def bind_navigation_commands(gw: Any, commands: Any | None) -> None:
-    """Bind the Blueprint-assembled command capability after module discovery."""
+    """Bind the HostBuilder-assembled command capability after module discovery."""
 
     gw._nav_commands = commands
     publisher = getattr(gw, "_teleop_native_publisher", None)
@@ -795,6 +814,7 @@ def release(
         if not isinstance(hold_receipt, OperatorMotionReceipt):
             raise CommandBoundaryError("native endpoint returned no hold receipt")
         if not hold_receipt.final_output_published:
+            # A source-only Hold has already released its claim without motion.
             return hold_receipt
         if reason == "disconnect":
             release_receipt = publisher.release_source(
@@ -806,8 +826,6 @@ def release(
             )
             if not isinstance(release_receipt, OperatorMotionReceipt):
                 raise CommandBoundaryError("native endpoint returned no release receipt")
-            if not release_receipt.final_output_published:
-                return release_receipt
             return release_receipt
     except CommandBoundaryError as exc:
         logger.error("GatewayModule: field teleop release failed: %s", exc)

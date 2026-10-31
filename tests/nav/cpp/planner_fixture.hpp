@@ -115,7 +115,7 @@ class PlannerFixture {
     return request;
   }
 
-  local::Planner planner_;
+  LocalPlanner planner_;
   Pose vehicle_{};
   Vec3 target_{};
   mutable std::array<Vec3, 2> route_{};

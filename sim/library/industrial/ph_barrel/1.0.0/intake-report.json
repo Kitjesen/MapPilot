@@ -1,0 +1,84 @@
+{
+  "provider": "Poly Haven",
+  "source": {
+    "provider": "Poly Haven",
+    "id": "Barrel_02",
+    "name": "Barrel 02",
+    "authors": {
+      "Jorge Camacho": "All"
+    },
+    "license": "CC0-1.0",
+    "license_url": "https://polyhaven.com/license",
+    "source_url": "https://polyhaven.com/a/Barrel_02",
+    "resolution": "2k",
+    "model": "Barrel_02_2k.gltf",
+    "files": [
+      {
+        "path": "Barrel_02_2k.gltf",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/2k/Barrel_02/Barrel_02_2k.gltf",
+        "bytes": 2639
+      },
+      {
+        "path": "textures/Barrel_02_diff_2k.jpg",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/Barrel_02/Barrel_02_diff_2k.jpg",
+        "bytes": 240072
+      },
+      {
+        "path": "textures/Barrel_02_arm_2k.jpg",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/Barrel_02/Barrel_02_arm_2k.jpg",
+        "bytes": 503023
+      },
+      {
+        "path": "Barrel_02.bin",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/Barrel_02/Barrel_02.bin",
+        "bytes": 77440
+      },
+      {
+        "path": "textures/Barrel_02_nor_gl_2k.jpg",
+        "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/Barrel_02/Barrel_02_nor_gl_2k.jpg",
+        "bytes": 358609
+      }
+    ],
+    "ue_imported": false,
+    "physics_qualified": false
+  },
+  "axes": "Blender Z-up metres; GLB Y-up metres",
+  "bounds_m": [
+    [
+      -0.24408777058124542,
+      -0.2423081248998642,
+      0.004637363366782665
+    ],
+    [
+      0.2440878003835678,
+      0.24230831861495972,
+      0.8846373558044434
+    ]
+  ],
+  "mesh_objects": [
+    "Barrel_02"
+  ],
+  "materials": [
+    "Barrel_02"
+  ],
+  "images": [
+    {
+      "name": "Barrel_02_diff",
+      "width": 2048,
+      "height": 2048
+    },
+    {
+      "name": "Barrel_02_metallic-Barrel_02_roughness",
+      "width": 2048,
+      "height": 2048
+    },
+    {
+      "name": "Barrel_02_nor_gl",
+      "width": 2048,
+      "height": 2048
+    }
+  ],
+  "processing": "glTF import, embedded-texture GLB and FBX export; no decimation or geometry edits",
+  "ue_imported": false,
+  "physics_qualified": false
+}

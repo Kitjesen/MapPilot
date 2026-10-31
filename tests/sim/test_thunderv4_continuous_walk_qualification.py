@@ -94,7 +94,7 @@ def test_thunderv4_headless_qualification_reports_continuous_forward_walk() -> N
     assert report["walk"]["command"]["linear_x"] == pytest.approx(0.6)
 
 
-def test_policy_4998_qualification_uses_its_reference_control_timing() -> None:
+def test_default_policy_qualification_uses_its_reference_control_timing() -> None:
     pytest.importorskip("mujoco")
 
     report = run_qualification(seed=7)
@@ -173,7 +173,7 @@ def test_explicit_robot_mjcf_is_loaded_and_cross_bound_in_the_report(
     assert report["artifacts"] == {
         "world_mjcf": "sim/packages/worlds/open_field/physics/open_field.xml",
         "robot_mjcf": "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml",
-        "policy": "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998.onnx",
+        "policy": qualification_module.POLICY.relative_to(REPO_ROOT).as_posix(),
     }
 
 

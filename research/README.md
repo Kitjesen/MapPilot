@@ -15,6 +15,7 @@ or `web/` surface with tests and a license review.
 | `semantic/` | Git submodules | Upstream semantic-map implementations. |
 | `parking/` | LingTu candidate | RDK no-parking validation package; not the shipped Inspection Workbench analyzer. |
 | `vla/` | LingTu experiment | ROS 2 VLA navigation training and deployment prototype. |
+| `matrix/` | LingTu integration reference | MATRiX binary/asset analysis index; original local-only material stays in `third_party/matrix/`. |
 
 ## Naming
 

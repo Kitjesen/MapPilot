@@ -105,13 +105,7 @@ class PerceptionPipeline:
 
         try:
             source.load()
-            from perception.tracking.instance_tracker import InstanceTracker
-
-            self._tracker = InstanceTracker(
-                merge_distance=self._settings.merge_distance,
-                iou_threshold=self._settings.tracking_iou_threshold,
-                max_objects=self._settings.max_objects,
-            )
+            self._tracker = self._new_tracker()
         except Exception:
             source.close()
             self._source = None
@@ -119,12 +113,23 @@ class PerceptionPipeline:
             raise
         self._ready = True
 
+    def reset_spatial_context(self) -> None:
+        """Discard map-relative object state without reloading vision models."""
+
+        if not self._ready:
+            return
+        previous = self._tracker
+        self._tracker = self._new_tracker()
+        _close_resource(previous)
+
     def process(self, frame: Any) -> PerceptionOutcome:
         """Process one synchronized frame without publishing side effects."""
         if not self._ready or self._source is None or self._tracker is None:
             raise RuntimeError("perception_pipeline_not_ready")
 
         robot_pose = _robot_pose(frame.map_from_body, frame.timestamp, frame.frame_id)
+        map_id = str(getattr(frame, "map_id", "") or "")
+        content_epoch = int(getattr(frame, "content_epoch", 0) or 0)
         if self._source.name != "sim_scene":
             try:
                 bgr = frame.color.to_bgr().data
@@ -177,6 +182,8 @@ class PerceptionPipeline:
                     runtime_detections,
                     frame_id=frame.frame_id,
                     source_ts=frame.timestamp,
+                    map_id=map_id,
+                    content_epoch=content_epoch,
                 ),
                 frame.timestamp,
             )
@@ -193,6 +200,8 @@ class PerceptionPipeline:
                     regions=[],
                     ts=frame.timestamp,
                     frame_id=frame.frame_id,
+                    map_id=map_id,
+                    content_epoch=content_epoch,
                 ),
                 frame.timestamp,
             )
@@ -204,6 +213,8 @@ class PerceptionPipeline:
                 observed_ids={str(obj.object_id) for obj in observed_objects},
                 frame_id=frame.frame_id,
                 source_ts=frame.timestamp,
+                map_id=map_id,
+                content_epoch=content_epoch,
             )
         except Exception as exc:
             logger.warning("Scene-graph serialization failed; using current observations: %s", exc)
@@ -216,6 +227,8 @@ class PerceptionPipeline:
                     runtime_detections,
                     frame_id=frame.frame_id,
                     source_ts=frame.timestamp,
+                    map_id=map_id,
+                    content_epoch=content_epoch,
                 ),
                 frame.timestamp,
             )
@@ -227,6 +240,15 @@ class PerceptionPipeline:
             runtime_detections,
             scene_graph,
             frame.timestamp,
+        )
+
+    def _new_tracker(self) -> Any:
+        from perception.tracking.instance_tracker import InstanceTracker
+
+        return InstanceTracker(
+            merge_distance=self._settings.merge_distance,
+            iou_threshold=self._settings.tracking_iou_threshold,
+            max_objects=self._settings.max_objects,
         )
 
     def health(self) -> dict[str, Any]:
@@ -389,6 +411,8 @@ def _scene_graph_from_tracker(
     observed_ids: set[str],
     frame_id: str,
     source_ts: float,
+    map_id: str,
+    content_epoch: int,
 ) -> SceneGraph:
     data = json.loads(tracker.get_scene_graph_json())
     objects: list[CoreDetection3D] = []
@@ -431,19 +455,66 @@ def _scene_graph_from_tracker(
         )
         for raw in data.get("relations", [])
     ]
-    regions = [
-        Region(
-            name=str(raw.get("name", raw.get("room_type", ""))),
-            object_ids=[str(value) for value in raw.get("object_ids", [])],
+    room_records = data.get("rooms", data.get("regions", []))
+    regions = []
+    for raw in room_records:
+        if not isinstance(raw, dict):
+            continue
+        center_value = raw.get("center")
+        center = None
+        if isinstance(center_value, dict):
+            center = Vector3(
+                float(center_value.get("x", 0.0)),
+                float(center_value.get("y", 0.0)),
+                float(center_value.get("z", 0.0)),
+            )
+        elif isinstance(center_value, (list, tuple)) and len(center_value) >= 3:
+            center = Vector3(float(center_value[0]), float(center_value[1]), float(center_value[2]))
+        regions.append(
+            Region(
+                name=str(raw.get("name", raw.get("room_type", ""))),
+                object_ids=[str(value) for value in raw.get("object_ids", [])],
+                center=center,
+            )
         )
-        for raw in data.get("rooms", data.get("regions", []))
-    ]
+
+    def copy_records(key: str) -> list[dict[str, Any]]:
+        return [dict(value) for value in data.get(key, []) if isinstance(value, dict)]
+
+    raw_posteriors = data.get("room_type_posteriors", [])
+    if isinstance(raw_posteriors, dict):
+        room_type_posteriors = [
+            {"room_id": str(room_id), "hypotheses": dict(hypotheses) if isinstance(hypotheses, dict) else hypotheses}
+            for room_id, hypotheses in raw_posteriors.items()
+        ]
+    else:
+        room_type_posteriors = copy_records("room_type_posteriors")
+
     return SceneGraph(
         objects=objects,
         relations=relations,
         regions=regions,
         ts=float(source_ts),
         frame_id=frame_id,
+        graph_level=str(data.get("graph_level", "flat")),
+        graph_version=str(data.get("graph_version", "1.0")),
+        map_id=map_id,
+        content_epoch=content_epoch,
+        floors=copy_records("floors"),
+        rooms=copy_records("rooms"),
+        groups=copy_records("groups"),
+        views=copy_records("views"),
+        hierarchy_edges=copy_records("hierarchy_edges"),
+        topology_edges=copy_records("topology_edges"),
+        frontier_nodes=copy_records("frontier_nodes"),
+        subgraphs=copy_records("subgraphs"),
+        phantom_nodes=copy_records("phantom_nodes"),
+        room_type_posteriors=room_type_posteriors,
+        belief_propagation=(
+            dict(data.get("belief_propagation", {}))
+            if isinstance(data.get("belief_propagation", {}), dict)
+            else {}
+        ),
     )
 
 
@@ -452,6 +523,8 @@ def _fallback_scene_graph(
     *,
     frame_id: str,
     source_ts: float,
+    map_id: str,
+    content_epoch: int,
 ) -> SceneGraph:
     return SceneGraph(
         objects=[_clone_detection(detection) for detection in detections],
@@ -459,6 +532,8 @@ def _fallback_scene_graph(
         regions=[],
         ts=float(source_ts),
         frame_id=frame_id,
+        map_id=map_id,
+        content_epoch=content_epoch,
     )
 
 

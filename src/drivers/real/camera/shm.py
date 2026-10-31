@@ -70,6 +70,7 @@ class FrameSnapshot:
     encoding: str
     frame_id: str
     payload: bytes
+    source_generation: int = 0
     fx: float = 0.0
     fy: float = 0.0
     cx: float = 0.0
@@ -98,11 +99,17 @@ class ShmFrameWriter:
         stream_kind: StreamKind,
         slot_capacity: int,
         slot_count: int = 2,
+        source_generation: int | None = None,
     ) -> None:
         self.path = Path(path)
         self.stream_kind = StreamKind(stream_kind)
         self.slot_capacity = int(slot_capacity)
         self.slot_count = int(slot_count)
+        self._configured_generation = (
+            None if source_generation is None else int(source_generation)
+        )
+        if self._configured_generation is not None and self._configured_generation <= 0:
+            raise ValueError("camera SHM source_generation must be positive")
         if self.slot_count < 2 or self.slot_count > 0xFFFF:
             raise ValueError("camera SHM slot_count must be in [2, 65535]")
         if self.slot_capacity <= 0 or self.slot_capacity > 0xFFFFFFFF:
@@ -112,6 +119,7 @@ class ShmFrameWriter:
         self._fd: int | None = None
         self._mapping: mmap.mmap | None = None
         self._last_sequence = 0
+        self._created_timestamp_ns = 0
         self._generation_ns = 0
         self._open()
 
@@ -124,6 +132,12 @@ class ShmFrameWriter:
     @property
     def generation_ns(self) -> int:
         """Return the generation identifier written to the superblock."""
+
+        return self._generation_ns
+
+    @property
+    def source_generation(self) -> int:
+        """Return the camera producer generation shared by its streams."""
 
         return self._generation_ns
 
@@ -248,23 +262,23 @@ class ShmFrameWriter:
             0,
             0,
             sequence,
-            self._generation_ns,
+            self._created_timestamp_ns,
             heartbeat_ns,
-            0,
+            self._generation_ns,
         )
         mapping.flush()
         self._last_sequence = sequence
         return sequence
 
     def _open(self) -> None:
-        previous_generation = 0
+        created_timestamp_ns = 0
         try:
             with self.path.open("rb") as existing:
                 header = existing.read(SUPERBLOCK.size)
             if len(header) == SUPERBLOCK.size:
                 values = SUPERBLOCK.unpack(header)
                 if values[0] == SHM_MAGIC:
-                    previous_generation = int(values[10])
+                    created_timestamp_ns = int(values[10])
         except FileNotFoundError:
             pass
         expected_size = SUPERBLOCK.size + self.slot_count * (SLOT_HEADER.size + self.slot_capacity)
@@ -278,7 +292,9 @@ class ShmFrameWriter:
             raise
         self._fd = fd
         self._mapping = mapping
-        self._generation_ns = max(time.time_ns(), previous_generation + 1)
+        opened_ns = time.time_ns()
+        self._created_timestamp_ns = created_timestamp_ns or opened_ns
+        self._generation_ns = self._configured_generation or opened_ns
         mapping[:] = bytes(expected_size)
         SUPERBLOCK.pack_into(
             mapping,
@@ -293,9 +309,9 @@ class ShmFrameWriter:
             0,
             0,
             0,
+            self._created_timestamp_ns,
+            opened_ns,
             self._generation_ns,
-            self._generation_ns,
-            0,
         )
         mapping.flush()
 
@@ -428,6 +444,11 @@ class ShmFrameReader:
             except (FrameCorrupt, FrameStale):
                 self._last_rejected_sequence = sequence_hint
                 raise
+            if frame.source_generation != generation_ns:
+                last_changed = FrameChanged(
+                    "camera SHM producer generation changed while copying the frame"
+                )
+                continue
             if frame.sequence == self._last_sequence:
                 return None
             self._last_sequence = frame.sequence
@@ -447,9 +468,7 @@ class ShmFrameReader:
             raise FrameCorrupt(f"unsupported camera SHM schema version: {schema_version}")
         if superblock_size != SUPERBLOCK.size or slot_header_size != SLOT_HEADER.size:
             raise FrameCorrupt("camera SHM header sizes do not match schema v1")
-        generation_ns = int(values[10])
-        if generation_ns <= 0:
-            raise FrameCorrupt("camera SHM generation timestamp is not positive")
+        generation_ns = int(values[12])
         return int(values[9]), generation_ns
 
     def _ensure_open(self) -> None:
@@ -494,7 +513,7 @@ class ShmFrameReader:
             published_sequence,
             _created_ns,
             _heartbeat_ns,
-            _reserved_ns,
+            source_generation,
         ) = values
         if magic != SHM_MAGIC:
             raise FrameCorrupt("camera SHM magic does not match LTCSHM01")
@@ -558,6 +577,7 @@ class ShmFrameReader:
         calibration = tuple(float(value) for value in slot[17:27])
         return FrameSnapshot(
             schema_version=slot_schema,
+            source_generation=int(source_generation),
             sequence=sequence,
             timestamp_ns=timestamp_ns,
             stream_kind=stream_kind,

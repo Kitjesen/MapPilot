@@ -2,7 +2,8 @@
 
 DDS remains the real-time map data plane.  This client is only for bounded,
 same-host request/reply operations and for receiving an already validated map
-artifact file descriptor from ``mapd``.
+artifact file descriptor from ``mapd`` on Linux. Windows uses the same JSON
+query protocol over Winsock AF_UNIX; descriptor passing remains Linux-only.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import struct
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, BinaryIO
 
 DEFAULT_SOCKET_PATH = "/run/lingtu-mapd/mapd.sock"
 SOCKET_PATH_ENV = "LINGTU_MAPD_QUERY_SOCKET"
@@ -28,7 +29,7 @@ _VERSION = 2
 _HAS_FD = 1
 _MAX_REQUEST_ID_BYTES = 128
 _MAX_REQUEST_BYTES = 1024 * 1024
-# Match native query_protocol.hpp: bounded JSON previews can contain 80k XYZ points.
+# Match native mapd/protocol.hpp: bounded JSON previews can contain 80k XYZ points.
 _MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 _MAX_TIMEOUT_S = 600.0
 _MAX_DEADLINE_MS = int(_MAX_TIMEOUT_S * 1000.0)
@@ -54,6 +55,37 @@ class MapClientError(RuntimeError):
         super().__init__(message)
         self.reason_code = reason_code
         self.response = dict(response or {})
+
+
+class _WindowsUnixSocket(socket.socket):
+    """Use Winsock's AF_UNIX address when CPython does not expose it."""
+
+    def __init__(self) -> None:
+        super().__init__(1, socket.SOCK_STREAM)
+
+    def connect(self, address: str) -> None:
+        import ctypes
+        import select
+
+        path = os.fsencode(address)
+        if len(path) >= 108:
+            raise OSError("mapd query socket path is too long")
+        winsock = ctypes.WinDLL("ws2_32.dll")
+        winsock.connect.argtypes = [ctypes.c_size_t, ctypes.c_void_p, ctypes.c_int]
+        winsock.connect.restype = ctypes.c_int
+        winsock.WSAGetLastError.restype = ctypes.c_int
+        native_address = ctypes.create_string_buffer(struct.pack("H108s", 1, path))
+        if winsock.connect(self.fileno(), native_address, 110) == 0:
+            return
+        error = winsock.WSAGetLastError()
+        if error != 10035:  # WSAEWOULDBLOCK: settimeout uses a nonblocking socket.
+            raise OSError(error, "mapd Unix socket connect failed")
+        _, writable, exceptional = select.select([], [self], [self], self.gettimeout())
+        if not writable and not exceptional:
+            raise TimeoutError("mapd Unix socket connect timed out")
+        error = self.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+        if error:
+            raise OSError(error, "mapd Unix socket connect failed")
 
 
 @dataclass
@@ -94,21 +126,48 @@ class ArtifactHandle:
         if self._descriptor < 0:
             raise MapClientError("artifact_closed", "artifact file descriptor is closed")
 
-        def chunks() -> Iterator[bytes]:
-            # Keep ownership here until iteration starts: a download can be
-            # cancelled before the generator's body has ever executed.
-            descriptor = self._descriptor
-            if descriptor < 0:
-                raise MapClientError("artifact_closed", "artifact file descriptor is closed")
-            with os.fdopen(descriptor, "rb", closefd=True) as handle:
-                self._descriptor = -1
-                while True:
-                    block = handle.read(chunk_size)
-                    if not block:
-                        return
-                    yield block
+        return _ArtifactChunks(self, chunk_size)
 
-        return chunks()
+
+class _ArtifactChunks(Iterator[bytes]):
+    """Close an abandoned download even when its first read never starts."""
+
+    def __init__(self, artifact: ArtifactHandle, chunk_size: int) -> None:
+        self._artifact: ArtifactHandle | None = artifact
+        self._file: BinaryIO | None = None
+        self._chunk_size = chunk_size
+
+    def __next__(self) -> bytes:
+        if self._artifact is None and self._file is None:
+            raise StopIteration
+        try:
+            if self._artifact is not None:
+                descriptor = self._artifact._descriptor
+                if descriptor < 0:
+                    raise MapClientError("artifact_closed", "artifact file descriptor is closed")
+                self._file = os.fdopen(descriptor, "rb", closefd=True)
+                self._artifact._descriptor = -1
+                self._artifact = None
+            assert self._file is not None
+            block = self._file.read(self._chunk_size)
+        except Exception:
+            self.close()
+            raise
+        if not block:
+            self.close()
+            raise StopIteration
+        return block
+
+    def close(self) -> None:
+        if self._artifact is not None:
+            self._artifact.close()
+            self._artifact = None
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+
+    def __del__(self) -> None:
+        self.close()
 
 
 class MapClient:
@@ -131,6 +190,8 @@ class MapClient:
 
     @staticmethod
     def _new_socket():
+        if os.name == "nt" and not hasattr(socket, "AF_UNIX"):
+            return _WindowsUnixSocket()
         return socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 
     def ping(self) -> dict[str, Any]:

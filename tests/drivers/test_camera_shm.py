@@ -34,6 +34,7 @@ def write_committed_frame(
     stride: int = 6,
     payload: bytes = bytes(range(12)),
     sequence: int = 7,
+    source_generation: int = 0,
     timestamp_ns: int | None = None,
     guard_begin: int | None = None,
     guard_end: int | None = None,
@@ -61,7 +62,7 @@ def write_committed_frame(
         sequence,
         timestamp_ns,
         timestamp_ns,
-        0,
+        source_generation,
     )
     token = sequence * 2
     slot_offset = _SUPERBLOCK.size + active_slot * (_SLOT.size + slot_capacity)
@@ -152,18 +153,85 @@ def test_shm_reader_rejects_a_truncated_backing_object(tmp_path):
 def test_shm_reader_accepts_same_sequence_from_a_new_writer_generation(tmp_path):
     path = tmp_path / "camera_color.shm"
     first_timestamp = time.time_ns()
-    write_committed_frame(path, sequence=7, timestamp_ns=first_timestamp)
+    write_committed_frame(
+        path,
+        sequence=7,
+        source_generation=101,
+        timestamp_ns=first_timestamp,
+    )
     reader = ShmFrameReader(path, max_age_s=None)
     assert reader.read_latest() is not None
     reader.close()
 
     second_timestamp = first_timestamp + 1_000_000
-    write_committed_frame(path, sequence=7, timestamp_ns=second_timestamp)
+    write_committed_frame(
+        path,
+        sequence=7,
+        source_generation=102,
+        timestamp_ns=second_timestamp,
+    )
 
     restarted = reader.read_latest()
     assert restarted is not None
+    assert restarted.source_generation == 102
     assert restarted.sequence == 7
     assert restarted.timestamp_ns == second_timestamp
+
+
+def test_shm_reader_retries_when_writer_restarts_between_hint_and_snapshot(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "camera_color.shm"
+    first_timestamp = time.time_ns()
+    write_committed_frame(
+        path,
+        sequence=7,
+        source_generation=101,
+        timestamp_ns=first_timestamp,
+        payload=bytes([1]) * 12,
+    )
+    reader = ShmFrameReader(path, max_age_s=None, consistency_attempts=2)
+    assert reader.read_latest() is not None
+
+    def overwrite_frame(**kwargs):
+        replacement = tmp_path / "replacement.shm"
+        write_committed_frame(replacement, **kwargs)
+        with path.open("r+b") as current:
+            current.write(replacement.read_bytes())
+            current.flush()
+
+    overwrite_frame(
+        sequence=8,
+        source_generation=101,
+        timestamp_ns=first_timestamp + 500_000,
+        payload=bytes([3]) * 12,
+    )
+    original_read_once = reader._read_once
+    restarted = False
+
+    def restart_before_snapshot(*, now_ns):
+        nonlocal restarted
+        if not restarted:
+            restarted = True
+            overwrite_frame(
+                sequence=8,
+                source_generation=102,
+                timestamp_ns=first_timestamp + 1_000_000,
+                payload=bytes([2]) * 12,
+            )
+        return original_read_once(now_ns=now_ns)
+
+    monkeypatch.setattr(reader, "_read_once", restart_before_snapshot)
+
+    with pytest.raises(FrameChanged, match="producer generation changed"):
+        reader.read_latest()
+
+    frame = reader.read_latest()
+    assert frame is not None
+    assert frame.source_generation == 102
+    assert frame.sequence == 8
+    assert frame.payload == bytes([2]) * 12
 
 
 def test_portable_writer_publishes_complete_consecutive_frames(tmp_path):
@@ -228,6 +296,101 @@ def test_portable_writer_generation_changes_when_ring_is_recreated(tmp_path):
     with ShmFrameWriter(path, stream_kind=StreamKind.INFO, slot_capacity=1) as second:
         assert second.generation_ns > first_generation
         assert second.last_sequence == 0
+
+
+def test_reader_accepts_reused_sequence_after_writer_restarts_same_ring(tmp_path):
+    path = tmp_path / "camera_color.shm"
+    reader = ShmFrameReader(path, max_age_s=None)
+
+    with ShmFrameWriter(
+        path,
+        stream_kind=StreamKind.COLOR,
+        slot_capacity=12,
+        source_generation=101,
+    ) as first:
+        assert first.publish(
+            timestamp_ns=time.time_ns(),
+            width=2,
+            height=2,
+            stride=6,
+            encoding="rgb8",
+            frame_id="camera_link",
+            payload=bytes([1]) * 12,
+        ) == 1
+        first_frame = reader.read_latest()
+        assert first_frame is not None
+        assert first_frame.source_generation == 101
+        assert first_frame.sequence == 1
+
+    with ShmFrameWriter(
+        path,
+        stream_kind=StreamKind.COLOR,
+        slot_capacity=12,
+        source_generation=102,
+    ) as restarted:
+        assert restarted.publish(
+            timestamp_ns=time.time_ns(),
+            width=2,
+            height=2,
+            stride=6,
+            encoding="rgb8",
+            frame_id="camera_link",
+            payload=bytes([2]) * 12,
+        ) == 1
+        restarted_frame = reader.read_latest()
+        assert restarted_frame is not None
+        assert restarted_frame.source_generation == 102
+        assert restarted_frame.sequence == 1
+        assert restarted_frame.payload == bytes([2]) * 12
+
+    reader.close()
+
+
+def test_portable_writer_reuses_one_generation_with_independent_stream_sequences(tmp_path):
+    generation = time.time_ns()
+    color_path = tmp_path / "camera_color.shm"
+    depth_path = tmp_path / "camera_depth.shm"
+    with (
+        ShmFrameWriter(
+            color_path,
+            stream_kind=StreamKind.COLOR,
+            slot_capacity=12,
+            source_generation=generation,
+        ) as color,
+        ShmFrameWriter(
+            depth_path,
+            stream_kind=StreamKind.DEPTH,
+            slot_capacity=8,
+            source_generation=generation,
+        ) as depth,
+    ):
+        for _ in range(2):
+            color.publish(
+                timestamp_ns=time.time_ns(),
+                width=2,
+                height=2,
+                stride=6,
+                encoding="rgb8",
+                frame_id="camera_link",
+                payload=bytes(12),
+            )
+        depth.publish(
+            timestamp_ns=time.time_ns(),
+            width=2,
+            height=2,
+            stride=4,
+            encoding="16UC1",
+            frame_id="camera_link",
+            payload=bytes(8),
+        )
+
+        color_frame = ShmFrameReader(color_path, max_age_s=None).read_latest()
+        depth_frame = ShmFrameReader(depth_path, max_age_s=None).read_latest()
+
+        assert color_frame is not None and depth_frame is not None
+        assert color_frame.source_generation == depth_frame.source_generation == generation
+        assert color_frame.sequence == 2
+        assert depth_frame.sequence == 1
 
 
 def test_portable_writer_and_reader_never_expose_partial_concurrent_frames(tmp_path):

@@ -72,6 +72,14 @@ namespace LingTuSim::Sensors::CameraShm
             std::atomic_thread_fence(std::memory_order_release);
         }
 
+        void StoreLittleEndian64(uint8* Destination, const uint64 Value)
+        {
+            for (uint32 Byte = 0; Byte < sizeof(Value); ++Byte)
+            {
+                Destination[Byte] = static_cast<uint8>(Value >> (Byte * 8U));
+            }
+        }
+
         void StoreRelease32(uint32* Address, const uint32 Value)
         {
             std::atomic_thread_fence(std::memory_order_release);
@@ -265,7 +273,7 @@ namespace LingTuSim::Sensors::CameraShm
         Slot->payload_size = static_cast<uint32>(PayloadSize);
         Slot->payload_capacity = Config.SlotCapacity;
         Slot->payload_crc32 = PayloadSize == 0 ? 0U : Crc32(Payload, PayloadSize);
-        Slot->flags = 0;
+        Slot->flags = Metadata.bHasSimulationTruth ? HasSimulationTruth : 0U;
         Slot->reserved0 = 0;
         Slot->stream_kind = static_cast<uint16>(Metadata.StreamKind);
         Slot->encoding_size = static_cast<uint16>(FTCHARToUTF8(*Metadata.Encoding).Length());
@@ -284,6 +292,12 @@ namespace LingTuSim::Sensors::CameraShm
         Slot->dist_p2 = Metadata.DistP2;
         Slot->dist_k3 = Metadata.DistK3;
         FMemory::Memzero(Slot->reserved1, sizeof(Slot->reserved1));
+        if (Metadata.bHasSimulationTruth)
+        {
+            StoreLittleEndian64(Slot->reserved1, Metadata.TruthSequence);
+            StoreLittleEndian64(Slot->reserved1 + 8, Metadata.ResetGeneration);
+            StoreLittleEndian64(Slot->reserved1 + 16, static_cast<uint64>(Metadata.SimTimeNs));
+        }
         if (PayloadSize > 0)
         {
             FMemory::Memcpy(Destination, Payload, PayloadSize);
@@ -360,6 +374,11 @@ namespace LingTuSim::Sensors::CameraShm
             OutError = TEXT("camera SHM frame generation does not match the RunAllocation generation");
             return false;
         }
+        if (Metadata.SimTimeNs < 0)
+        {
+            OutError = TEXT("camera SHM simulation time must be non-negative");
+            return false;
+        }
         if (Metadata.StreamKind != EStreamKind::Color && Metadata.StreamKind != EStreamKind::Depth)
         {
             OutError = TEXT("camera SHM writer only publishes COLOR or DEPTH frames");
@@ -428,7 +447,7 @@ namespace LingTuSim::Sensors::CameraShm
             Header->published_sequence = 0;
             Header->created_timestamp_ns = UnixTimeNs();
             Header->writer_heartbeat_ns = Header->created_timestamp_ns;
-            Header->reserved1 = 0;
+            Header->reserved1 = Config.Generation;
             return true;
         }
 
@@ -441,6 +460,11 @@ namespace LingTuSim::Sensors::CameraShm
             || Header->created_timestamp_ns == 0)
         {
             OutError = TEXT("existing camera SHM mapping is incompatible with lingtu.camera.shm_frame.v1");
+            return false;
+        }
+        if (Header->reserved1 != Config.Generation)
+        {
+            OutError = TEXT("existing camera SHM mapping model generation does not match writer generation");
             return false;
         }
         return true;

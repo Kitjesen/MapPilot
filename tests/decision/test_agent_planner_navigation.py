@@ -72,6 +72,27 @@ def test_object_tool_delegates_complete_description_to_semantic_planner(agent):
     assert agent.goals == agent.servo == []
 
 
+def test_single_target_find_preserves_the_users_original_instruction(agent):
+    run = agent.module._new_run("帮我找一瓶水")
+
+    result = asyncio.run(agent.module._tool_find_object("chair", run=run))
+
+    agent.planner.submit_owned_instruction.assert_called_once_with(
+        "帮我找一瓶水", run.run_id, expected_revision=1,
+    )
+    assert json.loads(result)["success"] is True
+    assert run.requires_object_confirmation is True
+    assert run.object_confirmed is True
+
+
+def test_follow_selection_does_not_use_object_search_confirmation_gate(agent):
+    run = agent.module._new_run("跟随我")
+
+    assert run.requires_execution_evidence is True
+    assert run.requires_object_confirmation is False
+    assert run.object_query_instruction == ""
+
+
 def test_object_tool_without_semantic_planner_does_not_bypass_preview(agent):
     agent.module.on_system_modules({})
     assert "unavailable" in asyncio.run(agent.module._tool_navigate_to_object("chair")).lower()

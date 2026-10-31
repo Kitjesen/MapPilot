@@ -139,7 +139,7 @@ function iconForDocument(documentId: string) {
   if (documentId === 'simulation') {
     return <Rocket {...commonProps} />
   }
-  if (documentId === 'getting-started') {
+  if (documentId === 'getting-started' || documentId === 'product') {
     return <Bot {...commonProps} />
   }
   return <FileText {...commonProps} />
@@ -323,15 +323,15 @@ function Metadata({ document }: { document: GuideDocument }) {
 
 function HomePage({ onNavigate }: { onNavigate: (documentId: string) => void }) {
   const paths = [
-    { id: 'getting-started', title: '本地或仿真首跑', text: '先证明模块图和选定的仿真边界，而不是直接连接现场机器人。', icon: <Rocket aria-hidden="true" /> },
-    { id: 'runtime', title: '理解运行时', text: '建立地图、检查路径、导航、语义任务与探索各自有清晰的所有权。', icon: <Route aria-hidden="true" /> },
-    { id: 'operations', title: '部署与运维', text: '通过健康检查、路线预览和恢复路径管理实际运行的系统。', icon: <Wrench aria-hidden="true" /> },
+    { id: 'product', title: '了解产品与使用', text: '从产品范围进入首次启动、建图、地图重载和导航操作。', icon: <Bot aria-hidden="true" /> },
+    { id: 'architecture', title: '开发与集成', text: '按职责找到代码、配置和接口的唯一维护位置。', icon: <Code2 aria-hidden="true" /> },
+    { id: 'testing', title: '验证与交付', text: '明确每次测试证明什么，再沿路线图完成剩余验收。', icon: <ShieldCheck aria-hidden="true" /> },
   ]
 
   const capabilities = [
-    { title: '理解环境', text: '本地、仿真和现场证明不同的事情。', icon: <Map aria-hidden="true" /> },
-    { title: '保持边界', text: '模块、蓝图、端口和显式连线定义产品路径。', icon: <Code2 aria-hidden="true" /> },
-    { title: '安全行动', text: '运动前先检查定位、地图、路线和命令源。', icon: <ShieldCheck aria-hidden="true" /> },
+    { title: '一条操作流程', text: '建图、保存重载、定位、导航和停止，按实际状态推进。', icon: <Map aria-hidden="true" /> },
+    { title: '一份当前说明', text: '用户操作在手册，实现细节在所属模块，剩余工作在路线图。', icon: <Code2 aria-hidden="true" /> },
+    { title: '可追溯的结果', text: '区分代码实现、仿真结果和真实机器人验收。', icon: <ShieldCheck aria-hidden="true" /> },
   ]
 
   return (
@@ -339,11 +339,11 @@ function HomePage({ onNavigate }: { onNavigate: (documentId: string) => void }) 
       <section className="home-hero" aria-labelledby="home-title">
         <div className="hero-copy">
           <p className="eyebrow">LingTu documentation</p>
-          <h1 id="home-title">让四足机器人可靠地理解、建图与导航。</h1>
-          <p className="hero-lede">从可复现的本地验证开始，逐步进入仿真、部署和受监督的现场任务。每一步都说明它真正证明什么，以及何时必须停止。</p>
+          <h1 id="home-title">从建图到导航，按一条清楚的流程使用机器人。</h1>
+          <p className="hero-lede">了解 LingTu 的产品范围，找到启动与操作方法，并查看每项能力的验收边界。开发、集成和交付使用同一份当前手册。</p>
           <div className="hero-actions">
-            <a className="button-primary" href="#getting-started">开始使用 <ArrowRight aria-hidden="true" /></a>
-            <a className="text-link" href="#architecture">理解架构 <ArrowRight aria-hidden="true" /></a>
+            <a className="button-primary" href="#product">了解产品 <ArrowRight aria-hidden="true" /></a>
+            <a className="text-link" href="#getting-started">开始使用 <ArrowRight aria-hidden="true" /></a>
           </div>
         </div>
         <div className="hero-diagram" aria-label="从传感器到安全命令边界的 LingTu 数据流示意">
@@ -379,7 +379,7 @@ function HomePage({ onNavigate }: { onNavigate: (documentId: string) => void }) 
       <section className="home-capabilities" aria-labelledby="capabilities-title">
         <div className="section-heading">
           <p className="eyebrow">Product model</p>
-          <h2 id="capabilities-title">把系统理解成可验证的边界</h2>
+          <h2 id="capabilities-title">让操作、实现和验收各有归属</h2>
         </div>
         <div className="capability-list">
           {capabilities.map((capability) => (
@@ -394,10 +394,10 @@ function HomePage({ onNavigate }: { onNavigate: (documentId: string) => void }) 
       <section className="home-safety" aria-label="现场操作提示">
         <TriangleAlert aria-hidden="true" />
         <div>
-          <strong>现场操作不是 Quick Start 的默认下一步。</strong>
-          <p>任何可能产生运动的流程都要先完成无运动检查、地图与定位验证、路线预览和操作员监督。</p>
+          <strong>真实机器人操作需要对应的现场证据。</strong>
+          <p>本地测试与仿真通过后，仍需确认实际版本、地图与定位，并在现场看护下验证运动。</p>
         </div>
-        <button type="button" onClick={() => onNavigate('operations')}>查看安全边界 <ChevronRight aria-hidden="true" /></button>
+        <button type="button" onClick={() => onNavigate('operations')}>查看现场流程 <ChevronRight aria-hidden="true" /></button>
       </section>
     </div>
   )
@@ -433,7 +433,6 @@ function OnThisPage({
         <dl>
           <div><dt>来源</dt><dd><code>{document.sourcePath}</code></dd></div>
           <div><dt>状态</dt><dd>{document.status}</dd></div>
-          <div><dt>文档索引</dt><dd>{document.lastVerified}</dd></div>
         </dl>
       </section>
       <section className={`boundary-note operation-${document.operation.toLowerCase().replace(/[^a-z]+/g, '-')}`}>
@@ -560,7 +559,7 @@ export function DocsApp() {
     }),
     [currentDocument],
   )
-  const visibleDocuments = guideDocuments.filter((entry) => entry.id !== 'home')
+  const visibleDocuments = guideGroups.flatMap((group) => group.ids.map(findDocument))
   const documentIndex = visibleDocuments.findIndex((entry) => entry.id === currentDocument.id)
   const previousDocument = documentIndex > 0 ? visibleDocuments[documentIndex - 1] : undefined
   const nextDocument = documentIndex >= 0 && documentIndex < visibleDocuments.length - 1 ? visibleDocuments[documentIndex + 1] : undefined

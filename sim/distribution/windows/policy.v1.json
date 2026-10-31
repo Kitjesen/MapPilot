@@ -21,7 +21,7 @@
       "/Game/RobotSim/Maps/FactoryPark_HF",
       "/Game/RobotSim/Maps/OpenField_HF",
       "/Game/RobotSim/Maps/OpenFieldRuntime",
-      "/Game/RobotSim/Maps/ThunderV4_RuntimePreview"
+      "/Game/RobotSim/Maps/LingTuFrontEnd"
     ],
     "platform": "Win64",
     "project": "sim/runtime/visual/RobotSimUE/RobotSimUE.uproject",

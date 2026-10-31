@@ -1,6 +1,6 @@
 #include "lingtu/maps/build/occupancy_snapshot.hpp"
 
-#include "lingtu/maps/build/pcd.hpp"
+#include "lingtu/maps/io/pcd.hpp"
 #include "lingtu/maps/layers/ground_surface.hpp"
 
 #include <algorithm>

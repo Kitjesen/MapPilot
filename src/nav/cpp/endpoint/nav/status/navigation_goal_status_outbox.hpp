@@ -5,7 +5,7 @@
 #include <functional>
 #include <vector>
 
-#include "runtime/goal/plan.hpp"
+#include "app/goal/plan.hpp"
 
 namespace lingtu::nav::endpoint {
 

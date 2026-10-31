@@ -4,7 +4,7 @@
   "description": "Map-free MuJoCo acceptance for native live exploration segments.",
   "product_contract": {
     "product": "explore",
-    "source": "config/runtime_graph/products/explore.yaml",
+    "source": "config/system/products/explore.yaml",
     "native_control_mode": "autonomy",
     "slam_mode": "mapping",
     "requires_map": false,
@@ -20,7 +20,7 @@
     "width": 3.0
   },
   "slam_runtime": {
-    "provider": "fastlio2",
+    "provider": "ltlio",
     "mode": "mapping"
   },
   "sensor_runtime": {
@@ -39,7 +39,7 @@
     "apply_timeout_ms": 500
   },
   "paths": {
-    "slam_config": "src/localization/fastlio2/config/sim_mid360_slam.yaml",
+    "slam_config": "src/localization/ltlio/config/sim_mid360_slam.yaml",
     "path_library": "src/nav/cpp/planning/local/cmu/paths/thunder",
     "sensor_runner": "sim/scripts/mujoco/native_dds_sensors.py"
   },

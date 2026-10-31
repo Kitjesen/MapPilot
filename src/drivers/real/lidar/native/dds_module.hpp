@@ -17,6 +17,12 @@ enum class DdsOutput {
   Imu,
 };
 
+struct NavigationFixtureMapIdentity {
+  std::string map_id;
+  std::int64_t content_epoch{0};
+  std::string frame_id;
+};
+
 class DdsModule {
  public:
   DdsModule(
@@ -25,7 +31,9 @@ class DdsModule {
       std::string imu_frame,
       bool navigation_fixture = false,
       DdsOutput output = DdsOutput::All,
-      bool publish_raw_packets = true);
+      bool publish_raw_packets = true,
+      std::optional<NavigationFixtureMapIdentity> navigation_fixture_map_identity =
+          std::nullopt);
   ~DdsModule();
 
   DdsModule(const DdsModule&) = delete;

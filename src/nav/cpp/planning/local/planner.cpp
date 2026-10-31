@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "planning/local/cmu/backend.hpp"
+#include "planning/local/grid_axis.hpp"
 #include "planning/local/scan/backend.hpp"
 #include "planning/local/scan/task.hpp"
 #include "trajectory/spline.hpp"
@@ -103,14 +104,92 @@ bool LocalCollisionMapView::occupiedLinear(std::size_t linear) const noexcept {
           static_cast<std::uint8_t>(1U << (linear % 8U))) != 0U;
 }
 
+bool LocalCollisionMapView::observedFreeBox(const Vec3 &minimum,
+                                           const Vec3 &maximum) const noexcept {
+  return observedBox(minimum,maximum,true);
+}
+
+bool LocalCollisionMapView::observedClearBox(const Vec3 &minimum,
+                                            const Vec3 &maximum) const noexcept {
+  return observedBox(minimum,maximum,false);
+}
+
+bool LocalCollisionMapView::observedBox(const Vec3 &minimum, const Vec3 &maximum,
+                                       bool requireAllFree) const noexcept {
+  if (!valid() || !finitePoint(minimum) || !finitePoint(maximum) ||
+      !measuredOccupiedStorage || !knownFreeStorage ||
+      measuredOccupiedStorage->size() != inflatedBytes ||
+      knownFreeStorage->size() != inflatedBytes ||
+      minimum.x >= maximum.x || minimum.y >= maximum.y || minimum.z >= maximum.z ||
+      minimum.x < aabbMin.x || minimum.y < aabbMin.y || minimum.z < aabbMin.z ||
+      maximum.x > aabbMax.x || maximum.y > aabbMax.y || maximum.z > aabbMax.z) {
+    return false;
+  }
+  const auto range = [&](double low, double high, double origin) {
+    const local::GridAxis axis(origin,resolution);
+    const int first=static_cast<int>(axis.index(low));
+    double upper=axis.coordinate(high);
+    const double face=std::round(upper);
+    const double rounding=4.0*std::numeric_limits<double>::epsilon()*std::max(1.0,std::abs(upper));
+    if (std::abs(upper-face)<=rounding) upper=face;
+    const int last=static_cast<int>(std::ceil(upper)-axis.base)-1;
+    return std::pair<int, int>{first, last};
+  };
+  const auto [x0, x1] = range(minimum.x, maximum.x, aabbMin.x);
+  const auto [y0, y1] = range(minimum.y, maximum.y, aabbMin.y);
+  const auto [z0, z1] = range(minimum.z, maximum.z, aabbMin.z);
+  if (x0 < 0 || y0 < 0 || z0 < 0 || x1 >= sizeX || y1 >= sizeY || z1 >= sizeZ ||
+      x0 > x1 || y0 > y1 || z0 > z1) {
+    return false;
+  }
+  bool seenFree=false;
+  for (int z = z0; z <= z1; ++z) for (int y = y0; y <= y1; ++y)
+    for (int x = x0; x <= x1; ++x) {
+      const std::size_t linear =
+          (static_cast<std::size_t>(z) * sizeY + y) * sizeX + x;
+      const auto mask = static_cast<std::uint8_t>(1U << (linear % 8U));
+      if (((*measuredOccupiedStorage)[linear / 8U] & mask) != 0U) return false;
+      const bool free=((*knownFreeStorage)[linear / 8U] & mask)!=0U;
+      if (requireAllFree && !free) return false;
+      seenFree |= free;
+    }
+  return seenFree;
+}
+
+bool LocalCollisionMapView::measuredOccupiedCylinder(const Vec3 &center, double radius,
+    double below, double above, bool upperHemisphere) const noexcept {
+  if (!measuredOccupiedStorage) return false;
+  const local::GridAxis ax(aabbMin.x,resolution), ay(aabbMin.y,resolution), az(aabbMin.z,resolution);
+  const int x0=static_cast<int>(std::max<std::int64_t>(0,ax.index(center.x-radius)));
+  const int y0=static_cast<int>(std::max<std::int64_t>(0,ay.index(center.y-radius)));
+  const int z0=static_cast<int>(std::max<std::int64_t>(0,az.index(center.z-below)));
+  const int x1=static_cast<int>(std::min<std::int64_t>(sizeX-1,ax.index(center.x+radius)));
+  const int y1=static_cast<int>(std::min<std::int64_t>(sizeY-1,ay.index(center.y+radius)));
+  const int z1=static_cast<int>(std::min<std::int64_t>(sizeZ-1,az.index(center.z+above)));
+  for (int z=z0;z<=z1;++z) {
+    const double lowZ=aabbMin.z+z*resolution, highZ=lowZ+resolution;
+    if (highZ<=center.z-below+1e-9 || lowZ>=center.z+above-1e-9) continue;
+    const double dz=upperHemisphere ? std::max(0.0,lowZ-center.z) : 0.0;
+    for (int y=y0;y<=y1;++y) for (int x=x0;x<=x1;++x) {
+      const std::size_t linear=(static_cast<std::size_t>(z)*sizeY+y)*sizeX+x;
+      if (((*measuredOccupiedStorage)[linear/8U] & (1U<<(linear%8U)))==0U) continue;
+      const double lowX=aabbMin.x+x*resolution, lowY=aabbMin.y+y*resolution;
+      const double dx=std::max({lowX-center.x,0.0,center.x-lowX-resolution});
+      const double dy=std::max({lowY-center.y,0.0,center.y-lowY-resolution});
+      if (dx*dx+dy*dy+dz*dz<=radius*radius+1e-12) return true;
+    }
+  }
+  return false;
+}
+
 bool LocalCollisionMapView::occupied(const Vec3 &planning_point) const noexcept {
   if (!valid() || !finitePoint(planning_point)) {
     return true;
   }
   const Vec3 point = gridPoint(*this, planning_point);
-  const int x = static_cast<int>(std::floor((point.x - aabbMin.x) / resolution));
-  const int y = static_cast<int>(std::floor((point.y - aabbMin.y) / resolution));
-  const int z = static_cast<int>(std::floor((point.z - aabbMin.z) / resolution));
+  const auto x = local::GridAxis(aabbMin.x, resolution).index(point.x);
+  const auto y = local::GridAxis(aabbMin.y, resolution).index(point.y);
+  const auto z = local::GridAxis(aabbMin.z, resolution).index(point.z);
   if (x < 0 || x >= sizeX || y < 0 || y >= sizeY || z < 0 || z >= sizeZ) {
     return true;
   }
@@ -265,7 +344,7 @@ const ControlHints &LocalPlan::hints() const noexcept {
   return hints_;
 }
 
-class local::Planner::Impl {
+class LocalPlanner::Impl {
  public:
   explicit Impl(LocalPlannerParams params) : params_(std::move(params)) {
     if (params_.backend == LocalPlannerBackend::Scan) {
@@ -288,6 +367,10 @@ class local::Planner::Impl {
   }
 
   bool configured() const { return configured_; }
+
+  LocalPlannerCapabilities capabilities() const noexcept {
+    return plannerCapabilities(params_);
+  }
 
   LocalPlannerDebugSnapshot debugSnapshot() const {
     LocalPlannerDebugSnapshot snapshot =
@@ -338,6 +421,18 @@ class local::Planner::Impl {
   bool configured_{false};
 };
 
+LocalPlannerCapabilities plannerCapabilities(
+    const LocalPlannerParams &params) noexcept {
+  const bool scan = params.backend == LocalPlannerBackend::Scan;
+  return {
+      scan,                              // ownsReferencePath
+      !scan && params.useTraversabilityCost,  // consumesTraversability
+      scan,                              // consumesPredictions
+      scan,                              // supportsBoundaryDeparture
+      scan,                              // consumesCollisionMap
+  };
+}
+
 const char *localPlannerBackendName(LocalPlannerBackend backend) {
   switch (backend) {
     case LocalPlannerBackend::Cmu:
@@ -359,11 +454,11 @@ const char *localPlanStatusName(LocalPlanStatus status) {
     case LocalPlanStatus::NotConfigured:
       return "not_configured";
     case LocalPlanStatus::NoPath:
-      return "no_path";
+      return "local_no_path";
     case LocalPlanStatus::Blocked:
-      return "blocked";
+      return "local_blocked";
     case LocalPlanStatus::NearFieldStop:
-      return "near_field_stop";
+      return "local_near_field_stop";
     case LocalPlanStatus::Cancelled:
       return "cancelled";
     case LocalPlanStatus::Expired:
@@ -372,42 +467,46 @@ const char *localPlanStatusName(LocalPlanStatus status) {
   return "invalid_input";
 }
 
-local::Planner::Planner(const LocalPlannerParams &params) : impl_(std::make_unique<Impl>(params)) {}
+LocalPlanner::LocalPlanner(const LocalPlannerParams &params) : impl_(std::make_unique<Impl>(params)) {}
 
-local::Planner::~Planner() = default;
-local::Planner::Planner(local::Planner &&) noexcept = default;
-local::Planner &local::Planner::operator=(local::Planner &&) noexcept = default;
+LocalPlanner::~LocalPlanner() = default;
+LocalPlanner::LocalPlanner(LocalPlanner &&) noexcept = default;
+LocalPlanner &LocalPlanner::operator=(LocalPlanner &&) noexcept = default;
 
-bool local::Planner::configure(const std::string &path_library_dir) {
+bool LocalPlanner::configure(const std::string &path_library_dir) {
   return impl_->configure(path_library_dir);
 }
 
-bool local::Planner::configured() const {
+bool LocalPlanner::configured() const {
   return impl_->configured();
 }
 
-LocalPlannerDebugSnapshot local::Planner::debugSnapshot() const {
+LocalPlannerCapabilities LocalPlanner::capabilities() const noexcept {
+  return impl_->capabilities();
+}
+
+LocalPlannerDebugSnapshot LocalPlanner::debugSnapshot() const {
   return impl_->debugSnapshot();
 }
 
-LocalPlan local::Planner::plan(const LocalPlanRequest &request) {
+LocalPlan LocalPlanner::plan(const LocalPlanRequest &request) {
   return impl_->plan(request);
 }
 
-LocalPlan local::Planner::plan(const LocalPlanRequest &request,
+LocalPlan LocalPlanner::plan(const LocalPlanRequest &request,
                                const LocalPlanCancel &cancel) {
   return impl_->plan(request, cancel);
 }
 
-void local::Planner::pause() {
+void LocalPlanner::pause() {
   impl_->pause();
 }
 
-void local::Planner::reset() {
+void LocalPlanner::reset() {
   impl_->reset();
 }
 
-const LocalPlannerParams &local::Planner::params() const {
+const LocalPlannerParams &LocalPlanner::params() const {
   return impl_->params();
 }
 

@@ -7,7 +7,35 @@ import numpy as np
 import pytest
 
 from decision.frontiers.scorer import FrontierScorer
-from decision.frontiers.vlnav import Candidate, Cue, observe_frontiers, rank_candidates, unknown_ratio, vl_score
+from decision.frontiers.vlnav import (
+    Candidate,
+    Cue,
+    cue_from_box,
+    observe_frontiers,
+    rank_candidates,
+    unknown_ratio,
+    vl_score,
+)
+
+
+def test_box_projection_preserves_left_right_and_resize_intrinsics():
+    center = cue_from_box((300, 100, 340, 160), 0.8, fx=320, cx=320)
+    right = cue_from_box((460, 100, 500, 160), 0.8, fx=320, cx=320)
+    left = cue_from_box((140, 100, 180, 160), 0.8, fx=320, cx=320)
+    assert center.bearing == 0
+    assert right.bearing == pytest.approx(-math.atan(0.5))
+    assert left.bearing == pytest.approx(-right.bearing)
+    assert right.confidence == 0.8
+    resized = cue_from_box((230, 50, 250, 80), 0.8, fx=160, cx=160)
+    assert resized == right
+    assert vl_score(right.bearing, [right], math.pi / 2) > vl_score(left.bearing, [right], math.pi / 2)
+
+
+def test_box_projection_rejects_missing_calibration_and_empty_boxes():
+    with pytest.raises(ValueError, match="fx"):
+        cue_from_box((10, 10, 20, 20), 0.8, fx=0, cx=320)
+    with pytest.raises(ValueError, match="positive area"):
+        cue_from_box((10, 10, 10, 20), 0.8, fx=320, cx=320)
 
 
 def rank(candidates, robot=(0.0, 0.0, 0.4), **kwargs):

@@ -12,6 +12,19 @@ bool SnapshotsMatch(const FRobotDriveInputSnapshot &Left, const FRobotDriveInput
          FMath::IsNearlyEqual(Left.CameraPitch, Right.CameraPitch) &&
          Left.ActiveControls == Right.ActiveControls;
 }
+
+FString KeyboardControlName(const FKey &Key) {
+  FString KeyName = Key.GetFName().ToString().ToLower();
+  const FKey DigitKeys[] = {EKeys::Zero, EKeys::One, EKeys::Two,   EKeys::Three, EKeys::Four,
+                            EKeys::Five, EKeys::Six, EKeys::Seven, EKeys::Eight, EKeys::Nine};
+  for (int32 Index = 0; Index < UE_ARRAY_COUNT(DigitKeys); ++Index) {
+    if (Key == DigitKeys[Index]) {
+      KeyName = FString::FromInt(Index);
+      break;
+    }
+  }
+  return FString::Printf(TEXT("keyboard.%s"), *KeyName);
+}
 }  // namespace
 
 ERobotDriveInputUpdate FRobotDriveInputState::SetDriveMode(const bool bInDriveMode) {
@@ -42,6 +55,19 @@ ERobotDriveInputUpdate FRobotDriveInputState::SetViewportFocused(const bool bInV
     return ERobotDriveInputUpdate::Released;
   }
   return ERobotDriveInputUpdate::Changed;
+}
+
+ERobotDriveInputUpdate FRobotDriveInputState::SetKeyBindings(
+    const FDriveKeyBindings &InKeyBindings) {
+  FDriveKeyBindings Normalized = InKeyBindings;
+  Normalized.Normalize();
+  if (KeyBindings == Normalized) {
+    return ERobotDriveInputUpdate::Handled;
+  }
+  KeyBindings = Normalized;
+  ClearPhysicalState();
+  bRelease = true;
+  return ERobotDriveInputUpdate::Released;
 }
 
 ERobotDriveInputUpdate FRobotDriveInputState::HandleKeyDown(const FKey &Key, const bool bIsRepeat) {
@@ -119,27 +145,26 @@ FRobotDriveInputSnapshot FRobotDriveInputState::GetSnapshot() const {
     return Snapshot;
   }
 
-  Snapshot.bDeadman = bKeyboardDeadman || bGamepadDeadman;
-  if (bKeyboardDeadman) {
-    Snapshot.ActiveControls.Add(TEXT("keyboard.left_shift"));
+  // Keyboard movement itself is the live permit; gamepad axes still require LB.
+  Snapshot.bDeadman = bForward || bBackward || bLeft || bRight || bTurnLeft || bTurnRight ||
+                      bGamepadDeadman;
+  if (bForward) {
+    Snapshot.ActiveControls.Add(KeyboardControlName(KeyBindings.GetKey(EDriveKeyAction::Forward)));
   }
-  if (bW) {
-    Snapshot.ActiveControls.Add(TEXT("keyboard.w"));
+  if (bBackward) {
+    Snapshot.ActiveControls.Add(KeyboardControlName(KeyBindings.GetKey(EDriveKeyAction::Backward)));
   }
-  if (bS) {
-    Snapshot.ActiveControls.Add(TEXT("keyboard.s"));
+  if (bLeft) {
+    Snapshot.ActiveControls.Add(KeyboardControlName(KeyBindings.GetKey(EDriveKeyAction::Left)));
   }
-  if (bA) {
-    Snapshot.ActiveControls.Add(TEXT("keyboard.a"));
+  if (bRight) {
+    Snapshot.ActiveControls.Add(KeyboardControlName(KeyBindings.GetKey(EDriveKeyAction::Right)));
   }
-  if (bD) {
-    Snapshot.ActiveControls.Add(TEXT("keyboard.d"));
+  if (bTurnLeft) {
+    Snapshot.ActiveControls.Add(KeyboardControlName(KeyBindings.GetKey(EDriveKeyAction::TurnLeft)));
   }
-  if (bQ) {
-    Snapshot.ActiveControls.Add(TEXT("keyboard.q"));
-  }
-  if (bE) {
-    Snapshot.ActiveControls.Add(TEXT("keyboard.e"));
+  if (bTurnRight) {
+    Snapshot.ActiveControls.Add(KeyboardControlName(KeyBindings.GetKey(EDriveKeyAction::TurnRight)));
   }
   if (bGamepadDeadman) {
     Snapshot.ActiveControls.Add(TEXT("gamepad.left_shoulder"));
@@ -159,20 +184,29 @@ FRobotDriveInputSnapshot FRobotDriveInputState::GetSnapshot() const {
     Snapshot.ActiveControls.Add(TEXT("gamepad.right_trigger"));
   }
   if (Snapshot.bDeadman) {
-    const float KeyboardForward = static_cast<float>(bW) - static_cast<float>(bS);
-    const float KeyboardLeft = static_cast<float>(bA) - static_cast<float>(bD);
-    const float KeyboardYawLeft = static_cast<float>(bQ) - static_cast<float>(bE);
-    Snapshot.Forward = FMath::Clamp(KeyboardForward + static_cast<float>(LeftStick.Y), -1.0f, 1.0f);
-    Snapshot.Left = FMath::Clamp(KeyboardLeft - static_cast<float>(LeftStick.X), -1.0f, 1.0f);
-    Snapshot.YawLeft = FMath::Clamp(KeyboardYawLeft + LeftTrigger - RightTrigger, -1.0f, 1.0f);
+    const float KeyboardForward = static_cast<float>(bForward) - static_cast<float>(bBackward);
+    const float KeyboardLeft = static_cast<float>(bLeft) - static_cast<float>(bRight);
+    const float KeyboardYawLeft = static_cast<float>(bTurnLeft) - static_cast<float>(bTurnRight);
+    const float GamepadForward = bGamepadDeadman ? static_cast<float>(LeftStick.Y) : 0.0f;
+    const float GamepadLeft = bGamepadDeadman ? -static_cast<float>(LeftStick.X) : 0.0f;
+    const float GamepadYawLeft = bGamepadDeadman ? LeftTrigger - RightTrigger : 0.0f;
+    Snapshot.Forward = FMath::Clamp(KeyboardForward + GamepadForward, -1.0f, 1.0f);
+    Snapshot.Left = FMath::Clamp(KeyboardLeft + GamepadLeft, -1.0f, 1.0f);
+    Snapshot.YawLeft = FMath::Clamp(KeyboardYawLeft + GamepadYawLeft, -1.0f, 1.0f);
   }
   return Snapshot;
 }
 
-bool FRobotDriveInputState::IsMappedKey(const FKey &Key) {
-  return Key == EKeys::W || Key == EKeys::S || Key == EKeys::A || Key == EKeys::D ||
-         Key == EKeys::Q || Key == EKeys::E || Key == EKeys::LeftShift ||
-         Key == EKeys::Gamepad_LeftShoulder;
+bool FRobotDriveInputState::IsMappedKey(const FKey &Key) const {
+  if (Key == EKeys::Gamepad_LeftShoulder) {
+    return true;
+  }
+  for (uint8 Index = 0; Index < static_cast<uint8>(EDriveKeyAction::Count); ++Index) {
+    if (Key == KeyBindings.GetKey(static_cast<EDriveKeyAction>(Index))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool FRobotDriveInputState::IsMappedAnalog(const FKey &Key) {
@@ -195,20 +229,18 @@ const TCHAR *FRobotDriveInputState::InputDeviceName(const ERobotDriveInputDevice
 ERobotDriveInputUpdate FRobotDriveInputState::SetMappedKey(const FKey &Key, const bool bPressed) {
   const FRobotDriveInputSnapshot Before = GetSnapshot();
   ERobotDriveInputDevice Device = ERobotDriveInputDevice::Keyboard;
-  if (Key == EKeys::W) {
-    bW = bPressed;
-  } else if (Key == EKeys::S) {
-    bS = bPressed;
-  } else if (Key == EKeys::A) {
-    bA = bPressed;
-  } else if (Key == EKeys::D) {
-    bD = bPressed;
-  } else if (Key == EKeys::Q) {
-    bQ = bPressed;
-  } else if (Key == EKeys::E) {
-    bE = bPressed;
-  } else if (Key == EKeys::LeftShift) {
-    bKeyboardDeadman = bPressed;
+  if (Key == KeyBindings.GetKey(EDriveKeyAction::Forward)) {
+    bForward = bPressed;
+  } else if (Key == KeyBindings.GetKey(EDriveKeyAction::Backward)) {
+    bBackward = bPressed;
+  } else if (Key == KeyBindings.GetKey(EDriveKeyAction::Left)) {
+    bLeft = bPressed;
+  } else if (Key == KeyBindings.GetKey(EDriveKeyAction::Right)) {
+    bRight = bPressed;
+  } else if (Key == KeyBindings.GetKey(EDriveKeyAction::TurnLeft)) {
+    bTurnLeft = bPressed;
+  } else if (Key == KeyBindings.GetKey(EDriveKeyAction::TurnRight)) {
+    bTurnRight = bPressed;
   } else if (Key == EKeys::Gamepad_LeftShoulder) {
     bGamepadDeadman = bPressed;
     Device = ERobotDriveInputDevice::Gamepad;
@@ -230,13 +262,12 @@ ERobotDriveInputUpdate FRobotDriveInputState::FinishMutation(const FRobotDriveIn
 }
 
 void FRobotDriveInputState::ClearPhysicalState() {
-  bW = false;
-  bS = false;
-  bA = false;
-  bD = false;
-  bQ = false;
-  bE = false;
-  bKeyboardDeadman = false;
+  bForward = false;
+  bBackward = false;
+  bLeft = false;
+  bRight = false;
+  bTurnLeft = false;
+  bTurnRight = false;
   bGamepadDeadman = false;
   GamepadLeftX = 0.0f;
   GamepadLeftY = 0.0f;

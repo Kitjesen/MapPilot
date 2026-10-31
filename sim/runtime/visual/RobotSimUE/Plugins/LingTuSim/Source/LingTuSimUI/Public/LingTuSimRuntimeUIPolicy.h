@@ -13,6 +13,7 @@ class LINGTUSIMUI_API FRuntimeUIPolicy final {
   static bool ShouldEnable(const TCHAR *CommandLine, bool bIsUnattended, bool bIsGame);
 
   static bool CanOwnInputContext(int32 EligibleGameWorldCount, int32 LocalPlayerCount);
+  static bool ShouldStartFrontEnd(const TCHAR* CommandLine, bool bHasSession, bool bHasControl);
 
  private:
   FRuntimeUIPolicy() = delete;

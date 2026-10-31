@@ -12,6 +12,7 @@
     "streams"
   ],
   "properties": {
+    "scene_measurements": {"$ref": "lingtu.sim.measurement-scene.v1"},
     "schema": {
       "const": "lingtu.sim.sensor-plan.v1"
     },
@@ -32,6 +33,9 @@
         "truth_odom"
       ],
       "properties": {
+        "thermal": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/thermal_stream"}},
+        "acoustic": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/acoustic_stream"}},
+        "semantic": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/semantic_stream"}},
         "rgb": {
           "type": "array",
           "items": {
@@ -66,6 +70,11 @@
             "$ref": "#/$defs/truth_odom_stream"
           },
           "minItems": 0
+        },
+        "gnss": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/gnss_stream"},
+          "minItems": 1
         }
       }
     },
@@ -76,7 +85,213 @@
     "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$"
     }
   },
+  "allOf": [{
+    "if": {
+      "properties": {"streams": {"anyOf": [
+        {"required": ["thermal"]}, {"required": ["acoustic"]}, {"required": ["semantic"]}
+      ]}}, "required": ["streams"]
+    },
+    "then": {"required": ["scene_measurements"]},
+    "else": {"not": {"required": ["scene_measurements"]}}
+  }],
   "$defs": {
+    "measurement_stream": {
+      "type": "object", "additionalProperties": false,
+      "required": ["instance_id", "sensor_id", "owner", "source", "frame_id", "parent_frame_id",
+                   "extrinsic", "rate_hz", "transport", "message_type", "measurement"],
+      "properties": {
+        "instance_id": {"$ref": "#/$defs/frame_id"},
+        "sensor_id": {"$ref": "#/$defs/frame_id"},
+        "owner": {"const": "physics"}, "source": {"const": "mujoco_measurement"},
+        "frame_id": {"$ref": "#/$defs/frame_id"}, "parent_frame_id": {"$ref": "#/$defs/frame_id"},
+        "extrinsic": {"$ref": "#/$defs/extrinsic"},
+        "rate_hz": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000000000},
+        "transport": {"const": "typed_dds"}, "message_type": {"type": "string"},
+        "measurement": {"$ref": "#/$defs/measurement_configuration"}
+      }
+    },
+    "thermal_stream": {
+      "allOf": [{"$ref": "#/$defs/measurement_stream"}, {"properties": {
+        "message_type": {"const": "lingtu.dds.ThermalImage"},
+        "measurement": {
+          "required": ["camera", "thermal"], "not": {"required": ["microphone"]},
+          "properties": {"noise": {"properties": {"unit": {"const": "K"}}}}
+        }
+      }}]
+    },
+    "semantic_stream": {
+      "allOf": [{"$ref": "#/$defs/measurement_stream"}, {"properties": {
+        "message_type": {"const": "lingtu.dds.SemanticImage"},
+        "measurement": {
+          "required": ["camera"], "not": {"anyOf": [{"required": ["microphone"]}, {"required": ["thermal"]}]},
+          "properties": {"noise": {"properties": {"unit": {"const": "label"}, "enabled": {"const": false}}}}
+        }
+      }}]
+    },
+    "acoustic_stream": {
+      "allOf": [{"$ref": "#/$defs/measurement_stream"}, {"properties": {
+        "message_type": {"const": "lingtu.dds.AcousticBlock"},
+        "measurement": {
+          "required": ["microphone"],
+          "not": {"anyOf": [{"required": ["camera"]}, {"required": ["thermal"]},
+                            {"required": ["gimbal"]}, {"required": ["max_distance_m"]}]},
+          "properties": {"noise": {"properties": {"unit": {"const": "Pa"}}}}
+        }
+      }}]
+    },
+    "measurement_number": {"type": "number", "minimum": -1.7976931348623157e308, "maximum": 1.7976931348623157e308},
+    "measurement_json": {"anyOf": [
+      {"type": ["string", "boolean", "null"]}, {"$ref": "#/$defs/measurement_number"},
+      {"type": "array", "items": {"$ref": "#/$defs/measurement_json"}},
+      {"type": "object", "additionalProperties": {"$ref": "#/$defs/measurement_json"}}
+    ]},
+    "measurement_positive": {"type": "number", "exclusiveMinimum": 0, "maximum": 1.7976931348623157e308},
+    "measurement_vector3": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"$ref": "#/$defs/measurement_number"}},
+    "measurement_configuration": {
+      "type": "object", "additionalProperties": false, "required": ["body_frame_id", "mount_pose"],
+      "properties": {
+        "body_frame_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*/[A-Za-z0-9][A-Za-z0-9_./:-]*$"},
+        "mount_pose": {
+          "type": "object", "additionalProperties": false, "required": ["position_m", "orientation_wxyz"],
+          "properties": {
+            "position_m": {"$ref": "#/$defs/measurement_vector3"},
+            "orientation_wxyz": {"type": "array", "minItems": 4, "maxItems": 4,
+              "items": {"type": "number", "minimum": -1, "maximum": 1}, "not": {"const": [0, 0, 0, 0]}}
+          }
+        },
+        "camera": {"$ref": "#/$defs/measurement_camera"},
+        "gimbal": {"$ref": "#/$defs/measurement_gimbal"},
+        "thermal": {"$ref": "#/$defs/measurement_thermal"},
+        "microphone": {"$ref": "#/$defs/measurement_microphone"},
+        "max_distance_m": {"type": "number", "exclusiveMinimum": 0.001, "maximum": 1.7976931348623157e308},
+        "noise": {
+          "type": "object", "additionalProperties": false, "required": ["unit"],
+          "properties": {
+            "unit": {"enum": ["K", "Pa", "label"]}, "enabled": {"type": "boolean"},
+            "stddev": {"type": "number", "minimum": 0, "maximum": 1.7976931348623157e308},
+            "seed": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615}
+          }
+        }
+      }
+    },
+    "measurement_camera": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["model", "width", "height", "fx_px", "fy_px", "cx_px", "cy_px"],
+          "properties": {
+            "model": {"const": "pinhole"}, "width": {"type": "integer", "minimum": 1}, "height": {"type": "integer", "minimum": 1},
+            "fx_px": {"$ref": "#/$defs/measurement_positive"}, "fy_px": {"$ref": "#/$defs/measurement_positive"},
+            "cx_px": {"$ref": "#/$defs/measurement_number"}, "cy_px": {"$ref": "#/$defs/measurement_number"}
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["model", "width", "height", "focal_px", "cx_px", "cy_px", "fov_deg", "valid_radius_px"],
+          "properties": {
+            "model": {"const": "equidistant_fisheye"}, "width": {"type": "integer", "minimum": 1}, "height": {"type": "integer", "minimum": 1},
+            "focal_px": {"$ref": "#/$defs/measurement_positive"}, "valid_radius_px": {"$ref": "#/$defs/measurement_positive"},
+            "cx_px": {"$ref": "#/$defs/measurement_number"}, "cy_px": {"$ref": "#/$defs/measurement_number"},
+            "fov_deg": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 360}
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["model", "width", "height"],
+          "properties": {
+            "model": {"const": "equirectangular"}, "width": {"type": "integer", "minimum": 1}, "height": {"type": "integer", "minimum": 1},
+            "longitude_min_deg": {"$ref": "#/$defs/measurement_number"}, "longitude_max_deg": {"$ref": "#/$defs/measurement_number"},
+            "latitude_min_deg": {"type": "number", "minimum": -90, "maximum": 90},
+            "latitude_max_deg": {"type": "number", "minimum": -90, "maximum": 90}
+          }
+        }
+      ]
+    },
+    "measurement_gimbal": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "pan_deg": {"$ref": "#/$defs/measurement_number"}, "tilt_deg": {"$ref": "#/$defs/measurement_number"},
+        "pan_limits_deg": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/measurement_number"}},
+        "tilt_limits_deg": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/measurement_number"}}
+      }
+    },
+    "measurement_thermal": {
+      "type": "object", "additionalProperties": false, "required": ["calibration_id", "background_temperature_k"],
+      "properties": {
+        "calibration_id": {"type": "string", "pattern": "\\S"},
+        "background_temperature_k": {"$ref": "lingtu.sim.measurement-scene.v1#/$defs/temperature"},
+        "atmospheric_temperature_k": {"$ref": "lingtu.sim.measurement-scene.v1#/$defs/temperature"},
+        "min_temperature_k": {"$ref": "lingtu.sim.measurement-scene.v1#/$defs/temperature"},
+        "max_temperature_k": {"$ref": "lingtu.sim.measurement-scene.v1#/$defs/temperature"},
+        "transmittance": {"type": "number", "minimum": 0, "maximum": 1},
+        "temperature_mode": {"enum": ["apparent", "surface_corrected"]}
+      }
+    },
+    "measurement_microphone": {
+      "type": "object", "additionalProperties": false, "required": ["sample_rate_hz", "block_samples", "channel_offsets_m"],
+      "properties": {
+        "sample_rate_hz": {"type": "integer", "minimum": 1, "maximum": 1000000000},
+        "block_samples": {"type": "integer", "minimum": 1},
+        "channel_offsets_m": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/measurement_vector3"}},
+        "speed_of_sound_mps": {"$ref": "#/$defs/measurement_positive"},
+        "sensitivity_volts_per_pa": {"anyOf": [{"$ref": "#/$defs/measurement_positive"}, {"type": "null"}]},
+        "calibration_metadata": {"anyOf": [
+          {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/measurement_json"}},
+          {"type": "null"}
+        ]}
+      },
+      "allOf": [{
+        "if": {"required": ["sensitivity_volts_per_pa"], "properties": {"sensitivity_volts_per_pa": {"type": "number"}}},
+        "then": {"required": ["calibration_metadata"], "properties": {"calibration_metadata": {"type": "object", "minProperties": 1}}},
+        "else": {"properties": {"calibration_metadata": {"type": "null"}}}
+      }]
+    },
+    "gnss_stream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instance_id", "sensor_id", "owner", "source", "frame_id",
+        "parent_frame_id", "extrinsic", "rate_hz", "transport", "message_type", "gnss"
+      ],
+      "properties": {
+        "instance_id": {"type": "string", "minLength": 1},
+        "sensor_id": {"type": "string", "minLength": 1},
+        "owner": {"const": "physics"},
+        "source": {"const": "mujoco_gnss"},
+        "frame_id": {"$ref": "#/$defs/frame_id"},
+        "parent_frame_id": {"$ref": "#/$defs/frame_id"},
+        "extrinsic": {"$ref": "#/$defs/extrinsic"},
+        "rate_hz": {"$ref": "#/$defs/sensor_rate_hz"},
+        "transport": {"const": "typed_dds"},
+        "message_type": {"const": "lingtu.dds.GnssFix"},
+        "gnss": {"$ref": "#/$defs/gnss_configuration"}
+      }
+    },
+    "gnss_configuration": {
+      "description": "Experimental WGS84 ellipsoidal origin; no calibrated reception, satellite or RTK model. NO_FIX unless explicitly enabled.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin_latitude_deg", "origin_longitude_deg", "origin_altitude_m", "body_frame_id"],
+      "properties": {
+        "origin_latitude_deg": {"type": "number", "minimum": -90, "maximum": 90},
+        "origin_longitude_deg": {"type": "number", "minimum": -180, "maximum": 180},
+        "origin_altitude_m": {"type": "number"},
+        "body_frame_id": {"$ref": "#/$defs/frame_id"},
+        "antenna_offset_m": {"$ref": "#/$defs/vector3"},
+        "world_origin_m": {"$ref": "#/$defs/vector3"},
+        "world_to_enu_yaw_deg": {"type": "number"},
+        "noise_enabled": {"type": "boolean", "default": false},
+        "horizontal_std_m": {"type": "number", "minimum": 0},
+        "vertical_std_m": {"type": "number", "minimum": 0},
+        "seed": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+        "fix_available": {"type": "boolean", "default": false}
+      }
+    },
+    "vector3": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {"type": "number"}
+    },
     "backends": {
       "type": "object",
       "additionalProperties": false,
@@ -221,8 +436,6 @@
         "width",
         "height",
         "encoding",
-        "requested_encoding",
-        "depth_scale",
         "unit"
       ],
       "properties": {
@@ -285,6 +498,17 @@
         }
       },
       "allOf": [
+        {
+          "$comment": "Only mujoco_camera omits Unreal depth conversion metadata; its wire encoding remains 16UC1.",
+          "if": {
+            "properties": {
+              "source": {"not": {"const": "mujoco_camera"}}
+            }
+          },
+          "then": {
+            "required": ["requested_encoding", "depth_scale"]
+          }
+        },
         {
           "if": {
             "allOf": [

@@ -2,6 +2,7 @@
 
 export interface MapInfo {
   name: string
+  content_epoch?: number | null
   has_pcd: boolean
   has_occupancy?: boolean
   has_octomap?: boolean
@@ -473,6 +474,7 @@ export interface InspectionRoute {
   point_count?: number | null
   points: InspectionRoutePoint[]
   loop_count?: number | null
+  loop_interval_s?: number | null
   failure_policy?: InspectionFailurePolicy | string | null
   max_retries?: number | null
   [key: string]: unknown
@@ -486,6 +488,7 @@ export interface InspectionRouteRequest {
   revision: number
   points: InspectionRoutePoint[]
   loop_count: number
+  loop_interval_s?: number
   failure_policy: InspectionFailurePolicy
   max_retries: number
 }
@@ -598,6 +601,10 @@ export interface InspectionTaskReportPoint {
     | 'PENDING'
     | 'IN_PROGRESS'
     | 'COMPLETED'
+    | 'SKIPPED'
+    | 'FAILED'
+    | 'CANCELLED'
+    | 'NOT_VISITED'
     | 'MISSING_EVIDENCE'
     | 'INVALID_EVIDENCE'
     | 'UNAVAILABLE_EVIDENCE'
@@ -612,6 +619,7 @@ export interface InspectionTaskReportPoint {
     | 'UNKNOWN'
   evidence_id: string
   reason: string
+  inspection_result: 'NOT_REQUIRED' | 'NEEDS_REVIEW' | 'NORMAL' | 'ANOMALY' | 'INCONCLUSIVE' | 'NOT_INSPECTED'
 }
 
 export interface InspectionTaskReportResponse {
@@ -643,12 +651,25 @@ export interface InspectionTaskReportResponse {
   coverage: {
     required_points: number
     completed_points: number
+    skipped_points: number
+    failed_points: number
+    cancelled_points: number
+    not_visited_points: number
+    unknown_points: number
     required_evidence: number
     verified_evidence: number
     missing_evidence: number
     invalid_evidence: number
     unavailable_evidence: number
     unknown_evidence: number
+  }
+  inspection_result: {
+    status: 'NOT_REQUIRED' | 'IN_PROGRESS' | 'NEEDS_REVIEW' | 'NORMAL' | 'ANOMALY' | 'INCONCLUSIVE'
+    normal_points: number
+    anomaly_points: number
+    inconclusive_points: number
+    unreviewed_points: number
+    not_inspected_points: number
   }
   points: InspectionTaskReportPoint[]
   issues: Array<{
@@ -688,7 +709,7 @@ export interface InspectionEvidenceArtifact {
 export interface InspectionEvidenceSummary {
   evidence_id: string
   request: {
-    run_id?: string
+    task_id?: string
     route_id?: string
     route_revision?: number
     map_id?: string
@@ -707,6 +728,11 @@ export interface InspectionEvidenceSummary {
     reason?: string
     [key: string]: unknown
   }
+  review?: {
+    verdict: 'normal' | 'anomaly' | 'inconclusive'
+    note: string
+    reviewed_at: string
+  } | null
   persistence?: Record<string, unknown>
   artifacts: InspectionEvidenceArtifact[]
 }
@@ -1323,8 +1349,8 @@ export interface FollowTaskStatusResponse {
 export interface VisualServoPersonStatus {
   id: string | null
   identity_id?: string
-  native_track_id?: string
-  position: number[]
+  native_track_id?: string | null
+  position: number[] | null
   velocity: number[]
   last_seen: number
   confidence: number
@@ -1439,6 +1465,7 @@ export interface GatewayErrorResponse {
   ok?: false
   error: string
   message?: string | null
+  reason?: string | null
   detail?: GatewayCommandErrorDetail | Record<string, unknown> | null
   command?: CommandReceipt
 }
@@ -1457,10 +1484,58 @@ export interface ControlCommandResponse {
   yaw?: number | null
   frame_id?: string | null
   instruction?: string | null
+  run_id?: string | null
+  operation?: 'start' | 'query' | 'cancel' | 'keep' | 'pause' | 'resume'
+  accepted?: boolean
+  task_status?: AgentTaskStatusResponse | null
+  cancel_requested?: boolean
+  stop_confirmed?: boolean
+  executor?: string | null
+  state?: string | null
   mode?: string | null
   reason?: string | null
   target?: ConstructedGoalTarget | null
   [key: string]: unknown
+}
+
+export interface AgentNavigationStatus {
+  owned?: boolean
+  state?: string | null
+  terminal?: boolean
+  success?: boolean
+  reason?: string | null
+  phase?: string | null
+  task_id?: string | null
+  confirmations?: number
+  search_moves?: number
+  observed_views?: number
+  pending_query?: boolean
+  follow_task_id?: string | null
+  product_session_id?: string | null
+  [key: string]: unknown
+}
+
+export interface AgentTaskStatusResponse {
+  found: boolean
+  run_id: string
+  instruction?: string | null
+  state?: string | null
+  reason?: string | null
+  failure_reason?: string | null
+  summary?: string | null
+  motion_attempted?: boolean
+  motion_success?: boolean
+  requires_execution_evidence?: boolean
+  stop_confirmed?: boolean
+  navigation?: AgentNavigationStatus | null
+  [key: string]: unknown
+}
+
+export interface AgentTaskCancelResponse extends ControlCommandResponse {
+  run_id?: string | null
+  accepted?: boolean
+  cancel_requested?: boolean
+  stop_confirmed?: boolean
 }
 
 export interface NavigationGoalStatus {
@@ -1516,6 +1591,9 @@ export interface OdometryEvent {
   yaw: number
   vx: number
   wz?: number | null
+  /** Distance accumulated from accepted poses since the current runtime began. */
+  session_distance_m?: number | null
+  session_distance_source?: string | null
   frame_id?: string | null
   child_frame_id?: string | null
   ts?: number | null
@@ -1928,6 +2006,7 @@ export interface AgentMessageEvent {
   role: 'thinking' | 'assistant' | 'tool'
   text: string
   phase?: string
+  run_id?: string
   ts: number
 }
 
@@ -2110,7 +2189,7 @@ export interface RecordingOperationResponse {
   detail?: unknown
 }
 
-/** Safe, product-level recording choices. Raw DDS and device arguments stay native-only. */
+/** Topic choices come from the native recorder catalog; device arguments stay native-only. */
 export interface RecordingStartConfig {
   duration?: number
   prefix?: string
@@ -2118,6 +2197,70 @@ export interface RecordingStartConfig {
   task_id?: string
   camera?: boolean
   minimum_free_gib?: number
+  topics?: string[]
+}
+
+export interface RecordingTopic {
+  topic: string
+  type_name: string
+  group: string
+  label: string
+  replayable: boolean
+  default_selected: boolean
+}
+
+export interface RecordingCatalogResponse {
+  ok: boolean
+  version: number
+  topics: RecordingTopic[]
+  presets: Array<{ name: string; selected_topics: string[]; required_topics: string[] }>
+  camera?: { supported: boolean; label?: string }
+}
+
+export interface RecordingLiveTopic {
+  topic: string
+  type_name: string
+  message_count: number
+  bytes_received: number
+  rate_hz: number
+  bytes_per_second: number
+  last_sample_age_ms: number | null
+  source_time_ns: number | null
+  preview: Record<string, unknown> | null
+}
+
+export interface RecordingStreamsResponse {
+  ok: boolean
+  available: boolean
+  state: 'starting' | 'observing' | 'stale' | 'unavailable'
+  error?: string | null
+  snapshot_age_ms: number | null
+  domain?: number
+  observed_at_unix_ns?: number
+  window_s?: number
+  topics: RecordingLiveTopic[]
+}
+
+export interface RecordingSummaryResponse {
+  ok: boolean
+  summary: {
+    message_count: number
+    start_time_ns: number
+    end_time_ns: number
+    duration_ns: number
+    topics: Array<{ topic: string; dds_topic: string; type_name: string; message_count: number; replayable: boolean }>
+    missing_topics: string[]
+  }
+}
+
+export interface RecordingValidationResponse {
+  ok: boolean
+  validation: {
+    ok: boolean
+    mode: 'validate'
+    validated_messages: number
+    skipped_record_only: number
+  }
 }
 
 export interface RecordingSessionSummary {

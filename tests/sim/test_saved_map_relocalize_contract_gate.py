@@ -33,7 +33,7 @@ def _saved_map_runtime_args(tmp_path: Path):
     paths = {
         "slamd": native_dir / "slamd",
         "slamctl": native_dir / "slamctl",
-        "config": native_dir / "fastlio2.yaml",
+        "config": native_dir / "ltlio.yaml",
         "bridge": native_dir / "native_dds_sensors.py",
         "publisher": native_dir / "lingtu_mujoco_sensor_publisher",
     }
@@ -143,7 +143,7 @@ def test_saved_map_relocalize_starts_native_dds_sensor_feed(
     command = captured["cmd"]
     assert str(args.sensor_bridge) in command
     assert command[command.index("--drive-mode") + 1] == "kinematic"
-    assert "--allow-kinematic-fastlio-acceptance" in command
+    assert "--allow-kinematic-ltlio-acceptance" in command
     assert command[command.index("--domain-id") + 1] == "231"
     assert command[command.index("--slam-status-json") + 1] == str(status_path)
     assert "--require-slam-output" in command
@@ -199,7 +199,7 @@ def test_saved_map_relocalize_starts_slamd_in_localization_mode(
     assert isinstance(proc, _FakePopen)
     command = captured["cmd"]
     assert command[0] == str(args.slam_runtime_bin)
-    assert command[command.index("--backend") + 1] == "fastlio2"
+    assert command[command.index("--backend") + 1] == "ltlio"
     assert command[command.index("--mode") + 1] == "localization"
     assert command[command.index("--map") + 1] == str(map_pcd)
     assert command[command.index("--config") + 1] == str(args.slam_config)
@@ -395,7 +395,7 @@ def test_saved_map_relocalize_runtime_gate_preflight_rejects_empty_map(
     [
         ("slam_runtime_bin", "slamd not found"),
         ("slam_control_bin", "slamctl not found"),
-        ("slam_config", "FastLIO native config not found"),
+        ("slam_config", "LTLIO native config not found"),
         ("sensor_bridge", "native DDS sensor bridge not found"),
         ("publisher_bin", "native DDS publisher not found"),
     ],

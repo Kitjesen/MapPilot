@@ -1,4 +1,5 @@
 #include <cmath>
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -81,10 +82,149 @@ CloudType::Ptr cloudWithOutsideMapPoints(const CloudType::Ptr &source)
     return cloud;
 }
 
+void checkMapVoxelCentroids()
+{
+    auto cloud = makeCloud();
+    const auto original = cloud->points;
+    for (auto point : original) {
+        point.x += 0.003F;
+        point.y += 0.002F;
+        point.intensity += 2.0F;
+        cloud->push_back(point);
+    }
+    PointType invalid;
+    invalid.x = std::numeric_limits<float>::quiet_NaN();
+    invalid.y = invalid.z = 0.0F;
+    cloud->push_back(invalid);
+    cloud->is_dense = false;
+    ICPLocalizer localizer(ICPConfig{});
+    require(localizer.setMap(cloud), "voxel centroid map should load");
+    std::vector<std::array<float, 4>> compact;
+    for (const auto& point : cloud->points)
+        compact.push_back({point.x, point.y, point.z, point.intensity});
+    ICPLocalizer compact_localizer(ICPConfig{});
+    require(compact_localizer.setMap(compact.size(), [&compact](std::size_t i) {
+        PointType point;
+        point.x = compact[i][0]; point.y = compact[i][1]; point.z = compact[i][2];
+        point.intensity = compact[i][3];
+        return point;
+    }), "compact map reader should build the same ICP targets");
+    for (int stage = 0; stage < 2; ++stage) {
+        const float leaf = stage == 0 ? 0.1F : 0.25F;
+        pcl::VoxelGrid<PointType> filter;
+        filter.setLeafSize(leaf, leaf, leaf);
+        filter.setInputCloud(cloud);
+        CloudType expected;
+        filter.filter(expected);
+        const auto target = stage == 0 ? localizer.refineMap() : localizer.roughMap();
+        const auto compact_target = stage == 0
+            ? compact_localizer.refineMap() : compact_localizer.roughMap();
+        require(target->size() == expected.size(), "map voxel count differs from PCL");
+        require(compact_target->size() == expected.size(), "compact map voxel count differs from PCL");
+        for (std::size_t i = 0; i < expected.size(); ++i) {
+            const auto &a = target->points[i];
+            const auto &b = expected.points[i];
+            const auto &c = compact_target->points[i];
+            require(a.x == c.x && a.y == c.y && a.z == c.z && a.intensity == c.intensity,
+                    "compact map reader changed voxel values or ordering");
+            require(std::abs(a.x-b.x) < 1e-6F && std::abs(a.y-b.y) < 1e-6F &&
+                        std::abs(a.z-b.z) < 1e-6F && std::abs(a.intensity-b.intensity) < 1e-6F,
+                    "map voxel centroid or ordering differs from PCL");
+        }
+    }
+}
+
+void checkLargeExtentMapVoxels()
+{
+    CloudType::Ptr cloud(new CloudType);
+    for (int region = 0; region < 2; ++region) {
+        const float origin = region == 0 ? -1000.0F : 1000.0F;
+        for (int x = 0; x < 8; ++x)
+            for (int y = 0; y < 8; ++y)
+                for (int z = 0; z < 8; ++z)
+                    for (int duplicate = 0; duplicate < 4; ++duplicate) {
+                        PointType point;
+                        const float offset = 0.025F + 0.005F * duplicate;
+                        point.x = origin + 0.1F * x + offset;
+                        point.y = origin + 0.1F * y + offset;
+                        point.z = origin + 0.1F * z + offset;
+                        point.intensity = static_cast<float>(duplicate);
+                        cloud->push_back(point);
+                    }
+    }
+    // A few thousand real points span more than INT_MAX empty linear cells.
+    require(std::pow(2000.0 / 0.1, 3) > std::numeric_limits<int>::max(),
+            "large-extent fixture must overflow VoxelGrid's linear index");
+    PointType invalid;
+    invalid.x = std::numeric_limits<float>::infinity();
+    invalid.y = invalid.z = 0.0F;
+    cloud->push_back(invalid);
+    cloud->is_dense = false;
+    ICPLocalizer localizer(ICPConfig{});
+    require(localizer.setMap(cloud), "large-extent voxel map should load");
+    require(localizer.refineMap()->size() == 2U*8U*8U*8U,
+            "large-extent map fell back to full input instead of voxel centroids");
+    require(localizer.roughMap()->size() < localizer.refineMap()->size(),
+            "rough map must keep its configured coarser voxel grid");
+    for (const auto &point : localizer.refineMap()->points)
+        require(std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z) &&
+                    std::abs(point.intensity - 1.5F) < 1e-6F,
+                "large-extent voxel centroid lost attributes or finite filtering");
+    require(cloud->size() == 2U*8U*8U*8U*4U+1U,
+            "map target reduction must not mutate the full saved input");
+}
+
+#ifdef LINGTU_ENABLE_SMALL_GICP
+void checkUnconvergedCoarseSeed()
+{
+    ICPConfig config;
+    config.rough_max_iteration = 1;
+    config.rough_scan_resolution = config.rough_map_resolution = 0.0;
+    config.refine_scan_resolution = config.refine_map_resolution = 0.0;
+    const auto map = makeCloud();
+    M4F expected = M4F::Identity();
+    expected.block<3, 3>(0, 0) =
+        Eigen::AngleAxisf(0.006F, Eigen::Vector3f::UnitZ()).toRotationMatrix();
+    expected.block<3, 1>(0, 3) = Eigen::Vector3f(0.04F, -0.03F, 0.02F);
+    const auto scan = transformedCloud(map, expected.inverse());
+
+    LingTuIcpBackend<PointType, PointType> coarse;
+    coarse.setNumThreads(config.num_threads);
+    coarse.setMaximumIterations(config.rough_max_iteration);
+    coarse.setInputTarget(map);
+    coarse.setInputSource(scan);
+    CloudType aligned;
+    coarse.align(aligned, M4F::Identity());
+    require(!coarse.hasConverged() && coarse.getFinalTransformation().allFinite() &&
+                coarse.getFinalTransformation().block<3, 1>(0, 3).norm() > 0.01F &&
+                std::isfinite(coarse.getFitnessScore()) &&
+                coarse.getFitnessScore() <= config.rough_score_thresh,
+            "fixture must exhaust coarse iterations with a finite, usable seed");
+
+    ICPLocalizer localizer(config);
+    require(localizer.setMap(map), "coarse-seed regression map should load");
+    localizer.setInput(scan);
+    M4F pose = M4F::Identity();
+    require(localizer.align(pose),
+            "an unconverged coarse seed must still reach converged fine registration");
+    require(localizer.getLastConverged() && localizer.getLastInliers() >= 30 &&
+                localizer.getLastEvaluatedPoints() >= 30,
+            "coarse-seed acceptance must retain final convergence and support checks");
+    require((pose.block<3, 1>(0, 3) - expected.block<3, 1>(0, 3)).norm() < 0.005F &&
+                (pose.block<3, 3>(0, 0) - expected.block<3, 3>(0, 0)).norm() < 0.005F,
+            "fine registration must recover the known transformed scan pose");
+}
+#endif
+
 }  // namespace
 
 int main()
 {
+    checkMapVoxelCentroids();
+    checkLargeExtentMapVoxels();
+#ifdef LINGTU_ENABLE_SMALL_GICP
+    checkUnconvergedCoarseSeed();
+#endif
     ICPConfig config;
     config.refine_scan_resolution = 0.0;
     config.refine_map_resolution = 0.0;

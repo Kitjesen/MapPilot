@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from localization.adapters.status import CppSlamStatusAdapterModule
 from runtime.contracts.messages import validate_message
 
@@ -17,7 +19,7 @@ def _payload() -> dict:
         "localization_quality": 0.75,
         "observation_sequence": 1,
         "scan_end_s": 10.0,
-        "fastlio_degeneracy": {
+        "ltlio_degeneracy": {
             "detected": True,
             "degenerate_dof_count": 2,
             "condition_number": 42000.0,
@@ -28,7 +30,7 @@ def _payload() -> dict:
             "iter_num": 4,
             "converged": True,
         },
-        "fastlio_lidar_update": {
+        "ltlio_lidar_update": {
             "attempted": True,
             "accepted": False,
             "attempt_sequence": 9,
@@ -68,7 +70,7 @@ def _payload() -> dict:
     }
 
 
-def test_cpp_slam_adapter_forwards_fastlio_degeneracy_metrics() -> None:
+def test_cpp_slam_adapter_forwards_ltlio_degeneracy_metrics() -> None:
     adapter = CppSlamStatusAdapterModule()
     statuses: list[dict] = []
     adapter.localization_status.subscribe(statuses.append)
@@ -87,7 +89,41 @@ def test_cpp_slam_adapter_forwards_fastlio_degeneracy_metrics() -> None:
     assert status["pos_cov_trace"] == 0.004
     assert status["ieskf_iter_num"] == 4
     assert status["ieskf_converged"] is True
-    assert status["fastlio_degeneracy"]["detected"] is True
+    assert status["ltlio_degeneracy"]["detected"] is True
+
+
+@pytest.mark.parametrize(
+    ("mode", "active", "phase", "entries", "exits"),
+    [("auto", True, "cruising", 1, 0), ("auto", False, "idle", 1, 1),
+     ("off", False, "idle", 0, 0)],
+)
+def test_cpp_slam_adapter_forwards_elevator_status(
+    mode: str, active: bool, phase: str, entries: int, exits: int,
+) -> None:
+    adapter = CppSlamStatusAdapterModule()
+    statuses: list[dict] = []
+    adapter.localization_status.subscribe(statuses.append)
+    payload = _payload()
+    elevator = {
+        "mode": mode, "active": active, "phase": phase,
+        "height_m": 3.5, "velocity_mps": 0.6 if active else 0.0,
+        "acceleration_mps2": 0.0, "range_quantile_m": 1.8,
+        "velocity_variance": None, "entries": entries, "exits": exits,
+    }
+    payload["elevator"] = elevator
+
+    adapter._publish_status_snapshot(payload)
+
+    assert statuses[-1]["elevator"] == elevator
+    assert statuses[-1]["elevator"] is not elevator
+
+
+def test_cpp_slam_adapter_does_not_invent_elevator_status() -> None:
+    adapter = CppSlamStatusAdapterModule()
+    statuses: list[dict] = []
+    adapter.localization_status.subscribe(statuses.append)
+    adapter._publish_status_snapshot(_payload())
+    assert "elevator" not in statuses[-1]
 
 
 def test_cpp_slam_adapter_does_not_invent_metrics_when_block_is_missing() -> None:
@@ -95,18 +131,18 @@ def test_cpp_slam_adapter_does_not_invent_metrics_when_block_is_missing() -> Non
     statuses: list[dict] = []
     adapter.localization_status.subscribe(statuses.append)
     payload = _payload()
-    payload.pop("fastlio_degeneracy")
+    payload.pop("ltlio_degeneracy")
 
     adapter._publish_status_snapshot(payload)
 
     status = statuses[-1]
-    assert status["fastlio_degeneracy"] is None
+    assert status["ltlio_degeneracy"] is None
     assert status["degeneracy"] == "UNKNOWN"
     assert "degeneracy_detected" not in status
     assert "condition_number" not in status
 
 
-def test_cpp_slam_adapter_forwards_fastlio_lidar_update_diagnostics_unchanged() -> None:
+def test_cpp_slam_adapter_forwards_ltlio_lidar_update_diagnostics_unchanged() -> None:
     adapter = CppSlamStatusAdapterModule()
     statuses: list[dict] = []
     adapter.localization_status.subscribe(statuses.append)
@@ -115,10 +151,10 @@ def test_cpp_slam_adapter_forwards_fastlio_lidar_update_diagnostics_unchanged() 
     adapter._publish_status_snapshot(payload)
 
     assert statuses[-1]["reason"] == "tracking"
-    assert statuses[-1]["fastlio_lidar_update"] == payload["fastlio_lidar_update"]
+    assert statuses[-1]["ltlio_lidar_update"] == payload["ltlio_lidar_update"]
 
 
-def test_fastlio_degeneracy_reaches_gateway_sse_and_rest_without_semantic_policy() -> None:
+def test_ltlio_degeneracy_reaches_gateway_sse_and_rest_without_semantic_policy() -> None:
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import LocalizationStatusResponse
     from gateway.services.runtime_status import build_localization_status

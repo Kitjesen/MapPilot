@@ -1,0 +1,31 @@
+{
+  "robots": [
+    {"id":"unitree_go2","version":"robot_lab_2.3.2","label":"Unitree Go2","category":"quadruped"},
+    {"id":"unitree_go2w","version":"robot_lab_2.3.2","label":"Unitree Go2W","category":"wheeled_legged"},
+    {"id":"unitree_b2","version":"robot_lab_2.3.2","label":"Unitree B2","category":"quadruped"},
+    {"id":"unitree_b2w","version":"robot_lab_2.3.2","label":"Unitree B2W","category":"wheeled_legged"},
+    {"id":"unitree_a1","version":"robot_lab_2.3.2","label":"Unitree A1","category":"quadruped"},
+    {"id":"unitree_g1","version":"robot_lab_2.3.2","label":"Unitree G1","category":"humanoid"},
+    {"id":"unitree_h1","version":"menagerie_62ab00f","label":"Unitree H1","category":"humanoid"},
+    {"id":"anymal_d","version":"simple_d5bf4dc","label":"ANYmal D","category":"quadruped"},
+    {"id":"deeprobotics_lite3","version":"robot_lab_2.3.2","label":"DeepRobotics Lite3","category":"quadruped"},
+    {"id":"deeprobotics_m20","version":"robot_lab_2.3.2","label":"DeepRobotics M20","category":"wheeled_legged"},
+    {"id":"ddtrobot_tita","version":"robot_lab_2.3.2","label":"DDTRobot Tita","category":"wheeled_legged"},
+    {"id":"zsibot_zsl1","version":"robot_lab_2.3.2","label":"Zsibot ZSL1","category":"quadruped"},
+    {"id":"zsibot_zsl1w","version":"robot_lab_2.3.2","label":"Zsibot ZSL1W","category":"wheeled_legged"},
+    {"id":"agibot_d1","version":"robot_lab_2.3.2","label":"Agibot D1","category":"quadruped"},
+    {"id":"magiclab_magicdog","version":"robot_lab_2.3.2","label":"MagicLab MagicDog","category":"quadruped"},
+    {"id":"magiclab_magicdog_w","version":"robot_lab_2.3.2","label":"MagicLab MagicDog-W","category":"wheeled_legged"},
+    {"id":"magiclab_magicbot_gen1","version":"robot_lab_2.3.2","label":"MagicLab MagicBot-Gen1","category":"humanoid"},
+    {"id":"magiclab_magicbot_z1","version":"robot_lab_2.3.2","label":"MagicLab MagicBot-Z1","category":"humanoid"},
+    {"id":"booster_t1","version":"robot_lab_2.3.2","label":"Booster T1","category":"humanoid"},
+    {"id":"fftai_gr1t1","version":"robot_lab_2.3.2","label":"FFTAI GR1T1","category":"humanoid"},
+    {"id":"fftai_gr1t2","version":"robot_lab_2.3.2","label":"FFTAI GR1T2","category":"humanoid"},
+    {"id":"robotera_xbot","version":"robot_lab_2.3.2","label":"RobotEra Xbot","category":"humanoid"},
+    {"id":"openloong_loong","version":"robot_lab_2.3.2","label":"OpenLoong Loong","category":"humanoid"},
+    {"id":"roboparty_atom01","version":"robot_lab_2.3.2","label":"RoboParty ATOM01","category":"humanoid"},
+    {"id":"boston_dynamics_spot","version":"menagerie_62ab00f","label":"Boston Dynamics Spot","category":"quadruped"},
+    {"id":"franka_emika_panda","version":"menagerie_62ab00f","label":"Franka Panda","category":"manipulator"},
+    {"id":"universal_robots_ur5e","version":"menagerie_62ab00f","label":"Universal Robots UR5e","category":"manipulator"}
+  ]
+}

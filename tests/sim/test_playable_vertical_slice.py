@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 import sim.runtime.coordinator.playable_vertical_slice as playable_module
 from sim.runtime.control import create_production_components
+from sim.runtime.coordinator.controlled_run import BaseTwist
 from sim.runtime.coordinator.coordinator import RuntimeState
 from sim.runtime.coordinator.playable_evidence import (
     PinnedPlayableMediaToolchain,
@@ -42,6 +43,7 @@ from sim.runtime.coordinator.unreal_process import (
 )
 from sim.runtime.process_owner import ProcessShutdownSnapshot
 from sim.runtime.sensors import (
+    GnssEndpointFactory,
     ImuEndpointFactory,
     Mid360EndpointFactory,
     SensorEndpointRouter,
@@ -169,9 +171,9 @@ def _fixed_bundle(tmp_path: Path) -> ResolvedSessionBundle:
                 "controllers": [
                     {
                         "instance_id": "thunder_01",
-                        "controller_id": "thunder_01.thunderv4_locomotion",
+                        "controller_id": "thunder_01.thunderv4_cts_moe",
                         "package": {
-                            "id": "thunderv4_locomotion",
+                            "id": "thunderv4_cts_moe",
                             "version": "1.0.0",
                         },
                         "command_channels": [
@@ -411,7 +413,7 @@ def test_create_playable_launch_assembles_one_inert_fixed_slice(
         control_pump_factory=_factory("pump", calls, resources),
         interactive_session_factory=_factory("session", calls, resources),
     )
-    config = _runtime(bundle, tmp_path)
+    config = replace(_runtime(bundle, tmp_path), drive_speed_limits=BaseTwist(.6, .15, .6))
 
     launch = create_playable_launch(
         bundle,
@@ -424,9 +426,11 @@ def test_create_playable_launch_assembles_one_inert_fixed_slice(
     assert launch.boot_id == "playable-boot-test"
     assert launch.run_dir == config.run_root / "playable-test"
     assert launch.ports == _PORTS
-    assert launch.target.controller_id == "thunder_01.thunderv4_locomotion"
+    assert launch.target.controller_id == "thunder_01.thunderv4_cts_moe"
     assert launch.target.instance_id == "thunder_01"
     assert launch.target.channel_id == "thunder_01.control.base_twist"
+    _pump_args, pump_kwargs = next(value for name, value in calls if name == "create.pump")
+    assert pump_kwargs["drive_speed_limits"] == config.drive_speed_limits
     assert playable_module.PLAYABLE_ROBOT_PACKAGE == ("thunderv4", "1.0.3")
 
     coordinator_call = next(value for name, value in calls if name == "create.coordinator")
@@ -489,7 +493,7 @@ def test_create_playable_launch_assembles_one_inert_fixed_slice(
     pump_call = next(value for name, value in calls if name == "create.pump")
     _pump_args, pump_kwargs = pump_call
     assert pump_kwargs["bundle_dir"] == bundle.bundle_dir
-    assert pump_kwargs["controller_id"] == "thunder_01.thunderv4_locomotion"
+    assert pump_kwargs["controller_id"] == "thunder_01.thunderv4_cts_moe"
     assert pump_kwargs["trace_sink"] is launch.control_evidence_writer
 
     assert all(not resource.started for resource in resources.values())
@@ -875,8 +879,10 @@ def test_run_playable_launch_starts_only_the_owned_lifecycle_and_closes_it(
     assert resources["camera_payload"].closed is True
 
 
+@pytest.mark.parametrize("with_gnss", [False, True])
 def test_create_playable_launch_default_sensor_router_owns_all_three_native_streams(
     tmp_path: Path,
+    with_gnss: bool,
 ) -> None:
     bundle = _fixed_bundle(tmp_path)
     calls: list[tuple[str, Any]] = []
@@ -909,6 +915,7 @@ def test_create_playable_launch_default_sensor_router_owns_all_three_native_stre
         imu_publisher=tmp_path / "lingtu_imu_publisher.exe",
         truth_odom_publisher=tmp_path / "lingtu_truth_odom_publisher.exe",
         mid360_publisher=tmp_path / "lingtu_mid360_publisher.exe",
+        **({"gnss_publisher": tmp_path / "lingtu_gnss_publisher.exe"} if with_gnss else {}),
     )
 
     create_playable_launch(
@@ -925,7 +932,7 @@ def test_create_playable_launch_default_sensor_router_owns_all_three_native_stre
         ImuEndpointFactory,
         TruthOdometryEndpointFactory,
         Mid360EndpointFactory,
-    )
+    ) + ((GnssEndpointFactory,) if with_gnss else ())
     mid360 = router.factories[2]
     assert isinstance(mid360, Mid360EndpointFactory)
     assert mid360.process is resources["physics"]

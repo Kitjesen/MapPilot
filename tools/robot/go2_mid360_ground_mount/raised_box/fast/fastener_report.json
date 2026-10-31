@@ -1,0 +1,28 @@
+{
+  "status": "nominal_mesh_access_checked_not_physical_interface_verification",
+  "mounting": [
+    {
+      "part": "left_pad",
+      "nominal_center_xy_mm": [
+        0,
+        29.25
+      ],
+      "m3_shank_sampled_clear": true,
+      "washer_seat_z_mm": -5.253,
+      "lid_off_tool_corridor_sampled_diameter_mm": 12,
+      "seat_to_body_surface_nominal_mm": 14.425
+    },
+    {
+      "part": "right_pad",
+      "nominal_center_xy_mm": [
+        0,
+        -29.25
+      ],
+      "m3_shank_sampled_clear": true,
+      "washer_seat_z_mm": -5.285,
+      "lid_off_tool_corridor_sampled_diameter_mm": 12,
+      "seat_to_body_surface_nominal_mm": 14.41
+    }
+  ],
+  "physical_interface_pending": "Go2 hole spacing, thread size, usable depth and load-bearing surface"
+}

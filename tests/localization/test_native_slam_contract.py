@@ -40,14 +40,14 @@ def _configure_native_slam(
         )
 
 
-def test_native_slam_dds_runtime_requires_real_fastlio_backend() -> None:
+def test_native_slam_dds_runtime_requires_real_ltlio_backend() -> None:
     result = _configure_native_slam(
         "-DLINGTU_SLAM_BUILD_DDS_RUNTIME=ON",
-        "-DLINGTU_SLAM_FASTLIO2_BACKEND=OFF",
+        "-DLINGTU_SLAM_LTLIO_BACKEND=OFF",
     )
 
     assert result.returncode != 0
-    assert "requires LINGTU_SLAM_FASTLIO2_BACKEND=ON" in (
+    assert "requires LINGTU_SLAM_LTLIO_BACKEND=ON" in (
         result.stdout + result.stderr
     )
 
@@ -57,7 +57,8 @@ def test_native_slam_dds_runtime_requires_real_fastlio_backend() -> None:
     [
         ("LINGTU_SLAM_BUILD_CPP_DDS_RUNTIME", "LINGTU_SLAM_BUILD_DDS_RUNTIME"),
         ("LINGTU_SLAM_BUILD_CYCLONE_DDS_RUNTIME", "LINGTU_SLAM_BUILD_DDS_RUNTIME"),
-        ("LINGTU_SLAM_WITH_FASTLIO2", "LINGTU_SLAM_FASTLIO2_BACKEND"),
+        ("LINGTU_SLAM_WITH_FASTLIO2", "LINGTU_SLAM_LTLIO_BACKEND"),
+        ("LINGTU_SLAM_FASTLIO2_BACKEND", "LINGTU_SLAM_LTLIO_BACKEND"),
     ],
 )
 def test_native_slam_rejects_removed_cmake_options(
@@ -75,7 +76,7 @@ def test_native_slam_rejects_removed_cmake_options(
 def test_native_slam_contract_only_configure_remains_supported() -> None:
     result = _configure_native_slam(
         "-DLINGTU_SLAM_BUILD_DDS_RUNTIME=OFF",
-        "-DLINGTU_SLAM_FASTLIO2_BACKEND=OFF",
+        "-DLINGTU_SLAM_LTLIO_BACKEND=OFF",
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -414,55 +415,13 @@ def test_native_cyclone_runtime_requires_synchronized_body_twist_for_odom() -> N
         assert "if (msg)" in call
 
 
-def test_native_slam_forwards_structured_fastlio_lidar_update_diagnostics() -> None:
-    root = LOCALIZATION_ROOT
-    ieskf_header = (root / "fastlio2" / "src" / "map_builder" / "ieskf.h").read_text(
-        encoding="utf-8"
-    )
-    ieskf_source = (root / "fastlio2" / "src" / "map_builder" / "ieskf.cpp").read_text(
-        encoding="utf-8"
-    )
-    fastlio_source = (root / "slam" / "cpp" / "fastlio.cpp").read_text(encoding="utf-8")
+def test_native_slam_forwards_structured_ltlio_lidar_update_diagnostics() -> None:
     cyclone_source = _cyclone_runtime_source()
-
-    for reason in (
-        "no_valid_measurement",
-        "pathological_degeneracy",
-        "candidate_translation_limit_exceeded",
-        "candidate_rotation_limit_exceeded",
-        "candidate_velocity_limit_exceeded",
-        "candidate_velocity_delta_limit_exceeded",
-        "nonconverged_update",
-        "degenerate_nonconverged_update",
-        "information_ldlt_decomposition_failed",
-        "information_ldlt_not_positive",
-        "candidate_covariance_nonfinite",
-        "candidate_covariance_nonpositive_diagonal",
-        "posterior_covariance_nonfinite",
-        "posterior_covariance_nonpositive_diagonal",
-    ):
-        assert f'"{reason}"' in ieskf_header
-
-    assert "LidarUpdateDiagnostics m_lidar_update_diagnostics" in ieskf_header
-    assert "previous_rejection_reason" in ieskf_header
-    assert "candidate_translation_m" in ieskf_header
-    assert "candidate_rotation_rad" in ieskf_header
-    assert "candidate_velocity_mps" in ieskf_header
-    assert "candidate_velocity_delta_mps" in ieskf_header
-    assert "information_ldlt_evaluated" in ieskf_header
-    assert "candidate_covariance_evaluated" in ieskf_header
-    assert "posterior_covariance_evaluated" in ieskf_header
-    update_source = ieskf_source[ieskf_source.index("bool IESKF::update()") :]
-    assert update_source.count("recordLidarUpdateRejection(") == update_source.count(
-        "return false;"
-    )
-    assert "builder_->lastLidarUpdateDiagnostics()" in fastlio_source
-
-    json_start = cyclone_source.index("std::string fastLioLidarUpdateJson(")
+    json_start = cyclone_source.index("std::string ltlioLidarUpdateJson(")
     json_end = cyclone_source.index("std::string statusSnapshotJson(", json_start)
     diagnostics_json = cyclone_source[json_start:json_end]
-    assert '"\\\"fastlio_lidar_update\\\":"' in cyclone_source
-    assert "fastLioLidarUpdateJson(out.fastlio_lidar_update)" in cyclone_source
+    assert '"\\\"ltlio_lidar_update\\\":"' in cyclone_source
+    assert "ltlioLidarUpdateJson(out.ltlio_lidar_update)" in cyclone_source
     for field in (
         "attempt_sequence",
         "rejection_reason",
@@ -477,6 +436,47 @@ def test_native_slam_forwards_structured_fastlio_lidar_update_diagnostics() -> N
         "posterior_covariance",
     ):
         assert f'\\\"{field}\\\"' in diagnostics_json
+
+
+@pytest.mark.parametrize("attempted,accepted", [(False, False), (True, False), (True, True)])
+def test_native_lidar_diagnostics_survive_host_boundary_without_invented_results(
+    attempted: bool, accepted: bool,
+) -> None:
+    from localization.adapters.status import CppSlamStatusAdapterModule
+
+    # Algorithm-specific solve/rejection paths are exercised by native tests.
+    # The Python contract preserves measured evidence, including unevaluated
+    # covariance fields, rather than requiring the retired filter's enums.
+    diagnostics = {
+        "attempted": attempted,
+        "accepted": accepted,
+        "attempt_sequence": 5 if attempted else 0,
+        "rejection_reason": "no_effective_points" if attempted and not accepted else "none",
+        "previous_rejection_reason": "no_effective_points" if accepted else "none",
+        "consecutive_rejections": 1 if attempted and not accepted else 0,
+        "downsampled_points": 123 if attempted else 0,
+        "effective_points": 100 if accepted else 0,
+        "candidate": {"translation_m": 0.01, "rotation_rad": 0.002},
+        "thresholds": {"translation_m": 0.35, "rotation_rad": 0.35},
+        "information_ldlt": {"evaluated": False, "decomposition_success": False, "positive": False},
+        "candidate_covariance": {"evaluated": False, "finite": False, "positive_diagonal": False},
+        "posterior_covariance": {"evaluated": False, "finite": False, "positive_diagonal": False},
+    }
+    adapter = CppSlamStatusAdapterModule()
+    statuses = []
+    adapter.localization_status._add_callback(statuses.append)
+    adapter._publish_status_snapshot({
+        "runtime_instance_id": "ltlio-diagnostics-contract",
+        "source_epoch": 1,
+        "observation_sequence": 1,
+        "stamp_s": 1.0,
+        "state": "TRACKING" if accepted else "INITIALIZING",
+        "alive": True,
+        "has_odom": False,
+        "ltlio_lidar_update": diagnostics,
+    })
+    assert len(statuses) == 1
+    assert statuses[0]["ltlio_lidar_update"] == diagnostics
 
 
 def test_cpp_slam_adapter_converts_native_map_cloud_at_host_boundary(tmp_path) -> None:
@@ -562,7 +562,7 @@ def test_cpp_slam_adapter_explicit_status_paths_override_env_defaults(
 
 
 def test_slam_stack_requires_external_native_adapter() -> None:
-    from lingtu.assembly.stacks.slam import slam
+    from lingtu.assembly.host.stacks.localization import slam
 
     with pytest.raises(ValueError, match="localization_adapter"):
         slam("native_dds")
@@ -573,7 +573,7 @@ def test_slam_stack_requires_external_native_adapter() -> None:
 
 @pytest.mark.parametrize("profile", ("pointlio", "genz"))
 def test_slam_stack_rejects_placeholder_profiles(profile: str) -> None:
-    from lingtu.assembly.stacks.slam import slam
+    from lingtu.assembly.host.stacks.localization import slam
 
     with pytest.raises(ValueError, match="unsupported native SLAM profile"):
         slam(profile, localization_adapter="cpp_slam_status")
@@ -590,8 +590,8 @@ def test_ros2_bridge_compatibility_is_removed(monkeypatch) -> None:
 
 
 def test_slam_stack_does_not_restore_removed_ros2_bridge(monkeypatch) -> None:
-    import lingtu.assembly.plugins as plugin_seed
-    from lingtu.assembly.stacks.slam import slam
+    import lingtu.assembly.host.plugin_catalog as plugin_seed
+    from lingtu.assembly.host.stacks.localization import slam
 
     monkeypatch.setenv("LINGTU_ENABLE_ROS2_COMPAT", "1")
     plugin_seed = importlib.reload(plugin_seed)
@@ -607,7 +607,7 @@ def test_slam_stack_does_not_restore_removed_ros2_bridge(monkeypatch) -> None:
 
 
 def test_native_slam_adapter_wiring_covers_host_consumers() -> None:
-    from lingtu.assembly.wires.full_stack import full_stack_wire_specs
+    from lingtu.assembly.host.wiring.connect import full_stack_wire_specs
 
     modules = {
         "SlamAdapterModule",
@@ -632,23 +632,22 @@ def test_native_slam_adapter_wiring_covers_host_consumers() -> None:
 
 
 def test_native_mapping_save_path_writes_only_real_map_artifacts() -> None:
-    fastlio = Path("src/localization/slam/cpp/fastlio.cpp").read_text(encoding="utf-8")
+    ltlio = Path("src/localization/slam/cpp/ltlio.cpp").read_text(encoding="utf-8")
     cyclone_runtime = Path("src/localization/slam/cpp/cyclone_runtime.cpp").read_text(encoding="utf-8")
 
-    assert "Status saveMap(const std::string& pcd_path) override" in fastlio
-    assert "builder_->lidar_processor()->mapSnapshot()" in fastlio
-    assert "writeTrajectory(capture.pcd.parent_path(), capture.trajectory)" in fastlio
-    assert "writePatchBundle(" in fastlio
+    assert "Status saveMap(const std::string& pcd_path) override" in ltlio
+    assert "writeTrajectory(capture.pcd.parent_path(), capture.trajectory)" in ltlio
+    assert "writePatchBundle(" in ltlio
     assert "backend->startSaveMapAsync(output_path)" in cyclone_runtime
     assert "backend->pollSaveMapAsync()" in cyclone_runtime
-    assert "max_patch_snapshots" in fastlio
-    assert "patch_min_translation_m" in fastlio
-    assert "patch_min_rotation_rad" in fastlio
-    assert "patch_history_.size() > max_snapshots" in fastlio
-    assert "patch_history_.size() > 300" not in fastlio
-    assert "map.raw.pcd" not in fastlio
-    assert "MapOptimizationReport" not in fastlio
-    assert "OptimizedMapResult" not in fastlio
+    assert "max_patch_snapshots" in ltlio
+    assert "patch_min_translation_m" in ltlio
+    assert "patch_min_rotation_rad" in ltlio
+    assert "patch_history_.size() > max_snapshots" in ltlio
+    assert "patch_history_.size() > 300" not in ltlio
+    assert "map.raw.pcd" not in ltlio
+    assert "MapOptimizationReport" not in ltlio
+    assert "OptimizedMapResult" not in ltlio
 
     assert 'action == "track_against_map"' in cyclone_runtime
     assert "if (runtime_mode != SlamMode::Localization)" in cyclone_runtime
@@ -658,7 +657,7 @@ def test_native_mapping_save_path_writes_only_real_map_artifacts() -> None:
 def test_slam_cpp_build_declares_native_dds_runtime() -> None:
     cmake = Path("src/localization/slam/cpp/CMakeLists.txt").read_text(encoding="utf-8")
     cyclone_runtime = Path("src/localization/slam/cpp/cyclone_runtime.cpp").read_text(encoding="utf-8")
-    fastlio = Path("src/localization/slam/cpp/fastlio.cpp").read_text(encoding="utf-8")
+    ltlio = Path("src/localization/slam/cpp/ltlio.cpp").read_text(encoding="utf-8")
     sdk2_dds = Path("src/drivers/real/lidar/native/dds_module.cpp").read_text(encoding="utf-8")
     build_script = Path("scripts/build/build_slam_core.sh").read_text(encoding="utf-8")
 
@@ -721,21 +720,21 @@ def test_slam_cpp_build_declares_native_dds_runtime() -> None:
     assert "qos_for_topic(lingtu::message::kLidarRawFrame.dds_topic)" in sdk2_dds
     assert "qos_for_topic(lingtu::message::kLidarRawPacket.dds_topic)" in sdk2_dds
     assert "make_qos(lingtu::dds::QosProfile::SensorStream)" in sdk2_dds
-    assert "state_estimation_at_scan_ = odometry_odom_body_" in fastlio
-    assert "map_odom_pose_ = result.map_odom" in fastlio
-    assert "composePoses(map_odom_pose_, *odometry_odom_body_)" in fastlio
-    assert "effective_guess" in fastlio
-    assert "relocalization_max_fitness" in fastlio
-    assert "EvaluateRelocalizationGate" in fastlio
-    assert "relocalization_map_bounds_margin_m" in fastlio
-    assert "relocalization_outside_map_bounds" in fastlio
-    assert "preserve_tracking_on_relocalization_failure" in fastlio
-    assert 'relocalization_state_ = preserve_tracking ? "tracking" : relocalization_state' in fastlio
-    assert "failRelocalization" in fastlio
-    assert "map_alignment_update" in fastlio
-    assert "state_estimation_at_scan_ = odometry_odom_body_" in fastlio
-    assert "updateMapBounds" in fastlio
-    assert "poseInsideMapBounds" in fastlio
+    assert "state_estimation_at_scan_ = odometry_odom_body_" in ltlio
+    assert "composePoses(result.map_odom, inversePose(lio_from_odom_))" in ltlio
+    assert "composePoses(mapOdomPose(), *odometry_odom_body_)" in ltlio
+    assert "effective_guess" in ltlio
+    assert "relocalization_max_fitness" in ltlio
+    assert "EvaluateRelocalizationGate" in ltlio
+    assert "relocalization_map_bounds_margin_m" in ltlio
+    assert "relocalization_outside_map_bounds" in ltlio
+    assert "preserve_tracking_on_relocalization_failure" in ltlio
+    assert 'relocalization_state_ = preserve_tracking ? "tracking" : relocalization_state' in ltlio
+    assert "failRelocalization" in ltlio
+    assert "map_alignment_update" in ltlio
+    assert "state_estimation_at_scan_ = odometry_odom_body_" in ltlio
+    assert "updateMapBounds" in ltlio
+    assert "poseInsideMapBounds" in ltlio
     assert "relocalization_refine_backend" in cyclone_runtime
     assert "relocalization_map_body" in cyclone_runtime
     assert "dds.writeTf(msg)" in cyclone_runtime
@@ -850,7 +849,7 @@ def test_relocalization_response_preserves_overlap_evidence_across_boundaries() 
 
 def test_slam_global_fallback_preserves_search_intent_and_commit_gates() -> None:
     runtime = Path("src/localization/slam/cpp/cyclone_runtime.cpp").read_text(encoding="utf-8")
-    fastlio = Path("src/localization/slam/cpp/fastlio.cpp").read_text(encoding="utf-8")
+    ltlio = Path("src/localization/slam/cpp/ltlio.cpp").read_text(encoding="utf-8")
 
     manual = runtime.split("command_status = manual_relocalization.start(", 1)[1].split(";", 1)[0]
     assert 'action == "global_relocalize"' in manual
@@ -865,13 +864,13 @@ def test_slam_global_fallback_preserves_search_intent_and_commit_gates() -> None
         ("Status relocalize(", "Status startRelocalizeAsync("),
         ("Status startRelocalizeAsync(", "std::optional<Status> pollRelocalizeAsync()"),
     ):
-        body = fastlio.split(method, 1)[1].split(following, 1)[0]
+        body = ltlio.split(method, 1)[1].split(following, 1)[0]
         assert "effective_guess = global_search ? std::nullopt : guess" in body
         assert "if (!global_search && !effective_guess.has_value()" in body
         assert "(search == RelocalizationSearch::Global || !guess.has_value())" in body
-        assert "has_map_odom_pose_ && odometry_odom_body_.has_value()" in body
-    assert "*odometry_odom_body_, map_alignment_update)" in fastlio
-    assert "odom_body, map_alignment_update)" in fastlio
+        assert "has_map_lio_pose_ && odometry_odom_body_.has_value()" in body
+    assert "*odometry_odom_body_, map_alignment_update)" in ltlio
+    assert "odom_body, map_alignment_update)" in ltlio
 
 
 def test_native_relocalization_uses_map_icp_with_generation_guard() -> None:
@@ -879,7 +878,7 @@ def test_native_relocalization_uses_map_icp_with_generation_guard() -> None:
     map_icp_header = Path("src/localization/slam/cpp/map_icp.hpp").read_text(encoding="utf-8")
     map_icp_source = Path("src/localization/slam/cpp/map_icp.cpp").read_text(encoding="utf-8")
     cmake = Path("src/localization/slam/cpp/CMakeLists.txt").read_text(encoding="utf-8")
-    fastlio = Path("src/localization/slam/cpp/fastlio.cpp").read_text(encoding="utf-8")
+    ltlio = Path("src/localization/slam/cpp/ltlio.cpp").read_text(encoding="utf-8")
     gate = Path("src/localization/slam/cpp/relocalization_gate.hpp").read_text(encoding="utf-8")
 
     assert '#include "map_icp.hpp"' in native_relocalizer
@@ -904,10 +903,10 @@ def test_native_relocalization_uses_map_icp_with_generation_guard() -> None:
     assert "native_relocalizer_seed_outside_search" in native_relocalizer
     assert "map_icp.cpp" in cmake
 
-    success_gate = fastlio.index("if (!result.success)")
-    commit_gate = fastlio.index("EvaluateRelocalizationGate")
-    bounds_gate = fastlio.index("relocalization_outside_map_bounds")
-    mutation = fastlio.index("map_odom_pose_ = result.map_odom")
+    success_gate = ltlio.index("if (!result.success)")
+    commit_gate = ltlio.index("EvaluateRelocalizationGate")
+    bounds_gate = ltlio.index("relocalization_outside_map_bounds")
+    mutation = ltlio.index("map_lio_pose_ = has_lio_odom_correction_")
     assert success_gate < mutation
     assert commit_gate < mutation
     assert bounds_gate < mutation
@@ -932,15 +931,17 @@ def test_cpp_message_topic_contract_stays_ros_free() -> None:
         assert marker not in header
 
 
-def test_fastlio_feed_lidar_only_queues_raw_frame() -> None:
-    text = Path("src/localization/slam/cpp/fastlio.cpp").read_text(encoding="utf-8")
+def test_ltlio_raw_intake_has_one_selection_owner_for_each_input_mode() -> None:
+    text = Path("src/localization/slam/cpp/ltlio.cpp").read_text(encoding="utf-8")
     feed = text.split("Status feedLidar(const LidarFrame& frame) override {", 1)[1]
     feed = feed.split("Status feedGnss", 1)[0]
-    sync = text.split("bool prepareFastLioPackage() {", 1)[1]
+    sync = text.split("bool prepareExternalScan() {", 1)[1]
     sync = sync.split("void updateWaitingReason()", 1)[0]
 
     assert "toPclCloud" not in feed
     assert "livox_scan_window" not in text
     assert "pending_lidar_scan_" not in text
     assert "pushLidarFrame(frame)" in feed
-    assert "toPclCloud(lidar_buffer_.front(), builder_config_)" in sync
+    assert "frontend_->feedCloud(toNativeCloud(frame))" in feed
+    assert "selectPoints" not in feed
+    assert "lio::selectPoints(input, frontend_config_)" in sync

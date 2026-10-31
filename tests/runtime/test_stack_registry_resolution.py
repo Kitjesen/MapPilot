@@ -19,7 +19,7 @@ def _entry_names(bp) -> list[str]:
 
 
 def test_driver_stack_keeps_runtime_compat_resolution_in_adapter():
-    driver_stack_source = Path("src/lingtu/assembly/stacks/driver.py").read_text(encoding="utf-8")
+    driver_stack_source = Path("src/lingtu/assembly/host/stacks/driver.py").read_text(encoding="utf-8")
     driver_runtime_source = Path("src/runtime/adapters/driver_runtime.py").read_text(encoding="utf-8")
 
     removed_driver_adapter = "drivers" + ".adapters"
@@ -39,7 +39,7 @@ def test_driver_stack_keeps_runtime_compat_resolution_in_adapter():
     ],
 )
 def test_driver_stack_resolves_runtime_driver_keys(robot, class_name):
-    from lingtu.assembly.stacks.driver import driver_name
+    from lingtu.assembly.host.stacks.driver import driver_name
 
     saved = snapshot()
     try:
@@ -52,7 +52,7 @@ def test_driver_stack_resolves_runtime_driver_keys(robot, class_name):
 
 @pytest.mark.parametrize("robot", ["s100p", "navigate", "sim_gazebo"])
 def test_driver_stack_rejects_removed_backend_aliases(robot):
-    from lingtu.assembly.stacks.driver import driver_name
+    from lingtu.assembly.host.stacks.driver import driver_name
 
     saved = snapshot()
     try:
@@ -64,7 +64,7 @@ def test_driver_stack_rejects_removed_backend_aliases(robot):
         restore(saved)
 @pytest.mark.parametrize("robot", ["thunder", "thunder_remote", "grpc_brainstem"])
 def test_driver_stack_rejects_retired_python_hardware_drivers(robot):
-    from lingtu.assembly.stacks.driver import driver_name
+    from lingtu.assembly.host.stacks.driver import driver_name
 
     saved = snapshot()
     try:
@@ -106,7 +106,7 @@ def test_driver_runtime_rejects_retired_python_hardware_keys(
 
 
 def test_driver_stack_rejects_retired_driver_backend_parameter():
-    from lingtu.assembly.stacks.driver import driver
+    from lingtu.assembly.host.stacks.driver import driver
 
     saved = snapshot()
     try:
@@ -119,7 +119,7 @@ def test_driver_stack_rejects_retired_driver_backend_parameter():
 
 
 def test_lidar_stack_prefers_registered_mid360_module():
-    from lingtu.assembly.stacks.lidar import lidar
+    from lingtu.assembly.host.stacks.lidar import lidar
 
     saved = snapshot()
     try:
@@ -139,7 +139,7 @@ def test_lidar_stack_prefers_registered_mid360_module():
 
 
 def test_lidar_stack_uses_default_source_without_transport_config():
-    from lingtu.assembly.stacks.lidar import lidar
+    from lingtu.assembly.host.stacks.lidar import lidar
 
     saved = snapshot()
     try:
@@ -157,7 +157,7 @@ def test_lidar_stack_uses_default_source_without_transport_config():
 
 
 def test_lidar_stack_can_select_mujoco_backend():
-    from lingtu.assembly.stacks.lidar import lidar
+    from lingtu.assembly.host.stacks.lidar import lidar
 
     saved = snapshot()
     try:
@@ -177,7 +177,7 @@ def test_lidar_stack_can_select_mujoco_backend():
 
 
 def test_lidar_stack_rejects_unknown_backend_without_mid360_fallback():
-    from lingtu.assembly.stacks.lidar import lidar
+    from lingtu.assembly.host.stacks.lidar import lidar
 
     saved = snapshot()
     try:
@@ -195,14 +195,14 @@ def test_lidar_stack_rejects_unknown_backend_without_mid360_fallback():
 
 @pytest.mark.parametrize("backend", ["dds", "replay"])
 def test_lidar_stack_rejects_declared_unimplemented_backends(backend):
-    from lingtu.assembly.stacks.lidar import lidar
+    from lingtu.assembly.host.stacks.lidar import lidar
 
     with pytest.raises(ValueError, match="declared but not implemented"):
         lidar(enabled=True, backend=backend)
 
 
 def test_gateway_stack_prefers_registered_interface_modules():
-    from lingtu.assembly.stacks.gateway import gateway
+    from lingtu.assembly.host.stacks.gateway import gateway
 
     saved = snapshot()
     try:
@@ -247,7 +247,7 @@ def test_gateway_stack_prefers_registered_interface_modules():
 
 
 def test_navigation_stack_uses_registered_skills_with_canonical_alias():
-    from lingtu.assembly.stacks.navigation import navigation
+    from lingtu.assembly.host.stacks.navigation import navigation
 
     saved = snapshot()
     try:
@@ -266,7 +266,7 @@ def test_navigation_stack_uses_registered_skills_with_canonical_alias():
 
 
 def test_external_tare_stack_prefers_registered_modules_with_canonical_aliases():
-    from lingtu.assembly.stacks.exploration import exploration
+    from lingtu.assembly.host.stacks.exploration import exploration
 
     saved = snapshot()
     try:
@@ -297,7 +297,7 @@ def test_external_tare_stack_prefers_registered_modules_with_canonical_aliases()
 
 
 def test_tare_stack_prefers_registered_bridge_modules_with_canonical_aliases():
-    from lingtu.assembly.stacks.exploration import exploration
+    from lingtu.assembly.host.stacks.exploration import exploration
 
     saved = snapshot()
     try:
@@ -332,7 +332,7 @@ def test_tare_stack_prefers_registered_bridge_modules_with_canonical_aliases():
 
 
 def test_perception_stack_prefers_registered_scene_and_camera_modules():
-    from lingtu.assembly.stacks.perception import perception
+    from lingtu.assembly.host.stacks.perception import perception
 
     saved = snapshot()
     try:
@@ -361,7 +361,7 @@ def test_perception_stack_prefers_registered_scene_and_camera_modules():
 
 
 def test_perception_stack_defaults_external_camera_to_canonical_backend():
-    from lingtu.assembly.stacks.perception import perception
+    from lingtu.assembly.host.stacks.perception import perception
 
     saved = snapshot()
     try:
@@ -394,7 +394,7 @@ def test_perception_stack_skips_camera_resolution_for_driver_camera(
     monkeypatch,
     config,
 ):
-    perception_stack = importlib.import_module("lingtu.assembly.stacks.perception")
+    perception_stack = importlib.import_module("lingtu.assembly.host.stacks.perception")
 
     saved = snapshot()
     try:
@@ -423,7 +423,7 @@ def test_perception_stack_skips_camera_resolution_for_driver_camera(
 
 
 def test_perception_stack_resolves_camera_for_mujoco_role(monkeypatch):
-    perception_stack = importlib.import_module("lingtu.assembly.stacks.perception")
+    perception_stack = importlib.import_module("lingtu.assembly.host.stacks.perception")
 
     saved = snapshot()
     try:
@@ -456,7 +456,7 @@ def test_perception_stack_resolves_camera_for_mujoco_role(monkeypatch):
 
 
 def test_perception_stack_resolves_camera_for_external_camera(monkeypatch):
-    perception_stack = importlib.import_module("lingtu.assembly.stacks.perception")
+    perception_stack = importlib.import_module("lingtu.assembly.host.stacks.perception")
 
     saved = snapshot()
     try:
@@ -490,7 +490,7 @@ def test_perception_stack_resolves_camera_for_external_camera(monkeypatch):
 
 
 def test_wiring_context_accepts_canonical_camera_name():
-    from lingtu.assembly.wires.context import camera_source
+    from lingtu.assembly.host.wiring.context import camera_source
 
     assert camera_source({"camera"}, driver_module="Driver") == (
         "camera",
@@ -500,7 +500,7 @@ def test_wiring_context_accepts_canonical_camera_name():
 
 
 def test_perception_stack_prefers_registered_optional_tool_modules():
-    from lingtu.assembly.stacks.perception import perception
+    from lingtu.assembly.host.stacks.perception import perception
 
     saved = snapshot()
     try:
@@ -554,8 +554,9 @@ def test_perception_stack_prefers_registered_optional_tool_modules():
 
 
 def test_planner_stack_prefers_registered_modules_with_canonical_aliases():
+    from decision.modules.agent_planner import AgentPlannerModule
     from decision.modules.visual_servo import VisualServoModule
-    from lingtu.assembly.stacks.planner import planner
+    from lingtu.assembly.host.stacks.semantic_tasks import planner
 
     saved = snapshot()
     try:
@@ -572,27 +573,48 @@ def test_planner_stack_prefers_registered_modules_with_canonical_aliases():
         bp = planner(llm="mock", save_dir="/tmp/lingtu-semantic")
 
         assert _entry_classes(bp) == [
-            FakeSemanticPlanner,
             FakeLlm,
+            FakeSemanticPlanner,
+            AgentPlannerModule,
             VisualServoModule,
         ]
         assert _entry_names(bp) == [
-            "SemanticPlannerModule",
             "LLMModule",
+            "SemanticPlannerModule",
+            "AgentPlannerModule",
             "VisualServoModule",
         ]
         assert bp._entries[0].config == {
+            "backend": "mock",
+            "model": "",
+            "base_url": "",
+            "api_key_env": "",
+            "timeout_sec": 10.0,
+        }
+        assert bp._entries[1].config == {
             "save_dir": "/tmp/lingtu-semantic",
             "llm_backend": "mock",
+            "llm_model": "",
+            "llm_base_url": "",
+            "llm_api_key_env": "",
+            "llm_timeout_sec": 10.0,
+            "product_session_id": "",
         }
-        assert bp._entries[1].config == {"backend": "mock"}
+        assert bp._entries[2].config == {
+            "llm_backend": "mock",
+            "llm_model": "",
+            "llm_base_url": "",
+            "llm_api_key_env": "",
+            "llm_timeout_sec": 10.0,
+        }
     finally:
         restore(saved)
 
 
 def test_planner_stack_only_adds_vla_when_requested():
+    from decision.modules.agent_planner import AgentPlannerModule
     from decision.modules.visual_servo import VisualServoModule
-    from lingtu.assembly.stacks.planner import planner
+    from lingtu.assembly.host.stacks.semantic_tasks import planner
 
     saved = snapshot()
     try:
@@ -613,24 +635,26 @@ def test_planner_stack_only_adds_vla_when_requested():
         bp = planner(llm="mock", vla_backend="mock-vla")
 
         assert _entry_classes(bp) == [
-            FakeSemanticPlanner,
             FakeLlm,
+            FakeSemanticPlanner,
+            AgentPlannerModule,
             VisualServoModule,
             FakeVla,
         ]
         assert _entry_names(bp) == [
-            "SemanticPlannerModule",
             "LLMModule",
+            "SemanticPlannerModule",
+            "AgentPlannerModule",
             "VisualServoModule",
             "VLAModule",
         ]
-        assert bp._entries[3].config == {"backend": "mock-vla"}
+        assert bp._entries[4].config == {"backend": "mock-vla"}
     finally:
         restore(saved)
 
 
 def test_memory_stack_prefers_registered_modules_with_canonical_aliases():
-    from lingtu.assembly.stacks.memory import memory
+    from lingtu.assembly.host.stacks.memory import memory
 
     saved = snapshot()
     try:
@@ -656,10 +680,6 @@ def test_memory_stack_prefers_registered_modules_with_canonical_aliases():
         class FakeTemporalMemory(Module, layer=3):
             pass
 
-        @register("memory", "mission_logger")
-        class FakeMissionLogger(Module, layer=3):
-            pass
-
         bp = memory(save_dir="/tmp/lingtu-semantic")
 
         assert _entry_classes(bp) == [
@@ -668,7 +688,6 @@ def test_memory_stack_prefers_registered_modules_with_canonical_aliases():
             FakeTaggedLocations,
             FakeVectorMemory,
             FakeTemporalMemory,
-            FakeMissionLogger,
         ]
         assert _entry_names(bp) == [
             "SemanticMapperModule",
@@ -676,7 +695,6 @@ def test_memory_stack_prefers_registered_modules_with_canonical_aliases():
             "TaggedLocationsModule",
             "VectorMemoryModule",
             "TemporalMemoryModule",
-            "MissionLoggerModule",
         ]
         assert bp._entries[0].config == {"save_dir": "/tmp/lingtu-semantic"}
         assert bp._entries[3].config == {"persist_dir": "/tmp/lingtu-semantic"}
@@ -686,7 +704,7 @@ def test_memory_stack_prefers_registered_modules_with_canonical_aliases():
 
 
 def test_slam_stack_rejects_removed_ros2_adapter_even_if_registered(monkeypatch):
-    from lingtu.assembly.stacks.slam import slam
+    from lingtu.assembly.host.stacks.localization import slam
 
     monkeypatch.setenv("LINGTU_ENABLE_ROS2_COMPAT", "1")
     saved = snapshot()
@@ -725,7 +743,7 @@ def test_slam_stack_rejects_removed_legacy_bridge_registry(monkeypatch):
 
 
 def test_native_slam_stack_requires_explicit_adapter_without_importing_ros2_bridge():
-    from lingtu.assembly.stacks.slam import slam
+    from lingtu.assembly.host.stacks.localization import slam
 
     saved = snapshot()
     ros2_bridge_before = sys.modules.get("localization.adapters.ros2.slam_bridge")

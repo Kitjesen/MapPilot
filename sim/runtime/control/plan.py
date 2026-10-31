@@ -113,6 +113,7 @@ class PolicySpec:
     runtime: str
     artifact: str
     manifest: str
+    profiles: Mapping[str, Mapping[str, str]] = field(default_factory=lambda: MappingProxyType({}))
 
 
 @dataclass(frozen=True)
@@ -285,18 +286,27 @@ def _parse_controller(value: Any, index: int) -> ControllerSpec:
         _text(package[key], f"{field}.package.{key}")
 
     adapter = _object(item["adapter"], f"{field}.adapter", {"plugin", "abi"})
+    policy_keys = {"runtime", "artifact", "manifest"}
+    if isinstance(item["policy"], dict) and "profiles" in item["policy"]:
+        policy_keys.add("profiles")
     policy = _object(
         item["policy"],
         f"{field}.policy",
-        {
-            "runtime",
-            "artifact",
-            "manifest",
-        },
+        policy_keys,
     )
     policy_runtime = _text(policy["runtime"], f"{field}.policy.runtime")
     policy_artifact = _text(policy["artifact"], f"{field}.policy.artifact")
     policy_manifest = _text(policy["manifest"], f"{field}.policy.manifest")
+    profiles = policy.get("profiles", {})
+    if not isinstance(profiles, dict) or set(profiles) - {"stairs_up", "stairs_down"}:
+        raise ControllerPlanError(f"{field}.policy.profiles must bind supported stair requirements")
+    parsed_profiles = {}
+    for requirement, value in profiles.items():
+        profile = _object(value, f"{field}.policy.profiles.{requirement}", {"artifact", "manifest"})
+        parsed_profiles[requirement] = MappingProxyType({
+            key: _text(profile[key], f"{field}.policy.profiles.{requirement}.{key}")
+            for key in ("artifact", "manifest")
+        })
     timing = _object(item["timing"], f"{field}.timing", {"inference_hz", "low_level_hz"})
     return ControllerSpec(
         controller_id=_text(item["controller_id"], f"{field}.controller_id"),
@@ -309,6 +319,7 @@ def _parse_controller(value: Any, index: int) -> ControllerSpec:
             runtime=policy_runtime,
             artifact=policy_artifact,
             manifest=policy_manifest,
+            profiles=MappingProxyType(parsed_profiles),
         ),
         inference_hz=_rate(timing["inference_hz"], f"{field}.timing.inference_hz"),
         low_level_hz=_rate(timing["low_level_hz"], f"{field}.timing.low_level_hz"),

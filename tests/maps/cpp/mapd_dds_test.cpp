@@ -212,7 +212,62 @@ void TestMapdDdsRoundTrip() {
   const auto snapshot_ack_writer =
       CreateWriter(participant, publisher, lingtu::message::kSlamMapSnapshotAck.dds_topic.data(),
                    &lingtu_dds_SlamMapSnapshotAck_desc);
+  const auto geometry_writer = CreateWriter(participant, publisher,
+      lingtu::message::kSlamMapGeometrySnapshot.dds_topic.data(),
+      &lingtu_dds_SlamMapGeometrySnapshot_desc);
+  const auto geometry_ack_reader = CreateReader(participant, subscriber,
+      lingtu::message::kSlamMapGeometryApplied.dds_topic.data(),
+      &lingtu_dds_SlamMapGeometryApplied_desc);
   std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+  lingtu_dds_SlamMapGeometrySnapshot geometry{};
+  geometry.reset_epoch = 81U;
+  geometry.graph_revision = 12U;
+  geometry.captured_sequence = 345U;
+  geometry.frame_id = const_cast<char*>("map");
+  geometry.frozen_dir = const_cast<char*>("/tmp/lingtu-frozen-geometry");
+  geometry.keyframe_count = 15U;
+  geometry.captured_stamp_ns = 123456789000LL;
+  geometry.map_body.position.x = 100;
+  geometry.map_body.orientation.w = 1;
+  geometry.sensor_origin_z_m = .35;
+  assert(dds_write(geometry_writer, &geometry) >= 0);
+  std::vector<lingtu::maps::mapd::GeometrySnapshot> received_geometry;
+  const auto geometry_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (received_geometry.empty() && std::chrono::steady_clock::now() < geometry_deadline) {
+    received_geometry = mapd.TakeGeometrySnapshots();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  assert(received_geometry.size() == 1U);
+  assert(received_geometry.front().reset_epoch == 81U);
+  assert(received_geometry.front().graph_revision == 12U);
+  assert(received_geometry.front().captured_sequence == 345U);
+  assert(received_geometry.front().keyframe_count == 15U);
+  assert(received_geometry.front().captured_stamp_ns == 123456789000LL);
+  assert(received_geometry.front().map_body.x == 100);
+  assert(received_geometry.front().sensor_origin_z_m == .35);
+  assert(received_geometry.front().frozen_dir == geometry.frozen_dir);
+  assert(mapd.PublishGeometryApplied({81U,12U,true,"applied"}));
+  lingtu_dds_SlamMapGeometryApplied geometry_ack{};
+  void* geometry_sample = &geometry_ack;
+  dds_sample_info_t geometry_info{};
+  dds_return_t geometry_count = 0;
+  while (geometry_count == 0 && std::chrono::steady_clock::now() < geometry_deadline) {
+    geometry_count = dds_take(geometry_ack_reader,&geometry_sample,&geometry_info,1,1);
+    if (geometry_count == 0) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  assert(geometry_count == 1 && geometry_info.valid_data && geometry_ack.success);
+  assert(geometry_ack.reset_epoch == 81U && geometry_ack.graph_revision == 12U);
+  FreeTaken(&geometry_ack,&lingtu_dds_SlamMapGeometryApplied_desc);
+  // The retained metadata reaches a fresh mapd reader after the first install.
+  Dds restarted_mapd(kDomainId,100U);
+  received_geometry.clear();
+  const auto restart_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (received_geometry.empty() && std::chrono::steady_clock::now() < restart_deadline) {
+    received_geometry = restarted_mapd.TakeGeometrySnapshots();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  assert(received_geometry.size() == 1U && received_geometry.front().graph_revision == 12U);
 
   lingtu_dds_MapArtifactIdentity target_artifact{};
   target_artifact.type = const_cast<char *>("pointcloud");
@@ -307,7 +362,7 @@ void TestMapdDdsRoundTrip() {
   snapshot_ack_message.success = true;
   snapshot_ack_message.message = const_cast<char *>("captured");
   snapshot_ack_message.output_path = const_cast<char *>("/tmp/snapshot-roundtrip/map.pcd");
-  snapshot_ack_message.runtime_instance_id = const_cast<char *>("fastlio2:boot:1");
+  snapshot_ack_message.runtime_instance_id = const_cast<char *>("ltlio:boot:1");
   snapshot_ack_message.product_session_id = const_cast<char *>("product-session-1");
   snapshot_ack_message.reset_epoch = 4U;
   snapshot_ack_message.observation_sequence = 9U;
@@ -327,7 +382,7 @@ void TestMapdDdsRoundTrip() {
   assert(snapshot_acks.size() == 1U);
   assert(snapshot_acks.front().request_id == "snapshot-roundtrip");
   assert(snapshot_acks.front().map_id == "office");
-  assert(snapshot_acks.front().runtime_instance_id == "fastlio2:boot:1");
+  assert(snapshot_acks.front().runtime_instance_id == "ltlio:boot:1");
   assert(snapshot_acks.front().point_count == 42U);
 
   ObservationMessage observation;
@@ -388,6 +443,7 @@ void TestMapdDdsRoundTrip() {
   snapshot.collision.occupied_bits.front() = 1U;
   snapshot.collision.measured_occupied_bits.assign(500U, 0U);
   snapshot.collision.measured_occupied_bits[3] = 4U;
+  snapshot.collision.hit_bounds.push_back({26U, .21, -1.79, -.49, .24, -1.76, -.45});
   snapshot.collision.known_free_bits.assign(500U, 0U);
   snapshot.collision.known_free_bits[4] = 8U;
   snapshot.occupancy = lingtu::maps::layers::makeGrid2D(2, 2, 0.2, 0.0, 0.0, 0.0F);
@@ -429,6 +485,19 @@ void TestMapdDdsRoundTrip() {
     }
   }
   assert(received_state);
+  const auto publish_timing = mapd.GetOutputState().realtime_publish_timing;
+  assert(publish_timing.samples > 0U && publish_timing.last_ms > 0.0);
+  assert(publish_timing.max_sequence == snapshot.sequence);
+  assert(publish_timing.max_generation == snapshot.generation);
+  const auto output_timing = mapd.GetOutputState();
+  assert(output_timing.realtime_prepare_timing.samples == publish_timing.samples);
+  assert(output_timing.live_cloud_write_timing.samples == publish_timing.samples);
+  assert(output_timing.voxel_cloud_write_timing.samples == publish_timing.samples);
+  assert(output_timing.collision_write_timing.samples == publish_timing.samples);
+  assert(output_timing.collision_write_timing.max_sequence == snapshot.sequence);
+  assert(output_timing.collision_bitmap_bytes == 1500U);
+  assert(output_timing.collision_hit_bounds == 1U);
+  assert(output_timing.collision_writer_statistics_available);
   assert(state_message.reset_epoch == 4U);
   assert(state_message.observation_sequence == 9U);
   assert(state_message.accumulated_snapshot_cells == 2U);
@@ -482,6 +551,10 @@ void TestMapdDdsRoundTrip() {
   assert(collision_message.inflated_occupied_bits._buffer[0] == 1U);
   assert(collision_message.measured_occupied_bits._length == 500U);
   assert(collision_message.measured_occupied_bits._buffer[3] == 4U);
+  assert(collision_message.hit_bounds._length == 1U);
+  assert(collision_message.hit_bounds._buffer[0].cell_index == 26U);
+  assert(std::fabs(collision_message.hit_bounds._buffer[0].minimum.z + .49) < 1e-12);
+  assert(std::fabs(collision_message.hit_bounds._buffer[0].maximum.z + .45) < 1e-12);
   assert(collision_message.known_free_bits._length == 500U);
   assert(collision_message.known_free_bits._buffer[4] == 8U);
   FreeTaken(&state_message, &lingtu_dds_MapRuntimeState_desc);

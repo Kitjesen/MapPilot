@@ -7,7 +7,8 @@ from pathlib import Path
 
 from .contracts import ControllerAdapter, ControllerPolicy, ControllerRuntimeError
 from .plan import ControllerSpec
-from .thunderv4 import create_thunderv4_components, create_thunderv4_onnx_components
+from .thunder.cts_controller import create_thunderv4_cts_components
+from .thunder.legacy_controller import create_thunderv4_components, create_thunderv4_onnx_components
 
 ControllerComponentProvider = Callable[
     [ControllerSpec, Path], tuple[ControllerAdapter, ControllerPolicy]
@@ -110,6 +111,12 @@ PRODUCTION_CONTROLLER_COMPONENTS.register(
     adapter_plugin="thunderv4_flat53",
     policy_runtime="onnxruntime",
     provider=create_thunderv4_onnx_components,
+)
+PRODUCTION_CONTROLLER_COMPONENTS.register(
+    adapter_abi="lingtu.sim.controller-adapter.v1",
+    adapter_plugin="thunderv4_cts_moe",
+    policy_runtime="onnxruntime",
+    provider=create_thunderv4_cts_components,
 )
 PRODUCTION_CONTROLLER_COMPONENTS.register(
     adapter_abi="lingtu.sim.controller-adapter.v1",

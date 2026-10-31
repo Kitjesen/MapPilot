@@ -1,5 +1,5 @@
 #include <algorithm>
-#include "lingtu/maps/json.hpp"
+#include "lingtu/maps/io/json.hpp"
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -24,9 +24,9 @@
 #include <utility>
 
 #include "dds.hpp"
-#include "lingtu/maps/mapd/query_core.hpp"
-#include "lingtu/maps/mapd/query_server.hpp"
-#include "lingtu/maps/mapd/save_coordinator.hpp"
+#include "query.hpp"
+#include "server.hpp"
+#include "lingtu/maps/mapd/save.hpp"
 #include "lingtu/maps/service.hpp"
 #include "native/snapshot_file.hpp"
 
@@ -462,6 +462,15 @@ Options ParseOptions(int argc, char **argv) {
   return options;
 }
 
+std::string TimingJson(const lingtu::maps::mapd::Timing &timing) {
+  return "{\"samples\":" + std::to_string(timing.samples) +
+         ",\"last_ms\":" + std::to_string(timing.last_ms) +
+         ",\"mean_ms\":" + std::to_string(timing.samples > 0U ? timing.total_ms / timing.samples : 0.0) +
+         ",\"max_ms\":" + std::to_string(timing.max_ms) +
+         ",\"max_sequence\":" + std::to_string(timing.max_sequence) +
+         ",\"max_generation\":" + std::to_string(timing.max_generation) + "}";
+}
+
 std::string StatusJson(const State &state, const DdsInputState &input, const DdsOutputState &output,
                        const PublicationProgress &publications, const std::string &producer_boot_id,
                        const Options &options) {
@@ -537,6 +546,25 @@ std::string StatusJson(const State &state, const DdsInputState &input, const Dds
          "\"map_layers_published_generation\":" +
          std::to_string(publications.map_layers.generation) + "," +
          "\"scene_published_generation\":" + std::to_string(publications.scene.generation) + "," +
+         "\"timing\":{\"process\":" + TimingJson(state.process_timing) +
+         ",\"occupancy_update\":" + TimingJson(state.occupancy_update_timing) +
+         ",\"view\":" + TimingJson(state.view_timing) +
+         ",\"collision_build\":" + TimingJson(state.collision_build_timing) +
+         ",\"realtime_publish\":" + TimingJson(output.realtime_publish_timing) +
+         ",\"realtime_prepare\":" + TimingJson(output.realtime_prepare_timing) +
+         ",\"live_cloud_write\":" + TimingJson(output.live_cloud_write_timing) +
+         ",\"voxel_cloud_write\":" + TimingJson(output.voxel_cloud_write_timing) +
+         ",\"collision_write\":" + TimingJson(output.collision_write_timing) + "}," +
+         "\"collision_publish\":{\"cloud_data_bytes\":" + std::to_string(output.realtime_cloud_bytes) +
+         ",\"bitmap_bytes\":" + std::to_string(output.collision_bitmap_bytes) +
+         ",\"hit_bounds\":" + std::to_string(output.collision_hit_bounds) +
+         ",\"payload_native_bytes\":" + std::to_string(output.collision_payload_native_bytes) +
+         ",\"max_payload_native_bytes\":" + std::to_string(output.collision_max_payload_native_bytes) +
+         ",\"writer_statistics_available\":" +
+         (output.collision_writer_statistics_available ? "true" : "false") +
+         ",\"throttle_count\":" + std::to_string(output.collision_throttle_count) +
+         ",\"throttle_ns\":" + std::to_string(output.collision_throttle_ns) +
+         ",\"rexmit_bytes\":" + std::to_string(output.collision_rexmit_bytes) + "}," +
          "\"engine_error\":\"" + JsonEscape(state.last_error) + "\"," + "\"input_error\":\"" +
          JsonEscape(input.last_error) + "\"," + "\"output_error\":\"" +
          JsonEscape(output.last_error) + "\"}\n";
@@ -625,6 +653,10 @@ int main(int argc, char **argv) {
     std::deque<std::string> activation_result_order;
     constexpr std::size_t kActivationResultCacheSize = 128U;
     while (g_running) {
+      for (auto& geometry : dds.TakeGeometrySnapshots())
+        static_cast<void>(engine.SubmitGeometry(std::move(geometry)));
+      for (const auto& ack : engine.TakeGeometryAcks())
+        static_cast<void>(dds.PublishGeometryApplied(ack));
       if (auto observation = dds.TakeLatestObservation(); observation.has_value()) {
         static_cast<void>(engine.Submit(std::move(*observation)));
       }

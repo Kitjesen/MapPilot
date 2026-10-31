@@ -1,6 +1,7 @@
 #include "lingtu/recording/recording_catalog.hpp"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <fstream>
 #include <iterator>
@@ -9,6 +10,13 @@
 #include <system_error>
 #include <utility>
 #include <vector>
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
 
 namespace lingtu::recording {
 namespace {
@@ -253,15 +261,31 @@ RecordingManifestSnapshot read_recording_manifest(const std::filesystem::path &s
   if (error || size == 0 || size > kMaximumManifestBytes) {
     invalid_manifest(path, "file size is outside the accepted range");
   }
-  std::ifstream input(path, std::ios::binary);
-  if (!input) {
-    invalid_manifest(path, "file cannot be opened");
-  }
-
   RecordingManifestSnapshot snapshot;
   snapshot.session_directory = normalized_path(session_directory, path);
+#if defined(_WIN32)
+  // Status readers must allow the manager's atomic manifest replacement.
+  const auto input = ::CreateFileW(path.c_str(), GENERIC_READ,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+      FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (input == INVALID_HANDLE_VALUE) invalid_manifest(path, "file cannot be opened");
+  std::array<char, 65536> buffer{};
+  DWORD read = 0;
+  bool read_ok = true;
+  while ((read_ok = ::ReadFile(input, buffer.data(), static_cast<DWORD>(buffer.size()), &read, nullptr) != 0) && read > 0) {
+    snapshot.manifest_json.append(buffer.data(), read);
+    if (snapshot.manifest_json.size() > kMaximumManifestBytes) break;
+  }
+  ::CloseHandle(input);
+  if (!read_ok || snapshot.manifest_json.size() > kMaximumManifestBytes) {
+    invalid_manifest(path, "file cannot be read within the accepted size");
+  }
+#else
+  std::ifstream input(path, std::ios::binary);
+  if (!input) invalid_manifest(path, "file cannot be opened");
   snapshot.manifest_json.assign(std::istreambuf_iterator<char>(input),
                                 std::istreambuf_iterator<char>());
+#endif
   if (json_integer_field(snapshot.manifest_json, "version", path) != 1) {
     invalid_manifest(path, "unsupported manifest version");
   }

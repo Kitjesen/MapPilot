@@ -42,6 +42,7 @@ class ManualLocomotionGateConfig:
     profile_deadline_monotonic: float
     drive_probe_script: Path
     input_method: str = "ForegroundInput"
+    direction_key: str = "W"
     hold_milliseconds: int = 3000
     release_settle_milliseconds: int = 800
     startup_timeout_s: float = 20.0
@@ -84,6 +85,8 @@ class ManualLocomotionGateConfig:
             raise ValueError(
                 "input_method must be ForegroundInput or TargetedMessages"
             )
+        if self.direction_key not in {"W", "S", "A", "D", "Q", "E"}:
+            raise ValueError("direction_key must be one of W, S, A, D, Q, or E")
         object.__setattr__(self, "run_dir", run_dir)
         object.__setattr__(self, "drive_probe_script", probe_script)
 
@@ -122,6 +125,10 @@ def build_locomotion_probe_command(
         str(config.release_settle_milliseconds),
         "-InputMethod",
         config.input_method,
+        "-DirectionKey",
+        config.direction_key,
+        "-MinimumYawDeltaRadians",
+        "0.8",
         "-RunDirectory",
         str(config.run_dir),
         "-ExpectedRunId",
@@ -154,7 +161,11 @@ def supervise_manual_locomotion_gate(
         raise TypeError("config must be ManualLocomotionGateConfig")
     if not callable(prove_presence) or not callable(command_runner):
         raise TypeError("prove_presence and command_runner must be callable")
-    release_keys = _release_drive_keys if release_input is None else release_input
+    release_keys = (
+        (lambda: _release_drive_key(config.direction_key))
+        if release_input is None
+        else release_input
+    )
     if not callable(release_keys):
         raise TypeError("release_input must be callable")
     summary_path = config.run_dir / _SUMMARY_FILENAME
@@ -193,7 +204,12 @@ def supervise_manual_locomotion_gate(
 
     remaining = config.profile_deadline_monotonic - _finite_now(monotonic)
     available_probe_s = remaining - config.completion_buffer_s
-    if available_probe_s < config.minimum_probe_budget_s:
+    required_probe_budget_s = max(
+        config.minimum_probe_budget_s,
+        (config.hold_milliseconds + config.release_settle_milliseconds) / 1000.0
+        + 4.0,
+    )
+    if available_probe_s < required_probe_budget_s:
         return _write_result(
             config,
             summary_path=summary_path,
@@ -215,6 +231,8 @@ def supervise_manual_locomotion_gate(
             cwd=config.run_dir,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="strict",
             timeout=available_probe_s,
             check=False,
         )
@@ -312,6 +330,7 @@ def _strict_probe(
         ("schema", "lingtu.sim.debug.drive-input-probe.v3"),
         ("process_id", config.unreal_pid),
         ("input_method", config.input_method),
+        ("direction_key", config.direction_key),
         ("run_directory", str(config.run_dir)),
         ("expected_run_id", config.run_id),
         ("expected_session_id", config.session_id),
@@ -349,9 +368,11 @@ def _probe_passed(
         or probe.get("command_accepted") is not True
         or probe.get("physics_motion_observed") is not True
         or probe.get("motion_observed") is not True
-        or (_number(probe.get("max_observed_linear_speed_mps")) or 0.0) <= 0.01
+        or (_number(probe.get("max_observed_angular_speed_radps" if config.direction_key in {"Q", "E"}
+                             else "max_observed_linear_speed_mps")) or 0.0) <= 0.01
         or (_positive_int(probe.get("new_received_intents")) or 0) <= 0
         or (_positive_int(probe.get("new_nonzero_accepted_commands")) or 0) <= 0
+        or _nonnegative_int(probe.get("unexpected_nonzero_commands")) != 0
     ):
         return False
     if not _press_passed(probe.get("press")):
@@ -375,7 +396,7 @@ def _probe_passed(
         return False
     return (
         _identity_passed(probe.get("run_identity_qualification"))
-        and _locomotion_passed(probe.get("locomotion_qualification"))
+        and _locomotion_passed(probe.get("locomotion_qualification"), config.direction_key)
         and _release_stop_passed(probe.get("release_stop_qualification"))
         and _upright_passed(probe.get("upright_qualification"))
     )
@@ -385,7 +406,8 @@ def _press_passed(value: object) -> bool:
     return (
         isinstance(value, Mapping)
         and value.get("passed") is True
-        and (_positive_int(value.get("accepted_zero_with_deadman")) or 0) > 0
+        and (_positive_int(value.get("accepted_nonzero_commands")) or 0) > 0
+        and (_positive_int(value.get("accepted_control_claims")) or 0) == 1
         and (_positive_int(value.get("origin_matches")) or 0) > 0
     )
 
@@ -412,7 +434,7 @@ def _release_transport_passed(value: object) -> bool:
     return isinstance(value, Mapping) and value.get("passed") is True and all(
         (_positive_int(value.get(name)) or 0) > 0
         for name in (
-            "zero_while_deadman_held",
+            "control_release_requests",
             "released_authority_statuses",
             "zero_audit_records",
             "origin_matches",
@@ -430,18 +452,22 @@ def _identity_passed(value: object) -> bool:
     )
 
 
-def _locomotion_passed(value: object) -> bool:
+def _locomotion_passed(value: object, direction_key: str) -> bool:
     if not _base_qualification_passed(value) or not isinstance(value, Mapping):
         return False
-    displacement = _number(value.get("position_displacement_m"))
-    minimum = _number(value.get("minimum_position_displacement_m"))
+    turning = direction_key in {"Q", "E"}
+    displacement = _number(value.get("yaw_delta_rad" if turning else "position_displacement_m"))
+    if turning and displacement is not None and direction_key == "E":
+        displacement = -displacement
+    minimum = _number(value.get("minimum_orientation_delta_rad" if turning else "minimum_position_displacement_m"))
     hold_start = _nonnegative_int(value.get("hold_start_time_ns"))
     hold_end = _nonnegative_int(value.get("hold_end_time_ns"))
     return (
-        value.get("position_displacement_required") is True
+        value.get("position_displacement_required") is (not turning)
         and displacement is not None
         and minimum is not None
         and displacement >= minimum > 0.0
+        and (not turning or minimum >= .8)
         and (_positive_int(value.get("hold_samples")) or 0) >= 2
         and hold_start is not None
         and hold_end is not None
@@ -583,17 +609,25 @@ def _reserve_invocation(config: ManualLocomotionGateConfig) -> None:
         raise RuntimeError("locomotion gate input invocation is already reserved") from exc
 
 
-def _release_drive_keys() -> None:
-    """Release only the diagnostic keys from the parent process on Windows."""
+def _release_drive_key(direction_key: str) -> None:
+    """Release only the configured diagnostic key from the parent process."""
 
     if os.name != "nt":
         return
     import ctypes
 
     key_event_key_up = 0x0002
+    key_codes = {
+        "W": (0x57, 0x11),
+        "S": (0x53, 0x1F),
+        "A": (0x41, 0x1E),
+        "D": (0x44, 0x20),
+        "Q": (0x51, 0x10),
+        "E": (0x45, 0x12),
+    }
+    virtual_key, scan_code = key_codes[direction_key]
     user32 = ctypes.WinDLL("user32", use_last_error=True)
-    user32.keybd_event(0x57, 0x11, key_event_key_up, 0)
-    user32.keybd_event(0x10, 0x2A, key_event_key_up, 0)
+    user32.keybd_event(virtual_key, scan_code, key_event_key_up, 0)
 
 
 def _atomic_write_json(path: Path, document: Mapping[str, Any]) -> None:

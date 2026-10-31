@@ -60,7 +60,6 @@ struct InspectionTaskCommandReceipt {
   bool accepted{false};
   std::int32_t kind{0};
   std::string reason;
-  std::string run_id;
   double endpoint_timestamp_s{0.0};
   std::string diagnostic;
 };
@@ -84,7 +83,6 @@ struct InspectionTaskEventSnapshot {
   std::int32_t kind{0};
   std::string task_id;
   std::string request_id;
-  std::string command_request_id;
   std::int32_t state{0};
   std::string map_id;
   std::int64_t map_content_epoch{0};
@@ -94,7 +92,6 @@ struct InspectionTaskEventSnapshot {
   std::uint32_t point_count{0U};
   std::uint32_t loop_index{0U};
   std::uint32_t retry_count{0U};
-  std::string point_id;
   std::string action;
   std::string action_request_id;
   std::string evidence_id;
@@ -158,6 +155,37 @@ struct PlanResult {
   PathPoint start;
   PathPoint goal;
   std::vector<PathPoint> path;
+};
+
+struct SemanticCameraView {
+  double x{0.0};
+  double y{0.0};
+  double yaw{0.0};
+  double range_m{0.0};
+  double horizontal_fov_rad{0.0};
+};
+
+struct SemanticViewCandidate {
+  PathPoint position;
+  double yaw{0.0};
+  double score{0.0};
+  double route_cost_m{0.0};
+  std::uint32_t visible_cells{0U};
+};
+
+struct SemanticViewResult {
+  double timestamp_s{0.0};
+  std::string frame_id;
+  std::string request_id;
+  std::string boot_id;
+  std::string map_id;
+  std::int64_t map_content_epoch{0};
+  std::uint64_t frame_epoch{0U};
+  double reference_z{0.0};
+  bool available{false};
+  bool geometry_exhausted{false};
+  std::string reason;
+  std::vector<SemanticViewCandidate> candidates;
 };
 
 // Latest measured joints for display, independent of navigation authority.
@@ -502,6 +530,17 @@ class LINGTU_NAV_CLIENT_API Client {
   [[nodiscard]] bool takeJointState(JointStateSnapshot *state);
   [[nodiscard]] bool takeMapScene(MapSceneSnapshot* scene);
   [[nodiscard]] MapSceneHealthSnapshot mapSceneHealth() const;
+  [[nodiscard]] SemanticViewResult querySemanticViews(
+      const std::string& boot_id,
+      const std::string& map_id,
+      std::int64_t map_content_epoch,
+      const std::string& frame_id,
+      std::uint64_t frame_epoch,
+      double reference_z,
+      double camera_range_m,
+      double camera_horizontal_fov_rad,
+      const std::vector<SemanticCameraView>& views,
+      int timeout_ms = 3000);
 
  private:
   struct Impl;

@@ -18,6 +18,9 @@
 
 namespace nav_kernel {
 
+// Ordinary library/endpoint speed; Product and task limits remain explicit.
+inline constexpr double kDefaultLinearSpeedMps = 1.0;
+
 struct Vec3 {
   double x = 0, y = 0, z = 0;
 };
@@ -32,6 +35,11 @@ struct Twist {
   double vy = 0;    // body-frame left
   double wz = 0;    // yaw rate (rad/s)
 };
+
+// Recovery is a navigation execution state shared by the native endpoint and
+// the Recovery component. Candidate search remains an internal detail of
+// Recovery; this value crosses the execution/status boundary only.
+enum class RecoveryAction { None, Translate, Rotate };
 
 // One body-relative sample of an executable local trajectory.
 struct TrajectoryPoint {
@@ -53,6 +61,8 @@ struct SplineTarget {
   double startTimeS{-1.0};
   // Linear-speed limit used to generate this trajectory; zero is unspecified.
   double maxLinearSpeedMps{0.0};
+  // An explicitly checked deceleration prefix may start above that limit.
+  double speedTransitionEndS{0.0};
 };
 
 using Path = std::vector<Pose>;

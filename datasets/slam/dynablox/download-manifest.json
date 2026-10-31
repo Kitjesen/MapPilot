@@ -1,0 +1,73 @@
+{
+  "dataset": "Dynablox",
+  "date": "2026-10-20",
+  "status": "selected_processed_sequences_downloaded_and_inspected",
+  "doi": "10.3929/ethz-c-000788607",
+  "project_url": "https://projects.asl.ethz.ch/datasets/dynablox/",
+  "rights": "In Copyright - Non-Commercial Use Permitted",
+  "rights_url": "http://rightsstatements.org/page/InC-NC/1.0/",
+  "selected_files": [
+    {
+      "sequence": "indoor",
+      "path": "processed/indoor.bag",
+      "status": "downloaded_and_structurally_inspected",
+      "bytes": 1680021637,
+      "source_archive_url": "https://www.research-collection.ethz.ch/server/api/core/bitstreams/1edc638b-1c1b-4edd-9c4a-85e59d89bee9/content",
+      "archive_member": "processed/indoor.bag",
+      "source_range_start": 68,
+      "source_range_end": 784448046,
+      "compressed_member_bytes": 784447901,
+      "pointcloud_frames": 267,
+      "points_total": 34996224,
+      "bag_time_duration_s": 26.596442568,
+      "inspection": "metadata/indoor-inspection.json"
+    },
+    {
+      "sequence": "ramp_2",
+      "path": "processed/ramp_2.bag",
+      "status": "downloaded_and_structurally_inspected",
+      "bytes": 2529462427,
+      "source_archive_url": "https://www.research-collection.ethz.ch/server/api/core/bitstreams/1edc638b-1c1b-4edd-9c4a-85e59d89bee9/content",
+      "archive_member": "processed/ramp_2.bag",
+      "source_range_start": 13588338156,
+      "source_range_end": 14729833662,
+      "compressed_member_bytes": 1141495429,
+      "pointcloud_frames": 402,
+      "points_total": 52690944,
+      "bag_time_duration_s": 40.09113955,
+      "inspection": "metadata/ramp_2-inspection.json"
+    }
+  ],
+  "selected_bag_total_bytes": 4209484064,
+  "archives": {
+    "processed.zip": {
+      "bytes": 14729834629,
+      "status": "range_selected_members_only_archive_not_saved"
+    },
+    "raw.zip": {
+      "bytes": 16225975934,
+      "status": "not_downloaded"
+    }
+  },
+  "official_documentation": [
+    {
+      "path": "metadata/README.pdf",
+      "bytes": 859607,
+      "status": "downloaded"
+    },
+    {
+      "path": "metadata/Notes.txt",
+      "bytes": 261,
+      "status": "downloaded"
+    }
+  ],
+  "validation": "Complete deflate streams, exact expanded sizes, ROS bag V2.0; all chunks/messages read with existing project Ros1Bag; all PointCloud2 shape checks and point counts. No new hashes.",
+  "limitations": [
+    "Processed FAST-LIO2 states are estimates, not external pose ground truth.",
+    "Selected processed bags have no IMU or annotation topic; not standalone raw LIO input.",
+    "No per-point human dynamic-state or ground truth labels confirmed.",
+    "No LTU conversion or algorithm benchmark performed.",
+    "First TF parent os_lidar, child map; confirm/invert transform convention during downstream conversion."
+  ],
+  "historical_access_issue": "Old robotics.ethz.ch HTTPS EOF; new repository temporarily returned HTTP429, recovered after waiting; public Range then HTTP206."
+}

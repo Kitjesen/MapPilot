@@ -46,5 +46,7 @@ printf '%s\n' \
 if [ "$BUILD_DDS" = ON ]; then
   printf '%s\n' \
     "$BUILD_DIR/lingtu_dds_recorder" \
-    "$BUILD_DIR/lingtu_dds_player"
+    "$BUILD_DIR/lingtu_dds_player" \
+    "$BUILD_DIR/ltplay" \
+    "$BUILD_DIR/lingtu_dds_observer"
 fi

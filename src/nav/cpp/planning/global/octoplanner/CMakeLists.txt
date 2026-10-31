@@ -87,9 +87,13 @@ endif()
 
 add_library(octoplanner3d_global_planner STATIC
   "${OCTOPLANNER3D_SOURCE_DIR}/planner/src/global_planner.cpp"
+  surface.cpp
+  surface_graph.cpp
+  route_smoothing.cpp
 )
 target_include_directories(octoplanner3d_global_planner
   PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}"
     "${OCTOPLANNER3D_SOURCE_DIR}/planner/include"
     "${OCTOPLANNER3D_SOURCE_DIR}/octomap/include"
 )
@@ -116,8 +120,17 @@ if(OCTOPLANNER3D_ENABLE_PCD)
   )
 endif()
 
+if(NOT TARGET lingtu_nav_body)
+  add_library(lingtu_nav_body STATIC
+    "${LINGTU_NAV_CPP_DIR}/collision/body.cpp"
+    "${LINGTU_NAV_CPP_DIR}/collision/body_io.cpp"
+    "${LINGTU_NAV_CPP_DIR}/collision/terrain.cpp")
+  target_include_directories(lingtu_nav_body PUBLIC "${LINGTU_NAV_CPP_DIR}")
+endif()
+
 add_library(octoplanner3d_runtime STATIC
   octoplanner3d_core.cpp
+  body_query.cpp
 )
 target_include_directories(octoplanner3d_runtime
   PUBLIC
@@ -127,6 +140,7 @@ target_include_directories(octoplanner3d_runtime
 target_link_libraries(octoplanner3d_runtime
   PRIVATE
     octoplanner3d_global_planner
+    lingtu_nav_body
 )
 if(OCTOPLANNER3D_RUNTIME_ENABLE_PCD_INPUT AND NOT OCTOPLANNER3D_ENABLE_PCD)
   message(FATAL_ERROR
@@ -173,6 +187,16 @@ set_target_properties(octoplanner3d_dump_octomap PROPERTIES
   INSTALL_RPATH "$ORIGIN"
 )
 
+add_executable(octoplanner3d_verify_path verify_path.cpp)
+target_link_libraries(octoplanner3d_verify_path
+  PRIVATE
+    octoplanner3d_global_planner
+)
+set_target_properties(octoplanner3d_verify_path PROPERTIES
+  BUILD_RPATH "${OCTOPLANNER3D_SOURCE_DIR}/lib"
+  INSTALL_RPATH "$ORIGIN"
+)
+
 add_executable(octoplanner3d_make_test_octomap make_test_octomap.cpp)
 target_link_libraries(octoplanner3d_make_test_octomap
   PRIVATE
@@ -184,18 +208,47 @@ set_target_properties(octoplanner3d_make_test_octomap PROPERTIES
   INSTALL_RPATH "$ORIGIN"
 )
 if(BUILD_TESTING)
+  add_executable(octoplanner3d_prepared_surface_smoke prepared_surface_smoke.cpp)
+  target_link_libraries(octoplanner3d_prepared_surface_smoke PRIVATE octoplanner3d_global_planner)
+  add_test(NAME octoplanner3d_prepared_surface_smoke COMMAND octoplanner3d_prepared_surface_smoke)
+  add_executable(octoplanner3d_surface_graph_smoke surface_graph_smoke.cpp)
+  target_link_libraries(octoplanner3d_surface_graph_smoke PRIVATE octoplanner3d_global_planner)
+  add_test(NAME octoplanner3d_surface_graph_smoke COMMAND octoplanner3d_surface_graph_smoke)
+  add_executable(octoplanner3d_route_smoothing_smoke route_smoothing_smoke.cpp)
+  target_link_libraries(octoplanner3d_route_smoothing_smoke PRIVATE octoplanner3d_global_planner)
+  add_test(NAME octoplanner3d_route_smoothing_smoke COMMAND octoplanner3d_route_smoothing_smoke)
+  add_executable(octoplanner3d_start_evidence_smoke start_evidence_smoke.cpp)
+  target_link_libraries(octoplanner3d_start_evidence_smoke PRIVATE octoplanner3d_runtime octoplanner3d_global_planner)
+  add_test(NAME octoplanner3d_start_evidence_smoke COMMAND octoplanner3d_start_evidence_smoke)
+  add_executable(octoplanner3d_surface_smoke surface_smoke.cpp)
+  target_link_libraries(octoplanner3d_surface_smoke PRIVATE octoplanner3d_global_planner)
+  add_test(NAME octoplanner3d_surface_smoke COMMAND octoplanner3d_surface_smoke)
+  add_executable(test_body_geometry "${LINGTU_NAV_CPP_DIR}/../../../tests/nav/cpp/test_body_geometry.cpp")
+  target_link_libraries(test_body_geometry PRIVATE lingtu_nav_body)
+  add_test(NAME test_body_geometry COMMAND test_body_geometry)
+  add_executable(octoplanner3d_xyz_smoke xyz_smoke.cpp)
+  target_link_libraries(octoplanner3d_xyz_smoke PRIVATE octoplanner3d_runtime octoplanner3d_global_planner)
+  add_test(NAME octoplanner3d_xyz_smoke COMMAND octoplanner3d_xyz_smoke)
+  add_executable(octoplanner3d_support_gait_probe support_gait_probe.cpp)
+  target_link_libraries(octoplanner3d_support_gait_probe PRIVATE octoplanner3d_runtime octoplanner3d_global_planner)
+  add_executable(octoplanner3d_body_query_smoke body_query_smoke.cpp)
+  target_link_libraries(octoplanner3d_body_query_smoke PRIVATE octoplanner3d_runtime octoplanner3d_global_planner)
+  add_test(NAME octoplanner3d_body_query_smoke COMMAND octoplanner3d_body_query_smoke)
   add_executable(octoplanner3d_planning_slice_smoke planning_slice_smoke.cpp)
   target_link_libraries(octoplanner3d_planning_slice_smoke PRIVATE octoplanner3d_global_planner)
   add_test(NAME octoplanner3d_planning_slice_smoke COMMAND octoplanner3d_planning_slice_smoke)
-  add_executable(octoplanner3d_neighborhood_fallback_smoke neighborhood_fallback_smoke.cpp)
-  target_link_libraries(octoplanner3d_neighborhood_fallback_smoke
+  add_executable(octoplanner3d_neighborhood_smoke neighborhood_smoke.cpp)
+  target_link_libraries(octoplanner3d_neighborhood_smoke
     PRIVATE octoplanner3d_runtime octoplanner3d_global_planner)
-  add_test(NAME octoplanner3d_neighborhood_fallback_smoke
-    COMMAND octoplanner3d_neighborhood_fallback_smoke)
+  add_test(NAME octoplanner3d_neighborhood_smoke
+    COMMAND octoplanner3d_neighborhood_smoke)
 
   add_executable(octoplanner3d_grid_smoke grid_smoke.cpp)
   target_link_libraries(octoplanner3d_grid_smoke PRIVATE octoplanner3d_global_planner)
   add_test(NAME octoplanner3d_grid_smoke COMMAND octoplanner3d_grid_smoke)
+
+  add_test(NAME octoplanner3d_verify_path_self_test
+    COMMAND octoplanner3d_verify_path --self-test)
 
   add_executable(octoplanner3d_queue_node_compare_smoke queue_node_compare_smoke.cpp)
   target_include_directories(octoplanner3d_queue_node_compare_smoke
@@ -239,8 +292,8 @@ endif()
 
 add_executable(octoplanner3d_pcd_to_octomap pcd_to_octomap.cpp)
 target_sources(octoplanner3d_pcd_to_octomap PRIVATE
-  "${LINGTU_NAV_CPP_DIR}/../../maps/cpp/build/saved_scans.cpp"
-  "${LINGTU_NAV_CPP_DIR}/../../maps/cpp/build/pcd.cpp")
+  "${LINGTU_NAV_CPP_DIR}/../../maps/cpp/io/scans.cpp"
+  "${LINGTU_NAV_CPP_DIR}/../../maps/cpp/io/pcd.cpp")
 target_include_directories(octoplanner3d_pcd_to_octomap PRIVATE
   "${LINGTU_NAV_CPP_DIR}/../../maps/include")
 target_link_libraries(octoplanner3d_pcd_to_octomap
@@ -276,8 +329,8 @@ if(BUILD_TESTING)
   if(OCTOPLANNER3D_ENABLE_PCD)
     add_executable(octoplanner3d_ascii_pcd_test_converter pcd_to_octomap.cpp)
     target_sources(octoplanner3d_ascii_pcd_test_converter PRIVATE
-      "${LINGTU_NAV_CPP_DIR}/../../maps/cpp/build/saved_scans.cpp"
-      "${LINGTU_NAV_CPP_DIR}/../../maps/cpp/build/pcd.cpp")
+      "${LINGTU_NAV_CPP_DIR}/../../maps/cpp/io/scans.cpp"
+      "${LINGTU_NAV_CPP_DIR}/../../maps/cpp/io/pcd.cpp")
     target_include_directories(octoplanner3d_ascii_pcd_test_converter PRIVATE
       "${LINGTU_NAV_CPP_DIR}/../../maps/include")
     target_link_libraries(octoplanner3d_ascii_pcd_test_converter PRIVATE octomap_vendor octomath_vendor)

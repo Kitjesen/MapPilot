@@ -10,8 +10,8 @@
 #include <vector>
 
 #include "safety/stop.hpp"
-#include "runtime/navigation.hpp"
-#include "runtime/goal/runtime.hpp"
+#include "app/navigation.hpp"
+#include "app/goal/runtime.hpp"
 #include "status/goal_terminal_status_delivery.hpp"
 #include "status/goal_terminal_transaction.hpp"
 #include "status/navigation_goal_status_outbox.hpp"
@@ -45,7 +45,6 @@ using lingtu::nav::endpoint::NavigationGoalStatusOutbox;
 using lingtu::nav::endpoint::NavigationRuntimeAutonomyObservation;
 using lingtu::nav::endpoint::NavigationRuntimeController;
 using lingtu::nav::endpoint::NavigationRuntimeFrameActions;
-using lingtu::nav::endpoint::NavigationRuntimePostAutonomyState;
 using lingtu::nav::endpoint::StopConfirmationState;
 
 void require(bool condition, const char *message) {
@@ -63,8 +62,10 @@ struct Fixture {
   std::vector<std::string> reported_errors;
   std::vector<std::string> inspection_pauses;
   std::vector<std::string> estop_reasons;
+  std::vector<std::string> motion_outputs;
   std::size_t stop_control_calls{0U};
   std::size_t diagnostic_syncs{0U};
+  std::size_t path_activations{0U};
   NavigationGoalStatusOutbox outbox;
   GoalPlanController goal_plan;
   MotionStopBarrier motion_stop;
@@ -110,7 +111,7 @@ struct Fixture {
     actions.inspection_plan_ready = [](double) {
       return lingtu::nav::endpoint::GoalPlanInspectionDecision{};
     };
-    actions.activate_path = [](const GoalPlanPathActivation &) {};
+    actions.activate_path = [this](const GoalPlanPathActivation &) { ++path_activations; };
     return actions;
   }
 
@@ -135,9 +136,15 @@ struct Fixture {
     actions.set_autonomy_request_not_before = [](double) {};
     actions.persist_estop_latch = [](const std::string &) { return true; };
     actions.clear_persisted_estop_latch = [] { return true; };
-    actions.publish_zero = [] { return true; };
+    actions.publish_zero = [this] {
+      motion_outputs.emplace_back("zero");
+      return true;
+    };
     actions.last_output_sequence = [] { return 1U; };
-    actions.publish_sequenced_zero = [] { return std::optional<std::uint64_t>{2U}; };
+    actions.publish_sequenced_zero = [this] {
+      motion_outputs.emplace_back("sequenced_zero");
+      return std::optional<std::uint64_t>{2U};
+    };
     actions.confirm_zero = [this](std::uint64_t) { return confirmation; };
     actions.clear_global_path = [] {};
     return actions;
@@ -209,14 +216,12 @@ struct Fixture {
       if (run_calls) {
         ++*run_calls;
       }
-      return NavigationRuntimeAutonomyObservation{frame(10.0), AutonomyTickOutcome{}, false, false,
-                                                  false};
+      return NavigationRuntimeAutonomyObservation{frame(10.0), AutonomyTickOutcome{}, false, false};
     };
     actions.apply_autonomy_outputs = [apply_calls](const GoalReplanRuntimeResult &) {
       if (apply_calls) {
         ++*apply_calls;
       }
-      return NavigationRuntimePostAutonomyState{};
     };
     return actions;
   }
@@ -246,13 +251,11 @@ void testNormalFrameUsesStrictTypedContinuationOrder() {
     order.push_back("autonomy");
     require(snapshot.planning_task_id == "task-a" && snapshot.planning_request_id == "request-a",
             "controller captured the goal snapshot before endpoint work");
-    return NavigationRuntimeAutonomyObservation{fixture.frame(10.1), AutonomyTickOutcome{}, false,
-                                                false, false};
+    return NavigationRuntimeAutonomyObservation{fixture.frame(10.1), AutonomyTickOutcome{}, false, false};
   };
   actions.apply_autonomy_outputs = [&](const GoalReplanRuntimeResult &runtime_outcome) {
     order.push_back("apply_outputs");
     require(!runtime_outcome.handled, "empty autonomy outcome was unexpectedly handled");
-    return NavigationRuntimePostAutonomyState{};
   };
 
   const auto result = fixture.runtime.advanceFrame(fixture.frame(10.0), actions);
@@ -315,7 +318,7 @@ void testInspectionCompletionAfterStop() {
     actions.run_autonomy = [&](const GoalPlanSnapshot &) {
       ++run_calls;
       return NavigationRuntimeAutonomyObservation{
-          fixture.frame(30.1), AutonomyTickOutcome{kind, reason}, true, true, false, std::nullopt};
+          fixture.frame(30.1), AutonomyTickOutcome{kind, reason}, true, false};
     };
     const auto pending = fixture.runtime.advanceFrame(fixture.frame(30.0), actions);
     require(pending.autonomy_result && pending.autonomy_result->handled,
@@ -337,7 +340,54 @@ void testInspectionCompletionAfterStop() {
   }
 }
 
-void testUnhandledAutonomyTickCannotCreateInspectionFallbackTerminal() {
+void testInspectionCompletionUsesCommittedResult() {
+  Fixture fixture;
+  fixture.activateGoal(GoalPlanOrigin::kInspection);
+  auto actions = fixture.idleActions();
+  actions.run_autonomy = [&](const GoalPlanSnapshot &) {
+    auto frame = fixture.frame(30.1);
+    frame.map_drift = true;
+    return NavigationRuntimeAutonomyObservation{
+        frame, AutonomyTickOutcome{AutonomyTickOutcomeKind::kGoalReached, "goal_reached"},
+        true, false};
+  };
+  const auto completed = fixture.runtime.advanceFrame(fixture.frame(30.0), actions);
+  require(completed.inspection_completion &&
+              completed.inspection_completion->kind == AutonomyTickOutcomeKind::kGoalFailed &&
+              completed.inspection_completion->reason == "active_goal_map_identity_changed",
+          "raw arrival bypassed the committed map-change failure");
+}
+
+void testInspectionCancelDoesNotFinishWaypoint() {
+  Fixture fixture;
+  fixture.activateGoal(GoalPlanOrigin::kInspection);
+  (void)fixture.coordinator.interrupt(GoalReplanRuntimeInterruption::kCancel, 30.0);
+  const auto completed = fixture.runtime.advanceFrame(fixture.frame(30.1), fixture.idleActions());
+  require(completed.terminal_delivery_acknowledged && !completed.inspection_completion,
+          "cancelling a route was returned as arrival or a retryable failure");
+}
+
+void testConsecutiveInspectionLegs() {
+  Fixture fixture;
+  for (int leg = 0; leg < 3; ++leg) {
+    fixture.activateGoal(GoalPlanOrigin::kInspection);
+    auto actions = fixture.idleActions();
+    actions.run_autonomy = [&](const GoalPlanSnapshot &) {
+      return NavigationRuntimeAutonomyObservation{
+          fixture.frame(30.0 + leg),
+          AutonomyTickOutcome{AutonomyTickOutcomeKind::kGoalReached, "goal_reached"},
+          true, false};
+    };
+    const auto completed = fixture.runtime.advanceFrame(fixture.frame(30.0 + leg), actions);
+    require(completed.inspection_completion &&
+                completed.inspection_completion->kind == AutonomyTickOutcomeKind::kGoalReached &&
+                !fixture.runtime.terminalPending(),
+            "inspection leg did not finish and release the next goal");
+  }
+  require(fixture.write_attempts.empty(), "waypoint progress published multiple public tasks");
+}
+
+void testExternalGoalCannotCompleteInspection() {
   Fixture fixture;
   fixture.activateGoal();
   NavigationRuntimeFrameActions actions;
@@ -347,7 +397,6 @@ void testUnhandledAutonomyTickCannotCreateInspectionFallbackTerminal() {
         fixture.frame(35.1),
         AutonomyTickOutcome{AutonomyTickOutcomeKind::kGoalFailed, "ignored_tick_failure", false,
                             std::nullopt},
-        false,
         true,
         false,
     };
@@ -355,7 +404,6 @@ void testUnhandledAutonomyTickCannotCreateInspectionFallbackTerminal() {
   actions.apply_autonomy_outputs = [](const GoalReplanRuntimeResult &runtime_outcome) {
     require(!runtime_outcome.handled,
             "unhandled autonomy fixture was unexpectedly consumed by the replan runtime");
-    return NavigationRuntimePostAutonomyState{true, true};
   };
 
   const auto result = fixture.runtime.advanceFrame(fixture.frame(35.0), actions);
@@ -364,7 +412,7 @@ void testUnhandledAutonomyTickCannotCreateInspectionFallbackTerminal() {
           "unhandled autonomy observation was not preserved");
   require(!result.terminal_delivery_acknowledged && !result.inspection_completion &&
               result.pending_cycle_advanced && !fixture.runtime.terminalPending(),
-          "unhandled autonomy tick created an inspection fallback terminal");
+          "external goal manufactured an inspection terminal");
 }
 
 void testCapturedSnapshotCannotCommitReachedAfterGoalStateChangesDuringTick() {
@@ -382,13 +430,11 @@ void testCapturedSnapshotCannotCommitReachedAfterGoalStateChangesDuringTick() {
         fixture.frame(40.1),
         AutonomyTickOutcome{AutonomyTickOutcomeKind::kGoalReached, "goal_reached", true,
                             std::nullopt},
-        true,
         false,
         false,
     };
   };
   actions.apply_autonomy_outputs = [](const GoalReplanRuntimeResult &) {
-    return NavigationRuntimePostAutonomyState{};
   };
 
   const auto result = fixture.runtime.advanceFrame(fixture.frame(40.0), actions);
@@ -476,6 +522,117 @@ void testGoalSubmissionOwnsExternalPreemptionAndTerminalBarrier() {
   }
 }
 
+void testRejectedReplacementPreservesTheActiveGoalRetry() {
+  Fixture fixture;
+  fixture.activateGoal();
+  const auto original = fixture.goal_plan.snapshot();
+  lingtu::nav::endpoint::GoalReplanTrigger trigger;
+  trigger.kind = lingtu::nav::endpoint::GoalReplanTriggerKind::kLocalRecoveryExhausted;
+  trigger.reason = "local_recovery_exhausted";
+  trigger.goal = {original.active_task_id, original.active_request_id,
+                  original.active_goal_epoch, *original.active_map_identity};
+  const auto armed = fixture.coordinator.handleAutonomyOutcome(
+      fixture.frame(58.1),
+      {AutonomyTickOutcome{AutonomyTickOutcomeKind::kGoalFailed,
+                           "local_recovery_exhausted", false, trigger},
+       original, false, false});
+  require(armed.reason == "backoff_pending" && fixture.coordinator.replanPending(),
+          "rejected replacement fixture did not arm the active goal retry");
+  const auto retry_before = fixture.coordinator.snapshot();
+
+  auto blocked_admission = fixture.admission();
+  blocked_admission.driver_control_blocker = "driver_heartbeat_stale";
+  const auto rejected = fixture.runtime.submitGoal(
+      fixture.request("task-b", "request-b"), blocked_admission, 58.2);
+  require(!rejected.plan_result.accepted &&
+              rejected.plan_result.reason == "driver_heartbeat_stale" &&
+              !rejected.preemption_terminal && !fixture.runtime.terminalPending(),
+          "blocked replacement goal did not retain its admission rejection");
+  const auto retained = fixture.goal_plan.snapshot();
+  const auto retry_after = fixture.coordinator.snapshot();
+  require(retained.active_task_id == original.active_task_id &&
+              retained.active_request_id == original.active_request_id &&
+              retained.active_goal_epoch == original.active_goal_epoch &&
+              fixture.coordinator.replanPending() && retry_after.state == retry_before.state &&
+              retry_after.deadline_s == retry_before.deadline_s,
+          "rejected replacement cancelled the active goal retry");
+
+  const auto restarted =
+      fixture.coordinator.advancePlanningCycle(fixture.frame(retry_before.deadline_s));
+  require(restarted.replan_started && !restarted.terminal_after_stop,
+          "healthy frame could not resume the original goal after replacement rejection");
+  for (int index = 0; index < 1000; ++index) {
+    const auto completed = fixture.coordinator.advancePlanningCycle(
+        fixture.frame(retry_before.deadline_s + .001 + index * .001));
+    if (completed.plan_advance.path_activated) {
+      require(fixture.goal_plan.snapshot().active_task_id == original.active_task_id &&
+                  fixture.countStatus(NavigationGoalState::Failed) == 0U,
+              "replacement rejection changed the goal completed by replan");
+      return;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  require(false, "original goal did not activate its replanned path");
+}
+
+void testAcceptedGoalWaitsForSupersededDeferredReplacementTerminal() {
+  Fixture fixture;
+  fixture.activateGoal();
+  require(fixture.runtime.submitGoal(fixture.request("task-b", "request-b"),
+                                      fixture.admission(), 58.3)
+              .plan_result.accepted,
+          "deferred replacement fixture could not submit B");
+  GoalReplanRuntimeResult replacement;
+  for (int index = 0; index < 1000; ++index) {
+    replacement = fixture.coordinator.advancePlanningCycle(fixture.frame(58.4 + index * .001));
+    if (replacement.terminal_after_stop) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  require(replacement.terminal_after_stop && replacement.terminal_task_id == "task-a",
+          "replacement B did not wait for A terminal");
+  require(fixture.terminal_transaction.advance(replacement).delivery_acknowledged &&
+              !fixture.runtime.terminalPending() &&
+              fixture.goal_plan.snapshot().deferred_replacement_task_id == "task-b",
+          "replacement fixture did not retain B after A acknowledgement");
+
+  fixture.writes_allowed = false;
+  const auto submitted = fixture.runtime.submitGoal(
+      fixture.request("task-c", "request-c"), fixture.admission(), 59.5);
+  require(submitted.plan_result.accepted && submitted.preemption_terminal &&
+              !submitted.preemption_terminal->delivery_acknowledged &&
+              fixture.runtime.terminalPending() &&
+              fixture.goal_plan.snapshot().planning_task_id == "task-c",
+          "accepted C was lost while superseding deferred B");
+  const auto held = fixture.runtime.advanceFrame(fixture.frame(59.6), fixture.idleActions());
+  require(!held.planning_result.plan_advance.path_activated &&
+              fixture.path_activations == 1U && fixture.runtime.terminalPending(),
+          "new C path activated before superseded B terminal acknowledgement");
+
+  fixture.writes_allowed = true;
+  const auto acknowledged =
+      fixture.runtime.advanceFrame(fixture.frame(59.7), fixture.idleActions());
+  require(acknowledged.terminal_delivery_acknowledged && !fixture.runtime.terminalPending(),
+          "superseded B terminal could not be acknowledged");
+  for (int index = 0; index < 1000; ++index) {
+    const auto completed = fixture.runtime.advanceFrame(
+        fixture.frame(59.8 + index * .001), fixture.idleActions());
+    if (completed.planning_result.plan_advance.path_activated) {
+      require(fixture.goal_plan.snapshot().active_task_id == "task-c" &&
+                  fixture.path_activations == 2U,
+              "terminal acknowledgement activated the superseded B path instead of C");
+      for (const auto &status : fixture.observed_statuses) {
+        require(status.task_id != "task-c" ||
+                    (status.state != NavigationGoalState::Cancelled &&
+                     status.state != NavigationGoalState::Failed),
+                "superseded B terminal was attributed to accepted C");
+      }
+      return;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  require(false, "accepted C did not activate after the superseded B terminal");
+}
+
 void testControllerInterruptionPreservesEstopReason() {
   Fixture fixture;
   fixture.activateGoal();
@@ -504,6 +661,69 @@ void testIncompleteFrameActionsAreRejectedBeforeRuntimeMutation() {
           "invalid frame actions mutated navigation runtime state");
 }
 
+void testManualTakeoverIsTheOnlyFrameOutputForPausedActiveGoal() {
+  Fixture fixture;
+  fixture.activateGoal();
+  const auto paused = fixture.runtime.interrupt(
+      GoalReplanRuntimeInterruption::kOperatorTakeover, 61.0);
+  require(paused.runtime_result.reason == "task_paused" &&
+              fixture.goal_plan.snapshot().active_paused,
+          "active-goal takeover fixture did not pause its task");
+  fixture.motion_outputs.clear();
+
+  auto actions = fixture.idleActions();
+  actions.complete_endpoint_work_before_autonomy = [&](const GoalReplanRuntimeResult &) {
+    fixture.motion_outputs.emplace_back("manual_nonzero");
+  };
+  (void)fixture.runtime.advanceFrame(fixture.frame(61.1), actions);
+
+  require(fixture.motion_outputs == std::vector<std::string>{"manual_nonzero"},
+          "paused active goal overwrote the frame's manual nonzero command with a later zero");
+}
+
+void testManualTakeoverIsTheOnlyFrameOutputForPausedInitialPlanning() {
+  Fixture fixture;
+  require(fixture.goal_plan.submit(fixture.request(), fixture.admission()).accepted,
+          "initial-planning takeover fixture could not submit its goal");
+  const auto original = fixture.goal_plan.snapshot();
+  require(!original.planning_task_id.empty() && original.active_task_id.empty(),
+          "initial-planning takeover fixture unexpectedly activated its goal");
+  const auto paused = fixture.runtime.interrupt(
+      GoalReplanRuntimeInterruption::kOperatorTakeover, 62.0);
+  const auto retained = fixture.goal_plan.snapshot();
+  require(paused.runtime_result.reason == "task_paused" && retained.active_paused &&
+              retained.pending_plan_queued &&
+              retained.pending_goal_epoch == original.planning_goal_epoch,
+          "planning takeover did not retain the same pending goal epoch");
+  fixture.motion_outputs.clear();
+
+  auto actions = fixture.idleActions();
+  actions.complete_endpoint_work_before_autonomy = [&](const GoalReplanRuntimeResult &) {
+    fixture.motion_outputs.emplace_back("manual_nonzero");
+  };
+  (void)fixture.runtime.advanceFrame(fixture.frame(62.1), actions);
+
+  require(fixture.motion_outputs == std::vector<std::string>{"manual_nonzero"},
+          "paused pending drain overwrote the frame's manual nonzero command with zero");
+}
+
+void testPausedCoordinatorIsSilentAndEndpointOwnsZeroHeartbeat() {
+  Fixture fixture;
+  fixture.activateGoal();
+  (void)fixture.runtime.interrupt(GoalReplanRuntimeInterruption::kOperatorTakeover, 63.0);
+  fixture.motion_outputs.clear();
+
+  const auto planning = fixture.coordinator.advancePlanningCycle(fixture.frame(63.1));
+  const auto draining = fixture.coordinator.drainPendingCycle(fixture.frame(63.1));
+  require(planning.reason == "task_paused" && !planning.zero_kept_fresh &&
+              !draining.zero_kept_fresh && fixture.motion_outputs.empty(),
+          "paused coordinator wrote a fallback zero without owning a frame command");
+
+  require(fixture.motion_stop.keepZeroFresh() &&
+              fixture.motion_outputs == std::vector<std::string>{"zero"},
+          "Endpoint MotionStop no longer owns the explicit idle zero heartbeat");
+}
+
 }  // namespace
 
 int main() {
@@ -511,13 +731,21 @@ int main() {
     testNormalFrameUsesStrictTypedContinuationOrder();
     testPlanningTerminalBlocksAutonomyAndDrainUntilReplayAcknowledges();
     testInspectionCompletionAfterStop();
-    testUnhandledAutonomyTickCannotCreateInspectionFallbackTerminal();
+    testInspectionCompletionUsesCommittedResult();
+    testInspectionCancelDoesNotFinishWaypoint();
+    testConsecutiveInspectionLegs();
+    testExternalGoalCannotCompleteInspection();
     testCapturedSnapshotCannotCommitReachedAfterGoalStateChangesDuringTick();
     testTerminalCompanionInterfacesForwardExactTransactions();
     testLifecycleInterruptionsAreCompletedByController();
     testGoalSubmissionOwnsExternalPreemptionAndTerminalBarrier();
+    testRejectedReplacementPreservesTheActiveGoalRetry();
+    testAcceptedGoalWaitsForSupersededDeferredReplacementTerminal();
     testControllerInterruptionPreservesEstopReason();
     testIncompleteFrameActionsAreRejectedBeforeRuntimeMutation();
+    testManualTakeoverIsTheOnlyFrameOutputForPausedActiveGoal();
+    testManualTakeoverIsTheOnlyFrameOutputForPausedInitialPlanning();
+    testPausedCoordinatorIsSilentAndEndpointOwnsZeroHeartbeat();
     return 0;
   } catch (const std::exception &exc) {
     std::fprintf(stderr, "test_navigation_runtime_controller: FAIL: %s\n", exc.what());

@@ -9,7 +9,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "lingtu/maps/semantic_map_persistence.hpp"
+#include "lingtu/maps/semantic/store.hpp"
 
 namespace {
 
@@ -153,6 +153,13 @@ void TestNativeRelocalizerArtifactSelection(
   Check(message == "native_relocalizer_semantic_map_loaded",
         "valid_semantic_artifact_not_selected");
   Check(semantic_relocalizer.hasMap(), "semantic_relocalizer_map_missing");
+  lingtu::slam::Cloud empty_saved_cloud;
+  const auto staged_pcd = pcd_path.parent_path() / "map.pcd.tmp" / "map.pcd";
+  lingtu::slam::NativeRelocalizer staged_relocalizer;
+  Check(staged_relocalizer.loadMap(staged_pcd.string(), &message, &empty_saved_cloud,
+                                  semantic_path.string()), message.c_str());
+  Check(message == "native_relocalizer_semantic_map_loaded" && staged_relocalizer.hasMap(),
+        "staged_snapshot_changed_existing_semantic_artifact_precedence");
 
   {
     std::ofstream corrupt(semantic_path, std::ios::binary | std::ios::trunc);
@@ -164,6 +171,10 @@ void TestNativeRelocalizerArtifactSelection(
   Check(message.find("native_relocalizer_semantic_map_load_failed:") == 0U,
         "corrupt_semantic_failure_not_reported");
   Check(!corrupt_relocalizer.hasMap(), "corrupt_semantic_artifact_loaded_map");
+  Check(!staged_relocalizer.loadMap(staged_pcd.string(), &message, &empty_saved_cloud,
+                                   semantic_path.string()) &&
+            message.find("native_relocalizer_semantic_map_load_failed:") == 0U,
+        "staged_snapshot_ignored_corrupt_existing_semantic_artifact");
 
   std::filesystem::remove(semantic_path);
   lingtu::slam::NativeRelocalizer pcd_relocalizer;

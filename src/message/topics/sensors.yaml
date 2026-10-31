@@ -1,5 +1,45 @@
 schema_version: lingtu.runtime_graph.topics.v2
 topics:
+  sensor_control_request:
+    topic: /sensors/control/request
+    transport: dds
+    dds_topic: rt/sensors/control/request
+    message_type: lingtu.dds.SensorControlRequest
+    qos_profile: CommandRequest
+    cpp_name: kSensorControlRequest
+    semantics: source_owner_sensor_configuration_request_not_motion_authority
+  sensor_control_result:
+    topic: /sensors/control/result
+    transport: dds
+    dds_topic: rt/sensors/control/result
+    message_type: lingtu.dds.SensorControlResult
+    qos_profile: CommandAck
+    cpp_name: kSensorControlResult
+    semantics: applied_or_rejected_with_effective_settings_not_measurement_quality
+  sensor_thermal:
+    topic: /sensors/thermal
+    transport: dds
+    dds_topic: rt/sensors/thermal
+    message_type: lingtu.dds.ThermalImage
+    qos_profile: CameraStream
+    cpp_name: kSensorThermal
+    semantics: kelvin_per_pixel_with_validity_calibration_source_identity_not_pseudocolor
+  sensor_acoustic:
+    topic: /sensors/acoustic
+    transport: dds
+    dds_topic: rt/sensors/acoustic
+    message_type: lingtu.dds.AcousticBlock
+    qos_profile: SensorStream
+    cpp_name: kSensorAcoustic
+    semantics: channel_major_pressure_pa_with_sample_clock_and_calibration_not_playback
+  sensor_semantic:
+    topic: /sensors/semantic
+    transport: dds
+    dds_topic: rt/sensors/semantic
+    message_type: lingtu.dds.SemanticImage
+    qos_profile: CameraStream
+    cpp_name: kSensorSemantic
+    semantics: physical_class_instance_ground_truth_not_recognition_predictions
   camera_info:
     topic: /camera/color/camera_info
     transport: dds
@@ -80,6 +120,20 @@ topics:
     message_type: lingtu.dds.Odometry
     qos_profile: HighFreqState
     cpp_name: kDriverOdometry
+  motion_profile_request:
+    topic: /driver/profile/request
+    transport: dds
+    dds_topic: rt/driver/profile/request
+    message_type: lingtu.dds.MotionProfileRequest
+    qos_profile: ControlCommand
+    cpp_name: kMotionProfileRequest
+  motion_profile_state:
+    topic: /driver/profile/state
+    transport: dds
+    dds_topic: rt/driver/profile/state
+    message_type: lingtu.dds.MotionProfileState
+    qos_profile: SystemStatus
+    cpp_name: kMotionProfileState
   robot_joint_states:
     topic: /robot/joint_states
     transport: dds

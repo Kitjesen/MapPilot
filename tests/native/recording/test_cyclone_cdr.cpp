@@ -1,4 +1,6 @@
 #include <chrono>
+#include <filesystem>
+#include "mcap/reader.hpp"
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -18,6 +20,84 @@ void require(bool condition, const char *message) {
   if (!condition) {
     throw std::runtime_error(message);
   }
+}
+
+void test_joint_telemetry_cdr_round_trip(dds_entity_t participant) {
+  const auto *binding = lingtu::recording::find_sensor_topic("/robot/joint_states");
+  require(binding != nullptr, "motor joint telemetry cannot be recorded/replayed");
+  const auto topic = dds_create_topic(participant, binding->descriptor,
+                                     "rt/lingtu/test/native_recording/joints", nullptr, nullptr);
+  const auto writer = dds_create_writer(participant, topic, nullptr, nullptr);
+  const auto reader = dds_create_reader(participant, topic, nullptr, nullptr);
+  require(writer > 0 && reader > 0, "could not create joint telemetry endpoints");
+  lingtu_dds_JointState input{};
+  input.header.frame_id = const_cast<char *>("body");
+  input.header.stamp.sec = 15;
+  input.robot_model = const_cast<char *>("test-platform");
+  char *names[]{const_cast<char *>("hip"), const_cast<char *>("knee")};
+  double positions[]{0.25, -1.2};
+  double velocities[]{1.5, -0.75};
+  double torques[]{3.5, -2.25};
+  input.names = {2, 2, names, false};
+  input.position = {2, 2, positions, false};
+  input.velocity = {2, 2, velocities, false};
+  input.effort = {2, 2, torques, false};
+  require(dds_write_ts(writer, &input, 15000000000LL) == DDS_RETCODE_OK,
+          "could not publish joint telemetry");
+  std::uint32_t sequence = 0;
+  std::vector<lingtu::recording::RecordedMessage> captured;
+  for (int attempt = 0; attempt < 100 && captured.empty(); ++attempt) {
+    captured = lingtu::recording::take_cdr_messages(reader, binding->contract->dds_topic, sequence);
+    if (captured.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  require(captured.size() == 1, "joint telemetry did not reach the CDR recorder");
+  require(lingtu::recording::validate_cdr_payload(*binding, captured[0].payload).empty(),
+          "recorded joint telemetry is not valid typed CDR");
+  const auto file = std::filesystem::temp_directory_path() /
+      ("lingtu-joints-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".mcap");
+  {
+    lingtu::recording::McapSessionWriter storage(
+        file, "module fixture {};", {lingtu::recording::channel_definition(*binding)}, 1024);
+    storage.write(captured[0]);
+    storage.commit();
+  }
+  mcap::McapReader stored;
+  require(stored.open(file.string()).ok(), "could not open recorded motor MCAP");
+  std::vector<std::byte> recorded_payload;
+  for (const auto &message : stored.readMessages()) {
+    require(message.channel->metadata.at("lingtu.idl_type") == "lingtu.dds.JointState",
+            "joint MCAP lost typed schema identity");
+    recorded_payload.assign(message.message.data, message.message.data + message.message.dataSize);
+  }
+  stored.close();
+  require(recorded_payload == captured[0].payload, "joint bytes changed in MCAP storage");
+  std::filesystem::remove(file);
+  const auto replay_topic = dds_create_topic(participant, binding->descriptor,
+                                            "rt/lingtu/test/native_recording/joints/replay", nullptr, nullptr);
+  const auto replay_writer = dds_create_writer(participant, replay_topic, nullptr, nullptr);
+  const auto replay_reader = dds_create_reader(participant, replay_topic, nullptr, nullptr);
+  require(replay_writer > 0 && replay_reader > 0, "could not create joint replay endpoints");
+  require(lingtu::recording::forward_cdr_message(replay_writer, *binding,
+                                               recorded_payload, 15000000000LL).empty(),
+          "could not replay recorded joint telemetry");
+  auto *output = lingtu_dds_JointState__alloc();
+  void *samples[]{output};
+  dds_sample_info_t info{};
+  dds_return_t count = 0;
+  for (int attempt = 0; attempt < 100 && count == 0; ++attempt) {
+    count = dds_take(replay_reader, samples, &info, 1, 1);
+    if (count == 0) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  require(count == 1 && info.valid_data, "replayed joint telemetry did not arrive");
+  require(std::strcmp(output->robot_model, "test-platform") == 0 && output->names._length == 2 &&
+          std::strcmp(output->names._buffer[1], "knee") == 0,
+          "joint robot/name metadata was lost");
+  require(output->position._length == 2 && output->position._buffer[1] == -1.2 &&
+          output->velocity._length == 2 && output->velocity._buffer[0] == 1.5 &&
+          output->effort._length == 2 && output->effort._buffer[1] == -2.25,
+          "joint position, velocity or torque changed during replay");
+  require(info.source_timestamp == 15000000000LL, "joint acquisition timestamp was changed");
+  lingtu_dds_JointState_free(output, static_cast<dds_free_op_t>(DDS_FREE_ALL_BIT));
 }
 
 }  // namespace
@@ -82,10 +162,15 @@ int main() {
   }
 
   for (const auto *topic_name : {"/tf", "/tf_static", "/slam/map_observation", "/gnss/fix",
-                                 "/gnss/odom"}) {
+                                 "/gnss/odom", "/robot/joint_states", "/camera/depth/image_raw",
+                                 "/camera/color/camera_info"}) {
     require_policy(topic_name, lingtu::recording::ReplayPolicy::Replayable);
   }
   for (const auto *topic_name : {
+           "/driver/profile/request",
+           "/driver/profile/state",
+           "/slam/relocalization/request",
+           "/slam/relocalization/response",
            "/gnss/status",
            "/slam/localization_health",
            "/slam/localization_quality",
@@ -185,6 +270,7 @@ int main() {
            .empty(),
       "malformed CDR representation header was accepted");
 
+  test_joint_telemetry_cdr_round_trip(participant);
   dds_delete(participant);
   return 0;
 }

@@ -5,7 +5,7 @@
   "description": "Saved-map MuJoCo component acceptance for the native Explore map route.",
   "product_contract": {
     "product": "explore",
-    "source": "config/runtime_graph/products/explore.yaml",
+    "source": "config/system/products/explore.yaml",
     "native_control_mode": "autonomy",
     "slam_mode": "localization",
     "requires_map": true,
@@ -41,7 +41,7 @@
   "acceptance_scope": {
     "coverage": "component",
     "claims": [
-      "saved-map Fast-LIO2 localization",
+      "saved-map LTLIO localization",
       "saved-map occupancy coverage planning",
       "typed exploration goal command and acknowledgement",
       "native global and local planning with final command safety",

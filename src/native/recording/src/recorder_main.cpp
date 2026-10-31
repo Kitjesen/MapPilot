@@ -20,6 +20,9 @@
 #include "lingtu/recording/recording_core.hpp"
 #include "lingtu/recording/topic_catalog.hpp"
 #include "message/generated/topics.hpp"
+#if defined(_WIN32)
+#include "lingtu/recording/recording_windows.hpp"
+#endif
 
 namespace {
 
@@ -232,12 +235,21 @@ int main(int argc, char **argv) {
 
       std::signal(SIGINT, request_stop);
       std::signal(SIGTERM, request_stop);
+#if defined(_WIN32)
+      lingtu::recording::WindowsRecordingStopEvent stop_event;
+#endif
       const auto started = std::chrono::steady_clock::now();
       const auto deadline = options.seconds > 0.0
                                 ? started + std::chrono::duration<double>(options.seconds)
                                 : std::chrono::steady_clock::time_point::max();
 
       while (!stop_requested.load() && std::chrono::steady_clock::now() < deadline) {
+#if defined(_WIN32)
+        if (stop_event.stop_requested()) {
+          stop_requested.store(true);
+          break;
+        }
+#endif
         bool received = false;
         for (auto &reader : readers) {
           auto messages = lingtu::recording::take_cdr_messages(

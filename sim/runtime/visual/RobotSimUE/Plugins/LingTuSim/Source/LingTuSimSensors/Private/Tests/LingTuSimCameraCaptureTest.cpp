@@ -5,6 +5,128 @@
 #include "Serialization/JsonSerializer.h"
 #include "ShowFlags.h"
 
+namespace
+{
+    FString CameraOwnershipPlan(const FString& Streams)
+    {
+        return TEXT("{\"schema\":\"lingtu.sim.sensor-plan.v1\",\"session_id\":\"ownership-test\",\"streams\":{")
+            + Streams + TEXT("}}");
+    }
+
+    const FString ExternalCameraRow = TEXT(R"json({"sensor_id":"robot.external_rgb","owner":"sensor_runtime","source":"mujoco_camera","transport":"camera_shm","frame_id":"robot/camera","rate_hz":30,"width":640,"height":480,"encoding":"rgb8"})json");
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FLingTuCameraExternalOwnershipTest,
+    "LingTuSim.Sensors.CameraCapture.ExternalOwnership",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FLingTuCameraExternalOwnershipTest::RunTest(const FString& Parameters)
+{
+    (void)Parameters;
+    using namespace LingTuSim::Sensors::Camera;
+    FCameraPlan Plan;
+    FString Error;
+    TestTrue(TEXT("external-only plan is legal"), ParseCameraPlanJson(
+        CameraOwnershipPlan(TEXT("\"rgb\":[") + ExternalCameraRow + TEXT("]")), Plan, Error));
+    TestEqual(TEXT("external camera is counted"), Plan.TotalStreamCount, 1);
+    TestEqual(TEXT("external camera never enters UE captures"), Plan.Streams.Num(), 0);
+    TestTrue(TEXT("successful external plan has no failure"), Error.IsEmpty());
+    const FString Evidence = BuildReadinessEvidenceJson(Plan.SessionId, 0, 0, {});
+    TestFalse(TEXT("no owned streams cannot claim ACTIVE"), Evidence.Contains(TEXT("ACTIVE")));
+    const FString DepthRow = ExternalCameraRow.Replace(TEXT("external_rgb"), TEXT("external_depth"))
+        .Replace(TEXT("rgb8"), TEXT("16UC1"));
+    TestTrue(TEXT("external depth requires no Unreal mount/conversion metadata"), ParseCameraPlanJson(
+        CameraOwnershipPlan(TEXT("\"depth\":[") + DepthRow + TEXT("]")), Plan, Error));
+    TestEqual(TEXT("external depth never enters UE captures"), Plan.Streams.Num(), 0);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FLingTuCameraMixedOwnershipTest,
+    "LingTuSim.Sensors.CameraCapture.MixedOwnership",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FLingTuCameraMixedOwnershipTest::RunTest(const FString& Parameters)
+{
+    (void)Parameters;
+    using namespace LingTuSim::Sensors::Camera;
+    const FString UnrealRow = TEXT(R"json({"sensor_id":"robot.ue_rgb","owner":"visual","source":"unreal_camera","transport":"camera_shm","frame_id":"robot/camera","parent_frame_id":"robot/base_link","rate_hz":30,"width":640,"height":480,"encoding":"rgb8","extrinsic":{"position_m":[0,0,0],"quaternion_wxyz":[1,0,0,0]}})json");
+    FCameraPlan Plan;
+    FString Error;
+    TestTrue(TEXT("mixed backends parse"), ParseCameraPlanJson(CameraOwnershipPlan(
+        TEXT("\"rgb\":[") + ExternalCameraRow + TEXT(",") + UnrealRow + TEXT("]")), Plan, Error));
+    TestEqual(TEXT("both backends count toward total"), Plan.TotalStreamCount, 2);
+    if (TestEqual(TEXT("only UE camera is owned"), Plan.Streams.Num(), 1))
+    {
+        TestEqual(TEXT("owned identity retained"), Plan.Streams[0].SensorId, FString(TEXT("robot.ue_rgb")));
+        TestEqual(TEXT("owned rate unchanged"), Plan.Streams[0].RateHz, 30.0);
+        TestTrue(TEXT("owned mount remains strict"), Plan.Streams[0].bHasExtrinsic);
+    }
+    const FString InvalidUE = UnrealRow.Replace(TEXT("\"width\":640"), TEXT("\"width\":0"));
+    TestFalse(TEXT("external stream cannot excuse invalid UE resolution"), ParseCameraPlanJson(
+        CameraOwnershipPlan(TEXT("\"rgb\":[") + ExternalCameraRow + TEXT(",") + InvalidUE + TEXT("]")), Plan, Error));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FLingTuCameraInvalidOwnershipRouteTest,
+    "LingTuSim.Sensors.CameraCapture.InvalidOwnershipRoute",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FLingTuCameraInvalidOwnershipRouteTest::RunTest(const FString& Parameters)
+{
+    (void)Parameters;
+    using namespace LingTuSim::Sensors::Camera;
+    for (const FString& Row : {
+        ExternalCameraRow.Replace(TEXT("sensor_runtime"), TEXT("visual")),
+        ExternalCameraRow.Replace(TEXT("mujoco_camera"), TEXT("unreal_camera")),
+        ExternalCameraRow.Replace(TEXT("mujoco_camera"), TEXT("unknown_camera")),
+        ExternalCameraRow.Replace(TEXT("\"source\":\"mujoco_camera\""), TEXT("\"source\":42")),
+        ExternalCameraRow.Replace(TEXT("camera_shm"), TEXT("typed_dds")),
+        ExternalCameraRow.Replace(TEXT("\"owner\":\"sensor_runtime\","), TEXT(""))})
+    {
+        FCameraPlan Plan;
+        FString Error;
+        TestFalse(TEXT("unknown or mixed route fails closed"), ParseCameraPlanJson(
+            CameraOwnershipPlan(TEXT("\"rgb\":[") + Row + TEXT("]")), Plan, Error));
+        TestFalse(TEXT("invalid route explains failure"), Error.IsEmpty());
+    }
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FLingTuCameraSensorlessPresentationTest,
+    "LingTuSim.Sensors.CameraCapture.SensorlessPresentation",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FLingTuCameraSensorlessPresentationTest::RunTest(const FString& Parameters)
+{
+    (void)Parameters;
+    using namespace LingTuSim::Sensors::Camera;
+    FCameraPlan Plan;
+    FString Error;
+    TestTrue(TEXT("empty stream set is honest sensorless presentation"), ParseCameraPlanJson(
+        CameraOwnershipPlan(TEXT("")), Plan, Error));
+    TestEqual(TEXT("sensorless total is zero"), Plan.TotalStreamCount, 0);
+    TestFalse(TEXT("missing streams object is invalid, not sensorless"), ParseCameraPlanJson(
+        TEXT("{\"schema\":\"lingtu.sim.sensor-plan.v1\",\"session_id\":\"ownership-test\"}"), Plan, Error));
+    TestTrue(TEXT("non-camera plan needs no UE captures"), ParseCameraPlanJson(
+        CameraOwnershipPlan(TEXT(R"json("imu":[{"sensor_id":"robot.imu","source":"mujoco_imu","transport":"typed_dds"}])json")), Plan, Error));
+    TestEqual(TEXT("non-camera stream is counted"), Plan.TotalStreamCount, 1);
+    TestEqual(TEXT("non-camera stream is not a UE capture"), Plan.Streams.Num(), 0);
+    TestTrue(TEXT("non-camera routes and future sensor payloads are not camera-owned validation"), ParseCameraPlanJson(
+        CameraOwnershipPlan(TEXT(R"json("imu":[{"source":"unknown"}],"future_sensor":[null,{}],"mid360":{})json")), Plan, Error));
+    TestEqual(TEXT("only non-camera array lengths contribute to total"), Plan.TotalStreamCount, 3);
+    TestEqual(TEXT("ignored non-camera payloads produce no UE captures"), Plan.Streams.Num(), 0);
+    for (const FString& Streams : {FString(TEXT("\"rgb\":{}")), FString(TEXT("\"depth\":[null]"))})
+    {
+        TestFalse(TEXT("malformed camera entries are not sensorless success"), ParseCameraPlanJson(
+            CameraOwnershipPlan(Streams), Plan, Error));
+    }
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FLingTuCameraWorldBindingLifecycleTest,
     "LingTuSim.Sensors.CameraCapture.WorldBindingLifecycle",
@@ -458,7 +580,7 @@ bool FLingTuCameraDeferredCapturePromotionTest::RunTest(const FString& Parameter
     TestTrue(
         TEXT("same-frame deferred capture waits for end-of-frame rendering"),
         EvaluateDeferredCapturePromotion(
-            Stamp, TEXT("digest-a"), 7, 3, 100, 100, 10.0, 10.01, 0, 3, 0.5, Error)
+            Stamp, TEXT("digest-a"), 7, 3, 100, 100, 10.0, 10.999, 0, 3, 1.0, Error)
             == EDeferredCaptureAction::Wait);
     TestTrue(
         TEXT("next-frame deferred capture may promote to asynchronous readback"),
@@ -466,14 +588,26 @@ bool FLingTuCameraDeferredCapturePromotionTest::RunTest(const FString& Parameter
             Stamp, TEXT("digest-a"), 7, 3, 100, 101, 10.0, 10.02, 0, 3, 0.5, Error)
             == EDeferredCaptureAction::Promote);
     TestTrue(
+        TEXT("an advanced frame with ring capacity promotes after a long game-thread gap"),
+        EvaluateDeferredCapturePromotion(
+            Stamp, TEXT("digest-a"), 7, 3, 100, 101, 10.0, 11.261, 0, 3, 1.0, Error)
+            == EDeferredCaptureAction::Promote);
+    TestTrue(
+        TEXT("an invalid wall clock cannot use the ready promotion path"),
+        EvaluateDeferredCapturePromotion(
+            Stamp, TEXT("digest-a"), 7, 3, 100, 101, 10.0, 9.0, 0, 3, 1.0, Error)
+            == EDeferredCaptureAction::Fail);
+    TestTrue(TEXT("invalid clock failure remains explicit"),
+        Error.Contains(TEXT("wall-clock age is invalid")));
+    TestTrue(
         TEXT("a reset-generation capture is discarded instead of published"),
         EvaluateDeferredCapturePromotion(
             Stamp, TEXT("digest-a"), 7, 4, 100, 101, 10.0, 10.02, 0, 3, 0.5, Error)
             == EDeferredCaptureAction::Discard);
     TestTrue(
-        TEXT("a session change discards the old deferred capture"),
+        TEXT("a session change cannot use the ready promotion path"),
         EvaluateDeferredCapturePromotion(
-            Stamp, TEXT("digest-b"), 7, 3, 100, 101, 10.0, 10.02, 0, 3, 0.5, Error)
+            Stamp, TEXT("digest-b"), 7, 3, 100, 101, 10.0, 11.261, 0, 3, 1.0, Error)
             == EDeferredCaptureAction::Discard);
     TestTrue(
         TEXT("a model-generation change discards the old deferred capture"),
@@ -491,19 +625,20 @@ bool FLingTuCameraDeferredCapturePromotionTest::RunTest(const FString& Parameter
             Stamp, TEXT("digest-a"), 7, 3, 100, 101, 10.0, 11.50, 0, 3, 30.0, Error)
             == EDeferredCaptureAction::Promote);
     TestTrue(
-        TEXT("the first-frame startup budget remains bounded"),
+        TEXT("a blocked first-frame startup budget remains bounded"),
         EvaluateDeferredCapturePromotion(
-            Stamp, TEXT("digest-a"), 7, 3, 100, 101, 10.0, 40.0, 0, 3, 30.0, Error)
+            Stamp, TEXT("digest-a"), 7, 3, 100, 101, 10.0, 40.0, 3, 3, 30.0, Error)
             == EDeferredCaptureAction::Fail);
     TestTrue(TEXT("startup timeout reports its exact stage and age"),
         Error.Contains(TEXT("stage=DeferredCapture"))
             && Error.Contains(TEXT("age=30.000")));
     TestTrue(
-        TEXT("a deferred capture that exceeds its deadline fails closed"),
+        TEXT("a full readback ring still fails after the reported long-frame age"),
         EvaluateDeferredCapturePromotion(
-            Stamp, TEXT("digest-a"), 7, 3, 100, 101, 10.0, 10.50, 3, 3, 0.5, Error)
+            Stamp, TEXT("digest-a"), 7, 3, 100, 101, 10.0, 11.261, 3, 3, 1.0, Error)
             == EDeferredCaptureAction::Fail);
-    TestTrue(TEXT("timeout failure is explicit"), Error.Contains(TEXT("deadline")));
+    TestTrue(TEXT("timeout failure preserves the observed age"),
+        Error.Contains(TEXT("deadline")) && Error.Contains(TEXT("age=1.261")));
     TestTrue(
         TEXT("game-frame regression fails closed"),
         EvaluateDeferredCapturePromotion(

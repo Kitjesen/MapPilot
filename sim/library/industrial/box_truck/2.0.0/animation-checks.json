@@ -1,0 +1,31 @@
+{
+  "checks": [
+    {
+      "mode": "roll",
+      "mesh_count": 5,
+      "animated_nodes": [
+        "Wheel_FL",
+        "Wheel_FR",
+        "Wheel_RL",
+        "Wheel_RR"
+      ],
+      "one_combined_clip": true,
+      "uv_and_pbr_preserved": true,
+      "rotation_changes_verified": true,
+      "output": "D:\\inovxio\\brain\\lingtu\\build\\tripo\\truck-articulation-20261017\\wheel-repair\\v2\\truck-roll-preview.glb"
+    },
+    {
+      "mode": "steer",
+      "mesh_count": 5,
+      "animated_nodes": [
+        "Steer_FL",
+        "Steer_FR"
+      ],
+      "one_combined_clip": true,
+      "uv_and_pbr_preserved": true,
+      "rotation_changes_verified": true,
+      "output": "D:\\inovxio\\brain\\lingtu\\build\\tripo\\truck-articulation-20261017\\wheel-repair\\v2\\truck-steer-preview.glb"
+    }
+  ],
+  "physics_connected": false
+}

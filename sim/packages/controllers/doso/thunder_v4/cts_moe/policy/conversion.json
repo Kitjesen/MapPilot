@@ -1,0 +1,108 @@
+{
+  "conversion_passed": true,
+  "behavior_verified": false,
+  "source_path": "/root/autodl-tmp/cts-omni-repair-v19-20260922/idle_request_validation_20261011/candidate_u4000/student_80708.pt",
+  "source_bytes": 6763892,
+  "onnx_path": "/root/autodl-tmp/lingtu-cts-export-20261012/candidate_80708/policy_cts_moe.onnx",
+  "onnx_bytes": 6724873,
+  "runtime_contract_source": "/root/autodl-tmp/lingtu-cts-export-20261012/runtime_contract.json",
+  "policy_contract": "thunder_cts_moe_v1",
+  "torch_version": "2.7.0+cu128",
+  "numpy_version": "1.26.0",
+  "onnx_version": "1.18.0",
+  "onnxruntime_version": "1.29.0",
+  "opset": 17,
+  "inputs": [
+    {
+      "name": "history",
+      "shape": [
+        "batch",
+        530
+      ],
+      "type": "tensor(float)"
+    },
+    {
+      "name": "single_obs",
+      "shape": [
+        "batch",
+        53
+      ],
+      "type": "tensor(float)"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "actions",
+      "shape": [
+        "batch",
+        16
+      ],
+      "type": "tensor(float)"
+    }
+  ],
+  "atol": 0.0001,
+  "rtol": 0.0001,
+  "max_absolute_error": 0.0001220703125,
+  "numerical_cases": [
+    {
+      "batch": 1,
+      "scale": 0.0,
+      "max_absolute_error": 1.1622905731201172e-06
+    },
+    {
+      "batch": 1,
+      "scale": 0.1,
+      "max_absolute_error": 8.046627044677734e-07
+    },
+    {
+      "batch": 1,
+      "scale": 1.0,
+      "max_absolute_error": 1.1444091796875e-05
+    },
+    {
+      "batch": 1,
+      "scale": 3.0,
+      "max_absolute_error": 6.103515625e-05
+    },
+    {
+      "batch": 4,
+      "scale": 0.0,
+      "max_absolute_error": 9.238719940185547e-07
+    },
+    {
+      "batch": 4,
+      "scale": 0.1,
+      "max_absolute_error": 2.1457672119140625e-06
+    },
+    {
+      "batch": 4,
+      "scale": 1.0,
+      "max_absolute_error": 2.288818359375e-05
+    },
+    {
+      "batch": 4,
+      "scale": 3.0,
+      "max_absolute_error": 0.0001220703125
+    },
+    {
+      "batch": 72,
+      "scale": 0.0,
+      "max_absolute_error": 5.066394805908203e-07
+    },
+    {
+      "batch": 72,
+      "scale": 0.1,
+      "max_absolute_error": 1.6689300537109375e-06
+    },
+    {
+      "batch": 72,
+      "scale": 1.0,
+      "max_absolute_error": 4.57763671875e-05
+    },
+    {
+      "batch": 72,
+      "scale": 3.0,
+      "max_absolute_error": 9.1552734375e-05
+    }
+  ]
+}

@@ -39,6 +39,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from sim.catalog import resolve_robot_default_policy
 from sim.scripts.mujoco import native_sensor_records as _sensor_records  # noqa: E402
 from sim.scripts.mujoco.async_jsonl_writer import AsyncJsonlWriter  # noqa: E402
 
@@ -57,6 +58,7 @@ from drivers.sim.mujoco.sensors import (  # noqa: E402
     NAVIGATION_FIXTURE_GROUND_RESOLUTION_M,
     NAVIGATION_FIXTURE_GROUND_Y_HALF_M,
     angle_delta_rad,
+    lidar_pose_world,
     navigation_fixture_registered_body_points,
     projected_gravity_body,
     quat_xyzw_to_matrix,
@@ -87,12 +89,8 @@ _MID360_ACCEL_MPS2_PER_G = _sensor_records.MID360_ACCEL_MPS2_PER_G
 POINT_DTYPE = _sensor_records.POINT_DTYPE
 KINEMATIC_LEGACY_IMU_ACC_AXIS_SCALE = (-0.43, 1.0, 1.0)
 # MuJoCo kinematic drive sets base velocity directly. Its finite-difference X
-# acceleration is a control artifact, not a physical IMU force for Fast-LIO.
+# acceleration is a control artifact, not a physical IMU force for LTLIO.
 KINEMATIC_SIM_HARDWARE_IMU_ACC_AXIS_SCALE = (0.0, 1.0, 1.0)
-_THUNDERV4_POLICY_DIR = (
-    ROOT / "sim" / "packages" / "controllers" / "doso" / "thunder_v4" / "locomotion" / "policy"
-)
-DEFAULT_THUNDERV4_ONNX_POLICY = _THUNDERV4_POLICY_DIR / "policy_4998.onnx"
 REQUIRED_SLAM_OUTPUT_TOPICS = (
     TOPICS.odometry,
     TOPICS.map_cloud,
@@ -1097,7 +1095,7 @@ def _gravity_specific_force_body(state: Any) -> np.ndarray:
 class SimImuSignalConditioner:
     """Sensor-side conditioning for MuJoCo accelerometer samples.
 
-    This keeps Fast-LIO on the normal accelerometer route while modeling the
+    This keeps LTLIO on the normal accelerometer route while modeling the
     finite bandwidth and saturation envelope that a real IMU/driver chain has.
     """
 
@@ -1305,7 +1303,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=3.0,
         help=(
             "Advance MuJoCo with a zero command before starting the simulated "
-            "hardware clock or publishing sensors, keeping Fast-LIO IMU "
+            "hardware clock or publishing sensors, keeping LTLIO IMU "
             "initialization away from model drop/settle transients."
         ),
     )
@@ -1313,7 +1311,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--warmup-s",
         type=float,
         default=2.0,
-        help="Publish stationary IMU/LiDAR before driving so Fast-LIO can initialize gyro bias at rest.",
+        help="Publish stationary IMU/LiDAR before driving so LTLIO can initialize gyro bias at rest.",
     )
     parser.add_argument(
         "--drive-ramp-s",
@@ -1330,7 +1328,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Publish MuJoCo odometry to /slam/odom_prior for simulation-only "
             "diagnostics. Real hardware configs keep this path off, and "
-            "Fast-LIO simulation acceptance must not depend on it."
+            "LTLIO simulation acceptance must not depend on it."
         ),
     )
     parser.add_argument(
@@ -1374,12 +1372,18 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--navigation-fixture-synthetic-ground",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Add the fixture's synthetic ground; disable to publish only LiDAR returns.",
+    )
+    parser.add_argument(
         "--imu-acc-mode",
         choices=["sensor", "finite_difference", "gravity_only"],
         default="sensor",
         help=(
             "IMU specific-force source. The native DDS MuJoCo default is "
-            "sensor so Fast-LIO receives the same raw accelerometer route as "
+            "sensor so LTLIO receives the same raw accelerometer route as "
             "real hardware. Use gravity_only only as a diagnostic fallback; "
             "finite_difference is legacy."
         ),
@@ -1390,7 +1394,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_IMU_ACC_CONDITIONING,
         help=(
             "Condition MuJoCo accelerometer samples before publishing raw IMU. "
-            "The default keeps sensor mode on the real Fast-LIO route while "
+            "The default keeps sensor mode on the real LTLIO route while "
             "adding sensor-bandwidth low-pass, dynamic acceleration clipping, "
             "and slew limiting to suppress non-physical contact impulses."
         ),
@@ -1667,12 +1671,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Fail the sensor/locomotion report unless a non-zero DDS command was consumed.",
     )
     parser.add_argument(
-        "--allow-kinematic-fastlio-acceptance",
+        "--allow-kinematic-ltlio-acceptance",
         action="store_true",
         help=(
             "Allow require-slam-output gates to pass with kinematic drive. "
             "Default false because kinematic cmd_vel pose injection is not a "
-            "hardware-equivalent LiDAR/IMU source for Fast-LIO saved-map claims."
+            "hardware-equivalent LiDAR/IMU source for LTLIO saved-map claims."
         ),
     )
     parser.add_argument(
@@ -1718,6 +1722,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mid360-pattern", type=Path, default=DEFAULT_MID360_PATTERN)
     parser.add_argument("--mid360-samples-per-frame", type=int, default=DEFAULT_MID360_SAMPLES_PER_FRAME)
     parser.add_argument("--lidar-backend", choices=["mujoco_lidar", "ray_caster_lidar"], default="mujoco_lidar")
+    parser.add_argument("--lidar-body-name", default="lidar_link")
+    parser.add_argument("--lidar-site-name", default="lidar_site")
     parser.add_argument("--mujoco-lidar-backend", choices=["cpu", "taichi", "warp", "jax"], default="cpu")
     parser.add_argument("--max-points", type=int, default=DEFAULT_MID360_SAMPLES_PER_FRAME)
     parser.add_argument(
@@ -1743,6 +1749,11 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=640,
         help="Maximum live world-frame LiDAR points stored in each motion-log sample.",
+    )
+    parser.add_argument(
+        "--sample-static-truth",
+        action="store_true",
+        help="Sample MuJoCo body truth even when no nonzero drive interval starts.",
     )
     parser.add_argument(
         "--nav-status-json",
@@ -2303,9 +2314,7 @@ def _resolve_policy_path_for_drive(drive_mode: str, value: str) -> Path | None:
         return candidate
     if str(drive_mode or "").strip().lower() != "policy":
         return None
-    if DEFAULT_THUNDERV4_ONNX_POLICY.exists():
-        return DEFAULT_THUNDERV4_ONNX_POLICY.resolve()
-    return None
+    return resolve_robot_default_policy(ROOT)["artifact"]
 
 
 def _configure_policy_cpu_threads(
@@ -3720,7 +3729,7 @@ def _remaining_gaps(
     require_slam_output: bool,
     require_odom_prior: bool = True,
     drive_mode: str = "",
-    allow_kinematic_fastlio_acceptance: bool = False,
+    allow_kinematic_ltlio_acceptance: bool = False,
 ) -> list[str]:
     gaps: list[str] = []
     for topic in (TOPICS.lidar_scan, TOPICS.imu):
@@ -3729,8 +3738,8 @@ def _remaining_gaps(
     if require_odom_prior and sensor_counts.get(TOPICS.odom_prior, 0) <= 0:
         gaps.append(f"sensor_not_published:{TOPICS.odom_prior}")
     if require_slam_output:
-        if str(drive_mode or "").strip().lower() == "kinematic" and not bool(allow_kinematic_fastlio_acceptance):
-            gaps.append("kinematic_fastlio_acceptance_disabled")
+        if str(drive_mode or "").strip().lower() == "kinematic" and not bool(allow_kinematic_ltlio_acceptance):
+            gaps.append("kinematic_ltlio_acceptance_disabled")
         for topic in REQUIRED_SLAM_OUTPUT_TOPICS:
             if slam_counts.get(topic, 0) <= 0:
                 gaps.append(f"native_slam_output_missing:{topic}")
@@ -4923,6 +4932,7 @@ def _write_native_registered_cloud(
     *,
     timestamp_ns: int,
     sequence: int,
+    sensor_origin_world: Any | None = None,
     parent_diagnostics: ParentSensorDiagnostics | None = None,
     async_batch: AsyncPublisherBatch | None = None,
 ) -> None:
@@ -4932,6 +4942,7 @@ def _write_native_registered_cloud(
             points_xyzi_body,
             timestamp_ns=timestamp_ns,
             sequence=sequence,
+            sensor_origin_world=sensor_origin_world,
         ),
         parent_diagnostics=parent_diagnostics,
         diagnostic_record_type="registered_cloud",
@@ -5228,6 +5239,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     runtime_stage_profiler = RuntimeStageProfiler()
     mocap_motion: LinearMocapMotion | None = None
     mocap_body_id: int | None = None
+    runtime_started = False
+    runtime_error: Exception | None = None
     try:
         policy_path = _resolve_policy_path_for_drive(str(args.drive_mode), str(args.policy_path or ""))
         policy_runtime_report = _configure_policy_cpu_threads(policy_path, int(args.policy_cpu_threads))
@@ -5242,6 +5255,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             mid360_pattern=args.mid360_pattern,
             mid360_samples_per_frame=int(args.mid360_samples_per_frame),
             lidar_backend=str(args.lidar_backend),
+            lidar_body_name=str(args.lidar_body_name),
+            lidar_site_name=str(args.lidar_site_name),
             mujoco_lidar_backend=str(args.mujoco_lidar_backend),
             require_product_lidar_backend=True,
             policy_path=policy_path,
@@ -5390,6 +5405,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         sim_abs_yaw_delta_rad = 0.0
         prev_drive_position = None
         prev_drive_yaw = None
+        static_truth_start_position = None
+        static_truth_end_position = None
+        static_truth_start_yaw = None
+        static_truth_end_yaw = None
+        static_truth_path_length_xy_m = 0.0
+        static_truth_abs_yaw_delta_rad = 0.0
+        static_truth_prev_position = None
+        static_truth_prev_yaw = None
         subscan_samples: list[tuple[float, Any, Any, int]] = []
         latest_world_points = np.zeros((0, 4), dtype=np.float32)
         next_motion_log_sim_s = sim_start_s
@@ -5428,6 +5451,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             )
             driver_heartbeat = DriverHeartbeat(driver_bridge)
             driver_heartbeat.start()
+        runtime_started = True
         while True:
             if driver_heartbeat is not None:
                 driver_heartbeat.raise_if_failed()
@@ -5628,6 +5652,23 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 position = np.asarray(state.position, dtype=np.float64).copy()
                 yaw = yaw_from_quat_xyzw(state.orientation)
             physical_drive_active = driving and (driver_bridge is None or motion_started)
+            if bool(args.sample_static_truth):
+                if static_truth_start_position is None:
+                    static_truth_start_position = position.copy()
+                    static_truth_start_yaw = float(yaw)
+                if static_truth_prev_position is not None:
+                    truth_delta = position[:2] - static_truth_prev_position[:2]
+                    static_truth_path_length_xy_m += float(
+                        math.hypot(float(truth_delta[0]), float(truth_delta[1]))
+                    )
+                if static_truth_prev_yaw is not None:
+                    static_truth_abs_yaw_delta_rad += abs(
+                        float(angle_delta_rad(float(yaw), float(static_truth_prev_yaw)))
+                    )
+                static_truth_prev_position = position.copy()
+                static_truth_prev_yaw = float(yaw)
+                static_truth_end_position = position.copy()
+                static_truth_end_yaw = float(yaw)
             if physical_drive_active and sim_start_position is None:
                 sim_start_position = position.copy()
                 sim_start_yaw = float(yaw)
@@ -5743,8 +5784,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             )
             sensor_counts[TOPICS.imu] += 1
             imu_sequence += 1
-            if physical_drive_active:
-                mujoco_truth_velocity_estimator.update(state.position, sensor_ts_s)
+            if physical_drive_active or bool(args.sample_static_truth):
+                mujoco_truth_velocity_estimator.update(position, sensor_ts_s)
             if bool(args.publish_odom_prior):
                 odom_prior_velocity, odom_prior_velocity_valid = odom_prior_velocity_estimator.update(
                     state.position,
@@ -5832,6 +5873,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         world_points = world_points[::stride][: int(args.max_points)]
                         relative_times_s = relative_times_s[::stride][: int(args.max_points)]
                 else:
+                    # This is the same state sampled by the instantaneous scan;
+                    # reading its site pose does not advance or resample physics.
+                    scan_sensor_origin_world = (
+                        lidar_pose_world(engine)[0].copy() if navigation_fixture else None
+                    )
                     world_points = _bounded_points(
                         engine.get_lidar_points(scan_duration_s=lidar_period_s), int(args.max_points),
                     )
@@ -5866,6 +5912,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         state,
                         max_points=navigation_fixture_cloud_points,
                         raw_overlay_enabled=bool(getattr(args, "navigation_fixture_raw_overlay", True)),
+                        synthetic_ground_enabled=bool(getattr(args, "navigation_fixture_synthetic_ground", True)),
                         ground_resolution_m=navigation_fixture_ground_resolution_m,
                         ground_y_half_m=navigation_fixture_ground_y_half_m,
                     )
@@ -5876,6 +5923,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         body_points,
                         timestamp_ns=int(scan_start_timestamp_s * 1_000_000_000),
                         sequence=registered_cloud_sequence,
+                        sensor_origin_world=scan_sensor_origin_world,
                         parent_diagnostics=parent_diagnostics,
                         async_batch=publisher_batch,
                     )
@@ -6073,6 +6121,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 sim_time_s=last_sim_time_s,
                 goal_reached=goal_reached_early,
             )
+    except Exception as exc:
+        if not runtime_started:
+            raise
+        runtime_error = exc
     finally:
         if pacing_controller is not None:
             pacing_stats = pacing_controller.stats(
@@ -6141,19 +6193,28 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 cleanup_errors.append(f"mujoco_viewer_cleanup_failed:{type(exc).__name__}:{exc}")
         if engine is not None:
             try:
+                lidar_backend_report = engine.get_lidar_backend_report()
+            except Exception as exc:
+                cleanup_errors.append(f"lidar_report_cleanup_failed:{type(exc).__name__}:{exc}")
+            try:
                 engine.close()
             except Exception as exc:
                 cleanup_errors.append(f"mujoco_cleanup_failed:{type(exc).__name__}:{exc}")
 
     status_counts, slam_status = _slam_status_counts(str(args.slam_status_json or ""))
     slam_counts.update(status_counts)
+    static_truth_sampled = bool(args.sample_static_truth) and static_truth_start_position is not None
     motion = _motion_report(
-        sim_start_position=sim_start_position,
-        sim_end_position=sim_end_position,
-        sim_start_yaw=sim_start_yaw,
-        sim_end_yaw=sim_end_yaw,
-        sim_path_length_xy_m=sim_path_length_xy_m,
-        sim_abs_yaw_delta_rad=sim_abs_yaw_delta_rad,
+        sim_start_position=(static_truth_start_position if static_truth_sampled else sim_start_position),
+        sim_end_position=(static_truth_end_position if static_truth_sampled else sim_end_position),
+        sim_start_yaw=(static_truth_start_yaw if static_truth_sampled else sim_start_yaw),
+        sim_end_yaw=(static_truth_end_yaw if static_truth_sampled else sim_end_yaw),
+        sim_path_length_xy_m=(
+            static_truth_path_length_xy_m if static_truth_sampled else sim_path_length_xy_m
+        ),
+        sim_abs_yaw_delta_rad=(
+            static_truth_abs_yaw_delta_rad if static_truth_sampled else sim_abs_yaw_delta_rad
+        ),
         slam_status=slam_status,
         min_sim_motion_for_odom_check_m=float(args.min_sim_motion_for_odom_check_m),
         min_slam_motion_ratio=float(args.min_slam_motion_ratio),
@@ -6167,8 +6228,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         require_slam_output=bool(args.require_slam_output),
         require_odom_prior=bool(args.publish_odom_prior),
         drive_mode=str(args.drive_mode),
-        allow_kinematic_fastlio_acceptance=bool(args.allow_kinematic_fastlio_acceptance),
+        allow_kinematic_ltlio_acceptance=bool(args.allow_kinematic_ltlio_acceptance),
     )
+    if runtime_error is not None:
+        gaps.insert(0, f"mujoco_native_dds_sensor_bridge_failed:{type(runtime_error).__name__}")
     if external_arm_gate is not None:
         external_gap = external_arm_failure_gap or external_arm_gate.failure_gap
         if external_gap:
@@ -6239,6 +6302,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         motion=motion,
         scan_time_profile=str(args.scan_time_profile),
         timestamp_clock=str(args.timestamp_clock),
+        error=str(runtime_error) if runtime_error is not None else "",
     )
     report["warmup_s"] = warmup_s
     report["external_arm"] = (
@@ -6250,6 +6314,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "contact_steps": entity_contacts.entity_contact_steps,
         "first_contact_geom": entity_contacts.first_contact_geom,
         "first_contact": entity_contacts.first_contact,
+        "support_normal_disagreements": entity_contacts.support_normal_disagreements,
+        "first_support_normal_disagreement": entity_contacts.first_support_normal_disagreement,
         "coverage": "every visible simulation step; excludes self contact and floor support",
     }
     report["start_anchor"] = start_anchor
@@ -6284,7 +6350,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     report["physics_timestep_s"] = physics_timestep_s
     report["imu_acc_mode"] = str(args.imu_acc_mode)
     if str(args.imu_acc_mode) == "gravity_only":
-        sensor_model = "fastlio_gravity_only_imu"
+        sensor_model = "ltlio_gravity_only_imu"
     elif str(args.imu_acc_mode) == "sensor" and imu_acc_conditioner is not None:
         sensor_model = "mujoco_accelerometer_conditioned_imu"
     elif str(args.imu_acc_mode) == "sensor":
@@ -6297,7 +6363,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         report["imu_acc_conditioner"] = imu_acc_conditioner.stats()
     else:
         report["imu_acc_conditioner"] = {"enabled": False}
-    report["allow_kinematic_fastlio_acceptance"] = bool(args.allow_kinematic_fastlio_acceptance)
+    report["allow_kinematic_ltlio_acceptance"] = bool(args.allow_kinematic_ltlio_acceptance)
     report["publish_odom_prior"] = bool(args.publish_odom_prior)
     report["navigation_fixture"] = navigation_fixture
     report["navigation_fixture_cloud_points"] = navigation_fixture_cloud_points

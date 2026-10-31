@@ -179,7 +179,14 @@ class McapSessionWriter::Impl {
 
   ~Impl() {
     if (!committed) {
-      writer.terminate();
+      // Verification failure must retain the facts already captured, including
+      // a short run whose last chunk is still buffered. Closing the container
+      // does not promote the temporary file or mark the session completed.
+      try {
+        writer.close();
+      } catch (...) {
+        writer.terminate();
+      }
       if (sink) {
         sink->close_noexcept();
       }

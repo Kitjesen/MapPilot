@@ -1,10 +1,8 @@
-"""Bounded loopback delivery for the first live Physics-to-Visual slice.
+"""Send physics snapshots to RobotSimUE over nonblocking localhost UDP.
 
-The transport is deliberately presentation-only.  It does not replace typed
-DDS contracts or camera shared memory, and it never becomes a physics clock
-authority.  RuntimeCoordinator advances MuJoCo; this module only serializes
-validated immutable snapshots and drops them onto localhost with latest-wins
-semantics.
+Interactive sessions, recording and replay reuse the publisher. The standalone
+CLI uses zero-output controllers for visual bring-up. RuntimeCoordinator owns
+physics; this module sends validated snapshots for display.
 """
 
 from __future__ import annotations
@@ -101,7 +99,10 @@ class UdpLoopbackSnapshotPublisher:
     def publish(self, event: Mapping[str, Any]) -> int:
         """Send one whole immutable snapshot or explicitly drop it when busy."""
 
-        payload = encode_truth_snapshot(event)
+        # Contact telemetry belongs to the recorded physics truth, not the UE
+        # pose datagram. Do not mutate the shared snapshot or grow its UDP size.
+        visual_event = {key: value for key, value in event.items() if key not in {"contacts", "contact_count"}}
+        payload = encode_truth_snapshot(visual_event)
         try:
             sent = self._socket.sendto(payload, self._destination)
         except BlockingIOError:
@@ -149,16 +150,14 @@ def stream_live_snapshots(
     ):
         raise ValueError("frame_limit must be a positive integer when provided")
 
-    coordinator.prepare()
-    coordinator.start()
     frames = 0
     wall_origin: float | None = None
     sim_origin_ns: int | None = None
     try:
+        coordinator.prepare()
+        coordinator.start()
         while frame_limit is None or frames < frame_limit:
             snapshot = coordinator.advance(steps_per_frame)
-            publisher.publish(snapshot)
-            frames += 1
 
             if pace:
                 sim_time_ns = snapshot.get("sim_time_ns")
@@ -174,23 +173,28 @@ def stream_live_snapshots(
                     remaining = deadline - monotonic()
                     if remaining > 0:
                         sleep(remaining)
+            publisher.publish(snapshot)
+            frames += 1
     finally:
-        if coordinator.state is RuntimeState.RUNNING:
-            coordinator.pause()
-        if coordinator.state in {
-            RuntimeState.READY,
-            RuntimeState.RUNNING,
-            RuntimeState.PAUSED,
-        }:
-            coordinator.stop()
+        try:
+            if coordinator.state is RuntimeState.RUNNING:
+                coordinator.pause()
+        finally:
+            if coordinator.state in {
+                RuntimeState.PREPARING,
+                RuntimeState.READY,
+                RuntimeState.RUNNING,
+                RuntimeState.PAUSED,
+            }:
+                coordinator.stop()
     return frames
 
 
 def main() -> int:
-    """Run the first localhost Physics-to-RobotSimUE live stream."""
+    """Run a zero-output visual bring-up session."""
 
     parser = argparse.ArgumentParser(
-        description="Stream MuJoCo truth snapshots to RobotSimUE over localhost UDP."
+        description="Stream MuJoCo snapshots to RobotSimUE for zero-output visual bring-up."
     )
     parser.add_argument("bundle", type=Path)
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())

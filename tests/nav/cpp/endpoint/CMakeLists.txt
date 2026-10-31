@@ -20,6 +20,26 @@ set(_EP_DIRS
   "${_EXPLORE_CPP_DIR}"
   "${LINGTU_SRC_ROOT}")
 
+if(LINGTU_NAV_CPP_BUILD_TESTS
+    AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_nav_endpoint_config.cpp")
+  add_executable(test_nav_endpoint_config
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_nav_endpoint_config.cpp"
+    "${_ENDPOINT_DIR}/nav/app/config/parse.cpp"
+    "${_ENDPOINT_DIR}/nav/app/config/build.cpp")
+  target_include_directories(test_nav_endpoint_config PRIVATE
+    "${_ENDPOINT_DIR}"
+    "${_NAV_CORE_DIR}"
+    "${_EXPLORE_CPP_DIR}"
+    ${_EP_DIRS}
+    "${_NAV_KERNEL_DIR}/include")
+  target_link_libraries(test_nav_endpoint_config PRIVATE
+    lingtu_nav_far
+    lingtu_nav_follower
+    lingtu_nav_local_planner)
+  lingtu_endpoint_enable_warnings(test_nav_endpoint_config)
+  add_test(NAME test_nav_endpoint_config COMMAND test_nav_endpoint_config)
+endif()
+
 if(LINGTU_NAV_CPP_BUILD_ENDPOINT)
   find_package(CycloneDDS REQUIRED)
   if(WIN32)
@@ -54,7 +74,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
   find_package(Threads REQUIRED)
   add_executable(test_global_plan_task
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_global_plan_task.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/task.cpp")
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/task.cpp")
   target_include_directories(test_global_plan_task PRIVATE
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav"
@@ -134,7 +154,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
       "${LINGTU_NAV_TESTS_DIR}/endpoint/test_bounded_goal_replan_controller.cpp")
   add_executable(test_bounded_goal_replan_controller
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_bounded_goal_replan_controller.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/retry.cpp")
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/retry.cpp")
   target_include_directories(test_bounded_goal_replan_controller PRIVATE
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav"
@@ -150,35 +170,12 @@ endif()
 if(LINGTU_NAV_CPP_BUILD_TESTS
     AND NOT LINGTU_NAV_CPP_BUILD_ENDPOINT
     AND EXISTS
-      "${LINGTU_NAV_TESTS_DIR}/endpoint/test_active_path_blockage_policy.cpp"
-    AND EXISTS
-      "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/blockage.cpp")
-  add_executable(test_active_path_blockage_policy
-    "${LINGTU_NAV_TESTS_DIR}/endpoint/test_active_path_blockage_policy.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/blockage.cpp")
-  target_include_directories(test_active_path_blockage_policy PRIVATE
-    "${LINGTU_NAV_CPP_ROOT}/endpoint"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav"
-    "${LINGTU_SRC_ROOT}"
-    "${LINGTU_NAV_CPP_ROOT}"
-    "${LINGTU_NAV_KERNEL_DIR}/include")
-  target_compile_options(test_active_path_blockage_policy PRIVATE
-    $<$<CXX_COMPILER_ID:MSVC>:/W4>
-    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
-  add_test(
-    NAME test_active_path_blockage_policy
-    COMMAND test_active_path_blockage_policy)
-endif()
-
-if(LINGTU_NAV_CPP_BUILD_TESTS
-    AND NOT LINGTU_NAV_CPP_BUILD_ENDPOINT
-    AND EXISTS
       "${LINGTU_NAV_TESTS_DIR}/endpoint/test_goal_plan_controller.cpp")
   find_package(Threads REQUIRED)
   add_executable(test_goal_plan_controller
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_goal_plan_controller.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/task.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/plan.cpp")
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/task.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/plan.cpp")
   target_include_directories(test_goal_plan_controller PRIVATE
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav"
@@ -204,11 +201,10 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/command/cancel.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/command/ingress.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/safety/stop.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/task.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/retry.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/plan.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/blockage.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/runtime.cpp")
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/task.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/retry.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/plan.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/runtime.cpp")
   target_include_directories(test_goal_replan_runtime_coordinator PRIVATE
     "${LINGTU_SRC_ROOT}"
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
@@ -231,15 +227,15 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
   find_package(Threads REQUIRED)
   add_executable(test_active_path_replan_cycle
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_active_path_replan_cycle.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/blockage.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/autonomy.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/diagnostics.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/final.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/safety/stop.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/safety/command.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/task.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/retry.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/plan.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/runtime.cpp")
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/task.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/retry.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/plan.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/runtime.cpp")
   target_include_directories(test_active_path_replan_cycle PRIVATE
     "${LINGTU_SRC_ROOT}"
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
@@ -281,8 +277,8 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
   find_package(Threads REQUIRED)
   add_executable(test_goal_plan_completion
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_goal_plan_completion.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/task.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/plan.cpp")
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/task.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/plan.cpp")
   target_include_directories(test_goal_plan_completion PRIVATE
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav"
@@ -466,11 +462,10 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/goal_terminal_status_delivery.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/navigation_goal_status_outbox.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/safety/stop.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/task.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/retry.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/plan.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/blockage.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/runtime.cpp")
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/task.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/retry.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/plan.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/runtime.cpp")
   target_include_directories(test_goal_terminal_status_delivery PRIVATE
     "${LINGTU_SRC_ROOT}"
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
@@ -497,15 +492,15 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
   find_package(Threads REQUIRED)
   add_executable(test_goal_terminal_transaction
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_goal_terminal_transaction.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/command/cancel.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/goal_terminal_status_delivery.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/goal_terminal_transaction.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/navigation_goal_status_outbox.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/safety/stop.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/task.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/retry.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/plan.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/blockage.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/runtime.cpp")
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/task.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/retry.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/plan.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/runtime.cpp")
   target_include_directories(test_goal_terminal_transaction PRIVATE
     "${LINGTU_SRC_ROOT}"
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
@@ -528,20 +523,19 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     AND EXISTS
       "${LINGTU_NAV_TESTS_DIR}/endpoint/test_navigation_runtime_controller.cpp"
     AND EXISTS
-      "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/navigation.cpp")
+      "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/navigation.cpp")
   find_package(Threads REQUIRED)
   add_executable(test_navigation_runtime_controller
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_navigation_runtime_controller.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/navigation.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/navigation.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/goal_terminal_status_delivery.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/goal_terminal_transaction.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/navigation_goal_status_outbox.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/safety/stop.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/task.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/retry.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/plan.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/blockage.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/runtime.cpp")
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/task.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/retry.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/plan.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/runtime.cpp")
   target_include_directories(test_navigation_runtime_controller PRIVATE
     "${LINGTU_SRC_ROOT}"
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
@@ -571,11 +565,10 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/goal_terminal_status_delivery.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/navigation_goal_status_outbox.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/safety/stop.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/task.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/retry.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/plan.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/blockage.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/goal/runtime.cpp")
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/task.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/retry.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/plan.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/runtime.cpp")
   target_include_directories(test_goal_terminal_endpoint_acceptance PRIVATE
     "${LINGTU_SRC_ROOT}"
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
@@ -598,10 +591,10 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     AND EXISTS
       "${LINGTU_NAV_TESTS_DIR}/endpoint/test_inspection_command_coordinator.cpp"
     AND EXISTS
-      "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/inspection/inspection_command_coordinator.cpp")
+      "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/inspection/inspection_command_coordinator.cpp")
   add_executable(test_inspection_command_coordinator
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_inspection_command_coordinator.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/inspection/inspection_command_coordinator.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/inspection/inspection_command_coordinator.cpp"
     "${LINGTU_SRC_ROOT}/nav/inspection/inspection.cpp")
   target_include_directories(test_inspection_command_coordinator PRIVATE
     "${LINGTU_NAV_CPP_ROOT}"
@@ -609,7 +602,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav"
     "${LINGTU_SRC_ROOT}"
     "${LINGTU_NAV_KERNEL_DIR}/include"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/inspection")
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/inspection")
   target_compile_options(test_inspection_command_coordinator PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
@@ -629,7 +622,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav"
     "${LINGTU_SRC_ROOT}"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/inspection")
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/inspection")
   target_compile_options(test_inspection_task_event_outbox PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
@@ -644,13 +637,13 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
       "${LINGTU_NAV_TESTS_DIR}/endpoint/test_inspection_runtime_controller.cpp")
   add_executable(test_inspection_runtime_controller
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_inspection_runtime_controller.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/inspection/inspection_runtime_controller.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/inspection/inspection_runtime_controller.cpp"
     "${LINGTU_SRC_ROOT}/nav/inspection/inspection.cpp")
   target_include_directories(test_inspection_runtime_controller PRIVATE
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav"
     "${LINGTU_SRC_ROOT}"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/runtime/inspection")
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/inspection")
   target_compile_options(test_inspection_runtime_controller PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
@@ -710,6 +703,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
   add_executable(test_teleop_tick_controller
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_teleop_tick_controller.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/teleop.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/diagnostics.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/final.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/safety/command.cpp")
   target_include_directories(test_teleop_tick_controller PRIVATE
@@ -738,6 +732,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
   add_executable(test_autonomy_tick_controller
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_autonomy_tick_controller.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/autonomy.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/diagnostics.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/final.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/safety/command.cpp")
   target_include_directories(test_autonomy_tick_controller PRIVATE
@@ -854,7 +849,7 @@ if(TARGET octoplanner3d_runtime)
     "${_ENDPOINT_DIR}/nav/dds/frame.cpp"
     "${_ENDPOINT_DIR}/nav/command/goal.cpp"
     "${_ENDPOINT_DIR}/nav/input/frame.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/semantic/view_query.cpp"
+    "${_ENDPOINT_DIR}/nav/app/semantic/view_query.cpp"
     "${_ENDPOINT_DIR}/nav/input/active/octomap.cpp"
     "${_ENDPOINT_DIR}/nav/input/active/declared.cpp"
     "${_LINGTU_ROOT}/src/explore/cpp/semantic_views.cpp"
@@ -866,7 +861,7 @@ if(TARGET octoplanner3d_runtime)
     "${_LINGTU_ROOT}/src/explore/cpp" "${_NAV_KERNEL_DIR}/include")
   target_link_libraries(test_semantic_view_query PRIVATE
     octoplanner3d_runtime octoplanner3d_global_planner Threads::Threads
-    lingtu_nav_local_planner lingtu_inspection_core lingtu_dds_messages
+    lingtu_nav_local_planner lingtu_inspection_core lingtu_dds_messages lingtu_maps
     CycloneDDS::ddsc lingtu_dds_contracts)
   lingtu_endpoint_enable_warnings(test_semantic_view_query)
   add_test(NAME test_semantic_view_query COMMAND test_semantic_view_query)
@@ -926,7 +921,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
 if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_global_plan_task.cpp")
   add_executable(test_global_plan_task
     "${_NAV_ENDPOINT_TESTS_DIR}/test_global_plan_task.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/task.cpp")
+    "${_ENDPOINT_DIR}/nav/app/goal/task.cpp")
   target_include_directories(test_global_plan_task PRIVATE
     "${_ENDPOINT_DIR}"
     "${_NAV_CORE_DIR}"
@@ -943,7 +938,7 @@ if(NOT TARGET test_bounded_goal_replan_controller
     AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_bounded_goal_replan_controller.cpp")
   add_executable(test_bounded_goal_replan_controller
     "${_NAV_ENDPOINT_TESTS_DIR}/test_bounded_goal_replan_controller.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/retry.cpp")
+    "${_ENDPOINT_DIR}/nav/app/goal/retry.cpp")
   target_include_directories(test_bounded_goal_replan_controller PRIVATE
     "${_ENDPOINT_DIR}"
     "${_NAV_CORE_DIR}"
@@ -952,28 +947,12 @@ if(NOT TARGET test_bounded_goal_replan_controller
   add_test(NAME test_bounded_goal_replan_controller COMMAND test_bounded_goal_replan_controller)
 endif()
 
-if(NOT TARGET test_active_path_blockage_policy
-    AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_active_path_blockage_policy.cpp"
-    AND EXISTS "${_ENDPOINT_DIR}/nav/runtime/goal/blockage.cpp")
-  add_executable(test_active_path_blockage_policy
-    "${_NAV_ENDPOINT_TESTS_DIR}/test_active_path_blockage_policy.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/blockage.cpp")
-  target_include_directories(test_active_path_blockage_policy PRIVATE
-    "${_ENDPOINT_DIR}"
-    "${_NAV_CORE_DIR}"
-    "${_NAV_KERNEL_DIR}/include"
-    ${_EP_DIRS})
-  lingtu_endpoint_enable_warnings(test_active_path_blockage_policy)
-  add_test(NAME test_active_path_blockage_policy
-           COMMAND test_active_path_blockage_policy)
-endif()
-
 if(NOT TARGET test_goal_plan_controller
     AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_plan_controller.cpp")
   add_executable(test_goal_plan_controller
     "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_plan_controller.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/task.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/plan.cpp")
+    "${_ENDPOINT_DIR}/nav/app/goal/task.cpp"
+    "${_ENDPOINT_DIR}/nav/app/goal/plan.cpp")
   target_include_directories(test_goal_plan_controller PRIVATE
     "${_ENDPOINT_DIR}"
     "${_LINGTU_ROOT}/src"
@@ -993,11 +972,10 @@ if(NOT TARGET test_goal_replan_runtime_coordinator
     "${_ENDPOINT_DIR}/nav/command/cancel.cpp"
     "${_ENDPOINT_DIR}/nav/command/ingress.cpp"
     "${_ENDPOINT_DIR}/nav/safety/stop.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/task.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/retry.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/plan.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/blockage.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/runtime.cpp")
+    "${_ENDPOINT_DIR}/nav/app/goal/task.cpp"
+    "${_ENDPOINT_DIR}/nav/app/goal/retry.cpp"
+    "${_ENDPOINT_DIR}/nav/app/goal/plan.cpp"
+    "${_ENDPOINT_DIR}/nav/app/goal/runtime.cpp")
   target_include_directories(test_goal_replan_runtime_coordinator PRIVATE
     "${_ENDPOINT_DIR}"
     "${_LINGTU_ROOT}/src"
@@ -1015,15 +993,15 @@ if(NOT TARGET test_active_path_replan_cycle
     AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_active_path_replan_cycle.cpp")
   add_executable(test_active_path_replan_cycle
     "${_NAV_ENDPOINT_TESTS_DIR}/test_active_path_replan_cycle.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/blockage.cpp"
     "${_ENDPOINT_DIR}/nav/control/autonomy.cpp"
+    "${_ENDPOINT_DIR}/nav/control/diagnostics.cpp"
     "${_ENDPOINT_DIR}/nav/control/final.cpp"
     "${_ENDPOINT_DIR}/nav/safety/stop.cpp"
     "${_ENDPOINT_DIR}/nav/safety/command.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/task.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/retry.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/plan.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/runtime.cpp")
+    "${_ENDPOINT_DIR}/nav/app/goal/task.cpp"
+    "${_ENDPOINT_DIR}/nav/app/goal/retry.cpp"
+    "${_ENDPOINT_DIR}/nav/app/goal/plan.cpp"
+    "${_ENDPOINT_DIR}/nav/app/goal/runtime.cpp")
   target_include_directories(test_active_path_replan_cycle PRIVATE
     "${_ENDPOINT_DIR}"
     "${_LINGTU_ROOT}/src"
@@ -1041,15 +1019,15 @@ if(NOT TARGET test_goal_terminal_transaction
     AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_terminal_transaction.cpp")
   add_executable(test_goal_terminal_transaction
     "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_terminal_transaction.cpp"
+    "${_ENDPOINT_DIR}/nav/command/cancel.cpp"
     "${_ENDPOINT_DIR}/nav/status/goal_terminal_status_delivery.cpp"
     "${_ENDPOINT_DIR}/nav/status/goal_terminal_transaction.cpp"
     "${_ENDPOINT_DIR}/nav/status/navigation_goal_status_outbox.cpp"
     "${_ENDPOINT_DIR}/nav/safety/stop.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/task.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/retry.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/plan.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/blockage.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/runtime.cpp")
+    "${_ENDPOINT_DIR}/nav/app/goal/task.cpp"
+    "${_ENDPOINT_DIR}/nav/app/goal/retry.cpp"
+    "${_ENDPOINT_DIR}/nav/app/goal/plan.cpp"
+    "${_ENDPOINT_DIR}/nav/app/goal/runtime.cpp")
   target_include_directories(test_goal_terminal_transaction PRIVATE
     "${_ENDPOINT_DIR}"
     "${_LINGTU_ROOT}/src"
@@ -1067,16 +1045,15 @@ if(NOT TARGET test_navigation_runtime_controller
     AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_navigation_runtime_controller.cpp")
   add_executable(test_navigation_runtime_controller
     "${_NAV_ENDPOINT_TESTS_DIR}/test_navigation_runtime_controller.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/navigation.cpp"
+    "${_ENDPOINT_DIR}/nav/app/navigation.cpp"
     "${_ENDPOINT_DIR}/nav/status/goal_terminal_status_delivery.cpp"
     "${_ENDPOINT_DIR}/nav/status/goal_terminal_transaction.cpp"
     "${_ENDPOINT_DIR}/nav/status/navigation_goal_status_outbox.cpp"
     "${_ENDPOINT_DIR}/nav/safety/stop.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/task.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/retry.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/plan.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/blockage.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/runtime.cpp")
+    "${_ENDPOINT_DIR}/nav/app/goal/task.cpp"
+    "${_ENDPOINT_DIR}/nav/app/goal/retry.cpp"
+    "${_ENDPOINT_DIR}/nav/app/goal/plan.cpp"
+    "${_ENDPOINT_DIR}/nav/app/goal/runtime.cpp")
   target_include_directories(test_navigation_runtime_controller PRIVATE
     "${_ENDPOINT_DIR}"
     "${_LINGTU_ROOT}/src"
@@ -1107,8 +1084,8 @@ if(NOT TARGET test_goal_plan_completion
     AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_plan_completion.cpp")
   add_executable(test_goal_plan_completion
     "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_plan_completion.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/task.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/goal/plan.cpp")
+    "${_ENDPOINT_DIR}/nav/app/goal/task.cpp"
+    "${_ENDPOINT_DIR}/nav/app/goal/plan.cpp")
   target_include_directories(test_goal_plan_completion PRIVATE
     "${_ENDPOINT_DIR}"
     "${_LINGTU_ROOT}/src"
@@ -1368,7 +1345,7 @@ add_executable(test_motion_worker
   "${_ENDPOINT_DIR}/nav/input/obstacle.cpp")
 target_include_directories(test_motion_worker PRIVATE
   "${_NAV_CPP_DIR}" "${_NAV_KERNEL_DIR}/include" ${_EP_DIRS})
-target_link_libraries(test_motion_worker PRIVATE Threads::Threads)
+target_link_libraries(test_motion_worker PRIVATE Threads::Threads lingtu_nav_body)
 lingtu_endpoint_enable_warnings(test_motion_worker)
 add_test(NAME test_motion_worker COMMAND test_motion_worker)
 
@@ -1603,7 +1580,7 @@ if(NOT TARGET test_inspection_command_coordinator
       "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_command_coordinator.cpp")
   add_executable(test_inspection_command_coordinator
     "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_command_coordinator.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/inspection/inspection_command_coordinator.cpp")
+    "${_ENDPOINT_DIR}/nav/app/inspection/inspection_command_coordinator.cpp")
   target_include_directories(test_inspection_command_coordinator PRIVATE
     "${LINGTU_NAV_CPP_ROOT}"
     "${_ENDPOINT_DIR}"
@@ -1623,7 +1600,7 @@ if(NOT TARGET test_inspection_runtime_controller
       "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_runtime_controller.cpp")
   add_executable(test_inspection_runtime_controller
     "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_runtime_controller.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/inspection/inspection_runtime_controller.cpp")
+    "${_ENDPOINT_DIR}/nav/app/inspection/inspection_runtime_controller.cpp")
   target_include_directories(test_inspection_runtime_controller PRIVATE
     "${_ENDPOINT_DIR}"
     "${_LINGTU_ROOT}/src"
@@ -1659,6 +1636,7 @@ if(NOT TARGET test_teleop_tick_controller
   add_executable(test_teleop_tick_controller
     "${_NAV_ENDPOINT_TESTS_DIR}/test_teleop_tick_controller.cpp"
     "${_ENDPOINT_DIR}/nav/control/teleop.cpp"
+    "${_ENDPOINT_DIR}/nav/control/diagnostics.cpp"
     "${_ENDPOINT_DIR}/nav/control/final.cpp"
     "${_ENDPOINT_DIR}/nav/safety/command.cpp")
   target_include_directories(test_teleop_tick_controller PRIVATE
@@ -1683,6 +1661,7 @@ if(NOT TARGET test_autonomy_tick_controller
   add_executable(test_autonomy_tick_controller
     "${_NAV_ENDPOINT_TESTS_DIR}/test_autonomy_tick_controller.cpp"
     "${_ENDPOINT_DIR}/nav/control/autonomy.cpp"
+    "${_ENDPOINT_DIR}/nav/control/diagnostics.cpp"
     "${_ENDPOINT_DIR}/nav/control/final.cpp"
     "${_ENDPOINT_DIR}/nav/safety/command.cpp")
   target_include_directories(test_autonomy_tick_controller PRIVATE
@@ -1756,25 +1735,6 @@ if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_teleop_safety.cpp")
     "${_NAV_KERNEL_DIR}/include")
   lingtu_endpoint_enable_warnings(test_teleop_safety)
   add_test(NAME test_teleop_safety COMMAND test_teleop_safety)
-endif()
-
-if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_nav_endpoint_config.cpp")
-  add_executable(test_nav_endpoint_config
-    "${_NAV_ENDPOINT_TESTS_DIR}/test_nav_endpoint_config.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/config/parse.cpp"
-    "${_ENDPOINT_DIR}/nav/runtime/config/build.cpp")
-  target_include_directories(test_nav_endpoint_config PRIVATE
-    "${_ENDPOINT_DIR}"
-    "${_NAV_CORE_DIR}"
-    "${_EXPLORE_CPP_DIR}"
-    ${_EP_DIRS}
-    "${_NAV_KERNEL_DIR}/include")
-  target_link_libraries(test_nav_endpoint_config PRIVATE
-    lingtu_nav_far
-    lingtu_nav_follower
-    lingtu_nav_local_planner)
-  lingtu_endpoint_enable_warnings(test_nav_endpoint_config)
-  add_test(NAME test_nav_endpoint_config COMMAND test_nav_endpoint_config)
 endif()
 
 if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_nav_status_debug_sampling.cpp")

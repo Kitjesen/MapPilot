@@ -64,7 +64,7 @@ def test_overlay_reuses_static_geometry_and_transforms_only_map_data(monkeypatch
 
 def frame(sequence, *, captured_at_s=None):
     return feeder._LidarFrame(
-        snapshot=None, state=None, frame_start_s=0, monotonic_s=0, wall_s=0,
+        snapshot=None, state=None, monotonic_s=0, wall_s=0,
         sequence=sequence, registered_sequence=None,
         captured_at_s=time.monotonic() if captured_at_s is None else captured_at_s,
     )

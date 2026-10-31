@@ -48,7 +48,7 @@ class TestSemanticMapperInstantiation(unittest.TestCase):
     """Test creation and configuration defaults."""
 
     def _make(self, **kw):
-        from memory.modules.semantic_mapper_module import SemanticMapperModule
+        from memory.modules.semantic import SemanticMapperModule
         return SemanticMapperModule(**kw)
 
     def test_default_save_dir(self):
@@ -80,7 +80,7 @@ class TestSemanticMapperPorts(unittest.TestCase):
     """Test that In/Out ports exist with correct types."""
 
     def _make(self, **kw):
-        from memory.modules.semantic_mapper_module import SemanticMapperModule
+        from memory.modules.semantic import SemanticMapperModule
         return SemanticMapperModule(**kw)
 
     def test_input_ports_exist(self):
@@ -111,10 +111,10 @@ class TestSemanticMapperSetup(unittest.TestCase):
     """Test setup and basic state."""
 
     def _make(self, **kw):
-        from memory.modules.semantic_mapper_module import SemanticMapperModule
+        from memory.modules.semantic import SemanticMapperModule
         return SemanticMapperModule(**kw)
 
-    @patch("memory.modules.semantic_mapper_module.SemanticMapperModule._init_backends")
+    @patch("memory.modules.semantic.SemanticMapperModule._init_backends")
     def test_setup_subscribes(self, mock_init):
         m = self._make()
         m.setup()
@@ -156,7 +156,7 @@ class TestSemanticMapperProcessing(unittest.TestCase):
     """Test KG/TSG updates from scene graph events."""
 
     def _make(self, **kw):
-        from memory.modules.semantic_mapper_module import SemanticMapperModule
+        from memory.modules.semantic import SemanticMapperModule
         return SemanticMapperModule(**kw)
 
     def test_empty_regions_skips(self):
@@ -218,7 +218,7 @@ class TestSemanticMapperObservationGate(unittest.TestCase):
     """Test _min_obs gating and Dirichlet-Multinomial posterior."""
 
     def _make(self, **kw):
-        from memory.modules.semantic_mapper_module import SemanticMapperModule
+        from memory.modules.semantic import SemanticMapperModule
         return SemanticMapperModule(**kw)
 
     def test_min_obs_gate_blocks_below_threshold(self):
@@ -303,7 +303,7 @@ class TestSemanticMapperSkills(unittest.TestCase):
     """Test @skill-exposed methods."""
 
     def _make(self, **kw):
-        from memory.modules.semantic_mapper_module import SemanticMapperModule
+        from memory.modules.semantic import SemanticMapperModule
         return SemanticMapperModule(**kw)
 
     def test_get_room_summary_no_tsg(self):
@@ -370,7 +370,7 @@ class TestSemanticMapperPersistence(unittest.TestCase):
     """Test save and load with temporary directory."""
 
     def _make(self, **kw):
-        from memory.modules.semantic_mapper_module import SemanticMapperModule
+        from memory.modules.semantic import SemanticMapperModule
         return SemanticMapperModule(**kw)
 
     def test_kg_path(self):

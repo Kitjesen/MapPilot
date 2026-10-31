@@ -179,12 +179,14 @@ def _motion_permission(
     input_gate = _mapping(native_endpoint.get("input_gate"))
     if input_gate.get("ready") is False:
         return "HELD", _text(input_gate.get("reason")) or "input_gate_blocked"
+    blockers = [_text(code) for code in readiness.get("blockers", []) if _text(code)]
+    if "native_control_loop_unhealthy" in blockers:
+        return "HELD", "native_control_loop_unhealthy"
     if control.get("operator_takeover_latched") is True:
         return "HELD", "operator_takeover"
     if control.get("resume_required") is True:
         return "HELD", "resume_required"
 
-    blockers = [_text(code) for code in readiness.get("blockers", []) if _text(code)]
     if blockers:
         return "HELD", blockers[0]
     if not isinstance(readiness.get("can_accept_goal"), bool):

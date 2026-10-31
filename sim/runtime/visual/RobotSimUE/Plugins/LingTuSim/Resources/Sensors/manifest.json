@@ -1,0 +1,102 @@
+{
+  "meta": {
+    "version": 1,
+    "root": ".",
+    "generator": "sim/tools/assets/render_sensor_type_previews.py",
+    "classification": "schematic",
+    "measurement": false,
+    "method": "original_code_authored_svg_and_pillow_primitives",
+    "palette": {
+      "background": "#edf0f3",
+      "paper": "#f8fafc",
+      "ink": "#202933",
+      "muted": "#616e7c",
+      "grid": "#d4dce4",
+      "accent": "#1675ed",
+      "soft": "#d9e8fc"
+    }
+  },
+  "images": {
+    "rgb": {
+      "path": "rgb.png",
+      "source": "rgb.svg",
+      "width": 480,
+      "height": 240,
+      "classification": "schematic",
+      "measurement": false,
+      "depicts": "Camera lens and a visible-light scene with RGB channels."
+    },
+    "depth": {
+      "path": "depth.png",
+      "source": "depth.svg",
+      "width": 480,
+      "height": 240,
+      "classification": "schematic",
+      "measurement": false,
+      "depicts": "Near-to-far distance bands and a range ruler in metres."
+    },
+    "lidar": {
+      "path": "lidar.png",
+      "source": "lidar.svg",
+      "width": 480,
+      "height": 240,
+      "classification": "schematic",
+      "measurement": false,
+      "depicts": "Radial ranging rays ending at discrete return points."
+    },
+    "imu": {
+      "path": "imu.png",
+      "source": "imu.svg",
+      "width": 480,
+      "height": 240,
+      "classification": "schematic",
+      "measurement": false,
+      "depicts": "Three body axes, acceleration vector and angular-motion arc."
+    },
+    "thermal": {
+      "path": "thermal.png",
+      "source": "thermal.svg",
+      "width": 480,
+      "height": 240,
+      "classification": "schematic",
+      "measurement": false,
+      "depicts": "Illustrative temperature grid and a Kelvin scale."
+    },
+    "acoustic": {
+      "path": "acoustic.png",
+      "source": "acoustic.svg",
+      "width": 480,
+      "height": 240,
+      "classification": "schematic",
+      "measurement": false,
+      "depicts": "Sound propagation and a pressure waveform over time."
+    },
+    "semantic": {
+      "path": "semantic.png",
+      "source": "semantic.svg",
+      "width": 480,
+      "height": 240,
+      "classification": "schematic",
+      "measurement": false,
+      "depicts": "Region masks with illustrative class and instance identifiers."
+    },
+    "gnss": {
+      "path": "gnss.png",
+      "source": "gnss.svg",
+      "width": 480,
+      "height": 240,
+      "classification": "schematic",
+      "measurement": false,
+      "depicts": "Satellite signals intersecting at an illustrative position fix."
+    },
+    "truth_odom": {
+      "path": "truth_odom.png",
+      "source": "truth_odom.svg",
+      "width": 480,
+      "height": 240,
+      "classification": "schematic",
+      "measurement": false,
+      "depicts": "Reference trajectory and pose axes, not an estimated path."
+    }
+  }
+}

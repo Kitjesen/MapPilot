@@ -1,0 +1,43 @@
+{
+  "status": "nominal_not_installed_or_field_verified",
+  "body_from_lidar_xyz_m": [
+    0.24,
+    0.0,
+    0.20262
+  ],
+  "body_from_lidar_rpy_rad": [
+    0,
+    0.6108652381980153,
+    0
+  ],
+  "body_from_imu_rotation": [
+    0.8191520442889918,
+    0.0,
+    0.573576436351046,
+    0.0,
+    1.0,
+    0.0,
+    -0.573576436351046,
+    0.0,
+    0.8191520442889918
+  ],
+  "body_from_imu_translation": [
+    0.22370448011537075,
+    0.02329,
+    0.16016967100610818
+  ],
+  "assembly_bounds_in_body_m": [
+    [
+      0.13440592575073243,
+      -0.051000011444091796,
+      0.06120750808715821
+    ],
+    [
+      0.2740789351119558,
+      0.05099974060058594,
+      0.2319102107571659
+    ]
+  ],
+  "collision_note": "URDF boxes are model approximations; SCAN does not consume these collision links",
+  "active_configs_modified": false
+}

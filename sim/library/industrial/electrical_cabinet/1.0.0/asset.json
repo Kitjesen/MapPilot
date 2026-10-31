@@ -1,0 +1,46 @@
+{
+  "category": "equipment",
+  "category_label": "设备",
+  "description": "落地式电气柜，带门缝、把手、通风口。柜门尚不能开合。",
+  "geometry": {
+    "animations": 0,
+    "bytes": 12833468,
+    "embedded_images": 3,
+    "materials": 1,
+    "meshes": 1,
+    "normals": true,
+    "tangents": false,
+    "triangles": 76934,
+    "uv": true
+  },
+  "id": "electrical_cabinet",
+  "new_in_batch": false,
+  "notes": "单图生成；遮挡面和微小结构仍需检查。",
+  "preview": "preview.png",
+  "qualification": {
+    "collision_ready": false,
+    "license_reviewed": false,
+    "physics_ready": false,
+    "status": "quarantined",
+    "ue_imported": false
+  },
+  "reference": "reference.png",
+  "scale_note": "原始归一化模型，尚未标定真实尺寸",
+  "source": {
+    "credits_consumed": 60,
+    "local_edit": null,
+    "model": "v3.1-20260211",
+    "provider": "Tripo",
+    "reference_method": "built-in image generation",
+    "source_directory": "build/tripo/factory-cabinet-20261017/tripo-out/factory-cabinet-v1-b08679ad",
+    "task_id": "b08679ad-7ead-409a-afdc-d1e8bfcc32f6"
+  },
+  "title": "双门配电柜",
+  "variants": [
+    {
+      "file": "model.glb",
+      "label": "静态模型"
+    }
+  ],
+  "version": "1.0.0"
+}

@@ -1,0 +1,50 @@
+{
+  "asset_id": "service_door",
+  "title": "双开检修门",
+  "units": "m",
+  "source_axes": "RH Z-up",
+  "joints": [
+    {
+      "body": "service_door/left",
+      "joint": "service_door/hinge_left",
+      "axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "range_rad": [
+        0.0,
+        1.919862
+      ],
+      "pivot_m": [
+        0.12999999523162842,
+        1.0,
+        1.0
+      ],
+      "mass_source": "physics.xml"
+    },
+    {
+      "body": "service_door/right",
+      "joint": "service_door/hinge_right",
+      "axis": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "range_rad": [
+        0.0,
+        1.919862
+      ],
+      "pivot_m": [
+        0.12999999523162842,
+        -1.0,
+        1.0
+      ],
+      "mass_source": "physics.xml"
+    }
+  ],
+  "physics": "physics.xml",
+  "ue_qualified": false,
+  "parameters": "design_assumptions",
+  "materials": "procedural PBR; no bitmap texture atlas"
+}

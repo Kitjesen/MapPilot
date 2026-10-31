@@ -1,6 +1,6 @@
-#include "lingtu/maps/build/grid_artifacts.hpp"
+#include "lingtu/maps/build/grids.hpp"
 #include "lingtu/maps/build/occupancy_snapshot.hpp"
-#include "lingtu/maps/build/pcd.hpp"
+#include "lingtu/maps/io/pcd.hpp"
 
 #include <algorithm>
 #include <cassert>

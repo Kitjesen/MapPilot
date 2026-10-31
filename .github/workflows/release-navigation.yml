@@ -44,13 +44,6 @@ jobs:
           fetch-depth: 0
           submodules: false
 
-      - name: Configure Node.js for the field dashboard
-        uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
       - name: Checkout DOSO SDK
         uses: actions/checkout@v4
         with:
@@ -88,7 +81,7 @@ jobs:
       - name: Synchronize repository version
         run: |
           printf '%s\n' "${{ steps.version.outputs.version_clean }}" > VERSION
-          bash tools/release/sync_versions.sh
+          bash scripts/deploy/sync_versions.sh
 
       - name: Verify native aarch64 runner
         run: |
@@ -102,6 +95,7 @@ jobs:
             build-essential \
             ccache \
             cmake \
+            curl \
             cyclonedds-dev \
             cyclonedds-tools \
             libeigen3-dev \
@@ -131,6 +125,11 @@ jobs:
 
       - name: Test native release packager
         run: bash scripts/deploy/package_native_release.sh --self-test
+
+      - name: Prepare the locked GTSAM CPU SDK
+        run: |
+          LINGTU_GTSAM_PREFIX="${RUNNER_TEMP}/gtsam" bash scripts/build/prepare_gtsam.sh
+          echo "CMAKE_PREFIX_PATH=${RUNNER_TEMP}/gtsam" >> "${GITHUB_ENV}"
 
       - name: Build native product artifacts
         run: make build PYTHON=python3

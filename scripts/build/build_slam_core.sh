@@ -4,10 +4,11 @@ set -euo pipefail
 for deprecated_var in \
   LINGTU_SLAM_BUILD_CPP_DDS_RUNTIME \
   LINGTU_SLAM_BUILD_CYCLONE_DDS_RUNTIME \
-  LINGTU_SLAM_WITH_FASTLIO2; do
+  LINGTU_SLAM_WITH_FASTLIO2 \
+  LINGTU_SLAM_FASTLIO2; do
   if [[ -v "$deprecated_var" ]]; then
-    if [[ "$deprecated_var" == "LINGTU_SLAM_WITH_FASTLIO2" ]]; then
-      replacement_var="LINGTU_SLAM_FASTLIO2"
+    if [[ "$deprecated_var" == "LINGTU_SLAM_WITH_FASTLIO2" || "$deprecated_var" == "LINGTU_SLAM_FASTLIO2" ]]; then
+      replacement_var="LINGTU_SLAM_LTLIO"
     else
       replacement_var="LINGTU_SLAM_BUILD_DDS_RUNTIME"
     fi
@@ -20,7 +21,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="${LINGTU_SLAM_CORE_BUILD_DIR:-$ROOT/build/slam_core}"
 BUILD_TYPE="${CMAKE_BUILD_TYPE:-Release}"
 JOBS="${LINGTU_BUILD_JOBS:-$(nproc 2>/dev/null || echo 4)}"
-FASTLIO2_BACKEND="${LINGTU_SLAM_FASTLIO2:-ON}"
+LTLIO_BACKEND="${LINGTU_SLAM_LTLIO:-ON}"
 BUILD_DDS_RUNTIME="${LINGTU_SLAM_BUILD_DDS_RUNTIME:-ON}"
 DEFAULT_BBS3D_ROOT="$ROOT/third_party/3d_bbs/install"
 CPU_BBS3D_ROOT="${CPU_BBS3D_ROOT:-${LINGTU_BBS3D_PREFIX:-$DEFAULT_BBS3D_ROOT}}"
@@ -39,41 +40,46 @@ cmake_bool_on() {
   esac
 }
 
-check_fastlio2_deps() {
-  local probe_dir="$BUILD_DIR/.fastlio2_dep_probe"
+check_ltlio_deps() {
+  local probe_dir="$BUILD_DIR/.ltlio_dep_probe"
   mkdir -p "$probe_dir"
   cat > "$probe_dir/CMakeLists.txt" <<'CMAKE'
-cmake_minimum_required(VERSION 3.16)
-project(lingtu_fastlio2_dep_probe LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.20)
+project(lingtu_ltlio_dep_probe LANGUAGES C CXX)
 find_package(Eigen3 REQUIRED)
-find_package(PCL REQUIRED COMPONENTS common io filters kdtree)
+find_package(PCL REQUIRED COMPONENTS common io filters kdtree registration)
+include("${LINGTU_ROOT}/scripts/build/cmake/gtsam.cmake")
 find_package(yaml-cpp REQUIRED)
 CMAKE
 
-  if ! cmake -S "$probe_dir" -B "$probe_dir/build" >/tmp/lingtu_fastlio2_dep_probe.log 2>&1; then
+  if ! cmake -S "$probe_dir" -B "$probe_dir/build" -DLINGTU_ROOT="$ROOT" >/tmp/lingtu_ltlio_dep_probe.log 2>&1; then
     cat >&2 <<'EOF'
-Fast-LIO2 native backend is ROS-free, but these C++ libraries must be visible to CMake:
-  Eigen3, PCL(common/io/filters/kdtree), yaml-cpp
+LTLIO native backend is ROS-free, but these C++ libraries must be visible to CMake:
+  Eigen3, PCL(common/io/filters/kdtree/registration), locked GTSAM, yaml-cpp
 
 Ubuntu baseline:
   sudo apt install -y libeigen3-dev libpcl-dev libyaml-cpp-dev
 
+GTSAM is required by the online LIO-SAM backend. Use scripts/build/prepare_gtsam.sh
+to build the locked SDK with system Eigen, then expose its prefix through
+CMAKE_PREFIX_PATH. Existing older SDKs must be rebuilt for this source version.
+
 Dependency probe output:
 EOF
-    cat /tmp/lingtu_fastlio2_dep_probe.log >&2
+    cat /tmp/lingtu_ltlio_dep_probe.log >&2
     exit 2
   fi
 }
 
-if cmake_bool_on "$FASTLIO2_BACKEND"; then
-  check_fastlio2_deps
+if cmake_bool_on "$LTLIO_BACKEND"; then
+  check_ltlio_deps
 fi
 
 cmake -S "$ROOT/src/localization/slam/cpp" -B "$BUILD_DIR" \
   -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
   -DLINGTU_SLAM_BUILD_TESTS="${LINGTU_SLAM_BUILD_TESTS:-ON}" \
   -DLINGTU_SLAM_BUILD_DDS_RUNTIME="$BUILD_DDS_RUNTIME" \
-  -DLINGTU_SLAM_FASTLIO2_BACKEND="$FASTLIO2_BACKEND" \
+  -DLINGTU_SLAM_LTLIO_BACKEND="$LTLIO_BACKEND" \
   -DCPU_BBS3D_ROOT="$CPU_BBS3D_ROOT" \
   -DSMALL_GICP_ROOT="$SMALL_GICP_ROOT" \
   -DLINGTU_ENABLE_SMALL_GICP="${LINGTU_ENABLE_SMALL_GICP:-ON}" \

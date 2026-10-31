@@ -10,15 +10,15 @@ from sim.catalog import CatalogResolver
 from sim.compat.engine.core.sensor import LidarConfig
 from sim.compat.engine.mujoco.lidar import MuJoCoLidar
 
-from lingtu.assembly.compiler import compile_run_plan
+from lingtu.assembly.compile_plan import compile_run_plan
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_navigation_consumers_allow_the_campus_feeder_to_finish_cold_start():
+def test_navigation_consumers_allow_the_campus_feeder_to_finish_cold_start(allow_unbuilt_process_artifacts):
     plan = compile_run_plan("nav", "sim", robot="doso/thunder_v4", env_config={"backend": "mujoco"})
     feeder = next(process for process in plan.processes if process.name == "mujoco_feeder")
-    assert plan.process("traversability").timeout_s >= feeder.timeout_s
+    assert plan.process("nav").timeout_s >= feeder.timeout_s
 
 
 @pytest.mark.parametrize("product", ["default", "nav"])
@@ -29,7 +29,8 @@ def test_product_preset_selects_installed_campus_with_formal_robot(product):
     robot = resolved.physics_plan["robots"][0]
     assert robot["spawn"]["position_m"] == [61.0, 16.5, .02]
     assert robot["model"]["initial_keyframe"] == "v4_nominal_stand"
-    assert resolved.session["robots"][0]["controller"] == "thunderv4_locomotion@1.0.0"
+    assert "controller" not in resolved.session["robots"][0]
+    assert resolved.control_plan["controllers"][0]["package"]["id"] == "thunderv4_cts_moe"
 
 
 def test_hidden_campus_contact_is_visible_to_formal_lidar():

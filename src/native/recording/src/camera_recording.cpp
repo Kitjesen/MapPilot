@@ -1,6 +1,7 @@
 #include "lingtu/recording/camera_recording.hpp"
 
 #include <cerrno>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -61,7 +62,9 @@ inline constexpr const char *kCameraSchema = R"json({
     "dist_k2": {"type": "number"},
     "dist_p1": {"type": "number"},
     "dist_p2": {"type": "number"},
-    "dist_k3": {"type": "number"}
+    "dist_k3": {"type": "number"},
+    "nominal_fps": {"type": "number", "minimum": 0},
+    "frame_timestamps_ns": {"type": "array", "items": {"type": "integer", "minimum": 1}}
   },
   "additionalProperties": false
 })json";
@@ -167,21 +170,31 @@ std::string json_escape(std::string_view value) {
   return output;
 }
 
-std::string segment_json(const CameraSegment &segment) {
+std::string segment_json(const CameraSegment &segment, bool string_times = false) {
   const auto number = [](double value) {
     std::ostringstream output;
     output.imbue(std::locale::classic());
     output << std::setprecision(std::numeric_limits<double>::max_digits10) << value;
     return output.str();
   };
+  const auto time = [string_times](std::uint64_t value) {
+    const auto literal = std::to_string(value);
+    return string_times ? "\"" + literal + "\"" : literal;
+  };
+  std::string timestamps = "[";
+  for (const auto timestamp : segment.frame_timestamps_ns) {
+    if (timestamps.size() > 1) timestamps += ',';
+    timestamps += time(timestamp);
+  }
+  timestamps += ']';
   return "{\"version\":1,\"index\":" + std::to_string(segment.index) + ",\"camera_id\":\"" +
          json_escape(segment.camera_id) + "\",\"relative_path\":\"" +
          json_escape(segment.relative_path) + "\",\"codec\":\"" + json_escape(segment.codec) +
          "\",\"source_encoding\":\"" + json_escape(segment.source_encoding) +
          "\",\"width\":" + std::to_string(segment.width) +
          ",\"height\":" + std::to_string(segment.height) +
-         ",\"start_time_ns\":" + std::to_string(segment.start_time_ns) +
-         ",\"end_time_ns\":" + std::to_string(segment.end_time_ns) +
+         ",\"start_time_ns\":" + time(segment.start_time_ns) +
+         ",\"end_time_ns\":" + time(segment.end_time_ns) +
          ",\"first_sequence\":" + std::to_string(segment.first_sequence) +
          ",\"last_sequence\":" + std::to_string(segment.last_sequence) +
          ",\"frame_count\":" + std::to_string(segment.frame_count) +
@@ -193,7 +206,10 @@ std::string segment_json(const CameraSegment &segment) {
          ",\"cy\":" + number(segment.cy) + ",\"depth_scale\":" + number(segment.depth_scale) +
          ",\"dist_k1\":" + number(segment.dist_k1) + ",\"dist_k2\":" + number(segment.dist_k2) +
          ",\"dist_p1\":" + number(segment.dist_p1) + ",\"dist_p2\":" + number(segment.dist_p2) +
-         ",\"dist_k3\":" + number(segment.dist_k3) + "}";
+         ",\"dist_k3\":" + number(segment.dist_k3) + ",\"nominal_fps\":" + number(segment.nominal_fps) +
+         ",\"frame_timestamps_ns\":" + timestamps +
+         (string_times ? std::string(",\"timing\":\"") +
+              (segment.frame_timestamps_ns.empty() ? "segment_cfr_estimate" : "frame_timestamp_index") + "\"" : "") + "}";
 }
 
 class JsonCursor {
@@ -310,6 +326,10 @@ class JsonCursor {
     return result;
   }
 
+  bool consume(std::string_view token) {
+    if (input_.substr(position_, token.size()) != token) return false;
+    position_ += token.size(); return true;
+  }
   bool at_end() const noexcept { return position_ == input_.size(); }
 
  private:
@@ -384,6 +404,14 @@ CameraSegment parse_segment_json(std::string_view json) {
   segment.dist_p2 = cursor.double_value();
   cursor.literal(",\"dist_k3\":");
   segment.dist_k3 = cursor.double_value();
+  if (cursor.consume(",\"nominal_fps\":")) {
+    segment.nominal_fps = cursor.double_value();
+    cursor.literal(",\"frame_timestamps_ns\":[");
+    if (!cursor.consume("]")) {
+      do { segment.frame_timestamps_ns.push_back(cursor.unsigned_value()); } while (cursor.consume(","));
+      cursor.literal("]");
+    }
+  }
   cursor.literal("}");
   if (!cursor.at_end()) {
     throw std::runtime_error("camera index JSON has trailing data");
@@ -398,6 +426,12 @@ CameraSegment parse_segment_json(std::string_view json) {
       segment.depth_scale <= 0.0) {
     throw std::runtime_error("camera index segment metadata is invalid");
   }
+  if (!segment.frame_timestamps_ns.empty() &&
+      (segment.nominal_fps <= 0 || segment.frame_timestamps_ns.size() != segment.frame_count ||
+       segment.frame_timestamps_ns.front() != segment.start_time_ns ||
+       segment.frame_timestamps_ns.back() != segment.end_time_ns ||
+       !std::is_sorted(segment.frame_timestamps_ns.begin(), segment.frame_timestamps_ns.end())))
+    throw std::runtime_error("camera frame timestamp index is inconsistent");
   return segment;
 }
 
@@ -598,7 +632,8 @@ bool CameraSegment::operator==(const CameraSegment &other) const noexcept {
          crc32 == other.crc32 && frame_id == other.frame_id && fx == other.fx && fy == other.fy &&
          cx == other.cx && cy == other.cy && depth_scale == other.depth_scale &&
          dist_k1 == other.dist_k1 && dist_k2 == other.dist_k2 && dist_p1 == other.dist_p1 &&
-         dist_p2 == other.dist_p2 && dist_k3 == other.dist_k3;
+         dist_p2 == other.dist_p2 && dist_k3 == other.dist_k3 &&
+         nominal_fps == other.nominal_fps && frame_timestamps_ns == other.frame_timestamps_ns;
 }
 
 std::filesystem::path camera_index_path(const std::filesystem::path &session_directory,
@@ -727,6 +762,7 @@ std::vector<CameraSegment> CameraSegmentRecorder::record() {
         active.dist_p1 = frame.dist_p1;
         active.dist_p2 = frame.dist_p2;
         active.dist_k3 = frame.dist_k3;
+        active.nominal_fps = options_.nominal_fps;
         const auto stem = [&]() {
           char buffer[32];
           std::snprintf(buffer, sizeof(buffer), "%06u", active.index);
@@ -752,6 +788,7 @@ std::vector<CameraSegment> CameraSegmentRecorder::record() {
       }
       encoder_.write(frame);
       ++active.frame_count;
+      active.frame_timestamps_ns.push_back(frame.timestamp_ns);
       active.end_time_ns = frame.timestamp_ns;
       active.last_sequence = frame.sequence;
       previous_timestamp = frame.timestamp_ns;
@@ -879,6 +916,28 @@ extract_camera_window(const std::filesystem::path &index_path,
     extracted.push_back(destination);
   }
   return extracted;
+}
+
+std::string camera_segment_index_json(const std::filesystem::path &path, std::optional<std::size_t> selected) {
+  const auto segments = read_camera_segment_index(path);
+  if(selected && *selected>=segments.size()) throw std::runtime_error("camera segment index is out of range");
+  std::string output = "{\"version\":1,\"ok\":true,\"mode\":\"camera-info\",\"camera_id\":\"" + json_escape(segments.front().camera_id) + "\",\"segments\":[";
+  for (const auto &segment : segments) {
+    if(selected && *selected!=segment.index)continue;
+    if (output.back() != '[') output += ',';
+    if(selected) output += segment_json(segment, true);
+    else {
+      output += "{\"index\":" + std::to_string(segment.index) +
+        ",\"relative_path\":\"" + json_escape(segment.relative_path) +
+        "\",\"start_time_ns\":\"" + std::to_string(segment.start_time_ns) +
+        "\",\"end_time_ns\":\"" + std::to_string(segment.end_time_ns) +
+        "\",\"frame_count\":" + std::to_string(segment.frame_count) +
+        ",\"dropped_frames\":" + std::to_string(segment.dropped_frames) +
+        ",\"nominal_fps\":" + std::to_string(segment.nominal_fps) +
+        ",\"timing\":\"" + (segment.frame_timestamps_ns.empty() ? "segment_cfr_estimate" : "frame_timestamp_index") + "\"}";
+    }
+  }
+  return output + "]}";
 }
 
 }  // namespace lingtu::recording

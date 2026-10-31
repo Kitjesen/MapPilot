@@ -1,4 +1,4 @@
-"""Regression checks for LingTu's ten maintained documentation pages."""
+"""Regression checks for LingTu's maintained handbook and static Web guide."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ DOCS_ROOT = REPOSITORY_ROOT / "docs"
 
 DOCUMENT_NAMES = (
     "README.md",
+    "product.md",
     "getting-started.md",
     "architecture.md",
     "runtime.md",
@@ -24,6 +25,7 @@ DOCUMENT_NAMES = (
 CURATED_PAGES = tuple(DOCS_ROOT / name for name in DOCUMENT_NAMES)
 DOCUMENT_IDS = {
     "home",
+    "product",
     "getting-started",
     "architecture",
     "runtime",
@@ -86,11 +88,11 @@ def _has_exact_local_path_case(source: Path, target: str) -> bool:
     return True
 
 
-def test_documentation_tree_contains_exactly_ten_root_markdown_pages() -> None:
+def test_documentation_tree_contains_only_maintained_handbook_pages() -> None:
     expected = {f"docs/{name}" for name in DOCUMENT_NAMES}
     actual = {
         path.relative_to(REPOSITORY_ROOT).as_posix()
-        for path in DOCS_ROOT.rglob("*.md")
+        for path in DOCS_ROOT.glob("*.md")
     }
 
     assert actual == expected
@@ -171,7 +173,7 @@ def test_curated_documentation_has_no_replacement_characters() -> None:
     assert not corrupted, "replacement characters in curated documentation:\n" + "\n".join(corrupted)
 
 
-def test_web_guide_is_static_and_catalogs_exactly_the_ten_docs() -> None:
+def test_web_guide_is_static_and_catalogs_the_handbook() -> None:
     """Keep the public Web guide separate from robot-control runtime surfaces."""
 
     assert WEB_GUIDE_ENTRY.is_file(), "the /guide Vite entry is missing"
@@ -226,7 +228,7 @@ def test_web_guide_navigation_uses_only_canonical_document_ids() -> None:
     assert app_targets <= DOCUMENT_IDS
 
 
-def test_web_guide_bundles_only_the_ten_docs_without_field_endpoints() -> None:
+def test_web_guide_bundles_only_the_handbook_without_field_endpoints() -> None:
     """The static guide may bundle only source material safe for public reading."""
 
     registry = WEB_GUIDE_REGISTRY.read_text(encoding="utf-8")

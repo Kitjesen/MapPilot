@@ -3,10 +3,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 NAV_ENDPOINT = ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav"
-ENDPOINT_LOOP = NAV_ENDPOINT / "runtime" / "loop.cpp"
+ENDPOINT_LOOP = NAV_ENDPOINT / "app" / "loop.cpp"
 STOP_HEADER = NAV_ENDPOINT / "safety" / "stop.hpp"
-RUNTIME_HEADER = NAV_ENDPOINT / "runtime" / "goal" / "runtime.hpp"
-RUNTIME_SOURCE = NAV_ENDPOINT / "runtime" / "goal" / "runtime.cpp"
+RUNTIME_HEADER = NAV_ENDPOINT / "app" / "goal" / "runtime.hpp"
+RUNTIME_SOURCE = NAV_ENDPOINT / "app" / "goal" / "runtime.cpp"
 
 
 def _read(path: Path) -> str:

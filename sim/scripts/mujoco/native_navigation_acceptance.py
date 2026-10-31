@@ -90,6 +90,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from sim.catalog import resolve_robot_default_policy
 from sim.runtime.process_owner import ProcessTreeOwner
 from sim.runtime.windows_cpu_isolation import (
     WindowsCpuIsolationConfig,
@@ -100,7 +101,6 @@ from sim.runtime.windows_cpu_isolation import (
     resolve_windows_cpu_isolation,
 )
 from sim.scripts.mujoco.native_dds_sensors import (
-    DEFAULT_THUNDERV4_ONNX_POLICY,
     _driver_producer_matches_host,
     _linux_binary_command,
     _managed_wsl_command,
@@ -113,7 +113,7 @@ from sim.scripts.mujoco.native_dds_sensors import (
 )
 from sim.scripts.mujoco.product_acceptance import classify_evidence
 
-from lingtu.assembly.native_nav import compile_native_nav_config, mapd_environment
+from lingtu.assembly.config.native_navigation import compile_native_nav_config, mapd_environment
 from lingtu.sim.acceptance import load_manifest as _load_acceptance_manifest
 from lingtu.sim.acceptance import validate_runner_plan
 from lingtu.sim.viewer_goal import ViewerGoal
@@ -122,6 +122,8 @@ DEFAULT_MANIFEST = ROOT / "config" / "acceptance" / "mujoco" / "navigation.json"
 DEFAULT_THUNDERV4_MJCF = (
     ROOT / "sim" / "packages" / "robots" / "doso" / "thunder_v4" / "mjcf" / "thunderv4.xml"
 )
+THUNDERV4_ACCEPTANCE_LIDAR_BODY = "lidar1_link"
+THUNDERV4_ACCEPTANCE_LIDAR_SITE = "lidar1_link_site"
 
 
 def _linux_arg(path: Path) -> str:
@@ -433,7 +435,7 @@ def _requires_wsl_runtime(
     if platform != "nt":
         return False
     state_provider = str(
-        (manifest.get("slam_runtime") or {}).get("provider") or "fastlio2"
+        (manifest.get("slam_runtime") or {}).get("provider") or "ltlio"
     ).strip().lower()
     require_traversability = bool(
         (manifest.get("thresholds") or {}).get("require_traversability", True)
@@ -468,6 +470,17 @@ def _with_native_env(
         env_args = [f"{name}={value}" for name, value in assignments.items()]
         return ["env", *env_args, *command], {}
     return list(command), assignments
+
+
+def _with_saved_map_traversability_env(
+    command: list[str],
+    environment: Mapping[str, str],
+) -> tuple[list[str], Mapping[str, str]]:
+    """Bind saved-map snapshot identity only to the traversability process."""
+
+    values = dict(environment)
+    values["LINGTU_EXPLORE_ROUTE"] = "map"
+    return _with_native_env(command, **values)
 
 
 @dataclass(frozen=True)
@@ -593,8 +606,19 @@ def _native_map_identity(
         or metadata.get("map_name")
         or (map_dir.name if map_dir else "mujoco_map")
     )
+    # SLAM publishes the epoch from the map directory's authoritative marker.
+    # Keep the navigation-side identity on that same source; metadata.created_at
+    # is only a creation timestamp and can differ after a saved-map revision.
+    epoch_marker = (map_dir / ".content_epoch") if map_dir else None
+    marker_epoch = ""
+    if epoch_marker is not None:
+        try:
+            marker_epoch = epoch_marker.read_text(encoding="utf-8").strip()
+        except OSError:
+            marker_epoch = ""
     content_epoch = str(
         os.environ.get("LINGTU_MAP_CONTENT_EPOCH")
+        or marker_epoch
         or metadata.get("content_epoch")
         or metadata.get("created_at")
         or "1"
@@ -1502,6 +1526,10 @@ def _run_saved_map_asset_builder(
                 str(float(spec.get("lidar_publish_hz") or 10.0)),
                 "--mid360-samples-per-frame",
                 str(int(spec.get("mid360_samples_per_frame") or 15000)),
+                "--lidar-body-name",
+                THUNDERV4_ACCEPTANCE_LIDAR_BODY,
+                "--lidar-site-name",
+                THUNDERV4_ACCEPTANCE_LIDAR_SITE,
             ]
         )
     builder_args = saved_map_plan_gate.build_parser().parse_args(arguments)
@@ -1632,7 +1660,7 @@ def _preflight_runtime(
     blockers: list[str] = []
     binaries: dict[str, Path] = {}
     state_provider = str(
-        (manifest.get("slam_runtime") or {}).get("provider") or "fastlio2"
+        (manifest.get("slam_runtime") or {}).get("provider") or "ltlio"
     ).strip().lower()
     require_traversability = bool(
         (manifest.get("thresholds") or {}).get("require_traversability", True)
@@ -1701,7 +1729,7 @@ def _preflight_runtime(
     policy = (
         _repo_path(policy_value)
         if policy_value
-        else DEFAULT_THUNDERV4_ONNX_POLICY
+        else resolve_robot_default_policy(ROOT)["artifact"]
     )
     paths["policy"] = policy
     if not policy.is_file():
@@ -2314,10 +2342,10 @@ def _planner_constraint_args(manifest: dict[str, Any]) -> list[str]:
         "body_clearance_above_m": ("--octo-body-clearance-above-m", float),
         "max_iterations": ("--octo-max-iterations", int),
         "snap_radius_cells": ("--octo-snap-radius-cells", int),
-        "require_ground_support": ("--octo-require-ground-support", bool),
-        "strict_ground_support": ("--octo-strict-ground-support", bool),
-        "ground_support_xy_radius_cells": ("--octo-ground-support-xy-radius-cells", int),
-        "ground_support_depth_cells": ("--octo-ground-support-depth-cells", int),
+        "ground_support": ("--octo-ground-support", bool),
+        "direct_support_only": ("--octo-direct-support-only", bool),
+        "support_radius_cells": ("--octo-support-radius-cells", int),
+        "support_depth_cells": ("--octo-support-depth-cells", int),
         "support_height_m": ("--octo-support-height-m", float),
         "support_height_tolerance_m": ("--octo-support-height-tolerance-m", float),
         "support_patch_radius_cells": ("--octo-support-patch-radius-cells", int),
@@ -2331,7 +2359,6 @@ def _planner_constraint_args(manifest: dict[str, Any]) -> list[str]:
         "max_slope": ("--octo-max-slope", float),
         "same_floor_preference": ("--octo-same-floor-preference", bool),
         "same_floor_z_tolerance_m": ("--octo-same-floor-z-tolerance-m", float),
-        "max_same_floor_z_excursion_m": ("--octo-max-same-floor-z-excursion-m", float),
         "obstacle_clearance_radius_cells": ("--octo-obstacle-clearance-radius-cells", int),
         "obstacle_clearance_weight": ("--octo-obstacle-clearance-weight", float),
         "terminal_goal_tolerance_m": ("--octo-terminal-goal-tolerance-m", float),
@@ -2409,7 +2436,7 @@ def _sensor_start_args(start: list[float]) -> list[str]:
     position = [float(value) for value in start[:3]]
     if not all(math.isfinite(value) for value in position):
         raise ValueError("MuJoCo navigation start position must be finite")
-    arguments = ["--start", ",".join(str(value) for value in position)]
+    arguments = ["--start=" + ",".join(str(value) for value in position)]
     if len(start) >= 4:
         yaw_rad = float(start[3])
         if not math.isfinite(yaw_rad):
@@ -2429,6 +2456,7 @@ def _sensor_runtime_args(manifest: dict[str, Any]) -> list[str]:
         "publish_odom_prior",
         "odom_prior_velocity_window_s",
         "navigation_fixture_cloud_points",
+        "navigation_fixture_synthetic_ground",
         "navigation_fixture_ground_resolution_m",
         "navigation_fixture_ground_y_half_m",
         "stop_on_nav_goal_reached",
@@ -2478,6 +2506,8 @@ def _sensor_runtime_args(manifest: dict[str, Any]) -> list[str]:
                 str(int(config["navigation_fixture_cloud_points"])),
             ]
         )
+    if config.get("navigation_fixture_synthetic_ground") is False:
+        arguments.append("--no-navigation-fixture-synthetic-ground")
     if "navigation_fixture_ground_resolution_m" in config:
         ground_resolution_m = float(config["navigation_fixture_ground_resolution_m"])
         if (
@@ -2529,10 +2559,11 @@ def _motion_capture_settings(
     *,
     record_video: bool,
     record_telemetry: bool,
+    record_truth: bool = False,
     video_cfg: dict[str, Any],
     telemetry_cfg: dict[str, Any],
 ) -> tuple[float, int] | None:
-    if not record_video and not record_telemetry:
+    if not record_video and not record_telemetry and not record_truth:
         return None
     if record_video:
         # Encoding FPS is a presentation concern. The renderer already holds
@@ -2743,22 +2774,29 @@ def _evaluate_phase(
             blockers.append("no_motion_phase_published_cmd_vel")
         if int(cmd_vel.get("nonzero_samples") or 0) != 0:
             blockers.append("no_motion_phase_consumed_nonzero_cmd_vel")
-        max_static_map_error_m = thresholds.get("max_no_motion_slam_map_xy_error_m")
-        if uses_slam_pose and max_static_map_error_m is not None:
-            try:
-                static_map_error_m = float(motion.get("slam_map_xy_error_m"))
-            except (TypeError, ValueError):
-                static_map_error_m = math.inf
-            if static_map_error_m > float(max_static_map_error_m):
-                blockers.append("no_motion_slam_map_pose_drift")
-        max_static_odom_m = thresholds.get("max_no_motion_slam_odom_xy_m")
-        if uses_slam_pose and max_static_odom_m is not None:
-            try:
-                static_odom_m = float(motion.get("slam_odom_xy_m"))
-            except (TypeError, ValueError):
-                static_odom_m = math.inf
-            if static_odom_m > float(max_static_odom_m):
-                blockers.append("no_motion_slam_odom_drift")
+        if uses_slam_pose and motion.get("available") is not True:
+            blockers.append("no_motion_mujoco_truth_unavailable")
+        else:
+            max_static_map_error_m = thresholds.get("max_no_motion_slam_map_xy_error_m")
+            if uses_slam_pose and max_static_map_error_m is not None:
+                try:
+                    static_map_error_m = float(motion.get("slam_map_xy_error_m"))
+                except (TypeError, ValueError):
+                    static_map_error_m = math.nan
+                if not math.isfinite(static_map_error_m):
+                    blockers.append("no_motion_slam_map_pose_unavailable")
+                elif static_map_error_m > float(max_static_map_error_m):
+                    blockers.append("no_motion_slam_map_pose_drift")
+            max_static_odom_m = thresholds.get("max_no_motion_slam_odom_xy_m")
+            if uses_slam_pose and max_static_odom_m is not None:
+                try:
+                    static_odom_m = float(motion.get("slam_odom_xy_m"))
+                except (TypeError, ValueError):
+                    static_odom_m = math.nan
+                if not math.isfinite(static_odom_m) or (evidence.last_slam or {}).get("has_odom") is not True:
+                    blockers.append("no_motion_slam_odom_unavailable")
+                elif static_odom_m > float(max_static_odom_m):
+                    blockers.append("no_motion_slam_odom_drift")
     elif phase == "motion":
         if (
             require_traversability
@@ -3186,10 +3224,10 @@ def _run_phase(
     record_telemetry = phase == "motion" and bool(telemetry_cfg.get("enabled"))
 
     slam_runtime_cfg = dict(manifest.get("slam_runtime") or {})
-    state_provider = str(slam_runtime_cfg.get("provider") or "fastlio2").strip().lower()
-    if state_provider not in {"fastlio2", "mujoco_navigation_fixture"}:
+    state_provider = str(slam_runtime_cfg.get("provider") or "ltlio").strip().lower()
+    if state_provider not in {"ltlio", "mujoco_navigation_fixture"}:
         raise ValueError(f"unsupported navigation state provider: {state_provider}")
-    use_slam_process = state_provider == "fastlio2"
+    use_slam_process = state_provider == "ltlio"
     thresholds.setdefault("navigation_state_provider", state_provider)
     slam_mode = str(slam_runtime_cfg.get("mode") or "localization").strip().lower()
     if use_slam_process and slam_mode not in {"mapping", "localization"}:
@@ -3198,7 +3236,7 @@ def _run_phase(
     if use_slam_process:
         slam_args = [
             "--backend",
-            "fastlio2",
+            "ltlio",
             "--mode",
             slam_mode,
             "--config",
@@ -3241,7 +3279,11 @@ def _run_phase(
         if use_slam_process
         else None
     )
-    lidar_offset_body = _compiled_mujoco_site_offset_body(DEFAULT_THUNDERV4_MJCF)
+    lidar_offset_body = _compiled_mujoco_site_offset_body(
+        DEFAULT_THUNDERV4_MJCF,
+        site_name=THUNDERV4_ACCEPTANCE_LIDAR_SITE,
+        body_name="base_link",
+    )
     lidar_offset_args = _sensor_offset_args(lidar_offset_body)
     traversability_runtime_cfg = dict(manifest.get("traversability_runtime") or {})
     local_planner_backend = _local_planner_backend(manifest)
@@ -3279,7 +3321,7 @@ def _run_phase(
     )
     traversability = None
     if require_traversability:
-        traversability_command, traversability_env = _with_native_env(
+        traversability_command, traversability_env = _with_saved_map_traversability_env(
             _native_command(
                 binaries["traversability"],
                 "--domain-id",
@@ -3300,7 +3342,7 @@ def _run_phase(
                 "--status-file",
                 _native_path_arg(binaries["traversability"], traversability_status),
             ),
-            **native_map_env,
+            native_map_env,
         )
         traversability = ManagedProcess(
             "traversability",
@@ -3495,6 +3537,14 @@ def _run_phase(
     else:
         sensor_args.append("--navigation-fixture")
     sensor_args.extend(_sensor_runtime_args(manifest))
+    sensor_args.extend(
+        [
+            "--lidar-body-name",
+            THUNDERV4_ACCEPTANCE_LIDAR_BODY,
+            "--lidar-site-name",
+            THUNDERV4_ACCEPTANCE_LIDAR_SITE,
+        ]
+    )
     sensor_args.extend(dynamic_args)
     sensor_overrides = dict(manifest.get("diagnostic_sensor_overrides") or {})
     if sensor_overrides.get("imu_acc_mode"):
@@ -3510,9 +3560,12 @@ def _run_phase(
         sensor_args.extend(["--scan-time-profile", str(sensor_overrides["scan_time_profile"])])
     if bool(phase_cfg.get("require_nonzero_cmd_vel")):
         sensor_args.append("--require-cmd-vel")
+    if phase == "no_motion":
+        sensor_args.append("--sample-static-truth")
     motion_capture = _motion_capture_settings(
         record_video=record_video,
         record_telemetry=record_telemetry,
+        record_truth=phase == "no_motion",
         video_cfg=video_cfg,
         telemetry_cfg=telemetry_cfg,
     )
@@ -3532,6 +3585,7 @@ def _run_phase(
         "sensor",
         sensor_args,
         phase_dir / "sensor.log",
+        env=native_map_env,
         affinity_mask=support_affinity_mask,
     )
     goal_trigger = phase_dir / "goal_control.trigger"
@@ -3563,7 +3617,8 @@ def _run_phase(
              "--goal-deadband-m", str(manifest.get("rgbd_follow_goal_deadband_m", .25)),
              "--timeout-s", str(float(phase_cfg.get("duration_s", 120)) /
                                 float(runtime_tolerances.get("sim_hardware_realtime_factor", 0.5)) + 120)],
-            phase_dir / "rgbd_follow.log", affinity_mask=support_affinity_mask,
+            phase_dir / "rgbd_follow.log", env=native_map_env,
+            affinity_mask=support_affinity_mask,
         )
     processes = [
         process
@@ -4020,15 +4075,34 @@ def _component_native_environment(manifest: Mapping[str, Any]) -> dict[str, str]
     )
     environment.update({
         key: value for key, value in compiled.environment.items()
-        if key.startswith("LINGTU_NAV_COLLISION_")
+        if key.startswith("LINGTU_NAV_COLLISION_") or key in {
+            "LINGTU_NAV_VEHICLE_LENGTH_M",
+            "LINGTU_NAV_VEHICLE_WIDTH_M",
+            "LINGTU_TELEOP_OBSTACLE_MARGIN_M",
+        }
     })
     return environment
+
+
+def _bind_manifest_policy_to_run_plan(manifest: dict[str, Any], plan: Any) -> None:
+    """Keep a formal acceptance run on its already resolved controller artifact."""
+    controllers = plan.simulation["control_plan"]["controllers"]
+    if len(controllers) != 1:
+        raise ValueError("navigation acceptance requires exactly one RunPlan controller")
+    policy = _repo_path(controllers[0]["policy"]["artifact"])
+    paths = dict(manifest.get("paths") or {})
+    if paths.get("policy") and _repo_path(str(paths["policy"])) != policy:
+        raise ValueError("formal acceptance policy must come from RunPlan.control_plan")
+    paths["policy"] = str(policy)
+    manifest["paths"] = paths
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     manifest_path = Path(args.manifest).expanduser().resolve()
     manifest = _load_manifest(manifest_path)
     validated_run_plan = getattr(args, "validated_run_plan", None)
+    if validated_run_plan is not None:
+        _bind_manifest_policy_to_run_plan(manifest, validated_run_plan)
     native_environment = (
         validated_run_plan.native_process_environment
         if validated_run_plan is not None
@@ -4322,10 +4396,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "supporting_inputs": [
             "MuJoCo-LiDAR 10 Hz full frame -> native DDS",
             (
-                "MuJoCo truth odometry/TF/body cloud/health fixture -> native DDS"
-                if str((manifest.get("slam_runtime") or {}).get("provider") or "fastlio2").lower()
+                ("MuJoCo truth odometry/TF/health and LiDAR body cloud -> native DDS"
+                 if (manifest.get("sensor_runtime") or {}).get("navigation_fixture_synthetic_ground") is False
+                 else "MuJoCo truth odometry/TF/health and LiDAR body cloud with synthetic fixture ground -> native DDS")
+                if str((manifest.get("slam_runtime") or {}).get("provider") or "ltlio").lower()
                 == "mujoco_navigation_fixture"
-                else "Fast-LIO2 odometry/registered cloud/health -> native DDS"
+                else "LTLIO odometry/registered cloud/health -> native DDS"
             ),
             "Mapd robot-centred local collision snapshot",
             *(
@@ -4368,6 +4444,9 @@ def _product_goal_blockers(manifest, motion, live, goal_status, stop, ready_frac
     error = math.inf if not end else math.hypot(end[0] - world_goal[0], end[1] - world_goal[1])
     if error > limits["max_goal_error_m"]:
         blockers.append("goal_error")
+    if "max_goal_height_error_m" in limits:
+        if not end or len(end) < 3 or abs(end[2] - world_goal[2]) > limits["max_goal_height_error_m"]:
+            blockers.append("goal_height_error")
     if motion.get("path_length_xy_m", 0) < limits["min_motion_m"]:
         blockers.append("insufficient_motion")
     if motion.get("net_displacement_xy_m", 0) < limits["min_net_displacement_m"]:
@@ -4381,9 +4460,16 @@ def _product_goal_blockers(manifest, motion, live, goal_status, stop, ready_frac
     return blockers, error
 
 
-def _product_runtime_sample(root, product_session_id, max_age):
+def _product_runtime_sample(root, product_session_id, max_age, localization="ltlio"):
     nav = _load_json(root / "nav.status.json")
-    slam = _load_json(root / "slam.status.json")
+    slam = _load_json(root / "slam.status.json") if localization != "mujoco_truth" else {
+        "native_product": nav.get("native_product"),
+        "stamp_s": nav.get("stamp_s"),
+        "snapshot_written_at_s": nav.get("stamp_s"),
+        "has_odom": nav.get("has_odom") is True,
+        "state": "TRACKING" if nav.get("has_odom") and nav.get("has_map_odom_tf") else "LOST",
+        "map_odom_tf": {"valid": nav.get("has_map_odom_tf") is True},
+    }
     live = _load_json(root / "mujoco_feeder.live.json")
     now = time.time()
     snapshot_current = all(
@@ -4394,7 +4480,7 @@ def _product_runtime_sample(root, product_session_id, max_age):
     localization_ready = (
         snapshot_current and slam.get("has_odom") is True
         and slam.get("state") == "TRACKING"
-        and slam.get("odom_prior_enabled") is False
+        and (localization == "mujoco_truth" or slam.get("odom_prior_enabled") is False)
         and 0 <= now - float(slam.get("stamp_s", 0)) <= max_age
         and (slam.get("map_odom_tf") or {}).get("valid") is True
     )
@@ -4404,16 +4490,54 @@ def _product_runtime_sample(root, product_session_id, max_age):
     return {"wall_s": now, "ready": ready, "nav": nav, "slam": slam, "live": live}
 
 
+def _stair_leg_evidence(leg, samples, profile_report, task_id, initial_profile, limits):
+    """Require physical floor arrival and actual model restoration for a stair leg."""
+    events = [event for event in profile_report.get("events", []) if event.get("task_id") == task_id]
+    ready = [event for event in events if event.get("phase") == "ready"
+             and event.get("active_profile") == event.get("requested_profile")
+             and event.get("active_profile")]
+    requirements = [event.get("requirement") for event in ready]
+    expected = leg.get("profile_sequence", [])
+    blockers = []
+    if requirements != expected:
+        blockers.append("profile_sequence_incomplete")
+    if expected and (not ready or ready[-1].get("active_profile") != initial_profile):
+        blockers.append("original_model_not_restored")
+    if any(event.get("active_profile") == initial_profile for event in ready
+           if event.get("requirement") in {"stairs_up", "stairs_down"}):
+        blockers.append("stair_model_did_not_change")
+    positions = [sample["live"]["position_m"] for sample in samples
+                 if len((sample.get("live") or {}).get("position_m", [])) >= 3]
+    goal = leg.get("goal_world", leg["goal"])
+    height_error = abs(positions[-1][2] - goal[2]) if positions else math.inf
+    if height_error > limits["max_goal_height_error_m"]:
+        blockers.append("goal_height_error")
+    return {"events": events, "ready_requirements": requirements,
+            "height_error_m": height_error, "blockers": blockers}
+
+
 def run_attached_goal(plan, run_plan_path, product_session_id, manifest, out):
-    """Exercise the Gateway click route on an already active Fast-LIO2 nav Product."""
+    """Exercise the Gateway click route on an already active LTLIO nav Product."""
     from urllib.parse import quote
 
-    slam_process = plan.process("slam")
-    slam_argv = slam_process.command.argv if slam_process.command is not None else ()
+    from sim.scripts.mujoco.product_acceptance import _uses_mujoco_truth_localization
+
+    truth_localized = bool(getattr(plan, "native_process_environment", None)) and \
+        _uses_mujoco_truth_localization(plan)
+    slam_process = plan.process("slam") if not truth_localized else None
+    slam_argv = (slam_process.command.argv if slam_process and slam_process.command is not None else ())
+    requested_localization = str(manifest.get("localization", "ltlio"))
+    if requested_localization not in {"ltlio", "mujoco_truth"}:
+        raise ValueError("navigation acceptance localization must be ltlio or mujoco_truth")
+    if requested_localization == "mujoco_truth" and not truth_localized:
+        raise ValueError("truth navigation acceptance requires the selected RunPlan truth provider")
+    if requested_localization == "ltlio" and truth_localized:
+        raise ValueError("LTLIO navigation acceptance received a truth-localized RunPlan")
     if (plan.env != "sim" or plan.product != "nav"
             or plan.native_nav.get("local_planner") != "scan"
-            or "fastlio2" not in slam_argv or "--navigation-fixture" in slam_argv):
-        raise ValueError("Click acceptance requires a nav+SCAN RunPlan with independent Fast-LIO2")
+            or (not truth_localized and "ltlio" not in slam_argv)
+            or (not truth_localized and "--navigation-fixture" in slam_argv)):
+        raise ValueError("Click acceptance requires a nav+SCAN RunPlan with independent LTLIO")
     if "goal_world" not in manifest:
         raise ValueError("Actual SLAM acceptance requires an explicit goal_world evaluation reference")
     expected_world = (manifest.get("scene_contract") or {}).get("world")
@@ -4425,7 +4549,8 @@ def run_attached_goal(plan, run_plan_path, product_session_id, manifest, out):
     client = ViewerGoal(plan, root, product_session_id)
     max_age = float(dict(plan.process("nav").command.env).get("LINGTU_NAV_ODOM_MAX_AGE_S", 0.6))
     report = {"ok": False, "mode": "attach_only", "input_scope": "gateway_map_click",
-              "localization": "fastlio2", "product_session_id": product_session_id, "blockers": []}
+              "localization": "mujoco_truth" if truth_localized else "ltlio",
+              "product_session_id": product_session_id, "blockers": []}
     samples = []
     startup_samples = []
     try:
@@ -4434,7 +4559,8 @@ def run_attached_goal(plan, run_plan_path, product_session_id, manifest, out):
         required_stable_s = float(limits.get("startup_ready_stable_s", 0.0))
         ready_since = None
         while time.monotonic() < startup_deadline:
-            sample = _product_runtime_sample(root, product_session_id, max_age)
+            sample = _product_runtime_sample(root, product_session_id, max_age,
+                                              report["localization"])
             startup_samples.append({
                 "wall_s": sample["wall_s"], "ready": sample["ready"],
                 "input_gate": sample["nav"].get("input_gate"),
@@ -4451,26 +4577,100 @@ def run_attached_goal(plan, run_plan_path, product_session_id, manifest, out):
             time.sleep(RUNTIME_EVIDENCE_SAMPLE_PERIOD_S)
         else:
             raise RuntimeError("native_runtime_startup_timeout")
-        ack = client.send_map_goal(list(manifest["goal"]))
-        report["goal_ack"] = ack
-        task_id = str(ack.get("task_id") or "").strip()
-        if not task_id:
-            raise RuntimeError("Gateway click acknowledgement has no task_id")
-        deadline = time.monotonic() + float(manifest["motion_duration_s"])
-        while time.monotonic() < deadline:
-            sample = _product_runtime_sample(root, product_session_id, max_age)
-            packet = client._request("/api/v1/navigation/tasks/" + quote(task_id, safe=""))
-            goal = {}
-            if packet.get("found") is True:
-                status = packet.get("status") or {}
-                if packet.get("task_id") != task_id or status.get("task_id") != task_id:
-                    raise RuntimeError("Gateway task status identity does not match the click")
-                goal = dict(status)
-                report["goal_status"] = goal
-            samples.append({**sample, "goal": goal})
-            if _product_goal_state(goal) in {"REACHED", "FAILED", "CANCELLED"}:
+        sequence = manifest.get("goals")
+        legs = sequence if isinstance(sequence, list) and sequence else [
+            {"id": "goal-1", "goal": manifest["goal"],
+             "goal_world": manifest.get("goal_world", manifest["goal"])}
+        ]
+        leg_reports = []
+        for leg_index, leg in enumerate(legs):
+            goal_payload = list(leg["goal"])
+            ack = client.send_map_goal(goal_payload)
+            task_id = str(ack.get("task_id") or "").strip()
+            if not task_id:
+                raise RuntimeError("Gateway click acknowledgement has no task_id")
+            leg_report = {"index": leg_index, "id": str(leg.get("id", f"goal-{leg_index + 1}")),
+                          "goal": goal_payload, "goal_world": list(leg.get("goal_world", goal_payload)),
+                          "ack": ack, "task_id": task_id, "samples": [], "terminal": {}}
+            deadline = time.monotonic() + float(leg.get("motion_duration_s", manifest["motion_duration_s"]))
+            while time.monotonic() < deadline:
+                sample = _product_runtime_sample(root, product_session_id, max_age,
+                                                  report["localization"])
+                packet = client._request("/api/v1/navigation/tasks/" + quote(task_id, safe=""))
+                goal = {}
+                if packet.get("found") is True:
+                    status = packet.get("status") or {}
+                    if packet.get("task_id") != task_id or status.get("task_id") != task_id:
+                        raise RuntimeError("Gateway task status identity does not match the click")
+                    goal = dict(status)
+                live_position = (sample.get("live") or {}).get("position_m")
+                physical_error = None
+                if isinstance(live_position, list) and len(live_position) >= 2:
+                    physical_error = math.hypot(float(live_position[0]) - leg_report["goal_world"][0],
+                                                float(live_position[1]) - leg_report["goal_world"][1])
+                leg_sample = {**sample, "goal": goal, "physical_goal_error_m": physical_error,
+                              "input_ready": bool((sample["nav"].get("input_gate") or {}).get("ready")),
+                              "stop_evidence": (sample["nav"].get("motion_stop_evidence") or {})}
+                leg_report["samples"].append(leg_sample)
+                samples.append({**leg_sample, "leg_index": leg_index, "task_id": task_id})
+                if _product_goal_state(goal) in {"REACHED", "FAILED", "CANCELLED"}:
+                    leg_report["terminal"] = goal
+                    if len(legs) > 1:
+                        stop_deadline = time.monotonic() + min(
+                            float(manifest.get("stop_confirmation_timeout_s", 3.0)), 3.0)
+                        while time.monotonic() < stop_deadline:
+                            stop_sample = _product_runtime_sample(root, product_session_id, max_age,
+                                                                  report["localization"])
+                            evidence = stop_sample["nav"].get("motion_stop_evidence") or {}
+                            if (evidence.get("state") == "CONFIRMED" or
+                                    evidence.get("confirmation_state") == "confirmed"):
+                                leg_report["samples"].append({**stop_sample, "goal": goal,
+                                                               "physical_goal_error_m": None,
+                                                               "input_ready": bool((stop_sample["nav"].get("input_gate") or {}).get("ready")),
+                                                               "stop_evidence": evidence})
+                                break
+                            time.sleep(RUNTIME_EVIDENCE_SAMPLE_PERIOD_S)
+                        else:
+                            leg_report["stop_confirmation_missing"] = True
+                    break
+                time.sleep(RUNTIME_EVIDENCE_SAMPLE_PERIOD_S)
+            else:
+                leg_report["terminal"] = leg_report["samples"][-1].get("goal", {}) if leg_report["samples"] else {}
+            leg_report["evidence"] = {
+                "ready_fraction": sum(item["input_ready"] for item in leg_report["samples"])
+                / max(1, len(leg_report["samples"])),
+                "physical_goal_error_m": [item["physical_goal_error_m"] for item in leg_report["samples"]
+                                          if item["physical_goal_error_m"] is not None],
+                "terminal_stop_evidence": leg_report["samples"][-1].get("stop_evidence", {})
+                if leg_report["samples"] else {},
+            }
+            if leg.get("profile_sequence"):
+                profiles = _load_json(root / "mujoco_feeder.profiles.json")
+                if profiles.get("product_session_id") != product_session_id:
+                    profiles = {}
+                stair_evidence = _stair_leg_evidence(
+                    leg, leg_report["samples"], profiles, task_id,
+                    plan.simulation["control_plan"]["controllers"][0]["policy"]["artifact"], limits,
+                )
+                leg_report["evidence"]["stairs"] = stair_evidence
+                report["blockers"].extend(f"leg_{leg_index}_{reason}" for reason in stair_evidence["blockers"])
+            if len(legs) > 1:
+                if leg_report.get("stop_confirmation_missing"):
+                    report["blockers"].append(f"leg_{leg_index}_terminal_stop_unconfirmed")
+                errors = leg_report["evidence"]["physical_goal_error_m"]
+                max_error = float(manifest.get("thresholds", {}).get("max_goal_error_m", 0.5))
+                if not errors:
+                    report["blockers"].append(f"leg_{leg_index}_physical_goal_error_missing")
+                elif errors[-1] > max_error:
+                    report["blockers"].append(f"leg_{leg_index}_goal_error_above_threshold")
+            leg_reports.append(leg_report)
+            if _product_goal_state(leg_report["terminal"]) != "REACHED":
+                report["blockers"].append(f"leg_{leg_index}_not_reached")
                 break
-            time.sleep(RUNTIME_EVIDENCE_SAMPLE_PERIOD_S)
+        if leg_reports:
+            report["legs"] = [{k: v for k, v in leg.items() if k != "samples"} for leg in leg_reports]
+            report["goal_ack"] = leg_reports[0]["ack"]
+            report["goal_status"] = leg_reports[-1]["terminal"]
     except Exception as exc:
         report["blockers"].append(f"{type(exc).__name__}:{exc}")
     finally:
@@ -4506,9 +4706,13 @@ def run_product_goal(args):
                 f"received {actual_profile!r}; select the saved map for this scenario"
             )
     environment = {**os.environ, "NAV_MAP_DIR": str(map_dir.parent)}
+    localization = str(manifest.get("localization", "ltlio"))
+    if localization not in {"ltlio", "mujoco_truth"}:
+        raise ValueError("navigation acceptance localization must be ltlio or mujoco_truth")
     control = product.ProductControl(
         robot="doso/thunder_v4", env="sim", process_env=environment,
-        env_config={"backend": "mujoco", "localization": "fastlio2", "viewer": args.viewer},
+        env_config={"backend": "mujoco", "localization": "truth" if localization == "mujoco_truth" else "ltlio", "viewer": args.viewer,
+                    **({"session": manifest["simulation_session"]} if manifest.get("simulation_session") else {})},
     )
     if control.status().get("status") != "stopped":
         raise RuntimeError("Stop the existing sim Product before the dedicated navigation run")
@@ -4522,7 +4726,8 @@ def run_product_goal(args):
         delegate = product.ensure_sim_supervisor(rollback_root, ROOT, timeout_s=30.0)
         rollback_control = product.ProductControl(
             robot="doso/thunder_v4", env="sim", process_env=environment,
-            env_config={"backend": "mujoco", "localization": "fastlio2", "viewer": args.viewer},
+            env_config={"backend": "mujoco", "localization": "truth" if localization == "mujoco_truth" else "ltlio", "viewer": args.viewer,
+                        **({"session": manifest["simulation_session"]} if manifest.get("simulation_session") else {})},
             simulation_runner=product._FailSecondApplyRunner(delegate),
         )
     report = product.run(
@@ -4539,7 +4744,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest")
     parser.add_argument("--run-plan", type=Path)
     parser.add_argument("--product-map", type=Path,
-                        help="Saved map directory: test Gateway clicks with Fast-LIO2 and ProductControl.")
+                        help="Saved map directory: test Gateway clicks with LTLIO and ProductControl.")
     parser.add_argument("--viewer", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--mode", choices=["no_motion", "motion", "both"], default="both")
     parser.add_argument("--domain-id", type=int, default=None)

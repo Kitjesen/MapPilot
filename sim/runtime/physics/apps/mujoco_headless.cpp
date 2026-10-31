@@ -206,6 +206,7 @@ void write_state(const char *event, const lingtu::sim::SimulationSnapshot &snaps
             << ",\"joint_count\":" << snapshot.joints.size()
             << ",\"actuator_count\":" << snapshot.actuators.size()
             << ",\"sensor_count\":" << snapshot.sensors.size()
+            << ",\"contact_count\":" << snapshot.contact_count
             << "}\n" << std::flush;
 }
 
@@ -300,6 +301,31 @@ void write_snapshot(const lingtu::sim::SimulationSnapshot &snapshot,
               << json_string(sensor.source_stable_id)
               << ",\"values\":";
     write_array(sensor.values);
+    std::cout << '}';
+  }
+  std::cout << ']';
+  std::cout << ",\"contact_count\":" << snapshot.contact_count
+            << ",\"contacts\":[";
+  for (std::size_t index = 0; index < snapshot.contacts.size(); ++index) {
+    const auto &contact = snapshot.contacts[index];
+    if (index != 0) {
+      std::cout << ',';
+    }
+    std::cout << "{\"geom1_id\":" << contact.geom1_id
+              << ",\"geom2_id\":" << contact.geom2_id
+              << ",\"geom1_name\":" << json_string(contact.geom1_name)
+              << ",\"geom2_name\":" << json_string(contact.geom2_name)
+              << ",\"body1_stable_id\":"
+              << json_string(contact.body1_stable_id)
+              << ",\"body2_stable_id\":"
+              << json_string(contact.body2_stable_id)
+              << ",\"distance_m\":" << contact.distance_m
+              << ",\"normal_force_n\":";
+    if (contact.normal_force_available) {
+      std::cout << contact.normal_force_n;
+    } else {
+      std::cout << "null";
+    }
     std::cout << '}';
   }
   std::cout << "]}";

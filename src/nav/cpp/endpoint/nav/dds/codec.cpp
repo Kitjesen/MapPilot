@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "command/ingress.hpp"
+#include "collision/terrain.hpp"
 #include "traversability/point_cloud_layout.hpp"
 
 namespace lingtu::nav::endpoint {
@@ -363,6 +364,7 @@ nav_kernel::LocalCollisionMapView LocalCollisionMap::view() const noexcept {
   result.inflatedStorage = inflated_occupied_bits;
   result.measuredOccupiedStorage = measured_occupied_bits;
   result.knownFreeStorage = known_free_bits;
+  result.terrain = terrain;
   result.occupiedCells = occupied_cells;
   result.occupiedCellsKnown = occupied_cells_known;
   return result;
@@ -439,6 +441,53 @@ Decoded<LocalCollisionMap> decodeLocalCollisionMap(
       !copyEvidence(msg.known_free_bits, decoded.value.known_free_bits)) {
     decoded.error = "local_collision_evidence_invalid";
     return decoded;
+  }
+  if (msg.hit_bounds._maximum < msg.hit_bounds._length || msg.hit_bounds._length > cells ||
+      (msg.hit_bounds._length > 0U && msg.hit_bounds._buffer == nullptr)) {
+    decoded.error = "local_collision_hit_bounds_invalid";
+    return decoded;
+  }
+  if (msg.hit_bounds._length > 0U) {
+    std::vector<collision::Aabb> bounds;
+    bounds.reserve(msg.hit_bounds._length);
+    for (std::uint32_t i = 0; i < msg.hit_bounds._length; ++i) {
+      const auto &hit = msg.hit_bounds._buffer[i];
+      const std::size_t index = hit.cell_index;
+      if (index >= cells ||
+          ((*decoded.value.measured_occupied_bits)[index / 8U] & (1U << (index % 8U))) == 0U) {
+        decoded.error = "local_collision_hit_bounds_invalid";
+        return decoded;
+      }
+      const int x = static_cast<int>(index % decoded.value.size_x);
+      const int y = static_cast<int>((index / decoded.value.size_x) % decoded.value.size_y);
+      const int z = static_cast<int>(index / (static_cast<std::size_t>(decoded.value.size_x) *
+                                              decoded.value.size_y));
+      const double origin[3] = {decoded.value.aabb_min.x, decoded.value.aabb_min.y,
+                                decoded.value.aabb_min.z};
+      const double minimum[3] = {hit.minimum.x, hit.minimum.y, hit.minimum.z};
+      const double maximum[3] = {hit.maximum.x, hit.maximum.y, hit.maximum.z};
+      const int coords[3] = {x, y, z};
+      double low[3], high[3];
+      for (int axis = 0; axis < 3; ++axis) {
+        const double cell_low = origin[axis] + coords[axis] * decoded.value.resolution;
+        const double cell_high = cell_low + decoded.value.resolution;
+        const double tolerance = 1e-8 * std::max(1.0, std::abs(cell_low));
+        if (!std::isfinite(minimum[axis]) || !std::isfinite(maximum[axis]) ||
+            minimum[axis] > maximum[axis] || minimum[axis] < cell_low - tolerance ||
+            maximum[axis] > cell_high + tolerance) {
+          decoded.error = "local_collision_hit_bounds_invalid";
+          return decoded;
+        }
+        const double inside_low = cell_low + decoded.value.resolution * 1e-9;
+        const double inside_high = cell_high - decoded.value.resolution * 1e-9;
+        low[axis] = std::clamp(minimum[axis], inside_low, inside_high);
+        high[axis] = std::clamp(maximum[axis], inside_low, inside_high);
+      }
+      bounds.push_back({{(low[0]+high[0])*.5,(low[1]+high[1])*.5,(low[2]+high[2])*.5},
+                        {(high[0]-low[0])*.5,(high[1]-low[1])*.5,(high[2]-low[2])*.5}});
+    }
+    decoded.value.terrain = std::make_shared<const collision::Terrain>(
+        std::move(bounds), decoded.value.resolution);
   }
   decoded.value.occupied_cells = decoded.value.view().occupiedCount();
   decoded.value.occupied_cells_known = true;

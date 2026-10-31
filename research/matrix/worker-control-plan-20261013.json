@@ -1,0 +1,8 @@
+{
+  "calls": [
+    {"name":"inspect_binary_layout","arguments":{"path":"/mnt/d/inovxio/brain/lingtu/third_party/matrix/analysis/v1.1.2/worker-control-20261013/projection.elf","detail":"summary"}},
+    {"name":"open_binary","arguments":{"path":"/mnt/d/inovxio/brain/lingtu/third_party/matrix/analysis/v1.1.2/worker-control-20261013/projection.elf","provider_id":"ghidra"}},
+    {"name":"batch_decompile","arguments":{"addresses":["0xdddae90","0xdddf010","0xddde6f0","0xdddc4f0","0xddddb20","0xdd5d3c0","0x11a59500","0x11a683a0","0x11a69160","0x11a5b860"]}},
+    {"name":"export_evidence_bundle","arguments":{"path":"/mnt/d/inovxio/brain/lingtu/third_party/matrix/analysis/v1.1.2/worker-control-20261013/rea-evidence-bundle.json","overwrite":false}}
+  ]
+}

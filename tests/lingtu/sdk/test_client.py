@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import unittest
 import urllib.error
 from pathlib import Path
@@ -20,6 +21,7 @@ from lingtu.sdk import (
     RobotState,
     SessionInfo,
 )
+from lingtu.sdk import cli as sdk_cli
 
 
 class TestLingTuClient(unittest.TestCase):
@@ -27,6 +29,9 @@ class TestLingTuClient(unittest.TestCase):
 
     def setUp(self) -> None:
         self.robot = LingTuClient()
+        http = patch("urllib.request.urlopen", side_effect=AssertionError("SDK tests must stub HTTP"))
+        http.start()
+        self.addCleanup(http.stop)
 
     def test_public_all_exports_both_clients(self) -> None:
         self.assertIn("AsyncLingTuClient", sdk_pkg.__all__)
@@ -90,16 +95,6 @@ class TestLingTuClient(unittest.TestCase):
         routes = (
             (lambda: self.robot.rename_map("old", "new"), "/api/v1/map/rename", {"old_name": "old", "new_name": "new"}),
             (lambda: self.robot.set_mode("autonomous"), "/api/v1/mode", {"mode": "autonomous"}),
-            (
-                lambda: self.robot.follow_person("person_01"),
-                "/api/v1/visual_servo",
-                {"mode": "follow", "target_id": "person_01"},
-            ),
-            (
-                self.robot.stop_following,
-                "/api/v1/visual_servo",
-                {"mode": "stop"},
-            ),
             (self.robot.explore_start, "/api/v1/explore/start", None),
             (self.robot.explore_stop, "/api/v1/explore/stop", None),
             (self.robot.reset_map_cloud, "/api/v1/map_cloud/reset", None),
@@ -221,6 +216,139 @@ class TestLingTuClient(unittest.TestCase):
         r = self.robot.navigate_click(10.0, 5.0)
         self.assertIsInstance(r, CommandResult)
 
+    def test_start_follow_preserves_task_and_product_session_identity(self) -> None:
+        self.robot._command = Mock(
+            return_value=CommandResult(
+                ok=True,
+                accepted=True,
+                request_id="follow-request-1",
+                task_id="follow/task 1",
+                follow_task_id="follow/task 1",
+                product_session_id="product/session 1",
+            )
+        )
+
+        result = self.robot.start_follow(
+            description="person wearing a gray shirt",
+            request_id="follow-request-1",
+            client_id="sdk-test",
+        )
+
+        self.assertEqual(result.follow_task_id, "follow/task 1")
+        self.assertEqual(result.product_session_id, "product/session 1")
+        self.robot._command.assert_called_once_with(
+            "/api/v1/visual_servo",
+            {
+                "mode": "follow",
+                "target": "person wearing a gray shirt",
+                "request_id": "follow-request-1",
+                "client_id": "sdk-test",
+            },
+        )
+
+    @patch("urllib.request.urlopen")
+    def test_start_follow_parses_gateway_owner_identity(self, mock_urlopen) -> None:
+        self._mock_http(
+            mock_urlopen,
+            {
+                "ok": True,
+                "accepted": True,
+                "follow_task_id": "follow-1",
+                "product_session_id": "product-session-1",
+                "command": {
+                    "accepted": True,
+                    "request_id": "follow-request-1",
+                    "task_id": "follow-1",
+                },
+            },
+        )
+
+        result = self.robot.start_follow(
+            target_id="person-1",
+            request_id="follow-request-1",
+        )
+
+        self.assertEqual(result.follow_task_id, "follow-1")
+        self.assertEqual(result.product_session_id, "product-session-1")
+        self.assertEqual(result.task_id, "follow-1")
+        request = mock_urlopen.call_args.args[0]
+        self.assertEqual(
+            json.loads(request.data),
+            {
+                "mode": "follow",
+                "target_id": "person-1",
+                "request_id": "follow-request-1",
+                "client_id": "sdk",
+            },
+        )
+
+    def test_start_follow_rejects_an_accepted_receipt_without_owner_identity(self) -> None:
+        self.robot._command = Mock(
+            return_value=CommandResult(ok=True, accepted=True, task_id="follow-1")
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Follow start receipt is missing"):
+            self.robot.start_follow(target_id="person-1")
+
+    def test_get_follow_task_encodes_task_and_product_session(self) -> None:
+        expected = {"found": True, "state": "running", "terminal": False}
+        self.robot._get = Mock(return_value=expected)
+
+        result = self.robot.get_follow_task("follow/task 1", "product/session 1")
+
+        self.assertIs(result, expected)
+        self.robot._get.assert_called_once_with(
+            "/api/v1/follow/follow%2Ftask%201?product_session_id=product%2Fsession+1"
+        )
+
+    def test_cancel_follow_task_uses_exact_owner_reference(self) -> None:
+        expected = CommandResult(
+            ok=True,
+            accepted=True,
+            task_id="follow-old",
+            follow_task_id="follow-old",
+            product_session_id="product-old",
+        )
+        self.robot._command = Mock(return_value=expected)
+
+        result = self.robot.cancel_follow_task(
+            "follow-old",
+            "product-old",
+            reason="operator_cancel",
+            request_id="cancel-follow-old",
+            client_id="sdk-test",
+        )
+
+        self.assertIs(result, expected)
+        self.robot._command.assert_called_once_with(
+            "/api/v1/follow/follow-old/cancel",
+            {
+                "product_session_id": "product-old",
+                "reason": "operator_cancel",
+                "request_id": "cancel-follow-old",
+                "client_id": "sdk-test",
+            },
+        )
+
+    def test_stop_following_requires_the_original_owner_reference(self) -> None:
+        self.robot.cancel_follow_task = Mock(return_value=CommandResult(ok=True))
+
+        self.robot.stop_following("follow-1", "product-session-1")
+
+        self.robot.cancel_follow_task.assert_called_once_with(
+            "follow-1",
+            "product-session-1",
+            reason="operator_cancel",
+            request_id=None,
+            client_id="sdk",
+        )
+
+    def test_follow_query_and_cancel_reject_missing_owner_reference(self) -> None:
+        with self.assertRaisesRegex(ValueError, "follow_task_id is required"):
+            self.robot.get_follow_task("", "product-session-1")
+        with self.assertRaisesRegex(ValueError, "product_session_id is required"):
+            self.robot.cancel_follow_task("follow-1", "")
+
     # ------------------------------------------------------------------
     # State
     # ------------------------------------------------------------------
@@ -229,7 +357,15 @@ class TestLingTuClient(unittest.TestCase):
     def test_state(self, mock_urlopen) -> None:
         self._mock_http(mock_urlopen, {
             "mode": "autonomous",
-            "odometry": {"x": 1.0, "y": 2.0, "z": 0.0, "yaw": 1.57},
+            "localization": {
+                "odometry": {
+                    "frame_id": "map",
+                    "x": 1.0,
+                    "y": 2.0,
+                    "z": 0.3,
+                    "yaw": 1.57,
+                }
+            },
             "mission_state": "navigating",
         })
         s = self.robot.state()
@@ -238,17 +374,51 @@ class TestLingTuClient(unittest.TestCase):
         self.assertIsInstance(s.odometry, Position)
         self.assertEqual(s.odometry.x, 1.0)
         self.assertEqual(s.odometry.y, 2.0)
+        self.assertEqual(s.odometry.z, 0.3)
+        self.assertEqual(s.odometry.yaw, 1.57)
 
     @patch("urllib.request.urlopen")
     def test_position(self, mock_urlopen) -> None:
         self._mock_http(mock_urlopen, {
             "mode": "idle",
-            "odometry": {"x": 1.0, "y": 2.0, "z": 0.0, "yaw": 0.0},
+            "localization": {
+                "odometry": {
+                    "frame_id": "map",
+                    "x": 61.25,
+                    "y": 16.75,
+                    "z": 0.46,
+                    "yaw": 1.57,
+                }
+            },
         })
         p = self.robot.position()
         self.assertIsInstance(p, Position)
-        self.assertEqual(p.x, 1.0)
-        self.assertEqual(p.y, 2.0)
+        self.assertEqual((p.x, p.y, p.z, p.yaw), (61.25, 16.75, 0.46, 1.57))
+
+    @patch("urllib.request.urlopen")
+    def test_state_and_position_preserve_missing_map_pose(self, mock_urlopen) -> None:
+        self._mock_http(
+            mock_urlopen,
+            {"mode": "idle", "localization": {"odometry": None}},
+        )
+
+        state = self.robot.state()
+        self.assertIsNone(state.odometry)
+        with self.assertRaisesRegex(RuntimeError, "map-frame position is unavailable"):
+            self.robot.position()
+
+    def test_state_cli_displays_unavailable_when_map_pose_is_missing(self) -> None:
+        robot = Mock()
+        robot.system.state.return_value = RobotState(mode="idle", odometry=None)
+        with (
+            patch.object(sys, "argv", ["lingtu", "state"]),
+            patch.object(sdk_cli, "LingTuClient", return_value=robot),
+            patch("builtins.print") as print_mock,
+        ):
+            sdk_cli.main()
+
+        self.assertIn(call("Pos: unavailable"), print_mock.call_args_list)
+        robot.close.assert_called_once_with()
 
     @patch("urllib.request.urlopen")
     def test_health(self, mock_urlopen) -> None:
@@ -350,8 +520,8 @@ class TestLingTuClient(unittest.TestCase):
         self.assertEqual(status.task.state, "UNKNOWN")
 
     def test_wait_until_arrived_ignores_other_task_terminal(self) -> None:
-        self.robot.navigation_status = Mock()
-        self.robot.navigation_task_status = Mock(
+        self.robot.navigation.status = Mock()
+        self.robot.navigation.task = Mock(
             side_effect=[
                 {
                     "found": True,
@@ -374,18 +544,18 @@ class TestLingTuClient(unittest.TestCase):
             ]
         )
 
-        result = self.robot.wait_until_arrived(
+        result = self.robot.navigation.wait_until_arrived(
             "navigation-task-1",
             timeout=1.0,
             poll_interval=0.0,
         )
 
         self.assertEqual(result.task.state, "SUCCESS")
-        self.assertEqual(self.robot.navigation_task_status.call_count, 3)
-        self.robot.navigation_status.assert_not_called()
+        self.assertEqual(self.robot.navigation.task.call_count, 3)
+        self.robot.navigation.status.assert_not_called()
 
     def test_wait_until_arrived_reports_exact_task_failure(self) -> None:
-        self.robot.navigation_task_status = Mock(
+        self.robot.navigation.task = Mock(
             return_value={
                 "found": True,
                 "task_id": "navigation-task-1",
@@ -399,7 +569,7 @@ class TestLingTuClient(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(RuntimeError, "FAILED.*planner_failed"):
-            self.robot.wait_until_arrived(
+            self.robot.navigation.wait_until_arrived(
                 "navigation-task-1",
                 timeout=1.0,
                 poll_interval=0.0,
@@ -412,16 +582,16 @@ class TestLingTuClient(unittest.TestCase):
         success = NavigationStatus(
             task=NavigationTask(state="SUCCESS", task_id="navigation-task-1")
         )
-        self.robot.navigation_status = Mock(side_effect=[executing, success])
-        self.robot.navigation_task_status = Mock()
+        self.robot.navigation.status = Mock(side_effect=[executing, success])
+        self.robot.navigation.task = Mock()
 
-        result = self.robot.wait_until_arrived(timeout=1.0, poll_interval=0.0)
+        result = self.robot.navigation.wait_until_arrived(timeout=1.0, poll_interval=0.0)
 
         self.assertIs(result, success)
-        self.robot.navigation_task_status.assert_not_called()
+        self.robot.navigation.task.assert_not_called()
 
     def test_wait_until_arrived_without_task_id_reports_v3_failure(self) -> None:
-        self.robot.navigation_status = Mock(
+        self.robot.navigation.status = Mock(
             return_value=NavigationStatus(
                 task=NavigationTask(
                     state="FAILED",
@@ -432,7 +602,7 @@ class TestLingTuClient(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(RuntimeError, "FAILED.*planner_failed"):
-            self.robot.wait_until_arrived(timeout=1.0, poll_interval=0.0)
+            self.robot.navigation.wait_until_arrived(timeout=1.0, poll_interval=0.0)
 
     @patch("urllib.request.urlopen")
     def test_command_without_explicit_success_signal_is_not_accepted(self, mock_urlopen) -> None:
@@ -564,21 +734,21 @@ class TestLingTuClient(unittest.TestCase):
                 "map_id": "test_map",
             },
         }
-        self.robot.save_map = Mock(return_value=receipt)
-        self.robot.get_map_operation = Mock(return_value=completed)
+        self.robot.map.save = Mock(return_value=receipt)
+        self.robot.map.operation = Mock(return_value=completed)
 
-        result = self.robot.save_map_and_wait(
+        result = self.robot.map.save_and_wait(
             "test_map",
             request_id="request_1",
             poll_interval=0.0,
         )
 
         self.assertIs(result, completed)
-        self.robot.save_map.assert_called_once_with(
+        self.robot.map.save.assert_called_once_with(
             "test_map",
             request_id="request_1",
         )
-        self.robot.get_map_operation.assert_called_once_with("operation_1")
+        self.robot.map.operation.assert_called_once_with("operation_1")
 
     def test_save_map_and_wait_uses_server_operation_id(self) -> None:
         receipt = CommandResult(
@@ -600,17 +770,17 @@ class TestLingTuClient(unittest.TestCase):
                 "map_id": "test_map",
             },
         }
-        self.robot.save_map = Mock(return_value=receipt)
-        self.robot.get_map_operation = Mock(return_value=completed)
+        self.robot.map.save = Mock(return_value=receipt)
+        self.robot.map.operation = Mock(return_value=completed)
 
-        result = self.robot.save_map_and_wait(
+        result = self.robot.map.save_and_wait(
             "test_map",
             request_id="request_1",
             poll_interval=0.0,
         )
 
         self.assertIs(result, completed)
-        self.robot.get_map_operation.assert_called_once_with("operation_9")
+        self.robot.map.operation.assert_called_once_with("operation_9")
 
     def test_legacy_save_job_methods_are_not_public(self) -> None:
         self.assertFalse(hasattr(self.robot, "get_save_map_job"))
@@ -639,8 +809,8 @@ class TestLingTuClient(unittest.TestCase):
                 },
             )
 
-        self.robot.save_map = Mock(side_effect=admit_save)
-        self.robot.get_map_operation = Mock(
+        self.robot.map.save = Mock(side_effect=admit_save)
+        self.robot.map.operation = Mock(
             side_effect=[
                 {
                     "ok": True,
@@ -654,18 +824,18 @@ class TestLingTuClient(unittest.TestCase):
             ]
         )
 
-        result = self.robot.save_map_and_wait("test_map", poll_interval=0.0)
+        result = self.robot.map.save_and_wait("test_map", poll_interval=0.0)
 
-        resolved_id = self.robot.save_map.call_args.kwargs["request_id"]
+        resolved_id = self.robot.map.save.call_args.kwargs["request_id"]
         self.assertRegex(resolved_id, r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
         self.assertIs(result, completed)
         self.assertEqual(
-            self.robot.get_map_operation.call_args_list,
+            self.robot.map.operation.call_args_list,
             [call("operation_generated"), call("operation_generated")],
         )
 
     def test_save_map_and_wait_fails_fast_when_submission_is_rejected(self) -> None:
-        self.robot.save_map = Mock(
+        self.robot.map.save = Mock(
             return_value=CommandResult(
                 ok=False,
                 accepted=False,
@@ -678,23 +848,23 @@ class TestLingTuClient(unittest.TestCase):
                 },
             )
         )
-        self.robot.get_map_operation = Mock()
+        self.robot.map.operation = Mock()
 
         with self.assertRaisesRegex(
             RuntimeError,
             "request rejected.*invalid_map_name",
         ):
-            self.robot.save_map_and_wait(
+            self.robot.map.save_and_wait(
                 "bad/name",
                 request_id="save-test-001",
                 timeout=0.01,
                 poll_interval=0.0,
             )
 
-        self.robot.get_map_operation.assert_not_called()
+        self.robot.map.operation.assert_not_called()
 
     def test_save_map_and_wait_fails_fast_on_explicit_status_query_error(self) -> None:
-        self.robot.save_map = Mock(
+        self.robot.map.save = Mock(
             return_value=CommandResult(
                 ok=True,
                 accepted=True,
@@ -703,7 +873,7 @@ class TestLingTuClient(unittest.TestCase):
                 raw={"request_id": "request_1", "operation_id": "operation_1"},
             )
         )
-        self.robot.get_map_operation = Mock(
+        self.robot.map.operation = Mock(
             return_value={
                 "ok": False,
                 "success": False,
@@ -720,16 +890,16 @@ class TestLingTuClient(unittest.TestCase):
             RuntimeError,
             "status query failed.*forbidden",
         ):
-            self.robot.save_map_and_wait(
+            self.robot.map.save_and_wait(
                 "test_map",
                 request_id="request_1",
                 poll_interval=0.0,
             )
 
-        self.robot.get_map_operation.assert_called_once_with("operation_1")
+        self.robot.map.operation.assert_called_once_with("operation_1")
 
     def test_save_map_and_wait_rejects_mismatched_request_identity(self) -> None:
-        self.robot.save_map = Mock(
+        self.robot.map.save = Mock(
             return_value=CommandResult(
                 ok=True,
                 accepted=True,
@@ -738,19 +908,19 @@ class TestLingTuClient(unittest.TestCase):
                 raw={"request_id": "different-request", "operation_id": "operation_1"},
             )
         )
-        self.robot.get_map_operation = Mock()
+        self.robot.map.operation = Mock()
 
         with self.assertRaisesRegex(RuntimeError, "request identity mismatch"):
-            self.robot.save_map_and_wait(
+            self.robot.map.save_and_wait(
                 "test_map",
                 request_id="request_1",
                 poll_interval=0.0,
             )
 
-        self.robot.get_map_operation.assert_not_called()
+        self.robot.map.operation.assert_not_called()
 
     def test_save_map_and_wait_rejects_mismatched_operation_identity(self) -> None:
-        self.robot.save_map = Mock(
+        self.robot.map.save = Mock(
             return_value=CommandResult(
                 ok=True,
                 accepted=True,
@@ -759,7 +929,7 @@ class TestLingTuClient(unittest.TestCase):
                 raw={"request_id": "request_1", "operation_id": "operation_1"},
             )
         )
-        self.robot.get_map_operation = Mock(
+        self.robot.map.operation = Mock(
             return_value={
                 "operation_id": "different-operation",
                 "operation": {
@@ -770,14 +940,14 @@ class TestLingTuClient(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(RuntimeError, "identity mismatch"):
-            self.robot.save_map_and_wait(
+            self.robot.map.save_and_wait(
                 "test_map",
                 request_id="request_1",
                 poll_interval=0.0,
             )
 
     def test_save_map_and_wait_raises_with_failed_operation_reason(self) -> None:
-        self.robot.save_map = Mock(
+        self.robot.map.save = Mock(
             return_value=CommandResult(
                 ok=True,
                 accepted=True,
@@ -786,7 +956,7 @@ class TestLingTuClient(unittest.TestCase):
                 raw={"request_id": "request_1", "operation_id": "operation_1"},
             )
         )
-        self.robot.get_map_operation = Mock(
+        self.robot.map.operation = Mock(
             return_value={
                 "operation_id": "operation_1",
                 "operation": {
@@ -798,7 +968,7 @@ class TestLingTuClient(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(RuntimeError, "FAILED.*snapshot_failed"):
-            self.robot.save_map_and_wait(
+            self.robot.map.save_and_wait(
                 "test_map",
                 request_id="request_1",
                 timeout=0.01,
@@ -808,7 +978,7 @@ class TestLingTuClient(unittest.TestCase):
     def test_save_map_and_wait_raises_for_cancelled_operation_spellings(self) -> None:
         for state in ("CANCELLED", "CANCELED"):
             with self.subTest(state=state):
-                self.robot.save_map = Mock(
+                self.robot.map.save = Mock(
                     return_value=CommandResult(
                         ok=True,
                         accepted=True,
@@ -820,7 +990,7 @@ class TestLingTuClient(unittest.TestCase):
                         },
                     )
                 )
-                self.robot.get_map_operation = Mock(
+                self.robot.map.operation = Mock(
                     return_value={
                         "operation_id": "operation_1",
                         "operation": {
@@ -835,7 +1005,7 @@ class TestLingTuClient(unittest.TestCase):
                     RuntimeError,
                     f"{state}.*operator cancelled",
                 ):
-                    self.robot.save_map_and_wait(
+                    self.robot.map.save_and_wait(
                         "test_map",
                         request_id="request_1",
                         timeout=0.01,
@@ -852,7 +1022,7 @@ class TestLingTuClient(unittest.TestCase):
                 "map_id": "test_map",
             },
         }
-        self.robot.save_map = Mock(
+        self.robot.map.save = Mock(
             side_effect=[
                 CommandResult(
                     ok=False,
@@ -868,7 +1038,7 @@ class TestLingTuClient(unittest.TestCase):
                 ),
             ]
         )
-        self.robot.get_map_operation = Mock(
+        self.robot.map.operation = Mock(
             side_effect=[
                 {
                     "ok": False,
@@ -889,15 +1059,15 @@ class TestLingTuClient(unittest.TestCase):
             ]
         )
 
-        result = self.robot.save_map_and_wait("test_map", poll_interval=0.0)
+        result = self.robot.map.save_and_wait("test_map", poll_interval=0.0)
 
-        first_call, second_call = self.robot.save_map.call_args_list
+        first_call, second_call = self.robot.map.save.call_args_list
         resolved_id = first_call.kwargs["request_id"]
         self.assertRegex(resolved_id, r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
         self.assertEqual(second_call.kwargs["request_id"], resolved_id)
         self.assertIs(result, completed)
         self.assertEqual(
-            self.robot.get_map_operation.call_args_list,
+            self.robot.map.operation.call_args_list,
             [
                 call("operation_recovered"),
                 call("operation_recovered"),
@@ -905,9 +1075,9 @@ class TestLingTuClient(unittest.TestCase):
             ],
         )
 
-    @patch("lingtu.sdk.client.time.monotonic", side_effect=[10.0, 10.1, 11.1])
+    @patch("lingtu.sdk.maps.time.monotonic", side_effect=[10.0, 10.1, 11.1])
     def test_save_map_and_wait_times_out_with_last_state(self, _monotonic) -> None:
-        self.robot.save_map = Mock(
+        self.robot.map.save = Mock(
             return_value=CommandResult(
                 ok=True,
                 accepted=True,
@@ -916,7 +1086,7 @@ class TestLingTuClient(unittest.TestCase):
                 raw={"request_id": "request_1", "operation_id": "operation_1"},
             )
         )
-        self.robot.get_map_operation = Mock(
+        self.robot.map.operation = Mock(
             return_value={
                 "operation_id": "operation_1",
                 "operation": {
@@ -927,14 +1097,14 @@ class TestLingTuClient(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(TimeoutError, "within 1.0s.*RUNNING"):
-            self.robot.save_map_and_wait(
+            self.robot.map.save_and_wait(
                 "test_map",
                 request_id="request_1",
                 timeout=1.0,
                 poll_interval=0.0,
             )
 
-        self.robot.get_map_operation.assert_called_once_with("operation_1")
+        self.robot.map.operation.assert_called_once_with("operation_1")
 
     @patch("urllib.request.urlopen")
     def test_get_map_operation(self, mock_urlopen) -> None:

@@ -294,6 +294,13 @@ class GoalCandidateRequest(BaseModel):
 
 class InstructionRequest(BaseModel):
     text: str = Field(min_length=1, max_length=1024)
+    run_id: str | None = Field(default=None, max_length=128)
+    control_only: bool = False
+    request_id: str | None = Field(default=None, max_length=128)
+    client_id: str = Field(default="unknown", max_length=128)
+
+
+class AgentTaskCancelRequest(BaseModel):
     request_id: str | None = Field(default=None, max_length=128)
     client_id: str = Field(default="unknown", max_length=128)
 
@@ -497,15 +504,17 @@ class RecordingStartRequest(BaseModel):
         max_length=40,
         pattern=r"^[A-Za-z0-9_-]+$",
     )
-    # These are the only operator-configurable capture choices. Topic lists,
-    # DDS transport settings, and device paths remain native-owned.
+    # The native catalog owns valid topic names and transport configuration.
     capture_profile: Literal["sensors", "evidence"] = "sensors"
+    topics: list[str] | None = None
     task_id: str | None = None
     camera: bool = False
     minimum_free_gib: int = Field(default=5, ge=1, le=100)
 
     @model_validator(mode="after")
     def bind_evidence_to_inspection_task(self) -> RecordingStartRequest:
+        if self.topics == [] and (not self.camera or self.capture_profile == "evidence"):
+            raise ValueError("select a DDS topic, or enable camera-only sensor recording")
         if self.task_id is not None:
             self.task_id = self.task_id.strip()
             if not self.task_id:
@@ -974,6 +983,15 @@ class ControlCommandResponse(GatewayResponseModel):
     instruction: str | None = None
     mode: str | None = None
     reason: str | None = None
+    operation: str | None = None
+    accepted: bool | None = None
+    executor: str | None = None
+    run_id: str | None = None
+    state: str | None = None
+    task_status: dict[str, Any] | None = None
+    stop_confirmed: bool | None = None
+    execution_confirmed: bool | None = None
+    motor_confirmed: bool | None = None
     target: ConstructedGoalTarget | None = None
 
 
@@ -1289,6 +1307,7 @@ class InspectionRouteRequest(BaseModel):
     revision: int = Field(ge=1, le=_UINT64_MAX)
     points: list[InspectionRoutePointRequest] = Field(min_length=1)
     loop_count: int = Field(default=1, ge=1)
+    loop_interval_s: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
     failure_policy: InspectionFailurePolicy = "stop"
     max_retries: int = Field(default=0, ge=0)
 
@@ -1298,11 +1317,26 @@ class InspectionTaskStartRequest(BaseModel):
     map_id: str | None = Field(default=None, max_length=128)
     revision: int = Field(default=0, ge=0, le=_UINT64_MAX)
     request_id: str | None = Field(default=None, max_length=128)
+    expected_product_session_id: str | None = Field(
+        default=None, min_length=1, max_length=128
+    )
+    expected_env: Literal["real", "sim"] | None = None
+
+
+class InspectionEvidenceReviewRequest(BaseModel):
+    """A human finding for captured evidence; independent of motion status."""
+
+    verdict: Literal["normal", "anomaly", "inconclusive"]
+    note: str = Field(default="", max_length=2000)
 
 
 class InspectionTaskControlRequest(BaseModel):
     reason: str = Field(default="operator", max_length=128)
     request_id: str | None = Field(default=None, max_length=128)
+    expected_product_session_id: str | None = Field(
+        default=None, min_length=1, max_length=128
+    )
+    expected_env: Literal["real", "sim"] | None = None
 
 
 class InspectionRouteRecord(GatewayResponseModel):
@@ -1313,6 +1347,7 @@ class InspectionRouteRecord(GatewayResponseModel):
     revision: int | None = None
     points: list[dict[str, Any]] = Field(default_factory=list)
     loop_count: int | None = None
+    loop_interval_s: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
     failure_policy: str | None = None
     max_retries: int | None = None
 
@@ -1364,6 +1399,7 @@ class InspectionTaskStatusResponse(GatewayResponseModel):
     schema_version: Literal["lingtu.inspection.task.v1"] = "lingtu.inspection.task.v1"
     found: bool
     task_id: str
+    product_session_id: str | None = None
     current_state: Literal[
         "PLANNING",
         "EXECUTING",
@@ -1388,6 +1424,7 @@ class InspectionTaskStatusResponse(GatewayResponseModel):
         "ACTION_PENDING",
         "PAUSING",
         "CANCELLING",
+        "WAITING_NEXT_LOOP",
     ] | None = None
     transition: Literal["PAUSE_REQUESTED", "CANCEL_REQUESTED"] | None = None
     state_source: str
@@ -1401,12 +1438,62 @@ class InspectionTaskStatusResponse(GatewayResponseModel):
     can_resume: bool = False
     can_cancel: bool = False
     identity: dict[str, Any] = Field(default_factory=dict)
+    route_snapshot: dict[str, Any] | None = None
     last_submission: dict[str, Any] | None = None
     latest_event: dict[str, Any] | None = None
     timeline: list[dict[str, Any]] = Field(default_factory=list)
     recording: dict[str, Any] | None = None
     delivery: dict[str, Any] = Field(default_factory=dict)
     updated_at: float
+
+
+class InspectionGuidanceIdentity(GatewayResponseModel):
+    task_id: str
+    route_id: str
+    route_revision: int | None = None
+    map_id: str
+    map_content_epoch: int | None = None
+
+
+class InspectionGuidanceGoal(GatewayResponseModel):
+    frame_id: Literal["map"] = "map"
+    x: float
+    y: float
+    z: float
+
+
+class InspectionGuidanceRobotPose(InspectionGuidanceGoal):
+    yaw: float
+
+
+class InspectionGuidancePath(GatewayResponseModel):
+    available: Literal[False] = False
+    reason: Literal["execution_path_unbound"] = "execution_path_unbound"
+    points: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class InspectionGuidanceRuntime(GatewayResponseModel):
+    env: Literal["real", "sim"]
+    product: str | None = None
+    product_session_id: str | None = None
+    state: Literal["active", "standby"]
+
+
+class InspectionGuidanceResponse(GatewayResponseModel):
+    schema_version: Literal["lingtu.inspection.guidance.v1"] = (
+        "lingtu.inspection.guidance.v1"
+    )
+    task_id: str
+    product_session_id: str | None = None
+    identity: InspectionGuidanceIdentity
+    available: bool
+    reason: str
+    point_id: str
+    phase: str
+    goal: InspectionGuidanceGoal | None = None
+    robot_pose: InspectionGuidanceRobotPose | None = None
+    path: InspectionGuidancePath = Field(default_factory=InspectionGuidancePath)
+    runtime: InspectionGuidanceRuntime
 
 
 class InspectionTaskListResponse(GatewayResponseModel):
@@ -1433,6 +1520,10 @@ class InspectionTaskReportPoint(GatewayResponseModel):
         "PENDING",
         "IN_PROGRESS",
         "COMPLETED",
+        "SKIPPED",
+        "FAILED",
+        "CANCELLED",
+        "NOT_VISITED",
         "MISSING_EVIDENCE",
         "INVALID_EVIDENCE",
         "UNAVAILABLE_EVIDENCE",
@@ -1449,6 +1540,10 @@ class InspectionTaskReportPoint(GatewayResponseModel):
     ]
     evidence_id: str = ""
     reason: str = ""
+
+    inspection_result: Literal[
+        "NOT_REQUIRED", "NOT_INSPECTED", "NEEDS_REVIEW", "NORMAL", "ANOMALY", "INCONCLUSIVE"
+    ] = "NOT_INSPECTED"
 
 
 class InspectionTaskReportResponse(GatewayResponseModel):
@@ -1475,6 +1570,7 @@ class InspectionTaskReportResponse(GatewayResponseModel):
     execution: dict[str, Any]
     identity: dict[str, Any]
     coverage: dict[str, int]
+    inspection_result: dict[str, Any] = Field(default_factory=dict)
     points: list[InspectionTaskReportPoint] = Field(default_factory=list)
     issues: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -1546,6 +1642,7 @@ class LocalizationStatusResponse(GatewayResponseModel):
     odom_age_ms: float | None = None
     cloud_age_ms: float | None = None
     degeneracy: str | None = None
+    ltlio_degeneracy: dict[str, Any] | None = None
     icp_fitness: float | None = None
     degeneracy_detected: bool | None = None
     effective_ratio: float | None = None
@@ -1724,6 +1821,7 @@ class MapInfo(GatewayResponseModel):
     model_config = ConfigDict(extra="ignore")
 
     name: str
+    content_epoch: int | None = None
     has_pcd: bool = False
     has_occupancy: bool = False
     has_octomap: bool = False
@@ -2019,6 +2117,7 @@ class RecordingOperationResponse(GatewayResponseModel):
     duration: int | None = None
     prefix: str | None = None
     capture_profile: Literal["sensors", "evidence"] | None = None
+    topics: list[str] | None = None
     task_id: str | None = None
     camera: bool | None = None
     minimum_free_gib: int | None = None
@@ -2051,6 +2150,15 @@ class Go2RTCStatusResponse(GatewayResponseModel):
     streams: list[str] = Field(default_factory=list)
 
 
+class WebRTCStatusResponse(Go2RTCStatusResponse):
+    backend: Literal["go2rtc", "gstreamer"]
+    ice_servers: list[dict[str, Any]] = Field(default_factory=list)
+    rotation_degrees: int = 0
+    whep_available: bool | None = None
+    source_ready: bool | None = None
+    source_status: dict[str, Any] | None = None
+
+
 class ClientLinks(GatewayResponseModel):
     bootstrap: str | None = None
     capabilities: str | None = None
@@ -2076,6 +2184,7 @@ class ClientLinks(GatewayResponseModel):
     scan_ws: str | None = None
     camera_snapshot: str | None = None
     webrtc_whep: str | None = None
+    webrtc_status: str | None = None
     go2rtc_status: str | None = None
     health: str | None = None
     session: str | None = None
@@ -2184,6 +2293,7 @@ class WHEPMediaStatus(GatewayResponseModel):
     supported: bool
     endpoint: str
     go2rtc_status: str
+    status: str = "/api/v1/webrtc/status"
 
 
 class AppMediaLinks(GatewayResponseModel):
@@ -2195,6 +2305,7 @@ class AppMediaLinks(GatewayResponseModel):
     camera_snapshot: str
     webrtc_whep: str | None = None
     go2rtc_status: str | None = None
+    webrtc_status: str | None = None
     camera: CameraMediaStatus
     whep: WHEPMediaStatus
 

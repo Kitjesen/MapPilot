@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <mutex>
 #include <optional>
@@ -8,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include "runtime/goal/plan.hpp"
+#include "app/goal/plan.hpp"
 
 namespace {
 
@@ -30,6 +31,18 @@ planImmediately(const lingtu::nav::plan::GlobalPlanRequest &request,
   result.overlay_obstacle_generation = request.temporary_overlay.obstacle_generation;
   result.path = {request.start, request.goal};
   return result;
+}
+
+lingtu::nav::endpoint::GoalPlanAdvanceResult
+waitForCompletion(lingtu::nav::endpoint::GoalPlanController &controller,
+                  std::uint64_t frame_epoch, double now_s) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(12);
+  while (std::chrono::steady_clock::now() < deadline) {
+    auto result = controller.advance({frame_epoch, false, now_s});
+    if (result.completion_consumed) return result;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  throw std::runtime_error("planner fixture did not complete");
 }
 
 }  // namespace
@@ -158,6 +171,287 @@ int runTests() {
     value.activate_path = [](const GoalPlanPathActivation &) {};
     return value;
   };
+
+  {
+    std::vector<GoalPlanStatus> goal_statuses;
+    bool goal_preempted = false;
+    GoalPlanController observed_controller(
+        [](const lingtu::nav::plan::GlobalPlanRequest &input,
+           const lingtu::nav::plan::GlobalPlanCancelCheck &cancel) {
+          require(input.observed_free && input.observed_free({{1,2,3},{.1,.1,.1}}),
+                  "goal request lost the live free snapshot");
+          require(input.observed_occupied && input.observed_occupied({1,2,3},.2,.1,.3,false),
+                  "goal request lost the raw occupied snapshot");
+          return planImmediately(input,cancel);
+        }, make_admission_actions(&goal_statuses,&goal_preempted,true));
+    auto observed_context=context;
+    observed_context.observed_free=[](const auto &box) { return box.center.z==3; };
+    observed_context.observed_occupied=[](const auto &center, double radius,
+                                        double below, double above, bool hemisphere) {
+      return center.z==3 && radius==.2 && below==.1 && above==.3 && !hemisphere;
+    };
+    require(observed_controller.submit(request,observed_context).accepted,
+            "observed goal fixture could not start");
+    require(waitForCompletion(observed_controller,context.frame_epoch,20.0).path_activated,
+            "live snapshot callbacks did not reach the asynchronous global job");
+  }
+
+  {
+    std::vector<GoalPlanStatus> goal_statuses;
+    std::vector<GoalPlanPathActivation> activations;
+    bool goal_preempted = false;
+    auto goal_actions = make_admission_actions(&goal_statuses, &goal_preempted, true);
+    goal_actions.activate_path = [&](const GoalPlanPathActivation &activation) {
+      activations.push_back(activation);
+    };
+    GoalPlanController shifted_controller(
+        [](const lingtu::nav::plan::GlobalPlanRequest &input,
+           const lingtu::nav::plan::GlobalPlanCancelCheck &cancel) {
+          auto result = planImmediately(input, cancel);
+          result.path.back().x -= 0.14;
+          result.support_surface=[](const lingtu::nav::collision::Vec3 &ground,
+                                    double tolerance) -> std::optional<double> {
+            return std::abs(ground.z)<=tolerance ? std::optional<double>{0.0} : std::nullopt;
+          };
+          return result;
+        }, std::move(goal_actions));
+    require(shifted_controller.submit(request, context).accepted,
+            "shifted goal fixture could not start planning");
+    require(waitForCompletion(shifted_controller, context.frame_epoch, 20.0).path_activated &&
+                activations.size() == 1U,
+            "shifted goal fixture did not activate its path");
+    require(activations.front().requested_goal &&
+                activations.front().requested_goal->x == request.target->position.x &&
+                activations.front().path.back().x == request.target->position.x - 0.14,
+            "goal activation replaced the requested arrival position with a shifted endpoint");
+    require(activations.front().support_surface &&
+                activations.front().support_surface({0,0,0},.05)==std::optional<double>{0.0},
+            "goal activation lost the immutable reconstructed support query");
+  }
+
+  for (int support_case = 0; support_case < 4; ++support_case) {
+    std::vector<GoalPlanStatus> support_statuses;
+    std::vector<GoalPlanPathActivation> support_activations;
+    bool support_preempted = false;
+    auto support_actions = make_admission_actions(&support_statuses, &support_preempted, true);
+    support_actions.activate_path = [&](const GoalPlanPathActivation &activation) {
+      support_activations.push_back(activation);
+    };
+    GoalPlanController support_controller(planImmediately, std::move(support_actions));
+    auto support_context = context;
+    support_context.planner_options.ground_support = support_case != 1;
+    support_context.planner_options.support_height_m = support_case == 3 ? 0.0 : 0.52;
+    support_context.planner_options.support_height_tolerance_m = support_case == 2 ? 0.0 : 0.03;
+    require(support_controller.submit(request, support_context).accepted,
+            "support activation test could not start planning");
+    // Later admission/config changes cannot alter the completed request's datum.
+    support_context.planner_options.support_height_m = 1.4;
+    support_context.planner_options.support_height_tolerance_m = 0.2;
+    lingtu::nav::endpoint::GoalPlanAdvanceResult support_completion;
+    for (int attempt = 0; attempt < 100 && !support_completion.completion_consumed; ++attempt) {
+      support_completion = support_controller.advance({context.frame_epoch, false, 20.0});
+      if (!support_completion.completion_consumed) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    }
+    require(support_completion.path_activated && support_activations.size() == 1U,
+            "support activation test lost its completed path");
+    const auto &activation = support_activations.front();
+    require(activation.requested_goal &&
+                activation.requested_goal->x == request.target->position.x &&
+                activation.requested_goal->y == request.target->position.y &&
+                activation.requested_goal->z == request.target->position.z,
+            "activation lost the original task position");
+    if (support_case == 1 || support_case == 3) {
+      require(!activation.support_height_m && !activation.support_height_tolerance_m,
+              "missing or disabled support fabricated a turn support datum");
+    } else {
+      require(activation.support_height_m == std::optional<double>{0.52} &&
+                  activation.support_height_tolerance_m ==
+                      std::optional<double>{support_case == 2 ? 0.0 : 0.03},
+              "activation did not retain the completed request's exact support datum");
+    }
+  }
+
+  for (const char *retry_failure : {"empty_path", "start_snap_exhausted", "start_occupied",
+                                   "start_unsupported", "start_temporary_obstacle"}) {
+    std::vector<GoalPlanStatus> retry_statuses;
+    bool retry_preempted = false;
+    std::vector<lingtu::nav::plan::GlobalPlanRequest> retry_requests;
+    auto retry_actions = make_admission_actions(&retry_statuses, &retry_preempted, true);
+    std::vector<GoalPlanPathActivation> retry_activations;
+    retry_actions.activate_path = [&](const GoalPlanPathActivation &activation) {
+      retry_activations.push_back(activation);
+    };
+    GoalPlanController retry_controller(
+        [&](const lingtu::nav::plan::GlobalPlanRequest &plan_request,
+            const lingtu::nav::plan::GlobalPlanCancelCheck &cancel) {
+          retry_requests.push_back(plan_request);
+          if (retry_requests.size() > 1U) return planImmediately(plan_request, cancel);
+          lingtu::nav::plan::GlobalPlanResult result;
+          result.map_identity = {"field", 7, "map"};
+          result.failure_reason = retry_failure;
+          return result;
+        },
+        std::move(retry_actions));
+    require(retry_controller.submit(request, context).accepted,
+            "initial no-path retry fixture was not admitted");
+    lingtu::nav::endpoint::GoalPlanAdvanceResult retry_completion;
+    for (int tick = 0; tick < 1000 && !retry_completion.completion_consumed; ++tick) {
+      retry_completion = retry_controller.advance({context.frame_epoch, false, 20.0});
+      if (!retry_completion.completion_consumed)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(retry_completion.completion_consumed && !retry_completion.path_activated,
+            "initial no-path search did not complete without activating motion");
+    const auto retained = retry_controller.snapshot();
+    require(retained.pending_plan_queued && !retained.busy &&
+                retained.active_request_id.empty(),
+            "initial ordinary no-path search dropped its accepted pending goal");
+    require(retry_statuses.back().state == NavigationGoalState::Planning &&
+                retry_statuses.back().reason == "planning_waiting",
+            "initial ordinary no-path search published a terminal task state");
+    require(retained.pending_task_id == request.task_id &&
+                retained.pending_request_id == request.request_id &&
+                retained.pending_goal_epoch == 1U,
+            "initial no-path retry changed the task/request/goal identity");
+    require(retry_activations.empty(), "initial no-path search activated motion");
+    auto fresh_context = context;
+    fresh_context.map_position = nav_kernel::Vec3{2.0, 3.0, .5};
+    const auto early = retry_controller.resumePending(fresh_context, 20.49);
+    require(!early.accepted && early.reason == "planning_waiting" &&
+                retry_requests.size() == 1U && retry_controller.snapshot().pending_plan_queued,
+            "initial no-path retry ignored its backoff");
+    require(retry_controller.resumePending(fresh_context, 20.5).accepted,
+            "initial no-path retry did not start at its deadline");
+    retry_completion = {};
+    for (int tick = 0; tick < 1000 && !retry_completion.completion_consumed; ++tick) {
+      retry_completion = retry_controller.advance({context.frame_epoch, false, 20.6});
+      if (!retry_completion.completion_consumed)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(retry_completion.path_activated && retry_activations.size() == 1U &&
+                retry_requests.size() == 2U && retry_requests.back().start.x == 2.0 &&
+                retry_requests.back().start.y == 3.0 &&
+                retry_requests.back().goal.x == request.target->position.x,
+            "initial no-path retry did not use the fresh pose and retained target");
+    const auto active = retry_controller.snapshot();
+    require(active.active_task_id == request.task_id &&
+                active.active_request_id == request.request_id && active.active_goal_epoch == 1U,
+            "successful initial retry replaced the accepted task identity");
+  }
+
+  for (const std::string interruption : {"cancel", "new_goal", "map_changed"}) {
+    std::vector<GoalPlanStatus> observed;
+    bool preempted = false;
+    int planner_calls = 0;
+    std::optional<lingtu::nav::plan::MapIdentity> current_map{
+        lingtu::nav::plan::MapIdentity{"field", 7, "map"}};
+    auto retry_actions = make_admission_actions(&observed, &preempted, true);
+    retry_actions.current_map_identity = [&] {
+      return GoalPlanMapIdentityResult{current_map, {}};
+    };
+    std::vector<GoalPlanPathActivation> activations;
+    retry_actions.activate_path = [&](const GoalPlanPathActivation &activation) {
+      activations.push_back(activation);
+    };
+    GoalPlanController waiting(
+        [&](const lingtu::nav::plan::GlobalPlanRequest &plan_request,
+            const lingtu::nav::plan::GlobalPlanCancelCheck &cancel) {
+          if (++planner_calls > 1) return planImmediately(plan_request, cancel);
+          lingtu::nav::plan::GlobalPlanResult result;
+          result.map_identity = {"field", 7, "map"};
+          result.failure_reason = "support_disconnected";
+          return result;
+        },
+        std::move(retry_actions));
+    require(waiting.submit(request, context).accepted, "retry interruption fixture was rejected");
+    (void)waitForCompletion(waiting, context.frame_epoch, 30.0);
+    require(waiting.snapshot().pending_plan_queued, "retry interruption fixture lost pending goal");
+
+    if (interruption == "cancel") {
+      auto cancelled = waiting.deferCancelPending(request.task_id, "cancel-retry", "operator_cancel");
+      require(cancelled.accepted && cancelled.commit, "waiting goal could not be cancelled");
+      cancelled.commit();
+      require(!waiting.resumePending(context, 31.0).accepted && planner_calls == 1 &&
+                  !waiting.snapshot().pending_plan_queued && activations.empty() &&
+                  observed.back().state == NavigationGoalState::Cancelled,
+              "cancelled waiting goal was revived by its retry deadline");
+    } else if (interruption == "new_goal") {
+      auto replacement = request;
+      replacement.task_id = "replacement-task";
+      replacement.request_id = "replacement-goal";
+      replacement.target->position.x = 8.0;
+      require(waiting.submit(replacement, context).accepted &&
+                  waiting.resumePending(context, 30.1).accepted,
+              "new goal did not supersede the waiting search");
+      require(waitForCompletion(waiting, context.frame_epoch, 30.2).path_activated &&
+                  planner_calls == 2 && activations.size() == 1U &&
+                  activations.front().path.back().x == 8.0 &&
+                  waiting.snapshot().active_task_id == replacement.task_id,
+              "retry activated the abandoned target after replacement");
+    } else {
+      current_map->content_epoch = 8;
+      const auto changed = waiting.resumePending(context, 30.5);
+      require(!changed.accepted && changed.reason == "active_map_changed_before_pending_plan" &&
+                  !waiting.snapshot().pending_plan_queued && planner_calls == 1 &&
+                  activations.empty() && observed.back().state == NavigationGoalState::Failed,
+              "waiting search retried the old goal against a different map");
+    }
+  }
+
+  for (const std::string failure : {"body_pose_input_invalid", "temporary_overlay_region_invalid",
+                                    "cancelled", "exception"}) {
+    std::vector<GoalPlanStatus> observed;
+    bool preempted = false;
+    auto failed_actions = make_admission_actions(&observed, &preempted, true);
+    int activations = 0;
+    failed_actions.activate_path = [&](const GoalPlanPathActivation &) { ++activations; };
+    GoalPlanController invalid(
+        [&](const lingtu::nav::plan::GlobalPlanRequest &,
+            const lingtu::nav::plan::GlobalPlanCancelCheck &)
+            -> lingtu::nav::plan::GlobalPlanResult {
+          if (failure == "exception") throw std::runtime_error("fixture algorithm failure");
+          lingtu::nav::plan::GlobalPlanResult result;
+          result.map_identity = {"field", 7, "map"};
+          result.cancelled = failure == "cancelled";
+          result.failure_reason = failure;
+          return result;
+        },
+        std::move(failed_actions));
+    require(invalid.submit(request, context).accepted, "invalid-result fixture was not admitted");
+    (void)waitForCompletion(invalid, context.frame_epoch, 40.0);
+    require(!invalid.snapshot().pending_plan_queued && activations == 0 &&
+                observed.back().state == NavigationGoalState::Failed,
+            "invalid request/cancel/algorithm failure was silently retried");
+  }
+
+  {
+    std::vector<GoalPlanStatus> observed;
+    bool preempted = false;
+    int calls = 0;
+    auto timeout_actions = make_admission_actions(&observed, &preempted, true);
+    GoalPlanController timeout(
+        [&](const lingtu::nav::plan::GlobalPlanRequest &plan_request,
+            const lingtu::nav::plan::GlobalPlanCancelCheck &cancel) {
+          if (++calls > 1) return planImmediately(plan_request, cancel);
+          while (!cancel()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+          lingtu::nav::plan::GlobalPlanResult result;
+          result.map_identity = {"field", 7, "map"};
+          result.cancelled = true;
+          return result;
+        },
+        std::move(timeout_actions));
+    require(timeout.submit(request, context).accepted, "timeout fixture was not admitted");
+    (void)waitForCompletion(timeout, context.frame_epoch, 50.0);
+    require(timeout.snapshot().pending_plan_queued &&
+                timeout.snapshot().diagnostics.reason == "global_planning_timeout" &&
+                observed.back().state == NavigationGoalState::Planning,
+            "real planner timeout ended the accepted goal instead of waiting to retry");
+    require(timeout.resumePending(context, 50.5).accepted &&
+                waitForCompletion(timeout, context.frame_epoch, 50.6).path_activated && calls == 2,
+            "timed-out initial search did not recover on a later successful attempt");
+  }
 
   auto expect_admission_rejection =
       [&](GoalPlanRequest candidate, GoalPlanAdmissionContext candidate_context,
@@ -442,6 +736,13 @@ int runTests() {
   blocked_resume_context.driver_control_blocker = "driver_control_stale";
   expect_resume_rejection(blocked_resume_context, "driver_control_stale");
 
+  blocked_resume_context.driver_control_blocker = "profile_transition";
+  blocked_resume_context.profile_transition_pending = true;
+  blocked_resume_context.input_ready = false;
+  expect_resume_wait(blocked_resume_context, "resume_waiting_for_profile");
+  blocked_resume_context.motion_allowed = false;
+  expect_resume_rejection(blocked_resume_context, "estop_latched");
+
   blocked_resume_context = context;
   blocked_resume_context.input_ready = false;
   blocked_resume_context.input_gate_reason = "localization_health_stale";
@@ -547,6 +848,114 @@ int runTests() {
                 observed_overlay.blocked_regions.front().radius_xy_m == 0.7,
             "GoalPlan did not preserve the request-scoped overlay across replan admission");
     require(overlay_activations.size() == 2U, "overlay replan activated a path more than once");
+  }
+
+  {
+    std::vector<GoalPlanStatus> body_statuses;
+    bool body_preempted = false;
+    auto body_actions = make_admission_actions(&body_statuses, &body_preempted, true);
+    std::vector<GoalPlanPathActivation> body_activations;
+    std::vector<lingtu::nav::plan::GlobalPlanRequest> body_requests;
+    body_actions.activate_path = [&](const GoalPlanPathActivation &activation) {
+      body_activations.push_back(activation);
+    };
+    GoalPlanController body_controller(
+        [&](const lingtu::nav::plan::GlobalPlanRequest &planned,
+            const lingtu::nav::plan::GlobalPlanCancelCheck &) {
+          body_requests.push_back(planned);
+          auto result = planImmediately(planned, {});
+          result.path = {{planned.start.x, planned.start.y, planned.start.z},
+                         {planned.goal.x, planned.goal.y, planned.goal.z}};
+          return result;
+        }, std::move(body_actions));
+    auto wait_body_completion = [&] {
+      lingtu::nav::endpoint::GoalPlanAdvanceResult result;
+      for (int i = 0; i < 1000 && !result.completion_consumed; ++i) {
+        result = body_controller.advance({context.frame_epoch, false, 50.0});
+        if (!result.completion_consumed)
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      require(result.completion_consumed, "body fixture planning did not complete");
+      return result;
+    };
+    auto body = std::make_shared<lingtu::nav::collision::Body>();
+    lingtu::nav::collision::Part box;
+    box.link = "navigation_body";
+    box.half_size = {0.38, 0.155, 0.17};
+    body->parts.push_back(box);
+    auto body_context = context;
+    body_context.body = body;
+    body_context.map_yaw_rad = 0.7;
+
+    require(body_controller.submit(request, body_context).accepted,
+            "body goal was rejected");
+    require(wait_body_completion().path_activated && body_requests.size() == 1U,
+            "body goal did not activate");
+    require(body_requests.front().body == body && body_requests.front().start.yaw == 0.7 &&
+                body_requests.front().goal.yaw == request.target->yaw,
+            "goal admission dropped the body, start yaw or optional goal yaw");
+
+    require(body_activations.size() == 1U && body_activations.front().body == body &&
+                body_activations.front().path.size() == 2U &&
+                body_activations.front().pose_points.empty() &&
+                body_activations.front().goal_yaw == 0.25,
+            "XYZ activation must retain the local body and terminal yaw without pose stages");
+
+    auto fresh_body = std::make_shared<lingtu::nav::collision::Body>(*body);
+    fresh_body->margin_m = 0.03;
+    body_context.body = fresh_body;
+    body_context.map_position = nav_kernel::Vec3{2.0, 3.0, 0.5};
+    body_context.map_yaw_rad = -0.4;
+
+    require(body_controller.replanActive(body_context).accepted,
+            "body replan was rejected");
+    require(wait_body_completion().path_activated && body_requests.size() == 2U,
+            "body replan did not activate");
+    require(body_requests.back().body == fresh_body && body_requests.back().start.x == 2.0 &&
+                body_activations.back().body == fresh_body &&
+                body_activations.back().pose_points.empty(),
+            "XYZ replan reused an old model or added mandatory heading stages");
+
+
+    auto replacement = request;
+    replacement.task_id = "replacement-body-task";
+    replacement.request_id = "replacement-body-goal";
+    replacement.target->yaw.reset();
+    body_context.map_yaw_rad = 1.0;
+    require(body_controller.submit(replacement, body_context).accepted,
+            "replacement body goal was rejected");
+    auto replacement_completion = wait_body_completion();
+    require(replacement_completion.terminal_after_stop.has_value() &&
+                !replacement_completion.path_activated && body_activations.size() == 2U,
+            "replacement body route bypassed the active task stop barrier");
+    require(!body_requests.back().goal.yaw && body_requests.back().start.yaw == 1.0,
+            "replacement fabricated a goal yaw or lost the fresh start yaw");
+    replacement_completion.terminal_after_stop->commit();
+    require(body_controller.activateDeferredReplacement(51.0, body_context).path_activated,
+            "deferred replacement body route did not activate after stop");
+    require(body_activations.size() == 3U && body_activations.back().body == fresh_body &&
+                !body_activations.back().goal_yaw && body_activations.back().pose_points.empty(),
+            "deferred XYZ replacement lost the local body or optional terminal yaw");
+
+    std::vector<GoalPlanStatus> invalid_statuses;
+    bool invalid_preempted = false;
+    auto invalid_actions = make_admission_actions(&invalid_statuses, &invalid_preempted, true);
+    bool invalid_activated = false;
+    invalid_actions.activate_path = [&](const GoalPlanPathActivation &) {
+      invalid_activated = true;
+    };
+    GoalPlanController invalid_body_controller(planImmediately, std::move(invalid_actions));
+    require(invalid_body_controller.submit(replacement, body_context).accepted,
+            "invalid body result fixture failed admission");
+    lingtu::nav::endpoint::GoalPlanAdvanceResult invalid_completion;
+    for (int i = 0; i < 1000 && !invalid_completion.completion_consumed; ++i) {
+      invalid_completion = invalid_body_controller.advance({context.frame_epoch, false, 52.0});
+      if (!invalid_completion.completion_consumed)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(invalid_completion.completion_consumed && !invalid_completion.counted_failure &&
+                invalid_activated,
+            "XYZ-only result was incorrectly rejected because body headings were absent");
   }
 
   {

@@ -1,9 +1,9 @@
 #include "lingtu/maps/service.hpp"
 
-#include "lingtu/maps/build/pcd.hpp"
-#include "lingtu/maps/json.hpp"
-#include "lingtu/maps/lock.hpp"
-#include "lingtu/maps/map_graph.hpp"
+#include "lingtu/maps/io/pcd.hpp"
+#include "lingtu/maps/io/json.hpp"
+#include "lingtu/maps/storage/lock.hpp"
+#include "lingtu/maps/graph.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -68,17 +68,15 @@ std::string BoolJson(bool value) {
   return value ? "true" : "false";
 }
 
-// saved_rays: the OctoMap was replayed from the saved scans and may drive
-// navigation. preview: built from point samples (an imported cloud), for
-// viewing and localization only. none: no OctoMap yet.
-std::string MapEvidence(const std::filesystem::path& dir, bool activation_ready) {
+// Keep the source label for diagnostics. It is deliberately independent of
+// activation: a valid full OcTree may be selected even when it was built from
+// sampled points rather than saved scan rays. none means no OctoMap metadata.
+std::string MapEvidence(const std::filesystem::path& dir) {
   std::ifstream file(dir / "metadata.json", std::ios::binary);
   const std::string metadata((std::istreambuf_iterator<char>(file)), {});
   if (!JsonObjectHasPath(metadata, {"artifacts", "octomap"})) return "none";
-  return activation_ready &&
-                 JsonObjectStringAtPath(metadata, {"artifacts", "octomap", "evidence_source"}) ==
-                     "saved_rays" &&
-                 JsonObjectBoolAtPath(metadata, {"artifacts", "octomap", "navigation_ready"}) == true
+  return JsonObjectStringAtPath(metadata, {"artifacts", "octomap", "evidence_source"}) ==
+                 "saved_rays"
              ? "saved_rays"
              : "preview";
 }
@@ -348,7 +346,7 @@ std::string MapsServiceCore::ListMapsJson() const {
           << "\"has_traversability\":" << BoolJson(has_traversability) << ","
           << "\"can_activate\":" << BoolJson(activation_ready) << ","
           << "\"activation_blockers\":" << StringArrayJson(activation.blockers) << ","
-          << "\"map_evidence\":" << JsonString(MapEvidence(dir, activation_ready)) << ","
+          << "\"map_evidence\":" << JsonString(MapEvidence(dir)) << ","
           << "\"is_active\":" << BoolJson(record->state == MapState::kActive) << ","
           << "\"size_mb\":" << size_mb << ","
           << "\"patch_count\":" << patch_count << ","

@@ -1,11 +1,30 @@
 # Core TF
 
-ROS-free transform support for normal LingTu modules.
+Frame contracts, diagnostic mirrors, and development transform utilities.
+
+## Native ownership
+
+Field map/body/scan poses are resolved in
+`src/localization/slam/cpp/frames.hpp` from one SLAM snapshot. Native DDS map
+observations and the Host status export use this same resolver. `map_odometry`
+contains a map-frame body pose and the synchronized body-frame linear/angular
+velocity. `map_scan_pose` contains the scan-frame pose and the physical LiDAR
+ray origin, which differs from the body origin for a mounted sensor.
+
+The Python SLAM adapter forwards those resolved values. Navigation skills use
+the published map height. The browser displays map-frame poses and paths; it
+does not compose separately received odometry and TF. Raw `odometry` and
+`map_odom_tf` remain available as diagnostics/native inputs, not Host fallbacks
+for reconstructing a missing map pose. Deploy native SLAM, Host and web together.
+
+Native navigation retains time-indexed input buffers for algorithm inputs.
+Python `FrameTree` is not their owner. Gateway's tree is a diagnostic mirror;
+its cached edges must not be used to authorize or project navigation commands.
 
 ## Where It Is Used
 
 - Native DDS localization adapters feed `map <- odom` from endpoint localization health.
-- `src/gateway/gateway_module.py`: caches `map <- odom` for viewer/map-cloud alignment.
+- `src/gateway/gateway_module.py`: mirrors published frames for diagnostics.
 - `src/gateway/routes/diagnostics.py`: exposes `FrameTree.snapshot()` in frame diagnostics.
 
 ## Math Contract

@@ -1,0 +1,53 @@
+{
+  "category": "equipment",
+  "category_label": "设备",
+  "description": "固定门框、左右独立门板，0–110°限位。附 MuJoCo 铰链、阻尼与碰撞模型。",
+  "geometry": {
+    "animations": 0,
+    "bytes": 444988,
+    "embedded_images": 0,
+    "materials": 4,
+    "meshes": 25,
+    "normals": true,
+    "tangents": false,
+    "triangles": 7388,
+    "uv": true
+  },
+  "id": "service_door",
+  "new_in_batch": true,
+  "notes": "PBR 材质参数与几何细节，无位图贴图。已通过单体 MuJoCo 机构测试，尚未在 UE 联动。 新增 Workbench 可编辑动作包；25个部件的转轴位置、固定框、回程数值验证通过。",
+  "physics": "physics.xml",
+  "preview": "preview.png",
+  "qualification": {
+    "collision_ready": false,
+    "license_reviewed": false,
+    "physics_model_tested": true,
+    "physics_ready": false,
+    "status": "quarantined",
+    "ue_imported": false
+  },
+  "reference": "open.png",
+  "reference_label": "查看展开结构",
+  "scale_note": "米制机构设计；质量、摩擦、力矩为仿真假设，非实测标定",
+  "source": {
+    "credits_consumed": 0,
+    "provider": "LingTu procedural Blender authoring",
+    "source_script": "sim/tools/assets/author_interactive_props.py"
+  },
+  "title": "双开检修门",
+  "variants": [
+    {
+      "file": "model.glb",
+      "label": "静态结构"
+    },
+    {
+      "file": "open-close.glb",
+      "label": "机构行程预览"
+    },
+    {
+      "file": "workbench-animation.glb",
+      "label": "Workbench 开合 / 6秒"
+    }
+  ],
+  "version": "1.0.1"
+}

@@ -1122,3 +1122,137 @@ def test_policy_anchor_keeps_requested_xy_and_physical_standing_height():
         policy_settled=False,
     )
     assert unconditioned.tolist() == pytest.approx([3.0, 4.0, 0.6])
+
+
+def test_runtime_publisher_failure_preserves_loaded_policy_and_cleanup_report(monkeypatch):
+    import io
+    import numpy as np
+
+    args = bridge._build_parser().parse_args(
+        ["--settle-s", "0", "--warmup-s", "0", "--publisher-write-mode", "sync"]
+    )
+    args.require_slam_output = False
+    args.imu_acc_mode = "gravity_only"
+    events = []
+
+    class Engine:
+        dt = 0.005
+        sim_time = 0.0
+        has_policy = True
+        physics_integrator = "euler"
+
+        def get_robot_state(self):
+            return SimpleNamespace(position=np.array([1.0, 2.0, 0.44]),
+                                   orientation=np.array([0.0, 0.0, 0.0, 1.0]))
+
+        def get_lidar_backend_report(self):
+            return {"backend": "test_fixture"}
+
+        def close(self):
+            events.append("engine_closed")
+
+    process = SimpleNamespace(stdin=io.BytesIO(),
+                              _lingtu_native_clock_alignment={"native_minus_local_s": 0.0})
+    monkeypatch.setattr(bridge, "_resolve_publisher_bin", lambda _path: Path("publisher.exe"))
+    monkeypatch.setattr(bridge, "_start_native_publisher", lambda _args: process)
+    monkeypatch.setattr(bridge, "_resolve_policy_path_for_drive", lambda *_args: Path("policy.onnx"))
+    monkeypatch.setattr(bridge, "_configure_policy_cpu_threads", lambda *_args: {"backend": "onnx"})
+    monkeypatch.setattr(bridge, "resolve_world", lambda _path: Path("world.xml"))
+    monkeypatch.setattr(bridge, "build_engine", lambda **_kwargs: Engine())
+
+    def fail_publisher(_publisher):
+        raise bridge.AsyncPublisherError("queue_oldest_age:1.375s>0.5s")
+
+    def cleanup(*_args, **_kwargs):
+        events.append("publisher_cleaned")
+        return {"clean": True, "failed_before_cleanup": False}
+
+    monkeypatch.setattr(bridge, "_begin_native_publisher_batch", fail_publisher)
+    monkeypatch.setattr(bridge, "_cleanup_native_publisher", cleanup)
+
+    report = bridge.run(args)
+
+    assert report["ok"] is False
+    assert report["error"] == "queue_oldest_age:1.375s>0.5s"
+    assert "mujoco_native_dds_sensor_bridge_failed:AsyncPublisherError" in report["remaining_gaps"]
+    assert report["policy_loaded"] is True
+    assert report["policy_runtime"] == {"backend": "onnx"}
+    assert report["command_source"] == "profile"
+    assert report["native_sensor_publisher_process"]["clean"] is True
+    assert report["entity_contacts"]["observation_steps"] == 0
+    assert report["motion"]["available"] is False
+    assert events == ["publisher_cleaned", "engine_closed"]
+
+
+def test_navigation_fixture_registered_cloud_uses_sampled_lidar_site_origin(monkeypatch):
+    import io
+    import struct
+    import numpy as np
+
+    args = bridge._build_parser().parse_args([
+        "--settle-s", "0", "--warmup-s", "0", "--publisher-write-mode", "sync",
+        "--navigation-fixture", "--publish-odom-prior", "--scan-time-profile", "instantaneous",
+        "--start-anchor", "off", "--motion-log-hz", "0",
+    ])
+    args.require_slam_output = False
+    args.imu_acc_mode = "gravity_only"
+    site = np.array([1.403, 2.0, 0.498])
+    state = SimpleNamespace(position=np.array([1.0, 2.0, 0.44]),
+                            orientation=np.array([0.0, 0.0, 0.0, 1.0]),
+                            linear_velocity=np.zeros(3), imu_gyro=np.zeros(3))
+
+    class Engine:
+        dt = 0.005
+        sim_time = 0.0
+        has_policy = True
+        physics_integrator = "euler"
+
+        def get_robot_state(self):
+            return state
+
+        def get_lidar_backend_report(self):
+            return {"backend": "test_fixture"}
+
+        def get_lidar_points(self, **_kwargs):
+            return np.array([[3.0, 2.0, 0.6, 12.0]], dtype=np.float32)
+
+        def close(self):
+            pass
+
+    engine = Engine()
+    engine.model = object()
+    engine.data = SimpleNamespace(ncon=0)
+    stream = io.BytesIO()
+    process = SimpleNamespace(stdin=stream,
+                              _lingtu_native_clock_alignment={"native_minus_local_s": 0.0})
+    monkeypatch.setattr(bridge, "_resolve_publisher_bin", lambda _path: Path("publisher.exe"))
+    monkeypatch.setattr(bridge, "_start_native_publisher", lambda _args: process)
+    monkeypatch.setattr(bridge, "_resolve_policy_path_for_drive", lambda *_args: Path("policy.onnx"))
+    monkeypatch.setattr(bridge, "_configure_policy_cpu_threads", lambda *_args: {"backend": "onnx"})
+    monkeypatch.setattr(bridge, "resolve_world", lambda _path: Path("world.xml"))
+    monkeypatch.setattr(bridge, "build_engine", lambda **_kwargs: engine)
+    monkeypatch.setattr(bridge, "_acceptance_contacts", lambda *_args: [])
+    monkeypatch.setattr(bridge, "_cleanup_native_publisher", lambda *_args, **_kwargs: {"clean": True})
+    monkeypatch.setattr(bridge, "world_xyzi_to_sensor_xyzi", lambda _engine, points: points)
+    monkeypatch.setattr(bridge, "lidar_pose_world", lambda _engine: (site.copy(), np.eye(3)), raising=False)
+    for name in ("_write_native_imu", "_write_native_scan", "_write_native_odom_prior"):
+        monkeypatch.setattr(bridge, name, lambda *_args, **_kwargs: None)
+
+    def step(_engine, _command, _dt):
+        engine.sim_time += 0.005
+        return state
+
+    monkeypatch.setattr(bridge, "_step_engine_for_sensor_tick", step)
+    writer = bridge._write_native_registered_cloud
+
+    def capture(*args, **kwargs):
+        writer(*args, **kwargs)
+        raise RuntimeError("fixture_sample_captured")
+
+    monkeypatch.setattr(bridge, "_write_native_registered_cloud", capture)
+    report = bridge.run(args)
+    assert report["error"] == "fixture_sample_captured"
+    raw = stream.getvalue()
+    _, record_type, _stamp, _sequence, _count, _size = bridge._HEADER.unpack(raw[:bridge._HEADER.size])
+    assert record_type == bridge._sensor_records.RECORD_REGISTERED_CLOUD_WITH_ORIGIN
+    assert struct.unpack_from("<ddd", raw, bridge._HEADER.size) == pytest.approx(site)
