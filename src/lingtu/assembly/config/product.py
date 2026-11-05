@@ -415,6 +415,8 @@ def resolve_product_host_runtime(
             config["lidar_ip"] = resolved_env.lidar_ip
 
     config.update(dict(overrides or {}))
+    if config["enable_semantic"]:
+        config = {**_model_config(graph.root, config["llm"]), **config}
     return ResolvedProductHostConfig(
         robot=resolved_env.robot,
         product=resolved_product_name,
@@ -428,6 +430,33 @@ def resolve_product_host_runtime(
             else None
         ),
     )
+
+
+def _model_config(root: Path, backend: str) -> dict[str, Any]:
+    path = root / "models.yaml"
+    try:
+        models = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValueError(f"Cannot read model settings from {path}") from exc
+    if not isinstance(models, Mapping) or backend not in models:
+        raise ValueError(f"{path} must declare model connection {backend!r}")
+    connection = models[backend]
+    fields = {"model", "base_url", "api_key_env", "timeout_sec"}
+    if not isinstance(connection, Mapping) or set(connection) != fields:
+        raise ValueError(f"{path}: {backend!r} requires {', '.join(sorted(fields))}")
+    for field in ("model", "base_url", "api_key_env"):
+        value = connection[field]
+        if not isinstance(value, str) or (field != "base_url" and not value.strip()):
+            raise ValueError(f"{path}: {backend!r}.{field} must be a string")
+    timeout = connection["timeout_sec"]
+    if (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, (int, float))
+        or not math.isfinite(timeout)
+        or timeout <= 0
+    ):
+        raise ValueError(f"{path}: {backend!r}.timeout_sec must be positive and finite")
+    return {f"llm_{key}": value for key, value in connection.items()}
 
 
 def _product_host_config(

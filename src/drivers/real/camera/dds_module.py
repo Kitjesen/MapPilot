@@ -21,6 +21,7 @@ from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat
 from runtime.registry import register
 from runtime.stream import Out
+from runtime.yaml_helpers import load_yaml
 
 from .shm import (
     POSIX_SHM_DIRECTORY,
@@ -37,11 +38,6 @@ from .shm import (
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_COLOR_SHM = "/lingtu_camera_color"
-_DEFAULT_DEPTH_SHM = "/lingtu_camera_depth"
-_DEFAULT_INFO_SHM = "/lingtu_camera_info"
-
-
 def _sim_session_shm_path(filename: str, fallback: str) -> Path:
     if os.environ.get("LINGTU_ENV", "").strip() != "sim":
         return posix_shm_path(fallback)
@@ -54,10 +50,7 @@ def _sim_session_shm_path(filename: str, fallback: str) -> Path:
     return root / filename
 
 
-def _configured_shm_path(argument: str | None, env_name: str, fallback: Path) -> Path:
-    if argument is not None and argument.strip():
-        return Path(argument.strip())
-    value = (os.environ.get(env_name, "") or str(fallback)).strip()
+def _configured_shm_path(value: str) -> Path:
     path = Path(value)
     if path.is_absolute() and not (value.startswith("/") and value.count("/") == 1):
         return path
@@ -94,23 +87,20 @@ class DdsCameraModule(Module, layer=1):  # type: ignore[call-arg]
         self._color_topic = color_topic or dds_topic_name(TOPICS.camera_color)
         self._depth_topic = depth_topic or dds_topic_name(TOPICS.camera_depth)
         self._info_topic = info_topic or dds_topic_name(TOPICS.camera_info)
-        self._shm_paths = {
-            "color": _configured_shm_path(
-                color_shm_path,
-                "LINGTU_CAMERA_COLOR_SHM",
-                _sim_session_shm_path("camera_color.shm", _DEFAULT_COLOR_SHM),
-            ),
-            "depth": _configured_shm_path(
-                depth_shm_path,
-                "LINGTU_CAMERA_DEPTH_SHM",
-                _sim_session_shm_path("camera_depth.shm", _DEFAULT_DEPTH_SHM),
-            ),
-            "info": _configured_shm_path(
-                info_shm_path,
-                "LINGTU_CAMERA_INFO_SHM",
-                _sim_session_shm_path("camera_info.shm", _DEFAULT_INFO_SHM),
-            ),
-        }
+        self._shm_paths = {}
+        defaults = None
+        for stream, argument in (("color", color_shm_path), ("depth", depth_shm_path), ("info", info_shm_path)):
+            value = os.environ.get(f"LINGTU_CAMERA_{stream.upper()}_SHM", "").strip()
+            if argument and argument.strip():
+                path = Path(argument.strip())
+            elif value:
+                path = _configured_shm_path(value)
+            else:
+                if defaults is None:
+                    source = Path(__file__).resolve().parents[4] / "config/system/settings/camera.yaml"
+                    defaults = load_yaml(source)["camera"]["shm"]
+                path = _sim_session_shm_path(f"camera_{stream}.shm", defaults[stream])
+            self._shm_paths[stream] = path
         self._stale_timeout_s = max(0.001, float(stale_timeout_s))
         self._poll_interval_s = max(0.001, float(poll_interval_s))
         self._readers: dict[str, ShmFrameReader] = {}

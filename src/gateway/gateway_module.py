@@ -272,6 +272,8 @@ class GatewayModule(Module, layer=6):
         frame_tree: Any | None = None,
         measurement_sensor_ids: Collection[str] = (),
         measurement_stale_timeout_s: float = 1.0,
+        grpc_port: int = 5052,
+        observations: Any | None = None,
         **kw,
     ):
         if kw:
@@ -283,6 +285,8 @@ class GatewayModule(Module, layer=6):
         self._measurements = LatestMeasurements(measurement_sensor_ids, measurement_stale_timeout_s)
         self._port = port
         self._host = host
+        self._grpc_port = grpc_port
+        self._observations = observations
         self._compiled_run_plan = run_plan
         if run_plan is not None:
             plan_host_config = getattr(run_plan, "host_config", None)
@@ -393,15 +397,11 @@ class GatewayModule(Module, layer=6):
             self,
             enabled=os.environ.get("LINGTU_DRIFT_WATCHDOG", "1") not in ("0", "false", "False"),
             interval_s=float(os.environ.get("LINGTU_DRIFT_WATCHDOG_INTERVAL", "5")),
-            xy_limit=float(os.environ.get("LINGTU_DRIFT_WATCHDOG_XY_LIMIT", "50")),
             v_limit=float(os.environ.get("LINGTU_DRIFT_WATCHDOG_V_LIMIT", "10")),
             cooldown_s=float(os.environ.get("LINGTU_DRIFT_WATCHDOG_COOLDOWN", "300")),
         )
 
-        # Crash-time black box. Records the gateway's view of the world (odom,
-        # slam_diag, gnss_fusion, map_odom_tf) and dumps to disk before the
-        # watchdog requests the Product-owned SLAM restart, so we can attribute
-        # divergences offline.
+        # Keep odometry evidence before the watchdog clears the runtime cache.
         from runtime.utils.blackbox_recorder import BlackBoxRecorder
 
         self._blackbox = BlackBoxRecorder.from_env()

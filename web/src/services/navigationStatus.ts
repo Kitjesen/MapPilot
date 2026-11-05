@@ -76,11 +76,11 @@ const MOTION_OBSERVATION_LABELS: Partial<Record<NavigationMotionObservation, { e
 }
 
 const STOP_CONFIRMATION_LABELS: Partial<Record<NavigationStopConfirmation, { en: string; zh: string }>> = {
-  NOT_REQUESTED: { en: 'Stop not requested', zh: '未请求停稳' },
-  PENDING: { en: 'Awaiting stop confirmation', zh: '等待停稳确认' },
-  CONFIRMED: { en: 'Stop confirmed', zh: '已确认停稳' },
-  FAILED: { en: 'Stop confirmation failed', zh: '停稳确认失败' },
-  UNKNOWN: { en: 'Stop confirmation unknown', zh: '停稳状态未知' },
+  NOT_REQUESTED: { en: 'Stop not requested', zh: '未请求停止确认' },
+  PENDING: { en: 'Awaiting stop confirmation', zh: '等待停止确认' },
+  CONFIRMED: { en: 'Stop command confirmed', zh: '停止命令已确认' },
+  FAILED: { en: 'Stop confirmation failed', zh: '停止确认失败' },
+  UNKNOWN: { en: 'Stop confirmation unknown', zh: '停止确认状态未知' },
 }
 
 const GOAL_ADMISSION_LABELS: Partial<Record<NavigationGoalAdmission, { en: string; zh: string }>> = {
@@ -119,17 +119,17 @@ function localizationRecoveryMessage(
   if (!reason.startsWith('localization_')) return ''
   if (stopConfirmation === 'CONFIRMED') {
     return locale === 'zh'
-      ? '定位恢复中，已确认机器人停稳'
-      : 'Localization recovery in progress; robot stop is confirmed'
+      ? '定位恢复中，停止命令已确认'
+      : 'Localization recovery in progress; stop command confirmed'
   }
   if (stopConfirmation === 'PENDING') {
     return locale === 'zh'
-      ? '定位恢复中，正在等待停稳确认'
+      ? '定位恢复中，正在等待停止确认'
       : 'Localization recovery in progress; awaiting stop confirmation'
   }
   if (stopConfirmation === 'FAILED') {
     return locale === 'zh'
-      ? '定位恢复中，停稳确认失败'
+      ? '定位恢复中，停止确认失败'
       : 'Localization recovery in progress; stop confirmation failed'
   }
   return locale === 'zh'

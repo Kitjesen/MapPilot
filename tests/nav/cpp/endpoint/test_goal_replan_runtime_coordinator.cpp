@@ -208,7 +208,7 @@ struct Fixture {
     };
     actions.last_output_sequence = [this] { return last_output_sequence; };
     actions.publish_sequenced_zero = [] { return std::optional<std::uint64_t>{18U}; };
-    actions.confirm_zero = [this](std::uint64_t) { return confirmation; };
+    actions.confirm_zero = [this](std::uint64_t, auto) { return confirmation; };
     actions.clear_global_path = [] {};
     return actions;
   }
@@ -2682,6 +2682,42 @@ void testIneligibleOutcomesNeverTakeOver() {
   });
 }
 
+void testPendingReplanObservesRuntimeChangesBeforeSubmission() {
+  for (int change = 0; change < 6; ++change) {
+    Fixture fixture;
+    fixture.activate(fixture.request());
+    require(fixture.arm(235.0).reason == "backoff_pending", "fixture did not arm retry");
+    auto frame = fixture.frameInput(235.5);
+    const char *reason = nullptr;
+    switch (change) {
+      case 0: frame.control_hold = true; reason = "control_hold_pending"; break;
+      case 1:
+        frame.fresh_admission.input_ready = false;
+        frame.fresh_admission.input_gate_reason = "collision_stale";
+        reason = "input_gate_hold_pending";
+        break;
+      case 2:
+        frame.fresh_admission.driver_control_blocker = "driver_control_stale";
+        reason = "driver_control_hold_pending";
+        break;
+      case 3: frame.map_drift = true; reason = "map_drift"; break;
+      case 4: frame.inspection_active = true; reason = "control_hold"; break;
+      case 5: frame.rolling_segment_active = true; reason = "control_hold"; break;
+    }
+    const auto observed = fixture.coordinator.advancePlanningCycle(frame);
+    require(observed.reason == reason && !observed.replan_started && fixture.planner_calls == 1,
+            "runtime state change reached request submission or changed its outcome");
+    if (change < 3) {
+      require(!observed.terminal_after_stop && observed.zero_kept_fresh &&
+                  fixture.coordinator.snapshot().state ==
+                      lingtu::nav::endpoint::BoundedGoalReplanState::kBackoffPending,
+              "temporary runtime hold ended or consumed the pending retry");
+    } else {
+      require(observed.terminal_after_stop.has_value(), "runtime interruption lost its terminal");
+    }
+  }
+}
+
 void testInvalidTimeAdmissionAndIdentityFailClosed() {
   for (double invalid :
        {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()}) {
@@ -3054,6 +3090,7 @@ int main() {
   testIntentionalInterruptionsCancelActiveAttempt();
   testInspectionInterruptionsProduceCancelledTicketsWithDiagnosticReasons();
   testIneligibleOutcomesNeverTakeOver();
+  testPendingReplanObservesRuntimeChangesBeforeSubmission();
   testInvalidTimeAdmissionAndIdentityFailClosed();
   testReplanKeepsGoalAcrossPoseAndMapLookupGaps();
   testActiveShutdownCreatesProjectedCancelledIntentAndExactDuplicateReplay();

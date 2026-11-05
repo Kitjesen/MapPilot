@@ -77,6 +77,10 @@ def open_artifact(gw: Any, map_name: str, capability: str) -> ArtifactHandle:
     return open_native(map_name, capability)
 
 
+def open_save_source(gw: Any, operation_id: str) -> ArtifactHandle:
+    return map_client(gw).open_save_source(operation_id)
+
+
 def _bounds_arguments(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or not value:
         return {"has_bounds": False}
@@ -138,6 +142,7 @@ def _canonical_request(command: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         arguments.update(
             map_id=map_id,
             request_id=str(command.get("request_id") or uuid.uuid4()),
+            auto_process=command.get("auto_process", True),
         )
     elif action == "save_edited_source":
         arguments.update(
@@ -154,7 +159,7 @@ def _canonical_request(command: dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 arguments[f"octomap_{key}"] = command[key]
     elif action == "rename_map":
         arguments["new_map_id"] = str(command.get("new_map_id") or "")
-    elif action in {"get_save_map_status", "cancel_save_map", "retry_save_map"}:
+    elif action in {"get_save_map_status", "cancel_save_map", "retry_save_map", "process_save_map"}:
         arguments["job_id"] = str(command.get("job_id") or "")
     elif action == "list_save_map_jobs":
         arguments["limit"] = max(1, min(int(command.get("limit") or 100), 1000))

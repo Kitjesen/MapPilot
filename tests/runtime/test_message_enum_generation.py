@@ -75,6 +75,7 @@ WIRE_VALUES = {
         "RESUME_AUTONOMY": 7,
         "PAUSE_TASK": 8,
         "RESUME_TASK": 9,
+        "TASK_SPEED_LIMIT": 10,
     },
     "OperatorMotionAction": {"CLAIM": 1, "RELEASE": 2, "HOLD": 3},
     "ExplorationCommandKind": {

@@ -8,9 +8,83 @@ import ts from 'typescript'
 import {
   waitForMapSaveOperation,
   saveMap,
+  fetchMapSaveOperations,
+  retryMapSaveOperation,
+  cancelMapSaveOperation,
+  processMapSaveOperation,
+  mapSaveSourceUrl,
+  MapSaveError,
   type SaveMapResult,
 } from '../src/services/api.ts'
-import { formatMapSaveProgress, pendingMapSaveStatus, savedMapStatus, mapSaveElapsedMs, mapSaveProgressValue, formatMapSaveElapsed, type MapSaveStatus } from '../src/services/mapSavePresentation.ts'
+import { formatMapSaveProgress, pendingMapSaveStatus, savedMapStatus, archivedMapStatus, failedMapSaveStatus, mapSavePhaseLabel, mapSaveStateLabel, mapSaveReason, mapSaveElapsedMs, mapSaveProgressValue, formatMapSaveElapsed, mappingCapacityNotice, mappingFailureNotice, type MapSaveStatus } from '../src/services/mapSavePresentation.ts'
+
+test('online failure notice distinguishes retained geometry from an empty preview', () => {
+  const notice = (product: string, state: string, points: number) =>
+    mappingFailureNotice(product, { global_mapping: { state, points } })
+  const failed = 'online_mapping_failed: synthetic backend error'
+  assert.match(notice('map', failed, 120)!, /在线建图处理失败；保留上次生成的地图预览/)
+  assert.match(notice('map', failed, 0)!, /在线建图处理失败；还没有可用的地图预览/)
+  assert.doesNotMatch(notice('map', failed, 120)!, /未收敛|synthetic backend error/)
+  assert.equal(notice('map', 'accumulating', 120), null)
+  assert.equal(notice('map', 'loop_corrected', 120), null)
+  assert.equal(notice('nav', failed, 120), null)
+  assert.equal(mappingFailureNotice('map', null), null)
+})
+
+test('capacity notice follows the native mapping diagnostic, independently of the selected cloud layer', () => {
+  const diagnostics = { global_mapping: { state: 'mapping_keyframe_capacity_reached' } }
+  const notice = mappingCapacityNotice('map', diagnostics)
+  assert.ok(notice)
+  assert.match(notice, /定位仍会处理新数据/)
+  assert.match(notice, /已停止记录新区域/)
+  assert.match(notice, /保存仅包含满额前的记录/)
+  assert.equal(mappingCapacityNotice('nav', diagnostics), null)
+  assert.equal(mappingCapacityNotice(null, diagnostics), null)
+  assert.equal(mappingCapacityNotice('map', { global_mapping: { state: 'ready' } }), null)
+  assert.equal(mappingCapacityNotice('map', {}), null)
+  assert.equal(mappingCapacityNotice('map', null), null)
+})
+
+test('both save dialogs explain the capacity boundary and keep normal replacement guidance', () => {
+  const notice = mappingCapacityNotice('map', {
+    global_mapping: { state: 'mapping_keyframe_capacity_reached' },
+  })
+  for (const component of ['MapView', 'SceneView']) {
+    const source = readFileSync(new URL(`../src/components/${component}.tsx`, import.meta.url), 'utf8')
+    const ast = ts.createSourceFile(`${component}.tsx`, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+    let message: ts.Expression | undefined
+    const visit = (node: ts.Node) => {
+      if ((ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) && node.tagName.getText(ast) === 'PromptModal') {
+        const attributes = node.attributes.properties
+        const title = attributes.find(attribute => ts.isJsxAttribute(attribute)
+          && attribute.name.getText(ast) === 'title')
+        if (title && ts.isJsxAttribute(title) && title.initializer
+          && ts.isStringLiteral(title.initializer) && title.initializer.text === '保存地图') {
+          const attribute = attributes.find(attribute => ts.isJsxAttribute(attribute)
+            && attribute.name.getText(ast) === 'message')
+          if (attribute && ts.isJsxAttribute(attribute) && attribute.initializer
+            && ts.isJsxExpression(attribute.initializer)) message = attribute.initializer.expression
+        }
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(ast)
+    assert.ok(message, `${component} must use the current capacity notice in its save dialog`)
+    const expression = ts.transpileModule(`(${message.getText(ast)})`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 },
+    }).outputText
+    const withCapacity = runInNewContext(expression, { capacityNotice: notice }) as string
+    const normal = runInNewContext(expression, { capacityNotice: null }) as string
+    assert.ok(withCapacity.includes(notice!), component)
+    assert.match(normal, /同名会替换原地图/)
+    assert.doesNotMatch(normal, /容量已满/)
+    assert.match(source, /(?:capacityNotice|mappingNotice) && <div className=\{styles\.(sceneAlert|saveNotice)\} role="status">/)
+  }
+  const scene = readFileSync(new URL('../src/components/SceneView.tsx', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('../src/components/SceneView.module.css', import.meta.url), 'utf8')
+  assert.match(scene, /<span className=\{styles\.capacityNotice\}>\{mappingNotice\}<\/span>/)
+  assert.match(styles, /\.capacityNotice\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/)
+})
 
 test('save timing uses robot timestamps and freezes at completion, independent of browser clock', () => {
   const result: SaveMapResult = { ...admission(), ts: 222, operation: { created_at_ns: 100e9, progress: 0.3 } }
@@ -216,6 +290,7 @@ test('both save callbacks continue the pending operation without resubmitting or
     const saved: MapSaveStatus[] = []
     const queried: SaveMapResult[] = []
     let posts = 0
+    let mapLoads = 0
     const noOp = () => {}
     const context = {
       api: {
@@ -229,13 +304,14 @@ test('both save callbacks continue the pending operation without resubmitting or
       },
       setSaveOpen: noOp, setSaveModalOpen: noOp, showToast: noOp,
       openWorkspaceTool: noOp,
-      mapSaveBlockedReason: () => '', saveBlockedReason: '', session: {},
+      mapSaveBlockedReason: () => '', saveBlockedReason: '', session: {}, autoProcess: true,
       setSaveStatus: (value: MapSaveStatus) => saved.push(value),
-      formatMapSaveProgress, pendingMapSaveStatus, savedMapStatus,
+      formatMapSaveProgress, pendingMapSaveStatus, savedMapStatus, archivedMapStatus, failedMapSaveStatus,
       mapSaveElapsedMs, mapSaveProgressValue,
       saveStartedAt: { current: 0 }, setSaveTiming: noOp, setSaveClock: noOp, setSaveProgress: noOp,
       savePreviewSession: { current: 'mapping-session' }, hasAutoSelected: { current: false },
-      setSelectedMap: noOp, setLibraryOpen: noOp, setPreviewRefresh: noOp, setGoalPickingMap: noOp, loadMaps: noOp,
+      setSelectedMap: noOp, setLibraryOpen: noOp, setPreviewRefresh: noOp, setGoalPickingMap: noOp,
+      loadMaps: () => { mapLoads += 1 },
     }
     const confirm = runInNewContext(ts.transpileModule(`const ${callback.getText(ast)}; ${callbackName};`, {
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
@@ -250,5 +326,167 @@ test('both save callbacks continue the pending operation without resubmitting or
     assert.equal(posts, 1, component)
     assert.deepEqual(queried.map(value => value.operation_id), ['save-17', 'save-17'])
     assert.equal(saved.at(-1)?.state, 'saved', component)
+    context.api.waitForMapSaveOperation = async () => {
+      throw new MapSaveError('Map save failed.', {
+        ...admission(), operation: { state: 'FAILED', phase: 'PROCESS_SOURCE', reason_code: 'dynamic_filter_failed' },
+      })
+    }
+    await confirm('warehouse', admission())
+    const failed = saved.at(-1)!
+    assert.equal(failed.state, 'failed', component)
+    if (failed.state !== 'failed') throw new Error('Expected failed UI state')
+    assert.equal(failed.operation?.operation_id, 'save-17', component)
+    assert.match(failed.summary!, /清理动态点.*dynamic_filter_failed/)
+    assert.equal(posts, 1, component)
+    const archive = { ...admission(), operation: { state: 'CAPTURED', source_saved: true } }
+    context.api.waitForMapSaveOperation = async () => ({ state: 'source_saved', result: archive })
+    const loadedBeforeCapture = mapLoads
+    await confirm('warehouse', admission())
+    assert.equal(saved.at(-1)?.state, 'archived', component)
+    assert.match(saved.at(-1)!.detail, /PCD 已保存/)
+    assert.equal(mapLoads, loadedBeforeCapture, `${component} refreshed formal maps before processing completed`)
   }
+})
+
+test('new saves default to background processing and manual mode is sent explicitly', async () => {
+  const bodies: unknown[] = []
+  globalThis.fetch = async (_input, init) => {
+    bodies.push(JSON.parse(String(init?.body)))
+    return new Response(JSON.stringify(admission()), { status: 202 })
+  }
+  await saveMap('warehouse')
+  await saveMap('warehouse', false)
+  assert.deepEqual(bodies, [{ name: 'warehouse', auto_process: true }, { name: 'warehouse', auto_process: false }])
+})
+
+test('source waiting finishes when PCD is stored while default ready waiting continues through CAPTURED', async () => {
+  let reads = 0
+  globalThis.fetch = async () => {
+    reads += 1
+    return new Response(JSON.stringify({ ...admission(), operation: {
+      state: reads === 1 ? 'WAITING_SNAPSHOT' : 'CAPTURED', source_saved: reads > 1,
+    } }), { status: 200 })
+  }
+  const source = await waitForMapSaveOperation(admission(), { until: 'source', pollIntervalMs: 0 })
+  assert.equal(source.state, 'source_saved')
+  assert.equal(source.result.operation_id, 'save-17')
+  assert.equal(reads, 2)
+  reads = 0
+  globalThis.fetch = async () => new Response(JSON.stringify({ ...admission(), operation: {
+    state: ++reads === 1 ? 'CAPTURED' : 'SUCCEEDED', source_saved: true,
+  } }), { status: 200 })
+  assert.equal((await waitForMapSaveOperation(admission(), { pollIntervalMs: 0 })).state, 'saved')
+  assert.equal(reads, 2)
+})
+
+test('source_saved and failed processing remain two separate facts', async () => {
+  const result = { ...admission(), operation: {
+    state: 'FAILED', phase: 'PROCESS_SOURCE', source_saved: true, reason_code: 'dynamic_filter_failed',
+  } }
+  const source = await waitForMapSaveOperation(result, { until: 'source' })
+  assert.equal(source.state, 'source_saved')
+  if (source.state !== 'source_saved') throw new Error('Expected stored source')
+  const status = archivedMapStatus(source.result)
+  assert.equal(status.state, 'failed')
+  assert.match(status.detail, /PCD 已保存，处理失败/)
+  await assert.rejects(waitForMapSaveOperation(result), MapSaveError)
+})
+
+test('manual processing uses the same operation and capture download has a task identity', async () => {
+  const requests: string[] = []
+  globalThis.fetch = async (input, init) => {
+    requests.push(`${init?.method ?? 'GET'} ${String(input)}`)
+    return new Response(JSON.stringify({ ...admission(), operation: { state: 'QUEUED', source_saved: true } }), { status: 202 })
+  }
+  const result = await processMapSaveOperation('save-17')
+  assert.equal(result.operation_id, 'save-17')
+  assert.deepEqual(requests, ['POST /api/v1/maps/operations/save-17/process'])
+  assert.equal(mapSaveSourceUrl('save-17'), '/api/v1/maps/operations/save-17/source/pcd')
+})
+
+test('save history lists durable states and retries through the operation endpoint to a real terminal result', async () => {
+  const requests: { url: string; method: string }[] = []
+  const operations = [
+    { operation_id: 'failed-1', map_id: 'warehouse', state: 'FAILED', phase: 'BUILD_ARTIFACTS', reason_code: 'artifact_failed', created_at_ns: 10e9 },
+    { operation_id: 'running-1', map_id: 'hall', state: 'RUNNING', phase: 'PROCESS_SOURCE' },
+    { operation_id: 'cancelled-1', map_id: 'yard', state: 'CANCELLED', phase: 'CAPTURE' },
+    { operation_id: 'done-1', map_id: 'room', state: 'SUCCEEDED', phase: 'DONE' },
+  ]
+  globalThis.fetch = async (input, init) => {
+    const url = String(input)
+    requests.push({ url, method: init?.method ?? 'GET' })
+    let data: object
+    if (url === '/api/v1/maps/operations') data = { operations, ts: 20 }
+    else if (url.endsWith('/failed-1/retry')) data = {
+      ...admission(), operation_id: 'retry-2', operation: { operation_id: 'retry-2', map_id: 'warehouse', state: 'QUEUED' },
+    }
+    else if (url.endsWith('/running-1/cancel')) data = {
+      ...admission(), operation_id: 'running-1', operation: { state: 'RUNNING', cancel_requested: true },
+    }
+    else if (url.endsWith('/retry-2')) data = {
+      ...admission(), operation_id: 'retry-2', operation: { state: 'SUCCEEDED', phase: 'DONE' },
+    }
+    else throw new Error(`Unexpected request ${url}`)
+    return new Response(JSON.stringify(data), { status: 200 })
+  }
+  const history = await fetchMapSaveOperations()
+  assert.deepEqual(history.operations.map(operation => mapSaveStateLabel(operation.state)), ['失败', '进行中', '已取消', '成功'])
+  assert.equal(history.ts, 20)
+  assert.match(mapSaveReason(history.operations[0]), /导航地图生成失败.*artifact_failed/)
+  assert.equal(mapSavePhaseLabel(history.operations[0].phase), '生成导航地图')
+  assert.deepEqual(requests, [{ url: '/api/v1/maps/operations', method: 'GET' }])
+  const retried = await retryMapSaveOperation('failed-1')
+  const terminal = await waitForMapSaveOperation(retried, { pollIntervalMs: 0 })
+  assert.equal(terminal.state, 'saved')
+  assert.equal(terminal.result.operation_id, 'retry-2')
+  const cancelled = await cancelMapSaveOperation('running-1')
+  assert.equal(cancelled.operation?.cancel_requested, true)
+  assert.equal(cancelled.operation?.state, 'RUNNING')
+  assert.deepEqual(requests.slice(1), [
+    { url: '/api/v1/maps/operations/failed-1/retry', method: 'POST' },
+    { url: '/api/v1/maps/operations/retry-2', method: 'GET' },
+    { url: '/api/v1/maps/operations/running-1/cancel', method: 'POST' },
+  ])
+})
+
+test('failed operation errors retain the queried task and actual failure stage', async () => {
+  const result: SaveMapResult = {
+    ...admission(), operation: { operation_id: 'save-17', state: 'FAILED', phase: 'BUILD_ARTIFACTS', reason_code: 'artifact_failed' },
+  }
+  globalThis.fetch = async () => new Response(JSON.stringify(result), { status: 200 })
+  await assert.rejects(waitForMapSaveOperation(admission()), error => {
+    assert.ok(error instanceof MapSaveError)
+    const status = failedMapSaveStatus('warehouse', error)
+    assert.equal(status.state, 'failed')
+    if (status.state !== 'failed') return false
+    assert.equal(status.operation?.operation_id, 'save-17')
+    assert.equal(status.operation?.operation?.state, 'FAILED')
+    assert.match(status.summary!, /生成导航地图.*artifact_failed/)
+    return true
+  })
+  assert.equal(failedMapSaveStatus('warehouse', new Error('connection unavailable')).state, 'failed')
+})
+
+test('a rejected retry reports its server failure instead of submitting a new save', async () => {
+  const urls: string[] = []
+  globalThis.fetch = async input => {
+    urls.push(String(input))
+    return new Response(JSON.stringify({ ok: false, success: false, message: 'Map save requires mapping Product.' }), { status: 409 })
+  }
+  await assert.rejects(retryMapSaveOperation('failed-1'), /requires mapping Product/)
+  assert.deepEqual(urls, ['/api/v1/maps/operations/failed-1/retry'])
+})
+
+test('expired snapshot retry keeps the operation reason for the history recovery message', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    ok: false, success: false, operation_id: 'failed-1', reason_code: 'snapshot_session_expired',
+    operation: { operation_id: 'failed-1', state: 'FAILED', phase: 'CAPTURE', reason_code: 'snapshot_session_expired' },
+    message: 'Map save failed.',
+  }), { status: 409 })
+  await assert.rejects(retryMapSaveOperation('failed-1'), error => {
+    assert.ok(error instanceof MapSaveError)
+    assert.equal(error.result.operation_id, 'failed-1')
+    assert.match(mapSaveReason(error.result.operation!), /原建图会话已结束，请重新保存地图。.*snapshot_session_expired/)
+    return true
+  })
 })

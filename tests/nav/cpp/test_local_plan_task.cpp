@@ -748,6 +748,7 @@ TEST(LocalPlanTask, BodyHeadingChangesDiscardCachedCollisionFootprint) {
   }
 }
 
+
 TEST(LocalPlanTask, BodyModelReplacementDiscardsCachedSplineWithoutNewRouteOrFrame) {
   namespace collision = lingtu::nav::collision;
   nav_kernel::local::scan::Task task(scanParams());
@@ -788,18 +789,10 @@ TEST(LocalPlanTask, BodyModelReplacementDiscardsCachedSplineWithoutNewRouteOrFra
 
   // Body identity is the only changed input; both route and frame stay fixed.
   fixture.request.body = large;
-  auto update = task.update(fixture.request);
-  ASSERT_FALSE(update.plan.ready());
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-  bool workerResponded = false;
-  do {
-    ASSERT_FALSE(update.plan.ready()) << "Old spline escaped after body replacement";
-    workerResponded = workerResponded || !update.debug.searchReason.empty();
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    update = task.update(fixture.request);
-  } while (std::chrono::steady_clock::now() < deadline);
-  EXPECT_FALSE(update.plan.ready());
-  EXPECT_TRUE(workerResponded);
+  ASSERT_FALSE(task.update(fixture.request).plan.ready());
+  const auto replacement = waitReady();
+  ASSERT_TRUE(replacement.plan.ready()) << replacement.debug.searchReason;
+  EXPECT_GT(std::get<nav_kernel::SplineTarget>(replacement.plan.target()).trajectoryId,initialId);
 
   fixture.request.body = small;
   EXPECT_FALSE(task.update(fixture.request).plan.ready());
@@ -808,7 +801,7 @@ TEST(LocalPlanTask, BodyModelReplacementDiscardsCachedSplineWithoutNewRouteOrFra
   EXPECT_GT(std::get<nav_kernel::SplineTarget>(recovered.plan.target()).trajectoryId,initialId);
 }
 
-TEST(LocalPlanTask, ObservedBodySnapshotsUpdateCollisionWithoutReplacingGuideIdentity) {
+TEST(LocalPlanTask, ObservedBodySnapshotsDoNotReplaceCylinderPlanningEvidence) {
   namespace collision = lingtu::nav::collision;
   nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());
@@ -863,17 +856,11 @@ TEST(LocalPlanTask, ObservedBodySnapshotsUpdateCollisionWithoutReplacingGuideIde
   // stay fixed, and every frame owns a fresh immutable snapshot.
   collision::Body widened = *nominal;
   widened.parts.front().half_size.y = .5;
-  auto blocked = updateSnapshot(widened);
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-  while (blocked.plan.ready() && std::chrono::steady_clock::now() < deadline) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    blocked = updateSnapshot(widened);
-  }
-  ASSERT_FALSE(blocked.plan.ready())
-      << "Worker retained Ready after the observed body reached the existing wall";
   for (int frame = 0; frame < 20; ++frame) {
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    EXPECT_FALSE(updateSnapshot(widened).plan.ready());
+    const auto update = updateSnapshot(widened);
+    ASSERT_TRUE(update.plan.ready());
+    EXPECT_EQ(std::get<nav_kernel::SplineTarget>(update.plan.target()).trajectoryId,initialId);
   }
 
   const auto recovered = waitReady();

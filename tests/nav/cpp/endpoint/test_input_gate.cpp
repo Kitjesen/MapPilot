@@ -113,7 +113,6 @@ void testFutureInputsCloseTheGate() {
 
 void testCloudCanBeOptional() {
   lingtu::nav::endpoint::InputGateConfig cfg;
-  cfg.recovery_frames = 1;
   cfg.require_cloud = false;
   lingtu::nav::endpoint::InputGate gate(cfg);
 
@@ -124,7 +123,6 @@ void testCloudCanBeOptional() {
 
 void testOdometryAndCloudCanBeOptionalForPureTeleop() {
   lingtu::nav::endpoint::InputGateConfig cfg;
-  cfg.recovery_frames = 1;
   cfg.require_odom = false;
   cfg.require_cloud = false;
   lingtu::nav::endpoint::InputGate gate(cfg);
@@ -137,7 +135,6 @@ void testOdometryAndCloudCanBeOptionalForPureTeleop() {
 
 void testScanRequiresFreshLocalCollisionGeometry() {
   lingtu::nav::endpoint::InputGateConfig cfg;
-  cfg.recovery_frames = 1;
   cfg.require_cloud = false;
   cfg.require_local_collision = true;
   cfg.require_localization_health = true;
@@ -205,7 +202,6 @@ void testLocalCollisionHoldDoesNotMaskPlanningInputs() {
   lingtu::nav::endpoint::InputGateConfig cfg;
   cfg.require_local_collision = true;
   cfg.require_localization_health = true;
-  cfg.recovery_frames = 1;
   for (int collision_case = 0; collision_case < 4; ++collision_case) {
     auto inputs = input(10.0, 10.0, 10.0, 10.0, false, 1);
     inputs.local_collision_stamp_s = collision_case == 0 ? 0.0 :
@@ -254,7 +250,6 @@ void testLocalCollisionHoldDoesNotMaskPlanningInputs() {
 
 void testTeleopAvoidRequiresFreshTraversabilityAndHealthyLocalization() {
   lingtu::nav::endpoint::InputGateConfig cfg;
-  cfg.recovery_frames = 1;
   cfg.require_traversability = true;
   cfg.require_localization_health = true;
   cfg.traversability_max_age_s = 0.5;
@@ -302,7 +297,6 @@ void testDivergentOdometryVelocityClosesTheGate() {
           "when DDS twist is zero");
 
   lingtu::nav::endpoint::InputGateConfig cfg;
-  cfg.recovery_frames = 1;
   cfg.require_cloud = false;
   cfg.odom_max_speed_mps = 3.0;
 
@@ -338,7 +332,6 @@ void testSingleSampleOdometryPoseImpulseDoesNotCloseTheGate() {
           "one MuJoCo contact-tick pose impulse must not become an odometry overspeed");
 
   lingtu::nav::endpoint::InputGateConfig cfg;
-  cfg.recovery_frames = 1;
   cfg.require_cloud = false;
   cfg.odom_max_speed_mps = 3.0;
   lingtu::nav::endpoint::InputGate gate(cfg);
@@ -505,7 +498,6 @@ void testStopEvidenceUsesFreshPlanarPoseInsteadOfBiasedVelocityState() {
 
 void testLocalizationStateAndCatastrophicReasonCloseTheGate() {
   lingtu::nav::endpoint::InputGateConfig cfg;
-  cfg.recovery_frames = 1;
   cfg.require_odom = false;
   cfg.require_cloud = false;
   cfg.require_localization_health = true;
@@ -531,7 +523,6 @@ void testLocalizationStateAndCatastrophicReasonCloseTheGate() {
 
 void testSafetyInputsUseSourceTimestamps() {
   lingtu::nav::endpoint::InputGateConfig cfg;
-  cfg.recovery_frames = 1;
   cfg.require_odom = false;
   cfg.require_cloud = false;
   cfg.require_traversability = true;
@@ -565,7 +556,6 @@ void testDriverControlMustBeFreshAndReady() {
   cfg.require_cloud = false;
   cfg.require_driver_control = true;
   cfg.driver_control_max_age_s = 0.35;
-  cfg.recovery_frames = 1;
   lingtu::nav::endpoint::InputGate gate(cfg);
 
   lingtu::nav::endpoint::InputSnapshot inputs;
@@ -611,7 +601,6 @@ void testSourceOrderIsIndependentOfReceiverWallClock() {
 
 void testInputFreshnessUsesReceiverSteadyClock() {
   lingtu::nav::endpoint::InputGateConfig cfg;
-  cfg.recovery_frames = 1;
   cfg.require_odom = true;
   cfg.require_cloud = true;
   cfg.require_traversability = true;

@@ -6,6 +6,7 @@ get_filename_component(LINGTU_NAV_ROOT
   "${LINGTU_NAV_CPP_ROOT}/.." ABSOLUTE)
 get_filename_component(LINGTU_SRC_ROOT
   "${LINGTU_NAV_ROOT}/.." ABSOLUTE)
+include("${LINGTU_SRC_ROOT}/../scripts/build/cmake/settings.cmake")
 
 set(LINGTU_NAV_INCLUDE_DIR "${LINGTU_NAV_CPP_ROOT}/include")
 set(LINGTU_NAV_LOCAL_PLANNING_DIR "${LINGTU_NAV_CPP_ROOT}/planning/local")
@@ -57,6 +58,7 @@ if(NOT TARGET lingtu_nav_far)
     "${LINGTU_NAV_GLOBAL_PLANNING_DIR}/far/planner.cpp")
   add_library(LingTuNav::far ALIAS lingtu_nav_far)
   target_compile_features(lingtu_nav_far PUBLIC cxx_std_17)
+  target_link_libraries(lingtu_nav_far PUBLIC "$<BUILD_INTERFACE:lingtu_settings>")
   target_include_directories(lingtu_nav_far PUBLIC
     "$<BUILD_INTERFACE:${LINGTU_NAV_CPP_ROOT}>")
   set_target_properties(lingtu_nav_far PROPERTIES
@@ -94,7 +96,7 @@ if(NOT TARGET lingtu_nav_spline)
   target_include_directories(lingtu_nav_spline PUBLIC
     "$<BUILD_INTERFACE:${LINGTU_NAV_CPP_ROOT}>"
     "$<BUILD_INTERFACE:${LINGTU_NAV_INCLUDE_DIR}>")
-  target_link_libraries(lingtu_nav_spline PUBLIC Eigen3::Eigen)
+  target_link_libraries(lingtu_nav_spline PUBLIC Eigen3::Eigen "$<BUILD_INTERFACE:lingtu_settings>")
   set_target_properties(lingtu_nav_spline PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
   target_compile_options(lingtu_nav_spline PRIVATE
@@ -150,7 +152,7 @@ if(NOT TARGET lingtu_nav_follower)
   target_include_directories(lingtu_nav_follower PUBLIC
     "$<BUILD_INTERFACE:${LINGTU_NAV_CPP_ROOT}>"
     "$<BUILD_INTERFACE:${LINGTU_NAV_INCLUDE_DIR}>")
-  target_link_libraries(lingtu_nav_follower PRIVATE lingtu_nav_spline)
+  target_link_libraries(lingtu_nav_follower PUBLIC "$<BUILD_INTERFACE:lingtu_settings>" PRIVATE lingtu_nav_spline)
   set_target_properties(lingtu_nav_follower PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
   target_compile_options(lingtu_nav_follower PRIVATE

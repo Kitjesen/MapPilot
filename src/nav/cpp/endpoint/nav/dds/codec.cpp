@@ -342,34 +342,6 @@ std::vector<float> terrainCloudToXyzh(const lingtu_dds_PointCloud2 &msg,
   return decodeCloudToXyzh(msg, max_points, map_body, map_odom, true);
 }
 
-nav_kernel::LocalCollisionMapView LocalCollisionMap::view() const noexcept {
-  const auto *bits = inflated_occupied_bits.get();
-  nav_kernel::LocalCollisionMapView result{
-      bits == nullptr || bits->empty() ? nullptr : bits->data(),
-      bits == nullptr ? 0U : bits->size(),
-      size_x,
-      size_y,
-      size_z,
-      resolution,
-      aabb_min,
-      aabb_max,
-      reset_epoch,
-      observation_sequence,
-      generation,
-      stamp_s,
-      receive_stamp_s,
-      complete,
-      live,
-  };
-  result.inflatedStorage = inflated_occupied_bits;
-  result.measuredOccupiedStorage = measured_occupied_bits;
-  result.knownFreeStorage = known_free_bits;
-  result.terrain = terrain;
-  result.occupiedCells = occupied_cells;
-  result.occupiedCellsKnown = occupied_cells_known;
-  return result;
-}
-
 Decoded<LocalCollisionMap> decodeLocalCollisionMap(
     const lingtu_dds_MapCollisionLayer &msg) {
   Decoded<LocalCollisionMap> decoded;

@@ -215,33 +215,6 @@ TEST(LocalCollisionMapView, ObservedClearBoxKeepsCoverageAndPositiveVolumeBounda
   EXPECT_FALSE(view.observedClearBox({0,.01,.01},{.1,.09,.09}));
 }
 
-TEST(LocalCollisionMapView, MeasuredCylinderUsesRawHitsAndActualCircularFootprint) {
-  auto view=observedFreeFixture();
-  // Inflation marks everything occupied; raw hits remain independently queried.
-  EXPECT_FALSE(view.measuredOccupiedCylinder({0,0,.25},.2,.1,.1));
-  view.measuredOccupiedStorage=std::make_shared<const std::vector<std::uint8_t>>(2,255U);
-  EXPECT_TRUE(view.measuredOccupiedCylinder({0,0,.25},.2,.1,.1));
-  EXPECT_FALSE(view.measuredOccupiedCylinder({0,0,1.0},.2,.1,.1));
-  view.measuredOccupiedStorage=std::make_shared<const std::vector<std::uint8_t>>(
-      std::initializer_list<std::uint8_t>{1U,0U});
-  // Hit bounds x=[-.5,-.25], y=[-.25,0] intersect the square but not this circle.
-  EXPECT_FALSE(view.measuredOccupiedCylinder({0,.1,.125},.26,.1,.1));
-  EXPECT_TRUE(view.measuredOccupiedCylinder({0,0,.125},.26,.1,.1));
-  // Ground cell ending exactly at the body's lower face is not a body hit.
-  EXPECT_FALSE(view.measuredOccupiedCylinder({-.375,-.125,.35},.1,.1,.1));
-  EXPECT_TRUE(view.measuredOccupiedCylinder({-.375,-.125,.349},.1,.1,.1));
-}
-
-TEST(LocalCollisionMapView, MeasuredCylinderPreservesLegacyHemisphere) {
-  auto view=observedFreeFixture();
-  view.measuredOccupiedStorage=std::make_shared<const std::vector<std::uint8_t>>(
-      std::initializer_list<std::uint8_t>{0U,1U});
-  // Upper corner of a cylinder lies outside the legacy hemisphere.
-  EXPECT_TRUE(view.measuredOccupiedCylinder({0,0,0},.3,0,.3));
-  EXPECT_FALSE(view.measuredOccupiedCylinder({0,0,0},.3,0,.3,true));
-  EXPECT_TRUE(view.measuredOccupiedCylinder({-.375,-.125,0},.3,0,.3,true));
-}
-
 static int correspondenceVoxel(double x, double y, double searchRadius) {
   constexpr double voxelSize = 0.02;
   constexpr double offsetX = 3.2;
@@ -599,7 +572,6 @@ TEST(LocalPlanner, TwoWayDriveKeepsCloseBehindGoalTrackable) {
   p.useTraversabilityCost = false;
   p.pathScaleBySpeed = false;
   p.pathRangeBySpeed = false;
-  p.goalBehindRange = 0.8;
 
   PlannerFixture planner(p);
   ASSERT_TRUE(planner.configure(pathsDir.string()));
@@ -623,7 +595,6 @@ TEST(LocalPlanner, SingleDirectionDriveReleasesCloseBehindGoalAfterFreeze) {
   p.useTraversabilityCost = false;
   p.pathScaleBySpeed = false;
   p.pathRangeBySpeed = false;
-  p.goalBehindRange = 0.8;
 
   PlannerFixture planner(p);
   ASSERT_TRUE(planner.configure(pathsDir.string()));
@@ -1658,7 +1629,6 @@ TEST(RecoverySearch, FallsBackToVerifiedRotationWhenTranslationIsBlocked) {
   EXPECT_EQ(result.action, RecoveryAction::Rotate);
   EXPECT_TRUE(result.pathBody.empty());
   EXPECT_NEAR(std::abs(result.rotationDeltaRad), params.minRotationRad, 1e-9);
-  EXPECT_GT(std::abs(result.directCommand.wz), 0.0);
 }
 
 TEST(RecoverySearch, CurrentFootprintBlindCellsDoNotBlockVerifiedMotion) {

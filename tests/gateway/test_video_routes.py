@@ -15,7 +15,7 @@ from gateway.routes import video
 from gateway.routes.video import register_video_routes
 
 
-def client_for(monkeypatch, handler, *, native="", ice=None, status_file=""):
+def client_for(monkeypatch, handler, *, native="", ice=None, status_file="", camera=None):
     original = httpx.AsyncClient
     transport = httpx.MockTransport(handler)
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: original(transport=transport, **kwargs))
@@ -26,6 +26,7 @@ def client_for(monkeypatch, handler, *, native="", ice=None, status_file=""):
         _webrtc_ice_servers=ice or [],
         _webrtc_rotation=180,
         _webrtc_status_file=str(status_file),
+        _all_modules={"camera": camera} if camera is not None else {},
     )
     register_video_routes(app, gateway)
     return TestClient(app)
@@ -160,3 +161,81 @@ def test_native_listener_alone_does_not_claim_fresh_video(monkeypatch, tmp_path)
 
     path.write_text(json.dumps({"ready": False, "status": "stopped"}))
     assert client.get("/api/v1/webrtc/status").json()["available"] is False
+
+
+def video_snapshot(**updates):
+    return {
+        "schema_version": "lingtu.camera_video.status.v1",
+        "status": "running", "ready": True, "source_fresh": True,
+        "heartbeat_timestamp_s": time.time(), "source_generation": 8, "source_sequence": 15,
+        "frame_age_ms": 12, "encoder": "x264enc", "last_error": "",
+        **updates,
+    }
+
+
+def test_unified_diagnostics_uses_observations_without_opening_a_camera_or_media_session(monkeypatch, tmp_path):
+    methods = []
+    path = tmp_path / "video.json"
+    path.write_text(json.dumps(video_snapshot(endpoint="http://secret:credential@internal/whep?token=value")))
+    port = {"msg_count": 30, "rate_hz": 30, "stale_ms": 20}
+    camera = SimpleNamespace(health=lambda: {"ports_out": {"color_image": port}})
+
+    def upstream(request):
+        methods.append(request.method)
+        return httpx.Response(204)
+
+    client = client_for(monkeypatch, upstream, native="http://127.0.0.1:9090/whep/endpoint", status_file=path, camera=camera)
+    response = client.get("/api/v1/camera/diagnostics")
+    status = response.json()
+    assert response.status_code == 200 and methods == ["OPTIONS"]
+    assert status["schema_version"] == "lingtu.camera_video.diagnostics.v1"
+    assert status["camera"]["frames_fresh"] is True
+    assert status["camera"]["physical_online"] is None
+    assert status["video"]["pipeline_ready"] is True and status["video"]["encoder"] == "x264enc"
+    assert status["whep"]["available"] is True and status["ready_for_receiver"] is True
+    assert status["receiver"]["decoded_frames_advancing"] is None
+    assert status["video"]["encoder_output_verified"] is None
+    assert "credential" not in response.text and "internal" not in response.text
+
+
+@pytest.mark.parametrize("updates,reason", [
+    ({"source_fresh": False}, "video_source_not_ready"),
+    ({"schema_version": "old"}, "video_status_invalid"),
+    ({"heartbeat_timestamp_s": time.time() - 10}, "video_status_stale"),
+    ({"heartbeat_timestamp_s": time.time() + 3600}, "video_status_stale"),
+])
+def test_diagnostics_rejects_stale_or_invalid_ready_snapshots(monkeypatch, tmp_path, updates, reason):
+    path = tmp_path / "video.json"
+    path.write_text(json.dumps(video_snapshot(**updates)))
+    client = client_for(monkeypatch, lambda request: httpx.Response(204), native="http://127.0.0.1:9090/whep/endpoint", status_file=path)
+    status = client.get("/api/v1/camera/diagnostics").json()
+    assert status["video"]["pipeline_ready"] is False
+    assert status["video"]["reason"] == reason
+    assert status["ready_for_receiver"] is False
+
+
+def test_diagnostics_separates_camera_frames_pipeline_and_whep_failure(monkeypatch, tmp_path):
+    path = tmp_path / "video.json"
+    path.write_text(json.dumps(video_snapshot(last_error="failed http://user:password@internal/path")))
+    port = {"msg_count": 30, "rate_hz": 0, "stale_ms": 6000}
+    camera = SimpleNamespace(health=lambda: {"ports_out": {"color_image": port}})
+    client = client_for(monkeypatch, lambda request: httpx.Response(503), native="http://127.0.0.1:9090/whep/endpoint", status_file=path, camera=camera)
+    response = client.get("/api/v1/camera/diagnostics")
+    status = response.json()
+    assert status["camera"]["frames_fresh"] is False
+    assert status["camera"]["reason"] == "camera_frames_stale"
+    assert status["video"]["pipeline_ready"] is True
+    assert status["video"]["last_error"] == "native_video_error"
+    assert status["whep"]["available"] is False and status["ready_for_receiver"] is False
+    assert "password" not in response.text
+
+
+def test_diagnostics_keeps_unobserved_native_pipeline_unknown_for_go2rtc(monkeypatch):
+    client = client_for(monkeypatch, lambda request: httpx.Response(200, json={"cam": {}}))
+    status = client.get("/api/v1/camera/diagnostics").json()
+    assert status["camera"]["status"] == "not_loaded"
+    assert status["camera"]["frames_fresh"] is None
+    assert status["video"]["pipeline_ready"] is None
+    assert status["video"]["reason"] == "native_video_status_not_supported"
+    assert status["whep"]["available"] is True
+    assert status["ready_for_receiver"] is None

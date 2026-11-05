@@ -113,7 +113,8 @@ from sim.scripts.mujoco.native_dds_sensors import (
 )
 from sim.scripts.mujoco.product_acceptance import classify_evidence
 
-from lingtu.assembly.config.native_navigation import compile_native_nav_config, mapd_environment
+from lingtu.assembly.config.maps import default_map_settings, mapd_environment
+from lingtu.assembly.config.native_navigation import compile_native_nav_config
 from lingtu.sim.acceptance import load_manifest as _load_acceptance_manifest
 from lingtu.sim.acceptance import validate_runner_plan
 from lingtu.sim.viewer_goal import ViewerGoal
@@ -3303,7 +3304,8 @@ def _run_phase(
             "LINGTU_NAV_LOCAL_PLANNER_BACKEND": local_planner_backend,
         }
     )
-    native_map_env.update(mapd_environment(native_map_env))
+    for key, value in mapd_environment(default_map_settings(), native_map_env).items():
+        native_map_env.setdefault(key, value)
     mapd_command, mapd_env = _native_mapd_launch(
         binary=binaries["mapd"],
         domain_id=domain_id,
@@ -3386,7 +3388,9 @@ def _run_phase(
         _native_path_arg(binaries["navigation"], paths["planner"]),
         *_planner_constraint_args(manifest),
         "--tick-hz",
-        str(float(navigation_runtime_cfg.get("tick_hz", 20.0))),
+        str(float(navigation_runtime_cfg.get(
+            "tick_hz", navigation_environment["LINGTU_NAV_DDS_TICK_HZ"]
+        ))),
         "--control-loop-deadline-miss-ratio-limit",
         str(
             float(
@@ -3430,8 +3434,6 @@ def _run_phase(
         str(float(runtime_tolerances.get("cloud_pose_max_gap_s") or 0.2)),
         "--input-future-tolerance-s",
         str(float(runtime_tolerances.get("input_future_tolerance_s") or 0.05)),
-        "--input-recovery-frames",
-        str(int(runtime_tolerances.get("input_recovery_frames") or 1)),
         "--publish-cmd-vel",
         "true" if bool(phase_cfg.get("publish_cmd_vel")) else "false",
         "--check-obstacle",
@@ -4481,13 +4483,13 @@ def _product_runtime_sample(root, product_session_id, max_age, localization="ltl
         snapshot_current and slam.get("has_odom") is True
         and slam.get("state") == "TRACKING"
         and (localization == "mujoco_truth" or slam.get("odom_prior_enabled") is False)
-        and 0 <= now - float(slam.get("stamp_s", 0)) <= max_age
         and (slam.get("map_odom_tf") or {}).get("valid") is True
     )
     health = nav.get("control_loop_health") or {}
     ready = (localization_ready and (nav.get("input_gate") or {}).get("ready") is True
              and health.get("ready") is True and health.get("healthy") is True)
-    return {"wall_s": now, "ready": ready, "nav": nav, "slam": slam, "live": live}
+    return {"wall_s": now, "ready": ready, "snapshot_current": snapshot_current,
+            "localization_ready": localization_ready, "nav": nav, "slam": slam, "live": live}
 
 
 def _stair_leg_evidence(leg, samples, profile_report, task_id, initial_profile, limits):
@@ -4563,7 +4565,10 @@ def run_attached_goal(plan, run_plan_path, product_session_id, manifest, out):
                                               report["localization"])
             startup_samples.append({
                 "wall_s": sample["wall_s"], "ready": sample["ready"],
+                "snapshot_current": sample["snapshot_current"],
+                "localization_ready": sample["localization_ready"],
                 "input_gate": sample["nav"].get("input_gate"),
+                "control_loop_health": sample["nav"].get("control_loop_health"),
                 "slam_state": sample["slam"].get("state"),
             })
             now = time.monotonic()

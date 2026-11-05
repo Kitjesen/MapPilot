@@ -4,11 +4,11 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-ERASOR2_DIR="${LINGTU_ERASOR2_DIR:-${REPO_ROOT}/third_party/research_nav/ERASOR2}"
-BUILD_DIR="${LINGTU_PRUNE_BUILD_DIR:-${REPO_ROOT}/build/prune}"
-RUN_FETCH=0
-BUILD_ERASOR2=0
-RUN_ERASOR2=0
+DEFAULT_BUILD_DIR="${REPO_ROOT}/build/prune"
+if grep -qiE "(microsoft|wsl)" /proc/version 2>/dev/null; then
+  DEFAULT_BUILD_DIR="${REPO_ROOT}/build/prune_wsl"
+fi
+BUILD_DIR="${LINGTU_PRUNE_BUILD_DIR:-${DEFAULT_BUILD_DIR}}"
 STATUS="pass"
 ITEMS=()
 
@@ -18,32 +18,14 @@ Usage:
   bash tools/maps/prune_check.sh [options]
 
 Options:
-  --fetch          Fetch pinned ERASOR2 source into third_party/research_nav/ERASOR2.
-  --build         Build the optional GPLv3 ERASOR2 backend.
-  --run           Run upstream ERASOR2 after staging a tiny smoke map. Implies --build.
   --help          Show this message.
 
-Default behavior checks robot readiness, builds the default LingTu map
-cleaner, and runs native smoke tests. It reports missing optional ERASOR2
-checkout/dependencies as blocked, not as a default failure.
+Build the production cleaner and run a native smoke test.
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --fetch)
-      RUN_FETCH=1
-      shift
-      ;;
-    --build)
-      BUILD_ERASOR2=1
-      shift
-      ;;
-    --run)
-      BUILD_ERASOR2=1
-      RUN_ERASOR2=1
-      shift
-      ;;
     -h|--help)
       usage
       exit 0
@@ -98,17 +80,6 @@ run_step() {
     add_item "${name}" "fail" "rc=${rc}; ${output}"
   fi
   return "${rc}"
-}
-
-pkg_or_config() {
-  local pkg="$1"
-  local cmake_file="$2"
-  if have pkg-config && pkg-config --exists "${pkg}" 2>/dev/null; then
-    pkg-config --modversion "${pkg}" 2>/dev/null
-    return 0
-  fi
-  find /usr/lib /usr/share /usr/local/lib /usr/local/share "${REPO_ROOT}/third_party/install" \
-    -name "${cmake_file}" -print -quit 2>/dev/null | grep -q .
 }
 
 write_smoke_map() {
@@ -169,7 +140,7 @@ POSES
 
 cd "${REPO_ROOT}" || exit 1
 
-for cmd in git cmake c++; do
+for cmd in cmake c++; do
   if have "${cmd}"; then
     add_item "cmd:${cmd}" "pass" "$("${cmd}" --version 2>/dev/null | head -1)"
   else
@@ -177,30 +148,9 @@ for cmd in git cmake c++; do
   fi
 done
 
-if [[ ${RUN_FETCH} -eq 1 ]]; then
-  run_step "fetch_erasor2" bash scripts/build/fetch_erasor2.sh
-fi
-
-if [[ -f "${ERASOR2_DIR}/CMakeLists.txt" ]]; then
-  add_item "erasor2_checkout" "pass" "${ERASOR2_DIR}"
-else
-  add_item "erasor2_checkout" "blocked" "missing ${ERASOR2_DIR}; run scripts/build/fetch_erasor2.sh"
-fi
-
-for spec in "eigen3:Eigen3Config.cmake" "pcl_common:PCLConfig.cmake" "opencv4:OpenCVConfig.cmake" "yaml-cpp:yaml-cpp-config.cmake"; do
-  pkg="${spec%%:*}"
-  cmake_file="${spec#*:}"
-  if detail="$(pkg_or_config "${pkg}" "${cmake_file}" 2>/dev/null)"; then
-    add_item "dep:${pkg}" "pass" "${detail:-found ${cmake_file}}"
-  else
-    add_item "dep:${pkg}" "blocked" "missing ${pkg} or ${cmake_file}"
-  fi
-done
-
-run_step "build_default_prune" bash scripts/build/build_prune.sh
+run_step "build_default_prune" env LINGTU_PRUNE_BUILD_DIR="${BUILD_DIR}" bash scripts/build/build_prune.sh
 
 SMOKE_ROOT="${TMPDIR:-/tmp}/lingtu_prune_check_map"
-SMOKE_STAGE="${TMPDIR:-/tmp}/lingtu_prune_check_stage"
 write_smoke_map "${SMOKE_ROOT}"
 
 if [[ -x "${BUILD_DIR}/prune" ]]; then
@@ -209,43 +159,10 @@ else
   add_item "prune_smoke" "fail" "missing ${BUILD_DIR}/prune"
 fi
 
-if [[ ${BUILD_ERASOR2} -eq 1 ]]; then
-  output="$(LINGTU_PRUNE_ERASOR2=ON bash scripts/build/build_prune.sh 2>&1)"
-  rc=$?
-  if [[ ${rc} -eq 0 ]]; then
-    add_item "build_erasor2_backend" "pass" "${output}"
-  else
-    add_item "build_erasor2_backend" "fail" "rc=${rc}; ${output}"
-  fi
-  rm -rf "${SMOKE_STAGE}"
-  if [[ -x "${BUILD_DIR}/erasor2_stage" ]]; then
-    run_step "erasor2_stage_smoke" "${BUILD_DIR}/erasor2_stage" --map-dir "${SMOKE_ROOT}" --out "${SMOKE_STAGE}" --overwrite
-  else
-    add_item "erasor2_stage_smoke" "fail" "missing ${BUILD_DIR}/erasor2_stage"
-  fi
-  if [[ -x "${BUILD_DIR}/erasor2_clean" ]]; then
-    run_step "erasor2_clean_skip_run" "${BUILD_DIR}/erasor2_clean" --map-dir "${SMOKE_ROOT}" --stage-dir "${SMOKE_STAGE}" --overwrite --skip-run
-  else
-    add_item "erasor2_clean_skip_run" "fail" "missing ${BUILD_DIR}/erasor2_clean"
-  fi
-else
-  add_item "build_erasor2_backend" "blocked" "not requested; pass --build after checkout/deps are present"
-  add_item "erasor2_stage_smoke" "blocked" "optional ERASOR2 backend not requested"
-fi
-
-if [[ ${RUN_ERASOR2} -eq 1 ]]; then
-  if [[ -x "${BUILD_DIR}/erasor2_clean" ]]; then
-    run_step "erasor2_full_smoke" "${BUILD_DIR}/erasor2_clean" --map-dir "${SMOKE_ROOT}" --stage-dir "${SMOKE_STAGE}" --overwrite
-  else
-    add_item "erasor2_full_smoke" "fail" "missing ${BUILD_DIR}/erasor2_clean"
-  fi
-fi
-
 printf '{\n'
 printf '  "schema": "lingtu.prune_check.v1",\n'
 printf '  "status": "%s",\n' "$(json_escape "${STATUS}")"
 printf '  "repo_root": "%s",\n' "$(json_escape "${REPO_ROOT}")"
-printf '  "erasor2_dir": "%s",\n' "$(json_escape "${ERASOR2_DIR}")"
 printf '  "build_dir": "%s",\n' "$(json_escape "${BUILD_DIR}")"
 printf '  "items": [\n'
 for i in "${!ITEMS[@]}"; do
@@ -259,8 +176,5 @@ printf '}\n'
 
 if [[ "${STATUS}" == "fail" ]]; then
   exit 1
-fi
-if [[ "${STATUS}" == "blocked" && ( ${BUILD_ERASOR2} -eq 1 || ${RUN_ERASOR2} -eq 1 ) ]]; then
-  exit 3
 fi
 exit 0

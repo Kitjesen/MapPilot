@@ -79,7 +79,7 @@ ClosedLoopControllerOutput ClosedLoopController::step(
 
   const double desiredHeading = state.desiredHeading
       ? *state.desiredHeading
-      : desiredYaw(evaluationTime, desiredPosition, state.yaw,
+      : desiredYaw(evaluationTime, state.yaw,
                    std::max(0.0, params.timeForward));
   const double yawError = state.desiredYawRate ? 0.0 : normalizeAngle(desiredHeading - state.yaw);
   const double yawLimit =
@@ -171,20 +171,11 @@ std::int64_t ClosedLoopController::trajectoryId() const noexcept {
 }
 
 double ClosedLoopController::desiredYaw(
-    double time, const Eigen::Vector3d &desiredPosition, double currentYaw,
+    double time, double currentYaw,
     double timeForward) const {
-  if(timeForward<=0) {
-    const Eigen::Vector3d velocity=velocityTrajectory_.evaluateDeBoorT(time);
-    // Tangent execution shares Grid::trajectoryOccupancy's quiet-speed rule.
-    return velocity.head<2>().norm()<=0.03 ? currentYaw : std::atan2(velocity.y(),velocity.x());
-  }
-  const double lookaheadTime = std::min(durationS_, time + timeForward);
-  Eigen::Vector3d direction =
-      positionTrajectory_.evaluateDeBoorT(lookaheadTime) - desiredPosition;
-  if (direction.head<2>().squaredNorm() < 1e-4) {
-    direction = velocityTrajectory_.evaluateDeBoorT(time);
-  }
-  if (direction.head<2>().squaredNorm() < 1e-4) return currentYaw;
+  const Eigen::Vector3d direction =
+      positionTrajectory_.headingDirection(time, velocityTrajectory_, timeForward);
+  if (direction.head<2>().squaredNorm() == 0.0) return currentYaw;
   return std::atan2(direction.y(), direction.x());
 }
 

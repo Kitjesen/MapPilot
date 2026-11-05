@@ -339,9 +339,15 @@ StairTraversalOutput StairTraversal::step(const nav_kernel::Pose& body,
     return out;
   }
   const bool aligned = std::abs(nav_kernel::normalizeAngle(body.yaw - *out.bodyYaw)) <= 0.12;
-  if (distance > 0.08 || !aligned || !quiet || !within_width) {
+  if (distance > 0.08 || !aligned || !within_width) {
     out.phase = StairPhase::Approach;
     out.reason = "stair_approach";
+    return out;
+  }
+  if (!quiet) {
+    out.phase = StairPhase::Approach;
+    out.hold = true;
+    out.reason = "stair_settling";
     return out;
   }
   profile_requested_ = true;

@@ -1,3 +1,5 @@
+#include <lingtu/settings.hpp>
+
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -190,15 +192,15 @@ std::string makeExploreBootId() {
 struct Config {
   int domain_id{0};
   std::optional<Route> route;
-  double tick_hz{2.0};
-  double command_retry_s{3.0};
-  double arrival_tolerance_m{0.65};
-  double goal_timeout_s{180.0};
-  double status_period_s{2.0};
-  double control_max_age_s{2.0};
-  int command_timeout_ms{10000};
-  double directed_target_max_ttl_s{3600.0};
-  double directed_progress_weight{4.0};
+  double tick_hz{lingtu::settings::explore::explore::tick_hz};
+  double command_retry_s{lingtu::settings::explore::explore::command_retry_s};
+  double arrival_tolerance_m{lingtu::settings::explore::explore::arrival_tolerance_m};
+  double goal_timeout_s{lingtu::settings::explore::explore::goal_timeout_s};
+  double status_period_s{lingtu::settings::explore::explore::status_period_s};
+  double control_max_age_s{lingtu::settings::explore::explore::control_max_age_s};
+  int command_timeout_ms{lingtu::settings::explore::explore::command_timeout_ms};
+  double directed_target_max_ttl_s{lingtu::settings::explore::explore::directed_target_max_ttl_s};
+  double directed_progress_weight{lingtu::settings::explore::explore::directed_progress_weight};
   std::string status_file;
   std::string product;
   std::string product_session_id;
@@ -241,12 +243,16 @@ Config parseArgs(int argc, char **argv) {
   envDouble("LINGTU_EXPLORE_GOAL_TIMEOUT_S", config.goal_timeout_s);
   envDouble("LINGTU_EXPLORE_STATUS_PERIOD_S", config.status_period_s);
   envDouble("LINGTU_EXPLORE_CONTROL_MAX_AGE_S", config.control_max_age_s);
+  envDouble("LINGTU_EXPLORE_DIRECTED_TARGET_MAX_TTL_S", config.directed_target_max_ttl_s);
+  envDouble("LINGTU_EXPLORE_DIRECTED_PROGRESS_WEIGHT", config.directed_progress_weight);
   envDouble("LINGTU_EXPLORE_ODOM_MAX_AGE_S", config.input_gate.odometry_max_age_s);
   envDouble("LINGTU_EXPLORE_SNAPSHOT_MAX_AGE_S", config.input_gate.snapshot_max_age_s);
   envDouble("LINGTU_EXPLORE_TF_MAX_AGE_S", config.input_gate.transform_max_age_s);
   envDouble("LINGTU_EXPLORE_FUTURE_TOLERANCE_S", config.input_gate.future_tolerance_s);
   envInt("LINGTU_EXPLORE_MIN_FRONTIER_SIZE", config.policy.min_frontier_size);
   envDouble("LINGTU_EXPLORE_SENSOR_RANGE_M", config.policy.sensor_range_m);
+  envDouble("LINGTU_EXPLORE_SENSOR_HORIZONTAL_FOV_RAD", config.policy.sensor_horizontal_fov_rad);
+  envDouble("LINGTU_EXPLORE_SENSOR_YAW_OFFSET_RAD", config.policy.sensor_yaw_offset_rad);
   envDouble("LINGTU_EXPLORE_CANDIDATE_RADIUS_M", config.policy.candidate_radius_m);
   envDouble("LINGTU_EXPLORE_MIN_GOAL_DISTANCE_M", config.policy.min_goal_distance_m);
   envDouble("LINGTU_EXPLORE_NOVELTY_RADIUS_M", config.policy.novelty_radius_m);
@@ -267,10 +273,14 @@ Config parseArgs(int argc, char **argv) {
   envSize("LINGTU_EXPLORE_MAX_FRONTIER_CELLS", config.policy.max_frontier_cells);
   envSize("LINGTU_EXPLORE_MAX_FRONTIER_CLUSTERS", config.policy.max_frontier_clusters);
   envSize("LINGTU_EXPLORE_MAX_COVERAGE_CELLS", config.policy.max_coverage_cells);
+  envSize("LINGTU_EXPLORE_MAX_KNOWN_MAP_CANDIDATE_SAMPLES", config.policy.max_known_map_candidate_samples);
+  envSize("LINGTU_EXPLORE_MAX_KNOWN_MAP_GAIN_CHECKS_PER_CANDIDATE", config.policy.max_known_map_gain_checks_per_candidate);
+  envSize("LINGTU_EXPLORE_MAX_KNOWN_MAP_VISIBILITY_CHECKS", config.policy.max_known_map_visibility_checks);
   envSize("LINGTU_EXPLORE_MAX_KEYPOSES", config.policy.max_keyposes);
   envSize("LINGTU_EXPLORE_MAX_KEYPOSE_EDGES", config.policy.max_keypose_edges);
   envSize("LINGTU_EXPLORE_MAX_KEYPOSE_NEIGHBOR_LINKS", config.policy.max_keypose_neighbor_links);
   envSize("LINGTU_EXPLORE_MAX_ROUTE_TARGETS", config.policy.max_route_targets);
+  envBool("LINGTU_EXPLORE_KNOWN_MAP_REQUIRE_LINE_OF_SIGHT", config.policy.known_map_require_line_of_sight);
   envBool("LINGTU_EXPLORE_RETURN_HOME", config.policy.return_home_when_done);
 
   for (int index = 1; index < argc; ++index) {

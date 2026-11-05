@@ -74,7 +74,33 @@ struct LocalCollisionMap {
   std::size_t occupied_cells{0U};
   bool occupied_cells_known{false};
 
-  [[nodiscard]] nav_kernel::LocalCollisionMapView view() const noexcept;
+  [[nodiscard]] nav_kernel::LocalCollisionMapView view() const noexcept {
+    const auto *bits = inflated_occupied_bits.get();
+    nav_kernel::LocalCollisionMapView result{
+        bits == nullptr || bits->empty() ? nullptr : bits->data(),
+        bits == nullptr ? 0U : bits->size(),
+        size_x,
+        size_y,
+        size_z,
+        resolution,
+        aabb_min,
+        aabb_max,
+        reset_epoch,
+        observation_sequence,
+        generation,
+        stamp_s,
+        receive_stamp_s,
+        complete,
+        live,
+    };
+    result.inflatedStorage = inflated_occupied_bits;
+    result.measuredOccupiedStorage = measured_occupied_bits;
+    result.knownFreeStorage = known_free_bits;
+    result.terrain = terrain;
+    result.occupiedCells = occupied_cells;
+    result.occupiedCellsKnown = occupied_cells_known;
+    return result;
+  }
 };
 
 struct DriverControlSample {

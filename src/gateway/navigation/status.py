@@ -451,7 +451,7 @@ def evaluate_navigation_gate(
     *,
     facts: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Evaluate goal admission once for commands, readiness, and presentation."""
+    """Summarize cached navigation readiness for presentation and diagnostics."""
 
     if facts is None:
         from gateway.services.runtime_facts import capture_runtime_facts

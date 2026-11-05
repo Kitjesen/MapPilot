@@ -183,7 +183,14 @@ def test_lidar_module_reads_mock_sdk2_process_stream(monkeypatch, tmp_path) -> N
         def kill(self):
             pass
 
-    monkeypatch.setattr(sdk2_stream_source.subprocess, "Popen", lambda *_args, **_kw: FakeProcess())
+    commands = []
+
+    def start_process(command, **_kw):
+        commands.append(command)
+        return FakeProcess()
+
+    monkeypatch.setattr(sdk2_stream_source.subprocess, "Popen", start_process)
+    monkeypatch.setattr(sdk2_stream_source, "lidar_settings", lambda: {"scan_hz": 12.0, "imu_hz": 60.0})
 
     fake_bin = tmp_path / "livox_sdk2_stream"
     fake_cfg = tmp_path / "MID360_config.json"
@@ -214,6 +221,8 @@ def test_lidar_module_reads_mock_sdk2_process_stream(monkeypatch, tmp_path) -> N
         module.stop()
 
     assert len(scans) == 1
+    assert commands[0][commands[0].index("--publish-freq") + 1] == "12.0"
+    assert commands[0][commands[0].index("--imu-publish-freq") + 1] == "60.0"
     assert isinstance(scans[0], PointCloud2)
     assert scans[0].points.shape == (2, 4)
     assert raw_scans[0].points["offset_time_ns"].tolist() == [0, 1000]

@@ -61,6 +61,7 @@ int main() {
 
   const auto dir = tempMapDir();
   const auto save_status = backend->saveMap((dir / "map.pcd").string());
+  check(save_status.message == "map_snapshot_ready", "snapshot_reported_product_map_saved");
   check(save_status.ok, "save_map_failed");
   check(pathExists(dir / "map.pcd"), "map_pcd_missing");
   check(pathExists(dir / "poses.txt"), "poses_txt_missing");
@@ -70,12 +71,14 @@ int main() {
 
   const auto outputs = backend->outputs();
   check(outputs.alive, "not_alive");
-  check(outputs.map_loaded, "map_not_loaded");
+  check(!outputs.map_loaded, "saving_implicitly_loaded_localization_map");
   check((outputs.map_cloud_map != nullptr), "map_cloud_missing");
   check(outputs.observation_sequence == 1U, "observation_sequence_missing");
   check(outputs.source_epoch > 0U, "source_epoch_missing");
   check(outputs.map_cloud_map->points[0].offset_time_ns == 100, "point_offset_missing");
   check(!outputs.map_frame_jump, "unexpected_map_frame_jump");
+  check(backend->loadMap((dir / "map.pcd").string()).ok && backend->outputs().map_loaded,
+        "explicit_map_load_failed");
   const auto source_epoch = outputs.source_epoch;
   check(backend->reset().ok, "reset_failed");
   check(backend->outputs().source_epoch > source_epoch, "source_epoch_not_advanced");

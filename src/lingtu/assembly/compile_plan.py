@@ -9,20 +9,24 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from lingtu.assembly.config.camera import camera_environment
 from lingtu.assembly.config.endpoint_bindings import (
     endpoint_transport_for_config,
 )
+from lingtu.assembly.config.explore import explore_environment
+from lingtu.assembly.config.lidar import lidar_environment
+from lingtu.assembly.config.maps import mapd_environment
 from lingtu.assembly.config.native_navigation import (
     NATIVE_NAV_ENVIRONMENT,
     compile_native_nav_config,
-    mapd_environment,
 )
-from lingtu.assembly.config.native_parameters import resolve_parameters
+from lingtu.assembly.config.native_parameters import PARAMETER_SPECS, resolve_parameters
 from lingtu.assembly.config.product import (
     EnvSpec,
     resolve_product_host_runtime,
 )
 from lingtu.assembly.config.simulation import compile_simulation_snapshot
+from lingtu.assembly.config.slam import slam_environment
 from lingtu.assembly.graph import (
     ProcessSpec,
     load_runtime_graph,
@@ -224,14 +228,26 @@ def compile_run_plan(
             **resolved_config,
             "native_control_mode": lifecycle["native_control_mode"],
             "native_nav": dict(native_nav),
+            "maps": product_spec.get("maps"),
         },
+        settings_directory=graph.root / "settings",
     )
+    physical_limits = None
+    if env_spec.robot_config is not None:
+        speed = env_spec.robot_config.speed
+        if isinstance(speed.max_linear, bool) or isinstance(speed.max_angular, bool):
+            raise ValueError("RobotConfig speed.max_linear and speed.max_angular must be finite and positive")
+        physical_limits = (float(speed.max_linear), float(speed.max_angular))
+        if any(not math.isfinite(value) or value <= 0.0 for value in physical_limits):
+            raise ValueError("RobotConfig speed.max_linear and speed.max_angular must be finite and positive")
+        compiled_native_nav = compiled_native_nav.limit_motion(*physical_limits)
     native_nav_contract = dict(compiled_native_nav.native_nav)
     del native_nav_contract["octoplanner3d"]
     del native_nav_contract["recovery"]
     del native_nav_contract["smoothing"]
     process_environment = _process_environment(
         product=resolved_product,
+        settings=product_spec,
         env_spec=env_spec,
         native_environment=compiled_native_nav.environment,
         lifecycle=lifecycle,
@@ -257,6 +273,10 @@ def compile_run_plan(
     )
     if compiled_native_nav.native_nav["local_planner"] == "scan":
         path_speed = compiled_native_nav.parameters["path_follower_max_speed_mps"]
+        minimum_planner_speed = next(spec.minimum for spec in PARAMETER_SPECS
+                                    if spec.name == "scan_planner.max_velocity_mps")
+        # SCAN initializes above this floor, then applies the actual request speed.
+        planner_speed = max(path_speed, minimum_planner_speed)
         for axis in ("scan_follower.max_vx_mps", "scan_follower.max_vy_mps"):
             if axis in product_parameters:
                 product_parameters[axis] = min(float(product_parameters[axis]), path_speed)
@@ -266,13 +286,14 @@ def compile_run_plan(
             else "path_follower_max_speed_mps"
         ]
         env_parameters = {
-            "scan_planner.max_velocity_mps": compiled_native_nav.parameters["path_follower_max_speed_mps"],
+            "scan_planner.max_velocity_mps": planner_speed,
             "scan_planner.max_acceleration_mps2": compiled_native_nav.parameters["path_follower_max_accel_mps2"],
             "scan_follower.max_vx_mps": forward_limit,
             "scan_follower.max_yaw_rate_rad_s": compiled_native_nav.parameters["path_follower_max_yaw_rate_rad_s"],
             **env_parameters,
         }
     parameters = resolve_parameters(
+        settings_directory=graph.root / "settings",
         env_overrides=env_parameters,
         product_parameters=product_parameters,
         session_overrides=parameter_overrides,
@@ -281,7 +302,19 @@ def compile_run_plan(
             implementation=implementation,
             env_spec=graph.envs.get(env_name),
         ),
-    )
+    ).as_dict()
+    if physical_limits is not None and compiled_native_nav.native_nav["local_planner"] == "scan":
+        max_linear_mps, max_angular_rps = physical_limits
+        parameters["scan_planner.max_velocity_mps"] = max(
+            minimum_planner_speed,
+            min(parameters["scan_planner.max_velocity_mps"], math.hypot(max_linear_mps, max_linear_mps)),
+        )
+        for name, limit in (
+            ("scan_follower.max_vx_mps", max_linear_mps),
+            ("scan_follower.max_vy_mps", max_linear_mps),
+            ("scan_follower.max_yaw_rate_rad_s", max_angular_rps),
+        ):
+            parameters[name] = min(parameters[name], limit)
     return RunPlan.create(
         product=resolved_product,
         product_variant=resolved_product_variant,
@@ -301,7 +334,7 @@ def compile_run_plan(
         route_contract=route_contract,
         host_config=resolved_config,
         lifecycle=lifecycle,
-        parameters=parameters.as_dict(),
+        parameters=parameters,
         simulation=simulation,
     )
 
@@ -547,6 +580,7 @@ def _env_name(value: Any) -> str:
 def _process_environment(
     *,
     product: str,
+    settings: Mapping[str, Any],
     env_spec: EnvSpec,
     native_environment: Mapping[str, str],
     lifecycle: Mapping[str, Any],
@@ -565,23 +599,18 @@ def _process_environment(
             "live" if lifecycle["slam_mode"] == "mapping" else "map"
         )
     if "maps" in roles:
-        environment.update(mapd_environment(native_environment))
+        environment.update(mapd_environment(settings["maps"], native_environment))
+    if "slam" in roles:
+        environment.update(slam_environment(settings["slam"], simulation=env_spec.name == "sim"))
+    if "explore" in roles:
+        environment.update(explore_environment(settings["explore"]))
     if env_spec.name == "real":
         environment["LINGTU_WEBRTC_URL"] = ""
-        if "video" in roles:
-            environment["LINGTU_VIDEO_LISTEN"] = "http://127.0.0.1:9090"
-            environment["LINGTU_WEBRTC_URL"] = environment["LINGTU_VIDEO_LISTEN"] + "/whep/endpoint"
-            environment["LINGTU_VIDEO_STATUS_FILE"] = "/dev/shm/lingtu/video_status.json"
         robot_config = env_spec.robot_config
         if robot_config is None:
             raise RuntimeError("real Env resolved without RobotConfig")
         if "camera" in roles:
-            camera = robot_config.camera
-            if camera.capture_driver not in {"orbbec_native", "realsense_native"}:
-                raise ValueError(f"unsupported camera capture driver: {camera.capture_driver}")
-            environment["LINGTU_CAMERA_DRIVER"] = camera.capture_driver
-            serial_key = "LINGTU_REALSENSE_SERIAL_NUMBER" if camera.capture_driver == "realsense_native" else "LINGTU_ORBBEC_SERIAL_NUMBER"
-            environment[serial_key] = camera.serial_number
+            environment.update(camera_environment(settings["camera"], robot_config.camera, include_video="video" in roles))
         driver = robot_config.driver
         speed = robot_config.speed
         safety = robot_config.safety
@@ -632,6 +661,7 @@ def _process_environment(
         if "slam" in roles:
             values["LINGTU_SLAM_CONFIG"] = env_spec.slam_config_ref
         if "lidar" in roles:
+            environment.update(lidar_environment(settings["lidar"], robot_config))
             values.update(
                 {
                     "LINGTU_LIVOX_LIDAR_IP": env_spec.lidar_ip,
@@ -664,9 +694,6 @@ def _process_environment(
             else "src/nav/cpp/planning/local/cmu/paths"
         )
         environment["LINGTU_LOCAL_PLANNER_PATHS"] = f"{root}/{profile}"
-        # CMU's collision threshold is calibrated for the upstream 5 cm
-        # obstacle voxel size. Keep SCAN's rolling-map pipeline independent.
-        environment["LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M"] = "0.05"
     if process_control == "subprocess":
         # SimProcessManager injects runtime identity after publishing the RunPlan.
         environment.pop("LINGTU_PRODUCT", None)

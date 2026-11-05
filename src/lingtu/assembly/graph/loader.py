@@ -10,6 +10,8 @@ from typing import Any
 from message.catalog import load_topics
 from runtime.yaml_helpers import load_yaml
 
+from .settings import load_settings
+
 SYSTEM_CONFIG_DIR = Path(__file__).resolve().parents[4] / "config" / "system"
 PRODUCT_HOST_CAPABILITIES = frozenset(
     {
@@ -81,6 +83,13 @@ def load_runtime_graph(root: str | Path | None = None) -> RuntimeGraph:
         "native_contract_topics": [spec["topic"] for spec in entries if spec.get("native_contract") is True],
     }
     products = _load_named_dir(graph_root / "products")
+    for product in products.values():
+        load_settings(product, graph_root / "settings")
+        variants = product.get("variants")
+        if isinstance(variants, Mapping):
+            for variant in variants.values():
+                if isinstance(variant, dict):
+                    load_settings(variant, graph_root / "settings")
     envs = _load_named_dir(graph_root / "envs")
     return RuntimeGraph(
         root=graph_root,
@@ -118,7 +127,22 @@ def resolve_product_variant_spec(
     resolved = {
         str(key): value for key, value in spec.items() if key not in {"default_variant", "product_variant", "variants"}
     }
-    resolved.update({str(key): value for key, value in variant.items()})
+    additions = {
+        "topics_add": "topics",
+        "capabilities_add": "capabilities",
+        "processes_add": "processes",
+        "optional_processes_add": "optional_processes",
+    }
+    resolved.update({str(key): value for key, value in variant.items() if key not in additions})
+    for key, field in additions.items():
+        if key not in variant:
+            continue
+        values = variant[key]
+        if not isinstance(values, list):
+            raise ValueError(f"Product {product!r} variant {selected_variant!r} {key} must be a list")
+        extra = _names(values, owner=key) if values else ()
+        base = _names(resolved[field], owner=field) if field in resolved else ()
+        resolved[field] = list(dict.fromkeys((*base, *extra)))
     resolved["product_variant"] = selected_variant
     return resolved
 

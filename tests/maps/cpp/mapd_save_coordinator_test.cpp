@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -211,9 +212,9 @@ void TestSaveMapRequiresMapProductSession() {
   assert(JsonObjectBoolAtPath(wrong_product, {"accepted"}) == false);
   assert(JsonObjectStringAtPath(wrong_product, {"reason_code"}) == "map_product_required");
   assert(JsonObjectStringAtPath(nav.RetrySaveMapJson("job"), {"reason_code"}) ==
-         "map_product_required");
+         "job_not_found");
   assert(JsonObjectStringAtPath(nav.CancelSaveMapJson("job"), {"reason_code"}) ==
-         "map_product_required");
+         "job_not_found");
 
   config.product = "map";
   config.product_session_id.clear();
@@ -222,6 +223,52 @@ void TestSaveMapRequiresMapProductSession() {
   assert(JsonObjectBoolAtPath(missing_session, {"accepted"}) == false);
   assert(JsonObjectStringAtPath(missing_session, {"reason_code"}) == "map_product_required");
   assert(exchange.published.empty());
+  std::filesystem::remove_all(root);
+}
+
+void TestPendingSavesKeepTheirOwnFailureReasons() {
+  const auto root = TempRoot();
+  MapsServiceCore service(MapsServiceConfig{MapStoreConfig{root}});
+  FakeExchange exchange;
+  SaveCoordinatorConfig config;
+  config.product = "map";
+  config.product_session_id = "failure-session";
+  SaveCoordinator coordinator(service, exchange, config);
+  struct FailureCase {
+    std::string job;
+    std::string message;
+    std::string health;
+    std::string expected;
+  };
+  const std::vector<FailureCase> cases = {
+      {"busy", "online_mapping_busy_retry_save", "SLAM snapshot accepted",
+       "online_mapping_busy_retry_save"},
+      {"health", "", "tracking quality below save threshold", "tracking quality below save threshold"},
+      {"empty", "", "", "SLAM rejected the map snapshot request"},
+  };
+  for (const auto &test : cases) {
+    assert(JsonObjectBoolAtPath(coordinator.SaveMapJson(test.job, test.job), {"accepted"}) == true);
+    const auto published = exchange.published.size();
+    assert(JsonObjectBoolAtPath(coordinator.SaveMapJson(test.job, test.job), {"accepted"}) == true);
+    assert(exchange.published.size() == published);
+  }
+  assert(exchange.published.size() == cases.size());
+  for (std::size_t i = cases.size(); i-- > 0;) {
+    SlamSnapshotAck ack;
+    ack.request_id = exchange.published[i].request_id;
+    ack.map_id = cases[i].job;
+    ack.message = cases[i].message;
+    ack.health_message = cases[i].health;
+    ack.healthy = i == 0;
+    exchange.acks.push_back(std::move(ack));
+  }
+  coordinator.Poll();
+  for (const auto &test : cases) {
+    const auto status = service.GetSaveMapStatusJson(test.job);
+    assert(JsonObjectStringAtPath(status, {"status", "state"}) == "FAILED");
+    assert(JsonObjectStringAtPath(status, {"status", "reason_code"}) == "slam_snapshot_failed");
+    assert(JsonObjectStringAtPath(status, {"status", "message"}) == test.expected);
+  }
   std::filesystem::remove_all(root);
 }
 
@@ -248,11 +295,182 @@ void TestLegacyTwoStepActionsAreNotPublic() {
   std::filesystem::remove_all(root);
 }
 
+void TestRetryAcrossMappingSessions() {
+  const auto root = TempRoot();
+  MapsServiceCore service(MapsServiceConfig{MapStoreConfig{root}});
+  FakeExchange previous_exchange;
+  SaveCoordinatorConfig config;
+  config.product = "map";
+  config.product_session_id = "previous-session";
+  SaveCoordinator previous(service, previous_exchange, config);
+  assert(JsonObjectBoolAtPath(previous.SaveMapJson("old-capture", "office"), {"accepted"}) == true);
+  assert(JsonObjectBoolAtPath(previous.CancelSaveMapJson("old-capture"), {"accepted"}) == true);
+
+  config.product_session_id = "current-session";
+  FakeExchange current_exchange;
+  SaveCoordinator current(service, current_exchange, config);
+  const auto retried = current.RetrySaveMapJson("old-capture");
+  assert(JsonObjectBoolAtPath(retried, {"accepted"}) == false);
+  assert(JsonObjectStringAtPath(retried, {"status", "job_id"}) == "old-capture");
+  assert(JsonObjectStringAtPath(retried, {"reason_code"}) == "snapshot_session_expired");
+  const auto status = service.GetSaveMapStatusJson("old-capture");
+  assert(JsonObjectStringAtPath(status, {"status", "state"}) == "FAILED");
+  assert(JsonObjectStringAtPath(status, {"status", "reason_code"}) == "snapshot_session_expired");
+  assert(JsonObjectStringAtPath(status, {"status", "product_session_id"}) == "previous-session");
+  assert(current_exchange.published.empty());
+  std::filesystem::remove_all(root);
+}
+
+std::string WaitForFailure(MapsServiceCore &service, const std::string &job_id) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < deadline) {
+    const auto status = service.GetSaveMapStatusJson(job_id);
+    if (JsonObjectStringAtPath(status, {"status", "state"}) == "FAILED") return status;
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  assert(false && "save job did not fail within the test deadline");
+  return {};
+}
+
+void TestCapturedRetryAcrossSessions() {
+  const auto root = TempRoot();
+  MapsServiceCore service(MapsServiceConfig{MapStoreConfig{root}});
+  FakeExchange previous_exchange;
+  SaveCoordinatorConfig config;
+  config.product = "map";
+  config.product_session_id = "previous-session";
+  config.request_defaults.require.octomap = false;
+  config.request_defaults.source.dynamic_filter_enabled = false;
+  config.request_defaults.pgo.executable = (root / "missing_map_optimizer").string();
+  SaveCoordinator previous(service, previous_exchange, config);
+  assert(JsonObjectBoolAtPath(previous.SaveMapJson("captured", "office"), {"accepted"}) == true);
+  const auto request = previous_exchange.published.back();
+  WriteSnapshotPcd(request.output_path);
+  std::ofstream(request.output_path.parent_path() / "pose_graph.constraints") << "explicit constraints\n";
+  SlamSnapshotAck ack;
+  ack.request_id = request.request_id;
+  ack.map_id = request.map_id;
+  ack.output_path = request.output_path;
+  ack.success = true;
+  ack.product_session_id = config.product_session_id;
+  ack.runtime_instance_id = "ltlio:boot:captured";
+  ack.reset_epoch = 1;
+  ack.observation_sequence = 1;
+  ack.point_count = 1;
+  ack.captured_at_ns = 1;
+  ack.frame_id = "map";
+  ack.healthy = true;
+  previous_exchange.acks.push_back(ack);
+  previous.Poll();
+  const auto failed = WaitForFailure(service, "captured");
+  assert(JsonObjectStringAtPath(failed, {"status", "phase"}) == "OPTIMIZE_SOURCE");
+
+  config.product_session_id = "current-session";
+  FakeExchange current_exchange;
+  SaveCoordinator current(service, current_exchange, config);
+  const auto retried = current.RetrySaveMapJson("captured");
+  assert(JsonObjectBoolAtPath(retried, {"accepted"}) == true);
+  assert(JsonObjectStringAtPath(retried, {"status", "job_id"}) == "captured");
+  assert(JsonObjectStringAtPath(retried, {"status", "state"}) == "QUEUED");
+  assert(JsonObjectStringAtPath(retried, {"status", "product_session_id"}) == "previous-session");
+  assert(current_exchange.published.empty());
+  static_cast<void>(WaitForFailure(service, "captured"));
+  std::filesystem::remove_all(root);
+}
+
+void TestManualCaptureCanProcessOutsideMapProduct() {
+  const auto root = TempRoot();
+  MapsServiceCore service(MapsServiceConfig{MapStoreConfig{root}});
+  FakeExchange exchange;
+  SaveCoordinatorConfig config;
+  config.product = "map";
+  config.product_session_id = "capture-session";
+  config.request_defaults.require.octomap = false;
+  config.request_defaults.source.dynamic_filter_enabled = false;
+  config.request_defaults.pgo.executable = (root / "missing_map_optimizer").string();
+  SaveCoordinator coordinator(service, exchange, config);
+  const auto submitted = lingtu::maps::mapd::query::DispatchServiceJson(
+      service, &coordinator,
+      R"({"action":"save_map","request_id":"manual","map_id":"office","auto_process":false})");
+  assert(submitted.ok);
+  const auto request = exchange.published.back();
+  WriteSnapshotPcd(request.output_path);
+  std::ofstream(request.output_path.parent_path() / "pose_graph.constraints") << "explicit constraints\n";
+  SlamSnapshotAck ack;
+  ack.request_id = request.request_id;
+  ack.map_id = request.map_id;
+  ack.output_path = request.output_path;
+  ack.success = true;
+  ack.product_session_id = config.product_session_id;
+  ack.runtime_instance_id = "ltlio:manual";
+  ack.reset_epoch = 1;
+  ack.observation_sequence = 1;
+  ack.point_count = 1;
+  ack.captured_at_ns = 1;
+  ack.frame_id = "map";
+  ack.healthy = true;
+  exchange.acks.push_back(ack);
+  coordinator.Poll();
+  const auto captured = service.GetSaveMapStatusJson("manual");
+  assert(JsonObjectStringAtPath(captured, {"status", "state"}) == "CAPTURED");
+  assert(JsonObjectBoolAtPath(captured, {"status", "source_saved"}) == true);
+  assert(service.SaveMapSource("manual") == request.output_path);
+  assert(!service.SaveMapSource("unknown").has_value());
+
+  FakeExchange nav_exchange;
+  config.product = "nav";
+  config.product_session_id = "nav-session";
+  SaveCoordinator nav(service, nav_exchange, config);
+  assert(JsonObjectBoolAtPath(nav.CancelSaveMapJson("manual"), {"accepted"}) == true);
+  const auto processed = lingtu::maps::mapd::query::DispatchServiceJson(
+      service, R"({"action":"process_save_map","job_id":"manual"})");
+  assert(processed.ok);
+  assert(JsonObjectStringAtPath(processed.json, {"status", "job_id"}) == "manual");
+  assert(JsonObjectStringAtPath(processed.json, {"status", "state"}) == "QUEUED");
+  assert(nav_exchange.published.empty());
+  static_cast<void>(WaitForFailure(service, "manual"));
+  assert(service.SaveMapSource("manual") == request.output_path);
+  std::filesystem::remove_all(root);
+}
+
+void TestRejectedReceiptKeepsNativeReason() {
+  const auto root = TempRoot();
+  MapsServiceCore service(MapsServiceConfig{MapStoreConfig{root}});
+  FakeExchange exchange;
+  SaveCoordinatorConfig config;
+  config.product = "map";
+  config.product_session_id = "receipt-session";
+  SaveCoordinator coordinator(service, exchange, config);
+  assert(JsonObjectBoolAtPath(coordinator.SaveMapJson("receipt", "office"), {"accepted"}) == true);
+  const auto request = exchange.published.back();
+  SlamSnapshotAck ack;
+  ack.request_id = request.request_id;
+  ack.map_id = request.map_id;
+  ack.output_path = request.output_path;
+  ack.success = true;
+  ack.product_session_id = config.product_session_id;
+  ack.frame_id = "map";
+  ack.healthy = true;
+  exchange.acks.push_back(ack);
+  coordinator.Poll();
+  const auto status = service.GetSaveMapStatusJson("receipt");
+  assert(JsonObjectStringAtPath(status, {"status", "state"}) == "FAILED");
+  assert(JsonObjectStringAtPath(status, {"status", "reason_code"}) == "snapshot_receipt_incomplete");
+  assert(JsonObjectStringAtPath(status, {"status", "message"}) ==
+         "snapshot receipt is missing SLAM boot, epoch, sequence, or point count");
+  std::filesystem::remove_all(root);
+}
+
 }  // namespace
 
 int main() {
   TestSaveMapRequestsSlamAndConsumesReceipt();
   TestSaveMapRequiresMapProductSession();
+  TestPendingSavesKeepTheirOwnFailureReasons();
   TestLegacyTwoStepActionsAreNotPublic();
+  TestRetryAcrossMappingSessions();
+  TestCapturedRetryAcrossSessions();
+  TestManualCaptureCanProcessOutsideMapProduct();
+  TestRejectedReceiptKeepsNativeReason();
   return 0;
 }

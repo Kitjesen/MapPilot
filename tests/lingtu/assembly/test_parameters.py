@@ -11,17 +11,29 @@ PRODUCT_PARAMETERS = {
 }
 
 
-def test_ordinary_scan_speed_defaults_are_one_meter_per_second() -> None:
+def test_scan_uses_shared_path_and_body_axis_limits() -> None:
     resolved = resolve_parameters()
     values = resolved.as_dict()
     environment = resolved.environment()
-    for name, key in (
-        ("scan_planner.max_velocity_mps", "LINGTU_NAV_SCAN_PLANNER_MAX_VELOCITY_MPS"),
-        ("scan_follower.max_vx_mps", "LINGTU_NAV_SCAN_MAX_VX_MPS"),
-        ("scan_follower.max_vy_mps", "LINGTU_NAV_SCAN_MAX_VY_MPS"),
+    for name, key, limit in (
+        ("scan_planner.max_velocity_mps", "LINGTU_NAV_SCAN_PLANNER_MAX_VELOCITY_MPS", 2 ** 0.5),
+        ("scan_follower.max_vx_mps", "LINGTU_NAV_SCAN_MAX_VX_MPS", 1.0),
+        ("scan_follower.max_vy_mps", "LINGTU_NAV_SCAN_MAX_VY_MPS", 1.0),
     ):
-        assert values[name] == 1.0
-        assert float(environment[key]) == 1.0
+        assert values[name] == limit
+        assert float(environment[key]) == limit
+
+
+@pytest.mark.parametrize("axis", ["vx", "vy"])
+@pytest.mark.parametrize("limit", [0.005, 0.0, -0.005])
+def test_scan_axis_limits_accept_positive_low_speeds(axis: str, limit: float) -> None:
+    name = f"scan_follower.max_{axis}_mps"
+    if limit <= 0.0:
+        with pytest.raises(ValueError):
+            resolve_parameters(session_overrides={name: limit})
+    else:
+        parameters = resolve_parameters(session_overrides={name: limit})
+        assert parameters.as_dict()[name] == limit
 
 
 def test_parameter_precedence_is_session_then_product_then_environment() -> None:
@@ -54,6 +66,7 @@ def test_product_parameters_have_higher_priority_than_env() -> None:
     [
         ({"segment.max_waypoints": 1}, "outside"),
         ({"map_input.max_cells": 1}, "outside"),
+        ({"map_input.max_cells": 1_048_577}, "outside"),
         ({"risk.unknown": 1}, "unknown runtime parameters"),
         (
             {"risk.stop_threshold": 40.0, "risk.resume_threshold": 50.0},
@@ -110,6 +123,7 @@ def test_scan_overrides_follow_the_existing_parameter_precedence() -> None:
 @pytest.mark.parametrize("overrides", [
     {"scan_planner.max_velocity_mps": True},
     {"scan_planner.max_velocity_mps": float("nan")},
+    {"scan_planner.max_velocity_mps": 0.02},
     {"scan_planner.max_acceleration_mps2": 0.0},
     {"scan_planner.control_point_spacing_m": 0.01},
     {"scan_planner.smooth_weight": -1.0},

@@ -19,10 +19,10 @@ visual:
 semantic:
   class: quadruped
 navigation_geometry:
-  body_file: collision/thunderv4_nominal.body2
+  body_file: collision/thunderv4_navigation.body2
   # base_link is near the torso bottom, not at half the standing robot height.
   # Fixed collision geoms span Z [-0.00209, 0.224772]. One 5 cm cell below
-  # base_link leaves 4.79 cm below the rigid torso; the legs own ground contact.
+  # base_link leaves 4.79 cm below the rigid torso for map inflation.
   collision_clearance_below_m: 0.05
   collision_clearance_above_m: 0.35
   # Standing base_link height for the packaged locomotion controller, with

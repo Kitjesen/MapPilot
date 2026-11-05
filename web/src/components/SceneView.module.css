@@ -2346,6 +2346,7 @@
 .sceneAlert > svg, .sceneAlert > button { flex-shrink: 0; }
 .sceneAlert > button { min-height: 28px; padding: 3px 8px; }
 .sceneAlertMessage { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capacityNotice { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .sceneAlertDetail { margin-left: auto; font-size: var(--t-caption-size); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 900px) { .sceneAlertDetail { display: none; } }
 @media (max-width: 560px) {

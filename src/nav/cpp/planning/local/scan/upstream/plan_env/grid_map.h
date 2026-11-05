@@ -17,20 +17,15 @@ class GridMap {
   explicit GridMap(const Grid &grid) noexcept;
 
   void setGrid(const Grid *grid) noexcept;
-  void setTrajectoryTimeOffset(double seconds) noexcept { trajectoryTimeOffsetS_ = seconds; }
 
   [[nodiscard]] double getResolution() const noexcept;
   [[nodiscard]] int getInflateOccupancy(const Eigen::Vector3d &position,
                                         double yaw) const noexcept;
   [[nodiscard]] int getInflateOccupancySegment(const Eigen::Vector3d &start, double startYaw,
                                                const Eigen::Vector3d &end, double endYaw) const noexcept;
-  [[nodiscard]] int getTrajectoryOccupancySegment(const Eigen::Vector3d &start,
-      const Eigen::Vector3d &velocity, const Eigen::Vector3d &end,
-      const Eigen::Vector3d &endVelocity, double startAheadS, double endAheadS) const noexcept;
 
  private:
   const Grid *grid_{nullptr};
-  double trajectoryTimeOffsetS_{0.0};
 };
 
 }  // namespace nav_kernel::local::scan::upstream

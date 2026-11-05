@@ -68,8 +68,12 @@ test('dashboard compares received state with the current render clock, not the p
   assert.doesNotMatch(app, /freshness = \{ nowMs, /)
 })
 
-test('scene preview is read-only while dispatch retains the shared motion gate', () => {
+test('scene preview is read-only and single-goal admission belongs to navigation', () => {
   const scene = source('components/SceneView.tsx')
+  const goalGate = scene.slice(scene.indexOf('const goalDisabledReason ='), scene.indexOf('const canSendGoal ='))
+  assert.match(goalGate, /observe/)
+  assert.match(goalGate, /instructionActive/)
+  assert.doesNotMatch(goalGate, /canAcceptGoal|motionStartAllowed|resumeRequired/)
   const preview = scene.slice(scene.indexOf('const handlePendingGoal ='), scene.indexOf('const handleSceneRelocalize ='))
   assert.match(preview, /if \(previewDisabledReason\)/)
   assert.doesNotMatch(preview, /canSendGoal|api\.sendGoal|showToast/)

@@ -48,7 +48,7 @@ layers:
       - src/lingtu/assembly/graph/
       - src/lingtu/run_plan.py
       - src/lingtu/products.py
-      - src/lingtu/assembly/config/native_parameters.py
+      - src/lingtu/assembly/config/native_parameters/
 
   - id: L3_adapter_layer
     title: Adapter Layer

@@ -15,10 +15,16 @@ assembly/
     product.py                    resolve Product, Env, and RobotConfig inputs
     endpoint_bindings.py          choose declared endpoint/transport bindings
     native_navigation.py          compile native navigation configuration
-    native_parameters.py          native parameter schema, bounds, and defaults
+    native_parameters/            numeric parameter types, bounds and environment mapping
+      planning.py                 local planning parameters
+      tracking.py                 trajectory tracking parameters
+      map_input.py                map inputs and collision parameters
+      segment.py                  segment and risk parameters
+      schema.py                   shared parameter types
     simulation.py                 compile simulation session/acceptance data
     validation.py                 validate the resolved Product assembly
   graph/                          load declarations, resolve variants/processes
+    settings.py                   load shared Product settings and source groups
   host/
     build.py                      assemble selected Host Modules
     native_state_bridge.py        runtime native-state adapter (HostBus)
@@ -93,22 +99,38 @@ Product behavior and capabilities come from `config/system/products/*.yaml`;
 resolves these with the selected RobotConfig for `real` and the supported
 simulation inputs for `sim`.
 
-Native tuning parameters in `config/native_parameters.py` are applied in this
-order, with later values overriding earlier ones:
+Native tuning values live in `config/system/settings/`. For the numeric
+`parameters` mapping, `config/native_parameters/` declares accepted names,
+types, bounds and environment keys. Resolution applies values in this order:
 
 ```text
-schema defaults -> Env parameters -> Product parameters -> session overrides
+component YAML defaults -> Env parameters -> Product parameters -> session overrides
 ```
 
-The same schema is used by Product compilation and RunPlan validation/export.
-Bounds and cross-parameter constraints remain active after resolution. Ordinary
-speed defaults use `DEFAULT_LINEAR_SPEED_MPS = 1.0`, shared with
-`config/native_navigation.py`. Native C++ structs use
-`nav_kernel::kDefaultLinearSpeedMps = 1.0` across planning, tracking, execution,
-and command limits. Product profiles still declare their own motion contract:
-the current 1 m/s-per-axis profiles use a sqrt(2) norm budget. An explicit lower
-limit remains binding; these defaults do not replace calibration, stair/recovery
-profiles, or final motion arbitration.
+`graph/settings.py` reads the Product's `includes` from `config/system/settings/`
+and expands the short `follower`, `teleop` and `global` source groups before
+merging their flat keys. Camera variants append their topics and processes
+through the same loader, without replacing the base Product's processes.
+`graph/loader.py` owns Product/Env assembly and variant selection;
+`config/native_navigation.py` compiles the resolved navigation values for native
+processes. The `maps`, `camera`, `lidar`, `slam.runtime` and `explore` sections
+become values in the existing process environment. RobotConfig supplies
+installation calibration and explicit device overrides. The LiDAR compiler
+also records the assembled Livox SDK JSON in `LINGTU_LIVOX_CONFIG_JSON`, which
+the field launcher writes directly to the SDK file. Native SLAM loads the
+selected estimator profile and the common settings it references.
+
+The same schema validates values during compilation and RunPlan export.
+`limits.yaml` supplies the common motion budget. SCAN derives its planner speed
+and acceleration from the resolved follower limits; explicit lower limits
+remain binding. `scripts/build/settings.py` generates the C++ defaults from
+these same YAML files, and CMake regenerates them when the inputs change.
+The remaining `standalone` entries select actual modes, such as disabled
+recovery without a Product; they do not maintain a separate set of speeds.
+
+The [component reference](../../../config/system/README.md) lists all twelve
+settings files and the owners of derived values. TF frame names, service
+readiness paths, and DDS message contracts are shared runtime interfaces.
 
 Host configuration has a separate merge: common defaults, Product Host settings,
 real-only defaults for missing fields, Env implementation `host_config`, physical
@@ -117,6 +139,16 @@ and reserved robot/environment fields retain their declared owners; callers
 cannot override them through arbitrary Host settings. `DEFAULT_GATEWAY_PORT`
 lives in `config/product.py`; the planning frame uses `runtime.tf.frames.map_frame_id()`.
 There is no separate `products/runtime_paths.py` defaults layer.
+
+For a Product that selects a Host model, assembly reads
+[`config/system/models.yaml`](../../../config/system/models.yaml) using the
+resolved backend name. The shared connection values fill missing fields after
+Product, Env and permitted caller overrides have selected the backend and any
+explicit settings. `RunPlan.host_config` carries the resulting `llm` and `llm_*`
+fields. Host restores that snapshot and supplies the same settings to LLMModule,
+AgentPlanner and SemanticPlanner's GoalResolver when those modules are enabled.
+VisualServo can reuse the LLMModule client when it supports vision. Credentials
+are read from the Host process environment using the configured variable name.
 
 ## Important path changes
 
@@ -129,7 +161,7 @@ paths without compatibility packages.
 | `deployment.py` | `build_scripts.py` |
 | `products/configuration.py` | `config/product.py` |
 | `products/host.py` | `host/build.py` |
-| `native_nav.py`, `parameters.py` | `config/native_navigation.py`, `config/native_parameters.py` |
+| `native_nav.py`, `parameters.py` | `config/native_navigation.py`, `config/native_parameters/` |
 | `host_bus.py`, `plugins.py` | `host/native_state_bridge.py`, `host/plugin_catalog.py` |
 | `stacks/planner.py`, `stacks/slam.py` | `host/stacks/semantic_tasks.py`, `host/stacks/localization.py` |
 | `stacks/services.py`, `stacks/system.py`, `stacks/stack_config.py` | `host/stacks/native_commands.py`, `host/stacks/startup_checks.py`, `host/stacks/settings.py` |

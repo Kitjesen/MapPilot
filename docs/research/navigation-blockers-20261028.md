@@ -94,11 +94,19 @@ epoch/sequence 尚未积累足够历史而额外拒绝。缺地图、地图边�
 | `scan_local_target_blocked`、`scan_target_rejected`、`scan_initialization_failed`、`scan_replan_failed`、首次 Pending | 没有可执行轨迹时零输出；仍安全的旧尾段可以继续 | [backend.cpp](../../src/nav/cpp/planning/local/scan/backend.cpp:520)。候选失败机制主要继承 SCAN；不是每次重规划均停车 |
 | `scan_emergency_stop`、`scan_speed_transition_blocked` | 近期预测会碰撞，或换轨/降速过渡不可行 | [backend.cpp](../../src/nav/cpp/planning/local/scan/backend.cpp:425)、[planner_fsm.cpp](../../src/nav/cpp/planning/local/scan/upstream/plan_manage/planner_fsm.cpp:309)。官方有未来碰撞急停，交接与过渡由适配扩展 |
 | heading 对齐、外部 hold、速度目标为 0、safetyStop、无效样条/跟踪输入 | 可能只停止 XY 保留 yaw，也可能全零 | [closed_loop_controller.cpp](../../src/nav/cpp/planning/local/scan/upstream/plan_manage/closed_loop_controller.cpp:62)、[follower.cpp](../../src/nav/cpp/tracking/follower.cpp:389)。大朝向误差先转后走是官方已有行为 |
-| `settling_before_goal_yaw`、`settling_before_pose_turn`、`aligning_goal_yaw`、`pose_turn_blocked`、`settling_at_goal` | 姿态阶段交接或终点确认期间暂停平移/等待停稳 | [executor.cpp](../../src/nav/cpp/navigation/executor.cpp:684)。新增复杂度热点；普通内部路点不应套最终到点精度。最终到点确认仍包含位置、高度、必要朝向及持续稳定 0.5 s |
+| `settling_before_goal_yaw`、`settling_before_pose_turn`、`aligning_goal_yaw`、`pose_turn_blocked`、`settling_at_goal` | 姿态阶段交接或终点确认期间暂停平移/等待低速 | [executor.cpp](../../src/nav/cpp/navigation/executor.cpp:684)。普通内部路点不应套最终到点精度。最终到点确认包含位置、高度、必要朝向和一次有效低速观测，不再累计 0.5 s |
 | 受阻/无进展触发 Recovery；候选为空、不安全、离轨或无进展 | 停止当前动作，使用当前几何继续检查下一候选 | [recovery.cpp](../../src/nav/cpp/navigation/recovery.cpp)、[executor.cpp](../../src/nav/cpp/navigation/executor.cpp)。已删除额外观测版本等待；当前实测障碍仍能拒绝所有候选 |
 | `local_recovery_exhausted`；关闭 recovery 后的 `execution_stalled` | 前者交回全局重规划；后者在该配置下保持零直到新路线/重置 | [executor.cpp](../../src/nav/cpp/navigation/executor.cpp:1079)、[autonomy.cpp](../../src/nav/cpp/endpoint/nav/control/autonomy.cpp:152)。不能因 outcome 仍叫 kGoalFailed 就忽略附带的 replan trigger |
 | `stair_landing_space`、`stair_entry_required`、`stair_switching`、`stair_profile_unsupported/wait`、`stair_hold_on_flight`、`stair_settling/restoring/route_wait` | 楼梯入口、平台模式确认、梯中保持或出口恢复期间 hold | [stairs.cpp](../../src/nav/cpp/navigation/stairs.cpp:255)。仅有效楼梯段激活；`stair_approach` 本身不是 hold。落脚平台矩形包络及过渡位置/角度/静稳条件的组合应单独审查，尚不能宣称已证实多余 |
 | `teleop_intent_idle`、`teleop_intent_direction_changed`、`local_intent_pending`、`teleop_assist_local_stop` | 遥控无输入、换方向或等新局部参考时输出零 | [executor.cpp](../../src/nav/cpp/navigation/executor.cpp:1340)。不意味着键盘消息一定没收到 |
+
+终点等待调整（2026-11-01）：此前执行器要求在目标范围内连续低速 0.5 s，成功终态随后还要等待驱动接受零命令及 8 条低速里程计；现在执行器在有效速度观测低于既有阈值时即可报告几何到达，成功终态等待匹配的驱动零命令回执，不再额外收集 8 条样本。暂停、取消、急停及重规划仍沿用各自原有停止确认。这个调整减少到达反馈延迟，但一次低速观测不能保证之后不会回弹，也不代表已完成连续物理静稳验证。
+
+对照固定上游：[DimOS Basic `26144f7`](https://github.com/dimensionalOS/dimos/blob/26144f7fd8424bdc33ab97dcd58e9497f2d413ee/dimos/navigation/trajectory_follower/basic/module.py#L148) 在进入水平范围后发零并报告到达；[SCAN `348e8a5` 控制器](https://github.com/wuyi2121/SCAN-Planner/blob/348e8a590a50a5a6bbab8d8c6dcfd171f009be26/src/planner/plan_manage/src/closed_loop_controller.cpp#L210) 在轨迹完成且水平误差达标后输出零。两者在上述分支均没有本项目原来的 0.5 s 窗口；LingTu 保留的高度、可选最终朝向、即时低速和驱动回执是本地合同，不是上游默认。
+
+同场景的本地组件对照：修改前保留的 Windows 构建中 `Executor.ArrivalRequiresFreshQuietOdometryAndResetsForNewRoute` 通过，测试要求首次有效低速样本不立即到达；修改后 `Executor.ArrivalRequiresValidQuietMotionWithoutAccumulatingSamples` 通过，测试要求首次有效低速样本即可到达，并继续拒绝无效速度、过快转动及过快竖直运动。修改后记录见 [arrival-final.log](../../build/arrival-no-dwell-20261101-executor/arrival-final.log)。两者是不同时间构建的组件测试，不是同场景 Go2 前后实测。
+
+仿真取证边界：启用 `stop_on_nav_goal_reached` 时，组件 feeder 在原生到达和停止事务确认后即结束仿真；成功到达使用仅回执确认后，不能把这一提前结束当成连续物理静稳的证据。若要验收到点后的物理漂移，应延续仿真并独立记录机身运动。
 
 ### 任务、遥控和最终输出
 

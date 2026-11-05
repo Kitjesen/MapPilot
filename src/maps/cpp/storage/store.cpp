@@ -42,7 +42,7 @@ struct ArtifactSpec {
 };
 
 constexpr ArtifactSpec kArtifactSpecs[] = {
-    {"map_pcd", "map.pcd", ArtifactType::kPointCloud, "source_pointcloud", "raw_slam_map_source"},
+    {"map_pcd", "map.pcd", ArtifactType::kPointCloud, "source_pointcloud", "saved_map_source"},
     {"occupancy_grid", "occupancy.npz", ArtifactType::kOccupancy2D, "path_planning_2d", "static_grid_helper"},
     {"octomap", "octomap.ot", ArtifactType::kOctomap3D, "navigation_safety_3d", "octoplanner3d_global_planning"},
     {"octomap", "octomap.bt", ArtifactType::kOctomap3D, "navigation_safety_3d", "octomap_compatibility"},

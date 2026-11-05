@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Mapping
 from typing import Any
@@ -192,6 +193,81 @@ def build_media_status(gw: Any) -> dict[str, Any]:
     return {
         "schema_version": MEDIA_STATUS_SCHEMA_VERSION,
         "camera": build_camera_status(gw),
+    }
+
+
+def build_camera_video_diagnostics(gw: Any, video: Mapping[str, Any]) -> dict[str, Any]:
+    """Combine observations without opening a camera or creating a media session."""
+    camera = build_camera_status(gw)
+    now = time.time()
+    raw = _mapping(video.get("source_status"))
+    native = video.get("backend") == "gstreamer"
+    age = video.get("source_status_age_s")
+    valid = raw.get("schema_version") == "lingtu.camera_video.status.v1" and all(
+        isinstance(raw.get(name), (int, float))
+        and not isinstance(raw[name], bool)
+        and math.isfinite(raw[name])
+        and raw[name] >= 0
+        for name in ("heartbeat_timestamp_s", "source_generation", "source_sequence")
+    ) and isinstance(raw.get("ready"), bool) and isinstance(raw.get("source_fresh"), bool)
+    heartbeat_age = now - raw["heartbeat_timestamp_s"] if valid else None
+    status_fresh = (
+        isinstance(age, (int, float)) and math.isfinite(age) and 0 <= age <= 3.0
+        and heartbeat_age is not None and 0 <= heartbeat_age <= 3.0
+    )
+    if not native:
+        reason = "native_video_status_not_supported"
+        pipeline_ready = None
+    elif not raw:
+        reason = video.get("source_reason") or "video_status_unavailable"
+        pipeline_ready = False
+    elif not valid:
+        reason = "video_status_invalid"
+        pipeline_ready = False
+    elif not status_fresh:
+        reason = "video_status_stale"
+        pipeline_ready = False
+    else:
+        pipeline_ready = raw.get("ready") is True and raw.get("source_fresh") is True and raw.get("status") == "running"
+        reason = None if pipeline_ready else "video_source_not_ready"
+    whep_available = video.get("whep_available") if native else video.get("available")
+    errors = [value for value in (camera.get("reason"), reason) if value]
+    if whep_available is False:
+        errors.append("whep_unavailable")
+    if valid and raw.get("last_error"):
+        errors.append("native_video_error")
+    return {
+        "schema_version": "lingtu.camera_video.diagnostics.v1",
+        "observed_at_s": now,
+        "camera": {
+            "source": "host_camera_health",
+            "status": camera["status"],
+            "reason": camera.get("reason"),
+            "physical_online": None,
+            "frames_fresh": None if camera["status"] in {"not_loaded", "error"} else camera["available"],
+            "color": camera["color"],
+            "depth": camera["depth"],
+        },
+        "video": {
+            "source": "native_video_status" if native else "not_reported",
+            "status": raw.get("status") if valid else None,
+            "reason": reason,
+            "status_age_s": age,
+            "heartbeat_age_s": heartbeat_age,
+            "status_fresh": status_fresh if native and raw else None,
+            "source_fresh": raw.get("source_fresh") if valid and status_fresh else None,
+            "source_generation": raw.get("source_generation") if valid else None,
+            "source_sequence": raw.get("source_sequence") if valid else None,
+            "frame_age_ms": raw.get("frame_age_ms") if valid else None,
+            "pipeline_ready": pipeline_ready,
+            "encoder": raw.get("encoder") if valid else None,
+            "encoder_output_verified": None,
+            "last_error": "native_video_error" if valid and raw.get("last_error") else None,
+        },
+        "whep": {"source": "gateway_endpoint_probe", "available": whep_available},
+        "receiver": {"decoded_frames_advancing": None, "reason": "client_observation_required"},
+        "ready_for_receiver": pipeline_ready and whep_available if pipeline_ready is not None else None,
+        "errors": errors,
     }
 
 

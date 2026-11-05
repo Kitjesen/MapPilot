@@ -2,6 +2,7 @@
 // Apache-2.0, commit 26144f7fd8424bdc33ab97dcd58e9497f2d413ee, edges.rs/nodes.rs.
 // This C++ adaptation uses LingTu's three-dimensional pose and segment queries.
 #include "surface_graph.hpp"
+#include "route_smoothing.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -42,16 +43,20 @@ SurfaceGraph::SurfaceGraph(std::vector<PointPose> surfaces, double resolution,
   }
   neighbors_.resize(cells_.size());
   const int stride=std::max(1,static_cast<int>(std::ceil(config.search_resolution_m/resolution_)));
+  // One quantized height step may need a longer horizontal connection than the search grid.
+  const int height_stride=config.max_slope>0 ?
+      std::max(stride,static_cast<int>(std::ceil(1./config.max_slope))) : stride;
   for(int i=0;i<static_cast<int>(cells_.size());++i) {
     check_cancelled();
     const auto &a=cells_[i];const auto xy=key(a);
-    for(int hop=1;hop<=stride;++hop) for(int dx=-1;dx<=1;++dx)for(int dy=-1;dy<=1;++dy) {
+    for(int hop=1;hop<=height_stride;++hop) for(int dx=-1;dx<=1;++dx)for(int dy=-1;dy<=1;++dy) {
       if(!dx&&!dy)continue;
       const auto column=columns_.find({xy.x+dx*hop,xy.y+dy*hop,0});
       if(column==columns_.end())continue;
       for(int j:column->second) {
         if(j<=i)continue;
         const auto &b=cells_[j];const double rise=std::abs(b.z-a.z);
+        if(hop>stride && rise<1e-6)continue;
         const double run=std::hypot(b.x-a.x,b.y-a.y);
         if((config.max_step_height>0 && rise>config.max_step_height+1e-6) ||
            (config.max_slope>0 && rise>config.max_slope*run+1e-6))continue;
@@ -167,22 +172,19 @@ std::vector<SurfaceGraph::Attachment> SurfaceGraph::attachments(const PointPose 
     }
   }
   std::sort(candidates.begin(),candidates.end());
-  std::unordered_map<int,Attachment> best;
-  // DimOS also bounds endpoint attempts; failure here falls back to full XYZ search.
+  std::vector<Attachment> out;
   for(std::size_t i=0;i<std::min<std::size_t>(64,candidates.size());++i) {
     if(cancelled&&cancelled())return {};
-    const auto [d,id]=candidates[i];const int owner=owner_[id];const double cost=d+distances_[id];
-    const auto found=best.find(owner);if(found!=best.end()&&found->second.cost<=cost)continue;
-    auto chain=toNode(id);std::vector<PointPose> path{point};
+    const auto [d,id]=candidates[i];
+    auto chain=toNode(id);
+    std::vector<PointPose> path{point};
     for(int cell:chain)path.push_back(cells_[cell]);
-    bool valid=true;
-    for(std::size_t j=1;j<path.size();++j) if(!check(path[j-1],path[j])){valid=false;break;}
-    if(valid)best[owner]={owner,cost,std::move(path),id,1};
+    auto entry=std::vector<PointPose>{point,cells_[id]};
+    if(goal || checkRoute(entry,check,cancelled))
+      out.push_back({owner_[id],d+distances_[id],std::move(path),id,1});
   }
-  std::vector<Attachment> out;for(auto &entry:best)out.push_back(std::move(entry.second));
   if(out.empty() && !candidates.empty())
     if(auto local=localAttachment(point,candidates,check,cancelled))out.push_back(std::move(*local));
-  std::sort(out.begin(),out.end(),[](const auto &a,const auto &b){return a.node<b.node;});
   return out;
 }
 
@@ -215,17 +217,16 @@ std::optional<SurfaceGraph::Attachment> SurfaceGraph::localAttachment(
     const auto state=states.find(current.idx);
     if(current.g>state->second.cost)continue;
     if(++iterations>config_.max_iterations)return {};
-    const auto p=position(current.idx);const auto column_key=key(p);
+    const auto p=position(current.idx);
+    const auto column_key=key(p);
     const int nearby=static_cast<int>(std::ceil(xy/resolution_));
     for(int dx=-nearby;dx<=nearby;++dx)for(int dy=-nearby;dy<=nearby;++dy) {
       const auto column=columns_.find({column_key.x+dx,column_key.y+dy,0});
       if(column==columns_.end())continue;
       for(int id:column->second) {
-        if(!candidate_ids.count(id) || distance(p,cells_[id])>std::sqrt(3.)*xy || !check(p,cells_[id]))continue;
-        auto chain=toNode(id);bool valid=true;
-        for(std::size_t j=1;j<chain.size();++j)
-          if(!check(cells_[chain[j-1]],cells_[chain[j]])){valid=false;break;}
-        if(!valid)continue;
+        const auto &target=cells_[id];
+        if(!candidate_ids.count(id) || distance(p,target)>std::sqrt(3.)*xy || !check(p,target))continue;
+        auto chain=toNode(id);
         std::vector<PointPose> path;
         for(auto cell=current.idx;;cell=states.at(cell).parent) {
           path.push_back(position(cell));if(cell==origin)break;
@@ -243,7 +244,7 @@ std::optional<SurfaceGraph::Attachment> SurfaceGraph::localAttachment(
       if((rise>0 && run==0) || (config_.max_step_height>0 && rise>config_.max_step_height+1e-6) ||
          (config_.max_slope>0 && rise>config_.max_slope*run+1e-6))continue;
       const GridIndex next{current.idx.x+dx,current.idx.y+dy,current.idx.z+dz};
-      const auto q=position(next);
+      auto q=position(next);
       if(distance(point,q)>radius+1e-6)continue;
       const double cost=current.g+distance(p,q)+std::max(0.,config_.floor_change_penalty)*rise;
       const auto found=states.find(next);
@@ -258,125 +259,155 @@ std::optional<SurfaceGraph::Attachment> SurfaceGraph::localAttachment(
 
 std::vector<PointPose> SurfaceGraph::plan(const PointPose &start,const PointPose &goal,
     const EdgeCheck &check,const CancelCheck &cancelled) const {
-  if(nodes_.empty() || (cancelled&&cancelled()) || !check(start,start))return {};
-  const auto starts=attachments(start,false,check,cancelled),goals=attachments(goal,true,check,cancelled);
+  if(nodes_.empty() || (cancelled&&cancelled()))return {};
+  const auto starts=attachments(start,false,check,cancelled);
+  const auto goals=attachments(goal,true,check,cancelled);
   if(starts.empty()||goals.empty())return {};
-  std::vector<signed char> validity(edges_.size(),0);
-  int iterations=0;
-  for(;;) {
-    if(cancelled&&cancelled())return {};
-    std::vector<double> costs(nodes_.size(),infinity);std::vector<int> previous(nodes_.size(),-1),via(nodes_.size(),-1),origin(nodes_.size(),-1);
-    Queue queue;
-    for(int i=0;i<static_cast<int>(starts.size());++i) {
-      const auto &a=starts[i];if(a.cost<costs[a.node]){costs[a.node]=a.cost;origin[a.node]=i;queue.push({a.cost,a.node});}
-    }
-    while(!queue.empty()) {
-      if(cancelled&&cancelled())return {};
-      const auto [d,u]=queue.top();queue.pop();if(d!=costs[u])continue;
-      if(++iterations>config_.max_iterations)return {};
-      for(int id:node_edges_[u]) {
-        if(validity[id]<0)continue;
-        const auto &edge=edges_[id];const int v=edge.a==u?edge.b:edge.a;
-        if(d+edge.cost<costs[v]){costs[v]=d+edge.cost;previous[v]=u;via[v]=id;origin[v]=origin[u];queue.push({costs[v],v});}
-      }
-    }
-    int finish=-1;double best=infinity;
-    for(int i=0;i<static_cast<int>(goals.size());++i)if(costs[goals[i].node]+goals[i].cost<best) {
-      best=costs[goals[i].node]+goals[i].cost;finish=i;
-    }
-    if(finish<0)return {};
-    std::vector<std::pair<int,bool>> route;
-    int node=goals[finish].node;
-    for(int u=node;via[u]>=0;u=previous[u])route.push_back({via[u],edges_[via[u]].a==previous[u]});
-    std::reverse(route.begin(),route.end());bool blocked=false;
-    for(const auto &[id,forward]:route) {
-      (void)forward;if(validity[id])continue;
-      const auto &chain=edges_[id].cells;bool valid=true;
-      for(std::size_t j=1;j<chain.size();++j)if(!check(cells_[chain[j-1]],cells_[chain[j]])){valid=false;break;}
-      validity[id]=valid?1:-1;if(!valid){blocked=true;break;}
-    }
-    if(blocked)continue;
-    auto path=starts[origin[node]].path;
-    for(const auto &[id,forward]:route) {
-      const auto &chain=edges_[id].cells;
-      if(forward)for(int cell:chain)path.push_back(cells_[cell]);
-      else for(auto it=chain.rbegin();it!=chain.rend();++it)path.push_back(cells_[*it]);
-    }
-    const auto &tail=goals[finish].path;path.insert(path.end(),tail.rbegin(),tail.rend());
-    path.erase(std::unique(path.begin(),path.end(),[](const auto &a,const auto &b){return distance(a,b)<1e-7;}),path.end());
-    return refineCorridor(std::move(path),starts[origin[node]],goals[finish],route,check,cancelled,iterations);
+  struct State {
+    double cost{infinity};
+    int parent{-1};
+    std::vector<PointPose> segment;
+  };
+  std::vector<State> states(nodes_.size());
+  const auto estimate=[&](int node) { return distance(cells_[nodes_[node]],goal); };
+  Queue queue;
+  for(int i=0;i<static_cast<int>(starts.size());++i) {
+    auto path=starts[i].path;
+    if(!checkRoute(path,check,cancelled))continue;
+    const int node=starts[i].node;
+    auto &state=states[node];
+    if (starts[i].cost>=state.cost) continue;
+    state.cost=starts[i].cost;state.segment=std::move(path);
+    queue.push({state.cost+estimate(node),node});
   }
+  int iterations=0,finish=-1;
+  double best=infinity;
+  std::vector<PointPose> terminal;
+  while(!queue.empty()) {
+    if(cancelled&&cancelled())return {};
+    const auto [f,label]=queue.top();queue.pop();
+    const double cost=states[label].cost;
+    if(f!=cost+estimate(label))continue;
+    if(f>=best || ++iterations>config_.max_iterations)break;
+    for(const auto &attachment:goals) {
+      if(attachment.node!=label || cost+attachment.cost>=best)continue;
+      auto tail=attachment.path;std::reverse(tail.begin(),tail.end());
+      if(!checkRoute(tail,check,cancelled))continue;
+      finish=label;best=cost+attachment.cost;terminal=std::move(tail);
+    }
+    for(int id:node_edges_[label]) {
+      const auto &edge=edges_[id];const bool forward=edge.a==label;
+      const int next_label=forward?edge.b:edge.a;
+      if(cost+edge.cost>=states[next_label].cost)continue;
+
+      auto chain=edge.cells;if(!forward)std::reverse(chain.begin(),chain.end());
+      std::vector<PointPose> segment;
+      for(int cell:chain)segment.push_back(cells_[cell]);
+      if (!checkRoute(segment,check,cancelled)) continue;
+      auto &next=states[next_label];
+      next.cost=cost+edge.cost;
+      next.parent=label;
+      next.segment=std::move(segment);
+      queue.push({next.cost+estimate(next_label),next_label});
+    }
+  }
+  if(cancelled&&cancelled())return {};
+  std::vector<PointPose> path;
+  std::vector<bool> allowed(nodes_.size(),false);
+  if(finish>=0) {
+    std::vector<int> labels;
+    for(int label=finish;label>=0;label=states[label].parent)labels.push_back(label);
+    std::reverse(labels.begin(),labels.end());
+    for(int label:labels) {
+      const auto &state=states[label];allowed[label]=true;
+      for(const auto &point:state.segment)
+        if(path.empty() || distance(path.back(),point)>1e-7)path.push_back(point);
+    }
+    for(const auto &point:terminal)
+      if(path.empty() || distance(path.back(),point)>1e-7)path.push_back(point);
+    if(!path.empty())path.back().yaw=goal.yaw ? goal.yaw : terminal.back().yaw;
+    auto refined=searchCells(starts,goals,allowed,check,cancelled,iterations,best);
+    const auto length=[](const auto &points) {
+      double total=0;
+      for(std::size_t i=1;i<points.size();++i)total+=distance(points[i-1],points[i]);
+      return total;
+    };
+    if(!refined.empty() && length(refined)<=length(path)+1e-7)return refined;
+    return cancelled&&cancelled() ? std::vector<PointPose>{} : path;
+  }
+  // A blocked corridor can still have a detour through its support cells.
+  iterations=0;
+  return searchCells(starts,goals,{},check,cancelled,iterations);
 }
 
-std::vector<PointPose> SurfaceGraph::refineCorridor(std::vector<PointPose> path,
-    const Attachment &start,const Attachment &goal,
-    const std::vector<std::pair<int,bool>> &route,const EdgeCheck &check,
-    const CancelCheck &cancelled,int &iterations) const {
-  // Cached fine edges may bypass owner centres, but never leave the chosen owners.
-  std::vector<bool> allowed(nodes_.size(),false);
-  allowed[start.node]=true;
-  allowed[goal.node]=true;
-  double upper=distances_[start.cell]+distances_[goal.cell];
-  for(const auto &part:route) {
-    const auto &edge=edges_[part.first];
-    allowed[edge.a]=true;
-    allowed[edge.b]=true;
-    upper+=edge.cost;
-  }
-  const auto length=[](const std::vector<PointPose> &points) {
-    double total=0;
-    for(std::size_t i=1;i<points.size();++i)total+=distance(points[i-1],points[i]);
-    return total;
+std::vector<PointPose> SurfaceGraph::searchCells(const std::vector<Attachment> &starts,
+    const std::vector<Attachment> &goals,const std::vector<bool> &allowed,
+    const EdgeCheck &check,const CancelCheck &cancelled,int &iterations,double upper) const {
+  struct State {
+    double cost;
+    int parent;
+    int origin;
   };
-  struct State { double cost; int parent; };
   std::unordered_map<int,State> states;
-  states.emplace(start.cell,State{0,-1});
-  Queue fine;
-  fine.push({distance(cells_[start.cell],cells_[goal.cell]),start.cell});
-  const int coarse_iterations=iterations;
-  while(!fine.empty()) {
+  std::priority_queue<QueueNode,std::vector<QueueNode>,QueueNodeCompare> queue;
+  const auto estimate=[&](int cell) {
+    double result=infinity;
+    for(const auto &goal:goals)result=std::min(result,distance(cells_[cell],cells_[goal.cell]));
+    return result;
+  };
+  for(int i=0;i<static_cast<int>(starts.size());++i) {
+    const auto &attachment=starts[i];
+    auto prefix=std::vector<PointPose>(attachment.path.begin(),attachment.path.begin()+attachment.entry+1);
+    if(!checkRoute(prefix,check,cancelled))continue;
+    double cost=0;
+    for(std::size_t j=1;j<prefix.size();++j)cost+=distance(prefix[j-1],prefix[j]);
+    const int cell=attachment.cell;
+    const auto found=states.find(cell);
+    if (found!=states.end() && found->second.cost<=cost) continue;
+    states.insert_or_assign(cell,State{cost,cell,i});
+    queue.push({{cell,0,0},cost+estimate(cell),cost});
+  }
+  while(!queue.empty()) {
     if(cancelled&&cancelled())return {};
-    const auto [f,u]=fine.top();
-    fine.pop();
-    const double g=states.at(u).cost;
-    if(f>g+distance(cells_[u],cells_[goal.cell]))continue;
-    if(f>=upper)break;
-    if(u==goal.cell) {
-      std::vector<PointPose> candidate;
-      for(int cell=goal.cell;cell>=0;cell=states.at(cell).parent)
-        candidate.push_back(cells_[cell]);
-      std::reverse(candidate.begin(),candidate.end());
-      candidate.insert(candidate.begin(),start.path.begin(),start.path.begin()+start.entry);
-      for(std::size_t i=goal.entry;i>0;--i)candidate.push_back(goal.path[i-1]);
-      candidate.erase(std::unique(candidate.begin(),candidate.end(),[](const auto &a,const auto &b) {
-        return distance(a,b)<1e-7;
-      }),candidate.end());
-      const double original_length=length(path),refined_length=length(candidate);
-      if(refined_length>original_length+1e-7)break;
-      for(std::size_t i=1;i<candidate.size();++i) {
-        if(cancelled&&cancelled())return {};
-        if(!check(candidate[i-1],candidate[i])) {
-          if(cancelled&&cancelled())return {};
-          return path;
-        }
-      }
-      std::printf("OctoPlanner3D surface corridor refinement: expanded=%d cost=%.3f->%.3f length=%.3f->%.3f\n",
-                  iterations-coarse_iterations,upper,g,original_length,refined_length);
-      return candidate;
-    }
+    const auto current=queue.top();queue.pop();
+    const int cell=current.idx.x;
+    const auto state=states.at(cell);
+    if(current.g!=state.cost)continue;
+    if(current.f>=upper)break;
     if(++iterations>config_.max_iterations)break;
-    for(const auto &edge:neighbors_[u]) {
-      const int v=edge.to;
-      if(!allowed[owner_[v]])continue;
-      const double next=g+edge.cost,h=distance(cells_[v],cells_[goal.cell]);
-      if(next+h>=upper)continue;
-      const auto state=states.find(v);
-      if(state!=states.end()&&state->second.cost<=next)continue;
-      states.insert_or_assign(v,State{next,u});
-      fine.push({next+h,v});
+    const auto &from=cells_[cell];
+    for(const auto &goal:goals) {
+      if(goal.cell!=cell)continue;
+      std::vector<PointPose> tail(goal.path.begin(),goal.path.begin()+goal.entry+1);
+      std::reverse(tail.begin(),tail.end());
+      if(!checkRoute(tail,check,cancelled))continue;
+      std::vector<PointPose> result;
+      for(auto previous=cell;;previous=states.at(previous).parent) {
+        result.push_back(cells_[previous]);
+        if(previous==states.at(previous).parent)break;
+      }
+      std::reverse(result.begin(),result.end());
+      const auto &start=starts[state.origin];
+      result.insert(result.begin(),start.path.begin(),start.path.begin()+start.entry);
+      result.insert(result.end(),tail.begin()+1,tail.end());
+      if(!checkRoute(result,check,cancelled))continue;
+      return result;
+    }
+    for(const auto &edge:neighbors_[cell]) {
+      if(!allowed.empty() && !allowed[owner_[edge.to]])continue;
+      const auto &to=cells_[edge.to];
+      const int next=edge.to;
+      const double cost=state.cost+edge.cost;
+      const double estimate_cost=cost+estimate(edge.to);
+      if(estimate_cost>=upper)continue;
+      const auto found=states.find(next);
+      if(found!=states.end() && found->second.cost<=cost)continue;
+      if(!check(from,to))continue;
+      states.insert_or_assign(next,State{cost,cell,state.origin});
+      queue.push({{next,0,0},estimate_cost,cost});
     }
   }
-  return path;
+  return {};
 }
 
 }  // namespace global_planner

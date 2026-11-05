@@ -1,0 +1,106 @@
+# Native LTLIO algorithm settings. Installation profiles reference this file,
+# then override calibrated sensor values and explicit real/sim differences.
+topics:
+  - /slam/odometry
+  - /slam/registered_cloud
+  - /slam/map_observation
+  - /slam/map_geometry_snapshot
+  - /slam/map_geometry_applied
+  - /slam/localization_health
+
+slam:
+  runtime:
+    # The scheduler supports tick rates of at least 1 Hz.
+    tick_hz: 50.0
+    log_status_s: 5.0
+    status_json_hz: 10.0
+    cloud_snapshot_hz: 5.0
+    lidar_scan_snapshot_hz: 10.0
+    # Zero disables periodic registration. Enabled periods are at least one second.
+    track_against_map_period_s: 5.0
+    sim:
+      log_status_s: 0.0
+      track_against_map_period_s: 0.0
+
+  body_frame: body
+  world_frame: odom
+
+  # Input buffering and scan selection; sensor scale/time/extrinsics stay per rig.
+  max_imu_gap_s: 0.25
+  max_sensor_time_jump_s: 5.0
+  max_imu_buffer: 4000
+  max_lidar_buffer: 64
+  lidar_filter_num: 2
+  lidar_min_range: 0.5
+  lidar_max_range: 20.0
+  scan_resolution: 0.25
+  map_resolution: 0.2
+  scale_aware_sampling_enabled: false
+  hybrid_enabled: false
+  correspondence_pruning_enabled: false
+  hybrid_point_weight: 0.05
+  hybrid_point_initial_threshold_m: 0.5
+
+  cube_len: 1000.0
+  det_range: 30.0
+  move_thresh: 1.5
+  max_map_points: 1000000
+  stationary_thresh: 0.08  # Map insertion distance, not the stationary IMU threshold.
+  imu_init_num: 400
+  near_search_num: 5
+  ieskf_max_iter: 5
+  esti_il: false  # Use calibrated extrinsics rather than estimating them online.
+  lidar_cov_inv: 1000.0
+  max_update_translation_m: 0.0
+  max_update_rotation_rad: 0.0
+  max_update_velocity_mps: 3.0
+  max_update_velocity_delta_mps: 1.0
+  ltlio_max_pos_cov_trace: 100.0
+  zupt_min_static_frames: 5
+  zupt_sigma_v: 0.02
+
+  # Saved-map registration and tracking acceptance.
+  relocalization_max_fitness: 0.5
+  relocalization_min_inliers: 30
+  relocalization_min_evaluated_points: 100
+  relocalization_max_pos_cov_trace: 1.0
+  relocalization_map_bounds_margin_m: 2.0
+  track_against_map_max_translation_m: 0.15
+  track_against_map_max_yaw_deg: 2.0
+  track_against_map_max_tilt_deg: 5.0
+  track_against_map_require_degeneracy_metrics: true
+
+  elevator_mode: "off"
+  elevator_entry:
+    range_m: 3.0
+    hold_s: 2.0
+    motion_m: 0.15
+
+  # The truth-based simulation profile opts in; real localization stays LTLIO-only.
+  odom_prior_enabled: false
+  odom_prior_bypass_ltlio: false
+  odom_prior_max_age_s: 0.20
+  odom_prior_map_resolution: 0.20
+  odom_prior_snap_translation_m: 0.25
+  max_odom_prior_buffer: 4000
+
+  max_patch_snapshots: 3000
+  patch_min_interval_s: 1.0
+  patch_min_translation_m: 0.20
+  patch_min_rotation_rad: 0.0872664626
+  online_mapping:
+    radius_m: 15.0
+    min_time_s: 30.0
+    submap_half_window: 25
+    voxel_m: 0.4
+    max_fitness: 0.3
+    correspondence_m: 1.0
+    inlier_distance_m: 0.4
+    min_overlap: 0.5
+    translation_sigma_m: 0.1
+    rotation_sigma_rad: 0.05
+    huber_k: 1.345
+    confirm_distance_m: 1.0
+    consistency_m: 0.4
+    consistency_rad: 0.1
+    odom_variance: [0.000001, 0.000001, 0.000001, 0.0001, 0.0001, 0.0001]

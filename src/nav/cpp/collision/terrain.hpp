@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <functional>
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -13,7 +12,6 @@
 namespace lingtu::nav::collision {
 
 // Map-frame ground height near the requested layer; distinct from measured collision hits.
-using SupportQuery = std::function<std::optional<double>(const Vec3 &, double)>;
 
 struct TerrainSurface {
   Vec3 normal{0.0, 0.0, 1.0};

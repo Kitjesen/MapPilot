@@ -19,11 +19,6 @@ int main() try {
   r::PlanRequest request;
   request.start = {-1, 0, .35, {}};
   request.goal = {1, 0, .35, 1.2};
-  auto body = std::make_shared<lingtu::nav::collision::Body>();
-  lingtu::nav::collision::Part part;
-  part.half_size = {2, 2, .1};
-  body->parts.push_back(part);
-  request.body = body;
   request.options.robot_radius = .12;
   request.options.body_clearance_below_m = .1;
   request.options.body_clearance_above_m = .2;
@@ -49,17 +44,19 @@ int main() try {
     require(tree.write(path.string()), "could not save XYZ fixture");
     const auto result = r::runPlan(path, request);
     if (scene == 0) {
-      require(result.ok && result.reached_goal, "XYZ route was blocked by body/heading admission");
-      require(std::none_of(result.path.begin(), result.path.end(), [](const auto &p) { return p.yaw.has_value(); }),
-              "global XYZ route still contains mandatory heading stages");
+      require(result.ok && result.reached_goal, "supported XYZ guidance did not reach its goal");
       auto alternate = request;
-      alternate.body.reset();
       alternate.start.yaw = 2.4;
+      alternate.goal.yaw = -2.4;
       const auto other = r::runPlan(path, alternate);
-      require(other.path.size() == result.path.size(), "model or start heading changed global route");
-      for (std::size_t i=0; i<result.path.size(); ++i)
-        require(other.path[i].x == result.path[i].x && other.path[i].y == result.path[i].y &&
-                other.path[i].z == result.path[i].z, "model or start heading changed XYZ positions");
+      require(other.ok && other.reached_goal && other.path.size() == result.path.size(),
+              "endpoint heading changed XYZ reachability");
+      for (std::size_t i=0; i<result.path.size(); ++i) {
+        require(std::hypot(result.path[i].x-other.path[i].x,
+                           result.path[i].y-other.path[i].y,
+                           result.path[i].z-other.path[i].z)<1e-9,
+                "endpoint heading changed the XYZ route");
+      }
       const auto cancelled = r::runPlan(path, request, [] { return true; });
       require(cancelled.cancelled && cancelled.path.empty(), "cancellation returned an executable route");
     } else {
@@ -87,7 +84,7 @@ int main() try {
             "runtime applied arrival tolerance to a coarse grid node instead of the exact goal");
   }
   std::filesystem::remove(path);
-  std::cout << "XYZ passed: independent of body/yaw; solid wall, ground gap and cancellation preserved\n";
+  std::cout << "XYZ passed: heading-independent guidance, static wall, ground gap and cancellation\n";
   return 0;
 } catch (const std::exception &e) {
   std::cerr << e.what() << '\n';

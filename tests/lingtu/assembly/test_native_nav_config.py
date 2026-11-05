@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
+from shutil import copytree
 
 import pytest
+import yaml
 
-from lingtu.assembly.config.native_navigation import compile_native_nav_config, mapd_environment
+from lingtu.assembly.compile_plan import compile_run_plan
+from lingtu.assembly.config.maps import default_map_settings, mapd_environment
+from lingtu.assembly.config.native_navigation import compile_native_nav_config
 from lingtu.assembly.config.product import resolve_product_host_runtime
+from lingtu.assembly.graph.loader import load_runtime_graph
 
 
 def _compiled_product_config(product_name: str, robot: str = "unitree/go2") -> dict:
@@ -15,6 +21,73 @@ def _compiled_product_config(product_name: str, robot: str = "unitree/go2") -> d
         "native_control_mode": resolved.product_spec["native_control_mode"],
         "native_nav": dict(resolved.product_spec.get("native_nav", {})),
     }
+
+
+def test_component_settings_reach_exploration_launch(tmp_path):
+    system = tmp_path / "system"
+    copytree(Path(__file__).resolve().parents[3] / "config/system", system)
+    settings = system / "settings"
+    for name, section, key, value in (
+        ("explore", ("explore",), "tick_hz", 3.0),
+        ("explore", ("explore",), "directed_target_max_ttl_s", 900.0),
+        ("explore", ("standalone", "parameters"), "map_input.future_tolerance_s", 0.7),
+        ("control", ("native_nav",), "stop_confirmation_timeout_s", 3.0),
+        ("control", ("native_nav",), "smoother_feedback_timeout_s", 0.4),
+        ("control", ("native_nav",), "input_future_tolerance_s", 0.07),
+        ("local", ("native_nav",), "obstacle_voxel_size_m", 0.06),
+        ("local", ("native_nav",), "local_planner_obstacle_height_min_m", 0.10),
+        ("local", ("native_nav",), "local_planner_obstacle_height_max_m", 0.8),
+        ("local", ("native_nav",), "scan_motion_voxel_size_m", 0.09),
+        ("maps", ("maps", "occupancy"), "resolution_m", 0.10),
+        ("local", ("native_nav", "cmu"), "path_scale", 0.9),
+        ("follower", ("native_nav", "cmu"), "follower_lookahead_m", 0.7),
+        ("teleop", ("native_nav", "teleop"), "cmd_max_age_s", 0.5),
+    ):
+        path = settings / f"{name}.yaml"
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        group = data
+        for part in section:
+            group = group[part]
+        group[key] = value
+        path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    graph = load_runtime_graph(system)
+    plan = compile_run_plan("explore", "real", robot="unitree/go2", graph=graph)
+    environment = plan.native_process_environment
+    assert float(environment["LINGTU_EXPLORE_TICK_HZ"]) == 3.0
+    assert float(environment["LINGTU_EXPLORE_DIRECTED_TARGET_MAX_TTL_S"]) == 900.0
+    assert float(environment["LINGTU_NAV_SEGMENT_FUTURE_TOLERANCE_S"]) == 0.7
+    assert float(environment["LINGTU_NAV_STOP_CONFIRMATION_TIMEOUT_S"]) == 3.0
+    assert float(environment["LINGTU_NAV_SMOOTHER_FEEDBACK_TIMEOUT_S"]) == 0.4
+    assert float(environment["LINGTU_TELEOP_CMD_MAX_AGE_S"]) == 0.5
+    assert float(environment["LINGTU_NAV_INPUT_FUTURE_TOLERANCE_S"]) == 0.07
+    assert float(environment["LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M"]) == 0.06
+    assert environment["LINGTU_NAV_LOCAL_PLANNER_OBSTACLE_HEIGHT_MIN_M"] == "0.1"
+    assert environment["LINGTU_NAV_LOCAL_PLANNER_OBSTACLE_HEIGHT_MAX_M"] == "0.8"
+    assert "LINGTU_TELEOP_OBSTACLE_HEIGHT_MIN_M" not in environment
+    assert "LINGTU_TELEOP_OBSTACLE_HEIGHT_MAX_M" not in environment
+    assert float(environment["LINGTU_NAV_CMU_PATH_SCALE"]) == 0.9
+    assert float(environment["LINGTU_NAV_CMU_FOLLOWER_LOOKAHEAD_M"]) == 0.7
+    assert "LINGTU_NAV_LIVE_OBSTACLE_INFLATION_RADIUS_M" not in environment
+    scan = compile_run_plan("nav", "real", robot="unitree/go2", graph=graph)
+    assert scan.native_process_environment["LINGTU_NAV_SCAN_MOTION_VOXEL_SIZE_M"] == "0.09"
+    assert scan.native_process_environment["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.1"
+    assert scan.native_process_environment["LINGTU_NAV_SCAN_VOXEL_RESOLUTION_M"] == "0.1"
+    assert "LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M" not in scan.native_process_environment
+
+    for invalid_min, message in ((-0.1, "must be non-negative"), (0.9, "maximum must be at least")):
+        with pytest.raises(ValueError, match=message):
+            compile_native_nav_config(
+                "test",
+                {
+                    "native_control_mode": "autonomy",
+                    "native_nav": {
+                        "local_planner_obstacle_height_min_m": invalid_min,
+                        "local_planner_obstacle_height_max_m": 0.8,
+                    },
+                },
+                settings_directory=settings,
+            )
 
 
 def test_native_nav_omits_legacy_final_stop_distances() -> None:
@@ -33,7 +106,7 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
     assert payload["schema_version"] == "lingtu.native_nav_config.v1"
     assert payload["product"] == "nav"
     assert "fingerprint" not in payload
-    assert payload["parameters"] == {
+    expected_parameters = {
         "braking_deceleration_mps2": 4.0,
         "collision_clearance_above_m": 0.24,
         "collision_clearance_below_m": 0.10,
@@ -67,6 +140,7 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
         "sensor_offset_z_m": 0.20262,
         "waypoint_reached_m": 0.2,
     }
+    assert {key: payload["parameters"][key] for key in expected_parameters} == expected_parameters
     expected_environment = {
         "LINGTU_NAV_CORRIDOR_LOOKAHEAD_M": "3.5",
         "LINGTU_NAV_GOAL_REACHED_M": "0.15",
@@ -255,7 +329,7 @@ def test_scan_mapd_inflation_covers_asymmetric_body_clearances() -> None:
     config["collision_clearance_below_m"] = 0.25
     config["collision_clearance_above_m"] = 0.35
     compiled = compile_native_nav_config("nav", config)
-    environment = mapd_environment(compiled.environment)
+    environment = mapd_environment(default_map_settings(), compiled.environment)
 
     assert environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.25"
     assert environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.35"
@@ -268,7 +342,7 @@ def test_go2_vertical_clearance_reaches_nav_and_mapd(product: str) -> None:
     assert compiled.environment["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"] == "0.24"
     assert compiled.environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M"] == "0.1"
     assert compiled.environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"] == "0.25"
-    environment = mapd_environment(compiled.environment)
+    environment = mapd_environment(default_map_settings(), compiled.environment)
     assert environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.1"
     assert environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.24"
 
@@ -355,6 +429,26 @@ def test_octoplanner_explicit_override_reaches_environment() -> None:
 
 
 @pytest.mark.parametrize(
+    "settings,expected",
+    [
+        ({}, ("0", "0")),
+        (
+            {"octoplanner3d_support_patch_radius_cells": 2,
+             "octoplanner3d_support_patch_min_samples": 3},
+            ("2", "3"),
+        ),
+    ],
+)
+def test_octoplanner_support_patch_settings_reach_environment(settings, expected) -> None:
+    compiled = compile_native_nav_config(
+        "nav", {"native_control_mode": "autonomy", "native_nav": settings}
+    )
+
+    assert compiled.environment["LINGTU_NAV_OCTO_SUPPORT_PATCH_RADIUS_CELLS"] == expected[0]
+    assert compiled.environment["LINGTU_NAV_OCTO_SUPPORT_PATCH_MIN_SAMPLES"] == expected[1]
+
+
+@pytest.mark.parametrize(
     ("radius", "offset"),
     [
         (0.40, 0.25),
@@ -398,6 +492,17 @@ def test_scan_global_corridor_uses_robot_width_and_vertical_clearance(
     assert float(compiled.environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"]) == pytest.approx(above)
 
 
+@pytest.mark.parametrize("robot", ["unitree/go2", "doso/thunder_v4"])
+@pytest.mark.parametrize("product", ["nav", "inspection", "tracking", "explore"])
+def test_global_profile_keeps_platform_support_and_slope(product: str, robot: str) -> None:
+    config = _compiled_product_config(product, robot)
+    compiled = compile_native_nav_config(product, config)
+    assert config["octoplanner3d_max_slope"] > 0
+    for field in ("support_height_m", "support_height_tolerance_m", "max_slope"):
+        env = "LINGTU_NAV_OCTO_" + field.upper()
+        assert float(compiled.environment[env]) == pytest.approx(config["octoplanner3d_" + field])
+
+
 @pytest.mark.parametrize(("requested", "effective"), [(0.1, 0.25), (0.44, 0.44), (0.7, 0.7)])
 def test_scan_global_radius_override_cannot_shrink_the_corridor_width(
     requested: float, effective: float
@@ -416,7 +521,7 @@ def test_scan_global_clearance_uses_the_mapd_voxel_resolution() -> None:
     config["collision_clearance_below_m"] = 0.22
     config["collision_clearance_above_m"] = 0.36
     compiled = compile_native_nav_config("nav", config)
-    profile = mapd_environment(compiled.environment)
+    profile = mapd_environment(default_map_settings(), compiled.environment)
 
     assert profile["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.05"
     assert compiled.environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"] == "0.22"
@@ -427,14 +532,15 @@ def test_scan_global_clearance_uses_the_mapd_voxel_resolution() -> None:
 
 @pytest.mark.parametrize(
     ("mode", "path_speed"),
-    [("autonomy", 1.0), ("teleop", 1.0), ("teleop_avoid", math.sqrt(2.0))],
+    [(mode, math.sqrt(2.0)) for mode in ("autonomy", "teleop", "teleop_avoid")],
 )
-def test_bare_native_config_uses_one_meter_per_second_speed_defaults(mode, path_speed) -> None:
+def test_bare_native_config_uses_shared_motion_defaults(mode, path_speed) -> None:
     compiled = compile_native_nav_config("test", {"native_control_mode": mode})
     assert compiled.parameters["teleop_max_speed_mps"] == 1.0
     assert compiled.parameters["path_follower_max_speed_mps"] == pytest.approx(path_speed)
     assert float(compiled.environment["LINGTU_TELEOP_MAX_SPEED_MPS"]) == 1.0
     assert float(compiled.environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"]) == pytest.approx(path_speed)
+    assert compiled.environment["LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M"] == "0.05"
 
 
 def test_velocity_smoother_is_left_to_the_native_endpoint() -> None:

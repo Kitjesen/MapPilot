@@ -1,0 +1,61 @@
+# Native mapd publication, occupancy, surface fitting and persistent-map saving.
+# Robot collision dimensions and Product/session identity are resolved separately.
+
+maps:
+  publish:
+    state_hz: 2.0
+    cloud_hz: 20.0
+    map_hz: 2.0
+    scene_hz: 2.0
+  input:
+    max_points: 300000
+    min_range_m: 0.25
+    max_range_m: 30.0
+    stale_ms: 1000
+  occupancy:
+    resolution_m: 0.05
+    size_x: 200
+    size_y: 200
+    size_z: 100
+    slide_m: 0.20
+    ray_m: 5.0
+    p_hit: 0.85
+    p_miss: 0.30
+    p_min: 0.12
+    p_max: 0.98
+    p_occ: 0.80
+    # Zero keeps cells until ray misses or a rolling-window update clears them.
+    decay_after_s: 0.0
+    decay_ms: 250
+    # Local update ranges are derived from half the configured window dimensions.
+  inflation:
+    # SCAN uses the resolved robot collision radius and vertical clearances instead.
+    radius_m: 0.25
+    z_up_m: 0.10
+    z_down_m: 0.10
+  surface:
+    residual_m: 0.04
+    min_columns: 3
+  capacity:
+    cloud_bytes: 16777216
+    point_fields: 16
+    point_step: 64
+    string_bytes: 4096
+    scene_bytes: 33554432
+    voxel_snapshot_points: 200000
+    voxel_snapshot_radius_m: 30.0
+    voxels: 500000
+    accumulated_cells: 2000000
+    accumulated_blocks: 4096
+    query_json_bytes: 1048576
+  save:
+    patches: true
+    build_octomap: true
+    octomap_resolution_m: 0.10
+    dynamic_filter: true
+    dynamic_filter_required: true
+    # Empty selects the native pruning command resolved by the save pipeline.
+    dynamic_filter_command: ""
+    dynamic_filter_timeout_s: 300.0
+    profile: native_dds
+    data_source: field

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -8,6 +10,8 @@
 #include "lingtu/maps/storage/store.hpp"
 
 namespace lingtu::maps {
+
+namespace map_defaults = lingtu::settings::maps::maps;
 
 // Sensor model of saved-map OctoMaps. An .ot file keeps every voxel's
 // log-odds but not the model that interprets them, so every reader applies
@@ -23,7 +27,7 @@ struct OctomapSensorModel {
 inline constexpr OctomapSensorModel kSavedMapSensorModel{};
 
 struct OctomapBuildOptions {
-  double resolution{0.10};
+  double resolution{map_defaults::save::octomap_resolution_m};
   bool inherit_saved_metadata{false};
   int support_dilation_cells{0};
   int free_layers_above{0};
@@ -44,10 +48,10 @@ struct SourceEditOperation {
 
 struct SourceCommitOptions {
   double voxel_size{0.0};
-  bool dynamic_filter_enabled{true};
+  bool dynamic_filter_enabled{map_defaults::save::dynamic_filter};
   bool dynamic_filter_required{false};
-  std::string dynamic_filter_command;
-  double dynamic_filter_timeout_sec{300.0};
+  std::string dynamic_filter_command{map_defaults::save::dynamic_filter_command};
+  double dynamic_filter_timeout_sec{map_defaults::save::dynamic_filter_timeout_s};
   std::function<bool()> cancel_requested;
 };
 

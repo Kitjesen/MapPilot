@@ -1,6 +1,9 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <string>
+#include <string_view>
 
 #include "nav_kernel/types.hpp"
 
@@ -15,23 +18,28 @@ enum class VelocityFeedbackMode {
 // limits are m/s^2 (rad/s^2 for yaw). Deadband uses the same unit as the
 // axis velocity.
 struct VelocityAxisLimits {
-  double minimum{-1.0};   // Lower bound in m/s (rad/s for yaw).
-  double maximum{1.0};    // Upper bound in m/s (rad/s for yaw).
-  double acceleration{1.0};   // Ramp-up rate limit in m/s^2 (rad/s^2).
-  double deceleration{2.0};   // Ramp-down/reversal rate limit, same unit.
-  double deadband{0.0};       // Outputs below this magnitude become zero.
+  double minimum{-::lingtu::settings::teleop::native_nav::teleop::max_speed_mps};
+  double maximum{::lingtu::settings::teleop::native_nav::teleop::max_speed_mps};
+  double acceleration{::lingtu::settings::limits::native_nav::follower::max_accel_mps2};
+  double deceleration{::lingtu::settings::limits::native_nav::braking_deceleration_mps2};
+  double deadband{::lingtu::settings::control::native_nav::smoother_x_deadband_mps};
 };
 
 struct VelocitySmootherConfig {
-  VelocityAxisLimits x{-1.0, 1.0, 2.0, 2.0, 0.0};
-  VelocityAxisLimits y{-0.5, 0.5, 2.0, 2.0, 0.0};
-  VelocityAxisLimits yaw{-1.5, 1.5, 2.0, 3.0, 0.0};
-  VelocityFeedbackMode feedback_mode{VelocityFeedbackMode::kOpenLoop};
-  double target_timeout_s{0.5};     // Seconds before a stale target fails closed.
-  double feedback_timeout_s{0.25};  // Seconds before stale feedback fails closed.
-  double max_step_s{0.2};           // Upper bound in seconds applied to one step dt.
-  double future_tolerance_s{0.05};  // Seconds a timestamp may lead ahead of now.
-  bool scale_velocities{false};
+  VelocityAxisLimits x{};
+  VelocityAxisLimits y{-::lingtu::settings::teleop::native_nav::teleop::max_speed_mps, ::lingtu::settings::teleop::native_nav::teleop::max_speed_mps,
+      ::lingtu::settings::limits::native_nav::follower::max_accel_mps2, ::lingtu::settings::limits::native_nav::braking_deceleration_mps2, ::lingtu::settings::control::native_nav::smoother_y_deadband_mps};
+  VelocityAxisLimits yaw{-::lingtu::settings::limits::native_nav::follower::max_yaw_rate_rad_s, ::lingtu::settings::limits::native_nav::follower::max_yaw_rate_rad_s,
+      ::lingtu::settings::limits::native_nav::follower::max_yaw_accel_rad_s2, ::lingtu::settings::limits::native_nav::follower::max_yaw_accel_rad_s2, ::lingtu::settings::control::native_nav::smoother_yaw_deadband_rad_s};
+  VelocityFeedbackMode feedback_mode{
+      std::string_view(::lingtu::settings::control::native_nav::smoother_feedback_mode) == "closed"
+          ? VelocityFeedbackMode::kClosedLoop
+          : VelocityFeedbackMode::kOpenLoop};
+  double target_timeout_s{::lingtu::settings::control::native_nav::smoother_target_timeout_s};     // Seconds before a stale target fails closed.
+  double feedback_timeout_s{::lingtu::settings::control::native_nav::smoother_feedback_timeout_s};  // Seconds before stale feedback fails closed.
+  double max_step_s{::lingtu::settings::control::native_nav::smoother_max_step_s};           // Upper bound in seconds applied to one step dt.
+  double future_tolerance_s{::lingtu::settings::control::native_nav::smoother_future_tolerance_s};  // Seconds a timestamp may lead ahead of now.
+  bool scale_velocities{::lingtu::settings::control::native_nav::smoother_scale_velocities};
 };
 
 struct VelocitySmootherOutput {

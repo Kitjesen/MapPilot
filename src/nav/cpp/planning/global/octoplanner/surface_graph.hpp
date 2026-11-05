@@ -38,10 +38,10 @@ class SurfaceGraph {
   std::optional<Attachment> localAttachment(const PointPose &point,
       const std::vector<std::pair<double,int>> &candidates,
       const EdgeCheck &check, const CancelCheck &cancelled) const;
-  std::vector<PointPose> refineCorridor(std::vector<PointPose> path,
-      const Attachment &start, const Attachment &goal,
-      const std::vector<std::pair<int,bool>> &route, const EdgeCheck &check,
-      const CancelCheck &cancelled, int &iterations) const;
+  std::vector<PointPose> searchCells(const std::vector<Attachment> &starts,
+      const std::vector<Attachment> &goals, const std::vector<bool> &allowed,
+      const EdgeCheck &check, const CancelCheck &cancelled, int &iterations,
+      double upper = std::numeric_limits<double>::infinity()) const;
   std::vector<int> toNode(int cell) const;
   GridIndex key(const PointPose &point) const;
   double resolution_;

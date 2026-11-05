@@ -24,11 +24,14 @@ def test_thunder_service_readiness_collector_is_read_only() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
 
     assert "lt-camera.service" in module.SERVICES
+    assert module.CAMERA_SERVICE_UNIT == module.service_install_unit("camera")
+    assert module.DRIVER_SERVICE_UNIT == module.service_install_unit("driver")
     assert module.STATUS_FILES["camera"] == "/dev/shm/lingtu/camera_status.json"
     assert module.STATUS_FILES["driver"] == "/dev/shm/lingtu/driver_status.json"
     assert module.SERVICES == (
         "lt-lidar.service",
         "lt-camera.service",
+        "lt-video.service",
         "lt-slam.service",
         "lt-maps.service",
         "lt-terrain.service",
@@ -37,20 +40,14 @@ def test_thunder_service_readiness_collector_is_read_only() -> None:
         "lt-explore.service",
         "lt-host.service",
     )
-    assert module.NATIVE_BINARY_DEFAULTS["nav_dds"] == ("/opt/lingtu/current/bin/navd")
-    assert module.NATIVE_BINARY_ENV["nav_dds"] == "LINGTU_NAV_DDS_BIN"
-    assert module.NATIVE_BINARY_DEFAULTS["driver"] == ("/opt/lingtu/current/bin/lingtu_driver")
-    assert module.NATIVE_BINARY_ENV["driver"] == "LINGTU_DRIVER_BIN"
-    assert module.NATIVE_BINARY_DEFAULTS["traversability_dds"] == (
-        "/opt/lingtu/current/bin/lingtu_traversability_dds"
-    )
-    assert module.NATIVE_BINARY_ENV["traversability_dds"] == ("LINGTU_TRAVERSABILITY_DDS_BIN")
-    assert module.NATIVE_BINARY_DEFAULTS == {name: item["path"] for name, item in module.NATIVE_BINARIES.items()}
-    assert module.NATIVE_BINARY_ENV == {name: item["env"] for name, item in module.NATIVE_BINARIES.items()}
-    assert "thunder_runtime_units" in source
-    assert "thunder_runtime_status_files" in source
-    assert "thunder_runtime_native_binaries" in source
-    assert "thunder_runtime_dds_topics" in source
+    binaries = module.runtime_native_binaries()
+    assert binaries["nav_dds"]["path"] == "/opt/lingtu/current/bin/navd"
+    assert binaries["nav_dds"]["env"] == "LINGTU_NAV_DDS_BIN"
+    assert binaries["driver"]["path"] == "/opt/lingtu/current/bin/lingtu_driver"
+    assert binaries["driver"]["env"] == "LINGTU_DRIVER_BIN"
+    assert binaries["traversability_dds"]["path"] == "/opt/lingtu/current/bin/lingtu_traversability_dds"
+    assert binaries["traversability_dds"]["env"] == "LINGTU_TRAVERSABILITY_DDS_BIN"
+    assert "runtime.service_catalogs.real" in source
     assert "/api/v1/services/status" in source
 
     for mutating in (
@@ -71,7 +68,7 @@ def test_thunder_service_readiness_report_shape(monkeypatch) -> None:
     monkeypatch.setattr(
         module,
         "collect_systemd",
-        lambda: {"lt-camera.service": {"active_state": "inactive"}},
+        lambda **_: {"lt-camera.service": {"active_state": "inactive"}},
     )
     monkeypatch.setattr(
         module,
@@ -81,7 +78,7 @@ def test_thunder_service_readiness_report_shape(monkeypatch) -> None:
     monkeypatch.setattr(
         module,
         "collect_native_binaries",
-        lambda: {
+        lambda **_: {
             "ok": False,
             "binaries": {
                 "camera_dds": {
@@ -544,18 +541,10 @@ def test_thunder_service_readiness_collector_reports_missing_camera_binaries(mon
 
     monkeypatch.setattr(
         module,
-        "NATIVE_BINARY_DEFAULTS",
-        {
-            "camera_dds": "/missing/lingtu_camera_dds",
-            "orbbec_capture": "/missing/orbbec_capture",
-        },
-    )
-    monkeypatch.setattr(
-        module,
-        "NATIVE_BINARY_ENV",
-        {
-            "camera_dds": "LINGTU_CAMERA_DDS_BIN",
-            "orbbec_capture": "LINGTU_ORBBEC_CAPTURE_BIN",
+        "runtime_native_binaries",
+        lambda **_: {
+            "camera_dds": {"path": "/missing/lingtu_camera_dds", "env": "LINGTU_CAMERA_DDS_BIN"},
+            "orbbec_capture": {"path": "/missing/orbbec_capture", "env": "LINGTU_ORBBEC_CAPTURE_BIN"},
         },
     )
     monkeypatch.delenv("LINGTU_CAMERA_DDS_BIN", raising=False)
@@ -582,18 +571,10 @@ def test_thunder_service_readiness_collector_accepts_executable_camera_binaries(
 
     monkeypatch.setattr(
         module,
-        "NATIVE_BINARY_DEFAULTS",
-        {
-            "camera_dds": str(camera_dds),
-            "orbbec_capture": str(capture),
-        },
-    )
-    monkeypatch.setattr(
-        module,
-        "NATIVE_BINARY_ENV",
-        {
-            "camera_dds": "LINGTU_CAMERA_DDS_BIN",
-            "orbbec_capture": "LINGTU_ORBBEC_CAPTURE_BIN",
+        "runtime_native_binaries",
+        lambda **_: {
+            "camera_dds": {"path": str(camera_dds), "env": "LINGTU_CAMERA_DDS_BIN"},
+            "orbbec_capture": {"path": str(capture), "env": "LINGTU_ORBBEC_CAPTURE_BIN"},
         },
     )
     monkeypatch.delenv("LINGTU_CAMERA_DDS_BIN", raising=False)
@@ -608,7 +589,11 @@ def test_thunder_service_readiness_collector_accepts_executable_camera_binaries(
     assert native["binaries"]["orbbec_capture"]["executable"] is True
 
 
-def test_thunder_service_readiness_accepts_camera_closed_loop_evidence() -> None:
+@pytest.mark.parametrize(
+    ("camera_driver", "capture"),
+    [("orbbec_native", "orbbec_capture"), ("realsense_native", "realsense_capture")],
+)
+def test_thunder_service_readiness_accepts_camera_closed_loop_evidence(camera_driver, capture) -> None:
     module = _load_module()
 
     camera = module.collect_camera_readiness(
@@ -624,8 +609,8 @@ def test_thunder_service_readiness_accepts_camera_closed_loop_evidence() -> None
                     "path": "/opt/lingtu/current/bin/lingtu_camera_dds",
                     "executable": True,
                 },
-                "orbbec_capture": {
-                    "path": "/opt/lingtu/current/bin/orbbec_capture",
+                capture: {
+                    "path": f"/opt/lingtu/current/bin/{capture}",
                     "executable": True,
                 },
             }
@@ -662,6 +647,7 @@ def test_thunder_service_readiness_accepts_camera_closed_loop_evidence() -> None
             "blockers": [],
         },
         processes={"legacy_lines": [], "blockers": []},
+        camera_driver=camera_driver,
     )
 
     assert camera["ok"] is True
@@ -679,6 +665,80 @@ def test_thunder_service_readiness_accepts_camera_closed_loop_evidence() -> None
     assert camera["dds_samples"] == {"rt/camera/info": 1}
     assert camera["legacy_orbbec_observed"] is False
     assert camera["blockers"] == []
+    assert camera["driver"] == camera_driver
+    assert set(camera["native_binaries"]) == {"camera_dds", capture}
+
+
+@pytest.mark.parametrize("verified", [True, False, None])
+def test_readiness_uses_verified_run_camera_and_binary_environment(monkeypatch, tmp_path, verified):
+    module = _load_module()
+    paths = {name: tmp_path / name for name in ("camera", "capture", "plan-nav", "shell-nav")}
+    for path in paths.values():
+        path.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(module.os, "access", lambda _path, _mode: True)
+    monkeypatch.setenv("LINGTU_CAMERA_DRIVER", "orbbec_native")
+    monkeypatch.setenv("LINGTU_CAMERA_DDS_BIN", str(paths["camera"]))
+    monkeypatch.setenv("LINGTU_ORBBEC_CAPTURE_BIN", str(paths["capture"]))
+    monkeypatch.setenv("LINGTU_NAV_DDS_BIN", str(paths["shell-nav"]))
+    plan_environment = {
+        "LINGTU_CAMERA_DRIVER": "realsense_native",
+        "LINGTU_REALSENSE_CAPTURE_BIN": str(paths["capture"]),
+        "LINGTU_NAV_DDS_BIN": str(paths["plan-nav"]),
+    }
+    current_run = {} if verified is None else {
+        "plan_verified": verified,
+        "verified_contract": {
+            "native_process_environment": plan_environment,
+            "systemd_targets": {
+                "camera": "historical-camera.service",
+                "driver": "historical-driver.service",
+                "host": "historical-host.service",
+            },
+        },
+    }
+    reads = []
+    systemd_reads = []
+
+    def collect_current_run():
+        reads.append(True)
+        return current_run
+
+    def collect_systemd(*, services):
+        systemd_reads.extend(services)
+        return {unit: {"active_state": "active"} for unit in services}
+
+    monkeypatch.setattr(module, "collect_current_run", collect_current_run)
+    monkeypatch.setattr(module, "collect_systemd", collect_systemd)
+    monkeypatch.setattr(module, "collect_status_files", lambda: {})
+    monkeypatch.setattr(module, "collect_gnss_device", lambda: {"blockers": []})
+    monkeypatch.setattr(module, "collect_gateway", lambda _: {})
+    monkeypatch.setattr(module, "collect_processes", lambda: {"lines": [], "legacy_lines": []})
+    monkeypatch.setattr(module, "collect_dds", lambda **_: {"checked": False, "services": {}})
+    report = module.build_report(gateway_url="http://127.0.0.1:5050")
+
+    expected_capture = "realsense_capture" if verified else "orbbec_capture"
+    expected_nav = paths["plan-nav"] if verified else paths["shell-nav"]
+    assert reads == [True]
+    assert report["camera"]["driver"] == ("realsense_native" if verified else "orbbec_native")
+    assert set(report["camera"]["native_binaries"]) == {"camera_dds", expected_capture}
+    binaries = report["native_binaries"]["binaries"]
+    assert binaries[expected_capture]["executable"] is True
+    assert binaries["nav_dds"]["path"] == str(expected_nav)
+    assert binaries["nav_dds"]["executable"] is True
+    expected_units = tuple(
+        f"historical-{name}.service" if name in {"camera", "driver"} else
+        "historical-host.service" if name == "lingtu" else unit
+        for name, unit in module.SERVICE_UNITS.items()
+    ) if verified else module.SERVICES
+    assert tuple(systemd_reads) == expected_units
+    assert report["camera"]["unit"] == (
+        "historical-camera.service" if verified else module.CAMERA_SERVICE_UNIT
+    )
+    assert report["driver"]["unit"] == (
+        "historical-driver.service" if verified else module.DRIVER_SERVICE_UNIT
+    )
+    assert not any(item.startswith("systemd_unit_") for item in report["camera"]["blockers"])
+    assert not any(item.startswith("systemd_unit_") for item in report["driver"]["blockers"])
 
 
 def test_thunder_service_readiness_blocks_incomplete_camera_closed_loop() -> None:

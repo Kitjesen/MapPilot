@@ -876,6 +876,23 @@ int lingtu_nav_client_pause_task_with_receipt_v1(
   });
 }
 
+int lingtu_nav_client_set_task_speed_limit_with_receipt_v1(
+    lingtu_nav_client_handle handle,
+    const char* task_id,
+    const char* request_id,
+    double max_speed_mps,
+    int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1* receipt) {
+  if (!validateNavigationReceiptBuffer(receipt, "navigation task speed limit")) {
+    return -1;
+  }
+  return invoke(handle, [&](lingtu::nav::commands::Client& client) {
+    copyNavigationReceipt(receipt, client.navigation().setTaskSpeedLimit(
+        task_id == nullptr ? "" : task_id, max_speed_mps, timeout_ms,
+        request_id == nullptr ? "" : request_id));
+  });
+}
+
 int lingtu_nav_client_resume_task_with_receipt_v1(
     lingtu_nav_client_handle handle,
     const char* task_id,

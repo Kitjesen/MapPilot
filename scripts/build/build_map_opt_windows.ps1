@@ -23,7 +23,7 @@ try {
         *> "$build/windows-configure.log"
     if ($LASTEXITCODE) { throw "PGO configure failed: $build/windows-configure.log" }
     & cmake --build $build --config Release --target lt_pgo lt_loop_verify pgo_test `
-        loop_information_test constraint_assembly_test online_graph_test --parallel $Jobs -- /nodeReuse:false `
+        loop_information_test constraint_assembly_test --parallel $Jobs -- /nodeReuse:false `
         *> "$build/windows-build.log"
     if ($LASTEXITCODE) { throw "PGO build failed: $build/windows-build.log" }
     $linkerLine = Select-String -Path "$build/CMakeCache.txt" -Pattern '^CMAKE_LINKER:FILEPATH='
@@ -32,7 +32,7 @@ try {
         -P "$PSScriptRoot/cmake/stage_map_opt_windows.cmake" *> "$build/windows-stage.log"
     if ($LASTEXITCODE) { throw "PGO DLL staging failed: $build/windows-stage.log" }
     & ctest --test-dir $build -C Release --output-on-failure `
-        -R '^(pgo_core|loop_information|constraint_assembly|online_graph)$' `
+        -R '^(pgo_core|loop_information|constraint_assembly)$' `
         --output-junit "$build/windows-tests.xml" *> "$build/windows-tests.log"
     if ($LASTEXITCODE) { throw "PGO tests failed: $build/windows-tests.log" }
     Write-Output "Current saved-map tools and tests passed: $build/Release"

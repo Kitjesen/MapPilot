@@ -4,7 +4,6 @@ summary: Simulation environment with an explicit backend implementation selected
 simulation_only: true
 traversability_publish_hz: 10.0
 parameter_overrides:
-  map_input.max_cells: 262144
   map_input.max_age_s: 0.50
 supported_products:
   - teleop
@@ -195,7 +194,7 @@ backends:
         provides: [slam]
         platforms:
           windows:
-            argv: [build/slam-core-windows-x64/stage/bin/slamd.exe, --backend, ltlio, --domain-id, "17", --tick-hz, "50", --status-json-hz, "10", --track-against-map-period-s, "0"]
+            argv: [build/slam-core-windows-x64/stage/bin/slamd.exe, --backend, ltlio, --domain-id, "17"]
             cwd: .
             env: {LINGTU_DDS_DOMAIN_ID: "17"}
             artifact: {path: build/slam-core-windows-x64/stage/bin/slamd.exe}
@@ -222,7 +221,7 @@ backends:
             readiness: {kind: file, target: slam.status.json}
             shutdown: {kind: process}
           linux:
-            argv: [build/slam_core/slamd, --backend, ltlio, --domain-id, "231", --tick-hz, "50", --status-json-hz, "10", --track-against-map-period-s, "0"]
+            argv: [build/slam_core/slamd, --backend, ltlio, --domain-id, "231"]
             cwd: .
             env: {LINGTU_DDS_DOMAIN_ID: "231"}
             artifact: {path: build/slam_core/slamd}
@@ -281,7 +280,8 @@ backends:
         target: nav_runtime
         lifecycle: mode
         order: 20
-        timeout_s: 60
+        # Large saved maps prepare the surface graph before the control loop starts.
+        timeout_s: 240
         provides: [nav]
         platforms:
           windows:
@@ -293,7 +293,6 @@ backends:
               LINGTU_NAV_EXECUTION_CLOCK: simulation
               LINGTU_NAV_ODOM_MAX_AGE_S: "0.60"
               LINGTU_NAV_CLOUD_MAX_AGE_S: "0.60"
-              LINGTU_NAV_INPUT_RECOVERY_FRAMES: "1"
             artifact: {path: build/nav-cpp/windows-x64-nav-endpoint/Release/navd.exe}
             dependencies:
               - path: build/nav-cpp/windows-x64-nav-endpoint/Release/ddsc.dll
@@ -308,7 +307,6 @@ backends:
               LINGTU_NAV_EXECUTION_CLOCK: simulation
               LINGTU_NAV_ODOM_MAX_AGE_S: "0.60"
               LINGTU_NAV_CLOUD_MAX_AGE_S: "0.60"
-              LINGTU_NAV_INPUT_RECOVERY_FRAMES: "1"
             artifact: {path: build/nav_endpoint/navd}
             readiness: {kind: file, target: nav.status.json}
             shutdown: {kind: process}
@@ -320,7 +318,7 @@ backends:
         provides: [explore]
         platforms:
           windows:
-            argv: [build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_explore_dds.exe, --domain, "17", --tick-hz, "2"]
+            argv: [build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_explore_dds.exe, --domain, "17"]
             cwd: .
             env: {LINGTU_DDS_DOMAIN_ID: "17"}
             artifact: {path: build/nav-cpp/windows-x64-nav-endpoint/Release/lingtu_explore_dds.exe}
@@ -329,7 +327,7 @@ backends:
             readiness: {kind: file, target: explore.status.json}
             shutdown: {kind: process}
           linux:
-            argv: [build/nav_endpoint/lingtu_explore_dds, --domain, "231", --tick-hz, "2"]
+            argv: [build/nav_endpoint/lingtu_explore_dds, --domain, "231"]
             cwd: .
             env: {LINGTU_DDS_DOMAIN_ID: "231"}
             artifact: {path: build/nav_endpoint/lingtu_explore_dds}

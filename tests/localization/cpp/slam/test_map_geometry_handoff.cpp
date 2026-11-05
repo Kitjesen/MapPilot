@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <thread>
 
@@ -26,6 +27,7 @@ int main() {
       config << "odom_prior_enabled: true\nodom_prior_bypass_ltlio: true\n"
              << "elevator_mode: off\nlidar_filter_num: 1\n"
              << "max_sensor_time_jump_s: 10\npatch_min_interval_s: 0\n"
+             << "max_patch_snapshots: 24\n"
              << "patch_min_translation_m: 0\npatch_min_rotation_rad: 0\n"
              << "t_il: [0.02, -0.06, 0.04]\n"
              << "online_mapping:\n  voxel_m: 0.15\n  min_time_s: 30\n  submap_half_window: 2\n";
@@ -142,6 +144,35 @@ int main() {
     const auto unchanged = backend->mapGeometrySnapshot();
     require(unchanged && unchanged->graph_revision == latest.graph_revision,
             "ordinary keyframe re-exported history without a new loop");
+    const auto full = backend->outputs();
+    require(full.global_map_state == "mapping_keyframe_capacity_reached" &&
+                full.global_map_optimizations > 0,
+            "loop-corrected fixture did not reach mapping capacity");
+    far_prior.stamp_s = far_imu.stamp_s = last_frame.stamp_s = 71;
+    far_prior.odom_body.x = 1000.2;
+    require(backend->feedVisualOdom(far_prior).ok && backend->feedImu(far_imu).ok &&
+                backend->feedLidar(last_frame).ok && backend->tick().ok,
+            "capacity stopped sensor processing");
+    const auto continued = backend->outputs();
+    require(continued.state == SlamState::Tracking && continued.confidence > 0 &&
+                continued.odometry_odom_body &&
+                std::abs(continued.odometry_odom_body->x - 1000.2) < 1e-9 &&
+                continued.observation_sequence == full.observation_sequence + 1 &&
+                continued.global_map_keyframes == full.global_map_keyframes,
+            "capacity stopped localization or grew the frozen graph");
+    require(backend->saveMap((root / "saved" / "map.pcd").string()).ok,
+            "corrected capacity snapshot failed");
+    const auto saved = backend->outputs();
+    require(saved.saved_map_cloud_map && saved.saved_map_cloud_map->stamp_s == full.stamp_s &&
+                saved.saved_map_observation_sequence == full.observation_sequence,
+            "corrected capacity snapshot used a later scan identity");
+    std::ifstream report_input(root / "saved" / "map_optimization.json");
+    const std::string report((std::istreambuf_iterator<char>(report_input)), {});
+    report_input.close();
+    require(report.find("\"performed\":true") != std::string::npos &&
+                report.find("\"pose_count\":24") != std::string::npos &&
+                report.find("\"evidence_complete\":true") != std::string::npos,
+            "corrected capacity snapshot lost its complete graph prefix");
     require(backend->setMode(SlamMode::Localization, {}).ok && !backend->mapGeometrySnapshot(),
             "localization advertised mapping geometry");
     require(backend->reset().ok, "reset failed");

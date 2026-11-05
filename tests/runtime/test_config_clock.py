@@ -36,8 +36,8 @@ class TestLoadConfigDefaults:
 
     def test_speed_defaults(self):
         cfg = load_config(path="/nonexistent/path.yaml")
-        assert cfg.speed.max_speed == 0.875
         assert cfg.speed.max_linear == 1.0
+        assert cfg.speed.max_angular == 1.0
 
     def test_geometry_defaults(self):
         cfg = load_config(path="/nonexistent/path.yaml")
@@ -72,7 +72,7 @@ class TestLoadConfigFromYAML:
 
         cfg = load_config(path=real_path)
         # These values come from the actual YAML, not defaults
-        assert cfg.speed.max_speed == 0.875
+        assert cfg.speed.max_linear == 1.0
         assert cfg.geometry.vehicle_length == 0.76
         assert cfg.geometry.vehicle_width == 0.31
         assert cfg.geometry.collision_hard_margin == 0.05
@@ -85,8 +85,8 @@ class TestLoadConfigFromYAML:
     def test_custom_yaml(self, tmp_path):
         yaml_content = textwrap.dedent("""\
             speed:
-              max_speed: 2.5
               max_linear: 3.0
+              max_angular: 2.5
             geometry:
               vehicle_height: 0.8
             driver:
@@ -99,10 +99,9 @@ class TestLoadConfigFromYAML:
         cfg_file.write_text(yaml_content, encoding="utf-8")
 
         cfg = load_config(path=str(cfg_file))
-        assert cfg.speed.max_speed == 2.5
         assert cfg.speed.max_linear == 3.0
+        assert cfg.speed.max_angular == 2.5
         # Fields not in YAML keep their defaults
-        assert cfg.speed.autonomy_speed == 0.875
         assert cfg.geometry.vehicle_height == 0.8
         assert cfg.driver.dog_host == "10.0.0.1"
         assert cfg.driver.dog_port == 9999
@@ -111,15 +110,18 @@ class TestLoadConfigFromYAML:
     def test_ignores_unknown_keys(self, tmp_path):
         yaml_content = textwrap.dedent("""\
             speed:
-              max_speed: 1.5
+              max_linear: 1.5
+              max_speed: 0.875
+              autonomy_speed: 0.875
               unknown_key: 42
         """)
         cfg_file = tmp_path / "test_config.yaml"
         cfg_file.write_text(yaml_content, encoding="utf-8")
 
         cfg = load_config(path=str(cfg_file))
-        assert cfg.speed.max_speed == 1.5
+        assert cfg.speed.max_linear == 1.5
         assert not hasattr(cfg.speed, "unknown_key")
+        assert cfg.raw["speed"]["max_speed"] == 0.875
 
 
 class TestGetConfigSingleton:

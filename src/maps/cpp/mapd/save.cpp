@@ -1,7 +1,7 @@
 #include "lingtu/maps/mapd/save.hpp"
 
+#include <algorithm>
 #include <limits>
-#include <sstream>
 #include <utility>
 
 #include "lingtu/maps/io/json.hpp"
@@ -10,37 +10,10 @@
 namespace lingtu::maps::mapd {
 namespace {
 
-std::string Escape(const std::string &value) {
-  std::ostringstream out;
-  for (const unsigned char ch : value) {
-    switch (ch) {
-      case '"':
-        out << "\\\"";
-        break;
-      case '\\':
-        out << "\\\\";
-        break;
-      case '\n':
-        out << "\\n";
-        break;
-      case '\r':
-        out << "\\r";
-        break;
-      case '\t':
-        out << "\\t";
-        break;
-      default:
-        out << static_cast<char>(ch);
-        break;
-    }
-  }
-  return out.str();
-}
-
 std::string Failure(const std::string &action, const std::string &reason,
                     const std::string &message) {
-  return "{\"action\":\"" + Escape(action) + "\",\"accepted\":false,\"reason_code\":\"" +
-         Escape(reason) + "\",\"message\":\"" + Escape(message) + "\"}";
+  return "{\"action\":\"" + JsonEscape(action) + "\",\"accepted\":false,\"reason_code\":\"" +
+         JsonEscape(reason) + "\",\"message\":\"" + JsonEscape(message) + "\"}";
 }
 
 std::string PublicActionResponse(std::string json, const std::string &action) {
@@ -50,7 +23,7 @@ std::string PublicActionResponse(std::string json, const std::string &action) {
     const auto value_begin = begin + prefix.size();
     const auto value_end = json.find('"', value_begin);
     if (value_end != std::string::npos) {
-      json.replace(value_begin, value_end - value_begin, Escape(action));
+      json.replace(value_begin, value_end - value_begin, JsonEscape(action));
     }
   }
   return json;
@@ -62,7 +35,8 @@ SaveCoordinator::SaveCoordinator(MapsServiceCore &service, SlamSnapshotExchange 
                                  SaveCoordinatorConfig config)
     : service_(service), exchange_(exchange), config_(std::move(config)) {}
 
-std::string SaveCoordinator::SaveMapJson(const std::string &request_id, const std::string &map_id) {
+std::string SaveCoordinator::SaveMapJson(const std::string &request_id, const std::string &map_id,
+                                         bool auto_process) {
   if (config_.product != "map" || config_.product_session_id.empty()) {
     return Failure("save_map", "map_product_required",
                    "SaveMap requires the committed map Product and its Product session");
@@ -71,35 +45,26 @@ std::string SaveCoordinator::SaveMapJson(const std::string &request_id, const st
   request.request_id = request_id;
   request.map_id = map_id;
   request.product_session_id = config_.product_session_id;
+  request.auto_process = auto_process;
   return RequestSnapshot(service_.BeginSaveMapJson(request), "save_map");
 }
 
 std::string SaveCoordinator::RetrySaveMapJson(const std::string &job_id) {
-  if (config_.product != "map" || config_.product_session_id.empty()) {
-    return Failure("retry_save_map", "map_product_required",
-                   "SaveMap requires the committed map Product and its Product session");
-  }
   return RequestSnapshot(service_.RetrySaveMapJson(job_id), "retry_save_map");
 }
 
 std::string SaveCoordinator::CancelSaveMapJson(const std::string &job_id) {
-  if (config_.product != "map" || config_.product_session_id.empty()) {
-    return Failure("cancel_save_map", "map_product_required",
-                   "SaveMap requires the committed map Product and its Product session");
-  }
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto current = current_capture_.find(job_id);
-    if (current != current_capture_.end()) {
-      pending_.erase(current->second);
-      current_capture_.erase(current);
-    }
+    const auto current = std::find_if(pending_.begin(), pending_.end(),
+        [&](const auto &entry) { return entry.second.job_id == job_id; });
+    if (current != pending_.end()) pending_.erase(current);
   }
   return PublicActionResponse(service_.CancelSaveMapJson(job_id), "cancel_save_map");
 }
 
 std::string SaveCoordinator::RequestSnapshot(std::string response,
-                                             const std::string &public_action) {
+                                              const std::string &public_action) {
   if (JsonObjectBoolAtPath(response, {"accepted"}) != true) {
     return PublicActionResponse(std::move(response), public_action);
   }
@@ -119,6 +84,18 @@ std::string SaveCoordinator::RequestSnapshot(std::string response,
   if (state.has_value() && *state != "WAITING_SNAPSHOT") {
     return PublicActionResponse(std::move(response), public_action);
   }
+  if (config_.product != "map" || config_.product_session_id.empty()) {
+    return PublicActionResponse(service_.RejectSaveMapSnapshotJson(
+        *job_id, "map_product_required",
+        "Capturing a new snapshot requires the committed map Product and its Product session"),
+        public_action);
+  }
+  if (JsonObjectStringAtPath(response, {"status", "product_session_id"}) !=
+      config_.product_session_id) {
+    return PublicActionResponse(service_.RejectSaveMapSnapshotJson(
+        *job_id, "snapshot_session_expired",
+        "The original mapping session has ended; save the map again"), public_action);
+  }
   if (!map_id.has_value() || map_id->empty()) {
     static_cast<void>(service_.RejectSaveMapSnapshotJson(
         *job_id, "save_job_invalid", "native SaveMap did not return its target map"));
@@ -133,7 +110,8 @@ std::string SaveCoordinator::RequestSnapshot(std::string response,
   snapshot_request.save_patches = config_.save_patches;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (current_capture_.find(*job_id) != current_capture_.end()) {
+    if (std::any_of(pending_.begin(), pending_.end(),
+        [&](const auto &entry) { return entry.second.job_id == *job_id; })) {
       return PublicActionResponse(std::move(response), public_action);
     }
     snapshot_request.request_id = *job_id + "-capture-" + std::to_string(++next_capture_attempt_);
@@ -145,7 +123,6 @@ std::string SaveCoordinator::RequestSnapshot(std::string response,
     }
     pending_.emplace(snapshot_request.request_id,
                      Pending{*job_id, *map_id, snapshot_request.output_path});
-    current_capture_.emplace(*job_id, snapshot_request.request_id);
   }
   return PublicActionResponse(std::move(response), public_action);
 }
@@ -159,15 +136,11 @@ void SaveCoordinator::Poll() {
       if (found == pending_.end()) {
         continue;
       }
-      pending = found->second;
+      pending = std::move(found->second);
       pending_.erase(found);
-      const auto current = current_capture_.find(pending.job_id);
-      if (current != current_capture_.end() && current->second == ack.request_id) {
-        current_capture_.erase(current);
-      }
     }
     if (!ack.success) {
-      const std::string message = ack.health_message.empty() ? ack.message : ack.health_message;
+      const std::string &message = ack.message.empty() ? ack.health_message : ack.message;
       static_cast<void>(service_.RejectSaveMapSnapshotJson(
           pending.job_id, "slam_snapshot_failed",
           message.empty() ? "SLAM rejected the map snapshot request" : message));
@@ -199,7 +172,15 @@ void SaveCoordinator::Poll() {
     snapshot.source_point_count = ack.point_count;
     snapshot.slam_healthy = ack.healthy;
     snapshot.health_message = ack.health_message.empty() ? ack.message : ack.health_message;
-    static_cast<void>(service_.ProvideSaveMapSnapshotJson(pending.job_id, snapshot));
+    const auto provided = service_.ProvideSaveMapSnapshotJson(pending.job_id, snapshot);
+    if (JsonObjectBoolAtPath(provided, {"accepted"}) != true &&
+        JsonObjectStringAtPath(provided, {"status", "state"}) == "WAITING_SNAPSHOT") {
+      const auto reason = JsonObjectStringAtPath(provided, {"reason_code"});
+      const auto message = JsonObjectStringAtPath(provided, {"status", "message"});
+      static_cast<void>(service_.RejectSaveMapSnapshotJson(
+          pending.job_id, reason.value_or("snapshot_rejected"),
+          message.value_or("SLAM snapshot was rejected")));
+    }
   }
 }
 

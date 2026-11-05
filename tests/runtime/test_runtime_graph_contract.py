@@ -166,9 +166,406 @@ def test_runtime_graph_keeps_variant_products_unresolved() -> None:
     explore = load_runtime_graph().products["explore"]
 
     assert explore["default_variant"] == "live"
-    assert "topics" not in explore
+    assert "/nav/exploration/command" not in explore.get("topics", [])
+    assert "slam_mode" not in explore
     assert "capabilities" not in explore
     assert "product_variant" not in explore
+
+
+def test_variant_additions_preserve_order_and_leave_source_unchanged() -> None:
+    spec = {
+        "default_variant": "camera",
+        "topics": ["/tf", "/nav/state"],
+        "capabilities": ["navigation"],
+        "host": {"capabilities": ["gateway"]},
+        "variants": {
+            "camera": {
+                "topics_add": ["/nav/state", "/camera/image"],
+                "capabilities_add": ["camera", "navigation"],
+                "host": {"capabilities": ["preview"]},
+            },
+            "replacement": {"topics": ["/camera/image"], "topics_add": ["/tf"]},
+        },
+    }
+    original = deepcopy(spec)
+
+    camera = resolve_product_variant_spec("demo", spec)
+    replacement = resolve_product_variant_spec("demo", spec, product_variant="replacement")
+
+    assert camera["topics"] == ["/tf", "/nav/state", "/camera/image"]
+    assert camera["capabilities"] == ["navigation", "camera"]
+    assert camera["host"] == {"capabilities": ["preview"]}
+    assert replacement["topics"] == ["/camera/image", "/tf"]
+    assert "topics_add" not in camera and "capabilities_add" not in camera
+    assert spec == original
+
+
+@pytest.mark.parametrize("field", ["topics_add", "capabilities_add"])
+@pytest.mark.parametrize("value", ["camera", None, [""], [" camera"], [42], ["camera", "camera"]])
+def test_variant_additions_reject_invalid_names(field: str, value: object) -> None:
+    spec = {"default_variant": "camera", "variants": {"camera": {field: value}}}
+
+    with pytest.raises(ValueError):
+        resolve_product_variant_spec("demo", spec)
+
+
+@pytest.mark.parametrize("camera_in_base", [False, True])
+def test_camera_variant_keeps_base_processes_and_optional_video(camera_in_base: bool) -> None:
+    processes = ["lidar", "slam", "maps", "traversability", "nav", "driver", "host"]
+    if camera_in_base:
+        processes.append("camera")
+    spec = {
+        "default_variant": "camera",
+        "processes": processes,
+        "optional_processes": ["diagnostics"],
+        "variants": {
+            "camera": {
+                "processes_add": ["camera", "video"],
+                "optional_processes_add": ["video"],
+            },
+        },
+    }
+    original = deepcopy(spec)
+
+    selected = resolve_product_variant_spec("tracking", spec)
+
+    assert selected["processes"] == list(dict.fromkeys([*processes, "camera", "video"]))
+    assert "traversability" in selected["processes"]
+    assert selected["processes"].count("camera") == 1
+    assert selected["optional_processes"] == ["diagnostics", "video"]
+    assert "processes_add" not in selected and "optional_processes_add" not in selected
+    assert spec == original
+
+
+@pytest.fixture
+def settings_root(tmp_path: Path) -> Path:
+    (tmp_path / "products").mkdir()
+    (tmp_path / "settings").mkdir()
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    ("settings", "expected"),
+    [
+        ("{takeover: true, planner: false}", {"allow_teleop_takeover": True, "teleop_local_planner": False}),
+        ("{takeover: false}", {"allow_teleop_takeover": False}),
+        ("{planner: true}", {"teleop_local_planner": True}),
+    ],
+)
+def test_source_teleop_settings_expand_without_adding_defaults(
+    settings_root: Path, settings: str, expected: dict[str, bool]
+) -> None:
+    source = f"native_nav: {{teleop: {settings}}}\n"
+    path = settings_root / "products/demo.yaml"
+    path.write_text(source, encoding="utf-8")
+
+    graph = load_runtime_graph(settings_root)
+
+    assert graph.products["demo"]["native_nav"] == expected
+    assert path.read_text(encoding="utf-8") == source
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        "teleop: false",
+        "teleop: {unknown: true}",
+        "teleop: {takeover: 1}",
+        "teleop: {planner: 'true'}",
+        "teleop: {takeover: true}, allow_teleop_takeover: true",
+        "teleop: {planner: false}, teleop_local_planner: false",
+    ],
+)
+def test_source_teleop_settings_reject_ambiguous_or_invalid_input(
+    settings_root: Path, settings: str
+) -> None:
+    (settings_root / "products/demo.yaml").write_text(
+        f"native_nav: {{{settings}}}\n", encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match=r"native_nav\.teleop"):
+        load_runtime_graph(settings_root)
+
+
+def test_grouped_navigation_merges_shared_files_before_inline_overrides(settings_root: Path) -> None:
+    root = settings_root
+    source = (
+        "includes: [limits, tracking]\n"
+        "native_nav:\n"
+        "  follower: {max_speed_mps: 0.5}\n"
+        "  teleop: {takeover: true, max_speed_mps: 0.4}\n"
+        "  global: {terminal_tolerance_m: 0.15, terminal_xy_tolerance_m: 0.2, terminal_z_tolerance_m: 0.3}\n"
+    )
+    (root / "products/demo.yaml").write_text(source, encoding="utf-8")
+    (root / "settings/limits.yaml").write_text(
+        "native_nav:\n"
+        "  follower: {max_speed_mps: 1.4, max_accel_mps2: 4.0, max_yaw_accel_rad_s2: 4.0}\n"
+        "  teleop: {planner: true, max_speed_mps: 1.0, max_yaw_rate_rad_s: 1.0}\n"
+        "  recovery: {max_attempts: 3, rotation_timeout_s: 2.5}\n",
+        encoding="utf-8",
+    )
+    (root / "settings/tracking.yaml").write_text(
+        "native_nav:\n"
+        "  follower: {lookahead_m: 0.35, align_enter_rad: 0.8, align_exit_rad: 0.35}\n"
+        "  teleop: {horizon_m: 3.5, max_deviation_deg: 55}\n"
+        "  recovery: {max_attempts: 2}\n",
+        encoding="utf-8",
+    )
+
+    nav = load_runtime_graph(root).products["demo"]["native_nav"]
+
+    assert nav == {
+        "path_follower_max_speed_mps": 0.5,
+        "path_follower_max_accel_mps2": 4.0,
+        "path_follower_max_yaw_accel_rad_s2": 4.0,
+        "path_follower_lookahead_m": 0.35,
+        "path_follower_heading_align_enter_rad": 0.8,
+        "path_follower_heading_align_exit_rad": 0.35,
+        "allow_teleop_takeover": True,
+        "teleop_local_planner": True,
+        "teleop_max_speed_mps": 0.4,
+        "teleop_max_yaw_rate_rad_s": 1.0,
+        "teleop_planner_horizon_m": 3.5,
+        "teleop_planner_max_deviation_deg": 55,
+        "octoplanner3d_terminal_goal_tolerance_m": 0.15,
+        "octoplanner3d_terminal_goal_xy_tolerance_m": 0.2,
+        "octoplanner3d_terminal_goal_z_tolerance_m": 0.3,
+        "recovery": {"max_attempts": 2},
+    }
+    assert (root / "products/demo.yaml").read_text(encoding="utf-8") == source
+
+
+@pytest.mark.parametrize("settings", ["follower: false", "follower: {unknown: 1}",
+    "follower: {max_speed_mps: 1}, path_follower_max_speed_mps: 1"])
+def test_source_follower_rejects_ambiguous_or_invalid_input(settings_root: Path, settings: str) -> None:
+    (settings_root / "products/demo.yaml").write_text(
+        f"native_nav: {{{settings}}}\n", encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match=r"native_nav\.follower"):
+        load_runtime_graph(settings_root)
+
+
+def test_grouped_follower_adds_no_defaults_and_preserves_variant_replacement(settings_root: Path) -> None:
+    (settings_root / "products/demo.yaml").write_text(
+        "native_nav: {follower: {max_speed_mps: 1}}\n"
+        "default_variant: inherited\n"
+        "variants:\n"
+        "  inherited: {}\n"
+        "  selected: {native_nav: {follower: {goal_tolerance_m: 0.15, min_speed_mps: 0.08, max_yaw_rate_rad_s: 1}}}\n",
+        encoding="utf-8",
+    )
+    product = load_runtime_graph(settings_root).products["demo"]
+    assert resolve_product_variant_spec("demo", product)["native_nav"] == {"path_follower_max_speed_mps": 1}
+    assert resolve_product_variant_spec("demo", product, product_variant="selected")["native_nav"] == {
+        "path_follower_goal_tolerance_m": 0.15,
+        "path_follower_min_speed_mps": 0.08,
+        "path_follower_max_yaw_rate_rad_s": 1,
+    }
+
+
+def test_shared_navigation_topics_join_product_in_order(settings_root: Path) -> None:
+    root = settings_root
+    (root / "products/demo.yaml").write_text(
+        "includes: [global, extra]\n"
+        "topics: [/tf, /nav/state]\n"
+        "native_nav: {global: {preblocked: false, robot_radius_m: 0.3}}\n",
+        encoding="utf-8",
+    )
+    (root / "settings/global.yaml").write_text(
+        "topics: [/maps/state, /tf]\n"
+        "native_nav: {global: {planner: octoplanner3d, support_patch_radius_cells: 2, support_patch_min_samples: 3}}\n",
+        encoding="utf-8",
+    )
+    (root / "settings/extra.yaml").write_text(
+        "topics: [/maps/state, /nav/global_path]\n", encoding="utf-8"
+    )
+
+    product = load_runtime_graph(root).products["demo"]
+
+    assert product["topics"] == ["/maps/state", "/tf", "/nav/global_path", "/nav/state"]
+    assert product["native_nav"] == {
+        "global_planner": "octoplanner3d",
+        "octoplanner3d_support_patch_radius_cells": 2,
+        "octoplanner3d_support_patch_min_samples": 3,
+        "octoplanner3d_enable_preblocked_costmap": False,
+        "octoplanner3d_robot_radius": 0.3,
+    }
+
+
+@pytest.mark.parametrize("topics", ["null", "{}", "camera", "[null]", "[42]", "['']", "[' /tf']"])
+def test_shared_navigation_rejects_invalid_topics(settings_root: Path, topics: str) -> None:
+    root = settings_root
+    (root / "products/demo.yaml").write_text("includes: [global]\n", encoding="utf-8")
+    (root / "settings/global.yaml").write_text(f"topics: {topics}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="settings topics must be a list"):
+        load_runtime_graph(root)
+
+
+def test_variant_shared_topics_preserve_whole_field_replacement(settings_root: Path) -> None:
+    root = settings_root
+    (root / "products/demo.yaml").write_text(
+        "topics: [/tf, /nav/state]\n"
+        "default_variant: inherited\n"
+        "variants:\n"
+        "  inherited: {}\n"
+        "  selected: {includes: [global], topics_add: [/camera/image]}\n",
+        encoding="utf-8",
+    )
+    (root / "settings/global.yaml").write_text("topics: [/nav/global_path]\n", encoding="utf-8")
+    product = load_runtime_graph(root).products["demo"]
+
+    assert resolve_product_variant_spec("demo", product)["topics"] == ["/tf", "/nav/state"]
+    assert resolve_product_variant_spec("demo", product, product_variant="selected")["topics"] == [
+        "/nav/global_path", "/camera/image",
+    ]
+
+
+def test_camera_include_adds_preview_to_existing_product(settings_root: Path) -> None:
+    root = settings_root
+    (root / "products/demo.yaml").write_text(
+        "includes: [local]\n"
+        "topics: [/tf]\n"
+        "capabilities: [navigation]\n"
+        "processes: [lidar, traversability, nav, camera, host]\n"
+        "default_variant: standard\n"
+        "variants:\n"
+        "  standard: {}\n"
+        "  camera: {includes: [camera]}\n",
+        encoding="utf-8",
+    )
+    (root / "settings/local.yaml").write_text(
+        "topics: [/nav/state]\ncapabilities: [local_planning]\n", encoding="utf-8"
+    )
+    (root / "settings/camera.yaml").write_text(
+        "topics_add: [/camera/image]\ncapabilities_add: [camera_preview]\n"
+        "processes_add: [camera, video]\noptional_processes_add: [video]\n",
+        encoding="utf-8",
+    )
+
+    product = load_runtime_graph(root).products["demo"]
+    standard = resolve_product_variant_spec("demo", product)
+    camera = resolve_product_variant_spec("demo", product, product_variant="camera")
+
+    assert standard["topics"] == ["/nav/state", "/tf"]
+    assert standard["capabilities"] == ["local_planning", "navigation"]
+    assert camera["topics"] == ["/nav/state", "/tf", "/camera/image"]
+    assert camera["capabilities"] == ["local_planning", "navigation", "camera_preview"]
+    assert camera["processes"] == ["lidar", "traversability", "nav", "camera", "host", "video"]
+    assert camera["optional_processes"] == ["video"]
+    assert "includes" not in camera
+
+
+def test_grouped_scan_parameters_preserve_inline_override(settings_root: Path) -> None:
+    root = settings_root
+    (root / "products/demo.yaml").write_text(
+        "includes: [local]\nparameters: {scan_planner.acceleration_tolerance: 1.2}\n", encoding="utf-8"
+    )
+    (root / "settings/local.yaml").write_text(
+        "parameters:\n"
+        "  scan_planner: {acceleration_tolerance: 1.0, control_point_spacing_m: 0.2}\n"
+        "  scan_follower: {max_vx_mps: 1.0, max_vy_mps: 1.0}\n",
+        encoding="utf-8",
+    )
+
+    assert load_runtime_graph(root).products["demo"]["parameters"] == {
+        "scan_planner.acceleration_tolerance": 1.2,
+        "scan_planner.control_point_spacing_m": 0.2,
+        "scan_follower.max_vx_mps": 1.0,
+        "scan_follower.max_vy_mps": 1.0,
+    }
+
+
+@pytest.mark.parametrize("values", ["scan_planner: 1", "scan_follower: {max_vx_mps: 1}, scan_follower.max_vx_mps: 1"])
+def test_grouped_scan_parameters_reject_ambiguous_source(settings_root: Path, values: str) -> None:
+    (settings_root / "products/demo.yaml").write_text(f"parameters: {{{values}}}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"parameters\.scan_"):
+        load_runtime_graph(settings_root)
+
+
+def test_settings_expand_in_order_before_inline_values(settings_root: Path) -> None:
+    root = settings_root
+    (root / "products/demo.yaml").write_text(
+        "includes: [limits, scan]\n"
+        "native_nav: {path_follower_max_speed_mps: 0.5}\n"
+        "parameters: {scan_follower.max_vx_mps: 0.4}\n",
+        encoding="utf-8",
+    )
+    (root / "settings/limits.yaml").write_text(
+        "native_nav: {path_follower_max_speed_mps: 1.0}\n"
+        "parameters: {scan_follower.max_vx_mps: 1.0, scan_follower.max_vy_mps: 1.0}\n",
+        encoding="utf-8",
+    )
+    (root / "settings/scan.yaml").write_text(
+        "native_nav: {local_planner: scan}\n"
+        "parameters: {scan_follower.max_vx_mps: 0.8, scan_follower.max_vy_mps: 0.7}\n",
+        encoding="utf-8",
+    )
+
+    product = load_runtime_graph(root).products["demo"]
+
+    assert product["native_nav"] == {"path_follower_max_speed_mps": 0.5, "local_planner": "scan"}
+    assert product["parameters"] == {"scan_follower.max_vx_mps": 0.4, "scan_follower.max_vy_mps": 0.7}
+    assert "includes" not in product
+
+
+def test_settings_preserve_variant_whole_section_replacement(settings_root: Path) -> None:
+    root = settings_root
+    (root / "products/demo.yaml").write_text(
+        "includes: [limits]\n"
+        "default_variant: inherited\n"
+        "variants:\n"
+        "  inherited: {}\n"
+        "  selected: {includes: [scan], native_nav: {local_planner: cmu}}\n",
+        encoding="utf-8",
+    )
+    (root / "settings/limits.yaml").write_text(
+        "native_nav: {path_follower_max_speed_mps: 1.0}\n"
+        "parameters: {scan_follower.max_vx_mps: 1.0}\n",
+        encoding="utf-8",
+    )
+    (root / "settings/scan.yaml").write_text(
+        "native_nav: {local_planner: scan}\n"
+        "parameters: {scan_follower.max_vy_mps: 0.7}\n",
+        encoding="utf-8",
+    )
+
+    product = load_runtime_graph(root).products["demo"]
+    inherited = resolve_product_variant_spec("demo", product)
+    selected = resolve_product_variant_spec("demo", product, product_variant="selected")
+
+    assert inherited["native_nav"] == {"path_follower_max_speed_mps": 1.0}
+    assert selected["native_nav"] == {"local_planner": "cmu"}
+    assert selected["parameters"] == {"scan_follower.max_vy_mps": 0.7}
+    assert "product_variant" not in product
+
+
+@pytest.mark.parametrize(
+    ("references", "fragment", "error"),
+    (
+        ("[]", None, "invalid or duplicate names"),
+        ("scan", None, "includes must be a list"),
+        ("[scan, scan]", None, "invalid or duplicate names"),
+        ("[../scan]", None, "invalid includes name"),
+        ("[scan]", None, "cannot load settings"),
+        ("[scan]", "{}", "must contain only native_nav or parameters"),
+        ("[scan]", "host: {}", "must contain only native_nav or parameters"),
+        ("[scan]", "parameters: []", "parameters must be a mapping"),
+        ("[scan]", "parameters: [", "cannot load settings"),
+        ("[scan]", "parameters: {}\nparameters: {}", "duplicate key"),
+        ("[scan]", "parameters: {scan_follower.max_vx_mps: 1, scan_follower.max_vx_mps: 2}", "duplicate key"),
+    ),
+)
+def test_settings_reject_invalid_references_and_files(
+    settings_root: Path, references: str, fragment: str | None, error: str
+) -> None:
+    root = settings_root
+    (root / "products/demo.yaml").write_text(f"includes: {references}\n", encoding="utf-8")
+    if fragment is not None:
+        (root / "settings/scan.yaml").write_text(fragment, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=error):
+        load_runtime_graph(root)
 
 
 def test_products_own_their_runtime_boundary_without_named_contract_ids() -> None:

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -11,6 +13,8 @@
 
 namespace lingtu::maps::layers {
 
+namespace map_defaults = lingtu::settings::maps::maps;
+
 class RollingOccupancyGrid;
 struct Grid2D;
 
@@ -21,7 +25,7 @@ struct VoxelLayerConfig {
   float max_z_m{3.0F};
   float decay_rate{0.01F};
   float prune_below_count{1.0F};
-  std::size_t max_voxels{500000U};
+  std::size_t max_voxels{map_defaults::capacity::voxels};
   bool column_carving{true};
 };
 

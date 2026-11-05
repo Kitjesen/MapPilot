@@ -29,6 +29,7 @@ nav_kernel::FollowerParams followerParams(const CliConfig &cfg) {
   params.stopDisThre = cfg.path_follower_goal_tolerance_m;
   params.nominalDt = 1.0 / cfg.tick_hz;
   params.spline = cfg.scan_follower;
+  params.cmu = cfg.cmu_follower;
   const bool uses_local_planner =
       cfg.control_mode == ControlMode::Autonomy || cfg.teleop_local_planner;
   return uses_local_planner && cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu
@@ -86,6 +87,13 @@ CommandSafetyConfig commandSafetyConfig(const CliConfig &cfg) {
   return out;
 }
 
+OperatorMotionAuthorityOptions operatorMotionAuthorityOptions(const CliConfig &cfg) {
+  OperatorMotionAuthorityOptions options;
+  options.max_sample_age_s = cfg.teleop_cmd_max_age_s;
+  options.future_tolerance_s = cfg.input_future_tolerance_s;
+  return options;
+}
+
 InputGateConfig inputGateConfig(const CliConfig &cfg) {
   InputGateConfig out;
   out.odom_max_age_s = cfg.odom_max_age_s;
@@ -96,7 +104,6 @@ InputGateConfig inputGateConfig(const CliConfig &cfg) {
   out.driver_control_max_age_s = cfg.driver_control_max_age_s;
   out.require_driver_control = true;
   out.future_tolerance_s = cfg.input_future_tolerance_s;
-  out.recovery_frames = 1;
 
   if (cfg.control_mode == ControlMode::Teleop) {
     out.require_odom = false;
@@ -126,6 +133,7 @@ rolling::SegmentExecutorConfig rollingSegmentExecutorConfig(const CliConfig &cfg
   out.segment.max_waypoints = cfg.segment_max_waypoints;
   out.map_input.max_grid_cells = cfg.segment_max_grid_cells;
   out.map_input.max_age_s = cfg.segment_map_max_age_s;
+  out.map_input.future_tolerance_s = cfg.segment_future_tolerance_s;
   out.risk.stop_threshold = static_cast<float>(cfg.segment_risk_stop);
   out.risk.resume_threshold = static_cast<float>(cfg.segment_risk_resume);
   return out;
@@ -171,10 +179,8 @@ StatusWriterConfig buildStatusWriterConfig(const CliConfig &cfg,
       cfg.control_mode == ControlMode::Autonomy ? "driver_ack_and_odometry" : "driver_ack";
   out.local_planner_debug_candidate_limit = cfg.local_planner_debug_candidate_limit;
   out.local_map_debug_point_limit = cfg.local_map_debug_point_limit;
-  out.planner_obstacle_height_min_m = cfg.teleop_obstacle_height_min_m;
-  out.planner_obstacle_height_max_m = std::max(
-      cfg.local_planner_obstacle_height_max_m,
-      cfg.teleop_obstacle_height_max_m);
+  out.planner_obstacle_height_min_m = cfg.local_planner_obstacle_height_min_m;
+  out.planner_obstacle_height_max_m = cfg.local_planner_obstacle_height_max_m;
   out.obstacle_voxel_size_m = cfg.obstacle_voxel_size_m;
   out.sensor_offset_x_m = cfg.sensor_offset_x_m;
   out.sensor_offset_y_m = cfg.sensor_offset_y_m;
@@ -192,7 +198,6 @@ StatusWriterConfig buildStatusWriterConfig(const CliConfig &cfg,
   out.cloud_max_age_s = cfg.cloud_max_age_s;
   out.cloud_pose_max_gap_s = cfg.cloud_pose_max_gap_s;
   out.input_future_tolerance_s = cfg.input_future_tolerance_s;
-  out.input_recovery_frames = 1;
   out.octoplanner_options = cfg.octoplanner_options;
   out.far_options = cfg.far_options;
   // Input gate fields
@@ -210,7 +215,7 @@ StatusWriterConfig buildStatusWriterConfig(const CliConfig &cfg,
 }
 
 nav_kernel::LocalPlannerParams buildLocalPlannerParams(const CliConfig &cfg) {
-  nav_kernel::LocalPlannerParams out;
+  nav_kernel::LocalPlannerParams out = cfg.cmu_planner;
   const double planner_obstacle_margin_m =
       cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan
           ? 0.0
@@ -247,10 +252,8 @@ nav_kernel::LocalPlannerParams buildLocalPlannerParams(const CliConfig &cfg) {
   // applied when sensor-origin geometry is constructed and must not shift
   // the body pose a second time inside the local Planner, which accepts no
   // sensor-origin offset by design.
-  out.obstacleHeightThre = cfg.teleop_obstacle_height_min_m;
-  out.obstacleHeightMax = std::max(
-      cfg.local_planner_obstacle_height_max_m,
-      cfg.teleop_obstacle_height_max_m);
+  out.obstacleHeightThre = cfg.local_planner_obstacle_height_min_m;
+  out.obstacleHeightMax = cfg.local_planner_obstacle_height_max_m;
   // The CMU planner's fourth point value is terrain height above local ground.
   // Its official runtime enables terrain analysis and replaces raw registered
   // scans with the fresh terrain cloud before candidate scoring.

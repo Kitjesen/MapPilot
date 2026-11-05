@@ -215,14 +215,43 @@ def test_thunder_model_regenerates_identically_for_real_and_sim(tmp_path):
     assert report == json.loads((ROOT / THUNDER_BODY).with_suffix(".json").read_text(encoding="utf-8"))
     assert report == json.loads((ROOT / THUNDER_SIM_BODY).with_suffix(".json").read_text(encoding="utf-8"))
     geometry = yaml.safe_load((ROOT / THUNDER_BODY).parent.parent.joinpath("robot.yaml").read_text(encoding="utf-8"))["geometry"]
-    assert geometry["navigation_body_file"] == "body/thunderv4_nominal.body2"
+    assert geometry["navigation_body_file"] == "body/thunderv4_navigation.body2"
     assert report["source_keyframe"] == "v4_nominal_stand"
     assert len(report["joint_angles"]) == 16
-    assert report["primitive_count"] == 38
+    assert report["primitive_count"] == 8
+    assert report["source_primitive_count"] == 38
     assert report["geometry_margin_m"] == 0
     assert report["installation_qualified"] is False
-    assert all("support_required" not in part for part in report["parts"])
-    contacts = [part for part in report["parts"] if part["support_contact"]]
-    assert len(contacts) == 4
-    assert all(part["source_type"] == "cylinder" for part in contacts)
-    assert all(part["radius_m"] == pytest.approx(.093) for part in contacts)
+    assert report["support_contact_links"] == []
+    assert {part["link"] for part in report["parts"]} == {
+        "chassis", "nose", "tail", "sensor",
+        "FR_clearance", "FL_clearance", "RR_clearance", "RL_clearance",
+    }
+    sources = {part["link"]: part for part in report["source_bounds"]}
+    covered = []
+    for part in report["parts"]:
+        assert part["source_type"] == "box"
+        assert part["support_contact"] is False
+        assert "support_required" not in part
+        assert np.asarray(part["rotation"]) == pytest.approx(np.eye(3))
+        minimum = np.array(part["center"]) - part["half_size"]
+        maximum = np.array(part["center"]) + part["half_size"]
+        covered.extend(part["footprint_source_parts"])
+        for link in part["footprint_source_parts"]:
+            source = sources[link]
+            assert np.all(minimum[:2] <= np.array(source["minimum"])[:2] + 1e-12)
+            assert np.all(maximum[:2] >= np.array(source["maximum"])[:2] - 1e-12)
+        for link in part["height_source_parts"]:
+            source = sources[link]
+            assert minimum[2] <= source["minimum"][2] + 1e-12
+            assert maximum[2] >= source["maximum"][2] - 1e-12
+        if part["link"].endswith("_clearance"):
+            assert len(part["footprint_source_parts"]) == 8
+            assert len(part["height_source_parts"]) == 4
+            assert all(sources[link]["body"].endswith(("_hip", "_thigh"))
+                       for link in part["height_source_parts"])
+    assert sorted(covered) == sorted(sources)
+    assert report["envelope_bounds"]["size"] == pytest.approx([.835, .5983312173, .4115492487])
+    assert report["envelope_bounds"]["minimum"][2] + .435 > .2
+    assert set(report["excluded_height_bodies"]) == {
+        f"{leg}_{link}" for leg in ("FL", "FR", "RL", "RR") for link in ("calf", "foot")}

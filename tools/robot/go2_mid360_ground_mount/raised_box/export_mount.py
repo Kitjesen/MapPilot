@@ -106,7 +106,17 @@ def export(directory=HERE, asset_name="mid360_raised_box"):
     fixed(robot, "mid360_lid", "livox_frame", (0, 0, height))
 
     model_dir = ROOT / "config/robots/unitree/go2"
-    slam = yaml.safe_load((model_dir / "sensors/mid360_ltlio.yaml").read_text(encoding="utf-8"))
+    slam_path = model_dir / "sensors/mid360_ltlio.yaml"
+    slam = yaml.safe_load(slam_path.read_text(encoding="utf-8"))
+    # The exported candidate is a portable snapshot of the effective profile.
+    if defaults := slam.pop("defaults", None):
+        common = yaml.safe_load((slam_path.parent / defaults).read_text(encoding="utf-8"))
+        effective = common["slam"]
+        for key, value in slam.items():
+            previous = effective.get(key)
+            effective[key] = {**previous, **value} if isinstance(previous, dict) and isinstance(value, dict) else value
+        slam = effective
+    slam.pop("runtime", None)
     r_il = np.array(slam["r_il"]).reshape(3, 3)
     t_il = np.array(slam["t_il"])
     r_bi = rotation @ r_il.T

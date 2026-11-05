@@ -193,7 +193,7 @@ std::string MapsServiceCore::GetMapTypesJson() const {
   constexpr const char* kArtifacts =
       "{"
       "\"map_pcd\":{\"filename\":\"map.pcd\",\"map_class\":\"saved_point_cloud\","
-      "\"role\":\"raw_slam_map_source\",\"type\":\"POINTCLOUD\",\"capability\":\"source_pointcloud\"},"
+      "\"role\":\"saved_map_source\",\"type\":\"POINTCLOUD\",\"capability\":\"source_pointcloud\"},"
       "\"occupancy_grid\":{\"filename\":\"occupancy.npz\",\"map_class\":\"static_2d_occupancy\","
       "\"role\":\"static_grid_helper\",\"type\":\"OCCUPANCY_2D\",\"capability\":\"path_planning_2d\"},"
       "\"octomap\":{\"filename\":\"octomap.ot\",\"map_class\":\"global_3d_occupancy\","

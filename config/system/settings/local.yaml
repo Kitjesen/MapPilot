@@ -1,0 +1,63 @@
+# SCAN local planning; motion budget from limits.yaml, geometry from RobotConfig.
+topics:
+  - /nav/local_path
+native_nav:
+  dynamic_min_cells: 8
+  dynamic_min_speed_mps: 0.25
+  dynamic_confirm_frames: 4
+  # Freshness and scoring for the CMU terrain inputs.
+  traversability_max_age_s: 1.5
+  terrain_map_max_age_s: 0.5
+  traversability_hard_cost: 80.0
+  traversability_soft_cost: 40.0
+  traversability_weight: 0.01
+  local_planner_obstacle_height_min_m: 0.20
+  local_planner_obstacle_height_max_m: 1.20
+  max_obstacle_points: 20000
+  local_planner_threads: 2
+  local_planner_debug_candidates: 0
+  local_map_debug_points: 0
+  # CMU collision thresholds use the upstream 5 cm obstacle voxel size.
+  obstacle_voxel_size_m: 0.05
+  scan_motion_voxel_size_m: 0.08  # SCAN dynamic observations use their own motion layer.
+  live_obstacle_decay_s: 0.45
+  live_obstacle_ray_clearing: true
+  live_obstacle_ray_clear_max_range_m: 3.5
+  live_obstacle_ray_clearing_interval_s: 0.10
+  live_obstacle_max_clearing_rays: 512
+  live_obstacle_min_hits: 1
+  cmu:
+    ground_height_m: 0.1
+    cost_height_high_m: 0.15
+    cost_height_low_m: 0.1
+    points_per_path: 2
+    direction_weight: 0.02
+    direction_threshold_deg: 90
+    direction_to_vehicle: false
+    path_scale: 1
+    min_path_scale: 0.75
+    path_scale_step: 0.25
+    scale_by_speed: true
+    min_path_range_m: 1
+    path_range_step_m: 0.5
+    range_by_speed: true
+    crop_by_goal: true
+    goal_clear_range_m: 0.5
+    slow_path_count: 5
+    slow_group_count: 1
+parameters:
+  local_collision.max_age_s: 0.5
+  scan_planner:
+    control_point_spacing_m: 0.20
+    # Normal replanning progress and near-goal suppression; collision triggers are separate.
+    replan_distance_m: 1.0
+    no_replan_distance_m: 0.10
+    planning_horizon_m: 3.5
+    smooth_weight: 1.0
+    collision_weight: 1.0
+    feasibility_weight: 0.1
+    fitness_weight: 1.0
+    feasibility_tolerance: 0.5  # Fractional spline allowance: limit * (1 + tolerance).
+    velocity_tolerance: 1.0  # Additive acceptance allowance in m/s.
+    acceleration_tolerance: 1.0  # Additive acceptance allowance in m/s2.
+    collision_distance_m: 0.20  # Optimizer clearance, separate from body radius.

@@ -8,6 +8,7 @@
 #include "planning/local/cmu/backend.hpp"
 #include "planning/local/grid_axis.hpp"
 #include "planning/local/scan/backend.hpp"
+#include "planning/local/scan/grid.hpp"
 #include "planning/local/scan/task.hpp"
 #include "trajectory/spline.hpp"
 
@@ -154,32 +155,6 @@ bool LocalCollisionMapView::observedBox(const Vec3 &minimum, const Vec3 &maximum
       seenFree |= free;
     }
   return seenFree;
-}
-
-bool LocalCollisionMapView::measuredOccupiedCylinder(const Vec3 &center, double radius,
-    double below, double above, bool upperHemisphere) const noexcept {
-  if (!measuredOccupiedStorage) return false;
-  const local::GridAxis ax(aabbMin.x,resolution), ay(aabbMin.y,resolution), az(aabbMin.z,resolution);
-  const int x0=static_cast<int>(std::max<std::int64_t>(0,ax.index(center.x-radius)));
-  const int y0=static_cast<int>(std::max<std::int64_t>(0,ay.index(center.y-radius)));
-  const int z0=static_cast<int>(std::max<std::int64_t>(0,az.index(center.z-below)));
-  const int x1=static_cast<int>(std::min<std::int64_t>(sizeX-1,ax.index(center.x+radius)));
-  const int y1=static_cast<int>(std::min<std::int64_t>(sizeY-1,ay.index(center.y+radius)));
-  const int z1=static_cast<int>(std::min<std::int64_t>(sizeZ-1,az.index(center.z+above)));
-  for (int z=z0;z<=z1;++z) {
-    const double lowZ=aabbMin.z+z*resolution, highZ=lowZ+resolution;
-    if (highZ<=center.z-below+1e-9 || lowZ>=center.z+above-1e-9) continue;
-    const double dz=upperHemisphere ? std::max(0.0,lowZ-center.z) : 0.0;
-    for (int y=y0;y<=y1;++y) for (int x=x0;x<=x1;++x) {
-      const std::size_t linear=(static_cast<std::size_t>(z)*sizeY+y)*sizeX+x;
-      if (((*measuredOccupiedStorage)[linear/8U] & (1U<<(linear%8U)))==0U) continue;
-      const double lowX=aabbMin.x+x*resolution, lowY=aabbMin.y+y*resolution;
-      const double dx=std::max({lowX-center.x,0.0,center.x-lowX-resolution});
-      const double dy=std::max({lowY-center.y,0.0,center.y-lowY-resolution});
-      if (dx*dx+dy*dy+dz*dz<=radius*radius+1e-12) return true;
-    }
-  }
-  return false;
 }
 
 bool LocalCollisionMapView::occupied(const Vec3 &planning_point) const noexcept {
@@ -496,6 +471,32 @@ LocalPlan LocalPlanner::plan(const LocalPlanRequest &request) {
 LocalPlan LocalPlanner::plan(const LocalPlanRequest &request,
                                const LocalPlanCancel &cancel) {
   return impl_->plan(request, cancel);
+}
+
+bool LocalPlanner::turnClear(const LocalPlanRequest &request, double targetYaw) const {
+  const local::scan::Grid grid(impl_->params(), request);
+  const auto &body = request.robot.pose;
+  return grid.valid() &&
+      grid.segmentInflatedOccupancy(body.position, body.yaw, body.position, targetYaw) == 0;
+}
+
+bool LocalPlanner::sweepClear(const LocalPlanRequest &request,
+                              const std::vector<Pose> &poses) const {
+  const local::scan::Grid grid(impl_->params(), request);
+  if (!grid.valid()) return false;
+  for (std::size_t i = 1; i < poses.size(); ++i) {
+    if (grid.segmentInflatedOccupancy(poses[i - 1].position, poses[i - 1].yaw,
+                                      poses[i].position, poses[i].yaw) != 0) return false;
+  }
+  return true;
+}
+
+bool LocalPlanner::boundaryDepartureClear(const LocalPlanRequest &request,
+                                          const Vec3 &target) const {
+  const local::scan::Grid grid(impl_->params(), request);
+  const auto &body = request.robot.pose;
+  return grid.valid() && grid.inflatedOccupancy(body.position, body.yaw) == 1 &&
+      grid.boundaryDepartureFree(body, target);
 }
 
 void LocalPlanner::pause() {

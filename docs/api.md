@@ -59,7 +59,13 @@ not invent version directories or bypass ProductControl activation.
 
 Live-mapping saves are durable operations. A successful admission is not a completed
 save: poll `GET /api/v1/maps/operations/{operation_id}` and inspect
-`operation.state`. A client wait timeout or a lost status response leaves the
+`operation.source_saved` and `operation.state`. `POST /api/v1/map/save` accepts
+`auto_process` (default `true`). Once the capture and receipt are durable,
+`source_saved=true` confirms the archive, independently of processing success.
+With `auto_process=false`, the task stays `CAPTURED` across restarts until
+`POST /api/v1/maps/operations/{operation_id}/process`. Processing uses the saved
+source and does not require a new SLAM session. The existing active-map mutation
+restriction still applies. A client wait timeout or a lost status response leaves the
 outcome unconfirmed; continue querying that operation instead of submitting
 another save. A `SUCCEEDED` detail includes the available
 `operation.processing.optimization` and `operation.processing.cleanup`
@@ -69,6 +75,36 @@ imply completed optimization or navigation readiness. Lightweight operation
 lists omit these summaries; fetch the individual detail. A same-name save may
 replace an inactive map; active-map changes are rejected. Saves do not activate
 a map or switch Product.
+
+The source remains archived after successful processing, failure or cancellation.
+`GET /api/v1/maps/operations/{operation_id}/source/pcd` streams that operation's
+PCD with `X-Lingtu-Operation-Id`; it does not claim a formal map content epoch.
+This uses the existing Linux descriptor transport. Old successful tasks whose
+sources were already deleted return `source_saved=false`; the endpoint never
+substitutes the processed map. Repeated process calls for queued/running/successful
+tasks return the existing result. There is no implicit reprocessing of a completed task.
+
+Python SDK examples:
+
+```python
+# Return once the point cloud is archived; processing continues in the background.
+saved = robot.map.save_and_wait("yard", wait_for_source=True)
+
+# Archive now, process later, retaining the same operation identity.
+saved = robot.map.save_and_wait("yard_later", auto_process=False)
+operation_id = saved["operation_id"]
+robot.map.download_source(operation_id, "yard_later.source.pcd")
+robot.map.process_operation(operation_id)
+```
+
+Failed/cancelled operations retain their last actual `phase`; only successful
+completion reaches `DONE`. Older records may still report `DONE` without a
+recoverable stage. `GET /api/v1/maps/operations` lists existing operations;
+`POST /api/v1/maps/operations/{operation_id}/retry` reuses a retained snapshot
+when available, and `/cancel` cancels that operation. Retry clears previous
+processing reports before rebuilding its working data. Native diagnostic
+paths (`job_dir`, `capture_dir`, `work_dir`) remain private to the native query
+interface. See [file retention](operations/map-files.md).
 
 `GET /map/viewer?map=MAP_ID` returns a 307 redirect to `/?tab=map&map=MAP_ID`;
 without `map` it opens the product map library. The redirect does not activate
@@ -86,6 +122,28 @@ The separate `/points` endpoint remains bound to the active live scene.
 `GET /api/v1/maps/{name}/octomap` streams the saved full-probability
 `octomap.ot` with the same artifact identity headers. Its occupied-voxel
 display does not classify undrawn space as free or unknown.
+
+## Active navigation task speed limit
+
+`POST /api/v1/navigation/tasks/{task_id}/speed-limit` accepts the active control
+owner's request. The body contains `client_id`, a distinct `request_id` and
+`max_speed_mps`. An optional body `task_id` must match the route.
+
+```json
+{"client_id": "web", "request_id": "speed-1", "max_speed_mps": 0.3}
+```
+
+The native endpoint accepts a finite positive limit up to its configured
+navigation maximum for the retained active task, including a paused task.
+A task still awaiting its first route, an unrelated task and a completed task
+return a rejection. A pending terminal transaction also rejects the update.
+
+A 202 response includes the correlated native ACK with kind `10` and reason
+`task_speed_limit_updated`. The route and task identity remain active, and an
+in-flight global replan retains the latest limit. SCAN uses its existing speed
+transition to generate the changed trajectory. The ACK confirms that the limit
+was updated. Actual speed and tracking still come from runtime telemetry, so
+`execution_confirmed` and `final_output_confirmed` remain false in this response.
 
 ## Saved point-cloud subset editing
 
@@ -460,11 +518,15 @@ _ExplorationSupervisorModule — cross-process watchdog for TARE exploration._
 ## src/gateway/mcp_server.py
 _LingTu MCP Server -Model Context Protocol for AI agent control._
 
+`get_config` reports the RobotConfig driver limits as `speed.max_linear` and
+`speed.max_angular`; these are not the current task's navigation speed. The
+unused `speed.max_speed` field is no longer returned.
+
 | Tool | Module | Parameters | Returns | Description |
 | --- | --- | --- | --- | --- |
 | `get_health` | `MCPServerModule` | — | `str` | Return full system health: modules, connections, message counts. |
 | `list_modules` | `MCPServerModule` | — | `str` | List all deployed modules with layer, port counts, and running state. |
-| `get_config` | `MCPServerModule` | — | `str` | Return robot configuration: speed limits, geometry, safety thresholds. |
+| `get_config` | `MCPServerModule` | — | `str` | Return robot driver limits, geometry, and safety thresholds. |
 | `get_robot_position` | `MCPServerModule` | — | `str` | Return the robot's current position (x, y, z) and yaw in map frame. |
 | `get_scene_graph` | `MCPServerModule` | — | `str` | Return the current flat or hierarchical scene graph snapshot. |
 | `detect_objects` | `MCPServerModule` | `query: str` | `str` | Search the current scene for objects matching *query* (case-insensitive). |
@@ -563,7 +625,7 @@ Each source file has one complete table; the rows are the route contract.
 | `GET /api/v1/map/global/points` | Native online whole-map preview | `—` | `get_global_map_points` |
 | `GET /api/v1/map/points` | Map point cloud as JSON (from ikd-tree snapshot) | `MapPointsResponse` | `get_map_points` |
 | `POST /api/v1/map/rename` | Rename a saved map | `MapLifecycleResponse` | `rename_map` |
-| `POST /api/v1/map/save` | Save current SLAM map | `MapSaveOperationResponse` | `save_map_now` |
+| `POST /api/v1/map/save` | Request a map save | `MapSaveOperationResponse` | `save_map_now` |
 | `POST /api/v1/map_cloud/reset` | Clear accumulated map cloud (viz only, SLAM ikd-tree untouched) | `MapLifecycleResponse` | `reset_map_cloud` |
 | `GET /api/v1/maps/environment/layers` | Operator-facing environment map layer state | `—` | `get_environment_map_layers` |
 | `POST /api/v1/maps/import_pcd` | Import a PCD file into a LingTu map package | `MapLifecycleResponse` | `import_pcd_map` |
@@ -625,6 +687,7 @@ Each source file has one complete table; the rows are the route contract.
 | `POST /api/v1/navigation/tasks/{task_id}/cancel` | Request cancellation of one navigation task | `ControlCommandResponse` | `post_navigation_task_cancel` |
 | `POST /api/v1/navigation/tasks/{task_id}/pause` | Request a stop-confirmed pause of one navigation task | `ControlCommandResponse` | `post_navigation_task_pause` |
 | `POST /api/v1/navigation/tasks/{task_id}/resume` | Request continuation of the same paused navigation task | `ControlCommandResponse` | `post_navigation_task_resume` |
+| `POST /api/v1/navigation/tasks/{task_id}/speed-limit` | Update the active task speed limit while retaining its route | `ControlCommandResponse` | `post_navigation_task_speed_limit` |
 
 ### src/gateway/routes/app.py
 
@@ -803,7 +866,19 @@ Each source file has one complete table; the rows are the route contract.
 
 | Route | Summary | Response model | Handler |
 | --- | --- | --- | --- |
+| `GET /api/v1/camera/diagnostics` | Read camera, video pipeline and WHEP diagnostic observations | `—` | `camera_video_diagnostics` |
 | `GET /api/v1/webrtc/go2rtc/status` | Probe the optional go2rtc endpoint | `Go2RTCStatusResponse` | `go2rtc_status` |
 | `DELETE /api/v1/webrtc/sessions/{resource_path:path}` | Release a video receiver | `—` | `delete_session` |
 | `GET /api/v1/webrtc/status` | Probe the selected media endpoint and camera display configuration | `WebRTCStatusResponse` | `media_status` |
 | `POST /api/v1/webrtc/whep` | Negotiate a video receiver with the media endpoint | `—` | `offer` |
+
+### src/gateway/video_test.py
+
+| Route | Summary | Response model | Handler |
+| --- | --- | --- | --- |
+| `GET /api/v1/app/bootstrap` | — | `—` | `bootstrap` |
+| `GET /api/v1/app/capabilities` | — | `—` | `capabilities` |
+| `GET /api/v1/readiness` | — | `—` | `readiness` |
+| `GET /api/v1/state` | — | `—` | `state` |
+| `GET /video-probe/` | — | `—` | `probe_index` |
+| `GET /video-probe/{asset}` | — | `—` | `probe_asset` |

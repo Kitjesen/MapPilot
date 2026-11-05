@@ -270,156 +270,28 @@ TEST(RecoverySequence, SuccessfulActionsStillConsumeTheAttemptBudget) {
   EXPECT_EQ(retry.attempt, 1);
 }
 
-TEST(RecoverySequence, ScanEscapesBesideInflatedWallWithoutInflatingItAgain) {
-  lingtu::nav::tests::CollisionBitmap collision({-4, -4, -2}, {4, 4, 3}, .05);
-  // Inflation reaches beside the body, but neither cylinder centre is occupied.
-  for (double x = -2; x < 2; x += .025)
-    collision.occupy({x, .175, .435});
+TEST(RecoverySequence, ScanTranslationIsAnUnverifiedGoalUntilPlannerAcceptsIt) {
   auto params = freeSpaceParams();
   params.backend = nav_kernel::LocalPlannerBackend::Scan;
-  params.checkObstacle = true;
-  params.scan.cylinderOffset = .25;
-  params.scan.bodyClearanceBelow = .05;
-  params.scan.bodyClearanceAbove = .35;
-  params.useTraversabilityCost = true;
   auto input = freeSpaceInput();
-  input.robot.pose.position.z = .435;
-  input.environment.collision = collision.view();
   lingtu::nav::navigation::Recovery recovery(params, {});
-
-  const auto output = recovery.step(input);
-  ASSERT_TRUE(output.active) << output.reason;
-  ASSERT_TRUE(output.verified);
-  ASSERT_EQ(output.action, nav_kernel::RecoveryAction::Translate);
-  nav_kernel::local::scan::Grid grid(params, input);
-  for (const auto& point : output.path_body) {
-    EXPECT_TRUE(grid.obstacleFree({point.x, point.y, .435}, 0.0));
-    EXPECT_LT(point.y, .15);
-  }
-
-  // A newly observed obstacle at the actual body height must stop recovery.
-  collision.occupyInflated({.25f, 0, .435f}, .20, .1, .1);
-  input.clock.timestampS = 1.02;
-  input.environment.collision = collision.view(1.02, 2);
-  const auto blocked = recovery.step(input);
-  EXPECT_EQ(blocked.state, 0);
-  EXPECT_EQ(blocked.action, nav_kernel::RecoveryAction::None);
-  EXPECT_FALSE(blocked.verified);
-}
-
-TEST(RecoverySequence, ScanUsesGeometryWithoutRecoveryMetadataGate) {
-  lingtu::nav::tests::CollisionBitmap collision({-4, -4, -2}, {4, 4, 3}, .05);
-  // An inflated voxel above the body origin is not an obstacle at body height.
-  collision.occupy({.25, 0, .675});
-  auto params = freeSpaceParams();
-  params.backend = nav_kernel::LocalPlannerBackend::Scan;
-  params.checkObstacle = true;
-  params.scan.cylinderOffset = .25;
-  params.scan.bodyClearanceBelow = .05;
-  params.scan.bodyClearanceAbove = .35;
-  params.useTraversabilityCost = true;
-  auto input = freeSpaceInput();
-  input.robot.pose.position.z = .435;
-  input.environment.collision = collision.view();
-  lingtu::nav::navigation::Recovery recovery(params, {});
-  EXPECT_TRUE(recovery.step(input).active);
-  input.clock.timestampS = 2.0;
-  EXPECT_TRUE(recovery.step(input).active);
-  input.environment.collision = collision.view(2.0, 2);
-  input.environment.collision.complete = false;
-  EXPECT_TRUE(recovery.step(input).active);
-  input.environment.collision = {};
-  EXPECT_TRUE(recovery.step(input).active);
-}
-
-TEST(RecoverySequence, ScanExternalClockUsesRebasedReceiveTimeInsteadOfWallSourceTime) {
-  lingtu::nav::tests::CollisionBitmap collision({-4, -4, -2}, {4, 4, 3}, .05);
-  auto params = freeSpaceParams();
-  params.backend = nav_kernel::LocalPlannerBackend::Scan;
-  params.checkObstacle = true;
-  auto input = freeSpaceInput(1700000000.1);
-  input.clock.mode = nav_kernel::PlanClockMode::External;
-  input.environment.collision = collision.view(1800000000.0);
-  input.environment.collision.receiveStampS = 1700000000.0;
-  lingtu::nav::navigation::Recovery recovery(params, {});
-  EXPECT_TRUE(recovery.step(input).verified);
-  input.clock.timestampS += 1.0;
-  EXPECT_TRUE(recovery.step(input).verified);
-}
-
-TEST(RecoverySequence, ScanCanLeaveAnInflatedBoundaryCellWithoutTurning) {
-  lingtu::nav::tests::CollisionBitmap collision({-4, -4, -2}, {4, 4, 3}, .05);
-  collision.occupy({.275, .025, .435});
-  auto params = freeSpaceParams();
-  params.backend = nav_kernel::LocalPlannerBackend::Scan;
-  params.checkObstacle = true;
-  params.scan.cylinderOffset = .25;
-  auto input = freeSpaceInput();
-  input.robot.pose.position = {.025, .025, .435};
-  input.environment.collision = collision.view();
-  lingtu::nav::navigation::Recovery recovery(params, {});
-  const auto output = recovery.step(input);
-  EXPECT_TRUE(output.verified) << output.reason;
-  EXPECT_EQ(output.action, nav_kernel::RecoveryAction::Translate);
-  EXPECT_FALSE(output.direct_command);
-  ASSERT_EQ(output.path_body.size(), 2U);
-  nav_kernel::local::scan::Grid grid(params, input);
-  const auto world = lingtu::nav::navigation::detail::RecoverySearch::bodyPathToWorld(output.path_body, input.robot.pose);
-  EXPECT_TRUE(grid.boundaryDepartureFree(input.robot.pose, world.back()));
-  input.robot.pose.position.z += .003;
-  input.clock.timestampS = 1.02;
-  input.environment.collision = collision.view(1.02, 2);
-  EXPECT_TRUE(recovery.step(input).verified)
-      << "small body bobbing must keep the planar exit valid at the actual height";
-}
-
-TEST(RecoverySequence, ScanBodyCollisionCannotFallBackToFreeInflatedOrPointGeometry) {
-  lingtu::nav::tests::CollisionBitmap raw({-2,-2,-1},{2,2,2},.1);
-  lingtu::nav::tests::CollisionBitmap inflated({-2,-2,-1},{2,2,2},.1);
-  raw.occupy({.25,.05,.55});
-  auto body = std::make_shared<lingtu::nav::collision::Body>();
-  body->margin_m = 0;
-  lingtu::nav::collision::Part part;
-  part.link = "base";
-  part.half_size = {.3,.1,.1};
-  body->parts.push_back(part);
-  auto params = freeSpaceParams();
-  params.backend = nav_kernel::LocalPlannerBackend::Scan;
-  params.checkObstacle = true;
-  params.scan.voxelResolution = .1;
-  auto input = freeSpaceInput();
-  input.body = body;
-  input.robot.pose.position.z = .5;
-  input.environment.collision = inflated.view();
-  const auto measured = raw.view();
-  input.environment.collision.measuredOccupiedStorage =
-      std::make_shared<const std::vector<std::uint8_t>>(
-          measured.inflatedBits, measured.inflatedBits+measured.inflatedBytes);
-  input.environment.collision.knownFreeStorage =
-      std::make_shared<const std::vector<std::uint8_t>>(measured.inflatedBytes,255U);
-  const auto collision = input.environment.collision;
-  for (bool check_points : {true, false}) {
-    SCOPED_TRACE(check_points);
-    params.checkObstacle = check_points;
-    input.environment.collision = collision;
-    nav_kernel::local::scan::Grid grid(params, input);
-    ASSERT_TRUE(grid.valid());
-    EXPECT_EQ(grid.inflatedOccupancy(input.robot.pose.position, input.robot.pose.yaw), 1);
-    lingtu::nav::navigation::Recovery recovery(params, {});
-    const auto blocked = recovery.step(input);
-    EXPECT_FALSE(blocked.verified) << blocked.reason;
-    EXPECT_EQ(blocked.action,nav_kernel::RecoveryAction::None);
-    input.environment.collision.measuredOccupiedStorage.reset();
-    const auto missing = recovery.step(input);
-    EXPECT_FALSE(missing.verified);
-    EXPECT_EQ(missing.reason,"recovery_body_raw_evidence_missing");
-  }
-  input.body.reset();
-  input.environment.collision = collision;
-  lingtu::nav::navigation::Recovery sampling(params, {});
-  const auto unchecked = sampling.step(input);
-  EXPECT_TRUE(unchecked.verified) << unchecked.reason;
-  EXPECT_EQ(unchecked.action, nav_kernel::RecoveryAction::Translate);
+  const auto target = recovery.step(input);
+  EXPECT_TRUE(target.active);
+  EXPECT_FALSE(target.verified);
+  EXPECT_FALSE(target.direct_command);
+  EXPECT_EQ(target.action, nav_kernel::RecoveryAction::Translate);
+  ASSERT_EQ(target.path_world.size(), 2U);
+  input.clock.timestampS += .1;
+  const auto pending = recovery.step(input);
+  EXPECT_EQ(pending.attempt, target.attempt);
+  ASSERT_EQ(pending.path_world.size(), 2U);
+  EXPECT_DOUBLE_EQ(pending.path_world.back().x, target.path_world.back().x);
+  EXPECT_DOUBLE_EQ(pending.path_world.back().y, target.path_world.back().y);
+  input.robot.pose.position = target.path_world.back();
+  input.clock.timestampS += .1;
+  const auto arrived = recovery.step(input);
+  EXPECT_FALSE(arrived.active);
+  EXPECT_EQ(arrived.reason, "recovery_translation_complete");
 }
 
 TEST(RecoverySequence, ExplicitBodyGridChecksSweptMotionWhenPointSamplingIsDisabled) {
@@ -470,39 +342,5 @@ TEST(RecoverySequence, ExplicitBodyGridChecksSweptMotionWhenPointSamplingIsDisab
   EXPECT_FALSE(search.validateRotation(search_input, M_PI / 2));
 }
 
-TEST(RecoverySequence, ScanBodyRecoveryChecksCandidateHeadingInsteadOfRouteHeading) {
-  lingtu::nav::tests::CollisionBitmap raw({-2,-2,-1},{2,2,2},.1);
-  lingtu::nav::tests::CollisionBitmap inflated({-2,-2,-1},{2,2,2},.1);
-  raw.occupy({.05,.25,.55});
-  auto body = std::make_shared<lingtu::nav::collision::Body>();
-  body->margin_m = 0;
-  lingtu::nav::collision::Part part;
-  part.link = "base";
-  part.half_size = {.3,.1,.1};
-  body->parts.push_back(part);
-  auto params = freeSpaceParams();
-  params.backend = nav_kernel::LocalPlannerBackend::Scan;
-  params.checkObstacle = true;
-  params.scan.voxelResolution = .1;
-  auto input = freeSpaceInput();
-  input.body = body;
-  input.bodyHeading = M_PI/2;
-  input.robot.pose.position.z = .5;
-  input.environment.collision = inflated.view();
-  const auto measured = raw.view();
-  input.environment.collision.measuredOccupiedStorage =
-      std::make_shared<const std::vector<std::uint8_t>>(
-          measured.inflatedBits, measured.inflatedBits+measured.inflatedBytes);
-  input.environment.collision.knownFreeStorage =
-      std::make_shared<const std::vector<std::uint8_t>>(measured.inflatedBytes,255U);
-  lingtu::nav::navigation::Recovery recovery(params, {});
-  const auto output = recovery.step(input);
-  ASSERT_TRUE(output.verified) << output.reason;
-  EXPECT_EQ(output.action,nav_kernel::RecoveryAction::Translate);
-  input.bodyHeading.reset();
-  nav_kernel::local::scan::Grid actual(params,input);
-  for (const auto &point : output.path_body)
-    EXPECT_TRUE(actual.obstacleFree({point.x,point.y,.5},0));
-}
 
 }  // namespace

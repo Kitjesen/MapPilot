@@ -13,6 +13,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 
 from gateway.schemas import Go2RTCStatusResponse, WebRTCStatusResponse
+from gateway.services.media_status import build_camera_video_diagnostics
 
 
 def _native_source_status(path: str) -> dict[str, Any]:
@@ -30,6 +31,7 @@ def _native_source_status(path: str) -> dict[str, Any]:
     return {
         "source_ready": ready,
         "source_status": snapshot,
+        "source_status_age_s": age_s,
         "source_reason": None if ready else "video_status_stale" if age_s > 3.0 else "video_source_not_ready",
     }
 
@@ -140,6 +142,10 @@ def register_video_routes(app: Any, gw: Any) -> None:
             "ice_servers": ice_servers,
             "rotation_degrees": rotation,
         }
+
+    @app.get("/api/v1/camera/diagnostics", summary="Read camera, video pipeline and WHEP diagnostic observations")
+    async def camera_video_diagnostics() -> dict[str, Any]:
+        return build_camera_video_diagnostics(gw, await media_status())
 
     @app.post("/api/v1/webrtc/whep", summary="Negotiate a video receiver with the media endpoint")
     async def offer(request: Request) -> Response:

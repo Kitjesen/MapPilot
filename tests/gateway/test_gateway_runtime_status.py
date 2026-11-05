@@ -892,6 +892,38 @@ def test_slam_profile_accepts_only_native_runtime_identity():
 
 
 
+@pytest.mark.parametrize("position", [(61.0, 16.5, 0.45), (-1000.0, 500.0, 80.0)])
+def test_drift_watchdog_accepts_far_map_coordinates(position):
+    from gateway.gateway_module import GatewayModule
+    from runtime.msgs.geometry import Pose, Twist, Vector3
+    from runtime.msgs.nav import Odometry
+
+    gateway = GatewayModule()
+    gateway._on_odometry(Odometry(pose=Pose(position=Vector3(*position)), twist=Twist(), frame_id="map"))
+
+    assert gateway._drift_current_odom_divergence()[0] is False
+    assert gateway._odom["x"] == position[0]
+
+
+@pytest.mark.parametrize("axis", ["vx", "vy", "vz"])
+@pytest.mark.parametrize("direction", [-1, 1])
+def test_drift_watchdog_rejects_excessive_velocity(axis, direction):
+    from gateway.gateway_module import GatewayModule
+    from runtime.msgs.geometry import Pose, Twist, Vector3
+    from runtime.msgs.nav import Odometry
+
+    gateway = GatewayModule()
+    velocity = Vector3()
+    setattr(velocity, axis[1], direction * (gateway._drift_watchdog_v_limit + 0.1))
+    gateway._on_odometry(Odometry(
+        pose=Pose(position=Vector3(61.0, 16.5, 0.45)),
+        twist=Twist(linear=velocity), frame_id="map",
+    ))
+
+    assert gateway._drift_current_odom_divergence()[0] is True
+    assert gateway._odom[axis] == getattr(velocity, axis[1])
+
+
 def test_drift_watchdog_classifies_nan_odom_as_diverged():
     from gateway.gateway_module import GatewayModule
 
@@ -910,7 +942,8 @@ def test_drift_watchdog_classifies_nan_odom_as_diverged():
     )
 
 
-def test_gateway_quarantines_non_finite_odometry_before_publication():
+@pytest.mark.parametrize("field", ["x", "vy", "vz"])
+def test_gateway_quarantines_non_finite_odometry_before_publication(field):
     from gateway.gateway_module import GatewayModule
     from runtime.msgs.geometry import Pose, Quaternion, Twist, Vector3
     from runtime.msgs.nav import Odometry
@@ -921,14 +954,20 @@ def test_gateway_quarantines_non_finite_odometry_before_publication():
     previous = {"x": 1.0, "y": 2.0, "z": 0.0, "yaw": 0.0}
     with gateway._state_lock:
         gateway._odom = dict(previous)
+    position = Vector3()
+    velocity = Vector3()
+    if field == "x":
+        position.x = float("nan")
+    else:
+        setattr(velocity, field[1], float("nan"))
 
     gateway._on_odometry(
         Odometry(
             pose=Pose(
-                position=Vector3(float("nan"), 0.0, 0.0),
+                position=position,
                 orientation=Quaternion(),
             ),
-            twist=Twist(linear=Vector3(0.0, 0.0, 0.0)),
+            twist=Twist(linear=velocity),
         )
     )
 

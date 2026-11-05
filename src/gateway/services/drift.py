@@ -1,4 +1,4 @@
-"""SLAM drift detection and operator handoff for GatewayModule."""
+"""Odometry diagnostics and operator handoff for GatewayModule."""
 
 from __future__ import annotations
 
@@ -32,13 +32,8 @@ def odom_diverged(
     vz, vz_ok = abs_finite("vz")
     v = max(vx, vy, vz)
     invalid = not all((x_ok, y_ok, z_ok, vx_ok, vy_ok, vz_ok))
-    xy_bad = (
-        x > gw._drift_watchdog_xy_limit
-        or y > gw._drift_watchdog_xy_limit
-        or z > gw._drift_watchdog_xy_limit
-    )
     v_bad = v > gw._drift_watchdog_v_limit
-    return invalid or xy_bad or v_bad, x, y, z, v, invalid
+    return invalid or v_bad, x, y, z, v, invalid
 
 
 def current_odom_divergence(
@@ -64,13 +59,11 @@ def watchdog_loop(
 ) -> None:
     """Report divergence without taking ProductControl ownership."""
 
-    xy_lim = gw._drift_watchdog_xy_limit
     v_lim = gw._drift_watchdog_v_limit
     interval = gw._drift_watchdog_interval
     logger.info(
-        "drift_watchdog: enabled, interval=%.0fs, |xy|<%.0fm, |v|<%.1fm/s",
+        "drift_watchdog: enabled, interval=%.0fs, |v|<%.1fm/s",
         interval,
-        xy_lim,
         v_lim,
     )
     stop_event = stop_event or gw._stop_event
@@ -92,7 +85,7 @@ def watchdog_loop(
                 )
                 continue
             logger.error(
-                "drift_watchdog: IEKF diverged xy=(%.0f,%.0f) z=%.0f v=%.1f; "
+                "drift_watchdog: invalid odometry xy=(%.0f,%.0f) z=%.0f v=%.1f; "
                 "Product switch required",
                 x,
                 y,

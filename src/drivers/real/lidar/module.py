@@ -51,7 +51,9 @@ class LidarModule(Module, layer=1):
         lidar:
           lidar_ip: "192.168.123.20"
           host_ip:  "192.168.123.18"
-          publish_freq: 10.0
+
+    Acquisition rates and SDK settings are shared with the native Product in
+    ``config/system/settings/lidar.yaml``.
     """
 
     scan: Out[PointCloud2]

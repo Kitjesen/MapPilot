@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "input/projector.hpp"
-#include "collision/body.hpp"
 #include "collision/terrain.hpp"
 #include "input/planner.hpp"
 #include "dds/codec.hpp"
@@ -454,7 +453,6 @@ void testOdometryRejectsDuplicateSourceStampWithoutPoisoningFiniteState() {
   EndpointState state;
   InputGateConfig gate_config;
   gate_config.require_cloud = false;
-  gate_config.recovery_frames = 1;
   InputGate input_gate(gate_config);
   TransformBuffer pose_buffer;
   TransformBuffer map_odom_buffer;
@@ -541,7 +539,6 @@ void testTfRejectsReverseMapOdomPayload() {
 void testDriverProjectionCopiesLoansUsesSteadyFreshnessAndPreservesBlockerPrecedence() {
   EndpointState state;
   InputGateConfig gate_config;
-  gate_config.recovery_frames = 1;
   gate_config.require_odom = false;
   gate_config.require_cloud = false;
   gate_config.require_driver_control = true;
@@ -942,43 +939,6 @@ void testLocalCollisionProjectionOwnsPayloadAndRejectsPreClearReplay() {
           "a newer complete collision layer must re-establish planner input");
 }
 
-void testGlobalSpaceKeepsObservedObstaclesWhenUpdatesPause() {
-  EndpointState state;
-  InputGate gate;
-  TransformBuffer poses, transforms;
-  InputProjector projector(state,gate,poses,transforms,MotionLayer{},InputConfig{},InputActions{});
-  projector.projectOdometry(odometryMessage(22,"map",0),202);
-  CollisionFixture occupied(22,7,9,true);
-  projector.projectLocalCollision(occupied.message,202);
-  const lingtu::nav::collision::Vec3 center{1.05,2.05,.55};
-  const auto fresh = projector.observedSpaceQueries(202.1,.5);
-  require(fresh.first && fresh.second && fresh.second(center,.02,.02,.02,false),
-          "fresh global queries must include the observed obstacle");
-  const auto delayed = projector.observedSpaceQueries(203,.5);
-  require(!delayed.first && delayed.second && delayed.second(center,.02,.02,.02,false),
-          "delayed updates must revoke clearing, not erase an observed obstacle");
-  state.local_collision_map.live = false;
-  require(projector.observedSpaceQueries(203,.5).second(center,.02,.02,.02,false),
-          "map liveness is not evidence that an obstacle disappeared");
-
-  CollisionFixture cleared(22.1,8,10,true);
-  std::fill(cleared.bits.begin(),cleared.bits.end(),0U);
-  std::vector<std::uint8_t> free(cleared.bits.size(),255U);
-  cleared.message.known_free_bits._buffer = free.data();
-  projector.projectLocalCollision(cleared.message,203.1);
-  const auto updated = projector.observedSpaceQueries(203.2,.5);
-  require(updated.first && updated.second && !updated.second(center,.02,.02,.02,false) &&
-              updated.first({center,{.02,.02,.02}}),
-          "new mapd free evidence must remove the old obstacle in subsequent requests");
-  require(delayed.second(center,.02,.02,.02,false),
-          "a running request must retain its immutable snapshot");
-  lingtu_dds_Bool clear{};
-  clear.data = true;
-  projector.clearPlannerInputs(clear,ClearSource::Map);
-  const auto reset = projector.observedSpaceQueries(203.3,.5);
-  require(!reset.first && !reset.second,"map reset must discard both global queries");
-}
-
 void testObstacleMaterializationKeepsMeasuredBudgetSeparateFromPrediction() {
   EndpointState state;
   InputGate input_gate;
@@ -1185,7 +1145,6 @@ void testLocalTraversabilityProjectionKeepsOdomSeparateFromMap() {
 void testEpochRecoveryBaselinesBeforeTriggeringTfGeneration() {
   EndpointState state;
   InputGateConfig gate_config;
-  gate_config.recovery_frames = 1;
   gate_config.require_cloud = false;
   gate_config.odom_max_age_s = 0.5;
   gate_config.tf_max_age_s = 0.5;
@@ -1251,7 +1210,6 @@ void testSimulationClockSeparatesExecutionAndFreshness() {
   EndpointState state;
   InputGateConfig gate_config;
   gate_config.require_cloud = false;
-  gate_config.recovery_frames = 1;
   gate_config.odom_max_age_s = 10.0;
   InputGate gate(gate_config);
   TransformBuffer poses, transforms;
@@ -1332,7 +1290,6 @@ void testMotionProfileBatchPreservesSourceAndReceiveClocks() {
 void testAsyncCloudFreshnessAndEpochDiscard() {
   EndpointState state;
   InputGateConfig gate_config;
-  gate_config.recovery_frames = 1;
   gate_config.odom_max_age_s = 10.0;
   gate_config.cloud_max_age_s = 0.25;
   InputGate gate(gate_config);
@@ -1373,20 +1330,12 @@ void testAsyncCloudFreshnessAndEpochDiscard() {
           "post-clear geometry must contain only new-epoch observations");
 }
 
-void testBodyGeometryUsesMeasuredAttitudeWithoutApplyingYawTwice() {
+void testOdometryPreservesFullMeasuredAttitude() {
   using namespace lingtu::nav::endpoint;
   EndpointState state;
   InputGate gate(InputGateConfig{});
   TransformBuffer poses, transforms;
-  auto configured = std::make_shared<lingtu::nav::collision::Body>();
-  configured->margin_m = 0;
-  configured->horizontal_margin_m = .05;
-  lingtu::nav::collision::Part part;
-  part.center = {.2, -.1, .05};
-  part.half_size = {.15, .05, .02};
-  configured->parts.push_back(part);
   InputConfig config;
-  config.navigation_body = configured;
   InputProjector projector(state, gate, poses, transforms, MotionLayer{}, config, InputActions{});
   auto message = odometryMessage(10.0, "map");
   const double yaw = .8, pitch = .3;
@@ -1395,38 +1344,23 @@ void testBodyGeometryUsesMeasuredAttitudeWithoutApplyingYawTwice() {
       {0, std::sin(pitch * .5), 0, std::cos(pitch * .5)});
   message.pose.pose.orientation = {orientation.x, orientation.y, orientation.z, orientation.w};
   projector.projectOdometry(message, 100.0);
-  require(state.body_geometry && state.body_geometry != configured,
-          "formal odometry must produce measured attitude geometry");
-  require(state.body_geometry->horizontal_margin_m == .05 && configured->parts[0].center.z == .05,
-          "attitude geometry must preserve margin and never mutate the configured model");
-  const auto& measured = state.body_geometry->parts[0];
-  const auto actual = rotatePoint({0, 0, std::sin(yaw * .5), std::cos(yaw * .5)},
-                                 {measured.center.x, measured.center.y, measured.center.z});
-  const auto expected = rotatePoint(orientation, {part.center.x, part.center.y, part.center.z});
+  require(state.map_body && state.map_body_transform,
+          "formal odometry must retain the complete current pose");
+  const auto actual = rotatePoint(state.map_body_transform->rotation, {.2, -.1, .05});
+  const auto expected = rotatePoint(orientation, {.2, -.1, .05});
   require(std::abs(actual.x - expected.x) < 1e-12 && std::abs(actual.y - expected.y) < 1e-12 &&
               std::abs(actual.z - expected.z) < 1e-12,
-          "applying planning yaw once must reconstruct the full measured body transform");
-  require(std::abs(measured.rotation[6] + std::sin(pitch)) < 1e-12,
-          "part axes must include measured pitch");
-  const auto first = state.body_geometry;
-  message.header.stamp.sec = 11;
-  message.pose.pose.orientation = {0, 0, 0, 1};
-  projector.projectOdometry(message, 101.0);
-  require(state.body_geometry != first && std::abs(state.body_geometry->parts[0].center.z - .05) < 1e-12,
-          "returning to level must rebuild from configured geometry rather than accumulating attitude");
+          "removing body snapshots must preserve the full measured rotation");
+  require(std::abs(state.map_body->yaw - yaw) < 1e-12,
+          "planning pose must retain the measured yaw");
 }
 
-void testTfOnlyUpdateKeepsPoseAndBodyGeometryInTheSameOrientation() {
+void testTfOnlyUpdateKeepsPlanningYawConsistentWithFullPose() {
   using namespace lingtu::nav::endpoint;
   EndpointState state;
   InputGate gate(InputGateConfig{});
   TransformBuffer poses, transforms;
   InputConfig config;
-  auto body = std::make_shared<lingtu::nav::collision::Body>();
-  lingtu::nav::collision::Part part;
-  part.center = {.2, -.1, .05};
-  body->parts.push_back(part);
-  config.navigation_body = body;
   InputProjector projector(state, gate, poses, transforms, MotionLayer{}, config, InputActions{});
   lingtu_dds_TransformStamped transform{};
   auto tf = tfMessage(transform, 10.0);
@@ -1437,25 +1371,50 @@ void testTfOnlyUpdateKeepsPoseAndBodyGeometryInTheSameOrientation() {
   projector.projectOdometry(odom, 100.0);
   transform.header.stamp.nanosec = 10000000;
   projector.projectTf(tf, 100.01);
-  require(state.map_body && state.map_body_transform && state.body_geometry,
+  require(state.map_body && state.map_body_transform,
           "TF-only update must retain the complete current pose");
   require(std::abs(state.map_body->yaw - state.map_body_transform->yaw) < 1e-12,
           "TF-only update must derive planning yaw from the full composed rotation");
-  const auto& measured = state.body_geometry->parts[0];
-  const double yaw = state.map_body->yaw;
-  const auto actual = rotatePoint({0, 0, std::sin(yaw * .5), std::cos(yaw * .5)},
-                                 {measured.center.x, measured.center.y, measured.center.z});
-  const auto expected = rotatePoint(state.map_body_transform->rotation,
-                                    {part.center.x, part.center.y, part.center.z});
-  require(std::abs(actual.x - expected.x) < 1e-12 && std::abs(actual.y - expected.y) < 1e-12 &&
-              std::abs(actual.z - expected.z) < 1e-12,
-          "TF-only update must not rotate collision geometry by a different yaw");
+}
+
+void testObservedBodyKeepsMeasuredTilt() {
+  namespace c = lingtu::nav::collision;
+  using namespace lingtu::nav::endpoint;
+  auto body = std::make_shared<c::Body>();
+  body->margin_m = 0;
+  body->horizontal_margin_m = .08;
+  c::Part thigh;
+  thigh.center = {.25,0,-.2};
+  thigh.half_size = {.12,.06,.06};
+  body->parts.push_back(thigh);
+  for (double yaw : {0.0, .9}) {
+    const Quaternion heading{0,0,std::sin(yaw/2),std::cos(yaw/2)};
+    const Quaternion pitch{0,-std::sin(.2),0,std::cos(.2)};
+    RigidTransform pose;
+    pose.rotation = multiplyQuaternions(heading,pitch);
+    pose.yaw = yaw;
+    pose.valid = true;
+    const auto measured = observedBody(body,pose);
+    const auto xy = rotatePoint(heading,{.35,0,0});
+    const c::Pose query{{0,0,.45},yaw};
+    const c::Aabb step{{xy.x,xy.y,.225},{.025,.025,.025}};
+    const c::Aabb obstacle{{xy.x,xy.y,.35},{.025,.025,.025}};
+    require(c::intersects(body->parts.front(),query,step,0,.08),
+            "level nominal thigh must reproduce the step overlap");
+    require(!c::intersects(measured->parts.front(),query,step,0,.08),
+            "measured nose-up attitude must clear the lower step");
+    require(c::intersects(measured->parts.front(),query,obstacle,0,.08),
+            "measured attitude must retain real thigh-height collision");
+    require(measured->horizontal_margin_m == .08 && body->parts.front().center.z == -.2,
+            "attitude projection must retain padding and immutable calibration");
+  }
 }
 
 }  // namespace
 
 int main() {
   try {
+  testObservedBodyKeepsMeasuredTilt();
   testTfProjectionPreservesCountersGenerationsAndReceiveClock();
   testEpochResetClearsInputsBeforeSynchronousEffectsAndAcceptsTriggeringTf();
   testOdometryAcceptsMapFrameAndRequiresTimeAlignedTfForOdomFrame();
@@ -1471,7 +1430,6 @@ int main() {
   testPlanViewUsesTickTime();
   testTraversabilityAndLocalizationProjectionOwnPayloadsAndAdvanceExactGenerations();
   testLocalCollisionProjectionOwnsPayloadAndRejectsPreClearReplay();
-  testGlobalSpaceKeepsObservedObstaclesWhenUpdatesPause();
   testLocalTraversabilityProjectionKeepsOdomSeparateFromMap();
   testPlannerClearingUsesDistinctSynchronousReasonsWithoutResettingCloudEpoch();
   testEpochRecoveryBaselinesBeforeTriggeringTfGeneration();
@@ -1479,8 +1437,8 @@ int main() {
   testSimulationClockSeparatesExecutionAndFreshness();
   testMotionProfileBatchPreservesSourceAndReceiveClocks();
   testAsyncCloudFreshnessAndEpochDiscard();
-  testBodyGeometryUsesMeasuredAttitudeWithoutApplyingYawTwice();
-  testTfOnlyUpdateKeepsPoseAndBodyGeometryInTheSameOrientation();
+  testOdometryPreservesFullMeasuredAttitude();
+  testTfOnlyUpdateKeepsPlanningYawConsistentWithFullPose();
   std::cout << "test_input_projector passed\n";
   return 0;
   } catch (const std::exception &error) {

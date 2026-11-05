@@ -12,6 +12,9 @@ using EdgeCheck = std::function<bool(const PointPose &, const PointPose &)>;
 using BodyHeight = std::function<std::optional<double>(const PointPose &)>;
 using RouteCancelCheck = std::function<bool()>;
 
+bool checkRoute(std::vector<PointPose> &route, const EdgeCheck &valid,
+                const RouteCancelCheck &cancel = {});
+
 std::vector<PointPose> smoothRoute(const std::vector<PointPose> &route,
                                   const EdgeCheck &valid,
                                   const BodyHeight &height,

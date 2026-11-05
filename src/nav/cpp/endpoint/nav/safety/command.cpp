@@ -1,5 +1,6 @@
 #include "safety/command.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace lingtu::nav::endpoint {
@@ -40,7 +41,10 @@ evaluateCommandSafety(const CommandSafetyConfig &cfg,
   }
 
   const double limited_speed = linearSpeed(decision.cmd);
-  if (limited_speed > 1e-9 && limited_speed < cfg.min_motion_speed_mps) {
+  // A deadband above the single-axis budget would suppress every legal axis input.
+  const double single_axis_budget = std::min(cfg.max_speed_mps, cfg.max_axis_speed_mps);
+  if (cfg.min_motion_speed_mps <= single_axis_budget &&
+      limited_speed > 1e-9 && limited_speed < cfg.min_motion_speed_mps) {
     decision.cmd.vx = 0.0;
     decision.cmd.vy = 0.0;
     decision.stopped = std::abs(decision.cmd.wz) < 1e-4;

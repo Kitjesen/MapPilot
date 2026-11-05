@@ -187,21 +187,10 @@ std::optional<LocalCollisionEvidence> measuredCollisionEvidence(
     return std::nullopt;
   }
 
-  const auto &body = input.observedBody ? input.observedBody : input.body;
-  double radius = std::max(0.0, params.cylinderRadius) +
+  const double radius = std::max(0.0, params.cylinderRadius) +
                   std::max(0.0, params.cylinderOffset);
-  double below = std::max(0.0, params.bodyClearanceBelow);
-  double above = std::max(0.0, params.bodyClearanceAbove);
-  if (body) {
-    namespace collision_geometry = lingtu::nav::collision;
-    // One radian of pure yaw yields the expanded parts' maximum XY radius.
-    // This bounds evidence collection at every heading; Grid still decides
-    // the actual pose/sweep collision against the same observed body.
-    radius = collision_geometry::sweepBound(*body, {{}, 0.0}, {{}, 1.0});
-    const auto extent = collision_geometry::bounds(*body, {});
-    below = std::max(0.0, extent.half_size.z - extent.center.z);
-    above = std::max(0.0, extent.center.z + extent.half_size.z);
-  }
+  const double below = std::max(0.0, params.bodyClearanceBelow);
+  const double above = std::max(0.0, params.bodyClearanceAbove);
   if (!collision.coversCylinder(attempt.collisionPosition, radius, below, above)) {
     return std::nullopt;
   }
@@ -240,8 +229,8 @@ std::optional<LocalCollisionEvidence> measuredCollisionEvidence(
           continue;
         }
         const Vec3 point = collision.planningCellCenter(linear);
-        if ((body || std::hypot(point.x - rejected.x, point.y - rejected.y) <=
-                         radius + 0.5 * collision.resolution) &&
+        if (std::hypot(point.x - rejected.x, point.y - rejected.y) <=
+                         radius + 0.5 * collision.resolution &&
             point.z >= rejected.z - below - 0.5 * collision.resolution &&
             point.z <= rejected.z + above + 0.5 * collision.resolution) {
           points->push_back(point);
@@ -341,7 +330,10 @@ class Backend::Impl {
     }
 
     const auto gridStarted = std::chrono::steady_clock::now();
-    Grid grid(params_, input);
+    auto collisionRequest = input;
+    collisionRequest.body.reset();
+    collisionRequest.observedBody.reset();
+    Grid grid(params_, collisionRequest);
     debug_.gridTimeMs = elapsedMs(gridStarted);
     debug_.occupiedCellCount = grid.occupiedCellCount();
     debug_.collisionPointCount = grid.collisionPointCount();
@@ -351,9 +343,7 @@ class Backend::Impl {
 
     PlanParameters plan = planParameters(params_);
     plan.motion_intent_ = input.intent() != nullptr;
-    plan.preserve_boundary_ = input.body != nullptr &&
-        (input.bodyHeading.has_value() || (input.intent()==nullptr &&
-         input.supportHeightM.has_value() && input.supportHeightToleranceM.has_value()));
+    plan.preserve_boundary_ = input.bodyHeading.has_value();
     plan.body_yaw_ = input.bodyHeading;
     // Intent keeps its independent collision/yaw policy. Use the observed
     // body frame only for velocity capacity; this is not a prediction of
@@ -517,16 +507,18 @@ class Backend::Impl {
       return stop(LocalPlanStatus::Cancelled, "planning_cancelled");
     }
     recordAttempt(input, *route);
-    if (output.localTargetBlocked) {
-      active_.reset();
-      return stop(LocalPlanStatus::Blocked, "scan_local_target_blocked");
-    }
     if (output.state == ScanReplanState::EMERGENCY_STOP || output.emergencyStopIssued) {
       // Keep the upstream stop trajectory inside the FSM. The native executor
       // owns stopping; publishing this stationary spline as Ready hides failure.
       active_.reset();
       emergencyStopped_ = true;
       return stop(LocalPlanStatus::NearFieldStop, "scan_emergency_stop");
+    }
+    if (emergencyStopped_ && !fsm_->hasTarget())
+      return stop(LocalPlanStatus::NoPath, "scan_replan_failed");
+    if (output.localTargetBlocked) {
+      active_.reset();
+      return stop(LocalPlanStatus::Blocked, "scan_local_target_blocked");
     }
     if (output.trajectory) {
       SplineTarget target = splineTarget(*output.trajectory, plan.max_vel_);
@@ -553,9 +545,15 @@ class Backend::Impl {
     if (referenceRejected_ && !active_)
       return stop(LocalPlanStatus::NoPath, "scan_target_rejected");
     if (emergencyStopped_)
-      return stop(fsm_->hasTarget() ? LocalPlanStatus::NearFieldStop : LocalPlanStatus::NoPath,
-                  fsm_->hasTarget() ? "scan_emergency_stop" : "scan_replan_failed");
-    if (output.initializationFailed && !active_)
+      return stop(LocalPlanStatus::NearFieldStop, "scan_emergency_stop");
+    const bool continuationFailed = output.state == ScanReplanState::REPLAN_TRAJ &&
+        !manager_->reboundDebug().success;
+    const auto &executing = manager_->local_data_;
+    // A failed continuation may retain a safe tail, but never an exhausted one.
+    if (!output.trajectory && (output.initializationFailed || continuationFailed) &&
+        input.clock.timestampS >= executing.start_time_ + executing.duration_)
+      active_.reset();
+    if ((output.initializationFailed || continuationFailed) && !active_)
       return stop(LocalPlanStatus::Blocked, "scan_initialization_failed");
     if (active_) {
       debug_.valid = true;

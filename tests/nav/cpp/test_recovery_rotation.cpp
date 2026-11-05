@@ -26,7 +26,6 @@ RecoverySearchParams rotationParams() {
   params.maxRotationRad = 1.20;
   params.rotationCandidateStepRad = 0.20;
   params.rotationSampleStepRad = 0.05;
-  params.rotationRate = 0.25;
   return params;
 }
 

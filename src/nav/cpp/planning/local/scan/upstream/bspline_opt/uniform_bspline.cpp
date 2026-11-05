@@ -8,6 +8,21 @@
 
 namespace nav_kernel::local::scan::upstream {
 
+Eigen::Vector3d UniformBspline::headingDirection(
+    double time, const UniformBspline &velocity, double lookaheadS) const {
+  if (lookaheadS <= 0.0) {
+    const Eigen::Vector3d tangent = velocity.evaluateDeBoorT(time);
+    return tangent.head<2>().norm() <= 0.03 ? Eigen::Vector3d::Zero().eval() : tangent;
+  }
+  Eigen::Vector3d direction = evaluateDeBoorT(std::min(getTimeSum(), time + lookaheadS)) -
+                              evaluateDeBoorT(time);
+  if (direction.head<2>().squaredNorm() < 1e-4)
+    direction = velocity.evaluateDeBoorT(time);
+  if (direction.head<2>().squaredNorm() < 1e-4) return Eigen::Vector3d::Zero();
+  // Grid's quiet-heading threshold must not discard a valid controller preview.
+  return direction / direction.head<2>().norm();
+}
+
 UniformBspline::UniformBspline(const Eigen::MatrixXd &points, int order,
                                double interval) {
   setUniformBspline(points, order, interval);

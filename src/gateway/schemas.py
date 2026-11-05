@@ -46,6 +46,9 @@ class GatewayCommandErrorDetail(GatewayResponseModel):
     has_odometry: bool | None = None
     session_mode: str | None = None
     localization: dict[str, Any] | None = None
+    native_ack: dict[str, Any] | None = None
+    task_id: str | None = None
+    request_id: str | None = None
     error: str | None = None
 
 
@@ -381,6 +384,13 @@ class NavigationTaskPauseRequest(BaseModel):
     client_id: str = Field(default="unknown", max_length=128)
 
 
+class NavigationTaskSpeedLimitRequest(BaseModel):
+    max_speed_mps: float = Field(gt=0, allow_inf_nan=False)
+    task_id: str | None = Field(default=None, max_length=128)
+    request_id: str | None = Field(default=None, max_length=128)
+    client_id: str = Field(default="unknown", max_length=128)
+
+
 class NavigationTaskResumeRequest(BaseModel):
     """Request continuation of the same paused navigation task."""
 
@@ -426,6 +436,7 @@ class MapSaveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, max_length=128)
+    auto_process: bool = True
     request_id: str | None = Field(
         default=None,
         max_length=128,
@@ -977,6 +988,7 @@ class ControlCommandResponse(GatewayResponseModel):
     command: CommandReceipt
     task_id: str | None = None
     native_request_id: str | None = None
+    native_ack: dict[str, Any] | None = None
     goal: list[float] | None = None
     yaw: float | None = None
     frame_id: str | None = None
@@ -1871,6 +1883,7 @@ class MapSaveOperationStatus(GatewayResponseModel):
     state: str | None = None
     phase: str | None = None
     progress: float | None = None
+    source_saved: bool | None = None
     reason: str | None = None
     reason_code: str | None = None
     message: str | None = None
@@ -2222,6 +2235,8 @@ class ClientLinks(GatewayResponseModel):
     map_operation_status: str | None = None
     map_operation_cancel: str | None = None
     map_operation_retry: str | None = None
+    map_operation_process: str | None = None
+    map_operation_source: str | None = None
     map_import_pcd: str | None = None
     map_crop: str | None = None
     map_mark_zone: str | None = None

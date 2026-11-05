@@ -1,3 +1,5 @@
+#include <lingtu/settings.hpp>
+
 #include "livox_lidar_api.h"
 #include "livox_lidar_def.h"
 #include "fallback_timestamp_clock.hpp"
@@ -726,6 +728,8 @@ void signal_stop(int /*signal*/) {
 
 CliConfig parse_args(int argc, const char* argv[]) {
   CliConfig config;
+  config.scan_window_s = 1.0 / lingtu::settings::lidar::lidar::scan_hz;
+  config.imu_publish_hz = lingtu::settings::lidar::lidar::imu_hz;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     auto next = [&]() -> std::string {

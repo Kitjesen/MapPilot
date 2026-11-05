@@ -682,6 +682,7 @@ class TestLingTuClient(unittest.TestCase):
             {
                 "name": "test_map",
                 "request_id": "save-test-001",
+                "auto_process": True,
             },
         )
 
@@ -747,8 +748,40 @@ class TestLingTuClient(unittest.TestCase):
         self.robot.map.save.assert_called_once_with(
             "test_map",
             request_id="request_1",
+            auto_process=True,
         )
         self.robot.map.operation.assert_called_once_with("operation_1")
+
+    def test_manual_map_save_returns_when_source_is_saved(self) -> None:
+        receipt = CommandResult(
+            ok=True, accepted=True, operation_id="archive_1",
+            raw={"operation_id": "archive_1"},
+        )
+        captured = {
+            "ok": True, "operation_id": "archive_1",
+            "operation": {"operation_id": "archive_1", "state": "CAPTURED", "source_saved": True},
+        }
+        self.robot.map.save = Mock(return_value=receipt)
+        self.robot.map.operation = Mock(return_value=captured)
+        self.assertEqual(self.robot.map.save_and_wait(
+            "yard", request_id="archive_1", auto_process=False, poll_interval=0,
+        ), captured)
+        self.robot.map.save.assert_called_once_with("yard", request_id="archive_1", auto_process=False)
+
+    def test_map_source_wait_preserves_archive_success_when_processing_fails(self) -> None:
+        receipt = CommandResult(ok=True, accepted=True, operation_id="archive_2", raw={"operation_id": "archive_2"})
+        failed = {
+            "ok": True, "operation_id": "archive_2",
+            "operation": {"operation_id": "archive_2", "state": "FAILED", "source_saved": True},
+        }
+        self.robot.map.save = Mock(return_value=receipt)
+        self.robot.map.operation = Mock(return_value=failed)
+        self.assertEqual(self.robot.map.save_and_wait("yard", wait_for_source=True, poll_interval=0), failed)
+
+    def test_process_map_source_uses_the_existing_operation(self) -> None:
+        self.robot._command = Mock(return_value=CommandResult(ok=True, accepted=True))
+        self.robot.map.process_operation("archive_1")
+        self.robot._command.assert_called_once_with("/api/v1/maps/operations/archive_1/process")
 
     def test_save_map_and_wait_uses_server_operation_id(self) -> None:
         receipt = CommandResult(
@@ -797,7 +830,8 @@ class TestLingTuClient(unittest.TestCase):
             },
         }
 
-        def admit_save(_name, *, request_id):
+        def admit_save(_name, *, request_id, auto_process):
+            self.assertTrue(auto_process)
             return CommandResult(
                 ok=True,
                 accepted=True,
@@ -1008,7 +1042,7 @@ class TestLingTuClient(unittest.TestCase):
                     self.robot.map.save_and_wait(
                         "test_map",
                         request_id="request_1",
-                        timeout=0.01,
+                        timeout=1.0,
                         poll_interval=0.0,
                     )
 

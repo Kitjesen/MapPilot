@@ -28,6 +28,8 @@ if(LINGTU_SLAM_BUILD_DDS_RUNTIME AND NOT LINGTU_SLAM_LTLIO_BACKEND)
 endif()
 
 project(messages_contract LANGUAGES C CXX)
+
+include("${CMAKE_CURRENT_LIST_DIR}/../../../../scripts/build/cmake/settings.cmake")
 if(MSVC)
   add_compile_options(/utf-8)
 endif()
@@ -38,6 +40,7 @@ add_library(messages_contract STATIC
   ltlio.cpp
 )
 target_compile_features(messages_contract PUBLIC cxx_std_17)
+target_link_libraries(messages_contract PUBLIC "$<BUILD_INTERFACE:lingtu_settings>")
 target_include_directories(messages_contract PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(messages_contract PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -59,7 +62,7 @@ if(LINGTU_SLAM_LTLIO_BACKEND)
   add_subdirectory("${LTLIO_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/ltlio")
   add_subdirectory("${RELOCALIZATION_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/relocalization")
   if(NOT TARGET lingtu_online_mapping)
-    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../map_optimization/online" "${CMAKE_CURRENT_BINARY_DIR}/online_mapping")
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../online_mapping" "${CMAKE_CURRENT_BINARY_DIR}/online_mapping")
   endif()
 
   target_sources(messages_contract PRIVATE
@@ -197,6 +200,8 @@ if(LINGTU_SLAM_BUILD_TESTS)
       "${LINGTU_SLAM_TESTS_DIR}/test_ltlio_mock_flow.cpp")
     target_link_libraries(test_ltlio_mock_flow PRIVATE messages_contract)
     add_test(NAME messages_ltlio_mock_flow COMMAND test_ltlio_mock_flow)
+    add_test(NAME messages_ltlio_worker_capacity COMMAND test_ltlio_mock_flow --worker-capacity)
+    set_tests_properties(messages_ltlio_worker_capacity PROPERTIES TIMEOUT 120)
     add_executable(test_map_geometry_handoff "${LINGTU_SLAM_TESTS_DIR}/test_map_geometry_handoff.cpp")
     target_link_libraries(test_map_geometry_handoff PRIVATE messages_contract)
     add_test(NAME messages_map_geometry_handoff COMMAND test_map_geometry_handoff)

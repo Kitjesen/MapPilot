@@ -77,7 +77,7 @@ class ControlCommandService:
         detail.update({key: value for key, value in extra.items() if value is not None})
         return detail
 
-    def motion_safety_rejection(
+    def control_lease_rejection(
         self,
         command: str,
         body: Any,
@@ -100,6 +100,16 @@ class ControlCommandService:
                 ),
                 status_code=403,
             )
+        return None
+
+    def motion_safety_rejection(
+        self,
+        command: str,
+        body: Any,
+    ) -> JSONResponse | None:
+        rejection = self.control_lease_rejection(command, body)
+        if rejection is not None:
+            return rejection
         try:
             with self._gw._state_lock:
                 safety = getattr(self._gw, "_navigation_state", None)
@@ -189,8 +199,7 @@ class ControlCommandService:
     ) -> dict[str, Any] | JSONResponse:
         def _execute() -> dict[str, Any] | JSONResponse:
             for check in (
-                self.motion_safety_rejection,
-                self._goal_readiness_rejection,
+                self.control_lease_rejection,
                 self._goal_map_identity_rejection,
             ):
                 rejection = check(command, body)
@@ -214,15 +223,46 @@ class ControlCommandService:
                 )
             except CommandBoundaryError as exc:
                 reason = str(exc)
+                receipt = exc.receipt or {}
+                if receipt.get("admission_unconfirmed") is True:
+                    return JSONResponse(status_code=503, content={
+                        "schema_version": 1,
+                        "ok": False,
+                        "error": "native_command_unconfirmed",
+                        "message": "未收到导航服务的确认，请先核对当前任务，再重新操作。",
+                        "detail": self.command_error_detail(
+                            reason_code="native_command_unconfirmed",
+                            reason=reason,
+                            source="native_navigation_command",
+                            task_id=receipt.get("task_id"),
+                            request_id=receipt.get("request_id"),
+                        ),
+                    })
+                native_ack = receipt.get("native_ack")
+                if isinstance(native_ack, Mapping) and native_ack.get("accepted") is False:
+                    code = str(native_ack.get("reason") or "native_command_rejected")
+                    return self.rejected_response(
+                        command,
+                        body,
+                        error="native_command_rejected",
+                        message="Native navigation endpoint rejected the command.",
+                        detail=self.command_error_detail(
+                            reason_code=code,
+                            reason=reason,
+                            source="native_navigation_command_ack",
+                            blockers=[code],
+                            native_ack=dict(native_ack),
+                        ),
+                    )
                 return self.rejected_response(
                     command,
                     body,
-                    error="native_command_rejected",
-                    message="Native navigation endpoint rejected the command.",
+                    error="goal_submission_rejected",
+                    message="The goal could not be submitted to navigation.",
                     detail=self.command_error_detail(
-                        reason_code="native_command_rejected",
+                        reason_code="goal_submission_rejected",
                         reason=reason,
-                        source="native_navigation_command_ack",
+                        source="goal_service",
                         blockers=[reason],
                     ),
                 )
@@ -260,36 +300,6 @@ class ControlCommandService:
 
         return self._gw._run_control_command(
             command, body, _execute, success_status_code=success_status_code
-        )
-
-    def _goal_readiness_rejection(
-        self,
-        command: str,
-        body: Any,
-    ) -> JSONResponse | None:
-        from gateway.navigation.status import evaluate_navigation_gate
-
-        gate = evaluate_navigation_gate(self._gw)
-        blockers = list(gate.get("blockers") or [])
-        if gate.get("can_accept_goal") is True and not blockers:
-            return None
-        if not blockers:
-            blockers.append(str(gate.get("reason") or "navigation_state_unknown"))
-        return self.rejected_response(
-            command,
-            body,
-            error="navigation_not_ready",
-            message="Navigation cannot accept a goal in the current state.",
-            detail=self.command_error_detail(
-                reason_code="navigation_not_ready",
-                reason="Navigation cannot accept a goal in the current state.",
-                source="gateway_readiness",
-                path="/api/v1/navigation/status",
-                blockers=blockers,
-                advisories=list(gate.get("advisories") or []),
-                state=(gate.get("navigation_state") or {}).get("lifecycle_state_name"),
-                session_mode=getattr(self._gw, "_session_mode", None),
-            ),
         )
 
     def _goal_map_identity_rejection(

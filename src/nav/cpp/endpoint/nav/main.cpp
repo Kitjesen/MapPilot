@@ -28,7 +28,6 @@
 #include "dds/runtime.hpp"
 #include "input/gate.hpp"
 #include "input/planner.hpp"
-#include "input/stairs.hpp"
 #include "input/projector.hpp"
 #include "app/inspection/inspection_command_coordinator.hpp"
 #include "app/inspection/inspection_runtime_controller.hpp"
@@ -37,7 +36,6 @@
 #include "nav/inspection/inspection.hpp"
 #include "nav/inspection/store.hpp"
 #include "navigation/executor.hpp"
-#include "planning/local/scan/grid.hpp"
 #include "input/obstacle.hpp"
 #include "app/goal/plan.hpp"
 #include "app/goal/runtime.hpp"
@@ -46,7 +44,6 @@
 #include "app/rolling/effects.hpp"
 #include "app/rolling/lifecycle.hpp"
 #include "app/loop.hpp"
-#include "app/stair_profile.hpp"
 #include "app/state.hpp"
 #include "app/time.hpp"
 #include "safety/command.hpp"
@@ -84,13 +81,7 @@ using lingtu::nav::endpoint::ControlLoopRuntimeGuardState;
 using lingtu::nav::endpoint::ControlMode;
 using lingtu::nav::endpoint::Dds;
 using lingtu::nav::endpoint::DdsStatus;
-using lingtu::nav::endpoint::StairProfileState;
-using lingtu::nav::endpoint::stairProfileFeedback;
-using lingtu::nav::endpoint::expectedProfileTransition;
-using lingtu::nav::endpoint::readStairFlights;
 using lingtu::nav::endpoint::EstopLatchStore;
-using lingtu::nav::endpoint::evaluateCommandSafety;
-using lingtu::nav::endpoint::FinalActions;
 using lingtu::nav::endpoint::FinalControl;
 using lingtu::nav::endpoint::GeofenceManager;
 using lingtu::nav::endpoint::GlobalPlannerBackend;
@@ -265,10 +256,6 @@ int main(int argc, char **argv) {
         if (!preflight.ok()) {
           throw std::runtime_error("active OctoMap failed native Maps preflight: " +
                                    preflight.reason);
-        }
-        if (!cfg.navigation_body_file.empty()) {
-          // Build the collision-hit index before the first goal's planning deadline.
-          (void)preflight.artifact->terrain();
         }
         const auto prepare_started = std::chrono::steady_clock::now();
         octomap_planner->prepare(preflight.artifact->loadPath(),
@@ -459,7 +446,8 @@ int main(int argc, char **argv) {
                    persisted_estop->c_str());
     }
     CommandIngressController command_ingress;
-    OperatorMotionAuthority operator_motion_authority;
+    OperatorMotionAuthority operator_motion_authority(
+        lingtu::nav::endpoint::operatorMotionAuthorityOptions(cfg));
     const bool operator_motion_interface_enabled =
         cfg.control_mode == ControlMode::Teleop || cfg.control_mode == ControlMode::TeleopAvoid ||
         (cfg.control_mode == ControlMode::Autonomy && cfg.allow_teleop_takeover);
@@ -575,38 +563,7 @@ int main(int argc, char **argv) {
     TimingDiagnostics *current_timing = nullptr;
     std::uint64_t last_zero_output_sequence = 0U;
     std::uint64_t last_zero_source_wall_ns = 0U;
-    std::optional<nav_kernel::VelocitySmoother> velocity_smoother;
-    if (cfg.velocity_smoother_enabled) {
-      velocity_smoother.emplace(cfg.velocity_smoother);
-    }
-    auto shape_velocity = [&](const nav_kernel::Twist &target, double timestamp_s) {
-      if (!velocity_smoother) {
-        nav_kernel::VelocitySmootherOutput output;
-        output.command = target;
-        output.valid = true;
-        output.reason = "disabled";
-        return output;
-      }
-      std::string error;
-      if (!velocity_smoother->SetTarget(target, timestamp_s, &error)) {
-        nav_kernel::VelocitySmootherOutput output;
-        output.reason = error.empty() ? "velocity_smoother_set_target_failed" : error;
-        return output;
-      }
-      return velocity_smoother->Step(timestamp_s);
-    };
-    auto commit_applied_velocity = [&](const nav_kernel::Twist &applied, double timestamp_s) {
-      if (velocity_smoother && !velocity_smoother->CommitApplied(applied, timestamp_s))
-        return false;
-      executor.commitAppliedCommand(applied);
-      return true;
-    };
-    auto stop_velocity = [&](double timestamp_s, const std::string &reason) {
-      executor.commitAppliedCommand({});
-      if (velocity_smoother) {
-        (void)velocity_smoother->Stop(timestamp_s, reason);
-      }
-    };
+    FinalControl final_control(cfg, local_planner_params, state, executor);
     auto record_final_output_publish_failure = [&](const std::string &reason) {
       control_authority.holdOperatorTakeover();
       operator_resume_required = true;
@@ -616,10 +573,11 @@ int main(int argc, char **argv) {
     };
 
     std::optional<StopConfirmation> stop_confirmation;
+    std::optional<StopConfirmationEvidencePolicy> stop_confirmation_policy;
     std::uint64_t stop_confirmation_sequence{0U};
     OdometrySpeedMonitor stop_speed_monitor(OdometrySpeedEvidence::PoseDerivedPlanar);
     auto publish_zero_command = [&]() -> bool {
-      stop_velocity(steadySeconds(), "zero_command");
+      final_control.stop(steadySeconds(), "zero_command");
       if (!cfg.publish_cmd_vel) {
         return true;
       }
@@ -647,7 +605,7 @@ int main(int argc, char **argv) {
       return receipt.has_value();
     };
     auto publish_sequenced_zero_command = [&]() -> std::optional<std::uint64_t> {
-      stop_velocity(steadySeconds(), "sequenced_zero_command");
+      final_control.stop(steadySeconds(), "sequenced_zero_command");
       const auto publish_receipt =
           dds.publish(lingtu::nav::endpoint::OutputEvent{
               lingtu::nav::endpoint::FinalVelocityOutput{}});
@@ -669,7 +627,7 @@ int main(int argc, char **argv) {
     };
 
     auto clear_motion_outputs = [&](const std::string &reason) -> bool {
-      stop_velocity(steadySeconds(), reason);
+      final_control.stop(steadySeconds(), reason);
       executor.clear();
       last_global_path.clear();
       last_local_path.clear();
@@ -698,7 +656,7 @@ int main(int argc, char **argv) {
       return zero_published;
     };
     auto suspend_motion_outputs = [&](const std::string &reason) -> bool {
-      stop_velocity(steadySeconds(), reason);
+      final_control.stop(steadySeconds(), reason);
       executor.suspendAutonomy();
       last_local_path.clear();
       last_local_planner_debug = {};
@@ -855,18 +813,6 @@ int main(int argc, char **argv) {
       route.supportHeightM = activation.support_height_m;
       route.supportHeightToleranceM = activation.support_height_tolerance_m;
       route.requestedGoal = activation.requested_goal;
-      route.supportSurface = activation.support_surface;
-      if (activation.map_identity) {
-        const auto flights = readStairFlights(cfg.map_path, activation.map_identity->content_epoch);
-        route.stairs = lingtu::nav::navigation::resolveStairSegments(
-            route.points, flights, cfg.octoplanner_options.support_height_m,
-            std::max(cfg.octoplanner_options.support_height_tolerance_m,
-                     executor_config.stairs.heightTolerance));
-        if (!flights.empty()) {
-          std::fprintf(stderr, "nav_native: matched %zu stair sections from %zu observed flights\n",
-                       route.stairs.size(), flights.size());
-        }
-      }
       executor.setRoute(std::move(route));
       const auto write_start = SteadyClock::now();
       (void)dds.publish(lingtu::nav::endpoint::OutputEvent{
@@ -955,7 +901,6 @@ int main(int argc, char **argv) {
     };
     inputs_config.check_obstacle = cfg.check_obstacle;
     inputs_config.max_obstacle_points = cfg.max_obstacle_points;
-    inputs_config.navigation_body = executor_config.body;
     if (cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan) {
       inputs_config.support_height_m = cfg.octoplanner_options.support_height_m;
       inputs_config.support_tolerance_m = cfg.octoplanner_options.support_height_tolerance_m;
@@ -988,9 +933,15 @@ int main(int argc, char **argv) {
         nav_status.flush();
       }
     };
-    auto poll_stop_confirmation = [&](std::uint64_t output_sequence) {
-      if (!stop_confirmation || output_sequence != stop_confirmation_sequence) {
+    auto poll_stop_confirmation = [&](std::uint64_t output_sequence,
+        std::optional<StopConfirmationEvidencePolicy> evidence_policy) {
+      auto confirmation_config = stop_confirmation_config;
+      confirmation_config.evidence_policy = evidence_policy.value_or(
+          stop_confirmation_config.evidence_policy);
+      if (!stop_confirmation || output_sequence != stop_confirmation_sequence ||
+          stop_confirmation_policy != confirmation_config.evidence_policy) {
         const double zero_wall_s = static_cast<double>(last_zero_source_wall_ns) / 1e9;
+        state.motion_stop_evidence.configure(confirmation_config);
         state.motion_stop_evidence.begin(output_sequence, zero_wall_s);
         if (output_sequence != last_zero_output_sequence || last_zero_source_wall_ns == 0U) {
           state.motion_stop_evidence.update(StopConfirmationState::TimedOut, {}, nowSeconds());
@@ -999,8 +950,9 @@ int main(int argc, char **argv) {
         }
         stop_confirmation.emplace(dds_status.producer_boot_id, output_sequence,
                                   last_zero_source_wall_ns, StopConfirmation::Clock::now(),
-                                  stop_confirmation_config);
+                                  confirmation_config);
         stop_confirmation_sequence = output_sequence;
+        stop_confirmation_policy = confirmation_config.evidence_policy;
         stop_speed_monitor = OdometrySpeedMonitor(OdometrySpeedEvidence::PoseDerivedPlanar);
         publish_motion_stop_evidence_status();
       }
@@ -1086,8 +1038,9 @@ int main(int argc, char **argv) {
       return dds_status.final_output_sequence;
     };
     motion_stop_actions.publish_sequenced_zero = publish_sequenced_zero_command;
-    motion_stop_actions.confirm_zero = [&](std::uint64_t output_sequence) {
-      return poll_stop_confirmation(output_sequence);
+    motion_stop_actions.confirm_zero = [&](std::uint64_t output_sequence,
+        std::optional<StopConfirmationEvidencePolicy> evidence_policy) {
+      return poll_stop_confirmation(output_sequence, evidence_policy);
     };
     motion_stop_actions.clear_global_path = [&]() { executor.clear(); };
     MotionStopBarrier motion_stop(cfg.publish_cmd_vel, std::move(motion_stop_actions));
@@ -1213,6 +1166,7 @@ int main(int argc, char **argv) {
     TeleopAdmissionController teleop_admission(std::move(teleop_actions));
 
     const auto execution_observation = [&](bool local_traversability) {
+      state.observed_body = observedBody(executor.activeBody(), state.map_body_transform);
       lingtu::nav::navigation::ExecutionObservation observation{
           state.frame_epoch,
           state.cloud_generation,
@@ -1225,8 +1179,8 @@ int main(int argc, char **argv) {
           state.odom_yaw_rate,
           state.odom_velocity_valid,
       };
+      observation.body_geometry = state.observed_body;
       observation.collision = state.local_collision_map.view();
-      observation.body_geometry = state.body_geometry;
       const double prediction_now = steadySeconds();
       observation.predictions = lingtu::nav::endpoint::makePredictionView(state.predicted_obstacle_volumes,
           state.prediction_source_receive_s, prediction_now, cfg.cloud_max_age_s);
@@ -1245,69 +1199,6 @@ int main(int argc, char **argv) {
                                                        : nav_kernel::PlanClockMode::Steady;
       return observation;
     };
-
-    FinalActions final_control_actions;
-    final_control_actions.command_safety = [&](const auto &base_safety, const auto &command, double age) {
-      auto safety = base_safety;
-      if (cfg.control_mode == ControlMode::Autonomy && executor.hasRoute() &&
-          !control_authority.operatorTakeoverLatched()) {
-        safety.max_speed_mps = std::min(safety.max_speed_mps, executor.activeMaxSpeedMps());
-      }
-      auto decision = evaluateCommandSafety(safety, command, age);
-      if (decision.stopped || local_planner_params.backend != nav_kernel::LocalPlannerBackend::Scan ||
-          !local_planner_params.checkObstacle || control_authority.teleopManualMode() ||
-          (cfg.control_mode != ControlMode::Autonomy && !cfg.teleop_local_planner)) return decision;
-      nav_kernel::LocalPlanRequest collision_request;
-      collision_request.body = executor_config.body;
-      collision_request.observedBody = state.body_geometry;
-      if (map_body) collision_request.robot.pose = *map_body;
-      collision_request.environment.collision = state.local_collision_map.view();
-      collision_request.clock.timestampS = steadySeconds();
-      collision_request.environment.predictions = lingtu::nav::endpoint::makePredictionView(
-          state.predicted_obstacle_volumes, state.prediction_source_receive_s,
-          collision_request.clock.timestampS, cfg.cloud_max_age_s);
-      nav_kernel::local::scan::Grid grid(local_planner_params, collision_request);
-      const double deceleration = std::min(
-          cfg.velocity_smoother.x.deceleration, cfg.velocity_smoother.y.deceleration);
-      const double reaction = std::max(safety.cmd_max_age_s, 1.0 / cfg.tick_hz);
-      const auto occupied = [&](const nav_kernel::Twist &twist) {
-        return !map_body || grid.brakingOccupancy(*map_body, twist, reaction, deceleration,
-                                                  cfg.velocity_smoother.yaw.deceleration) != 0;
-      };
-      const nav_kernel::Twist measured{state.odom_linear_velocity_body.x,
-                                      state.odom_linear_velocity_body.y, state.odom_yaw_rate};
-      if (map_body && safety.verified_recovery_translation &&
-          grid.inflatedOccupancy(map_body->position, map_body->yaw) == 1 &&
-          state.odom_velocity_valid &&
-          grid.boundaryDepartureMotionFree(*map_body, decision.cmd, measured,
-              std::min(cfg.recovery_translation_speed_mps, safety.max_speed_mps),
-              reaction, deceleration, cfg.velocity_smoother.yaw.deceleration)) {
-        decision.reason = "scan_boundary_departure";
-        return decision;
-      }
-      const double braking_scale = !map_body ||
-          (state.odom_velocity_valid && occupied(measured)) ? 0.0 :
-          grid.brakingScale(*map_body, decision.cmd, reaction, deceleration,
-                            cfg.velocity_smoother.yaw.deceleration);
-      if (braking_scale <= 0.0) {
-        decision.cmd = {};
-        decision.stopped = true;
-        decision.limited = true;
-        decision.reason = "scan_actual_motion_blocked";
-      } else if (braking_scale < 1.0) {
-        decision.cmd.vx *= braking_scale;
-        decision.cmd.vy *= braking_scale;
-        decision.cmd.wz *= braking_scale;
-        decision.slowed = true;
-        decision.limited = true;
-        decision.reason = "scan_actual_motion_limited";
-      }
-      return decision;
-    };
-    final_control_actions.shape = shape_velocity;
-    final_control_actions.commit = commit_applied_velocity;
-    final_control_actions.stop = stop_velocity;
-    FinalControl final_control(std::move(final_control_actions));
 
     TeleopTickActions teleop_tick_actions;
     teleop_tick_actions.teleop_receive_age_s = teleop_receive_age_s;
@@ -1343,78 +1234,6 @@ int main(int argc, char **argv) {
     };
     TeleopTickController teleop_tick(std::move(teleop_tick_actions), final_control);
 
-    StairProfileState profile_state;
-    std::string profile_task_id;
-    lingtu::nav::navigation::StairProfile last_profile_request{lingtu::nav::navigation::StairProfile::None};
-    double last_profile_request_s{-1.0};
-    bool profile_paused{false};
-    auto profile_feedback = [&]() {
-      const double now = steadySeconds();
-      return stairProfileFeedback(profile_state, profile_task_id, nowSeconds(), now,
-                                  inputs.executionTime(now));
-    };
-    auto publish_profile = [&](const lingtu::nav::navigation::StairTraversalOutput& output) {
-      using Profile = lingtu::nav::navigation::StairProfile;
-      if (output.request == Profile::None) {
-        if (output.phase == lingtu::nav::navigation::StairPhase::Ordinary) {
-          last_profile_request = Profile::None;
-          last_profile_request_s = -1.0;
-          profile_task_id.clear();
-        }
-        return;
-      }
-      if (profile_task_id.empty()) profile_task_id = goal_plan.snapshot().active_task_id;
-      if (profile_task_id.empty()) return;
-      const double now = steadySeconds();
-      if (output.request != last_profile_request || now - last_profile_request_s >= 0.25) {
-        if (dds.publish(lingtu::nav::endpoint::MotionProfileRequestOutput{profile_task_id,
-                lingtu::nav::navigation::stairProfileName(output.request)}).published) {
-          last_profile_request = output.request;
-          last_profile_request_s = now;
-        }
-      }
-    };
-    auto tick_executor = [&](lingtu::nav::navigation::ExecutionInput input) {
-      input.stairProfile = profile_feedback();
-      auto output = executor.tick(input);
-      publish_profile(output.stairs);
-      return output;
-    };
-    auto maintain_stairs = [&]() {
-      if (state.motion_profile) {
-        const auto& message = *state.motion_profile;
-        profile_state = {message.stamp_s, state.motion_profile_receive_s, message.task_id,
-                         message.requirement, message.phase, message.requested_profile,
-                         message.active_profile, message.reason};
-      }
-      // Planned driver readiness loss does not revoke this request. Operator
-      // pause/stop/takeover does: hold the selected model without new body actions.
-      const auto task = goal_plan.snapshot();
-      const bool allowed = control_authority.pathActive() && control_authority.motionAllowed() &&
-          !control_authority.operatorTakeoverLatched() && !control_loop_guard_latched() &&
-          !task.active_paused;
-      if (!allowed) {
-        if (!profile_task_id.empty() && (!profile_paused || steadySeconds() - last_profile_request_s >= 0.25)) {
-          if (dds.publish(lingtu::nav::endpoint::MotionProfileRequestOutput{profile_task_id, "hold"}).published) {
-            profile_paused = true;
-            last_profile_request_s = steadySeconds();
-          }
-        }
-      } else {
-        if (profile_paused) {
-          profile_paused = false;
-          last_profile_request_s = -1.0;
-        }
-        if (state.map_body && executor.hasStairTransition() &&
-            steadySeconds() - state.last_odom_receive_s <= cfg.odom_max_age_s) {
-          publish_profile(executor.tickStairTransition(*state.map_body, execution_observation(false),
-              inputs.executionTime(steadySeconds()), profile_feedback()));
-        }
-      }
-      return expectedProfileTransition(profile_state, profile_task_id, state.driver_control_reason,
-                                       nowSeconds(), steadySeconds(), last_profile_request_s);
-    };
-
     AutonomyTickActions autonomy_tick_actions;
     autonomy_tick_actions.steady_now_s = steadySeconds;
     autonomy_tick_actions.current_map_identity = current_map_identity;
@@ -1439,7 +1258,7 @@ int main(int argc, char **argv) {
                 state.map_odom_tf->translation,
                 state.map_odom_tf->yaw,
             };
-            return tick_executor(lingtu::nav::navigation::ExecutionInput{
+            return executor.tick(lingtu::nav::navigation::ExecutionInput{
                 lingtu::nav::navigation::ExecutionMode::Route,
                 pose,
                 *state.odom_body,
@@ -1451,7 +1270,7 @@ int main(int argc, char **argv) {
                 observation,
                 {}});
           }
-          return tick_executor(lingtu::nav::navigation::ExecutionInput{
+          return executor.tick(lingtu::nav::navigation::ExecutionInput{
               lingtu::nav::navigation::ExecutionMode::Route,
               pose,
               pose,
@@ -1507,7 +1326,6 @@ int main(int argc, char **argv) {
         control_loop_guard_latched,
         current_timing,
         &semantic_view_query,
-        maintain_stairs,
     };
     loop_ctx.observe_stop_inputs = observe_stop_inputs;
     return runEndpointLoop(loop_ctx, g_running);

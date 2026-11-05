@@ -230,6 +230,16 @@ class Commands(Module, layer=3):
         )
 
     @rpc
+    def set_task_speed_limit(
+        self, task_id: str, max_speed_mps: float, request_id: str | None = None,
+    ) -> NavigationCommandReceipt:
+        return self._navigation_receipt(
+            lambda client: client.set_task_speed_limit(
+                task_id, max_speed_mps, request_id=request_id,
+            )
+        )
+
+    @rpc
     def pause_task(
         self,
         task_id: str,

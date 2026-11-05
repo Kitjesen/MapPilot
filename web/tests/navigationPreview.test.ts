@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { previewNavigationPlan } from '../src/services/api.ts'
-import { navigationPreviewErrorMessage, navigationPreviewIsCurrent, sceneGoalHeight, navigationSupportHeightFromRunPlan } from '../src/services/navigationPreview.ts'
+import { GatewayApiError, previewNavigationPlan } from '../src/services/api.ts'
+import { navigationGoalErrorMessage, navigationPreviewErrorMessage, navigationPreviewIsCurrent, sceneGoalHeight, navigationSupportHeightFromRunPlan } from '../src/services/navigationPreview.ts'
 import type { PlanPreviewResponse } from '../src/types/index.ts'
 
 const originalFetch = globalThis.fetch
@@ -17,7 +17,21 @@ test('preview service errors stay distinct from infeasible paths and editable ta
   assert.equal(navigationPreviewErrorMessage('未找到可行路线'), '未找到可行路线')
   assert.equal(navigationPreviewErrorMessage('请输入目标高度'), '请输入目标高度')
   assert.equal(navigationPreviewErrorMessage('连接断开，等待恢复'), '连接断开，等待恢复')
-  assert.equal(navigationPreviewErrorMessage('发送目标失败: goal_terminal_pending'), '目标提交失败')
+  assert.equal(navigationPreviewErrorMessage('发送目标失败: goal_terminal_pending'), '发送目标失败: goal_terminal_pending')
+})
+
+test('goal feedback distinguishes a native refusal from an unconfirmed reply', () => {
+  const refused = new GatewayApiError(409, {
+    error: 'native_command_rejected', detail: { reason_code: 'estop_latched' },
+  })
+  assert.match(navigationGoalErrorMessage(refused, 'zh'), /急停仍处于锁定状态/)
+  const unknown = new GatewayApiError(503, {
+    error: 'native_command_unconfirmed', detail: { reason_code: 'native_command_unconfirmed' },
+  })
+  const message = navigationGoalErrorMessage(unknown, 'zh')
+  assert.match(message, /未收到.*确认/)
+  assert.match(message, /查看当前任务/)
+  assert.doesNotMatch(message, /未接受|拒绝/)
 })
 
 test('the direct plan preview API forwards the effective acceptance radius', async () => {

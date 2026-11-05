@@ -6,6 +6,8 @@
  */
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -19,7 +21,8 @@
 namespace nav_kernel {
 
 // Ordinary library/endpoint speed; Product and task limits remain explicit.
-inline constexpr double kDefaultLinearSpeedMps = 1.0;
+inline constexpr double kDefaultLinearSpeedMps =
+    ::lingtu::settings::limits::native_nav::follower::max_speed_mps;
 
 struct Vec3 {
   double x = 0, y = 0, z = 0;

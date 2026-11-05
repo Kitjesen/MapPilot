@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install one Thunder service from runtime.service_catalogs.thunder.
+# Install one real service from runtime.service_catalogs.real.
 
 set -euo pipefail
 
@@ -15,13 +15,13 @@ export LINGTU_PYTHON="${PYTHON_BIN}"
 
 catalog() {
     PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
-        "${PYTHON_BIN}" -m runtime.service_catalogs.thunder "$@"
+        "${PYTHON_BIN}" -m runtime.service_catalogs.real "$@"
 }
 
 SERVICE_FILE="$(catalog install-unit "${SERVICE}")"
 CATALOG_ENABLE_DEFAULT="$(catalog install-enable-default "${SERVICE}")"
 if [ -z "${SERVICE_FILE}" ]; then
-    echo "Unknown Thunder catalog service: ${SERVICE}" >&2
+    echo "Unknown real catalog service: ${SERVICE}" >&2
     exit 2
 fi
 

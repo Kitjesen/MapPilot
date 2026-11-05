@@ -1,6 +1,6 @@
 # 导航碰撞模型、转弯朝向与运动姿态
 
-**更新日期：2026-10-26，北京时间。** 本文记录用户需求、当前设计选择、实现状态、
+**更新日期：2026-11-03，北京时间。** 本文记录用户需求、当前设计选择、实现状态、
 部署差异和验收方法，是本主题的维护入口。源配置决定实际运行行为；本文中的目标
 不能冒充已实现能力。历史实验已移到
 [2026-10-22 至 10-25 实验记录](history/body-collision-experiments-20261022-20261025.md)。
@@ -41,14 +41,15 @@
 `geometry.navigation_body_file`、`LINGTU_NAV_BODY_FILE` 和已有命令，不制造迁移或兼容层。
 历史用户原话、日期记录、文件名与实验模型标签保留，读取时按本表理解旧称。
 
-灵途本地已经做的是几何导出、共享 C++ Body/地图查询，以及全局、SCAN、Executor、
-脱困和制动检查的接线。球体与格子的检查使用球几何；圆柱/胶囊当前仍使用保守有向盒
-相交近似，不能写成精确三角网格碰撞、完整 FCL 能力或可微碰撞算法。
+灵途本地已经做的是几何导出、C++ Body/地图查询，以及 SCAN、Executor、脱困和制动
+检查的接线。当前全局搜索使用 XYZ 和配置的圆柱通道。组合 Body 由任务上下文传给局部执行。球体与格子的检查使用球几何；圆柱的候选分离轴已按
+真实圆柱投影改进，不能写成完整精确碰撞、三角网格碰撞、FCL 或可微碰撞算法。
 是否存在可发表的新贡献需要单独的相关工作与同条件实验，本命名不构成原创性声明。
 
-**2026-10-26 后续决定：组合碰撞模型成为已适配平台的正式规划默认。** 本地 Go2
+**2026-10-26 后续决定：已适配平台的规划使用组合碰撞模型。** 当前组合模型用于局部碰撞与执行检查。本地 Go2
 与 Thunder 的 real RobotConfig 已选择平台对应的 BODY2；正式 Thunder sim package
-也选择同源模型。加载余量与 endpoint 当前机身姿态接线已调整，验证记录见本文末尾。
+也选择同源模型。加载余量及当时的姿态接线验证记录见本文末尾；该姿态接线已于
+2026-11-01 删除，现状见下文。
 本地源配置切换不表示 NX 已安装，固定关节快照也不表示在线 FK 或未来步态包络已完成。
 **正式执行验收仍未通过：** 本轮 Thunder 名义模型在实际 DDS＋MuJoCo 短程中，
 全局有路线、局部持续零命令；失败与完整位图保存在
@@ -67,42 +68,120 @@
 
 | 项目 | 已确认方向 / 要求 | 当前实现和缺口 |
 |---|---|---|
-| 机体表示 | 采用平台来源明确的组合碰撞模型＋朝向；未适配平台仍由原 RobotConfig 决定 | Go2 real 选择 raised URDF 的 17 部件导航模型，排除名义小腿、足端；Thunder real/sim 仍为现有 MJCF 名义站姿的 38 部件模型 |
+| 机体表示 | 采用平台来源明确的导航包络＋朝向；未适配平台仍由原 RobotConfig 决定 | Go2 real 选择 raised URDF 的 17 部件导航模型；Thunder real/sim 自 2026-11-03 选择从现有 MJCF 导出的 8 部件组合模型，保留四腿名义水平占地 |
 | 普通导航姿态 | 前向行走为主，在转角处配合行进方向转动 yaw；必要短侧移保留 | 前向代价、短弯/多拐角候选、分部机体切向扫掠和 SCAN/Follower 同切向已接通；理想速度积分闭环与物理/实机证据分别记录 |
 | 水平余量 | 按目标平台配置应用一次：Go2 每侧 5 cm，Thunder 每侧 8 cm | 原始部件不预膨胀；builder 置三维 margin=0，将配置写入 world XY 的水平余量；边角采用保守方形扩张，Z 不扩大 |
 | 垂直范围 | 根据安装外形和地面接触分别判断，不随水平余量一起膨胀 | Go2 导航模型保留上部机身、大腿与附件，小腿、足端仅在源 URDF/物理模型中保留；尚缺 D435i/支架实测 CAD 核对 |
-| 实时环境 | 导航默认更新三维实时观测，临时变化及时进入局部轨迹与执行检查 | 局部共享查询已有修复；全局本地代码也取消额外 unknown 机体否决，并允许实时自由证据清除旧机体障碍判断 |
+| 实时环境 | 导航默认更新三维实时观测，临时变化及时进入局部轨迹与执行检查 | 实时占据与自由空间由局部处理。全局只用保存地图，起点保留单次静态占据豁免 |
 | 地面与执行 | 全局三维地面、支撑、高差及可执行运动约束保留；局部检查实际碰撞与最终制动 | 2026-10-27 已删除全局/局部 Body 查询的逐脚接地证明和承重角色；原始点地形细化仍由已有接口提供，正式实时 Grid 的累计原始点尚未接通 |
 | 验收 | 几何、姿态、跟踪和实机分别有证据 | 新增真实 S 墙的原生闭环和缓坡原始面几何对照；Go2 接触物理、步态和实机仍未验收 |
 
 当前平台模型及生成来源只维护在以下位置；其他模型表达仅用于明确标记的对照实验，
-不能覆盖正式选型。全局、SCAN、Executor、脱困及最终制动检查沿现有 Body 接口共用
-所选模型，原生端不为各阶段另选外形。
+不能覆盖正式选型。局部 SCAN、Executor、脱困及最终制动检查使用所选 Body；当前全局
+使用独立配置的圆柱通道，不能称全局已逐部件验证同一模型。
+
+### 当前全局与局部的职责
+
+全局使用保存的 OctoMap、平台配置的三维圆柱通道和支撑证据，输出 XYZ 引导。
+搜索状态不带朝向。初次规划、预览和重规划均不接收实时占据、自由空间或原始地形点。
+起点圆柱范围内的保存占据豁免只用于本次查询，不修改保存图或支撑证据。
+局部 SCAN 和最终制动使用所选组合机身和实时碰撞图，终点朝向由执行层处理。
+在窄门或拐角处，静态引导与实际机身可通过性需要分别验证。
+
+2026-11-01 的[低横杆对照](../../build/body-model-unification-20261101/README.md)保留为历史证据。
+当时全局返回路线，局部固定站姿机身拒绝其中 5 条边。该试验只测几何。
 
 | 平台/环境 | 正式选择 | 来源与姿态边界 |
 |---|---|---|
 | Go2 / real | [`go2_raised_nominal.body2`](../../config/robots/unitree/go2/body/go2_raised_nominal.body2)，17 部件 | 当前 raised MID360 URDF 排除 `_calf*`、`_foot` 后的 16 个 collision＋一个未实测上部附件覆盖盒；名义关节按既有 0.35 m 支撑高度拟合 |
-| Thunder V4 / real | [`thunderv4_nominal.body2`](../../config/robots/doso/thunder_v4/body/thunderv4_nominal.body2)，38 部件 | 现有 MJCF 的 `v4_nominal_stand`，保留 0.093 m 轮半径；未套用 Go2 关节角 |
-| Thunder V4 / sim | [`collision/thunderv4_nominal.body2`](../../sim/packages/robots/doso/thunder_v4/collision/thunderv4_nominal.body2) | 与 real 模型同次导出、字节相同；由 package → physics plan → RunPlan 环境传入，不读取 real RobotConfig |
+| Thunder V4 / real | [`thunderv4_navigation.body2`](../../config/robots/doso/thunder_v4/body/thunderv4_navigation.body2)，8 部件 | 现有 MJCF 的 `v4_nominal_stand`；4 个机身细节盒＋4 个整腿位净空盒，每腿 XY 保留髋、大腿、小腿及轮子的完整名义投影，Z 取髋及大腿范围 |
+| Thunder V4 / sim | [`collision/thunderv4_navigation.body2`](../../sim/packages/robots/doso/thunder_v4/collision/thunderv4_navigation.body2) | 与 real 模型同次导出、字节相同；由 package → physics plan → RunPlan 环境传入，不读取 real RobotConfig |
+
+2026-11-03 用户进一步明确选择“BODY2 分部模型，用少量部件保留机器人轮廓”。
+正式模型收敛为 8 件。机身中箱与前后肩合并为 1 盒，窄头、窄尾和高处传感器各保留
+1 盒。四个整腿位净空盒分别覆盖该侧髋、大腿、小腿及轮子的完整名义 XY 投影，
+其 Z 取髋和大腿范围。四个腿位之间、头尾外侧及传感器旁的空间按各盒分别查询。
+
+源 38 个碰撞原语通过解析投影给出整体 XY 范围 0.835000 × 0.598331 m；轮子相对
+上身在 Y 每侧再伸出约 8.45 cm，主要位于前后轮的 |X| 约 0.228–0.414 m 区段。
+这部分水平范围保留在正式模型中。8 件模型的 Z 为 [-0.186777, 0.224772] m，
+总外接尺寸为 0.835000 × 0.598331 × 0.411549 m。原有每侧 8 cm 水平余量运行时
+应用一次，零 yaw 下外接范围为 0.995000 × 0.758331 m。圆柱的投影使用圆形截面
+及有限轴长的解析支持值，避免斜圆柱外接盒的额外角点进入占地范围。
+
+同日曾选过的单盒外接尺寸为 0.899659 × 0.605420 × 0.438535 m，它用斜圆柱的盒
+包络计算 XY，并填满全身外接范围。该选择由实现时自行作出，随后按用户明确的
+少量分部轮廓要求更正。隔离的 5/9/12 件上身候选排除了下肢额外的水平占地，
+未被选入正式配置。正式资产、导出器和 real/sim 解析测试采用上述 8 件方案。
+
+四腿位盒是导航净空代理。其完整名义水平占地有源几何覆盖依据，竖直范围承担上身
+避障，动态步态、小腿及轮子遇到低物的实际通过能力仍待物理验证。物理 MJCF 与
+CTS 策略保持各自完整模型。正式 Body 的接地标记全部为空；普通三维碰撞、轨迹
+扫掠及最终制动继续使用选定 Body。
+
+全局 XYZ 搜索仍使用圆柱通道，本次统一范围是局部与最终控制的正式 Body。
+相同余量的单盒／分部几何对照、原碰撞快照回放及验证边界记录在
+[8 部件模型对照](../../build/thunder-body2-20261103/README.md)。正式接线核查见
+[正式接入核查](../research/production-integration-20261103.md)。
+
+2026-11-01 针对“更简单紧凑”的离线尝试：Thunder 的 38 个几何原语是机身 6、髋部 4、
+大腿 12、小腿 12、轮子 4，并非 38 个独立机械部位。新候选保留机身、髋和四轮，
+将每条腿的大腿和小腿各自的三个原语合并为一个有向盒，共 22 个。八组盒在固定名义
+姿态下解析包围原几何；整体外接长度增加约 2.1 mm。回放已保存的两个观测快照时，
+原模型和新候选均拒绝低障碍，也均在地面快照被前轮拒绝；合并并未修好起步误拒。
+这是 `build/thunder-compact-body-20261101/` 内的隔离候选，不是此前删去全部小腿和
+轮子的 22 部件模型。回放使用已有二进制并应用记录的 roll/pitch，与当前正式 yaw-only
+查询不同；该次未测查询性能、物理步态或实机，2026-11-01 当时正式 real/sim
+选型没有改变。它没有完成整体模型要求；2026-11-03 的正式选择以上表为准。
 
 唯一再生成入口是 `python tools/robot/export_navigation_bodies.py`，复用既有导出器；
 每个模型旁的 JSON 保存来源、关节角、再生成命令和未验收项。Go2 的 JSON 另外记录排除的
-导航部件；17 部件检查不证明小腿、足端能够越过低障碍。Thunder 中仍标为接触部件的足部
-保留底部几何接触；碰撞查询不要求证明每只脚已经落地。`support_required`、逐列接地
+导航部件；17 部件检查不证明小腿、足端能够越过低障碍。组合模型格式仍支持底部
+几何接触；Thunder 的正式 8 件模型接地标记全部为空。碰撞查询不要求证明每只脚已经落地。`support_required`、逐列接地
 证明以及 5 mm / 30 mm 的接地判定已删除。BODY2 原最后一位仅保留为格式占位，写入零，
 读取时忽略。三维地面支撑仍属于全局规划，不由足部标志替代。
 `supportHeightM`/容差仍随 route/global 请求传递，
 不再被 Grid 用作这项运动准入。
-正式 endpoint 用实测机身 roll/pitch 更新部件姿态，yaw 由查询位姿应用一次；这不是
-在线关节 FK。Go2 未提供正式 sim preset，本次不据 Thunder 物理结果宣称 Go2 仿真通过。
+正式 endpoint 使用固定名义关节与机身姿态的身体模型，查询位姿应用 yaw；当前不将
+实测 roll/pitch 烘入身体模型，也没有在线关节 FK。Go2 未提供正式 sim preset，不据
+Thunder 物理结果宣称 Go2 仿真通过。
 本轮没有复核目标机当前 RunPlan，也没有安装或发送运动指令。
+
+2026-11-01 按用户要求删除 endpoint 的当前机身姿态快照：删除前局部与最终检查使用
+名义模型加当前 roll/pitch，删除后使用名义模型与查询 yaw。配置 Body、三维碰撞与
+最终制动检查保留。当前正式全局路线的激活没有填入显式姿态点，不应将姿态分段的
+规则描述为每次普通转弯都适用。倾斜机体覆盖与实机
+表现尚未验证，不能声称两种几何结果等价。
+
+对照固定 DimOS `26144f7fd8424bdc33ab97dcd58e9497f2d413ee`：其
+[局部位姿](https://github.com/dimensionalOS/dimos/blob/26144f7fd8424bdc33ab97dcd58e9497f2d413ee/dimos/navigation/local_planner/rust/src/module/tf_pose.rs#L87)
+使用 XY/yaw 和独立高度，[身体包络](https://github.com/dimensionalOS/dimos/blob/26144f7fd8424bdc33ab97dcd58e9497f2d413ee/dimos/navigation/embodiment/base.py#L96)
+仍提供固定或按运动方向选择的尺寸；已核对路径没有 LingTu 的逐次 Body 姿态烘焙。
+两个系统的规划与碰撞模型不同，不代表行为等价。
+
+同一 Windows 原生构建配置下，删除前和删除后 `test_input_projector` 与
+`ScanBodyTest.*` 均为 43/43 通过，分别记录在
+`build/body-attitude-removal-20261101/before-tests.log` 与 `after-tests.log`。
+这些是本地契约测试，不证明坡面和实机运动安全。
+
+同日进一步核对显式姿态路线：内部转向已有按实际位置扫掠的衔接分支；路线刚
+接收时的初始转向却按快照有无选择不同的高度范围。用户随后要求去除该起步判断的
+支撑容差和 2 cm 限制，并删除中间阶段单独的 1/2 cm 高度条件；现使用已有任务高度
+容差，普通 nav 配置为 0.35 m。实际转身和制动检查保留，1 cm 水平位置常量不变；
+独立的地面支撑查询及内部实际位姿衔接条件未因此删除。固定 SCAN 的航点序列以 0.5 m 三维距离或
+轨迹完成衔接；DimOS Basic 按路径投影及前视跟踪；两者均非本地这一高度阈值，未
+直接套用其数值。这里调整的是本地显式姿态路线的起步行为，不声明上游等价。
+修改前首拍与障碍等 4 项针对性测试失败，删除特殊高度条件后 4/4 通过；完整
+PoseRoute 回归 64/65，唯一失败的 `CoupledReferenceCommandsForwardAndYawTogetherAndRetainsTerminalYaw`
+在本轮修改前也复现。前后日志及构建记录位于 `build/body-attitude-removal-20261101/`。
+这些本地测试不构成仿真或实机验收。
 
 ## 用户需求与可判断的验收条件
 
 | 编号 | 需求 | 验收方式 |
 |---|---|---|
 | G1 | 模型表达当前机器人与已安装设备；不把一个大盒子的空角当成实际机体 | 对照安装外形与部件模型，明确模型覆盖、缺失附件、参考原点、余量和关节姿态 |
-| G2 | 组合碰撞模型可通过 RobotConfig 选择，全局、局部和执行共用一致的模型语义 | 核对导出文件、RunPlan、原生加载和 Body 传递；不能只检查某一个配置路径 |
+| G2 | 组合碰撞模型可通过 RobotConfig 选择，由局部规划和最终控制使用 | 核对导出文件、RunPlan、原生加载和 Body 传递；不能只检查某一个配置路径 |
 | G3 | 额外水平余量为每侧 5 cm，不能再重复叠加旧圆柱膨胀 | 记录本体尺寸、余量和最终碰撞范围，使用原始三维占据检查；保留贴墙与窄通道反例 |
 | P1 | 普通点到点导航面向行进方向，转角时身体配合转向 | 查看 XYZ+yaw 与机体系运动；当前 80 cm L 形“横移约 0.80 m、终点才转身”的路线不得判为姿态通过 |
 | P2 | 优先连续、自然地转弯，而非靠盒子碰墙迫使规划器转身 | 同一场景比较朝向、转角位置、停转时间与轨迹连续性；短期停转基线不等于连续转弯需求已完成 |
@@ -327,8 +406,8 @@ P2 的连续自然转弯要求；本轮不把它标为全部运动姿态验收�
 12 mm 的输入写成原起点已修好。12 mm 不会成为运行时自动抬高或控制命令；接触窗
 仍为原有 5 mm 穿入、30 mm 间隙，允许几何间隙不证明四足载荷或动态稳定。
 
-正式全局入口从同一 map_id/content_epoch/frame 声明的原始 PCD 按需建立 Terrain；
-普通 XYZ/单 OBB 不承担加载成本。正式实时 collision 是多帧累计，一帧 `live_cloud`
+此前组合机身全局实验曾从同一 map_id/content_epoch/frame 的原始 PCD 建立 Terrain。
+当前 XYZ 全局入口仅加载保存 OctoMap。正式实时 collision 是多帧累计，一帧 `live_cloud`
 不包含该格全部历史命中，不能用相同发布序号替代同源证据。本轮没有盲接这一条路径，
 因此新坡面制动模型只属于完整原始点的进程内组件/仿真能力。
 
@@ -383,20 +462,23 @@ P2 的连续自然转弯要求；本轮不把它标为全部运动姿态验收�
 以上是决策与交接失配，不是 URDF 代码丢失。不能用“用户曾经选过 OBB”作为忽略
 后续分部要求的理由，也不能未经新证据就再次把当前 Go2 默认切换回去并称已验收。
 
-## 已有代码与未完成部分
+## 2026-10-25 时的代码入口与缺口
+
+下表保留当时的代码阅读记录，不描述当前产品选型或当前全局搜索；当前模型、
+XYZ 全局搜索、实时地形和姿态边界以本文开头及相应模块 README 为准。
 
 | 部分 | 代码入口 | 实际状态 |
 |---|---|---|
 | URDF 导入与离线 FK | [body_model.py](../../tools/bench/body_model.py) | 存在；MuJoCo 计算部件变换，不能代表 Go2 在线关节接入 |
 | 固定姿态导出 | [body_export.py](../../tools/bench/body_export.py)、[BODY2 资产](../../config/robots/unitree/go2/body/go2_mid360_flatpack.body2) | 34 部件、固定标称关节；资产说明明确缺外置相机/支架覆盖 |
-| RobotConfig / RunPlan 选择 | [robot.yaml](../../config/robots/unitree/go2/robot.yaml)、[compile_plan.py](../../src/lingtu/assembly/compile_plan.py) | 非空模型路径会进入 LINGTU_NAV_BODY_FILE；当前 Go2 为空 |
+| RobotConfig / RunPlan 选择 | [robot.yaml](../../config/robots/unitree/go2/robot.yaml)、[compile_plan.py](../../src/lingtu/assembly/compile_plan.py) | 非空模型路径进入 LINGTU_NAV_BODY_FILE；10-25 记录的空路径已过时，当前 Go2 选 17 部件 |
 | 原生加载与 OBB 构造 | [build.cpp](../../src/nav/cpp/endpoint/nav/app/config/build.cpp) | 两个分支都保留；非空读 BODY2，空值用尺寸与水平余量构造 OBB |
-| 全局机体与 yaw | [body_query.cpp](../../src/nav/cpp/planning/global/octoplanner/body_query.cpp)、[heading.cpp](../../src/nav/cpp/planning/global/octoplanner/heading.cpp) | 三维姿态/扫掠、前向软偏好、原始面细查及插值高度直达候选已接线 |
-| 原始地面来源 | [terrain.cpp](../../src/nav/cpp/collision/terrain.cpp)、[octomap.cpp](../../src/nav/cpp/endpoint/nav/input/active/octomap.cpp) | 正式全局按需绑定同图 PCD；正式累计实时图的同源原始子集尚缺 |
-| SCAN 局部碰撞 | [grid.cpp](../../src/nav/cpp/planning/local/scan/grid.cpp) | 共用 Body，正式 endpoint 已传当前 roll/pitch 的 observedBody；完整同源 Terrain 的 live Grid 赋值仍未接通 |
+| 当时的全局机体与 yaw | 原 `body_query.cpp`（已删除） | 10-25 的姿态搜索记录保留，当前全局使用 XYZ 圆柱通道 |
+| 原始地面来源 | [terrain.cpp](../../src/nav/cpp/collision/terrain.cpp)、[octomap.cpp](../../src/nav/cpp/endpoint/nav/input/active/octomap.cpp) | 当时实验曾绑定同图 PCD，当前全局入口已删除此接线 |
+| SCAN 局部碰撞 | [grid.cpp](../../src/nav/cpp/planning/local/scan/grid.cpp) | 使用配置的名义 Body；当前 endpoint 不再传机身姿态快照。实时 hit bounds 已构造局部 Terrain，完整逐点同源数据仍未接通 |
 | 路线与执行 | [pose_route.cpp](../../src/nav/cpp/navigation/pose_route.cpp)、[executor.cpp](../../src/nav/cpp/navigation/executor.cpp) | 短等高圆弧、多拐角、实际分部扫掠与切向跟踪已接线；仅入口附近静止时可回退停转，弯中失败保留当前曲线/原目标 |
 | 实测关节快照组件验证 | [body_physics.py](../../tools/bench/body_physics.py) | Thunder MuJoCo 组件路径存在；不能当 Go2 正式产品证据 |
-| 正式当前姿态与在线 FK | [pose.cpp](../../src/nav/cpp/endpoint/nav/input/pose.cpp) 更新当前机身姿态，main 传入执行与最终检查 | 当前采用固定名义关节＋实测 roll/pitch；驱动关节 FK 和未来步态覆盖仍待实现/验收 |
+| 正式当前姿态与在线 FK | [pose.cpp](../../src/nav/cpp/endpoint/nav/input/pose.cpp) 更新导航位姿 | 碰撞使用固定名义姿态；当前 roll/pitch、驱动关节 FK 和未来步态覆盖未接入正式碰撞查询 |
 
 最后直接读取的目标机证据为 10 月 25 日 22:12 的 `.96` OBB 运行状态；另一聊天
 随后记录 `.97` 已安装并修复局部 unknown，之后网络断连、实走待验收。本轮没有
@@ -420,9 +502,9 @@ P2 的连续自然转弯要求；本轮不把它标为全部运动姿态验收�
 
 | 状态 | 内容 | 完成边界 |
 |---|---|---|
-| 已完成本地平台接入 | Go2 real、Thunder real/sim 选定组合资产；配置水平余量一次应用；当前 roll/pitch 到局部和最终 Body | 19 项模型导出、21 项物理工具、194 项 catalog/schema、47 项 native 窄回归及 3 项 endpoint/快照检查通过；完整 navd Windows 编译成功 |
+| 已完成本地平台接入 | Go2 real、Thunder real/sim 选定组合资产；配置水平余量一次应用 | 原模型导出与原生测试记录保留；2026-11-01 正式端点的实时姿态快照已删除，当前使用名义 Body |
 | 已删除，定向回归通过 | local Grid 整身逐部件投影逐列地面准入 | 删除前 3 项中 optional-foot 与异步 Task 两个正常场景失败，required-foot 缺支撑反例通过；删除后完整 ScanBodyTest＋LocalPlanTask 49/49 通过，Windows navd 重新编译成功；同位图下 34 个非接触部件无碰撞，4 足部占据格碰撞仍保留 |
-| 待修正式执行阻塞 | 新 Thunder 名义模型通过全局搜索，删除前 DDS＋MuJoCo 局部持续零命令 | 原位图同时记录整身支撑缺观测与足部/地面体素相交；前者的额外准入已删除，后者仍缺同源亚体素证据，不能宣称正式运动已通过 |
+| 历史正式执行阻塞（2026-10-26） | 当时 Thunder 名义模型通过全局搜索，DDS＋MuJoCo 局部持续零命令 | 原位图同时记录整身支撑缺观测与足部/地面体素相交；前者的额外准入已删除，后者仍缺同源亚体素证据，不能宣称正式运动已通过 |
 | 已完成组件实现 | 前向软代价、原始面量化纠错、短 S 弯参考/切向适配、入口回退与弯中原目标恢复 | 对应原生代码与针对性测试；完整日志见本轮入口 |
 | 已完成原生闭环对照 | 真实 S 墙内同一 Go2 固定分部模型，串联 SCAN、跟踪、命令和制动检查 | 理想速度积分，不含接触动力学 |
 | 待接线 | mapd 累计实时占据对应的完整同源原始点；实测关节/接触到 observedBody | 同时到达 Executor 与最终制动，不能只接其中一处 |

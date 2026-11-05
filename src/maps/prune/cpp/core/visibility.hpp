@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -15,11 +16,21 @@ class VisibilityEvidence {
   void observe(const std::vector<PointXYZI>& scan, const Pose& pose);
   bool contradicted(std::size_t index) const;
   bool onSupportedSurface(std::size_t index) const;
+  std::vector<bool> supportedSurfaces() const;
 
  private:
+  struct Cell {
+    std::vector<std::size_t> points;
+    std::size_t remaining{0};
+    std::size_t ray{0};
+    std::uint32_t frame{0};
+  };
   const std::vector<PointXYZI>& points_;
   const StaticCleanerOptions& options_;
-  std::unordered_map<VoxelKey, std::vector<std::size_t>, VoxelKeyHash> cells_;
+  std::unordered_map<VoxelKey, Cell, VoxelKeyHash> cells_;
+  // Bucket geometry is fixed; each query still reads the current hit/free evidence.
+  mutable std::optional<VoxelKey> support_key_;
+  mutable std::vector<const std::vector<std::size_t>*> support_cells_;
   std::vector<std::uint32_t> free_frames_;
   std::vector<bool> seen_;
   std::vector<std::uint32_t> hit_frames_;

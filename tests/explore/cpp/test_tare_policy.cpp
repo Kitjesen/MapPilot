@@ -267,14 +267,16 @@ void TestVisitedGoalSuppressesCandidate() {
   assert(decision.diagnostics.state_committed);
 }
 
-void TestDirectedTargetDefaultWeightIsNeutral() {
+void TestDirectedTargetZeroWeightIsNeutral() {
   ExploreInput baseline_input = MakeInput(MakeFrontierGrid(), Pose2D{2.5, 3.5, 0.0}, 1U);
   ExploreInput directed_input = baseline_input;
   directed_input.directed_target = DirectedTarget{100.0, 3.5};
   directed_input.directed_intent_revision = 1U;
 
-  TarePolicy baseline_policy;
-  TarePolicy directed_policy;
+  TarePolicyConfig config;
+  config.directed_progress_weight = 0.0;
+  TarePolicy baseline_policy(config);
+  TarePolicy directed_policy(config);
   const auto baseline = baseline_policy.plan(baseline_input);
   const auto directed = directed_policy.plan(directed_input);
 
@@ -523,7 +525,7 @@ int main() {
   TestRejectsRobotOutsideFreeSpace();
   TestFloatGridMetadataKeepsBoundaryStable();
   TestVisitedGoalSuppressesCandidate();
-  TestDirectedTargetDefaultWeightIsNeutral();
+  TestDirectedTargetZeroWeightIsNeutral();
   TestDirectedTargetFavorsProgress();
   TestNewIntentRevisionReplansSameGeneration();
   TestDirectedTargetDoesNotBypassCandidateSafety();

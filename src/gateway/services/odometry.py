@@ -19,6 +19,8 @@ def handle_odometry(gw: Any, odom: Any) -> None:
         "z": float(getattr(odom, "z", 0.0)),
         "yaw": float(getattr(odom, "yaw", 0.0)),
         "vx": odom.twist.linear.x if odom.twist else 0.0,
+        "vy": odom.twist.linear.y if odom.twist else 0.0,
+        "vz": odom.twist.linear.z if odom.twist else 0.0,
         "wz": odom.twist.angular.z if odom.twist else 0.0,
         "frame_id": str(getattr(odom, "frame_id", "") or "unknown"),
         "child_frame_id": str(getattr(odom, "child_frame_id", "") or "body"),
@@ -32,7 +34,7 @@ def handle_odometry(gw: Any, odom: Any) -> None:
         norm = math.hypot(*values)
         if all(math.isfinite(value) for value in values) and norm > 1e-9:
             data["orientation"] = [value / norm for value in values]
-    numeric_fields = ("x", "y", "z", "yaw", "vx", "wz", "ts")
+    numeric_fields = ("x", "y", "z", "yaw", "vx", "vy", "vz", "wz", "ts")
     invalid_fields = [name for name in numeric_fields if not math.isfinite(float(data.get(name, 0.0)))]
     if invalid_fields:
         invalid_odometry = {

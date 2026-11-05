@@ -3,6 +3,208 @@
 This directory declares operating modes under `products/` and their real/sim
 implementations under `envs/`. ProductControl resolves them once before startup.
 
+## Finding a setting
+
+| What to change | Source |
+| --- | --- |
+| Operating-mode policy, selected planners and teleop takeover | `products/<product>.yaml` |
+| Model name, endpoint, credential variable and request timeout | `models.yaml`, selected by Product `host.llm` |
+| Body-axis speed limits, trajectory speed/acceleration and braking | `settings/limits.yaml` |
+| SCAN optimization and collision freshness, CMU obstacle-height interval and terrain costs, live obstacle processing and dynamic-object detection | `settings/local.yaml` |
+| OctoPlanner3D search, support, surface closing, clearance costs, goal snapping and path interfaces | `settings/global.yaml` |
+| Saved-map route tracking, arrival and SCAN tracking gains | `settings/follower.yaml` |
+| Operator interfaces, request freshness, speed, obstacle filtering and intent planning | `settings/teleop.yaml` |
+| RGB-D acquisition, Orbbec SDK selection, SHM transport and WebRTC tuning | `settings/camera.yaml` |
+| Recovery order, progress timeouts, attempt limit and maneuver speeds | `settings/recovery.yaml` |
+| Native control cadence, input freshness, stop confirmation, command publication and smoothing | `settings/control.yaml` |
+| Hardware scan/IMU rates, Livox point type, scan pattern, multicast, binding and SDK ports | `settings/lidar.yaml` |
+| SLAM process cadence and publication, LTLIO estimation, registration, elevator and online mapping | `settings/slam.yaml` |
+| Map publication, occupancy, point filtering, surface fitting, capacities and save/cleanup | `settings/maps.yaml` |
+| Exploration interfaces, segment and risk bounds, native endpoint and TARE parameters | `settings/explore.yaml` |
+| Real/sim process implementation | `envs/<env>.yaml` |
+| Robot geometry, device calibration and physical driver limits | `config/robots/<vendor>/<model>/robot.yaml` |
+| Real IMU noise, sensor units, LiDAR/IMU extrinsics and installation overrides | `config/robots/<vendor>/<model>/sensors/*.yaml` |
+| Simulation-specific estimator overrides | `src/localization/ltlio/config/sim_mid360*.yaml` |
+| Camera device selection, calibration and explicit capture overrides | Selected RobotConfig; `config/devices.yaml` serves the compatibility driver |
+| Target-specific video encoder and optional sidecar | `config/video.env.example`, `config/go2rtc.yaml` |
+| DDS message types, topic names and QoS | `src/message/topics/*.yaml` |
+| Semantic classes and scoring | `config/semantics/` |
+
+A Product's `includes` lists shared files from `settings/` in load order.
+Later files override earlier keys within `native_nav` or `parameters`; inline
+Product values then override those shared values. The source groups `follower`,
+`teleop` and `global` expand to existing flat fields before each merge, so a
+follower file can add tracking tolerances without replacing the limits file's
+speed limits. Other nested mappings, such as `recovery`, are replaced as a whole.
+Map, camera and hardware LiDAR mappings are compiled into the same RunPlan process
+environment, along with exploration parameters and SLAM runtime cadence.
+Shared Product settings files cannot include other files. SLAM retains its
+native configuration-file contract. Each installation or simulation profile
+references the common `slam` mapping and applies its overrides in the native loader.
+
+```yaml
+includes: [control, lidar, slam, maps, limits, global, local, follower, teleop, recovery]
+variants:
+  standard: {}
+  camera:
+    includes: [camera]
+    processes_add: [camera, video]
+    optional_processes_add: [video]
+    topics_add: [/camera/color/image_raw, /camera/depth/image_raw, /camera/color/camera_info]
+    capabilities_add: [camera_preview]
+```
+
+Products select functions and keep intentional mode-specific overrides. Camera
+variants explicitly select preview processes and interfaces. `camera.yaml` owns
+the acquisition/transport defaults for every camera role, including perception
+without preview; explicit RobotConfig capture overrides take precedence. Physical
+camera selection and calibration remain with the robot. The field launcher does
+not read `devices.yaml`; that file remains a compatibility-driver input.
+Capture dimensions control the stream, while RobotConfig intrinsic dimensions
+describe the calibration. The frame name comes from `runtime.tf.frames`, and
+status-file paths come from the real service catalogue used by readiness checks.
+The video process uses the same color SHM as capture, and slot capacity derives
+from the effective color/depth dimensions.
+Service diagnostics and Gateway metadata report SHM names from the current
+RunPlan environment rather than a fixed catalogue copy.
+
+`control.yaml` declares command I/O and loop settings; `limits.yaml` contains motion bounds.
+It does not grant control or choose a Product. Teleop request limits and recovery
+action speeds stay with those behaviors, while physical driver limits stay with
+the robot. An omitted Product-specific yaw limit retains its existing default;
+it is not replaced by another mode's value.
+
+The unused `input_recovery_frames` setting, environment variable and CLI option
+were removed with their simulation callers. They never delayed native input
+recovery; status still reports the actual one-frame behavior.
+
+ProductControl writes resolved field settings to `session.env`. The LiDAR
+compiler builds `LINGTU_LIVOX_CONFIG_JSON` from the SDK settings and the selected
+RobotConfig. The field launcher writes that snapshot to the SDK configuration
+file. LiDAR/IMU rates come from `lidar.yaml`, frame names come from RuntimeFrames,
+and IP addresses, NIC and extrinsics belong to RobotConfig. `lidar.publish_freq`
+has been removed. An optional robot `lidar.frame_id` describes a calibration
+alias, while simulated rates and frames come from SensorPlan.
+The field scan rate is `lidar.scan_hz`; the checked Go2 and Thunder mapping,
+navigation and assisted-teleop plans currently resolve it to 10 Hz. SLAM loop
+and map publication rates have separate purposes.
+The explicit `LINGTU_LIVOX_CONFIG` file override remains available for SDK
+diagnostics and replaces the generated JSON; the field unit does not set it.
+Standalone Host capture uses its explicit RobotConfig and the same YAML defaults,
+not an inherited Product SDK snapshot.
+
+Mapd derives local update ranges from half the rolling occupancy window. SCAN
+inflation derives from the resolved robot collision dimensions and clearances.
+The generic inflation parameters apply to the other mapd paths. Publication,
+occupancy and save parameters are passed to mapd in both Envs. The unused
+carving bounds and independently configurable local ranges have been removed.
+SCAN receives that same resolved occupancy resolution at runtime, including
+after YAML changes without rebuilding navd. Its map-resolution consistency
+check remains in place.
+SLAM-backed map saving uses the fixed `map` coordinate contract; the misleading
+`maps.save.frame` tuning field has been removed. Historical metadata and explicit
+offline artifact frame metadata retain their existing meanings.
+
+The SLAM runtime section supplies the common tick and snapshot cadence. Its
+`sim` subsection disables periodic status logging and tracking against the
+saved map on a timer. These runtime choices are separate from estimator profile
+overrides such as sensor calibration, buffering and the simulation pose prior.
+The scheduler supports `tick_hz >= 1` and tracking periods of zero (disabled)
+or at least one second. Configuration outside those ranges is rejected at the
+entry point rather than silently raised by the scheduling loop.
+
+Product launch scripts read the resolved settings. Native default values for
+these component parameters are generated from the same YAML files by
+`scripts/build/settings.py`; they are not independently maintained in C++.
+`scripts/build/cmake/settings.cmake` registers the YAML as build dependencies,
+so an ordinary incremental native build regenerates `lingtu/settings.hpp` after
+a source edit. Do not edit or copy values into the generated header.
+Direct CLI/library users get the common component defaults too. A caller that
+needs a different experiment setting must pass it explicitly.
+The generated session environment overrides same-named tuning values previously
+placed in `/etc/lingtu/maps.env` or `video.env`; move those values to the owning
+component settings (or the existing explicit RobotConfig capture overrides).
+Deployment-only endpoints, device selection and encoder availability keep their
+existing target configuration. Release the settings with the updated binaries:
+older SLAM binaries do not load the new common-profile reference, and older
+mapd binaries do not read all of the newly wired environment parameters.
+Products keep their actual interface differences: map
+activation, saved/cumulative cloud outputs, goal status and traversability are
+not enabled merely because a related process exists. Inspection-only interfaces
+stay in `products/inspection.yaml`; no empty per-feature files are introduced.
+
+Both exploration variants explicitly include `limits`, `local` and `explore`.
+Variant `parameters` replace the entire base section, so splitting these values
+between base and variant would drop local or segment parameters. The loader's
+existing replacement rule is unchanged.
+
+Shared files may also declare `topics`. These are combined with the Product's
+topic list in file order without duplicates; message types, DDS names and QoS
+remain defined once in `src/message/topics/`. Variant whole-field replacement
+still applies: a variant with its own navigation topic list replaces the base
+list; use the existing `topics_add` for an incremental variant.
+
+`global.yaml` lists all 23 platform-independent OctoPlanner algorithm settings and the
+selected planner, plus `/nav/global_path` and the existing preview request/result
+topics. `nav`, `inspection`, `tracking`, and both `explore` variants load it.
+The `nav` Product explicitly keeps its existing 0.15 m terminal tolerances;
+other Products retain the shared 0.5 / 0.35 / 0.75 m values. Robot radius,
+support height/tolerance, slope limit and upper/lower body clearance are documented there
+but continue to come from RobotConfig or the selected simulation geometry.
+Writing one fixed Go2 value into the shared file would override Thunder too.
+The planner reads its saved OctoMap through the map path; live local collision
+topics and final velocity outputs are not owned by the global planner.
+
+Common tuning stays short within its owner:
+
+```yaml
+native_nav:
+  follower:
+    max_speed_mps: 1.4142135623730951
+    max_accel_mps2: 4.0
+    lookahead_m: 0.35
+    goal_tolerance_m: 0.15
+  teleop:
+    max_speed_mps: 1.0
+    horizon_m: 3.5
+  global:
+    terminal_tolerance_m: 0.15
+```
+
+These are source names, not new runtime parameters. Units remain in the keys.
+Numeric bounds are still checked by the existing native configuration compiler.
+`parameters.scan_planner` and `parameters.scan_follower` may also be written as
+groups. They expand to the existing dotted runtime parameter names before merging.
+Local planning speed/acceleration continue to derive from the motion budget;
+the source files do not independently fix those values.
+
+File names use a short responsibility noun; fields use their enclosing group
+instead of repeating a module prefix. Keep unit suffixes such as `_m`, `_mps`
+and `_rad_s`. English comments explain units not present in legacy keys,
+override rules and non-obvious behavior. Public topics, capability identifiers
+and runtime fields retain their contract names.
+
+Two teleop settings have different owners and must not be confused:
+
+| YAML key under `native_nav` | Meaning | Native environment field |
+| --- | --- | --- |
+| `teleop.takeover` | Allow an autonomy Product to expose operator takeover. This does not itself grant a client control. | `LINGTU_NAV_ALLOW_TELEOP_TAKEOVER` |
+| `teleop.planner` | Use local planning for assisted teleop translation. Explicit manual mode and pure rotation follow their existing control paths. | `LINGTU_TELEOP_LOCAL_PLANNER` |
+
+```yaml
+native_nav:
+  teleop:
+    takeover: true
+    planner: true
+```
+
+`src/lingtu/assembly/graph/settings.py` translates these source keys to `allow_teleop_takeover` and
+`teleop_local_planner` once. RunPlan, native fields, environment variables and
+status retain their existing names. The environment mapping is in
+`src/lingtu/assembly/config/native_navigation.py`; native nav reads it in
+`src/nav/cpp/endpoint/nav/app/config/parse.cpp`. These are control-mode settings,
+not SCAN algorithm parameters.
+
 ## Runtime Control Model
 
 The control plane has Product and Env declarations, one resolved plan, one
@@ -35,9 +237,10 @@ Each Product uses `lingtu.runtime_graph.product.v3`. Its top-level `topics` and
 `host.capabilities` selects the in-process Host Modules. Topic definitions
 and message types remain canonical under `src/message/topics/*.yaml`; a Product only lists
 which canonical topics it needs. Product navigation settings stay under
-`native_nav`, and rolling launch parameters stay under `parameters`. There is
-no Python Product-default, Product contract registry, or named parameter profile
-beside the YAML.
+`native_nav`, and rolling launch parameters stay under `parameters`. Shared
+values are declared by `includes` and expanded from the
+YAML files above. There is no separate Python Product-default or Product
+contract registry beside the YAML.
 
 Products declare `processes` using stable logical roles such as `lidar`,
 `slam`, `nav`, and `host`. The ProductControl-managed `real` Env maps those roles to
@@ -64,7 +267,11 @@ execute that final result and do not resolve Product policy a second time.
 The graph loader preserves raw variant declarations. Assembly selects the
 variant once and passes its resolved values explicitly to Host construction.
 Variants inherit top-level Product fields; an override replaces that whole
-field, without recursively merging nested mappings. Declare only differences:
+field, without recursively merging nested mappings. `topics_add`,
+`capabilities_add`, `processes_add` and `optional_processes_add` append only
+the variant's extra declarations, preserving
+order and omitting duplicates; they are expanded before validation and are
+not stored in RunPlan. Declare only differences:
 `standard: {}` retains the base Product, and camera variants inherit its Host
 configuration when they do not change it.
 Public selection uses `python -m lingtu.control switch PRODUCT --variant NAME`.
@@ -72,17 +279,8 @@ For `nav`, `standard` is the default; `camera` adds native camera and video proc
 and the Host preview relay while retaining the same navigation configuration.
 The real-only `semantic` variant keeps that native navigation and camera process
 set, then adds RGB-D perception plus semantic and Agent planning in the Host.
-It declares the existing `yolo_world` detector and the official mainland Kimi
-endpoint (`https://api.moonshot.cn/v1`, model `kimi-k3`). Both this variant and
-`tracking` read credentials from the Host process's `MOONSHOT_API_KEY`
-environment variable; credentials must not be placed in Product YAML or RunPlan.
-Set the variable on the machine running Host. A local Windows user variable does
-not configure the robot's systemd environment; the deployed Host already reads
-`/etc/lingtu/gateway.env`. Existing processes need the updated environment on
-their next ProductControl-managed start. Product assembly does not load detector
-weights, call the model, or
-weaken camera-calibration preflight. The `standard` and `camera` variants remain
-unchanged, and simulation continues to support only `standard`.
+It selects the `yolo_world` detector and the shared `kimi` model entry.
+Simulation supports only `standard`.
 For `tracking`, `standard` keeps the existing RGB-D perception and Follow graph;
 `camera` adds video preview over that same camera source. It does not add a
 second camera or change the selected local planner, identity checks or calibration.
@@ -92,6 +290,23 @@ runner reports that failure and continues core startup; stopping and rollback
 still own the video process. Missing mappings and invalid core-role declarations
 remain errors. The sim map/nav/tracking backends support only `standard`.
 The release installer preserves the selected variant when restoring a Product.
+
+### Host models
+
+`nav/semantic` and `tracking` select `kimi` in [models.yaml](models.yaml).
+This entry sets `kimi-k3`, `https://api.moonshot.cn/v1`, `MOONSHOT_API_KEY`
+and a 30-second timeout. Tracking uses the vision-capable client for person
+selection. Inspection selects `qwen`, which sets `qwen-turbo`,
+`DASHSCOPE_API_KEY`, the SDK's default endpoint and a 10-second timeout.
+Calling Qwen requires the DashScope SDK, which the current LLM extra does not
+install.
+
+Assembly resolves the selected backend once. Explicit Product fields override
+the shared values, Env Host fields override Product fields, and permitted
+caller overrides have the highest priority. RunPlan stores the resolved
+`llm` and `llm_*` values; Host reads that snapshot. Set the credential value in
+the Host environment, for example in `/etc/lingtu/gateway.env` on the robot.
+YAML and RunPlan store the variable name only.
 The internal snapshot stores structured navigation settings under `launch.native_nav` and
 other process environment values under `launch.process_environment`; the final
 launch environment is derived from those values and `launch.parameters`.
@@ -158,7 +373,9 @@ endpoints own DDS communication.
 
 ## Files
 
-The loader reads only `products/*.yaml` and `envs/*.yaml` from this directory.
+The loader reads `products/*.yaml`, their referenced `settings/*.yaml` and
+`envs/*.yaml`. Host configuration resolution reads the selected connection
+from `models.yaml` for Products with semantic Modules.
 Qualification manifests belong under `config/acceptance/`, and the canonical
 topic catalogue belongs under `src/message/topics/`; neither is a Runtime
 Graph subdirectory. Empty `acceptance/` or `topics/` folders left by older
@@ -193,8 +410,11 @@ CMU and SCAN.
 ## SCAN runtime parameters
 
 SCAN tuning uses the existing Product `parameters` mapping and session
-`parameter_overrides` / `--set` interface. Defaults and accepted ranges live in
-`src/lingtu/assembly/config/native_parameters.py`; the resolved values are saved in
+`parameter_overrides` / `--set` interface. Values come from the component YAML.
+The remaining `standalone` entries describe explicit mode choices, such as a
+bare endpoint not enabling recovery; they do not define another motion budget.
+Python parameter specifications declare names, types, bounds and environment
+keys. The resolved values are saved in
 `RunPlan.launch.parameters` and rendered into the native process environment.
 There is no separate `native_nav.scan_follower` or `native_nav.scan_planner`
 configuration block.
@@ -218,14 +438,21 @@ Product motion limits. Explicit parameter values override these defaults:
 Env overrides, then Product parameters, then session overrides. Planner
 constraints, follower axis limits, and final command safety limits retain
 their separate roles; an explicit SCAN override does not raise the final
-Product command limit. CMU selection and its configuration are unchanged.
+Product command limit. CMU planning/tracking settings are grouped under `cmu`
+in `local.yaml` and `follower.yaml` and passed through the existing native
+environment input. CMU tracking does not replace those values with fixed numbers.
 
 `local_collision.max_age_s` is Endpoint input policy, shared with recovery.
 Robot geometry still comes from RobotConfig. Map resolution and upstream FSM
-cadences remain part of the fixed SCAN port contract. C++ parameter-struct
-initializers serve standalone library callers; Product runs receive every
-SCAN tuning value from the saved RunPlan. Plans created before these fields
-were recorded must be recompiled before use with this runtime.
+cadences remain part of the SCAN port contract. C++ parameter-struct initializers
+reference the generated YAML constants; Product runs receive resolved settings
+from the saved RunPlan. Plans created before these fields were recorded must be
+recompiled before use with this runtime.
+
+Editing YAML does not mutate a running Product. Start a new Product run to apply
+its runtime settings. Rebuild native code to update standalone generated defaults
+or settings consumed directly by a native library. Explicit CLI/session/platform
+overrides retain their documented precedence over the common defaults.
 
 Regeneration uses the normal `ProductControl.switch` entry: it compiles and
 publishes a new RunPlan from the current Product, Env, and session parameters.

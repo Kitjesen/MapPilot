@@ -66,6 +66,37 @@ def test_new_status_does_not_blank_previous_complete_revision(tmp_path, monkeypa
     assert result["sequence"] == 3
 
 
+def test_failed_status_keeps_complete_cloud_and_updates_failure_count(tmp_path, monkeypatch):
+    status, metadata = setup_snapshot(tmp_path, monkeypatch)
+    latest = {
+        **metadata,
+        "state": "online_mapping_failed: test failure",
+        "optimization_failures": 1,
+        "revision": 4,
+        "stamp_s": 13.0,
+        "points": 0,
+    }
+    status.write_text(json.dumps(dict(source_epoch=42, global_mapping=latest)))
+    app = FastAPI()
+    map_routes.register_map_routes(app, SimpleNamespace())
+    with TestClient(app) as client:
+        json_response = client.get("/api/v1/map/global/points?max_points=2").json()
+        response = client.get("/api/v1/map/global/points?max_points=2&format=binary")
+    frame = decode_pointcloud_frame(response.content)
+    for mapping in (json_response["global_mapping"],
+                    json.loads(response.headers["x-lingtu-global-mapping"])):
+        assert mapping["state"] == latest["state"]
+        assert mapping["optimization_failures"] == 1
+        assert mapping["revision"] == 3
+        assert mapping["stamp_s"] == 12.0
+        assert mapping["points"] == 4
+    assert json_response["count"] == 2
+    assert frame.sequence == json_response["sequence"] == 3
+    assert frame.stamp_s == json_response["stamp_s"] == 12.0
+    assert frame.frame_id == json_response["frame_id"] == "map"
+    np.testing.assert_allclose(frame.points, json_response["points"], atol=.003)
+
+
 @pytest.mark.parametrize("endpoint", ["/api/v1/map/global/points", "/api/v1/map/points"])
 def test_map_response_encodes_off_the_teleop_event_loop(monkeypatch, endpoint):
     app = FastAPI()

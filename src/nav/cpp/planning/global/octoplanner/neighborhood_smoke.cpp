@@ -218,7 +218,7 @@ void checkBodyHeightSlopeLattice()
       const double horizontal = std::hypot(path[i].x-path[i-1].x, path[i].y-path[i-1].y);
       const double rise = std::abs(path[i].z-path[i-1].z);
       rises = rises || rise > 1e-6;
-      require(rise <= .050001 && horizontal > 1e-6 &&
+      require(rise <= options.max_step_height + 1e-6 && horizontal > 1e-6 &&
         rise <= options.max_slope * horizontal + 1e-6,
         "body-height route violates its configured metric slope");
     }

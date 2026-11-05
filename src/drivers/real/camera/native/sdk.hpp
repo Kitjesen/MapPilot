@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -62,22 +64,28 @@ enum class PixelFormat : uint32_t {
 };
 
 struct VideoMode {
-  uint32_t width = 640;
-  uint32_t height = 480;
-  uint32_t fps = 30;
+  uint32_t width;
+  uint32_t height;
+  uint32_t fps;
 };
 
 struct Config {
-  std::string sdk_config_path;
+  std::string sdk_config_path{lingtu::settings::camera::camera::orbbec::sdk_config};
   std::string serial_number;
   std::string uid;
-  int product_id = 0;
-  uint32_t device_index = 0;
-  bool use_device_index = false;
-  uint32_t connect_timeout_ms = 10000;
-  VideoMode color;
-  VideoMode depth;
-  bool enable_frame_sync = false;
+  int product_id = std::stoi(lingtu::settings::camera::camera::orbbec::product_id, nullptr, 0);
+  uint32_t device_index = lingtu::settings::camera::camera::orbbec::device_index;
+  bool use_device_index = true;
+  uint32_t connect_timeout_ms = lingtu::settings::camera::camera::orbbec::connect_timeout_ms;
+  VideoMode color{
+      lingtu::settings::camera::camera::capture::color_width,
+      lingtu::settings::camera::camera::capture::color_height,
+      lingtu::settings::camera::camera::capture::color_fps};
+  VideoMode depth{
+      lingtu::settings::camera::camera::capture::depth_width,
+      lingtu::settings::camera::camera::capture::depth_height,
+      lingtu::settings::camera::camera::capture::depth_fps};
+  bool enable_frame_sync = lingtu::settings::camera::camera::orbbec::frame_sync;
 };
 
 struct DeviceInfo {

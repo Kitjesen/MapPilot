@@ -225,9 +225,17 @@ class MapClient:
     def open_artifact(self, map_id: str, capability: str) -> ArtifactHandle:
         """Receive one validated, read-only map artifact descriptor."""
 
+        return self._open_artifact({"map_id": str(map_id), "capability": str(capability)})
+
+    def open_save_source(self, job_id: str) -> ArtifactHandle:
+        """Receive the original PCD archived by a map-save operation."""
+
+        return self._open_artifact({"job_id": str(job_id)})
+
+    def _open_artifact(self, arguments: Mapping[str, Any]) -> ArtifactHandle:
         response, descriptors = self._request(
             _OPEN_ARTIFACT,
-            {"map_id": str(map_id), "capability": str(capability)},
+            arguments,
             expect_fd=True,
         )
         if len(descriptors) != 1:

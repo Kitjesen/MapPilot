@@ -8,11 +8,8 @@
 #include <utility>
 #include <vector>
 
-#include "core/evidence.hpp"
-#include "core/flow.hpp"
 #include "core/io.hpp"
 #include "core/save.hpp"
-#include "core/score.hpp"
 #include "core/text.hpp"
 #include "core/visibility.hpp"
 
@@ -40,16 +37,8 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
     if (!std::isfinite(options.voxel_size_m) || options.voxel_size_m <= 0.0F) {
       return fail("bad_voxel_size", "voxel size must be positive");
     }
-    if (!std::isfinite(options.ground_z_threshold) || !std::isfinite(options.instance_grid_m)
-        || options.instance_grid_m <= 0 || !std::isfinite(options.moving_score_threshold)
-        || options.moving_score_threshold < 0 || options.moving_score_threshold > 1) {
-      return fail("bad_threshold", "legacy ground, instance and score thresholds must be finite and in range");
-    }
     if (options.dry_run && options.apply_to_map) {
       return fail("conflicting_mode", "--dry-run cannot be combined with --apply");
-    }
-    if (options.min_frame_support == 0 || options.min_hit_support == 0) {
-      return fail("bad_support_threshold", "support thresholds must be positive");
     }
 
     if (options.min_free_frames < 2 || !std::isfinite(options.ray_tolerance_m)
@@ -69,7 +58,11 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
         options.output_clean_pcd.empty() ? (map_dir / "map.clean.pcd") : options.output_clean_pcd;
     fs::path removed_path = options.output_removed_pcd.empty() ? (map_dir / "map.removed.pcd")
                                                                : options.output_removed_pcd;
-    const fs::path backup_path = fs::absolute(map_dir / "map.pcd.preclean");
+    const fs::path canonical_backup = map_dir / "map.before_clean.pcd";
+    const fs::path legacy_backup = map_dir / "map.pcd.preclean";
+    const fs::path backup_path =
+        fs::exists(canonical_backup) || !fs::exists(legacy_backup)
+            ? canonical_backup : legacy_backup;
     const fs::path tmp_map_path = fs::absolute(map_dir / "map.pcd.tmpclean");
     clean_path = fs::absolute(clean_path).lexically_normal();
     removed_path = fs::absolute(removed_path).lexically_normal();
@@ -97,7 +90,8 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
     if (same_file(clean_path, removed_path)) {
       return fail("bad_output_path", "clean and removed outputs must differ");
     }
-    for (const auto& input : {map_pcd, poses_path, backup_path, tmp_map_path, map_dir / "scan_origin.txt"}) {
+    for (const auto& input : {map_pcd, poses_path, canonical_backup, legacy_backup,
+                             tmp_map_path, map_dir / "scan_origin.txt"}) {
       if (same_file(clean_path, input) || same_file(removed_path, input)) {
         return fail("bad_output_path", "outputs cannot overwrite source, poses, backup or staging files");
       }
@@ -144,8 +138,8 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
     if (!std::all_of(source_map.begin(), source_map.end(), finite_point))
       return fail("invalid_map_point", "map.pcd contains non-finite coordinates");
     VisibilityEvidence visibility(source_map, options);
-    std::unordered_map<VoxelKey, VoxelEvidence, VoxelKeyHash> evidence;
     std::uint64_t matched_patches = 0;
+    bool has_scan_points = false;
     for (const fs::path &patch : patches) {
       const std::string patch_name = patch.filename().string();
       auto pose_it = poses.find(patch_name);
@@ -161,21 +155,11 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
           || !std::isfinite(norm2) || norm2 < 1e-12)
         return fail("invalid_scan_pose", "scan pose is not a finite rigid transform: " + patch_name);
       visibility.observe(points, pose);
-      const std::size_t frame_idx = static_cast<std::size_t>(matched_patches);
-      for (const PointXYZI &local_pt : points) {
-        PointXYZI map_pt = transformPoint(local_pt, pose_it->second);
-        const VoxelKey key = voxelKey(map_pt, options.voxel_size_m);
-        VoxelEvidence &item = evidence[key];
-        ++item.hits;
-        if (item.last_frame != frame_idx) {
-          item.last_frame = frame_idx;
-          ++item.frame_count;
-        }
-      }
+      has_scan_points = has_scan_points || !points.empty();
       ++matched_patches;
     }
 
-    if (matched_patches == 0 || evidence.empty()) {
+    if (matched_patches == 0 || !has_scan_points) {
       return fail("no_matched_patch_evidence", "no patch PCD files matched poses.txt");
     }
 
@@ -183,40 +167,20 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
     std::vector<PointXYZI> removed;
     kept.reserve(source_map.size());
 
-    const MovingScoreSummary score_summary =
-        scoreMovingInstances(source_map, evidence, options);
-
-    std::uint64_t dynamic_voxels = 0;
-    for (const auto &entry : evidence) {
-      if (!isProtected(entry.second, options)) {
-        ++dynamic_voxels;
-      }
-    }
-
+    const auto supported_surfaces = visibility.supportedSurfaces();
     StaticCleanerResult result;
     for (std::size_t index = 0; index < source_map.size(); ++index) {
       const auto& pt = source_map[index];
-      if (visibility.contradicted(index)) ++result.free_space_candidate_points;
-      const VoxelKey key = voxelKey(pt, options.voxel_size_m);
-      auto found = evidence.find(key);
       if (visibility.contradicted(index)) {
-        if (visibility.onSupportedSurface(index)) {
+        ++result.free_space_candidate_points;
+        if (supported_surfaces[index]) {
           ++result.kept_supported_surface_points;
           kept.push_back(pt);
         } else {
           removed.push_back(pt);
         }
-      } else if (found == evidence.end()) {
-        ++result.kept_without_evidence_points;
-        kept.push_back(pt);
-      } else if (found->second.frame_count >= options.min_frame_support) {
-        ++result.kept_multi_frame_points;
-        kept.push_back(pt);
-      } else if (found->second.hits >= options.min_hit_support) {
-        ++result.kept_hit_support_points;
-        kept.push_back(pt);
       } else {
-        ++result.kept_unconfirmed_points;
+        ++result.kept_uncontradicted_points;
         kept.push_back(pt);
       }
     }
@@ -225,7 +189,6 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
     result.reason_code = options.dry_run ? "analyzed" : "cleaned";
     result.message = options.dry_run ? "analysis completed; no files written"
         : "prune completed with multi-frame observed free-space contradictions";
-    result.preset = options.preset;
     result.dry_run = options.dry_run;
     result.unmatched_patch_count = patches.size() - matched_patches;
     result.patch_count = matched_patches;
@@ -233,12 +196,6 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
     result.source_points = source_map.size();
     result.kept_points = kept.size();
     result.removed_points = removed.size();
-    result.evidence_voxels = evidence.size();
-    result.dynamic_candidate_voxels = dynamic_voxels;
-    result.scored_instances = score_summary.scored_instances;
-    result.moving_instances = score_summary.moving_instances;
-    result.score_candidate_points = score_summary.candidate_points;
-    result.max_moving_score = score_summary.max_candidate_ratio;
     if (!options.dry_run) {
       fs::create_directories(clean_path.parent_path());
       fs::create_directories(removed_path.parent_path());
@@ -272,7 +229,6 @@ std::string toJson(const StaticCleanerResult &result) {
   out << "  \"applied\": " << (result.applied ? "true" : "false") << ",\n";
   out << "  \"reason_code\": \"" << jsonEscape(result.reason_code) << "\",\n";
   out << "  \"message\": \"" << jsonEscape(result.message) << "\",\n";
-  out << "  \"preset\": \"" << jsonEscape(result.preset) << "\",\n";
   out << "  \"clean_pcd\": \"" << jsonEscape(genericString(result.clean_pcd)) << "\",\n";
   out << "  \"removed_pcd\": \"" << jsonEscape(genericString(result.removed_pcd)) << "\",\n";
   out << "  \"backup_pcd\": \"" << jsonEscape(genericString(result.backup_pcd)) << "\",\n";
@@ -285,23 +241,12 @@ std::string toJson(const StaticCleanerResult &result) {
   out << "  \"removed_fraction\": " << (result.source_points
       ? static_cast<double>(result.removed_points) / result.source_points : 0.0) << ",\n";
   out << "  \"decision_counts\": {\n";
-  out << "    \"kept_ground_geometry\": " << result.kept_ground_points << ",\n";
-  out << "    \"kept_multi_frame\": " << result.kept_multi_frame_points << ",\n";
-  out << "    \"kept_hit_support\": " << result.kept_hit_support_points << ",\n";
-  out << "    \"kept_without_evidence\": " << result.kept_without_evidence_points << ",\n";
-  out << "    \"kept_unconfirmed\": " << result.kept_unconfirmed_points << ",\n";
+  out << "    \"kept_uncontradicted\": " << result.kept_uncontradicted_points << ",\n";
   out << "    \"kept_supported_surface\": " << result.kept_supported_surface_points << ",\n";
   out << "    \"removed_free_space_contradiction\": " << result.removed_points << "\n  },\n";
   out << "  \"free_space_candidate_points\": " << result.free_space_candidate_points << ",\n";
   out << "  \"removal_semantics\": \"multi_frame_observed_free_space_not_semantic_motion\",\n";
-  out << "  \"evidence_voxels\": " << result.evidence_voxels << ",\n";
-  out << "  \"dynamic_candidate_voxels\": " << result.dynamic_candidate_voxels << ",\n";
-  out << "  \"scored_instances\": " << result.scored_instances << ",\n";
-  out << "  \"moving_instances\": " << result.moving_instances << ",\n";
-  out << "  \"score_candidate_points\": " << result.score_candidate_points << ",\n";
-  out << "  \"max_moving_score\": " << result.max_moving_score << ",\n";
   out << "  \"algorithm\": \"prune.visibility_surface_v4\",\n";
-  out << "  \"flow\": " << flowJson() << ",\n";
   out << "  \"license_boundary\": \"LingTu visibility and local-surface core; "
          "does not include or link ERASOR2 code\"\n";
   out << "}\n";

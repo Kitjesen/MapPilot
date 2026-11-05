@@ -51,7 +51,6 @@ struct OwnedRequest {
     observedBody = source.observedBody;
     supportHeightM=source.supportHeightM;
     supportHeightToleranceM=source.supportHeightToleranceM;
-    supportSurface=source.supportSurface;
     environment = source.environment;
     environment.obstacles = {};
     environment.traversability = {};
@@ -94,7 +93,6 @@ struct OwnedRequest {
     request.observedBody = observedBody;
     request.supportHeightM=supportHeightM;
     request.supportHeightToleranceM=supportHeightToleranceM;
-    request.supportSurface=supportSurface;
 
     LocalRouteView routeViewCopy = routeView;
     routeViewCopy.points = route && !route->empty() ? route->data() : nullptr;
@@ -122,7 +120,6 @@ struct OwnedRequest {
   std::shared_ptr<const lingtu::nav::collision::Body> observedBody;
   std::optional<double> supportHeightM;
   std::optional<double> supportHeightToleranceM;
-  lingtu::nav::collision::SupportQuery supportSurface;
   LocalRouteView routeView{};
   EnvironmentView environment{};
   std::optional<LocalMotionIntent> intent;
@@ -203,7 +200,8 @@ bool sameGuide(std::uint64_t routeGeneration, std::uint64_t frameEpoch,
                                   : std::optional<LocalMotionIntent>{*request.intent()};
   return route != nullptr && routeGeneration == route->generation &&
          frameEpoch == request.identity.frameEpoch && sameIntent(intent, requestIntent) &&
-         bodyHeading == request.bodyHeading && body == request.body;
+         bodyHeading == request.bodyHeading &&
+         body == request.body;
 }
 
 bool sameGuide(const WorkerDebug &debug, const LocalPlanRequest &request) {
@@ -321,7 +319,9 @@ class Task::Impl {
     if (current_ && (current_->frameEpoch != request.identity.frameEpoch ||
                      current_->bodyHeading != request.bodyHeading || current_->body != request.body))
       current_.reset();
-    if (latest_ && (latest_->bodyHeading != request.bodyHeading || latest_->body != request.body))
+    if (latest_ && !sameGuide(latest_->routeGeneration, latest_->frameEpoch,
+                              latest_->intent, latest_->bodyHeading,
+                              latest_->body, request))
       latest_.reset();
     if (waiting_ && effectiveSpeedLimit(request.maxLinearSpeedMps) <
                         std::get<SplineTarget>(waiting_->plan.target()).maxLinearSpeedMps) {
@@ -354,7 +354,8 @@ class Task::Impl {
     if (polled.completion &&
         sameGuide(polled.completion->routeGeneration,
                   polled.completion->frameEpoch,
-                  polled.completion->intent, polled.completion->bodyHeading, polled.completion->body, request)) {
+                  polled.completion->intent, polled.completion->bodyHeading,
+                  polled.completion->body, request)) {
       const auto *spline = std::get_if<SplineTarget>(&polled.completion->plan.target());
       if (polled.completion->handoff) {
         // Receiving a future offer does not acknowledge execution. The next
@@ -482,7 +483,8 @@ class Task::Impl {
           !hasInput_ ||
           !sameGuide(input_.request.routeView.generation,
                      input_.request.identity.frameEpoch,
-                     input_.request.intent, input_.request.bodyHeading, input_.request.body, request);
+                     input_.request.intent, input_.request.bodyHeading,
+                     input_.request.body, request);
       const bool speedReduced = hasInput_ &&
           effectiveSpeedLimit(request.maxLinearSpeedMps) + 1e-9 <
               effectiveSpeedLimit(input_.request.maxLinearSpeedMps);
@@ -635,7 +637,8 @@ class Task::Impl {
         if (completion.debug.lastScanFailure)
           lastScanFailure_ = completion.debug.lastScanFailure;
         workerDebug_ = WorkerDebug{completion.frameEpoch, completion.routeGeneration,
-                                   completion.intent, completion.bodyHeading, completion.body, completion.debug};
+                                   completion.intent, completion.bodyHeading,
+                                   completion.body, completion.debug};
         const PublishedPlan publication = publicationOf(completion);
         if (!publishedPlan_ || !samePublication(*publishedPlan_, publication)) {
           publishedPlan_ = publication;

@@ -822,6 +822,13 @@ accumulated 层仍使用既有更新策略，不能把这项修改说成所有�
 
 #### 对照本库后追加确认的缺口
 
+> 2026-11-05 更新：以下是当时版本的调查记录。当前正式清理使用
+> `prune.visibility_surface_v4`，第 2、3 项的 `isProtected`/body Z 保护已不再决定删点；
+> 报告中遗留的计数与第 4 项的静态阶段表也已删除。研究地面分割和 ERASOR2
+> 已归入 `research/maps/`。当前行为及未解决的玻璃反例见
+> [prune 说明](../../../../src/maps/prune/README.md) 和
+> [清理边界与对比](../../../../docs/research/map-cleaning-boundaries-20261105.md)。
+
 1. **雷达质量信息没有充分使用。** `src/localization/slam/cpp/fastlio.cpp::toPclCloud`
    只检查 `tag & 0x30`，接受该字段为 0/1；SDK 流原样传递完整 tag。
    [MID-360 协议](https://github.com/Livox-SDK/livox_wiki_en/blob/master/source/tutorials/new_product/mid360/livox_eth_protocol_mid360.md)

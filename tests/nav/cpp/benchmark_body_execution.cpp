@@ -3,7 +3,6 @@
 #include "navigation/executor.hpp"
 #include "planning/local/scan/grid.hpp"
 #include "octoplanner3d_core.hpp"
-#include "body_query.hpp"
 #include "global_planner.h"
 #include "collision/body_io.hpp"
 #include "app/config/config.hpp"
@@ -195,7 +194,7 @@ int main(int argc,char** argv) try {
   abstract.release(); auto tree=std::shared_ptr<octomap::OcTree>(raw);
   const auto start=points.front(),goal=points.back();
   p::GlobalPlanRequest request; request.start=start;request.goal=goal;
-  request.body=legacy?nullptr:body; request.map_identity={"body_execution",1,"map"};
+  request.map_identity={"body_execution",1,"map"};
   auto& options=request.options;
   options.robot_radius=.25;options.body_clearance_below_m=.1;options.body_clearance_above_m=.25;
   options.support_height_m=start.z;options.support_height_tolerance_m=.05;
@@ -305,8 +304,6 @@ int main(int argc,char** argv) try {
   support_config.support_radius_cells=options.support_radius_cells;
   support_config.support_depth_cells=options.support_depth_cells;
   support.setConfig(support_config);support.setOctomap(tree);support.preparePoseQueries({start.x,start.y,start.z});
-  const p::GlobalPlanTemporaryOverlay empty;
-  r::BodyQuery body_query(*tree,*body,empty);
   std::ofstream states(out/"states.csv");
   std::ofstream events(out/"attempts.csv");
   // This is a sampled latest-attempt view, not a lossless worker event stream.
@@ -430,14 +427,13 @@ int main(int argc,char** argv) try {
     const double final_grid_ms=std::chrono::duration<double,std::milli>(Clock::now()-grid_start).count();
     const auto& current_body=observed_body?*observed_body:*body;
     const auto body_start=Clock::now();
-    r::BodyQuery actual_query(*tree,current_body,empty);
-    const auto actual=actual_query.pose({{pose.position.x,pose.position.y,pose.position.z},pose.yaw});
+    const int actual_occupancy=grid.inflatedOccupancy(pose.position,pose.yaw);
     const double final_body_ms=std::chrono::duration<double,std::milli>(Clock::now()-body_start).count();
     const auto contact_parts=std::count_if(current_body.parts.begin(),current_body.parts.end(),
         [](const auto& part){return part.support_contact;});
     const nav_kernel::Twist measured{obs.body_linear_velocity.x,obs.body_linear_velocity.y,yaw_rate};
     double final_measured_braking_ms=0,final_command_braking_ms=0,final_support_ms=0;
-    bool safe=actual.free && grid.valid();
+    bool safe=actual_occupancy==0 && grid.valid();
     double final_scale=safe?1.:0.;
     if(safe) {
       const auto started=Clock::now();
@@ -470,7 +466,7 @@ int main(int argc,char** argv) try {
       <<velocity.x<<','<<velocity.y<<','<<yaw_rate<<','<<cmd.vx<<','<<cmd.vy<<','<<cmd.wz<<','
       <<output.pose_stage_index<<','<<output.pose_stage_count<<','<<output.tracking.trajectoryId<<','
       <<output.tracking.positionErrorM<<','<<tick_ms<<','<<!safe<<','<<output.reason<<','<<output.local_planner_debug.searchReason<<','
-      <<actual.reason<<','<<actual.link<<','<<contact_parts<<','
+      <<(actual_occupancy==1 ? "occupied_body" : grid.reason())<<",,"<<contact_parts<<','
       <<output.tracking.executionTimeS<<','<<output.tracking.durationS<<','
       <<attempt.timestampS<<','<<output.local_planner_debug.planningTimeMs<<','
       <<local_start.x<<','<<local_start.y<<','<<local_start.z<<','<<executor_ms<<','<<final_grid_ms<<','

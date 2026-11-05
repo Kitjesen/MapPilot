@@ -1810,6 +1810,24 @@ void runTest() {
           !accepted_goal_receipt.task_id.empty() &&
           accepted_goal_receipt.task_id != accepted_goal_receipt.request_id,
       "startTask must return distinct task/request ids for lifecycle correlation");
+  lingtu::nav::commands::NavigationCommandReceipt speed_receipt;
+  sendAndReply(
+      request_reader, ack_writer,
+      [&]() {
+        speed_receipt = client.navigation().setTaskSpeedLimit(
+            accepted_goal_receipt.task_id, 0.3, 1000, "speed-001");
+      },
+      [&](const lingtu_dds_NavigationCommandRequest& request) {
+        check(request.kind == static_cast<std::int32_t>(CommandKind::TaskSpeedLimit),
+              "task speed kind mismatch");
+        check(std::string(request.task_id) == accepted_goal_receipt.task_id &&
+                  std::abs(request.max_speed_mps - 0.3) < 1e-9,
+              "task speed identity or limit mismatch");
+      }, true, "task_speed_limit_updated");
+  check(speed_receipt.accepted && speed_receipt.request_id == "speed-001" &&
+            speed_receipt.task_id == accepted_goal_receipt.task_id,
+        "task speed receipt lost task or request identity");
+
   lingtu::nav::commands::NavigationCommandReceipt pause_receipt;
   sendAndReply(
       request_reader,
@@ -1980,6 +1998,27 @@ void runTest() {
           std::string(c_resume_receipt.task_id) == c_goal_receipt.task_id &&
           std::string(c_resume_receipt.request_id) == "c-resume-001",
       "C resume task receipt did not preserve task/request identity");
+
+  lingtu_nav_navigation_command_receipt_v1 c_speed_receipt{};
+  c_speed_receipt.abi_version = LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION;
+  c_speed_receipt.struct_size = sizeof(c_speed_receipt);
+  sendAndReply(
+      request_reader, ack_writer,
+      [&]() {
+        check(lingtu_nav_client_set_task_speed_limit_with_receipt_v1(
+                  c_client, c_goal_receipt.task_id, "c-speed-001", 0.4, 1000,
+                  &c_speed_receipt) == 0,
+              "C task speed call failed");
+      },
+      [&](const lingtu_dds_NavigationCommandRequest& request) {
+        check(request.kind == static_cast<std::int32_t>(CommandKind::TaskSpeedLimit) &&
+                  std::string(request.task_id) == c_goal_receipt.task_id &&
+                  std::abs(request.max_speed_mps - 0.4) < 1e-9,
+              "C task speed payload mismatch");
+      }, true, "task_speed_limit_updated");
+  check(c_speed_receipt.accepted != 0 &&
+            std::string(c_speed_receipt.request_id) == "c-speed-001",
+        "C task speed receipt lost request identity");
 
   lingtu_nav_navigation_command_receipt_v1 c_cancel_receipt{};
   c_cancel_receipt.abi_version =

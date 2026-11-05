@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from runtime.service_catalogs.thunder import thunder_service_spec
+from runtime.service_catalogs.real import service_spec
 
 GNSS_ROOT = Path("src/drivers/real/gnss")
 
@@ -68,7 +68,7 @@ def test_gnss_native_dds_entrypoint_is_product_service() -> None:
     run = _read("scripts/deploy/thunder/run_gnss_dds.sh")
     service = _read("scripts/deploy/thunder/lt-gnss.service")
     installer = _read("scripts/deploy/thunder/install_catalog_service.sh")
-    catalog_entry = thunder_service_spec("gnss")
+    catalog_entry = service_spec("gnss")
 
     assert '#include "native/dds_module.hpp"' in entry
     assert '#include "native/module.hpp"' in entry

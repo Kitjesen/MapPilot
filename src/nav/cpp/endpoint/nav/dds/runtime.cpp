@@ -290,8 +290,6 @@ Dds::Dds(int domain_id, DdsStatus *status, bool read_obstacle_cloud, bool read_s
                                        &lingtu_dds_Text_desc, "localization_health");
   motion_profile_state_reader_ = reader(lingtu::message::kMotionProfileState.dds_topic.data(),
       &lingtu_dds_MotionProfileState_desc, "motion_profile_state");
-  motion_profile_request_writer_ = writer(lingtu::message::kMotionProfileRequest.dds_topic.data(),
-      &lingtu_dds_MotionProfileRequest_desc, "motion_profile_request");
   driver_control_state_reader_ =
       reader(lingtu::message::kDriverControlState.dds_topic.data(),
              &lingtu_dds_DriverControlState_desc, "driver_control_state");
@@ -590,8 +588,6 @@ PublishReceipt Dds::publish(const OutputEvent &output) {
         } else if constexpr (std::is_same_v<Event, FinalVelocityOutput>) {
           receipt.final_velocity = writeCmdVelSequenced(event.command);
           receipt.published = receipt.final_velocity.has_value();
-        } else if constexpr (std::is_same_v<Event, MotionProfileRequestOutput>) {
-          receipt.published = writeMotionProfileRequest(event.task_id, event.requirement);
         } else if constexpr (std::is_same_v<Event, OperatorMotionAckSample>) {
           receipt.published = writeOperatorMotionAck(event);
         } else if constexpr (std::is_same_v<Event, OperatorMotionStatusSample>) {
@@ -632,14 +628,6 @@ PublishReceipt Dds::publish(const OutputEvent &output) {
       },
       output);
   return receipt;
-}
-
-bool Dds::writeMotionProfileRequest(const std::string &task_id, const std::string &requirement) {
-  lingtu_dds_MotionProfileRequest message{};
-  fillHeader(message.header, nowSeconds(), "base_link");
-  message.task_id = const_cast<char *>(task_id.c_str());
-  message.requirement = const_cast<char *>(requirement.c_str());
-  return dds_write(motion_profile_request_writer_, &message) == DDS_RETCODE_OK;
 }
 
 bool Dds::writeLocalPath(const std::vector<nav_kernel::Vec3> &path) {

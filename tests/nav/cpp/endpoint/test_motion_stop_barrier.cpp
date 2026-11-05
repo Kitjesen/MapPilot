@@ -118,7 +118,7 @@ struct Fixture {
       order.emplace_back("publish_sequenced_zero");
       return sequenced_zero;
     };
-    actions.confirm_zero = [&](std::uint64_t sequence) {
+    actions.confirm_zero = [&](std::uint64_t sequence, auto) {
       order.emplace_back("confirm_zero:" + std::to_string(sequence));
       return confirmation;
     };
@@ -237,7 +237,7 @@ void testPendingPauseCommitsOnceAndStaysZeroUntilAck() {
 void testPauseTimeoutRetriesFreshEvidenceAndCommitsOnce() {
   Fixture fixture;
   fixture.confirmation = StopConfirmationState::TimedOut;
-  fixture.actions.confirm_zero = [&](std::uint64_t sequence) {
+  fixture.actions.confirm_zero = [&](std::uint64_t sequence, auto) {
     fixture.order.emplace_back("confirm_zero:" + std::to_string(sequence));
     fixture.last_output_sequence = 29U;
     return fixture.confirmation;

@@ -1,3 +1,5 @@
+#include <lingtu/settings.hpp>
+
 #include <librealsense2/rs.hpp>
 #include <chrono>
 #include <cstdint>
@@ -6,7 +8,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-#include "../../native/camera_record.hpp"
+#include "../../native/record_writer.hpp"
 #include "intrinsics.hpp"
 #include "frame_sequence.hpp"
 
@@ -14,9 +16,9 @@ namespace record = lingtu::drivers::camera::record;
 
 namespace {
 struct Options {
-  int color_width{640}, color_height{480}, color_fps{30};
-  int depth_width{640}, depth_height{480}, depth_fps{30};
-  int timeout_ms{1000}, startup_timeout_ms{10000};
+  int color_width{lingtu::settings::camera::camera::capture::color_width}, color_height{lingtu::settings::camera::camera::capture::color_height}, color_fps{lingtu::settings::camera::camera::capture::color_fps};
+  int depth_width{lingtu::settings::camera::camera::capture::depth_width}, depth_height{lingtu::settings::camera::camera::capture::depth_height}, depth_fps{lingtu::settings::camera::camera::capture::depth_fps};
+  int timeout_ms{lingtu::settings::camera::camera::capture::timeout_ms}, startup_timeout_ms{lingtu::settings::camera::camera::capture::startup_timeout_ms};
   int max_frames{0};
   std::string serial;
   bool list{false};
@@ -58,21 +60,11 @@ Options parse(int argc, char** argv) {
   return o;
 }
 
-void emit(const record::RecordHeader& h, const void* data = nullptr) {
-  const auto valid = record::validateRecordHeader(h);
-  if (valid != record::RecordValidation::kValid)
-    throw std::runtime_error(record::recordValidationReason(valid));
-  const auto payload = record::validateRecordPayloadPointer(h, data);
-  if (payload != record::RecordValidation::kValid)
-    throw std::runtime_error(record::recordValidationReason(payload));
-  std::cout.write(reinterpret_cast<const char*>(&h), sizeof(h));
-  if (h.payload_size) std::cout.write(static_cast<const char*>(data), h.payload_size);
-  if (!std::cout) throw std::runtime_error("camera_record_output_failed");
-}
 }
 
 int main(int argc, char** argv) try {
   const auto o = parse(argc, argv);
+  record::RecordWriter output(std::cout);
   rs2::context context;
   const auto devices = context.query_devices();
   if (o.list) {
@@ -143,17 +135,16 @@ int main(int argc, char** argv) try {
           mm[y * intr.width + x] = record::normalizeDepthSampleMillimeters(row + x * 2, scale);
       }
     }
-    if (new_color) emit(info);
+    if (new_color) output.write(info);
     auto image = record::makeRecordHeader(record::kKindColor);
     image.width = intr.width; image.height = intr.height; image.timestamp_s = stamp;
     image.channels = 3; image.format = record::kFormatRgb8; image.payload_size = rgb.size();
-    if (new_color) emit(image, rgb.data());
+    if (new_color) output.write(image, rgb.data());
     image = record::makeRecordHeader(record::kKindDepth);
     image.width = intr.width; image.height = intr.height; image.timestamp_s = stamp;
     image.channels = 1; image.format = record::kFormatDepthU16; image.payload_size = mm.size() * 2;
-    if (new_depth) emit(image, mm.data());
-    std::cout.flush();
-    if (!std::cout) throw std::runtime_error("camera_record_output_failed");
+    if (new_depth) output.write(image, mm.data());
+    output.flush();
   }
   pipeline.stop();
   return 0;

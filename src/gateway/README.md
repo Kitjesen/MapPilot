@@ -110,15 +110,21 @@ deletes locations using HTTP DELETE with an encoded location name.
 | Where are goal, cancel, pause/resume, and status HTTP endpoints? | `navigation/routes.py` |
 | How is a coordinate, map click, or saved location converted to a goal? | `navigation/goals.py` |
 | How do requests reach the assembled navigation capability and validate ACK identity? | `navigation/commands.py` |
-| Can a goal be admitted, and what native evidence is available? | `navigation/status.py` |
+| What does the latest cached navigation status suggest? | `navigation/status.py` |
 | How do those facts become task/admission/control/motion axes? | `navigation/projection.py` |
 | How is an exact task or request queried, including retained results? | `navigation/tasks.py` |
 | Where are planned paths and raw native execution evidence exposed? | `navigation/diagnostics.py` |
 
-`status.py` captures runtime facts, evaluates admission, and passes that evaluated
+`status.py` captures runtime facts, estimates readiness, and passes that evaluated
 snapshot to the pure projector. HTTP status, SSE callbacks, the full state
 snapshot, and readiness use the same evaluation/projection functions. No client
 surface maintains its own navigation state machine.
+
+Goal commands use the native acknowledgement for acceptance; cached readiness
+and safety status are informational. An unconfirmed native acknowledgement is
+reported as an unknown outcome, not a rejection. The Gateway retains its page
+control lease and explicit map-name or saved-location binding, which is not in
+the goal wire format.
 
 Public URLs remain unchanged, including `/api/v1/goal`, `/api/v1/navigate/click`,
 and `/api/v1/navigation/*`. Task resume continues a specific task; motion resume
@@ -245,3 +251,23 @@ Gateway may ask other modules or native endpoint adapters for work or state.
 Gateway should not import planner, SLAM, driver, inspection executor, or
 perception internals to do the work itself. Put that logic in the owning package
 and expose it through Module ports, typed commands, skills, or runtime status.
+
+## Nearby BLE discovery
+
+On a Linux robot with BlueZ `bluetoothctl`, an already powered LE controller,
+advertising and GATT support, and permission to register both, set the existing
+`DOSO_DEVICE_ID` to the device's canonical UUID v4 and run
+`PYTHONPATH=src python -m gateway.discovery`. The command keeps its BlueZ
+service and advertisement alive until Ctrl+C or SIGTERM. Registration has a
+10-second deadline and success is reported only after BlueZ accepts both.
+Stopping the process closes its D-Bus client and removes its registrations.
+
+The shared discovery service UUID is
+`81343a98-47b3-4a0b-af0c-d42d87c7070f` and the local name is `DOSO`. The short
+name keeps the packet within the legacy 31-byte budget. Its read-only GATT
+characteristic `44cecaf8-0fab-4594-96f9-6e864f1dedf2` returns the 16 bytes of
+the configured UUID in network byte order. This public value identifies an
+unverified candidate: it is not a manufacturing signature or account binding.
+The command changes no adapter name, power, pairing or discovery settings and
+has no automatic startup integration. BlueZ 5.64 command behavior was checked
+against its official source. Robot radio behavior still requires field verification.

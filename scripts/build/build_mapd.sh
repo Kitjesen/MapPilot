@@ -18,7 +18,6 @@ fi
 
 LINGTU_PRUNE_BUILD_DIR="${PRUNE_BUILD_DIR}" \
 LINGTU_BUILD_JOBS="${JOBS}" \
-LINGTU_PRUNE_ERASOR2=OFF \
 CMAKE_BUILD_TYPE="${BUILD_TYPE}" \
   bash "${ROOT}/scripts/build/build_prune.sh"
 

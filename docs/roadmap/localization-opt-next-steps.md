@@ -57,19 +57,23 @@ Windows 用 `prepare_cyclonedds_windows.ps1`、`prepare_slam_dependencies_window
 
 ## 最小可重现命令
 
-在 Visual Studio 开发终端中，先只构建不依赖 PCL/DDS 的优化器测试：
+在 Visual Studio 开发终端中，分别构建离线优化器和在线建图测试。离线部分使用
+GTSAM，但不依赖在线 worker 或 PCL；在线部分需要项目已有的 GTSAM、PCL 和 yaml-cpp：
 
 ```powershell
 cmake -S src/localization/map_optimization -B build/mapping-check -DBUILD_TESTING=ON
-cmake --build build/mapping-check --config Release --target online_mapping_test constraint_assembly_test lt_mapping_replay
-ctest --test-dir build/mapping-check -C Release -R "online_mapping|constraint_assembly" --output-on-failure
+cmake --build build/mapping-check --config Release --target constraint_assembly_test
+ctest --test-dir build/mapping-check -C Release -R "constraint_assembly" --output-on-failure
+cmake -S src/localization/online_mapping -B build/online-mapping-check -DBUILD_TESTING=ON
+cmake --build build/online-mapping-check --config Release --target online_mapping_worker_test lt_mapping_replay
+ctest --test-dir build/online-mapping-check -C Release -R "online_mapping_worker" --output-on-failure
 uv run --locked python -m pytest tests/gateway/test_global_mapping.py -q
 ```
 
 Windows 多配置构建的回放命令（Linux 单配置构建去掉 `Release/`）：
 
 ```powershell
-build/mapping-check/Release/lt_mapping_replay.exe build/go2-live-validation-20260913/go2_expanded_20260914_0350 build/mapping-check/replay.json
+build/online-mapping-check/Release/lt_mapping_replay.exe build/go2-live-validation-20260913/go2_expanded_20260914_0350 build/online-mapping-check/replay.json
 ```
 
 这是串行离线回放；下一步仍需按录制节奏回放和目标板测量。

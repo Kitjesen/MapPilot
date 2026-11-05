@@ -46,7 +46,7 @@ STAIRS3D_UPPER_FLOOR_Z = STAIRS3D_RISE_M * STAIRS3D_STEP_COUNT
 STAIRS3D_DEFAULT_START = [0.75, 0.0, 0.55]
 STAIRS3D_DEFAULT_GOAL = [7.10, 0.0, STAIRS3D_UPPER_FLOOR_Z + 0.55]
 BUILDING_MAP_PREFIXES = ("floor_", "wall_", "rail_", "stair_", "step_", "riser_", "obs_")
-MULTIFLOOR_FLOOR_Y_STEP_M = 1.55
+MULTIFLOOR_FLOOR_Y_STEP_M = 2.40
 MULTILEVEL_SCENE_PRESETS = (
     "stairs3d",
     "stair_easy",
@@ -120,7 +120,7 @@ STAIR_SCENE_PROFILES: dict[str, dict[str, Any]] = {
         "step_count": 16,
         "mid_landing_after_steps": 8,
         "mid_landing_length_m": 0.80,
-        "stair_width_m": 1.20,
+        "stair_width_m": 1.80,
         "include_down_connector": False,
         "include_second_connector": False,
         "include_rough_patch": False,
@@ -652,30 +652,58 @@ def _multifloor_stack_geoms(scene_preset: str = "multifloor_stack_3") -> list[di
     stair_rail_height = 1.08
     geoms: list[dict[str, Any]] = []
 
+    floor_north = (levels - 1) * floor_y_step + floor_half_y + 2 * stair_half_width + 1.0
     for level in range(levels):
         z = level * level_height
         level_floor_y = level * floor_y_step
+        # Continuous decks surround only the incoming stairwell opening.
+        deck_rects = [(floor_x - floor_half_x, floor_x + floor_half_x, -floor_half_y, floor_north)]
+        if level > 0:
+            stair_y = level_floor_y + floor_half_y + stair_half_width + 0.04
+            left, right = stair_start_x - 0.20, stair_start_x + run_length + 0.20
+            south, north = stair_y - stair_half_width - 0.36, stair_y + stair_half_width + 0.36
+            deck_rects = [
+                (floor_x - floor_half_x, floor_x + floor_half_x, -floor_half_y, south),
+                (floor_x - floor_half_x, left, south, north),
+                (right, floor_x + floor_half_x, south, north),
+                (floor_x - floor_half_x, floor_x + floor_half_x, north, floor_north),
+            ]
+        for index, (x0, x1, y0, y1) in enumerate(deck_rects):
+            geoms.append({
+                "name": f"floor_level_{level + 1}" + (f"_deck_{index}" if index else ""),
+                "type": "box",
+                "pos": [(x0 + x1) / 2, (y0 + y1) / 2, z - 0.04],
+                "size": [(x1 - x0) / 2, (y1 - y0) / 2, 0.04],
+                "rgba": "0.74 0.76 0.72 0.66",
+            })
         geoms.extend(
             [
                 {
-                    "name": f"floor_level_{level + 1}",
-                    "type": "box",
-                    "pos": [floor_x, level_floor_y, z - 0.04],
-                    "size": [floor_half_x, floor_half_y, 0.04],
-                    "rgba": "0.74 0.76 0.72 0.66",
-                },
-                {
                     "name": f"rail_level_{level + 1}_south",
                     "type": "box",
-                    "pos": [floor_x, level_floor_y - floor_half_y - 0.06, z + wall_half_z],
+                    "pos": [floor_x, -floor_half_y - 0.06, z + wall_half_z],
                     "size": [floor_half_x, 0.05, wall_half_z],
                     "rgba": "0.50 0.50 0.54 0.72",
                 },
                 {
                     "name": f"rail_level_{level + 1}_west",
                     "type": "box",
-                    "pos": [floor_x - floor_half_x - 0.05, level_floor_y, z + wall_half_z],
-                    "size": [0.05, floor_half_y, wall_half_z],
+                    "pos": [floor_x - floor_half_x - 0.05, (floor_north - floor_half_y) / 2, z + wall_half_z],
+                    "size": [0.05, (floor_north + floor_half_y) / 2, wall_half_z],
+                    "rgba": "0.50 0.50 0.54 0.72",
+                },
+                {
+                    "name": f"rail_level_{level + 1}_east",
+                    "type": "box",
+                    "pos": [floor_x + floor_half_x + 0.05, (floor_north - floor_half_y) / 2, z + wall_half_z],
+                    "size": [0.05, (floor_north + floor_half_y) / 2, wall_half_z],
+                    "rgba": "0.50 0.50 0.54 0.72",
+                },
+                {
+                    "name": f"rail_level_{level + 1}_north",
+                    "type": "box",
+                    "pos": [floor_x, floor_north + 0.05, z + wall_half_z],
+                    "size": [floor_half_x, 0.05, wall_half_z],
                     "rgba": "0.50 0.50 0.54 0.72",
                 },
             ]
@@ -741,8 +769,10 @@ def _multifloor_stack_geoms(scene_preset: str = "multifloor_stack_3") -> list[di
                 {
                     "name": landing_name,
                     "type": "box",
-                    "pos": [landing_x, y, landing_z + slab_half_z],
-                    "size": [landing_half_x, stair_half_width, slab_half_z],
+                    "pos": [landing_x, y, landing_z - slab_half_z],
+                    "size": [landing_half_x,
+                             stair_half_width + (0.80 if "_bottom_" in landing_name else 0.0),
+                             slab_half_z],
                     "rgba": "0.62 0.67 0.72 0.78",
                 }
             )
@@ -750,9 +780,10 @@ def _multifloor_stack_geoms(scene_preset: str = "multifloor_stack_3") -> list[di
                 {
                     "name": f"floor_stair_bridge_{landing_name.removeprefix('floor_stair_')}",
                     "type": "box",
-                    "pos": [landing_x, (floor_edge_y + y) / 2.0, landing_z + slab_half_z],
+                    "pos": [landing_x + (direction_x * 0.30 if "_bottom_" in landing_name else 0.0),
+                            (floor_edge_y + y) / 2.0, landing_z - slab_half_z],
                     "size": [
-                        landing_half_x,
+                        landing_half_x + (0.30 if "_bottom_" in landing_name else 0.0),
                         (y - floor_edge_y) / 2.0 + STAIRS3D_EDGE_CLEARANCE_M,
                         slab_half_z,
                     ],
@@ -770,7 +801,7 @@ def _multifloor_stack_geoms(scene_preset: str = "multifloor_stack_3") -> list[di
                     "pos": [
                         run_end_x + direction_x * landing_half_x,
                         (y + next_y) / 2.0,
-                        base_z + level_height + slab_half_z,
+                        base_z + level_height - slab_half_z,
                     ],
                     "size": [landing_half_x, transfer_half_y, slab_half_z],
                     "rgba": "0.62 0.67 0.72 0.82",
@@ -786,7 +817,7 @@ def _multifloor_stack_geoms(scene_preset: str = "multifloor_stack_3") -> list[di
                     "pos": [
                         run_start_x + direction_x * (landing_progress + mid_landing_length / 2.0),
                         y,
-                        landing_z + slab_half_z,
+                        landing_z - slab_half_z,
                     ],
                     "size": [mid_landing_length / 2.0, stair_half_width, slab_half_z],
                     "rgba": "0.62 0.67 0.72 0.88",

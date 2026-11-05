@@ -308,7 +308,7 @@ def test_checked_in_robot_package_selects_a_package_relative_compound_body() -> 
     schema = json.loads((SCHEMA_ROOT / "robot.v1.json").read_text(encoding="utf-8"))
     package = yaml.safe_load(THUNDER_ROBOT_PACKAGE.read_text(encoding="utf-8"))
 
-    assert package["navigation_geometry"]["body_file"] == "collision/thunderv4_nominal.body2"
+    assert package["navigation_geometry"]["body_file"] == "collision/thunderv4_navigation.body2"
     _validate(package, schema, schema)
 
     package["navigation_geometry"]["body_file"] = "../outside.body2"
@@ -321,7 +321,7 @@ def test_physics_plan_robot_geometry_accepts_resolved_compound_body(version: int
     schema = json.loads((SCHEMA_ROOT / f"physics-plan.v{version}.json").read_text(encoding="utf-8"))
     package = yaml.safe_load(THUNDER_ROBOT_PACKAGE.read_text(encoding="utf-8"))
     geometry = dict(package["navigation_geometry"])
-    geometry["body_file"] = "sim/packages/robots/doso/thunder_v4/collision/thunderv4_nominal.body2"
+    geometry["body_file"] = "sim/packages/robots/doso/thunder_v4/collision/thunderv4_navigation.body2"
 
     _validate(geometry, schema["$defs"]["robot"]["properties"]["navigation_geometry"], schema)
 

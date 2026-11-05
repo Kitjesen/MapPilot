@@ -4,6 +4,8 @@
 
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 RECORDING = ROOT / "src" / "native" / "recording"
 
@@ -59,12 +61,11 @@ def test_field_camera_shm_ring_absorbs_segment_rotation_backlog() -> None:
     runner = _read(ROOT / "scripts" / "deploy" / "thunder" / "run_camera_dds.sh")
     service = _read(ROOT / "scripts" / "deploy" / "thunder" / "lt-camera.service")
 
-    assert ': "${LINGTU_CAMERA_SHM_SLOT_COUNT:=16}"' in runner
-    assert ': "${LINGTU_CAMERA_SHM_SLOT_CAPACITY_BYTES:=1048576}"' in runner
+    settings = yaml.safe_load(_read(ROOT / "config/system/settings/camera.yaml"))["camera"]
+    assert settings["shm"]["slots"] == 16
     assert '--shm-slot-count "${LINGTU_CAMERA_SHM_SLOT_COUNT}"' in runner
     assert '--shm-slot-capacity-bytes "${LINGTU_CAMERA_SHM_SLOT_CAPACITY_BYTES}"' in runner
-    assert "Environment=LINGTU_CAMERA_SHM_SLOT_COUNT=16" in service
-    assert "Environment=LINGTU_CAMERA_SHM_SLOT_CAPACITY_BYTES=1048576" in service
+    assert "EnvironmentFile=/run/lingtu/session.env" in service
 
 
 def test_camera_image_shm_inherits_the_latest_camera_info_calibration() -> None:

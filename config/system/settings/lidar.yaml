@@ -1,0 +1,25 @@
+# Native hardware acquisition; network endpoints and extrinsics stay in RobotConfig.
+# Simulation sampling rates and optical frames belong to its SensorPlan.
+lidar:
+  scan_hz: 10.0
+  imu_hz: 0.0  # 0 forwards every device IMU sample without rate limiting.
+  sdk:
+    pcl_data_type: 1  # Livox high-precision Cartesian points.
+    pattern_mode: 0  # MID-360 non-repetitive scan pattern.
+    multicast_ip: 224.1.1.5
+    bind_lidar_ip: false
+    device_ports:
+      command: 56100
+      status: 56200
+      points: 56300
+      imu: 56400
+      log: 56500
+    host_ports:
+      command: 56101
+      status: 56201
+      points: 56301
+      imu: 56401
+      log: 56501
+  # Device/host IP and NIC come from the selected RobotConfig. SDK extrinsics
+  # stay zero: the calibrated LiDAR/IMU/body transforms are applied by SLAM.
+  # DDS frame names come from RuntimeFrames so headers and TF cannot drift apart.

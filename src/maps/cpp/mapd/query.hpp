@@ -33,6 +33,7 @@ class MapQueryCore {
   std::string PingJson() const;
   ServiceResult ServiceJson(const std::string &request_json);
   OpenArtifactResult OpenArtifact(const std::string &map_id, const std::string &capability) const;
+  OpenArtifactResult OpenSaveSource(const std::string &job_id) const;
 
  private:
   std::string FailureJson(const std::string &action, const std::string &message,

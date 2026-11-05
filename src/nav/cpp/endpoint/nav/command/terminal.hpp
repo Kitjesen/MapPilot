@@ -15,6 +15,7 @@ enum class GoalTerminalIngressKind {
   kTypedTaskCancel,
   kTypedTaskPause,
   kTypedTaskResume,
+  kTypedTaskSpeedLimit,
   kTypedClearEstop,
   kTypedResumeAutonomy,
   kTypedClientClockSync,

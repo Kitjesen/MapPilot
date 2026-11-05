@@ -57,6 +57,7 @@ add_library(lingtu_nav_velocity_smoother STATIC
 add_library(LingTuNav::velocity_smoother ALIAS
   lingtu_nav_velocity_smoother)
 target_compile_features(lingtu_nav_velocity_smoother PUBLIC cxx_std_17)
+target_link_libraries(lingtu_nav_velocity_smoother PUBLIC "$<BUILD_INTERFACE:lingtu_settings>")
 target_include_directories(lingtu_nav_velocity_smoother PUBLIC
   "$<BUILD_INTERFACE:${LINGTU_NAV_INCLUDE_DIR}>")
 target_compile_options(lingtu_nav_velocity_smoother PRIVATE
@@ -86,6 +87,7 @@ if(EXISTS
   add_library(LingTuNav::rolling_segment ALIAS
     lingtu_nav_rolling_segment)
   target_compile_features(lingtu_nav_rolling_segment PUBLIC cxx_std_17)
+  target_link_libraries(lingtu_nav_rolling_segment PUBLIC "$<BUILD_INTERFACE:lingtu_settings>")
   target_include_directories(lingtu_nav_rolling_segment PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>"
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/endpoint>"

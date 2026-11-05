@@ -24,7 +24,7 @@ sim-mujoco = [
     "onnxruntime>=1.17,<1.24; python_version == '3.10'",
     "onnxruntime>=1.24; python_version >= '3.11'",
 ]
-gateway = ["fastapi", "uvicorn", "websockets", "httpx"]
+gateway = ["fastapi", "uvicorn", "websockets", "httpx", "grpcio>=1.78,<2", "protobuf>=6.31.1,<7"]
 vision = ["opencv-python-headless>=4.5"]
 sim-recording = ["lingtu[sim-mujoco,vision]", "imageio>=2.31"]
 ml = ["scikit-learn>=1.0"]
@@ -33,7 +33,7 @@ nlp = ["jieba>=0.42"]
 agent = ["langchain-core>=0.2", "langchain-openai>=0.1", "langchain>=0.2"]
 perception = ["torch", "ultralytics", "open-clip-torch"]
 vector = ["chromadb"]
-dev = ["pytest", "pytest-cov", "pytest-asyncio", "ruff", "mypy", "fastapi", "httpx", "uvicorn", "websockets"]
+dev = ["lingtu[gateway]", "pytest", "pytest-cov", "pytest-asyncio", "ruff", "mypy"]
 # ThunderDriver requires brainstem gRPC contract package brainstem_api (v2.0.0).
 # Install on a real robot target: pip install -e '.[thunder]'
 # stub / sim mode does not need this.
@@ -85,7 +85,7 @@ target-version = "py310"
 line-length = 120
 src = ["src"]
 cache-dir = "build/ruff-cache"
-exclude = ["**/legacy/*"]
+exclude = ["**/legacy/*", "src/gateway/rpc/generated"]
 
 [tool.ruff.lint]
 select = [

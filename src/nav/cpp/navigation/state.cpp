@@ -52,11 +52,6 @@ nav_kernel::LocalKinematicState Executor::planningKinematics(
   return state;
 }
 
-double Executor::goalYawError(const nav_kernel::Pose& odom_map_body) const {
-  if (!final_yaw_) return 0.0;
-  return wrappedAngle(*final_yaw_ - odom_map_body.yaw);
-}
-
 bool Executor::autonomyMotionStalled(
     const nav_kernel::Pose& odom_map_body, double timestamp_s, bool planning_pending) {
   if (!autonomy_motion_expected_) return false;

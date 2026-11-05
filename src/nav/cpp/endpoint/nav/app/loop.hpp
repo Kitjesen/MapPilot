@@ -130,7 +130,6 @@ struct EndpointLoopContext {
   // -- Timing (current_timing is shared with setup-phase lambdas) -----------
   TimingDiagnostics *&current_timing;
   SemanticViewQuery *semantic_view_query{nullptr};
-  std::function<bool()> maintain_stairs;
   std::function<void(const SensorBatch &)> observe_stop_inputs;
 };
 

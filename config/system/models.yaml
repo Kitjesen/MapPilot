@@ -1,0 +1,13 @@
+# Product host.llm selects one connection; RunPlan stores the resolved values.
+# Only environment variable names belong here, never API keys.
+kimi:
+  model: kimi-k3
+  base_url: https://api.moonshot.cn/v1
+  api_key_env: MOONSHOT_API_KEY
+  timeout_sec: 30.0
+qwen:
+  model: qwen-turbo
+  # The DashScope SDK uses its own service endpoint.
+  base_url: ""
+  api_key_env: DASHSCOPE_API_KEY
+  timeout_sec: 10.0

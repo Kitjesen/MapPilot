@@ -1,4 +1,4 @@
-#include "localization/map_optimization/online_mapping.hpp"
+#include "localization/online_mapping/worker.hpp"
 #include "localization/online_mapping/config_yaml.hpp"
 #include <chrono>
 #include <cmath>
@@ -13,6 +13,7 @@
 #endif
 
 namespace map_optimization = lingtu::localization::map_optimization;
+namespace online_mapping = lingtu::localization::online_mapping;
 int main(int argc, char** argv) {
   if (argc != 3) {
     std::cerr << "Usage: lt_mapping_replay MAP_DIRECTORY REPORT_JSON\n";
@@ -40,7 +41,7 @@ int main(int argc, char** argv) {
     for (const auto* suffix : {"", ".loops.json", ".poses.txt"})
       if (std::filesystem::exists(std::string(argv[2])+suffix))
         throw std::runtime_error("replay output already exists");
-    map_optimization::OnlineMappingOptions options;
+    online_mapping::WorkerOptions options;
     const auto evidence_path = root / "sam_loops.json";
     if (std::filesystem::is_regular_file(evidence_path)) {
       const auto evidence=YAML::LoadFile(evidence_path.string());
@@ -48,22 +49,22 @@ int main(int argc, char** argv) {
         throw std::runtime_error("unsupported SAM evidence configuration");
       options.online_mapping=lingtu::localization::online_mapping::readConfig(evidence["config"]);
     }
-    map_optimization::OnlineMapping mapper(options);
+    online_mapping::Worker mapper(options);
     mapper.reset(1);
-    std::shared_ptr<const map_optimization::OnlineMappingSnapshot> snapshot;
+    std::shared_ptr<const online_mapping::Snapshot> snapshot;
     const auto started = std::chrono::steady_clock::now();
     double worst_ms = 0;
     double worst_worker_ms = 0, worst_preview_ms = 0;
     std::size_t peak_cloud_bytes = 0;
     std::vector<double> latency;
     for (std::size_t i = 0; i < poses.size(); ++i) {
-      map_optimization::MappingFrame frame;
+      online_mapping::MappingFrame frame;
       frame.keyframe = poses[i]; frame.stamp_s = stamps[i];
       frame.body_cloud = map_optimization::read_point_cloud(root / "patches" / poses[i].patch_name);
       const auto tick = std::chrono::steady_clock::now();
       if (!mapper.enqueue(std::move(frame)).ok) throw std::runtime_error("frame rejected");
       do {
-        if (auto result = mapper.poll()) snapshot = result;
+        if (auto result = mapper.update()) snapshot = result;
         if (std::chrono::steady_clock::now() - tick > std::chrono::seconds(60))
           throw std::runtime_error("worker exceeded replay budget");
         std::this_thread::sleep_for(std::chrono::milliseconds(1));

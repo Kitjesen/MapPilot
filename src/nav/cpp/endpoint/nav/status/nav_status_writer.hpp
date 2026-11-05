@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -65,8 +67,10 @@ struct StatusWriterConfig {
   std::string stop_confirmation_evidence{"driver_ack_and_odometry"};
   std::size_t local_planner_debug_candidate_limit{0};
   std::size_t local_map_debug_point_limit{0};
-  double planner_obstacle_height_min_m{0.20};
-  double planner_obstacle_height_max_m{1.20};
+  double planner_obstacle_height_min_m{
+      ::lingtu::settings::local::native_nav::local_planner_obstacle_height_min_m};
+  double planner_obstacle_height_max_m{
+      ::lingtu::settings::local::native_nav::local_planner_obstacle_height_max_m};
   double obstacle_voxel_size_m{0.0};
   double sensor_offset_x_m{0.0};
   double sensor_offset_y_m{0.0};
@@ -88,7 +92,6 @@ struct StatusWriterConfig {
   double driver_control_max_age_s{0.0};
   double cloud_pose_max_gap_s{0.0};
   double input_future_tolerance_s{0.0};
-  std::size_t input_recovery_frames{0};
   bool input_require_odom{true};
   bool input_require_cloud{true};
   bool input_require_local_collision{false};

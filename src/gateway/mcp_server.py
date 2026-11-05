@@ -326,7 +326,7 @@ class MCPServerModule(Module, layer=6):
 
     @skill
     def get_config(self) -> str:
-        """Return robot configuration: speed limits, geometry, safety thresholds."""
+        """Return robot driver limits, geometry, and safety thresholds."""
         try:
             from runtime.config import get_config
 
@@ -336,7 +336,6 @@ class MCPServerModule(Module, layer=6):
                     "speed": {
                         "max_linear": cfg.speed.max_linear,
                         "max_angular": cfg.speed.max_angular,
-                        "max_speed": cfg.speed.max_speed,
                     },
                     "geometry": {
                         "height": cfg.geometry.vehicle_height,

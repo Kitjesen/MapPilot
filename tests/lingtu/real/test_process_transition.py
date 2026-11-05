@@ -210,7 +210,7 @@ def test_optional_video_uses_declared_startup_readiness_budget(becomes_ready: bo
     probes: list[str] = []
 
     class VideoStartup:
-        def status_details(self, service, *, dds_check, http_check):
+        def status_details(self, service, *, dds_check, http_check, target):
             probes.append(service)
             ready = service != "video" or (becomes_ready and now[0] >= 0.75)
             return {

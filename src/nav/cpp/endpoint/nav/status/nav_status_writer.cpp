@@ -607,7 +607,8 @@ void MotionStopEvidenceTracker::update(StopConfirmationState state,
       break;
     case StopConfirmationState::Confirmed:
       snapshot_.state = "CONFIRMED";
-      snapshot_.reason = "stop_confirmed";
+      snapshot_.reason = diagnostics.quiet_odometry_required
+          ? "stop_confirmed" : "zero_command_accepted";
       snapshot_.confirmation_state = "confirmed";
       break;
     case StopConfirmationState::DriverRejected:
@@ -1072,7 +1073,7 @@ void writeStatusSnapshot(
         << "\"recovering\": " << (input_gate.recovering ? "true" : "false") << ", "
         << "\"reason\": \"" << jsonEscape(input_gate.reason) << "\", "
         << "\"fresh_frames\": " << input_gate.fresh_frames << ", "
-        << "\"required_frames\": " << cfg.input_recovery_frames << ", "
+        << "\"required_frames\": 1, "
         << "\"require_odom\": " << (cfg.input_require_odom ? "true" : "false") << ", "
         << "\"require_cloud\": " << (cfg.input_require_cloud ? "true" : "false") << ", "
         << "\"require_local_collision\": "

@@ -1,0 +1,1020 @@
+{
+  "robot": "doso/thunder_v4",
+  "primitive_count": 8,
+  "parts": [
+    {
+      "link": "chassis",
+      "center": [
+        0.0,
+        0.0,
+        0.07540999999999998
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.255,
+        0.135,
+        0.07750000000000001
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "footprint_source_parts": [
+        "base_link_2",
+        "base_link_3",
+        "base_link_4"
+      ],
+      "height_source_parts": [
+        "base_link_2",
+        "base_link_3",
+        "base_link_4"
+      ]
+    },
+    {
+      "link": "nose",
+      "center": [
+        0.335,
+        0.0,
+        0.07999999999999996
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.08000000000000002,
+        0.06,
+        0.07200000000000001
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "footprint_source_parts": [
+        "base_link_5"
+      ],
+      "height_source_parts": [
+        "base_link_5"
+      ]
+    },
+    {
+      "link": "tail",
+      "center": [
+        -0.3375,
+        0.0,
+        0.07999999999999996
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.08250000000000002,
+        0.05,
+        0.07500000000000001
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "footprint_source_parts": [
+        "base_link_6"
+      ],
+      "height_source_parts": [
+        "base_link_6"
+      ]
+    },
+    {
+      "link": "sensor",
+      "center": [
+        -0.30638,
+        0.0,
+        0.18472199999999994
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.03839999999999999,
+        0.0384,
+        0.04005
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "footprint_source_parts": [
+        "base_link_7"
+      ],
+      "height_source_parts": [
+        "base_link_7"
+      ]
+    },
+    {
+      "link": "FR_clearance",
+      "center": [
+        0.2564375048481122,
+        -0.18814948112183133,
+        -0.023505984762802606
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.15788591532845242,
+        0.11101188411186329,
+        0.16327126395615735
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "footprint_source_parts": [
+        "FR_hip_9",
+        "FR_thigh_11",
+        "FR_thigh_12",
+        "FR_thigh_13",
+        "FR_calf_15",
+        "FR_calf_16",
+        "FR_calf_17",
+        "FR_foot_19"
+      ],
+      "height_source_parts": [
+        "FR_hip_9",
+        "FR_thigh_11",
+        "FR_thigh_12",
+        "FR_thigh_13"
+      ]
+    },
+    {
+      "link": "FL_clearance",
+      "center": [
+        0.2561304599545488,
+        0.18815835983403342,
+        -0.023506061032947875
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.15757887043488905,
+        0.11101149225283138,
+        0.16327103223021977
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "footprint_source_parts": [
+        "FL_hip_21",
+        "FL_thigh_23",
+        "FL_thigh_24",
+        "FL_thigh_25",
+        "FL_calf_27",
+        "FL_calf_28",
+        "FL_calf_29",
+        "FL_foot_31"
+      ],
+      "height_source_parts": [
+        "FL_hip_21",
+        "FL_thigh_23",
+        "FL_thigh_24",
+        "FL_thigh_25"
+      ]
+    },
+    {
+      "link": "RR_clearance",
+      "center": [
+        -0.2564395048481122,
+        -0.18814948112183133,
+        -0.023505984762802606
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.15788591532845242,
+        0.11101188411186329,
+        0.16327126395615735
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "footprint_source_parts": [
+        "RR_hip_33",
+        "RR_thigh_35",
+        "RR_thigh_36",
+        "RR_thigh_37",
+        "RR_calf_39",
+        "RR_calf_40",
+        "RR_calf_41",
+        "RR_foot_43"
+      ],
+      "height_source_parts": [
+        "RR_hip_33",
+        "RR_thigh_35",
+        "RR_thigh_36",
+        "RR_thigh_37"
+      ]
+    },
+    {
+      "link": "RL_clearance",
+      "center": [
+        -0.2564395048481122,
+        0.1881583101428087,
+        -0.023506061032947875
+      ],
+      "rotation": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "half_size": [
+        0.15788591532845242,
+        0.11101144256160667,
+        0.16327103223021977
+      ],
+      "source_type": "box",
+      "radius_m": 0.0,
+      "half_length_m": 0.0,
+      "support_contact": false,
+      "footprint_source_parts": [
+        "RL_hip_45",
+        "RL_thigh_47",
+        "RL_thigh_48",
+        "RL_thigh_49",
+        "RL_calf_51",
+        "RL_calf_52",
+        "RL_calf_53",
+        "RL_foot_55"
+      ],
+      "height_source_parts": [
+        "RL_hip_45",
+        "RL_thigh_47",
+        "RL_thigh_48",
+        "RL_thigh_49"
+      ]
+    }
+  ],
+  "source_mjcf": "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml",
+  "model_name": "thunderv4_navigation",
+  "source_keyframe": "v4_nominal_stand",
+  "source_qpos": [
+    0.0,
+    0.0,
+    0.6,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    -0.1,
+    -0.8,
+    1.8,
+    0.0,
+    0.1,
+    0.8,
+    -1.8,
+    0.0,
+    0.1,
+    0.8,
+    -1.8,
+    0.0,
+    -0.1,
+    -0.8,
+    1.8,
+    0.0
+  ],
+  "joint_angles": {
+    "FR_hip_joint": -0.1,
+    "FR_thigh_joint": -0.8,
+    "FR_calf_joint": 1.8,
+    "FR_foot_joint": 0.0,
+    "FL_hip_joint": 0.1,
+    "FL_thigh_joint": 0.8,
+    "FL_calf_joint": -1.8,
+    "FL_foot_joint": 0.0,
+    "RR_hip_joint": 0.1,
+    "RR_thigh_joint": 0.8,
+    "RR_calf_joint": -1.8,
+    "RR_foot_joint": 0.0,
+    "RL_hip_joint": -0.1,
+    "RL_thigh_joint": -0.8,
+    "RL_calf_joint": 1.8,
+    "RL_foot_joint": 0.0
+  },
+  "source_primitive_count": 38,
+  "footprint_source_bodies": [
+    "FL_calf",
+    "FL_foot",
+    "FL_hip",
+    "FL_thigh",
+    "FR_calf",
+    "FR_foot",
+    "FR_hip",
+    "FR_thigh",
+    "RL_calf",
+    "RL_foot",
+    "RL_hip",
+    "RL_thigh",
+    "RR_calf",
+    "RR_foot",
+    "RR_hip",
+    "RR_thigh",
+    "base_link"
+  ],
+  "height_source_bodies": [
+    "FL_hip",
+    "FL_thigh",
+    "FR_hip",
+    "FR_thigh",
+    "RL_hip",
+    "RL_thigh",
+    "RR_hip",
+    "RR_thigh",
+    "base_link"
+  ],
+  "excluded_height_bodies": [
+    "FL_calf",
+    "FL_foot",
+    "FR_calf",
+    "FR_foot",
+    "RL_calf",
+    "RL_foot",
+    "RR_calf",
+    "RR_foot"
+  ],
+  "source_bounds": [
+    {
+      "link": "base_link_2",
+      "body": "base_link",
+      "minimum": [
+        -0.205,
+        -0.12776,
+        -0.0020900000000000224
+      ],
+      "maximum": [
+        0.205,
+        0.13024,
+        0.15291
+      ]
+    },
+    {
+      "link": "base_link_3",
+      "body": "base_link",
+      "minimum": [
+        0.20500000000000002,
+        -0.135,
+        -5.551115123125783e-17
+      ],
+      "maximum": [
+        0.255,
+        0.135,
+        0.13999999999999996
+      ]
+    },
+    {
+      "link": "base_link_4",
+      "body": "base_link",
+      "minimum": [
+        -0.255,
+        -0.135,
+        -5.551115123125783e-17
+      ],
+      "maximum": [
+        -0.20500000000000002,
+        0.135,
+        0.13999999999999996
+      ]
+    },
+    {
+      "link": "base_link_5",
+      "body": "base_link",
+      "minimum": [
+        0.255,
+        -0.06,
+        0.007999999999999965
+      ],
+      "maximum": [
+        0.41500000000000004,
+        0.06,
+        0.15199999999999997
+      ]
+    },
+    {
+      "link": "base_link_6",
+      "body": "base_link",
+      "minimum": [
+        -0.42000000000000004,
+        -0.05,
+        0.004999999999999963
+      ],
+      "maximum": [
+        -0.255,
+        0.05,
+        0.15499999999999997
+      ]
+    },
+    {
+      "link": "base_link_7",
+      "body": "base_link",
+      "minimum": [
+        -0.34478,
+        -0.0384,
+        0.14467199999999994
+      ],
+      "maximum": [
+        -0.26798,
+        0.0384,
+        0.22477199999999994
+      ]
+    },
+    {
+      "link": "FR_hip_9",
+      "body": "FR_hip",
+      "minimum": [
+        0.267019,
+        -0.17369343162658465,
+        0.011878630950079391
+      ],
+      "maximum": [
+        0.387019,
+        -0.07713759700996806,
+        0.13976527919335474
+      ]
+    },
+    {
+      "link": "FR_thigh_11",
+      "body": "FR_thigh",
+      "minimum": [
+        0.2634989543480162,
+        -0.21466572227284103,
+        0.0029936961947985563
+      ],
+      "maximum": [
+        0.3914990456519838,
+        -0.17203655236888965,
+        0.13334928231031967
+      ]
+    },
+    {
+      "link": "FR_thigh_12",
+      "body": "FR_thigh",
+      "minimum": [
+        0.16973773668354242,
+        -0.20870557430829464,
+        -0.11922634469543396
+      ],
+      "maximum": [
+        0.3254450549194746,
+        -0.1608692987208923,
+        0.06303022566700804
+      ]
+    },
+    {
+      "link": "FR_thigh_13",
+      "body": "FR_thigh",
+      "minimum": [
+        0.09855158951965975,
+        -0.21150244559587836,
+        -0.18677724871895995
+      ],
+      "maximum": [
+        0.22955179038908607,
+        -0.13275362729226473,
+        -0.04984254211367822
+      ]
+    },
+    {
+      "link": "FR_calf_15",
+      "body": "FR_calf",
+      "minimum": [
+        0.10207628091836234,
+        -0.2593099675850066,
+        -0.19242596592321284
+      ],
+      "maximum": [
+        0.22907644157027357,
+        -0.2018556568550703,
+        -0.061567859609408776
+      ]
+    },
+    {
+      "link": "FR_calf_16",
+      "body": "FR_calf",
+      "minimum": [
+        0.1832970885746943,
+        -0.25251305368464444,
+        -0.3146858341987949
+      ],
+      "maximum": [
+        0.33027470599491293,
+        -0.21200152466209898,
+        -0.1563473118470656
+      ]
+    },
+    {
+      "link": "FR_calf_17",
+      "body": "FR_calf",
+      "minimum": [
+        0.2813232663613573,
+        -0.23725931312945597,
+        -0.35411241823511364
+      ],
+      "maximum": [
+        0.36132339131296354,
+        -0.19444731954937888,
+        -0.27101785390838384
+      ]
+    },
+    {
+      "link": "FR_foot_19",
+      "body": "FR_foot",
+      "minimum": [
+        0.22832323749775624,
+        -0.29916136523369463,
+        -0.412527667546559
+      ],
+      "maximum": [
+        0.4143234201765646,
+        -0.2296775740595811,
+        -0.22234834273000195
+      ]
+    },
+    {
+      "link": "FL_hip_21",
+      "body": "FL_hip",
+      "minimum": [
+        0.267019,
+        0.07714686758120204,
+        0.011878938946162237
+      ],
+      "maximum": [
+        0.387019,
+        0.17370176105535068,
+        0.1397649711972719
+      ]
+    },
+    {
+      "link": "FL_thigh_23",
+      "body": "FL_thigh",
+      "minimum": [
+        0.2634989543480162,
+        0.17204571997815182,
+        0.002993746655904919
+      ],
+      "maximum": [
+        0.3914990456519838,
+        0.21467415466357886,
+        0.13334923184921332
+      ]
+    },
+    {
+      "link": "FL_thigh_24",
+      "body": "FL_thigh",
+      "minimum": [
+        0.16973773668354242,
+        0.16087809872089232,
+        -0.11922634469543396
+      ],
+      "maximum": [
+        0.3254450549194746,
+        0.20871437430829465,
+        0.06303022566700804
+      ]
+    },
+    {
+      "link": "FL_thigh_25",
+      "body": "FL_thigh",
+      "minimum": [
+        0.09855158951965975,
+        0.13276279310142564,
+        -0.18677709326316766
+      ],
+      "maximum": [
+        0.22955179038908607,
+        0.21151087978671745,
+        -0.04984269756947053
+      ]
+    },
+    {
+      "link": "FL_calf_27",
+      "body": "FL_calf",
+      "minimum": [
+        0.1017712241075595,
+        0.2018906960513893,
+        -0.1921671599971092
+      ],
+      "maximum": [
+        0.22877138475947073,
+        0.25934444803994916,
+        -0.06130920083280879
+      ]
+    },
+    {
+      "link": "FL_calf_28",
+      "body": "FL_calf",
+      "minimum": [
+        0.18299203176389145,
+        0.21203628448772976,
+        -0.31442710184744316
+      ],
+      "maximum": [
+        0.3299696491841101,
+        0.2525478135102752,
+        -0.15608857949571378
+      ]
+    },
+    {
+      "link": "FL_calf_29",
+      "body": "FL_calf",
+      "minimum": [
+        0.28070917657423056,
+        0.19445639339070692,
+        -0.3541113662034939
+      ],
+      "maximum": [
+        0.3607093015258368,
+        0.23726803805302682,
+        -0.27101692492093254
+      ]
+    },
+    {
+      "link": "FL_foot_31",
+      "body": "FL_foot",
+      "minimum": [
+        0.2277091477106295,
+        0.2296868859713099,
+        -0.41252660289147713
+      ],
+      "maximum": [
+        0.41370933038943786,
+        0.2991698520868648,
+        -0.2223474263660128
+      ]
+    },
+    {
+      "link": "RR_hip_33",
+      "body": "RR_hip",
+      "minimum": [
+        -0.387021,
+        -0.17369343162658465,
+        0.011878630950079391
+      ],
+      "maximum": [
+        -0.267021,
+        -0.07713759700996806,
+        0.13976527919335474
+      ]
+    },
+    {
+      "link": "RR_thigh_35",
+      "body": "RR_thigh",
+      "minimum": [
+        -0.39150104565198385,
+        -0.21466572227284103,
+        0.0029936961947985563
+      ],
+      "maximum": [
+        -0.2635009543480161,
+        -0.17203655236888965,
+        0.13334928231031967
+      ]
+    },
+    {
+      "link": "RR_thigh_36",
+      "body": "RR_thigh",
+      "minimum": [
+        -0.3254470549194746,
+        -0.20870557430829464,
+        -0.11922634469543396
+      ],
+      "maximum": [
+        -0.16973973668354242,
+        -0.1608692987208923,
+        0.06303022566700804
+      ]
+    },
+    {
+      "link": "RR_thigh_37",
+      "body": "RR_thigh",
+      "minimum": [
+        -0.22955379038908608,
+        -0.21150244559587836,
+        -0.18677724871895995
+      ],
+      "maximum": [
+        -0.09855358951965976,
+        -0.13275362729226473,
+        -0.04984254211367822
+      ]
+    },
+    {
+      "link": "RR_calf_39",
+      "body": "RR_calf",
+      "minimum": [
+        -0.22907844157027357,
+        -0.2593099675850066,
+        -0.19242596592321284
+      ],
+      "maximum": [
+        -0.10207828091836234,
+        -0.2018556568550703,
+        -0.061567859609408776
+      ]
+    },
+    {
+      "link": "RR_calf_40",
+      "body": "RR_calf",
+      "minimum": [
+        -0.33027670599491293,
+        -0.25251305368464444,
+        -0.3146858341987949
+      ],
+      "maximum": [
+        -0.1832990885746943,
+        -0.21200152466209898,
+        -0.1563473118470656
+      ]
+    },
+    {
+      "link": "RR_calf_41",
+      "body": "RR_calf",
+      "minimum": [
+        -0.36132539131296354,
+        -0.23725931312945597,
+        -0.35411241823511364
+      ],
+      "maximum": [
+        -0.2813252663613573,
+        -0.19444731954937888,
+        -0.27101785390838384
+      ]
+    },
+    {
+      "link": "RR_foot_43",
+      "body": "RR_foot",
+      "minimum": [
+        -0.4143254201765646,
+        -0.29916136523369463,
+        -0.412527667546559
+      ],
+      "maximum": [
+        -0.22832523749775624,
+        -0.2296775740595811,
+        -0.22234834273000195
+      ]
+    },
+    {
+      "link": "RL_hip_45",
+      "body": "RL_hip",
+      "minimum": [
+        -0.387021,
+        0.07714686758120204,
+        0.011878938946162237
+      ],
+      "maximum": [
+        -0.267021,
+        0.17370176105535068,
+        0.1397649711972719
+      ]
+    },
+    {
+      "link": "RL_thigh_47",
+      "body": "RL_thigh",
+      "minimum": [
+        -0.39150104565198385,
+        0.17204571997815182,
+        0.002993746655904919
+      ],
+      "maximum": [
+        -0.2635009543480161,
+        0.21467415466357886,
+        0.13334923184921332
+      ]
+    },
+    {
+      "link": "RL_thigh_48",
+      "body": "RL_thigh",
+      "minimum": [
+        -0.3254470549194746,
+        0.16087809872089232,
+        -0.11922634469543396
+      ],
+      "maximum": [
+        -0.16973973668354242,
+        0.20871437430829465,
+        0.06303022566700804
+      ]
+    },
+    {
+      "link": "RL_thigh_49",
+      "body": "RL_thigh",
+      "minimum": [
+        -0.22955379038908608,
+        0.13276279310142564,
+        -0.18677709326316766
+      ],
+      "maximum": [
+        -0.09855358951965976,
+        0.21151087978671745,
+        -0.04984269756947053
+      ]
+    },
+    {
+      "link": "RL_calf_51",
+      "body": "RL_calf",
+      "minimum": [
+        -0.22907844157027357,
+        0.2018647362257585,
+        -0.19242589234846103
+      ],
+      "maximum": [
+        -0.10207828091836234,
+        0.25931848821431835,
+        -0.06156793318416061
+      ]
+    },
+    {
+      "link": "RL_calf_52",
+      "body": "RL_calf",
+      "minimum": [
+        -0.33027670599491293,
+        0.212010324662099,
+        -0.3146858341987949
+      ],
+      "maximum": [
+        -0.1832990885746943,
+        0.2525218536846444,
+        -0.1563473118470656
+      ]
+    },
+    {
+      "link": "RL_calf_53",
+      "body": "RL_calf",
+      "minimum": [
+        -0.36132539131296354,
+        0.19445629400825748,
+        -0.35411235671302943
+      ],
+      "maximum": [
+        -0.2813252663613573,
+        0.23726793867057738,
+        -0.27101791543046805
+      ]
+    },
+    {
+      "link": "RL_foot_55",
+      "body": "RL_foot",
+      "minimum": [
+        -0.4143254201765646,
+        0.22968678658886046,
+        -0.41252759340101264
+      ],
+      "maximum": [
+        -0.22832523749775624,
+        0.29916975270441537,
+        -0.2223484168755483
+      ]
+    }
+  ],
+  "envelope_bounds": {
+    "minimum": [
+      -0.42000000000000004,
+      -0.29916136523369463,
+      -0.18677724871895995
+    ],
+    "maximum": [
+      0.41500000000000004,
+      0.2991698520868648,
+      0.22477199999999994
+    ],
+    "size": [
+      0.8350000000000001,
+      0.5983312173205595,
+      0.4115492487189599
+    ]
+  },
+  "support_contact_links": [],
+  "frame": "base_link, metres; fixed parts placed with query yaw",
+  "pose_scope": "nominal XY footprint and chassis/hip/thigh height from MJCF keyframe",
+  "planning_scope": "four chassis parts and four leg-clearance proxies; full nominal XY coverage, upper-body Z; not full-body 3D or gait clearance",
+  "physical_drive": "offline forward kinematics only; no ONNX controller or physics rollout",
+  "geometry_margin_m": 0.0,
+  "runtime_margin_source": "RobotConfig collision_hard_margin; not baked into raw primitives",
+  "representation": "eight-part compound navigation model",
+  "installation_qualified": false,
+  "known_missing_geometry": [],
+  "source_asset_boundary": "checked-in MJCF nominal stance; calves/wheels contribute XY only; low obstacles, gait and wheel clearance remain unqualified",
+  "regeneration": "python tools/robot/export_navigation_bodies.py"
+}

@@ -1021,7 +1021,7 @@ def test_endpoint_only_goal_fails_closed_when_native_client_is_missing(monkeypat
     model = GatewayErrorResponse.model_validate(payload)
 
     assert response.status_code == 409
-    assert model.error == "native_command_rejected"
+    assert model.error == "goal_submission_rejected"
     assert "native navigation command boundary is unavailable" in model.detail["reason"]
     assert "goal_pose" not in gateway.ports_out
 
@@ -1032,11 +1032,13 @@ def test_goal_route_surfaces_native_business_rejection(monkeypatch):
 
     class RejectingGoals:
         def submit_goal(self, goal, *, task_id=None, request_id=None, action="goal"):
-            del goal, task_id, request_id, action
+            del goal, action
             return {
                 "accepted": False,
                 "success": False,
                 "message": "navigation command rejected: active_octomap_not_configured",
+                "native_ack": {"accepted": False, "task_id": task_id, "request_id": request_id,
+                               "reason": "active_octomap_not_configured"},
             }
 
     gateway = GatewayModule()
@@ -1794,13 +1796,13 @@ def test_field_stop_reports_missing_native_boundary_without_local_cmd_vel():
 
 def test_field_emergency_stop_uses_native_estop_latch(monkeypatch):
     from gateway.gateway_module import GatewayModule
-    from gateway.routes import commands
     from gateway.schemas import ControlCommandResponse, StopRequest
+    from gateway.services import stop
 
     calls = []
     monkeypatch.setattr(
-        commands,
-        "native_estop",
+        stop,
+        "estop",
         lambda _gw, reason="estop", *, request_id=None: calls.append((reason, request_id)) or True,
     )
     gateway = GatewayModule()
@@ -1818,8 +1820,8 @@ def test_field_emergency_stop_uses_native_estop_latch(monkeypatch):
 
 def test_native_stop_ack_does_not_block_gateway_event_loop(monkeypatch):
     from gateway.gateway_module import GatewayModule
-    from gateway.routes import commands
     from gateway.schemas import StopRequest
+    from gateway.services import stop
 
     entered = threading.Event()
     release = threading.Event()
@@ -1831,7 +1833,7 @@ def test_native_stop_ack_does_not_block_gateway_event_loop(monkeypatch):
         release.wait(timeout=1.0)
         return True
 
-    monkeypatch.setattr(commands, "native_estop", blocking_estop)
+    monkeypatch.setattr(stop, "estop", blocking_estop)
     gateway = GatewayModule()
     gateway.setup()
     post_stop = _endpoint(gateway, "/api/v1/stop")
@@ -2156,13 +2158,13 @@ def test_active_control_lease_blocks_other_rest_resume_clients(monkeypatch):
 
 def test_commands_without_request_id_preserve_existing_execute_every_time_behavior(monkeypatch):
     from gateway.gateway_module import GatewayModule
-    from gateway.routes import commands
     from gateway.schemas import ControlCommandResponse
+    from gateway.services import stop
 
     calls: list[tuple[str, str | None]] = []
     monkeypatch.setattr(
-        commands,
-        "native_estop",
+        stop,
+        "estop",
         lambda _gw, reason="estop", *, request_id=None: calls.append(
             (reason, request_id)
         )

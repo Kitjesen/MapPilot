@@ -1216,14 +1216,21 @@ def test_navigation_fixture_registered_cloud_uses_sampled_lidar_site_origin(monk
         def get_lidar_points(self, **_kwargs):
             return np.array([[3.0, 2.0, 0.6, 12.0]], dtype=np.float32)
 
+        def capture_state(self):
+            return object()
+
+        def get_lidar_points_from_snapshot(self, _snapshot, **_kwargs):
+            return self.get_lidar_points()
+
         def close(self):
             pass
 
     engine = Engine()
     engine.model = object()
     engine.data = SimpleNamespace(ncon=0)
+    engine._lidar_data = object()
     stream = io.BytesIO()
-    process = SimpleNamespace(stdin=stream,
+    process = SimpleNamespace(stdin=stream, poll=lambda: None,
                               _lingtu_native_clock_alignment={"native_minus_local_s": 0.0})
     monkeypatch.setattr(bridge, "_resolve_publisher_bin", lambda _path: Path("publisher.exe"))
     monkeypatch.setattr(bridge, "_start_native_publisher", lambda _args: process)
@@ -1233,8 +1240,8 @@ def test_navigation_fixture_registered_cloud_uses_sampled_lidar_site_origin(monk
     monkeypatch.setattr(bridge, "build_engine", lambda **_kwargs: engine)
     monkeypatch.setattr(bridge, "_acceptance_contacts", lambda *_args: [])
     monkeypatch.setattr(bridge, "_cleanup_native_publisher", lambda *_args, **_kwargs: {"clean": True})
-    monkeypatch.setattr(bridge, "world_xyzi_to_sensor_xyzi", lambda _engine, points: points)
-    monkeypatch.setattr(bridge, "lidar_pose_world", lambda _engine: (site.copy(), np.eye(3)), raising=False)
+    monkeypatch.setattr(bridge, "world_xyzi_to_sensor_xyzi", lambda _engine, points, **_kwargs: points)
+    monkeypatch.setattr(bridge, "lidar_pose_world", lambda _engine, **_kwargs: (site.copy(), np.eye(3)), raising=False)
     for name in ("_write_native_imu", "_write_native_scan", "_write_native_odom_prior"):
         monkeypatch.setattr(bridge, name, lambda *_args, **_kwargs: None)
 
@@ -1256,3 +1263,68 @@ def test_navigation_fixture_registered_cloud_uses_sampled_lidar_site_origin(monk
     _, record_type, _stamp, _sequence, _count, _size = bridge._HEADER.unpack(raw[:bridge._HEADER.size])
     assert record_type == bridge._sensor_records.RECORD_REGISTERED_CLOUD_WITH_ORIGIN
     assert struct.unpack_from("<ddd", raw, bridge._HEADER.size) == pytest.approx(site)
+
+
+@pytest.mark.parametrize("write_mode", ["sync", "async_fifo"])
+def test_delayed_snapshot_pose_pairs_with_real_native_publisher(monkeypatch, tmp_path, write_mode):
+    import time
+
+    import numpy as np
+
+    executable = bridge.ROOT / "build/windows-native-dds-adapter/Release/lingtu_mujoco_sensor_publisher.exe"
+    if os.name != "nt" or not executable.is_file():
+        pytest.skip("built Windows native DDS publisher required")
+    monkeypatch.setenv("LINGTU_MAP_ID", "snapshot-wire-test")
+    monkeypatch.setenv("LINGTU_MAP_FRAME", "map")
+    monkeypatch.setenv("LINGTU_MAP_CONTENT_EPOCH", "1")
+    args = bridge._build_parser().parse_args([
+        "--publisher-bin", str(executable), "--json-out", str(tmp_path / "report.json"),
+        "--domain-id", "138", "--duration", "0.4", "--settle-s", "0", "--warmup-s", "0",
+        "--publisher-write-mode", write_mode, "--navigation-fixture", "--publish-odom-prior",
+        "--scan-time-profile", "instantaneous", "--start-anchor", "off", "--motion-log-hz", "0",
+        "--drive-mode", "kinematic", "--allow-kinematic-ltlio-acceptance", "--imu-acc-mode", "gravity_only",
+    ])
+    args.require_slam_output = False
+
+    class Engine:
+        dt = 0.005
+        sim_time = 0.0
+        has_policy = False
+        physics_integrator = "euler"
+        model = object()
+        data = SimpleNamespace(ncon=0)
+
+        def get_robot_state(self):
+            return SimpleNamespace(position=np.array([self.sim_time, 0.0, .44]),
+                                   orientation=np.array([0, 0, 0, 1]),
+                                   linear_velocity=np.array([1.0, 0.0, 0.0]), imu_gyro=np.zeros(3))
+
+        def step_sensor_tick(self, _command, *, dt_s):
+            self.sim_time += dt_s
+            return self.get_robot_state()
+
+        def capture_state(self):
+            return self.get_robot_state().position.copy()
+
+        def get_lidar_points_from_snapshot(self, snapshot, **_kwargs):
+            time.sleep(.02)
+            self._lidar_data = SimpleNamespace(origin=snapshot.copy())
+            return np.array([[snapshot[0] + 2, 0, .6, 12]], dtype=np.float32)
+
+        def get_lidar_backend_report(self):
+            return {"backend": "test_fixture"}
+
+        def close(self):
+            pass
+
+    engine = Engine()
+    monkeypatch.setattr(bridge, "resolve_world", lambda _path: Path("world.xml"))
+    monkeypatch.setattr(bridge, "build_engine", lambda **_kwargs: engine)
+    monkeypatch.setattr(bridge, "world_xyzi_to_sensor_xyzi", lambda _engine, points, **_kwargs: points)
+    monkeypatch.setattr(bridge, "lidar_pose_world", lambda _engine, *, data: (data.origin, np.eye(3)))
+
+    report = bridge.run(args)
+
+    assert report["ok"], report
+    assert report["published"]["/slam/registered_cloud"] >= 2
+    assert report["native_sensor_publisher_process"]["clean"] is True

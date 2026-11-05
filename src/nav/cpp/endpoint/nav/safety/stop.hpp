@@ -173,7 +173,8 @@ struct MotionStopActions {
   std::function<bool()> publish_zero;
   std::function<std::uint64_t()> last_output_sequence;
   std::function<std::optional<std::uint64_t>()> publish_sequenced_zero;
-  std::function<StopConfirmationState(std::uint64_t)> confirm_zero;
+  std::function<StopConfirmationState(
+      std::uint64_t, std::optional<StopConfirmationEvidencePolicy>)> confirm_zero;
   std::function<void()> clear_global_path;
 };
 
@@ -199,8 +200,10 @@ class MotionStopBarrier {
   void resetAfterMotionStart() const;
   void cancelPendingResume() const;
   MotionStopResult confirmGoalReplanStop(const std::string &reason) const;
-  MotionStopResult commitGoalTerminalAfterStop(const std::string &reason,
-                                               MotionStopTerminalCommit commit_terminal) const;
+  MotionStopResult commitGoalTerminalAfterStop(
+      const std::string &reason,
+      MotionStopTerminalCommit commit_terminal,
+      std::optional<StopConfirmationEvidencePolicy> evidence_policy = std::nullopt) const;
   MotionStopResult stop() const;
   MotionStopResult stopWithoutTerminalCommit() const;
   // commit_terminal must be non-empty and copy-safe/idempotent across retries.
@@ -233,6 +236,7 @@ class MotionStopBarrier {
     bool fail_closed{false};
     bool retain_completion{false};
     std::function<MotionStopResult()> commit;
+    std::optional<StopConfirmationEvidencePolicy> evidence_policy;
   };
   struct CompletedConfirmation {
     std::string key;
@@ -244,7 +248,9 @@ class MotionStopBarrier {
                                     const std::string &failure_suffix, bool fail_closed,
                                     std::function<MotionStopResult()> commit,
                                     std::optional<std::uint64_t> sequence = std::nullopt,
-                                    bool retain_completion = false) const;
+                                    bool retain_completion = false,
+                                    std::optional<StopConfirmationEvidencePolicy> evidence_policy =
+                                        std::nullopt) const;
   void replaceConfirmation() const;
   bool clearMotionOutputs(const std::string &reason) const;
   MotionStopTerminalCommit deferGoalAbort(const std::string &reason) const;
@@ -252,7 +258,9 @@ class MotionStopBarrier {
   MotionStopResult confirmAndCommitTerminal(MotionStopTerminalCommit commit_terminal,
                                             const std::string &confirmed_reason,
                                             const std::string &failure_suffix,
-                                            bool fail_closed, bool retain_completion = true) const;
+                                            bool fail_closed, bool retain_completion = true,
+                                            std::optional<StopConfirmationEvidencePolicy> evidence_policy =
+                                                std::nullopt) const;
   MotionStopResult confirmLastZero(const std::string &confirmed_reason,
                                    const std::string &failure_suffix) const;
   MotionStopTerminalBarrierResult

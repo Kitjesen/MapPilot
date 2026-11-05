@@ -125,14 +125,14 @@ test('localization hold explains recovery without claiming an unconfirmed physic
   assert.equal(view.goalAdmission.message, '定位恢复中，新目标会排队等待输入恢复')
 })
 
-test('localization hold reports a stopped robot only after stop confirmation', () => {
+test('localization hold reports stop command confirmation separately from motion', () => {
   const view = presentNavigationStatus(status({
     permission: 'HELD',
     stop: 'CONFIRMED',
     motionReason: 'localization_not_tracking',
   }), 'zh')
 
-  assert.equal(view.motion.message, '定位恢复中，已确认机器人停稳')
+  assert.equal(view.motion.message, '定位恢复中，停止命令已确认')
 })
 
 test('legacy localization timeout stays a generic native reason', () => {
@@ -239,9 +239,12 @@ test('quiet observation is distinct from stop confirmation', () => {
   const failed = presentNavigationStatus(status({ stop: 'FAILED' }), 'zh')
 
   assert.equal(pending.motion.observation.label, '静止观测')
-  assert.equal(pending.motion.stopConfirmation.label, '等待停稳确认')
-  assert.equal(confirmed.motion.stopConfirmation.label, '已确认停稳')
-  assert.equal(failed.motion.stopConfirmation.label, '停稳确认失败')
+  assert.equal(pending.motion.stopConfirmation.label, '等待停止确认')
+  assert.equal(confirmed.motion.stopConfirmation.label, '停止命令已确认')
+  assert.equal(failed.motion.stopConfirmation.label, '停止确认失败')
+  const stillMoving = presentNavigationStatus(status({ stop: 'CONFIRMED', observation: 'MOVING' }), 'zh')
+  assert.equal(stillMoving.motion.observation.label, '运动中')
+  assert.doesNotMatch(stillMoving.motion.stopConfirmation.label, /停稳/)
 })
 
 test('obstacle and stalled reasons do not assert a stopped or paused robot', () => {
@@ -268,7 +271,7 @@ test('missing status reports every axis as unknown', () => {
   assert.equal(view.control.state, 'UNKNOWN')
   assert.equal(view.motion.permission.label, '运动权限未知')
   assert.equal(view.motion.observation.label, '运动状态未知')
-  assert.equal(view.motion.stopConfirmation.label, '停稳状态未知')
+  assert.equal(view.motion.stopConfirmation.label, '停止确认状态未知')
 })
 
 test('nominal and emergency axes have stable labels', () => {

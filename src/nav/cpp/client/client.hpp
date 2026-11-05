@@ -333,6 +333,11 @@ class LINGTU_NAV_CLIENT_API Client {
         const std::string& reason,
         int timeout_ms = 1000,
         const std::string& request_id = {});
+    [[nodiscard]] NavigationCommandReceipt setTaskSpeedLimit(
+        const std::string& task_id,
+        double max_speed_mps,
+        int timeout_ms = 1000,
+        const std::string& request_id = {});
     void stop(
         const std::string& reason,
         int timeout_ms = 1000,

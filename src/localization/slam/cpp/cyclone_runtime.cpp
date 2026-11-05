@@ -1250,17 +1250,18 @@ SlamMapSnapshotAckMessage snapshotAck(
       : saved_cloud->frame_id;
   const double captured_stamp_s = saved_cloud == nullptr ? out.stamp_s : saved_cloud->stamp_s;
   ack.msg.reset_epoch = out.source_epoch;
-  ack.msg.observation_sequence = out.observation_sequence;
+  ack.msg.observation_sequence = success && out.saved_map_cloud_map
+      ? out.saved_map_observation_sequence : out.observation_sequence;
   ack.msg.captured_at_ns = static_cast<std::uint64_t>(
       std::max<std::int64_t>(0, snapshotTimestampNs(captured_stamp_s)));
   ack.msg.healthy = out.alive && out.source_epoch > 0U &&
-      out.observation_sequence > 0U && ack.msg.point_count > 0U &&
+      ack.msg.observation_sequence > 0U && ack.msg.point_count > 0U &&
       (out.state == lingtu::slam::SlamState::Mapping ||
        out.state == lingtu::slam::SlamState::Tracking ||
        (out.state == lingtu::slam::SlamState::Degraded &&
         out.reason == "mapping_keyframe_capacity_reached"));
   ack.health_message = ack.msg.healthy
-      ? "SLAM snapshot accepted"
+      ? "SLAM state is healthy"
       : (out.reason.empty() ? "SLAM snapshot identity or health is incomplete" : out.reason);
   ack.msg.success = success;
   ack.bindStorage();
@@ -1271,7 +1272,11 @@ struct PendingMapSnapshot {
   std::string request_id;
   std::string map_id;
   std::string output_path;
-  SlamOutputs captured;
+  std::uint64_t source_epoch;
+  std::uint64_t observation_sequence;
+  double stamp_s;
+  lingtu::slam::SlamState state;
+  std::string reason;
 };
 
 struct RelocalizationResponseMessage {
@@ -1352,6 +1357,8 @@ RelocalizationResponseMessage relocalizationResponse(
   return response;
 }
 
+namespace slam_runtime_defaults = lingtu::settings::slam::slam::runtime;
+
 struct CliConfig {
   std::string backend = "ltlio";
   std::string mode = "mapping";
@@ -1360,12 +1367,12 @@ struct CliConfig {
   std::string status_json_path;
   std::string cloud_snapshot_dir;
   int domain_id = 0;
-  double tick_hz = 50.0;
-  double log_status_s = 0.0;
-  double status_json_hz = 10.0;
-  double cloud_snapshot_hz = 5.0;
-  double lidar_scan_snapshot_hz = 10.0;
-  double track_against_map_period_s = 5.0;
+  double tick_hz = slam_runtime_defaults::tick_hz;
+  double log_status_s = slam_runtime_defaults::log_status_s;
+  double status_json_hz = slam_runtime_defaults::status_json_hz;
+  double cloud_snapshot_hz = slam_runtime_defaults::cloud_snapshot_hz;
+  double lidar_scan_snapshot_hz = slam_runtime_defaults::lidar_scan_snapshot_hz;
+  double track_against_map_period_s = slam_runtime_defaults::track_against_map_period_s;
   std::string track_against_map_seed_file;
   std::optional<Pose3d> track_against_map_initial_pose;
 };
@@ -1378,6 +1385,23 @@ CliConfig parseArgs(int argc, char** argv) {
   }
   cfg.map_path = envOrEmpty("LINGTU_SLAM_MAP");
   cfg.config_path = envOrEmpty("LINGTU_SLAM_CONFIG");
+  const auto runtime_rate = [](const char* name, double fallback) {
+    const std::string value = envOrEmpty(name);
+    if (value.empty()) return fallback;
+    std::size_t consumed = 0;
+    const double rate = std::stod(value, &consumed);
+    if (consumed != value.size() || !std::isfinite(rate) || rate < 0.0)
+      throw std::runtime_error(std::string(name) + " must be finite and nonnegative");
+    return rate;
+  };
+  cfg.tick_hz = runtime_rate("LINGTU_SLAM_TICK_HZ", cfg.tick_hz);
+  cfg.log_status_s = runtime_rate("LINGTU_SLAM_LOG_STATUS_S", cfg.log_status_s);
+  cfg.status_json_hz = runtime_rate("LINGTU_SLAM_STATUS_JSON_HZ", cfg.status_json_hz);
+  cfg.cloud_snapshot_hz = runtime_rate("LINGTU_SLAM_CLOUD_SNAPSHOT_HZ", cfg.cloud_snapshot_hz);
+  cfg.lidar_scan_snapshot_hz =
+      runtime_rate("LINGTU_SLAM_LIDAR_SCAN_SNAPSHOT_HZ", cfg.lidar_scan_snapshot_hz);
+  cfg.track_against_map_period_s =
+      runtime_rate("LINGTU_SLAM_TRACK_AGAINST_MAP_PERIOD_S", cfg.track_against_map_period_s);
   const std::string initial_yaw = envOrEmpty("LINGTU_SLAM_TRACK_INITIAL_YAW");
   if (!initial_yaw.empty()) {
     const auto env_coordinate = [](const char* name) {
@@ -1464,6 +1488,11 @@ CliConfig parseArgs(int argc, char** argv) {
           "[--track-against-map-initial-pose X Y Z YAW]");
     }
   }
+  if (!std::isfinite(cfg.tick_hz) || cfg.tick_hz < 1.0)
+    throw std::runtime_error("SLAM tick rate must be at least 1 Hz");
+  if (!std::isfinite(cfg.track_against_map_period_s) ||
+      (cfg.track_against_map_period_s != 0.0 && cfg.track_against_map_period_s < 1.0))
+    throw std::runtime_error("SLAM track-against-map period must be 0 or at least 1 second");
   return cfg;
 }
 
@@ -1937,8 +1966,7 @@ int main(int argc, char** argv) {
     }
 
     DdsRuntime dds(cli.domain_id);
-    const double hz = std::max(1.0, cli.tick_hz);
-    const auto period = std::chrono::duration<double>(1.0 / hz);
+    const auto period = std::chrono::duration<double>(1.0 / cli.tick_hz);
     double last_log_s = 0.0;
     double last_status_json_s = 0.0;
     double last_cloud_snapshot_s = 0.0;
@@ -2000,8 +2028,7 @@ int main(int argc, char** argv) {
     double last_track_against_map_success_s = -1.0;
     double last_track_against_map_s = 0.0;
     double last_track_against_map_scan_s = -1.0;
-    const double track_against_map_period_s =
-        repeat_track_against_map ? std::max(1.0, cli.track_against_map_period_s) : 1.0;
+    const double track_against_map_period_s = cli.track_against_map_period_s;
     constexpr int kTrackAgainstMapDegradedFailureCount = 3;
     auto note_track_failure = [&](const std::string& message) {
       ++track_against_map_failures;
@@ -2139,11 +2166,16 @@ int main(int argc, char** argv) {
           return;
         }
         if (backend->saveMapAsyncInFlight()) {
+          const auto captured = backend->outputs();
           pending_map_snapshot = PendingMapSnapshot{
               request.request_id ? request.request_id : "",
               request.map_id ? request.map_id : "",
               output_path,
-              backend->outputs()};
+              captured.source_epoch,
+              captured.observation_sequence,
+              captured.stamp_s,
+              captured.state,
+              captured.reason};
           return;
         }
         const SlamOutputs out = backend->outputs();
@@ -2376,11 +2408,11 @@ int main(int argc, char** argv) {
       if (pending_map_snapshot) {
         if (const auto completed = backend->pollSaveMapAsync()) {
           SlamOutputs captured = backend->outputs();
-          captured.source_epoch = pending_map_snapshot->captured.source_epoch;
-          captured.observation_sequence = pending_map_snapshot->captured.observation_sequence;
-          captured.stamp_s = pending_map_snapshot->captured.stamp_s;
-          captured.state = pending_map_snapshot->captured.state;
-          captured.reason = pending_map_snapshot->captured.reason;
+          captured.source_epoch = pending_map_snapshot->source_epoch;
+          captured.observation_sequence = pending_map_snapshot->observation_sequence;
+          captured.stamp_s = pending_map_snapshot->stamp_s;
+          captured.state = pending_map_snapshot->state;
+          captured.reason = pending_map_snapshot->reason;
           lingtu_dds_SlamMapSnapshotRequest request{};
           request.request_id = pending_map_snapshot->request_id.data();
           request.map_id = pending_map_snapshot->map_id.data();

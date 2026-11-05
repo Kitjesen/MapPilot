@@ -37,6 +37,7 @@ class CameraJpegRelayModule(Module, layer=6):
         self._jpeg_quality = jpeg_quality
         self._stream_interval = 1.0 / max(1.0, stream_fps)
         self._gateway: Any | None = None
+        self._viewer_lock = threading.Lock()
         self._clients = 0
         self._camera_clients = 0
         self._running = False
@@ -96,18 +97,22 @@ class CameraJpegRelayModule(Module, layer=6):
 
     def on_client_connect(self) -> None:
         """Register a teleop-socket viewer without acquiring motion control."""
-        self._clients += 1
+        with self._viewer_lock:
+            self._clients += 1
         self._wake_encoder_if_ready()
 
     def on_client_disconnect(self) -> None:
-        self._clients = max(0, self._clients - 1)
+        with self._viewer_lock:
+            self._clients = max(0, self._clients - 1)
 
     def on_camera_client_connect(self) -> None:
-        self._camera_clients += 1
+        with self._viewer_lock:
+            self._camera_clients += 1
         self._wake_encoder_if_ready()
 
     def on_camera_client_disconnect(self) -> None:
-        self._camera_clients = max(0, self._camera_clients - 1)
+        with self._viewer_lock:
+            self._camera_clients = max(0, self._camera_clients - 1)
 
     def _wake_encoder_if_ready(self) -> None:
         if self._latest_raw is not None:
@@ -167,7 +172,9 @@ class CameraJpegRelayModule(Module, layer=6):
             return
         with self._raw_lock:
             self._latest_raw = image.to_bgr().data
-        if self._clients + self._camera_clients > 0:
+        with self._viewer_lock:
+            has_viewers = self._clients + self._camera_clients > 0
+        if has_viewers:
             self._new_frame.set()
 
     def _rotate(self, frame: Any, cv2: Any) -> Any:
@@ -234,13 +241,15 @@ class CameraJpegRelayModule(Module, layer=6):
 
     def health(self) -> dict[str, Any]:
         info = super().port_summary()
+        with self._viewer_lock:
+            clients, camera_clients = self._clients, self._camera_clients
         info.update(
             {
                 "role": "camera_jpeg_relay",
                 "motion_capable": False,
-                "teleop_clients": self._clients,
-                "camera_clients": self._camera_clients,
-                "stream_clients": self._clients + self._camera_clients,
+                "teleop_clients": clients,
+                "camera_clients": camera_clients,
+                "stream_clients": clients + camera_clients,
             }
         )
         return info

@@ -54,8 +54,8 @@ struct CliConfig {
   bool navigation_fixture{false};
   int domain_id{0};
   double replay_rate{1.0};
-  double scan_window_s{0.1};
-  double imu_publish_hz{0.0};
+  double scan_window_s{};
+  double imu_publish_hz{};
   std::string lidar_frame{"lidar_link"};
   std::string imu_frame{"imu_link"};
   std::string config_path;

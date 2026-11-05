@@ -16,6 +16,7 @@ namespace lingtu::maps {
 
 enum class SaveJobState {
   kWaitingSnapshot,
+  kCaptured,
   kQueued,
   kRunning,
   kSucceeded,
@@ -36,7 +37,7 @@ enum class SavePhase {
 
 struct SaveRequirements {
   bool occupancy{false};
-  bool octomap{true};
+  bool octomap{map_defaults::save::build_octomap};
   bool esdf{false};
   bool traversability{false};
   bool semantic{false};
@@ -72,6 +73,7 @@ struct SaveMapRequest {
   PgoOptions pgo;
   SourceCommitOptions source;
   OctomapBuildOptions octomap;
+  bool auto_process{true};
   bool require_slam_healthy{true};
   // Development-only compatibility for snapshot sources without an atomic
   // native SLAM receipt. Field native_dds saves must leave this disabled.
@@ -96,6 +98,7 @@ struct SaveMapStatus {
   std::int64_t created_at_ns{0};
   std::int64_t updated_at_ns{0};
   std::int64_t completed_at_ns{0};
+  bool source_saved{false};
   bool cancel_requested{false};
   bool recovered{false};
   bool replayed{false};
@@ -129,6 +132,8 @@ class SaveMapEngine {
                                const std::string &message);
   SaveMapResult Cancel(const std::string &job_id);
   SaveMapResult Retry(const std::string &job_id);
+  SaveMapResult Process(const std::string &job_id);
+  std::optional<std::filesystem::path> GetSource(const std::string &job_id) const;
   std::optional<SaveMapStatus> GetStatus(const std::string &job_id) const;
   std::vector<SaveMapStatus> ListStatuses(std::size_t limit = 100U) const;
   std::optional<SaveMapStatus> Wait(const std::string &job_id,
@@ -141,6 +146,7 @@ class SaveMapEngine {
                                  const std::string &message);
   std::string CancelJson(const std::string &job_id);
   std::string RetryJson(const std::string &job_id);
+  std::string ProcessJson(const std::string &job_id);
   std::string GetStatusJson(const std::string &job_id) const;
   std::string ListStatusesJson(std::size_t limit = 100U) const;
 

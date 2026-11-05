@@ -16,7 +16,7 @@ import time
 from typing import Any, Callable
 
 from gateway.services.cloud_scene_cache import CloudSceneCache
-from gateway.services.cloud_ws import CloudWs
+from gateway.services.cloud_ws import CloudSubscription, CloudWs
 from gateway.services.traffic import DEFAULT_CLOUD_QUEUE_MAXSIZE
 from message.topics import TOPICS
 from runtime.msgs.map import MapObservationFrame
@@ -1425,6 +1425,9 @@ class CloudViewerService:
     def cloud_unsubscribe(self, q: asyncio.Queue) -> None:
         self._cloud_ws.unsubscribe(q)
 
+    def cloud_subscribe_sync(self) -> CloudSubscription:
+        return self._cloud_ws.subscribe_sync()
+
     def record_cloud_delivery(self, dropped: bool, depth: int) -> None:
         self._cloud_ws.record_delivery(dropped, depth)
 
@@ -1436,6 +1439,9 @@ class CloudViewerService:
 
     def scan_unsubscribe(self, q: asyncio.Queue) -> None:
         self._scan_ws.unsubscribe(q)
+
+    def scan_subscribe_sync(self) -> CloudSubscription:
+        return self._scan_ws.subscribe_sync()
 
     def record_scan_delivery(self, dropped: bool, depth: int) -> None:
         self._scan_ws.record_delivery(dropped, depth)

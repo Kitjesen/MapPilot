@@ -351,7 +351,7 @@ bool Executor::atGoal(const nav_kernel::Pose& odom_map_body) const {
   const double planar_distance =
       std::hypot(goal.x - odom_map_body.position.x, goal.y - odom_map_body.position.y);
   return planar_distance <= active_goal_reached_m_ &&
-         std::abs(goal.z - odom_map_body.position.z) <= active_goal_height_tolerance_m_;
+         std::abs(goal.z - odom_map_body.position.z) <= config_.goal_height_tolerance_m;
 }
 
 }  // namespace lingtu::nav::navigation

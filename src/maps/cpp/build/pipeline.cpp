@@ -18,6 +18,7 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "lingtu/maps/build/grids.hpp"
@@ -513,6 +514,7 @@ std::vector<std::string> SavedSourceArtifactNames() {
   names.push_back("patch_bundle.manifest");
   names.push_back("map.clean.pcd");
   names.push_back("map.removed.pcd");
+  names.push_back("map.before_clean.pcd");
   names.push_back("map.pcd.preclean");
   names.push_back("scan_origin.txt");
   names.push_back("map_optimization.json");
@@ -1736,13 +1738,16 @@ void CopySavedSourceAuxiliaryArtifacts(const std::filesystem::path &source_dir,
            "sam_loops.json",
            "patches",
            "patch_bundle.manifest",
-           "map.clean.pcd",
            "map.removed.pcd",
-           "map.pcd.preclean",
+           "map.before_clean.pcd",
            "scan_origin.txt",
            "map_optimization.json",
        }) {
-    const auto source = source_dir / filename;
+    auto source = source_dir / filename;
+    if (std::strcmp(filename, "map.before_clean.pcd") == 0 &&
+        !std::filesystem::exists(source)) {
+      source = source_dir / "map.pcd.preclean";
+    }
     if (!std::filesystem::exists(source)) {
       continue;
     }
@@ -2098,7 +2103,11 @@ std::string MapPipelineCore::CommitSavedSourceJson(const std::string &map_id,
 
     PcdFilterOptions filter;
     filter.voxel_size = options.voxel_size;
-    const auto filtered = FilterPcdPoints(loaded.points, filter);
+    const auto source_point_count = loaded.points.size();
+    // LoadPcdXyz already removed non-finite points.
+    const auto filtered = options.voxel_size <= 0.0
+        ? std::move(loaded.points)
+        : FilterPcdPoints(loaded.points, filter);
     if (filtered.empty()) {
       WriteStatus(id, build_id, "SOURCE_MAP_SAVE", "FAILED", 0.0, "source map empty after filters");
       std::filesystem::remove_all(LockPath(id));
@@ -2195,7 +2204,7 @@ std::string MapPipelineCore::CommitSavedSourceJson(const std::string &map_id,
            std::to_string(filtered.size()) +
            ","
            "\"source_point_count\":" +
-           std::to_string(loaded.points.size()) +
+           std::to_string(source_point_count) +
            ","
            "\"dynamic_filter\":" +
            dynamic_filter +

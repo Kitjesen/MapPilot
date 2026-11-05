@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Canonical Thunder service installer entrypoint.
+# Canonical real service installer entrypoint.
 #
-# Supported modes come only from the Thunder product service catalog.
+# Supported modes come only from the real service catalog.
 
 set -euo pipefail
 
@@ -39,12 +39,12 @@ require_dual_release_layout() {
 catalog_services_for_mode() {
     local mode="$1"
     PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
-        "${PYTHON_BIN}" -m runtime.service_catalogs.thunder install-services "${mode}"
+        "${PYTHON_BIN}" -m runtime.service_catalogs.real install-services "${mode}"
 }
 
 catalog_install_modes() {
     PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
-        "${PYTHON_BIN}" -m runtime.service_catalogs.thunder install-modes
+        "${PYTHON_BIN}" -m runtime.service_catalogs.real install-modes
 }
 
 usage() {
@@ -58,7 +58,7 @@ run_catalog_services() {
     local services=()
     mapfile -t services <<< "${service_text}"
     if [ "${#services[@]}" -eq 0 ]; then
-        echo "Thunder service install plan is empty." >&2
+        echo "real service install plan is empty." >&2
         exit 2
     fi
     local service
@@ -79,7 +79,7 @@ main() {
         return
     fi
 
-    echo "Unknown Thunder service install mode: ${MODE}" >&2
+    echo "Unknown real service install mode: ${MODE}" >&2
     usage
     return 2
 }

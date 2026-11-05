@@ -12,6 +12,7 @@ from runtime.host import HostBuilder
 
 def services(
     *,
+    env: str = "real",
     enable_goals: bool = True,
     required_topics: tuple[str, ...] = (),
     required_capabilities: tuple[str, ...] = (),
@@ -39,9 +40,7 @@ def services(
         bp.add(
             HostBus,
             alias="host.bus",
-            # MapScene is a display stream. Native navigation owns the live
-            # collision map, so a large saved scene must not block Host
-            # readiness or ProductControl startup.
+            env=env,
             require_map_scene=bool(
                 config.get(
                     "require_map_scene",

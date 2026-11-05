@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include "planning/global/contract.hpp"
 
 #include <cstddef>
@@ -32,17 +34,17 @@ struct FarGridMap {
 };
 
 struct FarPlannerConfig {
-  double robot_radius_m{0.35};
-  double obstacle_clearance_m{0.10};
-  double max_visibility_distance_m{30.0};
-  double unknown_cost_multiplier{6.0};
-  std::int32_t corner_separation_cells{1};
-  std::int32_t snap_search_radius_cells{12};
-  std::size_t max_graph_nodes{4096U};
-  std::size_t max_visibility_pairs{500000U};
-  std::size_t max_search_expansions{500000U};
+  double robot_radius_m{::lingtu::settings::global::native_nav::far_robot_radius_m};
+  double obstacle_clearance_m{::lingtu::settings::global::native_nav::far_obstacle_clearance_m};
+  double max_visibility_distance_m{::lingtu::settings::global::native_nav::far_max_visibility_distance_m};
+  double unknown_cost_multiplier{::lingtu::settings::global::native_nav::far_unknown_cost_multiplier};
+  std::int32_t corner_separation_cells{::lingtu::settings::global::native_nav::far_corner_separation_cells};
+  std::int32_t snap_search_radius_cells{::lingtu::settings::global::native_nav::far_snap_search_radius_cells};
+  std::size_t max_graph_nodes{::lingtu::settings::global::native_nav::far_max_graph_nodes};
+  std::size_t max_visibility_pairs{::lingtu::settings::global::native_nav::far_max_visibility_pairs};
+  std::size_t max_search_expansions{::lingtu::settings::global::native_nav::far_max_search_expansions};
   bool allow_unknown_fallback{false};
-  bool simplify_path{true};
+  bool simplify_path{::lingtu::settings::global::native_nav::far_simplify_path};
 };
 
 struct FarDiagnostics {

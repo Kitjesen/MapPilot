@@ -144,6 +144,14 @@ class NativeNavigationClient:
         )
         return NavigationCommandReceipt(**receipt)
 
+    def set_task_speed_limit(
+        self, task_id: str, max_speed_mps: float, *, request_id: str | None = None,
+    ) -> NavigationCommandReceipt:
+        receipt = self._session.set_navigation_task_speed_limit(
+            task_id, str(request_id or ""), float(max_speed_mps),
+        )
+        return NavigationCommandReceipt(**receipt)
+
     def pause_task(
         self,
         task_id: str,

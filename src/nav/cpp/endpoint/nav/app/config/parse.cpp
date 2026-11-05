@@ -139,6 +139,14 @@ double parseDouble(const std::string &raw, const char *name) {
   return parsed;
 }
 
+double parseMotionLimit(const std::string &raw, const char *name) {
+  const double value = parseDouble(raw, name);
+  if (!std::isfinite(value)) {
+    throw std::runtime_error(std::string(name) + " must be finite");
+  }
+  return value;
+}
+
 bool isGeometryOption(const std::string &arg) {
   return arg == "--vehicle-length-m" || arg == "--vehicle-width-m" ||
          arg == "--collision-cylinder-radius-m" ||
@@ -375,8 +383,10 @@ CliConfig parseArgs(int argc, char **argv) {
   }
   cfg.product = envOrEmpty("LINGTU_PRODUCT");
   cfg.product_session_id = envOrEmpty("LINGTU_PRODUCT_SESSION_ID");
-  applyEnvDouble(cfg.nav_max_speed_mps, "LINGTU_NAV_MAX_SPEED_MPS");
-  applyEnvDouble(cfg.nav_max_accel_mps2, "LINGTU_NAV_MAX_ACCEL_MPS2");
+  if (const auto value = envOrEmpty("LINGTU_NAV_MAX_SPEED_MPS"); !value.empty())
+    cfg.path_follower_max_speed_mps = parseMotionLimit(value, "LINGTU_NAV_MAX_SPEED_MPS");
+  if (const auto value = envOrEmpty("LINGTU_NAV_MAX_ACCEL_MPS2"); !value.empty())
+    cfg.path_follower_max_accel_mps2 = parseMotionLimit(value, "LINGTU_NAV_MAX_ACCEL_MPS2");
   applyEnvDouble(cfg.control_loop_deadline_miss_ratio_limit,
                  "LINGTU_NAV_CONTROL_LOOP_DEADLINE_MISS_RATIO_LIMIT");
   applyEnvDouble(cfg.control_loop_p95_utilization_limit,
@@ -389,8 +399,7 @@ CliConfig parseArgs(int argc, char **argv) {
   applyEnvDouble(cfg.segment_risk_stop, "LINGTU_NAV_SEGMENT_RISK_STOP");
   applyEnvDouble(cfg.segment_risk_resume, "LINGTU_NAV_SEGMENT_RISK_RESUME");
   applyEnvDouble(cfg.segment_map_max_age_s, "LINGTU_NAV_SEGMENT_MAP_MAX_AGE_S");
-  cfg.path_follower_max_speed_mps = cfg.nav_max_speed_mps;
-  cfg.path_follower_max_accel_mps2 = cfg.nav_max_accel_mps2;
+  applyEnvDouble(cfg.segment_future_tolerance_s, "LINGTU_NAV_SEGMENT_FUTURE_TOLERANCE_S");
   applyEnvDouble(cfg.waypoint_reached_m, "LINGTU_NAV_WAYPOINT_REACHED_M");
   applyEnvDouble(cfg.goal_reached_m, "LINGTU_NAV_GOAL_REACHED_M");
   applyEnvDouble(cfg.goal_height_tolerance_m, "LINGTU_NAV_GOAL_HEIGHT_TOLERANCE_M");
@@ -414,6 +423,10 @@ CliConfig parseArgs(int argc, char **argv) {
                                std::to_string(minimum));
     }
   };
+  applyEnvDouble(cfg.scan_planner.voxelResolution, "LINGTU_NAV_SCAN_VOXEL_RESOLUTION_M");
+  if (!std::isfinite(cfg.scan_planner.voxelResolution) || cfg.scan_planner.voxelResolution <= 0.0) {
+    throw std::runtime_error("LINGTU_NAV_SCAN_VOXEL_RESOLUTION_M must be finite and positive");
+  }
   scan_parameter(cfg.scan_planner.controlPointSpacing, "LINGTU_NAV_SCAN_CONTROL_POINT_SPACING_M", 0.05);
   scan_parameter(cfg.scan_planner.replanDistance, "LINGTU_NAV_SCAN_REPLAN_DISTANCE_M", 0.01);
   scan_parameter(cfg.scan_planner.noReplanDistance, "LINGTU_NAV_SCAN_NO_REPLAN_DISTANCE_M", 0.01);
@@ -516,10 +529,11 @@ CliConfig parseArgs(int argc, char **argv) {
   applyEnvDouble(cfg.cloud_max_age_s, "LINGTU_NAV_CLOUD_MAX_AGE_S");
   applyEnvDouble(cfg.cloud_pose_max_gap_s, "LINGTU_NAV_CLOUD_POSE_MAX_GAP_S");
   applyEnvDouble(cfg.input_future_tolerance_s, "LINGTU_NAV_INPUT_FUTURE_TOLERANCE_S");
-  applyEnvSize(cfg.input_recovery_frames, "LINGTU_NAV_INPUT_RECOVERY_FRAMES");
   applyEnvDouble(cfg.traversability_hard_cost, "LINGTU_NAV_TRAVERSABILITY_HARD_COST");
   applyEnvDouble(cfg.traversability_soft_cost, "LINGTU_NAV_TRAVERSABILITY_SOFT_COST");
   applyEnvDouble(cfg.traversability_weight, "LINGTU_NAV_TRAVERSABILITY_WEIGHT");
+  applyEnvDouble(cfg.local_planner_obstacle_height_min_m,
+                 "LINGTU_NAV_LOCAL_PLANNER_OBSTACLE_HEIGHT_MIN_M");
   applyEnvDouble(cfg.local_planner_obstacle_height_max_m,
                  "LINGTU_NAV_LOCAL_PLANNER_OBSTACLE_HEIGHT_MAX_M");
   applyEnvSize(cfg.max_obstacle_points, "LINGTU_NAV_DDS_MAX_OBSTACLE_POINTS");
@@ -527,7 +541,11 @@ CliConfig parseArgs(int argc, char **argv) {
   applyEnvSize(cfg.local_planner_debug_candidate_limit,
                "LINGTU_NAV_LOCAL_PLANNER_DEBUG_CANDIDATES");
   applyEnvSize(cfg.local_map_debug_point_limit, "LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS");
-  applyEnvDouble(cfg.obstacle_voxel_size_m, "LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M");
+  const auto obstacle_voxel_size = envOrEmpty("LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M");
+  bool explicit_obstacle_voxel_size = !obstacle_voxel_size.empty();
+  if (explicit_obstacle_voxel_size) {
+    cfg.obstacle_voxel_size_m = parseDouble(obstacle_voxel_size, "LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M");
+  }
   applyEnvDouble(cfg.live_obstacle_decay_s, "LINGTU_NAV_LIVE_OBSTACLE_DECAY_S");
   applyEnvDouble(cfg.live_obstacle_inflation_radius_m,
                  "LINGTU_NAV_LIVE_OBSTACLE_INFLATION_RADIUS_M");
@@ -541,14 +559,39 @@ CliConfig parseArgs(int argc, char **argv) {
   applyEnvDouble(cfg.dynamic_min_speed_mps, "LINGTU_NAV_DYNAMIC_MIN_SPEED_MPS");
   applyEnvSize(cfg.dynamic_confirm_frames, "LINGTU_NAV_DYNAMIC_CONFIRM_FRAMES");
   applyEnvBool(cfg.live_obstacle_ray_clearing, "LINGTU_NAV_LIVE_OBSTACLE_RAY_CLEARING");
+  applyEnvDouble(cfg.cmu_planner.groundHeightThre, "LINGTU_NAV_CMU_GROUND_HEIGHT_M");
+  applyEnvDouble(cfg.cmu_planner.costHeightThre1, "LINGTU_NAV_CMU_COST_HEIGHT_HIGH_M");
+  applyEnvDouble(cfg.cmu_planner.costHeightThre2, "LINGTU_NAV_CMU_COST_HEIGHT_LOW_M");
+  applyEnvInt(cfg.cmu_planner.pointPerPathThre, "LINGTU_NAV_CMU_POINTS_PER_PATH");
+  applyEnvDouble(cfg.cmu_planner.dirWeight, "LINGTU_NAV_CMU_DIRECTION_WEIGHT");
+  applyEnvDouble(cfg.cmu_planner.dirThre, "LINGTU_NAV_CMU_DIRECTION_THRESHOLD_DEG");
+  applyEnvBool(cfg.cmu_planner.dirToVehicle, "LINGTU_NAV_CMU_DIRECTION_TO_VEHICLE");
+  applyEnvDouble(cfg.cmu_planner.pathScale, "LINGTU_NAV_CMU_PATH_SCALE");
+  applyEnvDouble(cfg.cmu_planner.minPathScale, "LINGTU_NAV_CMU_MIN_PATH_SCALE");
+  applyEnvDouble(cfg.cmu_planner.pathScaleStep, "LINGTU_NAV_CMU_PATH_SCALE_STEP");
+  applyEnvBool(cfg.cmu_planner.pathScaleBySpeed, "LINGTU_NAV_CMU_SCALE_BY_SPEED");
+  applyEnvDouble(cfg.cmu_planner.minPathRange, "LINGTU_NAV_CMU_MIN_PATH_RANGE_M");
+  applyEnvDouble(cfg.cmu_planner.pathRangeStep, "LINGTU_NAV_CMU_PATH_RANGE_STEP_M");
+  applyEnvBool(cfg.cmu_planner.pathRangeBySpeed, "LINGTU_NAV_CMU_RANGE_BY_SPEED");
+  applyEnvBool(cfg.cmu_planner.pathCropByGoal, "LINGTU_NAV_CMU_CROP_BY_GOAL");
+  applyEnvDouble(cfg.cmu_planner.goalClearRange, "LINGTU_NAV_CMU_GOAL_CLEAR_RANGE_M");
+  applyEnvInt(cfg.cmu_planner.slowPathNumThre, "LINGTU_NAV_CMU_SLOW_PATH_COUNT");
+  applyEnvInt(cfg.cmu_planner.slowGroupNumThre, "LINGTU_NAV_CMU_SLOW_GROUP_COUNT");
+  applyEnvDouble(cfg.cmu_follower.lookahead_m, "LINGTU_NAV_CMU_FOLLOWER_LOOKAHEAD_M");
+  applyEnvDouble(cfg.cmu_follower.yaw_gain, "LINGTU_NAV_CMU_FOLLOWER_YAW_GAIN");
+  applyEnvDouble(cfg.cmu_follower.nominal_dt_s, "LINGTU_NAV_CMU_FOLLOWER_NOMINAL_DT_S");
+  applyEnvDouble(cfg.cmu_follower.switch_time_s, "LINGTU_NAV_CMU_FOLLOWER_SWITCH_TIME_S");
+  applyEnvDouble(cfg.cmu_follower.heading_align_rad, "LINGTU_NAV_CMU_FOLLOWER_HEADING_ALIGN_RAD");
+  applyEnvDouble(cfg.cmu_follower.omni_goal_m, "LINGTU_NAV_CMU_FOLLOWER_OMNI_GOAL_M");
+  applyEnvDouble(cfg.cmu_follower.omni_heading_rad, "LINGTU_NAV_CMU_FOLLOWER_OMNI_HEADING_RAD");
+  applyEnvDouble(cfg.cmu_follower.stop_distance_m, "LINGTU_NAV_CMU_FOLLOWER_STOP_DISTANCE_M");
+  applyEnvDouble(cfg.cmu_follower.slowdown_distance_m, "LINGTU_NAV_CMU_FOLLOWER_SLOWDOWN_DISTANCE_M");
   applyEnvBool(cfg.allow_teleop_takeover, "LINGTU_NAV_ALLOW_TELEOP_TAKEOVER");
   applyEnvBool(cfg.teleop_local_planner, "LINGTU_TELEOP_LOCAL_PLANNER");
   applyEnvDouble(cfg.teleop_cmd_max_age_s, "LINGTU_TELEOP_CMD_MAX_AGE_S");
   applyEnvDouble(cfg.teleop_max_speed_mps, "LINGTU_TELEOP_MAX_SPEED_MPS");
   applyEnvDouble(cfg.teleop_max_yaw_rate, "LINGTU_TELEOP_MAX_YAW_RATE");
   applyEnvDouble(cfg.teleop_min_motion_speed_mps, "LINGTU_TELEOP_MIN_MOTION_SPEED_MPS");
-  applyEnvDouble(cfg.teleop_obstacle_height_min_m, "LINGTU_TELEOP_OBSTACLE_HEIGHT_MIN_M");
-  applyEnvDouble(cfg.teleop_obstacle_height_max_m, "LINGTU_TELEOP_OBSTACLE_HEIGHT_MAX_M");
   applyEnvDouble(cfg.teleop_obstacle_margin_m, "LINGTU_TELEOP_OBSTACLE_MARGIN_M");
   applyEnvDouble(cfg.teleop_traversability_hard_cost, "LINGTU_TELEOP_TRAVERSABILITY_HARD_COST");
   applyEnvDouble(cfg.teleop_traversability_soft_cost, "LINGTU_TELEOP_TRAVERSABILITY_SOFT_COST");
@@ -651,11 +694,9 @@ CliConfig parseArgs(int argc, char **argv) {
     } else if (arg == "--control-loop-p95-utilization-limit") {
       cfg.control_loop_p95_utilization_limit = parseDouble(next(), arg.c_str());
     } else if (arg == "--max-speed-mps") {
-      cfg.nav_max_speed_mps = parseDouble(next(), arg.c_str());
-      cfg.path_follower_max_speed_mps = cfg.nav_max_speed_mps;
+      cfg.path_follower_max_speed_mps = parseMotionLimit(next(), arg.c_str());
     } else if (arg == "--max-accel-mps2") {
-      cfg.nav_max_accel_mps2 = parseDouble(next(), arg.c_str());
-      cfg.path_follower_max_accel_mps2 = cfg.nav_max_accel_mps2;
+      cfg.path_follower_max_accel_mps2 = parseMotionLimit(next(), arg.c_str());
     } else if (arg == "--corridor-lookahead-m") {
       cfg.corridor_lookahead_m = parseDouble(next(), arg.c_str());
     } else if (arg == "--segment-max-distance-m") {
@@ -712,6 +753,7 @@ CliConfig parseArgs(int argc, char **argv) {
       cfg.local_map_debug_point_limit = parseSize(next(), arg.c_str());
     } else if (arg == "--obstacle-voxel-size-m") {
       cfg.obstacle_voxel_size_m = parseDouble(next(), arg.c_str());
+      explicit_obstacle_voxel_size = true;
     } else if (arg == "--live-obstacle-decay-s") {
       cfg.live_obstacle_decay_s = parseDouble(next(), arg.c_str());
     } else if (arg == "--live-obstacle-inflation-radius-m") {
@@ -764,14 +806,14 @@ CliConfig parseArgs(int argc, char **argv) {
       cfg.cloud_pose_max_gap_s = parseDouble(next(), arg.c_str());
     } else if (arg == "--input-future-tolerance-s") {
       cfg.input_future_tolerance_s = parseDouble(next(), arg.c_str());
-    } else if (arg == "--input-recovery-frames") {
-      cfg.input_recovery_frames = parseSize(next(), arg.c_str());
     } else if (arg == "--traversability-hard-cost") {
       cfg.traversability_hard_cost = parseDouble(next(), arg.c_str());
     } else if (arg == "--traversability-soft-cost") {
       cfg.traversability_soft_cost = parseDouble(next(), arg.c_str());
     } else if (arg == "--traversability-weight") {
       cfg.traversability_weight = parseDouble(next(), arg.c_str());
+    } else if (arg == "--local-planner-obstacle-height-min-m") {
+      cfg.local_planner_obstacle_height_min_m = parseDouble(next(), arg.c_str());
     } else if (arg == "--local-planner-obstacle-height-max-m") {
       cfg.local_planner_obstacle_height_max_m = parseDouble(next(), arg.c_str());
     } else if (isGeometryOption(arg)) {
@@ -905,7 +947,7 @@ CliConfig parseArgs(int argc, char **argv) {
           "[--terrain-map-max-age-s S] [--traversability-hard-cost C] "
           "[--input-future-tolerance-s S] "
           "[--traversability-soft-cost C] [--traversability-weight W] "
-          "[--local-planner-obstacle-height-max-m M] "
+          "[--local-planner-obstacle-height-min-m M] [--local-planner-obstacle-height-max-m M] "
           "[--vehicle-length-m M] [--vehicle-width-m M] [--sensor-offset-x-m M] "
           "[--sensor-offset-y-m M] [--sensor-offset-z-m M] "
           "[--teleop-slow-distance-m M] [--teleop-stop-distance-m M] "
@@ -972,12 +1014,25 @@ CliConfig parseArgs(int argc, char **argv) {
     throw std::runtime_error(
         "path library is required; pass --path-library or set LINGTU_LOCAL_PLANNER_PATHS");
   }
+  if (!explicit_obstacle_voxel_size &&
+      cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan) {
+    cfg.obstacle_voxel_size_m = ::lingtu::settings::local::native_nav::scan_motion_voxel_size_m;
+    applyEnvDouble(cfg.obstacle_voxel_size_m, "LINGTU_NAV_SCAN_MOTION_VOXEL_SIZE_M");
+  }
+  if (cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu) {
+    const auto &cmu = cfg.cmu_planner;
+    for (const double value : {cmu.pathScale, cmu.minPathScale, cmu.pathScaleStep,
+                               cmu.minPathRange, cmu.pathRangeStep}) {
+      if (!std::isfinite(value) || value <= 0.0) {
+        throw std::runtime_error("CMU path scales, ranges, and steps must be finite and positive");
+      }
+    }
+  }
   validateVelocitySmootherConfig(cfg);
   if (!std::isfinite(cfg.tick_hz) ||
       !std::isfinite(cfg.control_loop_deadline_miss_ratio_limit) ||
       !std::isfinite(cfg.control_loop_p95_utilization_limit) ||
-      !std::isfinite(cfg.nav_max_speed_mps) ||
-      !std::isfinite(cfg.nav_max_accel_mps2) || !std::isfinite(cfg.waypoint_reached_m) ||
+      !std::isfinite(cfg.waypoint_reached_m) ||
       !std::isfinite(cfg.goal_reached_m) || !std::isfinite(cfg.goal_height_tolerance_m) ||
       !std::isfinite(cfg.path_follower_goal_tolerance_m) ||
       !std::isfinite(cfg.path_follower_lookahead_m) ||
@@ -1019,6 +1074,7 @@ CliConfig parseArgs(int argc, char **argv) {
     throw std::runtime_error(
         "rolling segment policy is invalid: distance must be within [0.1, 100] m, waypoints "
         "within [2, 4096], grid cells within [1, 1048576], map age within [0.01, 10] s, "
+        "future tolerance within [0, 5] s, "
         "and risk thresholds within [0, 100] with stop >= resume");
   }
   if (cfg.driver_control_max_age_s <= 0.0) {
@@ -1039,8 +1095,6 @@ CliConfig parseArgs(int argc, char **argv) {
     throw std::runtime_error(
         "stop confirmation timeout must be finite and within [0.5, 30] seconds");
   }
-  cfg.nav_max_speed_mps = std::max(0.0, cfg.nav_max_speed_mps);
-  cfg.nav_max_accel_mps2 = std::max(0.0, cfg.nav_max_accel_mps2);
   cfg.waypoint_reached_m = std::max(0.01, cfg.waypoint_reached_m);
   cfg.goal_reached_m = std::max(0.01, cfg.goal_reached_m);
   if (cfg.goal_height_tolerance_m <= 0.0) {
@@ -1113,11 +1167,16 @@ CliConfig parseArgs(int argc, char **argv) {
   cfg.cloud_max_age_s = std::max(0.0, cfg.cloud_max_age_s);
   cfg.cloud_pose_max_gap_s = std::max(0.0, cfg.cloud_pose_max_gap_s);
   cfg.input_future_tolerance_s = std::max(0.0, cfg.input_future_tolerance_s);
-  cfg.input_recovery_frames = std::max<std::size_t>(1, cfg.input_recovery_frames);
   cfg.traversability_hard_cost = std::max(0.0, cfg.traversability_hard_cost);
   cfg.traversability_soft_cost = std::max(0.0, cfg.traversability_soft_cost);
   cfg.traversability_weight = std::max(0.0, cfg.traversability_weight);
-  cfg.local_planner_obstacle_height_max_m = std::max(0.2, cfg.local_planner_obstacle_height_max_m);
+  if (!std::isfinite(cfg.local_planner_obstacle_height_min_m) ||
+      cfg.local_planner_obstacle_height_min_m < 0.0) {
+    throw std::runtime_error("local planner obstacle height minimum must be finite and non-negative");
+  }
+  if (cfg.local_planner_obstacle_height_max_m < cfg.local_planner_obstacle_height_min_m) {
+    throw std::runtime_error("local planner obstacle height maximum must be at least the minimum");
+  }
   cfg.local_planner_threads = std::clamp<std::size_t>(cfg.local_planner_threads, 1, 4);
   cfg.local_planner_debug_candidate_limit = std::min<std::size_t>(
       cfg.local_planner_debug_candidate_limit, static_cast<std::size_t>(nav_kernel::kRotDirs));
@@ -1136,9 +1195,6 @@ CliConfig parseArgs(int argc, char **argv) {
   cfg.teleop_max_speed_mps = std::max(0.0, cfg.teleop_max_speed_mps);
   cfg.teleop_max_yaw_rate = std::max(0.0, cfg.teleop_max_yaw_rate);
   cfg.teleop_min_motion_speed_mps = std::max(0.0, cfg.teleop_min_motion_speed_mps);
-  cfg.teleop_obstacle_height_min_m = std::max(0.0, cfg.teleop_obstacle_height_min_m);
-  cfg.teleop_obstacle_height_max_m =
-      std::max(cfg.teleop_obstacle_height_min_m, cfg.teleop_obstacle_height_max_m);
   cfg.teleop_obstacle_margin_m = std::max(0.0, cfg.teleop_obstacle_margin_m);
   cfg.teleop_traversability_hard_cost = std::max(0.0, cfg.teleop_traversability_hard_cost);
   cfg.teleop_traversability_soft_cost = std::max(0.0, cfg.teleop_traversability_soft_cost);
@@ -1200,7 +1256,7 @@ CliConfig parseArgs(int argc, char **argv) {
   if (cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan) {
     cfg.use_traversability_cost = false;
     // Global XYZ search checks corridor width. SCAN and final command checking
-    // retain both offset cylinders and the actual heading/turning sweep.
+    // use the configured Body and heading/turning sweep.
     // Adding the offset here would require turning room along straight routes.
     octo.robot_radius = std::max(octo.robot_radius,
         cfg.collision_cylinder_radius_m);

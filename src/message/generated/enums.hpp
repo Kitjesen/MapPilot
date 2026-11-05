@@ -92,6 +92,7 @@ enum class NavigationCommandKind : std::int32_t {
   ResumeAutonomy = 7,
   TaskPause = 8,
   TaskResume = 9,
+  TaskSpeedLimit = 10,
 };
 enum class OperatorMotionAction : std::int32_t {
   Claim = 1,

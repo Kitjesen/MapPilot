@@ -58,8 +58,9 @@ void DecisionReport() {
   const auto r = cleanStaticMap(f.options);
   Require(r.success && !r.applied && !r.dry_run, "preview should write comparison outputs only");
   Require(r.source_points == 6 && r.kept_points == 5 && r.removed_points == 1, "wrong point split");
-  Require(r.kept_ground_points == 0 && r.kept_multi_frame_points == 1 &&
-      r.kept_hit_support_points == 1 && r.kept_without_evidence_points == 1 && r.kept_unconfirmed_points == 2,
+  Require(r.kept_uncontradicted_points == 5 && r.kept_supported_surface_points == 0 &&
+      r.kept_uncontradicted_points + r.kept_supported_surface_points == r.kept_points &&
+      r.free_space_candidate_points == r.removed_points + r.kept_supported_surface_points,
       "decision counts must partition the kept points");
   Require(r.patch_count == 5 && r.unmatched_patch_count == 1, "missing trajectory coverage report");
   Require(Read(f.root / "map.pcd") == original, "preview changed source");
@@ -77,7 +78,8 @@ void DryRun() {
   Require(r.success && r.dry_run && !r.applied && r.removed_points == 1, "dry-run analysis failed");
   Require(r.clean_pcd.empty() && r.removed_pcd.empty() && r.backup_pcd.empty(), "dry-run claims artifacts");
   Require(!fs::exists(f.root / "preview") && !fs::exists(f.root / "map.removed.pcd") &&
-      !fs::exists(f.root / "map.pcd.preclean"), "dry-run wrote files or directories");
+      !fs::exists(f.root / "map.before_clean.pcd") && !fs::exists(f.root / "map.pcd.preclean"),
+      "dry-run wrote files or directories");
   Require(Read(f.root / "map.pcd") == original, "dry-run changed source");
   f.options.apply_to_map = true;
   r = cleanStaticMap(f.options);
@@ -92,20 +94,36 @@ void EmptyApply() {
   const auto r = cleanStaticMap(f.options);
   Require(!r.success && r.reason_code == "empty_clean_map" && !r.applied, "empty result was applied");
   Require(r.removed_points == 1 && r.kept_points == 0, "rejected apply lost analysis counts");
-  Require(Read(f.root / "map.pcd") == original && !fs::exists(f.root / "map.pcd.preclean") &&
+  Require(Read(f.root / "map.pcd") == original && !fs::exists(f.root / "map.before_clean.pcd") &&
+      !fs::exists(f.root / "map.pcd.preclean") &&
       !fs::exists(f.root / "map.clean.pcd"), "empty apply changed artifacts");
 }
 
 void RepeatApply() {
-  Fixture f;
-  const auto original = Read(f.root / "map.pcd");
-  f.options.apply_to_map = true;
-  f.options.overwrite = true;
-  const auto first = cleanStaticMap(f.options);
-  Require(first.success && first.applied && readPcd(f.root / "map.pcd").size() == 5, "first apply failed");
-  const auto second = cleanStaticMap(f.options);
-  Require(second.success && second.applied, "repeated apply failed");
-  Require(Read(f.root / "map.pcd.preclean") == original, "repeated apply replaced the original backup");
+  for (const bool legacy : {false, true}) {
+    Fixture f;
+    const auto original = Read(f.root / "map.pcd");
+    const auto canonical_backup = f.root / "map.before_clean.pcd";
+    const auto legacy_backup = f.root / "map.pcd.preclean";
+    f.options.apply_to_map = true;
+    f.options.overwrite = true;
+    const auto first = cleanStaticMap(f.options);
+    Require(first.success && first.applied && readPcd(f.root / "map.pcd").size() == 5,
+        "first apply failed");
+    Require(first.backup_pcd == canonical_backup && Read(canonical_backup) == original &&
+        !fs::exists(legacy_backup), "first apply did not create the canonical backup");
+    if (legacy) fs::rename(canonical_backup, legacy_backup);
+    else writePcd(legacy_backup, {{9, 9, 9}});
+    const auto legacy_contents = Read(legacy_backup);
+    const auto second = cleanStaticMap(f.options);
+    const auto expected_backup = legacy ? legacy_backup : canonical_backup;
+    Require(second.success && second.applied && second.backup_pcd == expected_backup,
+        "repeated apply selected the wrong backup");
+    Require(Read(expected_backup) == original && Read(legacy_backup) == legacy_contents,
+        "repeated apply replaced an existing backup");
+    Require(!legacy || !fs::exists(canonical_backup),
+        "legacy re-cleaning backed up the already cleaned map");
+  }
 }
 
 void OutputAliases() {
@@ -113,11 +131,18 @@ void OutputAliases() {
   f.options.overwrite = true;
   const auto original = Read(f.root / "map.pcd");
   for (const auto& path : {f.root / "map.pcd", f.root / "patches/../map.pcd",
-      f.root / "poses.txt", f.root / "patches/a.pcd", f.root / "map.pcd.preclean",
+      f.root / "poses.txt", f.root / "patches/a.pcd", f.root / "map.before_clean.pcd",
+      f.root / "map.pcd.preclean",
       f.root / "map.pcd.tmpclean", f.root / "map.removed.pcd"}) {
     f.options.output_clean_pcd = path;
     const auto r = cleanStaticMap(f.options);
     Require(!r.success && r.reason_code == "bad_output_path", "unsafe output alias accepted");
+  }
+  f.options.output_clean_pcd.clear();
+  for (const auto* filename : {"map.before_clean.pcd", "map.pcd.preclean"}) {
+    f.options.output_removed_pcd = f.root / filename;
+    const auto r = cleanStaticMap(f.options);
+    Require(!r.success && r.reason_code == "bad_output_path", "removed output overwrote backup");
   }
   Require(Read(f.root / "map.pcd") == original, "output alias damaged source");
 }
@@ -129,7 +154,8 @@ void TruncatedSource() {
   f.options.apply_to_map = true;
   const auto r = cleanStaticMap(f.options);
   Require(!r.success && r.message.find("truncated PCD") != std::string::npos, "partial input accepted");
-  Require(Read(f.root / "map.pcd") == original && !fs::exists(f.root / "map.pcd.preclean"),
+  Require(Read(f.root / "map.pcd") == original && !fs::exists(f.root / "map.before_clean.pcd") &&
+      !fs::exists(f.root / "map.pcd.preclean"),
       "truncated input was applied");
   std::ofstream(f.root / "map.pcd")
       << "VERSION 0.7\nFIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\n"
@@ -137,7 +163,7 @@ void TruncatedSource() {
   const auto ascii = Read(f.root / "map.pcd");
   const auto ascii_result = cleanStaticMap(f.options);
   Require(!ascii_result.success && Read(f.root / "map.pcd") == ascii &&
-              !fs::exists(f.root / "map.pcd.preclean"),
+              !fs::exists(f.root / "map.before_clean.pcd") && !fs::exists(f.root / "map.pcd.preclean"),
           "truncated ASCII source was applied");
 }
 
@@ -173,11 +199,51 @@ void VisibilityRules() {
   for (int i = 0; i < 3; ++i) new_object.observe({{4, 0, 0}}, {});
   new_object.observe({{2, 0, 0}}, {});
   Require(!new_object.contradicted(0), "earlier free space deleted a later object");
+  for (int frame=0;frame<3;++frame) new_object.observe({{4,0,0}},{});
+  Require(new_object.contradicted(0), "newly observed object could not accumulate later free evidence");
+
+  VisibilityEvidence partial(map, options);
+  partial.observe({map.front()}, {});
+  const PointXYZI above{4, .08F, 0}, below{4, -.08F, 0};
+  std::vector<PointXYZI> repeated(128, above);
+  for (int frame = 0; frame < 3; ++frame) partial.observe(repeated, {});
+  Require(!partial.contradicted(0), "repeated partial rays counted as complete coverage");
+  repeated.assign(128, below);
+  for (int frame = 0; frame < 3; ++frame) partial.observe(repeated, {});
+  Require(!partial.contradicted(0), "probe coverage leaked across frames");
+  repeated.insert(repeated.end(), 128, above);
+  VisibilityEvidence distinct(map, options);
+  distinct.observe({map.front()}, {});
+  for (int frame = 0; frame < 3; ++frame) {
+    partial.observe(repeated, {});
+    distinct.observe({above, below}, {});
+    Require(partial.contradicted(0) == distinct.contradicted(0),
+        "duplicate saturated rays changed the per-frame vote");
+  }
+  Require(partial.contradicted(0), "complementary rays did not complete probe coverage");
+  repeated.push_back(map.front());
+  partial.observe(repeated, {});
+  Require(!partial.contradicted(0), "saturated free coverage overrode a same-frame hit");
+  repeated.pop_back();
+  for (int frame=0;frame<3;++frame) {
+    partial.observe(repeated,{});
+    Require(partial.contradicted(0)==(frame==2),
+        "reconfirmed point did not restart free-frame accumulation");
+  }
 }
 
 void EndpointConfirmationRadius() {
   StaticCleanerOptions options;
   options.sensor_origin = std::array<float, 3>{0, 0, 0};
+  for (const float x : {-2.201F, -1.999F, 1.999F, 2.201F}) {
+    const PointXYZI point{x, .199F, -.201F};
+    const std::vector<PointXYZI> source{point};
+    VisibilityEvidence boundary(source, options);
+    boundary.observe({{x+.03F, point.y+.03F, point.z}}, {});
+    for (int frame=0;frame<3;++frame)
+      boundary.observe({{2*point.x, 2*point.y, 2*point.z}}, {});
+    Require(boundary.contradicted(0), "endpoint radius missed a point across signed cell boundaries");
+  }
   const std::vector<PointXYZI> map{{2, 0, 0}, {2, .06F, 0}};
   VisibilityEvidence evidence(map, options);
   evidence.observe(map, {});
@@ -199,7 +265,7 @@ void EndpointConfirmationRadius() {
   const auto result = cleanStaticMap(f.options);
   Require(result.success && result.free_space_candidate_points == 1,
       "boundary fixture did not establish a point-level contradiction");
-  Require(result.removed_points == 1 && result.kept_without_evidence_points == 0,
+  Require(result.removed_points == 1 && result.kept_uncontradicted_points == 0,
       "coarse voxel lookup discarded confirmed cross-voxel free evidence");
 
   // A coarse hit in the source voxel is not a point-level confirmation.
@@ -207,11 +273,10 @@ void EndpointConfirmationRadius() {
   writePcd(f.root / "patches/a.pcd", {{1.90F, .1F, .1F}});
   const auto unseen = cleanStaticMap(f.options);
   Require(unseen.success && unseen.free_space_candidate_points == 0 &&
-      unseen.removed_points == 0 && unseen.kept_unconfirmed_points == 1,
+      unseen.removed_points == 0 && unseen.kept_uncontradicted_points == 1,
       "free rays deleted an unconfirmed point with coarse voxel statistics");
 
-  // Point-level contradictions still pass through stable surface protection
-  // when the exact source voxel has no hit statistics.
+  // Cross-voxel point confirmation still passes through surface protection.
   const PointXYZI center{1.999F, .1F, .1F};
   std::vector<PointXYZI> supported{center};
   for (int u = -1; u <= 1; ++u)
@@ -263,7 +328,6 @@ void CalibratedOrigin() {
 
 void GroundProtection() {
   Fixture f;
-  f.options.ground_z_threshold = 100.F;
   const PointXYZI ground{1, 0, -.6F};
   writePcd(f.root / "map.pcd", {ground});
   writePcd(f.root / "patches/a.pcd", {ground});
@@ -272,7 +336,7 @@ void GroundProtection() {
     writePcd(f.root / "patches" / name, {{2, 0, -1.2F}});
   f.options.dry_run = true;
   const auto r = cleanStaticMap(f.options);
-  Require(r.success && r.free_space_candidate_points == 1 && r.kept_ground_points == 0 &&
+  Require(r.success && r.free_space_candidate_points == 1 && r.kept_supported_surface_points == 0 &&
       r.removed_points == 1, "isolated low ghost retained height-only ground immunity");
 }
 
@@ -289,10 +353,8 @@ void MixedVoxelGroundProtection() {
   const auto r = cleanStaticMap(f.options);
   Require(r.success && r.source_points == 2 && r.free_space_candidate_points == 2,
       "mixed-voxel fixture did not establish two contradicted points");
-  Require(r.kept_points == 0 && r.removed_points == 2 && r.kept_ground_points == 0,
+  Require(r.kept_points == 0 && r.removed_points == 2 && r.kept_supported_surface_points == 0,
       "two isolated low ghosts retained height-only ground immunity");
-  Require(r.score_candidate_points == 2 && r.dynamic_candidate_voxels == 1,
-      "instance and voxel reports disagree with point-level ground decisions");
 }
 
 void PoseOrder() {
@@ -342,6 +404,30 @@ void SurfaceProtection() {
   }
 }
 
+void BatchSurfaceQueries() {
+  StaticCleanerOptions options;
+  options.sensor_origin = std::array<float, 3>{0, 0, 0};
+  std::vector<PointXYZI> map{{2,0,-.6F},{2,0,-.3F},{2.01F,0,-.6F},{2.01F,0,-.3F}};
+  for (float height : {-.6F,-.3F})
+    for (int x=-1;x<=1;++x)
+      for (int y=-1;y<=1;++y)
+        if (x || y) map.push_back({2+.3F*x,.3F*y,height});
+  VisibilityEvidence evidence(map,options);
+  evidence.observe(map,{});
+  evidence.observe(map,{});
+  for (int frame=0;frame<3;++frame)
+    evidence.observe({{4,0,-1.2F},{4,0,-.6F}},{});
+  const auto supported=evidence.supportedSurfaces();
+  Require(supported.size()==map.size() && supported[0] && supported[1],
+      "batch surface query lost a supported height layer");
+  for (std::size_t index=0;index<map.size();++index)
+    Require(supported[index]==(evidence.contradicted(index) && evidence.onSupportedSurface(index)),
+        "batch surface results differ from source-order point queries");
+  evidence.observe({map[0],map[2]},{});
+  const auto updated=evidence.supportedSurfaces();
+  Require(!updated[0] && updated[1], "cached neighbor buckets retained stale point evidence");
+}
+
 void MissingOrigin() {
   Fixture f;
   std::ofstream(f.root / "scan_origin.txt") << "";
@@ -349,6 +435,10 @@ void MissingOrigin() {
   f.options.sensor_origin = std::array<float, 3>{0, 0, 0};
   f.options.dry_run = true;
   Require(cleanStaticMap(f.options).success, "explicit origin cannot process older maps");
+  for (const auto* name : {"a.pcd", "b.pcd", "c.pcd", "d.pcd", "e.pcd"})
+    writePcd(f.root / "patches" / name, {});
+  Require(cleanStaticMap(f.options).reason_code == "no_matched_patch_evidence",
+      "matched empty scans were accepted after report evidence removal");
 }
 
 void ExpiredSurfaceProtection() {
@@ -409,7 +499,7 @@ int main(int argc, char** argv) {
     else if (name == "mixed_ground") MixedVoxelGroundProtection();
     else if (name == "pose_order") PoseOrder();
     else if (name == "missing_origin") MissingOrigin();
-    else if (name == "surface") SurfaceProtection();
+    else if (name == "surface") { SurfaceProtection(); BatchSurfaceQueries(); }
     else if (name == "expired_surface") ExpiredSurfaceProtection();
     else throw std::runtime_error("unknown test case");
     return 0;

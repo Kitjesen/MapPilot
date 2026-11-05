@@ -302,7 +302,8 @@ void MotionStopBarrier::replaceConfirmation() const {
 
 std::optional<MotionStopResult> MotionStopBarrier::poll() const {
   if (!pending_confirmation_) return std::nullopt;
-  const auto state = actions_.confirm_zero(pending_confirmation_->output_sequence);
+  const auto state = actions_.confirm_zero(pending_confirmation_->output_sequence,
+                                          pending_confirmation_->evidence_policy);
   if (state == StopConfirmationState::Pending) {
     return MotionStopResult{false, "stop_confirmation_pending", true};
   }
@@ -354,7 +355,7 @@ MotionStopResult MotionStopBarrier::confirmTransition(
     const std::string &key, const std::string &confirmed_reason,
     const std::string &failure_suffix, bool fail_closed,
     std::function<MotionStopResult()> commit, std::optional<std::uint64_t> sequence,
-    bool retain_completion) const {
+    bool retain_completion, std::optional<StopConfirmationEvidencePolicy> evidence_policy) const {
   if (auto replay = replayConfirmation(key)) return *replay;
   replaceConfirmation();
   if (!publish_cmd_vel_) {
@@ -368,7 +369,7 @@ MotionStopResult MotionStopBarrier::confirmTransition(
   }
   pending_confirmation_ = PendingConfirmation{key, output_sequence, confirmed_reason,
                                              failure_suffix, fail_closed, retain_completion,
-                                             std::move(commit)};
+                                             std::move(commit), evidence_policy};
   auto result = *poll();
   if (!result.pending) completed_confirmation_.reset();
   return result;
@@ -376,13 +377,14 @@ MotionStopResult MotionStopBarrier::confirmTransition(
 
 MotionStopResult MotionStopBarrier::confirmAndCommitTerminal(
     MotionStopTerminalCommit commit_terminal, const std::string &confirmed_reason,
-    const std::string &failure_suffix, bool fail_closed, bool retain_completion) const {
+    const std::string &failure_suffix, bool fail_closed, bool retain_completion,
+    std::optional<StopConfirmationEvidencePolicy> evidence_policy) const {
   return confirmTransition(confirmed_reason + ":" + failure_suffix, confirmed_reason,
                            failure_suffix, fail_closed,
                            [commit_terminal = std::move(commit_terminal), confirmed_reason] {
                              if (commit_terminal) commit_terminal();
                              return MotionStopResult{true, confirmed_reason};
-                           }, std::nullopt, retain_completion);
+                           }, std::nullopt, retain_completion, evidence_policy);
 }
 
 MotionStopResult MotionStopBarrier::confirmLastZero(const std::string &confirmed_reason,
@@ -473,7 +475,8 @@ MotionStopBarrier::confirmGoalReplanStop(const std::string &reason) const {
 
 MotionStopResult
 MotionStopBarrier::commitGoalTerminalAfterStop(const std::string &reason,
-                                                   MotionStopTerminalCommit commit_terminal) const {
+    MotionStopTerminalCommit commit_terminal,
+    std::optional<StopConfirmationEvidencePolicy> evidence_policy) const {
   if (auto replay = replayConfirmation(reason + ":goal_terminal_pending")) return *replay;
   replaceConfirmation();
   actions_.stop_control();
@@ -481,7 +484,7 @@ MotionStopBarrier::commitGoalTerminalAfterStop(const std::string &reason,
     return failClosed({false, "zero_publish_failed_goal_terminal_pending"});
   }
   return confirmAndCommitTerminal(std::move(commit_terminal), reason, "goal_terminal_pending",
-                                  true);
+                                  true, true, evidence_policy);
 }
 
 MotionStopResult MotionStopBarrier::stop() const {

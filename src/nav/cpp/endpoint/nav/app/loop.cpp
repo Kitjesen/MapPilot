@@ -41,7 +41,6 @@
 #include "app/state.hpp"
 #include "app/semantic/view_query.hpp"
 #include "app/time.hpp"
-#include "app/stair_profile.hpp"
 #include "safety/command.hpp"
 #include "safety/geofence.hpp"
 #include "safety/stop.hpp"
@@ -296,10 +295,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     pending_preview.reset();
     plan_preview.cancel();
   };
-  const auto observed_space_queries = [&]() {
-    return inputs.observedSpaceQueries(steadySeconds(),
-                                       cfg.local_collision_max_age_s);
-  };
   auto submit_goal = [&](const GoalSample &goal, const std::string &task_id,
                          const std::string &request_id,
                          GoalPlanOrigin origin) -> std::pair<bool, std::string> {
@@ -328,7 +323,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     admission.autonomy_request_not_before_s = autonomy_request_not_before_s;
     if (map_body) {
       admission.map_position = map_body->position;
-      admission.map_yaw_rad = map_body->yaw;
     }
     admission.odometry_ready = odom_body.has_value();
     admission.planner_map_configured = !cfg.map_path.empty();
@@ -338,7 +332,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     admission.frame_epoch = frame_epoch;
     admission.rolling_segment_active = rolling_segment.snapshot().active;
     admission.planner_options = cfg.octoplanner_options;
-    std::tie(admission.observed_free,admission.observed_occupied) = observed_space_queries();
     const auto submission =
         navigation_runtime_controller.submitGoal(request, admission, steadySeconds());
     const auto &result = submission.plan_result;
@@ -381,21 +374,11 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     context.autonomy_mode = cfg.control_mode == ControlMode::Autonomy;
     context.control_mode_name = controlModeName(cfg.control_mode);
     context.driver_control_blocker = inputs.driverBlocker(SteadyClock::now());
-    if (executor.hasStairTransition() && state.motion_profile) {
-      const auto& message = *state.motion_profile;
-      const StairProfileState profile{message.stamp_s, state.motion_profile_receive_s,
-          message.task_id, message.requirement, message.phase, message.requested_profile,
-          message.active_profile, message.reason};
-      context.profile_transition_pending = expectedProfileTransition(
-          profile, goal_plan.snapshot().active_task_id, state.driver_control_reason,
-          nowSeconds(), steadySeconds());
-    }
     context.autonomy_request_not_before_s = autonomy_request_not_before_s;
     context.input_ready = input_gate_state.ready;
     context.input_gate_reason = input_gate_state.reason;
     if (map_body) {
       context.map_position = map_body->position;
-      context.map_yaw_rad = map_body->yaw;
     }
     context.odometry_ready = odom_body.has_value();
     context.planner_map_configured = !cfg.map_path.empty();
@@ -408,7 +391,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     context.frame_epoch = frame_epoch;
     context.rolling_segment_active = rolling_segment.snapshot().active;
     context.planner_options = cfg.octoplanner_options;
-    std::tie(context.observed_free,context.observed_occupied) = observed_space_queries();
     return context;
   };
   std::optional<CommandIngressRequest> deferred_control_ack;
@@ -1102,6 +1084,9 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
               case CommandKind::TaskResume:
                 ingress_kind = GoalTerminalIngressKind::kTypedTaskResume;
                 break;
+              case CommandKind::TaskSpeedLimit:
+                ingress_kind = GoalTerminalIngressKind::kTypedTaskSpeedLimit;
+                break;
               case CommandKind::Stop:
                 ingress_kind = payload.reason == "client_clock_sync"
                                    ? GoalTerminalIngressKind::kTypedClientClockSync
@@ -1164,6 +1149,13 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
                                          payload.reason);
             } else if (kind == CommandKind::TaskResume) {
               result = handle_task_resume(ingress_request.task_id, ingress_request.request_id, sample.goal.stamp_s);
+            } else if (kind == CommandKind::TaskSpeedLimit) {
+              result = goal_plan.setTaskSpeedLimit(ingress_request.task_id, payload.goal[7],
+                                                   cfg.path_follower_max_speed_mps);
+              if (result.first) {
+                executor.setSpeedLimit(payload.goal[7]);
+                nav_status.requestImmediate();
+              }
             } else if (kind == CommandKind::Stop) {
               result = payload.reason == "client_clock_sync"
                            ? std::pair<bool, std::string>{true, "clock_synchronized"}
@@ -1250,13 +1242,8 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       context.goal = goal;
       context.frame_epoch = frame_epoch;
       context.request.start = {start.x, start.y, start.z};
-      if (cfg.global_planner == GlobalPlannerBackend::OctoPlanner3D) {
-        context.request.body = executor.body();
-      }
-      context.request.start.yaw = map_body ? std::optional<double>{map_body->yaw} : std::nullopt;
       context.request.goal = {goal.x, goal.y, goal.z};
       context.request.options = cfg.octoplanner_options;
-      std::tie(context.request.observed_free,context.request.observed_occupied) = observed_space_queries();
       if (request.acceptance_radius_m > 0.0) {
         context.request.options.terminal_goal_xy_tolerance_m = std::min(
             context.request.options.terminal_goal_xy_tolerance_m, request.acceptance_radius_m);
@@ -1417,10 +1404,9 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     // navigation admission gate will hold the next motion command until the
     // required inputs recover; a temporary input gap must not rewrite the
     // inspection task state.
-    const bool profile_transition = ctx.maintain_stairs && ctx.maintain_stairs();
     const std::string driver_blocker = inputs.driverBlocker(SteadyClock::now());
     const bool driver_authority_now = driver_blocker.empty();
-    if (driver_authority_previous && !driver_authority_now && !profile_transition) {
+    if (driver_authority_previous && !driver_authority_now) {
       (void)goal_replan_runtime.interrupt(
           GoalReplanRuntimeInterruption::kDriverAuthorityLost, steadySeconds());
       if (!motion_stop.holdEndpointMotion("driver_control_lost:" + driver_blocker)) {

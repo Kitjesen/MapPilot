@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
+from shutil import copyfile, copytree
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -264,6 +265,8 @@ def test_exact_teleop_attach_only_rejects_ambiguous_run_plan_dds_domain(
 
 def _materialized_linux_graph(tmp_path: Path) -> RuntimeGraph:
     graph = load_runtime_graph()
+    copytree(graph.root / "settings", tmp_path / "settings")
+    copyfile(graph.root / "models.yaml", tmp_path / "models.yaml")
     envs = deepcopy(graph.envs)
     processes = envs["sim"]["backends"]["mujoco"]["processes"]
     for process_name, process in processes.items():
@@ -695,7 +698,9 @@ def test_mujoco_catalog_declares_persistent_products() -> None:
         "inspection",
         "explore",
     )
-    assert backend["supported_product_variants"] == {"map": ["standard"], "nav": ["standard"]}
+    assert backend["supported_product_variants"] == {
+        "map": ["standard"], "nav": ["standard"], "tracking": ["standard"],
+    }
     assert "acceptance" not in backend
     assert "acceptance_manifests" not in backend
     assert "acceptance_runners" not in backend

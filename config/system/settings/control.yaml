@@ -1,0 +1,38 @@
+# Task commands and the final checked velocity output; teleop input is separate.
+# Message types and QoS are defined in src/message/topics/navigation.yaml.
+topics:
+  - /nav/command/request
+  - /nav/command/ack
+  - /nav/state
+  - /nav/cmd_vel
+native_nav:
+  tick_hz: 20.0  # SCAN Products override this with their required 100 Hz cadence.
+  publish_cmd_vel: true
+  status_s: 5.0
+  stop_confirmation_timeout_s: 4.0
+  control_loop_deadline_miss_ratio_limit: 0.05
+  control_loop_p95_utilization_limit: 0.90
+
+  # Freshness requirements for the native safety gate.
+  localization_health_max_age_s: 0.5
+  driver_control_max_age_s: 0.35
+  odom_max_age_s: 0.25
+  tf_max_age_s: 0.25
+  cloud_max_age_s: 0.35
+  cloud_pose_max_gap_s: 0.10
+  input_future_tolerance_s: 0.05
+
+  smoothing: false  # Planned trajectories use the selected follower's command shaping.
+  smoother_feedback_mode: open
+  smoother_target_timeout_s: 0.5
+  smoother_feedback_timeout_s: 0.25
+  smoother_max_step_s: 0.2
+  smoother_future_tolerance_s: 0.05
+  smoother_scale_velocities: false
+  smoother_x_deadband_mps: 0.0
+  smoother_y_deadband_mps: 0.0
+  smoother_yaw_deadband_rad_s: 0.0
+
+standalone:
+  native_nav:
+    local_planner: cmu

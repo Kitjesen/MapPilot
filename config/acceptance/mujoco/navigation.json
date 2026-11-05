@@ -154,7 +154,6 @@
     "cloud_max_age_s": 0.60,
     "cloud_pose_max_gap_s": 0.20,
     "input_future_tolerance_s": 0.05,
-    "input_recovery_frames": 1,
     "track_against_map_period_s": 5.0
   },
   "frame_contract": {

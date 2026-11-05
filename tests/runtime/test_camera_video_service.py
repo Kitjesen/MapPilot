@@ -9,9 +9,12 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import yaml
 
+from lingtu.assembly.config.camera import camera_environment
 from lingtu.real.systemd import _ServiceInspector
-from runtime.service_catalogs.thunder import thunder_service_spec
+from runtime.config import CameraConfig
+from runtime.service_catalogs.real import service_spec
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -44,7 +47,7 @@ class _Systemd:
 
 
 def test_video_service_catalog_and_unit_follow_product_lifecycle() -> None:
-    spec = thunder_service_spec("video")
+    spec = service_spec("video")
     assert spec is not None
     assert spec.start_units == ("lt-video.service",)
     assert spec.optional is True
@@ -161,6 +164,63 @@ def test_video_launcher_requires_explicit_target_encoder(tmp_path: Path) -> None
     assert "Set an exact target encoder" in result.stderr
 
 
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash is required")
+@pytest.mark.parametrize("video", [False, True])
+def test_yaml_settings_reach_native_launcher_arguments(tmp_path: Path, video: bool) -> None:
+    settings = yaml.safe_load(_read("config/system/settings/camera.yaml"))["camera"]
+    settings["capture"]["color_fps"] = 24
+    settings["capture"]["timeout_ms"] = 1234
+    settings["orbbec"]["frame_sync"] = True
+    settings["orbbec"]["product_id"] = "0"
+    settings["shm"]["color"] = "/fixture_color"
+    settings["video"]["fps"] = 17
+    settings["video"]["start_bitrate"] = 900000
+    settings["video"]["idle_timeout_ms"] = 0
+    environment = camera_environment(settings, CameraConfig(video_encoder="x264enc"), include_video=video)
+    recorder = tmp_path / "record-args.sh"
+    recorder.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n', encoding="utf-8", newline="\n")
+    executable = _bash_path(recorder)
+    runtime = tmp_path / "runtime-env.sh"
+    runtime.write_text("# test runtime\n", encoding="utf-8")
+    environment.update({
+        "LINGTU_CAMERA_DDS_BIN": executable,
+        "LINGTU_CAMERA_STATUS_FILE": _bash_path(tmp_path / "camera.json"),
+        "LINGTU_CAMERA_COLOR_TOPIC": "rt/test/camera/color",
+        "LINGTU_ORBBEC_CAPTURE_BIN": "/bin/true",
+        "LINGTU_VIDEO_BIN": executable,
+        "LINGTU_VIDEO_STATUS_FILE": _bash_path(tmp_path / "video.json"),
+        "LINGTU_VIDEO_RUNTIME_ENV": _bash_path(runtime),
+    })
+    launcher = _bash_path(ROOT / "scripts/deploy/thunder" / ("run_video.sh" if video else "run_camera_dds.sh"))
+    command = (
+        f"chmod +x {shlex.quote(executable)} && env "
+        + " ".join(f"{key}={shlex.quote(value)}" for key, value in environment.items())
+        + f" bash {shlex.quote(launcher)}"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", command], cwd=ROOT, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    args = result.stdout.splitlines()
+    if video:
+        assert args[args.index("--fps") + 1] == "17"
+        assert args[args.index("--start-bitrate") + 1] == "900000"
+        assert args[args.index("--idle-timeout-ms") + 1] == "0"
+        assert args[args.index("--color-shm") + 1] == "/fixture_color"
+        assert args[args.index("--stun-server") + 1] == ""
+    else:
+        assert args[args.index("--color-fps") + 1] == "24"
+        assert args[args.index("--timeout-ms") + 1] == "1234"
+        assert args[args.index("--color-topic") + 1] == "rt/test/camera/color"
+        assert "--depth-topic" not in args
+        assert "--enable-frame-sync" in args
+        assert "--no-publish-image-dds" in args
+        assert args[args.index("--product-id") + 1] == "0"
+        assert args[args.index("--sdk-config") + 1] == ""
+
+
 def test_video_readiness_requires_fresh_source_status_and_whep(
     monkeypatch,
     tmp_path: Path,
@@ -209,10 +269,10 @@ def test_video_readiness_requires_fresh_source_status_and_whep(
         return _Response()
 
     monkeypatch.setattr("urllib.request.urlopen", open_request)
-    spec = thunder_service_spec("video")
+    spec = service_spec("video")
     assert spec is not None
     local_spec = replace(spec, files=(str(status_path),))
-    monkeypatch.setattr("lingtu.real.systemd.thunder_service_spec", lambda _name: local_spec)
+    monkeypatch.setattr("lingtu.real.systemd.service_spec", lambda _name: local_spec)
 
     result = _ServiceInspector(systemd=_Systemd(), now=lambda: status_path.stat().st_mtime).status_details(
         "video",
@@ -247,7 +307,7 @@ def test_video_readiness_distinguishes_alive_from_stale_source(monkeypatch, tmp_
         ),
         encoding="utf-8",
     )
-    spec = thunder_service_spec("video")
+    spec = service_spec("video")
     assert spec is not None
     local_spec = replace(spec, files=(str(status_path),))
 

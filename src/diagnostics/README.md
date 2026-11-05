@@ -12,6 +12,7 @@ diagnostics/
   saved_map_display.py   text output for the saved-map gate
   field/
     doctor.py            current Gateway/native readiness snapshot
+    ble.py               read-only Bluetooth controller and BlueZ capability report
     dds_readiness.py     one-shot native DDS Topic liveness report
     soak.py              bounded non-motion readiness and process-resource sample
     field_check.py       one read-only Product field summary
@@ -38,6 +39,12 @@ Python diagnostics and acceptance commands run with
 `scripts/gates/field/` contains only the stable P0 Shell procedures. Static
 Runtime Graph, architecture, and Topic declaration checks stay with their
 existing development validators instead of being repeated here.
+
+`python -m diagnostics.field.ble` reports controller enumeration, Bluetooth
+service state, and per-controller LE/advertising support as JSON. Missing tools,
+insufficient permissions, and unconfirmed capability output are reported as
+unknown. Each controller's current powered state is reported independently.
+Pairing-service acceptance is tracked separately from hardware support.
 
 `runtime_contract.py` consumes message contracts, frame rules, and Product
 declarations. It is not imported by the generic runtime or message package.

@@ -1,3 +1,5 @@
+#include <lingtu/settings.hpp>
+
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -30,14 +32,14 @@ void requestStop(int) {
 }
 
 struct Options {
-  std::string source{"/lingtu_camera_color"};
-  std::string metrics_path;
+  std::string source{lingtu::settings::camera::camera::shm::color};
+  std::string metrics_path{lingtu::settings::camera::camera::video::metrics_file};
   std::string status_path;
   std::string h264_output;
   video::GstOptions gst;
-  unsigned max_age_ms{250};
-  unsigned idle_timeout_ms{5000};
-  unsigned metrics_interval_ms{1000};
+  unsigned max_age_ms{lingtu::settings::camera::camera::video::max_age_ms};
+  unsigned idle_timeout_ms{lingtu::settings::camera::camera::video::idle_timeout_ms};
+  unsigned metrics_interval_ms{lingtu::settings::camera::camera::video::metrics_interval_ms};
 };
 
 unsigned number(const std::string &text, const std::string &key) {
@@ -102,6 +104,8 @@ Options parse(int argc, char **argv) {
   }
   if (options.gst.fps > 120)
     throw std::invalid_argument("--fps must be at most 120");
+  if (options.gst.encoder_factory.empty())
+    throw std::invalid_argument("--encoder must select an installed H.264 encoder");
   if (options.gst.min_bitrate > options.gst.start_bitrate ||
       options.gst.start_bitrate > options.gst.max_bitrate) {
     throw std::invalid_argument("bitrate must satisfy min <= start <= max");
@@ -113,17 +117,17 @@ Options parse(int argc, char **argv) {
 
 void usage() {
   std::cout << "lingtu_camera_webrtc: existing color SHM -> exact H.264 encoder -> WHEP or H.264\n"
-               "  --color-shm NAME             default /lingtu_camera_color\n"
-               "  --listen URI                 default http://127.0.0.1:9090\n"
-               "  --stun-server URI            stun://host:port; default empty (LAN direct)\n"
+               "  --color-shm NAME             color shared memory name\n"
+               "  --listen URI                 configured in camera.yaml\n"
+               "  --stun-server URI            stun://host:port; empty uses a direct LAN connection\n"
                "  --output FILE|-              fixed-rate Annex-B H.264 instead of WHEP\n"
-               "  --encoder FACTORY            default nvv4l2h264enc; exact, no fallback\n"
-               "  --fps N                      maximum raw input rate, default 20\n"
-               "  --min-bitrate BPS            default 200000\n"
-               "  --start-bitrate BPS          default 1500000\n"
-               "  --max-bitrate BPS            default 4000000\n"
-               "  --max-age-ms N               reject stale camera frames, default 250\n"
-               "  --idle-timeout-ms N          H.264 input timeout; WHEP accepts 0, default 5000\n"
+               "  --encoder FACTORY            required exact H.264 encoder factory\n"
+               "  --fps N                      maximum raw input rate\n"
+               "  --min-bitrate BPS            configured in camera.yaml\n"
+               "  --start-bitrate BPS          configured in camera.yaml\n"
+               "  --max-bitrate BPS            configured in camera.yaml\n"
+               "  --max-age-ms N               reject stale camera frames\n"
+               "  --idle-timeout-ms N          H.264 input timeout; WHEP accepts 0\n"
                "  --metrics FILE               append runtime JSONL (default stderr)\n"
                "  --status-file FILE           atomic service status JSON\n"
                "  --metrics-interval-ms N      default 1000\n";

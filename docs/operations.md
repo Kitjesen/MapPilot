@@ -56,10 +56,13 @@ obstacles. It is not autonomous navigation around the room.
 ### 2. Save and inspect
 
 Stop manual input, keep the robot stationary, and use **保存地图**. Choose a
-name that does not overwrite a map needed by an active session. Wait for the
-durable save operation to reach `SUCCEEDED`, then inspect the saved map. An
-accepted save request is not completion, and saving does not activate the map.
-Do not switch modes or power off while the save is pending.
+name that does not overwrite a map needed by an active session. The default
+**保存点云后自动后台处理** first archives the point cloud, then processes it in the
+background. Clear the checkbox to defer processing until **开始处理** is clicked.
+`source_saved=true` confirms the archive; `SUCCEEDED` confirms the processed map
+was committed. An accepted request alone confirms neither. Keep the capture
+session running until the archive is confirmed; do not power off during file
+writes. Saving does not activate a map.
 
 The save transaction processes source data, builds navigation artifacts
 (including OctoMap), validates them, and commits the saved version. Dynamic
@@ -68,6 +71,12 @@ object cleanup is configured inside that transaction; there is no separate Web
 data, an unavailable tool, or a cleanup failure can leave this step skipped or
 failed even when non-required cleanup allows the save to succeed. Do not treat
 `SUCCEEDED` as proof that all dynamic objects were removed.
+
+Use **保存记录** to find previous saves after refreshing the page, inspect their
+stage/reason, download the archived PCD, or explicitly process/retry/cancel a task.
+Processing failure preserves the archive. Successful tasks also retain it;
+archives are separate from loadable maps. File names, pre-cleaning
+backups and retry retention are defined in [Map files and save tasks](operations/map-files.md).
 
 Use **查看完整地图** or **已存地图** to inspect the result. Cropping or editing a
 saved map is a separate maintenance operation and can invalidate derived
@@ -223,9 +232,9 @@ PYTHONPATH=/opt/lingtu/current/src "$LINGTU_PYTHON" -m lingtu.sdk.cli --host 127
 bash /opt/lingtu/current/scripts/lingtu stop --robot unitree/go2 --env real
 ```
 
-Confirm terminal zero output and driver acknowledgement before treating the
-robot as stopped. A `HELD` command or a successful request alone does not
-confirm physical settling. Use task pause/cancel for normal task control;
+Confirm terminal zero output and driver acknowledgement, and check the robot's
+physical motion before treating it as stopped. A `HELD` command or a successful
+request alone does not confirm physical settling. Use task pause/cancel for normal task control;
 ending a completed task does not require shutting down the whole Product.
 
 If a switch fails, inspect ProductControl's report and current status first. It
@@ -235,8 +244,9 @@ do not guess by starting individual units.
 If navigation reports `motion.permission=HELD` with
 `localization_not_tracking`, the robot is withholding autonomous commands while
 saved-map localization recovers. Local escape motion also waits for valid
-localization. Check `motion.stop_confirmation` for physical stop evidence; a
-held command alone does not prove that the robot has stopped. Inspect the
+localization. Check the current motion observation separately from
+`motion.stop_confirmation`: a confirmed stop command alone does not prove
+physical settling. Inspect the
 current task before deciding whether continuation or a new goal is needed;
 task resume does not repair missing localization. If recovery does not restore
 a valid pose, inspect `/api/v1/localization/status`, verify the active map and

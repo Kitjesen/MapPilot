@@ -24,7 +24,7 @@ def test_go2rtc_is_not_a_product_or_readiness_service() -> None:
     )
     scanned = {
         "runtime_config": _read_all(runtime_files),
-        "thunder_catalog": _read("src/runtime/service_catalogs/thunder.py"),
+        "real_catalog": _read("src/runtime/service_catalogs/real.py"),
         "robot_cli": _read("scripts/lingtu"),
     }
 

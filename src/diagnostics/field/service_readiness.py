@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect read-only Thunder service readiness evidence.
+"""Collect read-only real service readiness evidence.
 
 This script is safe to run on the robot or through SSH. It does not start,
 stop, restart, enable, or publish anything; it only reads systemd state, status
@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -26,31 +27,28 @@ from diagnostics.field.teleop_preflight import evaluate_teleop_preflight
 from lingtu.product_lock import resolve_current_run_path
 from lingtu.run_plan import RunPlan
 from runtime.config import load_config
-from runtime.service_catalogs.thunder import (
-    thunder_runtime_dds_topics,
-    thunder_runtime_native_binaries,
-    thunder_runtime_status_files,
-    thunder_runtime_units,
+from runtime.service_catalogs.real import (
+    camera_service_spec,
+    runtime_dds_topics,
+    runtime_native_binaries,
+    runtime_services,
+    runtime_status_files,
+    service_install_unit,
+    service_spec,
 )
 
-SERVICES = thunder_runtime_units()
-STATUS_FILES = thunder_runtime_status_files()
-DDS_TOPICS = thunder_runtime_dds_topics()
-NATIVE_BINARIES = thunder_runtime_native_binaries()
-
-
-NATIVE_BINARY_DEFAULTS: dict[str, str] = {name: item["path"] for name, item in NATIVE_BINARIES.items()}
-
-NATIVE_BINARY_ENV: dict[str, str] = {name: item["env"] for name, item in NATIVE_BINARIES.items()}
+SERVICE_UNITS = {name: service_install_unit(name) for name in runtime_services()}
+SERVICES = tuple(SERVICE_UNITS.values())
+STATUS_FILES = runtime_status_files()
+DDS_TOPICS = runtime_dds_topics()
 
 LIDAR_IMU_EXPECTED_PROCESS = "livox_sdk2_stream"
 LIDAR_IMU_EXPECTED_BINARY = "livox_dds"
 LIDAR_IMU_EXPECTED_SERVICE = "lidar"
 LIDAR_IMU_RAW_TOPIC = "rt/lidar/raw_frame"
 LIDAR_IMU_IMU_TOPIC = "rt/imu/raw"
-CAMERA_SERVICE_UNIT = "lt-camera.service"
+CAMERA_SERVICE_UNIT = service_install_unit("camera")
 CAMERA_STATUS_NAME = "camera"
-CAMERA_NATIVE_BINARIES = ("camera_dds", "orbbec_capture")
 CAMERA_DDS_TOPICS = ("rt/camera/info",)
 CAMERA_STATUS_FRAME_KEYS = ("color_frames", "depth_frames", "info_frames")
 CAMERA_SHM_SEQUENCE_KEYS = (
@@ -58,7 +56,7 @@ CAMERA_SHM_SEQUENCE_KEYS = (
     "depth_shm_sequence",
     "info_shm_sequence",
 )
-DRIVER_SERVICE_UNIT = "lt-driver.service"
+DRIVER_SERVICE_UNIT = service_install_unit("driver")
 DRIVER_STATUS_NAME = "driver"
 DRIVER_NATIVE_BINARY = "driver"
 DRIVER_DDS_TOPIC = "rt/nav/cmd_vel"
@@ -107,9 +105,9 @@ def _parse_systemctl_show(text: str) -> dict[str, str]:
     return parsed
 
 
-def collect_systemd() -> dict[str, Any]:
+def collect_systemd(*, services: tuple[str, ...] = SERVICES) -> dict[str, Any]:
     units: dict[str, Any] = {}
-    for unit in SERVICES:
+    for unit in services:
         show = _run(
             [
                 "systemctl",
@@ -302,6 +300,13 @@ def collect_current_run() -> dict[str, Any]:
                 "required_topics": list(run_plan.required_topics),
                 "required_capabilities": list(run_plan.required_capabilities),
                 "native_nav": run_plan.native_nav,
+                "native_process_environment": run_plan.native_process_environment,
+                "systemd_targets": {
+                    role: process.target
+                    for process in run_plan.available_processes
+                    if process.manager == "systemd"
+                    for role in (process.name, *process.provides)
+                },
                 "selected_roles": sorted({role for process in run_plan.processes for role in process.provides}),
             },
         }
@@ -309,12 +314,14 @@ def collect_current_run() -> dict[str, Any]:
     return result
 
 
-def collect_native_binaries() -> dict[str, Any]:
+def collect_native_binaries(*, environment: Mapping[str, str] | None = None) -> dict[str, Any]:
+    environment = os.environ if environment is None else environment
     binaries: dict[str, Any] = {}
     blockers: list[str] = []
-    for name, default_path in NATIVE_BINARY_DEFAULTS.items():
-        env_var = NATIVE_BINARY_ENV[name]
-        raw_path = os.environ.get(env_var, default_path)
+    camera_driver = environment.get("LINGTU_CAMERA_DRIVER", "orbbec_native")
+    for name, binary in runtime_native_binaries(camera_driver=camera_driver).items():
+        env_var = binary["env"]
+        raw_path = environment.get(env_var, binary["path"])
         path = Path(raw_path)
         exists = path.exists()
         executable = exists and os.access(path, os.X_OK)
@@ -509,24 +516,28 @@ def collect_camera_readiness(
     status_files: dict[str, Any],
     dds: dict[str, Any],
     processes: dict[str, Any],
+    camera_driver: str = "orbbec_native",
+    service_unit: str = CAMERA_SERVICE_UNIT,
 ) -> dict[str, Any]:
     """Collect camera-specific end-to-end readiness evidence."""
 
-    unit = dict(systemd.get(CAMERA_SERVICE_UNIT, {}))
+    unit = dict(systemd.get(service_unit, {}))
     binaries = dict(native_binaries.get("binaries", {}))
     status = dict(status_files.get(CAMERA_STATUS_NAME, {}))
     status_json = status.get("json", {}) if isinstance(status.get("json"), dict) else {}
     dds_camera = dict(dds.get("services", {}).get(CAMERA_STATUS_NAME, {}))
     dds_samples = dict(dds_camera.get("samples", {}))
     legacy_lines = list(processes.get("legacy_lines", []))
+    camera_spec = camera_service_spec(service_spec("camera"), camera_driver)
+    camera_binaries = tuple(name for name, _env, _path in camera_spec.binaries)
 
     blockers: list[str] = []
     if unit.get("missing"):
-        blockers.append(f"systemd_unit_missing:{CAMERA_SERVICE_UNIT}")
+        blockers.append(f"systemd_unit_missing:{service_unit}")
     elif unit.get("active_state") and unit.get("active_state") != "active":
-        blockers.append(f"systemd_unit_inactive:{CAMERA_SERVICE_UNIT}:{unit.get('active_state')}")
+        blockers.append(f"systemd_unit_inactive:{service_unit}:{unit.get('active_state')}")
 
-    for name in CAMERA_NATIVE_BINARIES:
+    for name in camera_binaries:
         item = dict(binaries.get(name, {}))
         if not item.get("executable", False):
             blockers.append(f"native_binary_missing_or_not_executable:{name}:{item.get('path', '')}")
@@ -557,14 +568,15 @@ def collect_camera_readiness(
 
     return {
         "ok": not blockers,
-        "unit": CAMERA_SERVICE_UNIT,
+        "driver": camera_driver,
+        "unit": service_unit,
         "status_file": status.get("path", STATUS_FILES.get(CAMERA_STATUS_NAME, "")),
         "native_binaries": {
             name: {
                 "path": dict(binaries.get(name, {})).get("path", ""),
                 "executable": bool(dict(binaries.get(name, {})).get("executable", False)),
             }
-            for name in CAMERA_NATIVE_BINARIES
+            for name in camera_binaries
         },
         "status_frames": {key: int(status_json.get(key, 0) or 0) for key in CAMERA_STATUS_FRAME_KEYS},
         "data_plane": status_json.get("data_plane"),
@@ -582,10 +594,11 @@ def collect_driver_readiness(
     systemd: dict[str, Any],
     native_binaries: dict[str, Any],
     status_files: dict[str, Any],
+    service_unit: str = DRIVER_SERVICE_UNIT,
 ) -> dict[str, Any]:
     """Validate the idle-safe driver boundary without requiring cmd_vel traffic."""
 
-    unit = dict(systemd.get(DRIVER_SERVICE_UNIT, {}))
+    unit = dict(systemd.get(service_unit, {}))
     binary = dict(native_binaries.get("binaries", {}).get(DRIVER_NATIVE_BINARY, {}))
     status = dict(status_files.get(DRIVER_STATUS_NAME, {}))
     payload = status.get("json", {}) if isinstance(status.get("json"), dict) else {}
@@ -595,9 +608,9 @@ def collect_driver_readiness(
     blockers: list[str] = []
 
     if unit.get("missing"):
-        blockers.append(f"systemd_unit_missing:{DRIVER_SERVICE_UNIT}")
+        blockers.append(f"systemd_unit_missing:{service_unit}")
     elif unit.get("active_state") != "active":
-        blockers.append(f"systemd_unit_inactive:{DRIVER_SERVICE_UNIT}:{unit.get('active_state', 'unknown')}")
+        blockers.append(f"systemd_unit_inactive:{service_unit}:{unit.get('active_state', 'unknown')}")
     if not binary.get("executable", False):
         blockers.append(f"native_binary_missing_or_not_executable:{DRIVER_NATIVE_BINARY}")
     if not status.get("exists", False):
@@ -648,7 +661,7 @@ def collect_driver_readiness(
 
     return {
         "ok": not blockers,
-        "unit": DRIVER_SERVICE_UNIT,
+        "unit": service_unit,
         "status_file": status.get("path", STATUS_FILES.get(DRIVER_STATUS_NAME, "")),
         "status_age_s": status.get("age_s"),
         "connected": payload.get("connected") is True,
@@ -806,10 +819,20 @@ def build_report(
 ) -> dict[str, Any]:
     if teleop_stage is not None and teleop_avoid_stage is not None:
         raise ValueError("teleop and teleop_avoid preflight gates are mutually exclusive")
+    current_run = collect_current_run()
+    environment = dict(os.environ)
+    systemd_targets = {}
+    if current_run.get("plan_verified"):
+        environment.update(current_run["verified_contract"]["native_process_environment"])
+        systemd_targets = current_run["verified_contract"]["systemd_targets"]
+    service_units = {
+        name: systemd_targets.get("host" if name == "lingtu" else name, unit)
+        for name, unit in SERVICE_UNITS.items()
+    }
     processes = collect_processes()
     dds = collect_dds(seconds=dds_seconds, domain_id=dds_domain)
-    systemd = collect_systemd()
-    native_binaries = collect_native_binaries()
+    systemd = collect_systemd(services=tuple(service_units.values()))
+    native_binaries = collect_native_binaries(environment=environment)
     gnss = collect_gnss_device()
     gateway = collect_gateway(gateway_url)
     status_files = (
@@ -821,6 +844,7 @@ def build_report(
         systemd=systemd,
         native_binaries=native_binaries,
         status_files=status_files,
+        service_unit=service_units["driver"],
     )
     report = {
         "schema": "lingtu.thunder.service_readiness.v1",
@@ -839,13 +863,14 @@ def build_report(
             status_files=status_files,
             dds=dds,
             processes=processes,
+            camera_driver=environment.get("LINGTU_CAMERA_DRIVER", "orbbec_native"),
+            service_unit=service_units["camera"],
         ),
         "driver": driver_readiness,
     }
     report["summary"] = summarize_report(report)
     selected_stage = teleop_stage if teleop_stage is not None else teleop_avoid_stage
     if selected_stage is not None:
-        current_run = collect_current_run()
         report["current_run"] = current_run
         evaluator = evaluate_teleop_preflight if teleop_stage is not None else evaluate_teleop_avoid_preflight
         report_key = "teleop_preflight" if teleop_stage is not None else "teleop_avoid_preflight"

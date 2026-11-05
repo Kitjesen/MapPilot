@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/nonlinear/ISAM2.h>
 #include <pcl/point_cloud.h>
@@ -10,28 +12,30 @@
 #include <vector>
 
 namespace lingtu::localization::online_mapping {
+
+namespace loop_defaults = lingtu::settings::slam::slam::online_mapping;
 using Cloud = pcl::PointCloud<pcl::PointXYZI>;
 
 // Upstream odometry settings plus explicit candidate loop-verification tuning.
 struct Config {
-  double radius_m = 15.0;
-  double min_time_s = 30.0;
-  int submap_half_window = 25;
-  double voxel_m = 0.4;
-  double max_fitness = 0.3;
+  double radius_m = loop_defaults::radius_m;
+  double min_time_s = loop_defaults::min_time_s;
+  int submap_half_window = loop_defaults::submap_half_window;
+  double voxel_m = loop_defaults::voxel_m;
+  double max_fitness = loop_defaults::max_fitness;
   // Candidate defaults for geometric verification, recorded with every save.
   // These are bounded tuning values, not calibrated sensor covariances.
-  double correspondence_m = 1.0;
-  double inlier_distance_m = 0.4;
-  double min_overlap = 0.5;
-  double translation_sigma_m = 0.1;
-  double rotation_sigma_rad = 0.05;
-  double huber_k = 1.345;
+  double correspondence_m = loop_defaults::correspondence_m;
+  double inlier_distance_m = loop_defaults::inlier_distance_m;
+  double min_overlap = loop_defaults::min_overlap;
+  double translation_sigma_m = loop_defaults::translation_sigma_m;
+  double rotation_sigma_rad = loop_defaults::rotation_sigma_rad;
+  double huber_k = loop_defaults::huber_k;
   // Initial engineering values: independent anchor motion and SE(3) cycle error.
-  double confirm_distance_m = 1.0;
-  double consistency_m = 0.4;
-  double consistency_rad = 0.1;
-  std::array<double, 6> odom_variance{1e-6, 1e-6, 1e-6, 1e-4, 1e-4, 1e-4};
+  double confirm_distance_m = loop_defaults::confirm_distance_m;
+  double consistency_m = loop_defaults::consistency_m;
+  double consistency_rad = loop_defaults::consistency_rad;
+  std::array<double, 6> odom_variance= loop_defaults::odom_variance;
 };
 
 struct Frame {

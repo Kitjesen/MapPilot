@@ -15,6 +15,27 @@ class RecordingMapClient:
         return {"success": True, "action": action}
 
 
+@pytest.mark.parametrize("auto_process", [True, False])
+def test_save_forwards_processing_choice(auto_process):
+    from gateway.maps.transport import mapd_request
+
+    client = RecordingMapClient()
+    mapd_request(SimpleNamespace(_map_client=client), {
+        "action": "save_map", "map_id": "yard", "request_id": "save_1", "auto_process": auto_process,
+    })
+    assert client.calls == [("save_map", {
+        "map_id": "yard", "request_id": "save_1", "auto_process": auto_process,
+    })]
+
+
+def test_process_uses_existing_job_without_a_new_snapshot():
+    from gateway.maps.transport import mapd_request
+
+    client = RecordingMapClient()
+    mapd_request(SimpleNamespace(_map_client=client), {"action": "process_save_map", "job_id": "save_1"})
+    assert client.calls == [("process_save_map", {"job_id": "save_1"})]
+
+
 def test_mapd_request_uses_mapd_canonical_action_without_maps_module() -> None:
     from gateway.maps.transport import mapd_request
 
@@ -153,6 +174,7 @@ def test_mapd_request_uses_native_save_map_entrypoint() -> None:
             {
                 "map_id": "yard",
                 "request_id": "request-1",
+                "auto_process": True,
             },
         )
     ]

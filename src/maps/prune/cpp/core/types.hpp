@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 
 namespace lingtu::map_cleaning {
 
@@ -45,12 +44,6 @@ struct VoxelKeyHash {
     mix(key.z);
     return h;
   }
-};
-
-struct VoxelEvidence {
-  std::uint32_t hits{0};
-  std::uint32_t frame_count{0};
-  std::size_t last_frame{std::numeric_limits<std::size_t>::max()};
 };
 
 }  // namespace lingtu::map_cleaning

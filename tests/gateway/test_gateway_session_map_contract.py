@@ -1376,9 +1376,9 @@ def test_service_status_exposes_catalog_readiness_contract(monkeypatch, tmp_path
 
 def test_service_status_default_names_follow_field_readiness_catalog():
     from gateway.gateway_module import GatewayModule
-    from runtime.service_catalogs.thunder import thunder_runtime_services
+    from runtime.service_catalogs.real import runtime_services
 
-    expected = tuple(dict.fromkeys((*thunder_runtime_services(), "gateway")))
+    expected = tuple(dict.fromkeys((*runtime_services(), "gateway")))
 
     gateway = GatewayModule(run_plan=_field_run_plan("nav"))
     gateway.setup()
@@ -1391,6 +1391,28 @@ def test_service_status_default_names_follow_field_readiness_catalog():
     assert "camera" in payload["service_metadata"]
     assert "gateway" in payload["service_metadata"]
     assert payload["services"]["gateway"] == "running"
+
+
+@pytest.mark.parametrize(
+    ("robot", "capture"),
+    [("unitree/go2", "realsense_capture"), ("doso/thunder_v4", "orbbec_capture"), (None, "orbbec_capture")],
+)
+@pytest.mark.parametrize("path", ["/api/v1/services/status", "/api/v1/slam/status"])
+def test_service_metadata_matches_resolved_camera(monkeypatch, robot, capture, path):
+    from gateway.gateway_module import GatewayModule
+    from lingtu.assembly.compile_plan import compile_run_plan
+
+    plan = compile_run_plan("nav", "real", robot=robot, product_variant="camera") if robot else None
+    gateway = GatewayModule(run_plan=plan)
+    gateway.setup()
+    monkeypatch.setenv("LINGTU_CAMERA_DRIVER", "realsense_native" if capture == "orbbec_capture" else "orbbec_native")
+    endpoint = _endpoint(gateway, path)
+    payload = asyncio.run(endpoint(names="camera") if path.endswith("services/status") else endpoint())
+
+    binaries = payload["service_metadata"]["camera"]["binaries"]
+    assert [binary["name"] for binary in binaries] == ["camera_dds", capture]
+    if path.endswith("services/status"):
+        assert payload["service_details"]["camera"]["contract"]["binaries"] == binaries
 
 
 def test_removed_slam_relocalization_endpoints_are_not_registered():

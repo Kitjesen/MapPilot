@@ -25,6 +25,7 @@ import sys
 import threading
 import time
 from collections import Counter, deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Sequence
@@ -5016,6 +5017,67 @@ def _acceptance_contacts(model: Any, data: Any) -> list[dict[str, Any]]:
     return contacts
 
 
+@dataclass(frozen=True)
+class LidarSnapshot:
+    state: Any
+    timestamp_s: float
+    world_points: np.ndarray
+    sensor_points: np.ndarray
+    sensor_origin_world: np.ndarray
+    elapsed_s: float
+
+
+class SnapshotLidar:
+    """Raycast one captured state while the physics thread keeps stepping."""
+
+    def __init__(self, engine: Any, *, period_s: float, max_points: int) -> None:
+        self.engine = engine
+        self.period_s = period_s
+        self.max_points = max_points
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mujoco-lidar")
+        self.pending: Future[LidarSnapshot] | None = None
+        self.busy_drops = 0
+        self.shutdown_drops = 0
+
+    @property
+    def ready(self) -> bool:
+        return self.pending is not None and self.pending.done()
+
+    def submit(self, state: Any, timestamp_s: float) -> bool:
+        if self.pending is not None:
+            self.busy_drops += 1
+            return False
+        snapshot = self.engine.capture_state()
+        self.pending = self.executor.submit(self._scan, snapshot, state, timestamp_s)
+        return True
+
+    def _scan(self, snapshot: Any, state: Any, timestamp_s: float) -> LidarSnapshot:
+        started = time.monotonic()
+        world_points = _bounded_points(
+            self.engine.get_lidar_points_from_snapshot(snapshot, scan_duration_s=self.period_s),
+            self.max_points,
+        )
+        data = self.engine._lidar_data
+        sensor_points = world_xyzi_to_sensor_xyzi(self.engine, world_points, data=data)
+        origin = lidar_pose_world(self.engine, data=data)[0].copy()
+        return LidarSnapshot(state, timestamp_s, world_points, sensor_points, origin,
+                             time.monotonic() - started)
+
+    def take(self) -> LidarSnapshot | None:
+        if not self.ready:
+            return None
+        pending, self.pending = self.pending, None
+        assert pending is not None
+        return pending.result()
+
+    def close(self) -> None:
+        self.executor.shutdown(wait=True)
+        if self.pending is not None:
+            self.shutdown_drops += 1
+            self.pending.result()
+            self.pending = None
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     from sim.compat.engine.core.engine import VelocityCommand
     from sim.scripts.mujoco.formal_feeder import _PhysicalMotionEvidence
@@ -5241,6 +5303,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     mocap_body_id: int | None = None
     runtime_started = False
     runtime_error: Exception | None = None
+    snapshot_lidar: SnapshotLidar | None = None
     try:
         policy_path = _resolve_policy_path_for_drive(str(args.drive_mode), str(args.policy_path or ""))
         policy_runtime_report = _configure_policy_cpu_threads(policy_path, int(args.policy_cpu_threads))
@@ -5374,6 +5437,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "drop_sensor_ticks": False,
             }
         last_sim_time_s = sim_start_s
+        if str(args.scan_time_profile) == "instantaneous":
+            snapshot_lidar = SnapshotLidar(engine, period_s=lidar_period_s, max_points=int(args.max_points))
         drive_vx = float(args.drive_vx)
         drive_vy = float(args.drive_vy)
         drive_wz = float(args.drive_wz)
@@ -5693,7 +5758,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 drop_sensor_tick
                 and pacing_controller is not None
                 and unified_sim_hardware_clock
-                and sim_time_s + 1e-9 >= next_lidar_sim_s
+                and (sim_time_s + 1e-9 >= next_lidar_sim_s
+                     or (snapshot_lidar is not None and snapshot_lidar.ready))
             ):
                 pacing_controller.force_sensor_observation(reason="lidar_due")
                 drop_sensor_tick = False
@@ -5835,11 +5901,46 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             lidar_due = (
                 sim_time_s + 1e-9 >= next_lidar_sim_s if unified_sim_hardware_clock else loop_start >= next_lidar_s
             )
+            lidar_snapshot = snapshot_lidar.take() if snapshot_lidar is not None else None
             if lidar_due:
                 if parent_diagnostics is not None:
                     parent_diagnostics.record_scheduled("cloud")
                     if navigation_fixture:
                         parent_diagnostics.record_scheduled("registered_cloud")
+                if snapshot_lidar is not None:
+                    submitted = snapshot_lidar.submit(state, _sensor_timestamp_s(
+                        clock=lidar_timestamp_clock,
+                        sim_clock_epoch_s=sim_clock_epoch_s,
+                        sim_time_s=sim_time_s,
+                        wall_time_s=wall_ts_s,
+                    ))
+                    if not submitted:
+                        sequence += 1
+                        if parent_diagnostics is not None:
+                            parent_diagnostics.record_catchup_drop("cloud")
+                            if navigation_fixture:
+                                parent_diagnostics.record_catchup_drop("registered_cloud")
+                if unified_sim_hardware_clock:
+                    next_lidar_sim_s += lidar_period_s
+                    skipped_lidar_deadlines = 0
+                    while next_lidar_sim_s <= sim_time_s - 1e-9:
+                        next_lidar_sim_s += lidar_period_s
+                        skipped_lidar_deadlines += 1
+                    if parent_diagnostics is not None and skipped_lidar_deadlines > 0:
+                        parent_diagnostics.record_scheduled("cloud", skipped_lidar_deadlines)
+                        parent_diagnostics.record_deadline_skip("cloud", skipped_lidar_deadlines)
+                        if navigation_fixture:
+                            parent_diagnostics.record_scheduled(
+                                "registered_cloud",
+                                skipped_lidar_deadlines,
+                            )
+                            parent_diagnostics.record_deadline_skip(
+                                "registered_cloud",
+                                skipped_lidar_deadlines,
+                            )
+                else:
+                    next_lidar_s = loop_start + lidar_period_s
+            if lidar_snapshot is not None or (lidar_due and snapshot_lidar is None):
                 lidar_frame_stage_start = time.monotonic()
                 scan_start_sim_s = max(0.0, sim_time_s - lidar_period_s)
                 scan_start_wall_s = wall_ts_s - min(lidar_period_s, max(0.0, sim_time_s - scan_start_sim_s))
@@ -5859,6 +5960,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     scan_start_sim_s=scan_stamp_sim_s,
                     wall_scan_start_s=scan_stamp_wall_s,
                 )
+                scan_state = state
                 if str(args.scan_time_profile) == "physical_rolling":
                     sensor_points, world_points, relative_times_s, _moving_count, _subscan_count = (
                         _physical_rolling_scan_from_samples(
@@ -5872,6 +5974,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         sensor_points = sensor_points[::stride][: int(args.max_points)]
                         world_points = world_points[::stride][: int(args.max_points)]
                         relative_times_s = relative_times_s[::stride][: int(args.max_points)]
+                elif lidar_snapshot is not None:
+                    world_points = lidar_snapshot.world_points
+                    sensor_points = lidar_snapshot.sensor_points
+                    scan_sensor_origin_world = lidar_snapshot.sensor_origin_world
+                    scan_start_timestamp_s = lidar_snapshot.timestamp_s
+                    scan_state = lidar_snapshot.state
+                    relative_times_s = _relative_times_for_scan(
+                        len(sensor_points), lidar_period_s, scan_time_profile="instantaneous",
+                    )
+                    runtime_stage_profiler.record("lidar_scan", lidar_snapshot.elapsed_s, sim_time_s)
                 else:
                     # This is the same state sampled by the instantaneous scan;
                     # reading its site pose does not advance or resample physics.
@@ -5908,8 +6020,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 sequence += 1
                 if navigation_fixture:
                     body_points, navigation_fixture_ground_report = navigation_fixture_registered_body_points(
-                        world_xyzi_to_body_xyzi(state, world_points),
-                        state,
+                        world_xyzi_to_body_xyzi(scan_state, world_points),
+                        scan_state,
                         max_points=navigation_fixture_cloud_points,
                         raw_overlay_enabled=bool(getattr(args, "navigation_fixture_raw_overlay", True)),
                         synthetic_ground_enabled=bool(getattr(args, "navigation_fixture_synthetic_ground", True)),
@@ -5918,6 +6030,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     if parent_diagnostics is not None:
                         parent_diagnostics.record_generated("registered_cloud")
+                    if lidar_snapshot is not None:
+                        # The native fixture pairs this cloud with the preceding pose;
+                        # older captured poses do not rewind its live odometry.
+                        if parent_diagnostics is not None:
+                            parent_diagnostics.record_scheduled("odom_prior")
+                            parent_diagnostics.record_generated("odom_prior")
+                        _write_native_odom_prior(
+                            publisher.stdin, scan_state, scan_start_timestamp_s, odom_prior_sequence,
+                            parent_diagnostics=parent_diagnostics, async_batch=publisher_batch,
+                        )
+                        sensor_counts[TOPICS.odom_prior] += 1
+                        odom_prior_sequence += 1
                     _write_native_registered_cloud(
                         publisher.stdin,
                         body_points,
@@ -5929,26 +6053,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     sensor_counts[TOPICS.registered_cloud] += 1
                     registered_cloud_sequence += 1
-                if unified_sim_hardware_clock:
-                    next_lidar_sim_s += lidar_period_s
-                    skipped_lidar_deadlines = 0
-                    while next_lidar_sim_s <= sim_time_s - 1e-9:
-                        next_lidar_sim_s += lidar_period_s
-                        skipped_lidar_deadlines += 1
-                    if parent_diagnostics is not None and skipped_lidar_deadlines > 0:
-                        parent_diagnostics.record_scheduled("cloud", skipped_lidar_deadlines)
-                        parent_diagnostics.record_deadline_skip("cloud", skipped_lidar_deadlines)
-                        if navigation_fixture:
-                            parent_diagnostics.record_scheduled(
-                                "registered_cloud",
-                                skipped_lidar_deadlines,
-                            )
-                            parent_diagnostics.record_deadline_skip(
-                                "registered_cloud",
-                                skipped_lidar_deadlines,
-                            )
-                else:
-                    next_lidar_s = loop_start + lidar_period_s
                 runtime_stage_profiler.record(
                     "lidar_frame_publish",
                     time.monotonic() - lidar_frame_stage_start,
@@ -6159,6 +6263,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 except Exception as exc:
                     cleanup_errors.append(f"driver_bridge_cleanup_failed:{type(exc).__name__}:{exc}")
                 driver_bridge_stats = driver_bridge.stats()
+        if snapshot_lidar is not None:
+            try:
+                snapshot_lidar.close()
+            except Exception as exc:
+                cleanup_errors.append(f"lidar_scan_cleanup_failed:{type(exc).__name__}:{exc}")
         if motion_log_writer is not None:
             try:
                 motion_log_writer_diagnostics = motion_log_writer.close()
@@ -6389,6 +6498,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         for topic, count in sensor_counts.items()
     }
     report["lidar_backend"] = lidar_backend_report
+    report["snapshot_lidar"] = {
+        "enabled": snapshot_lidar is not None,
+        "busy_drops": snapshot_lidar.busy_drops if snapshot_lidar is not None else 0,
+        "shutdown_drops": snapshot_lidar.shutdown_drops if snapshot_lidar is not None else 0,
+    }
     report["motion_log"] = motion_log_path
     report["motion_log_samples"] = int(motion_log_samples)
     report["motion_log_writer"] = motion_log_writer_diagnostics

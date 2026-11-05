@@ -1,7 +1,5 @@
 """Livox MID-360 driver config generation.
 
-Enterprise-grade rule: single source of truth.
-
 We keep all network addresses in the selected RobotConfig (RobotConfig.lidar),
 and generate one JSON file that both the ROS-free SDK2 source and the
 livox_ros_driver2 compatibility path can consume.
@@ -18,7 +16,14 @@ from ipaddress import ip_address, ip_interface
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from runtime.config import RobotConfig
+
+
+def lidar_settings() -> dict[str, Any]:
+    path = Path(__file__).resolve().parents[3] / "config/system/settings/lidar.yaml"
+    return yaml.safe_load(path.read_text(encoding="utf-8"))["lidar"]
 
 
 def _env_bool(name: str) -> bool | None:
@@ -91,36 +96,41 @@ def build_mid360_config_dict(
     lidar_ip: str | None = None,
     multicast_ip: str | None = None,
     bind_lidar_ip: bool | None = None,
+    settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a MID360_config.json dict for SDK2 and livox_ros_driver2."""
     resolved_lidar_ip = lidar_ip or cfg.lidar.lidar_ip
     resolved_host_ip = host_ip or cfg.lidar.host_ip
 
-    # Ports follow Livox reference defaults; override via cfg.raw['lidar'] if needed.
+    sdk = (lidar_settings() if settings is None else settings)["sdk"]
+    if set(sdk) != {"pcl_data_type", "pattern_mode", "multicast_ip", "bind_lidar_ip", "device_ports", "host_ports"}:
+        raise ValueError("lidar.sdk has missing or unknown settings")
+    if not isinstance(sdk["bind_lidar_ip"], bool):
+        raise ValueError("lidar.sdk.bind_lidar_ip must be a boolean")
     raw_lidar = (cfg.raw or {}).get("lidar", {})
     ports = raw_lidar.get("livox_ports", {}) if isinstance(raw_lidar, dict) else {}
     resolved_multicast_ip = (
-        multicast_ip if multicast_ip is not None else str(raw_lidar.get("livox_multicast_ip", "224.1.1.5"))
+        multicast_ip if multicast_ip is not None else str(raw_lidar.get("livox_multicast_ip", sdk["multicast_ip"]))
     )
     resolved_bind_lidar_ip = (
-        bool(raw_lidar.get("livox_bind_lidar_ip", False)) if bind_lidar_ip is None else bool(bind_lidar_ip)
+        bool(raw_lidar.get("livox_bind_lidar_ip", sdk["bind_lidar_ip"])) if bind_lidar_ip is None else bool(bind_lidar_ip)
     )
 
-    def p(name: str, default: int) -> int:
-        try:
-            v = int(ports.get(name, default))
-        except Exception:
-            v = default
-        return v
+    channel_names = {"command": "cmd_data_port", "status": "push_msg_port", "points": "point_data_port", "imu": "imu_data_port", "log": "log_data_port"}
+    port_sets = {}
+    for owner in ("device", "host"):
+        values = sdk[f"{owner}_ports"]
+        if not isinstance(values, dict) or set(values) != channel_names.keys():
+            raise ValueError(f"lidar.sdk.{owner}_ports has missing or unknown channels")
+        port_sets[owner] = {
+            target: int(ports.get(target + ("_host" if owner == "host" else ""), values[channel]))
+            for channel, target in channel_names.items()
+        }
 
     host_info: dict[str, Any] = {
         "host_ip": resolved_host_ip,
         "multicast_ip": resolved_multicast_ip,
-        "cmd_data_port": p("cmd_data_port_host", 56101),
-        "push_msg_port": p("push_msg_port_host", 56201),
-        "point_data_port": p("point_data_port_host", 56301),
-        "imu_data_port": p("imu_data_port_host", 56401),
-        "log_data_port": p("log_data_port_host", 56501),
+        **port_sets["host"],
     }
     if resolved_bind_lidar_ip and resolved_lidar_ip:
         host_info["lidar_ip"] = [resolved_lidar_ip]
@@ -128,13 +138,7 @@ def build_mid360_config_dict(
     cfg_dict: dict[str, Any] = {
         "lidar_summary_info": {"lidar_type": 8},
         "MID360": {
-            "lidar_net_info": {
-                "cmd_data_port": p("cmd_data_port", 56100),
-                "push_msg_port": p("push_msg_port", 56200),
-                "point_data_port": p("point_data_port", 56300),
-                "imu_data_port": p("imu_data_port", 56400),
-                "log_data_port": p("log_data_port", 56500),
-            },
+            "lidar_net_info": port_sets["device"],
             # Keep the official array form. By default we do not pin lidar_ip:
             # field deployments often keep the MID-360 on a custom subnet and
             # SDK2 discovery is more robust than stale config values.
@@ -143,8 +147,8 @@ def build_mid360_config_dict(
         "lidar_configs": [
             {
                 "ip": resolved_lidar_ip,
-                "pcl_data_type": int(raw_lidar.get("livox_pcl_data_type", 1)),
-                "pattern_mode": int(raw_lidar.get("livox_pattern_mode", 0)),
+                "pcl_data_type": int(raw_lidar.get("livox_pcl_data_type", sdk["pcl_data_type"])),
+                "pattern_mode": int(raw_lidar.get("livox_pattern_mode", sdk["pattern_mode"])),
                 # Keep extrinsics at zero here. SLAM uses the selected RobotConfig
                 # as the unified TF source of truth.
                 "extrinsic_parameter": {
@@ -161,13 +165,16 @@ def build_mid360_config_dict(
     return cfg_dict
 
 
-def ensure_mid360_config_file(cfg: RobotConfig, out_dir: str | None = None) -> str:
+def ensure_mid360_config_file(cfg: RobotConfig | None, out_dir: str | None = None) -> str:
     """Write a generated MID360_config.json and return its absolute path."""
     base = Path(out_dir).expanduser() if out_dir else Path(os.path.expanduser("~/.lingtu/generated/livox"))
     base.mkdir(parents=True, exist_ok=True)
 
     path = base / "MID360_config.json"
-    data = build_mid360_config_dict(
+    snapshot = os.environ.get("LINGTU_LIVOX_CONFIG_JSON") if cfg is None else None
+    if not snapshot and cfg is None:
+        raise ValueError("Livox configuration requires RobotConfig or a compiled Product snapshot")
+    data = json.loads(snapshot) if snapshot else build_mid360_config_dict(
         cfg,
         host_ip=_env_text("LINGTU_LIVOX_HOST_IP"),
         lidar_ip=_env_text("LINGTU_LIVOX_LIDAR_IP"),

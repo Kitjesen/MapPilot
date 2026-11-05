@@ -145,7 +145,7 @@ struct Fixture {
       motion_outputs.emplace_back("sequenced_zero");
       return std::optional<std::uint64_t>{2U};
     };
-    actions.confirm_zero = [this](std::uint64_t) { return confirmation; };
+    actions.confirm_zero = [this](std::uint64_t, auto) { return confirmation; };
     actions.clear_global_path = [] {};
     return actions;
   }
@@ -578,6 +578,14 @@ void testRejectedReplacementPreservesTheActiveGoalRetry() {
 void testAcceptedGoalWaitsForSupersededDeferredReplacementTerminal() {
   Fixture fixture;
   fixture.activateGoal();
+  auto advance = [&](double now) {
+    const auto frame = fixture.frame(now);
+    auto actions = fixture.idleActions();
+    actions.run_autonomy = [frame](const GoalPlanSnapshot &) {
+      return NavigationRuntimeAutonomyObservation{frame, AutonomyTickOutcome{}, false, false};
+    };
+    return fixture.runtime.advanceFrame(frame, actions);
+  };
   require(fixture.runtime.submitGoal(fixture.request("task-b", "request-b"),
                                       fixture.admission(), 58.3)
               .plan_result.accepted,
@@ -603,19 +611,17 @@ void testAcceptedGoalWaitsForSupersededDeferredReplacementTerminal() {
               fixture.runtime.terminalPending() &&
               fixture.goal_plan.snapshot().planning_task_id == "task-c",
           "accepted C was lost while superseding deferred B");
-  const auto held = fixture.runtime.advanceFrame(fixture.frame(59.6), fixture.idleActions());
+  const auto held = advance(59.6);
   require(!held.planning_result.plan_advance.path_activated &&
               fixture.path_activations == 1U && fixture.runtime.terminalPending(),
           "new C path activated before superseded B terminal acknowledgement");
 
   fixture.writes_allowed = true;
-  const auto acknowledged =
-      fixture.runtime.advanceFrame(fixture.frame(59.7), fixture.idleActions());
+  const auto acknowledged = advance(59.7);
   require(acknowledged.terminal_delivery_acknowledged && !fixture.runtime.terminalPending(),
           "superseded B terminal could not be acknowledged");
   for (int index = 0; index < 1000; ++index) {
-    const auto completed = fixture.runtime.advanceFrame(
-        fixture.frame(59.8 + index * .001), fixture.idleActions());
+    const auto completed = advance(59.8 + index * .001);
     if (completed.planning_result.plan_advance.path_activated) {
       require(fixture.goal_plan.snapshot().active_task_id == "task-c" &&
                   fixture.path_activations == 2U,

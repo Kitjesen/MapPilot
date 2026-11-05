@@ -1036,3 +1036,22 @@ def test_commands_detect_shared_native_handle_closing_after_start(
     assert health["ok"] is False
     assert health["readiness"] == reason
     assert health["native"]["handle_open"] is False
+
+
+def test_commands_forward_task_speed_limit(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    calls = []
+    receipt = object()
+
+    def update(task_id, max_speed_mps, *, request_id):
+        calls.append((task_id, max_speed_mps, request_id))
+        return receipt
+
+    monkeypatch.setattr(
+        command_module, "get_native_navigation_client",
+        lambda *, required: SimpleNamespace(set_task_speed_limit=update),
+    )
+    result = command_module.Commands().set_task_speed_limit("task-1", 0.3, request_id="speed-1")
+    assert result is receipt
+    assert calls == [("task-1", 0.3, "speed-1")]

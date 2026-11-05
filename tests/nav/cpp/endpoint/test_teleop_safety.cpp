@@ -104,6 +104,30 @@ void testSubthresholdTranslationBecomesZero() {
           "deadband must not leak nonzero translation");
 }
 
+void testDeadbandCannotSuppressTheWholeMotionBudget() {
+  using namespace lingtu::nav::endpoint;
+  CommandSafetyConfig cfg;
+  cfg.max_axis_speed_mps = 0.005;
+  cfg.max_speed_mps = std::hypot(0.005, 0.005);
+  cfg.min_motion_speed_mps = 0.03;
+  const auto slow = evaluateCommandSafety(cfg, {0.002, 0.0, 0.0}, 0.0);
+  require(!slow.stopped && slow.cmd.vx == 0.002,
+          "a smaller axis budget must preserve a legal slow command");
+  const auto diagonal = evaluateCommandSafety(cfg, {0.02, -0.02, 0.0}, 0.0);
+  require(diagonal.cmd.vx == 0.005 && diagonal.cmd.vy == -0.005,
+          "physical body axes must still bound low-speed diagonal commands");
+  cfg.max_axis_speed_mps = 1.0;
+  cfg.max_speed_mps = 0.02;
+  const auto low_norm = evaluateCommandSafety(cfg, {0.2, 0.0, 0.0}, 0.0);
+  require(!low_norm.stopped && std::abs(low_norm.cmd.vx - 0.02) < 1e-9,
+          "a smaller path budget must retain its capped nonzero command");
+  require(cfg.min_motion_speed_mps == 0.03,
+          "a per-command budget must preserve the configured deadband");
+  cfg.min_motion_speed_mps = 0.001;
+  require(evaluateCommandSafety(cfg, {0.0005, 0.0, 0.0}, 0.0).stopped,
+          "a smaller configured deadband must still suppress creep");
+}
+
 }  // namespace
 
 int main() {
@@ -114,6 +138,7 @@ int main() {
     testDefaultScalarLimitStillBoundsDiagonal();
     testStaleCommandStops();
     testSubthresholdTranslationBecomesZero();
+    testDeadbandCannotSuppressTheWholeMotionBudget();
   } catch (const std::exception &error) {
     std::cerr << "test_teleop_safety: FAIL: " << error.what() << '\n';
     return 1;

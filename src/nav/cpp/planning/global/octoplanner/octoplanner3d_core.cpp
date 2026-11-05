@@ -42,7 +42,9 @@ global_planner::PointPose toPlannerPoint(const Point & point)
   out.x = point.x;
   out.y = point.y;
   out.z = point.z;
-  if (!std::isfinite(out.x) || !std::isfinite(out.y) || !std::isfinite(out.z)) {
+  out.yaw = point.yaw;
+  if (!std::isfinite(out.x) || !std::isfinite(out.y) || !std::isfinite(out.z) ||
+      (out.yaw && !std::isfinite(*out.yaw))) {
     throw std::runtime_error("point contains non-finite value");
   }
   return out;
@@ -50,7 +52,7 @@ global_planner::PointPose toPlannerPoint(const Point & point)
 
 Point fromPlannerPoint(const global_planner::PointPose & point)
 {
-  return Point{point.x, point.y, point.z};
+  return Point{point.x, point.y, point.z, point.yaw};
 }
 
 void copyOverlayIdentity(const PlanRequest & request, PlanResult & result)
@@ -459,20 +461,12 @@ PlanResult runPreparedPlanner(
   if (cancel_check && cancel_check()) {
     return cancelledResult(request, started);
   }
-  const auto start = toPlannerPoint(request.start);
+  auto start = toPlannerPoint(request.start);
   const auto goal = toPlannerPoint(request.goal);
-
   std::vector<global_planner::PointPose> native_path;
-  planner.setObservedOccupiedCheck(request.observed_occupied
-      ? std::function<bool(const global_planner::PointPose &, double, double, double, bool)>(
-          [check=request.observed_occupied](const auto &point, double radius, double below,
-                                          double above, bool hemisphere) {
-            return check({point.x,point.y,point.z},radius,below,above,hemisphere);
-          }) : std::function<bool(const global_planner::PointPose &, double, double, double, bool)>{});
-  planner.setObservedFreeCheck(
-      [start, options=request.options, check=request.observed_free](const auto &point, double size) {
+  planner.setStartExemption(
+      [start, options=request.options](const auto &point, double size) {
         const double half=size*.5;
-        if (check && check({{point.x,point.y,point.z},{half,half,half}})) return true;
         const bool explicit_body=options.body_clearance_below_m>0 || options.body_clearance_above_m>0;
         const bool body_center=options.support_height_m>0 && !options.lowest_traversable_only;
         const double below=explicit_body ? options.body_clearance_below_m : (body_center ? size : 0.0);
@@ -482,14 +476,19 @@ PlanResult runPreparedPlanner(
         const double dy=std::max(0.0,std::abs(point.y-start.y)-half);
         const double dz=!explicit_body && !body_center ? std::max(0.0,point.z-half-start.z) : 0.0;
         // The actual start is already occupied by the robot; only saved cells
-        // overlapping that initial envelope are exempt. Current hits win upstream.
+        // overlapping that initial envelope are exempt.
         return dx*dx+dy*dy+dz*dz<=options.robot_radius*options.robot_radius;
       });
+  struct ClearRequestChecks {
+    global_planner::OctoPlanner3D &planner;
+    ~ClearRequestChecks() {
+      planner.setStartExemption({});
+      planner.setCancelCheck({});
+    }
+  } clear_request_checks{planner};
   planner.setCancelCheck(cancel_check);
   planner.makePlan(start, goal);
   planner.getPlannerResults(native_path);
-  planner.setObservedFreeCheck({});
-  planner.setObservedOccupiedCheck({});
   const auto endpoint_resolution = planner.endpointResolution();
   const auto search_info = planner.searchInfo();
 
@@ -517,12 +516,6 @@ PlanResult runPreparedPlanner(
     result.failure_reason = "empty_path";
   }
   if (!result.path.empty()) {
-    if (request.options.ground_support && request.options.support_height_m > 0) {
-      const int neighbors=request.options.direct_support_only ? 0 : std::max(0,request.options.support_radius_cells);
-      result.support_surface = [surface=planner.supportSurface(),neighbors](const auto &expected, double tolerance) {
-        return surface->height({expected.x,expected.y,expected.z},tolerance,neighbors);
-      };
-    }
     result.goal_error_m = distanceToGoal(result.path.back(), request.goal);
     result.goal_xy_error_m = xyDistanceToGoal(result.path.back(), request.goal);
     result.goal_z_error_m = zDistanceToGoal(result.path.back(), request.goal);

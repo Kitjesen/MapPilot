@@ -9,7 +9,8 @@ secrets, site overrides, generated maps, logs, and evidence belong elsewhere.
 Read configuration in this order:
 
 1. `robots/<vendor>/<model>/` describes one physical robot and its sensors.
-2. `system/products/` declares what the selected Product needs.
+2. `system/products/` declares what the selected Product needs and composes shared
+   interfaces and tuning from `system/settings/`.
 3. `system/envs/` binds those needs to exactly one `real` or `sim` Env.
 4. `ProductControl` resolves the inputs once and starts the selected runtime;
    it stores an immutable execution snapshot internally (currently a
@@ -25,10 +26,11 @@ config/
 │   └── <vendor>/<model>/     # Model, physical config, and sensor calibration
 ├── system/
 │   ├── products/             # Env-independent operating modes
+│   ├── settings/             # Component tuning; also generates native defaults
 │   └── envs/                 # real/sim implementation bindings
 ├── architecture_layers.yaml  # Machine-enforced source/import ownership
 ├── cyclonedds.xml            # Native DDS participant defaults
-├── devices.yaml              # Hardware inventory and camera startup input
+├── devices.yaml              # Hardware inventory and compatibility-device selection
 ├── go2rtc.yaml               # Browser camera-stream sidecar template
 └── semantics/
     ├── scoring.yaml           # Decision scoring weights
@@ -43,11 +45,20 @@ config/
 | `robots/<vendor>/<model>/robot.yaml` | Physical geometry, calibrated transforms, device endpoints, and hardware safety limits. | Gateway ports, planner policy, or Product lifecycle. |
 | `robots/<vendor>/<model>/sensors/` | Sensor and estimator calibration for that installation. | Product support policy. |
 | `system/products/*.yaml` | Immutable Product capabilities, topics, and logical process roles. | Hardware implementation or launch side effects. |
+| `system/settings/*.yaml` | Component interfaces and tuning shared by Product assembly and generated native defaults. | Runtime state, physical calibration, or another Product lifecycle. |
 | `system/envs/*.yaml` | Concrete `real`/`sim` processes, transports, and backend bindings. | Product intent. |
 | `../src/message/topics/*.yaml` | Canonical logical topic, DDS type, QoS profile, and ownership by domain. | Generated Python/C++ tables or per-site tuning. |
 | `acceptance/mujoco/*.json` | Reproducible local qualification orchestration and thresholds. | Runtime configuration or physical-target claims. |
 | `semantics/` | Shared scoring weights and stable class taxonomy. | Detector model files or Product policy. |
 | Root files | Cross-cutting configuration with one direct consumer family. | Component-private configuration. |
+
+The [system configuration reference](system/README.md) lists all twelve
+component settings files. For example, common LiDAR acquisition rates and
+Livox SDK options live in `system/settings/lidar.yaml`. The robot file supplies
+addresses, NIC and calibrated transforms. Common camera acquisition lives in
+`system/settings/camera.yaml`, while the installed camera's intrinsics and
+explicit capture overrides live in its RobotConfig. The sizes in those two
+groups describe image acquisition and calibration respectively.
 
 Gateway HTTP and MCP ports are Host/deployment values, not robot properties.
 The code defaults are `5050` and `8090`; field overrides use the deployed

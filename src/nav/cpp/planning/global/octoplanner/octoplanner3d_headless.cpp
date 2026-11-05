@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <streambuf>
@@ -530,6 +531,7 @@ void emitError(const std::string & message)
 
 void emitSuccess(const octoplanner3d::runtime::PlanResult & result)
 {
+  std::cout.precision(std::numeric_limits<double>::max_digits10);
   std::cout << "{\"planner\":\"octoplanner3d\",\"protocol_version\":1,"
             << "\"ok\":" << (result.ok ? "true" : "false") << ",";
   if (!result.ok) {

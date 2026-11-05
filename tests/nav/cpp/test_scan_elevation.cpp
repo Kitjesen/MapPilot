@@ -42,7 +42,8 @@ struct ElevationFixture {
   }
 
   bool plan(const std::vector<Eigen::Vector3d> &route,
-            Eigen::Vector3d initialVelocity=Eigen::Vector3d::Zero()) {
+            Eigen::Vector3d initialVelocity=Eigen::Vector3d::Zero(),
+            std::optional<Eigen::Vector3d> observedPosition=std::nullopt) {
     ScanReplanParams settings;
     settings.navigationMode=ScanNavigationMode::REFERENCE_PATH;
     settings.planningHorizon=8;
@@ -52,7 +53,7 @@ struct ElevationFixture {
     FsmInput input;
     input.nowS=1;
     FsmOdometry odometry;
-    odometry.position=route.front();
+    odometry.position=observedPosition.value_or(route.front());
     odometry.velocity=initialVelocity;
     input.odometry=odometry;
     input.referencePath=route;
@@ -66,6 +67,24 @@ struct ElevationFixture {
     return false;
   }
 };
+
+TEST(ScanElevation, HeightOffsetOnlyChangesRouteEntry) {
+  ElevationFixture fixture;
+  fixture.manager.pp_.preserve_boundary_=true;
+  ASSERT_TRUE(fixture.plan({{0,0,.5},{1,0,.5},{2,0,1},{2.5,0,1},{4,0,1}},
+      Eigen::Vector3d::Zero(),Eigen::Vector3d{1,0,.4})) << fixture.manager.reboundDebug().reason;
+  const auto &curve=fixture.manager.local_data_.position_traj_;
+  double nearest=1e9, height=0;
+  for(int i=0;i<=400;++i) {
+    const auto point=curve.evaluateDeBoorT(curve.getTimeSum()*i/400);
+    if(std::abs(point.x()-2.5)<nearest) {
+      nearest=std::abs(point.x()-2.5);
+      height=point.z();
+    }
+  }
+  EXPECT_NEAR(curve.evaluateDeBoorT(0).z(),.4,1e-9);
+  EXPECT_GT(height,.97);
+}
 
 TEST(ScanElevation, ReturnedLocalSplineRetainsCrestBetweenEqualHeightEndpoints) {
   ElevationFixture fixture;
@@ -143,22 +162,18 @@ TEST(ScanElevation, ReferenceHeightDoesNotBypassAnObservedObstacle) {
   EXPECT_FALSE(fixture.manager.reboundDebug().success);
 }
 
-TEST(ScanElevation, CheckedTangentReferenceCanInitializeInsideAnSShapedChannel) {
+TEST(ScanElevation, CylinderReferenceCanInitializeInsideAnSShapedChannel) {
   ElevationFixture fixture;
   lingtu::nav::tests::CollisionBitmap bitmap({-2,-1,-1},{2,2,2},.1);
+  std::vector<float> hits;
   for(double y=-.95;y<2;y+=.1) for(double x=-1.95;x<2;x+=.1)
     if(y<-.4 || y>=1.6 || (x<-.4 && y>=.4) || (x>=.4 && y<.8))
-      for(double z=.05;z<1;z+=.1) bitmap.occupy({x,y,z});
+      for(double z=.05;z<1;z+=.1)
+        hits.insert(hits.end(), {static_cast<float>(x),static_cast<float>(y),static_cast<float>(z)});
+  bitmap.occupyInflated(hits,.15,.1,.1);
   fixture.params.checkObstacle=true;
   fixture.request.environment.collision=bitmap.view();
-  const auto& view=fixture.request.environment.collision;
-  fixture.request.environment.collision.measuredOccupiedStorage=
-      std::make_shared<const std::vector<std::uint8_t>>(view.inflatedBits,view.inflatedBits+view.inflatedBytes);
-  fixture.request.environment.collision.knownFreeStorage=
-      std::make_shared<const std::vector<std::uint8_t>>(view.inflatedBytes,255);
-  auto body=std::make_shared<lingtu::nav::collision::Body>();body->margin_m=0;
-  lingtu::nav::collision::Part box;box.half_size={.3,.15,.1};body->parts.push_back(box);
-  fixture.request.body=body;fixture.request.robot.pose.position={-1.1,0,.5};
+  fixture.request.robot.pose.position={-1.1,0,.5};
   fixture.grid=std::make_unique<nav_kernel::local::scan::Grid>(fixture.params,fixture.request);
   ASSERT_TRUE(fixture.grid->valid())<<fixture.grid->reason();
   fixture.manager.grid_map_->setGrid(fixture.grid.get());
@@ -167,15 +182,13 @@ TEST(ScanElevation, CheckedTangentReferenceCanInitializeInsideAnSShapedChannel) 
       {0,.8,.5},{.1,1.05,.5},{.4,1.2,.5},{1.1,1.2,.5}}))
       <<fixture.manager.reboundDebug().stage<<':'<<fixture.manager.reboundDebug().reason;
   const auto& spline=fixture.manager.local_data_.position_traj_;
-  const auto velocity=spline.getDerivative();
   EXPECT_LT((spline.evaluateDeBoorT(0)-Eigen::Vector3d{-1.1,0,.5}).norm(),1e-9);
   EXPECT_LT((spline.evaluateDeBoorT(spline.getTimeSum())-Eigen::Vector3d{1.1,1.2,.5}).norm(),1e-9);
   for(double t=0;t<spline.getTimeSum();t+=.02) {
     const double next=std::min(t+.02,spline.getTimeSum());
     const auto a=spline.evaluateDeBoorT(t),b=spline.evaluateDeBoorT(next);
-    const auto va=velocity.evaluateDeBoorT(t),vb=velocity.evaluateDeBoorT(next);
-    EXPECT_EQ(fixture.grid->trajectoryOccupancy({a.x(),a.y(),a.z()},{va.x(),va.y(),va.z()},
-        {b.x(),b.y(),b.z()},{vb.x(),vb.y(),vb.z()},t,next),0);
+    EXPECT_EQ(fixture.manager.grid_map_->getInflateOccupancy(
+        a, std::atan2(b.y()-a.y(),b.x()-a.x())),0);
   }
 }
 
@@ -202,103 +215,73 @@ TEST(ScanElevation, CheckedCurveSeedDoesNotFollowThePolynomialReversePrefix) {
   EXPECT_LT((spline.evaluateDeBoorT(spline.getTimeSum())-goal).norm(),1e-9);
 }
 
-TEST(ScanElevation, SharedReconstructedSupportChecksTheOptimizedRouteWithoutLocalFloorHits) {
+TEST(ScanElevation, OptimizedRouteRetainsHeightWithoutLocalFloorHits) {
   ElevationFixture fixture;
-  const std::vector<nav_kernel::Vec3> reference{{0,0,.5},{2,0,.5}};
-  fixture.request.reference = {reference.data(), static_cast<int>(reference.size()), 1};
   fixture.request.supportHeightM = .5;
   fixture.request.supportHeightToleranceM = .05;
-  fixture.request.supportSurface = [](const lingtu::nav::collision::Vec3 &ground,
-                                      double tolerance) -> std::optional<double> {
-    return std::abs(ground.z) <= tolerance ? std::optional<double>{0.0} : std::nullopt;
-  };
   *fixture.grid = nav_kernel::local::scan::Grid(fixture.params, fixture.request);
   ASSERT_TRUE(fixture.plan({{0,0,.5},{2,0,.5}})) << fixture.manager.reboundDebug().reason;
   const auto &curve = fixture.manager.local_data_.position_traj_;
+  for (int i=0; i<=40; ++i)
+    EXPECT_NEAR(curve.evaluateDeBoorT(curve.getTimeSum()*i/40).z(), .5, .02);
+}
+
+struct FloorGapFixture : ElevationFixture {
+  lingtu::nav::tests::CollisionBitmap floor{{-1,-1,-1},{2,1,2},.1};
+
+  FloorGapFixture() {
+    params.checkObstacle = true;
+    auto body = std::make_shared<lingtu::nav::collision::Body>();
+    body->margin_m = 0;
+    lingtu::nav::collision::Part part;
+    part.half_size = {.1,.1,.1};
+    body->parts.push_back(part);
+    request.body = body;
+    request.robot.pose = {{0,0,.35},0};
+    request.supportHeightM = .35;
+    request.supportHeightToleranceM = .05;
+    for (int y=-10; y<10; ++y) for (int x=-10; x<20; ++x) {
+      const double px = (x+.5)*.1;
+      if (px < .3 || px > .7) floor.occupy({px,(y+.5)*.1,-.05});
+    }
+    snapshot();
+  }
+
+  void snapshot() {
+    request.environment.collision = floor.view();
+    const auto view = floor.view();
+    request.environment.collision.measuredOccupiedStorage =
+        std::make_shared<const std::vector<std::uint8_t>>(
+            view.inflatedBits, view.inflatedBits + view.inflatedBytes);
+    *grid = nav_kernel::local::scan::Grid(params,request);
+  }
+};
+
+TEST(ScanElevation, OptimizedRouteCanCrossMissingFloorEvidence) {
+  FloorGapFixture fixture;
+  ASSERT_TRUE(fixture.plan({{0,0,.35},{1,0,.35}}))
+      << fixture.manager.reboundDebug().reason;
+  const auto &curve = fixture.manager.local_data_.position_traj_;
   const auto derivative = curve.getDerivative();
-  for (int i=0; i<40; ++i) {
-    const double a = curve.getTimeSum()*i/40, b = curve.getTimeSum()*(i+1)/40;
+  bool crossed_gap = false;
+  for (int i=0; i<80; ++i) {
+    const double a=curve.getTimeSum()*i/80, b=curve.getTimeSum()*(i+1)/80;
     const auto start=curve.evaluateDeBoorT(a), end=curve.evaluateDeBoorT(b);
     const auto velocity=derivative.evaluateDeBoorT(a), endVelocity=derivative.evaluateDeBoorT(b);
+    crossed_gap |= start.x() > .3 && start.x() < .7;
+    EXPECT_NEAR(start.z(),.35,.02);
     EXPECT_EQ(fixture.grid->trajectoryOccupancy({start.x(),start.y(),start.z()},
         {velocity.x(),velocity.y(),velocity.z()}, {end.x(),end.y(),end.z()},
         {endVelocity.x(),endVelocity.y(),endVelocity.z()},a,b),0);
   }
+  EXPECT_TRUE(crossed_gap);
 }
 
-TEST(ScanElevation, SharedSupportRejectsARealGapBetweenSupportedSegmentEndpoints) {
-  nav_kernel::LocalPlannerParams params;
-  params.checkObstacle=false;
-  params.scan.voxelResolution=.1;
-  const std::vector<nav_kernel::Vec3> reference{{0,0,.35},{1,0,.35}};
-  nav_kernel::LocalPlanRequest request;
-  request.reference={reference.data(),static_cast<int>(reference.size()),1};
-  request.supportHeightM=.35;
-  request.supportHeightToleranceM=.05;
-  request.supportSurface=[](const lingtu::nav::collision::Vec3 &ground,
-                            double tolerance) -> std::optional<double> {
-    if (ground.x > .3 && ground.x < .7) return std::nullopt;
-    return std::abs(ground.z)<=tolerance ? std::optional<double>{0.0} : std::nullopt;
-  };
-  nav_kernel::local::scan::Grid grid(params,request);
-  ASSERT_TRUE(grid.valid());
-  EXPECT_EQ(grid.inflatedOccupancy({.5,0,.35},0),0) << "support must not alter obstacle evidence";
-  EXPECT_EQ(grid.trajectoryOccupancy({.1,0,.35},{1,0,0},{.9,0,.35},{1,0,0},0,1),1);
-
-  ElevationFixture fixture;
-  fixture.request=request;
-  *fixture.grid=nav_kernel::local::scan::Grid(fixture.params,fixture.request);
-  EXPECT_FALSE(fixture.plan({{0,0,.35},{1,0,.35}}))
-      << "SCAN returned an optimized trajectory across the missing support";
-}
-
-TEST(ScanElevation, SharedSupportUsesReferenceLayerAndAllowsBaseHeave) {
-  nav_kernel::LocalPlannerParams params;
-  params.checkObstacle=false;
-  params.scan.voxelResolution=.1;
-  const std::vector<nav_kernel::Vec3> reference{{0,0,2.35},{1,0,2.35}};
-  nav_kernel::LocalPlanRequest request;
-  request.reference={reference.data(),static_cast<int>(reference.size()),1};
-  request.supportHeightM=.35;
-  request.supportHeightToleranceM=.05;
-  double selected=-1;
-  request.supportSurface=[&](const lingtu::nav::collision::Vec3 &ground,
-                             double tolerance) -> std::optional<double> {
-    for (double height : {0.0,2.0}) if (std::abs(ground.z-height)<=tolerance) {
-      selected=height;
-      return height;
-    }
-    return std::nullopt;
-  };
-  request.robot.pose.position={0,0,2.45};
-  nav_kernel::local::scan::Grid grid(params,request);
-  EXPECT_EQ(grid.trajectoryOccupancy({0,0,2.45},{1,0,0},{1,0,2.35},{1,0,0},0,1),0);
-  EXPECT_DOUBLE_EQ(selected,2.0);
-  request.supportSurface=[](const lingtu::nav::collision::Vec3 &ground,
-                            double tolerance) -> std::optional<double> {
-    return std::abs(ground.z)<=tolerance ? std::optional<double>{0.0} : std::nullopt;
-  };
-  EXPECT_EQ(nav_kernel::local::scan::Grid(params,request).trajectoryOccupancy(
-      {0,0,2.45},{1,0,0},{1,0,2.35},{1,0,0},0,1),1) << "the lower floor cannot replace the missing upper floor";
-}
-
-TEST(ScanElevation, SharedSupportTransformsOdomReferenceIntoMapCoordinates) {
-  nav_kernel::LocalPlannerParams params;
-  params.checkObstacle=false;
-  params.scan.voxelResolution=.1;
-  const std::vector<nav_kernel::Vec3> reference{{0,0,.35},{1,0,.35}};
-  nav_kernel::LocalPlanRequest request;
-  request.reference={reference.data(),static_cast<int>(reference.size()),1};
-  request.supportHeightM=.35;
-  request.supportHeightToleranceM=.05;
-  request.environment.collision.gridFromPlanningTranslation={10,20,2};
-  request.environment.collision.gridFromPlanningYaw=M_PI/2;
-  request.supportSurface=[](const lingtu::nav::collision::Vec3 &ground,
-                            double tolerance) -> std::optional<double> {
-    if (std::abs(ground.x-10)>1e-6 || ground.y<20 || ground.y>21) return std::nullopt;
-    return std::abs(ground.z-2)<=tolerance ? std::optional<double>{2.0} : std::nullopt;
-  };
-  nav_kernel::local::scan::Grid grid(params,request);
-  EXPECT_EQ(grid.trajectoryOccupancy({0,0,.35},{1,0,0},{1,0,.35},{1,0,0},0,1),0);
+TEST(ScanElevation, MeasuredObstacleStillBlocksTheSegmentAcrossMissingFloorEvidence) {
+  FloorGapFixture fixture;
+  ASSERT_EQ(fixture.grid->trajectoryOccupancy({.1,0,.35},{1,0,0},{.9,0,.35},{1,0,0},0,1),0);
+  fixture.floor.occupy({.55,.05,.35});
+  fixture.snapshot();
+  EXPECT_EQ(fixture.grid->trajectoryOccupancy({.1,0,.35},{1,0,0},{.9,0,.35},{1,0,0},0,1),1);
 }
 }  // namespace

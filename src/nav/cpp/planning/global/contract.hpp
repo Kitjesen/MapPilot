@@ -1,16 +1,12 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <cstdint>
 #include <functional>
-#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
-
-#include "collision/body.hpp"
-#include "collision/terrain.hpp"
-
-namespace lingtu::nav::collision { class Terrain; }
 
 namespace lingtu::nav::plan {
 
@@ -18,7 +14,7 @@ struct GlobalPlanPoint {
   double x{0.0};
   double y{0.0};
   double z{0.0};
-  // Optional input/terminal heading; global XYZ route points leave it unset.
+  // Optional heading metadata.
   std::optional<double> yaw{};
 };
 
@@ -41,38 +37,38 @@ struct GlobalPlanTemporaryOverlay {
 };
 
 struct GlobalPlannerOptions {
-  double surface_closing_radius_m{0.20};
-  double search_resolution_m{0.10};
+  double surface_closing_radius_m{::lingtu::settings::global::native_nav::global::surface_closing_radius_m};
+  double search_resolution_m{::lingtu::settings::global::native_nav::global::search_resolution_m};
   double robot_radius{0.25};
   double body_clearance_below_m{0.0};
   double body_clearance_above_m{0.0};
-  int max_iterations{500000};
-  int snap_search_radius_cells{12};
-  bool ground_support{true};
+  int max_iterations{::lingtu::settings::global::native_nav::global::max_iterations};
+  int snap_search_radius_cells{::lingtu::settings::global::native_nav::global::snap_search_radius_cells};
+  bool ground_support{::lingtu::settings::global::native_nav::global::ground_support};
   // The saved-map path uses OctoPlanner3D's neighbouring support fallback by
   // default. A single missing floor voxel must not block an otherwise
   // supported stance; strict direct support remains available for diagnostics.
-  bool direct_support_only{false};
-  int support_radius_cells{1};
-  int support_depth_cells{2};
-  double support_height_m{0.0};
-  double support_height_tolerance_m{0.0};
-  int support_patch_radius_cells{0};
-  int support_patch_min_samples{0};
-  bool enable_preblocked_costmap{true};
-  int preblocked_costmap_radius_cells{3};
-  double preblocked_costmap_weight{2.5};
-  bool lowest_traversable_only{false};
-  double floor_change_penalty{4.0};
-  double max_step_height{0.45};
-  double max_slope{0.0};
-  bool same_floor_preference{true};
-  double same_floor_z_tolerance{0.75};
-  int obstacle_clearance_radius_cells{4};
-  double obstacle_clearance_weight{2.0};
-  double terminal_goal_tolerance_m{0.5};
-  double terminal_goal_xy_tolerance_m{0.6};
-  double terminal_goal_z_tolerance_m{0.75};
+  bool direct_support_only{::lingtu::settings::global::native_nav::global::direct_support_only};
+  int support_radius_cells{::lingtu::settings::global::native_nav::global::support_radius_cells};
+  int support_depth_cells{::lingtu::settings::global::native_nav::global::support_depth_cells};
+  double support_height_m{::lingtu::settings::global::standalone::native_nav::global::support_height_m};
+  double support_height_tolerance_m{::lingtu::settings::global::standalone::native_nav::global::support_height_tolerance_m};
+  int support_patch_radius_cells{::lingtu::settings::global::native_nav::global::support_patch_radius_cells};
+  int support_patch_min_samples{::lingtu::settings::global::native_nav::global::support_patch_min_samples};
+  bool enable_preblocked_costmap{::lingtu::settings::global::native_nav::global::preblocked};
+  int preblocked_costmap_radius_cells{::lingtu::settings::global::native_nav::global::preblocked_radius_cells};
+  double preblocked_costmap_weight{::lingtu::settings::global::native_nav::global::preblocked_weight};
+  bool lowest_traversable_only{::lingtu::settings::global::native_nav::global::lowest_traversable_only};
+  double floor_change_penalty{::lingtu::settings::global::native_nav::global::floor_change_penalty};
+  double max_step_height{::lingtu::settings::global::native_nav::global::max_step_height_m};
+  double max_slope{::lingtu::settings::global::standalone::native_nav::global::max_slope};
+  bool same_floor_preference{::lingtu::settings::global::native_nav::global::same_floor_preference};
+  double same_floor_z_tolerance{::lingtu::settings::global::native_nav::global::same_floor_z_tolerance_m};
+  int obstacle_clearance_radius_cells{::lingtu::settings::global::native_nav::global::obstacle_clearance_radius_cells};
+  double obstacle_clearance_weight{::lingtu::settings::global::native_nav::global::obstacle_clearance_weight};
+  double terminal_goal_tolerance_m{::lingtu::settings::global::native_nav::global::terminal_tolerance_m};
+  double terminal_goal_xy_tolerance_m{::lingtu::settings::global::native_nav::global::terminal_xy_tolerance_m};
+  double terminal_goal_z_tolerance_m{::lingtu::settings::global::native_nav::global::terminal_z_tolerance_m};
 };
 
 // Stable identity of the saved map content used by a planning job.
@@ -98,18 +94,6 @@ struct GlobalPlanRequest {
   MapIdentity map_identity{};
   std::uint64_t map_generation{0U};
   GlobalPlanTemporaryOverlay temporary_overlay{};
-  // Immutable model forwarded to local execution. Global XYZ search does not
-  // use this snapshot to search headings or reject a candidate route.
-  std::shared_ptr<const lingtu::nav::collision::Body> body{};
-  // Request-scoped measured free cells. The planner separately exempts saved
-  // occupancy in the robot's initial envelope without erasing ground support.
-  std::function<bool(const lingtu::nav::collision::Aabb &)> observed_free{};
-  // Raw live hits override saved free space and live clearing. The last argument
-  // preserves the legacy support-rooted upper hemisphere instead of a cylinder.
-  std::function<bool(const collision::Vec3 &, double, double, double, bool)> observed_occupied{};
-  // Original 3-D hits belonging to this map, used only to resolve measured
-  // terrain geometry below the voxel scale. An occupancy preview is not a source.
-  std::shared_ptr<const lingtu::nav::collision::Terrain> terrain{};
 };
 
 struct GlobalPlanResult {
@@ -128,7 +112,6 @@ struct GlobalPlanResult {
   std::uint64_t overlay_frame_epoch{0U};
   std::uint64_t overlay_obstacle_generation{0U};
   std::vector<GlobalPlanPoint> path{};
-  collision::SupportQuery support_surface{};
 };
 
 using GlobalPlanCancelCheck = std::function<bool()>;

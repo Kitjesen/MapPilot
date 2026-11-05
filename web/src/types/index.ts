@@ -1456,6 +1456,9 @@ export interface GatewayCommandErrorDetail {
   has_odometry?: boolean | null
   session_mode?: string | null
   localization?: Record<string, unknown> | null
+  native_ack?: Record<string, unknown> | null
+  task_id?: string | null
+  request_id?: string | null
   error?: string | null
   [key: string]: unknown
 }
@@ -1478,6 +1481,7 @@ export interface ControlCommandResponse {
   task_id?: string | null
   request_id?: string | null
   native_request_id?: string | null
+  native_ack?: Record<string, unknown> | null
   stage?: string | null
   execution_confirmed?: boolean | null
   goal?: number[] | null

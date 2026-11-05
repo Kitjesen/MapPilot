@@ -3,6 +3,7 @@
 #
 # The Orbbec native capture binary writes local binary records. The camera DDS
 # publisher wraps that capture process and publishes color/depth/info topics.
+# Product launch settings are supplied by session.env.
 
 set -euo pipefail
 
@@ -14,7 +15,6 @@ fi
 : "${LINGTU_REPO:=/opt/lingtu/current}"
 : "${LINGTU_CAMERA_DDS_BIN:=${LINGTU_REPO}/bin/lingtu_camera_dds}"
 : "${LINGTU_ORBBEC_CAPTURE_BIN:=${LINGTU_REPO}/bin/orbbec_capture}"
-: "${LINGTU_CAMERA_DRIVER:=orbbec_native}"
 : "${LINGTU_REALSENSE_CAPTURE_BIN:=${LINGTU_REPO}/bin/realsense_capture}"
 : "${LINGTU_REALSENSE_SERIAL_NUMBER:=}"
 case "${LINGTU_CAMERA_DRIVER}" in
@@ -22,35 +22,10 @@ case "${LINGTU_CAMERA_DRIVER}" in
     realsense_native) capture_bin="${LINGTU_REALSENSE_CAPTURE_BIN}" ;;
     *) echo "Unsupported camera driver: ${LINGTU_CAMERA_DRIVER}" >&2; exit 2 ;;
 esac
-: "${LINGTU_CAMERA_STATUS_FILE:=/dev/shm/lingtu/camera_status.json}"
-: "${LINGTU_CAMERA_FRAME_ID:=camera_link}"
-: "${LINGTU_CAMERA_COLOR_TOPIC:=rt/camera/color}"
-: "${LINGTU_CAMERA_DEPTH_TOPIC:=rt/camera/depth}"
-: "${LINGTU_CAMERA_INFO_TOPIC:=rt/camera/info}"
-: "${LINGTU_CAMERA_COLOR_SHM:=/lingtu_camera_color}"
-: "${LINGTU_CAMERA_DEPTH_SHM:=/lingtu_camera_depth}"
-: "${LINGTU_CAMERA_INFO_SHM:=/lingtu_camera_info}"
-: "${LINGTU_CAMERA_SHM_SLOT_COUNT:=16}"
-: "${LINGTU_CAMERA_SHM_SLOT_CAPACITY_BYTES:=1048576}"
-: "${LINGTU_CAMERA_PUBLISH_IMAGE_DDS:=0}"
 : "${LINGTU_DDS_DOMAIN_ID:=0}"
 : "${LINGTU_CYCLONEDDS_PREFIX:=}"
 : "${LINGTU_ORBBEC_SERIAL_NUMBER:=}"
 : "${LINGTU_ORBBEC_UID:=}"
-: "${LINGTU_ORBBEC_PRODUCT_ID:=0x0800}"
-: "${LINGTU_ORBBEC_DEVICE_INDEX:=0}"
-: "${LINGTU_ORBBEC_CONNECT_TIMEOUT_MS:=10000}"
-: "${LINGTU_ORBBEC_SDK_CONFIG:=}"
-: "${LINGTU_ORBBEC_ENABLE_FRAME_SYNC:=0}"
-: "${LINGTU_CAMERA_COLOR_WIDTH:=640}"
-: "${LINGTU_CAMERA_COLOR_HEIGHT:=480}"
-: "${LINGTU_CAMERA_COLOR_FPS:=30}"
-: "${LINGTU_CAMERA_DEPTH_WIDTH:=640}"
-: "${LINGTU_CAMERA_DEPTH_HEIGHT:=480}"
-: "${LINGTU_CAMERA_DEPTH_FPS:=30}"
-: "${LINGTU_CAMERA_CAPTURE_TIMEOUT_MS:=1000}"
-: "${LINGTU_CAMERA_STARTUP_FRAME_TIMEOUT_MS:=10000}"
-: "${LINGTU_CAMERA_CAPTURE_STALE_TIMEOUT_MS:=15000}"
 : "${LINGTU_CAMERA_CAPTURE_MAX_FRAMES:=}"
 
 if [ -n "${LINGTU_CYCLONEDDS_PREFIX}" ] && [ -d "${LINGTU_CYCLONEDDS_PREFIX}/lib" ]; then
@@ -98,19 +73,16 @@ fi
 if [ -n "${LINGTU_ORBBEC_UID}" ]; then
     capture_args+=(--uid "${LINGTU_ORBBEC_UID}")
 fi
-if [ -n "${LINGTU_ORBBEC_PRODUCT_ID}" ] && [ "${LINGTU_ORBBEC_PRODUCT_ID}" != "0" ]; then
-    capture_args+=(--product-id "${LINGTU_ORBBEC_PRODUCT_ID}")
-fi
+capture_args+=(--product-id "${LINGTU_ORBBEC_PRODUCT_ID}")
 if [ -n "${LINGTU_ORBBEC_DEVICE_INDEX}" ]; then
     capture_args+=(--device-index "${LINGTU_ORBBEC_DEVICE_INDEX}")
 fi
-if [ -n "${LINGTU_ORBBEC_SDK_CONFIG}" ]; then
-    capture_args+=(--sdk-config "${LINGTU_ORBBEC_SDK_CONFIG}")
-fi
+capture_args+=(--sdk-config "${LINGTU_ORBBEC_SDK_CONFIG}")
 case "${LINGTU_ORBBEC_ENABLE_FRAME_SYNC}" in
     1|true|TRUE|yes|YES|on|ON)
         capture_args+=(--enable-frame-sync)
         ;;
+    *) capture_args+=(--no-frame-sync) ;;
 esac
 fi
 if [ -n "${LINGTU_CAMERA_CAPTURE_MAX_FRAMES}" ]; then
@@ -121,9 +93,6 @@ runtime_args=(
     --domain-id "${LINGTU_DDS_DOMAIN_ID}"
     --capture-bin "${capture_bin}"
     --frame-id "${LINGTU_CAMERA_FRAME_ID}"
-    --color-topic "${LINGTU_CAMERA_COLOR_TOPIC}"
-    --depth-topic "${LINGTU_CAMERA_DEPTH_TOPIC}"
-    --info-topic "${LINGTU_CAMERA_INFO_TOPIC}"
     --color-shm "${LINGTU_CAMERA_COLOR_SHM}"
     --depth-shm "${LINGTU_CAMERA_DEPTH_SHM}"
     --info-shm "${LINGTU_CAMERA_INFO_SHM}"
@@ -132,10 +101,18 @@ runtime_args=(
     --status-file "${LINGTU_CAMERA_STATUS_FILE}"
     --capture-stale-timeout-ms "${LINGTU_CAMERA_CAPTURE_STALE_TIMEOUT_MS}"
 )
+# Native defaults come from the message catalogue; preserve explicit overrides.
+for stream in color depth info; do
+    key="LINGTU_CAMERA_${stream^^}_TOPIC"
+    if [ -n "${!key:-}" ]; then
+        runtime_args+=("--${stream}-topic" "${!key}")
+    fi
+done
 case "${LINGTU_CAMERA_PUBLISH_IMAGE_DDS}" in
     1|true|TRUE|yes|YES|on|ON)
         runtime_args+=(--publish-image-dds)
         ;;
+    *) runtime_args+=(--no-publish-image-dds) ;;
 esac
 
 exec "${LINGTU_CAMERA_DDS_BIN}" \

@@ -23,6 +23,8 @@ class UniformBspline {
   [[nodiscard]] Eigen::VectorXd evaluateDeBoor(double u) const;
   [[nodiscard]] Eigen::VectorXd evaluateDeBoorT(double time) const;
   [[nodiscard]] UniformBspline getDerivative() const;
+  [[nodiscard]] Eigen::Vector3d headingDirection(double time, const UniformBspline &velocity,
+                                                 double lookaheadS) const;
 
   static void parameterizeToBspline(
       double interval, const std::vector<Eigen::Vector3d> &points,

@@ -7,7 +7,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 HERE = Path(__file__).resolve().parent
 RUNNER = HERE / "compare_maps.py"
 
@@ -21,7 +20,8 @@ class CompareMapsTest(unittest.TestCase):
             for name in ("poses.txt", "scan_origin.txt", "patch_bundle.manifest"):
                 (source / name).write_text(name, encoding="utf-8")
             (source / "patches" / "scan_000000.pcd").write_text("patch", encoding="utf-8")
-            (source / "map.pcd.preclean").write_text("original", encoding="utf-8")
+            (source / "map.before_clean.pcd").write_text("original", encoding="utf-8")
+            (source / "map.pcd.preclean").write_text("legacy", encoding="utf-8")
             (source / "map.pcd").write_text("cleaned", encoding="utf-8")
 
             config = {
@@ -107,6 +107,33 @@ class CompareMapsTest(unittest.TestCase):
             report = json.loads((work / "comparison.json").read_text(encoding="utf-8"))
             self.assertEqual(report["reason"], "source_snapshot_incomplete")
             self.assertFalse(report["groups"])
+
+    def test_input_prefers_original_backup(self) -> None:
+        for backups, expected in (
+            (("map.before_clean.pcd", "map.pcd.preclean"), "map.before_clean.pcd"),
+            (("map.pcd.preclean",), "map.pcd.preclean"),
+            ((), "map.pcd"),
+        ):
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                source = root / "source"
+                source.mkdir()
+                for filename in (*backups, "map.pcd"):
+                    (source / filename).write_text(filename, encoding="utf-8")
+                config = root / "config.json"
+                config.write_text('{"rois":[],"labels":[],"plans":[]}', encoding="utf-8")
+                missing = root / "missing"
+                work = root / "work"
+                command = [
+                    sys.executable, str(RUNNER), "--source", str(source), "--work-dir", str(work),
+                    "--config", str(config), "--tool", str(missing), "--old-prune", str(missing),
+                    "--new-prune", str(missing), "--old-replay", str(missing), "--new-replay", str(missing),
+                    "--planner", str(missing), "--code-sha", "abc123", "--content-epoch", "epoch-7",
+                ]
+                completed = subprocess.run(command, capture_output=True, text=True, check=False)
+                self.assertEqual(completed.returncode, 2, completed.stderr or completed.stdout)
+                report = json.loads((work / "comparison.json").read_text(encoding="utf-8"))
+                self.assertEqual(Path(report["input_pcd"]), (source / expected).resolve())
 
 
 if __name__ == "__main__":

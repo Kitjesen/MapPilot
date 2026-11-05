@@ -484,15 +484,26 @@ PackageImportResult MapPackageMaintenance::ImportMapPackage(
     result.report.AddIssue({"lock_busy", id, package_dir, "map write lock is busy"});
     return result;
   }
+  MapStore store(MapStoreConfig{root_dir_, config_.active_state_filename});
+  const auto allowed = store.CheckMapMutationAllowedWhileLocked(id, *lock);
+  if (!allowed.ok) {
+    result.report.AddIssue({
+        allowed.message.find("active map conflict") != std::string::npos
+            ? "active_map_conflict"
+            : "active_map_state_invalid",
+        id,
+        map_dir,
+        allowed.message});
+    return result;
+  }
   const auto stage = root_dir_ /
       (".import-staging-" + id + "-" +
        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   std::filesystem::remove_all(stage);
   CopyTreeChecked(map_source, stage, map_source);
-  MapStore epoch_store(MapStoreConfig{root_dir_});
   WriteTextAtomic(
       stage / MapStore::ContentEpochFilename(),
-      std::to_string(epoch_store.AllocateContentEpoch()) + "\n");
+      std::to_string(store.AllocateContentEpoch()) + "\n");
   ReplaceDirectoryRecoverably(stage, map_dir);
   return result;
 }

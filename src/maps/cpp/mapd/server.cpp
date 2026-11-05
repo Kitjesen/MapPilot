@@ -515,18 +515,21 @@ void QueryServer::HandleClient(QuerySocket client_fd) noexcept {
         return;
       }
       case Opcode::kOpenArtifact: {
+        const auto job_id = lingtu::maps::JsonObjectStringAtPath(request->json, {"job_id"});
         const auto map_id = lingtu::maps::JsonObjectStringAtPath(request->json, {"map_id"});
         const auto capability =
             lingtu::maps::JsonObjectStringAtPath(request->json, {"capability"});
-        if (!map_id.has_value() || !capability.has_value()) {
+        if ((!job_id.has_value() && (!map_id.has_value() || !capability.has_value())) ||
+            (job_id.has_value() && (map_id.has_value() || capability.has_value()))) {
           static_cast<void>(SendResponse(
               client_fd,
               {Status::kError, 0U,
-               ErrorJson("bad_request", "open_artifact requires string map_id and capability"), -1},
+               ErrorJson("bad_request", "open_artifact requires job_id or map_id and capability"), -1},
               config_.max_json_bytes));
           return;
         }
-        const auto opened = query_.OpenArtifact(*map_id, *capability);
+        const auto opened = job_id.has_value() ? query_.OpenSaveSource(*job_id)
+                                               : query_.OpenArtifact(*map_id, *capability);
         if (!opened.ok) {
           static_cast<void>(SendResponse(
               client_fd,

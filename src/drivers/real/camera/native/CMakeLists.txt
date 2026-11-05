@@ -14,6 +14,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(_LINGTU_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../..")
 set(_LINGTU_IDL "${_LINGTU_ROOT}/src/message/idl/messages.idl")
 include("${_LINGTU_ROOT}/cmake/LingTuDDS.cmake")
+include("${_LINGTU_ROOT}/scripts/build/cmake/settings.cmake")
 lingtu_add_dds_c_messages(lingtu_camera_dds_messages "${_LINGTU_IDL}")
 
 add_executable(lingtu_camera_dds
@@ -25,6 +26,7 @@ target_include_directories(lingtu_camera_dds PRIVATE
   "${_LINGTU_ROOT}/src")
 
 target_link_libraries(lingtu_camera_dds PRIVATE
+  lingtu_settings
   CycloneDDS::ddsc
   lingtu_dds_contracts
   lingtu_camera_dds_messages
@@ -59,6 +61,19 @@ if(BUILD_TESTING)
     -Wpedantic
     -Werror)
   add_test(NAME lingtu_camera_record_contract COMMAND test_camera_record)
+
+  add_executable(
+    test_camera_record_writer
+    "${_LINGTU_CAMERA_TESTS_DIR}/test_record_writer.cpp")
+  target_include_directories(test_camera_record_writer PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_definitions(test_camera_record_writer PRIVATE NDEBUG)
+  target_compile_options(test_camera_record_writer PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror)
+  add_test(NAME lingtu_camera_record_writer COMMAND test_camera_record_writer)
 
   add_executable(
     test_camera_record_deadline

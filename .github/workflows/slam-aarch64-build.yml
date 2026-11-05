@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - 'src/localization/slam/**'
+      - 'config/system/settings/**'
+      - 'scripts/build/settings.py'
+      - 'scripts/build/cmake/settings.cmake'
       - 'src/localization/online_mapping/**'
       - 'src/localization/map_optimization/**'
       - 'scripts/build/prepare_gtsam.sh'
@@ -22,6 +25,9 @@ on:
     branches: [main]
     paths:
       - 'src/localization/slam/**'
+      - 'config/system/settings/**'
+      - 'scripts/build/settings.py'
+      - 'scripts/build/cmake/settings.cmake'
       - 'src/localization/online_mapping/**'
       - 'src/localization/map_optimization/**'
       - 'scripts/build/prepare_gtsam.sh'
@@ -72,6 +78,7 @@ jobs:
             build-essential \
             ccache \
             cmake \
+            python3-yaml \
             curl \
             cyclonedds-dev \
             cyclonedds-tools \

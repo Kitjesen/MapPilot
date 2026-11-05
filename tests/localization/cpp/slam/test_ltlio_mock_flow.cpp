@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <thread>
 #include <pcl/io/pcd_io.h>
@@ -1078,13 +1080,19 @@ void checkPatchBundleRetentionManifest(
   check(initial_sequence == 1, "patch_bundle_initial_observation_count_wrong");
   const auto check_manifest = [&](const char* directory, bool expected_complete,
                                   std::uint64_t expected_dropped,
-                                  std::uint64_t expected_count) {
+                                  std::uint64_t expected_count, double expected_stamp,
+                                  std::uint64_t expected_observation) {
     const auto map_path = map_dir / directory / "map.pcd";
     const auto saved = backend->saveMap(map_path.string());
     if (!saved.ok) {
       std::cerr << "patch_bundle_save_failed: " << saved.message << '\n';
     }
     check(saved.ok, "patch_bundle_save_failed");
+    const auto cloud = backend->outputs().saved_map_cloud_map;
+    check(cloud && std::abs(cloud->stamp_s - expected_stamp) < 1e-9,
+          "patch_bundle_save_timestamp_outside_retained_prefix");
+    check(backend->outputs().saved_map_observation_sequence == expected_observation,
+          "patch_bundle_save_identity_outside_retained_prefix");
     std::ifstream manifest(map_path.parent_path() / "patch_bundle.manifest");
     check(manifest.is_open(), "patch_bundle_manifest_missing");
     std::string schema;
@@ -1113,35 +1121,122 @@ void checkPatchBundleRetentionManifest(
     check(std::abs(ox - 0.16) < 1e-6 && std::abs(oy - 0.02) < 1e-6 &&
               std::abs(oz - 0.12) < 1e-6,
           "scan_origin_not_in_exported_body_frame");
+    std::ifstream trajectory(map_path.parent_path() / "trajectory.raw.txt");
+    std::string line;
+    double last_stamp = 0.0;
+    while (std::getline(trajectory, line)) {
+      std::istringstream row(line);
+      check(static_cast<bool>(row >> last_stamp) && last_stamp <= expected_stamp + 1e-9,
+            "patch_bundle_trajectory_exceeds_retained_prefix");
+    }
+    check(std::abs(last_stamp - expected_stamp) < 1e-9,
+          "patch_bundle_trajectory_lost_retained_prefix");
+    if (backend->outputs().stamp_s > expected_stamp) {
+      std::size_t points = 0;
+      for (const auto& patch : std::filesystem::directory_iterator(map_path.parent_path() / "patches")) {
+        std::ifstream input(patch.path(), std::ios::binary);
+        while (std::getline(input, line) && line.rfind("DATA ", 0) != 0)
+          if (line.rfind("POINTS ", 0) == 0) points += std::stoull(line.substr(7));
+      }
+      check(cloud->points.size() == points,
+            "patch_bundle_frozen_save_included_unarchived_geometry");
+    }
   };
-  check_manifest("complete_patch_bundle", true, 0, 1);
+  check_manifest("complete_patch_bundle", true, 0, 1, backend->outputs().stamp_s, initial_sequence);
   prior.stamp_s = 0.445;
   check(backend->feedVisualOdom(prior).ok, "patch_bundle_pose_prior_rejected");
   processScan(*backend, 0.40, 0.0F, next_imu_stamp_s);
   const auto full = backend->outputs();
-  check(full.state == SlamState::Degraded &&
-            full.reason == "mapping_keyframe_capacity_reached" &&
+  check(full.state == SlamState::Tracking && full.confidence > 0.0 &&
+            full.global_map_state == "mapping_keyframe_capacity_reached" &&
             full.observation_sequence == initial_sequence + 1,
-        "patch_bundle_did_not_stop_at_capacity");
+        "patch_bundle_capacity_blocked_tracking");
   for (int i = 0; i < 4; ++i) {
     const double scan_stamp_s = 0.50 + static_cast<double>(i) * 0.10;
     prior.stamp_s = scan_stamp_s + 0.045;
+    prior.odom_body.x = (i + 1) * 0.05;
     check(backend->feedVisualOdom(prior).ok, "patch_bundle_pose_prior_rejected");
     processScan(*backend, scan_stamp_s, 0.0F, next_imu_stamp_s);
     const auto outputs = backend->outputs();
-    check(outputs.state == SlamState::Degraded &&
-              outputs.observation_sequence == full.observation_sequence &&
-              outputs.stamp_s == full.stamp_s,
-          "patch_bundle_processed_scan_after_capacity");
+    check(outputs.state == SlamState::Tracking && outputs.confidence > 0.0 &&
+              outputs.global_map_state == "mapping_keyframe_capacity_reached" &&
+              outputs.odom_prior_map_points == full.odom_prior_map_points &&
+              outputs.observation_sequence == full.observation_sequence + i + 1 &&
+              outputs.stamp_s > full.stamp_s && outputs.odometry_odom_body &&
+              std::abs(outputs.odometry_odom_body->x - prior.odom_body.x) < 0.01,
+          "patch_bundle_capacity_stopped_new_odometry");
   }
-  check(backend->feedImu(imu(100.0)).ok &&
-            backend->feedLidar(lidar(100.0, 0.0F)).ok &&
-            backend->tick().ok,
-        "patch_bundle_capacity_did_not_hold_input");
-  check(backend->outputs().source_epoch == full.source_epoch &&
-            backend->outputs().observation_sequence == full.observation_sequence,
-        "patch_bundle_capacity_lost_map_on_sensor_time_jump");
-  check_manifest("capacity_preserved_patch_bundle", true, 0, 2);
+  auto invalid_imu = imu(1.0);
+  invalid_imu.ax = std::numeric_limits<double>::quiet_NaN();
+  check(!backend->feedImu(invalid_imu).ok && !backend->feedLidar(LidarFrame{}).ok,
+        "patch_bundle_capacity_skipped_input_validation");
+  check(backend->outputs().source_epoch == full.source_epoch,
+        "patch_bundle_capacity_changed_source_epoch");
+  check_manifest("capacity_preserved_patch_bundle", true, 0, 2, full.stamp_s,
+                 full.observation_sequence);
+}
+
+void checkWorkerCapacityWithBacklog(const std::filesystem::path& base_config,
+                                    const std::filesystem::path& map_dir) {
+  const auto config_path = map_dir / "worker_capacity.yaml";
+  {
+    std::ifstream input(base_config);
+    std::ofstream output(config_path);
+    output << input.rdbuf() << "max_patch_snapshots: 4000\n"
+           << "lidar_filter_num: 1\n"
+           << "patch_min_interval_s: 0\npatch_min_translation_m: 0\npatch_min_rotation_rad: 0\n";
+  }
+  auto backend = makeLtlioBackend();
+  SlamConfig config;
+  config.config_path = config_path.string();
+  check(backend->configure(config).ok && backend->setMode(SlamMode::Mapping, {}).ok,
+        "worker_capacity_configuration_failed");
+  // Exercise the real default worker limit with an archive configured larger.
+  constexpr std::uint64_t worker_capacity = 3000;
+  bool saw_backlog = false;
+  for (std::uint64_t i = 0; i < worker_capacity + 2; ++i) {
+    const double stamp = 1.0 + i * .001;
+    OdomSample prior;
+    prior.stamp_s = stamp;
+    prior.odom_body.x = i * .00001;
+    LidarFrame frame;
+    frame.stamp_s = stamp;
+    frame.points = {{0, 0, 0, 1},
+                    {1.0F + static_cast<float>(i % 30) * .1F,
+                     static_cast<float>((i / 30) % 30) * .1F,
+                     static_cast<float>(i / 900) * .2F, 1}};
+    check(backend->feedVisualOdom(prior).ok && backend->feedImu(imu(stamp)).ok &&
+              backend->feedLidar(frame).ok && backend->tick().ok,
+          "worker_capacity_input_rejected");
+    const auto out = backend->outputs();
+    saw_backlog |= out.global_map_keyframes + 4 < out.observation_sequence;
+    check(out.state == SlamState::Tracking && out.observation_sequence == i + 1 &&
+              out.odometry_odom_body &&
+              std::abs(out.odometry_odom_body->x - prior.odom_body.x) < 1e-9,
+          "worker_capacity_stopped_localization");
+  }
+  check(saw_backlog, "worker_capacity_fixture_did_not_create_backlog");
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+  while (backend->outputs().global_map_busy) {
+    check(backend->tick().ok && std::chrono::steady_clock::now() < deadline,
+          "worker_capacity_backlog_did_not_drain");
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  const auto full = backend->outputs();
+  check(full.global_map_keyframes == worker_capacity && full.global_map_dropped_frames == 0 &&
+            full.global_map_state == "mapping_keyframe_capacity_reached",
+        "worker_capacity_archive_exceeded_worker_limit");
+  const auto path = map_dir / "worker_capacity" / "map.pcd";
+  const auto status = backend->saveMap(path.string());
+  if (!status.ok) std::cerr << status.message << '\n';
+  check(status.ok, "worker_capacity_snapshot_failed");
+  const auto saved = backend->outputs();
+  check(saved.saved_map_observation_sequence == worker_capacity && saved.saved_map_cloud_map &&
+            std::abs(saved.saved_map_cloud_map->stamp_s - (1.0 + (worker_capacity - 1) * .001)) < 1e-9 &&
+            saved.saved_map_cloud_map->points.size() == worker_capacity,
+        "worker_capacity_snapshot_did_not_freeze_archive_prefix");
+  std::cout << "worker_capacity=" << full.global_map_keyframes
+            << " observations=" << full.observation_sequence << " backlog_drained=1\n";
 }
 
 void checkMissingImuDoesNotRefreshOdometry(const std::filesystem::path& config_path) {
@@ -1177,6 +1272,49 @@ void checkMissingImuDoesNotRefreshOdometry(const std::filesystem::path& config_p
             recovered.stamp_s > before.stamp_s &&
             recovered.observation_sequence > before.observation_sequence,
         "imu_gap_did_not_recover_on_new_scan");
+}
+
+void checkSnapshotKeepsLoadedMap(
+    const std::filesystem::path& config_path,
+    const std::filesystem::path& map_dir) {
+  double next_imu_stamp_s = 0.0;
+  auto backend = initializedMappingBackend(config_path, next_imu_stamp_s);
+  const auto mapping = backend->outputs();
+  check(mapping.map_cloud_map && mapping.odometry_odom_body,
+        "snapshot_loaded_map_fixture_missing_geometry");
+  Cloud reference = *mapping.map_cloud_map;
+  for (auto& point : reference.points) point.x += 25.0F;
+  const auto reference_path = map_dir / "snapshot_loaded_map" / "reference.pcd";
+  writePcd(reference_path, reference);
+  check(backend->loadMap(reference_path.string()).ok,
+        "snapshot_reference_map_load_failed");
+  const auto loaded = backend->outputs();
+  const auto output_path = map_dir / "snapshot_loaded_map" / "capture" / "map.pcd";
+  auto started = backend->startSaveMapAsync(output_path.string());
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+  while (!started.ok && started.message == "online_mapping_busy_retry_save") {
+    check(std::chrono::steady_clock::now() < deadline, "loaded_map_snapshot_start_timed_out");
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    started = backend->startSaveMapAsync(output_path.string());
+  }
+  check(started.ok, "loaded_map_snapshot_start_failed");
+  std::optional<Status> completed;
+  while (!(completed = backend->pollSaveMapAsync())) {
+    check(std::chrono::steady_clock::now() < deadline, "loaded_map_snapshot_timed_out");
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  const auto saved = backend->outputs();
+  check(completed->ok && saved.saved_map_cloud_map && saved.map_loaded &&
+            saved.relocalization_state == loaded.relocalization_state &&
+            saved.last_relocalization_message == loaded.last_relocalization_message &&
+            saved.reason == loaded.reason && saved.source_epoch == loaded.source_epoch,
+        "snapshot_changed_active_localization_state");
+  check(backend->setMode(SlamMode::Localization, "").ok,
+        "snapshot_reference_localization_mode_failed");
+  auto seed = *mapping.odometry_odom_body;
+  seed.x += 25.0;
+  const auto aligned = backend->relocalize(seed);
+  check(aligned.ok, "snapshot_replaced_loaded_target_or_bounds");
 }
 
 void checkAsyncSnapshotKeepsProcessingScans(
@@ -1246,10 +1384,15 @@ void checkAsyncSnapshotKeepsProcessingScans(
   }
   check(completed->ok && std::filesystem::is_regular_file(pcd_path),
         "async_snapshot_write_failed");
+  check(completed->message == "map_snapshot_ready", "snapshot_reported_product_map_saved");
   const auto saved = backend->outputs();
+  check(!saved.map_loaded && !saved.saved_map_relocalization_supported,
+        "snapshot_implicitly_loaded_localization_map");
   check(saved.saved_map_cloud_map &&
             saved.saved_map_cloud_map->stamp_s == captured.stamp_s,
         "async_snapshot_used_newer_scan_timestamp");
+  check(saved.saved_map_observation_sequence == captured.observation_sequence,
+        "async_snapshot_used_newer_scan_identity");
   check(saved.saved_map_cloud_map == backend->outputs().saved_map_cloud_map,
         "unchanged_saved_map_was_copied");
   std::size_t patch_points = 0;
@@ -1299,16 +1442,18 @@ void checkAsyncSnapshotKeepsProcessingScans(
   const auto original_poses = read_bytes(pcd_path.parent_path() / "poses.txt");
   const auto old_cloud = saved.saved_map_cloud_map;
   const auto old_revision = saved.saved_map_revision;
-  check(saved.saved_map_relocalization_supported,
-        "snapshot_compact_target_did_not_enable_relocalization");
+  check(!saved.saved_map_relocalization_supported,
+        "snapshot_prepared_a_localization_target");
   auto staging = pcd_path;
   staging += ".tmp";
+  check(!std::filesystem::exists(staging), "snapshot_left_completed_staging");
   check(std::filesystem::create_directory(staging), "snapshot_staging_fixture_failed");
   const auto failed = backend->saveMap(pcd_path.string());
   check(!failed.ok, "snapshot_staging_conflict_was_reported_successful");
+  check(std::filesystem::is_directory(staging), "snapshot_failure_removed_existing_staging");
   check(backend->outputs().saved_map_cloud_map == old_cloud &&
             backend->outputs().saved_map_revision == old_revision &&
-            backend->outputs().saved_map_relocalization_supported &&
+            !backend->outputs().saved_map_relocalization_supported &&
             original_pcd == read_bytes(pcd_path) &&
             original_poses == read_bytes(pcd_path.parent_path() / "poses.txt"),
         "snapshot_failure_replaced_previous_map");
@@ -1316,7 +1461,7 @@ void checkAsyncSnapshotKeepsProcessingScans(
 #ifdef _WIN32
   {
     // A file being read on Windows cannot be renamed. Exercise commit failure
-    // after staged output and the replacement localization target are ready.
+    // after the archived output is ready.
     std::ifstream held_open(pcd_path, std::ios::binary);
     check(held_open.is_open(), "snapshot_commit_failure_fixture_failed");
     const auto commit_failed = backend->saveMap(pcd_path.string());
@@ -1354,6 +1499,7 @@ void checkAsyncSnapshotKeepsProcessingScans(
   check(!stale_completed->ok && stale_completed->message == "map_snapshot_source_changed",
         "snapshot_stale_source_was_reported_successful");
   const auto after_stale = backend->outputs();
+  check(!std::filesystem::exists(staging), "snapshot_left_stale_staging");
   check(original_pcd == read_bytes(pcd_path) &&
             original_poses == read_bytes(pcd_path.parent_path() / "poses.txt") &&
             after_stale.saved_map_cloud_map == reset_output.saved_map_cloud_map &&
@@ -1365,8 +1511,10 @@ void checkAsyncSnapshotKeepsProcessingScans(
 }  // namespace
 
 int main(int argc, char** argv) {
+  const bool worker_capacity = argc == 2 && std::string(argv[1]) == "--worker-capacity";
   const auto map_dir =
-      std::filesystem::temp_directory_path() / "lingtu_ltlio_mock_flow_map";
+      std::filesystem::temp_directory_path() / (worker_capacity
+          ? "lingtu_ltlio_worker_capacity_map" : "lingtu_ltlio_mock_flow_map");
   std::filesystem::remove_all(map_dir);
   std::filesystem::create_directories(map_dir);
   const auto config_path = map_dir / "ltlio_test.yaml";
@@ -1453,6 +1601,13 @@ int main(int argc, char** argv) {
     config_out << "odom_prior_max_age_s: 0.20\n";
   }
 
+  const auto patch_bundle_bypass_config_path = map_dir / "ltlio_patch_bundle_bypass_test.yaml";
+  {
+    std::ifstream input(patch_bundle_config_path);
+    std::ofstream output(patch_bundle_bypass_config_path);
+    output << input.rdbuf() << "odom_prior_bypass_ltlio: true\n";
+  }
+
   const auto patch_sampling_config_path = map_dir / "ltlio_patch_sampling_test.yaml";
   {
     std::ofstream config_out(patch_sampling_config_path);
@@ -1475,6 +1630,15 @@ int main(int argc, char** argv) {
     config_out << "patch_min_interval_s: 0.0\n";
   }
 
+  if (argc == 2 && std::string(argv[1]) == "--mapping-capacity") {
+    checkPatchBundleRetentionManifest(patch_bundle_config_path, map_dir);
+    checkPatchBundleRetentionManifest(patch_bundle_bypass_config_path, map_dir / "bypass_capacity");
+    return 0;
+  }
+  if (worker_capacity) {
+    checkWorkerCapacityWithBacklog(bypass_config_path, map_dir);
+    return 0;
+  }
   if (argc == 2 && std::string(argv[1]) == "--map-reload-failure") {
     checkMapReloadTransaction(config_path, map_dir, true);
     return 0;
@@ -1487,6 +1651,7 @@ int main(int argc, char** argv) {
   checkMapReloadTransaction(config_path, map_dir, true);
   checkMapReloadTransaction(config_path, map_dir, false);
   checkPatchBundleRetentionManifest(patch_bundle_config_path, map_dir);
+  checkPatchBundleRetentionManifest(patch_bundle_bypass_config_path, map_dir / "bypass_capacity");
   checkPatchSamplingMotion(patch_sampling_config_path, map_dir);
   checkPatchSamplingMotion(patch_rate_limit_config_path, map_dir / "rate_limited_sampling", true);
   checkPatchSamplingMotion(patch_spatial_sampling_config_path, map_dir / "spatial_sampling", false);
@@ -1500,6 +1665,7 @@ int main(int argc, char** argv) {
   checkPositionCovarianceHealthGate(covariance_gate_config_path);
   checkSensorTimeJumpGate(config_path);
   checkMissingImuDoesNotRefreshOdometry(config_path);
+  checkSnapshotKeepsLoadedMap(config_path, map_dir);
   checkAsyncSnapshotKeepsProcessingScans(config_path, map_dir);
   checkRejectedUpdateHealthGate(config_path);
   checkVelocityHealthGate(config_path);

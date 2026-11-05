@@ -21,8 +21,10 @@ documentation; architecture and evidence levels belong in
 再对照真实地图、优化保存性能并验证恢复续建。计划记录了当前测试失败与实机资格边界。
 
 2026-10-26 决定：**组合碰撞模型作为已适配平台的正式规划默认**。本地 Go2 real、
-Thunder real/sim 已绑定平台模型；余量统一取平台配置、只扩水平面一次，endpoint 已接当前
-机身姿态。固定关节资产与在线 FK、Go2 附件实测和 NX 部署分别记录，不能混称全部验收。
+Thunder real/sim 已绑定平台模型；余量统一取平台配置、只扩水平面一次。2026-11-01
+已删除 endpoint 的实时 roll/pitch 机体快照；当前碰撞使用固定名义姿态与查询 yaw，
+尚无在线关节 FK。当前全局使用简化圆柱通道，所选组合模型用于局部与执行碰撞检查。
+Go2 附件实测和 NX 部署分别记录，不能混称全部验收。
 代码、模型来源、验证与后续范围见
 [导航碰撞模型与运动姿态](design/navigation-body-model-and-motion-posture.md)。
 本轮正式 Thunder 名义模型 DDS＋MuJoCo 短程仍起步阻塞：全局成功、局部零命令，
@@ -35,11 +37,11 @@ Thunder real/sim 已绑定平台模型；余量统一取平台配置、只扩水
 [导航碰撞模型与运动姿态](design/navigation-body-model-and-motion-posture.md#名称行业来源与实现边界)。
 该命名步骤当时只更新名称；随后模型接入以上述最新决定和对应验证记录为准。
 
-2026-10-23 当前对话推进：在已通过的单OBB＋SCAN＋Thunder MuJoCo直线闭环上，
+2026-10-23 历史推进：在已通过的单OBB＋SCAN＋Thunder MuJoCo直线闭环上，
 按森哥要求组队完成首次/连续任务响应、宽敞转角连续运动和复杂平地场景验证。
 代码分工与固定输入记录在 `build/navigation-team-20261023/PLAN.md`；
 原直线证据保存在 `build/navigation-closeout-20261023/`。正式Product整链路、
-坡地楼梯与实机验收仍单列未完成，不以组件测试代替。此项为当前导航验收目标，
+坡地楼梯与实机验收仍单列未完成，不以组件测试代替。此项导航验收目标尚未完成，
 下方历史任务缺口保留。
 
 更新：2026-10-22。当前任务和优先级以本节为准；下方日期记录与研究计划提供背景，

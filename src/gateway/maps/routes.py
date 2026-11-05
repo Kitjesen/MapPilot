@@ -19,6 +19,7 @@ from gateway.maps.transport import (
     active_map,
     mapd_request,
     open_artifact,
+    open_save_source,
     safe_map_name,
     voxel_edit_center,
 )
@@ -41,7 +42,7 @@ from gateway.services.exploration import (
 from gateway.services.global_mapping import global_mapping_frame, global_mapping_points
 from gateway.services.native_status import read_navigation_status, read_traversability_status
 from runtime.endpoints.map_paths import map_import_root, resolve_exchange_path
-from runtime.endpoints.mapd import MapClientError
+from runtime.endpoints.mapd import ArtifactHandle, MapClientError
 from runtime.runtime_policy import backend_capability_defaults
 from runtime.tf.frames import normalize_frame_id
 from runtime.utils.sanitize import sanitize_dict
@@ -74,6 +75,7 @@ _EXTERNAL_OPERATION_STATUS_FIELDS = frozenset(
         "state",
         "phase",
         "progress",
+        "source_saved",
         "reason",
         "reason_code",
         "message",
@@ -127,6 +129,7 @@ _EXTERNAL_OPERATION_MESSAGES = {
     "map_service_unavailable": "Native mapd is unavailable.",
     "save_job_in_progress": "Map save is in progress.",
     "save_job_timeout": "Map save is still in progress.",
+    "saved_source_missing": "The saved point cloud is unavailable; save the map again.",
 }
 _PUBLIC_OPERATION_REASON_CODES = {
     "invalid_job_id": "invalid_operation_id",
@@ -177,6 +180,8 @@ def _external_operation_message(payload: dict[str, Any]) -> str:
     if reason_code in _EXTERNAL_OPERATION_MESSAGES:
         return _EXTERNAL_OPERATION_MESSAGES[reason_code]
     state = str(payload.get("state") or payload.get("status") or "").strip().upper()
+    if state == "CAPTURED":
+        return "Point cloud saved; waiting for processing."
     if state in {"QUEUED", "RUNNING"} or payload.get("accepted") is True:
         return "Map save is in progress."
     if state == "SUCCEEDED" or payload.get("success") is True:
@@ -408,6 +413,235 @@ def _mapd_http_request(gw: Any, cmd: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+async def list_maps(gw: Any):
+    resp = await asyncio.to_thread(
+        _mapd_http_request, gw, {"action": "list_maps"}
+    )
+    if resp.get("success") is not True:
+        return JSONResponse(
+            status_code=503,
+            content=GatewayErrorResponse(
+                error="map_service_unavailable",
+                message="Native mapd is unavailable.",
+            ).model_dump(mode="json"),
+        )
+    active_candidate = str(resp.get("active") or "")
+    active_target = (
+        active_candidate if public_map_name_error(active_candidate) is None else ""
+    )
+    maps = []
+    for item in resp.get("maps") if isinstance(resp.get("maps"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "")
+        if public_map_name_error(name) is not None:
+            continue
+        if type(item.get("can_activate")) is not bool:
+            return JSONResponse(
+                status_code=503,
+                content=GatewayErrorResponse(
+                    error="map_service_contract_invalid",
+                    message="Native mapd returned invalid can_activate.",
+                ).model_dump(mode="json"),
+            )
+        record = item.get("record")
+        content_epoch = record.get("content_epoch") if isinstance(record, dict) else None
+        maps.append(
+            {
+                "name": name,
+                "content_epoch": content_epoch,
+                "has_pcd": bool(item.get("has_pcd")),
+                "has_occupancy": bool(item.get("has_occupancy")),
+                "has_octomap": bool(item.get("has_octomap")),
+                "can_activate": item["can_activate"],
+                "activation_blockers": [
+                    str(blocker)
+                    for blocker in (
+                        item.get("activation_blockers")
+                        if isinstance(item.get("activation_blockers"), list)
+                        else []
+                    )
+                ],
+                "map_evidence": str(item.get("map_evidence") or "none"),
+                "state": (
+                    state
+                    if (state := str(item.get("state") or "").strip().upper())
+                    in _PUBLIC_MAP_STATES
+                    else None
+                ),
+                "is_active": bool(item.get("is_active")) or name == active_target,
+                "size_mb": item.get("size_mb"),
+                "patch_count": int(item.get("patch_count") or 0),
+            }
+        )
+    return {
+        "schema_version": 1,
+        "maps": maps,
+        "count": len(maps),
+        "active": active_target,
+        "ts": time.time(),
+    }
+
+
+async def get_operation(gw: Any, operation_id: str):
+    if MAP_OPERATION_ID_PATTERN.fullmatch(operation_id) is None:
+        return _external_operation_lifecycle_response(
+            False,
+            status_code=400,
+            reason_code="invalid_operation_id",
+            message="invalid map operation id",
+        )
+    resp = await asyncio.to_thread(
+        _mapd_http_request,
+        gw,
+        {"action": "get_save_map_status", "job_id": operation_id},
+    )
+    return _external_operation_service_response(
+        resp,
+        status_code=200 if resp.get("success") is True else 404,
+    )
+
+
+async def save_map(gw: Any, body: MapSaveRequest):
+    payload = body.model_dump()
+    name = payload.get("name", "")
+    if not name:
+        name = "map_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+    err = public_map_name_error(name)
+    if err is not None:
+        return _external_operation_lifecycle_response(
+            False,
+            message=err,
+            reason_code="invalid_map_name",
+            status_code=400,
+        )
+    if product_control_owns_explore(gw):
+        try:
+            save_readiness = exploration_map_save_readiness(gw)
+        except ExplorationRunError as exc:
+            return _external_operation_lifecycle_response(
+                False,
+                status_code=exc.status_code,
+                name=name,
+                reason_code=exc.code,
+                message=str(exc),
+            )
+        if not save_readiness["can_save"]:
+            return _external_operation_lifecycle_response(
+                False,
+                status_code=409,
+                name=name,
+                reason_code=str(save_readiness["reason"]),
+                message=str(save_readiness["message"]),
+                exploration_run_id=save_readiness.get("exploration_run_id"),
+                exploration_state=save_readiness.get("exploration_state"),
+            )
+    try:
+        slam_profile = gw._get_slam_profile()
+    except Exception:
+        return _external_operation_lifecycle_response(
+            False,
+            status_code=503,
+            name=name,
+            reason_code="slam_profile_unavailable",
+            message="Current SLAM profile is unavailable.",
+        )
+    capability = backend_capability_defaults(slam_profile)
+    if capability.get("map_save_supported") is not True:
+        return _external_operation_lifecycle_response(
+            False,
+            status_code=409,
+            name=name,
+            reason_code="map_save_unsupported",
+            message=f"map save is not supported by SLAM backend: {slam_profile}",
+            slam_profile=slam_profile,
+            map_save_source=capability.get("map_save_source", "unknown"),
+        )
+
+    try:
+        resp = await asyncio.to_thread(
+            _mapd_http_request,
+            gw,
+            {
+                "action": "save_map",
+                "map_id": name,
+                "slam_profile": slam_profile,
+                "request_id": payload.get("request_id"),
+                "auto_process": body.auto_process,
+            },
+        )
+    except HTTPException as exc:
+        return _external_operation_lifecycle_response(
+            False,
+            status_code=int(exc.status_code),
+            name=name,
+            reason_code="map_service_unavailable",
+            message=str(exc.detail),
+        )
+    ok = resp.get("success") is True
+    native_status = resp.get("status") if isinstance(resp.get("status"), dict) else {}
+    operation_id = str(
+        resp.get("operation_id")
+        or resp.get("job_id")
+        or native_status.get("job_id")
+        or ""
+    ).strip()
+    accepted = bool(operation_id) and (
+        resp.get("accepted") is True
+        or str(resp.get("status") or "").strip().lower() == "running"
+    )
+    if accepted:
+        accepted_payload = dict(resp)
+        accepted_payload.pop("success", None)
+        accepted_payload.pop("ok", None)
+        accepted_payload["accepted"] = True
+        accepted_payload["operation_id"] = operation_id
+        if accepted_payload.get("reason_code") == "save_job_timeout":
+            accepted_payload["reason_code"] = "save_job_in_progress"
+        payload = map_lifecycle_payload(
+            True,
+            name=name,
+            **accepted_payload,
+        )
+        # Accepted is neither terminal success nor terminal failure.
+        payload["success"] = None
+        return _external_operation_json_response(payload, status_code=202)
+    message_lower = str(resp.get("message", "")).lower()
+    status_code = 200 if ok else 409 if "unsupported" in message_lower or "not supported" in message_lower else 500
+    return _external_operation_service_response(
+        resp,
+        status_code=status_code,
+        name=name,
+    )
+
+
+def _artifact_response(
+    artifact: ArtifactHandle, filename: str, *, operation_id: str | None = None,
+) -> StreamingResponse:
+    headers = {
+        "Cache-Control": "no-store",
+        "Content-Length": str(artifact.size_bytes),
+        "Content-Disposition": f'attachment; filename="{filename}"',
+    }
+    if operation_id is not None:
+        headers["X-Lingtu-Operation-Id"] = operation_id
+    artifact_map_id = artifact.metadata.get("map_id")
+    if isinstance(artifact_map_id, str) and artifact_map_id:
+        headers["X-Lingtu-Map-Id"] = artifact_map_id
+    content_epoch = artifact.metadata.get("content_epoch")
+    if isinstance(content_epoch, int) and not isinstance(content_epoch, bool) and content_epoch > 0:
+        headers["X-Lingtu-Content-Epoch"] = str(content_epoch)
+    frame_id = artifact.metadata.get("frame_id")
+    if isinstance(frame_id, str) and frame_id:
+        headers["X-Lingtu-Frame-Id"] = frame_id
+    try:
+        body = artifact.iter_bytes()
+    except Exception:
+        artifact.close()
+        raise
+    return StreamingResponse(body, media_type=artifact.media_type, headers=headers)
+
+
 def _register_save_operation_routes(app, gw) -> None:
     """Register the public map-save operation API."""
 
@@ -432,22 +666,7 @@ def _register_save_operation_routes(app, gw) -> None:
         response_model=MapSaveOperationResponse,
     )
     async def get_map_operation(operation_id: str):
-        if MAP_OPERATION_ID_PATTERN.fullmatch(operation_id) is None:
-            return _external_operation_lifecycle_response(
-                False,
-                status_code=400,
-                reason_code="invalid_operation_id",
-                message="invalid map operation id",
-            )
-        resp = await asyncio.to_thread(
-            _mapd_http_request,
-            gw,
-            {"action": "get_save_map_status", "job_id": operation_id},
-        )
-        return _external_operation_service_response(
-            resp,
-            status_code=200 if resp.get("success") is True else 404,
-        )
+        return await get_operation(gw, operation_id)
 
     @app.post(
         "/api/v1/maps/operations/{operation_id}/cancel",
@@ -497,6 +716,50 @@ def _register_save_operation_routes(app, gw) -> None:
             status_code=202 if accepted else 409,
         )
 
+    @app.post(
+        "/api/v1/maps/operations/{operation_id}/process",
+        summary="Process an already saved point cloud",
+        response_model=MapSaveOperationResponse,
+    )
+    async def process_map_operation(operation_id: str):
+        if MAP_OPERATION_ID_PATTERN.fullmatch(operation_id) is None:
+            return _external_operation_lifecycle_response(
+                False, status_code=400, reason_code="invalid_operation_id",
+                message="invalid map operation id",
+            )
+        resp = await asyncio.to_thread(
+            _mapd_http_request, gw, {"action": "process_save_map", "job_id": operation_id},
+        )
+        accepted = resp.get("accepted") is True
+        return _external_operation_service_response(
+            {**resp, "success": accepted}, status_code=202 if accepted else 409,
+        )
+
+    @app.get(
+        "/api/v1/maps/operations/{operation_id}/source/pcd",
+        summary="Download the point cloud archived by this save operation",
+    )
+    async def get_operation_source(operation_id: str):
+        if MAP_OPERATION_ID_PATTERN.fullmatch(operation_id) is None:
+            raise HTTPException(400, detail={"reason_code": "invalid_operation_id"})
+        try:
+            artifact = await asyncio.to_thread(open_save_source, gw, operation_id)
+        except MapClientError as exc:
+            if exc.reason_code in {"job_not_found", "saved_source_missing"}:
+                raise HTTPException(404, detail={
+                    "reason_code": "saved_source_missing", "message": "Saved point cloud is unavailable.",
+                }) from exc
+            logger.warning("saved point cloud open failed for operation %r: %s", operation_id, exc)
+            raise HTTPException(503, detail={
+                "reason_code": "mapd_unavailable", "message": "Saved point cloud service is unavailable.",
+            }) from exc
+        except (OSError, RuntimeError) as exc:
+            logger.warning("saved point cloud endpoint unavailable for operation %r: %s", operation_id, exc)
+            raise HTTPException(503, detail={
+                "reason_code": "mapd_unavailable", "message": "Saved point cloud service is unavailable.",
+            }) from exc
+        return _artifact_response(artifact, "map.source.pcd", operation_id=operation_id)
+
 
 def register_map_routes(app, gw) -> None:
     """Register saved-map query and lifecycle routes on the Gateway app."""
@@ -511,73 +774,7 @@ def register_map_routes(app, gw) -> None:
         responses={503: {"model": GatewayErrorResponse}},
     )
     async def slam_maps():
-        resp = await asyncio.to_thread(
-            _mapd_http_request, gw, {"action": "list_maps"}
-        )
-        if resp.get("success") is not True:
-            return JSONResponse(
-                status_code=503,
-                content=GatewayErrorResponse(
-                    error="map_service_unavailable",
-                    message="Native mapd is unavailable.",
-                ).model_dump(mode="json"),
-            )
-        active_candidate = str(resp.get("active") or "")
-        active_target = (
-            active_candidate if public_map_name_error(active_candidate) is None else ""
-        )
-        maps = []
-        for item in resp.get("maps") if isinstance(resp.get("maps"), list) else []:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or "")
-            if public_map_name_error(name) is not None:
-                continue
-            if type(item.get("can_activate")) is not bool:
-                return JSONResponse(
-                    status_code=503,
-                    content=GatewayErrorResponse(
-                        error="map_service_contract_invalid",
-                        message="Native mapd returned invalid can_activate.",
-                    ).model_dump(mode="json"),
-                )
-            record = item.get("record")
-            content_epoch = record.get("content_epoch") if isinstance(record, dict) else None
-            maps.append(
-                {
-                    "name": name,
-                    "content_epoch": content_epoch,
-                    "has_pcd": bool(item.get("has_pcd")),
-                    "has_occupancy": bool(item.get("has_occupancy")),
-                    "has_octomap": bool(item.get("has_octomap")),
-                    "can_activate": item["can_activate"],
-                    "activation_blockers": [
-                        str(blocker)
-                        for blocker in (
-                            item.get("activation_blockers")
-                            if isinstance(item.get("activation_blockers"), list)
-                            else []
-                        )
-                    ],
-                    "map_evidence": str(item.get("map_evidence") or "none"),
-                    "state": (
-                        state
-                        if (state := str(item.get("state") or "").strip().upper())
-                        in _PUBLIC_MAP_STATES
-                        else None
-                    ),
-                    "is_active": bool(item.get("is_active")) or name == active_target,
-                    "size_mb": item.get("size_mb"),
-                    "patch_count": int(item.get("patch_count") or 0),
-                }
-            )
-        return {
-            "schema_version": 1,
-            "maps": maps,
-            "count": len(maps),
-            "active": active_target,
-            "ts": time.time(),
-        }
+        return await list_maps(gw)
 
     @app.delete(
         "/api/v1/maps/{name}",
@@ -952,30 +1149,7 @@ def register_map_routes(app, gw) -> None:
                 },
             ) from exc
 
-        headers = {
-            "Cache-Control": "no-store",
-            "Content-Length": str(artifact.size_bytes),
-            "Content-Disposition": f'attachment; filename="{filename}"',
-        }
-        artifact_map_id = artifact.metadata.get("map_id")
-        if isinstance(artifact_map_id, str) and artifact_map_id:
-            headers["X-Lingtu-Map-Id"] = artifact_map_id
-        content_epoch = artifact.metadata.get("content_epoch")
-        if isinstance(content_epoch, int) and not isinstance(content_epoch, bool) and content_epoch > 0:
-            headers["X-Lingtu-Content-Epoch"] = str(content_epoch)
-        frame_id = artifact.metadata.get("frame_id")
-        if isinstance(frame_id, str) and frame_id:
-            headers["X-Lingtu-Frame-Id"] = frame_id
-        try:
-            body = artifact.iter_bytes()
-        except Exception:
-            artifact.close()
-            raise
-        return StreamingResponse(
-            body,
-            media_type=artifact.media_type,
-            headers=headers,
-        )
+        return _artifact_response(artifact, filename)
 
     @app.get(
         "/api/v1/maps/{name}/points",
@@ -1236,7 +1410,7 @@ def register_map_routes(app, gw) -> None:
 
     @app.post(
         "/api/v1/map/save",
-        summary="Save current SLAM map",
+        summary="Request a map save",
         response_model=MapSaveOperationResponse,
         responses={
             202: {"model": MapSaveOperationResponse},
@@ -1247,115 +1421,7 @@ def register_map_routes(app, gw) -> None:
         },
     )
     async def save_map_now(body: MapSaveRequest = MapSaveRequest()):
-        payload = body.model_dump()
-        name = payload.get("name", "")
-        if not name:
-            name = "map_" + datetime.now().strftime("%Y%m%d_%H%M%S")
-        err = public_map_name_error(name)
-        if err is not None:
-            return _external_operation_lifecycle_response(
-                False,
-                message=err,
-                reason_code="invalid_map_name",
-                status_code=400,
-            )
-        if product_control_owns_explore(gw):
-            try:
-                save_readiness = exploration_map_save_readiness(gw)
-            except ExplorationRunError as exc:
-                return _external_operation_lifecycle_response(
-                    False,
-                    status_code=exc.status_code,
-                    name=name,
-                    reason_code=exc.code,
-                    message=str(exc),
-                )
-            if not save_readiness["can_save"]:
-                return _external_operation_lifecycle_response(
-                    False,
-                    status_code=409,
-                    name=name,
-                    reason_code=str(save_readiness["reason"]),
-                    message=str(save_readiness["message"]),
-                    exploration_run_id=save_readiness.get("exploration_run_id"),
-                    exploration_state=save_readiness.get("exploration_state"),
-                )
-        try:
-            slam_profile = gw._get_slam_profile()
-        except Exception:
-            return _external_operation_lifecycle_response(
-                False,
-                status_code=503,
-                name=name,
-                reason_code="slam_profile_unavailable",
-                message="Current SLAM profile is unavailable.",
-            )
-        capability = backend_capability_defaults(slam_profile)
-        if capability.get("map_save_supported") is not True:
-            return _external_operation_lifecycle_response(
-                False,
-                status_code=409,
-                name=name,
-                reason_code="map_save_unsupported",
-                message=f"map save is not supported by SLAM backend: {slam_profile}",
-                slam_profile=slam_profile,
-                map_save_source=capability.get("map_save_source", "unknown"),
-            )
-
-        try:
-            resp = await asyncio.to_thread(
-                _mapd_http_request,
-                gw,
-                {
-                    "action": "save_map",
-                    "map_id": name,
-                    "slam_profile": slam_profile,
-                    "request_id": payload.get("request_id"),
-                },
-            )
-        except HTTPException as exc:
-            return _external_operation_lifecycle_response(
-                False,
-                status_code=int(exc.status_code),
-                name=name,
-                reason_code="map_service_unavailable",
-                message=str(exc.detail),
-            )
-        ok = resp.get("success") is True
-        native_status = resp.get("status") if isinstance(resp.get("status"), dict) else {}
-        operation_id = str(
-            resp.get("operation_id")
-            or resp.get("job_id")
-            or native_status.get("job_id")
-            or ""
-        ).strip()
-        accepted = bool(operation_id) and (
-            resp.get("accepted") is True
-            or str(resp.get("status") or "").strip().lower() == "running"
-        )
-        if accepted:
-            accepted_payload = dict(resp)
-            accepted_payload.pop("success", None)
-            accepted_payload.pop("ok", None)
-            accepted_payload["accepted"] = True
-            accepted_payload["operation_id"] = operation_id
-            if accepted_payload.get("reason_code") == "save_job_timeout":
-                accepted_payload["reason_code"] = "save_job_in_progress"
-            payload = map_lifecycle_payload(
-                True,
-                name=name,
-                **accepted_payload,
-            )
-            # Accepted is neither terminal success nor terminal failure.
-            payload["success"] = None
-            return _external_operation_json_response(payload, status_code=202)
-        message_lower = str(resp.get("message", "")).lower()
-        status_code = 200 if ok else 409 if "unsupported" in message_lower or "not supported" in message_lower else 500
-        return _external_operation_service_response(
-            resp,
-            status_code=status_code,
-            name=name,
-        )
+        return await save_map(gw, body)
 
     @app.get(
         "/api/v1/maps/environment/layers",

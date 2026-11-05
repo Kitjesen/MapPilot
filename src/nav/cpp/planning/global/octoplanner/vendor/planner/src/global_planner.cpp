@@ -281,23 +281,23 @@ namespace global_planner
         return true;
     }
 
+    bool OctoPlanner3D::routeConnectionFree(const PointPose &from, const PointPose &to) const
+    {
+        if (!metricConnectionWithinLimits(from,to)) return false;
+        const octomap::point3d a(from.x,from.y,from.z), b(to.x,to.y,to.z);
+        const bool start=a==octomap::point3d(start_point_.x,start_point_.y,start_point_.z);
+        if (start) return isStartConnectionAllowed(a,b);
+        return queryWorld(a,robot_radius_,ground_support_)==TraversabilityFailure::None &&
+            queryWorld(b,robot_radius_,ground_support_)==TraversabilityFailure::None &&
+            sweptRouteFree(a,b,nullptr,nullptr,true,true);
+    }
+
     bool OctoPlanner3D::startPlan()
     {
         planner_results_.clear();
         if (surface_graph_) {
-            // Consecutive edges share an endpoint and the same request observation.
-            std::optional<octomap::point3d> last_valid_pose;
-            const auto pose_free = [&](const octomap::point3d &point) {
-                if (last_valid_pose && *last_valid_pose == point) return true;
-                if (queryWorld(point,robot_radius_,ground_support_) != TraversabilityFailure::None)
-                    return false;
-                last_valid_pose = point;
-                return true;
-            };
             const auto valid = [&](const PointPose &a,const PointPose &b) {
-                const octomap::point3d from(a.x,a.y,a.z), to(b.x,b.y,b.z);
-                return metricConnectionWithinLimits(a,b) && pose_free(from) && pose_free(to) &&
-                    sweptRouteFree(from,to,nullptr,nullptr,true,true);
+                return routeConnectionFree(a,b);
             };
             const auto graph_started=std::chrono::steady_clock::now();
             auto candidate=surface_graph_->plan(start_point_,goal_point_,valid,cancel_check_);
@@ -393,8 +393,12 @@ namespace global_planner
         std::unordered_map<GridIndex, double, GridIndexHash> g_score;
         std::unordered_map<GridIndex, GridIndex, GridIndexHash> came_from;
         std::unordered_set<GridIndex, GridIndexHash> closed_set;
+        const auto poseAt=[&](const GridIndex &cell) {
+            const auto point=planningPoint(cell);
+            return PointPose{point.x(),point.y(),point.z()};
+        };
         g_score[start] = 0.0;
-        open_set.push(QueueNode{start, euclidean(start, goal), 0.0});
+        open_set.push({start, euclidean(start, goal), 0.0});
 
         while (!open_set.empty() && iters < max_iterations)
         {
@@ -417,37 +421,24 @@ namespace global_planner
             }
             closed_set.insert(current.idx);
 
+            const auto current_pose = poseAt(current.idx);
             if (current.idx == goal) {
-                const auto cells = reconstructPath(came_from, current.idx);
-                printf(
-                    "OctoPlanner3D::startPlan A* path found in %d iterations, "
-                    "waypoints=%zu\n",
-                    iters,
-                    cells.size());
-                planner_results_.clear();
-                for (std::size_t i = 0; i < cells.size(); ++i)
-                {
-                    const auto & c = cells[i];
-                    const auto p = planningPoint(c);
-                    PointPose temp;
-                    temp.x = p.x();
-                    temp.y = p.y();
-                    temp.z = p.z();
-                    planner_results_.push_back(temp);
-                }
-                if (goal_connected_) {
-                    const auto &last = planner_results_.back();
-                    if (std::hypot(last.x-goal_point_.x,last.y-goal_point_.y,last.z-goal_point_.z) >
-                        kMetricToleranceEpsilonM)
-                        planner_results_.push_back(goal_point_);
-                }
-
-                printf(
-                    "OctoPlanner3D::startPlan cache diagnostics: planning_cells=%zu planning_hits=%d\n",
-                    planning_cell_cache.size(),
-                    planning_cache_hits);
-
+                const auto terminal = goal_connected_ ? goal_point_ : current_pose;
+                std::vector<PointPose> path;
+                for (const auto &cell : reconstructPath(came_from, current.idx))
+                    path.push_back(poseAt(cell));
+                if (std::hypot(path.front().x-start_point_.x,path.front().y-start_point_.y,
+                               path.front().z-start_point_.z)>1e-6)
+                    path.insert(path.begin(),start_point_);
+                else path.front().yaw=start_point_.yaw;
+                if (std::hypot(path.back().x-terminal.x,path.back().y-terminal.y,
+                               path.back().z-terminal.z)>1e-6)
+                    path.push_back(terminal);
+                path.back().yaw=goal_point_.yaw;
+                planner_results_=std::move(path);
                 search_info_.outcome = SearchInfo::Outcome::Found;
+                printf("OctoPlanner3D::startPlan found: iterations=%d waypoints=%zu\n",
+                       iters,planner_results_.size());
                 return true;
             }
 
@@ -506,10 +497,8 @@ namespace global_planner
 
                 auto g_it = g_score.find(nbr);
                 if (g_it == g_score.end() || tentative_g < g_it->second) {
-                // Supported body-centre vertices do not establish clearance
-                // between them, especially across diagonal voxel corners.
-                if (support_height_m_ > 0.0 && !lowest_traversable_only_ &&
-                    !sweptRouteFree(planningPoint(current.idx), planningPoint(nbr))) {
+                if ((support_height_m_>0.0 && !lowest_traversable_only_) &&
+                    !routeConnectionFree(current_pose,poseAt(nbr))) {
                     ++rejected_sweep;
                     continue;
                 }
@@ -570,11 +559,11 @@ namespace global_planner
             ? octomap::point3d(connection_start->x, connection_start->y, connection_start->z)
             : octomap::point3d();
         const auto entry_allowed = [&](const octomap::point3d & point) {
-            return !connection_start || isStartConnectionAllowed(entry_origin, point);
+            if (!connection_start) return true;
+            return isStartConnectionAllowed(entry_origin, point);
         };
-        // No nearby free endpoint can repair an occupied or unsupported
-        // actual start. Avoid searching the snap volume in that case.
-        if (connection_start && !isStartConnectionAllowed(entry_origin, entry_origin, start_failure))
+        if (connection_start &&
+            !isStartConnectionAllowed(entry_origin,entry_origin,start_failure))
             return false;
         const auto distance_to_reference = [&](const octomap::point3d &point) {
             return std::hypot(point.x() - reference->x, point.y() - reference->y,
@@ -724,20 +713,33 @@ namespace global_planner
             return false;
         if (support_height_m_ > 0.0 || body_clearance_below_m_ > 0.0 ||
             body_clearance_above_m_ > 0.0) {
-            return sweptRouteFree(from, to, failure);
+            const bool actual_start=has_start_&&from==octomap::point3d(start_point_.x,start_point_.y,start_point_.z);
+            // The actual start may contain the robot or incomplete ground observations.
+            const auto origin=queryWorld(from,robot_radius_,ground_support_&&!actual_start,!actual_start);
+            if(origin!=TraversabilityFailure::None){if(failure)*failure=origin;return false;}
+            if(from==to)return true;
+            const auto target=queryWorld(to,robot_radius_,ground_support_);
+            if(target!=TraversabilityFailure::None){if(failure)*failure=target;return false;}
+            return sweptRouteFree(from,to,failure,nullptr,true,true,!actual_start);
         }
         // The legacy surface graph roots its upper body hemisphere at a
         // voxel, rather than declaring a body-centre clearance. Keep that
         // coordinate meaning while checking every part of its entry.
         const int count = std::max(1, static_cast<int>(std::ceil(
             2.0 * (to-from).norm() / octree_->getResolution())));
+        const bool actual_start=has_start_&&from==octomap::point3d(start_point_.x,start_point_.y,start_point_.z);
         for (int i = 0; i <= count; ++i) {
             const double t = static_cast<double>(i) / count;
             const auto cell = worldToPlanningGrid(
                 from.x()+t*(to.x()-from.x()), from.y()+t*(to.y()-from.y()),
                 from.z()+t*(to.z()-from.z()));
+            if(actual_start&&(i==0||from==to)) {
+                const auto origin=queryWorld(from,robot_radius_,false,false);
+                if(origin!=TraversabilityFailure::None){if(failure)*failure=origin;return false;}
+                continue;
+            }
             if (!isPlanningCellTraversableDetailed(
-                    cell, robot_radius_, ground_support_, direct_support_only_,
+                    cell, robot_radius_, ground_support_ && !actual_start, direct_support_only_,
                     support_radius_cells_, support_depth_cells_, failure))
                 return false;
         }
@@ -901,8 +903,6 @@ namespace global_planner
             return cached->second == TraversabilityFailure::None;
         }
         const auto evaluate_body = [&]() {
-            if (liveBodyOccupied(planningPoint(idx), robot_radius, true))
-                return TraversabilityFailure::OccupiedBody;
             if (!external_preblocked_cells_.empty()) {
                 for (int z = idx.z - 1; z >= 0; --z) {
                     const GridIndex below_idx{idx.x, idx.y, z};
@@ -920,7 +920,7 @@ namespace global_planner
                     return TraversabilityFailure::ExternalPreblockedBody;
                 if (isOccupiedCell(nearby_idx)) {
                     const double r=octree_->getResolution();
-                    if (observed_free_ && observed_free_(
+                    if (start_exemption_ && start_exemption_(
                         {(nearby_idx.x+.5)*r,(nearby_idx.y+.5)*r,(nearby_idx.z+.5)*r},r)) continue;
                     // The default envelope is rooted at a support surface.
                     // A reachable tread under the legs is terrain; explicit
@@ -951,10 +951,6 @@ namespace global_planner
     {
         if (lowest_traversable_only_) {
             const bool traversable = traversable_cells_.find(idx) != traversable_cells_.end();
-            if (traversable && liveBodyOccupied(planningPoint(idx), robot_radius, true)) {
-                if (failure) *failure = TraversabilityFailure::OccupiedBody;
-                return false;
-            }
             if (failure) {
                 *failure = traversable
                     ? TraversabilityFailure::None
@@ -986,7 +982,7 @@ namespace global_planner
         const double maximum_height = support_height_m_ + tolerance + 0.5 * resolution;
         int minimum_depth = std::max(
             1,
-            static_cast<int>(std::floor((minimum_height + centre_offset) / resolution + 1e-6)) + 1);
+            static_cast<int>(std::ceil((minimum_height + centre_offset) / resolution - 1e-6)));
         int maximum_depth = std::max(
             1,
             static_cast<int>(std::floor((maximum_height + centre_offset) / resolution + 1e-6)));
@@ -1413,31 +1409,15 @@ namespace global_planner
         if (!ground_support_ || support_height_m_<=0 || lowest_traversable_only_) return;
         const auto started=std::chrono::steady_clock::now();
         const double r=octree_->getResolution();
-        const auto cells=surface_index_->surfaces(support_height_m_+std::max(r,body_clearance_above_m_));
+        const auto cells=surface_index_->surfaces(r);
         std::vector<PointPose> points;
         points.reserve(cells.size());
         for (const auto &cell : cells)
             points.push_back({(cell.x+.5)*r,(cell.y+.5)*r,(cell.z+.5)*r+support_height_m_});
         surface_graph_=std::make_shared<const SurfaceGraph>(std::move(points),r,graph_config_,
-            [&](const PointPose &p) {
-                return queryWorld(octomap::point3d(p.x,p.y,p.z),robot_radius_,true)==TraversabilityFailure::None;
-            },
-            [&](const PointPose &a,const PointPose &b) {
-                if (!metricConnectionWithinLimits(a,b)) return false;
-                const octomap::point3d from(a.x,a.y,a.z),to(b.x,b.y,b.z);
-                const bool explicit_body=body_clearance_below_m_>0 || body_clearance_above_m_>0;
-                const double below=explicit_body ? std::max(0.0,body_clearance_below_m_) : r;
-                const double above=explicit_body ? std::max(0.0,body_clearance_above_m_) : r;
-                const auto low=worldToGrid(std::min(from.x(),to.x())-robot_radius_,
-                    std::min(from.y(),to.y())-robot_radius_,std::min(from.z(),to.z())-below+1e-7);
-                const auto high=worldToGrid(std::max(from.x(),to.x())+robot_radius_,
-                    std::max(from.y(),to.y())+robot_radius_,std::max(from.z(),to.z())+above);
-                const int top=static_cast<int>(std::ceil((std::max(from.z(),to.z())+above-1e-7)/r))-1;
-                // An empty swept AABB proves body clearance for every original sample.
-                const bool body_clear=!observed_occupied_ && external_preblocked_cells_.empty() &&
-                    !surface_index_->regionOccupied(low.x,low.y,high.x,high.y,low.z,top);
-                return sweptRouteFree(from,to,nullptr,nullptr,!body_clear,true);
-            },cancel_check_);
+            [&](const PointPose &p) { return poseSupportFree(p); },
+            [&](const PointPose &a,const PointPose &b) { return supportConnectionFree(a,b); },
+            cancel_check_);
         printf("OctoPlanner3D surface graph: nodes=%zu edges=%zu prepare_ms=%.3f\n",
             surface_graph_->nodeCount(),surface_graph_->edgeCount(),
             std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count());
@@ -1600,17 +1580,6 @@ namespace global_planner
                                (idx.z + .5) * planningZResolution() + planning_offset_.z);
     }
 
-    bool OctoPlanner3D::liveBodyOccupied(
-        const octomap::point3d &p, double radius, bool legacy) const
-    {
-        if (!observed_occupied_) return false;
-        const bool explicit_body = body_clearance_below_m_ > 0.0 || body_clearance_above_m_ > 0.0;
-        const double r = octree_->getResolution();
-        const double below = explicit_body ? body_clearance_below_m_ : (legacy ? 0.0 : r);
-        const double above = explicit_body ? body_clearance_above_m_ : (legacy ? radius : r);
-        return observed_occupied_({p.x(),p.y(),p.z()},radius,below,above,legacy && !explicit_body);
-    }
-
     OctoPlanner3D::TraversabilityFailure OctoPlanner3D::queryWorld(
         const octomap::point3d &p, double radius, bool require_support, bool check_body) const
     {
@@ -1646,7 +1615,6 @@ namespace global_planner
             }
         }
         if (!check_body) return TraversabilityFailure::None;
-        if (liveBodyOccupied(p, radius, false)) return TraversabilityFailure::OccupiedBody;
         const bool explicit_body = body_clearance_below_m_ > 0.0 || body_clearance_above_m_ > 0.0;
         const double below = explicit_body ? std::max(0.0, body_clearance_below_m_) : r;
         const double above = explicit_body ? std::max(0.0, body_clearance_above_m_) : r;
@@ -1664,9 +1632,9 @@ namespace global_planner
                     if (dx*dx+dy*dy>radius*radius+1e-9) continue;
                     auto z=surface_index_->below(x,y,top+1);
                     if (!z || *z<bottom) continue;
-                    if (!observed_free_) return TraversabilityFailure::OccupiedBody;
+                    if (!start_exemption_) return TraversabilityFailure::OccupiedBody;
                     for (; z && *z>=bottom; z=surface_index_->below(x,y,*z))
-                        if (!observed_free_({(x+.5)*r,(y+.5)*r,(*z+.5)*r},r))
+                        if (!start_exemption_({(x+.5)*r,(y+.5)*r,(*z+.5)*r},r))
                             return TraversabilityFailure::OccupiedBody;
                 }
             }
@@ -1683,8 +1651,8 @@ namespace global_planner
                     const GridIndex voxel{x, y, z};
                     if (external_preblocked_cells_.count(voxel))
                         return TraversabilityFailure::ExternalPreblockedBody;
-                    if (isOccupiedCell(voxel) && (!observed_free_ ||
-                        !observed_free_({(x+.5)*r,(y+.5)*r,(z+.5)*r},r)))
+                    if (isOccupiedCell(voxel) && (!start_exemption_ ||
+                        !start_exemption_({(x+.5)*r,(y+.5)*r,(z+.5)*r},r)))
                         return TraversabilityFailure::OccupiedBody;
                 }
             }
@@ -1695,7 +1663,7 @@ namespace global_planner
     bool OctoPlanner3D::sweptRouteFree(
         const octomap::point3d &from, const octomap::point3d &to,
         TraversabilityFailure *failure_out, octomap::point3d *failed_point, bool check_body,
-        bool endpoints_validated) const
+        bool endpoints_validated, bool require_support) const
     {
         if (failure_out) *failure_out = TraversabilityFailure::None;
         const double length = (to - from).norm();
@@ -1708,7 +1676,7 @@ namespace global_planner
                 from.x() + t * (to.x() - from.x()),
                 from.y() + t * (to.y() - from.y()),
                 from.z() + t * (to.z() - from.z()));
-            const auto failure = queryWorld(point, robot_radius_, ground_support_, check_body);
+            const auto failure = queryWorld(point, robot_radius_, ground_support_ && require_support, check_body);
             if (failure == TraversabilityFailure::None) continue;
             // A step connects two supported stances. Its body moves continuously,
             // while the observed tread height changes discontinuously. Keep the

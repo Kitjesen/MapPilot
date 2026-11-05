@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.16)
 
 project(lingtu_maps LANGUAGES CXX)
 
+include("${CMAKE_CURRENT_LIST_DIR}/../../scripts/build/cmake/settings.cmake")
+
 include(CTest)
 include(GNUInstallDirs)
 
@@ -23,6 +25,7 @@ if(LINGTU_MAPS_ENABLE_NATIVE_OCTOMAP)
 endif()
 
 add_library(lingtu_maps_contract INTERFACE)
+target_link_libraries(lingtu_maps_contract INTERFACE "$<BUILD_INTERFACE:lingtu_settings>")
 target_include_directories(
   lingtu_maps_contract
   INTERFACE

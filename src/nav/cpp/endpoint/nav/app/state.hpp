@@ -2,7 +2,6 @@
 
 #include <chrono>
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -33,7 +32,7 @@ struct EndpointState {
   std::optional<nav_kernel::Pose> map_body;
   std::optional<RigidTransform> odom_body_transform;
   std::optional<RigidTransform> map_body_transform;
-  std::shared_ptr<const collision::Body> body_geometry;
+  std::shared_ptr<const collision::Body> observed_body;
   std::optional<RigidTransform> map_odom_tf;
   nav_kernel::Vec3 odom_linear_velocity_body{};
   double odom_yaw_rate{0.0};

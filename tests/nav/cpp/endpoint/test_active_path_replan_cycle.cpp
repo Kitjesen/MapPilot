@@ -181,7 +181,7 @@ struct Fixture {
     };
     actions.last_output_sequence = [] { return 17U; };
     actions.publish_sequenced_zero = [] { return std::optional<std::uint64_t>{18U}; };
-    actions.confirm_zero = [this](std::uint64_t) { return confirmation; };
+    actions.confirm_zero = [this](std::uint64_t, auto) { return confirmation; };
     actions.clear_global_path = [] {};
     return actions;
   }

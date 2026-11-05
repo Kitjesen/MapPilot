@@ -1,22 +1,7 @@
 schema_version: lingtu.runtime_graph.product.v3
 name: teleop_avoid
 topics:
-  - /nav/command/request
-  - /nav/command/ack
-  - /nav/state
-  - /nav/operator_motion/control
-  - /nav/operator_motion/sample
-  - /nav/operator_motion/ack
-  - /nav/operator_motion/status
-  - /slam/odometry
-  - /slam/registered_cloud
-  - /slam/map_observation
-  - /slam/map_geometry_snapshot
-  - /slam/map_geometry_applied
-  - /slam/localization_health
-  - /nav/local_path
   - /nav/way_point
-  - /nav/cmd_vel
 capabilities:
   - teleop
   - operator_motion_typed_dds_interface
@@ -38,37 +23,24 @@ online_hot_switch_supported: false
 host:
   capabilities: [gateway, operator_motion]
   run_startup_checks: true
+includes: [control, lidar, slam, maps, limits, follower, local, teleop]
 native_nav:
   # Match SCAN's upstream 100 Hz FSM and closed-loop controller cadence.
   tick_hz: 100.0
   local_planner: scan
-  local_planners:
-    - cmu
-    - scan
+  local_planners: [cmu, scan]
   check_obstacle: true
   use_traversability_cost: false
-  teleop_local_planner: true
+  teleop:
+    planner: true
+    max_deviation_deg: 90.0
   # Local Planner followers own acceleration and curvature. A second generic
   # per-axis smoother would distort the path command after planning.
   smoothing: false
-  # x/y are independently limited to 1 m/s. The norm limit is sqrt(2), so
-  # simultaneous forward + lateral input remains 1 m/s on each axis.
-  path_follower_max_speed_mps: 1.4142135623730951
-  path_follower_max_accel_mps2: 4.0
-  path_follower_max_yaw_accel_rad_s2: 4.0
-  braking_deceleration_mps2: 4.0
-  path_follower_max_yaw_rate_rad_s: 1.0
-  teleop_max_speed_mps: 1.0
-  teleop_max_yaw_rate_rad_s: 1.0
-  teleop_planner_horizon_m: 3.5
-  teleop_planner_max_deviation_deg: 90.0
+  follower:
+    max_yaw_rate_rad_s: 1.0
   recovery:
     max_attempts: 0
-parameters:
-  # Acceleration inherits the shared motion profile; both body axes use the
-  # same 1 m/s limit.
-  scan_follower.max_vx_mps: 1.0
-  scan_follower.max_vy_mps: 1.0
 processes:
   - lidar
   - imu

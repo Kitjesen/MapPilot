@@ -87,6 +87,32 @@ def _registered_snapshot_adapter_jpeg() -> bytes | None:
     return None
 
 
+def snapshot_jpeg(gw: Any | None) -> Response:
+    frame = _teleop_snapshot_jpeg(gw) or _cached_gateway_jpeg(gw)
+    if frame:
+        return Response(content=frame, media_type="image/jpeg")
+
+    unavailable = _camera_unavailable(gw)
+    if unavailable is not None:
+        return unavailable
+
+    try:
+        data = _registered_snapshot_adapter_jpeg()
+        if data:
+            return Response(content=data, media_type="image/jpeg")
+        return _error_response(
+            "no_frame",
+            status_code=503,
+            message="Camera snapshot unavailable: no frame",
+        )
+    except Exception as e:
+        return _error_response(
+            "camera_snapshot_failed",
+            status_code=500,
+            message=str(e),
+        )
+
+
 def register_camera_routes(app, gw=None) -> None:
     @app.get("/api/v1/camera/status", summary="Camera frame availability and rates")
     async def camera_status():
@@ -107,26 +133,4 @@ def register_camera_routes(app, gw=None) -> None:
     )
     async def camera_snapshot():
         """Return the current JPEG frame without blocking cold-start clients."""
-        frame = _teleop_snapshot_jpeg(gw) or _cached_gateway_jpeg(gw)
-        if frame:
-            return Response(content=frame, media_type="image/jpeg")
-
-        unavailable = _camera_unavailable(gw)
-        if unavailable is not None:
-            return unavailable
-
-        try:
-            data = _registered_snapshot_adapter_jpeg()
-            if data:
-                return Response(content=data, media_type="image/jpeg")
-            return _error_response(
-                "no_frame",
-                status_code=503,
-                message="Camera snapshot unavailable: no frame",
-            )
-        except Exception as e:
-            return _error_response(
-                "camera_snapshot_failed",
-                status_code=500,
-                message=str(e),
-            )
+        return snapshot_jpeg(gw)

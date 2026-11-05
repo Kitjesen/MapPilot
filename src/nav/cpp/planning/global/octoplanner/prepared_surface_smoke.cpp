@@ -23,33 +23,15 @@ std::shared_ptr<octomap::OcTree> fixture(bool closed_wall) {
 }
 namespace global_planner {
 struct OctoPlannerGridQueryTest {
-  static void comparePreparedGeometry(OctoPlanner3D &planner) {
-    const auto r=planner.octree_->getResolution();
-    const auto surface=planner.surface_index_->surfaces(planner.support_height_m_+
-        std::max(r,planner.body_clearance_above_m_));
-    std::vector<PointPose> points;
-    for(const auto &cell:surface)points.push_back({(cell.x+.5)*r,(cell.y+.5)*r,
-        (cell.z+.5)*r+planner.support_height_m_});
-    SurfaceGraph reference(std::move(points),r,planner.graph_config_,
-      [&](const PointPose &p){return planner.queryWorld(octomap::point3d(p.x,p.y,p.z),planner.robot_radius_,true)==OctoPlanner3D::TraversabilityFailure::None;},
-      [&](const PointPose &a,const PointPose &b){return planner.metricConnectionWithinLimits(a,b) &&
-        planner.sweptRouteFree(octomap::point3d(a.x,a.y,a.z),octomap::point3d(b.x,b.y,b.z),nullptr,nullptr,true,true);});
-    const auto &actual=*planner.surface_graph_;
-    require(actual.cells_.size()==reference.cells_.size(),"prepare changed pose admission");
-    require(actual.nodes_==reference.nodes_,"prepare changed sparse node placement");
-    require(actual.edges_.size()==reference.edges_.size(),"prepare changed corridor count");
-    for(std::size_t i=0;i<actual.cells_.size();++i) {
-      require(actual.cells_[i].x==reference.cells_[i].x && actual.cells_[i].y==reference.cells_[i].y &&
-        actual.cells_[i].z==reference.cells_[i].z,"prepare changed surface coordinates");
-      const auto &a=actual.neighbors_[i],&b=reference.neighbors_[i];
-      require(a.size()==b.size(),"swept AABB changed fine edge admission");
-      for(std::size_t j=0;j<a.size();++j)
-        require(a[j].to==b[j].to && a[j].cost==b[j].cost,"swept AABB changed fine edge or cost");
+  static void checkPreparedSupport(OctoPlanner3D &planner) {
+    const auto &graph=*planner.surface_graph_;
+    require(!graph.cells_.empty(),"prepared support topology is empty");
+    for(std::size_t i=0;i<graph.cells_.size();++i) {
+      require(planner.poseSupportFree(graph.cells_[i]),"prepared cell lacks 3-D support");
+      for(const auto &edge:graph.neighbors_[i])
+        require(planner.supportConnectionFree(graph.cells_[i],graph.cells_[edge.to]),
+                "prepared edge bypassed support or metric motion limits");
     }
-    for(std::size_t i=0;i<actual.edges_.size();++i)
-      require(actual.edges_[i].a==reference.edges_[i].a && actual.edges_[i].b==reference.edges_[i].b &&
-        actual.edges_[i].cost==reference.edges_[i].cost && actual.edges_[i].cells==reference.edges_[i].cells,
-        "prepare changed a sparse corridor");
   }
 };
 }
@@ -77,7 +59,7 @@ int main()try {
   config.terminal_goal_z_tolerance_m=.05;config.enable_preblocked_costmap=false;
   const PointPose start{-.975,.025,.325},goal{.975,.025,.325};
   OctoPlanner3D planner;planner.setConfig(config);planner.setOctomap(fixture(false));
-  OctoPlannerGridQueryTest::comparePreparedGeometry(planner);
+  OctoPlannerGridQueryTest::checkPreparedSupport(planner);
   const auto run=[&](const PointPose &target) {
     planner.makePlan(start,target);std::vector<PointPose> path;planner.getPlannerResults(path);return path;
   };
@@ -89,17 +71,9 @@ int main()try {
   require(std::hypot(before.back().x-goal.x,before.back().y-goal.y,before.back().z-goal.z)<1e-6,
           "valid raw goal was lost");
   for(const auto &p:before)require(std::abs(p.z-start.z)<.051,"route switched floors");
-  planner.setObservedOccupiedCheck([](const PointPose &p,double radius,double below,double above,bool) {
-    return std::abs(p.x-.025)<=radius+.025 && p.y+radius>=-.05 &&
-        p.z+above>0 && p.z-below<.9;
-  });
-  require(run(goal).empty(),"current obstacle did not close the remaining passage");
-  planner.setObservedOccupiedCheck({});
-  require(!run(goal).empty() && planner.searchInfo().used_surface_graph,
-          "clearing the current obstacle failed to restore the prepared route");
   require(run({goal.x,goal.y,2.325}).empty(),"separate map floors were connected");
   planner.setOctomap(fixture(true));
-  OctoPlannerGridQueryTest::comparePreparedGeometry(planner);
+  OctoPlannerGridQueryTest::checkPreparedSupport(planner);
   require(run(goal).empty(),"prepared graph crossed a complete static wall");
   auto steps=std::make_shared<octomap::OcTree>(.05);
   for(int x=-12;x<12;++x)for(int y=-8;y<8;++y)for(int z=-1;z<24;++z) {
@@ -108,7 +82,7 @@ int main()try {
     steps->updateNode((x+.5)*.05,(y+.5)*.05,(z+.5)*.05,z==tread||obstacle,true);
   }
   steps->updateInnerOccupancy();planner.setOctomap(steps);
-  OctoPlannerGridQueryTest::comparePreparedGeometry(planner);
-  std::cout<<"Prepared surface integration passed: native graph selected, raw endpoints, live block/release, separate floors and static wall\n";
+  OctoPlannerGridQueryTest::checkPreparedSupport(planner);
+  std::cout<<"Prepared surface integration passed: native graph selected, raw endpoints, separate floors and static wall\n";
   return 0;
 }catch(const std::exception &error){std::cerr<<error.what()<<'\n';return 1;}

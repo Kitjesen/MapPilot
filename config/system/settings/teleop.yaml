@@ -1,0 +1,19 @@
+# Shared operator interface and tuning. Products select takeover/assisted control.
+topics:
+  - /nav/operator_motion/control
+  - /nav/operator_motion/sample
+  - /nav/operator_motion/ack
+  - /nav/operator_motion/status
+native_nav:
+  teleop:
+    takeover: false  # Autonomy Products explicitly allow takeover when supported.
+    planner: false  # Assisted Products explicitly select local planning.
+    max_speed_mps: 1.0
+    max_yaw_rate_rad_s: 1.0
+    cmd_max_age_s: 0.35
+    min_motion_speed_mps: 0.03
+    traversability_hard_cost: 80.0
+    traversability_soft_cost: 40.0
+    # Intent-reference length and allowed detour angle from the operator direction.
+    horizon_m: 3.5
+    max_deviation_deg: 55.0

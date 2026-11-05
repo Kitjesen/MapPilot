@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -10,8 +12,8 @@
 namespace lingtu::nav::endpoint {
 
 struct OperatorMotionAuthorityOptions {
-  double max_sample_age_s{0.35};
-  double future_tolerance_s{0.05};
+  double max_sample_age_s{::lingtu::settings::teleop::native_nav::teleop::cmd_max_age_s};
+  double future_tolerance_s{::lingtu::settings::control::native_nav::input_future_tolerance_s};
   double max_lease_ttl_s{2.0};
   std::size_t max_source_id_bytes{128};
   std::size_t max_retained_source_identities{1024};

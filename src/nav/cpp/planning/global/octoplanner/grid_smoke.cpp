@@ -1,6 +1,7 @@
 #include "global_planner.h"
 
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -8,6 +9,23 @@
 #include <vector>
 
 namespace global_planner {
+
+// These synthetic geometry probes use raw occupancy spacing and no surface closing.
+static PlannerConfig gridFixtureConfig() {
+  PlannerConfig config;
+  config.surface_closing_radius_m = 0.0;
+  config.search_resolution_m = 0.0;
+  config.max_iterations = 250000;
+  config.snap_search_radius_cells = 8;
+  config.terminal_goal_tolerance_m = std::numeric_limits<double>::infinity();
+  config.terminal_goal_xy_tolerance_m = std::numeric_limits<double>::infinity();
+  config.terminal_goal_z_tolerance_m = std::numeric_limits<double>::infinity();
+  config.preblocked_costmap_weight = 1.5;
+  config.floor_change_penalty = 4.0;
+  config.obstacle_clearance_radius_cells = 4;
+  config.obstacle_clearance_weight = 2.0;
+  return config;
+}
 
 struct OctoPlannerGridQueryTest
 {
@@ -18,7 +36,7 @@ struct OctoPlannerGridQueryTest
       tree->updateNode(octomap::point3d(-1,-1,-1),false);
       tree->updateNode(octomap::point3d(1,1,1),false);
       for (const auto &point : floor) tree->updateNode(point,true);
-      PlannerConfig config;
+      auto config = gridFixtureConfig();
       config.support_height_m=.4;
       config.support_height_tolerance_m=.05;
       config.direct_support_only=false;
@@ -55,12 +73,13 @@ struct OctoPlannerGridQueryTest
     for(int x=-10;x<=10;++x) for(int y=-10;y<=10;++y)
       if(y<=0 || x<=-3)
         tree->updateNode(octomap::point3d((x+.5)*.1,(y+.5)*.1,.05),true);
-    PlannerConfig config;
+    auto config = gridFixtureConfig();
     config.robot_radius=.01;
     config.body_clearance_below_m=config.body_clearance_above_m=.05;
     config.support_height_m=.4;
     config.support_height_tolerance_m=.05;
-    config.direct_support_only=false;
+    // This probe requires observed support directly under each route point.
+    config.direct_support_only=true;
     config.support_radius_cells=1;
     config.enable_preblocked_costmap=false;
     config.obstacle_clearance_radius_cells=0;
@@ -85,7 +104,7 @@ struct OctoPlannerGridQueryTest
     tree->updateNode(octomap::point3d(-.5,-.5,-.5), false);
     tree->updateNode(octomap::point3d(.5,.5,.8), false);
     tree->updateNode(octomap::point3d(.05,.05,.05), true);
-    PlannerConfig config;
+    auto config = gridFixtureConfig();
     config.support_height_m = .435;
     config.support_height_tolerance_m = .1;
     config.direct_support_only = true;
@@ -113,7 +132,7 @@ struct OctoPlannerGridQueryTest
     tree->updateNode(octomap::point3d(-1,-1,-1),false);
     tree->updateNode(octomap::point3d(1,1,1),false);
     tree->updateNode(octomap::point3d(.025,.025,-.375),true);
-    PlannerConfig config;
+    auto config = gridFixtureConfig();
     config.support_height_m=.35;
     config.support_height_tolerance_m=.05;
     config.direct_support_only=true;
@@ -124,6 +143,15 @@ struct OctoPlannerGridQueryTest
       throw std::runtime_error("support cell overlaps the stance band but its centre rejected the real-map start");
     if (planner.poseSupportFree({.025,.025,-.12}) || planner.poseSupportFree({.025,.025,.10}))
       throw std::runtime_error("support voxel wholly outside the stance band was accepted");
+    auto coarse = std::make_shared<octomap::OcTree>(.2);
+    coarse->updateNode(octomap::point3d(-1,-1,-1),false);
+    coarse->updateNode(octomap::point3d(1,1,1),false);
+    coarse->updateNode(octomap::point3d(.1,.1,.1),true);
+    planner.setOctomap(coarse);
+    if (!planner.poseSupportFree({.1,.1,.3}) || !planner.poseSupportFree({.1,.1,.6}))
+      throw std::runtime_error("support voxel touching a stance-band boundary was rejected");
+    if (planner.poseSupportFree({.1,.1,.2999}) || planner.poseSupportFree({.1,.1,.6001}))
+      throw std::runtime_error("support voxel outside the stance-band boundary was accepted");
   }
 
   static void supportedRoutesDoNotRequireObservedCentreAir() {
@@ -140,7 +168,7 @@ struct OctoPlannerGridQueryTest
       if (obstacle) tree->updateNode(octomap::point3d(.025,.025,.025), true);
       return tree;
     };
-    PlannerConfig config;
+    auto config = gridFixtureConfig();
     config.robot_radius = .01;
     config.body_clearance_below_m = config.body_clearance_above_m = .05;
     config.support_height_m = .35;
@@ -197,7 +225,7 @@ struct OctoPlannerGridQueryTest
     tree->updateNode(octomap::point3d(.05,.05,.05), true);
     tree->updateNode(octomap::point3d(.05,.05,-.05), false);
     tree->updateNode(octomap::point3d(.25,.05,.05), false);
-    PlannerConfig config;
+    auto config = gridFixtureConfig();
     config.robot_radius = .001;
     config.body_clearance_below_m = config.body_clearance_above_m = .01;
     config.support_height_m = .35;
@@ -231,7 +259,7 @@ struct OctoPlannerGridQueryTest
     tree->updateNode(octomap::point3d(.05, .05, .05), true);
     tree->updateNode(octomap::point3d(.15, .05, .05), false);
     tree->updateNode(octomap::point3d(.25, .05, .05), false);
-    PlannerConfig config;
+    auto config = gridFixtureConfig();
     config.robot_radius = .001;
     config.ground_support = false;
     config.snap_search_radius_cells = 2;
@@ -265,7 +293,7 @@ struct OctoPlannerGridQueryTest
       for(int z=1;z<=6;++z)
         tree->updateNode(octomap::point3d((x+.5)*.2,(y+.5)*.2,(z+.5)*.2),false);
     }
-    PlannerConfig cfg;
+    auto cfg = gridFixtureConfig();
     cfg.robot_radius=.02;
     cfg.body_clearance_below_m=cfg.body_clearance_above_m=.01;
     cfg.support_height_m=.45; cfg.support_height_tolerance_m=.11;
@@ -288,21 +316,22 @@ struct OctoPlannerGridQueryTest
     if(std::hypot(node.x-goal.x,node.y-goal.y,node.z-goal.z)<=cfg.terminal_goal_tolerance_m)
       throw std::runtime_error("exact-goal fixture did not exercise an out-of-tolerance grid centre");
 
-    // Both endpoint bodies clear this observed slab; the connecting sweep does not.
-    planner.setObservedOccupiedCheck([](const auto &p,double radius,double below,double above,bool) {
-      return std::hypot(p.x,p.y)<=.2+radius && p.z+above>.46 && p.z-below<.475;
-    });
+    // Both endpoints clear this saved slab; its connector must not cross it.
+    auto blocked_tree = std::make_shared<octomap::OcTree>(*tree);
+    for (int x=-3;x<=2;++x) for (int y=-3;y<=2;++y)
+      if (const double distance=std::hypot((x+.5)*.2,(y+.5)*.2);
+          distance>=.3 && distance<=.5)
+        blocked_tree->updateNode((x+.5)*.2,(y+.5)*.2,.5,true);
+    blocked_tree->updateInnerOccupancy();
+    planner.setOctomap(blocked_tree);
+    const auto goal_status = planner.queryWorld(octomap::point3d(static_cast<float>(goal.x),
+          static_cast<float>(goal.y),static_cast<float>(goal.z)),.02,true);
+    if (goal_status != OctoPlanner3D::TraversabilityFailure::None)
+      throw std::runtime_error("saved slab unexpectedly blocked goal: " +
+                               std::to_string(static_cast<int>(goal_status)));
     planner.makePlan(start,goal); planner.getPlannerResults(path);
-    if(!path.empty()) throw std::runtime_error("exact goal connector crossed an observed obstacle");
-    planner.setObservedOccupiedCheck([](const auto &p,double radius,double below,double above,bool) {
-      return std::hypot(p.x-.05,p.y-.05)<=.02+radius && p.z+above>.41 && p.z-below<.47;
-    });
-    planner.makePlan(start,{.05,.05,.435}); planner.getPlannerResults(path);
-    if(path.empty() || std::hypot(path.back().x-.05,path.back().y-.05,path.back().z-.435)>.15 ||
-        std::hypot(path.back().x-.05,path.back().y-.05,path.back().z-.435)<1e-6)
-      throw std::runtime_error("invalid exact goal lost the original in-tolerance snapped fallback");
-    planner.setObservedOccupiedCheck({});
-
+    if (!path.empty()) throw std::runtime_error("exact goal connector crossed a saved obstacle");
+    planner.setOctomap(tree);
     planner.makePlan(start,{0,0,.3}); planner.getPlannerResults(path);
     if(!path.empty()) throw std::runtime_error("exact goal connector bypassed unsupported goal height");
   }
@@ -313,7 +342,7 @@ struct OctoPlannerGridQueryTest
       for (int z = -7; z <= 26; ++z)
         tree->updateNode(octomap::point3d((x+.5)*.05,(y+.5)*.05,(z+.5)*.05),
                          z == -7 || z == 13);
-    PlannerConfig config;
+    auto config = gridFixtureConfig();
     config.robot_radius = .155;
     config.support_height_m = .35;
     config.support_height_tolerance_m = .05;
@@ -349,7 +378,7 @@ struct OctoPlannerGridQueryTest
       }
       return tree;
     };
-    PlannerConfig config;
+    auto config = gridFixtureConfig();
     config.robot_radius = .155;
     config.support_height_m = .35;
     config.support_height_tolerance_m = .05;
@@ -432,7 +461,7 @@ struct OctoPlannerGridQueryTest
         tree->updateNode(octomap::point3d((x+.5)*.05, .225, (z+.5)*.05), true);
       }
     }
-    PlannerConfig config;
+    auto config = gridFixtureConfig();
     config.robot_radius = .155;
     config.support_height_m = .35;
     config.support_height_tolerance_m = .05;
@@ -478,7 +507,7 @@ struct OctoPlannerGridQueryTest
       }
       return tree;
     };
-    PlannerConfig config;
+    auto config = gridFixtureConfig();
     config.robot_radius = .25;
     config.body_clearance_below_m = .10;
     config.body_clearance_above_m = .25;
@@ -551,7 +580,7 @@ struct OctoPlannerGridQueryTest
         }
       }
       tree->updateNode(octomap::point3d(.589, -.253, .115), true);
-      PlannerConfig config;
+      auto config = gridFixtureConfig();
       config.support_height_m = .35;
       config.body_clearance_below_m = config.body_clearance_above_m = .10;
       OctoPlanner3D planner;
@@ -573,7 +602,7 @@ struct OctoPlannerGridQueryTest
     tree->updateNode(octomap::point3d(-1, -1, -1), false);
     tree->updateNode(octomap::point3d(1, 1, 1), false);
     tree->updateNode(octomap::point3d(body.x(), body.y(), -.05), true);
-    PlannerConfig config;
+    auto config = gridFixtureConfig();
     config.robot_radius = .01;
     config.snap_search_radius_cells = 0;
     // Isolate observed free space from ground support; support has its own tests.
@@ -603,7 +632,7 @@ struct OctoPlannerGridQueryTest
     for (int x=-15;x<=15;++x) for (int y=-15;y<=15;++y)
       tree->updateNode(octomap::point3d((x+.5)*.05,(y+.5)*.05,-.325),true);
     tree->updateNode(octomap::point3d(1,1,1),false);
-    PlannerConfig c;
+    auto c = gridFixtureConfig();
     c.support_height_m=.35;c.support_height_tolerance_m=.05;
     c.body_clearance_below_m=c.body_clearance_above_m=.1;
     OctoPlanner3D planner;planner.setConfig(c);planner.setOctomap(tree);
@@ -650,7 +679,7 @@ struct OctoPlannerGridQueryTest
     // The centre column is absent from the saved occupied surface. A relaxed
     // one-voxel neighbour is valid, but the body collision check must remain.
     tree->deleteNode(octomap::point3d(.025,.025,-.325));
-    PlannerConfig c;
+    auto c = gridFixtureConfig();
     c.robot_radius=.10;
     c.support_height_m=.35;
     c.support_height_tolerance_m=.05;
@@ -685,7 +714,7 @@ struct OctoPlannerGridQueryTest
             tree->updateNode(octomap::point3d((x+.5)*r,(y+.5)*r,(z+.5)*r), true);
       for (int i = -15; i <= 15; ++i)
         tree->updateNode(octomap::point3d((i+.5)*r,-.5, .025), true);
-      PlannerConfig config;
+      auto config = gridFixtureConfig();
       config.support_height_m = .35;
       config.body_clearance_below_m = config.body_clearance_above_m = .1;
       OctoPlanner3D planner;
@@ -734,7 +763,7 @@ struct OctoPlannerGridQueryTest
               (x+.5)*r, (y+.5)*r, (z+.5)*r), false);
         }
       tree->updateNode(octomap::point3d(1.9,1.9,1.0), false);
-      PlannerConfig config;
+      auto config = gridFixtureConfig();
       config.robot_radius = .43;
       config.body_clearance_below_m = config.body_clearance_above_m = .10;
       // Keep the physical support interval wider than one coarse fixture
@@ -788,7 +817,7 @@ struct OctoPlannerGridQueryTest
         for (int z = -2; z <= 2; ++z)
           tree->updateNode(octomap::point3d((x+.5)*.1, (y+.5)*.1, (z+.5)*.1), false);
     tree->updateInnerOccupancy();
-    PlannerConfig config;
+    auto config = gridFixtureConfig();
     config.robot_radius = .01;
     config.body_clearance_below_m = config.body_clearance_above_m = .01;
     config.ground_support = false;
@@ -802,9 +831,11 @@ struct OctoPlannerGridQueryTest
     planner.makePlan(start, {.35, .05, .05});
     std::vector<PointPose> path;
     planner.getPlannerResults(path);
-    if (path.empty() || std::abs(path.front().x-.05)>1e-6 ||
-        std::abs(path.front().y-.05)>1e-6 ||
-        std::abs(path.front().z-start.z)>1e-6)
+    if (path.size()<2 || std::abs(path.front().x-start.x)>1e-6 ||
+        std::abs(path.front().y-start.y)>1e-6 ||
+        std::abs(path.front().z-start.z)>1e-6 ||
+        std::abs(path[1].x-.05)>1e-6 || std::abs(path[1].y-.05)>1e-6 ||
+        std::abs(path[1].z-start.z)>1e-6)
       throw std::runtime_error("safe free-space quantization entry was rejected");
 
     // The raw pose is clear while its containing cell centre overlaps a
@@ -834,7 +865,7 @@ struct OctoPlannerGridQueryTest
         tree->updateNode(octomap::point3d((x + 0.5) * 0.2, (y + 0.5) * 0.2, 0.1), false);
       }
     tree->updateNode(octomap::point3d(2.1, 2.1, 0.9), false);
-    PlannerConfig config;
+    auto config = gridFixtureConfig();
     config.robot_radius = 0.43;
     config.body_clearance_below_m = config.body_clearance_above_m = 0.10;
     OctoPlanner3D planner;
@@ -844,7 +875,8 @@ struct OctoPlannerGridQueryTest
     const auto standing = planner.worldToGrid(0.1, 0.1, 0.1);
     if (!planner.isCellTraversable(low, 0.43, true, true, 0, 2))
       throw std::runtime_error("fixture must reproduce uncalibrated low-body support");
-    config.support_height_m = 0.35;
+    // Keep the low pose truly outside the voxel's height interval, not touching its boundary.
+    config.support_height_m = 0.36;
     config.support_height_tolerance_m = 0.05;
     planner.setConfig(config);
     if (planner.isCellTraversable(low, 0.43, true, true, 0, 2) ||
@@ -858,7 +890,7 @@ struct OctoPlannerGridQueryTest
       for (int y = -2; y <= 2; ++y)
         tree->updateNode(octomap::point3d((x + 0.5) * 0.2, (y + 0.5) * 0.2, -0.1), true);
     tree->updateNode(octomap::point3d(2.1, 2.1, 0.9), false);
-    PlannerConfig config;
+    auto config = gridFixtureConfig();
     config.robot_radius = 0.43;
     config.max_step_height = 0.0;
     OctoPlanner3D planner;
@@ -881,7 +913,7 @@ struct OctoPlannerGridQueryTest
         for (int z = 0; z <= 10; ++z)
           tree->updateNode(octomap::point3d((x + 0.5) * 0.1, (y + 0.5) * 0.1,
                                            (z + 0.5) * 0.1), z <= 2);
-    PlannerConfig config;
+    auto config = gridFixtureConfig();
     config.robot_radius = 0.2;
     config.support_height_m = 0.4;
     config.support_height_tolerance_m = 0.01;
@@ -955,7 +987,7 @@ struct OctoPlannerGridQueryTest
         tree->updateNode(octomap::point3d((x + 0.5) * 0.2, (y + 0.5) * 0.2, 0.3), true);
         tree->updateNode(octomap::point3d((x + 0.5) * 0.2, (y + 0.5) * 0.2, 0.1), false);
       }
-    PlannerConfig config;
+    auto config = gridFixtureConfig();
     config.robot_radius = 0.43;
     config.body_clearance_below_m = 0.10;
     config.body_clearance_above_m = 0.10;
@@ -1026,7 +1058,7 @@ void expectPoint(global_planner::OctoPlanner3D & planner,
 
 void checkResolution(double resolution)
 {
-  global_planner::PlannerConfig config;
+  auto config = global_planner::gridFixtureConfig();
   config.robot_radius = 2.1 * resolution;
   config.ground_support = false;
   config.snap_search_radius_cells = 0;

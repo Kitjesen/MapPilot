@@ -6,7 +6,7 @@ set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND "${DUMPBIN}")
 file(GET_RUNTIME_DEPENDENCIES
   EXECUTABLES "${TOOL_DIRECTORY}/lt_pgo.exe" "${TOOL_DIRECTORY}/lt_loop_verify.exe"
               "${TOOL_DIRECTORY}/pgo_test.exe" "${TOOL_DIRECTORY}/loop_information_test.exe"
-              "${TOOL_DIRECTORY}/constraint_assembly_test.exe" "${TOOL_DIRECTORY}/online_graph_test.exe"
+              "${TOOL_DIRECTORY}/constraint_assembly_test.exe"
   DIRECTORIES "${DEPENDENCY_DIRECTORY}"
   PRE_EXCLUDE_REGEXES "[Aa][Pp][Ii]-[Mm][Ss]-.*" "[Ee][Xx][Tt]-[Mm][Ss]-.*"
   POST_EXCLUDE_REGEXES [=[[Cc]:[/\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\][Ss][Yy][Ss][Tt][Ee][Mm]32[/\\].*]=]

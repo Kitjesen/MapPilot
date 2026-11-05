@@ -123,7 +123,7 @@ export async function executeSlashCommand(raw: string, sseState: SSEState): Prom
       `新目标：${view.goalAdmission.label}`,
       `控制：${view.control.label}`,
       `运动：${view.motion.permission.label} · ${view.motion.observation.label}`,
-      `停稳：${view.motion.stopConfirmation.label}`,
+      `停止确认：${view.motion.stopConfirmation.label}`,
       `位置：${pos}`,
     ].join('\n')
   }

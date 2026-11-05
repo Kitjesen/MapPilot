@@ -37,17 +37,24 @@ mapd 与原生 `online_mapping` 预览维持原有地图聚合；增量清理仅
 墙面保护依靠实际回波、遮挡和局部平面一致性，稀疏点本身不是删除理由。
 平面保护需要 50 cm 内至少 6 个有两帧回波、没有后续空闲票的邻点，排除近似一条线的分布；
 至少 80% 邻点与候选点距同一参考平面不超过 4 cm，才保留候选点。这只增加保留，不增加删除。
-Patchwork++ 保留在独立的 `src/maps/ground` 分割模块中，保存清理不再依赖它。
+Patchwork++ 地面分割实验归 `research/maps/ground`，保存清理由自身的可见性和表面几何处理。
 同源 903room 的 185 个关键帧对照中，启用与停用地面标签的保留和删除 PCD 完全相同；
 新鲜的标签保护本身也是上述局部平面保护的子集，因此移除重复路径及其旧标签缓存。
 这不证明所有场景下地面分割都没有价值，也不代表这批真实点云有人工真值。
-旧的 `--ground-z-threshold` 仍接受，但只作兼容输入并提示已弃用；地面保护由几何和多帧证据决定，
-低矮物体不会因该参数获得永久保护。
+地面保护由几何和多帧证据决定，低矮物体不会因高度参数获得永久保护。
 机身倾斜、坡道、楼梯和配准误差需要实图验收，不能声称完全不会误删。
 长期站着的人、未被再次观察的位置，也可能留下残影。
 
-旧版依据“帧数/命中点数不足”删除的规则已取消。`moving_instances` 仍是粗略的分格候选统计，
-不是识别人或车辆，也不参与删除决定。
+旧版依据“帧数/命中点数不足”删除的规则已取消。保存清理不再计算粗略的 XY 分格运动评分。
+
+### 玻璃的已知局限
+
+当前 prune 没有透明材料分类。稀疏玻璃点或整片玻璃被后续射线穿过时，
+可能累积空闲证据并失去有效邻面保护，最终进入删除结果。
+局部平面规则保护的前提是周围仍有符合要求的实测支撑。
+即使玻璃点在清理后点云中保留，后续 OctoMap 射线重放仍可能把对应格累计更新为 free。
+实际原生函数的合成对照和现场归因边界记录在
+[玻璃保存机制与复现](../../../docs/research/glass-map-persistence-20261105.md)。
 
 ## 需要什么输入
 
@@ -94,8 +101,12 @@ prune --map-dir /path/to/map-copy
 prune --map-dir /path/to/map-copy --apply --overwrite
 ```
 
-首次应用保留 `map.pcd.preclean`，重复应用不覆盖最初的备份。空结果不能替换原图，
-截断的 binary PCD 会报错。正式保存流程将备份一起入库。
+首次应用创建 `map.before_clean.pcd`，重复应用不覆盖最初的备份。已有旧名
+`map.pcd.preclean` 时继续复用旧备份，避免把已清理的点云当作原图再备份。
+空结果不能替换原图，截断的 binary PCD 会报错。正式保存流程将备份以新名一起入库，
+保留最近一次的 `map.removed.pcd`，不再额外保存独立工具的 `map.clean.pcd` 中间文件。
+首次备份与最近一次移除点的时刻不同，不保证前者等于当前点云加当前移除点。
+完整归属见[地图文件与失败保存任务](../../../docs/operations/map-files.md)。
 命令行直接应用不会同步重建已有的 OctoMap、通行图等产物，正式重建要走地图保存流程。
 网页的清理前后对比、选区审查、恢复操作尚未接入。
 
@@ -106,7 +117,9 @@ prune --map-dir /path/to/map-copy --apply --overwrite
 | `dry_run` / `applied` | 只分析 / 已替换原图 |
 | `source_points`、`kept_points`、`removed_points` | 原图、保留、删除点数 |
 | `removed_fraction` | 删除比例，0–1 |
-| `decision_counts` | 每个点最终的保留或删除原因 |
+| `decision_counts.kept_uncontradicted` | 未满足多帧空闲矛盾条件的保留点 |
+| `decision_counts.kept_supported_surface` | 已有空闲矛盾，但被当前有效表面支撑保护的点 |
+| `decision_counts.removed_free_space_contradiction` | 满足空闲矛盾且没有有效表面保护的删除点 |
 | `free_space_candidate_points` | 多帧空闲候选数，部分可能被当前连续表面规则保留 |
 | `patch_count` / `unmatched_patch_count` | 已匹配 / 缺少位姿的扫描数 |
 | `backup_pcd` | 应用时的备份路径 |
@@ -122,9 +135,25 @@ prune --map-dir /path/to/map-copy --apply --overwrite
 | `--voxel-size` | 0.20 m | 查找和统计的格子尺寸，不是导航膨胀半径 |
 | `--out-clean` / `--out-removed` | 地图目录内 | 对比点云输出位置 |
 
-`--min-frame-support`、`--min-hit-support`、`--instance-grid-m`、`--moving-score-threshold`、
-`--min-instance-points` 只影响支持度归因和分格报告，不改变多帧射线的删除条件。
 完整参数见 `prune --help`。
+
+### 报告精简后的迁移
+
+`--ground-z-threshold`、`--min-frame-support`、`--min-hit-support`、`--instance-grid-m`、
+`--moving-score-threshold`、`--min-instance-points` 已删除。旧命令需要移除这些选项，
+继续传入会报未知参数并退出。它们原来只影响报告或已经无效，不改变当前可见性与表面保护的删点规则。
+此处调整针对默认 `prune`，外部研究算法的参数含义由各自项目定义。
+
+JSON 不再输出 `preset`、`flow`、`evidence_voxels`、`dynamic_candidate_voxels`、
+`scored_instances`、`moving_instances`、`score_candidate_points`、`max_moving_score`。
+旧的 `kept_ground_geometry` 恒零字段与 `kept_multi_frame`、`kept_hit_support`、
+`kept_without_evidence`、`kept_unconfirmed` 支持度归因一并删除。
+读取保留原因的调用方改用上表的 `kept_uncontradicted` 和 `kept_supported_surface`，
+算法版本继续读取 `algorithm`。历史报告保留原来的字段。
+
+`source_points = kept_points + removed_points`，
+`kept_points = kept_uncontradicted + kept_supported_surface`，
+`free_space_candidate_points = removed_points + kept_supported_surface`。
 
 ## 实现与验证范围
 
@@ -133,27 +162,25 @@ prune --map-dir /path/to/map-copy --apply --overwrite
 [ERASOR2](https://github.com/url-kaist/ERASOR2) 的地面和实例保护用于理解后续改进方向。
 当前实现不包含或链接 ERASOR2 GPLv3 代码。默认 prune 的配置与链接不依赖 Patchwork++ 或 Eigen3；
 可见性和局部平面实现使用 C++20，地图公共契约、mapd 和整图预览保留 C++17。
-`kept_ground_geometry` 保留为兼容报告字段并恒为零，实际表面保护计入 `kept_supported_surface`。
+实际表面保护计入 `kept_supported_surface`。
 完整 UFOMap/FreeDOM 服务没有链接进来；保存期复用了保守空闲证据与当前命中优先，历史增量重分类仅供离线实验。
-`third_party/research_nav/ERASOR2` 仅为可选参考，边界见 [refs/erasor2](cpp/refs/erasor2/README.md)。
+`third_party/research_nav/ERASOR2` 保留为外部研究参考，不接入产品构建和保存流程。
 
 ```bash
-cmake -S src/maps/prune/cpp -B build/prune -DBUILD_TESTING=ON -DLINGTU_PRUNE_ERASOR2=OFF
+cmake -S src/maps/prune/cpp -B build/prune -DBUILD_TESTING=ON
 cmake --build build/prune --config Release
 ctest --test-dir build/prune -C Release --output-on-failure
 ```
 
-独立地面分割测试可用 `cmake -S src/maps/ground -B build/ground` 配置；需要 Eigen3。
-离线增量清理与 `maps_cleaning_replay` 从 `src/maps/cleaning` 单独配置，后者仍为显式构建目标。
+独立地面分割、增量清理、同源回放和外部算法对照统一查看
+[地图研究入口](../../../research/maps/README.md)。
 
 入口：[cpp/prune.cpp](cpp/prune.cpp)；判定：[cpp/core/visibility.cpp](cpp/core/visibility.cpp)；
 测试：[prune_test.cpp](../../../tests/maps/cpp/prune_test.cpp)。覆盖多帧残影、遮挡、稀疏静态点、
 同帧回波优先、地面/墙面/坡面保护、贴近墙面的独立残影、非零雷达原点和保存恢复。
 本地测试不代表任何目标实机平台的性能或实图清理质量已经验收。
 
-离线同源回放工具需显式构建：`cmake -S src/maps/cleaning -B build/cleaning-experiment`，
-再执行 `cmake --build build/cleaning-experiment --target maps_cleaning_replay`。
-运行 `maps_cleaning_replay MAP_DIRECTORY NEW_OUTPUT_DIRECTORY`，同时输出保存图、
-增量图、逐帧耗时和容量计数。真实记录没有地面/墙柱/楼梯语义真值时，删除点数不能当作准确率。
+离线同源回放输出保存图、增量图、逐帧耗时和容量计数。
+真实记录没有地面/墙柱/楼梯语义真值时，删除点数不能当作准确率。
 实验增量结果是有容量上限的代表点集合，不能替代整图存储或作为任意地图点的删除掩码。
 清理证据不授权导航自由空间。实机性能与静态结构保留仍需目标平台验收。

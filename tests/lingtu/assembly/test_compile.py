@@ -4,6 +4,7 @@ import json
 import math
 from copy import deepcopy
 from pathlib import Path
+from shutil import copyfile, copytree
 from unittest.mock import patch
 
 import pytest
@@ -62,7 +63,7 @@ def test_sim_run_plan_selects_its_package_compound_body_without_real_robot_confi
     repository_root = Path(__file__).resolve().parents[3]
 
     assert plan.env == "sim"
-    assert body_file == "sim/packages/robots/doso/thunder_v4/collision/thunderv4_nominal.body2"
+    assert body_file == "sim/packages/robots/doso/thunder_v4/collision/thunderv4_navigation.body2"
     assert plan.native_process_environment["LINGTU_NAV_BODY_FILE"] == (
         repository_root / body_file
     ).resolve().as_posix()
@@ -71,6 +72,7 @@ def test_sim_run_plan_selects_its_package_compound_body_without_real_robot_confi
     real_plan = compile_run_plan("nav", "real", robot="doso/thunder_v4", local_planner="scan")
     real_body = real_plan.native_process_environment["LINGTU_NAV_BODY_FILE"]
     assert Path(real_body).read_bytes() == (repository_root / body_file).read_bytes()
+    assert Path(real_body).read_text(encoding="utf-8").splitlines()[0] == "BODY2 8"
 
 
 def test_compile_resolves_env_implementation_once(monkeypatch) -> None:
@@ -250,6 +252,160 @@ def test_scan_defaults_follow_product_motion_limits() -> None:
     assert float(plan.native_process_environment["LINGTU_NAV_SMOOTHER_Y_ACCEL_MPS2"]) == 0.3
     assert plan.parameters["scan_follower.max_vx_mps"] == 0.4
     assert plan.parameters["scan_follower.max_yaw_rate_rad_s"] == 0.7
+
+
+@pytest.mark.parametrize("product", ["nav", "teleop", "teleop_avoid"])
+def test_real_motion_budget_respects_robot_limits(product: str) -> None:
+    from dataclasses import replace
+
+    from runtime.config import load_config
+
+    robot = load_config("config/robots/doso/thunder_v4/robot.yaml")
+    robot = replace(robot, speed=replace(robot.speed, max_linear=0.5, max_angular=0.4))
+    with patch("lingtu.assembly.config.product.load_config", return_value=robot):
+        plan = compile_run_plan(product, "real", robot=SIM_ROBOT,
+                                local_planner=None if product == "teleop" else "scan")
+
+    environment = plan.native_process_environment
+    assert float(environment["LINGTU_DRIVER_MAX_LINEAR_MPS"]) == 0.5
+    assert float(environment["LINGTU_DRIVER_MAX_ANGULAR_RPS"]) == 0.4
+    for key in (
+        "LINGTU_TELEOP_MAX_SPEED_MPS", "LINGTU_NAV_SMOOTHER_X_MAX_MPS",
+        "LINGTU_NAV_SMOOTHER_Y_MAX_MPS",
+    ):
+        assert float(environment[key]) == 0.5
+    for key in (
+        "LINGTU_TELEOP_MAX_YAW_RATE", "LINGTU_NAV_PATH_FOLLOWER_MAX_YAW_RATE_RAD_S",
+        "LINGTU_NAV_SMOOTHER_YAW_MAX_RADPS",
+    ):
+        assert float(environment[key]) == 0.4
+    assert float(environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"]) == pytest.approx(math.hypot(0.5, 0.5))
+    assert float(environment["LINGTU_NAV_RECOVERY_ROTATION_RATE_RAD_S"]) == 0.4
+    if product != "teleop":
+        assert float(environment["LINGTU_NAV_SCAN_MAX_VX_MPS"]) == 0.5
+        assert float(environment["LINGTU_NAV_SCAN_MAX_VY_MPS"]) == 0.5
+        assert float(environment["LINGTU_NAV_SCAN_MAX_YAW_RATE_RAD_S"]) == 0.4
+        assert float(environment["LINGTU_NAV_SCAN_PLANNER_MAX_VELOCITY_MPS"]) == pytest.approx(math.hypot(0.5, 0.5))
+
+
+@pytest.mark.parametrize("session_speed", [0.2, 2.0])
+def test_real_robot_limits_apply_after_product_and_session_overrides(session_speed: float) -> None:
+    from dataclasses import replace
+
+    from runtime.config import load_config
+
+    robot = load_config("config/robots/doso/thunder_v4/robot.yaml")
+    robot = replace(robot, speed=replace(robot.speed, max_linear=0.5, max_angular=0.4))
+    graph = load_runtime_graph()
+    products = deepcopy(graph.products)
+    products["nav"]["native_nav"].update({
+        "path_follower_max_speed_mps": 0.3,
+        "path_follower_max_yaw_rate_rad_s": 0.15,
+        "teleop_max_speed_mps": 0.25,
+        "teleop_max_yaw_rate_rad_s": 0.2,
+    })
+    parameters = {
+        "scan_planner.max_velocity_mps": session_speed,
+        "scan_follower.max_vx_mps": session_speed,
+        "scan_follower.max_vy_mps": session_speed,
+        "scan_follower.max_yaw_rate_rad_s": min(session_speed, 1.0),
+    }
+    with patch("lingtu.assembly.config.product.load_config", return_value=robot):
+        plan = compile_run_plan("nav", "real", robot=SIM_ROBOT, local_planner="scan",
+                                graph=replace(graph, products=products), parameter_overrides=parameters)
+
+    environment = plan.native_process_environment
+    assert float(environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"]) == 0.3
+    assert float(environment["LINGTU_NAV_PATH_FOLLOWER_MAX_YAW_RATE_RAD_S"]) == 0.15
+    assert float(environment["LINGTU_TELEOP_MAX_SPEED_MPS"]) == 0.25
+    assert float(environment["LINGTU_TELEOP_MAX_YAW_RATE"]) == 0.2
+    assert plan.parameters["scan_planner.max_velocity_mps"] == min(session_speed, math.hypot(0.5, 0.5))
+    assert plan.parameters["scan_follower.max_vx_mps"] == min(session_speed, 0.5)
+    assert plan.parameters["scan_follower.max_vy_mps"] == min(session_speed, 0.5)
+    assert plan.parameters["scan_follower.max_yaw_rate_rad_s"] == min(session_speed, 0.4)
+    assert RunPlan.from_dict(plan.as_dict()).native_process_environment == environment
+
+
+@pytest.mark.parametrize("field", ["max_linear", "max_angular"])
+@pytest.mark.parametrize("value", [0.0, -0.5, math.inf, math.nan, True])
+def test_real_robot_motion_limits_must_be_finite_and_positive(field: str, value: float) -> None:
+    from dataclasses import replace
+
+    from runtime.config import load_config
+
+    robot = load_config("config/robots/doso/thunder_v4/robot.yaml")
+    robot = replace(robot, speed=replace(robot.speed, **{field: value}))
+    with patch("lingtu.assembly.config.product.load_config", return_value=robot):
+        with pytest.raises(ValueError, match=r"RobotConfig speed.*finite and positive"):
+            compile_run_plan("nav", "real", robot=SIM_ROBOT)
+
+
+@pytest.mark.parametrize("max_linear", [0.02, 0.005])
+@pytest.mark.parametrize("product", ["nav", "map", "teleop"])
+def test_low_physical_speed_compiles_with_consistent_budget(max_linear: float, product: str) -> None:
+    from dataclasses import replace
+
+    from runtime.config import load_config
+
+    robot = load_config("config/robots/doso/thunder_v4/robot.yaml")
+    robot = replace(robot, speed=replace(robot.speed, max_linear=max_linear))
+    with patch("lingtu.assembly.config.product.load_config", return_value=robot):
+        plan = compile_run_plan(product, "real", robot=SIM_ROBOT,
+                                local_planner="scan" if product == "nav" else None)
+    environment = plan.native_process_environment
+    assert float(environment["LINGTU_TELEOP_MAX_SPEED_MPS"]) == max_linear
+    assert float(environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"]) == pytest.approx(math.hypot(max_linear, max_linear))
+    assert float(environment["LINGTU_TELEOP_MIN_MOTION_SPEED_MPS"]) == 0.03
+    if product == "nav":
+        assert plan.parameters["scan_follower.max_vx_mps"] == max_linear
+        assert plan.parameters["scan_follower.max_vy_mps"] == max_linear
+        assert plan.parameters["scan_planner.max_velocity_mps"] == 0.05
+    assert RunPlan.from_dict(plan.as_dict()).native_process_environment == environment
+
+
+def test_sim_motion_budget_uses_its_package_without_real_robot_limits() -> None:
+    with patch("lingtu.assembly.config.product.load_config", side_effect=AssertionError("real RobotConfig read")):
+        plan = compile_run_plan("nav", "sim", robot=SIM_ROBOT, local_planner="scan")
+    assert plan.parameters["scan_follower.max_vx_mps"] == 1.0
+    assert plan.parameters["scan_follower.max_vy_mps"] == 1.0
+    assert float(plan.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"]) == pytest.approx(math.sqrt(2.0))
+
+
+def test_low_physical_budget_preserves_smaller_motion_deadband() -> None:
+    from dataclasses import replace
+
+    from runtime.config import load_config
+
+    robot = load_config("config/robots/doso/thunder_v4/robot.yaml")
+    robot = replace(robot, speed=replace(robot.speed, max_linear=0.005))
+    graph = load_runtime_graph()
+    products = deepcopy(graph.products)
+    products["teleop"]["native_nav"]["teleop_min_motion_speed_mps"] = 0.001
+    with patch("lingtu.assembly.config.product.load_config", return_value=robot):
+        plan = compile_run_plan("teleop", "real", robot=SIM_ROBOT, graph=replace(graph, products=products))
+    assert float(plan.native_process_environment["LINGTU_TELEOP_MIN_MOTION_SPEED_MPS"]) == 0.001
+
+
+@pytest.mark.parametrize("env", ["real", "sim"])
+@pytest.mark.parametrize("product", ["nav", "teleop"])
+@pytest.mark.parametrize("limit", ["teleop_max_speed_mps", "path_follower_max_speed_mps"])
+def test_low_product_motion_budget_preserves_configured_deadband(env: str, product: str, limit: str) -> None:
+    from dataclasses import replace
+
+    graph = load_runtime_graph()
+    products = deepcopy(graph.products)
+    products[product]["native_nav"].update({
+        limit: 0.02, "teleop_min_motion_speed_mps": 0.03, "path_follower_min_speed_mps": 0.0,
+    })
+    with patch.object(ProcessArtifact, "from_repository_path",
+                      classmethod(lambda cls, root, path: cls(str(path)))):
+        plan = compile_run_plan(product, env, robot=SIM_ROBOT, graph=replace(graph, products=products))
+    environment = plan.native_process_environment
+    env_key = "LINGTU_TELEOP_MAX_SPEED_MPS" if limit == "teleop_max_speed_mps" else "LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"
+    assert float(environment[env_key]) == 0.02
+    assert float(environment["LINGTU_TELEOP_MIN_MOTION_SPEED_MPS"]) == 0.03
+    if product == "nav":
+        assert plan.parameters["scan_planner.max_velocity_mps"] >= 0.05
 
 
 @pytest.mark.parametrize(("env", "robot"), [
@@ -503,6 +659,8 @@ def _subprocess_graph(*, include_support: bool = False) -> RuntimeGraph:
 
 def _materialized_platform_graph(tmp_path: Path) -> RuntimeGraph:
     graph = load_runtime_graph()
+    copytree(graph.root / "settings", tmp_path / "settings")
+    copyfile(graph.root / "models.yaml", tmp_path / "models.yaml")
     envs = deepcopy(graph.envs)
     processes = envs["sim"]["backends"]["mujoco"]["processes"]
     for process_name, process in processes.items():
@@ -585,6 +743,14 @@ def test_every_field_product_declares_one_host_builder_host_contract(product: st
     assert "acceptance" not in manifest.as_dict()["launch"]
     assert manifest.simulation == {}
     assert manifest.has_process("host")
+
+
+def test_saved_map_nav_preserves_go2_slope_limit() -> None:
+    plan = compile_run_plan("nav", "real", robot="unitree/go2")
+
+    assert float(plan.native_process_environment["LINGTU_NAV_OCTO_MAX_SLOPE"]) == pytest.approx(
+        math.tan(math.radians(30.0))
+    )
 
 
 def test_real_run_plan_selects_go2_mid360_config() -> None:
@@ -1068,6 +1234,9 @@ def test_actual_sim_slam_profile_does_not_wait_for_unpublished_pose_prior(
     assert plan.process("lidar").provides == ("lidar",)
     config_path = Path(__file__).resolve().parents[3] / plan.native_process_environment["LINGTU_SLAM_CONFIG"]
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    common_path = config_path.parent / config.pop("defaults")
+    common = yaml.safe_load(common_path.read_text(encoding="utf-8"))["slam"]
+    config = {**common, **config}
     assert config["odom_prior_enabled"] is False
     assert config.get("odom_prior_bypass_ltlio", False) is False
     assert config.get("esti_il", False) is False
@@ -1666,7 +1835,7 @@ def test_sim_mujoco_teleop_compiles_persistent_native_processes_and_host_guards(
         ) if process_platform == "windows" else ("build/nav_endpoint/liblingtu_nav_client.so",)
     )
     assert tuple(dependency.path for dependency in host_dependencies) == expected_dependencies
-    assert manifest.process("nav").timeout_s == 60
+    assert manifest.process("nav").timeout_s == 240
     assert manifest.process("nav").command.argv[-2:] == ("--status-s", "0.1")
     assert not manifest.has_process("camera")
     assert manifest.host_config["enable_camera"] is False
@@ -1752,7 +1921,6 @@ def test_sim_mujoco_teleop_avoid_compiles_complete_native_safety_chain(
     assert nav_environment["LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS"] == "600"
     assert nav_environment["LINGTU_NAV_ODOM_MAX_AGE_S"] == "0.60"
     assert nav_environment["LINGTU_NAV_CLOUD_MAX_AGE_S"] == "0.60"
-    assert nav_environment["LINGTU_NAV_INPUT_RECOVERY_FRAMES"] == "1"
     assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNER_BACKEND"] == "scan"
     assert "LINGTU_LOCAL_PLANNER_PATHS" not in plan.native_process_environment
     assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.05"
@@ -1924,12 +2092,12 @@ def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
         assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_SIZE_Y"] == "200"
         assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_SIZE_Z"] == "100"
         assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_SLIDE_M"] == "0.2"
-        assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_RAY_M"] == "5.0"
+        assert float(plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_RAY_M"]) == 5.0
         assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_HIT"] == "0.85"
-        assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_MISS"] == "0.30"
+        assert float(plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_MISS"]) == 0.30
         assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_MIN"] == "0.12"
         assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_MAX"] == "0.98"
-        assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_OCC"] == "0.80"
+        assert float(plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_OCC"]) == 0.80
         assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_DECAY_AFTER_S"] == "0"
         assert float(plan.native_process_environment["LINGTU_MAPD_INFLATION_RADIUS_M"]) == pytest.approx(
             float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"])
@@ -1951,7 +2119,10 @@ def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
             "src/nav/cpp/planning/local/cmu/paths/thunder"
         )
         assert plan.native_process_environment["LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M"] == "0.05"
-        assert "LINGTU_MAPD_OCCUPANCY_RESOLUTION_M" not in plan.native_process_environment
+        assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.05"
+        assert plan.native_process_environment["LINGTU_MAPD_INFLATION_RADIUS_M"] == "0.25"
+        assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.1"
+        assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.1"
     expected_processes = [
         *(["camera_publisher"] if product in {"inspection", "tracking"} else []),
         "driver_bridge",
@@ -2189,6 +2360,15 @@ def test_product_topics_control_host_bus_map_scene_requirement(
 
     host_bus = next(entry for entry in host_builder._entries if entry.name == "host.bus")
     assert host_bus.config["require_map_scene"] is require_map_scene
+
+
+@pytest.mark.parametrize("env", ["real", "sim"])
+def test_host_bus_receives_run_plan_environment(env) -> None:
+    product = compile_run_plan("nav", env, robot="doso/thunder_v4", local_planner="scan")
+    host_builder = host_builder_from_run_plan(product)
+
+    host_bus = next(entry for entry in host_builder._entries if entry.name == "host.bus")
+    assert host_bus.config["env"] == env
 
 
 def test_map_run_plan_contains_host_builder_contract() -> None:
@@ -2656,6 +2836,7 @@ def test_stair_model_bindings_come_from_selected_robot(robot):
                      stairs_down_profile="tested-descent")
     env = replace(env, robot_config=replace(env.robot_config, driver=driver))
     output = _process_environment(product="nav", env_spec=env, native_environment={},
+                                  settings={},
                                   lifecycle={"slam_mode": "localization"},
                                   roles=("driver",), process_control="systemd")
     assert output["LINGTU_DRIVER_STAIRS_UP_PROFILE"] == "tested-ascent"

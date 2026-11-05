@@ -978,7 +978,7 @@ class _PhysicalMotionEvidence:
 
     @staticmethod
     def _box_support_contact(model: Any, data: Any, environment: int,
-                             robot: int, point: Any) -> bool | None:
+                             robot: int, point: Any, distance: float) -> bool | None:
         import mujoco
 
         if model.geom_type[environment] != mujoco.mjtGeom.mjGEOM_BOX:
@@ -989,7 +989,9 @@ class _PhysicalMotionEvidence:
         faces = sorted((abs(float(local[axis]) - sign * float(size[axis])), axis, sign)
                        for axis in range(3) for sign in (-1, 1))
         rounding = 8 * math.ulp(max(1.0, *map(abs, local), *size))
-        if faces[1][0] - faces[0][0] <= rounding:
+        # Penetrating contact positions lie between surfaces; an edge within
+        # that depth does not identify a unique box face.
+        if faces[1][0] - faces[0][0] <= max(rounding, abs(distance)):
             return None
         _, axis, sign = faces[0]
         if any(abs(local[other]) > size[other] + rounding for other in range(3) if other != axis):
@@ -1080,7 +1082,8 @@ class _PhysicalMotionEvidence:
             if support_part and support_surface:
                 normal_support = support_normal_z > 0.5
                 geometric_support = self._box_support_contact(
-                    model, data, b if robot_geom == a else a, robot_geom, contact.pos)
+                    model, data, b if robot_geom == a else a, robot_geom,
+                    contact.pos, float(contact.dist))
                 if geometric_support is not None and geometric_support != normal_support:
                     self.support_normal_disagreements += 1
                     if self.first_support_normal_disagreement is None:

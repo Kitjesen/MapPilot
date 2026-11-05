@@ -1,7 +1,8 @@
 # LingTu device registry: physical hardware inventory.
 #
 # This file describes supported hardware assets and discovery metadata. The
-# camera record is also the native camera service's startup input. Other device
+# camera record supplies device selection for the compatibility driver; common
+# acquisition defaults live in system/settings/camera.yaml. Other device
 # endpoints come from the selected RobotConfig and ProductControl's internal
 # execution snapshot; editing an inventory
 # record here does not rewire Product dataflow.
@@ -45,22 +46,8 @@ devices:
       vendor_id: "2bc5"
       product_id: "0800"
     config:
-      sdk_config_path: ""
       serial_number: ""
       uid: ""
-      product_id: "0x0800"
-      device_index: 0
-      connect_timeout_ms: 10000
-      color:
-        width: 640
-        height: 480
-        fps: 30
-      depth:
-        width: 640
-        height: 480
-        fps: 30
-      enable_frame_sync: false
-      frame_id: camera_link
     capabilities: [color, depth, intrinsics]
 
   # Optional Go2 RGB-D accessory; enable only after USB discovery and calibration.
@@ -71,9 +58,6 @@ devices:
     description: "Intel RealSense D435i RGB-D Camera"
     config:
       serial_number: ""
-      color: {width: 640, height: 480, fps: 30}
-      depth: {width: 640, height: 480, fps: 30}
-      frame_id: camera_link
     capabilities: [color, depth, intrinsics]
 
   # Motor controller

@@ -18,7 +18,7 @@ Runtime implementations belong under `src/`.
 | Capture, convert, or evaluate SLAM recordings | [`datasets/`](datasets/README.md) | `public_slam_dataset.py`, `capture_slam_status_jsonl.py`, `normalized_lidar_imu_to_ltu1.py`, `elevator_bag_to_ltu1.py`, `inspection_localization_readiness.py` |
 | Inspect semantic, RGB-D, and person-follow datasets | [`datasets/`](datasets/README.md) | `semantic_dataset_inventory.py`; Habitat, ReplicaCAD, 3DSSG, TUM RGB-D and person evaluation tools |
 | Inspect field inputs and navigation evidence | `diagnostics/` | `navigation_motion_evidence.py`, `elevator_parity.py`; native probes and mapping replay are built by their owning components |
-| Check saved-map pruning | `maps/` | `prune_check.sh`; `erasor2_check.sh` is its compatibility alias, and `dufomap_offline.py` is an optional external comparison |
+| Check saved-map pruning | `maps/` | `prune_check.sh` checks the production cleaner; optional algorithm comparisons live under [research/maps](../research/maps/README.md) |
 | Prepare robot hardware or a simulation model | `robot/` | `setup_network.sh`, `scaffold_robot.py`; Go2 mounting assets stay with their hardware instructions |
 | Validate configuration and repository contracts | `validate/` | `validate_config.py`, `validate_topics.py`, `validate_architecture_boundaries.py`, `validate_real_deployment.py` |
 | View a saved map, Gateway, or SLAM streams | [`visualization/`](visualization/README.md) | `map.html` for saved maps; `rerun_gateway_live.py`, `run_rerun_mapping.py` for streams |

@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(ltlio LANGUAGES CXX)
 
+include("${CMAKE_CURRENT_LIST_DIR}/../../../scripts/build/cmake/settings.cmake")
+
 option(LTLIO_ENABLE_INTERNAL_TEST_HOOKS "Build LTLIO tree lifecycle regressions" OFF)
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common io filters kdtree)
@@ -18,7 +20,7 @@ add_library(ltlio_core STATIC
 )
 target_compile_features(ltlio_core PUBLIC cxx_std_17)
 target_include_directories(ltlio_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/.. ${PCL_INCLUDE_DIRS})
-target_link_libraries(ltlio_core PUBLIC Eigen3::Eigen Threads::Threads ${PCL_LIBRARIES})
+target_link_libraries(ltlio_core PUBLIC "$<BUILD_INTERFACE:lingtu_settings>" Eigen3::Eigen Threads::Threads ${PCL_LIBRARIES})
 set_target_properties(ltlio_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(MSVC)
   # PCL points require correctly aligned STL stable_sort temporary storage.

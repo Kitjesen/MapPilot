@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -12,6 +14,8 @@
 #include "lingtu/maps/mapd/save.hpp"
 
 namespace lingtu::maps::mapd {
+
+namespace map_defaults = lingtu::settings::maps::maps;
 
 struct DdsInputState {
   std::uint64_t received_samples{0U};
@@ -118,12 +122,12 @@ inline ReadinessState EvaluateReadiness(const State &state, const DdsOutputState
 }
 
 struct DdsLimits {
-  std::size_t max_points_per_observation{300000U};
-  std::size_t max_cloud_bytes{16U * 1024U * 1024U};
-  std::size_t max_point_fields{16U};
-  std::size_t max_point_step{64U};
-  std::size_t max_string_bytes{4096U};
-  std::size_t max_scene_bytes{32U * 1024U * 1024U};
+  std::size_t max_points_per_observation{map_defaults::input::max_points};
+  std::size_t max_cloud_bytes{map_defaults::capacity::cloud_bytes};
+  std::size_t max_point_fields{map_defaults::capacity::point_fields};
+  std::size_t max_point_step{map_defaults::capacity::point_step};
+  std::size_t max_string_bytes{map_defaults::capacity::string_bytes};
+  std::size_t max_scene_bytes{map_defaults::capacity::scene_bytes};
 };
 
 class Dds final : public SlamSnapshotExchange {

@@ -3,8 +3,10 @@ get_filename_component(LINGTU_REPO_ROOT
 set(_EXPLORE_SRC "${LINGTU_REPO_ROOT}/src/explore/cpp")
 set(_EXPLORE_ENDPOINT "${_EXPLORE_SRC}/endpoint")
 set(_NAV_SRC "${LINGTU_REPO_ROOT}/src/nav/cpp")
+include("${LINGTU_REPO_ROOT}/scripts/build/cmake/settings.cmake")
 
 function(lingtu_add_explore_test target)
+  target_link_libraries(${target} PRIVATE lingtu_settings)
   target_compile_features(${target} PRIVATE cxx_std_17)
   target_compile_options(${target} PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4 /UNDEBUG>

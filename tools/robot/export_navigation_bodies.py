@@ -1,4 +1,4 @@
-"""Regenerate the selected nominal compound models from checked-in robot assets.
+"""Regenerate the selected navigation models from checked-in robot assets.
 
 Run with the existing development MuJoCo environment. MuJoCo is an offline
 export tool here, not a dependency of native field navigation.
@@ -25,8 +25,8 @@ from tools.bench.body_physics import export_body as export_mjcf_body
 
 FEET = tuple(f"{leg}_foot" for leg in ("FL", "FR", "RL", "RR"))
 GO2_BODY = Path("config/robots/unitree/go2/body/go2_raised_nominal.body2")
-THUNDER_BODY = Path("config/robots/doso/thunder_v4/body/thunderv4_nominal.body2")
-THUNDER_SIM_BODY = Path("sim/packages/robots/doso/thunder_v4/collision/thunderv4_nominal.body2")
+THUNDER_BODY = Path("config/robots/doso/thunder_v4/body/thunderv4_navigation.body2")
+THUNDER_SIM_BODY = Path("sim/packages/robots/doso/thunder_v4/collision/thunderv4_navigation.body2")
 REGENERATION = "python tools/robot/export_navigation_bodies.py"
 
 
@@ -101,8 +101,44 @@ def export_go2(output: Path) -> dict:
     return report
 
 
+def _bounds(parts: list[dict]) -> tuple[np.ndarray, np.ndarray]:
+    """Project the source primitives themselves, including round cylinder ends."""
+    minimum, maximum = [], []
+    for part in parts:
+        rotation = np.asarray(part["rotation"])
+        if part["source_type"] == "box":
+            extent = np.abs(rotation) @ np.asarray(part["half_size"])
+        elif part["source_type"] == "sphere":
+            extent = np.repeat(part["radius_m"], 3)
+        else:
+            axial = np.abs(rotation[:, 2]) * part["half_length_m"]
+            if part["source_type"] == "capsule":
+                extent = axial + part["radius_m"]
+            else:
+                extent = axial + part["radius_m"] * np.linalg.norm(rotation[:, :2], axis=1)
+        center = np.asarray(part["center"])
+        minimum.append(center - extent)
+        maximum.append(center + extent)
+    return np.min(minimum, axis=0), np.max(maximum, axis=0)
+
+
+def _navigation_box(name: str, parts: list[dict], height_parts: list[dict] | None = None) -> dict:
+    minimum, maximum = _bounds(parts)
+    height_parts = parts if height_parts is None else height_parts
+    height_minimum, height_maximum = _bounds(height_parts)
+    minimum[2], maximum[2] = height_minimum[2], height_maximum[2]
+    return {
+        "link": name, "center": ((minimum + maximum) / 2).tolist(),
+        "rotation": np.eye(3).tolist(), "half_size": ((maximum - minimum) / 2).tolist(),
+        "source_type": "box", "radius_m": 0., "half_length_m": 0.,
+        "support_contact": False,
+        "footprint_source_parts": [part["link"] for part in parts],
+        "height_source_parts": [part["link"] for part in height_parts],
+    }
+
+
 def export_thunder(output: Path, sim_output: Path) -> dict:
-    """Export the real Thunder keyframe once, then copy the same model to sim."""
+    """Keep the chassis outline and four nominal leg footprints in eight parts."""
     source = ROOT / "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml"
     model = mujoco.MjModel.from_xml_path(str(source))
     data = mujoco.MjData(model)
@@ -117,22 +153,49 @@ def export_thunder(output: Path, sim_output: Path) -> dict:
     engine = SimpleNamespace(model=model, data=data, sim_time=0., get_robot_state=lambda: state)
     output.parent.mkdir(parents=True, exist_ok=True)
     exported = export_mjcf_body(engine, output, FEET)
-    report = {name: exported[name] for name in ("robot", "primitive_count", "parts", "rotation_layout")
-              if name in exported}
-    report.update(
-        source_mjcf=source.relative_to(ROOT).as_posix(), model_name="thunderv4_nominal",
+    source_parts = exported["parts"]
+    chassis = [part for part in source_parts if part["body"] == "base_link"]
+    # The first three source boxes form the central chassis. Keep the narrow
+    # nose, tail and raised sensor separate so their empty corners stay empty.
+    parts = [_navigation_box("chassis", chassis[:3])]
+    parts.extend(_navigation_box(name, [part]) for name, part in
+                 zip(("nose", "tail", "sensor"), chassis[3:], strict=True))
+    for leg in ("FR", "FL", "RR", "RL"):
+        footprint = [part for part in source_parts if part["body"].startswith(f"{leg}_")]
+        upper = [part for part in footprint if part["body"].endswith(("_hip", "_thigh"))]
+        # Preserve the entire nominal leg/wheel XY occupation without treating
+        # fixed wheel-ground intersections as rigid upper-body collisions.
+        parts.append(_navigation_box(f"{leg}_clearance", footprint, upper))
+    upper = [part for part in source_parts
+             if part["body"] == "base_link" or part["body"].endswith(("_hip", "_thigh"))]
+    minimum, maximum = _bounds(parts)
+    source_bounds = []
+    for part in source_parts:
+        low, high = _bounds([part])
+        source_bounds.append({"link": part["link"], "body": part["body"],
+                              "minimum": low.tolist(), "maximum": high.tolist()})
+    report = dict(
+        robot=exported["robot"], primitive_count=len(parts), parts=parts,
+        source_mjcf=source.relative_to(ROOT).as_posix(), model_name="thunderv4_navigation",
         source_keyframe="v4_nominal_stand", source_qpos=data.qpos.tolist(),
         joint_angles={model.joint(j).name: float(data.qpos[model.jnt_qposadr[j]])
                       for j in range(model.njnt) if model.jnt_type[j] == mujoco.mjtJoint.mjJNT_HINGE},
-        support_contact_links=list(FEET),
-        frame="base_link, metres; source keyframe part centers and axes relative to base_link",
-        pose_scope="fixed nominal MJCF keyframe; not measured joints, a trained gait envelope or field qualification",
+        source_primitive_count=len(source_parts),
+        footprint_source_bodies=sorted({part["body"] for part in source_parts}),
+        height_source_bodies=sorted({part["body"] for part in upper}),
+        excluded_height_bodies=sorted({part["body"] for part in source_parts if part not in upper}),
+        source_bounds=source_bounds,
+        envelope_bounds={"minimum": minimum.tolist(), "maximum": maximum.tolist(),
+                         "size": (maximum - minimum).tolist()},
+        support_contact_links=[], frame="base_link, metres; fixed parts placed with query yaw",
+        pose_scope="nominal XY footprint and chassis/hip/thigh height from MJCF keyframe",
+        planning_scope="four chassis parts and four leg-clearance proxies; full nominal XY coverage, upper-body Z; not full-body 3D or gait clearance",
         physical_drive="offline forward kinematics only; no ONNX controller or physics rollout",
         geometry_margin_m=0.,
         runtime_margin_source="RobotConfig collision_hard_margin; not baked into raw primitives",
-        representation="raw source collision primitives in a compound model", installation_qualified=False,
+        representation="eight-part compound navigation model", installation_qualified=False,
         known_missing_geometry=[],
-        source_asset_boundary="selected checked-in MJCF; upstream URDF source currently not present locally; wheel radius 0.093 m retained",
+        source_asset_boundary="checked-in MJCF nominal stance; calves/wheels contribute XY only; low obstacles, gait and wheel clearance remain unqualified",
         regeneration=REGENERATION,
     )
     write_report(output, report)

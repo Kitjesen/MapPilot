@@ -95,6 +95,8 @@ class MapsServiceCore {
   std::string ListSaveMapJobsJson(std::size_t limit = 100U) const;
   std::string CancelSaveMapJson(const std::string &job_id);
   std::string RetrySaveMapJson(const std::string &job_id);
+  std::string ProcessSaveMapJson(const std::string &job_id);
+  std::optional<std::filesystem::path> SaveMapSource(const std::string &job_id) const;
   std::string AuditMapsJson(bool dry_run) const;
   std::string QuarantineCorruptMapsJson(bool dry_run);
   std::string ExportMapPackageJson(const std::string &map_id,

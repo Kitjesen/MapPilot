@@ -95,6 +95,14 @@ int main() try {
   const auto nominal_result=smoothRoute(nominal_detour,flat_clear,nominal_height);
   check(nominal_detour,nominal_result,flat_clear);
   require(length(nominal_result)<2.001,"nominal height samples prevented a supported shortcut");
+  const std::vector<PointPose> edge_route{{0,0,.35},{1,0,.35},{1,1,.35},{2,1,.35}};
+  const BodyHeight edge_ground=[](const auto &p) -> std::optional<double> {
+    if (p.x>.55 && p.x<.95 && p.y>.1) return std::nullopt;
+    return .35;
+  };
+  const auto edge_result=smoothRoute(edge_route,flat_clear,edge_ground);
+  require(edge_result.size()>2 && length(edge_result)>std::hypot(2.,1.)+.05,
+          "start shortcut crossed the missing ground");
   const EdgeCheck denied=[](const auto &,const auto &){return false;};
   require(smoothRoute(stairs,denied,tread).empty(),"invalid original edge survived");
   int calls=0;

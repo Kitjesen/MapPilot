@@ -19,6 +19,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -179,6 +180,8 @@ bool IsTerminal(SaveJobState state) {
 SaveJobState ParseState(const std::string &value) {
   if (value == "WAITING_SNAPSHOT")
     return SaveJobState::kWaitingSnapshot;
+  if (value == "CAPTURED")
+    return SaveJobState::kCaptured;
   if (value == "QUEUED")
     return SaveJobState::kQueued;
   if (value == "RUNNING")
@@ -330,7 +333,7 @@ std::string RequestCanonical(const SaveMapRequest &request) {
       << request.octomap.localization_source << '\n'
       << request.octomap.mapping_source << '\n'
       << request.require_slam_healthy << request.allow_unverified_snapshot << '\n'
-      << request.minimum_point_count;
+      << request.minimum_point_count << '\n' << request.auto_process;
   if (!request.product_session_id.empty()) {
     out << '\n' << request.product_session_id;
   }
@@ -483,6 +486,30 @@ void CopyTree(const std::filesystem::path &source, const std::filesystem::path &
                                  std::filesystem::copy_options::overwrite_existing);
     }
   }
+}
+
+void StageMapForCommit(const std::filesystem::path &source,
+                       const std::filesystem::path &target) {
+  for (const auto *name : {".builds", ".save_lock"})
+    std::filesystem::remove_all(source / name);
+  for (const auto &entry : std::filesystem::recursive_directory_iterator(source))
+    if (entry.is_symlink())
+      throw std::runtime_error("symlinks are not allowed in map snapshots: " + entry.path().string());
+
+#if defined(_WIN32)
+  // Directory rename across Windows volumes can report access denied.
+  if (std::filesystem::absolute(source).root_name() != std::filesystem::absolute(target).root_name()) {
+    CopyTree(source, target, true);
+    return;
+  }
+#endif
+  std::error_code error;
+  std::filesystem::rename(source, target, error);
+  // Windows keeps work in TEMP, which can be on a different volume from maps.
+  if (error == std::errc::cross_device_link)
+    CopyTree(source, target, true);
+  else if (error)
+    throw std::filesystem::filesystem_error("failed to stage map for commit", source, target, error);
 }
 
 void SyncTree(const std::filesystem::path &root) {
@@ -719,6 +746,15 @@ void VerifyRequiredArtifacts(const std::filesystem::path &dir, const SaveMapRequ
   }
 }
 
+std::filesystem::path WorkDir(const std::filesystem::path &job_dir) {
+  if (job_dir.empty()) return {};
+#if defined(_WIN32)
+  return std::filesystem::temp_directory_path() / "lt_maps" / job_dir.filename();
+#else
+  return job_dir / "work";
+#endif
+}
+
 std::filesystem::path CommitStage(const std::filesystem::path &root, const std::string &job_id) {
   return root / (".save-staging-" + job_id);
 }
@@ -734,6 +770,8 @@ const char *SaveJobStateName(SaveJobState state) {
   switch (state) {
     case SaveJobState::kWaitingSnapshot:
       return "WAITING_SNAPSHOT";
+    case SaveJobState::kCaptured:
+      return "CAPTURED";
     case SaveJobState::kQueued:
       return "QUEUED";
     case SaveJobState::kRunning:
@@ -771,6 +809,7 @@ const char *SavePhaseName(SavePhase phase) {
 }
 
 std::string SaveMapStatusJson(const SaveMapStatus &status) {
+  const auto job_dir = status.capture_dir.parent_path();
   return "{"
          "\"job_id\":" +
          JsonString(status.job_id) +
@@ -799,6 +838,8 @@ std::string SaveMapStatusJson(const SaveMapStatus &status) {
          "\"reason_code\":" +
          JsonString(status.reason_code) +
          ","
+         "\"job_dir\":" + JsonString(job_dir.string()) + "," +
+         "\"work_dir\":" + JsonString(WorkDir(job_dir).string()) + "," +
          "\"capture_dir\":" +
          JsonString(status.capture_dir.string()) +
          ","
@@ -820,6 +861,7 @@ std::string SaveMapStatusJson(const SaveMapStatus &status) {
          "\"completed_at_ns\":" +
          std::to_string(status.completed_at_ns) +
          ","
+         "\"source_saved\":" + (status.source_saved ? "true" : "false") + "," +
          "\"cancel_requested\":" +
          (status.cancel_requested ? "true" : "false") +
          ","
@@ -900,19 +942,19 @@ class SaveMapEngine::Impl {
     const auto existing = jobs_.find(request.request_id);
     if (existing != jobs_.end()) {
       if (existing->second->status.reason_code == "journal_corrupt") {
-        SaveMapStatus corrupt = existing->second->status;
+        SaveMapStatus corrupt = Status(*existing->second);
         corrupt.replayed = true;
         return {false, true, "journal_corrupt", corrupt};
       }
       if (RequestCanonical(existing->second->request) != canonical) {
-        SaveMapStatus conflict = existing->second->status;
+        SaveMapStatus conflict = Status(*existing->second);
         conflict.state = SaveJobState::kFailed;
         conflict.reason_code = "idempotency_conflict";
         conflict.message = "request_id already belongs to a different SaveMap request";
         conflict.replayed = true;
         return {false, true, "idempotency_conflict", conflict};
       }
-      SaveMapStatus replay = existing->second->status;
+      SaveMapStatus replay = Status(*existing->second);
       replay.replayed = true;
       return {true, true, {}, replay};
     }
@@ -933,7 +975,7 @@ class SaveMapEngine::Impl {
     jobs_.emplace(request.request_id, job);
     PersistJobLocked(*job);
     AppendEventLocked(*job, "REQUESTED");
-    return {true, false, {}, job->status};
+    return {true, false, {}, Status(*job)};
   }
 
   SaveMapResult ProvideSnapshot(const std::string &job_id, const MapSnapshot &raw_snapshot) {
@@ -950,23 +992,23 @@ class SaveMapEngine::Impl {
         const bool id_conflict = !raw_snapshot.snapshot_id.empty() &&
                                  raw_snapshot.snapshot_id != job->snapshot->snapshot_id;
         if (id_conflict) {
-          SaveMapStatus conflict = job->status;
+          SaveMapStatus conflict = Status(*job);
           conflict.reason_code = "snapshot_idempotency_conflict";
           conflict.message = "job already owns a different map snapshot";
           return {false, true, conflict.reason_code, conflict};
         }
-        SaveMapStatus replay = job->status;
+        SaveMapStatus replay = Status(*job);
         replay.replayed = true;
         return {true, true, {}, replay};
       }
       if (IsTerminal(job->status.state)) {
-        SaveMapStatus replay = job->status;
+        SaveMapStatus replay = Status(*job);
         replay.replayed = true;
         return {job->status.state == SaveJobState::kSucceeded, true, job->status.reason_code,
                 replay};
       }
       if (job->accepting_snapshot) {
-        SaveMapStatus busy = job->status;
+        SaveMapStatus busy = Status(*job);
         busy.reason_code = "snapshot_capture_in_progress";
         busy.message = "another caller is capturing this SaveMap snapshot";
         return {false, false, busy.reason_code, busy};
@@ -986,7 +1028,7 @@ class SaveMapEngine::Impl {
     MapSnapshot snapshot = raw_snapshot;
     if (!job->request.product_session_id.empty() &&
         snapshot.product_session_id != job->request.product_session_id) {
-      SaveMapStatus mismatch = job->status;
+      SaveMapStatus mismatch = Status(*job);
       mismatch.reason_code = "snapshot_product_session_mismatch";
       mismatch.message = "snapshot does not belong to the SaveMap Product session";
       return {false, false, mismatch.reason_code, mismatch};
@@ -1067,13 +1109,6 @@ class SaveMapEngine::Impl {
                                      : semantic_error);
         }
       }
-      const auto bytes = TreeBytes(capture_dir);
-      const auto available = std::filesystem::space(store_.RootDir()).available;
-      const std::uint64_t reserve = 16ULL * 1024ULL * 1024ULL;
-      if (available < bytes * 3U + reserve) {
-        return FailBeforeQueue(*job, "insufficient_disk_space",
-                               "not enough disk space for staged SaveMap transaction");
-      }
       SyncTree(capture_dir);
       if (hooks_.after_snapshot_copied) {
         hooks_.after_snapshot_copied(job_id);
@@ -1086,23 +1121,27 @@ class SaveMapEngine::Impl {
       std::lock_guard<std::mutex> lock(mutex_);
       if (!job->accepting_snapshot || job->status.state != SaveJobState::kWaitingSnapshot ||
           IsTerminal(job->status.state) || job->status.cancel_requested) {
-        SaveMapStatus rejected = job->status;
+        SaveMapStatus rejected = Status(*job);
         rejected.replayed = true;
         const std::string reason = rejected.reason_code.empty()
                                        ? "snapshot_no_longer_accepted"
                                        : rejected.reason_code;
         return {false, true, reason, rejected};
       }
-      job->snapshot = snapshot;
-      job->status.state = SaveJobState::kQueued;
-      job->status.phase = SavePhase::kValidate;
-      job->status.progress = 0.05;
-      job->status.message = "snapshot accepted and queued";
-      job->status.updated_at_ns = NowNs();
-      PersistJobLocked(*job);
+      Job accepted = *job;
+      accepted.snapshot = snapshot;
+      accepted.status.state = accepted.request.auto_process ? SaveJobState::kQueued : SaveJobState::kCaptured;
+      accepted.status.phase = accepted.request.auto_process ? SavePhase::kValidate : SavePhase::kCapture;
+      accepted.status.progress = 0.05;
+      accepted.status.message = accepted.request.auto_process ? "source saved; processing queued"
+                                                              : "source saved; ready for processing";
+      accepted.status.updated_at_ns = NowNs();
+      PersistJobLocked(accepted);
+      *job = std::move(accepted);
+      if (job->request.auto_process) queue_.push_back(job_id);
+      cv_.notify_all();
       AppendEventLocked(*job, "SNAPSHOT_ACCEPTED");
-      queue_.push_back(job_id);
-      queued_status = job->status;
+      queued_status = Status(*job);
     }
     cv_.notify_all();
     return {true, false, {}, queued_status};
@@ -1119,7 +1158,7 @@ class SaveMapEngine::Impl {
       }
       job = found->second;
       if (IsTerminal(job->status.state)) {
-        SaveMapStatus replay = job->status;
+        SaveMapStatus replay = Status(*job);
         replay.replayed = true;
         return {false, true, replay.reason_code, replay};
       }
@@ -1135,7 +1174,7 @@ class SaveMapEngine::Impl {
     }
     auto &job = *found->second;
     if (IsTerminal(job.status.state)) {
-      SaveMapStatus replay = job.status;
+      SaveMapStatus replay = Status(job);
       replay.replayed = true;
       return {job.status.state == SaveJobState::kSucceeded, true, job.status.reason_code, replay};
     }
@@ -1143,9 +1182,8 @@ class SaveMapEngine::Impl {
     job.status.updated_at_ns = NowNs();
     job.status.message = "cancellation requested";
     if (job.status.state == SaveJobState::kWaitingSnapshot ||
-        job.status.state == SaveJobState::kQueued) {
+        job.status.state == SaveJobState::kCaptured || job.status.state == SaveJobState::kQueued) {
       job.status.state = SaveJobState::kCancelled;
-      job.status.phase = SavePhase::kDone;
       job.status.progress = 1.0;
       job.status.reason_code = "cancelled";
       job.status.completed_at_ns = job.status.updated_at_ns;
@@ -1154,7 +1192,7 @@ class SaveMapEngine::Impl {
     AppendEventLocked(job, job.status.state == SaveJobState::kCancelled ? "CANCELLED"
                                                                         : "CANCEL_REQUESTED");
     cv_.notify_all();
-    return {true, false, {}, job.status};
+    return {true, false, {}, Status(job)};
   }
 
   SaveMapResult Retry(const std::string &job_id) {
@@ -1165,54 +1203,76 @@ class SaveMapEngine::Impl {
     }
     auto &job = *found->second;
     if (job.status.reason_code == "journal_corrupt") {
-      return {false, false, "journal_corrupt", job.status};
+      return {false, false, "journal_corrupt", Status(job)};
     }
     if (job.status.reason_code == "legacy_schema_requires_resubmit") {
-      return {false, false, "legacy_schema_requires_resubmit", job.status};
+      return {false, false, "legacy_schema_requires_resubmit", Status(job)};
     }
     if (job.accepting_snapshot) {
-      return {false, false, "snapshot_capture_in_progress", job.status};
+      return {false, false, "snapshot_capture_in_progress", Status(job)};
     }
     if (job.status.state == SaveJobState::kSucceeded) {
-      SaveMapStatus replay = job.status;
+      SaveMapStatus replay = Status(job);
       replay.replayed = true;
       return {true, true, {}, replay};
     }
     if (!IsTerminal(job.status.state)) {
-      return {false, false, "job_not_terminal", job.status};
+      return {false, false, "job_not_terminal", Status(job)};
     }
+    if (Source(job).has_value()) return QueueProcessing(job, "RETRY_REQUESTED");
     job.status.cancel_requested = false;
     job.status.reason_code.clear();
     job.status.completed_at_ns = 0;
     job.status.map_dir.clear();
     job.map_committed = false;
+    job.status.source_report_json.clear();
     job.status.artifact_report_json.clear();
-    if (job.snapshot.has_value() && IsNonEmptyRegularFile(job.status.capture_dir / "map.pcd")) {
-      job.status.state = SaveJobState::kQueued;
-      job.status.phase = SavePhase::kValidate;
-      job.status.progress = 0.05;
-      job.status.message = "SaveMap retry queued";
-      queue_.push_back(job_id);
-    } else {
-      job.snapshot.reset();
-      job.status.state = SaveJobState::kWaitingSnapshot;
-      job.status.phase = SavePhase::kCapture;
-      job.status.progress = 0.0;
-      job.status.message = "SaveMap retry requires a new snapshot";
-      std::filesystem::create_directories(job.status.capture_dir);
-    }
+    job.snapshot.reset();
+    job.status.state = SaveJobState::kWaitingSnapshot;
+    job.status.phase = SavePhase::kCapture;
+    job.status.progress = 0.0;
+    job.status.message = "SaveMap retry requires a new snapshot";
+    std::filesystem::create_directories(job.status.capture_dir);
     job.status.updated_at_ns = NowNs();
     PersistJobLocked(job);
     AppendEventLocked(job, "RETRY_REQUESTED");
     cv_.notify_all();
-    return {true, false, {}, job.status};
+    return {true, false, {}, Status(job)};
+  }
+
+  SaveMapResult Process(const std::string &job_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto found = jobs_.find(job_id);
+    if (found == jobs_.end())
+      return {false, false, "job_not_found", MissingStatus(job_id, "job_not_found")};
+    auto &job = *found->second;
+    if (job.status.reason_code == "journal_corrupt" ||
+        job.status.reason_code == "legacy_schema_requires_resubmit")
+      return {false, false, job.status.reason_code, Status(job)};
+    if (job.status.state == SaveJobState::kQueued || job.status.state == SaveJobState::kRunning ||
+        job.status.state == SaveJobState::kSucceeded) {
+      auto replay = Status(job);
+      replay.replayed = true;
+      return {true, true, {}, replay};
+    }
+    if (job.accepting_snapshot)
+      return {false, false, "snapshot_capture_in_progress", Status(job)};
+    if (!Source(job).has_value())
+      return {false, false, "source_not_saved", Status(job)};
+    return QueueProcessing(job, "PROCESS_REQUESTED");
+  }
+
+  std::optional<std::filesystem::path> GetSource(const std::string &job_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto found = jobs_.find(job_id);
+    return found == jobs_.end() ? std::nullopt : Source(*found->second);
   }
 
   std::optional<SaveMapStatus> GetStatus(const std::string &job_id) const {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto found = jobs_.find(job_id);
     return found == jobs_.end() ? std::nullopt
-                                : std::optional<SaveMapStatus>(found->second->status);
+                                : std::optional<SaveMapStatus>(Status(*found->second));
   }
 
   std::vector<SaveMapStatus> ListStatuses(std::size_t limit) const {
@@ -1220,7 +1280,7 @@ class SaveMapEngine::Impl {
     std::vector<SaveMapStatus> statuses;
     statuses.reserve(jobs_.size());
     for (const auto &item : jobs_) {
-      statuses.push_back(item.second->status);
+      statuses.push_back(Status(*item.second));
     }
     std::sort(statuses.begin(), statuses.end(), [](const auto &left, const auto &right) {
       return left.created_at_ns > right.created_at_ns;
@@ -1244,7 +1304,7 @@ class SaveMapEngine::Impl {
     });
     const auto current = jobs_.find(job_id);
     return current == jobs_.end() ? std::nullopt
-                                  : std::optional<SaveMapStatus>(current->second->status);
+                                  : std::optional<SaveMapStatus>(Status(*current->second));
   }
 
   void Recover() {
@@ -1254,6 +1314,38 @@ class SaveMapEngine::Impl {
   }
 
  private:
+  std::optional<std::filesystem::path> Source(const Job &job) const {
+    const auto path = job.status.capture_dir / "map.pcd";
+    if (!job.snapshot.has_value() || !IsNonEmptyRegularFile(path)) return std::nullopt;
+    return path;
+  }
+
+  SaveMapStatus Status(const Job &job) const {
+    auto status = job.status;
+    status.source_saved = Source(job).has_value();
+    return status;
+  }
+
+  SaveMapResult QueueProcessing(Job &job, const char *event) {
+    job.status.cancel_requested = false;
+    job.status.reason_code.clear();
+    job.status.completed_at_ns = 0;
+    job.status.map_dir.clear();
+    job.map_committed = false;
+    job.status.source_report_json.clear();
+    job.status.artifact_report_json.clear();
+    job.status.state = SaveJobState::kQueued;
+    job.status.phase = SavePhase::kValidate;
+    job.status.progress = 0.05;
+    job.status.message = "map processing queued";
+    job.status.updated_at_ns = NowNs();
+    PersistJobLocked(job);
+    queue_.push_back(job.status.job_id);
+    cv_.notify_all();
+    AppendEventLocked(job, event);
+    return {true, false, {}, Status(job)};
+  }
+
   std::filesystem::path JobDir(const std::string &job_id) const { return jobs_root_ / job_id; }
 
   std::filesystem::path JobStatePath(const std::string &job_id) const {
@@ -1262,14 +1354,6 @@ class SaveMapEngine::Impl {
 
   std::filesystem::path JobJournalPath(const std::string &job_id) const {
     return JobDir(job_id) / "events.jsonl";
-  }
-
-  std::filesystem::path WorkRoot(const std::string &job_id) const {
-#if defined(_WIN32)
-    return std::filesystem::temp_directory_path() / "lt_maps" / job_id;
-#else
-    return JobDir(job_id) / "work";
-#endif
   }
 
   void AcquireEngineLock() {
@@ -1318,7 +1402,7 @@ class SaveMapEngine::Impl {
   SaveMapResult FailBeforeQueue(Job &job, const std::string &reason, const std::string &message) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (IsTerminal(job.status.state) || job.status.cancel_requested) {
-      SaveMapStatus replay = job.status;
+      SaveMapStatus replay = Status(job);
       replay.replayed = true;
       const std::string current_reason =
           replay.reason_code.empty()
@@ -1327,7 +1411,6 @@ class SaveMapEngine::Impl {
       return {false, true, current_reason, replay};
     }
     job.status.state = SaveJobState::kFailed;
-    job.status.phase = SavePhase::kDone;
     job.status.progress = 1.0;
     job.status.reason_code = reason;
     job.status.message = message;
@@ -1336,7 +1419,7 @@ class SaveMapEngine::Impl {
     PersistJobLocked(job);
     AppendEventLocked(job, "FAILED");
     cv_.notify_all();
-    return {false, false, reason, job.status};
+    return {false, false, reason, Status(job)};
   }
 
   void PersistJobLocked(const Job &job) const {
@@ -1369,6 +1452,7 @@ class SaveMapEngine::Impl {
     AppendKey(out, "require_slam_healthy", job.request.require_slam_healthy ? "1" : "0");
     AppendKey(out, "allow_unverified_snapshot", job.request.allow_unverified_snapshot ? "1" : "0");
     AppendKey(out, "minimum_point_count", std::to_string(job.request.minimum_point_count));
+    AppendKey(out, "auto_process", job.request.auto_process ? "1" : "0");
     AppendKey(out, "pgo_executable", job.request.pgo.executable);
     AppendKey(out, "pgo_constraints_file", job.request.pgo.constraints_file);
     AppendKey(out, "pgo_timeout_sec", PreciseDouble(job.request.pgo.timeout_sec));
@@ -1452,6 +1536,7 @@ class SaveMapEngine::Impl {
     auto job = std::make_shared<Job>();
     job->loaded_schema = schema;
     job->request.request_id = GetValue(values, "request_id");
+    job->request.auto_process = ParseBool(GetValue(values, "auto_process", "1"));
     job->request.map_id = GetValue(values, "map_id");
     job->request.product_session_id = GetValue(values, "product_session_id");
     if (job->request.request_id != directory_job_id ||
@@ -1584,6 +1669,7 @@ class SaveMapEngine::Impl {
     job->status.state = SaveJobState::kFailed;
     job->status.phase = SavePhase::kDone;
     job->status.progress = 1.0;
+    job->status.capture_dir = job_dir / "capture";
     job->status.reason_code = "journal_corrupt";
     job->status.message = "SaveMap job journal is corrupt";
     job->status.created_at_ns = NowNs();
@@ -1624,8 +1710,8 @@ class SaveMapEngine::Impl {
       }
       if (job->loaded_schema == "3" && !IsTerminal(job->status.state)) {
         job->status.state = SaveJobState::kFailed;
-        job->status.phase = SavePhase::kDone;
         job->status.progress = 1.0;
+        job->status.phase = SavePhase::kDone;
         job->status.reason_code = "legacy_schema_requires_resubmit";
         job->status.message = "legacy SaveMap job requires a new request";
         job->status.recovered = true;
@@ -1673,9 +1759,17 @@ class SaveMapEngine::Impl {
           job->status.message = "recovered committed map";
           job->status.completed_at_ns = NowNs();
           std::error_code cleanup_error;
-          std::filesystem::remove_all(WorkRoot(job->status.job_id), cleanup_error);
-          std::filesystem::remove_all(job->status.capture_dir, cleanup_error);
+          std::filesystem::remove_all(WorkDir(JobDir(job->status.job_id)), cleanup_error);
           std::filesystem::remove_all(commit_backup, cleanup_error);
+        } else if (job->status.state == SaveJobState::kCaptured) {
+          if (Source(*job).has_value()) {
+            job->status.message = "source saved; ready for processing";
+          } else {
+            job->status.state = SaveJobState::kFailed;
+            job->status.reason_code = "source_not_saved";
+            job->status.message = "archived source is missing";
+            job->status.completed_at_ns = NowNs();
+          }
         } else if (job->snapshot.has_value() &&
                    IsNonEmptyRegularFile(job->status.capture_dir / "map.pcd")) {
           if (std::filesystem::is_directory(commit_backup) && !std::filesystem::exists(map_dir)) {
@@ -1683,8 +1777,8 @@ class SaveMapEngine::Impl {
             std::filesystem::rename(commit_backup, map_dir, restore_error);
             if (restore_error) {
               job->status.state = SaveJobState::kFailed;
-              job->status.phase = SavePhase::kDone;
               job->status.progress = 1.0;
+              job->status.phase = SavePhase::kCommit;
               job->status.reason_code = "map_restore_failed";
               job->status.message = "failed to restore map interrupted during commit";
               job->status.completed_at_ns = NowNs();
@@ -1790,7 +1884,7 @@ class SaveMapEngine::Impl {
         if (map_lock != nullptr) {
           map_lock->reset();
         }
-        SetStatus(job, SaveJobState::kFailed, SavePhase::kDone, 1.0, *failure,
+        SetStatus(job, SaveJobState::kFailed, phase, 1.0, *failure,
                   "forced_stage_failure");
         return false;
       }
@@ -1816,7 +1910,7 @@ class SaveMapEngine::Impl {
         SetStatus(job, SaveJobState::kQueued, phase, progress,
                   "SaveMap service stopped; job will recover on restart");
       } else {
-        SetStatus(job, SaveJobState::kCancelled, SavePhase::kDone, 1.0, "SaveMap cancelled",
+        SetStatus(job, SaveJobState::kCancelled, phase, 1.0, "SaveMap cancelled",
                   "cancelled");
       }
       return false;
@@ -1846,7 +1940,6 @@ class SaveMapEngine::Impl {
       } catch (const std::exception &exc) {
         std::lock_guard<std::mutex> lock(mutex_);
         job->status.state = SaveJobState::kFailed;
-        job->status.phase = SavePhase::kDone;
         job->status.progress = 1.0;
         job->status.reason_code = "save_worker_failure";
         job->status.message = exc.what();
@@ -1860,7 +1953,6 @@ class SaveMapEngine::Impl {
       } catch (...) {
         std::lock_guard<std::mutex> lock(mutex_);
         job->status.state = SaveJobState::kFailed;
-        job->status.phase = SavePhase::kDone;
         job->status.progress = 1.0;
         job->status.reason_code = "save_worker_failure";
         job->status.message = "unknown SaveMap worker failure";
@@ -1873,20 +1965,21 @@ class SaveMapEngine::Impl {
 
   void ProcessJob(const std::shared_ptr<Job> &job) {
     if (!job->snapshot.has_value()) {
-      SetStatus(job, SaveJobState::kFailed, SavePhase::kDone, 1.0,
+      SetStatus(job, SaveJobState::kFailed, job->status.phase, 1.0,
                 "queued SaveMap job has no snapshot", "snapshot_missing");
       return;
     }
     auto map_lock = MapLock::TryAcquire(store_.RootDir(), job->request.map_id, job->status.job_id);
     if (!map_lock.has_value()) {
-      SetStatus(job, SaveJobState::kFailed, SavePhase::kDone, 1.0,
+      SetStatus(job, SaveJobState::kFailed, job->status.phase, 1.0,
                 "another process is saving this map", "map_save_in_progress");
       return;
     }
     const auto finish = [&map_lock, this, &job](SaveJobState state, const std::string &message,
                                                 const std::string &reason) {
       map_lock.reset();
-      SetStatus(job, state, SavePhase::kDone, 1.0, message, reason);
+      SetStatus(job, state, state == SaveJobState::kSucceeded ? SavePhase::kDone : job->status.phase,
+                1.0, message, reason);
     };
     const auto allowed =
         store_.CheckMapMutationAllowedWhileLocked(job->request.map_id, *map_lock);
@@ -1911,10 +2004,19 @@ class SaveMapEngine::Impl {
         return;
       }
 
-      const auto work_root = WorkRoot(job->status.job_id);
-      const auto source_work = work_root / "i";
-      const auto optimized_work = work_root / "o";
-      const auto store_root = work_root / "s";
+      const auto bytes = TreeBytes(job->status.capture_dir);
+      const auto available = std::filesystem::space(store_.RootDir()).available;
+      const std::uint64_t reserve = 16ULL * 1024ULL * 1024ULL;
+      if (available < bytes * 3U + reserve) {
+        finish(SaveJobState::kFailed, "not enough disk space for staged SaveMap transaction",
+               "insufficient_disk_space");
+        return;
+      }
+
+      const auto work_root = WorkDir(JobDir(job->status.job_id));
+      const auto source_work = work_root / "source";
+      const auto optimized_work = work_root / "optimized";
+      const auto store_root = work_root / "maps";
       std::filesystem::remove_all(work_root);
       CopyTree(job->status.capture_dir, source_work, true);
 
@@ -2105,7 +2207,7 @@ class SaveMapEngine::Impl {
           CommitBackup(store_.RootDir(), job->request.map_id, job->status.job_id);
       std::filesystem::remove_all(commit_stage);
       std::filesystem::remove_all(commit_backup);
-      CopyTree(staging_map, commit_stage, true);
+      StageMapForCommit(staging_map, commit_stage);
       VerifyRequiredArtifacts(commit_stage, job->request);
       WriteTextAtomic(commit_stage / MapStore::ContentEpochFilename(),
                       std::to_string(store_.AllocateContentEpoch()) + "\n");
@@ -2144,8 +2246,7 @@ class SaveMapEngine::Impl {
       UpdateDurableEvidence(job, true, "MAP_COMMITTED");
       std::filesystem::remove_all(commit_backup);
       std::error_code cleanup_error;
-      std::filesystem::remove_all(WorkRoot(job->status.job_id), cleanup_error);
-      std::filesystem::remove_all(job->status.capture_dir, cleanup_error);
+      std::filesystem::remove_all(WorkDir(JobDir(job->status.job_id)), cleanup_error);
       finish(SaveJobState::kSucceeded, "SaveMap saved", "");
     } catch (const std::exception &exc) {
       const auto map_dir = store_.MapPath(job->request.map_id);
@@ -2157,9 +2258,8 @@ class SaveMapEngine::Impl {
         std::error_code cleanup_error;
         std::filesystem::remove_all(commit_backup, cleanup_error);
         std::filesystem::remove_all(commit_stage, cleanup_error);
-        std::filesystem::remove_all(WorkRoot(job->status.job_id), cleanup_error);
-        std::filesystem::remove_all(job->status.capture_dir, cleanup_error);
-        finish(SaveJobState::kSucceeded,
+        std::filesystem::remove_all(WorkDir(JobDir(job->status.job_id)), cleanup_error);
+          finish(SaveJobState::kSucceeded,
                std::string("recovered committed map after finalization error: ") + exc.what(),
                "");
       } else if (CancelRequested(job->status.job_id)) {
@@ -2214,6 +2314,14 @@ SaveMapResult SaveMapEngine::Cancel(const std::string &job_id) {
 
 SaveMapResult SaveMapEngine::Retry(const std::string &job_id) {
   return impl_->Retry(job_id);
+}
+
+SaveMapResult SaveMapEngine::Process(const std::string &job_id) {
+  return impl_->Process(job_id);
+}
+
+std::optional<std::filesystem::path> SaveMapEngine::GetSource(const std::string &job_id) const {
+  return impl_->GetSource(job_id);
 }
 
 std::optional<SaveMapStatus> SaveMapEngine::GetStatus(const std::string &job_id) const {
@@ -2279,6 +2387,14 @@ std::string SaveMapEngine::RetryJson(const std::string &job_id) {
          ",\"replayed\":" + (result.replayed ? "true" : "false") +
          ",\"reason_code\":" + JsonString(result.reason_code) +
          ",\"status\":" + SaveMapStatusJson(result.status) + "}";
+}
+
+std::string SaveMapEngine::ProcessJson(const std::string &job_id) {
+  const auto result = Process(job_id);
+  return "{\"action\":\"process_save_map\",\"accepted\":" +
+         std::string(result.accepted ? "true" : "false") + ",\"replayed\":" +
+         (result.replayed ? "true" : "false") + ",\"reason_code\":" +
+         JsonString(result.reason_code) + ",\"status\":" + SaveMapStatusJson(result.status) + "}";
 }
 
 std::string SaveMapEngine::GetStatusJson(const std::string &job_id) const {

@@ -8,6 +8,55 @@ import pytest
 pytest.importorskip("fastapi")
 
 
+def test_source_download_uses_operation_archive_not_current_map(tmp_path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from gateway.maps.routes import register_map_routes
+    from runtime.endpoints.mapd import ArtifactHandle
+
+    path = tmp_path / "capture.pcd"
+    path.write_bytes(b"archived-source-pcd")
+    calls = []
+
+    class Client:
+        def open_save_source(self, job_id):
+            calls.append(job_id)
+            return ArtifactHandle(
+                metadata={"job_id": job_id}, size_bytes=path.stat().st_size,
+                filename="source.pcd", _descriptor=os.open(path, os.O_RDONLY),
+            )
+
+    app = FastAPI()
+    register_map_routes(app, SimpleNamespace(_map_client=Client()))
+    response = TestClient(app).get("/api/v1/maps/operations/save_1/source/pcd")
+    assert response.status_code == 200
+    assert response.content == b"archived-source-pcd"
+    assert calls == ["save_1"]
+    assert response.headers["x-lingtu-operation-id"] == "save_1"
+    assert "x-lingtu-content-epoch" not in response.headers
+    assert "capture" not in response.headers["content-disposition"]
+
+
+def test_missing_source_does_not_fall_back_to_processed_map():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from gateway.maps.routes import register_map_routes
+    from runtime.endpoints.mapd import MapClientError
+
+    class Client:
+        def open_save_source(self, _job_id):
+            raise MapClientError("saved_source_missing", "missing /private/archive/map.pcd")
+
+    app = FastAPI()
+    register_map_routes(app, SimpleNamespace(_map_client=Client()))
+    response = TestClient(app).get("/api/v1/maps/operations/old_job/source/pcd")
+    assert response.status_code == 404
+    assert response.json()["detail"]["reason_code"] == "saved_source_missing"
+    assert "/private/" not in response.text
+
+
 @pytest.mark.parametrize("route,capability,filename", [
     ("pcd", "source_pointcloud", "map.pcd"),
     ("octomap", "global_planning_3d", "octomap.ot"),

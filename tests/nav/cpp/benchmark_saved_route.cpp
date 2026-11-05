@@ -248,7 +248,6 @@ int run(int argc, char** argv) {
   request.start = {std::stod(argv[2]),std::stod(argv[3]),std::stod(argv[4])};
   request.start.yaw = 0.0;
   request.goal = {std::stod(argv[5]),std::stod(argv[6]),std::stod(argv[7])};
-  request.body = body_geometry;
   request.options = config.octoplanner_options;
   request.map_identity = {"offline-saved-route", 1, "map"};
   octoplanner3d::runtime::PlannerSession session;

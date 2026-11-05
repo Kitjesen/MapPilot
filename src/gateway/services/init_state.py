@@ -127,13 +127,11 @@ def init_drift_watchdog_state(
     *,
     enabled: bool,
     interval_s: float,
-    xy_limit: float,
     v_limit: float,
     cooldown_s: float,
 ) -> None:
     gw._drift_watchdog_enabled = enabled
     gw._drift_watchdog_interval = interval_s
-    gw._drift_watchdog_xy_limit = xy_limit
     gw._drift_watchdog_v_limit = v_limit
     gw._drift_watchdog_cooldown = cooldown_s
     gw._drift_last_report_ts = 0.0
@@ -153,6 +151,7 @@ def init_exploration_state(gw: Any) -> None:
 def init_server_state(gw: Any) -> None:
     gw._app = None
     gw._server = None
+    gw._grpc_server = None
     gw._server_error = None
     gw._server_thread = None
     gw._stop_event = threading.Event()

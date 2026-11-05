@@ -9,7 +9,7 @@
 #include <limits>
 
 #include "collision/body.hpp"
-#include "collision/terrain.hpp"
+#include "collision/query.hpp"
 #include "planning/local/grid_axis.hpp"
 
 namespace nav_kernel::local::scan {
@@ -45,14 +45,6 @@ Grid::Grid(const LocalPlannerParams &params, const LocalPlanRequest &input)
       robotYaw_(input.robot.pose.yaw),
       robotPosition_(input.robot.pose.position),
       collision_(input.environment.collision), body_(input.observedBody ? input.observedBody : input.body) {
-  if (input.supportSurface && input.supportHeightM && input.supportHeightToleranceM) {
-    supportSurface_ = input.supportSurface;
-    supportHeightM_ = *input.supportHeightM;
-    supportToleranceM_ = *input.supportHeightToleranceM;
-    const auto *reference = input.referenceRoute();
-    if (reference && reference->points && reference->count > 0)
-      supportReference_.assign(reference->points, reference->points + reference->count);
-  }
   if (input.observedBody && !input.body) {
     reason_ = "body_model_missing";
     return;
@@ -212,6 +204,13 @@ int Grid::inflatedOccupancy(const Vec3 &center, double yaw) const noexcept {
   if (body_) return measuredSegmentOccupancy(center, yaw, center, yaw);
   if (!bodyHeadings_.empty())
     return measuredSegmentOccupancy(center, yaw, center, yaw);
+  return cylinderOccupancy(center, yaw);
+}
+
+int Grid::cylinderOccupancy(const Vec3 &center, double yaw) const noexcept {
+  if (!valid()) return -1;
+  if (!checkObstacle_) return 0;
+  if (!bodyHeadings_.empty()) yaw = bodyHeadings_.back();
   const double c = std::cos(yaw);
   const double s = std::sin(yaw);
   const int front = occupiedState({center.x + cylinderOffset_ * c,
@@ -385,7 +384,6 @@ int Grid::trajectoryOccupancy(const Vec3 &start, const Vec3 &velocity,
                                double startAheadS, double endAheadS) const noexcept {
   if (!valid() || !std::isfinite(startAheadS) || !std::isfinite(endAheadS) ||
       startAheadS < 0.0 || endAheadS < startAheadS) return -1;
-  if (!supportedSegment(start, end)) return 1;
   if (!checkObstacle_) return 0;
   const auto heading = [&](const Vec3 &v, double previousYaw) {
     // Quiet motion preserves the known heading rather than replaying the request yaw.
@@ -402,43 +400,6 @@ int Grid::trajectoryOccupancy(const Vec3 &start, const Vec3 &velocity,
   }
   if (timedPredictionIntersects(start, startYaw, end, endYaw, startAheadS, endAheadS)) return 1;
   return measuredSegmentOccupancy(start, startYaw, end, endYaw, false);
-}
-
-bool Grid::supportedSegment(const Vec3 &start, const Vec3 &end) const noexcept {
-  if (!supportSurface_ || supportReference_.empty()) return true;
-  const int steps = std::max(1, static_cast<int>(std::ceil(distance3D(start, end) / (0.5 * resolution()))));
-  const double cosine = std::cos(collision_.gridFromPlanningYaw);
-  const double sine = std::sin(collision_.gridFromPlanningYaw);
-  for (int sample = 0; sample <= steps; ++sample) {
-    const double fraction = static_cast<double>(sample) / steps;
-    const Vec3 point{start.x + fraction * (end.x-start.x),
-                     start.y + fraction * (end.y-start.y),
-                     start.z + fraction * (end.z-start.z)};
-    double closest = std::numeric_limits<double>::infinity();
-    double low = supportReference_.front().z, high = low;
-    for (std::size_t i = 1; i < supportReference_.size(); ++i) {
-      const auto &from = supportReference_[i-1], &to = supportReference_[i];
-      const Vec3 delta{to.x-from.x,to.y-from.y,to.z-from.z};
-      const double length = delta.x*delta.x+delta.y*delta.y+delta.z*delta.z;
-      const double t = length > 0.0 ? std::clamp(((point.x-from.x)*delta.x+
-          (point.y-from.y)*delta.y+(point.z-from.z)*delta.z)/length, 0.0, 1.0) : 0.0;
-      const double dx = point.x-from.x-t*delta.x, dy = point.y-from.y-t*delta.y,
-                   dz = point.z-from.z-t*delta.z;
-      const double distance = dx*dx+dy*dy+dz*dz;
-      if (distance < closest) {
-        closest = distance;
-        low = std::min(from.z,to.z);
-        high = std::max(from.z,to.z);
-      }
-    }
-    // The reference selects the terrain layer. Base heave does not move that layer.
-    const lingtu::nav::collision::Vec3 ground{
-        collision_.gridFromPlanningTranslation.x + cosine*point.x - sine*point.y,
-        collision_.gridFromPlanningTranslation.y + sine*point.x + cosine*point.y,
-        collision_.gridFromPlanningTranslation.z + .5*(low+high) - supportHeightM_};
-    if (!supportSurface_(ground, .5*(high-low) + supportToleranceM_)) return false;
-  }
-  return true;
 }
 
 int Grid::measuredSegmentOccupancy(const Vec3 &start, double startYaw,
@@ -513,17 +474,8 @@ int Grid::bodyPoseOccupancy(const Vec3 &center, double yaw,
   };
   const double groundHeight = c::nominalGroundHeight(*body_, pose);
   for (const auto &part : body_->parts) {
-    const auto geometry = c::preparePart(part, pose, margin, body_->horizontal_margin_m);
-    std::optional<c::TerrainSurface> surface;
-    bool surfaceQueried = false;
-    const auto prepareSurface = [&] {
-      if (!surfaceQueried) {
-        surface = c::partTerrainSurface(collision_.terrain.get(), part, pose,
-                                        groundHeight, resolution, margin, body_->horizontal_margin_m);
-        surfaceQueried = true;
-      }
-    };
-    const auto &bounds = geometry.bounds;
+    c::PartQuery query(part, pose, margin, body_->horizontal_margin_m, groundHeight);
+    const auto &bounds = query.geometry.bounds;
     const c::Vec3 minimum{bounds.center.x - bounds.half_size.x,
                            bounds.center.y - bounds.half_size.y,
                            bounds.center.z - bounds.half_size.z};
@@ -557,12 +509,7 @@ int Grid::bodyPoseOccupancy(const Vec3 &center, double yaw,
                             collision_.aabbMin.y + (y + .5) * resolution,
                             collision_.aabbMin.z + (z + .5) * resolution},
                            {resolution * .5, resolution * .5, resolution * .5}};
-        if (!c::intersects(geometry, cell)) continue;
-        if (c::allowsGroundContact(geometry, cell)) continue;
-        if (collision_.terrain && collision_.terrain->hitBoundsClear(geometry, cell)) continue;
-        prepareSurface();
-        if (surface && c::terrainCellClear(*collision_.terrain, part, pose, margin,
-                                           cell, *surface, body_->horizontal_margin_m)) continue;
+        if (!query.collides(cell, collision_.terrain.get())) continue;
         if (!occupiedCells) return 1;
         occupiedCells->push_back(linear);
       }
@@ -694,7 +641,6 @@ int Grid::brakingOccupancy(const Pose &body, const Twist &command,
         : (stopTime > 0.0 ? elapsed - 0.5 * braking * braking / stopTime : elapsed);
     const Pose next = poseAt(time);
     int occupied = 0;
-    if (!supportedSegment(previous.position, next.position)) return 1;
     if (timedPredictionIntersects(previous.position, previous.yaw,
                                   next.position, next.yaw, previousTime, elapsed, false)) return 1;
     if (body_) {
@@ -860,7 +806,6 @@ bool Grid::boundaryDepartureFree(const Pose &start, const Vec3 &end) const noexc
         distance2D(start.position, end) > 0.5 ||
         bodyPredictionIntersects(start.position, start.yaw, end, start.yaw,
                                   0, 0, false, true) ||
-        !supportedSegment(start.position, end) ||
         bodyPoseOccupancy(end, start.yaw) != 0) return false;
     const int startState = bodyPoseOccupancy(start.position, start.yaw);
     if (startState < 0) return false;

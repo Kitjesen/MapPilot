@@ -106,8 +106,8 @@ def test_thunder_service_installer_defaults_to_native_field_cpp_stack() -> None:
     text = _read("scripts/deploy/thunder/install_services.sh")
 
     assert 'MODE="${1:-field-cpp}"' in text
-    assert "runtime.service_catalogs.thunder install-services" in text
-    assert "runtime.service_catalogs.thunder install-modes" in text
+    assert "runtime.service_catalogs.real install-services" in text
+    assert "runtime.service_catalogs.real install-modes" in text
     assert 'catalog_services_for_mode "${MODE}"' in text
     assert 'run_catalog_services "${service_text}"' in text
     assert 'bash "${SCRIPT_DIR}/install_catalog_service.sh" "${service}"' in text
@@ -122,7 +122,7 @@ def test_thunder_service_installer_defaults_to_native_field_cpp_stack() -> None:
     assert "lingtu|app|runtime" not in text
     assert "install_" + ("lc" + "m") + "_endpoint_service.sh" not in text
     assert "install_lite_service.sh" not in text
-    assert "Unknown Thunder service install mode" in text
+    assert "Unknown real service install mode" in text
     assert "Usage: $0 [<catalog-mode>]" in text
     assert "Catalog modes:" in text
     assert "Compatibility modes:" not in text
@@ -361,7 +361,9 @@ def test_thunder_slam_dds_service_runs_cpp_runtime() -> None:
     assert "config/robots/doso/thunder_v4" not in text + runner
     assert "LINGTU_DDS_DOMAIN_ID=0" in text
     assert "LINGTU_SLAM_STATUS_JSON=/tmp/lingtu_slam_status.json" in text
-    assert "LINGTU_SLAM_LIDAR_SCAN_SNAPSHOT_HZ=10" in text
+    assert "EnvironmentFile=/run/lingtu/session.env" in text
+    assert "LINGTU_SLAM_LIDAR_SCAN_SNAPSHOT_HZ=" not in text
+    assert "--lidar-scan-snapshot-hz" not in runner
     assert "run_slam_dds.sh" in text
     assert "native SLAM DDS runtime is missing or not executable" in runner
     assert "build_slam_core.sh" in runner
@@ -443,17 +445,10 @@ def test_native_mapd_service_is_packaged_as_a_strict_cpp_boundary() -> None:
     assert "\nRuntimeDirectory=lingtu-mapd\n" in unit
     assert "RuntimeDirectoryMode=0770" in unit
     assert "UMask=0007" in unit
-    assert "LINGTU_MAPD_STATE_HZ=2" in unit
-    assert "LINGTU_MAPD_CLOUD_HZ=20" in unit
-    assert "LINGTU_MAPD_MAP_HZ=2" in unit
-    assert "LINGTU_MAPD_SCENE_HZ=2" in unit
-    assert "LINGTU_MAPD_MAX_POINTS=300000" in unit
-    assert "LINGTU_MAPD_MAX_SCENE_BYTES=33554432" in unit
-    assert "LINGTU_MAPD_MAX_VOXEL_SNAPSHOT_POINTS=200000" in unit
-    assert "LINGTU_MAPD_MAX_VOXELS=500000" in unit
-    assert "LINGTU_MAPD_MAX_ACCUMULATED_CELLS=2000000" in unit
-    assert "LINGTU_MAPD_MAX_ACCUMULATED_BLOCKS=4096" in unit
-    assert "LINGTU_MAPD_CARVE_MIN_Z_M=-0.7" in unit
+    assert "EnvironmentFile=/run/lingtu/session.env" in unit
+    assert "LINGTU_MAPD_STATE_HZ=" not in unit
+    assert 'EnvNumber("LINGTU_MAPD_STATE_HZ"' in main
+    assert 'EnvNumber("LINGTU_MAPD_MAX_POINTS"' in main
     assert "ExecStartPre=/bin/rm -f /dev/shm/lingtu/mapd_status.json" in unit
     assert "native maps runtime is missing or not executable" in unit
     assert "native map prune runtime is missing or not executable" in unit
@@ -461,7 +456,7 @@ def test_native_mapd_service_is_packaged_as_a_strict_cpp_boundary() -> None:
     assert "python" not in unit.lower()
     assert 'PRUNE="${PRUNE_BUILD_DIR}/prune"' in build
     assert 'export CMAKE_PREFIX_PATH="${LINGTU_CYCLONEDDS_PREFIX}' in build
-    assert 'LINGTU_PRUNE_ERASOR2=OFF \\' in build
+    assert "ERASOR2" not in build
     assert 'CMAKE_BUILD_TYPE="${BUILD_TYPE}" \\' in build
     assert 'bash "${ROOT}/scripts/build/build_prune.sh"' in build
     assert "native map prune runtime is missing after build" in build
@@ -714,7 +709,7 @@ def test_thunder_livox_dds_service_publishes_native_sdk2_stream() -> None:
     assert "Environment=LINGTU_LIVOX_BIN=" not in text
     assert "LINGTU_LIVOX_CONFIG_DIR=/opt/lingtu/config/livox" in text
     assert "Environment=LINGTU_LIVOX_NET_IFACE=" not in text
-    assert "LINGTU_LIVOX_LIDAR_FRAME=lidar_link" in text
+    assert "EnvironmentFile=/run/lingtu/session.env" in text
     assert "run_livox_dds.sh" in text
     assert "native Livox DDS publisher is missing or not executable" in runner
     assert "build_livox_sdk2_stream.sh" in runner
@@ -726,7 +721,7 @@ def test_thunder_livox_dds_service_publishes_native_sdk2_stream() -> None:
     assert "${LINGTU_LIVOX_LIDAR_IP:?" in runner
     assert "${LINGTU_LIVOX_NET_IFACE:?" in runner
     assert "require_product_session.sh lidar" in runner
-    assert "LINGTU_LIVOX_LIDAR_FRAME:=lidar_link" in runner
+    assert "LINGTU_LIVOX_LIDAR_FRAME:?" in runner
     assert "LINGTU_LIVOX_IMU_HZ" in runner
     assert "head -n 1" not in runner
     assert "--dds" in runner
@@ -806,11 +801,7 @@ def test_thunder_camera_dds_service_is_optional_and_fails_without_native_publish
     assert "Description=LingTu native camera DDS publisher" in text
     assert "Environment=LINGTU_CAMERA_DDS_BIN=" not in text
     assert "Environment=LINGTU_ORBBEC_CAPTURE_BIN=" not in text
-    assert "LINGTU_ORBBEC_PRODUCT_ID=0x0800" in text
-    assert "LINGTU_ORBBEC_DEVICE_INDEX=0" in text
-    assert "LINGTU_ORBBEC_CONNECT_TIMEOUT_MS=10000" in text
-    assert "LINGTU_CAMERA_COLOR_WIDTH=640" in text
-    assert "LINGTU_CAMERA_DEPTH_WIDTH=640" in text
+    assert "EnvironmentFile=/run/lingtu/session.env" in text
     assert "run_camera_dds.sh" in text
     assert "native camera DDS publisher is missing or not executable" in runner
     assert "build_camera_dds.sh" in runner
@@ -820,9 +811,6 @@ def test_thunder_camera_dds_service_is_optional_and_fails_without_native_publish
     assert "--domain-id" in runner
     assert "--capture-bin" in runner
     assert "--frame-id" in runner
-    assert "--color-topic" in runner
-    assert "--depth-topic" in runner
-    assert "--info-topic" in runner
     assert "--status-file" in runner
     assert "capture_args=(" in runner
     assert "--color-width" in runner
@@ -842,9 +830,6 @@ def test_thunder_camera_dds_service_is_optional_and_fails_without_native_publish
     assert '-- "${capture_args[@]}"' in runner
     assert "${LINGTU_CAMERA_FRAME_ID}" in runner
     assert "${LINGTU_CAMERA_STATUS_FILE}" in runner
-    assert "${LINGTU_CAMERA_COLOR_TOPIC}" in runner
-    assert "${LINGTU_CAMERA_DEPTH_TOPIC}" in runner
-    assert "${LINGTU_CAMERA_INFO_TOPIC}" in runner
     assert "${LINGTU_CAMERA_COLOR_WIDTH}" in runner
     assert "${LINGTU_CAMERA_DEPTH_WIDTH}" in runner
     assert "${LINGTU_ORBBEC_CONNECT_TIMEOUT_MS}" in runner
@@ -1274,7 +1259,7 @@ def test_nav_endpoint_uses_relative_height_when_cloud_has_no_height_field() -> N
 def test_thunder_catalog_installer_owns_unit_installation() -> None:
     helper = _read("scripts/deploy/thunder/install_catalog_service.sh")
 
-    assert "runtime.service_catalogs.thunder" in helper
+    assert "runtime.service_catalogs.real" in helper
     assert "install-unit" in helper
     assert "thunder-runtime-env.sh" in helper
     assert "ros2-env.sh" not in helper
@@ -1655,7 +1640,7 @@ def test_product_nav_switch_commits_only_after_runtime_readiness() -> None:
 def test_product_switch_uses_gateway_availability_before_runtime_readiness() -> None:
     runner = _read("src/lingtu/real/systemd.py")
 
-    assert "thunder_service_spec(service)" in runner
+    assert "service_spec(service)" in runner
     assert "http_check=True" in runner
     assert '"http://127.0.0.1:5050/ready"' in runner
     assert 'for field in ("data_ready", "non_motion_safe")' in runner

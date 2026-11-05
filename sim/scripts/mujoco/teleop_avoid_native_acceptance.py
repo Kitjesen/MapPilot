@@ -102,7 +102,6 @@ FIELD_TELEOP_AVOID_PROFILE: dict[str, float | int] = {
     "cloud_pose_max_gap_s": 0.10,
     "localization_health_max_age_s": 0.5,
     "teleop_cmd_max_age_s": 0.35,
-    "input_recovery_frames": 3,
     "stop_confirmation_timeout_s": 4.0,
     "status_period_s": 0.2,
     "sensor_offset_x_m": -0.011,

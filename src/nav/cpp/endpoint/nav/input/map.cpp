@@ -241,32 +241,6 @@ void InputProjector::projectLocalCollision(InputSample<LocalCollisionMap> sample
   ++state_.local_collision_count;
 }
 
-InputProjector::SpaceQueries InputProjector::observedSpaceQueries(
-    double now_s, double max_age_s) const {
-  SpaceQueries queries;
-  const auto map = state_.local_collision_map.view();
-  const double age = now_s - map.receiveStampS;
-  if (!state_.map_body || !map.valid()) return queries;
-  if (map.measuredOccupiedStorage && map.measuredOccupiedStorage->size()==map.inflatedBytes) {
-    queries.second=[map](const lingtu::nav::collision::Vec3 &center, double radius,
-                         double below, double above, bool hemisphere) {
-      return map.measuredOccupiedCylinder({center.x,center.y,center.z},radius,below,above,hemisphere);
-    };
-  }
-  // Delayed observations cannot clear obstacles; existing hits remain until
-  // mapd supplies a replacement. Motion freshness is enforced by the input gate.
-  if (!map.live || map.receiveStampS <= 0 || age < 0 ||
-      (max_age_s > 0 && age > max_age_s)) return queries;
-  queries.first=[map](const lingtu::nav::collision::Aabb &cell) {
-    const nav_kernel::Vec3 low{cell.center.x-cell.half_size.x,
-        cell.center.y-cell.half_size.y, cell.center.z-cell.half_size.z};
-    const nav_kernel::Vec3 high{cell.center.x+cell.half_size.x,
-        cell.center.y+cell.half_size.y, cell.center.z+cell.half_size.z};
-    return map.observedFreeBox(low,high);
-  };
-  return queries;
-}
-
 void InputProjector::clearPlannerInputs(const PlannerClearSample &sample) {
   if (!sample.requested) {
     return;

@@ -331,6 +331,14 @@ class TestMCPToolExecution(unittest.TestCase):
         fn = self.mod._tool_registry[name]
         return json.loads(fn(**kwargs))
 
+    def test_get_config_reports_robot_driver_limits(self):
+        from runtime.config import RobotConfig, SpeedConfig
+
+        cfg = RobotConfig(speed=SpeedConfig(max_linear=0.7, max_angular=0.9))
+        with patch("runtime.config.get_config", return_value=cfg):
+            result = self._call("get_config")
+        self.assertEqual(result["speed"], {"max_linear": 0.7, "max_angular": 0.9})
+
     # -- stop --
     def test_stop_halts_motion(self):
         with patch("gateway.mcp_server.native_estop", return_value=True):

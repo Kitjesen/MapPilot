@@ -20,15 +20,15 @@
 /* LingTu field console: one shared palette, spacing and type system. */
 :root {
   color-scheme: light;
-  --bg: #f4f3ef;
+  --bg: #ffffff;
   --bg-layer-1: #ffffff;
-  --bg-layer-2: #f3f3f0;
-  --bg-layer-3: #e9eae5;
+  --bg-layer-2: #f5f6f8;
+  --bg-layer-3: #e9ecf0;
   --glass: rgb(255 255 255 / 96%);
   --glass-hi: rgb(255 255 255 / 98%);
-  --glass-lo: rgb(245 245 241 / 94%);
-  --border: #e7e8e2;
-  --border-hi: #c9cdc4;
+  --glass-lo: rgb(248 249 251 / 94%);
+  --border: #e6e9ed;
+  --border-hi: #cbd1d8;
   --border-focus: #202321;
   --inner-hi: inset 0 1px 0 rgb(255 255 255 / 16%);
   --text: #202321;
@@ -39,8 +39,8 @@
   --brand-2: #202321;
   --brand-3: #202321;
   --brand-4: #202321;
-  --gradient-brand: #e9eae5;
-  --gradient-brand-soft: #f3f3f0;
+  --gradient-brand: #e9ecf0;
+  --gradient-brand-soft: #f5f6f8;
   --accent: #202321;
   --on-accent: #ffffff;
   --accent-dim: #3d433e;

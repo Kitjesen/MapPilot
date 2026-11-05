@@ -11,7 +11,7 @@ html, body, #root {
 }
 
 body {
-  background: var(--bg, #f4f3ef);
+  background: var(--bg, #ffffff);
   color: var(--text, #202321);
   font-family: var(--font-ui, 'LingTu Inter', 'LingTu Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', 'Noto Sans CJK SC', 'Noto Sans SC', system-ui, sans-serif);
   font-size: var(--type-body-comfortable, 0.9375rem);

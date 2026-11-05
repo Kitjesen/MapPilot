@@ -91,6 +91,58 @@
 
 本轮无依赖安装、无新增补全实现、无部署或实机测试。
 
+## 实时观测与推断支撑：上游调研（2026-11-01）
+
+**当前工作树缺口：** mapd 发布实时 occupied、known-free 和原始命中边界；
+全局路线的机体空间查询可使用新鲜实时观测，但准备时的 `SurfaceIndex` 只读取
+保存 OctoMap 的 occupied，推断支撑查询不消费实时 free。成功路线把该准备时的
+支撑回调传给 SCAN；是否生效取决于启用支撑及机器人支撑高度。观测新鲜度默认
+0.50 s，实际运行参数须以 RunPlan 为准。实时清障碍不等于实时撤销推断地面。
+
+现有 `build/surface-evidence-20261101/downward_ray_probe.cpp` 是本地原生诊断：
+两图占据相同，预期地面格分别 unknown 和被一条合成向下射线观测为 free；
+当前补全在两图都生成该格的推断支撑。该结果不证明整块悬崖或实时 DDS 闭环。
+
+| 来源 | 已核查机制 | 对本问题的边界 |
+| --- | --- | --- |
+| [DimOS 固定 26144f7：MLS 局部更新](https://github.com/dimensionalOS/dimos/blob/26144f7fd8424bdc33ab97dcd58e9497f2d413ee/dimos/navigation/global_planner/mls_planner/rust/src/mls_planner.rs#L266) | 射线地图更新后，以带范围的当前区域占据快照替换旧区域；重新提取受影响表面并修复图 | MLS 的补面输入不含 free/unknown，邻域条件满足时仍可能把已删除位置重新补面；不能称其已解决 free 反证 |
+| [elevation_mapping_cupy v2.2.0](https://github.com/leggedrobotics/elevation_mapping_cupy/blob/f618dd8b2eb49db511601c0db780d073434859e2/elevation_mapping_cupy/elevation_mapping_cupy/kernels/custom_kernels.py#L224-L318) | 射线与旧高程矛盾时更新可见性；[同帧有效新测量优先](https://github.com/leggedrobotics/elevation_mapping_cupy/blob/f618dd8b2eb49db511601c0db780d073434859e2/elevation_mapping_cupy/elevation_mapping_cupy/kernels/custom_kernels.py#L359-L405)；记录射线给出的高度上界 | 上界不是可踩地面；所查 [inpainting 插件](https://github.com/leggedrobotics/elevation_mapping_cupy/blob/f618dd8b2eb49db511601c0db780d073434859e2/elevation_mapping_cupy/elevation_mapping_cupy/plugins/inpainting.py#L104-L143) 未读取该上界，不能宣称它完整禁止误补 |
+| [ANYbotics elevation_mapping 固定 f4b082c](https://github.com/ANYbotics/elevation_mapping/blob/f4b082c64a3e660980da53b33c7936a8f2a2ea22/elevation_mapping/src/ElevationMap.cpp#L461-L512) | 用射线高度上界、旧观测时间和高程方差判断能否撤销旧高程 | 历史实现参考，项目已停止积极维护；其二维高程语义不能直接替代本系统的多层三维地图 |
+| [OctoMap 1.9.7](https://octomap.github.io/octomap/doc/classoctomap_1_1OccupancyOcTreeBase.html) | 同帧射线 free 和端点 occupied 融合时，occupied 端点优先 | 自由空间不是地面；不能采用“最后一条射线覆盖本帧落点”造成地面假洞 |
+| [Nav2 Jazzy obstacle/voxel layer](https://docs.nav2.org/jazzy/configuration_and_development/configuration_guide/core_servers/costmap_2d/costmap_plugins/voxel/) | 障碍标记和射线清除分工 | 其规划代价层投影为二维，不能当作多层地面/断崖许可 |
+
+### 时间、方差和 LingTu 的射线融合
+
+固定 ANYbotics `f4b082c` 有两条不同分支：旧/新**高度测量**明显不一致时，
+某些条件下给旧高度增加方差；可见性清理则在旧高度超过扫描时间未更新、且
+`elevation - 3 * sqrt(variance) > max_height` 时，将旧高程置为无效 `NaN`。
+`max_height` 沿传感器至命中点的射线估计，近期有效更新受保护。相容的高度测量按
+方差加权融合；不能概括为射线矛盾总是“增加方差”，也不能把它的单层高程规则当作
+LingTu 多层三维地图默认行为。
+
+LingTu 保存 OctoMap 的 [rays.hpp](../../src/maps/include/lingtu/maps/octomap/rays.hpp)
+在一帧内先收集 free 与 occupied 集合，free 更新排除同帧 occupied，再更新占据。
+实时 [rolling_occupancy.cpp](../../src/maps/cpp/layers/rolling_occupancy.cpp) 的概率
+层则按 hit/miss 数量投票、平票选 hit；只要本帧有 hit，`unresolved_hit` 仍保留
+实时碰撞占据并阻止将该格发布为 known-free，直到后续无 hit 的穿越观测清除该状态。
+两者不是相同的概率更新规则。`PersistentBlockGrid` 的可选扩展层又有自己的逐射线
+更新方式，不能把上述任一规则泛化到所有地图。
+
+`SurfaceIndex` 目前没有高程方差或逐层更新时间，只从保存树的 occupied 构造表面；
+它不消费地图层已融合的实时 free。后续可以复用 mapd 的现有三维证据，对某个 XY、
+Z 层的旧支撑进行查询时覆盖，而不新增一个射线积分器或直接改写长期地图。准确匹配
+候选体素高度及分辨率；邻域补面/回退不能重新放行已被同层 free 反证的位置。未知、
+遮挡和旧 free 不能冒充新鲜自由空间，同帧 hit 应按实时碰撞层的融合结果处理。
+这只是设计方向；全局不同支撑入口与已激活路线的现有调用尚未接线，SCAN 是否保留
+支撑回调也是独立决策。本轮没有修改产品行为或验证实机。
+
+建议后续在现有地图/支撑查询边界先验证：未观测或遮挡不等同 free；仅上方
+free 不否定地面；真实穿过目标高度的证据与同帧命中按现有融合语义处理；
+同 XY 的其他高度层不被一起否定；重算不能无视已知反证重新补回。全局和已
+激活路线的 SCAN 查询须一致消费新鲜证据，同时保留测量与推断的区别。单条
+射线不证明整个足底区域无支撑；不同分辨率、时效、定位误差和多层高度需通过
+反例确定。本节为研究和实施方向，不声明已改代码、通过物理测试或部署实机。
+
 ## 同日后续：先让 Web 显示真实导航体素
 
 用户随后要求对齐 Web 与 OctoMap 的显示。已在保存地图场景增加点云/导航体素切换，

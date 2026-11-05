@@ -8,9 +8,6 @@ Type=simple
 WorkingDirectory=/opt/lingtu/current
 Environment=LINGTU_REPO=/opt/lingtu/current
 Environment=LINGTU_LIVOX_CONFIG_DIR=/opt/lingtu/config/livox
-Environment=LINGTU_LIVOX_LIDAR_FRAME=lidar_link
-Environment=LINGTU_LIVOX_IMU_FRAME=imu_link
-Environment=LINGTU_LIVOX_SCAN_HZ=10
 Environment=LINGTU_DDS_DOMAIN_ID=0
 Environment=LINGTU_CYCLONEDDS_PREFIX=
 Environment=LINGTU_TIME_SYNC_WAIT_SECONDS=8

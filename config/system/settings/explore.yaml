@@ -1,0 +1,77 @@
+# Shared exploration task interfaces; used by both live-map and saved-map variants.
+topics:
+  - /nav/exploration/command
+  - /nav/exploration/ack
+  - /nav/exploration/run/event
+  - /nav/exploration_snapshot
+  - /nav/exploration_execution_snapshot
+  - /nav/exploration_segment/request
+  - /nav/exploration_segment/ack
+  - /nav/exploration_segment/status
+
+parameters:
+  # Bound each dispatched segment, not the total exploration route.
+  segment.max_distance_m: 5.0
+  segment.max_waypoints: 32
+  # Separate stop/resume thresholds provide hysteresis for the risk score.
+  risk.stop_threshold: 50.0
+  risk.resume_threshold: 40.0
+
+standalone:
+  parameters:
+    map_input.max_cells: 262144
+    # Covers more than three traversability frames at the real Env's 10 Hz.
+    map_input.max_age_s: 0.35
+    map_input.future_tolerance_s: 0.25
+
+# Native exploration endpoint and TARE policy.
+explore:
+  tick_hz: 2.0
+  command_retry_s: 3.0
+  command_timeout_ms: 10000
+  arrival_tolerance_m: 0.65
+  goal_timeout_s: 180.0
+  status_period_s: 2.0
+  control_max_age_s: 2.0
+  directed_target_max_ttl_s: 3600.0
+  directed_progress_weight: 4.0
+
+  # Input freshness bounds.
+  odom_max_age_s: 0.50
+  snapshot_max_age_s: 2.00
+  tf_max_age_s: 1.00
+  future_tolerance_s: 0.50
+
+  # Frontier, coverage, and route search.
+  min_frontier_size: 3
+  sensor_range_m: 5.0
+  sensor_horizontal_fov_rad: 6.283185307179586
+  sensor_yaw_offset_rad: 0.0
+  candidate_radius_m: 2.5
+  min_goal_distance_m: 0.8
+  novelty_radius_m: 1.0
+  max_candidates: 16
+  coverage_resolution_m: 0.5
+  local_route_radius_m: 12.0
+  return_home_distance_m: 0.75
+  keypose_min_distance_m: 0.75
+  keypose_connect_distance_m: 6.0
+  gain_weight: 1.0
+  travel_weight: 0.20
+  momentum_weight: 2.0
+  revisit_weight: 3.0
+  max_plan_time_ms: 100.0
+  route_2opt_iterations: 4
+  max_grid_cells: 1000000
+  max_frontier_cells: 200000
+  max_frontier_clusters: 512
+  max_coverage_cells: 500000
+  max_known_map_candidate_samples: 128
+  max_known_map_gain_checks_per_candidate: 2048
+  max_known_map_visibility_checks: 20000
+  max_keyposes: 4096
+  max_keypose_edges: 16384
+  max_keypose_neighbor_links: 6
+  max_route_targets: 32
+  known_map_require_line_of_sight: true
+  return_home: true

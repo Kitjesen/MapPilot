@@ -1,6 +1,7 @@
-# Native mapping backend
+# Online mapping
 
-`online_mapping` owns loop verification and the incremental Pose3 graph. It links the real
+`online_mapping` owns the keyframe queue, background scheduling, loop verification,
+incremental Pose3 graph and corrected preview. It links the real
 GTSAM/iSAM2 and PCL libraries; neither library is reimplemented here.
 The pinned LIO-SAM source and deliberate adaptations are documented in
 [upstream/UPSTREAM.md](upstream/UPSTREAM.md).
@@ -8,8 +9,10 @@ The pinned LIO-SAM source and deliberate adaptations are documented in
 ## Integration
 
 `slam/cpp/ltlio.cpp` selects keyframes from continuous, uncorrected body
-odometry and deskewed body-local clouds. `map_optimization/online_mapping.cpp` schedules one
-background worker that calls `Backend::append`:
+odometry and deskewed body-local clouds. [`worker.cpp`](worker.cpp) schedules one
+background job that calls `Backend::append`. `Worker::update()` collects its result
+and starts the next queued batch; `enqueue()` only queues input. File reading is
+shared through `lingtu_mapping_io`, independently of the worker and Backend.
 
 - Adjacent factors use `raw_previous.between(raw_current)`. Optimized poses
   initialize new states but never replace those raw measurements.
@@ -50,7 +53,7 @@ background worker that calls `Backend::append`:
   runs before confirmation. Finite sampling, initialization and coarse mode
   grouping can still miss a competing fine minimum; these checks do not certify
   global place uniqueness or zero false loops in an actual garage.
-- `OnlineMapping` expresses corrected history relative to the latest continuous
+- `Worker` expresses corrected history relative to the latest continuous
   odometry anchor, so a loop does not jump the current body pose.
 - Saving uses full recorded patches and corrected keyframe poses, not the
   reduced preview or the voxel-filtered ICP clouds. Raw poses, timestamps,
@@ -110,9 +113,9 @@ with `GTSAM_DIR`, pointing to the directory holding `GTSAMConfig.cmake`; PCL use
 With those development libraries available, run from the repository root:
 
 ```sh
-cmake -S src/localization/map_optimization/online -B build/online-mapping-check -DBUILD_TESTING=ON
-cmake --build build/online-mapping-check --target online_mapping_backend_test online_mapping_test -j2
-ctest --test-dir build/online-mapping-check --output-on-failure -R 'online_mapping_backend|online_mapping'
+cmake -S src/localization/online_mapping -B build/online-mapping-check -DBUILD_TESTING=ON
+cmake --build build/online-mapping-check --target online_mapping_backend_test online_mapping_worker_test mapping_io_test -j2
+ctest --test-dir build/online-mapping-check --output-on-failure -R 'online_mapping_backend|online_mapping_worker|mapping_io'
 ```
 
 The full LTLIO integration test `test_ltlio_mock_flow` additionally checks

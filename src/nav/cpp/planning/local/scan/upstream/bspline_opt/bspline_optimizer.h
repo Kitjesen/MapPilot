@@ -92,7 +92,7 @@ class BsplineOptimizer {
                                   double ts);  // must be called after initControlPoints()
   bool BsplineOptimizeTrajRefine(const Eigen::MatrixXd &init_points, const double ts,
                                  Eigen::MatrixXd &optimal_points);
-  // Check the complete refined trajectory, including its final approach.
+  // Upstream refinement checks the closest two thirds; the FSM checks execution.
   bool checkTrajectoryCollisionFree(const UniformBspline &trajectory);
 
   inline int getOrder(void) { return order_; }

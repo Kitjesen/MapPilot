@@ -70,7 +70,6 @@ detail::RecoverySearchParams recoverySearchParams(
   recovery.maxRotationRad = config.max_rotation_rad;
   recovery.rotationCandidateStepRad = config.rotation_candidate_step_rad;
   recovery.rotationSampleStepRad = config.rotation_sample_step_rad;
-  recovery.rotationRate = config.rotation_rate_rad_s;
   return recovery;
 }
 
@@ -147,7 +146,7 @@ class Recovery::Impl {
     const CandidateSelection selection = selectCandidate(search_input);
     const detail::RecoverySearchResult& candidate = selection.result;
     candidate_count_ = selection.candidate_count;
-    if (!candidate.found() || !activate(candidate, request)) {
+    if (!activate(candidate, request)) {
       advanceBehavior(selection.behavior_index);
       ++cycle_count_;
       reason_ = std::string("recovery_no_safe_candidate_") +
@@ -272,7 +271,10 @@ class Recovery::Impl {
       return true;
     };
 
-    if (params_.checkObstacle || request.body || request.observedBody) {
+    const bool needs_geometry = !capabilities_.consumesCollisionMap || state_ == 1 ||
+        config_.behavior_order[behavior_cursor_] == nav_kernel::RecoveryAction::Rotate ||
+        rejected_translation_mask_ == 0xFFFFU;
+    if (needs_geometry && (params_.checkObstacle || request.body || request.observedBody)) {
       // The point cloud is the direct DDS-derived live observation and is a
       // useful recovery fallback when the optional packed collision snapshot
       // is between publications. Keep it for SCAN too; a valid 3D Grid still
@@ -357,13 +359,37 @@ class Recovery::Impl {
         input.rejectedTranslationDirectionMask |= 0xFFFFU;
       }
 
-      detail::RecoverySearchResult candidate = search_.plan(input);
+      detail::RecoverySearchResult candidate;
+      if (capabilities_.consumesCollisionMap &&
+          action == nav_kernel::RecoveryAction::Translate) {
+        const int goal_bin = static_cast<int>(std::lround(
+            input.goalDirectionBodyRad * 8.0 / M_PI));
+        // These are temporary goals. SCAN decides whether a trajectory exists.
+        for (const int offset : {4, -4, 8, 2, -2, 6, -6, 0,
+                                 3, -3, 5, -5, 7, -7, 1, -1}) {
+          const int bin = (goal_bin + offset + 32) % 16;
+          if (input.rejectedTranslationDirectionMask & (std::uint32_t{1} << bin)) continue;
+          const double angle = bin * M_PI / 8.0;
+          const double distance = search_.params().searchRadius;
+          candidate.status = detail::RecoverySearchStatus::TranslationReady;
+          candidate.action = action;
+          candidate.pathBody = {{}, {distance * std::cos(angle), distance * std::sin(angle), 0.0}};
+          candidate.pathWorld = detail::RecoverySearch::bodyPathToWorld(
+              candidate.pathBody, input.vehiclePose);
+          candidate.diagnostics.selectedDirectionBin = bin;
+          candidate.diagnostics.candidateCount = 1;
+          break;
+        }
+      } else {
+        candidate = search_.plan(input);
+      }
       selection.candidate_count +=
           candidate.diagnostics.candidateCount +
           candidate.diagnostics.rotationCandidateCount;
       selection.result = std::move(candidate);
       selection.behavior_index = static_cast<int>(index);
-      if (selection.result.found()) {
+      if (selection.result.found() ||
+          selection.result.action == nav_kernel::RecoveryAction::Translate) {
         return selection;
       }
       if (selection.result.status == detail::RecoverySearchStatus::InvalidInput) {
@@ -383,11 +409,12 @@ class Recovery::Impl {
   void populate(RecoveryOutput& output) const {
     output.state = state_;
     output.active = session_active_;
-    output.verified = state_ != 0;
+    output.verified = state_ != 0 &&
+        !(capabilities_.consumesCollisionMap && action_ == nav_kernel::RecoveryAction::Translate);
     output.direct_command =
         output.verified && action_ == nav_kernel::RecoveryAction::Rotate;
-    output.action = output.verified ? action_
-                                    : nav_kernel::RecoveryAction::None;
+    output.action = state_ != 0 ? action_ : nav_kernel::RecoveryAction::None;
+    if (state_ == 2) output.path_world = world_path_;
     output.reason = reason_.empty() ? "inactive" : reason_;
     output.progress = std::clamp(last_progress_, 0.0, 1.0);
     output.attempt = state_ != 0 ? cycle_count_ + 1 : cycle_count_;
@@ -516,7 +543,9 @@ class Recovery::Impl {
 
   bool activate(const detail::RecoverySearchResult& candidate,
                 const nav_kernel::LocalPlanRequest& request) {
-    if (!candidate.found()) return false;
+    if (!candidate.found() &&
+        !(capabilities_.consumesCollisionMap &&
+          candidate.action == nav_kernel::RecoveryAction::Translate)) return false;
 
     action_ = candidate.action;
     start_pose_ = request.robot.pose;
@@ -574,7 +603,8 @@ class Recovery::Impl {
       const double cross_track_limit = std::max(
           0.20,
           0.5 * params_.vehicleWidth + params_.footprintPadding);
-      if (projection.cross_track_distance > cross_track_limit) {
+      if (!capabilities_.consumesCollisionMap &&
+          projection.cross_track_distance > cross_track_limit) {
         *failure_reason = "recovery_translation_off_path";
         return Update::Failed;
       }
@@ -597,7 +627,8 @@ class Recovery::Impl {
           remainingPathBody(request.robot.pose, projection.segment_index);
       detail::RecoverySafetyFailure failure = detail::RecoverySafetyFailure::None;
       if (remaining.size() < 2 ||
-          !search_.validateBodyPath(search_input, remaining, &failure)) {
+          (!capabilities_.consumesCollisionMap &&
+           !search_.validateBodyPath(search_input, remaining, &failure))) {
         *failure_reason = std::string("recovery_translation_unsafe_") +
                           safetyFailureName(failure);
         return Update::Failed;

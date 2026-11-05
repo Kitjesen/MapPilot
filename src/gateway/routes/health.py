@@ -252,6 +252,134 @@ def _slam_rates(
     return processed_scan_hz, odom_hz, processed_scan_hz or odom_hz
 
 
+async def build_health(gw: Any, details: bool = False) -> dict[str, Any]:
+    traffic = traffic_snapshot(gw)
+    commands = gw._command_stats_snapshot()
+    cloud_debug = gw._cloud_viewer.debug_snapshot()
+    n_sse = traffic["sse"]["clients"]
+    map_pts = gw._cloud_viewer.cache_point_count()
+
+    sensors: dict[str, Any] = {}
+    modules_ok = 0
+    modules_fail = 0
+    module_summary: dict[str, str] = {}
+
+    def _probe_modules() -> tuple[dict[str, str], dict[str, Any], int, int]:
+        """Probe module health in a thread to avoid blocking the event loop."""
+        _summary: dict[str, str] = {}
+        _sensors: dict[str, Any] = {}
+        _ok = 0
+        _fail = 0
+        modules = getattr(gw, "_all_modules", None) or {}
+        for name, mod in modules.items():
+            probe_module = details or _health_module_needs_detail(str(name))
+            if not probe_module:
+                _summary[name] = "ok"
+                _ok += 1
+                continue
+            try:
+                h = mod.health() if hasattr(mod, "health") else {}
+                _summary[name] = "ok"
+                _ok += 1
+
+                name_l = str(name).lower()
+                if name_l == LIDAR_ROLE:
+                    lidar_h = h.get("lidar", {})
+                    _sensors["lidar"] = {
+                        "status": lidar_h.get("state", "unknown"),
+                        "ip": lidar_h.get("ip", "?"),
+                        "cloud_hz": round(
+                            h.get("ports_out", {}).get("scan", {}).get("rate_hz", 0),
+                            1,
+                        ),
+                    }
+                elif name_l == CAMERA_ROLE:
+                    _sensors["camera"] = build_camera_status(gw)
+                elif "slam" in name_l:
+                    slam_status = _module_odometry_status(h)
+                    if slam_status is not None:
+                        _sensors["slam"] = slam_status
+            except Exception:
+                _summary[name] = "error"
+                _fail += 1
+        return _summary, _sensors, _ok, _fail
+
+    # Run module probing in a thread to avoid blocking SSE/WS heartbeats
+    modules = getattr(gw, "_all_modules", None) or {}
+    if modules:
+        module_summary, sensors, modules_ok, modules_fail = (
+            await asyncio.get_running_loop().run_in_executor(None, _probe_modules)
+        )
+
+    localization_status = getattr(gw, "_localization_status", None)
+    localization_status = localization_status if isinstance(localization_status, Mapping) else {}
+    processed_scan_hz, odom_hz, slam_hz = _slam_rates(
+        gw,
+        localization_status,
+        sensors.get("slam", {}).get("hz"),
+    )
+    has_odom = gw._odom is not None
+    if localization_status or has_odom or odom_hz > 0.0:
+        slam_sensor = sensors.setdefault("slam", {})
+        state = str(
+            localization_status.get("state")
+            or slam_sensor.get("status")
+            or ("active" if odom_hz > 0.0 else "inactive")
+        ).lower()
+        slam_sensor.update(
+            {
+                "status": state,
+                "hz": round(slam_hz, 1),
+                "processed_scan_hz": round(processed_scan_hz, 1),
+                "odom_hz": round(odom_hz, 1),
+                "source": (
+                    "processed_scan_hz"
+                    if processed_scan_hz > 0.0
+                    else ("localization_status" if localization_status else "gateway_odom_window")
+                ),
+            }
+        )
+        if not localization_status:
+            slam_sensor.setdefault("reason", "localization_status_missing")
+        for key in (
+            "reason",
+            "status_snapshot_stale",
+            "status_snapshot_age_s",
+            "lidar_input_hz",
+            "imu_input_hz",
+            "slam_tick_hz",
+        ):
+            if key in localization_status:
+                slam_sensor[key] = localization_status[key]
+
+    brainstem_info = await _brainstem_health(gw, force_live=details)
+
+    return {
+        "status": "ok" if modules_fail == 0 else "degraded",
+        "modules_ok": modules_ok,
+        "modules_fail": modules_fail,
+        "gateway": {
+            "port": gw._port,
+            "mode": gw._mode,
+            "sse_clients": n_sse,
+            "traffic": traffic,
+            "cloud": cloud_debug,
+            "commands": commands,
+            "diagnostic_details": details,
+        },
+        "teleop": {
+            "active": gw._teleop_active,
+            "clients": gw._teleop_client_count(),
+        },
+        "sensors": sensors,
+        "slam_hz": round(slam_hz, 1),
+        "map_points": map_pts,
+        "has_odom": has_odom,
+        "modules": module_summary,
+        "brainstem": brainstem_info,
+    }
+
+
 def register_health_routes(app, gw) -> None:
     @app.get(
         "/api/v1/health",
@@ -266,131 +394,7 @@ def register_health_routes(app, gw) -> None:
             ),
         ] = False,
     ):
-        traffic = traffic_snapshot(gw)
-        commands = gw._command_stats_snapshot()
-        cloud_debug = gw._cloud_viewer.debug_snapshot()
-        n_sse = traffic["sse"]["clients"]
-        map_pts = gw._cloud_viewer.cache_point_count()
-
-        sensors: dict[str, Any] = {}
-        modules_ok = 0
-        modules_fail = 0
-        module_summary: dict[str, str] = {}
-
-        def _probe_modules() -> tuple[dict[str, str], dict[str, Any], int, int]:
-            """Probe module health in a thread to avoid blocking the event loop."""
-            _summary: dict[str, str] = {}
-            _sensors: dict[str, Any] = {}
-            _ok = 0
-            _fail = 0
-            modules = getattr(gw, "_all_modules", None) or {}
-            for name, mod in modules.items():
-                probe_module = details or _health_module_needs_detail(str(name))
-                if not probe_module:
-                    _summary[name] = "ok"
-                    _ok += 1
-                    continue
-                try:
-                    h = mod.health() if hasattr(mod, "health") else {}
-                    _summary[name] = "ok"
-                    _ok += 1
-
-                    name_l = str(name).lower()
-                    if name_l == LIDAR_ROLE:
-                        lidar_h = h.get("lidar", {})
-                        _sensors["lidar"] = {
-                            "status": lidar_h.get("state", "unknown"),
-                            "ip": lidar_h.get("ip", "?"),
-                            "cloud_hz": round(
-                                h.get("ports_out", {}).get("scan", {}).get("rate_hz", 0),
-                                1,
-                            ),
-                        }
-                    elif name_l == CAMERA_ROLE:
-                        _sensors["camera"] = build_camera_status(gw)
-                    elif "slam" in name_l:
-                        slam_status = _module_odometry_status(h)
-                        if slam_status is not None:
-                            _sensors["slam"] = slam_status
-                except Exception:
-                    _summary[name] = "error"
-                    _fail += 1
-            return _summary, _sensors, _ok, _fail
-
-        # Run module probing in a thread to avoid blocking SSE/WS heartbeats
-        modules = getattr(gw, "_all_modules", None) or {}
-        if modules:
-            module_summary, sensors, modules_ok, modules_fail = (
-                await asyncio.get_running_loop().run_in_executor(None, _probe_modules)
-            )
-
-        localization_status = getattr(gw, "_localization_status", None)
-        localization_status = localization_status if isinstance(localization_status, Mapping) else {}
-        processed_scan_hz, odom_hz, slam_hz = _slam_rates(
-            gw,
-            localization_status,
-            sensors.get("slam", {}).get("hz"),
-        )
-        has_odom = gw._odom is not None
-        if localization_status or has_odom or odom_hz > 0.0:
-            slam_sensor = sensors.setdefault("slam", {})
-            state = str(
-                localization_status.get("state")
-                or slam_sensor.get("status")
-                or ("active" if odom_hz > 0.0 else "inactive")
-            ).lower()
-            slam_sensor.update(
-                {
-                    "status": state,
-                    "hz": round(slam_hz, 1),
-                    "processed_scan_hz": round(processed_scan_hz, 1),
-                    "odom_hz": round(odom_hz, 1),
-                    "source": (
-                        "processed_scan_hz"
-                        if processed_scan_hz > 0.0
-                        else ("localization_status" if localization_status else "gateway_odom_window")
-                    ),
-                }
-            )
-            if not localization_status:
-                slam_sensor.setdefault("reason", "localization_status_missing")
-            for key in (
-                "reason",
-                "status_snapshot_stale",
-                "status_snapshot_age_s",
-                "lidar_input_hz",
-                "imu_input_hz",
-                "slam_tick_hz",
-            ):
-                if key in localization_status:
-                    slam_sensor[key] = localization_status[key]
-
-        brainstem_info = await _brainstem_health(gw, force_live=details)
-
-        return {
-            "status": "ok" if modules_fail == 0 else "degraded",
-            "modules_ok": modules_ok,
-            "modules_fail": modules_fail,
-            "gateway": {
-                "port": gw._port,
-                "mode": gw._mode,
-                "sse_clients": n_sse,
-                "traffic": traffic,
-                "cloud": cloud_debug,
-                "commands": commands,
-                "diagnostic_details": details,
-            },
-            "teleop": {
-                "active": gw._teleop_active,
-                "clients": gw._teleop_client_count(),
-            },
-            "sensors": sensors,
-            "slam_hz": round(slam_hz, 1),
-            "map_points": map_pts,
-            "has_odom": has_odom,
-            "modules": module_summary,
-            "brainstem": brainstem_info,
-        }
+        return await build_health(gw, details)
 
     @app.get(
         "/api/v1/metrics",

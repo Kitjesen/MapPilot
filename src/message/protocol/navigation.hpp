@@ -16,7 +16,8 @@ inline bool isKnownNavigationCommandKind(std::int32_t value) noexcept {
       value == static_cast<std::int32_t>(NavigationCommandKind::ClearEstop) ||
       value == static_cast<std::int32_t>(NavigationCommandKind::ResumeAutonomy) ||
       value == static_cast<std::int32_t>(NavigationCommandKind::TaskPause) ||
-      value == static_cast<std::int32_t>(NavigationCommandKind::TaskResume);
+      value == static_cast<std::int32_t>(NavigationCommandKind::TaskResume) ||
+      value == static_cast<std::int32_t>(NavigationCommandKind::TaskSpeedLimit);
 }
 
 inline const char* navigationCommandKindName(
@@ -38,6 +39,8 @@ inline const char* navigationCommandKindName(
       return "task_pause";
     case NavigationCommandKind::TaskResume:
       return "task_resume";
+    case NavigationCommandKind::TaskSpeedLimit:
+      return "task_speed_limit";
   }
   return "unknown";
 }

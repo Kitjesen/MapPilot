@@ -292,6 +292,7 @@ add_executable(lingtu_explore_dds
     ${_EP_DIRS})
 
   target_link_libraries(lingtu_explore_dds PRIVATE
+    lingtu_settings
     lingtu_dds_messages
     lingtu_maps_artifacts
     lingtu_nav_far

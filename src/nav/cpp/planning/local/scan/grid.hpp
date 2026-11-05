@@ -16,8 +16,10 @@ class Grid {
   [[nodiscard]] double resolution() const noexcept;
   [[nodiscard]] int occupiedCellCount() const noexcept;
   [[nodiscard]] int collisionPointCount() const noexcept;
+  // SCAN's upstream twin-cylinder query; inflation belongs to Mapd.
+  [[nodiscard]] int cylinderOccupancy(const Vec3 &center, double yaw) const noexcept;
   // Snapshot geometry at the request time, including aged dynamic positions.
-  // Candidate motion must still pass trajectory/braking queries with time.
+  // Native motion checks use this separately from SCAN's cylinder query.
   [[nodiscard]] int inflatedOccupancy(const Vec3 &center, double yaw) const noexcept;
   [[nodiscard]] int segmentInflatedOccupancy(const Vec3 &start, double startYaw,
                                               const Vec3 &end, double endYaw) const noexcept;
@@ -68,7 +70,6 @@ class Grid {
   [[nodiscard]] Grid excludingCells(const std::vector<std::size_t> &cells) const;
   [[nodiscard]] int occupiedGridSegment(const Vec3 &start, const Vec3 &end,
                                          bool leaveInitialCell = false) const noexcept;
-  [[nodiscard]] bool supportedSegment(const Vec3 &start, const Vec3 &end) const noexcept;
 
   bool checkObstacle_{false};
   double configuredResolution_{0.0};
@@ -80,9 +81,6 @@ class Grid {
   double predictionAgeS_{0.0}, predictionHorizonS_{1.0};
   LocalCollisionMapView collision_{};
   std::shared_ptr<const lingtu::nav::collision::Body> body_{};
-  lingtu::nav::collision::SupportQuery supportSurface_;
-  std::vector<Vec3> supportReference_;
-  double supportHeightM_{0.0}, supportToleranceM_{0.0};
   std::vector<PredictedObstacle> predictions_;
   std::string reason_{"collision_map_invalid"};
 };

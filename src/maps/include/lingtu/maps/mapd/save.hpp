@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
@@ -15,12 +17,14 @@ class MapsServiceCore;
 
 namespace lingtu::maps::mapd {
 
+namespace map_defaults = lingtu::settings::maps::maps;
+
 struct SlamSnapshotRequest {
   std::string request_id;
   std::string map_id;
   std::string product_session_id;
   std::filesystem::path output_path;
-  bool save_patches{true};
+  bool save_patches{map_defaults::save::patches};
 };
 
 struct SlamSnapshotAck {
@@ -51,7 +55,7 @@ class SlamSnapshotExchange {
 struct SaveCoordinatorConfig {
   std::string product;
   std::string product_session_id;
-  bool save_patches{true};
+  bool save_patches{map_defaults::save::patches};
   SaveMapRequest request_defaults;
 };
 
@@ -60,7 +64,8 @@ class SaveCoordinator final {
   SaveCoordinator(MapsServiceCore &service, SlamSnapshotExchange &exchange,
                   SaveCoordinatorConfig config);
 
-  std::string SaveMapJson(const std::string &request_id, const std::string &map_id);
+  std::string SaveMapJson(const std::string &request_id, const std::string &map_id,
+                          bool auto_process = true);
   std::string RetrySaveMapJson(const std::string &job_id);
   std::string CancelSaveMapJson(const std::string &job_id);
   void Poll();
@@ -79,7 +84,6 @@ class SaveCoordinator final {
   SaveCoordinatorConfig config_;
   std::mutex mutex_;
   std::unordered_map<std::string, Pending> pending_;
-  std::unordered_map<std::string, std::string> current_capture_;
   std::uint64_t next_capture_attempt_{0U};
 };
 

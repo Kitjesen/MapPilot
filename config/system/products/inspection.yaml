@@ -1,36 +1,20 @@
 schema_version: lingtu.runtime_graph.product.v3
 name: inspection
 topics:
-  - /tf
-  - /slam/odometry
-  - /slam/registered_cloud
-  - /slam/map_observation
-  - /slam/map_geometry_snapshot
-  - /slam/map_geometry_applied
-  - /slam/map_cloud
-  - /slam/localization_health
   - /maps/state
   - /maps/scene
+  - /tf
+  - /slam/map_cloud
   - /maps/activation/request
   - /maps/activation/ack
-  - /nav/command/request
-  - /nav/command/ack
   - /nav/goal/status
-  - /nav/state
-  - /nav/operator_motion/control
-  - /nav/operator_motion/sample
-  - /nav/operator_motion/ack
-  - /nav/operator_motion/status
   - /nav/inspection/task/request
   - /nav/inspection/task/ack
   - /nav/inspection/status
   - /nav/inspection/task/event
   - /nav/inspection/evidence/request
   - /nav/inspection/evidence/result
-  - /nav/global_path
-  - /nav/local_path
   - /nav/way_point
-  - /nav/cmd_vel
 capabilities:
   - saved_map_relocalization
   - operator_or_semantic_goal_source
@@ -62,25 +46,18 @@ host:
   llm: qwen
   inspection_evidence_max_rgb_odom_skew_s: 0.2
   run_startup_checks: true
+includes: [control, lidar, slam, maps, limits, follower, global, local, teleop, camera]
 native_nav:
-  global_planner: octoplanner3d
   # Inspection follows the same saved-map navigation chain as nav:
   # OctoPlanner3D plans the route and SCAN owns local execution.
   tick_hz: 100.0
   local_planner: scan
-  path_follower_max_speed_mps: 1.4142135623730951
-  path_follower_max_accel_mps2: 4.0
-  path_follower_max_yaw_accel_rad_s2: 4.0
-  braking_deceleration_mps2: 4.0
-  teleop_max_speed_mps: 1.0
-  teleop_max_yaw_rate_rad_s: 1.0
-  path_follower_max_yaw_rate_rad_s: 1.0
+  follower:
+    max_yaw_rate_rad_s: 1.0
   use_traversability_cost: false
-  allow_teleop_takeover: true
-  teleop_local_planner: true
-parameters:
-  scan_follower.max_vx_mps: 1.0
-  scan_follower.max_vy_mps: 1.0
+  teleop:
+    takeover: true
+    planner: true
 processes:
   - lidar
   - imu

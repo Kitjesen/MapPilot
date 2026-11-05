@@ -7,7 +7,8 @@ This directory contains offline-only helpers for the fixed three-way map compari
 3. new prune + new saved-ray replay.
 
 The runner copies one complete saved-map snapshot into three candidate directories. It never
-edits the source snapshot or an active map. `map.pcd.preclean` is preferred when present; use
+edits the source snapshot or an active map. Input preference is `map.before_clean.pcd`,
+then legacy `map.pcd.preclean`, then `map.pcd`; use
 `--input-pcd` to select another original PCD from the same snapshot.
 
 Build the evidence tool separately from the Maps runtime:

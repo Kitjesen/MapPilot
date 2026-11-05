@@ -113,12 +113,10 @@ int main() {
           "start-only plan appended an unplanned goal segment");
 
   auto body_context = first;
-  body_context.request.body = std::make_shared<lingtu::nav::collision::Body>();
-  body_context.request.start.yaw = 0.7;
-  body_context.request.goal.yaw = -0.4;
+  body_context.local_body = std::make_shared<lingtu::nav::collision::Body>();
   require(task.start(body_context), "body plan did not start");
   const auto body_result = waitForResult(task);
-  require(body_result && body_result->context.request.body == body_context.request.body,
+  require(body_result && body_result->context.local_body == body_context.local_body,
           "asynchronous plan lost its immutable body snapshot");
   auto xyz_result = *body_result;
   for (auto &point : xyz_result.result.path) point.yaw.reset();

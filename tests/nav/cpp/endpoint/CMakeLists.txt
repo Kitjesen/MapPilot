@@ -1,5 +1,7 @@
 # Endpoint-focused tests. Production endpoint targets remain under ../../endpoint.
 
+link_libraries(lingtu_settings)
+
 set(_ENDPOINT_DIR "${LINGTU_NAV_CPP_ROOT}/endpoint")
 set(_LINGTU_ROOT "${LINGTU_NAV_CPP_ROOT}/../../..")
 set(_NAV_COMMANDS_CPP_DIR "${LINGTU_NAV_CPP_ROOT}/client")
@@ -230,6 +232,9 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/autonomy.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/diagnostics.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/final.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/authority.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/input/planner.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/input/obstacle.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/safety/stop.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/safety/command.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/task.cpp"
@@ -243,7 +248,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}"
     "${LINGTU_NAV_CPP_ROOT}"
     "${LINGTU_NAV_KERNEL_DIR}/include")
-  target_link_libraries(test_active_path_replan_cycle PRIVATE Threads::Threads)
+  target_link_libraries(test_active_path_replan_cycle PRIVATE Threads::Threads lingtu_nav_navigation lingtu_nav_velocity_smoother)
   target_compile_options(test_active_path_replan_cycle PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
@@ -705,6 +710,9 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/teleop.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/diagnostics.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/final.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/authority.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/input/planner.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/input/obstacle.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/safety/command.cpp")
   target_include_directories(test_teleop_tick_controller PRIVATE
     "${LINGTU_SRC_ROOT}"
@@ -716,7 +724,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_KERNEL_DIR}/include"
     "${_LINGTU_EXPLORE_CPP_DIR}")
   target_link_libraries(test_teleop_tick_controller PRIVATE
-    lingtu_nav_navigation)
+    lingtu_nav_navigation lingtu_nav_velocity_smoother)
   target_compile_options(test_teleop_tick_controller PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
@@ -731,9 +739,15 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
       "${LINGTU_NAV_TESTS_DIR}/endpoint/test_autonomy_tick_controller.cpp")
   add_executable(test_autonomy_tick_controller
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_autonomy_tick_controller.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/input/gate.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/nav_status_writer.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/status_snapshot_file_writer.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/autonomy.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/diagnostics.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/final.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/authority.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/input/planner.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/input/obstacle.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/safety/command.cpp")
   target_include_directories(test_autonomy_tick_controller PRIVATE
     "${LINGTU_SRC_ROOT}"
@@ -744,7 +758,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}"
     "${LINGTU_NAV_KERNEL_DIR}/include")
   target_link_libraries(test_autonomy_tick_controller PRIVATE
-    lingtu_nav_navigation)
+    lingtu_nav_navigation lingtu_nav_velocity_smoother)
   target_compile_options(test_autonomy_tick_controller PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
@@ -841,6 +855,14 @@ endif()
 
 if(LINGTU_NAV_CPP_BUILD_ENDPOINT)
 if(LINGTU_NAV_CPP_BUILD_TESTS)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(
+  NAME test_task_speed_endpoint
+  COMMAND "${CMAKE_COMMAND}" -E env "PYTHONPATH=${_LINGTU_ROOT}/src"
+    "${Python3_EXECUTABLE}" "${_NAV_TESTS_DIR}/test_task_speed_endpoint.py"
+    --endpoint "$<TARGET_FILE:navd>"
+    --client "$<TARGET_FILE:lingtu_nav_client>")
+set_tests_properties(test_task_speed_endpoint PROPERTIES TIMEOUT 45)
 if(TARGET octoplanner3d_runtime)
   add_executable(test_semantic_view_query
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_semantic_view_query.cpp"
@@ -996,6 +1018,9 @@ if(NOT TARGET test_active_path_replan_cycle
     "${_ENDPOINT_DIR}/nav/control/autonomy.cpp"
     "${_ENDPOINT_DIR}/nav/control/diagnostics.cpp"
     "${_ENDPOINT_DIR}/nav/control/final.cpp"
+    "${_ENDPOINT_DIR}/nav/control/authority.cpp"
+    "${_ENDPOINT_DIR}/nav/input/planner.cpp"
+    "${_ENDPOINT_DIR}/nav/input/obstacle.cpp"
     "${_ENDPOINT_DIR}/nav/safety/stop.cpp"
     "${_ENDPOINT_DIR}/nav/safety/command.cpp"
     "${_ENDPOINT_DIR}/nav/app/goal/task.cpp"
@@ -1009,7 +1034,7 @@ if(NOT TARGET test_active_path_replan_cycle
     "${_NAV_CORE_DIR}"
     "${_NAV_KERNEL_DIR}/include"
     ${_EP_DIRS})
-  target_link_libraries(test_active_path_replan_cycle PRIVATE Threads::Threads)
+  target_link_libraries(test_active_path_replan_cycle PRIVATE Threads::Threads lingtu_nav_navigation lingtu_nav_velocity_smoother)
   lingtu_endpoint_enable_warnings(test_active_path_replan_cycle)
   add_test(NAME test_active_path_replan_cycle
            COMMAND test_active_path_replan_cycle)
@@ -1638,6 +1663,9 @@ if(NOT TARGET test_teleop_tick_controller
     "${_ENDPOINT_DIR}/nav/control/teleop.cpp"
     "${_ENDPOINT_DIR}/nav/control/diagnostics.cpp"
     "${_ENDPOINT_DIR}/nav/control/final.cpp"
+    "${_ENDPOINT_DIR}/nav/control/authority.cpp"
+    "${_ENDPOINT_DIR}/nav/input/planner.cpp"
+    "${_ENDPOINT_DIR}/nav/input/obstacle.cpp"
     "${_ENDPOINT_DIR}/nav/safety/command.cpp")
   target_include_directories(test_teleop_tick_controller PRIVATE
     "${_ENDPOINT_DIR}"
@@ -1648,7 +1676,7 @@ if(NOT TARGET test_teleop_tick_controller
     "${_EXPLORE_CPP_DIR}"
     ${_EP_DIRS})
   target_link_libraries(test_teleop_tick_controller PRIVATE
-    lingtu_nav_navigation)
+    lingtu_nav_navigation lingtu_nav_velocity_smoother)
   lingtu_endpoint_enable_warnings(test_teleop_tick_controller)
   add_test(
     NAME test_teleop_tick_controller
@@ -1660,9 +1688,15 @@ if(NOT TARGET test_autonomy_tick_controller
       "${_NAV_ENDPOINT_TESTS_DIR}/test_autonomy_tick_controller.cpp")
   add_executable(test_autonomy_tick_controller
     "${_NAV_ENDPOINT_TESTS_DIR}/test_autonomy_tick_controller.cpp"
+    "${_ENDPOINT_DIR}/nav/input/gate.cpp"
+    "${_ENDPOINT_DIR}/nav/status/nav_status_writer.cpp"
+    "${_ENDPOINT_DIR}/nav/status/status_snapshot_file_writer.cpp"
     "${_ENDPOINT_DIR}/nav/control/autonomy.cpp"
     "${_ENDPOINT_DIR}/nav/control/diagnostics.cpp"
     "${_ENDPOINT_DIR}/nav/control/final.cpp"
+    "${_ENDPOINT_DIR}/nav/control/authority.cpp"
+    "${_ENDPOINT_DIR}/nav/input/planner.cpp"
+    "${_ENDPOINT_DIR}/nav/input/obstacle.cpp"
     "${_ENDPOINT_DIR}/nav/safety/command.cpp")
   target_include_directories(test_autonomy_tick_controller PRIVATE
     "${_ENDPOINT_DIR}"
@@ -1672,7 +1706,7 @@ if(NOT TARGET test_autonomy_tick_controller
     "${_NAV_KERNEL_DIR}/include"
     ${_EP_DIRS})
   target_link_libraries(test_autonomy_tick_controller PRIVATE
-    lingtu_nav_navigation)
+    lingtu_nav_navigation lingtu_nav_velocity_smoother)
   lingtu_endpoint_enable_warnings(test_autonomy_tick_controller)
   add_test(
     NAME test_autonomy_tick_controller

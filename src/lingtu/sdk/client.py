@@ -318,9 +318,10 @@ class LingTuClient:
         name: str | None = None,
         *,
         request_id: str | None = None,
+        auto_process: bool = True,
     ) -> CommandResult:
         """Compatibility alias for map.save()."""
-        return self.map.save(name, request_id=request_id)
+        return self.map.save(name, request_id=request_id, auto_process=auto_process)
 
     def save_map_and_wait(
         self,
@@ -329,9 +330,14 @@ class LingTuClient:
         request_id: str | None = None,
         timeout: float = 300.0,
         poll_interval: float = 1.0,
+        auto_process: bool = True,
+        wait_for_source: bool = False,
     ) -> dict[str, Any]:
         """Compatibility alias for map.save_and_wait()."""
-        return self.map.save_and_wait(name, request_id=request_id, timeout=timeout, poll_interval=poll_interval)
+        return self.map.save_and_wait(
+            name, request_id=request_id, timeout=timeout, poll_interval=poll_interval,
+            auto_process=auto_process, wait_for_source=wait_for_source,
+        )
 
     def get_map_operation(self, operation_id: str) -> dict[str, Any]:
         """Compatibility alias for map.operation()."""

@@ -3652,6 +3652,24 @@ NavigationCommandReceipt Client::NavigationCommands::resumeTask(
       message, task_id, request_id, CommandKind::TaskResume, timeout_ms);
 }
 
+NavigationCommandReceipt Client::NavigationCommands::setTaskSpeedLimit(
+    const std::string& task_id,
+    double max_speed_mps,
+    int timeout_ms,
+    const std::string& requested_id) {
+  const std::string request_id = requested_id.empty()
+      ? makeRequestId(CommandKind::TaskSpeedLimit) : requested_id;
+  lingtu_dds_NavigationCommandRequest message{};
+  fillHeader(message.header, nowSeconds(), "map");
+  message.task_id = const_cast<char*>(task_id.c_str());
+  message.request_id = const_cast<char*>(request_id.c_str());
+  message.kind = static_cast<std::int32_t>(CommandKind::TaskSpeedLimit);
+  message.max_speed_mps = max_speed_mps;
+  message.reason = const_cast<char*>("operator_speed_limit");
+  return owner_.impl_->writeCommandReceipt(
+      message, task_id, request_id, CommandKind::TaskSpeedLimit, timeout_ms);
+}
+
 void Client::NavigationCommands::stop(
     const std::string& reason,
     int timeout_ms,

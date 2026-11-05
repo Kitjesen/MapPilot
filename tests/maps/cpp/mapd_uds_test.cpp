@@ -253,9 +253,55 @@ int main() {
   MapsServiceCore service(MapsServiceConfig{MapStoreConfig{maps_root}});
   assert(service.Store().SetActiveMap("map_a", false).ok);
 
+  lingtu::maps::SaveMapRequest capture_request;
+  capture_request.request_id = "source-job";
+  capture_request.map_id = "captured-map";
+  capture_request.auto_process = false;
+  const auto begun = service.BeginSaveMapJson(capture_request);
+  assert(lingtu::maps::JsonObjectBoolAtPath(begun, {"accepted"}) == true);
+  const auto capture_dir = lingtu::maps::JsonObjectStringAtPath(begun, {"status", "capture_dir"});
+  assert(capture_dir.has_value());
+  Write(std::filesystem::path(*capture_dir) / "map.pcd", "original pcd payload");
+  lingtu::maps::MapSnapshot snapshot;
+  snapshot.snapshot_id = "source-snapshot";
+  snapshot.source_dir = *capture_dir;
+  snapshot.frame_id = "map";
+  snapshot.slam_boot_id = "slam-source-test";
+  snapshot.product_session_id = "source-session";
+  snapshot.reset_epoch = 1;
+  snapshot.first_sequence = 1;
+  snapshot.last_sequence = 1;
+  snapshot.observation_sequence = 1;
+  snapshot.source_point_count = 1;
+  snapshot.slam_healthy = true;
+  const auto captured = service.ProvideSaveMapSnapshotJson("source-job", snapshot);
+  assert(lingtu::maps::JsonObjectBoolAtPath(captured, {"accepted"}) == true);
+  assert(lingtu::maps::JsonObjectStringAtPath(captured, {"status", "state"}) == "CAPTURED");
+
   MapQueryCore query(service);
   QueryServer server(query, QueryServerConfig{socket_path, 1024U * 1024U, 50U});
   server.Start();
+
+  const auto source = Query(socket_path, Opcode::kOpenArtifact, R"({"job_id":"source-job"})");
+#if defined(_WIN32)
+  assert(source.status == Status::kError);
+  assert(source.json.find("unsupported_platform") != std::string::npos);
+#else
+  assert(source.status == Status::kOk);
+  assert(source.fd >= 0);
+  assert(ReadFd(source.fd) == "original pcd payload");
+  ::close(source.fd);
+  assert(lingtu::maps::JsonObjectStringAtPath(source.json, {"job_id"}) == "source-job");
+  assert(source.json.find(*capture_dir) == std::string::npos);
+  assert(source.json.find("content_epoch") == std::string::npos);
+  const auto missing_source = Query(socket_path, Opcode::kOpenArtifact, R"({"job_id":"unknown"})");
+  assert(missing_source.status == Status::kError);
+  assert(missing_source.json.find("saved_source_missing") != std::string::npos);
+#endif
+  const auto ambiguous_source = Query(socket_path, Opcode::kOpenArtifact,
+      R"({"job_id":"source-job","map_id":"map_a","capability":"source_pointcloud"})");
+  assert(ambiguous_source.status == Status::kError);
+  assert(ambiguous_source.json.find("bad_request") != std::string::npos);
 
   const QuerySocket idle = OpenIdleClient(socket_path);
   std::this_thread::sleep_for(std::chrono::milliseconds(150));

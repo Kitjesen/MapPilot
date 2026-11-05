@@ -2592,8 +2592,10 @@ motion separately. A locked target does not imply that the robot is moving.
 When the target is not visible, retained coordinates are labelled as the last
 observed map position. Native motion is read through the existing freshness
 check; `QUIET`, a cancellation acknowledgement and task termination do not
-mean confirmed physical stop. Only `motion.stop_confirmation = CONFIRMED`
-does. Native task reasons are attributed to following only for a matching
+mean confirmed physical stop. `motion.stop_confirmation = CONFIRMED` confirms
+the stop transaction's configured evidence; a goal-reached transaction can
+confirm driver acceptance without continuous physical-stillness evidence.
+Native task reasons are attributed to following only for a matching
 task ID; robot-wide motion conditions remain a separate fact.
 
 Five focused regressions failed before repair and pass after it. The related

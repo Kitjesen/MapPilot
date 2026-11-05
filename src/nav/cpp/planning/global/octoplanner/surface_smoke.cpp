@@ -28,6 +28,7 @@ struct OctoPlannerGridQueryTest {
             "shared support query lost inferred or stacked terrain");
     require(!raw.height({.025,.025,0},.05) && !repaired.height({.025,.025,1},.05),
             "shared support query fabricated an unsupported height");
+
     PlannerConfig config;
     config.robot_radius=.1; config.body_clearance_below_m=.1; config.body_clearance_above_m=.25;
     config.support_height_m=.35; config.support_height_tolerance_m=.05;

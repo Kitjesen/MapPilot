@@ -12,8 +12,8 @@ geometry:
   collision_cylinder_radius: 0.40
   collision_cylinder_offset: 0.25
   collision_hard_margin: 0.08
-  # Checked-in MJCF collision primitives at v4_nominal_stand; no live joint FK.
-  navigation_body_file: "body/thunderv4_nominal.body2"
+  # Overall footprint and upper-body height derived from the checked-in MJCF.
+  navigation_body_file: "body/thunderv4_navigation.body2"
   collision_clearance_below: 0.25
   collision_clearance_above: 0.35
   sensor_offset_x: 0.3
@@ -22,8 +22,6 @@ geometry:
 speed:
   max_linear: 1.0
   max_angular: 1.0
-  max_speed: 0.875
-  autonomy_speed: 0.875
 
 safety:
   obstacle_height_thre: 0.2
@@ -53,8 +51,6 @@ driver:
   tls_server_name: ""
 
 lidar:
-  frame_id: livox_frame
-  publish_freq: 10.0
   network_interface: eth1
   lidar_ip: 192.168.1.178
   host_ip: 192.168.1.5

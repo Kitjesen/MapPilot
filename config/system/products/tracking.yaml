@@ -4,73 +4,21 @@ default_variant: standard
 variants:
   standard: {}
   camera:
+    includes: [camera]
+    processes_add: [camera, video]
+    optional_processes_add: [video]
+    topics_add: [/camera/color/image_raw, /camera/depth/image_raw, /camera/color/camera_info]
+    capabilities_add: [camera_preview]
     # Operator video preview shares the RGB source used by person perception.
-    processes: [lidar, imu, slam, maps, traversability, nav, driver, camera, video, host]
-    optional_processes: [video]
-    topics:
-      - /tf
-      - /slam/odometry
-      - /slam/registered_cloud
-      - /slam/map_observation
-      - /slam/map_geometry_snapshot
-      - /slam/map_geometry_applied
-      - /slam/localization_health
-      - /maps/state
-      - /maps/scene
-      - /maps/activation/request
-      - /maps/activation/ack
-      - /nav/command/request
-      - /nav/command/ack
-      - /nav/goal/status
-      - /nav/state
-      - /nav/operator_motion/control
-      - /nav/operator_motion/sample
-      - /nav/operator_motion/ack
-      - /nav/operator_motion/status
-      - /nav/traversability
-      - /nav/global_path
-      - /nav/local_path
-      - /nav/way_point
-      - /nav/cmd_vel
-      - /camera/color/image_raw
-      - /camera/depth/image_raw
-      - /camera/color/camera_info
-    capabilities:
-      - saved_map_relocalization
-      - explicit_goal_tracking
-      - local_planner_collision_and_traversability_scoring
-      - path_follower_pre_command_output
-      - final_cmd_vel_single_writer
-      - operator_motion_typed_dds_interface
-      - native_operator_motion_authority
-      - operator_teleop_takeover_with_safety_veto
-      - operator_assisted_local_planner_takeover
-      - camera_preview
 topics:
-  - /tf
-  - /slam/odometry
-  - /slam/registered_cloud
-  - /slam/map_observation
-  - /slam/map_geometry_snapshot
-  - /slam/map_geometry_applied
-  - /slam/localization_health
   - /maps/state
   - /maps/scene
+  - /tf
   - /maps/activation/request
   - /maps/activation/ack
-  - /nav/command/request
-  - /nav/command/ack
   - /nav/goal/status
-  - /nav/state
-  - /nav/operator_motion/control
-  - /nav/operator_motion/sample
-  - /nav/operator_motion/ack
-  - /nav/operator_motion/status
   - /nav/traversability
-  - /nav/global_path
-  - /nav/local_path
   - /nav/way_point
-  - /nav/cmd_vel
 capabilities:
   - saved_map_relocalization
   - explicit_goal_tracking
@@ -92,28 +40,20 @@ online_hot_switch_supported: false
 host:
   capabilities: [gateway, navigation_skills, goal_commands, semantic]
   llm: kimi
-  llm_model: kimi-k3
-  llm_base_url: https://api.moonshot.cn/v1
-  llm_api_key_env: MOONSHOT_API_KEY
-  llm_timeout_sec: 30.0
   default_classes: person
   run_startup_checks: true
+includes: [control, lidar, slam, maps, limits, follower, global, local, teleop, camera]
 native_nav:
-  global_planner: octoplanner3d
   local_planner: cmu
   local_planners: [cmu, scan]
   # SCAN requires the native control loop to run at its supported cadence.
   tick_hz: 100.0
-  path_follower_max_speed_mps: 1.4142135623730951
-  path_follower_max_accel_mps2: 4.0
-  path_follower_max_yaw_accel_rad_s2: 4.0
-  braking_deceleration_mps2: 4.0
-  teleop_max_speed_mps: 1.0
-  teleop_max_yaw_rate_rad_s: 1.0
-  path_follower_max_yaw_rate_rad_s: 1.0
+  follower:
+    max_yaw_rate_rad_s: 1.0
   use_traversability_cost: true
-  allow_teleop_takeover: true
-  teleop_local_planner: true
+  teleop:
+    takeover: true
+    planner: true
 processes:
   - lidar
   - imu
@@ -134,6 +74,3 @@ critical_modules:
 forbidden_modules:
   - SimEndpointDriverModule
   - SemanticPlannerModule
-parameters:
-  scan_follower.max_vx_mps: 1.0
-  scan_follower.max_vy_mps: 1.0

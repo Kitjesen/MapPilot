@@ -1,3 +1,5 @@
+#include <lingtu/settings.hpp>
+
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -12,7 +14,7 @@
 #endif
 
 #include "camera.hpp"
-#include "camera_record.hpp"
+#include "record_writer.hpp"
 
 namespace {
 
@@ -42,23 +44,23 @@ static_assert(
     camera_record::kFormatDepthU16);
 
 struct Options {
-  std::string sdk_config_path;
+  std::string sdk_config_path{lingtu::settings::camera::camera::orbbec::sdk_config};
   std::string serial_number;
   std::string uid;
-  int product_id = 0;
-  uint32_t device_index = 0;
-  bool use_device_index = false;
-  uint32_t connect_timeout_ms = 10000;
-  uint32_t color_width = 640;
-  uint32_t color_height = 480;
-  uint32_t color_fps = 30;
-  uint32_t depth_width = 640;
-  uint32_t depth_height = 480;
-  uint32_t depth_fps = 30;
-  uint32_t timeout_ms = 1000;
-  uint32_t startup_frame_timeout_ms = 10000;
+  int product_id = std::stoi(lingtu::settings::camera::camera::orbbec::product_id, nullptr, 0);
+  uint32_t device_index = lingtu::settings::camera::camera::orbbec::device_index;
+  bool use_device_index = true;
+  uint32_t connect_timeout_ms = lingtu::settings::camera::camera::orbbec::connect_timeout_ms;
+  uint32_t color_width = lingtu::settings::camera::camera::capture::color_width;
+  uint32_t color_height = lingtu::settings::camera::camera::capture::color_height;
+  uint32_t color_fps = lingtu::settings::camera::camera::capture::color_fps;
+  uint32_t depth_width = lingtu::settings::camera::camera::capture::depth_width;
+  uint32_t depth_height = lingtu::settings::camera::camera::capture::depth_height;
+  uint32_t depth_fps = lingtu::settings::camera::camera::capture::depth_fps;
+  uint32_t timeout_ms = lingtu::settings::camera::camera::capture::timeout_ms;
+  uint32_t startup_frame_timeout_ms = lingtu::settings::camera::camera::capture::startup_timeout_ms;
   uint64_t max_frames = 0;
-  bool enable_frame_sync = false;
+  bool enable_frame_sync = lingtu::settings::camera::camera::orbbec::frame_sync;
   bool self_test = false;
 };
 
@@ -140,6 +142,8 @@ Options parse_args(int argc, char **argv) {
       options.sdk_config_path = next();
     } else if (arg == "--enable-frame-sync") {
       options.enable_frame_sync = true;
+    } else if (arg == "--no-frame-sync") {
+      options.enable_frame_sync = false;
     } else if (arg == "--self-test") {
       options.self_test = true;
     } else if (arg == "--help" || arg == "-h") {
@@ -213,24 +217,9 @@ void write_record(
   header.dist_p2 = dist_p2;
   header.dist_k3 = dist_k3;
 
-  const auto validation = camera_record::validateRecordHeader(header);
-  if (validation != camera_record::RecordValidation::kValid) {
-    throw std::runtime_error(camera_record::recordValidationReason(validation));
-  }
-  const auto payload_validation =
-      camera_record::validateRecordPayloadPointer(header, payload);
-  if (payload_validation != camera_record::RecordValidation::kValid) {
-    throw std::runtime_error(
-        camera_record::recordValidationReason(payload_validation));
-  }
-  std::cout.write(reinterpret_cast<const char *>(&header), sizeof(header));
-  if (payload_size > 0 && payload != nullptr) {
-    std::cout.write(reinterpret_cast<const char *>(payload), payload_size);
-  }
-  std::cout.flush();
-  if (!std::cout.good()) {
-    throw std::runtime_error("camera_record_output_failed");
-  }
+  camera_record::RecordWriter output(std::cout);
+  output.write(header, payload);
+  output.flush();
 }
 
 void emit_intrinsics_record(const Intrinsics &intrinsics) {

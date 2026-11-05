@@ -1,1 +1,1 @@
-"""Runtime service catalogs for product-specific system service names."""
+"""Service installation and readiness metadata for runtime environments."""

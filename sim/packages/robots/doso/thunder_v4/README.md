@@ -69,15 +69,19 @@ for callers without an explicit Body. Geometry changes require a new RunPlan and
 process; an existing inflated bitmap cannot be reinterpreted with smaller bounds.
 
 The formal sim RunPlan now selects
-`collision/thunderv4_nominal.body2` through `navigation_geometry.body_file`
-and passes its resolved path as `LINGTU_NAV_BODY_FILE`. This 38-part
-组合碰撞模型 is exported from MJCF `v4_nominal_stand`; the real platform copy
-comes from the same export. Native navigation places the fixed nominal parts
-using the measured body pose, including roll and pitch. It does not update
-individual parts from live joint angles or joint FK. Physical MuJoCo contacts
-continue to use the MJCF collision geoms. The dimensions and vertical
-clearances above remain support/map configuration and the single-OBB benchmark
-baseline; they no longer select the formal navigation collision model.
+`collision/thunderv4_navigation.body2` through `navigation_geometry.body_file`
+and passes its resolved path as `LINGTU_NAV_BODY_FILE`. The eight-part compound
+model has four chassis boxes and four leg-clearance boxes. Each leg box retains
+that leg's complete nominal XY footprint from hip, thigh, calf and wheel at
+MJCF `v4_nominal_stand`; its vertical range uses the hip and thigh. The raw outer
+bounds are 0.835000 × 0.598331 × 0.411549 m. The existing 8 cm horizontal margin
+expands the zero-yaw outer footprint to 0.995000 × 0.758331 m. The same export
+writes the real platform asset and records source coverage per part in JSON.
+Native navigation places the compound model at the query position and yaw.
+The lower legs and wheels retain their full physical collision geometry in
+MJCF. Their motion and low-object clearance need locomotion qualification.
+Vertical map-inflation and ground-support settings above keep their declared
+roles.
 
 MuJoCo's feeder checks stability using measured vertical clearance above physical
 terrain, not world Z. Its motion-evidence `min_base_height_m` and

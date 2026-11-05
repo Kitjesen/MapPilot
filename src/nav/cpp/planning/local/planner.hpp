@@ -6,6 +6,8 @@
  */
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <cstddef>
 #include <cmath>
 #include <cstdint>
@@ -31,25 +33,25 @@ const char *localPlannerBackendName(LocalPlannerBackend backend);
 
 struct ScanPlannerParams {
   static constexpr double kMinReferenceWaypointDistanceM = 0.5;
-  double voxelResolution = 0.05;
+  double voxelResolution{::lingtu::settings::maps::maps::occupancy::resolution_m};
   double bodyClearanceBelow = 0.25;
   double bodyClearanceAbove = 0.35;
   double cylinderOffset = 0.18;
   double cylinderRadius = 0.40;
-  double controlPointSpacing = 0.20;
-  double replanDistance = 1.0;
-  double noReplanDistance = 0.10;
-  double maxVelocity = kDefaultLinearSpeedMps;
-  double maxAcceleration = 2.0;
-  double planningHorizon = 3.5;
-  double smoothWeight = 1.0;
-  double collisionWeight = 1.0;
-  double feasibilityWeight = 0.1;
-  double fitnessWeight = 1.0;
-  double feasibilityTolerance = 0.5;
-  double velocityTolerance = 1.0;
-  double accelerationTolerance = 1.0;
-  double collisionDistance = 0.20;
+  double controlPointSpacing{::lingtu::settings::local::parameters::scan_planner::control_point_spacing_m};
+  double replanDistance{::lingtu::settings::local::parameters::scan_planner::replan_distance_m};
+  double noReplanDistance{::lingtu::settings::local::parameters::scan_planner::no_replan_distance_m};
+  double maxVelocity{::lingtu::settings::limits::native_nav::follower::max_speed_mps};
+  double maxAcceleration{::lingtu::settings::limits::native_nav::follower::max_accel_mps2};
+  double planningHorizon{::lingtu::settings::local::parameters::scan_planner::planning_horizon_m};
+  double smoothWeight{::lingtu::settings::local::parameters::scan_planner::smooth_weight};
+  double collisionWeight{::lingtu::settings::local::parameters::scan_planner::collision_weight};
+  double feasibilityWeight{::lingtu::settings::local::parameters::scan_planner::feasibility_weight};
+  double fitnessWeight{::lingtu::settings::local::parameters::scan_planner::fitness_weight};
+  double feasibilityTolerance{::lingtu::settings::local::parameters::scan_planner::feasibility_tolerance};
+  double velocityTolerance{::lingtu::settings::local::parameters::scan_planner::velocity_tolerance};
+  double accelerationTolerance{::lingtu::settings::local::parameters::scan_planner::acceleration_tolerance};
+  double collisionDistance{::lingtu::settings::local::parameters::scan_planner::collision_distance_m};
   // Existing executor body-axis capabilities; zero leaves legacy callers
   // governed by the vector speed limit alone.
   double maxBodyVx = 0.0;
@@ -60,54 +62,51 @@ struct LocalPlannerParams {
   LocalPlannerBackend backend = LocalPlannerBackend::Cmu;
   ScanPlannerParams scan{};
   // Endpoint input policy shared with recovery collision queries.
-  double localCollisionMaxAge = 0.50;
+  double localCollisionMaxAge{::lingtu::settings::local::parameters::local_collision_max_age_s};
   double vehicleLength = 0.6;
   double vehicleWidth = 0.6;
   bool twoWayDrive = true;
-  double adjacentRange = 3.5;
-  double obstacleHeightThre = 0.2;
-  double obstacleHeightMax = 1.2;
-  double groundHeightThre = 0.1;
-  double costHeightThre1 = 0.15;
-  double costHeightThre2 = 0.1;
+  double adjacentRange{::lingtu::settings::follower::native_nav::corridor_lookahead_m};
+  double obstacleHeightThre{::lingtu::settings::local::native_nav::local_planner_obstacle_height_min_m};
+  double obstacleHeightMax{::lingtu::settings::local::native_nav::local_planner_obstacle_height_max_m};
+  double groundHeightThre{::lingtu::settings::local::native_nav::cmu::ground_height_m};
+  double costHeightThre1{::lingtu::settings::local::native_nav::cmu::cost_height_high_m};
+  double costHeightThre2{::lingtu::settings::local::native_nav::cmu::cost_height_low_m};
   bool useCost = false;
   bool checkObstacle = true;
   bool checkRotObstacle = false;
   bool useTerrainAnalysis = false;
-  int pointPerPathThre = 2;
-  double minRelZ = -0.5;
-  double maxRelZ = 0.25;
-  double dirWeight = 0.02;
-  double dirThre = 90.0;
-  bool dirToVehicle = false;
-  double pathScale = 1.0;
-  double minPathScale = 0.75;
-  double pathScaleStep = 0.25;
-  bool pathScaleBySpeed = true;
-  double minPathRange = 1.0;
-  double pathRangeStep = 0.5;
-  bool pathRangeBySpeed = true;
-  bool pathCropByGoal = true;
+  int pointPerPathThre{::lingtu::settings::local::native_nav::cmu::points_per_path};
+  double dirWeight{::lingtu::settings::local::native_nav::cmu::direction_weight};
+  double dirThre{::lingtu::settings::local::native_nav::cmu::direction_threshold_deg};
+  bool dirToVehicle{::lingtu::settings::local::native_nav::cmu::direction_to_vehicle};
+  double pathScale{::lingtu::settings::local::native_nav::cmu::path_scale};
+  double minPathScale{::lingtu::settings::local::native_nav::cmu::min_path_scale};
+  double pathScaleStep{::lingtu::settings::local::native_nav::cmu::path_scale_step};
+  bool pathScaleBySpeed{::lingtu::settings::local::native_nav::cmu::scale_by_speed};
+  double minPathRange{::lingtu::settings::local::native_nav::cmu::min_path_range_m};
+  double pathRangeStep{::lingtu::settings::local::native_nav::cmu::path_range_step_m};
+  bool pathRangeBySpeed{::lingtu::settings::local::native_nav::cmu::range_by_speed};
+  bool pathCropByGoal{::lingtu::settings::local::native_nav::cmu::crop_by_goal};
   double maxSpeed = kDefaultLinearSpeedMps;
   double autonomySpeed = kDefaultLinearSpeedMps;
   double slopeWeight = 0.0;
-  double goalClearRange = 0.5;
-  double goalBehindRange = 0.8;
+  double goalClearRange{::lingtu::settings::local::native_nav::cmu::goal_clear_range_m};
   double nearFieldStopDis = 0.5;
   double footprintPadding = 0.1;
   double selfFilterPadding = 0.03;
   double freezeAng = 90.0;
   double freezeTime = 2.0;
   double omniDirGoalThre = 1.0;
-  int slowPathNumThre = 5;
-  int slowGroupNumThre = 1;
+  int slowPathNumThre{::lingtu::settings::local::native_nav::cmu::slow_path_count};
+  int slowGroupNumThre{::lingtu::settings::local::native_nav::cmu::slow_group_count};
   bool useTraversabilityCost = false;
   bool traversabilityNearFieldStop = false;
-  double traversabilityHardCost = 90.0;
-  double traversabilitySoftCost = 40.0;
-  double traversabilityWeight = 0.01;
-  int scoringThreads = 2;
-  int debugCandidateLimit = 0;
+  double traversabilityHardCost{::lingtu::settings::local::native_nav::traversability_hard_cost};
+  double traversabilitySoftCost{::lingtu::settings::local::native_nav::traversability_soft_cost};
+  double traversabilityWeight{::lingtu::settings::local::native_nav::traversability_weight};
+  int scoringThreads{::lingtu::settings::local::native_nav::local_planner_threads};
+  int debugCandidateLimit{::lingtu::settings::local::native_nav::local_planner_debug_candidates};
 };
 
 // Non-owning views used only for the duration of one synchronous plan call.
@@ -185,10 +184,6 @@ struct LocalCollisionMapView {
   [[nodiscard]] bool observedFreeBox(const Vec3 &minimum, const Vec3 &maximum) const noexcept;
   // Partial observations can confirm the current stance without clearing unknown cells.
   [[nodiscard]] bool observedClearBox(const Vec3 &minimum, const Vec3 &maximum) const noexcept;
-  // Grid-frame geometry against raw hits; unknown/outside cells add no obstacle.
-  // The owning endpoint validates the immutable bitmap snapshot before use.
-  [[nodiscard]] bool measuredOccupiedCylinder(const Vec3 &center, double radius,
-      double below, double above, bool upperHemisphere = false) const noexcept;
   [[nodiscard]] bool occupied(const Vec3 &planningPoint) const noexcept;
   [[nodiscard]] bool occupiedLinear(std::size_t linear) const noexcept;
   [[nodiscard]] Vec3 planningCellCenter(std::size_t linear) const noexcept;
@@ -318,9 +313,9 @@ struct LocalPlanRequest {
   // Resolved runtime linear-speed ceiling; zero uses configured planner limits.
   double maxLinearSpeedMps{0.0};
   // Optional body heading in the planning frame, independent of route tangent.
-  // Candidate collision checks retain the turn from the measured robot yaw.
+  // Explicit native pose stages keep this heading independent of route tangent.
   std::optional<double> bodyHeading{};
-  // Immutable fixed-joint collision geometry shared with global planning.
+  // Platform geometry for native motion checks; SCAN candidates use map inflation.
   std::shared_ptr<const lingtu::nav::collision::Body> body{};
   // Measured body attitude applied to nominal joint geometry in the yaw-only
   // frame. This does not reconstruct geometry from live joint angles.
@@ -329,7 +324,6 @@ struct LocalPlanRequest {
   // Local collision queries do not require whole-body floor observation.
   std::optional<double> supportHeightM;
   std::optional<double> supportHeightToleranceM;
-  lingtu::nav::collision::SupportQuery supportSurface;
 
   [[nodiscard]] const LocalRouteView *route() const noexcept;
   [[nodiscard]] const LocalRouteView *referenceRoute() const noexcept;
@@ -553,6 +547,11 @@ class LocalPlanner {
 
   LocalPlan plan(const LocalPlanRequest &request);
   LocalPlan plan(const LocalPlanRequest &request, const LocalPlanCancel &cancel);
+  [[nodiscard]] bool turnClear(const LocalPlanRequest &request, double targetYaw) const;
+  [[nodiscard]] bool sweepClear(const LocalPlanRequest &request,
+                                const std::vector<Pose> &poses) const;
+  [[nodiscard]] bool boundaryDepartureClear(const LocalPlanRequest &request,
+                                            const Vec3 &target) const;
   void pause();
   void reset();
 

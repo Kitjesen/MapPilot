@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-
 GROUPS = (
     ("old_clean_old_replay", "old_prune", "old_replay"),
     ("new_clean_old_replay", "new_prune", "old_replay"),
@@ -209,7 +208,13 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     source = args.source.resolve()
-    input_pcd = (args.input_pcd or (source / "map.pcd.preclean" if (source / "map.pcd.preclean").is_file() else source / "map.pcd")).resolve()
+    input_pcd = args.input_pcd
+    if input_pcd is None:
+        for filename in ("map.before_clean.pcd", "map.pcd.preclean", "map.pcd"):
+            input_pcd = source / filename
+            if input_pcd.is_file():
+                break
+    input_pcd = input_pcd.resolve()
     if source not in input_pcd.parents:
         raise ValueError("input PCD must belong to the source snapshot")
     gaps = source_gaps(source)

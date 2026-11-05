@@ -32,6 +32,8 @@
 
 namespace {
 
+namespace map_defaults = lingtu::settings::maps::maps;
+
 using lingtu::maps::JsonEscape;
 using lingtu::maps::JsonString;
 
@@ -77,14 +79,14 @@ struct Options {
   std::string product;
   std::string product_session_id;
   std::filesystem::path status_file;
-  double state_hz{2.0};
-  double cloud_hz{20.0};
-  double map_hz{2.0};
-  double scene_hz{2.0};
+  double state_hz{map_defaults::publish::state_hz};
+  double cloud_hz{map_defaults::publish::cloud_hz};
+  double map_hz{map_defaults::publish::map_hz};
+  double scene_hz{map_defaults::publish::scene_hz};
   std::filesystem::path map_root;
   bool query_enabled{true};
   std::filesystem::path query_socket;
-  std::size_t query_max_json_bytes{lingtu::maps::mapd::query::kDefaultMaxJsonBytes};
+  std::size_t query_max_json_bytes{map_defaults::capacity::query_json_bytes};
   Config engine;
   DdsLimits dds;
   SaveCoordinatorConfig save;
@@ -133,6 +135,12 @@ std::size_t ParseSize(const std::string &value, const char *name) {
   return static_cast<std::size_t>(parsed);
 }
 
+template <typename Value, typename Parser>
+auto EnvNumber(const char* name, Value fallback, Parser parse) -> decltype(parse("", name)) {
+  const auto value = EnvOr(name, "");
+  return value.empty() ? fallback : parse(value, name);
+}
+
 std::filesystem::path ResolveMapRoot() {
   const char *configured = std::getenv("NAV_MAP_DIR");
   if (configured != nullptr && configured[0] != '\0') {
@@ -158,10 +166,6 @@ int ParseInt(const std::string &value, const char *name) {
   return static_cast<int>(parsed);
 }
 
-double Probability(double log_odds) {
-  return 1.0 / (1.0 + std::exp(-log_odds));
-}
-
 double LogOdds(double probability, const char *name) {
   if (!(probability > 0.0) || !(probability < 1.0)) {
     throw std::invalid_argument(std::string(name) + " must be in (0, 1)");
@@ -182,80 +186,42 @@ void ConfigureOccupancy(Config *engine) {
     throw std::invalid_argument("mapd occupancy engine is required");
   }
   auto &occupancy = engine->occupancy;
-  const double default_slide =
-      static_cast<double>(occupancy.size_x / 2 - occupancy.roll_margin_x) * occupancy.resolution_m;
-  occupancy.resolution_m = ParseDouble(
-      EnvOr("LINGTU_MAPD_OCCUPANCY_RESOLUTION_M", std::to_string(occupancy.resolution_m)),
-      "LINGTU_MAPD_OCCUPANCY_RESOLUTION_M");
+  occupancy.resolution_m = EnvNumber("LINGTU_MAPD_OCCUPANCY_RESOLUTION_M", occupancy.resolution_m, ParseDouble);
   occupancy.size_x =
-      ParseInt(EnvOr("LINGTU_MAPD_OCCUPANCY_SIZE_X", std::to_string(occupancy.size_x)),
-               "LINGTU_MAPD_OCCUPANCY_SIZE_X");
+      EnvNumber("LINGTU_MAPD_OCCUPANCY_SIZE_X", occupancy.size_x, ParseInt);
   occupancy.size_y =
-      ParseInt(EnvOr("LINGTU_MAPD_OCCUPANCY_SIZE_Y", std::to_string(occupancy.size_y)),
-               "LINGTU_MAPD_OCCUPANCY_SIZE_Y");
+      EnvNumber("LINGTU_MAPD_OCCUPANCY_SIZE_Y", occupancy.size_y, ParseInt);
   occupancy.size_z =
-      ParseInt(EnvOr("LINGTU_MAPD_OCCUPANCY_SIZE_Z", std::to_string(occupancy.size_z)),
-               "LINGTU_MAPD_OCCUPANCY_SIZE_Z");
+      EnvNumber("LINGTU_MAPD_OCCUPANCY_SIZE_Z", occupancy.size_z, ParseInt);
   const double slide =
-      ParseDouble(EnvOr("LINGTU_MAPD_OCCUPANCY_SLIDE_M", std::to_string(default_slide)),
-                  "LINGTU_MAPD_OCCUPANCY_SLIDE_M");
+      EnvNumber("LINGTU_MAPD_OCCUPANCY_SLIDE_M", map_defaults::occupancy::slide_m, ParseDouble);
   occupancy.roll_margin_x = RollMargin(occupancy.size_x, occupancy.resolution_m, slide);
   occupancy.roll_margin_y = RollMargin(occupancy.size_y, occupancy.resolution_m, slide);
   occupancy.roll_margin_z = RollMargin(occupancy.size_z, occupancy.resolution_m, slide);
-  occupancy.max_ray_range_m = ParseDouble(
-      EnvOr("LINGTU_MAPD_OCCUPANCY_RAY_M", std::to_string(occupancy.max_ray_range_m)),
-      "LINGTU_MAPD_OCCUPANCY_RAY_M");
-  occupancy.local_update_range_x_m = ParseDouble(
-      EnvOr("LINGTU_MAPD_LOCAL_RANGE_X_M",
-            std::to_string(0.5 * occupancy.size_x * occupancy.resolution_m)),
-      "LINGTU_MAPD_LOCAL_RANGE_X_M");
-  occupancy.local_update_range_y_m = ParseDouble(
-      EnvOr("LINGTU_MAPD_LOCAL_RANGE_Y_M",
-            std::to_string(0.5 * occupancy.size_y * occupancy.resolution_m)),
-      "LINGTU_MAPD_LOCAL_RANGE_Y_M");
-  occupancy.local_update_range_z_m = ParseDouble(
-      EnvOr("LINGTU_MAPD_LOCAL_RANGE_Z_M",
-            std::to_string(0.5 * occupancy.size_z * occupancy.resolution_m)),
-      "LINGTU_MAPD_LOCAL_RANGE_Z_M");
+  occupancy.max_ray_range_m = EnvNumber("LINGTU_MAPD_OCCUPANCY_RAY_M", occupancy.max_ray_range_m, ParseDouble);
+  occupancy.local_update_range_x_m = 0.5 * occupancy.size_x * occupancy.resolution_m;
+  occupancy.local_update_range_y_m = 0.5 * occupancy.size_y * occupancy.resolution_m;
+  occupancy.local_update_range_z_m = 0.5 * occupancy.size_z * occupancy.resolution_m;
 
-  const double hit_probability = ParseDouble(
-      EnvOr("LINGTU_MAPD_OCCUPANCY_P_HIT", std::to_string(Probability(occupancy.hit_log_odds))),
-      "LINGTU_MAPD_OCCUPANCY_P_HIT");
-  const double miss_probability = ParseDouble(
-      EnvOr("LINGTU_MAPD_OCCUPANCY_P_MISS", std::to_string(Probability(-occupancy.miss_log_odds))),
-      "LINGTU_MAPD_OCCUPANCY_P_MISS");
-  const double min_probability = ParseDouble(
-      EnvOr("LINGTU_MAPD_OCCUPANCY_P_MIN", std::to_string(Probability(occupancy.min_log_odds))),
-      "LINGTU_MAPD_OCCUPANCY_P_MIN");
-  const double max_probability = ParseDouble(
-      EnvOr("LINGTU_MAPD_OCCUPANCY_P_MAX", std::to_string(Probability(occupancy.max_log_odds))),
-      "LINGTU_MAPD_OCCUPANCY_P_MAX");
+  const double hit_probability = EnvNumber("LINGTU_MAPD_OCCUPANCY_P_HIT", map_defaults::occupancy::p_hit, ParseDouble);
+  const double miss_probability = EnvNumber("LINGTU_MAPD_OCCUPANCY_P_MISS", map_defaults::occupancy::p_miss, ParseDouble);
+  const double min_probability = EnvNumber("LINGTU_MAPD_OCCUPANCY_P_MIN", map_defaults::occupancy::p_min, ParseDouble);
+  const double max_probability = EnvNumber("LINGTU_MAPD_OCCUPANCY_P_MAX", map_defaults::occupancy::p_max, ParseDouble);
   occupancy.hit_log_odds = LogOdds(hit_probability, "LINGTU_MAPD_OCCUPANCY_P_HIT");
   occupancy.miss_log_odds = -LogOdds(miss_probability, "LINGTU_MAPD_OCCUPANCY_P_MISS");
   occupancy.min_log_odds = LogOdds(min_probability, "LINGTU_MAPD_OCCUPANCY_P_MIN");
   occupancy.max_log_odds = LogOdds(max_probability, "LINGTU_MAPD_OCCUPANCY_P_MAX");
-  occupancy.occupied_probability = ParseDouble(
-      EnvOr("LINGTU_MAPD_OCCUPANCY_P_OCC", std::to_string(occupancy.occupied_probability)),
-      "LINGTU_MAPD_OCCUPANCY_P_OCC");
-  const double decay_after_s = ParseDouble(
-      EnvOr("LINGTU_MAPD_OCCUPANCY_DECAY_AFTER_S",
-            std::to_string(static_cast<double>(occupancy.decay_after_ns) * 1e-9)),
-      "LINGTU_MAPD_OCCUPANCY_DECAY_AFTER_S");
+  occupancy.occupied_probability = EnvNumber("LINGTU_MAPD_OCCUPANCY_P_OCC", occupancy.occupied_probability, ParseDouble);
+  const double decay_after_s = EnvNumber("LINGTU_MAPD_OCCUPANCY_DECAY_AFTER_S", static_cast<double>(occupancy.decay_after_ns) * 1e-9, ParseDouble);
   if (decay_after_s < 0.0 ||
       decay_after_s > static_cast<double>(std::numeric_limits<std::int64_t>::max()) * 1e-9) {
     throw std::invalid_argument("LINGTU_MAPD_OCCUPANCY_DECAY_AFTER_S is invalid");
   }
   occupancy.decay_after_ns =
       static_cast<std::int64_t>(std::llround(decay_after_s * 1e9));
-  occupancy.inflation_radius_m = ParseDouble(
-      EnvOr("LINGTU_MAPD_INFLATION_RADIUS_M", std::to_string(occupancy.inflation_radius_m)),
-      "LINGTU_MAPD_INFLATION_RADIUS_M");
-  occupancy.inflation_z_up_m = ParseDouble(
-      EnvOr("LINGTU_MAPD_INFLATION_Z_UP_M", std::to_string(occupancy.inflation_z_up_m)),
-      "LINGTU_MAPD_INFLATION_Z_UP_M");
-  occupancy.inflation_z_down_m = ParseDouble(
-      EnvOr("LINGTU_MAPD_INFLATION_Z_DOWN_M", std::to_string(occupancy.inflation_z_down_m)),
-      "LINGTU_MAPD_INFLATION_Z_DOWN_M");
+  occupancy.inflation_radius_m = EnvNumber("LINGTU_MAPD_INFLATION_RADIUS_M", occupancy.inflation_radius_m, ParseDouble);
+  occupancy.inflation_z_up_m = EnvNumber("LINGTU_MAPD_INFLATION_Z_UP_M", occupancy.inflation_z_up_m, ParseDouble);
+  occupancy.inflation_z_down_m = EnvNumber("LINGTU_MAPD_INFLATION_Z_DOWN_M", occupancy.inflation_z_down_m, ParseDouble);
 }
 
 void PrintUsage() {
@@ -278,15 +244,13 @@ void PrintUsage() {
             << "  --max-scene-bytes N maximum serialized MapScene payload bytes\n"
             << "  --max-voxel-snapshot-points N bounded scene voxel points\n"
             << "  --voxel-snapshot-radius M local voxel scene radius\n"
-            << "  --surface-residual-m M maximum ground fit residual (default 0.04)\n"
-            << "  --surface-min-columns N minimum distinct ground XY samples (default 3)\n"
+            << "  --surface-residual-m M maximum ground fit residual\n"
+            << "  --surface-min-columns N minimum distinct ground XY samples\n"
             << "  --max-voxels N     live voxel runtime hard limit\n"
             << "  --max-accumulated-cells N accumulated runtime cell hard limit\n"
             << "  --max-accumulated-blocks N accumulated runtime block hard limit\n"
             << "  --min-range M       near-point filter\n"
             << "  --max-range M       far-point filter\n"
-            << "  --carve-min-z M     column clearing lower sensor-relative Z\n"
-            << "  --carve-max-z M     column clearing upper sensor-relative Z\n"
             << "  --decay-ms MS       independent decay timer period\n"
             << "  --stale-ms MS       live input timeout\n";
 }
@@ -298,28 +262,37 @@ Options ParseOptions(int argc, char **argv) {
   options.save.product = options.product;
   options.product_session_id = EnvOr("LINGTU_PRODUCT_SESSION_ID", "");
   options.save.product_session_id = options.product_session_id;
+  options.state_hz = EnvNumber("LINGTU_MAPD_STATE_HZ", options.state_hz, ParseDouble);
+  options.cloud_hz = EnvNumber("LINGTU_MAPD_CLOUD_HZ", options.cloud_hz, ParseDouble);
+  options.map_hz = EnvNumber("LINGTU_MAPD_MAP_HZ", options.map_hz, ParseDouble);
+  options.scene_hz = EnvNumber("LINGTU_MAPD_SCENE_HZ", options.scene_hz, ParseDouble);
+  options.engine.max_points_per_observation = EnvNumber("LINGTU_MAPD_MAX_POINTS", options.engine.max_points_per_observation, ParseSize);
+  options.engine.min_range_m = static_cast<float>(EnvNumber("LINGTU_MAPD_MIN_RANGE_M", options.engine.min_range_m, ParseDouble));
+  options.engine.max_range_m = static_cast<float>(EnvNumber("LINGTU_MAPD_MAX_RANGE_M", options.engine.max_range_m, ParseDouble));
+  options.engine.decay_period = std::chrono::milliseconds(EnvNumber("LINGTU_MAPD_DECAY_MS", options.engine.decay_period.count(), ParseUnsigned));
+  options.engine.stale_after = std::chrono::milliseconds(EnvNumber("LINGTU_MAPD_STALE_MS", options.engine.stale_after.count(), ParseUnsigned));
+  options.engine.ground_surface.max_residual_m = EnvNumber("LINGTU_MAPD_SURFACE_RESIDUAL_M", options.engine.ground_surface.max_residual_m, ParseDouble);
+  options.engine.ground_surface.min_support_columns = EnvNumber("LINGTU_MAPD_SURFACE_MIN_COLUMNS", options.engine.ground_surface.min_support_columns, ParseInt);
   options.engine.build_extended_layers = EnvEnabled("LINGTU_MAPD_EXTENDED_LAYERS", true);
-  options.save.save_patches = EnvEnabled("LINGTU_MAP_SAVE_PATCHES", true);
+  options.save.save_patches = EnvEnabled("LINGTU_MAP_SAVE_PATCHES", map_defaults::save::patches);
   auto &save_request = options.save.request_defaults;
-  const bool build_octomap = EnvEnabled("LINGTU_MAP_SAVE_BUILD_OCTOMAP", true);
+  const bool build_octomap = EnvEnabled("LINGTU_MAP_SAVE_BUILD_OCTOMAP", map_defaults::save::build_octomap);
   save_request.require.occupancy = false;
   save_request.require.octomap = build_octomap;
   save_request.require.esdf = false;
   save_request.require.traversability = false;
   save_request.require.semantic = false;
-  save_request.source.dynamic_filter_enabled = EnvEnabled("LINGTU_SAVE_DYNAMIC_FILTER", true);
+  save_request.source.dynamic_filter_enabled = EnvEnabled("LINGTU_SAVE_DYNAMIC_FILTER", map_defaults::save::dynamic_filter);
   save_request.source.dynamic_filter_required =
-      EnvEnabled("LINGTU_SAVE_DYNAMIC_FILTER_REQUIRED", true);
-  save_request.source.dynamic_filter_command = EnvOr("LINGTU_SAVE_DYNAMIC_FILTER_COMMAND", "");
+      EnvEnabled("LINGTU_SAVE_DYNAMIC_FILTER_REQUIRED", map_defaults::save::dynamic_filter_required);
+  if (const char* command = std::getenv("LINGTU_SAVE_DYNAMIC_FILTER_COMMAND")) {
+    save_request.source.dynamic_filter_command = command;
+  }
   save_request.source.dynamic_filter_timeout_sec =
-      ParseDouble(EnvOr("LINGTU_MAP_SAVE_DYNAMIC_FILTER_TIMEOUT_SEC", "300"),
-                  "LINGTU_MAP_SAVE_DYNAMIC_FILTER_TIMEOUT_SEC");
-  save_request.octomap.resolution = ParseDouble(EnvOr("LINGTU_MAP_SAVE_OCTOMAP_RESOLUTION",
-                                                std::to_string(save_request.octomap.resolution)),
-                                                "LINGTU_MAP_SAVE_OCTOMAP_RESOLUTION");
-  save_request.octomap.frame_id = EnvOr("LINGTU_MAP_FRAME", "map");
-  save_request.octomap.source_profile = EnvOr("LINGTU_PROFILE", "native_dds");
-  save_request.octomap.data_source = EnvOr("LINGTU_DATA_SOURCE", "field");
+      EnvNumber("LINGTU_MAP_SAVE_DYNAMIC_FILTER_TIMEOUT_SEC", map_defaults::save::dynamic_filter_timeout_s, ParseDouble);
+  save_request.octomap.resolution = EnvNumber("LINGTU_MAP_SAVE_OCTOMAP_RESOLUTION", save_request.octomap.resolution, ParseDouble);
+  save_request.octomap.source_profile = EnvOr("LINGTU_PROFILE", std::string{map_defaults::save::profile});
+  save_request.octomap.data_source = EnvOr("LINGTU_DATA_SOURCE", std::string{map_defaults::save::data_source});
   save_request.octomap.slam_source = "native_dds";
   save_request.octomap.localization_source = "native_dds";
   save_request.octomap.mapping_source = "save_map_product_chain";
@@ -338,33 +311,24 @@ Options ParseOptions(int argc, char **argv) {
   options.status_file = EnvOr("LINGTU_MAPD_STATUS_FILE", default_status);
   options.map_root = ResolveMapRoot();
   options.query_socket = DefaultQuerySocketPath();
-  options.query_max_json_bytes = ParseSize(EnvOr("LINGTU_MAPD_QUERY_MAX_JSON_BYTES", "1048576"),
-                                           "LINGTU_MAPD_QUERY_MAX_JSON_BYTES");
+  options.query_max_json_bytes = EnvNumber("LINGTU_MAPD_QUERY_MAX_JSON_BYTES", options.query_max_json_bytes, ParseSize);
   options.dds.max_cloud_bytes =
-      ParseSize(EnvOr("LINGTU_MAPD_MAX_CLOUD_BYTES", "16777216"), "LINGTU_MAPD_MAX_CLOUD_BYTES");
+      EnvNumber("LINGTU_MAPD_MAX_CLOUD_BYTES", map_defaults::capacity::cloud_bytes, ParseSize);
   options.dds.max_point_fields =
-      ParseSize(EnvOr("LINGTU_MAPD_MAX_POINT_FIELDS", "16"), "LINGTU_MAPD_MAX_POINT_FIELDS");
+      EnvNumber("LINGTU_MAPD_MAX_POINT_FIELDS", map_defaults::capacity::point_fields, ParseSize);
   options.dds.max_point_step =
-      ParseSize(EnvOr("LINGTU_MAPD_MAX_POINT_STEP", "64"), "LINGTU_MAPD_MAX_POINT_STEP");
+      EnvNumber("LINGTU_MAPD_MAX_POINT_STEP", map_defaults::capacity::point_step, ParseSize);
   options.dds.max_string_bytes =
-      ParseSize(EnvOr("LINGTU_MAPD_MAX_STRING_BYTES", "4096"), "LINGTU_MAPD_MAX_STRING_BYTES");
+      EnvNumber("LINGTU_MAPD_MAX_STRING_BYTES", map_defaults::capacity::string_bytes, ParseSize);
   options.dds.max_scene_bytes =
-      ParseSize(EnvOr("LINGTU_MAPD_MAX_SCENE_BYTES", "33554432"), "LINGTU_MAPD_MAX_SCENE_BYTES");
+      EnvNumber("LINGTU_MAPD_MAX_SCENE_BYTES", map_defaults::capacity::scene_bytes, ParseSize);
   options.engine.max_voxel_snapshot_points =
-      ParseSize(EnvOr("LINGTU_MAPD_MAX_VOXEL_SNAPSHOT_POINTS", "200000"),
-                "LINGTU_MAPD_MAX_VOXEL_SNAPSHOT_POINTS");
-  options.engine.voxel_snapshot_radius_m = static_cast<float>(ParseDouble(
-      EnvOr("LINGTU_MAPD_VOXEL_SNAPSHOT_RADIUS_M", "30"), "LINGTU_MAPD_VOXEL_SNAPSHOT_RADIUS_M"));
+      EnvNumber("LINGTU_MAPD_MAX_VOXEL_SNAPSHOT_POINTS", map_defaults::capacity::voxel_snapshot_points, ParseSize);
+  options.engine.voxel_snapshot_radius_m = static_cast<float>(EnvNumber("LINGTU_MAPD_VOXEL_SNAPSHOT_RADIUS_M", map_defaults::capacity::voxel_snapshot_radius_m, ParseDouble));
   options.engine.voxel.max_voxels =
-      ParseSize(EnvOr("LINGTU_MAPD_MAX_VOXELS", "500000"), "LINGTU_MAPD_MAX_VOXELS");
-  options.engine.accumulated.max_runtime_cells = ParseUnsigned(
-      EnvOr("LINGTU_MAPD_MAX_ACCUMULATED_CELLS", "2000000"), "LINGTU_MAPD_MAX_ACCUMULATED_CELLS");
-  options.engine.accumulated.max_runtime_blocks = ParseUnsigned(
-      EnvOr("LINGTU_MAPD_MAX_ACCUMULATED_BLOCKS", "4096"), "LINGTU_MAPD_MAX_ACCUMULATED_BLOCKS");
-  options.engine.column_carving_min_height_from_sensor_m = static_cast<float>(
-      ParseDouble(EnvOr("LINGTU_MAPD_CARVE_MIN_Z_M", "-0.7"), "LINGTU_MAPD_CARVE_MIN_Z_M"));
-  options.engine.column_carving_max_height_from_sensor_m = static_cast<float>(
-      ParseDouble(EnvOr("LINGTU_MAPD_CARVE_MAX_Z_M", "1.8"), "LINGTU_MAPD_CARVE_MAX_Z_M"));
+      EnvNumber("LINGTU_MAPD_MAX_VOXELS", map_defaults::capacity::voxels, ParseSize);
+  options.engine.accumulated.max_runtime_cells = EnvNumber("LINGTU_MAPD_MAX_ACCUMULATED_CELLS", map_defaults::capacity::accumulated_cells, ParseUnsigned);
+  options.engine.accumulated.max_runtime_blocks = EnvNumber("LINGTU_MAPD_MAX_ACCUMULATED_BLOCKS", map_defaults::capacity::accumulated_blocks, ParseUnsigned);
   ConfigureOccupancy(&options.engine);
 
   for (int index = 1; index < argc; ++index) {
@@ -418,14 +382,8 @@ Options ParseOptions(int argc, char **argv) {
           static_cast<float>(ParseDouble(next(), "--voxel-snapshot-radius"));
     } else if (argument == "--surface-residual-m") {
       options.engine.ground_surface.max_residual_m = ParseDouble(next(), "--surface-residual-m");
-      if (!(options.engine.ground_surface.max_residual_m > 0.0)) {
-        throw std::invalid_argument("--surface-residual-m must be positive");
-      }
     } else if (argument == "--surface-min-columns") {
       options.engine.ground_surface.min_support_columns = ParseInt(next(), "--surface-min-columns");
-      if (options.engine.ground_surface.min_support_columns < 3) {
-        throw std::invalid_argument("--surface-min-columns must be at least 3");
-      }
     } else if (argument == "--max-voxels") {
       options.engine.voxel.max_voxels = ParseSize(next(), "--max-voxels");
     } else if (argument == "--max-accumulated-cells") {
@@ -438,12 +396,6 @@ Options ParseOptions(int argc, char **argv) {
       options.engine.min_range_m = static_cast<float>(ParseDouble(next(), "--min-range"));
     } else if (argument == "--max-range") {
       options.engine.max_range_m = static_cast<float>(ParseDouble(next(), "--max-range"));
-    } else if (argument == "--carve-min-z") {
-      options.engine.column_carving_min_height_from_sensor_m =
-          static_cast<float>(ParseDouble(next(), "--carve-min-z"));
-    } else if (argument == "--carve-max-z") {
-      options.engine.column_carving_max_height_from_sensor_m =
-          static_cast<float>(ParseDouble(next(), "--carve-max-z"));
     } else if (argument == "--decay-ms") {
       options.engine.decay_period = std::chrono::milliseconds(ParseUnsigned(next(), "--decay-ms"));
     } else if (argument == "--stale-ms") {
@@ -451,6 +403,12 @@ Options ParseOptions(int argc, char **argv) {
     } else {
       throw std::invalid_argument("unknown argument: " + argument);
     }
+  }
+  if (!(options.engine.ground_surface.max_residual_m > 0.0)) {
+    throw std::invalid_argument("surface residual must be positive");
+  }
+  if (options.engine.ground_surface.min_support_columns < 3) {
+    throw std::invalid_argument("surface min columns must be at least 3");
   }
   if (options.domain_id < 0 || options.state_hz <= 0.0 || options.cloud_hz <= 0.0 ||
       options.map_hz <= 0.0 || options.scene_hz <= 0.0 || options.status_file.empty() ||

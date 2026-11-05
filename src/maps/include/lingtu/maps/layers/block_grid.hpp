@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -8,6 +10,8 @@
 #include <vector>
 
 namespace lingtu::maps {
+
+namespace map_defaults = lingtu::settings::maps::maps;
 
 struct BlockGridConfig {
   float cell_size_m{0.10F};
@@ -18,8 +22,8 @@ struct BlockGridConfig {
   float max_log_odds{4.0F};
   float occupied_threshold{0.60F};
   float prune_abs_log_odds_below{0.05F};
-  std::uint64_t max_runtime_cells{2000000ULL};
-  std::uint64_t max_runtime_blocks{4096ULL};
+  std::uint64_t max_runtime_cells{map_defaults::capacity::accumulated_cells};
+  std::uint64_t max_runtime_blocks{map_defaults::capacity::accumulated_blocks};
   std::uint64_t max_persisted_cells{20000000ULL};
 };
 

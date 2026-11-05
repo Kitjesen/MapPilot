@@ -1,4 +1,6 @@
 #pragma once
+
+#include <lingtu/settings.hpp>
 #include "lingtu/maps/layers/elevation.hpp"
 #include "lingtu/maps/layers/esdf.hpp"
 
@@ -24,6 +26,8 @@
 #include "lingtu/maps/mapd/activation.hpp"
 
 namespace lingtu::maps::mapd {
+
+namespace map_defaults = lingtu::settings::maps::maps;
 
 struct Pose {
   double x{0.0};
@@ -74,27 +78,27 @@ struct GeometryApplied {
 
 struct Config {
   bool build_extended_layers{true};
-  std::size_t max_points_per_observation{300000U};
-  float min_range_m{0.25F};
-  float max_range_m{30.0F};
+  std::size_t max_points_per_observation{map_defaults::input::max_points};
+  float min_range_m{static_cast<float>(map_defaults::input::min_range_m)};
+  float max_range_m{static_cast<float>(map_defaults::input::max_range_m)};
   float min_height_from_sensor_m{-2.0F};
   float max_height_from_sensor_m{3.0F};
   float column_carving_min_height_from_sensor_m{-0.7F};
   float column_carving_max_height_from_sensor_m{1.8F};
   float occupancy_min_height_from_sensor_m{-1.0F};
   float occupancy_max_height_from_sensor_m{2.0F};
-  std::chrono::milliseconds decay_period{250};
+  std::chrono::milliseconds decay_period{map_defaults::occupancy::decay_ms};
   std::chrono::milliseconds occupancy_update_period{50};
-  std::chrono::milliseconds stale_after{1000};
+  std::chrono::milliseconds stale_after{map_defaults::input::stale_ms};
   float accumulated_decay_factor{0.995F};
   float accumulated_snapshot_radius_m{30.0F};
   float accumulated_snapshot_min_z_from_sensor_m{-3.0F};
   float accumulated_snapshot_max_z_from_sensor_m{5.0F};
   std::size_t max_accumulated_snapshot_cells{200000U};
-  float voxel_snapshot_radius_m{30.0F};
+  float voxel_snapshot_radius_m{static_cast<float>(map_defaults::capacity::voxel_snapshot_radius_m)};
   float voxel_snapshot_min_z_from_sensor_m{-3.0F};
   float voxel_snapshot_max_z_from_sensor_m{5.0F};
-  std::size_t max_voxel_snapshot_points{200000U};
+  std::size_t max_voxel_snapshot_points{map_defaults::capacity::voxel_snapshot_points};
   layers::VoxelLayerConfig voxel = [] {
     layers::VoxelLayerConfig value;
     value.max_range_m = 0.0F;

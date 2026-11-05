@@ -1,14 +1,15 @@
 #include <gtest/gtest.h>
 
 #include "collision/body.hpp"
+#include "collision/body_io.hpp"
 #include "collision/terrain.hpp"
-#include "planning/global/octoplanner/body_query.hpp"
 #include "planning/local/scan/grid.hpp"
 
-#include <octomap/OcTree.h>
+#include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <memory>
-#include <optional>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -19,12 +20,8 @@ class BodySupportMapTest : public ::testing::Test {
  protected:
   static constexpr double resolution = .05;
   static constexpr int size = 40;
-  BodySupportMapTest() : tree(resolution), occupied((size * size * size + 7) / 8, 0),
+  BodySupportMapTest() : occupied((size * size * size + 7) / 8, 0),
                          free(occupied.size(), 255) {
-    for (int z = 0; z < size; ++z) for (int y = 0; y < size; ++y)
-      for (int x = 0; x < size; ++x)
-        tree.updateNode(-1 + (x + .5) * resolution, -1 + (y + .5) * resolution,
-                        -.5 + (z + .5) * resolution, false, true);
     for (int x = 0; x < size; ++x) for (int y = 0; y < size; ++y)
       set(x, y, 9, 1);
     body = std::make_shared<c::Body>();
@@ -47,16 +44,8 @@ class BodySupportMapTest : public ::testing::Test {
     const auto mask = static_cast<std::uint8_t>(1U << (index % 8U));
     occupied[index / 8] &= static_cast<std::uint8_t>(~mask);
     free[index / 8] &= static_cast<std::uint8_t>(~mask);
-    const double px = -1 + (x + .5) * resolution;
-    const double py = -1 + (y + .5) * resolution;
-    const double pz = -.5 + (z + .5) * resolution;
-    if (state == -1) tree.deleteNode(px, py, pz);
-    else {
-      auto *node = tree.updateNode(px, py, pz, state == 1, true);
-      node->setLogOdds(state == 1 ? 3.5f : -3.5f);
-      if (state == 1) occupied[index / 8] |= mask;
-      else free[index / 8] |= mask;
-    }
+    if (state == 1) occupied[index / 8] |= mask;
+    if (state == 0) free[index / 8] |= mask;
   }
 
   Grid local() {
@@ -73,29 +62,21 @@ class BodySupportMapTest : public ::testing::Test {
     return Grid(params,request);
   }
 
-  bool global(c::Pose pose = {}) {
-    return octoplanner3d::runtime::BodyQuery(tree,*body,overlay).pose(pose).free;
-  }
-
   void expect(bool accepted, c::Pose pose = {}) {
-    EXPECT_EQ(global(pose), accepted);
     auto grid = local();
     ASSERT_TRUE(grid.valid()) << grid.reason();
     EXPECT_EQ(grid.inflatedOccupancy({pose.position.x,pose.position.y,pose.position.z},pose.yaw) == 0,
               accepted);
   }
 
-  octomap::OcTree tree;
   std::vector<std::uint8_t> occupied, free;
   std::shared_ptr<c::Body> body;
   nav_kernel::LocalPlannerParams params;
   nav_kernel::LocalPlanRequest request;
-  lingtu::nav::plan::GlobalPlanTemporaryOverlay overlay;
 };
 
 TEST_F(BodySupportMapTest, DesignatedFootContactAndSweepsAreAccepted) {
   expect(true);
-  EXPECT_TRUE(octoplanner3d::runtime::BodyQuery(tree,*body,overlay).edge({{},0},{{.3,0,0},.5}));
   EXPECT_EQ(local().segmentInflatedOccupancy({0,0,0},0,{.3,0,0},.5),0);
   EXPECT_EQ(local().brakingOccupancy({{0,0,0},0},{.3,0,0},.1,1,1),0);
 }
@@ -124,7 +105,6 @@ TEST_F(BodySupportMapTest, OriginalHitsDistinguishFloorAndObstacleInSameVoxel) {
   auto grid = local();
   ASSERT_TRUE(grid.valid()) << grid.reason();
   EXPECT_NE(grid.inflatedOccupancy({},0),0);
-  EXPECT_FALSE(global());
 
   const auto bitmap = occupied;
   auto check = [&](const std::vector<c::Vec3>& points) {
@@ -133,17 +113,14 @@ TEST_F(BodySupportMapTest, OriginalHitsDistinguishFloorAndObstacleInSameVoxel) {
     local_request.environment.collision.terrain = terrain;
     const Grid refined(params,local_request);
     EXPECT_TRUE(refined.valid()) << refined.reason();
-    return std::make_pair(refined.inflatedOccupancy({},0),
-        octoplanner3d::runtime::BodyQuery(tree,*body,overlay,{},terrain).pose({}).free);
+    return refined.inflatedOccupancy({},0);
   };
   const auto flat = check(hits);
-  EXPECT_EQ(flat.first,0);
-  EXPECT_TRUE(flat.second);
+  EXPECT_EQ(flat,0);
 
   hits.push_back({.025,.025,.045});
   const auto obstructed = check(hits);
-  EXPECT_NE(obstructed.first,0);
-  EXPECT_FALSE(obstructed.second);
+  EXPECT_NE(obstructed,0);
   EXPECT_EQ(occupied,bitmap);
 }
 
@@ -165,16 +142,13 @@ TEST_F(BodySupportMapTest, GroundRefinementCoversTheHorizontalCollisionMargin) {
     request.environment.collision.terrain=terrain;
     const Grid refined(params,request);
     EXPECT_TRUE(refined.valid()) << refined.reason();
-    return std::make_pair(refined.inflatedOccupancy({},0),
-        octoplanner3d::runtime::BodyQuery(tree,*body,overlay,{},terrain).pose({}).free);
+    return refined.inflatedOccupancy({},0);
   };
   const auto floor=check();
-  EXPECT_EQ(floor.first,0);
-  EXPECT_TRUE(floor.second);
+  EXPECT_EQ(floor,0);
   hits.push_back({.115,.025,.045});
   const auto obstacle=check();
-  EXPECT_NE(obstacle.first,0);
-  EXPECT_FALSE(obstacle.second);
+  EXPECT_NE(obstacle,0);
 }
 
 TEST_F(BodySupportMapTest, ARecordedHitOutsideTheBodyDoesNotNeedASurfaceFit) {
@@ -188,20 +162,18 @@ TEST_F(BodySupportMapTest, ARecordedHitOutsideTheBodyDoesNotNeedASurfaceFit) {
         std::make_shared<const c::Terrain>(std::move(bounds),resolution);
     const Grid grid(params,request);
     EXPECT_TRUE(grid.valid()) << grid.reason();
-    return std::make_pair(grid.inflatedOccupancy({},0),
-        octoplanner3d::runtime::BodyQuery(tree,*body,overlay,{},
-            request.environment.collision.terrain).pose({}).free);
+    return grid.inflatedOccupancy({},0);
   };
-  EXPECT_EQ(check({{{.025,.025,.002},{}}}),std::make_pair(0,true));
-  EXPECT_EQ(check({{{.025,.025,.045},{}}}),std::make_pair(1,false));
+  EXPECT_EQ(check({{{.025,.025,.002},{}}}),0);
+  EXPECT_EQ(check({{{.025,.025,.045},{}}}),1);
   // The hit is above the foot's lowest point but outside the sphere itself.
-  EXPECT_EQ(check({{{.049,.049,.045},{}}}),std::make_pair(0,true));
-  EXPECT_EQ(check({{{.025,.025,.002},{}},{{.025,.025,.045},{}}}),std::make_pair(1,false));
-  EXPECT_EQ(check({{{.075,.025,.002},{}}}),std::make_pair(1,false));
-  EXPECT_EQ(check({}),std::make_pair(1,false));
+  EXPECT_EQ(check({{{.049,.049,.045},{}}}),0);
+  EXPECT_EQ(check({{{.025,.025,.002},{}},{{.025,.025,.045},{}}}),1);
+  EXPECT_EQ(check({{{.075,.025,.002},{}}}),1);
+  EXPECT_EQ(check({}),1);
 }
 
-TEST_F(BodySupportMapTest, OriginalSlopeHitsResolveTheSameGlobalAndLocalVoxelRejection) {
+TEST_F(BodySupportMapTest, OriginalSlopeHitsRefineLocalVoxelCollision) {
   body->margin_m = 0;
   const double normal_z = 1 / std::hypot(1., .08);
   auto &foot = body->parts.front();
@@ -215,18 +187,12 @@ TEST_F(BodySupportMapTest, OriginalSlopeHitsResolveTheSameGlobalAndLocalVoxelRej
     hits.push_back({px, py, .025 + .08 * px});
   }
   const auto terrain = std::make_shared<const c::Terrain>(hits, resolution);
-  EXPECT_FALSE(global());
   EXPECT_NE(local().inflatedOccupancy({0,0,0},0), 0);
-  const auto global_query = [&] {
-    return octoplanner3d::runtime::BodyQuery(tree, *body, overlay, {}, terrain);
-  };
-  EXPECT_TRUE(global_query().pose({}).free);
   auto local_request = request;
   local_request.environment.collision.terrain = terrain;
   const Grid refined(params, local_request);
   ASSERT_TRUE(refined.valid()) << refined.reason();
   EXPECT_EQ(refined.inflatedOccupancy({0,0,0},0), 0);
-  EXPECT_TRUE(global_query().edge({{},0},{{.1,0,.008},0}));
   EXPECT_EQ(refined.segmentInflatedOccupancy({0,0,0},0,{.1,0,.008},0), 0);
   EXPECT_EQ(refined.brakingOccupancy({{0,0,0},0},{.4,0,0},.1,1,1), 0);
   auto rotated_request=local_request;
@@ -239,8 +205,6 @@ TEST_F(BodySupportMapTest, OriginalSlopeHitsResolveTheSameGlobalAndLocalVoxelRej
   auto cleared_request=local_request;
   for(int x=16;x<25;++x) for(int y=16;y<25;++y)
     for(int z=7;z<=11;++z) set(x,y,z,0);
-  const auto cleared_global=global_query().pose({});
-  EXPECT_TRUE(cleared_global.free);
   (void)local();
   cleared_request.environment.collision=request.environment.collision;
   cleared_request.environment.collision.terrain=terrain;
@@ -256,9 +220,6 @@ TEST_F(BodySupportMapTest, OriginalSlopeHitsResolveTheSameGlobalAndLocalVoxelRej
   // A real hit inside the same ground voxel cannot be erased by the plane.
   hits.push_back({.025, .025, .049});
   const auto obstructed = std::make_shared<const c::Terrain>(std::move(hits), resolution);
-  const auto rejected = octoplanner3d::runtime::BodyQuery(tree, *body, overlay, {},
-                                                         obstructed).pose({});
-  EXPECT_FALSE(rejected.free);
   local_request.environment.collision.terrain = obstructed;
   EXPECT_NE(Grid(params,local_request).inflatedOccupancy({0,0,0},0), 0);
 }
@@ -333,7 +294,6 @@ TEST_F(BodySupportMapTest, UnknownAtMarginBoundaryDoesNotBlockBodyCollisionQueri
   foot.half_size = {.08,.08,.08};
   foot.center.z = .08;
   set(22,20,11,-1);
-  EXPECT_TRUE(global());
   const auto evidence = free;
   EXPECT_EQ(local().inflatedOccupancy({0,0,0},0),0);
   EXPECT_EQ(free,evidence);
@@ -374,18 +334,6 @@ TEST_F(BodySupportMapTest, JointSnapshotCannotReuseTheNominalCollisionShape) {
   EXPECT_EQ(local().inflatedOccupancy({0,0,0},0),0);
 }
 
-TEST_F(BodySupportMapTest, TemporaryHardObstacleIsNeverReclassifiedAsSupport) {
-  lingtu::nav::plan::GlobalPlanBlockedRegion region;
-  region.center = {0,0,0};
-  region.radius_xy_m = .1;
-  region.min_z = -.05;
-  region.max_z = 0;
-  overlay.blocked_regions.push_back(region);
-  const auto result = octoplanner3d::runtime::BodyQuery(tree,*body,overlay).pose({});
-  EXPECT_FALSE(result.free);
-  EXPECT_EQ(result.reason,"temporary_overlay");
-}
-
 TEST_F(BodySupportMapTest, CollisionMarginDoesNotRequireGroundOutsideTheUnpaddedFootprint) {
   // The real foot ends at x=.10. The missing floor column starts there,
   // so it has no positive-area overlap with the unpadded footprint.
@@ -397,11 +345,7 @@ TEST_F(BodySupportMapTest, CollisionMarginDoesNotRequireGroundOutsideTheUnpadded
 TEST_F(BodySupportMapTest, SweepPaddingDoesNotCreateAnExtraGroundRequirement) {
   for (int y = 0; y < size; ++y) set(22,y,9,0);
   body->margin_m = 0;
-  const octoplanner3d::runtime::BodyQuery query(tree,*body,overlay);
-  ASSERT_TRUE(query.pose({}).free);
-  EXPECT_TRUE(query.pose({},.008).free);
   // Motion is parallel to the edge; the true footprint never crosses it.
-  EXPECT_TRUE(query.edge({{},0},{{0,.004,0},0}));
   EXPECT_EQ(local().segmentInflatedOccupancy({0,0,0},0,{0,.004,0},0),0);
 }
 
@@ -410,15 +354,12 @@ TEST_F(BodySupportMapTest, LargeCollisionMarginStillAllowsContactWithObservedFla
   expect(true);
 }
 
-TEST_F(BodySupportMapTest, MarginOnlySideWallIsReportedAsCollisionInsteadOfMissingSupport) {
+TEST_F(BodySupportMapTest, MarginOnlySideWallStillCollides) {
   // The wall lies outside the sphere but within its .02 m collision margin.
   const c::Aabb wall{{.125,.025,.025},{.025,.025,.025}};
   ASSERT_FALSE(c::intersects(body->parts[0],{},wall,0));
   ASSERT_TRUE(c::intersects(body->parts[0],{},wall,body->margin_m));
   set(22,20,10,1);
-  const auto result = octoplanner3d::runtime::BodyQuery(tree,*body,overlay).pose({});
-  EXPECT_FALSE(result.free);
-  EXPECT_EQ(result.reason,"occupied_body");
   EXPECT_EQ(local().inflatedOccupancy({0,0,0},0),1);
 }
 
@@ -430,9 +371,6 @@ TEST_F(BodySupportMapTest, ObstacleAboveTheFootBottomStillCollides) {
 
 TEST_F(BodySupportMapTest, LocalUnknownAirStillRejectsNewMeasuredObstacle) {
   set(22,20,11,-1);
-  const auto result = octoplanner3d::runtime::BodyQuery(tree,*body,overlay).pose({});
-  EXPECT_TRUE(result.free);
-  EXPECT_TRUE(result.reason.empty());
   const auto evidence = free;
   EXPECT_EQ(local().inflatedOccupancy({0,0,0},0),0);
   EXPECT_EQ(*request.environment.collision.knownFreeStorage,evidence);
@@ -440,27 +378,68 @@ TEST_F(BodySupportMapTest, LocalUnknownAirStillRejectsNewMeasuredObstacle) {
   EXPECT_EQ(local().inflatedOccupancy({0,0,0},0),1);
 }
 
-TEST_F(BodySupportMapTest, LiveFreeBodyClearingDoesNotMutateSavedMap) {
-  set(22,20,10,1);
-  ASSERT_FALSE(global());
-  const auto result = octoplanner3d::runtime::BodyQuery(
-      tree,*body,overlay,[](const c::Aabb &) { return true; }).pose({});
-  EXPECT_TRUE(result.free);
-  EXPECT_TRUE(tree.isNodeOccupied(tree.search(.025,.025,-.025)));
-  EXPECT_TRUE(tree.isNodeOccupied(tree.search(.125,.025,.025)));
+TEST_F(BodySupportMapTest, CurrentTerrainEvidenceControlsMeasuredCellCollision) {
+  body->margin_m = 0;
+  body->parts.front().center.z = .136;
+  set(20,20,10,1);
+  const auto floor_terrain = std::make_shared<const c::Terrain>(
+      std::vector<c::Aabb>{{{.025,.025,.002},{}}},resolution);
+  (void)local();
+  for (const auto &live_terrain : {
+      std::shared_ptr<const c::Terrain>{},
+      std::make_shared<const c::Terrain>(
+          std::vector<c::Aabb>{{{.025,.025,.045},{}}},resolution)}) {
+    request.environment.collision.terrain = live_terrain;
+    EXPECT_EQ(Grid(params,request).inflatedOccupancy({},0),1);
+  }
+  request.environment.collision.terrain = floor_terrain;
+  EXPECT_EQ(Grid(params,request).inflatedOccupancy({},0),0);
 }
 
-TEST_F(BodySupportMapTest, LiveFreeBodyClearingDoesNotOverrideTemporaryHardObstacle) {
-  lingtu::nav::plan::GlobalPlanBlockedRegion region;
-  region.center = {0,0,0};
-  region.radius_xy_m = .1;
-  region.min_z = -.05;
-  region.max_z = 0;
-  overlay.blocked_regions.push_back(region);
-  const auto result = octoplanner3d::runtime::BodyQuery(
-      tree,*body,overlay,[](const c::Aabb &) { return true; }).pose({});
-  EXPECT_FALSE(result.free);
-  EXPECT_EQ(result.reason,"temporary_overlay");
+TEST_F(BodySupportMapTest, MeasuredBlockRetainsItsCollisionBoundary) {
+  body->margin_m = 0;
+  auto &part = body->parts.front();
+  part.shape = c::Shape::Box;
+  part.half_size = {.005,.005,.005};
+  part.center = {};
+  part.support_contact = false;
+  std::fill(occupied.begin(),occupied.end(),0);
+  for (int x=20;x<28;++x) for (int y=20;y<28;++y) for (int z=10;z<18;++z)
+    set(x,y,z,1);
+  expect(false,{{.395,.025,.025},0});
+  expect(false,{{.405,.025,.025},0});
+  expect(true,{{.406,.025,.025},0});
+}
+
+TEST_F(BodySupportMapTest, ClearEndpointHeadingsCannotSkipTheOccupiedTurnMiddle) {
+  body->margin_m = 0;
+  auto &part = body->parts.front();
+  part.shape = c::Shape::Box;
+  part.half_size = {.35,.04,.04};
+  part.center = {};
+  part.support_contact = false;
+  set(24,24,20,1);
+  const double quarter_turn = std::acos(-1.) / 2;
+  const c::Pose start{{0,0,.5},0}, end{{0,0,.5},quarter_turn};
+  expect(true,start);
+  expect(true,end);
+  expect(false,{start.position,quarter_turn*.5});
+  EXPECT_EQ(local().segmentInflatedOccupancy({0,0,.5},0,{0,0,.5},quarter_turn),1);
+}
+
+TEST_F(BodySupportMapTest, ThunderRaisedRearSensorPreservesFrontOpening) {
+  std::ifstream input(LINGTU_TEST_THUNDER_BODY);
+  ASSERT_TRUE(input.is_open());
+  body = c::readBody(input);
+  body->margin_m = .02;
+  body->horizontal_margin_m = .08;
+  request.body = body;
+  // Both cells sit above the main body at the nominal base height.
+  set(26,24,23,1);
+  expect(true,{{0,0,.435},0});
+  set(26,24,23,0);
+  set(13,20,23,1);
+  expect(false,{{0,0,.435},0});
 }
 
 }  // namespace

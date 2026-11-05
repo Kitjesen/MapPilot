@@ -1,0 +1,19 @@
+# CMU / assisted-teleop recovery. Autonomous SCAN uses its own retry FSM.
+native_nav:
+  recovery:
+    behavior_order: [translate, rotate]
+    blocked_interval_s: 2.0
+    # Time without observed progress, not total action duration.
+    rotation_timeout_s: 2.5
+    translation_timeout_s: 1.5
+    max_attempts: 3  # Recovery cycles; 0 disables recovery.
+    translation_speed_mps: 0.5
+    rotation_rate_rad_s: 0.8
+    min_rotation_rad: 0.2
+    max_rotation_rad: 1.2
+    rotation_candidate_step_rad: 0.2  # Spacing between candidate turn angles.
+    rotation_sample_step_rad: 0.05  # Safety sampling along each candidate turn.
+
+standalone:
+  native_nav:
+    recovery_max_attempts: 0  # A bare endpoint has no Product enabling recovery.

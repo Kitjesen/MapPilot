@@ -36,11 +36,19 @@ def build_gateway_app(gw: Any):
         docs_url="/docs",
         redoc_url="/redoc",
     )
+    from gateway.media_access import MediaAccessMiddleware
+
+    app.add_middleware(
+        MediaAccessMiddleware,
+        required=os.environ.get("LINGTU_MEDIA_REQUIRE_TOKEN") == "1",
+        viewer_token=os.environ.get("LINGTU_MEDIA_VIEWER_TOKEN"),
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["Location", "ETag"],
     )
 
     from gateway.maps.locations import register_location_routes

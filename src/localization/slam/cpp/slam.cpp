@@ -334,11 +334,9 @@ class ContractBackend final : public ISlamBackend {
 
     saved_map_cloud_map_ = std::make_shared<Cloud>(std::move(cloud));
     ++saved_map_revision_;
+    saved_map_observation_sequence_ = observation_sequence_;
     saved_map_points_ = static_cast<int>(saved_map_cloud_map_->points.size());
-    map_loaded_ = true;
-    last_map_path_ = pcd.string();
-    reason_ = "map_saved";
-    return Status::Ok(reason_);
+    return Status::Ok("map_snapshot_ready");
   }
 
   Status loadMap(const std::string& pcd_path) override {
@@ -351,9 +349,9 @@ class ContractBackend final : public ISlamBackend {
     cloud.frame_id = config_.map_frame;
     saved_map_cloud_map_ = std::make_shared<Cloud>(std::move(cloud));
     ++saved_map_revision_;
+    saved_map_observation_sequence_ = 0;
     saved_map_points_ = static_cast<int>(saved_map_cloud_map_->points.size());
     map_loaded_ = true;
-    last_map_path_ = pcd.string();
     reason_ = "map_loaded";
     return Status::Ok(reason_);
   }
@@ -370,6 +368,7 @@ class ContractBackend final : public ISlamBackend {
     out.map_cloud_map = map_cloud_map_;
     out.saved_map_cloud_map = saved_map_cloud_map_;
     out.saved_map_revision = saved_map_revision_;
+    out.saved_map_observation_sequence = saved_map_observation_sequence_;
     out.map_odom_tf = Transform3d{config_.map_frame, config_.odom_frame, Pose3d{}};
     out.observation_sequence = observation_sequence_;
     out.source_epoch = source_epoch_;
@@ -412,7 +411,6 @@ class ContractBackend final : public ISlamBackend {
   std::string reason_ = "unconfigured";
   std::string scene_mode_ = "unknown";
   std::string map_path_;
-  std::string last_map_path_;
   bool alive_ = false;
   bool map_loaded_ = false;
   bool map_frame_jump_ = false;
@@ -438,6 +436,7 @@ class ContractBackend final : public ISlamBackend {
   std::shared_ptr<const Cloud> map_cloud_map_;
   std::shared_ptr<const Cloud> saved_map_cloud_map_;
   std::uint64_t saved_map_revision_ = 0;
+  std::uint64_t saved_map_observation_sequence_ = 0;
   int saved_map_points_ = 0;
   GnssFusionHealth gnss_health_;
   std::vector<OdomSample> pose_history_;

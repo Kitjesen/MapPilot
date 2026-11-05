@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "collision/body.hpp"
 #include "nav_kernel/types.hpp"
 #include "navigation/pose_route.hpp"
 #include "planning/global/contract.hpp"
@@ -27,6 +28,7 @@ struct GlobalPlanContext {
   std::uint64_t goal_epoch{0};
   std::uint64_t frame_epoch{0};
   lingtu::nav::plan::GlobalPlanRequest request{};
+  std::shared_ptr<const lingtu::nav::collision::Body> local_body{};
   std::optional<double> max_speed_mps{};
   std::optional<double> acceptance_radius_m{};
   // Explicit zero retains the unlimited offline/diagnostic contract.

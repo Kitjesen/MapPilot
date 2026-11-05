@@ -58,6 +58,26 @@ GoalPlanController::terminalAfterStop(std::string reason,
   return {std::move(reason), std::move(terminal.ticket), std::move(terminal.commit)};
 }
 
+std::pair<bool, std::string> GoalPlanController::setTaskSpeedLimit(
+    const std::string &task_id, double max_speed_mps, double configured_max_speed_mps) {
+  if (!std::isfinite(max_speed_mps) || max_speed_mps <= 0.0 ||
+      max_speed_mps > configured_max_speed_mps) {
+    return {false, "task_speed_limit_invalid"};
+  }
+  if (task_id.empty() || task_id != active_task_id_ || !active_target_) {
+    return {false, "task_not_active"};
+  }
+  active_target_->max_speed_mps = max_speed_mps;
+  if (planning_task_id_ == task_id && planning_target_) {
+    planning_target_->max_speed_mps = max_speed_mps;
+  }
+  if (pending_plan_start_ && pending_plan_start_->request.task_id == task_id &&
+      pending_plan_start_->request.target) {
+    pending_plan_start_->request.target->max_speed_mps = max_speed_mps;
+  }
+  return {true, "task_speed_limit_updated"};
+}
+
 GoalPlanSubmitResult GoalPlanController::submit(const GoalPlanRequest &request,
                                                 const GoalPlanAdmissionContext &context) {
   diagnostics_ = {};
@@ -152,6 +172,12 @@ GoalPlanSubmitResult GoalPlanController::replanActive(const GoalPlanAdmissionCon
   diagnostics_ = {};
   diagnostics_.seen = true;
 
+  if (!std::isfinite(context.autonomy_request_not_before_s) ||
+      (context.map_position &&
+       (!std::isfinite(context.map_position->x) || !std::isfinite(context.map_position->y) ||
+        !std::isfinite(context.map_position->z)))) {
+    return reject("invalid_replan_admission");
+  }
   if (active_task_id_.empty() || active_request_id_.empty() || !active_target_) {
     return reject("no_active_external_goal");
   }
@@ -226,11 +252,7 @@ GoalPlanSubmitResult GoalPlanController::startPlanning(
       plan_context.goal.y,
       plan_context.goal.z,
   };
-  plan_context.request.body = context.body;
-  plan_context.request.observed_free = context.observed_free;
-  plan_context.request.observed_occupied = context.observed_occupied;
-  if (context.body) plan_context.request.start.yaw = context.map_yaw_rad;
-  plan_context.request.goal.yaw = target.yaw;
+  plan_context.local_body = context.body;
   plan_context.request.options = is_replan ? active_planner_options_ : context.planner_options;
   if (target.acceptance_radius_m) {
     plan_context.request.options.terminal_goal_xy_tolerance_m = std::min(
@@ -623,11 +645,14 @@ GoalPlanAdvanceResult GoalPlanController::advance(const GoalPlanAdvanceContext &
       completion->context.max_speed_mps,
       completion->context.acceptance_radius_m,
       {},
-      completion->context.request.body,
+      completion->context.local_body,
   };
+  // A running replan captured the previous limit when its worker started.
+  if (completing_replan && active_target_) {
+    activation.max_speed_mps = active_target_->max_speed_mps;
+  }
   const auto &support_options = completion->context.request.options;
   activation.requested_goal = completion->context.goal;
-  activation.support_surface = plan_result.support_surface;
   if (support_options.ground_support && std::isfinite(support_options.support_height_m) &&
       support_options.support_height_m > 0.0 &&
       std::isfinite(support_options.support_height_tolerance_m) &&
@@ -673,7 +698,7 @@ GoalPlanAdvanceResult GoalPlanController::advance(const GoalPlanAdvanceContext &
   paused_task_id_.clear();
   active_map_identity_ = plan_result.map_identity;
   active_target_ = GoalPlanTarget{completion->context.goal, completion->context.goal_yaw,
-                       completion->context.max_speed_mps, completion->context.acceptance_radius_m};
+                       activation.max_speed_mps, completion->context.acceptance_radius_m};
   active_source_stamp_s_ = planning_source_stamp_s_;
   active_origin_ = planning_origin_;
   active_planner_options_ = completion->context.request.options;
@@ -1011,12 +1036,10 @@ GoalPlanTaskTransition GoalPlanController::deferResume(const std::string &task_i
   if (!context.autonomy_mode) {
     return {false, std::string{"resume_not_allowed_in_"} + context.control_mode_name, {}};
   }
-  // Resume the paused task so it can finish its own model transition. Actual
-  // motion remains held by the driver and the stair model readback handshake.
-  if (!context.driver_control_blocker.empty() && !context.profile_transition_pending) {
+  if (!context.driver_control_blocker.empty()) {
     return {false, context.driver_control_blocker, {}};
   }
-  if (!context.input_ready && !context.profile_transition_pending) {
+  if (!context.input_ready) {
     if (goalPlanInputGapIsRecoverable(context.input_gate_reason)) {
       return make_resume_transition("resume_waiting_for_inputs");
     }
@@ -1050,7 +1073,7 @@ GoalPlanTaskTransition GoalPlanController::deferResume(const std::string &task_i
     }
   }
 
-  return make_resume_transition(context.profile_transition_pending ? "resume_waiting_for_profile" : "resume_ready");
+  return make_resume_transition("resume_ready");
 }
 GoalPlanTaskTransition GoalPlanController::deferCancelPending(const std::string &task_id,
                                                               const std::string &request_id,

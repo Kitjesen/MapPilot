@@ -79,6 +79,9 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
       lingtu_add_nav_gtest(${test_name} "${test_name}.cpp")
     endforeach()
 
+    target_compile_definitions(test_scan_body PRIVATE
+      LINGTU_TEST_THUNDER_BODY="${LINGTU_SRC_ROOT}/../config/robots/doso/thunder_v4/body/thunderv4_navigation.body2")
+
     lingtu_add_nav_gtest(test_scan_failure_snapshot test_scan_failure_snapshot.cpp)
     target_sources(test_scan_failure_snapshot PRIVATE
       "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/nav_status_writer.cpp"
@@ -201,9 +204,8 @@ if(LINGTU_NAV_CPP_BUILD_BENCHMARKS
   lingtu_nav_enable_performance(benchmark_body_execution)
 endif()
 
-if(LINGTU_NAV_CPP_BUILD_TESTS AND TARGET octoplanner3d_runtime
-    AND TARGET GTest::gtest_main)
+if(LINGTU_NAV_CPP_BUILD_TESTS AND TARGET GTest::gtest_main)
   lingtu_add_nav_gtest(test_body_support_map test_body_support_map.cpp)
-  target_link_libraries(test_body_support_map PRIVATE
-    octoplanner3d_runtime octoplanner3d_global_planner octomap_vendor octomath_vendor)
+  target_compile_definitions(test_body_support_map PRIVATE
+    LINGTU_TEST_THUNDER_BODY="${LINGTU_SRC_ROOT}/../config/robots/doso/thunder_v4/body/thunderv4_navigation.body2")
 endif()

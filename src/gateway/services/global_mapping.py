@@ -47,6 +47,7 @@ def _global_mapping_snapshot(max_points: int) -> tuple[dict[str, Any], np.ndarra
             **metadata,
             "busy": bool(live.get("busy", False)),
             "dropped_frames": live.get("dropped_frames", 0),
+            "optimization_failures": live.get("optimization_failures", 0),
             "state": live.get("state", metadata.get("state")),
         }
     empty = dict(

@@ -56,8 +56,6 @@ geometry:
 speed:
   max_linear: 1.0
   max_angular: 1.0
-  max_speed: 0.875
-  autonomy_speed: 0.875
 
 # Hardware safety limits
 safety:
@@ -93,8 +91,6 @@ driver:
 
 # LiDAR sensor
 lidar:
-  frame_id: "livox_frame"
-  publish_freq: 10.0          # Hz
   network_interface: "eth0"   # Interface that owns the MID-360 host address.
   lidar_ip: "192.168.123.20"  # Unitree expansion-dock MID-360 default.
   host_ip: "192.168.123.18"   # Go2 expansion-board NIC on the Livox subnet.

@@ -1,5 +1,131 @@
 # SCAN-Planner upstream
 
+## Autonomous retry restoration, 2026-11-05
+
+Reference: `wuyi2121/SCAN-Planner@348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
+`GEN_NEW_TRAJ` / `REPLAN_TRAJ` count failed planning rounds, including a blocked
+local target; successful rounds reset the count. At 1000 consecutive failures
+the FSM enters emergency stop, waits for measured 3-D speed below 0.1 m/s,
+then clears the autonomous target and waits for a new request. Multiple solver
+initializations within one replan round do not count as multiple failures.
+
+Executor's autonomous SCAN temporary Recovery goals, direct recovery rotations
+and independent stall/retry loop have been removed. `NoPath` uses the existing
+native terminal-stop transaction instead of triggering a global replan.
+CMU and held teleop-intent recovery are unchanged. The November 4 Recovery
+translation integration below is historical for autonomous SCAN.
+
+FSM and collision periods remain 0.01 s and 0.05 s; the follower runs at 100 Hz.
+The MuJoCo launcher now uses the resolved native frequency instead of silently
+overriding it with 20 Hz. Native asynchronous handoff, reference continuation
+and final measured-body/braking checks remain explicit local adaptations.
+Final-control trajectory resets are not solver failures; the counter does
+not bound every possible hold or guarantee a ten-second task timeout.
+Matched evidence: `build/scan-retry-20261105/report.md`.
+
+## Planning collision restoration, 2026-11-05
+
+Reference: `wuyi2121/SCAN-Planner@348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
+Candidate queries again use front/rear centers in the inflated 3-D map;
+control-point yaw and Projected DynAStar yaw come from adjacent positions.
+Rebound/refinement use the upstream leading-two-thirds sampler and chord-based
+step. FSM lookahead uses upstream position/chord queries. No candidate query
+uses multipart turn sweeps, controller preview yaw or predicted obstacle volumes.
+
+The removed preview/sweep changes are recorded below as history, not current
+behavior. The shared `headingDirection()` helper remains only in the controller.
+The native connector and asynchronous handoff still use cylinder checks; native
+command/braking checks keep measured Body geometry and predictions. Ordinary
+Body/support metadata no longer enables exact-boundary fitting. Explicit heading
+and operator intent contracts retain their local behavior.
+
+Platform dimensions, map inflation, controller preview/gains, native transport,
+reference initialization and the existing solver-result repairs are preserved.
+This is not a byte-identical replacement of the ROS planner or a claim that
+upstream's collision sampling guarantees continuous physical clearance.
+Matched evidence: `build/scan-native-restore-20261104/report.md`.
+
+## Rebound guidance and exhausted continuations, 2026-11-04
+
+The preview-heading A* change in the next paragraph was reverted on 2026-11-05.
+The reference-joining and exhausted-tail repairs remain.
+
+Rebound A* now receives the candidate's preview heading for each collision
+segment. Previously its eight XY neighbor directions selected a different
+footprint: a captured guide contained five occupied points out of nine when
+queried with the candidate heading. The search still has XYZ nodes, without a
+yaw search dimension, and the complete optimized curve retains its changing-yaw
+swept collision validation. The optional search argument leaves other A* callers
+on their existing tangent-heading behavior. The pinned upstream uses its
+twin-cylinder model; this aligns LingTu's compound-body guide and validation.
+
+The reference initializer joins the measured start and selected target without
+spreading their offsets across the entire remaining reference. Spreading a
+10 cm start-height difference lowered later stair points as well. This changes
+LingTu's reference-seed extension, not the upstream optimizer's Z constraint.
+
+The native Backend may retain a clear executing tail while continuation planning
+fails. It now drops that tail once its execution time is exhausted and reports
+Blocked, allowing SCAN to retry. Previously it could return
+Ready indefinitely while the follower reported finished far from the task goal.
+The regression also checks obstacle removal resumes planning and that an actual
+completed reference does not spuriously start a new trajectory. These changes
+do not establish successful physical stair navigation.
+
+## Recovery result ownership, 2026-11-04
+
+LingTu's asynchronous Task previously invalidated cached failures for body and
+heading changes but not a new reference generation or intent. Recovery could
+therefore count the previous target's failure against a new candidate before
+its SCAN result arrived. The Task now uses its existing guide-identity comparison
+for that cache. Executing trajectory handoff semantics are unchanged.
+
+Recovery translation submits a finite `RouteTarget`, retaining the selected body
+heading and speed cap. The previous `MotionIntentTarget` also requested rolling
+operator-motion endpoint semantics. A regression separates a blocked original
+goal from a reachable temporary goal and checks that the latter waits for its
+own result, reaches its endpoint and has zero terminal velocity. Executor tests
+cover temporary-route continuity, cancellation and return to the original route.
+Both Recovery and this asynchronous cache are LingTu extensions to the pinned
+SCAN implementation below; no upstream collision or braking threshold changes.
+
+## Candidate heading matches execution preview, 2026-11-04 (reverted)
+
+This records the superseded experiment; candidate preview propagation and
+its cache field were removed on 2026-11-05.
+
+The pinned controller's `estimateDesiredYaw()` uses the position at
+`min(duration, time + time_forward)` minus the current spline position,
+falling back to velocity below 1 cm of XY displacement, then measured yaw
+below 0.01 m/s XY speed. Its launch parameter is `time_forward=0.8`.
+LingTu's complete-trajectory collision validation instead used instantaneous
+velocity heading. A captured stair approach with measured velocity
+`[-0.0738,-0.0196,0.0382]` and yaw `0.0405` therefore checked a 167-degree turn
+while the same curve's 0.8 s controller preview requested only a 7-degree
+correction. The capture is a failure near a side obstacle before the first
+stair, not proof that the stair is traversable.
+
+`UniformBspline::headingDirection()` now supplies the same preview/fallback
+calculation to the controller and complete candidate, refinement, FSM lookahead,
+handoff and deceleration collision checks. The request carries the actual
+Follower preview time; explicit tangent pose stages retain zero preview.
+Changing that value invalidates asynchronous results checked under the old
+heading policy. Rebound control-point queries now also estimate heading from
+that preview. The knot interval is supplied before building rebound guides;
+adjacent control-point headings are interpolated during segment sampling.
+In a captured stair approach, tangent-only seeding found no obstacle guide,
+while the execution preview swept `FR_thigh_11` into the first railing post.
+Using the same preview produced a guide and a collision-free optimized
+candidate for that capture. This does not establish physical stair traversal.
+Measured-to-required turning sweeps, Body dimensions, occupied evidence,
+timed predictions and final braking checks remain in their existing owners.
+
+The native regressions cover a brief reverse entrance with a forward preview,
+a genuinely occupied turning sweep, preview clamping and fallback at the
+spline endpoint, and asynchronous invalidation after a preview-time change.
+This is an intentional collision-candidate change in the LingTu adapter,
+not an output-parity claim for the pinned upstream or physical stair validation.
+
 - Repository: https://github.com/wuyi2121/SCAN-Planner
 - Commit: `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`
 - License: Apache-2.0
@@ -29,6 +155,26 @@ native final arbitration checks braking motion against the live grid. These
 are not upstream navigation modes or an unconditional parity claim. Hardware
 clearance and command caps are resolved from the active RunPlan/RobotConfig;
 matching the upstream algorithm does not imply matching its effective parameters.
+
+LingTu's terminal and experimental stair turns are separate from the pinned upstream
+trajectory controller. The local turn query checks the body sweep, while final
+control checks actual and candidate braking with the configured deceleration.
+The former extra turn-braking query used fixed `0.1 / 0.5 / 1.0` values; it
+could reject a turn already permitted by final control. The matched native
+`testTurnUsesFinalConfiguredBraking` fixture reproduces that rejection before
+the change and confirms final braking still limits the same moving obstacle
+when configured to require it afterward. This is not a physical braking test.
+
+On 2026-11-02 navd stopped attaching recognized stair segments and publishing
+stair-profile requests. The retained prototype is not an upstream SCAN feature
+or a validated deployed stair workflow. The native endpoint boundary test checks
+that route activation and profile publication stay disconnected; ordinary goal
+and local-planner tests exercise the remaining path. This is not a physical test.
+
+LingTu recovery rotation and CMU recovery-translation follower parameters are
+owned by Follower. Autonomous SCAN translation recovery uses the ordinary spline
+follower as described in the 2026-11-03 entry below. These recovery controls are
+LingTu extensions to the pinned upstream controller.
 
 ## Upstream terrain capability and LingTu extensions
 
@@ -151,9 +297,16 @@ predictions. It does not require seven ground probes or an independently
 ray-cleared support patch before the FSM can plan.
 
 OctoPlanner owns the autonomous route's observed-ground, unknown-space,
-step-height and slope checks. Its radius and support settings are not SCAN
-inputs. A clear local collision query does not prove ground support or gait
-feasibility; assisted teleop has no independent footstep/drop-off guarantee.
+step-height and slope checks. On 2026-11-01, the local prepared-support callback
+gate was removed from SCAN trajectory, braking and boundary-departure queries.
+LocalPlanRequest no longer transports that callback, and Grid no longer copies
+the reference or searches its nearest height segment for support admission.
+This gate was a LingTu extension absent from the pinned upstream implementation.
+Route height metadata still controls the existing trajectory initialization;
+measured 3D occupancy, body sweeps and prediction queries remain active.
+A clear local collision query therefore does not establish ground bearing or
+drop-off safety away from the accepted global route. Missing-ground fixtures
+record this deliberate behavior difference; they are not physical cliff tests.
 
 Mapd's measured occupancy and known-free evidence remain in the typed snapshot.
 Removing the extra local gate does not convert unknown cells into measured
@@ -237,7 +390,9 @@ behavior, for which there is no defined upstream output to preserve. It does
 not change intersection geometry, search cost, optimization terms, or the
 controller equations on the successful path.
 
-## Collision sampling repair
+## Collision sampling repair (reverted on 2026-11-05)
+
+The following is historical. Candidate sampling has returned to upstream.
 
 The pinned rebound/refine acceptance checks choose their time step from the
 trajectory's endpoint chord. A slow detour can therefore have widely spaced
@@ -557,6 +712,10 @@ new-route/resume cleanup.
 
 ## Clearance-only body departure, 2026-10-31
 
+This section describes the implementation at that date. The local shared-support
+callback mentioned below was removed on 2026-11-01; the obstacle and prediction
+checks described here are separate.
+
 The pinned upstream has no LingTu multipart Body or final-command braking
 adapter. A captured physical detour stopped with its source primitives clear
 but its 8 cm horizontal clearance overlapping a measured box hit. The local
@@ -685,3 +844,67 @@ routes plus a separate final pose rotation, with 0.15 m and 0.6 m task radii.
 It requires bounded deceleration after radius entry and eventual goal/yaw
 completion. The original R10 records and before/after software logs remain in
 `build/navigation-stop-review-20261031/`; physical validation is separate.
+
+
+## Autonomous translation recovery through the normal task, 2026-11-03
+
+The pinned SCAN revision remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
+Its FSM regenerates trajectories after planning failure or emergency stop.
+LingTu's bounded recovery session, temporary goals and retry order are local
+product policy.
+
+Previously, autonomous recovery built another Grid, searched a geometric path
+and sent it directly to a separate path follower. SCAN now receives each
+translation candidate as a temporary MotionIntent guide and complete reference,
+with a stable generation and fixed starting body heading. The existing Task,
+FSM and spline follower own planning, live collision updates and execution.
+Selecting a temporary goal does not authorize motion. Only a ready SCAN result
+marks the recovery output verified. Measured arrival resumes the retained Route;
+a rejected plan or the existing no-progress timeout advances recovery policy.
+
+Rotation retains the existing sweep checks and turning command. CMU retains
+its geometric path recovery. Cancellation, replacement and manual takeover use
+the existing task cleanup. No upstream thresholds or dependency changes are
+introduced by this wiring. Matching Executor regressions use the same free
+collision bitmap to compare ordinary planning with an induced final-control
+block, verify trajectory reuse across ticks, measured completion, and pending
+candidate cancellation. Native test and physical-trial results are recorded
+separately from these implementation changes.
+
+
+## Task speed updates through the normal command API, 2026-11-03
+
+Pinned SCAN revision `348e8a590a50a5a6bbab8d8c6dcfd171f009be26` has no
+LingTu task-scoped HTTP/DDS command interface. `TaskSpeedLimit = 10` is a local
+product command. Previously the normal autonomous command path could set a
+limit only by submitting a goal, which starts a new global planning task.
+
+The new command changes the retained active task limit and Executor's limit
+without replacing its route or restarting SCAN. The existing Backend speed
+transition remains responsible for a checked deceleration and spline handover.
+An already-running global replan takes the latest retained task limit when its
+result activates. Task/request correlation, terminal barriers and configured
+maximum speed apply at the native command boundary.
+
+GoalPlan, ingress and terminal regressions cover task identity, no route reset,
+invalid limits, retry semantics and an update during an in-flight global replan.
+Client tests cover the C++ and C DDS payload/ACK roundtrip. These establish the
+software command chain. Physical speed-transition evidence is recorded separately.
+
+## Final command deadband and the active speed budget, 2026-11-04
+
+Pinned SCAN revision `348e8a590a50a5a6bbab8d8c6dcfd171f009be26` has no
+LingTu typed-DDS final-command safety chain. Its minimum-motion deadband is
+local product policy. A positive deadband above the current single-axis budget
+previously erased every legal axis command, including a lower active-task cap.
+
+Final command safety now applies the configured deadband only while it fits
+inside both the current path-norm and body-axis budgets. The configuration is
+retained, including an explicitly higher deadband. Only its application in the
+current control cycle is skipped when it exceeds that budget. Existing maximum
+limits and stale-command handling continue to apply.
+
+The matching `test_teleop_safety` and `test_autonomy_tick_controller` regressions
+exercise low body-axis budgets, low path-norm budgets, an active-task speed cap,
+and a smaller configured deadband. Both added cases failed against the prior
+implementation. Physical motion validation is recorded separately.

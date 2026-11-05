@@ -135,6 +135,14 @@ std::string MapsServiceCore::RetrySaveMapJson(const std::string &job_id) {
   return SaveEngine().RetryJson(job_id);
 }
 
+std::string MapsServiceCore::ProcessSaveMapJson(const std::string &job_id) {
+  return SaveEngine().ProcessJson(job_id);
+}
+
+std::optional<std::filesystem::path> MapsServiceCore::SaveMapSource(const std::string &job_id) const {
+  return SaveEngine().GetSource(job_id);
+}
+
 std::string MapsServiceCore::AuditMapsJson(bool dry_run) const {
   return MaintenanceReportJson("audit_maps", maintenance_.AuditMaps(dry_run));
 }

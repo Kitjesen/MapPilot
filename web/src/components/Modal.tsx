@@ -67,6 +67,7 @@ interface PromptModalProps {
   open: boolean
   title: string
   message?: string
+  children?: React.ReactNode
   placeholder?: string
   initialValue?: string
   confirmLabel?: string
@@ -80,6 +81,7 @@ export function PromptModal({
   open,
   title,
   message,
+  children,
   placeholder,
   initialValue = '',
   confirmLabel = '确认',
@@ -158,6 +160,7 @@ export function PromptModal({
         spellCheck={false}
       />
       {error && <div className={styles.error}>{error}</div>}
+      {children}
     </ModalShell>
   )
 }

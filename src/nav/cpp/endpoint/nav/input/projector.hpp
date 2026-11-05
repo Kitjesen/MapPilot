@@ -1,9 +1,10 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <chrono>
 #include <cstddef>
 #include <functional>
-#include <memory>
 #include <string>
 #include <utility>
 
@@ -14,7 +15,6 @@
 #include "input/gate.hpp"
 #include "input/obstacle.hpp"
 #include "input/motion_worker.hpp"
-#include "planning/global/contract.hpp"
 #include "status/nav_status_writer.hpp"
 #include "traversability/transform_buffer.hpp"
 
@@ -24,12 +24,11 @@ struct InputConfig {
   bool use_simulation_clock{false};
   double simulation_clock_max_age_s{0.25};
   double source_transform_max_gap_s{0.25};
-  double cloud_pose_max_gap_s{0.12};
-  double driver_control_max_age_s{0.35};
+  double cloud_pose_max_gap_s{::lingtu::settings::control::native_nav::cloud_pose_max_gap_s};
+  double driver_control_max_age_s{::lingtu::settings::control::native_nav::driver_control_max_age_s};
   nav_kernel::Vec3 sensor_offset{};
   bool check_obstacle{true};
-  std::size_t max_obstacle_points{20000};
-  std::shared_ptr<const collision::Body> navigation_body;
+  std::size_t max_obstacle_points{::lingtu::settings::local::native_nav::max_obstacle_points};
   double support_height_m{0.0};
   double support_tolerance_m{0.0};
 };
@@ -67,9 +66,6 @@ class InputProjector {
                                   double receive_steady_s);
   void projectLocalCollision(InputSample<LocalCollisionMap> sample,
                              double receive_steady_s);
-  using SpaceQueries = std::pair<decltype(plan::GlobalPlanRequest{}.observed_free),
-                                decltype(plan::GlobalPlanRequest{}.observed_occupied)>;
-  SpaceQueries observedSpaceQueries(double now_s, double max_age_s) const;
   bool pollObstacles(TimingDiagnostics &timing);
 
   // Health and motion-readiness inputs.
@@ -84,7 +80,6 @@ class InputProjector {
                       TimingDiagnostics &timing, bool extended);
   void resetEpoch(double epoch_start_s, const std::string &reason, bool clear_motion);
   void clearPlanState();
-  void updateBodyGeometry();
 
   EndpointState &state_;
   InputGate &gate_;

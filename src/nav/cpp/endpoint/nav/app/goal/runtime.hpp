@@ -28,6 +28,7 @@ enum class GoalReplanRuntimeInterruption {
 
 enum class TerminalStopPolicy {
   kGenericStop,
+  kReached,
   // Active and planning-only Stop terminal intents replay through Stop semantics.
   kStop,
   // Active cancel terminal intents replay with TerminalStopPolicy::kCancel.
@@ -109,6 +110,8 @@ class GoalReplanRuntimeCoordinator {
   [[nodiscard]] GoalReplanRuntimeResult interrupt(GoalReplanRuntimeInterruption interruption,
                                                   double steady_now_s);
   [[nodiscard]] GoalReplanRuntimeResult replayPendingTerminal() const;
+  // A safety stop must retain full stop evidence when the terminal is replayed.
+  void requirePendingTerminalOdometry();
   [[nodiscard]] bool acknowledgeTerminal(std::uint64_t terminal_intent_id);
   // Command ingress must not admit a new goal while this is true. The endpoint
   // must finish the stop-confirmed terminal transaction and acknowledge its
@@ -127,9 +130,7 @@ class GoalReplanRuntimeCoordinator {
   [[nodiscard]] static std::optional<BoundedGoalReplanGoal>
   activeGoal(const GoalPlanSnapshot &snapshot);
   [[nodiscard]] std::optional<BoundedGoalReplanGoal> trackedGoal() const;
-  [[nodiscard]] static GoalPlanAdmissionContext
-  normalizedAdmission(const GoalPlanAdmissionContext &context);
-  [[nodiscard]] static std::string admissionFailure(const GoalReplanRuntimeFrameInput &frame,
+  [[nodiscard]] static std::string replacementStateFailure(const GoalReplanRuntimeFrameInput &frame,
                                                    const GoalPlanSnapshot &snapshot);
   [[nodiscard]] std::optional<GoalReplanRuntimeResult>
   handleGoalReached(const GoalReplanRuntimeFrameInput &frame,

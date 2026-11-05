@@ -161,4 +161,41 @@ OpenArtifactResult MapQueryCore::OpenArtifact(const std::string &map_id,
 #endif
 }
 
+OpenArtifactResult MapQueryCore::OpenSaveSource(const std::string &job_id) const {
+#if defined(__linux__)
+  try {
+    const auto source = service_.SaveMapSource(job_id);
+    if (!source.has_value()) {
+      return {false, FailureJson("open_artifact", "Saved source PCD is unavailable",
+                                  "saved_source_missing"), -1};
+    }
+    const int fd = ::open(source->c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) {
+      return {false, FailureJson("open_artifact", "Saved source PCD could not be opened",
+                                  "saved_source_missing"), -1};
+    }
+    struct stat statbuf{};
+    if (::fstat(fd, &statbuf) != 0 || !S_ISREG(statbuf.st_mode)) {
+      ::close(fd);
+      return {false, FailureJson("open_artifact", "Saved source PCD is not a regular file",
+                                  "saved_source_missing"), -1};
+    }
+    return {true,
+            "{\"action\":\"open_artifact\",\"success\":true,"
+            "\"schema_version\":\"mapd.artifact.v1\",\"job_id\":" + JsonString(job_id) +
+                ",\"artifact\":{\"type\":\"POINTCLOUD\",\"filename\":\"source.pcd\","
+                "\"media_type\":\"application/octet-stream\",\"size_bytes\":" +
+                std::to_string(static_cast<std::uint64_t>(statbuf.st_size)) + "}}",
+            fd};
+  } catch (const std::exception &exc) {
+    return {false, FailureJson("open_artifact", exc.what(), "internal_error"), -1};
+  }
+#else
+  (void)job_id;
+  return {false,
+          FailureJson("open_artifact", "file descriptor passing requires Linux",
+                      "unsupported_platform"), -1};
+#endif
+}
+
 }  // namespace lingtu::maps::mapd::query

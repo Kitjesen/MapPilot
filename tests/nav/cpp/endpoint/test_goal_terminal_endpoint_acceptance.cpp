@@ -221,7 +221,7 @@ struct Fixture {
       order.emplace_back("publish_sequenced_zero");
       return sequenced_zero;
     };
-    actions.confirm_zero = [this](std::uint64_t sequence) {
+    actions.confirm_zero = [this](std::uint64_t sequence, auto) {
       order.emplace_back("confirm_zero:" + std::to_string(sequence));
       if (confirmation_results.empty()) {
         return StopConfirmationState::Confirmed;
@@ -321,9 +321,13 @@ struct Fixture {
         case TerminalStopPolicy::kShutdown:
           throw std::runtime_error(
               "shutdown terminal must use the shared shutdown transaction");
+        case TerminalStopPolicy::kReached:
         case TerminalStopPolicy::kGenericStop: {
           const auto stopped =
-              motion_stop.commitGoalTerminalAfterStop(terminal.reason, terminal.commit);
+              motion_stop.commitGoalTerminalAfterStop(terminal.reason, terminal.commit,
+                  result.terminal_stop_policy == TerminalStopPolicy::kReached
+                      ? std::optional{lingtu::nav::endpoint::StopConfirmationEvidencePolicy::DriverAckOnly}
+                      : std::nullopt);
           committed = MotionStopTerminalBarrierResult{stopped.accepted, stopped.reason,
                                                       stopped.accepted};
           break;

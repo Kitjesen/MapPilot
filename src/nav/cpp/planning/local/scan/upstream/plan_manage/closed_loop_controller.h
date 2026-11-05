@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 // Ported from SCAN-Planner plan_manage/closed_loop_controller.cpp at
 // commit 348e8a590a50a5a6bbab8d8c6dcfd171f009be26.
 // ROS messages, timers and publishers are replaced by value inputs/outputs;
@@ -26,15 +28,15 @@ struct BsplineTrajectory {
 };
 
 struct ClosedLoopControllerParams {
-  double timeForward{0.8};
-  double headingErrorThreshold{0.8};
-  double positionGain{0.8};
-  double yawGain{1.5};
-  double maxLinearSpeed{kDefaultLinearSpeedMps};
-  double maxVx{kDefaultLinearSpeedMps};
-  double maxVy{kDefaultLinearSpeedMps};
-  double maxYawRate{1.0};
-  double finishDistance{0.15};
+  double timeForward{::lingtu::settings::follower::parameters::scan_follower::time_forward_s};
+  double headingErrorThreshold{::lingtu::settings::follower::parameters::scan_follower::heading_error_rad};
+  double positionGain{::lingtu::settings::follower::parameters::scan_follower::position_gain};
+  double yawGain{::lingtu::settings::follower::parameters::scan_follower::yaw_gain};
+  double maxLinearSpeed{::lingtu::settings::limits::native_nav::follower::max_speed_mps};
+  double maxVx{::lingtu::settings::limits::parameters::scan_follower::max_vx_mps};
+  double maxVy{::lingtu::settings::limits::parameters::scan_follower::max_vy_mps};
+  double maxYawRate{::lingtu::settings::limits::native_nav::follower::max_yaw_rate_rad_s};
+  double finishDistance{::lingtu::settings::follower::parameters::scan_follower::finish_distance_m};
 };
 
 struct ClosedLoopControllerState {
@@ -69,7 +71,6 @@ class ClosedLoopController {
 
  private:
   [[nodiscard]] double desiredYaw(double time,
-                                  const Eigen::Vector3d &desiredPosition,
                                   double currentYaw,
                                   double timeForward) const;
 

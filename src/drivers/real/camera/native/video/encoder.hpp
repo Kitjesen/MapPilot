@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <chrono>
 #include <functional>
 #include <memory>
@@ -20,9 +22,9 @@ class Cancelled final : public std::runtime_error {
 struct EncoderOptions {
   std::string executable{"ffmpeg"};
   std::string codec{"libx264"};
-  unsigned fps{15};
-  unsigned bitrate_kbps{1500};
-  unsigned gop{15};
+  unsigned fps{lingtu::settings::camera::camera::video::fps};
+  unsigned bitrate_kbps{lingtu::settings::camera::camera::video::start_bitrate / 1000};
+  unsigned gop{lingtu::settings::camera::camera::video::fps};
   std::chrono::milliseconds write_timeout{500};
   std::function<bool()> stop_requested;
 };

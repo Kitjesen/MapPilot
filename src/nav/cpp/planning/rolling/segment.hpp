@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -59,8 +61,8 @@ struct SegmentPolicy {
   static constexpr std::size_t kMinimumWaypoints = 2U;
   static constexpr std::size_t kMaximumWaypoints = 4096U;
 
-  double max_distance_m{5.0};
-  std::size_t max_waypoints{32U};
+  double max_distance_m{::lingtu::settings::explore::parameters::segment_max_distance_m};
+  std::size_t max_waypoints{::lingtu::settings::explore::parameters::segment_max_waypoints};
 
   [[nodiscard]] bool valid() const {
     return std::isfinite(max_distance_m) && max_distance_m >= kMinimumDistanceM &&
@@ -75,9 +77,9 @@ struct MapInputPolicy {
   static constexpr double kMinimumMaxAgeS = 0.01;
   static constexpr double kMaximumMaxAgeS = 10.0;
 
-  std::size_t max_grid_cells{262'144U};
-  double max_age_s{0.35};
-  double future_tolerance_s{0.25};
+  std::size_t max_grid_cells{::lingtu::settings::explore::standalone::parameters::map_input_max_cells};
+  double max_age_s{::lingtu::settings::explore::standalone::parameters::map_input_max_age_s};
+  double future_tolerance_s{::lingtu::settings::explore::standalone::parameters::map_input_future_tolerance_s};
   double max_coordinate_m{1'000'000.0};
 
   [[nodiscard]] bool valid() const {
@@ -91,8 +93,8 @@ struct MapInputPolicy {
 };
 
 struct RiskPolicy {
-  float stop_threshold{50.0F};
-  float resume_threshold{40.0F};
+  float stop_threshold{static_cast<float>(::lingtu::settings::explore::parameters::risk_stop_threshold)};
+  float resume_threshold{static_cast<float>(::lingtu::settings::explore::parameters::risk_resume_threshold)};
   float max_cost{100.0F};
 
   [[nodiscard]] bool valid() const {

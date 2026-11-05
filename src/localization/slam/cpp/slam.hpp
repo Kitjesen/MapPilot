@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <cstddef>
 #include <array>
 #include <cstdint>
@@ -49,8 +51,8 @@ struct SlamConfig {
   std::string backend = "ltlio";
   std::string config_path;
   std::string map_frame = "map";
-  std::string odom_frame = "odom";
-  std::string body_frame = "body";
+  std::string odom_frame = lingtu::settings::slam::slam::world_frame;
+  std::string body_frame = lingtu::settings::slam::slam::body_frame;
   bool publish_state_estimation_at_scan = false;
 };
 
@@ -210,6 +212,7 @@ struct SlamOutputs {
   std::shared_ptr<const Cloud> map_cloud_map;
   std::shared_ptr<const Cloud> saved_map_cloud_map;
   std::uint64_t saved_map_revision = 0;
+  std::uint64_t saved_map_observation_sequence = 0;
   std::shared_ptr<const Cloud> global_map_cloud;
   std::uint64_t global_map_revision = 0;
   std::size_t global_map_keyframes = 0;
@@ -343,6 +346,8 @@ class ISlamBackend {
   virtual bool relocalizeAsyncInFlight() const { return false; }
 
   virtual Status tick() = 0;
+  // Prepare the SLAM point-cloud snapshot. mapd commits the product map bundle.
+  // Saving archives geometry only. loadMap() explicitly prepares the localization target.
   virtual Status saveMap(const std::string& pcd_path) = 0;
   virtual Status startSaveMapAsync(const std::string& pcd_path) {
     return saveMap(pcd_path);

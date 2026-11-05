@@ -27,9 +27,11 @@ class CloudWs:
         self._queue_put_latest = queue_put_latest
         self._current_loop = current_loop
         self._lock = threading.Lock()
+        self._changed = threading.Condition(self._lock)
         self._latest_buf: bytes | None = None
         self._seq = 0
         self._subs: list[asyncio.Queue] = []
+        self._sync_subs: set[CloudSubscription] = set()
         self._sub_loops: dict[asyncio.Queue, asyncio.AbstractEventLoop | None] = {}
         self._queue_maxsize = queue_maxsize
         self._published_frames = 0
@@ -48,6 +50,7 @@ class CloudWs:
             self._latest_meta = meta
             subscribers = [(q, self._sub_loops.get(q)) for q in self._subs]
             self._published_frames += 1
+            self._changed.notify_all()
         for q, loop in subscribers:
             self._queue_put_latest(q, buf, loop, self.record_delivery)
         return seq
@@ -71,7 +74,13 @@ class CloudWs:
 
     def has_subscribers(self) -> bool:
         with self._lock:
-            return bool(self._subs)
+            return bool(self._subs or self._sync_subs)
+
+    def subscribe_sync(self) -> CloudSubscription:
+        subscription = CloudSubscription(self)
+        with self._changed:
+            self._sync_subs.add(subscription)
+        return subscription
 
     def record_delivery(self, dropped: bool, depth: int) -> None:
         with self._lock:
@@ -87,7 +96,8 @@ class CloudWs:
             if latest.get("ts"):
                 latest["age_s"] = round(max(0.0, time.time() - float(latest["ts"])), 3)
             return {
-                "clients": len(self._subs),
+                "clients": len(self._subs) + len(self._sync_subs),
+                "sync_clients": len(self._sync_subs),
                 "queue_maxsize": self._queue_maxsize,
                 "queue_depths": depths,
                 "handoff_depths": [depth for depth, _ in handoffs],
@@ -107,3 +117,30 @@ class CloudWs:
         if latest.get("ts"):
             latest["age_s"] = round(max(0.0, time.time() - float(latest["ts"])), 3)
         return has_latest, latest
+
+
+class CloudSubscription:
+    """A synchronous consumer reads the shared latest frame without a second queue."""
+
+    def __init__(self, channel: CloudWs) -> None:
+        self._channel = channel
+        self._sequence = -1
+
+    def read(self, timeout: float) -> bytes | None:
+        channel = self._channel
+        with channel._changed:
+            channel._changed.wait_for(
+                lambda: self not in channel._sync_subs
+                or (channel._latest_buf is not None and channel._seq != self._sequence),
+                timeout,
+            )
+            if self not in channel._sync_subs or channel._seq == self._sequence:
+                return None
+            self._sequence = channel._seq
+            return channel._latest_buf
+
+    def close(self) -> None:
+        channel = self._channel
+        with channel._changed:
+            channel._sync_subs.discard(self)
+            channel._changed.notify_all()

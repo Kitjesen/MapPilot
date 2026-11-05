@@ -16,12 +16,15 @@ import time
 from pathlib import Path
 from typing import Any, BinaryIO
 
+import yaml
+
 from runtime.contracts import CAMERA_BACKEND_ORBBEC, CAMERA_ROLE
 from runtime.module import Module
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat
 from runtime.registry import register
 from runtime.stream import Out
+from runtime.tf.frames import FRAMES
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +88,6 @@ def _default_camera_config() -> dict[str, Any]:
     config: dict[str, Any] = {}
     path = _repo_root() / "config" / "devices.yaml"
     try:
-        import yaml
-
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except Exception:
         data = {}
@@ -99,6 +100,26 @@ def _default_camera_config() -> dict[str, Any]:
                 config.setdefault("device", item.get("id") or CAMERA_ROLE)
                 config.setdefault("driver", item.get("driver") or CAMERA_BACKEND_ORBBEC)
                 break
+
+    shared = yaml.safe_load((_repo_root() / "config/system/settings/camera.yaml").read_text(encoding="utf-8"))["camera"]
+    capture, sdk = shared["capture"], shared["orbbec"]
+    defaults = {
+        "color": {key: capture[f"color_{key}"] for key in ("width", "height", "fps")},
+        "depth": {key: capture[f"depth_{key}"] for key in ("width", "height", "fps")},
+        "frame_id": FRAMES.camera,
+        "timeout_ms": capture["timeout_ms"],
+        "startup_timeout_ms": capture["startup_timeout_ms"],
+        "product_id": sdk["product_id"],
+        "device_index": sdk["device_index"],
+        "sdk_config_path": sdk["sdk_config"],
+        "connect_timeout_ms": sdk["connect_timeout_ms"],
+        "enable_frame_sync": sdk["frame_sync"],
+    }
+    for stream in ("color", "depth"):
+        override = config.pop(stream, None)
+        if isinstance(override, dict):
+            defaults[stream].update(override)
+    config = {**defaults, **config}
 
     # Camera mounting orientation comes from the selected RobotConfig.
     from runtime.config import get_config
@@ -157,9 +178,9 @@ class OrbbecNativeCameraModule(Module, layer=1):
         config = _default_camera_config()
         color = config.get("color") if isinstance(config.get("color"), dict) else {}
         depth = config.get("depth") if isinstance(config.get("depth"), dict) else {}
-        base_width = int(width if width is not None else config.get("width", 640))
-        base_height = int(height if height is not None else config.get("height", 480))
-        base_fps = int(fps if fps is not None else config.get("fps", 30))
+        base_width = int(width if width is not None else config.get("width", color["width"]))
+        base_height = int(height if height is not None else config.get("height", color["height"]))
+        base_fps = int(fps if fps is not None else config.get("fps", color["fps"]))
         env_exe = os.environ.get("LINGTU_ORBBEC_NATIVE_EXECUTABLE", "").strip()
         self._executable = Path(executable or env_exe or _default_executable())
         self._color_width = int(color_width if color_width is not None else color.get("width", base_width))
@@ -177,18 +198,20 @@ class OrbbecNativeCameraModule(Module, layer=1):
         raw_device_index = device_index if device_index is not None else config.get("device_index")
         self._device_index = None if raw_device_index is None else int(raw_device_index)
         self._connect_timeout_ms = int(
-            connect_timeout_ms if connect_timeout_ms is not None else config.get("connect_timeout_ms", 10000)
+            connect_timeout_ms if connect_timeout_ms is not None else config["connect_timeout_ms"]
         )
         self._sdk_config_path = str(
-            sdk_config_path if sdk_config_path is not None else config.get("sdk_config_path", "")
+            sdk_config_path if sdk_config_path is not None else config["sdk_config_path"]
         ).strip()
         self._enable_frame_sync = bool(
-            enable_frame_sync if enable_frame_sync is not None else config.get("enable_frame_sync", False)
+            enable_frame_sync if enable_frame_sync is not None else config["enable_frame_sync"]
         )
         self._device = str(config.get("device") or CAMERA_ROLE)
         self._camera_backend = CAMERA_BACKEND_ORBBEC
         self._rotate = int(rotate if rotate is not None else config.get("rotate", 0))
-        self._frame_id = str(frame_id or config.get("frame_id", "camera_link"))
+        self._frame_id = str(frame_id or config["frame_id"])
+        self._timeout_ms = int(config["timeout_ms"])
+        self._startup_timeout_ms = int(config["startup_timeout_ms"])
         self._proc: subprocess.Popen[bytes] | None = None
         self._reader: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -224,19 +247,20 @@ class OrbbecNativeCameraModule(Module, layer=1):
             str(self._depth_fps),
             "--connect-timeout-ms",
             str(self._connect_timeout_ms),
+            "--timeout-ms",
+            str(self._timeout_ms),
+            "--startup-frame-timeout-ms",
+            str(self._startup_timeout_ms),
         ]
         if self._serial_number:
             cmd.extend(["--serial-number", self._serial_number])
         if self._uid:
             cmd.extend(["--uid", self._uid])
-        if self._product_id:
-            cmd.extend(["--product-id", str(self._product_id)])
+        cmd.extend(["--product-id", str(self._product_id)])
         if self._device_index is not None:
             cmd.extend(["--device-index", str(self._device_index)])
-        if self._sdk_config_path:
-            cmd.extend(["--sdk-config", self._sdk_config_path])
-        if self._enable_frame_sync:
-            cmd.append("--enable-frame-sync")
+        cmd.extend(["--sdk-config", self._sdk_config_path])
+        cmd.append("--enable-frame-sync" if self._enable_frame_sync else "--no-frame-sync")
         try:
             self._proc = subprocess.Popen(
                 cmd,

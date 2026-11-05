@@ -98,8 +98,8 @@ void testNavigationRateAndAcceleration() {
   });
   require(std::abs(cfg.tick_hz - 20.0) < 1e-12, "tick_hz must parse");
   require(std::abs(1.0 / cfg.tick_hz - 0.05) < 1e-12, "20 Hz must be 50 ms");
-  require(std::abs(cfg.nav_max_speed_mps - 0.6) < 1e-12, "max speed must parse");
-  require(std::abs(cfg.nav_max_accel_mps2 - 1.5) < 1e-12, "max accel must parse");
+  require(std::abs(cfg.path_follower_max_speed_mps - 0.6) < 1e-12, "max speed must parse");
+  require(std::abs(cfg.path_follower_max_accel_mps2 - 1.5) < 1e-12, "max accel must parse");
   require(std::abs(cfg.corridor_lookahead_m - 1.2) < 1e-12, "corridor lookahead must parse");
 }
 
@@ -113,21 +113,45 @@ void testOrdinarySpeedDefaultsAgreeAcrossTheNativeBoundary() {
   const auto cfg=parse({"navd", "--local-planner", "scan"});
   const auto planner=buildLocalPlannerParams(cfg);
   const auto executor=buildExecutorConfig(cfg);
-  require(nav_kernel::ScanPlannerParams{}.maxVelocity == 1.0 &&
+  const double path_speed = std::sqrt(2.0);
+  require(nav_kernel::ScanPlannerParams{}.maxVelocity == path_speed &&
               nav_kernel::SplineFollowerParams{}.maxVx == 1.0 &&
               nav_kernel::SplineFollowerParams{}.maxVy == 1.0 &&
-              nav_kernel::local::scan::upstream::ClosedLoopControllerParams{}.maxLinearSpeed == 1.0 &&
+              nav_kernel::local::scan::upstream::ClosedLoopControllerParams{}.maxLinearSpeed == path_speed &&
               nav_kernel::local::scan::upstream::ClosedLoopControllerParams{}.maxVx == 1.0 &&
               nav_kernel::local::scan::upstream::ClosedLoopControllerParams{}.maxVy == 1.0,
-          "ordinary SCAN library speed defaults must be one meter per second");
-  require(cfg.nav_max_speed_mps == 1.0 && cfg.path_follower_max_speed_mps == 1.0 &&
-              cfg.teleop_max_speed_mps == 1.0 && planner.scan.maxVelocity == 1.0 &&
+          "SCAN library defaults must preserve shared path and body-axis limits");
+  require(cfg.path_follower_max_speed_mps == path_speed &&
+              cfg.teleop_max_speed_mps == 1.0 && planner.scan.maxVelocity == path_speed &&
               planner.scan.maxBodyVx == 1.0 && planner.scan.maxBodyVy == 1.0 &&
-              executor.max_speed == 1.0 && executor.follower.spline.maxVx == 1.0 &&
+              executor.max_speed == path_speed && executor.follower.spline.maxVx == 1.0 &&
               executor.follower.spline.maxVy == 1.0 &&
-              lingtu::nav::navigation::ExecutorConfig{}.max_speed == 1.0 &&
+              lingtu::nav::navigation::ExecutorConfig{}.max_speed == path_speed &&
               lingtu::nav::endpoint::CommandSafetyConfig{}.max_speed_mps == 1.0,
-          "bare endpoint parsing and planner/follower wiring must preserve the speed default");
+          "bare endpoint parsing and planner/follower wiring must preserve the shared limits");
+}
+
+void testBackendSettingsReachPlannerAndFollower() {
+  ScopedEnvironment scale("LINGTU_NAV_CMU_PATH_SCALE", "0.9");
+  ScopedEnvironment lookahead("LINGTU_NAV_CMU_FOLLOWER_LOOKAHEAD_M", "0.7");
+  ScopedEnvironment cmu_voxel("LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M", "");
+  ScopedEnvironment scan_voxel("LINGTU_NAV_SCAN_MOTION_VOXEL_SIZE_M", "0.09");
+  ScopedEnvironment scan_resolution("LINGTU_NAV_SCAN_VOXEL_RESOLUTION_M", "0.10");
+  ScopedEnvironment operator_age("LINGTU_TELEOP_CMD_MAX_AGE_S", "0.5");
+  ScopedEnvironment input_future("LINGTU_NAV_INPUT_FUTURE_TOLERANCE_S", "0.07");
+  const auto cfg = parse({"navd", "--path-library", "fixture-paths"});
+  require(buildLocalPlannerParams(cfg).pathScale == 0.9, "CMU path scale must reach the planner");
+  require(cfg.obstacle_voxel_size_m == 0.05, "SCAN voxel tuning must not change CMU defaults");
+  const auto follower = buildExecutorConfig(cfg).follower;
+  require(nav_kernel::cmuFollowerParams(follower).baseLookAheadDis == 0.7,
+          "CMU lookahead must survive follower profile selection");
+  const auto scan = parse({"navd", "--local-planner", "scan"});
+  require(scan.obstacle_voxel_size_m == 0.09, "SCAN voxel tuning must reach the motion layer");
+  require(buildLocalPlannerParams(scan).scan.voxelResolution == 0.10,
+          "the map resolution must reach the SCAN planner");
+  const auto operator_options = lingtu::nav::endpoint::operatorMotionAuthorityOptions(scan);
+  require(operator_options.max_sample_age_s == 0.5 && operator_options.future_tolerance_s == 0.07,
+          "operator freshness settings must reach the authority");
 }
 
 void testOrdinaryAccelerationDefaultsAndExplicitOverrides() {
@@ -136,25 +160,25 @@ void testOrdinaryAccelerationDefaultsAndExplicitOverrides() {
   ScopedEnvironment scan_accel("LINGTU_NAV_SCAN_PLANNER_MAX_ACCELERATION_MPS2", "");
   ScopedEnvironment x_accel("LINGTU_NAV_SMOOTHER_X_ACCEL_MPS2", "");
   ScopedEnvironment y_accel("LINGTU_NAV_SMOOTHER_Y_ACCEL_MPS2", "");
-  require(nav_kernel::ScanPlannerParams{}.maxAcceleration == 2.0 &&
-              nav_kernel::FollowerParams{}.maxAccel == 2.0 &&
-              nav_kernel::VelocitySmootherConfig{}.x.acceleration == 2.0 &&
-              nav_kernel::VelocitySmootherConfig{}.y.acceleration == 2.0,
+  require(nav_kernel::ScanPlannerParams{}.maxAcceleration == 4.0 &&
+              nav_kernel::FollowerParams{}.maxAccel == 4.0 &&
+              nav_kernel::VelocitySmootherConfig{}.x.acceleration == 4.0 &&
+              nav_kernel::VelocitySmootherConfig{}.y.acceleration == 4.0,
           "native library ordinary acceleration defaults must agree");
   for (const char *backend : {"cmu", "scan"}) {
     const auto cfg = parse({"navd", "--path-library", "fixture-paths", "--local-planner", backend});
-    require(cfg.nav_max_accel_mps2 == 2.0 && cfg.path_follower_max_accel_mps2 == 2.0 &&
-                cfg.scan_planner.maxAcceleration == 2.0 &&
-                cfg.velocity_smoother.x.acceleration == 2.0 &&
-                cfg.velocity_smoother.y.acceleration == 2.0,
+    require(cfg.path_follower_max_accel_mps2 == 4.0 &&
+                cfg.scan_planner.maxAcceleration == 4.0 &&
+                cfg.velocity_smoother.x.acceleration == 4.0 &&
+                cfg.velocity_smoother.y.acceleration == 4.0,
             "ordinary endpoint acceleration defaults must agree");
-    require(buildExecutorConfig(cfg).follower.maxAccel == 2.0 &&
-                buildLocalPlannerParams(cfg).scan.maxAcceleration == 2.0,
+    require(buildExecutorConfig(cfg).follower.maxAccel == 4.0 &&
+                buildLocalPlannerParams(cfg).scan.maxAcceleration == 4.0,
             "ordinary defaults must reach planner and follower");
 
     const auto lower = parse({"navd", "--path-library", "fixture-paths", "--local-planner", backend,
                               "--max-accel-mps2", "1.3", "--path-follower-max-accel-mps2", "0.4"});
-    require(lower.nav_max_accel_mps2 == 1.3 && lower.path_follower_max_accel_mps2 == 0.4 &&
+    require(lower.path_follower_max_accel_mps2 == 0.4 &&
                 lower.scan_planner.maxAcceleration == 0.4 &&
                 lower.velocity_smoother.x.acceleration == 0.4 &&
                 lower.velocity_smoother.y.acceleration == 0.4,
@@ -162,10 +186,10 @@ void testOrdinaryAccelerationDefaultsAndExplicitOverrides() {
     require(buildExecutorConfig(lower).follower.maxAccel == 0.4 &&
                 buildLocalPlannerParams(lower).scan.maxAcceleration == 0.4,
             "explicit lower acceleration must survive CMU and SCAN composition");
-    require(lower.velocity_smoother.x.deceleration == 2.0 &&
-                lower.velocity_smoother.y.deceleration == 2.0 &&
-                lower.velocity_smoother.yaw.acceleration == 2.0 &&
-                lower.velocity_smoother.yaw.deceleration == 3.0,
+    require(lower.velocity_smoother.x.deceleration == 4.0 &&
+                lower.velocity_smoother.y.deceleration == 4.0 &&
+                lower.velocity_smoother.yaw.acceleration == 4.0 &&
+                lower.velocity_smoother.yaw.deceleration == 4.0,
             "ordinary translation acceleration must not alter braking or yaw defaults");
   }
   ScopedEnvironment explicit_follower("LINGTU_NAV_PATH_FOLLOWER_MAX_ACCEL_MPS2", "0.8");
@@ -346,8 +370,8 @@ void testUnsafeNegativeValuesClampToZero() {
       "-1.5",
   });
   require(cfg.tick_hz == 1.0, "tick_hz must clamp to at least 1 Hz");
-  require(cfg.nav_max_speed_mps == 0.0, "negative max speed must clamp to zero");
-  require(cfg.nav_max_accel_mps2 == 0.0, "negative max accel must clamp to zero");
+  require(cfg.path_follower_max_speed_mps == 0.0, "negative max speed must clamp to zero");
+  require(cfg.path_follower_max_accel_mps2 == 0.0, "negative max accel must clamp to zero");
 }
 
 void testInputFutureToleranceIsProfileConfigurable() {
@@ -1497,8 +1521,53 @@ void testEnvironmentNumbersRejectTrailingJunk() {
 
   ScopedEnvironment padded("LINGTU_NAV_MAX_SPEED_MPS", " 0.5 \t");
   const auto cfg = parse({"navd", "--path-library", "fixture-paths"});
-  require(std::abs(cfg.nav_max_speed_mps - 0.5) < 1e-12,
+  require(std::abs(cfg.path_follower_max_speed_mps - 0.5) < 1e-12,
           "environment numbers may contain surrounding whitespace");
+}
+
+void testMotionLimitOverrides() {
+  ScopedEnvironment speed("LINGTU_NAV_MAX_SPEED_MPS", "0.6");
+  ScopedEnvironment follower_speed("LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS", "0.7");
+  ScopedEnvironment accel("LINGTU_NAV_MAX_ACCEL_MPS2", "1.1");
+  ScopedEnvironment follower_accel("LINGTU_NAV_PATH_FOLLOWER_MAX_ACCEL_MPS2", "1.2");
+  const auto env = parse({"navd", "--path-library", "fixture-paths"});
+  require(env.path_follower_max_speed_mps == 0.7 && env.path_follower_max_accel_mps2 == 1.2,
+          "follower environment limits must override the general limits");
+  const auto cli = parse({"navd", "--path-library", "fixture-paths",
+                          "--max-speed-mps", "0.9", "--path-follower-max-speed-mps", "0.8",
+                          "--path-follower-max-accel-mps2", "0.4", "--max-accel-mps2", "1.3"});
+  require(cli.path_follower_max_speed_mps == 0.8 && cli.path_follower_max_accel_mps2 == 1.3,
+          "later CLI limits must override earlier limits");
+
+  {
+    ScopedEnvironment forward("LINGTU_NAV_SCAN_MAX_VX_MPS", "0.005");
+    ScopedEnvironment lateral("LINGTU_NAV_SCAN_MAX_VY_MPS", "0.005");
+    const auto low = parse({"navd", "--local-planner", "scan"});
+    require(low.scan_follower.maxVx == 0.005 && low.scan_follower.maxVy == 0.005,
+            "positive low hardware axis limits must reach the SCAN follower");
+  }
+
+  for (const auto &option : {"--max-speed-mps", "--max-accel-mps2"}) {
+    bool rejected = false;
+    try {
+      (void)parse({"navd", "--path-library", "fixture-paths", option, "nan",
+                   "--path-follower-max-speed-mps", "0.8",
+                   "--path-follower-max-accel-mps2", "1.0"});
+    } catch (const std::runtime_error &) {
+      rejected = true;
+    }
+    require(rejected, "invalid general limits must be rejected even when later overridden");
+  }
+  for (const auto &name : {"LINGTU_NAV_MAX_SPEED_MPS", "LINGTU_NAV_MAX_ACCEL_MPS2"}) {
+    ScopedEnvironment invalid(name, "nan");
+    bool rejected = false;
+    try {
+      (void)parse({"navd", "--path-library", "fixture-paths"});
+    } catch (const std::runtime_error &) {
+      rejected = true;
+    }
+    require(rejected, "invalid general environment limits must not be hidden by overrides");
+  }
 }
 
 void testVelocitySmootherAcceptsCoreBoundaryValues() {
@@ -1585,16 +1654,41 @@ void testSimulationRunPlanIdentityFailsClosed() {
 }
 
 void testLocalPlannerUsesConfiguredObstacleEnvelope() {
-  CliConfig cfg;
-  cfg.teleop_obstacle_height_min_m = 0.10;
-  cfg.teleop_obstacle_height_max_m = 1.40;
-  cfg.local_planner_obstacle_height_max_m = 1.20;
+  ScopedEnvironment minimum("LINGTU_NAV_LOCAL_PLANNER_OBSTACLE_HEIGHT_MIN_M", "0.10");
+  ScopedEnvironment legacy_maximum("LINGTU_TELEOP_OBSTACLE_HEIGHT_MAX_M", "1.20");
+  ScopedEnvironment maximum("LINGTU_NAV_LOCAL_PLANNER_OBSTACLE_HEIGHT_MAX_M", "0.80");
+  const auto cfg = parse({"navd", "--path-library", "fixture-paths"});
 
   const auto planner = buildLocalPlannerParams(cfg);
   require(std::abs(planner.obstacleHeightThre - 0.10) < 1e-12,
           "local planner must use the configured obstacle minimum");
-  require(std::abs(planner.obstacleHeightMax - 1.40) < 1e-12,
-          "local planner must use the configured obstacle maximum");
+  require(std::abs(planner.obstacleHeightMax - 0.80) < 1e-12,
+          "the local setting must own the planner obstacle maximum");
+  const auto status = buildStatusWriterConfig(cfg, inputGateConfig(cfg));
+  require(status.planner_obstacle_height_min_m == planner.obstacleHeightThre &&
+              status.planner_obstacle_height_max_m == planner.obstacleHeightMax,
+          "the status preview must use the same obstacle interval as the planner");
+
+  const auto low = buildLocalPlannerParams(parse({
+      "navd", "--path-library", "fixture-paths",
+      "--local-planner-obstacle-height-min-m", "0.05",
+      "--local-planner-obstacle-height-max-m", "0.10",
+  }));
+  require(low.obstacleHeightThre == 0.05 && low.obstacleHeightMax == 0.10,
+          "a valid low obstacle interval must reach the planner unchanged");
+
+  for (const auto &[value, expected] :
+       {std::pair{"-0.10", "local planner obstacle height minimum must be finite and non-negative"},
+        std::pair{"0.90", "local planner obstacle height maximum must be at least the minimum"}}) {
+    bool rejected = false;
+    try {
+      (void)parse({"navd", "--path-library", "fixture-paths",
+                   "--local-planner-obstacle-height-min-m", value});
+    } catch (const std::runtime_error &error) {
+      rejected = std::string(error.what()) == expected;
+    }
+    require(rejected, "an invalid local obstacle height interval must fail during config parsing");
+  }
 }
 
 void testDriverControlFreshnessCannotBeDisabled() {
@@ -1616,6 +1710,7 @@ void testDriverControlFreshnessCannotBeDisabled() {
 }
 
 void testRollingSegmentPoliciesAreConfigurableAndBounded() {
+  ScopedEnvironment future_tolerance("LINGTU_NAV_SEGMENT_FUTURE_TOLERANCE_S", "0.7");
   const auto cfg = parse({
       "navd",
       "--path-library",
@@ -1644,6 +1739,8 @@ void testRollingSegmentPoliciesAreConfigurableAndBounded() {
           "segment risk resume threshold must parse");
   require(std::abs(policy.map_input.max_age_s - 0.8) < 1e-12,
           "segment map maximum age must parse");
+  require(std::abs(policy.map_input.future_tolerance_s - 0.7) < 1e-12,
+          "segment map future tolerance must reach the planner");
 
   for (const std::vector<std::string> &args : {
            std::vector<std::string>{"navd", "--path-library", "fixture-paths",
@@ -1758,6 +1855,7 @@ int main() {
     testRobotConfigBody2ModelReplacesDimensionDerivedBox();
     testOrdinaryAccelerationDefaultsAndExplicitOverrides();
     testOrdinarySpeedDefaultsAgreeAcrossTheNativeBoundary();
+    testBackendSettingsReachPlannerAndFollower();
     testStairLandingUsesPhysicalFootprint();
     testDynamicObstacleThresholdsParse();
     testRuntimeEnvironmentPrecedesDefaultsAndCliPrecedesEnvironment();
@@ -1772,6 +1870,7 @@ int main() {
     testVelocitySmootherRejectsUnavailableClosedLoopOnlyWhenEnabled();
     testVelocitySmootherConfigurationFailsClosed();
     testEnvironmentNumbersRejectTrailingJunk();
+    testMotionLimitOverrides();
     testVelocitySmootherAcceptsCoreBoundaryValues();
     testSimulationRunPlanIdentityDerivesRuntimePaths();
     testExecutionClockConfiguration();

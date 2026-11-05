@@ -182,7 +182,8 @@ CommandIngressResult CommandIngressController::handle(const CommandIngressReques
   }
   const bool task_id_required =
       kind == CommandKind::Goal || kind == CommandKind::TaskCancel ||
-      kind == CommandKind::TaskPause || kind == CommandKind::TaskResume;
+      kind == CommandKind::TaskPause || kind == CommandKind::TaskResume ||
+      kind == CommandKind::TaskSpeedLimit;
   if (task_id_required && request.task_id.empty()) {
     return finish({}, request.request_id, kind, {false, "command_task_id_empty"}, false, false);
   }

@@ -318,6 +318,7 @@ function Dashboard() {
             sseState={sseState}
             showToast={showToast}
             locale={locale}
+            instructionActive={instructionActive}
             motionStartAllowed={motionStartGate.allowed && !instructionActive}
             motionStartBlockedReason={instructionActive
               ? text(locale, 'End the current instruction before starting a map goal', '请先结束当前指令任务，再开始地图导航')
@@ -343,6 +344,7 @@ function Dashboard() {
             productSwitchMessage={productControl.message}
             onReturnLive={() => handleTabChange('scene')}
             session={sseState.session}
+            slamDiag={sseState.slamDiag?.data ?? null}
             showToast={showToast}
             locale={locale}
           />

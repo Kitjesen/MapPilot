@@ -290,7 +290,7 @@ int main()
       {center(18), center(7), center(1)},
       support_footprint_options);
     if (unsupported_edge_start.ok || !unsupported_edge_start.path.empty() ||
-        unsupported_edge_start.failure_reason != "start_unsupported") {
+        unsupported_edge_start.failure_reason != "start_snap_exhausted") {
       std::cerr << "unsupported floor-edge start escaped through snapping\n";
       return 27;
     }
@@ -544,7 +544,7 @@ int main()
         {center(18), center(0), center(10)},
         {center(18), center(0), center(1)});
     if (start_snap_result.ok ||
-        start_snap_result.failure_reason != "start_unsupported") {
+        start_snap_result.failure_reason != "start_snap_exhausted") {
       std::cerr << "in-map unsupported start did not use the official snap failure; reason="
                 << start_snap_result.failure_reason << "\n";
       return 16;
@@ -561,7 +561,7 @@ int main()
     // from the actual high start.
     if (displaced_start_result.ok || displaced_start_result.reached_goal ||
         !displaced_start_result.path.empty() ||
-        displaced_start_result.failure_reason != "start_unsupported") {
+        displaced_start_result.failure_reason != "start_snap_exhausted") {
       std::cerr << "high raw start bypassed executable entry qualification; reason="
                 << displaced_start_result.failure_reason << "\n";
       return 30;

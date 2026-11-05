@@ -182,12 +182,12 @@ they are not competing estimators:
 | `src/localization/ltlio/` | library | per `slamd` process | LTLIO scan/IMU estimation and transport-mode state |
 | `src/localization/slam/cpp/` | native service | resident field process | DDS, lifecycle, status, map/odom, save/load and relocalization wiring |
 | `src/localization/online_mapping/` | library/worker | bounded online mapping worker | keyframe graph, loop factors and corrected map snapshots |
-| `src/localization/map_optimization/` | executable/library | short-lived save-time job | PGO, loop verification and map-bundle optimization |
+| `src/localization/map_optimization/` | executable/library | save-time job | PGO, loop verification, map-bundle optimization and shared point-cloud/pose file I/O |
 | `src/localization/relocalization/` | library/CLI | request-scoped | global/seeded registration and ICP refinement |
 
-The physical directory names now carry those responsibilities directly:
-`online_mapping` is the **online mapping backend**, `map_optimization` is the
-**map optimization job**, and `relocalization` is the **relocalization library**.
+The `online_mapping` directory owns both the online scheduler and its backend;
+the file reader used by replay and offline optimization is built separately.
+`relocalization` is the **relocalization library**.
 The upstream `sam` spelling remains only where it identifies the pinned
 LIO-SAM-derived implementation or its evidence format.
 

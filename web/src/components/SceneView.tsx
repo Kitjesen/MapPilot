@@ -1,6 +1,6 @@
 import { isObservationMode } from '../services/observationMode.ts'
 import { parseInitialPose } from '../services/localizationInitialPose.ts'
-import { navigationPreviewErrorMessage, navigationPreviewIsCurrent, sceneGoalHeight, navigationSupportHeightFromRunPlan } from '../services/navigationPreview.ts'
+import { navigationGoalErrorMessage, navigationPreviewErrorMessage, navigationPreviewIsCurrent, sceneGoalHeight, navigationSupportHeightFromRunPlan } from '../services/navigationPreview.ts'
 import { resolveMappingObservation, mappingObservationPointAt } from '../services/mappingObservation.ts'
 import { estimateSceneTime, freshSource, freshScenePose, projectScenePose, projectScenePath, scanCanStandAlone, currentNativeLocalPath, scenePoseEpoch, sceneTrailStorageKey, sceneRelocalizationSeed, activeMapRelocalizationTarget } from '../services/sceneTelemetry.ts'
 import { useRef, useEffect, useCallback, useMemo, useState, memo, type ReactNode } from 'react'
@@ -30,7 +30,7 @@ import type {
   InspectionRouteRequest,
 } from '../types'
 import * as api from '../services/api'
-import { formatMapSaveProgress, pendingMapSaveStatus, savedMapStatus, mapSaveProgressValue, mapSaveElapsedMs, formatMapSaveElapsed, type MapSaveStatus } from '../services/mapSavePresentation.ts'
+import { formatMapSaveProgress, pendingMapSaveStatus, savedMapStatus, archivedMapStatus, failedMapSaveStatus, mapSaveProgressValue, mapSaveElapsedMs, formatMapSaveElapsed, mappingCapacityNotice, mappingFailureNotice, type MapSaveStatus } from '../services/mapSavePresentation.ts'
 import {
   mapIsActivationReady,
   mapSaveBlockedReason,
@@ -48,6 +48,7 @@ import {
   savedMapNeedsSceneRebind,
 } from '../workers/cloudDecoderCore.ts'
 import { PromptModal, ConfirmModal } from './Modal'
+import { MapSaveHistory } from './MapSaveHistory'
 import { Scene3D, type Scene3DHandle } from './Scene3D'
 import type { GoalPickMode } from './scene3d/goalPicking.ts'
 import { StairEditor, type StairEditorHandle } from './StairEditor'
@@ -107,6 +108,7 @@ interface SceneViewProps {
   locale: Locale
   motionStartAllowed: boolean
   motionStartBlockedReason: string
+  instructionActive: boolean
   onElevationSubscriptionChange?: (enabled: boolean) => void
   onOpenSavedMap: (name: string | null) => void
   initialRoute?: InspectionRoute | null
@@ -132,7 +134,7 @@ interface Layers {
 }
 
 const TRAIL_MAX = 300
-const GOAL_SPEED_OPTIONS = [0.2, 0.25, 0.4, 0.5, 0.6]
+const GOAL_SPEED_OPTIONS = [0.2, 0.25, 0.4, 0.5, 0.6, 0.8, 1.0]
 const GOAL_RADIUS_OPTIONS = [0.25, 0.45, 0.8]
 
 type NavigationSelectionMode = 'single' | 'route'
@@ -287,6 +289,7 @@ function SceneViewComponent({
   locale,
   motionStartAllowed,
   motionStartBlockedReason,
+  instructionActive,
   onElevationSubscriptionChange,
   onOpenSavedMap,
   initialRoute,
@@ -385,6 +388,7 @@ function SceneViewComponent({
   const cameraExpandRef = useRef<HTMLButtonElement>(null)
   const [cameraStatus, setCameraStatus] = useState<CameraMediaStatus | null>(null)
   const [saveModalOpen, setSaveModalOpen] = useState(false)
+  const [autoProcess, setAutoProcess] = useState(true)
   const [recordingPanelOpen, setRecordingPanelOpen] = useState(false)
   const [sensorDiagnosticsVisible, setSensorDiagnosticsVisible] = useState(false)
   const [sceneDockTarget, setSceneDockTarget] = useState<HTMLElement | null>(null)
@@ -479,7 +483,7 @@ function SceneViewComponent({
   const [explorationStatus, setExplorationStatus] = useState<ExplorationStatusResponse | null>(null)
   const [explorationStatusLoading, setExplorationStatusLoading] = useState(false)
   const [directedExplorationBusy, setDirectedExplorationBusy] = useState(false)
-  const [goalMaxSpeed, setGoalMaxSpeed] = useState(0.4)
+  const [goalMaxSpeed, setGoalMaxSpeed] = useState<number | null>(null)
   const [goalYaw, setGoalYaw] = useState(0)
   const [goalAcceptanceRadius, setGoalAcceptanceRadius] = useState(0.45)
   const [locationName, setLocationName] = useState('')
@@ -793,6 +797,8 @@ function SceneViewComponent({
     || navigationView.motion.permission.state === 'ESTOPPED' || !!plannerAttention
   const slamHz       = sseState.slamStatus?.slam_hz ?? 0
   const slamDiag = sseState.slamDiag?.data ?? {}
+  const capacityNotice = mappingCapacityNotice(sseState.session?.product, slamDiag)
+  const mappingNotice = (sseState.connected ? mappingFailureNotice(sseState.session?.product, slamDiag) : null) ?? capacityNotice
   const processedScanHz = numericMetric(slamDiag, 'processed_scan_hz') ?? slamHz
   const lidarInputHz = numericMetric(slamDiag, 'lidar_input_hz')
   const displayedMapPoints = numericMetric(slamDiag, 'map_points') ?? sseState.slamStatus?.map_points
@@ -948,25 +954,28 @@ function SceneViewComponent({
       : { status: 'unavailable', message: '控制可通行性图层未启用' }
   ), [layers.nativeTraversability, rasterNowS, savedMapForScene?.frameId, sseState.nativeTraversability, sseState.mapScene?.frame_id])
   const localPlannerSampleWarningText = localPlannerSampleWarning(localPlannerSnapshot)
-  const goalDisabledReason =
+  const routeDisabledReason =
     observe ? '只读监控' : navigationView.control.resumeRequired ? '请先点击“解除控制暂停”' : !motionStartAllowed
       ? motionStartBlockedReason
       : canAcceptGoal
       ? ''
       : '导航暂未就绪'
+  const goalDisabledReason = observe ? '只读监控'
+    : instructionActive ? '请先结束当前指令任务，再开始地图导航' : ''
   const canSendGoal = goalDisabledReason === ''
+  const canStartRoute = routeDisabledReason === ''
   const robotStatusMessage = !sseState.connected ? '等待实时连接恢复'
     : navigationView.control.resumeRequired ? '控制已暂停'
       : motionHeld ? motionHoldMessage
         : operatorAttention ? plannerAttention
-          : !observe && !isMappingSession && !canSendGoal ? goalDisabledReason : null
+          : !observe && !isMappingSession && !canStartRoute ? routeDisabledReason : null
   const routeStartHint = routeTaskOpen ? ''
     : routeActionPending === 'start' ? '正在保存路线并提交启动请求…'
       : routeDraft.points.length === 1 ? '再添加一个点即可开始路线'
         : routeDraft.points.length === 0 ? '点击三维地图添加路线点位'
           : !sseState.connected ? '实时连接已断开，恢复后可开始路线'
             : !routeDraftIdentity ? '正在读取活动地图版本…'
-              : !canSendGoal ? goalDisabledReason
+              : !canStartRoute ? routeDisabledReason
                 : '点位顺序确认后即可开始路线'
   const previewDisabledReason = !sseState.connected ? '连接断开，等待恢复'
     : !poseAvailable ? '等待有效定位' : ''
@@ -1399,7 +1408,7 @@ function SceneViewComponent({
         target_type: 'map_point',
         label: 'scene_click',
         acceptance_radius_m: goalAcceptanceRadius,
-        max_speed_mps: goalMaxSpeed,
+        max_speed_mps: goalMaxSpeed ?? undefined,
       })
       if (request !== goalPreviewRequest.current) return
       if (!candidate.ok || candidate.preview?.feasible === false) {
@@ -1497,18 +1506,18 @@ function SceneViewComponent({
         target_type: 'map_point',
         label: 'scene_click',
         acceptance_radius_m: goalAcceptanceRadius,
-        max_speed_mps: goalMaxSpeed,
+        max_speed_mps: goalMaxSpeed ?? undefined,
       })
       if (!res.ok) throw new Error(api.formatCommandAck(res, '导航请求'))
       setPendingGoal(null)
       setPendingGoalPreview(null)
       showToast(api.formatCommandAck(res, `目标 (${x.toFixed(2)}, ${y.toFixed(2)})`), 'info')
     } catch (e: unknown) {
-      setGoalPreviewError(api.formatCommandError(e, '发送目标失败'))
+      setGoalPreviewError(navigationGoalErrorMessage(e, locale))
     } finally {
       setGoalSendPending(false)
     }
-  }, [canSendGoal, goalAcceptanceRadius, goalDisabledReason, goalMaxSpeed, goalYaw, pendingGoal, previewCurrent, goalPreviewPending, goalSendPending, showToast])
+  }, [canSendGoal, goalAcceptanceRadius, goalDisabledReason, goalMaxSpeed, goalYaw, locale, pendingGoal, previewCurrent, goalPreviewPending, goalSendPending, showToast])
 
   const handleDirectedExploration = useCallback(async () => {
     if (!pendingGoal || !isExplorationSession || directedExplorationBusy) return
@@ -1604,7 +1613,7 @@ function SceneViewComponent({
         label: loc.name,
         location_name: loc.name,
         acceptance_radius_m: goalAcceptanceRadius,
-        max_speed_mps: goalMaxSpeed,
+        max_speed_mps: goalMaxSpeed ?? undefined,
       })
       if (!candidate.ok || candidate.preview?.feasible === false) {
         const reason = formatPlanPreviewFailure(
@@ -1622,16 +1631,16 @@ function SceneViewComponent({
         target_type: 'saved_location',
         label: loc.name,
         acceptance_radius_m: goalAcceptanceRadius,
-        max_speed_mps: goalMaxSpeed,
+        max_speed_mps: goalMaxSpeed ?? undefined,
         metadata: { location_name: loc.name },
       })
       showToast(api.formatCommandAck(res, `Goal ${loc.name}`), 'success')
     } catch (e: unknown) {
-      showToast(`Location goal failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
+      showToast(navigationGoalErrorMessage(e, locale), 'error')
     } finally {
       setLocationBusy(null)
     }
-  }, [canSendGoal, goalAcceptanceRadius, goalDisabledReason, goalMaxSpeed, showToast])
+  }, [canSendGoal, goalAcceptanceRadius, goalDisabledReason, goalMaxSpeed, locale, showToast])
 
   const handleUpdateLocationToCurrent = useCallback(async (loc: LocationEntry) => {
     if (!poseAvailable) {
@@ -1705,6 +1714,7 @@ function SceneViewComponent({
   }, [restartLocalizationPending, session?.active_map, showToast])
 
   const handleSaveMap = () => {
+    setAutoProcess(true)
     setTeleopMode(false)
     setSaveModalOpen(true)
   }
@@ -1731,8 +1741,9 @@ function SceneViewComponent({
       detail: existing ? formatMapSaveProgress(existing) : '正在提交保存请求',
     })
     try {
-      const admission = existing ?? await api.saveMap(name)
+      const admission = existing ?? await api.saveMap(name, autoProcess)
       const outcome = await api.waitForMapSaveOperation(admission, {
+        until: 'source',
         onProgress: progress => {
           updateProgress(progress)
           setSaveStatus({ name, state: 'saving', detail: formatMapSaveProgress(progress) })
@@ -1740,6 +1751,12 @@ function SceneViewComponent({
       })
       if (outcome.state === 'pending') {
         setSaveStatus(pendingMapSaveStatus(outcome.result, outcome.reason))
+        return
+      }
+      if (outcome.state === 'source_saved') {
+        updateProgress(outcome.result)
+        setSaveStatus(archivedMapStatus(outcome.result))
+        showToast(`PCD 已保存 ${outcome.result.name}`, 'success')
         return
       }
       const r = outcome.result
@@ -1754,11 +1771,7 @@ function SceneViewComponent({
     } catch (e: unknown) {
       updateProgress()
       const message = e instanceof Error ? e.message : String(e)
-      setSaveStatus({
-        name,
-        state: 'failed',
-        detail: message || '保存失败，请检查 Gateway 日志。',
-      })
+      setSaveStatus(failedMapSaveStatus(name, e))
       showToast(`保存失败：${message}`, 'error')
     }
   }
@@ -2117,6 +2130,11 @@ function SceneViewComponent({
               <button className={styles.toolbarBtn} onClick={() => void loadMaps()} disabled={mapListStatus === 'loading'}><RefreshCw size={13} />刷新地图库</button>
             </div>
             {saveBlockedReason && <p role="status">{saveBlockedReason}</p>}
+            <MapSaveHistory refreshKey={`${session?.product_session_id ?? ''}:${saveStatus?.state ?? ''}`}
+              readOnly={observe}
+              currentOperationId={saveStatus && 'operation' in saveStatus ? saveStatus.operation?.operation_id : undefined}
+              onContinue={result => void confirmSaveMap(result.name, result)}
+              onComplete={result => void confirmSaveMap(result.name, result)} />
             {saveStatus && (
               <div
                 className={[
@@ -2127,7 +2145,7 @@ function SceneViewComponent({
                 title={saveStatus.summary ?? saveStatus.detail}
               >
                 <div className={styles.saveStatusHeader}>
-                  <span>{saveStatus.state === 'saving' ? '保存进度' : saveStatus.state === 'saved' ? '保存结果' : saveStatus.state === 'pending' ? '等待确认' : '保存失败'}</span>
+                  <span>{saveStatus.state === 'saving' ? '保存进度' : saveStatus.state === 'saved' ? '保存结果' : saveStatus.state === 'archived' ? '存档已保存' : saveStatus.state === 'pending' ? '等待确认' : '保存失败'}</span>
                   <span className={styles.saveStatusName}>{saveStatus.name}</span>
                 </div>
                 <div className={styles.saveStatusDetail}>{saveStatus.detail}</div>
@@ -2533,6 +2551,10 @@ function SceneViewComponent({
                   onExit={() => setTeleopMode(false)} />
               </div>
             )}
+            {mappingNotice && <div className={styles.sceneAlert} role="status">
+              <Info size={16} aria-hidden="true" />
+              <span className={styles.capacityNotice}>{mappingNotice}</span>
+            </div>}
             {sseState.connected && (operatorAttention || motionHeld) && <div className={styles.sceneAlert} role="status">
               <Info size={16} aria-hidden="true" />
               <span className={styles.sceneAlertMessage} title={plannerAttention || motionHoldMessage}>{navigationView.control.resumeRequired ? '控制已暂停' : motionHeld || navigationView.motion.permission.state === 'ESTOPPED' ? motionHoldMessage : plannerAttention}</span>
@@ -2902,8 +2924,8 @@ function SceneViewComponent({
                   {!routeTaskOpen && (
                     <button type="button" className={styles.goalConfirmBtn}
                       disabled={routeActionPending !== null || routeDraft.points.length < 2
-                        || !routeDraftIdentity || !sseState.connected || !canSendGoal}
-                      title={!routeDraftIdentity ? '等待活动地图版本' : !canSendGoal ? goalDisabledReason : '保存路线并提交一次原生巡检任务'}
+                        || !routeDraftIdentity || !sseState.connected || !canStartRoute}
+                      title={!routeDraftIdentity ? '等待活动地图版本' : !canStartRoute ? routeDisabledReason : '保存路线并提交一次原生巡检任务'}
                       onClick={() => void startRouteDraft()}>
                       <Play size={16} />{routeActionPending === 'start' ? '提交中…' : '开始路线'}
                     </button>
@@ -2993,8 +3015,9 @@ function SceneViewComponent({
                         ))}
                         <label className={styles.goalControl}>
                           <span>速度上限</span>
-                          <select className={styles.goalSelect} value={goalMaxSpeed} disabled={goalSendPending}
-                            onChange={(event) => { invalidatePendingGoalPreview(); setGoalMaxSpeed(Number(event.target.value)) }}>
+                          <select className={styles.goalSelect} value={goalMaxSpeed ?? ''} disabled={goalSendPending}
+                            onChange={(event) => { invalidatePendingGoalPreview(); setGoalMaxSpeed(event.target.value === '' ? null : Number(event.target.value)) }}>
+                            <option value="">跟随导航配置</option>
                             {GOAL_SPEED_OPTIONS.map((speed) => <option key={speed} value={speed}>{speed} m/s</option>)}
                           </select>
                         </label>
@@ -3036,7 +3059,7 @@ function SceneViewComponent({
                       <div className={styles.goalSettingsFooter}>
                         <span>圆圈为到达范围，箭头为目标朝向。</span>
                         <button type="button" disabled={goalSendPending} onClick={() => {
-                          invalidatePendingGoalPreview(); setGoalMaxSpeed(0.4); setGoalAcceptanceRadius(0.45); setGoalYaw(0)
+                          invalidatePendingGoalPreview(); setGoalMaxSpeed(null); setGoalAcceptanceRadius(0.45); setGoalYaw(0)
                         }}>恢复默认</button>
                       </div>
                       {goalPreviewError && goalPreviewMessage !== goalPreviewError && (
@@ -3169,7 +3192,7 @@ function SceneViewComponent({
                 <summary>安全细节</summary>
                 <div className={styles.metricRow}><span>控制权</span><strong className={styles.statusValue} data-state={navigationView.control.state}>{navigationView.control.label}</strong></div>
                 <div className={styles.metricRow}><span>运动许可</span><strong className={styles.statusValue} data-state={navigationView.motion.permission.state}>{navigationView.motion.permission.label}</strong></div>
-                <div className={styles.metricRow}><span>停稳确认</span><strong className={styles.statusValue} data-state={navigationView.motion.stopConfirmation.state}>{navigationView.motion.stopConfirmation.label}</strong></div>
+                <div className={styles.metricRow}><span>停止确认</span><strong className={styles.statusValue} data-state={navigationView.motion.stopConfirmation.state}>{navigationView.motion.stopConfirmation.label}</strong></div>
               </details>
               {sceneDebugTools && <p className={styles.units}>{String(lastLocal?.reason ?? '—')}</p>}
             </>}
@@ -3194,9 +3217,7 @@ function SceneViewComponent({
             aria-labelledby="scene-tab-layers" hidden={inspectorTab !== 'layers'} tabIndex={0}>
               {isMappingSession && showGlobalMapping && (cloud.mappingSummary?.droppedFrames ?? 0) > 0
                 ? <p className={styles.issueLine}>建图数据有缺失，请先保存原始记录</p>
-                : isMappingSession && showGlobalMapping && cloud.mappingSummary?.state === 'optimizer_quality_failed'
-                  ? <p className={styles.issueLine}>本轮校正未收敛，保留上一版</p>
-                  : isMappingSession && showGlobalMapping && (cloud.mappingSummary?.registrationRejections ?? 0) > 0
+                : isMappingSession && showGlobalMapping && (cloud.mappingSummary?.registrationRejections ?? 0) > 0
                     ? <p className={styles.sourceNote}>部分区域待校正</p>
                     : null}
             <section className={styles.layerSection} aria-labelledby="scene-layer-title" aria-description="只影响当前三维视图">
@@ -3480,7 +3501,7 @@ function SceneViewComponent({
       <PromptModal
         open={saveModalOpen}
         title="保存地图"
-        message="保存完成后可查看整图快照。同名会替换原地图；要保留原图请使用新名称。"
+        message={`${capacityNotice ? `${capacityNotice} ` : ''}先保存建图点云存档，可下载 PCD。处理成功后，同名会替换原地图；要保留原图请使用新名称。`}
         placeholder="例如 building_2f"
         confirmLabel="保存"
         icon={<Save size={18} />}
@@ -3491,7 +3512,12 @@ function SceneViewComponent({
         }}
         onConfirm={confirmSaveMap}
         onCancel={() => setSaveModalOpen(false)}
-      />
+      >
+        <label style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'flex-start' }}>
+          <input type="checkbox" checked={autoProcess} onChange={event => setAutoProcess(event.target.checked)} />
+          <span>保存点云后自动后台处理<br /><small>取消勾选后，可从保存记录开始处理。</small></span>
+        </label>
+      </PromptModal>
     </div>
   )
 }

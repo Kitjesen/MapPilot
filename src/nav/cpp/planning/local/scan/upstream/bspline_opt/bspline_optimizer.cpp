@@ -37,12 +37,10 @@ double BsplineOptimizer::estimateSegmentYaw(const Eigen::Vector3d &from,
 }
 
 double BsplineOptimizer::estimateControlPointYaw(const Eigen::MatrixXd &q, int id) const {
-  if (q.cols() <= 1)
-    return 0.0;
-
-  int prev_id = std::max(0, id - 1);
-  int next_id = std::min(static_cast<int>(q.cols()) - 1, id + 1);
-  return estimateSegmentYaw(q.col(prev_id), q.col(next_id));
+  if (q.cols() <= 1) return 0.0;
+  const int previous = std::max(0, id - 1);
+  const int next = std::min(static_cast<int>(q.cols()) - 1, id + 1);
+  return estimateSegmentYaw(q.col(previous), q.col(next));
 }
 
 void BsplineOptimizer::setControlPoints(const Eigen::MatrixXd &points) {
@@ -57,7 +55,8 @@ void BsplineOptimizer::setBsplineInterval(const double &ts) {
  * It was written separately, just because I did it once and it has been running stably since March
  * 2020. But I will merge then someday.*/
 std::vector<std::vector<Eigen::Vector3d>>
-BsplineOptimizer::initControlPoints(Eigen::MatrixXd &init_points, bool flag_first_init /*= true*/) {
+BsplineOptimizer::initControlPoints(Eigen::MatrixXd &init_points,
+                                    bool flag_first_init /*= true*/) {
   if (flag_first_init) {
     cps_.clearance = dist0_;
     cps_.resize(init_points.cols());
@@ -76,22 +75,11 @@ BsplineOptimizer::initControlPoints(Eigen::MatrixXd &init_points, bool flag_firs
   bool flag_got_start = false, flag_got_end = false, flag_got_end_maybe = false;
   int i_end = (int)init_points.cols() - order_ -
               ((int)init_points.cols() - 2 * order_) / 3;  // only check closed 2/3 points.
-  // Finish an obstacle already entered in the checked prefix. Dropping its
-  // exit beyond that prefix leaves the optimizer without an A* rebound guide.
-  for (int i = order_; i <= (int)init_points.cols() - order_ &&
-                       (i <= i_end || flag_got_start); ++i) {
+  for (int i = order_; i <= i_end; ++i) {
     for (double a = 1.0; a >= 0.0; a -= step_size) {
-      if (i > i_end && !flag_got_start) break;
       Eigen::Vector3d sample_pt = a * init_points.col(i - 1) + (1 - a) * init_points.col(i);
-      double sample_yaw = estimateSegmentYaw(init_points.col(i - 1), init_points.col(i));
-      const double next_a = std::max(0.0, a - step_size);
-      const Eigen::Vector3d next_sample =
-          next_a * init_points.col(i - 1) + (1 - next_a) * init_points.col(i);
-      // Dense controls can straddle a voxel corner while both are free. The
-      // same segment query used for candidate validation must seed a rebound
-      // guide too, including when the interpolation step exceeds one span.
-      occ = grid_map_->getInflateOccupancySegment(
-                sample_pt, sample_yaw, next_sample, sample_yaw) != 0;
+      const double sample_yaw = estimateSegmentYaw(init_points.col(i - 1), init_points.col(i));
+      occ = grid_map_->getInflateOccupancy(sample_pt, sample_yaw) != 0;
       // cout << setprecision(5);
       // cout << (a * init_points.col(i-1) + (1-a) * init_points.col(i)).transpose() << " occ1=" <<
       // occ << endl;
@@ -926,31 +914,18 @@ bool BsplineOptimizer::rebound_optimize() {
       flag_force_return = false;
 
       UniformBspline traj = UniformBspline(cps_.points, 3, bspline_interval_);
-      const UniformBspline velocity = traj.getDerivative();
       double tm, tmp;
       static_cast<void>(traj.getTimeSpan(tm, tmp));
-      // Validate every published segment, including the final approach. The
-      // periodic FSM lookahead is not a substitute for candidate validation.
-      const double t_step = std::min(
-          0.01, (tmp - tm) /
-                    ((traj.evaluateDeBoorT(tmp) - traj.evaluateDeBoorT(tm)).norm() /
-                     grid_map_->getResolution()));
-      Eigen::Vector3d last_heading_tangent = Eigen::Vector3d::Zero();
-      const auto heading_tangent = [&](const Eigen::Vector3d &tangent) {
-        if (!tangent.allFinite()) return tangent;
-        if (tangent.head<2>().norm() > 0.03) last_heading_tangent = tangent;
-        return last_heading_tangent;
-      };
-      for (double t = tm; t < tmp; t += t_step)
+      const double t_step = (tmp - tm) /
+          ((traj.evaluateDeBoorT(tmp) - traj.evaluateDeBoorT(tm)).norm() /
+           grid_map_->getResolution());
+      for (double t = tm; t < tmp * 2.0 / 3.0; t += t_step)
       {
         Eigen::Vector3d pos = traj.evaluateDeBoorT(t);
         const double next_t = std::min(t + t_step, tmp);
         const Eigen::Vector3d pos_next = traj.evaluateDeBoorT(next_t);
-        // These vectors select collision heading only; physical derivatives stay unchanged.
-        const Eigen::Vector3d tangent = heading_tangent(velocity.evaluateDeBoorT(t));
-        const Eigen::Vector3d next_tangent = heading_tangent(velocity.evaluateDeBoorT(next_t));
-        const int collision_state = grid_map_->getTrajectoryOccupancySegment(
-            pos, tangent, pos_next, next_tangent, t - tm, next_t - tm);
+        const int collision_state = grid_map_->getInflateOccupancy(
+            pos, estimateSegmentYaw(pos, pos_next));
         flag_occ = collision_state != 0;
         if (flag_occ) {
           debug_.collisionValid = true;
@@ -996,28 +971,17 @@ bool BsplineOptimizer::rebound_optimize() {
 }
 
 bool BsplineOptimizer::checkTrajectoryCollisionFree(const UniformBspline &traj) {
-  const UniformBspline velocity = traj.getDerivative();
   double tm, tmp;
   static_cast<void>(traj.getTimeSpan(tm, tmp));
-  // Refinement and boundary restoration can change the final approach too.
-  const double t_step = std::min(
-      0.01, (tmp - tm) /
-                ((traj.evaluateDeBoorT(tmp) - traj.evaluateDeBoorT(tm)).norm() /
-                 grid_map_->getResolution()));
-  Eigen::Vector3d last_heading_tangent = Eigen::Vector3d::Zero();
-  const auto heading_tangent = [&](const Eigen::Vector3d &tangent) {
-    if (!tangent.allFinite()) return tangent;
-    if (tangent.head<2>().norm() > 0.03) last_heading_tangent = tangent;
-    return last_heading_tangent;
-  };
-  for (double t = tm; t < tmp; t += t_step) {
+  const double t_step = (tmp - tm) /
+      ((traj.evaluateDeBoorT(tmp) - traj.evaluateDeBoorT(tm)).norm() /
+       grid_map_->getResolution());
+  for (double t = tm; t < tmp * 2.0 / 3.0; t += t_step) {
     Eigen::Vector3d pos = traj.evaluateDeBoorT(t);
     const double next_t = std::min(t + t_step, tmp);
     const Eigen::Vector3d pos_next = traj.evaluateDeBoorT(next_t);
-    const Eigen::Vector3d tangent = heading_tangent(velocity.evaluateDeBoorT(t));
-    const Eigen::Vector3d next_tangent = heading_tangent(velocity.evaluateDeBoorT(next_t));
-    const int collision_state = grid_map_->getTrajectoryOccupancySegment(
-        pos, tangent, pos_next, next_tangent, t - tm, next_t - tm);
+    const int collision_state = grid_map_->getInflateOccupancy(
+        pos, estimateSegmentYaw(pos, pos_next));
     if (collision_state != 0) {
       debug_.reason = "collision_after_refine";
       debug_.collisionValid = true;

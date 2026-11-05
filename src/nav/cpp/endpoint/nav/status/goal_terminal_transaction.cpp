@@ -54,9 +54,12 @@ GoalTerminalTransaction::advance(const GoalReplanRuntimeResult &runtime_result,
         break;
       case TerminalStopPolicy::kShutdown:
         return {false, false, "shutdown_terminal_requires_transaction"};
+      case TerminalStopPolicy::kReached:
       case TerminalStopPolicy::kGenericStop: {
         const MotionStopResult stopped =
-            motion_stop_.commitGoalTerminalAfterStop(terminal.reason, terminal.commit);
+            motion_stop_.commitGoalTerminalAfterStop(terminal.reason, terminal.commit,
+                runtime_result.terminal_stop_policy == TerminalStopPolicy::kReached
+                    ? std::optional{StopConfirmationEvidencePolicy::DriverAckOnly} : std::nullopt);
         terminal_result =
             MotionStopTerminalBarrierResult{stopped.accepted, stopped.reason, stopped.accepted,
                                              stopped.pending};
@@ -106,6 +109,7 @@ GoalTerminalTransaction::estopWhileTerminalPending(const std::string &estop_reas
 MotionStopTerminalBarrierResult
 GoalTerminalTransaction::runWhileTerminalPending(PendingTerminalSafetyAction safety_action,
                                                  const std::string &estop_reason) {
+  goal_replan_runtime_.requirePendingTerminalOdometry();
   const GoalReplanRuntimeResult pending = goal_replan_runtime_.replayPendingTerminal();
   if (!pending.terminal_after_stop || pending.terminal_intent_id == 0U) {
     const MotionStopResult physical_stop = motion_stop_.stopWithoutTerminalCommit();

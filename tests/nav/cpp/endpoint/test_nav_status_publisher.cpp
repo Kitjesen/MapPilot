@@ -662,6 +662,22 @@ void testConfirmedMotionStopEvidenceIsPublished() {
           "confirmed stop evidence must identify the refreshed zero ACK and quiet-odometry proof");
 }
 
+void testAckOnlyConfirmationDoesNotClaimOdometryStopEvidence() {
+  StopConfirmationConfig config;
+  config.evidence_policy = lingtu::nav::endpoint::StopConfirmationEvidencePolicy::DriverAckOnly;
+  MotionStopEvidenceTracker evidence(config);
+  evidence.begin(23U, 1234.0);
+  StopConfirmationDiagnostics diagnostics;
+  diagnostics.driver_ack_observed = diagnostics.driver_accepted = true;
+  diagnostics.quiet_odometry_required = false;
+  evidence.update(StopConfirmationState::Confirmed, diagnostics, 1235.0);
+  const auto &snapshot = evidence.snapshot();
+  require(snapshot.state == "CONFIRMED" && snapshot.reason == "zero_command_accepted" &&
+              snapshot.required_quiet_odometry_samples == 0U &&
+              snapshot.quiet_odometry_samples == 0U,
+          "ACK-only confirmation must distinguish command acceptance from physical stop proof");
+}
+
 void testPendingMotionStopEvidenceIsPublished() {
   Fixture fixture;
   StopConfirmationConfig config;
@@ -1028,6 +1044,7 @@ void testScanFailureNonfiniteValueIsJsonNull() {
 }  // namespace
 
 int main() {
+  testAckOnlyConfirmationDoesNotClaimOdometryStopEvidence();
   testScanFailureCaptureAndSafetyReasonSurviveStatusReset();
   testScanFailureNonfiniteValueIsJsonNull();
   testQueuedSnapshotOwnsCollisionBytesAfterInputChanges();

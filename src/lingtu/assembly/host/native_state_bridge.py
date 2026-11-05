@@ -72,6 +72,7 @@ class HostBus(Module):
             ),
         )
         self._session: NativeCommandSession | None = None
+        self._simulation_clock = config.get("env") == "sim"
         self._require_map_scene = bool(config.get("require_map_scene", False))
         self._require_inspection_task_events = bool(
             config.get("require_inspection_task_events", False)
@@ -653,10 +654,11 @@ class HostBus(Module):
         if (
             not math.isfinite(self._scene_source_timestamp_s)
             or self._scene_source_timestamp_s <= 0.0
-            or now_wall - self._scene_source_timestamp_s
-            > self._map_scene_max_age_s
-            or self._scene_source_timestamp_s - now_wall
-            > self._map_scene_future_tolerance_s
+            # MapScene uses sensor time. Simulation time can lag wall time.
+            or (not self._simulation_clock and (
+                now_wall - self._scene_source_timestamp_s > self._map_scene_max_age_s
+                or self._scene_source_timestamp_s - now_wall > self._map_scene_future_tolerance_s
+            ))
         ):
             return "map_scene_timestamp_stale"
         if not self._scene_live:

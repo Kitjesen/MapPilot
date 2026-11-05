@@ -9,6 +9,7 @@ find_library(OCTOMAP_LIBRARY NAMES octomap REQUIRED)
 find_library(OCTOMATH_LIBRARY NAMES octomath REQUIRED)
 
 set(LINGTU_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
+include("${LINGTU_ROOT}/scripts/build/cmake/settings.cmake")
 
 add_executable(
   lingtu_maps_evidence_tool
@@ -27,6 +28,7 @@ target_include_directories(
 target_link_libraries(
   lingtu_maps_evidence_tool
   PRIVATE
+    lingtu_settings
     "${OCTOMAP_LIBRARY}"
     "${OCTOMATH_LIBRARY}"
 )

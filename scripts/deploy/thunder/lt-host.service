@@ -40,6 +40,7 @@ Environment=LINGTU_SCAN_VIEWER_MAX_HZ=10
 Environment=LINGTU_SCAN_VIEWER_MAX_POINTS=5000
 Environment=LINGTU_SLAM_LIDAR_SCAN_INTERVAL_S=0.005
 EnvironmentFile=/run/lingtu/session.env
+EnvironmentFile=-/etc/doso/robot-cloud/agent/agent.env
 ExecStartPre=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh host
 ExecStart=/bin/bash -lc 'source /opt/lingtu/config/thunder-runtime-env.sh && exec "$${LINGTU_PYTHON}" -m lingtu.real.host'
 KillSignal=SIGINT

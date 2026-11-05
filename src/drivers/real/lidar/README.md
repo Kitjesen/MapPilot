@@ -9,6 +9,13 @@
 - `deps/livox/Livox-SDK2/` is the only vendor SDK kept under `real/lidar`.
 - `lt-lidar.service` should run the C++ stream binary in field builds.
 
+Acquisition rates and SDK options are owned by
+`config/system/settings/lidar.yaml`. Product compilation combines them with
+the selected RobotConfig network addresses and records the SDK JSON in RunPlan.
+The launcher writes that snapshot and passes its scan/IMU rates to the native
+binary. Host-managed SDK capture reads the same defaults. Simulation sampling
+belongs to SensorPlan; SDK extrinsics stay zero because SLAM applies calibration.
+
 ## Folder layout
 
 ```text

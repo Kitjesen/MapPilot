@@ -21,7 +21,7 @@ from sim.scripts.mujoco import native_navigation_acceptance as acceptance
 from sim.scripts.mujoco import native_navigation_video as navigation_video
 from sim.scripts.mujoco import saved_map_plan_gate
 
-from lingtu.assembly.config.native_navigation import mapd_environment
+from lingtu.assembly.config.maps import default_map_settings, mapd_environment
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -261,6 +261,21 @@ def test_box_support_uses_world_faces_and_equivalent_asset_axes(monkeypatch, pit
     evidence.observe_contacts(model, data)
     assert evidence.entity_contact_steps == 0
     assert evidence.support_normal_disagreements == 1
+
+
+@pytest.mark.parametrize("normal_z", [-1, 1])
+def test_recorded_deck_edge_uses_solver_normal_within_penetration(monkeypatch, normal_z):
+    from sim.scripts.mujoco.formal_feeder import _PhysicalMotionEvidence
+
+    model, data, _, _ = _recorded_box_contact(
+        monkeypatch, point=(7 - 6.67225594e-8, 0, -1.757185819398853e-6),
+        robot_center=(7.01027682635749, 0, .09551619755608186),
+        normal=(0, 0, normal_z))
+    data.contact[0].dist = -3.516904265852182e-6
+    evidence = _PhysicalMotionEvidence()
+    evidence.observe_contacts(model, data)
+    assert evidence.entity_contact_steps == (normal_z < 0)
+    assert evidence.support_normal_disagreements == 0
 
 
 @pytest.mark.parametrize(("surface", "body", "position"), [
@@ -529,7 +544,8 @@ def test_attached_goal_sequence_all_reached_and_world_error_is_gated(monkeypatch
     }
     def sample(*_args):
         target = goals[min(max(current[0] - 1, 0), 2)]
-        return {"wall_s": 1000.0, "ready": True, "nav": snapshots["nav.status.json"],
+        return {"wall_s": 1000.0, "ready": True, "snapshot_current": True,
+                "localization_ready": True, "nav": snapshots["nav.status.json"],
                 "slam": snapshots["slam.status.json"], "live": {"position_m": target[:3]}}
 
     plan = SimpleNamespace(
@@ -564,6 +580,7 @@ def test_attached_goal_waits_for_stable_input_once_and_preserves_failures(monkey
     def sample(*_):
         ready = mode != "never_ready" and elapsed[0] >= .2 and not .39 <= elapsed[0] <= .41
         return {"wall_s": elapsed[0], "ready": ready,
+                "snapshot_current": True, "localization_ready": True,
                 "nav": {"input_gate": {"ready": ready, "reason": "ready" if ready else "recovering"}},
                 "slam": {"state": "TRACKING"}, "live": {}}
 
@@ -741,13 +758,62 @@ def test_multifloor_ground_is_visual_only():
     assert ground.get("group") == "5"
 
 
+def test_multifloor_bridge_covers_floor_corner():
+    root = ET.fromstring(saved_map_plan_gate._stairs3d_scene_xml("multifloor_stack_3"))
+    floor = root.find(".//geom[@name='floor_level_1']")
+    assert floor is not None
+    assert float(floor.get("pos").split()[1]) + float(floor.get("size").split()[1]) >= 3.34
+    bridge = root.find(".//geom[@name='floor_stair_bridge_bottom_l1']")
+    assert bridge is not None
+    x, y, _ = map(float, bridge.get("pos").split())
+    hx, hy, _ = map(float, bridge.get("size").split())
+    assert x - hx <= 1.912 <= x + hx
+    assert y - hy <= 1.816 <= y + hy
+    landing = root.find(".//geom[@name='floor_stair_bottom_l1']")
+    assert landing is not None
+    x, y, _ = map(float, landing.get("pos").split())
+    hx, hy, _ = map(float, landing.get("size").split())
+    assert x - hx <= 1.162 <= x + hx
+    assert y - hy <= saved_map_plan_gate.MULTIFLOOR_FLOOR_Y_STEP_M + 1.75 + 0.9 <= y + hy
+
+
+def test_multifloor_decks_are_continuous_except_stairwells():
+    geoms = saved_map_plan_gate._stairs3d_geoms("multifloor_stack_3")
+    decks = [g for g in geoms if g["name"].startswith("floor_level_")]
+    for level in range(3):
+        z = level * 1.8
+        for x in (-0.5, 1.162, 1.912, 3.9, 7.8, 8.3):
+            for y in (0.0, 1.816, 3.2, 5.202, 6.3, 8.5):
+                opening = level > 0 and 1.55 < x < 7.55 and abs(
+                    y - (level * saved_map_plan_gate.MULTIFLOOR_FLOOR_Y_STEP_M + 2.69)
+                ) < 1.26
+                supported = any(
+                    abs(g["pos"][2] + g["size"][2] - z) < 1e-9
+                    and abs(x - g["pos"][0]) <= g["size"][0]
+                    and abs(y - g["pos"][1]) <= g["size"][1]
+                    for g in decks
+                )
+                assert supported != opening, (level, x, y)
+    for g in geoms:
+        if g["name"].startswith("floor_stair_"):
+            top = g["pos"][2] + g["size"][2]
+            assert abs(top / 0.9 - round(top / 0.9)) < 1e-9
+
+
+def test_multifloor_stair_flights_do_not_overlap():
+    geoms = saved_map_plan_gate._stairs3d_geoms("multifloor_stack_3")
+    first = next(g for g in geoms if g["name"] == "step_stack_l1_16")
+    second = next(g for g in geoms if g["name"] == "step_stack_l2_01")
+    assert second["pos"][1] - second["size"][1] > first["pos"][1] + first["size"][1]
+
+
 def test_multifloor_perimeter_rails_are_not_step_over_support():
     root = ET.fromstring(saved_map_plan_gate._stairs3d_scene_xml("multifloor_stack_3"))
-    rail = root.find(".//geom[@name='rail_level_1_south']")
-
-    assert rail is not None
-    half_height = float(rail.get("size", "0 0 0").split()[2])
-    assert half_height >= 0.45
+    for level in range(1, 4):
+        for side in ("south", "north", "east", "west"):
+            rail = root.find(f".//geom[@name='rail_level_{level}_{side}']")
+            assert rail is not None
+            assert float(rail.get("size").split()[2]) >= 0.45
 
 
 def test_saved_map_lidar_collector_uses_current_engine_interface(monkeypatch, tmp_path):
@@ -1378,6 +1444,7 @@ def test_run_plan_scan_backend_replaces_implicit_cmu_default() -> None:
 
 def test_scan_mapd_launch_uses_run_plan_collision_profile(tmp_path: Path) -> None:
     environment = mapd_environment(
+        default_map_settings(),
         {
             "LINGTU_NAV_LOCAL_PLANNER_BACKEND": "scan",
             "LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M": "0.4",
@@ -1402,11 +1469,13 @@ def test_scan_mapd_launch_uses_run_plan_collision_profile(tmp_path: Path) -> Non
     assert process_environment["LINGTU_MAPD_OCCUPANCY_SIZE_X"] == "200"
     assert process_environment["LINGTU_MAPD_OCCUPANCY_SIZE_Y"] == "200"
     assert process_environment["LINGTU_MAPD_OCCUPANCY_SIZE_Z"] == "100"
-    assert process_environment["LINGTU_MAPD_OCCUPANCY_RAY_M"] == "5.0"
+    assert process_environment["LINGTU_MAPD_OCCUPANCY_RAY_M"] == "5"
     assert process_environment["LINGTU_MAPD_INFLATION_RADIUS_M"] == "0.4"
     assert process_environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.25"
     assert process_environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.35"
-    assert mapd_environment({"LINGTU_NAV_LOCAL_PLANNER_BACKEND": "cmu"}) == {}
+    assert mapd_environment(default_map_settings(), {"LINGTU_NAV_LOCAL_PLANNER_BACKEND": "cmu"})[
+        "LINGTU_MAPD_INFLATION_RADIUS_M"
+    ] == "0.25"
 
 
 def test_scan_mapd_profile_rejects_missing_run_plan_geometry() -> None:
@@ -1414,7 +1483,7 @@ def test_scan_mapd_profile_rejects_missing_run_plan_geometry() -> None:
         ValueError,
         match="SCAN requires LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M",
     ):
-        mapd_environment({"LINGTU_NAV_LOCAL_PLANNER_BACKEND": "scan"})
+        mapd_environment(default_map_settings(), {"LINGTU_NAV_LOCAL_PLANNER_BACKEND": "scan"})
 
 
 def test_standalone_pedestrian_fixture_supplies_shared_collision_geometry() -> None:
@@ -1423,7 +1492,7 @@ def test_standalone_pedestrian_fixture_supplies_shared_collision_geometry() -> N
     )
     environment = acceptance._component_native_environment(manifest)
     environment["LINGTU_NAV_LOCAL_PLANNER_BACKEND"] = "scan"
-    profile = mapd_environment(environment)
+    profile = mapd_environment(default_map_settings(), environment)
 
     assert profile["LINGTU_MAPD_INFLATION_RADIUS_M"] == "0.4"
     assert profile["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.25"
@@ -2449,6 +2518,99 @@ def test_sensor_tick_applies_driver_bridge_command_before_ack():
     ]
 
 
+def test_snapshot_scan_keeps_pose_and_timestamp_while_physics_advances():
+    import io
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class Engine:
+        position = np.array([1.0, 2.0, 0.4])
+
+        def capture_state(self):
+            return self.position.copy()
+
+        def get_lidar_points_from_snapshot(self, snapshot, *, scan_duration_s):
+            started.set()
+            assert release.wait(timeout=1.0)
+            assert scan_duration_s == pytest.approx(0.1)
+            self._lidar_data = SimpleNamespace(
+                xpos=np.array([snapshot]), xmat=np.array([np.eye(3).ravel()]),
+            )
+            return np.array([[*(snapshot + np.array([2.0, 0.0, 0.0])), 25.0]], dtype=np.float32)
+
+        def step_sensor_tick(self, command, *, dt_s):
+            self.position = self.position + np.array([dt_s, 0.0, 0.0])
+            return SimpleNamespace(position=self.position.copy(), orientation=np.array([0, 0, 0, 1]),
+                                   linear_velocity=np.array([1.0, 0.0, 0.0]))
+
+    engine = Engine()
+    captured = SimpleNamespace(position=engine.position.copy(), orientation=np.array([0, 0, 0, 1]))
+    scanner = sensors.SnapshotLidar(engine, period_s=0.1, max_points=100)
+    try:
+        assert scanner.submit(captured, 12.5)
+        assert started.wait(timeout=0.5)
+        assert scanner.take() is None
+        state = engine.step_sensor_tick(VelocityCommand(), dt_s=0.005)
+        stream = io.BytesIO()
+        sensors._write_native_odom_prior(stream, state, timestamp_s=12.505, sequence=1)
+        assert stream.getvalue()
+        assert state.position[0] == pytest.approx(1.005)
+        assert not scanner.submit(state, 12.505)
+        assert scanner.busy_drops == 1
+        engine.position[:] = [9.0, 8.0, 7.0]
+        release.set()
+        scanner.pending.result(timeout=1.0)
+        frame = scanner.take()
+        assert frame.timestamp_s == 12.5
+        np.testing.assert_allclose(frame.sensor_origin_world, [1, 2, .4])
+        np.testing.assert_allclose(frame.sensor_points, [[2, 0, 0, 25]], atol=1e-6)
+        body = sensors.world_xyzi_to_body_xyzi(frame.state, frame.world_points)
+        np.testing.assert_allclose(body, [[2, 0, 0, 25]], atol=1e-6)
+    finally:
+        release.set()
+        scanner.close()
+
+
+def test_snapshot_scan_close_waits_and_reports_scan_failure():
+    started = threading.Event()
+    release = threading.Event()
+    closed = threading.Event()
+    failures = []
+
+    class Engine:
+        def capture_state(self):
+            return object()
+
+        def get_lidar_points_from_snapshot(self, snapshot, *, scan_duration_s):
+            started.set()
+            assert release.wait(timeout=1.0)
+            raise RuntimeError("raycast failed")
+
+    scanner = sensors.SnapshotLidar(Engine(), period_s=.1, max_points=100)
+    scanner.submit(None, 12.5)
+    assert started.wait(timeout=.5)
+
+    def close():
+        try:
+            scanner.close()
+        except RuntimeError as exc:
+            failures.append(str(exc))
+        finally:
+            closed.set()
+
+    thread = threading.Thread(target=close)
+    thread.start()
+    try:
+        assert not closed.wait(timeout=.02)
+    finally:
+        release.set()
+        thread.join(timeout=1.0)
+    assert closed.is_set()
+    assert failures == ["raycast failed"]
+    assert scanner.shutdown_drops == 1
+
+
 def test_anchored_sensor_tick_acks_zero_without_running_policy_dynamics():
     events: list[tuple[str, object, int | None]] = []
     command = sensors.PreparedDriverBridgeStep(
@@ -3384,7 +3546,6 @@ def test_native_acceptance_manifest_declares_exact_product_chain():
     assert manifest["phases"]["motion"]["publish_cmd_vel"] is True
     assert manifest["runtime_tolerances"]["sim_hardware_realtime_factor"] == 1.0
     assert manifest["runtime_tolerances"]["input_future_tolerance_s"] == 0.05
-    assert manifest["runtime_tolerances"]["input_recovery_frames"] >= 1
     assert manifest["frame_contract"]["traversability_geometry_frame_current"] == "map"
     assert manifest["frame_contract"]["traversability_header_frame_current"] == "map"
     slam_config = (ROOT / manifest["paths"]["slam_config"]).read_text(encoding="utf-8")

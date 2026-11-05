@@ -102,6 +102,7 @@ class NavigationCommandKind(IntEnum):
     RESUME_AUTONOMY = 7
     PAUSE_TASK = 8
     RESUME_TASK = 9
+    TASK_SPEED_LIMIT = 10
 
 
 class OperatorMotionAction(IntEnum):

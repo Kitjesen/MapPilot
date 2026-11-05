@@ -4,6 +4,26 @@ This directory contains research references used to shape product decisions.
 The papers and notes here are evidence for design choices, not evidence that
 LingTu already implements the techniques described in them.
 
+Use [Map-cleaning production and research boundaries](map-cleaning-boundaries-20261105.md)
+for the ERASOR2/prune comparison, legacy adapter input limits, removed report-only
+computation and isolated research builds. It does not claim a glass-persistence fix
+or a matched algorithm-quality ranking.
+
+Use [Map save latency and local reductions](map-save-latency-20261104.md) for
+the NX save-latency investigation, current full-save call chain, bounded local
+prune benchmark, repeated I/O and main-loop blocking findings. It separates
+local performance evidence from the still-unmeasured NX save job.
+
+Use [Glass visibility after map saving](glass-map-persistence-20261105.md) for
+the native prune and OctoMap transmission counterexamples, performance-baseline
+comparison, display-source boundaries, and the unimplemented glass persistence
+requirements. These reproductions do not establish a field fix.
+
+Use [Confirmed changes and production integration](production-integration-20261103.md)
+for the source-to-RunPlan audit, completed Thunder overall model selection, state
+corrections, and the explicit remaining implementation/deployment gaps. It links
+the matched native and MuJoCo evidence rather than treating experiments as delivery.
+
 Use [Map reconstruction and goal resolution](map-reconstruction-and-goal-resolution.md)
 for the 2026-10-31 pinned DimOS/RViz/Nav2 comparison, display versus navigation
 map semantics, actual-start anchoring, endpoint rejection causes, and the
@@ -26,6 +46,14 @@ backend or a replacement of Product defaults. The latest 2026-10-30 decision
 keeps LTLIO as the main implementation and narrows the next task to matching
 mechanisms. A completed compatibility probe distinguishes GLIM shape weights
 from native physical observation variance; it does not establish an accuracy gain.
+
+Use [Online mapping ownership and build boundaries](online-mapping-boundaries-20261101.md)
+for the dated investigation that preceded the online worker move and build
+dependency cleanup. Its header points to the current code and behavior.
+
+Use [Mapping and localization responsibilities](mapping-responsibilities-20261102.md)
+for the current runtime/data owners, online geometry versus saved-map handoffs,
+the meanings and limits of each queue and metric, and the remaining evidence gaps.
 
 Use [Collision model and motion posture](../design/navigation-body-model-and-motion-posture.md#名称行业来源与实现边界)
 for the 2026-10-26 naming decision **组合碰撞模型 / Compound Collision Model**,

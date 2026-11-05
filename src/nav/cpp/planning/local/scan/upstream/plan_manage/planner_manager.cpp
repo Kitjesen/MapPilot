@@ -244,6 +244,9 @@ bool applyReferenceSeed(std::vector<Eigen::Vector3d> &points, double &interval,
       guide.push_back(reference.getPosition(window.first+
           (window.second-window.first)*sample/samples));
   }
+  // Join measured endpoints without shifting the remaining route into obstacles.
+  guide.front()=start;
+  guide.back()=target;
   guide_length.push_back(0.0);
   for(std::size_t i=1;i<guide.size();++i)
     guide_length.push_back(guide_length.back()+(guide[i]-guide[i-1]).norm());
@@ -281,8 +284,7 @@ bool applyReferenceSeed(std::vector<Eigen::Vector3d> &points, double &interval,
     const double span=guide_length[segment+1]-guide_length[segment];
     const double along=span>1e-12 ? (distance-guide_length[segment])/span : 0.0;
     const Eigen::Vector3d point=(1-along)*guide[segment]+along*guide[segment+1];
-    result.push_back(point+(1-progress)*(start-guide.front())+
-                           progress*(target-guide.back()));
+    result.push_back(point);
   }
   interval*=static_cast<double>(old_intervals)/intervals;
   points=std::move(result);
@@ -749,19 +751,12 @@ bool SCANPlannerManager::decelerate(const Eigen::Vector3d &position,
         2.0 * controls.col(index + 1) - controls.col(index);
   }
   UniformBspline curve(controls, 3, interval);
-  const UniformBspline derivative = curve.getDerivative();
-  Eigen::Vector3d lastTangent = velocity;
   for (double time = 0.0; time < curve.getTimeSum(); time += 0.01) {
     const double next = std::min(time + 0.01, curve.getTimeSum());
-    Eigen::Vector3d tangent = derivative.evaluateDeBoorT(time);
-    if (tangent.head<2>().norm() <= 0.03) tangent = lastTangent;
-    Eigen::Vector3d nextTangent = derivative.evaluateDeBoorT(next);
-    if (nextTangent.head<2>().norm() <= 0.03) nextTangent = tangent;
-    if (grid_map_->getTrajectoryOccupancySegment(
-            curve.evaluateDeBoorT(time), tangent, curve.evaluateDeBoorT(next),
-            nextTangent, time, next) != 0)
+    const Eigen::Vector3d position = curve.evaluateDeBoorT(time);
+    const Eigen::Vector3d direction = curve.evaluateDeBoorT(next) - position;
+    if (grid_map_->getInflateOccupancy(position, std::atan2(direction.y(), direction.x())) != 0)
       return false;
-    lastTangent = nextTangent;
   }
   transitionEndS = 2.0 * interval;
   updateTrajInfo(curve, nowS);

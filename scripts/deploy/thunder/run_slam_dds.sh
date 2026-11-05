@@ -18,14 +18,8 @@ args=(
   --mode "${LINGTU_SLAM_MODE:-mapping}"
   --config "${SLAM_CONFIG}"
   --domain-id "${LINGTU_DDS_DOMAIN_ID:-0}"
-  --tick-hz "${LINGTU_SLAM_TICK_HZ:-50}"
-  --log-status-s "${LINGTU_SLAM_LOG_STATUS_S:-5}"
   --status-json "${LINGTU_SLAM_STATUS_JSON:-/tmp/lingtu_slam_status.json}"
-  --status-json-hz "${LINGTU_SLAM_STATUS_JSON_HZ:-10}"
   --cloud-snapshot-dir "${LINGTU_SLAM_CLOUD_SNAPSHOT_DIR:-/dev/shm/lingtu_slam}"
-  --cloud-snapshot-hz "${LINGTU_SLAM_CLOUD_SNAPSHOT_HZ:-5}"
-  --lidar-scan-snapshot-hz "${LINGTU_SLAM_LIDAR_SCAN_SNAPSHOT_HZ:-10}"
-  --track-against-map-period-s "${LINGTU_SLAM_TRACK_AGAINST_MAP_PERIOD_S:-5}"
 )
 
 if [ -n "${LINGTU_SLAM_MAP:-}" ]; then

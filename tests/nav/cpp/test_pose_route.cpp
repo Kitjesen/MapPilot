@@ -85,13 +85,9 @@ TEST(PoseRoute, FinalTurnUsesRequestedArrivalRadius) {
   // Exercise arrival radius, independently of the execution-gap hold policy.
   auto input = observation({{.98, 0, 0}, .2}, 1.01);
   auto output = executor.tick(input);
-  EXPECT_EQ(output.reason, "settling_at_goal");
+  EXPECT_EQ(output.reason, "goal_reached");
   EXPECT_DOUBLE_EQ(output.cmd_vel.vx, 0.0);
   EXPECT_DOUBLE_EQ(output.cmd_vel.vy, 0.0);
-  for (int i = 1; i <= 6; ++i) {
-    input.timestampS = input.observation.odom_stamp_s = 1.01 + i * .1;
-    output = executor.tick(input);
-  }
   EXPECT_TRUE(output.goal_reached) << output.reason;
 }
 
@@ -222,6 +218,26 @@ ExecutionInput wideObservation(nav_kernel::Pose pose, double time=1) {
   input.observation.collision.measuredOccupiedStorage=
       std::make_shared<const std::vector<std::uint8_t>>(view.inflatedBits,view.inflatedBits+view.inflatedBytes);
   return input;
+}
+
+TEST(PoseRoute, SpeedUpdateRetainsCurrentArcLimit) {
+  ExecutorConfig config;
+  config.max_speed = 1.0;
+  config.follower.spline.maxYawRateRadS = .2;
+  auto executor = makeExecutor(config);
+  const auto route = wideCornerRoute();
+  executor.setRoute(route);
+  const auto output = executor.tick(wideObservation({{0, 0, 0}, 0}));
+  ASSERT_EQ(output.pose_stage_count, 2U);
+  const auto blend = poseRouteBlend(compilePoseRoute(route.posePoints), 1, .05);
+  ASSERT_TRUE(blend);
+  const double arc_limit = blend->radiusM * config.follower.spline.maxYawRateRadS;
+  ASSERT_LT(arc_limit, .9);
+  EXPECT_NEAR(executor.activeMaxSpeedMps(), arc_limit, 1e-9);
+  executor.setSpeedLimit(.9);
+  EXPECT_NEAR(executor.activeMaxSpeedMps(), arc_limit, 1e-9);
+  executor.setSpeedLimit(.01);
+  EXPECT_DOUBLE_EQ(executor.activeMaxSpeedMps(), .01);
 }
 
 TEST(PoseRoute, WideTurnCandidateUsesRoundedSeedAndRetainsTerminalPose) {
@@ -518,6 +534,12 @@ TEST(PoseRoute, CoupledReferenceCommandsForwardAndYawTogetherAndRetainsTerminalY
   EXPECT_GT(output.cmd_vel.wz,0);
   EXPECT_FALSE(output.trajectory_frozen);
   input.mapBody=input.odomBody={route.posePoints.back().position,M_PI/2-.06};
+  input.timestampS+=.02;input.observation.odom_stamp_s=input.timestampS;
+  output=executor.tick(input);
+  EXPECT_FALSE(output.goal_reached);
+  EXPECT_EQ(output.reason,"spline_control_ready");
+  // A moving spline keeps its braking phase before the explicit pause.
+  executor.suspendAutonomy();
   input.timestampS+=.02;input.observation.odom_stamp_s=input.timestampS;
   output=executor.tick(input);
   EXPECT_FALSE(output.goal_reached);
@@ -900,28 +922,31 @@ TEST(PoseRoute, InitialTurnUsesMeasuredPositionAfterCentimeterBodyDrift) {
 }
 
 TEST(PoseRoute, InitialTurnAtMeasuredPositionStillChecksTheWholeSweep) {
-  auto route = poseRoute();
-  route.posePoints = {{{0,0,0},0}, {{0,0,0},M_PI/2}, {{0,1,0},M_PI/2}};
-  auto executor = makeExecutor();
-  executor.setRoute(route);
-  ASSERT_EQ(executor.tick(observation({{0,0,0},0})).pose_stage_index, 1U);
-  auto input = observation({{.011,0,0},0}, 1.02);
-  lingtu::nav::tests::CollisionBitmap obstacle({-1,-1,-1},{1,1,1},.025);
-  obstacle.occupy({.14,.14,0});
-  input.observation.collision = obstacle.view(1.02);
-  const auto &view = input.observation.collision;
-  input.observation.collision.measuredOccupiedStorage =
-      std::make_shared<const std::vector<std::uint8_t>>(view.inflatedBits,
-                                                       view.inflatedBits + view.inflatedBytes);
-  input.observation.collision.knownFreeStorage =
-      std::make_shared<const std::vector<std::uint8_t>>(view.inflatedBytes, 255);
-  const auto blocked = executor.tick(input);
-  EXPECT_EQ(blocked.pose_stage_index, 1U);
-  EXPECT_EQ(blocked.reason, "pose_turn_blocked");
-  EXPECT_FALSE(blocked.path_found);
-  EXPECT_DOUBLE_EQ(blocked.cmd_vel.vx, 0);
-  EXPECT_DOUBLE_EQ(blocked.cmd_vel.vy, 0);
-  EXPECT_DOUBLE_EQ(blocked.cmd_vel.wz, 0);
+  for (const bool observed : {false, true}) {
+    SCOPED_TRACE(observed);
+    auto route = poseRoute();
+    route.posePoints = {{{0,0,0},0}, {{0,0,0},M_PI/2}, {{0,1,0},M_PI/2}};
+    auto executor = makeExecutor();
+    executor.setRoute(route);
+    auto input = observation({{.011,0,.03},0}, 1.02);
+    if (observed) input.observation.body_geometry = route.body;
+    lingtu::nav::tests::CollisionBitmap obstacle({-1,-1,-1},{1,1,1},.025);
+    obstacle.occupy({.14,.14,0});
+    input.observation.collision = obstacle.view(1.02);
+    const auto &view = input.observation.collision;
+    input.observation.collision.measuredOccupiedStorage =
+        std::make_shared<const std::vector<std::uint8_t>>(view.inflatedBits,
+                                                         view.inflatedBits + view.inflatedBytes);
+    input.observation.collision.knownFreeStorage =
+        std::make_shared<const std::vector<std::uint8_t>>(view.inflatedBytes, 255);
+    const auto blocked = executor.tick(input);
+    EXPECT_EQ(blocked.pose_stage_index, 1U);
+    EXPECT_EQ(blocked.reason, "pose_turn_blocked");
+    EXPECT_FALSE(blocked.path_found);
+    EXPECT_DOUBLE_EQ(blocked.cmd_vel.vx, 0);
+    EXPECT_DOUBLE_EQ(blocked.cmd_vel.vy, 0);
+    EXPECT_DOUBLE_EQ(blocked.cmd_vel.wz, 0);
+  }
 }
 
 TEST(PoseRoute, IntermediateTurnReconnectsFromMeasuredPosition) {
@@ -998,21 +1023,66 @@ TEST(PoseRoute, InitialStanceDriftDoesNotDependOnMapCellBoundary) {
   }
 }
 
-TEST(PoseRoute, InitialObservedStanceReusesAdmittedSupportHeightTolerance) {
-  for (const double heave : {.021, .03, .08, .101}) {
-    SCOPED_TRACE(heave);
-    auto route = poseRoute();
-    route.posePoints = {{{0,0,0},0}, {{0,0,0},M_PI/2}, {{0,1,0},M_PI/2}};
-    route.supportHeightM = .435;
-    route.supportHeightToleranceM = .1;
-    auto executor = makeExecutor();
-    executor.setRoute(route);
-    ASSERT_EQ(executor.tick(observation({{0,0,0},0})).pose_stage_index, 1U);
-    auto input = observation({{.011,0,heave},M_PI/2}, 1.02);
-    input.observation.body_geometry = route.body;
-    const auto output = executor.tick(input);
-    EXPECT_EQ(output.pose_stage_index, heave <= .1 ? 2U : 1U);
-    EXPECT_FALSE(output.goal_reached);
+TEST(PoseRoute, InitialStanceUsesTaskHeightToleranceWithOrWithoutSnapshot) {
+  for (const bool observed : {false, true}) {
+    SCOPED_TRACE(observed);
+    for (const double heave : {.021, .03, .08, .101}) {
+      SCOPED_TRACE(heave);
+      auto route = poseRoute();
+      route.posePoints = {{{0,0,0},0}, {{0,0,0},M_PI/2}, {{0,1,0},M_PI/2}};
+      route.supportHeightM = .435;
+      route.supportHeightToleranceM = .005;
+      ExecutorConfig config;
+      config.goal_height_tolerance_m = .1;
+      auto executor = makeExecutor(config);
+      executor.setRoute(route);
+      ASSERT_EQ(executor.tick(observation({{0,0,0},0})).pose_stage_index, 1U);
+      auto input = observation({{.011,0,heave},M_PI/2}, 1.02);
+      if (observed) input.observation.body_geometry = route.body;
+      const auto output = executor.tick(input);
+      EXPECT_EQ(output.pose_stage_index, heave <= .1 ? 2U : 1U);
+      EXPECT_FALSE(output.goal_reached);
+    }
+  }
+}
+
+TEST(PoseRoute, InitialStanceAtRouteAdmissionUsesTaskHeightTolerance) {
+  for (const bool observed : {false, true}) {
+    SCOPED_TRACE(observed);
+    for (const double heave : {.03, .101}) {
+      SCOPED_TRACE(heave);
+      auto route = poseRoute();
+      route.posePoints = {{{0,0,0},0}, {{0,0,0},M_PI/2}, {{0,1,0},M_PI/2}};
+      ExecutorConfig config;
+      config.goal_height_tolerance_m = .1;
+      auto executor = makeExecutor(config);
+      executor.setRoute(route);
+      auto input = observation({{.011,0,heave},0});
+      if (observed) input.observation.body_geometry = route.body;
+      const auto output = executor.tick(input);
+      EXPECT_EQ(output.pose_stage_index, heave <= .1 ? 1U : 0U);
+      if (heave <= .1) EXPECT_EQ(output.reason, "aligning_goal_yaw");
+      EXPECT_FALSE(output.goal_reached);
+    }
+  }
+}
+
+TEST(PoseRoute, AlignedInitialStageUsesTaskHeightToleranceWithOrWithoutSnapshot) {
+  for (const bool observed : {false, true}) {
+    SCOPED_TRACE(observed);
+    for (const double heave : {.03, .101}) {
+      SCOPED_TRACE(heave);
+      auto route = poseRoute();
+      ExecutorConfig config;
+      config.goal_height_tolerance_m = .1;
+      auto executor = makeExecutor(config);
+      executor.setRoute(route);
+      auto input = observation({{0,0,heave},0});
+      if (observed) input.observation.body_geometry = route.body;
+      const auto output = executor.tick(input);
+      EXPECT_EQ(output.pose_stage_index, heave <= .1 ? 1U : 0U);
+      EXPECT_FALSE(output.goal_reached);
+    }
   }
 }
 
@@ -1232,7 +1302,7 @@ TEST(PoseRoute, ObservedArticulationAllowsBoundedHeaveAndValidatedXYResidual) {
   EXPECT_EQ(executor.tick(input).pose_stage_index, 1U);
 }
 
-TEST(PoseRoute, BalancingRatesNeedStableMeasuredPoseBeforeTerminalSuccess) {
+TEST(PoseRoute, BodyGeometryDoesNotBypassQuietMotionAtGoal) {
   auto executor = makeExecutor();
   auto route = poseRoute();
   route.posePoints = {{{0,0,0},0}, {{1,0,0},0}};
@@ -1249,8 +1319,12 @@ TEST(PoseRoute, BalancingRatesNeedStableMeasuredPoseBeforeTerminalSuccess) {
     input.timestampS=2.+i*.02;
     input.observation.odom_stamp_s=input.timestampS;
     output=executor.tick(input);
-    if(i<25) EXPECT_FALSE(output.goal_reached);
+    EXPECT_FALSE(output.goal_reached);
   }
+  input.observation.body_yaw_rate=0;
+  input.observation.body_linear_velocity={};
+  input.timestampS+=.02;input.observation.odom_stamp_s=input.timestampS;
+  output=executor.tick(input);
   EXPECT_TRUE(output.goal_reached);
   EXPECT_DOUBLE_EQ(output.cmd_vel.vx,0);
   EXPECT_DOUBLE_EQ(output.cmd_vel.wz,0);
@@ -1275,7 +1349,7 @@ TEST(PoseRoute, BalancingRatesNeedStableMeasuredPoseBeforeTerminalSuccess) {
   }
 }
 
-TEST(PoseRoute, ArticulatedYawSettlesThroughoutTheRequestedTolerance) {
+TEST(PoseRoute, QuietYawWithinRequestedToleranceArrivesWithoutDwell) {
   auto executor=makeExecutor();auto route=poseRoute();
   route.posePoints={{{0,0,0},0},{{1,0,0},0}};
   route.finalYaw=0;
@@ -1283,16 +1357,14 @@ TEST(PoseRoute, ArticulatedYawSettlesThroughoutTheRequestedTolerance) {
   auto input=observation({{0,0,0},0});executor.tick(input);
   input.observation.body_geometry=route.body;
   input.mapBody=input.odomBody={{1,0,0},-.04};
-  for (int i=0;i<=26;++i) {
-    input.timestampS=2+i*.02;input.observation.odom_stamp_s=input.timestampS;
-    const auto output=executor.tick(input);
-    EXPECT_DOUBLE_EQ(output.cmd_vel.wz,0);
-    EXPECT_EQ(output.reason,i<25 ? "settling_at_goal" : "goal_reached");
-    EXPECT_EQ(output.goal_reached,i>=25);
-  }
+  input.timestampS=input.observation.odom_stamp_s=2;
+  const auto output=executor.tick(input);
+  EXPECT_DOUBLE_EQ(output.cmd_vel.wz,0);
+  EXPECT_EQ(output.reason,"goal_reached");
+  EXPECT_TRUE(output.goal_reached);
 }
 
-TEST(PoseRoute, LeavingRequestedYawToleranceRestartsArrivalDwell) {
+TEST(PoseRoute, ArrivalReevaluatesRequestedYawToleranceWithoutDwell) {
   auto executor=makeExecutor();auto route=poseRoute();
   route.posePoints={{{0,0,0},0},{{1,0,0},0}};
   route.finalYaw=0;
@@ -1300,10 +1372,8 @@ TEST(PoseRoute, LeavingRequestedYawToleranceRestartsArrivalDwell) {
   auto input=observation({{0,0,0},0});executor.tick(input);
   input.observation.body_geometry=route.body;
   input.mapBody=input.odomBody={{1,0,0},-.04};
-  for (int i=0;i<20;++i) {
-    input.timestampS=2+i*.02;input.observation.odom_stamp_s=input.timestampS;
-    EXPECT_EQ(executor.tick(input).reason,"settling_at_goal");
-  }
+  input.timestampS=input.observation.odom_stamp_s=2;
+  EXPECT_TRUE(executor.tick(input).goal_reached);
   input.mapBody=input.odomBody={{1,0,0},-.051};
   input.timestampS=2.4;input.observation.odom_stamp_s=2.4;
   const auto escaped=executor.tick(input);
@@ -1311,13 +1381,10 @@ TEST(PoseRoute, LeavingRequestedYawToleranceRestartsArrivalDwell) {
   EXPECT_EQ(escaped.reason,"aligning_goal_yaw");
   EXPECT_DOUBLE_EQ(escaped.cmd_vel.wz,.2);
   input.mapBody=input.odomBody={{1,0,0},-.04};
-  for (int i=0;i<=26;++i) {
-    input.timestampS=2.42+i*.02;input.observation.odom_stamp_s=input.timestampS;
-    const auto output=executor.tick(input);
-    EXPECT_DOUBLE_EQ(output.cmd_vel.wz,0);
-    if (i<25) EXPECT_FALSE(output.goal_reached);
-    if (i==26) EXPECT_TRUE(output.goal_reached);
-  }
+  input.timestampS=input.observation.odom_stamp_s=2.42;
+  const auto output=executor.tick(input);
+  EXPECT_DOUBLE_EQ(output.cmd_vel.wz,0);
+  EXPECT_TRUE(output.goal_reached);
 }
 
 TEST(PoseRoute, MinimumGoalYawRateRetainsCollisionStop) {
@@ -1448,7 +1515,7 @@ TEST(PoseRoute, StairProfilesRetainTheBodyAndMapGeometryInBothFramesAndDirection
       input.stairProfile = {StairProfile::Restore,true,false,"ordinary-model","",1.06};
       const auto restored = executor.tick(input);
       EXPECT_EQ(restored.stairs.phase,StairPhase::Ordinary);
-      EXPECT_EQ(restored.reason,"settling_at_goal");
+      EXPECT_EQ(restored.reason,"goal_reached");
       EXPECT_DOUBLE_EQ(restored.cmd_vel.wz,0);
 
       // Cancellation on the flight retains its profile, pose and body model.
@@ -1515,10 +1582,18 @@ TEST(PoseRoute, StairApproachTurnKeepsTheBodyCollisionQuery) {
   const auto nearAligned = executor.tick(input);
   EXPECT_EQ(nearAligned.reason,"stair_aligning");
   EXPECT_DOUBLE_EQ(nearAligned.cmd_vel.wz,.2);
-  input.mapBody.yaw = .6;
+  input.mapBody.yaw = .55;
   input.odomBody = input.mapBody;
+  input.observation.body_yaw_rate = .1;
   input.timestampS = 1.02;
   input.observation.odom_stamp_s = 1.02;
+  const auto settling = executor.tick(input);
+  EXPECT_EQ(settling.reason,"stair_settling");
+  EXPECT_DOUBLE_EQ(settling.cmd_vel.wz,0);
+  EXPECT_EQ(settling.stairs.request,StairProfile::None);
+  input.observation.body_yaw_rate = 0;
+  input.timestampS = 1.03;
+  input.observation.odom_stamp_s = 1.03;
   EXPECT_EQ(executor.tick(input).stairs.request,StairProfile::Ascent);
 
   auto withoutEvidence = makeExecutor();

@@ -7,7 +7,37 @@
 #include "nav_kernel/velocity_smoother.hpp"
 #include "safety/command.hpp"
 
+namespace nav_kernel {
+struct LocalPlannerParams;
+struct LocalPlanRequest;
+}
+
+namespace lingtu::nav::navigation {
+class Executor;
+}
+
 namespace lingtu::nav::endpoint {
+
+struct CliConfig;
+struct EndpointState;
+
+struct FinalSafetyInput {
+  const CliConfig &config;
+  const nav_kernel::LocalPlannerParams &planner;
+  const nav_kernel::LocalPlanRequest &collision;
+  bool has_pose{false};
+  nav_kernel::Twist measured{};
+  bool measured_velocity_valid{false};
+  bool has_route{false};
+  bool operator_takeover{false};
+  bool manual_mode{false};
+  double active_max_speed_mps{0.0};
+};
+
+CommandSafetyDecision evaluateFinalSafety(const FinalSafetyInput &input,
+                                        const CommandSafetyConfig &base_safety,
+                                        const nav_kernel::Twist &command,
+                                        double request_age_s);
 
 enum class FinalMode {
   kTeleopCommand,
@@ -48,6 +78,8 @@ struct FinalActions {
 class FinalControl {
  public:
   explicit FinalControl(FinalActions actions);
+  FinalControl(const CliConfig &config, const nav_kernel::LocalPlannerParams &planner,
+               const EndpointState &state, navigation::Executor &executor);
 
   [[nodiscard]] FinalResult finalize(const FinalInput &input);
   void stop(double now_s, const std::string &reason);

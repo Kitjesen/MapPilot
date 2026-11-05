@@ -127,7 +127,7 @@ class PlannerFsm {
                            std::optional<double> latestHandoffS = std::nullopt);
   bool trackingReferenceSeparated(const LocalTrajData &trajectory, double elapsedS) const;
   bool trajectoryClear(const LocalTrajData &trajectory, double beginS,
-                        double endS, double nowS) const;
+                        double endS) const;
   bool preferExecutingTail(const LocalTrajData &previous, const LocalTrajData *candidate,
                            double boundaryTime, double nowS) const;
   bool reconcileHandoff(const FsmInput &input, FsmOutput &output);

@@ -52,22 +52,21 @@ from gateway.services.exploration import (
 from gateway.services.explore_runs import ensure_explore_runs
 from gateway.services.recording import NativeRecordingError
 from gateway.services.runtime_status import runtime_identity
-from runtime.service_catalogs.thunder import (
-    thunder_runtime_services,
-    thunder_service_groups,
-    thunder_service_metadata,
-    thunder_service_spec,
-    thunder_slam_status_services,
+from runtime.service_catalogs.real import (
+    runtime_services,
+    service_groups,
+    service_metadata,
+    service_spec,
+    slam_status_services,
 )
 
 logger = logging.getLogger(__name__)
 
 _ACTIVE_SERVICE_STATES = {"running", "active"}
-_SERVICE_STATUS_DEFAULTS = tuple(dict.fromkeys((*thunder_runtime_services(), "gateway")))
+_SERVICE_STATUS_DEFAULTS = tuple(dict.fromkeys((*runtime_services(), "gateway")))
 _FIELD_SERVICE_READINESS_DEFAULT_PATH = "/tmp/lingtu_service_readiness.json"
-_SLAM_STATUS_SERVICES = thunder_slam_status_services()
-_SLAM_SERVICE_GROUPS = thunder_service_groups()
-_SLAM_SERVICE_METADATA = thunder_service_metadata()
+_SLAM_STATUS_SERVICES = slam_status_services()
+_SLAM_SERVICE_GROUPS = service_groups()
 _EXPLORER_UNAVAILABLE_DETAIL = {
     "reason": "explorer_backend_not_running",
     "required_product": "explore",
@@ -275,7 +274,7 @@ def _field_status_for_service(
     if process is not None:
         units = (str(getattr(process, "target", "") or ""),)
     else:
-        spec = thunder_service_spec(service_name)
+        spec = service_spec(service_name)
         units = tuple(spec.units) if spec is not None else ()
     unit_evidence = {unit: dict(systemd[unit]) for unit in units if unit and isinstance(systemd.get(unit), Mapping)}
     if unit_evidence:
@@ -301,10 +300,20 @@ def _field_status_for_service(
     return None, {}
 
 
+def _service_metadata(gw: Any) -> dict[str, dict[str, Any]]:
+    plan = getattr(gw, "_compiled_run_plan", None)
+    environment = getattr(plan, "native_process_environment", {})
+    return service_metadata(
+        camera_driver=environment.get("LINGTU_CAMERA_DRIVER", "orbbec_native"),
+        environment=environment,
+    )
+
+
 def _service_status_snapshot(
     gw: Any,
     selected: tuple[str, ...],
     field_readiness: dict[str, Any],
+    service_contracts: Mapping[str, Mapping[str, Any]],
 ) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
     plan = getattr(gw, "_compiled_run_plan", None)
     report = field_readiness.pop("_report", {})
@@ -360,7 +369,7 @@ def _service_status_snapshot(
             status = "running"
 
         ready = status in _ACTIVE_SERVICE_STATES
-        metadata = _SLAM_SERVICE_METADATA.get(name, {})
+        metadata = service_contracts.get(name, {})
         details[name] = {
             "status": status,
             "ready": ready,
@@ -442,6 +451,109 @@ def _field_product_map_guard_response(
         details=blocker,
         status_code=409,
     )
+
+
+def localization_map_id(gw: Any, map_name: str) -> tuple[str, Any | None]:
+    name_error = safe_map_name(map_name)
+    if name_error is not None:
+        return map_name, _localization_operation_response(
+            False,
+            message=name_error,
+            status_code=400,
+        )
+    resolved_map, map_guard_response = _field_product_map_guard_response(gw, map_name)
+    if map_guard_response is not None:
+        return resolved_map, map_guard_response
+    try:
+        record = mapd_request(
+            gw,
+            {"action": "get_record", "map_id": resolved_map},
+        )
+    except Exception as exc:
+        return resolved_map, _localization_operation_response(
+            False,
+            message=str(exc),
+            status_code=503,
+        )
+    if record.get("success") is not True:
+        return resolved_map, _localization_operation_response(
+            False,
+            map_name=resolved_map,
+            message=f"Map unavailable: {resolved_map}",
+            status_code=404,
+        )
+    return resolved_map, None
+
+
+async def relocalize(gw: Any, body: LocalizationRelocalizationRequest):
+    request = (
+        body
+        if isinstance(body, LocalizationRelocalizationRequest)
+        else LocalizationRelocalizationRequest.model_validate(body)
+    )
+    map_id, map_response = await asyncio.to_thread(localization_map_id, gw, request.map_name)
+    if map_response is not None:
+        return map_response
+    unavailable_response = _relocalization_service_unavailable_response(gw)
+    if unavailable_response is not None:
+        return unavailable_response
+
+    try:
+        if request.mode == "global":
+            # BBS alone can take 30 seconds, before refinement and DDS delivery.
+            result = await asyncio.to_thread(
+                gw.localization.trigger_global_relocalize, timeout_s=45.0,
+            )
+        else:
+            if request.initial_pose is None:
+                return _localization_operation_response(
+                    False,
+                    map_name=map_id,
+                    mode=request.mode,
+                    request_id=request.request_id,
+                    message="seeded relocalization requires an initial pose",
+                    status_code=400,
+                )
+            result = await asyncio.to_thread(
+                gw.localization.relocalize_saved_map,
+                map_id,
+                request.initial_pose.x,
+                request.initial_pose.y,
+                request.initial_pose.yaw,
+                z=request.initial_pose.z,
+                timeout_s=30.0,
+            )
+        if result.timed_out:
+            return _localization_operation_response(
+                False,
+                map_name=map_id,
+                mode=request.mode,
+                request_id=request.request_id,
+                message=result.message,
+                status_code=504,
+            )
+        ok = result.success
+        quality = result.quality
+        if quality is None and ok:
+            quality = float(getattr(gw, "_icp_quality", 0.0))
+        return _operation_payload(
+            ok,
+            map_name=map_id,
+            mode=request.mode,
+            request_id=request.request_id,
+            message=result.message if not ok else f"Relocalized to {map_id}",
+            quality=quality,
+            details=dict(result.details),
+        )
+    except Exception as exc:
+        return _localization_operation_response(
+            False,
+            map_name=map_id,
+            mode=request.mode,
+            request_id=request.request_id,
+            message=str(exc),
+            status_code=500,
+        )
 
 
 def register_operation_routes(app, gw) -> None:
@@ -884,10 +996,12 @@ def register_operation_routes(app, gw) -> None:
     async def service_status(names: str | None = None, dds_check: bool = False):
         selected = _parse_service_names(names)
         field_readiness = _load_field_service_readiness()
+        metadata = _service_metadata(gw)
         services, service_details = _service_status_snapshot(
             gw,
             selected,
             field_readiness,
+            metadata,
         )
         return {
             "schema_version": 1,
@@ -901,7 +1015,7 @@ def register_operation_routes(app, gw) -> None:
             ),
             "field_readiness": field_readiness,
             "service_groups": _SLAM_SERVICE_GROUPS,
-            "service_metadata": _SLAM_SERVICE_METADATA,
+            "service_metadata": metadata,
             "product_runtime": "native_dds",
         }
 
@@ -912,10 +1026,12 @@ def register_operation_routes(app, gw) -> None:
     )
     async def slam_status():
         field_readiness = _load_field_service_readiness()
+        metadata = _service_metadata(gw)
         services, service_details = _service_status_snapshot(
             gw,
             _SLAM_STATUS_SERVICES,
             field_readiness,
+            metadata,
         )
 
         live_mode = ""
@@ -945,41 +1061,11 @@ def register_operation_routes(app, gw) -> None:
             "services": services,
             "service_details": service_details,
             "service_groups": _SLAM_SERVICE_GROUPS,
-            "service_metadata": _SLAM_SERVICE_METADATA,
+            "service_metadata": metadata,
             "product_runtime": "native_dds",
             "manual_systemctl_required": False,
         }
 
-    def localization_map_id(map_name: str) -> tuple[str, Any | None]:
-        name_error = safe_map_name(map_name)
-        if name_error is not None:
-            return map_name, _localization_operation_response(
-                False,
-                message=name_error,
-                status_code=400,
-            )
-        resolved_map, map_guard_response = _field_product_map_guard_response(gw, map_name)
-        if map_guard_response is not None:
-            return resolved_map, map_guard_response
-        try:
-            record = mapd_request(
-                gw,
-                {"action": "get_record", "map_id": resolved_map},
-            )
-        except Exception as exc:
-            return resolved_map, _localization_operation_response(
-                False,
-                message=str(exc),
-                status_code=503,
-            )
-        if record.get("success") is not True:
-            return resolved_map, _localization_operation_response(
-                False,
-                map_name=resolved_map,
-                message=f"Map unavailable: {resolved_map}",
-                status_code=404,
-            )
-        return resolved_map, None
 
     @app.post(
         "/api/v1/localization/relocalizations",
@@ -995,74 +1081,7 @@ def register_operation_routes(app, gw) -> None:
         },
     )
     async def localization_relocalize(body: LocalizationRelocalizationRequest):
-        request = (
-            body
-            if isinstance(body, LocalizationRelocalizationRequest)
-            else LocalizationRelocalizationRequest.model_validate(body)
-        )
-        map_id, map_response = await asyncio.to_thread(localization_map_id, request.map_name)
-        if map_response is not None:
-            return map_response
-        unavailable_response = _relocalization_service_unavailable_response(gw)
-        if unavailable_response is not None:
-            return unavailable_response
-
-        try:
-            if request.mode == "global":
-                # BBS alone can take 30 seconds, before refinement and DDS delivery.
-                result = await asyncio.to_thread(
-                    gw.localization.trigger_global_relocalize, timeout_s=45.0,
-                )
-            else:
-                if request.initial_pose is None:
-                    return _localization_operation_response(
-                        False,
-                        map_name=map_id,
-                        mode=request.mode,
-                        request_id=request.request_id,
-                        message="seeded relocalization requires an initial pose",
-                        status_code=400,
-                    )
-                result = await asyncio.to_thread(
-                    gw.localization.relocalize_saved_map,
-                    map_id,
-                    request.initial_pose.x,
-                    request.initial_pose.y,
-                    request.initial_pose.yaw,
-                    z=request.initial_pose.z,
-                    timeout_s=30.0,
-                )
-            if result.timed_out:
-                return _localization_operation_response(
-                    False,
-                    map_name=map_id,
-                    mode=request.mode,
-                    request_id=request.request_id,
-                    message=result.message,
-                    status_code=504,
-                )
-            ok = result.success
-            quality = result.quality
-            if quality is None and ok:
-                quality = float(getattr(gw, "_icp_quality", 0.0))
-            return _operation_payload(
-                ok,
-                map_name=map_id,
-                mode=request.mode,
-                request_id=request.request_id,
-                message=result.message if not ok else f"Relocalized to {map_id}",
-                quality=quality,
-                details=dict(result.details),
-            )
-        except Exception as exc:
-            return _localization_operation_response(
-                False,
-                map_name=map_id,
-                mode=request.mode,
-                request_id=request.request_id,
-                message=str(exc),
-                status_code=500,
-            )
+        return await relocalize(gw, body)
 
     @app.post(
         "/api/v1/localization/map-tracking",
@@ -1083,7 +1102,7 @@ def register_operation_routes(app, gw) -> None:
             if isinstance(body, LocalizationMapTrackingRequest)
             else LocalizationMapTrackingRequest.model_validate(body)
         )
-        map_name, map_response = await asyncio.to_thread(localization_map_id, request.map_name)
+        map_name, map_response = await asyncio.to_thread(localization_map_id, gw, request.map_name)
         if map_response is not None:
             return map_response
         unavailable_response = _relocalization_service_unavailable_response(gw)

@@ -8,7 +8,6 @@
 #include "navigation/stairs.hpp"
 #include "navigation/pose_route.hpp"
 #include "collision/body.hpp"
-#include "collision/terrain.hpp"
 
 namespace lingtu::nav::navigation {
 
@@ -31,7 +30,6 @@ struct Route {
   std::optional<double> supportHeightToleranceM;
   // Task arrival is measured from the requested position, not an adjusted path endpoint.
   std::optional<nav_kernel::Vec3> requestedGoal;
-  collision::SupportQuery supportSurface;
 
   [[nodiscard]] bool empty() const noexcept { return points.empty() && posePoints.empty(); }
 };

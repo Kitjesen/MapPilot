@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import time
 from typing import Any
 
+from gateway.navigation.actions import _new_navigation_task_id, _publish_goal, cancel, go
 from gateway.navigation.commands import (
     CommandBoundaryError,
-    submit_cancel,
-    submit_goal,
     submit_pause,
     submit_resume,
+    submit_speed_limit,
 )
 from gateway.navigation.goals import construct_goal_from_request
 from gateway.schemas import (
@@ -25,6 +24,7 @@ from gateway.schemas import (
     GoalRequest,
     NavigationTaskPauseRequest,
     NavigationTaskResumeRequest,
+    NavigationTaskSpeedLimitRequest,
     PlanPreviewRequest,
     PlanPreviewResponse,
     StopRequest,
@@ -48,6 +48,10 @@ LEASE_ERROR_RESPONSES = {
     403: {"model": GatewayErrorResponse},
     409: {"model": GatewayErrorResponse},
 }
+GOAL_ERROR_RESPONSES = {
+    **LEASE_ERROR_RESPONSES,
+    503: {"model": GatewayErrorResponse},
+}
 
 
 from gateway.navigation.status import build_navigation_status
@@ -59,41 +63,10 @@ from gateway.schemas import (
 )
 
 
-def _publish_goal(
-    gw: Any,
-    goal: Any,
-    *,
-    ts: float,
-    task_id: str,
-    request_id: str | None = None,
-) -> dict[str, Any]:
-    typed_goal = goal.pose_stamped(ts=ts)
-    result = submit_goal(gw, typed_goal, task_id=task_id, request_id=request_id,
-                         max_speed_mps=goal.max_speed_mps,
-                         acceptance_radius_m=goal.acceptance_radius_m)
-    if isinstance(result, dict):
-        return dict(result)
-    if result is True:
-        return {"accepted": True, "success": True, "task_id": task_id}
-    raise CommandBoundaryError("goal service is unavailable")
-
-
-def _new_navigation_task_id() -> str:
-    return f"nav-task-{time.time_ns()}"
-
-
 def _new_navigation_request_id(action: str) -> str:
     return f"nav-{action}-{time.time_ns()}"
 
 
-def _active_navigation_task_id(gw: Any) -> str | None:
-    with getattr(gw, "_state_lock", contextlib.nullcontext()):
-        native_state = getattr(gw, "_navigation_state", None)
-        if isinstance(native_state, dict):
-            task_id = str(native_state.get("active_task_id") or "").strip()
-            if task_id:
-                return task_id
-    return None
 
 
 def register_navigation_routes(app, gw) -> None:
@@ -171,51 +144,16 @@ def register_navigation_routes(app, gw) -> None:
         "/api/v1/goal",
         summary="Send navigation goal",
         response_model=ControlCommandResponse,
-        responses=CONTROL_COMMAND_ERROR_RESPONSES,
+        responses=GOAL_ERROR_RESPONSES,
     )
     async def post_goal(body: GoalRequest):
-        def _publish() -> dict[str, Any]:
-            goal = construct_goal_from_request(
-                body,
-                gw=gw,
-                default_source="coordinate",
-                default_target_type="coordinate",
-            )
-            ts = time.time()
-            task_id = str(body.task_id or "").strip() or _new_navigation_task_id()
-            ack = _publish_goal(
-                gw,
-                goal,
-                ts=ts,
-                task_id=task_id,
-                request_id=body.request_id,
-            )
-            return {
-                **goal.command_payload(
-                    status="ok",
-                    instruction=body.instruction,
-                    ts=ts,
-                ),
-                "task_id": ack.get("task_id") or task_id,
-                "native_request_id": ack.get("native_request_id"),
-                "native_ack": ack.get("native_ack"),
-                "accepted": True,
-                "stage": "submitted",
-                "execution_confirmed": False,
-            }
-
-        return await asyncio.to_thread(
-            command_service.run_planned_goal_command,
-            "goal",
-            body,
-            _publish,
-        )
+        return await asyncio.to_thread(go, gw, body)
 
     @app.post(
         "/api/v1/navigate/click",
         summary="Navigate to map-viewer click point",
         response_model=ControlCommandResponse,
-        responses=CONTROL_COMMAND_ERROR_RESPONSES,
+        responses=GOAL_ERROR_RESPONSES,
     )
     async def post_navigate_click(body: ClickNavRequest):
         def _publish() -> dict[str, Any]:
@@ -256,81 +194,7 @@ def register_navigation_routes(app, gw) -> None:
         *,
         route_task_id: str | None = None,
     ):
-        resolved_route_task_id = str(route_task_id or "").strip()
-        body_task_id = str(body.task_id or "").strip()
-        if route_task_id is not None and not resolved_route_task_id:
-            return command_service.rejected_response(
-                "navigation_cancel",
-                body,
-                error="task_identity_invalid",
-                message="The navigation task route requires a non-empty task_id.",
-                detail=command_service.command_error_detail(
-                    reason_code="task_identity_invalid",
-                    reason="route task_id must not be blank",
-                    source="gateway_navigation_task_api",
-                    blockers=["task_identity_invalid"],
-                ),
-            )
-        if resolved_route_task_id and body_task_id and body_task_id != resolved_route_task_id:
-            return command_service.rejected_response(
-                "navigation_cancel",
-                body,
-                error="task_identity_conflict",
-                message="The request body task_id does not match the task route.",
-                detail=command_service.command_error_detail(
-                    reason_code="task_identity_conflict",
-                    reason="body task_id must match route task_id",
-                    source="gateway_navigation_task_api",
-                    blockers=["task_identity_conflict"],
-                ),
-            )
-        command_body = body.model_copy(update={"task_id": resolved_route_task_id}) if resolved_route_task_id else body
-
-        def _publish() -> dict[str, Any]:
-            task_id = str(command_body.task_id or "").strip()
-            if not task_id:
-                task_id = _active_navigation_task_id(gw)
-            wrote_native = submit_cancel(
-                gw,
-                command_body.reason,
-                task_id=task_id,
-                request_id=command_body.request_id,
-            )
-            if not wrote_native:
-                raise CommandBoundaryError("goal service is unavailable")
-            ack = dict(wrote_native) if isinstance(wrote_native, dict) else {}
-            return {
-                "accepted": True,
-                "status": "cancel_requested",
-                "stage": "native_acknowledged",
-                "reason": command_body.reason,
-                "task_id": ack.get("task_id") or task_id,
-                "native_request_id": ack.get("native_request_id"),
-                "native_ack": ack.get("native_ack"),
-                "execution_confirmed": False,
-            }
-
-        try:
-            return await asyncio.to_thread(
-                gw._run_control_command,
-                "navigation_cancel",
-                command_body,
-                _publish,
-            )
-        except CommandBoundaryError as exc:
-            reason = str(exc)
-            return command_service.rejected_response(
-                "navigation_cancel",
-                command_body,
-                error="native_command_rejected",
-                message="Native navigation endpoint rejected the cancel request.",
-                detail=command_service.command_error_detail(
-                    reason_code="native_command_rejected",
-                    reason=reason,
-                    source="native_navigation_command_ack",
-                    blockers=[reason],
-                ),
-            )
+        return await asyncio.to_thread(cancel, gw, body, route_task_id)
 
     @app.post(
         "/api/v1/navigation/cancel",
@@ -351,7 +215,7 @@ def register_navigation_routes(app, gw) -> None:
         return await _submit_navigation_cancel(body, route_task_id=task_id)
 
     async def _submit_navigation_task_control(
-        body: NavigationTaskPauseRequest | NavigationTaskResumeRequest,
+        body: NavigationTaskPauseRequest | NavigationTaskResumeRequest | NavigationTaskSpeedLimitRequest,
         *,
         route_task_id: str,
         action: str,
@@ -404,20 +268,22 @@ def register_navigation_routes(app, gw) -> None:
         status = f"{action}_requested"
 
         def _publish() -> dict[str, Any]:
-            operation = submit_pause if action == "pause" else submit_resume
-            result = operation(
-                gw,
-                command_body.reason,
-                task_id=task_id,
-                request_id=request_id,
-            )
+            if action == "speed_limit":
+                result = submit_speed_limit(
+                    gw, command_body.max_speed_mps, task_id=task_id, request_id=request_id,
+                )
+            else:
+                operation = submit_pause if action == "pause" else submit_resume
+                result = operation(
+                    gw, command_body.reason, task_id=task_id, request_id=request_id,
+                )
             if not isinstance(result, dict):
                 raise CommandBoundaryError(f"navigation task {action} capability is unavailable")
             payload = {
                 "accepted": True,
                 "status": status,
                 "stage": "request_acknowledged",
-                "reason": command_body.reason,
+                "reason": result["native_ack"]["reason"] if action == "speed_limit" else command_body.reason,
                 "task_id": task_id,
                 "native_request_id": result.get("native_request_id"),
                 "native_ack": result.get("native_ack"),
@@ -429,7 +295,7 @@ def register_navigation_routes(app, gw) -> None:
             return payload
 
         try:
-            if action == "resume":
+            if action in {"resume", "speed_limit"}:
                 return await asyncio.to_thread(
                     command_service.run_motion_guarded_command,
                     command_name,
@@ -474,6 +340,20 @@ def register_navigation_routes(app, gw) -> None:
             body,
             route_task_id=task_id,
             action="pause",
+        )
+
+    @app.post(
+        "/api/v1/navigation/tasks/{task_id}/speed-limit",
+        summary="Update the active task speed limit while retaining its route",
+        response_model=ControlCommandResponse,
+        status_code=202,
+        responses=LEASE_ERROR_RESPONSES,
+    )
+    async def post_navigation_task_speed_limit(
+        task_id: str, body: NavigationTaskSpeedLimitRequest,
+    ):
+        return await _submit_navigation_task_control(
+            body, route_task_id=task_id, action="speed_limit",
         )
 
     @app.post(

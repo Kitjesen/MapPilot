@@ -1,3 +1,5 @@
+#include <lingtu/settings.hpp>
+
 #include "encoder.hpp"
 #include "../shm_reader.hpp"
 
@@ -25,12 +27,12 @@ volatile sig_atomic_t stopping = 0;
 void request_stop(int) { stopping = 1; }
 
 struct Options {
-  std::string source{"/lingtu_camera_color"};
+  std::string source{lingtu::settings::camera::camera::shm::color};
   std::string output{"-"};
   std::string metadata;
   video::EncoderOptions encoder;
-  unsigned max_age_ms{250};
-  unsigned idle_timeout_ms{5000};
+  unsigned max_age_ms{lingtu::settings::camera::camera::video::max_age_ms};
+  unsigned idle_timeout_ms{lingtu::settings::camera::camera::video::idle_timeout_ms};
   unsigned frames{0};
 };
 
@@ -48,17 +50,17 @@ unsigned number(const std::string& text, const std::string& key, bool allow_zero
 void usage() {
   std::cout <<
       "lingtu_camera_video: existing color SHM -> FFmpeg -> Annex-B H.264\n"
-      "  --color-shm NAME         default /lingtu_camera_color\n"
+      "  --color-shm NAME         color shared memory name\n"
       "  --output FILE|-          new H.264 file or stdout (default -)\n"
       "  --metadata FILE          new JSONL file (otherwise mixed stderr diagnostics)\n"
       "  --ffmpeg EXECUTABLE      default ffmpeg\n"
       "  --codec NAME             default libx264 (software; no automatic fallback)\n"
-      "  --fps N                  maximum input rate, default 15\n"
-      "  --bitrate-kbps N          target bitrate, default 1500\n"
+      "  --fps N                  maximum input rate\n"
+      "  --bitrate-kbps N          target bitrate\n"
       "  --gop N                  keyframe interval, default one second\n"
-      "  --max-age-ms N           reject older camera frames, default 250\n"
+      "  --max-age-ms N           reject older camera frames\n"
       "  --write-timeout-ms N     per-frame encoder input deadline, default 500\n"
-      "  --idle-timeout-ms N      fail without fresh camera frames, default 5000\n"
+      "  --idle-timeout-ms N      fail without fresh camera frames\n"
       "  --frames N              stop after N submitted frames; 0 means unlimited\n"
       "Only consumes an already-running camera. Does not manage a Product or WebRTC.\n";
 }

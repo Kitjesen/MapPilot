@@ -7,6 +7,8 @@
  */
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include "nav_kernel/types.hpp"
 
 #include <cstdint>
@@ -41,7 +43,8 @@ struct RecoverySearchParams {
   double vehicleLength{0.6};
   double vehicleWidth{0.6};
   double footprintPadding{0.1};
-  double obstacleHeightThreshold{0.2};
+  double obstacleHeightThreshold{
+      ::lingtu::settings::local::native_nav::local_planner_obstacle_height_min_m};
   bool useTerrainAnalysis{true};
   // Controls point-cloud fallback; a supplied collision Grid remains authoritative.
   bool checkObstacles{true};
@@ -52,11 +55,10 @@ struct RecoverySearchParams {
   double edgeSampleResolution{0.05};
   double minTranslationDistance{0.35};
   double portalMargin{0.15};
-  double minRotationRad{0.20};
-  double maxRotationRad{1.20};
-  double rotationCandidateStepRad{0.20};
-  double rotationSampleStepRad{0.05};
-  double rotationRate{0.25};
+  double minRotationRad{::lingtu::settings::recovery::native_nav::recovery::min_rotation_rad};
+  double maxRotationRad{::lingtu::settings::recovery::native_nav::recovery::max_rotation_rad};
+  double rotationCandidateStepRad{::lingtu::settings::recovery::native_nav::recovery::rotation_candidate_step_rad};
+  double rotationSampleStepRad{::lingtu::settings::recovery::native_nav::recovery::rotation_sample_step_rad};
   double clearanceWeight{0.10};
   double goalDirectionWeight{0.03};
   int maxSearchNodes{20000};
@@ -100,7 +102,6 @@ struct RecoverySearchResult {
   nav_kernel::RecoveryAction action{nav_kernel::RecoveryAction::None};
   std::vector<nav_kernel::Vec3> pathBody;
   std::vector<nav_kernel::Vec3> pathWorld;
-  nav_kernel::Twist directCommand{};
   double rotationDeltaRad{0.0};
   RecoverySafetyFailure safetyFailure{RecoverySafetyFailure::None};
   RecoverySearchDiagnostics diagnostics{};

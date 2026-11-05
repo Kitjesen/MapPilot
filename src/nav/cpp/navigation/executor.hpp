@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -21,17 +23,17 @@ enum class PlanningFrame { Odom, Map };
 // computes global routes nor publishes commands to the robot.
 struct ExecutorConfig {
   PlanningFrame planning_frame{PlanningFrame::Odom};
-  double corridor_lookahead_m{3.0};
-  double waypoint_reached_m{0.6};
-  double goal_reached_m{0.35};
-  double goal_height_tolerance_m{0.35};
+  double corridor_lookahead_m{::lingtu::settings::follower::native_nav::corridor_lookahead_m};
+  double waypoint_reached_m{::lingtu::settings::follower::native_nav::waypoint_reached_m};
+  double goal_reached_m{::lingtu::settings::follower::native_nav::goal_reached_m};
+  double goal_height_tolerance_m{::lingtu::settings::follower::native_nav::goal_height_tolerance_m};
   double goal_yaw_tolerance_rad{0.08726646259971647};
   double goal_yaw_kp{1.5};
   double goal_yaw_min_rate{0.2};
   double goal_yaw_max_rate{0.6};
-  double max_speed{nav_kernel::kDefaultLinearSpeedMps};
-  double teleop_intent_horizon_m{3.5};
-  double teleop_intent_max_deviation_deg{90.0};
+  double max_speed{::lingtu::settings::limits::native_nav::follower::max_speed_mps};
+  double teleop_intent_horizon_m{::lingtu::settings::teleop::native_nav::teleop::horizon_m};
+  double teleop_intent_max_deviation_deg{::lingtu::settings::teleop::native_nav::teleop::max_deviation_deg};
   RecoveryConfig recovery{};
   double slow_rate_1{0.25};
   double slow_rate_2{0.5};
@@ -48,6 +50,7 @@ struct ExecutionOutput {
   bool near_field_stop{false};
   bool trajectory_frozen{false};
   bool recovery_exhausted{false};
+  bool planning_failed{false};
   // Public failure names are owned by the producing boundary:
   // local_no_path/local_blocked/local_near_field_stop come from the local
   // planner; execution_stalled is emitted only after Executor observes that
@@ -143,6 +146,7 @@ class Executor {
 
   void setRoute(Route route);
   void clear();
+  void setSpeedLimit(double max_speed_mps);
   ExecutionOutput tick(const ExecutionInput &input);
 
   [[nodiscard]] bool hasRoute() const;
@@ -152,6 +156,9 @@ class Executor {
       const StairProfileFeedback& feedback);
   [[nodiscard]] double activeMaxSpeedMps() const { return active_max_speed_mps_; }
   [[nodiscard]] std::shared_ptr<const collision::Body> body() const { return config_.body; }
+  [[nodiscard]] std::shared_ptr<const collision::Body> activeBody() const {
+    return route_body_ ? route_body_ : config_.body;
+  }
   void pauseLinearMotion();
   void commitAppliedCommand(const nav_kernel::Twist &command);
   void reportFinalMotionBlocked(bool blocked, double timestamp_s);
@@ -207,7 +214,7 @@ class Executor {
   void resetTeleopRotation();
   void resetTeleopBoundaryDeparture();
   void resetTeleopReference();
-  void resetLocalPlanning();
+  void resetLocalPlanning(bool full_follower_reset = false);
   SegmentTarget buildSegment(const nav_kernel::Pose &map_body,
                              const nav_kernel::Pose &planning_body,
                              const MapFromOdomTransform &map_from_odom);
@@ -226,7 +233,6 @@ class Executor {
                      nav_kernel::LocalPlannerDebugSnapshot snapshot) const;
   double slowFactor(int slow_down) const;
   bool atGoal(const nav_kernel::Pose &odom_map_body) const;
-  double goalYawError(const nav_kernel::Pose &odom_map_body) const;
   bool autonomyMotionStalled(const nav_kernel::Pose &odom_map_body, double timestamp_s,
                             bool planning_pending);
   void setAutonomyMotionExpected(const nav_kernel::Twist &command,
@@ -254,6 +260,7 @@ class Executor {
   std::optional<std::uint64_t> pose_epoch_;
   void activatePoseStage();
   void tryBlendPoseStage(double grid_resolution_m);
+  void limitPoseSpeed();
   bool pose_blending_allowed_{false};
   std::optional<double> pose_support_height_m_;
   std::optional<double> pose_support_tolerance_m_;
@@ -273,15 +280,10 @@ class Executor {
   std::optional<double> final_yaw_;
   bool goal_heading_active_{false};
   std::optional<nav_kernel::Vec3> requested_goal_;
-  collision::SupportQuery support_surface_;
   std::optional<double> height_offset_;
   double active_goal_reached_m_{0.35};
   double active_max_speed_mps_{nav_kernel::kDefaultLinearSpeedMps};
-  double active_goal_height_tolerance_m_{0.35};
   double active_goal_yaw_tolerance_rad_{0.08726646259971647};
-  double goal_quiet_since_s_{-1.0};
-  double goal_last_odom_s_{-1.0};
-  nav_kernel::Pose goal_settle_pose_{};
   std::size_t progress{0};
   std::vector<float> obstacle_xyzh_odom_scratch_;
   std::vector<nav_kernel::PredictedObstacle> predictions_odom_scratch_;

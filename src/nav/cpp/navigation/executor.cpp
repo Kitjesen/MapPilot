@@ -1,5 +1,4 @@
 #include "navigation/executor.hpp"
-#include "planning/local/scan/grid.hpp"
 #include "planning/local/scan/upstream/plan_manage/closed_loop_controller.h"
 
 #include <algorithm>
@@ -17,7 +16,6 @@ double clamp01(double value) {
 
 constexpr double kTeleopIntentToleranceRad = 10.0 * M_PI / 180.0;
 constexpr double kPoseStagePositionToleranceM = 0.01;
-constexpr double kObservedBodyStageHeightToleranceM = 0.02;
 
 double bodyDistance2D(const nav_kernel::Vec3 &point) {
   return std::hypot(point.x, point.y);
@@ -121,8 +119,8 @@ void applyTeleopRotation(ExecutionOutput &output, const RecoveryOutput &recovery
   output.local_path_map.clear();
   output.cmd_vel = {};
   if (recovery.active && recovery.verified && recovery.direct_command) {
-    output.cmd_vel.wz =
-        static_cast<double>(recovery.rotation_direction) * rotation_rate_rad_s;
+    output.cmd_vel = nav_kernel::Follower::rotationCommand(
+        recovery.rotation_direction, rotation_rate_rad_s);
   }
   output.reason = recovery.reason;
 }
@@ -156,13 +154,15 @@ Executor::Executor(ExecutorConfig config, nav_kernel::LocalPlanner planner)
   config_.recovery.stuck_yaw_progress_rad = std::max(0.0, config_.recovery.stuck_yaw_progress_rad);
   active_goal_reached_m_ = config_.goal_reached_m;
   active_max_speed_mps_ = config_.max_speed;
-  active_goal_height_tolerance_m_ = config_.goal_height_tolerance_m;
   active_goal_yaw_tolerance_rad_ = config_.goal_yaw_tolerance_rad;
 }
 
-void Executor::resetLocalPlanning() {
+void Executor::resetLocalPlanning(bool full_follower_reset) {
   local_planner_.reset();
-  follower_.resetTarget();
+  if (full_follower_reset)
+    follower_.reset();
+  else
+    follower_.resetTarget();
   last_scan_tick_s_.reset();
   traj_frozen_ = false;
   intent_mode_ = false;
@@ -227,7 +227,6 @@ void Executor::setRoute(Route value) {
   pose_epoch_.reset();
   reference_epoch.reset();
   requested_goal_ = value.requestedGoal;
-  support_surface_ = std::move(value.supportSurface);
   activateRoute(value.points, value.finalYaw, value.goalToleranceM, value.yawToleranceRad, value.maxSpeedMps);
   if (requested_goal_) height_offset_ = 0.0;
   if (!stages.empty()) {
@@ -259,10 +258,6 @@ void Executor::activatePoseStage() {
   // Pose routes already reference the body origin; do not recalibrate their
   // elevation from the first observed pose and erase a vertical discrepancy.
   height_offset_ = 0.0;
-  if (!last) {
-    active_goal_reached_m_ = position_tolerance;
-    active_goal_height_tolerance_m_ = position_tolerance;
-  }
 }
 
 void Executor::tryBlendPoseStage(double grid_resolution_m) {
@@ -284,13 +279,24 @@ void Executor::tryBlendPoseStage(double grid_resolution_m) {
   pose_blend_=candidate;
   if(rounded) pose_blend_original_=original;
   pose_blend_checked_=true;
+  limitPoseSpeed();
+}
+
+void Executor::limitPoseSpeed() {
+  if (!pose_blend_) return;
   // Use moving-body limits, not terminal yaw-alignment settings.
   const auto& follower=config_.follower.spline;
   const double entry=std::max(0.,follower.headingErrorThreshold);
   const double lateral=entry<=1e-9 ? follower.maxVx :
       (entry<M_PI/2 ? follower.maxVy/std::sin(entry) : follower.maxVy);
   active_max_speed_mps_=std::min({active_max_speed_mps_,follower.maxVx,lateral,
-      candidate->radiusM*follower.maxYawRateRadS});
+      pose_blend_->radiusM*follower.maxYawRateRadS});
+}
+
+void Executor::setSpeedLimit(double max_speed_mps) {
+  active_max_speed_mps_ = std::min(config_.max_speed, max_speed_mps);
+  if (!pose_stages_.empty()) pose_max_speed_ = max_speed_mps;
+  limitPoseSpeed();
 }
 
 void Executor::clear() {
@@ -312,7 +318,6 @@ void Executor::activateRoute(const std::vector<nav_kernel::Vec3> &path,
   final_yaw_ = final_yaw;
   height_offset_.reset();
   active_goal_reached_m_ = std::max(0.01, goal_reached_m.value_or(config_.goal_reached_m));
-  active_goal_height_tolerance_m_ = config_.goal_height_tolerance_m;
   active_goal_yaw_tolerance_rad_ =
       std::max(0.0, goal_yaw_tolerance_rad.value_or(config_.goal_yaw_tolerance_rad));
   progress = 0;
@@ -341,11 +346,9 @@ void Executor::clearRoute() {
   ++generation;
   final_yaw_.reset();
   requested_goal_.reset();
-  support_surface_ = {};
   height_offset_.reset();
   active_goal_reached_m_ = config_.goal_reached_m;
   active_max_speed_mps_ = config_.max_speed;
-  active_goal_height_tolerance_m_ = config_.goal_height_tolerance_m;
   active_goal_yaw_tolerance_rad_ = config_.goal_yaw_tolerance_rad;
   progress = 0;
   segment.clear();
@@ -358,12 +361,10 @@ bool Executor::hasRoute() const {
 
 void Executor::suspendAutonomy() {
   goal_heading_active_ = false;
-  goal_quiet_since_s_ = goal_last_odom_s_ = -1.0;
-  follower_.reset();
   recovery_follower_.reset();
   recovery_action_ = 0;
   recovery_attempt_ = -1;
-  resetLocalPlanning();
+  resetLocalPlanning(true);
   recovery_.reset();
   reference.clear();
   committed_local_path_map_.clear();
@@ -538,9 +539,8 @@ ExecutionOutput Executor::tickRoute(const nav_kernel::Pose &map_body,
     recovery_action_ = 0;
     recovery_attempt_ = -1;
     recovery_follower_.reset();
-    follower_.reset();
     previous_kinematics_time_s_ = -1.0;
-    resetLocalPlanning();
+    resetLocalPlanning(true);
     recovery_.reset();
     resetAutonomyProgress();
     return output;
@@ -642,21 +642,8 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
     return std::hypot(map_body.position.x-origin.x, map_body.position.y-origin.y) <=
                std::max(kPoseStagePositionToleranceM, config_.goal_reached_m) &&
            std::abs(map_body.position.z-origin.z) <=
-               (observation.body_geometry ?
-                   std::min(config_.goal_height_tolerance_m,
-                            pose_support_tolerance_m_.value_or(kObservedBodyStageHeightToleranceM)) :
-                   kPoseStagePositionToleranceM);
+               config_.goal_height_tolerance_m;
   };
-  const auto update_pose_height_tolerance = [&]() {
-    if (pose_stages_.empty() || pose_stage_ + 1 == pose_stages_.size()) return;
-    // Leg articulation changes measured base height while soles remain on the
-    // same support. Keep the tight XY turn centre, but admit bounded heave only
-    // when collision checks use the current measured body-attitude geometry.
-    active_goal_height_tolerance_m_ = observation.body_geometry
-        ? std::min(config_.goal_height_tolerance_m, kObservedBodyStageHeightToleranceM)
-        : kPoseStagePositionToleranceM;
-  };
-  update_pose_height_tolerance();
   const auto measured_pose_stage_arrival = [&]() {
     if (pose_stages_.empty() || pose_stage_ == 0 ||
         pose_stage_ + 1 >= pose_stages_.size() || !route_body_)
@@ -674,22 +661,19 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
         obstacle_xyzh_planning, obstacle_count, timestamp_s, true, traversability, false);
     request.body = route_body_;
     request.observedBody = observation.body_geometry;
-    nav_kernel::local::scan::Grid grid(local_planner_.params(), request);
-    if (!grid.valid()) return false;
-    double yaw = planning_body.yaw;
+    std::vector<nav_kernel::Pose> sweep{planning_body};
     // A legged base need not hit an exact turn centre: validate the actual
     // rotation and reconnect instead of inheriting the nominal sweep clearance.
     for (std::size_t index = pose_stage_; index < pose_stages_.size(); ++index) {
       const auto &stage = pose_stages_[index];
       const double next_yaw = nav_kernel::normalizeAngle(stage.yaw-map_from_odom.yaw);
-      if (grid.segmentInflatedOccupancy(planning_body.position, yaw,
-              planning_body.position, next_yaw) != 0) return false;
-      yaw = next_yaw;
-      if (index > pose_stage_ && !stage.rotation)
-        return grid.segmentInflatedOccupancy(planning_body.position, yaw,
-            map_from_odom.odomPointFromMap(stage.points.front()), yaw) == 0;
+      sweep.push_back({planning_body.position, next_yaw});
+      if (index > pose_stage_ && !stage.rotation) {
+        sweep.push_back({map_from_odom.odomPointFromMap(stage.points.front()), next_yaw});
+        break;
+      }
     }
-    return true;
+    return local_planner_.sweepClear(request, sweep);
   };
   const auto following = follower_.diagnostics();
   // Let the active terminal spline brake before the goal radius resets it.
@@ -737,7 +721,6 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
         (moving_handoff || std::abs(observation.body_yaw_rate) <= 0.08)) {
       ++pose_stage_;
       activatePoseStage();
-      update_pose_height_tolerance();
     } else if (measured_stage_arrival) {
       output.reason = "settling_before_pose_turn";
       output.path_found = true;
@@ -746,7 +729,6 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
     }
   }
   tryBlendPoseStage(observation.collision.resolution);
-  update_pose_height_tolerance();
   measured_stage_arrival = measured_pose_stage_arrival();
   auto goal_body = route.back();
   goal_body.z += height_offset_.value_or(0.0);
@@ -774,13 +756,12 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
     recovery_action_ = 0;
     recovery_attempt_ = -1;
     recovery_follower_.reset();
-    resetLocalPlanning();
+    resetLocalPlanning(true);
     recovery_.reset();
     resetAutonomyProgress();
     const double yaw_error = execution_yaw_error();
     if (final_yaw_) goal_heading_active_ = true;
     if (final_yaw_ && std::abs(yaw_error) > active_goal_yaw_tolerance_rad_) {
-      goal_quiet_since_s_ = goal_last_odom_s_ = -1.0;
       output.path_found = true;
       output.reason = "aligning_goal_yaw";
       output.target_index = route.size() - 1;
@@ -789,41 +770,30 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
       output.target = initial_turn_stage() ? map_body.position : route.back();
       if (!initial_turn_stage()) output.target.z += height_offset_.value_or(0.0);
       output.target_distance_m = nav_kernel::distance3D(output.target, map_body.position);
-      output.cmd_vel.wz = std::clamp(config_.goal_yaw_kp * yaw_error, -config_.goal_yaw_max_rate,
-                                     config_.goal_yaw_max_rate);
-      if (output.cmd_vel.wz != 0.0) {
-        output.cmd_vel.wz = std::copysign(
-            std::max(std::abs(output.cmd_vel.wz), config_.goal_yaw_min_rate), output.cmd_vel.wz);
-      }
+      output.cmd_vel.wz = nav_kernel::Follower::turnRate(
+          yaw_error, config_.goal_yaw_kp, config_.goal_yaw_min_rate, config_.goal_yaw_max_rate);
       if (route_body_) {
         auto turn_request = makeLocalPlanRequest(
             planning_body, route, nullptr, generation, {}, observation,
             obstacle_xyzh_planning, obstacle_count, timestamp_s, true, traversability, false);
         turn_request.body = route_body_;
         turn_request.observedBody = observation.body_geometry;
-        nav_kernel::local::scan::Grid grid(local_planner_.params(), turn_request);
         const double target_yaw = nav_kernel::normalizeAngle(
             *execution_goal_yaw() - map_from_odom.yaw);
-        const bool clear = grid.valid() && grid.segmentInflatedOccupancy(
-            planning_body.position, planning_body.yaw, planning_body.position, target_yaw) == 0 &&
-            grid.brakingOccupancy(planning_body, output.cmd_vel, 0.1, 0.5, 1.0) == 0;
-        if (!clear) {
+        if (!local_planner_.turnClear(turn_request, target_yaw)) {
           output.cmd_vel = {};
           output.path_found = false;
           output.near_field_stop = true;
           output.reason = "pose_turn_blocked";
         }
       }
-      follower_.reset();
       return output;
     }
     output.target_index = route.size() - 1;
     output.target = route.back();
     output.target.z += height_offset_.value_or(0.0);
     output.target_distance_m = nav_kernel::distance3D(output.target, map_body.position);
-    follower_.reset();
-    // Entering the radius while braking is not a settled arrival. Keep issuing
-    // zero and re-evaluate position on fresh odometry before committing success.
+    // Entering the radius while braking is not an arrival.
     const double stamp = observation.odom_stamp_s;
     const double speed = std::hypot(observation.body_linear_velocity.x,
                                     observation.body_linear_velocity.y,
@@ -831,40 +801,15 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
     const bool valid_motion = observation.body_velocity_valid && std::isfinite(speed) &&
                               std::isfinite(observation.body_yaw_rate) &&
                               std::isfinite(stamp) && stamp > 0.0;
-    bool quiet = valid_motion && speed <= 0.03 &&
-                 std::abs(observation.body_yaw_rate) <= 0.08;
-    if (route_body_ && observation.body_geometry && valid_motion) {
-      // A balancing legged base can have short velocity spikes without
-      // travelling. Require bounded measured pose over the same dwell window;
-      // continuing drift restarts it, and every sample must still be atGoal.
-      const bool new_window = goal_quiet_since_s_ < 0.0 || stamp < goal_last_odom_s_ ||
-          stamp - goal_last_odom_s_ > 0.25 ||
-          nav_kernel::distance3D(map_body.position,goal_settle_pose_.position) > 0.03 * 0.5 ||
-          std::abs(nav_kernel::normalizeAngle(map_body.yaw-goal_settle_pose_.yaw)) > 0.08 * 0.5;
-      if (new_window) {
-        goal_quiet_since_s_ = stamp;
-        goal_settle_pose_ = map_body;
-      }
-      quiet = true;
-    }
-    if (!quiet) {
-      goal_quiet_since_s_ = goal_last_odom_s_ = -1.0;
-    } else {
-      if (goal_quiet_since_s_ < 0.0 || stamp < goal_last_odom_s_ ||
-          stamp - goal_last_odom_s_ > 0.25) {
-        goal_quiet_since_s_ = stamp;
-      }
-      goal_last_odom_s_ = stamp;
-    }
-    output.goal_reached = quiet && stamp - goal_quiet_since_s_ >= 0.5 &&
+    const bool quiet = valid_motion && speed <= 0.03 &&
+                       std::abs(observation.body_yaw_rate) <= 0.08;
+    output.goal_reached = quiet &&
         (pose_stages_.empty() || pose_stage_ + 1 == pose_stages_.size());
     output.active = !output.goal_reached;
     output.path_found = true;
     output.reason = output.goal_reached ? "goal_reached" : "settling_at_goal";
     return output;
   }
-
-  goal_quiet_since_s_ = goal_last_odom_s_ = -1.0;
 
   const auto planner_capabilities = local_planner_.capabilities();
   SegmentTarget target;
@@ -916,13 +861,9 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
     if (output.target_distance_m <= 0.08 && stair_step_.bodyYaw) {
       output.path_found = true;
       output.reason = "stair_aligning";
-      output.cmd_vel.wz = std::clamp(config_.goal_yaw_kp * nav_kernel::normalizeAngle(
-          *stair_step_.bodyYaw - map_body.yaw), -config_.goal_yaw_max_rate,
-          config_.goal_yaw_max_rate);
-      if (output.cmd_vel.wz != 0.0) {
-        output.cmd_vel.wz = std::copysign(
-            std::max(std::abs(output.cmd_vel.wz), config_.goal_yaw_min_rate), output.cmd_vel.wz);
-      }
+      output.cmd_vel.wz = nav_kernel::Follower::turnRate(
+          nav_kernel::normalizeAngle(*stair_step_.bodyYaw - map_body.yaw),
+          config_.goal_yaw_kp, config_.goal_yaw_min_rate, config_.goal_yaw_max_rate);
       const auto body = route_body_ ? route_body_ : config_.body;
       if (body) {
         auto turn_request = makeLocalPlanRequest(
@@ -930,11 +871,8 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
             obstacle_xyzh_planning, obstacle_count, timestamp_s, true, traversability, false);
         turn_request.body = body;
         turn_request.observedBody = observation.body_geometry;
-        nav_kernel::local::scan::Grid grid(local_planner_.params(),turn_request);
         const double target_yaw = nav_kernel::normalizeAngle(*stair_step_.bodyYaw-map_from_odom.yaw);
-        if (!grid.valid() || grid.segmentInflatedOccupancy(planning_body.position,
-                planning_body.yaw,planning_body.position,target_yaw) != 0 ||
-            grid.brakingOccupancy(planning_body,output.cmd_vel,.1,.5,1.0) != 0) {
+        if (!local_planner_.turnClear(turn_request, target_yaw)) {
           output.cmd_vel = {};
           output.path_found = false;
           output.near_field_stop = true;
@@ -964,11 +902,8 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
       planner_capabilities.consumesTraversability);
   plan_request.body = route_body_ ? route_body_ : config_.body;
   plan_request.observedBody = plan_request.body ? observation.body_geometry : nullptr;
-  if (support_surface_ || (pose_blend_ && pose_blending_allowed_)) {
-    plan_request.supportHeightM=pose_support_height_m_;
-    plan_request.supportHeightToleranceM=pose_support_tolerance_m_;
-  }
-  plan_request.supportSurface = support_surface_;
+  plan_request.supportHeightM = pose_support_height_m_;
+  plan_request.supportHeightToleranceM = pose_support_tolerance_m_;
   if (!pose_stages_.empty() && !pose_stages_[pose_stage_].tangentHeading)
     plan_request.bodyHeading = nav_kernel::normalizeAngle(
         pose_stages_[pose_stage_].yaw - map_from_odom.yaw);
@@ -987,7 +922,7 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   if (planner_capabilities.consumesPredictions && observation.predictions.fresh(timestamp_s)) {
     output.prediction_count = observation.predictions.count;
   }
-  nav_kernel::LocalPlan plan =
+  const nav_kernel::LocalPlan plan =
       planLocal(plan_request, map_from_odom, &output.local_planner_debug);
   if (planner_capabilities.ownsReferencePath && output.local_planner_debug.localTargetValid) {
     output.target = map_from_odom.mapPointFromOdom(
@@ -1017,47 +952,49 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
     output.trajectory_frozen=true;
     return output;
   }
-  if (recovery_failure && planner_input_valid &&
-      (local_blocked_since_s_ < 0.0 || local_blocked_since_s_ > timestamp_s)) {
-    local_blocked_since_s_ = timestamp_s;
-  }
-  const bool blocked_long_enough =
-      (local_blocked_since_s_ >= 0.0 &&
-       timestamp_s - local_blocked_since_s_ >= std::max(0.0, config_.recovery.blocked_interval_s)) ||
-      (final_motion_blocked_since_s_ >= 0.0 &&
-       timestamp_s - final_motion_blocked_since_s_ >=
-           std::max(0.0, config_.recovery.blocked_interval_s));
-  const bool recovery_enabled = config_.recovery.max_attempts > 0 && !stair_step_.constrainRecovery;
-  const bool recovery_active = recovery_.active();
-  const bool stalled = !recovery_active && !blocked_long_enough &&
-                        autonomyMotionStalled(planning_body, timestamp_s,
-                            plan_status == nav_kernel::LocalPlanStatus::Pending);
-  if (stalled && stair_step_.constrainRecovery) {
-    // A stair profile forbids ordinary recovery translations/rotations, not
-    // replanning within the same observed flight. Discard the stalled local
-    // trajectory and stop this tick; the next plan uses current collision data.
-    resetLocalPlanning();
-    follower_.stopLinear();
-    recovery_follower_.stopLinear();
-    resetAutonomyProgress();
-    output.reason = "stair_replanning";
-    output.recovery_trigger = "execution_stalled";
-    output.near_field_stop = near_field_stop;
-    output.trajectory_frozen = true;
-    return output;
-  }
-  if (stalled && !recovery_enabled) autonomy_stall_stop_ = true;
-  output.recovery_trigger = recovery_active
-                                ? "active"
-                                : (blocked_long_enough ? "local_blocked"
-                                                       : (stalled ? "execution_stalled" : "inactive"));
-  const bool force_recovery = recovery_enabled &&
-                              (recovery_active || blocked_long_enough || stalled);
   RecoveryOutput recovery;
-  if (force_recovery && planner_input_valid) {
-    recovery = recovery_.step(plan_request);
-  } else if (!planner_input_valid || plan_ready) {
-    recovery_.reset();
+  if (!planner_capabilities.ownsReferencePath) {
+    if (recovery_failure && planner_input_valid &&
+        (local_blocked_since_s_ < 0.0 || local_blocked_since_s_ > timestamp_s)) {
+      local_blocked_since_s_ = timestamp_s;
+    }
+    const bool blocked_long_enough =
+        (local_blocked_since_s_ >= 0.0 &&
+         timestamp_s - local_blocked_since_s_ >= std::max(0.0, config_.recovery.blocked_interval_s)) ||
+        (final_motion_blocked_since_s_ >= 0.0 &&
+         timestamp_s - final_motion_blocked_since_s_ >=
+             std::max(0.0, config_.recovery.blocked_interval_s));
+    const bool recovery_enabled = config_.recovery.max_attempts > 0 && !stair_step_.constrainRecovery;
+    const bool recovery_active = recovery_.active();
+    const bool stalled = !recovery_active && !blocked_long_enough &&
+                          autonomyMotionStalled(planning_body, timestamp_s,
+                              plan_status == nav_kernel::LocalPlanStatus::Pending);
+    if (stalled && stair_step_.constrainRecovery) {
+      // A stair profile forbids ordinary recovery translations/rotations, not
+      // replanning within the same observed flight. Discard the stalled local
+      // trajectory and stop this tick; the next plan uses current collision data.
+      resetLocalPlanning();
+      follower_.stopLinear();
+      recovery_follower_.stopLinear();
+      resetAutonomyProgress();
+      output.reason = "stair_replanning";
+      output.recovery_trigger = "execution_stalled";
+      output.near_field_stop = near_field_stop;
+      output.trajectory_frozen = true;
+      return output;
+    }
+    if (stalled && !recovery_enabled) autonomy_stall_stop_ = true;
+    output.recovery_trigger = recovery_active
+                                  ? "active"
+                                  : (blocked_long_enough ? "local_blocked"
+                                                         : (stalled ? "execution_stalled" : "inactive"));
+    const bool force_recovery = recovery_enabled &&
+                                (recovery_active || blocked_long_enough || stalled);
+    if (force_recovery && planner_input_valid) {
+      recovery = recovery_.step(plan_request);
+    } else if (!planner_input_valid || plan_ready) {
+      recovery_.reset();
+    }
   }
 
   output.near_field_stop = near_field_stop;
@@ -1137,8 +1074,8 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   }
 
   if (recovery.active && recovery.verified && recovery.direct_command) {
-    output.cmd_vel.wz =
-        static_cast<double>(recovery.rotation_direction) * config_.recovery.rotation_rate_rad_s;
+    output.cmd_vel = nav_kernel::Follower::rotationCommand(
+        recovery.rotation_direction, config_.recovery.rotation_rate_rad_s);
     output.reason = output.recovery_reason;
     follower_.stopLinear();
     setAutonomyMotionExpected(output.cmd_vel, planning_body, timestamp_s);
@@ -1154,23 +1091,9 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
       return output;
     }
 
-    nav_kernel::FollowerParams recovery_params = config_.follower;
-    recovery_params.maxSpeed = config_.recovery.translation_speed_mps;
-    recovery_params.minSpeed = 0.0;
-    // Recovery completes within 0.125 m. A wider normal-goal stopping radius
-    // would stop the follower before Recovery can acknowledge completion.
-    recovery_params.stopDisThre = 0.08;
-    recovery_params.slowDwnDisThre = 0.0;
-    recovery_params.yawRateGain = 0.0;
-    recovery_params.stopYawRateGain = 0.0;
-    recovery_params.maxYawRateRadS = 0.0;
-    recovery_params.twoWayDrive = false;
-    recovery_params.headingAlignEnterRad = M_PI + 0.1;
-    recovery_params.headingAlignExitRad = M_PI;
-    recovery_params.omniDirDiffThre = M_PI + 0.1;
-    recovery_params.omniDirGoalThre =
-        std::max(2.0, local_planner_.params().adjacentRange);
-    recovery_params.noRotAtGoal = true;
+    const auto recovery_params = nav_kernel::recoveryFollowerParams(
+        config_.follower, config_.recovery.translation_speed_mps,
+        local_planner_.params().adjacentRange);
 
     nav_kernel::FollowerState recovery_state;
     recovery_state.requestedSpeed = 1.0;
@@ -1202,6 +1125,8 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
     return output;
   }
   if (!plan_ready) {
+    output.planning_failed = planner_capabilities.ownsReferencePath &&
+                             plan_status == nav_kernel::LocalPlanStatus::NoPath;
     output.reason = plan_status == nav_kernel::LocalPlanStatus::Pending
                         ? "local_plan_pending"
                         : nav_kernel::localPlanStatusName(plan_status);
@@ -1310,8 +1235,7 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
   resetAutonomyProgress();
   const double requested_speed = std::hypot(intent.vx, intent.vy);
   if (requested_speed <= 1e-6 || config_.max_speed <= 1e-6) {
-    if (intent_mode_)
-      resetLocalPlanning();
+    resetLocalPlanning();
     output.reason = "teleop_intent_idle";
     follower_.stopLinear();
     resetTeleopBoundaryDeparture();
@@ -1488,7 +1412,6 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
       plan_unusable && config_.recovery.translation_speed_mps > 1e-6 &&
       std::abs(intent.wz) <= 1e-6 && observation.collision.valid();
   if (scan_boundary_departure_candidate) {
-    nav_kernel::local::scan::Grid grid(local_planner_.params(), plan_request);
     constexpr double departure_distance_m = 0.35;
     const std::vector<nav_kernel::Vec3> departure_body{
         {},
@@ -1496,10 +1419,7 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
          departure_distance_m * std::sin(input_direction_body), 0.0},
     };
     auto departure_map = bodyPathToMap(odom_map_body, departure_body);
-    const bool occupied_start =
-        grid.valid() && grid.inflatedOccupancy(odom_map_body.position, odom_map_body.yaw) == 1;
-    if (occupied_start &&
-        grid.boundaryDepartureFree(odom_map_body, departure_map.back())) {
+    if (local_planner_.boundaryDepartureClear(plan_request, departure_map.back())) {
       if (!teleop_boundary_departure_intent_rad_.has_value()) {
         recovery_follower_.reset();
       }
@@ -1517,22 +1437,10 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
       output.recovery_trigger = "local_blocked";
       output.recovery_reason = "scan_boundary_departure";
 
-      nav_kernel::FollowerParams recovery_params = config_.follower;
-      recovery_params.maxSpeed =
-          std::min(config_.recovery.translation_speed_mps, plan_request.maxLinearSpeedMps);
-      recovery_params.minSpeed = 0.0;
-      recovery_params.stopDisThre = 0.08;
-      recovery_params.slowDwnDisThre = 0.0;
-      recovery_params.yawRateGain = 0.0;
-      recovery_params.stopYawRateGain = 0.0;
-      recovery_params.maxYawRateRadS = 0.0;
-      recovery_params.twoWayDrive = false;
-      recovery_params.headingAlignEnterRad = M_PI + 0.1;
-      recovery_params.headingAlignExitRad = M_PI;
-      recovery_params.omniDirDiffThre = M_PI + 0.1;
-      recovery_params.omniDirGoalThre =
-          std::max(2.0, local_planner_.params().adjacentRange);
-      recovery_params.noRotAtGoal = true;
+      const auto recovery_params = nav_kernel::recoveryFollowerParams(
+          config_.follower,
+          std::min(config_.recovery.translation_speed_mps, plan_request.maxLinearSpeedMps),
+          local_planner_.params().adjacentRange);
 
       nav_kernel::FollowerState recovery_state;
       recovery_state.requestedSpeed = 1.0;

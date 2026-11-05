@@ -10,25 +10,12 @@ WorkingDirectory=/opt/lingtu/current
 Environment=LINGTU_REPO=/opt/lingtu/current
 Environment=LINGTU_VIDEO_BIN=/opt/lingtu/current/bin/lingtu_camera_webrtc
 Environment=LINGTU_VIDEO_RUNTIME_ENV=/opt/lingtu/current/lib/lingtu/video/env.sh
-Environment=LINGTU_VIDEO_STATUS_FILE=/dev/shm/lingtu/video_status.json
-Environment=LINGTU_VIDEO_COLOR_SHM=/lingtu_camera_color
-Environment=LINGTU_VIDEO_LISTEN=http://127.0.0.1:9090
-Environment=LINGTU_WEBRTC_URL=http://127.0.0.1:9090/whep/endpoint
-Environment=LINGTU_VIDEO_FPS=20
-Environment=LINGTU_VIDEO_MIN_BITRATE=200000
-Environment=LINGTU_VIDEO_START_BITRATE=1500000
-Environment=LINGTU_VIDEO_MAX_BITRATE=4000000
-Environment=LINGTU_VIDEO_MAX_AGE_MS=250
-Environment=LINGTU_VIDEO_IDLE_TIMEOUT_MS=5000
-Environment=LINGTU_VIDEO_METRICS_INTERVAL_MS=1000
-Environment=LINGTU_VIDEO_METRICS_FILE=/dev/null
 Environment=LINGTU_VIDEO_GST_REGISTRY=/run/lingtu/video-gst-registry.bin
-Environment=LINGTU_VIDEO_STUN_SERVER=
 EnvironmentFile=-/opt/lingtu/current/etc/lingtu/release-runtime.env
 EnvironmentFile=-/etc/lingtu/video.env
 EnvironmentFile=/run/lingtu/session.env
 ExecStartPre=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh video
-ExecStartPre=/bin/rm -f /dev/shm/lingtu/video_status.json
+ExecStartPre=/bin/rm -f -- ${LINGTU_VIDEO_STATUS_FILE}
 ExecStart=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_video.sh
 KillSignal=SIGINT
 TimeoutStopSec=20

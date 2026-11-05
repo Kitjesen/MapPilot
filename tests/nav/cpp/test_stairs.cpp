@@ -542,11 +542,7 @@ TEST(StairExecutor, OutsideGoalCannotFinishUntilFootprintClearAndProfileRestored
   EXPECT_FALSE(output.goal_reached);
   input.stairProfile = ready(StairProfile::Restore);
   output = executor.tick(input);
-  EXPECT_EQ(output.reason, "settling_at_goal");
-  for (int i = 1; i <= 6; ++i) {
-    input.timestampS = input.observation.odom_stamp_s = 1 + 0.1 * i;
-    output = executor.tick(input);
-  }
+  EXPECT_EQ(output.reason, "goal_reached");
   EXPECT_TRUE(output.goal_reached);
   EXPECT_FALSE(executor.hasStairTransition());
 }

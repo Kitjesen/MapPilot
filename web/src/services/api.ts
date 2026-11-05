@@ -1034,6 +1034,8 @@ export interface MapSaveOperationStatus {
   progress?: number | null
   reason_code?: string | null
   message?: string | null
+  cancel_requested?: boolean | null
+  source_saved?: boolean | null
   processing?: {
     optimization?: MapSaveProcessingStep
     cleanup?: MapSaveProcessingStep
@@ -1048,24 +1050,27 @@ export interface MapSaveProcessingStep {
 
 export type MapSaveWaitResult =
   | { state: 'saved'; result: SaveMapResult }
+  | { state: 'source_saved'; result: SaveMapResult & { operation_id: string } }
   | { state: 'pending'; result: SaveMapResult & { operation_id: string }; reason: 'timeout' | 'status_unavailable' }
 
 export interface WaitForMapSaveOptions {
+  until?: 'source' | 'ready'
   timeoutMs?: number
   pollIntervalMs?: number
   signal?: AbortSignal
   onProgress?: (result: SaveMapResult) => void
 }
 
-function mapSaveOperationPath(operationId: string): string {
+function mapSaveOperationPath(operationId: string, action?: 'retry' | 'cancel'): string {
   const encoded = encodeURIComponent(operationId)
+  const fallback = `/api/v1/maps/operations/{operation_id}${action ? `/${action}` : ''}`
   const template = apiPath(
-    'map_operation_status',
-    '/api/v1/maps/operations/{operation_id}',
+    action === 'retry' ? 'map_operation_retry' : action === 'cancel' ? 'map_operation_cancel' : 'map_operation_status',
+    fallback,
   ).replace(/%7Boperation_id%7D/gi, '{operation_id}')
   return template.includes('{operation_id}')
     ? template.replace('{operation_id}', encoded)
-    : `/api/v1/maps/operations/${encoded}`
+    : fallback.replace('{operation_id}', encoded)
 }
 
 function mapSaveOperation(response: SaveMapResult): MapSaveOperationStatus {
@@ -1086,15 +1091,38 @@ function mapSaveState(response: SaveMapResult): string {
   return typeof value === 'string' ? value.trim().toUpperCase() : ''
 }
 
-function mapSaveFailure(response: SaveMapResult, state: string): Error {
+export class MapSaveError extends Error {
+  result: SaveMapResult
+
+  constructor(message: string, result: SaveMapResult) {
+    super(message)
+    this.result = result
+  }
+}
+
+function mapSaveFailure(response: SaveMapResult, state: string): MapSaveError {
   const operation = mapSaveOperation(response)
   const message = operation.message ?? response.message
   const reason = operation.reason_code ?? response.reason_code
-  return new Error(
+  return new MapSaveError(
     typeof message === 'string' && message.trim()
       ? message
       : `Map save ${state.toLowerCase()}${reason ? `: ${String(reason)}` : ''}`,
+    response,
   )
+}
+
+async function readMapSaveResponse(response: Response): Promise<SaveMapResult> {
+  let result: SaveMapResult
+  try {
+    result = await response.json() as SaveMapResult
+  } catch {
+    throw new Error(`地图保存响应无法解析（HTTP ${response.status}）`)
+  }
+  if (!response.ok || result.ok === false || result.success === false) {
+    throw mapSaveFailure(result, mapSaveState(result) || 'FAILED')
+  }
+  return result
 }
 
 function waitDelay(delayMs: number, signal?: AbortSignal): Promise<void> {
@@ -1112,17 +1140,50 @@ function waitDelay(delayMs: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
-export async function saveMap(name: string): Promise<SaveMapResult> {
+export async function saveMap(name: string, autoProcess = true): Promise<SaveMapResult> {
   const res = await dashboardFetch(apiPath('map_save', '/api/v1/map/save'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, auto_process: autoProcess }),
   })
-  return readMapLifecycle(res) as Promise<SaveMapResult>
+  return readMapSaveResponse(res)
 }
 
 export async function fetchMapSaveOperation(operationId: string, signal?: AbortSignal): Promise<SaveMapResult> {
   return readJsonResponse<SaveMapResult>(await dashboardFetch(mapSaveOperationPath(operationId), { signal }))
+}
+
+export interface MapSaveOperationList {
+  operations: MapSaveOperationStatus[]
+  ts: number
+}
+
+export async function fetchMapSaveOperations(signal?: AbortSignal): Promise<MapSaveOperationList> {
+  return readJsonResponse<MapSaveOperationList>(
+    await dashboardFetch(apiPath('map_operations', '/api/v1/maps/operations'), { signal }),
+  )
+}
+
+export async function retryMapSaveOperation(operationId: string): Promise<SaveMapResult> {
+  return readMapSaveResponse(await dashboardFetch(mapSaveOperationPath(operationId, 'retry'), {
+    method: 'POST',
+  }))
+}
+
+export async function cancelMapSaveOperation(operationId: string): Promise<SaveMapResult> {
+  return readMapSaveResponse(await dashboardFetch(mapSaveOperationPath(operationId, 'cancel'), {
+    method: 'POST',
+  }))
+}
+
+export async function processMapSaveOperation(operationId: string): Promise<SaveMapResult> {
+  return readMapSaveResponse(await dashboardFetch(`/api/v1/maps/operations/${encodeURIComponent(operationId)}/process`, {
+    method: 'POST',
+  }))
+}
+
+export function mapSaveSourceUrl(operationId: string): string {
+  return `/api/v1/maps/operations/${encodeURIComponent(operationId)}/source/pcd`
 }
 
 export async function waitForMapSaveOperation(
@@ -1130,12 +1191,18 @@ export async function waitForMapSaveOperation(
   options: WaitForMapSaveOptions = {},
 ): Promise<MapSaveWaitResult> {
   const initialState = mapSaveState(admission)
-  if (['FAILED', 'CANCELLED', 'CANCELED'].includes(initialState)) throw mapSaveFailure(admission, initialState)
+  if (['FAILED', 'CANCELLED', 'CANCELED'].includes(initialState)
+    && !(options.until === 'source' && mapSaveOperation(admission).source_saved === true)) {
+    throw mapSaveFailure(admission, initialState)
+  }
   if (initialState === 'SUCCEEDED') return { state: 'saved', result: { ...admission, success: true } }
   const operationId = mapSaveOperationId(admission)
   if (!operationId && admission.success === true) return { state: 'saved', result: admission }
   if (!operationId) {
     throw new Error('Map save was accepted without an operation_id')
+  }
+  if (options.until === 'source' && mapSaveOperation(admission).source_saved === true) {
+    return { state: 'source_saved', result: { ...admission, operation_id: operationId } }
   }
   const timeoutMs = Math.max(1, options.timeoutMs ?? 360_000)
   const pollIntervalMs = Math.max(0, options.pollIntervalMs ?? 750)
@@ -1169,10 +1236,13 @@ export async function waitForMapSaveOperation(
         name: last.name || admission.name,
       } }
     }
+    if (options.until === 'source' && mapSaveOperation(last).source_saved === true) {
+      return { state: 'source_saved', result: { ...last, name: last.name || admission.name, operation_id: operationId } }
+    }
     if (state === 'FAILED' || state === 'CANCELLED' || state === 'CANCELED') {
       throw mapSaveFailure(last, state)
     }
-    if (state && state !== 'WAITING_SNAPSHOT' && state !== 'QUEUED' && state !== 'RUNNING') {
+    if (state && state !== 'WAITING_SNAPSHOT' && state !== 'QUEUED' && state !== 'RUNNING' && state !== 'CAPTURED') {
       throw new Error(`Map save returned unknown operation state: ${state}`)
     }
     if (Date.now() >= deadline) break

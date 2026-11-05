@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -11,11 +13,11 @@
 namespace lingtu::nav::endpoint {
 
 struct ExploreInputGateConfig {
-  double odometry_max_age_s{0.50};
-  double snapshot_max_age_s{2.00};
-  double transform_max_age_s{1.00};
-  double future_tolerance_s{0.50};
-  std::size_t max_grid_cells{1'000'000U};
+  double odometry_max_age_s{lingtu::settings::explore::explore::odom_max_age_s};
+  double snapshot_max_age_s{lingtu::settings::explore::explore::snapshot_max_age_s};
+  double transform_max_age_s{lingtu::settings::explore::explore::tf_max_age_s};
+  double future_tolerance_s{lingtu::settings::explore::explore::future_tolerance_s};
+  std::size_t max_grid_cells{lingtu::settings::explore::explore::max_grid_cells};
 };
 
 struct ExplorationSnapshot {

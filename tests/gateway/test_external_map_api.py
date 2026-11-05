@@ -46,23 +46,26 @@ def test_rename_map_accepts_the_validated_http_request(monkeypatch):
     assert commands == [{"action": "rename_map", "map_id": "yard", "new_map_id": "yard2"}]
 
 
-def test_save_map_accepts_the_validated_http_request(monkeypatch):
+@pytest.mark.parametrize("auto_process", [True, False])
+def test_save_map_accepts_the_validated_http_request(monkeypatch, auto_process):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     import gateway.maps.routes as map_routes
 
-    monkeypatch.setattr(
-        map_routes,
-        "_mapd_http_request",
-        lambda _gw, payload: {
+    requests = []
+
+    def submit(_gw, payload):
+        requests.append(payload)
+        return {
             "success": False,
             "accepted": True,
             "status": "running",
             "request_id": payload["request_id"],
             "job_id": "save_job_1",
-        },
-    )
+        }
+
+    monkeypatch.setattr(map_routes, "_mapd_http_request", submit)
     app = FastAPI()
     map_routes.register_map_routes(
         app,
@@ -71,11 +74,13 @@ def test_save_map_accepts_the_validated_http_request(monkeypatch):
 
     response = TestClient(app).post(
         "/api/v1/map/save",
-        json={"name": "warehouse", "request_id": "request_1"},
+        json={"name": "warehouse", "request_id": "request_1", "auto_process": auto_process},
     )
 
     assert response.status_code == 202
     assert response.json()["operation_id"] == "save_job_1"
+    assert requests[0]["auto_process"] is auto_process
+    assert MapSaveRequest().auto_process is True
 
 
 def test_save_map_does_not_expose_optimizer_selection(monkeypatch):
@@ -115,6 +120,8 @@ def _payload(response) -> dict:
 
 
 _PRIVATE_OPERATION_KEYS = {
+    "job_dir",
+    "work_dir",
     "capture_dir",
     "source_report",
     "artifact_report",
@@ -156,10 +163,13 @@ def _private_operation_status() -> dict:
         "state": "RUNNING",
         "phase": "BUILD_ARTIFACTS",
         "progress": 0.6,
+        "source_saved": True,
         "message": "building /home/sunrise/data/lingtu/maps/warehouse/map.pcd",
         "created_at_ns": 10,
         "updated_at_ns": 20,
-        "capture_dir": "/home/sunrise/data/lingtu/maps/.jobs/save_job_1/capture",
+        "job_dir": "/home/sunrise/data/lingtu/maps/.save_jobs/save_job_1",
+        "work_dir": "/home/sunrise/data/lingtu/maps/.save_jobs/save_job_1/work",
+        "capture_dir": "/home/sunrise/data/lingtu/maps/.save_jobs/save_job_1/capture",
         "map_dir": "/home/sunrise/data/lingtu/maps/warehouse",
         "source_report": {
             "source": "/home/sunrise/private/raw.pcd",
@@ -644,6 +654,11 @@ def test_save_map_keeps_gateway_event_loop_responsive(monkeypatch):
         (
             "/api/v1/maps/operations/{operation_id}/retry",
             "retry_save_map",
+            ("save_job_1",),
+        ),
+        (
+            "/api/v1/maps/operations/{operation_id}/process",
+            "process_save_map",
             ("save_job_1",),
         ),
     ],

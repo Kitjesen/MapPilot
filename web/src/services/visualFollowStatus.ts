@@ -80,6 +80,7 @@ const ROUTINE_NAVIGATION_REASONS = new Set([
   'motion_clear',
   'nonzero_output_published',
   'stop_confirmed',
+  'zero_command_accepted',
 ])
 
 function actionableReason(reason: string): string {

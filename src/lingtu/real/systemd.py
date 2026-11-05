@@ -10,7 +10,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -22,7 +21,7 @@ from lingtu.switch_contracts import (
     ProcessFailed,
     ProcessReport,
 )
-from runtime.service_catalogs.thunder import ThunderServiceSpec, thunder_service_spec
+from runtime.service_catalogs.real import ServiceSpec, camera_service_spec, service_spec
 
 
 class ProcessManager(Protocol):
@@ -210,21 +209,19 @@ class _ServiceInspector:
         *,
         dds_check: bool,
         http_check: bool,
+        target: str | None = None,
     ) -> dict[str, Mapping[str, Any]]:
-        spec = thunder_service_spec(service)
+        spec = service_spec(service)
         if spec is None:
             return {service: {"ready": False, "blockers": ["readiness_catalog_missing"]}}
         if service == "camera":
             driver = self._environment.get("LINGTU_CAMERA_DRIVER", "orbbec_native")
-            if driver not in {"orbbec_native", "realsense_native"}:
-                raise ProcessError(f"unsupported camera driver in readiness: {driver}")
-            if driver == "realsense_native":
-                spec = replace(spec, binaries=tuple(
-                    ("realsense_capture", "LINGTU_REALSENSE_CAPTURE_BIN", "/opt/lingtu/current/bin/realsense_capture")
-                    if binary[0] == "orbbec_capture" else binary
-                    for binary in spec.binaries
-                ))
-        target = (spec.start_units or spec.units)[0]
+            try:
+                spec = camera_service_spec(spec, driver)
+            except ValueError as exc:
+                raise ProcessError(str(exc)) from exc
+        if target is None:
+            target = (spec.start_units or spec.units)[0]
         blockers: list[str] = []
         observed: dict[str, Any] = {}
 
@@ -259,7 +256,7 @@ class _ServiceInspector:
                     "topics": list(spec.topics),
                     "dds_topics": list(spec.dds_topics),
                     "shm_topics": list(spec.shm_topics),
-                    "shm_channels": list(spec.shm_channels),
+                    "shm_channels": spec.shm_channels(self._environment),
                     "files": list(spec.files),
                     "binaries": [
                         {"name": name, "env": env, "path": path}
@@ -269,7 +266,7 @@ class _ServiceInspector:
             }
         }
 
-    def _binaries(self, spec: ThunderServiceSpec, blockers: list[str]) -> dict[str, Any]:
+    def _binaries(self, spec: ServiceSpec, blockers: list[str]) -> dict[str, Any]:
         rows = []
         for name, env, default_path in spec.binaries:
             raw_path = self._environment.get(env, default_path)
@@ -288,7 +285,7 @@ class _ServiceInspector:
                 blockers.append(f"native_binary_missing_or_not_executable:{name}:{raw_path}")
         return {"ok": all(row["executable"] for row in rows), "binaries": rows}
 
-    def _status_files(self, spec: ThunderServiceSpec, blockers: list[str]) -> dict[str, Any]:
+    def _status_files(self, spec: ServiceSpec, blockers: list[str]) -> dict[str, Any]:
         rows = []
         for file_name in spec.files:
             path = Path(file_name)
@@ -363,7 +360,7 @@ class _ServiceInspector:
             blockers.append(f"whep_status:{status_code}")
         return {"ok": ok, "checked": True, "url": url, "status": status_code}
 
-    def _dds(self, spec: ThunderServiceSpec, blockers: list[str]) -> dict[str, Any]:
+    def _dds(self, spec: ServiceSpec, blockers: list[str]) -> dict[str, Any]:
         topics = list(spec.dds_topics or spec.topics)
         root = Path(__file__).resolve().parents[3]
         command = [
@@ -488,11 +485,10 @@ class ServiceReadiness:
     def wait(self, process: ProcessSpec, timeout_s: float) -> Mapping[str, Any]:
         """Require every readiness check declared for *process*."""
 
-        service = self._validate_process(process)
         deadline = self._monotonic() + timeout_s
         last: Mapping[str, Any] = {}
         while self._monotonic() < deadline:
-            last = self._inspect(service)
+            last = self._inspect(process)
             if bool(last.get("ready")):
                 return last
             self._sleep(0.25)
@@ -501,16 +497,10 @@ class ServiceReadiness:
     def inspect(self, process: ProcessSpec) -> Mapping[str, Any]:
         """Inspect readiness once without consuming a core-service timeout."""
 
-        service = self._validate_process(process)
-        detail = self._inspect(service)
+        detail = self._inspect(process)
         if bool(detail.get("ready")):
             return detail
         raise self._not_ready(process, detail)
-
-    def validate(self, process: ProcessSpec) -> None:
-        """Validate the static process-to-readiness catalog binding."""
-
-        self._validate_process(process)
 
     @staticmethod
     def _not_ready(process: ProcessSpec, detail: Mapping[str, Any]) -> ProcessError:
@@ -518,19 +508,13 @@ class ServiceReadiness:
         reason = blockers or "readiness contract did not become true"
         return ProcessError(f"{process.name} is not ready: {reason}")
 
-    def _validate_process(self, process: ProcessSpec) -> str:
-        service = process.name
-        spec = thunder_service_spec(service)
-        if spec is not None and process.target not in (spec.start_units or spec.units):
-            raise ProcessError(f"Product target disagrees with readiness catalog for {service}: {process.target}")
-        return service
-
-    def _inspect(self, service: str) -> Mapping[str, Any]:
+    def _inspect(self, process: ProcessSpec) -> Mapping[str, Any]:
         return self._manager.status_details(
-            service,
+            process.name,
             dds_check=True,
             http_check=True,
-        )[service]
+            target=process.target,
+        )[process.name]
 
 
 class SystemdRunner:

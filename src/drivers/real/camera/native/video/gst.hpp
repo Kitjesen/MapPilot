@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -15,13 +17,13 @@ enum class GstOutput { Whep, H264Fd };
 struct GstOptions {
   GstOutput output{GstOutput::Whep};
   int output_fd{-1};
-  std::string listen_uri{"http://127.0.0.1:9090"};
-  std::string stun_server;
-  std::string encoder_factory{"nvv4l2h264enc"};
-  unsigned fps{20};
-  unsigned min_bitrate{200000};
-  unsigned start_bitrate{1500000};
-  unsigned max_bitrate{4000000};
+  std::string listen_uri{lingtu::settings::camera::camera::video::listen};
+  std::string stun_server{lingtu::settings::camera::camera::video::stun_server};
+  std::string encoder_factory;
+  unsigned fps{lingtu::settings::camera::camera::video::fps};
+  unsigned min_bitrate{lingtu::settings::camera::camera::video::min_bitrate};
+  unsigned start_bitrate{lingtu::settings::camera::camera::video::start_bitrate};
+  unsigned max_bitrate{lingtu::settings::camera::camera::video::max_bitrate};
 };
 
 struct GstMetrics {

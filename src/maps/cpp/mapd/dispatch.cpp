@@ -250,8 +250,8 @@ OctomapBuildOptions OctomapOptions(const Fields &fields) {
   options.support_dilation_cells = fields.IntOr("octomap_support_dilation_cells", 0);
   options.free_layers_above = fields.IntOr("octomap_free_layers_above", 0);
   options.free_dilation_cells = fields.IntOr("octomap_free_dilation_cells", 0);
-  options.frame_id = fields.StringOr("octomap_frame_id", "map");
-  options.source_profile = fields.StringOr("octomap_source_profile", "map_pipeline");
+  options.frame_id = fields.StringOr("octomap_frame_id", options.frame_id);
+  options.source_profile = fields.StringOr("octomap_source_profile", options.source_profile);
   options.data_source = fields.StringOr("octomap_data_source", options.source_profile);
   options.slam_source = fields.StringOr("octomap_slam_source", "unknown");
   options.localization_source = fields.StringOr("octomap_localization_source", options.slam_source);
@@ -284,8 +284,11 @@ std::string Invoke(MapsServiceCore &service, mapd::SaveCoordinator *save_coordin
     if (save_coordinator == nullptr) {
       throw std::runtime_error("native SaveMap coordinator is unavailable");
     }
-    return save_coordinator->SaveMapJson(f.String("request_id"), f.String("map_id"));
+    return save_coordinator->SaveMapJson(f.String("request_id"), f.String("map_id"),
+                                         f.BoolOr("auto_process", true));
   }
+  if (action == "process_save_map")
+    return service.ProcessSaveMapJson(f.String("job_id"));
   if (action == "get_save_map_status")
     return service.GetSaveMapStatusJson(f.String("job_id"));
   if (action == "list_save_map_jobs")
@@ -353,10 +356,10 @@ std::string Invoke(MapsServiceCore &service, mapd::SaveCoordinator *save_coordin
   if (action == "commit_saved_source") {
     SourceCommitOptions options;
     options.voxel_size = f.NumberOr("voxel_size", 0.0);
-    options.dynamic_filter_enabled = f.BoolOr("dynamic_filter_enabled", true);
-    options.dynamic_filter_required = f.BoolOr("dynamic_filter_required", false);
-    options.dynamic_filter_command = f.StringOr("dynamic_filter_command", "");
-    options.dynamic_filter_timeout_sec = f.NumberOr("dynamic_filter_timeout_sec", 300.0);
+    options.dynamic_filter_enabled = f.BoolOr("dynamic_filter_enabled", options.dynamic_filter_enabled);
+    options.dynamic_filter_required = f.BoolOr("dynamic_filter_required", options.dynamic_filter_required);
+    options.dynamic_filter_command = f.StringOr("dynamic_filter_command", options.dynamic_filter_command);
+    options.dynamic_filter_timeout_sec = f.NumberOr("dynamic_filter_timeout_sec", options.dynamic_filter_timeout_sec);
     return service.CommitSavedSourceJson(f.String("map_id"), f.String("source_dir"), options);
   }
   if (action == "save_edited_source")

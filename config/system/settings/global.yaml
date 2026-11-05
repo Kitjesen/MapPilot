@@ -1,0 +1,68 @@
+# OctoPlanner3D settings shared by Products that use global planning.
+# Product-specific overrides remain explicit in their native_nav.global section.
+# Message types, DDS names and QoS: src/message/topics/navigation.yaml.
+topics:
+  - /nav/global_path
+  - /nav/plan/request
+  - /nav/plan/result
+
+native_nav:
+  global:
+    planner: octoplanner3d
+
+    # Endpoint search and surface preparation do not alter the saved occupancy map.
+    max_iterations: 500000
+    snap_search_radius_cells: 24
+    search_resolution_m: 0.10  # Search XY spacing, separate from occupancy resolution.
+    surface_closing_radius_m: 0.20
+
+    # Direct-only mode requires observed support in the same column.
+    ground_support: true
+    direct_support_only: false
+    support_radius_cells: 1
+    support_depth_cells: 2  # Fallback when physical support height is unavailable.
+    # Zero disables the support-patch requirement.
+    support_patch_radius_cells: 0
+    support_patch_min_samples: 0
+    lowest_traversable_only: false
+    # Height-change costs bias the route without prohibiting cross-floor paths.
+    floor_change_penalty: 6.0
+    max_step_height_m: 0.45
+    same_floor_preference: true
+    same_floor_z_tolerance_m: 0.75
+
+    preblocked: true  # Soft proximity cost; does not mark cells occupied.
+    preblocked_radius_cells: 3
+    preblocked_weight: 2.5
+    # Soft obstacle proximity cost; cell counts use the underlying map resolution.
+    obstacle_clearance_radius_cells: 2
+    obstacle_clearance_weight: 1.5
+
+    # Goal snapping limits, separate from task-arrival tolerances in follower.yaml.
+    terminal_tolerance_m: 0.5
+    terminal_xy_tolerance_m: 0.35
+    terminal_z_tolerance_m: 0.75
+
+    # Geometry is resolved from RobotConfig / the selected simulation model:
+    # robot_radius_m, support_height_m, support_height_tolerance_m, max_slope;
+    # body_clearance_below_m and body_clearance_above_m use the collision profile.
+    # Fixed values here would override the selected platform's geometry.
+
+  # Options for the alternative FAR backend; used only when selected.
+  far_robot_radius_m: 0.35
+  far_obstacle_clearance_m: 0.10
+  far_max_visibility_distance_m: 30.0
+  far_unknown_cost_multiplier: 6.0
+  far_corner_separation_cells: 1
+  far_snap_search_radius_cells: 12
+  far_max_graph_nodes: 4096
+  far_max_visibility_pairs: 500000
+  far_max_search_expansions: 500000
+  far_simplify_path: true
+
+standalone:
+  native_nav:
+    global:
+      support_height_m: 0.0
+      support_height_tolerance_m: 0.0
+      max_slope: 0.0

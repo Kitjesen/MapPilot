@@ -120,14 +120,29 @@ def test_attached_click_uses_gateway_task_and_native_phase(attached):
     assert samples[0]["slam"]["has_odom"]
 
 
-@pytest.mark.parametrize("failure", ["no_odom", "old_slam", "old_nav", "lost_tracking", "pose_prior", "other_session", "wrong_task", "ack_only"])
+def test_attached_click_accepts_slow_simulation_with_fresh_native_inputs(attached):
+    attached.snapshots["slam.status.json"]["stamp_s"] -= 30
+
+    report = run_attached(attached)
+
+    assert report["ok"] is True
+    assert attached.requests[0] == [5.0, 4.0, 0.0]
+    startup = json.loads((attached.out / "goal/startup_samples.json").read_text())
+    assert startup[0]["snapshot_current"] is True
+    assert startup[0]["localization_ready"] is True
+    assert startup[0]["control_loop_health"] == {"ready": True, "healthy": True}
+
+
+@pytest.mark.parametrize("failure", ["no_odom", "old_slam", "old_nav", "stale_input", "lost_tracking", "pose_prior", "other_session", "wrong_task", "ack_only"])
 def test_attached_click_cannot_pass_without_current_localization_and_completion(attached, monkeypatch, failure):
     if failure == "no_odom":
         attached.snapshots["slam.status.json"]["has_odom"] = False
     elif failure == "old_slam":
-        attached.snapshots["slam.status.json"]["stamp_s"] -= 5
+        attached.snapshots["slam.status.json"]["snapshot_written_at_s"] -= 5
     elif failure == "old_nav":
         attached.snapshots["nav.status.json"]["stamp_s"] -= 5
+    elif failure == "stale_input":
+        attached.snapshots["nav.status.json"]["input_gate"] = {"ready": False, "reason": "odom_stale"}
     elif failure == "lost_tracking":
         attached.snapshots["slam.status.json"]["state"] = "LOST"
     elif failure == "pose_prior":

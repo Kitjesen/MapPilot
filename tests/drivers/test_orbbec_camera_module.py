@@ -334,9 +334,10 @@ def test_camera_record_validation_precedes_allocation_publish_and_counting() -> 
     assert intrinsics_gate < camera_dds_source.index("color_shm.publish")
     assert intrinsics_gate < camera_dds_source.index("records += 1")
     assert "validateRecordHeader(header)" in camera_dds_source
-    header_validation = capture_source.index("validateRecordHeader(header)")
-    payload_validation = capture_source.index("validateRecordPayloadPointer(header, payload)")
-    header_write = capture_source.index("std::cout.write(reinterpret_cast<const char *>(&header)")
+    writer_source = (native / "record_writer.hpp").read_text(encoding="utf-8")
+    header_validation = writer_source.index("validateRecordHeader(header)")
+    payload_validation = writer_source.index("validateRecordPayloadPointer(header, payload)")
+    header_write = writer_source.index("output_.write(reinterpret_cast<const char*>(&header)")
     assert header_validation < payload_validation < header_write
     assert "camera_record::kDepthScaleMetersPerMillimeter" in capture_source
     depth_layout_validation = capture_source.index("validateCanonicalDepthLayout(")
@@ -344,7 +345,8 @@ def test_camera_record_validation_precedes_allocation_publish_and_counting() -> 
     assert depth_layout_validation < depth_allocation
     assert "static_cast<const std::uint16_t*>(depth.data)" not in capture_source
     assert "normalizeDepthSampleMillimeters(" in capture_source
-    assert 'throw std::runtime_error("camera_record_output_failed")' in capture_source
+    assert 'throw std::runtime_error("camera_record_output_failed")' in writer_source
+    assert "output.write(header, payload)" in capture_source
     assert "timestamp_s > 0.0 ? timestamp_s : nowSeconds()" not in camera_dds_source
     for token in (
         "kUnsupportedKind",
@@ -413,7 +415,7 @@ def test_orbbec_capture_fails_fast_when_no_frames() -> None:
     assert "no valid Orbbec frames before startup timeout" in capture_source
     assert "camera capture ended before publishing the next record" in camera_dds_source
     assert "LINGTU_CAMERA_STARTUP_FRAME_TIMEOUT_MS" in runner
-    assert "LINGTU_CAMERA_STARTUP_FRAME_TIMEOUT_MS" in service
+    assert "EnvironmentFile=/run/lingtu/session.env" in service
 
 
 def test_orbbec_module_uses_device_inventory_and_robot_mount_config() -> None:

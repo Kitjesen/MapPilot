@@ -12,15 +12,11 @@ from fastapi.testclient import TestClient
 
 from gateway.gateway_module import GatewayModule
 from gateway.navigation.routes import register_navigation_routes
-from gateway.services.control_commands import ControlCommandService
 from memory.spatial.tagged_locations import TaggedLocationStore
 
 
 @pytest.fixture
-def navigation(monkeypatch):
-    # Readiness is covered separately; isolate the saved-location command boundary.
-    monkeypatch.setattr(ControlCommandService, "motion_safety_rejection", lambda *args: None)
-    monkeypatch.setattr(ControlCommandService, "_goal_readiness_rejection", lambda *args: None)
+def navigation():
     store = TaggedLocationStore()
     store.tag("dock", x=1.0, y=2.0, z=0.8, yaw=1.25, metadata={
         "map_id": "yard", "map_content_epoch": 7, "frame_id": "map", "binding_status": "bound",

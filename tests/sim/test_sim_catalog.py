@@ -376,7 +376,7 @@ def test_robot_navigation_body_must_be_a_present_package_file(tmp_path: Path, bo
     root, package_dir = _isolated_thunderv4_catalog(tmp_path)
     manifest = package_dir / "robot.package.yaml"
     source = manifest.read_text(encoding="utf-8")
-    source = source.replace("body_file: collision/thunderv4_nominal.body2", f"body_file: {body_file}")
+    source = source.replace("body_file: collision/thunderv4_navigation.body2", f"body_file: {body_file}")
     manifest.write_text(source, encoding="utf-8")
 
     with pytest.raises(CatalogError, match=r"navigation_geometry.body_file"):
@@ -388,7 +388,7 @@ def test_robot_navigation_body_resolves_with_the_selected_physics_model() -> Non
     robot = resolved.physics_plan["robots"][0]
     body_file = robot["navigation_geometry"]["body_file"]
 
-    assert body_file == "sim/packages/robots/doso/thunder_v4/collision/thunderv4_nominal.body2"
+    assert body_file == "sim/packages/robots/doso/thunder_v4/collision/thunderv4_navigation.body2"
     assert (REPO_ROOT / body_file).is_file()
     assert robot["model"]["mjcf"] == "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml"
 

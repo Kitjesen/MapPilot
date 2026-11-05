@@ -355,6 +355,8 @@ struct OctoPlannerGridQueryTest
     // Falling back to the first waypoint preserves the standalone path-file
     // contract for callers that have no request metadata.
     const auto & first = planning_anchor != nullptr ? *planning_anchor : path.front();
+    planner.start_point_=first;
+    planner.has_start_=true;
     planner.anchorPlanningLattice(first);
 
     if (planning_anchor && !planner.isStartConnectionAllowed(
@@ -366,15 +368,22 @@ struct OctoPlannerGridQueryTest
     }
 
     std::vector<GridIndex> cells;
+    const bool body_centre=config.support_height_m>0 || config.body_clearance_below_m>0 ||
+        config.body_clearance_above_m>0;
     cells.reserve(path.size());
     for (std::size_t i = 0; i < path.size(); ++i) {
       const auto & point = path[i];
       const auto cell = planner.worldToPlanningGrid(point.x, point.y, point.z);
       OctoPlanner3D::TraversabilityFailure failure;
-      if (!planner.isPlanningCellTraversableDetailed(
+      const bool traversable=body_centre ?
+        (failure=planner.queryWorld(octomap::point3d(point.x,point.y,point.z),config.robot_radius,
+            config.ground_support&&i!=0,i!=0))==
+            OctoPlanner3D::TraversabilityFailure::None :
+        planner.isPlanningCellTraversableDetailed(
             cell, config.robot_radius, config.ground_support,
             config.direct_support_only, config.support_radius_cells,
-            config.support_depth_cells, &failure)) {
+            config.support_depth_cells, &failure);
+      if (!traversable) {
         result.reason = std::string("point_") + failureName(failure);
         result.route_reason = result.reason;
         result.point_index = i;
@@ -383,12 +392,12 @@ struct OctoPlannerGridQueryTest
       ++result.checked_points;
       cells.push_back(cell);
     }
-    // Match the upstream graph contract independently of continuous motion.
+    // Legacy paths retain the upstream adjacent-cell contract; metric paths may be sparse.
     for (std::size_t i = 0; i + 1U < cells.size(); ++i) {
       const auto & a = cells[i];
       const auto & b = cells[i + 1U];
       const int span = std::max({std::abs(a.x-b.x), std::abs(a.y-b.y), std::abs(a.z-b.z)});
-      if (span != 1) {
+      if (!body_centre && span != 1) {
         result.reason = "non_adjacent_route";
         result.route_reason = result.reason;
         result.segment_index = i;
@@ -399,26 +408,27 @@ struct OctoPlannerGridQueryTest
     result.route_reason = "ok";
 
     for (std::size_t i = 0; i + 1U < path.size(); ++i) {
-      // The planner emits planningPoint(cell), which includes its lattice
-      // offset.  Use the same reconstructed points for swept clearance;
-      // checking the raw text coordinates would apply a different lattice
-      // when the start was snapped.
-      const auto from = planner.planningPoint(cells[i]);
-      const auto to = planner.planningPoint(cells[i + 1U]);
+      // Metric routes retain their actual coordinates; legacy routes use the planning lattice.
+      const auto from = body_centre ? octomap::point3d(path[i].x,path[i].y,path[i].z) :
+          planner.planningPoint(cells[i]);
+      const auto to = body_centre ? octomap::point3d(path[i+1].x,path[i+1].y,path[i+1].z) :
+          planner.planningPoint(cells[i + 1U]);
       const double horizontal = std::hypot(to.x() - from.x(), to.y() - from.y());
       const double rise = std::abs(to.z() - from.z());
       OctoPlanner3D::TraversabilityFailure sweep_failure;
       octomap::point3d failed_point;
       if (!planner.sweptRouteFree(
             from,
-            to, &sweep_failure, &failed_point)) {
+            to, &sweep_failure, &failed_point,true,i==0)) {
         result.sweep_failures.push_back({i, failureName(sweep_failure),
           {from.x(), from.y(), from.z()}, {to.x(), to.y(), to.z()},
           PointPose{failed_point.x(), failed_point.y(), failed_point.z()}, horizontal, rise});
       }
       // Match the same metric step/slope gate used during body-mode search.
       // This remains a route check, not a SCAN or locomotion validation.
-      if (!planner.isMotionAllowed(cells[i], cells[i + 1U])) {
+      if (!(body_centre || i==0 ? planner.metricConnectionWithinLimits(
+              {from.x(),from.y(),from.z()},{to.x(),to.y(),to.z()}) :
+              planner.isMotionAllowed(cells[i], cells[i + 1U]))) {
         const GridIndex step{cells[i+1U].x-cells[i].x,
           cells[i+1U].y-cells[i].y, cells[i+1U].z-cells[i].z};
         const double grid_rise = std::abs(step.z) * planner.planningZResolution();
@@ -519,6 +529,10 @@ bool runSelfTest(const PlannerConfig & base_config)
   config.robot_radius = .01;
   config.body_clearance_below_m = config.body_clearance_above_m = .01;
   config.ground_support = false;
+  const auto sparse_clear=global_planner::OctoPlannerGridQueryTest::verify(
+    makeSelfTestMap(false),{clear_path.front(),clear_path.back()},config);
+  const auto sparse_wall=global_planner::OctoPlannerGridQueryTest::verify(
+    makeSelfTestMap(true),{blocked_path.front(),blocked_path.back()},config);
   const std::vector<PointPose> corner_path{
     {-.175, -.075, .025}, {-.175, -.075, .05}, {-.125, -.025, .05}};
   const auto hidden = global_planner::OctoPlannerGridQueryTest::verify(corner, corner_path, config);
@@ -544,14 +558,15 @@ bool runSelfTest(const PlannerConfig & base_config)
   const auto free_entry = global_planner::OctoPlannerGridQueryTest::verify(
     makeSelfTestMap(false), clear_path, config, &free_anchor);
   return clear.valid && clear.route_valid && !blocked.route_valid &&
-    !rising.route_valid && !rising.valid && rising.route_reason == "non_adjacent_route" &&
+    rising.route_valid && !rising.valid && !rising.motion_diagnostic_valid &&
+    sparse_clear.valid && sparse_wall.route_valid && !sparse_wall.sweep_valid &&
     hidden.route_valid && !hidden.sweep_valid && hidden.checked_segments == 2U &&
     hidden.sweep_failures.front().index == 1U &&
     hidden.sweep_failures.front().reason == "occupied_body" &&
     !hidden.motion_failures.empty() && hidden.motion_failures.front().index == 0U &&
     hidden.reason == "segment_sweep_failed" &&
     detour.size() > 2U && routed.route_valid && routed.sweep_valid &&
-    !shortcut.route_valid && shortcut.route_reason == "non_adjacent_route" &&
+    shortcut.valid &&
     !bad_entry.valid && bad_entry.reason == "start_connection_failed" &&
     !vertical_entry.valid && vertical_entry.reason == "start_connection_failed" &&
     free_entry.valid;

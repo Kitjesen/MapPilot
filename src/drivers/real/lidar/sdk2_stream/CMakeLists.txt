@@ -18,7 +18,8 @@ add_executable(livox_sdk2_stream main.cpp)
 target_include_directories(livox_sdk2_stream PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/.."
   "${LIVOX_SDK2_DIR}/include")
-target_link_libraries(livox_sdk2_stream PRIVATE livox_lidar_sdk_static)
+include("${CMAKE_CURRENT_LIST_DIR}/../../../../../scripts/build/cmake/settings.cmake")
+target_link_libraries(livox_sdk2_stream PRIVATE livox_lidar_sdk_static lingtu_settings)
 
 if(LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS)
   find_package(iceoryx_binding_c QUIET)

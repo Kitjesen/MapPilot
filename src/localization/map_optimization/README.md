@@ -39,8 +39,8 @@ Short names are intentional:
 | `graph.*` | Legacy offline pose graph and bundle writer used by PGO. |
 | `poses.hpp`, `cloud_io.cpp` | Solver-independent pose types and saved pose/PCD readers. |
 | `gravity_graph.*` | GTSAM batch LM over XYZ and yaw with the original LIO gravity held fixed. |
-| `online_graph.*` | Single-worker, bounded in-memory optimization of measured graph snapshots. |
-| `online_mapping.*` | Bounded native SAM worker, loop evidence and map preview reconstruction. |
+| `io/` | Independent shared build target for the pose/PCD readers. |
+| `../online_mapping/worker.*` | Bounded online queue, loop evidence and map preview reconstruction. |
 | `pose_math.hpp` | Shared, explicit `T_parent_child` pose algebra used by loop verification. |
 | `cloud.hpp` | Portable PCD input contract shared by map optimization and loop verification. |
 | `loop_constraints.*` | Deterministic saved-map loop candidate, 4DoF verification, and audit report. |
@@ -73,7 +73,7 @@ Runtime rule:
 
 ## Online backend migration
 
-`OnlineMapping` retains the bounded queue, epoch reset, background-worker and
+`online_mapping::Worker` retains the bounded queue, epoch reset, background-worker and
 snapshot contracts. Algorithm work now calls the native LIO-SAM extraction:
 continuous raw LIO Pose3 between factors, GTSAM iSAM2, temporal/spatial loop
 candidates, PCL ICP against a historical submap, and updates of all key poses.
@@ -97,11 +97,12 @@ A complete `lio_sam_isam2` snapshot is already optimized: mapd preserves its rep
 and does not run the legacy save-time PGO on it. Explicit offline constraints
 conflicting with that snapshot are rejected instead of mixing two models.
 
-The generic `OnlinePoseGraph`, explicit offline `lt_pgo` and old-map
-`--auto-constraints` paths still use the previous graph utilities. They are not
-part of the new live SLAM backend. GTSAM, PCL common/filters/registration and their
-runtime libraries are required; no ROS node or DDS owner is added. The build
-still links the Rust kernel for those remaining offline utilities.
+The explicit offline `lt_pgo` and old-map `--auto-constraints` paths use the
+saved-map graph utilities and Rust kernel. The unused `OnlinePoseGraph` interface
+and its standalone test were removed. Online SLAM uses `online_mapping::Worker`
+and `Backend`; the offline tools do not link that worker or its PCL dependency.
+Offline gravity optimization still requires GTSAM. Shared point-cloud and pose
+reading is provided by `lingtu_mapping_io`.
 
 `lt_mapping_replay` requires original LIO poses and recorded keyframe timestamps.
 Previously optimized `poses.txt` is not a fallback. Old 903room_v2 lacks those
@@ -135,7 +136,7 @@ These commands do not download dependencies. The SDK goes to
 `build/deps/gtsam-<version>-windows-static-sdk`; the current binaries go to
 `build/map_optimization/Release`. The build script stages their actual PE DLL
 dependencies beside the executables, then runs `pgo_core`, `loop_information`,
-`constraint_assembly`, and `online_graph`. Logs and JUnit output are in the
+`constraint_assembly`. Logs and JUnit output are in the
 optimizer build directory. Windows simulation declares this optimizer in its
 map process environment and artifact dependencies; it does not inherit a
 shell-provided optimizer or search path. Linux/field deployment is unchanged.

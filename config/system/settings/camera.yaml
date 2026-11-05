@@ -1,0 +1,40 @@
+# RobotConfig overrides acquisition settings for the installed camera and owns
+# device selection and calibration. Encoder selection stays with the target runtime.
+camera:
+  capture:
+    # Acquisition dimensions are independent of RobotConfig intrinsics.
+    color_width: 640
+    color_height: 480
+    color_fps: 30
+    depth_width: 640
+    depth_height: 480
+    depth_fps: 30
+    timeout_ms: 1000
+    startup_timeout_ms: 10000
+    stale_timeout_ms: 15000
+  orbbec:
+    product_id: "0x0800"  # Use "0" to disable the SDK product filter.
+    device_index: 0
+    connect_timeout_ms: 10000
+    sdk_config: ""
+    frame_sync: false
+  shm:
+    color: /lingtu_camera_color
+    depth: /lingtu_camera_depth
+    info: /lingtu_camera_info
+    slots: 16
+    min_slot_bytes: 1048576  # Floor for a slot sized to fit the selected streams.
+    # Images normally use SHM; CameraInfo remains available over DDS.
+    publish_image_dds: false
+  video:
+    listen: http://127.0.0.1:9090
+    fps: 20
+    # Bitrate values are in bits per second.
+    min_bitrate: 200000
+    start_bitrate: 1500000
+    max_bitrate: 4000000
+    max_age_ms: 250
+    idle_timeout_ms: 5000  # WHEP accepts 0 to wait indefinitely for frames.
+    metrics_interval_ms: 1000
+    metrics_file: /dev/null
+    stun_server: ""

@@ -1,3 +1,5 @@
+#include <lingtu/settings.hpp>
+
 #include "camera_record.hpp"
 #include "message/generated/topics.hpp"
 #include "transport/dds/qos.hpp"
@@ -86,18 +88,23 @@ struct CliConfig {
   std::string depth_topic{std::string(lingtu::message::kCameraDepth.dds_topic)};
   std::string info_topic{std::string(lingtu::message::kCameraInfo.dds_topic)};
   std::string status_file{"/dev/shm/lingtu/camera_status.json"};
-  std::string color_shm{"/lingtu_camera_color"};
-  std::string depth_shm{"/lingtu_camera_depth"};
-  std::string info_shm{"/lingtu_camera_info"};
+  std::string color_shm{lingtu::settings::camera::camera::shm::color};
+  std::string depth_shm{lingtu::settings::camera::camera::shm::depth};
+  std::string info_shm{lingtu::settings::camera::camera::shm::info};
   std::vector<std::string> capture_args;
   RecordSource record_source{RecordSource::kChild};
   bool capture_bin_explicit{false};
   int domain_id{0};
-  int capture_stale_timeout_ms{15000};
-  std::uint32_t shm_slot_count{lingtu::drivers::camera::shm::kDefaultSlotCount};
+  int capture_stale_timeout_ms{lingtu::settings::camera::camera::capture::stale_timeout_ms};
+  std::uint32_t shm_slot_count{lingtu::settings::camera::camera::shm::slots};
   std::uint32_t shm_slot_capacity{
-      lingtu::drivers::camera::shm::kDefaultSlotCapacity};
-  bool publish_image_dds{false};
+      std::max<std::uint32_t>({
+          lingtu::settings::camera::camera::shm::min_slot_bytes,
+          lingtu::settings::camera::camera::capture::color_width *
+              lingtu::settings::camera::camera::capture::color_height * 3,
+          lingtu::settings::camera::camera::capture::depth_width *
+              lingtu::settings::camera::camera::capture::depth_height * 2})};
+  bool publish_image_dds{lingtu::settings::camera::camera::shm::publish_image_dds};
   std::uint64_t max_frames{0};
 };
 
@@ -148,6 +155,8 @@ CliConfig parseArgs(int argc, char** argv) {
       cfg.shm_slot_capacity = static_cast<std::uint32_t>(std::stoul(next()));
     } else if (arg == "--publish-image-dds") {
       cfg.publish_image_dds = true;
+    } else if (arg == "--no-publish-image-dds") {
+      cfg.publish_image_dds = false;
     } else if (arg == "--max-frames") {
       cfg.max_frames = static_cast<std::uint64_t>(std::stoull(next()));
     } else if (arg == "--capture-stale-timeout-ms") {
@@ -167,7 +176,7 @@ CliConfig parseArgs(int argc, char** argv) {
                    "                         [--color-shm NAME] [--depth-shm NAME]\n"
                    "                         [--info-shm NAME] [--shm-slot-count N]\n"
                    "                         [--shm-slot-capacity-bytes N]\n"
-                   "                         [--publish-image-dds]\n"
+                   "                         [--publish-image-dds|--no-publish-image-dds]\n"
                    "                         [--capture-stale-timeout-ms N]\n"
                    "                         [-- CAPTURE_ARGS...]\n");
       std::exit(0);

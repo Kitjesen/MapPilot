@@ -18,8 +18,8 @@ from message.topics import TOPICS
 from runtime.msgs.geometry import Quaternion, Vector3
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import POINT_DTYPE, Imu, LivoxPointFrame
-from runtime.tf.frames import topic_default_frame_id
-from runtime.utils.livox_config import ensure_mid360_config_file
+from runtime.tf.frames import FRAMES, topic_default_frame_id
+from runtime.utils.livox_config import ensure_mid360_config_file, lidar_settings
 
 from ...api.frame_stream import LidarFrameStream
 from ...native.model import LidarHealth, LidarState
@@ -89,6 +89,13 @@ class Sdk2Source:
             command = [str(executable), str(config_path)]
             if executable.suffix.lower() == ".py":
                 command = [sys.executable, str(executable), str(config_path)]
+            settings = lidar_settings()
+            command.extend([
+                "--publish-freq", str(settings["scan_hz"]),
+                "--imu-publish-freq", str(settings["imu_hz"]),
+                "--lidar-frame", FRAMES.lidar,
+                "--imu-frame", FRAMES.imu,
+            ])
             self._process = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,

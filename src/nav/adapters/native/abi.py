@@ -1739,6 +1739,21 @@ class NativeCommandSession:
                 if self._active_calls == 0:
                     self._state_changed.notify_all()
 
+    def set_navigation_task_speed_limit(
+        self, task_id: str, request_id: str, max_speed_mps: float,
+    ) -> dict[str, object]:
+        self.ensure_navigation_abi()
+        function = self.library.lingtu_nav_client_set_task_speed_limit_with_receipt_v1
+        function.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_double,
+            ctypes.c_int, ctypes.POINTER(_NativeNavigationCommandReceiptV1),
+        ]
+        function.restype = ctypes.c_int
+        return self._write_navigation_command_receipt(
+            function, task_id.encode("utf-8"), request_id.encode("utf-8"),
+            max_speed_mps, self.cancel_timeout_ms,
+        )
+
     def pause_navigation_task(
         self,
         task_id: str,

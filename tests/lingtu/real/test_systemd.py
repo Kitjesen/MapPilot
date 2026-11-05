@@ -4,6 +4,7 @@ import io
 import json
 import subprocess
 import urllib.error
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -391,26 +392,47 @@ def test_systemd_runner_quiesce_attempts_every_target_and_aggregates_stop_failur
     assert control.active_targets == failed_targets
 
 
-def test_service_readiness_rejects_product_catalog_drift() -> None:
-    process = ProcessSpec(
-        name="nav",
-        manager="systemd",
-        target="wrong-nav.service",
-        order=1,
-        timeout_s=1,
-        lifecycle="mode",
-    )
+@pytest.mark.parametrize("method", ["wait", "inspect"])
+def test_service_readiness_probes_resolved_plan_target_after_catalog_change(monkeypatch, method) -> None:
+    import lingtu.real.systemd as systemd_module
 
-    with pytest.raises(ProcessError, match="disagrees with readiness catalog"):
-        ServiceReadiness().wait(process, 1.0)
+    process = _field_product().process("nav")
+    current_spec = replace(
+        systemd_module.service_spec("nav"),
+        units=("updated-nav.service",),
+        start_units=("updated-nav.service",),
+        checks=("systemd",),
+    )
+    monkeypatch.setattr(systemd_module, "service_spec", lambda _service: current_spec)
+    probes = []
+
+    class Observer:
+        def available(self, target):
+            probes.append(("available", target))
+            return True
+
+        def active(self, target):
+            probes.append(("active", target))
+            return True
+
+    inspector = _ServiceInspector(systemd=Observer())
+    readiness = ServiceReadiness(inspector)
+    detail = readiness.wait(process, 1.0) if method == "wait" else readiness.inspect(process)
+
+    assert detail["ready"] is True
+    assert probes == [("available", process.target), ("active", process.target)]
+
+    probes.clear()
+    assert inspector.status_details("nav", dds_check=False, http_check=False)["nav"]["ready"] is True
+    assert probes == [("available", "updated-nav.service"), ("active", "updated-nav.service")]
 
 
 def test_service_readiness_allows_inactive_navigation_when_data_is_safe() -> None:
     calls = []
 
     class Manager:
-        def status_details(self, service, *, dds_check, http_check):
-            calls.append((service, dds_check, http_check))
+        def status_details(self, service, *, dds_check, http_check, target):
+            calls.append((service, dds_check, http_check, target))
             return {
                 service: {
                     "ready": True,
@@ -446,7 +468,7 @@ def test_service_readiness_allows_inactive_navigation_when_data_is_safe() -> Non
 
     detail = readiness.wait(process, 1.0)
 
-    assert calls == [("gateway", True, True)]
+    assert calls == [("gateway", True, True, process.target)]
     assert detail["ready"] is True
     assert detail["observed"]["http"]["payload"]["motion_ready"] is False
 

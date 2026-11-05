@@ -203,6 +203,42 @@ def test_open_artifact_returns_verified_regular_file_handle(tmp_path: Path) -> N
         os.fstat(descriptor)
 
 
+def test_open_save_source_uses_operation_identity_and_closes_descriptor(tmp_path: Path) -> None:
+    source_path = tmp_path / "map.pcd"
+    source_path.write_bytes(b"original-source")
+    descriptor = os.open(source_path, os.O_RDONLY)
+    transport = _ScriptedSocket(
+        _response(
+            {"success": True, "job_id": "capture-1", "artifact": {"filename": "source.pcd"}},
+            has_fd=True,
+        ),
+        descriptors=(descriptor,),
+    )
+    with MapClient(connector=lambda: transport).open_save_source("capture-1") as artifact:
+        assert artifact.metadata["job_id"] == "capture-1"
+        assert artifact.filename == "source.pcd"
+        assert b"".join(artifact.iter_bytes()) == b"original-source"
+
+    _, _, opcode, _, _, request_id_len, json_len = _REQUEST_HEADER.unpack(transport.sent[: _REQUEST_HEADER.size])
+    body_offset = _REQUEST_HEADER.size + request_id_len
+    assert opcode == 5
+    assert json.loads(bytes(transport.sent[body_offset : body_offset + json_len])) == {"job_id": "capture-1"}
+    with pytest.raises(OSError):
+        os.fstat(descriptor)
+
+
+def test_open_save_source_preserves_missing_source_reason() -> None:
+    transport = _ScriptedSocket(
+        _response(
+            {"success": False, "reason_code": "saved_source_missing", "message": "Source is unavailable"},
+            ok=False,
+        )
+    )
+    with pytest.raises(MapClientError) as raised:
+        MapClient(connector=lambda: transport).open_save_source("not-saved")
+    assert raised.value.reason_code == "saved_source_missing"
+
+
 @pytest.mark.parametrize("start_reading", [False, True])
 def test_abandoned_artifact_iterator_closes_descriptor(tmp_path: Path, start_reading: bool) -> None:
     artifact_path = tmp_path / "map.pcd"

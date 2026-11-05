@@ -125,6 +125,7 @@ def compose_full_stack_modules(
         if enable_semantic
         else HostBuilder(),
         services(
+            env=run_plan.env if run_plan is not None else "real",
             enable_goals=enable_goals,
             required_topics=required_topics,
             required_capabilities=required_capabilities,

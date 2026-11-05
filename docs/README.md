@@ -15,11 +15,13 @@ and which capabilities still need qualification. The shared delivery workflow is
 | Understand product scope, user workflow, and delivery limits | [Product](product.md) |
 | Install and make a first run | [Getting started](getting-started.md) |
 | Map, save/reload, navigate, take over, and stop | [Operations](operations.md) |
+| Find saved point clouds, pre-cleaning backups, failed saves and retry data | [Map files and save tasks](operations/map-files.md) |
 | Test the current dialogue/follow work on this workstation and Go2 | [Dialogue test entry, 2026-10-21](operations/dialogue-test-20261021.md) |
 | Decide whether the workflow has passed | [Testing](testing.md) |
 | Run MuJoCo or inspect simulation evidence | [Simulation](simulation.md) |
 | Inspect the fresh navigation physics tests and the unresolved crossing failure | [MuJoCo navigation, 2026-10-26](operations/mujoco-navigation-20261026.md) |
 | Find a responsibility and its source of truth | [Architecture](architecture.md) |
+| See the current responsibility map and verified boundary gaps | [System responsibility map](design/system-responsibility-map.md) |
 | Find what each design document records and when to use it | [Design document index](design/README.md) |
 | Understand compound collision models, upstream references, turning posture and decision history | [Collision model and motion posture](design/navigation-body-model-and-motion-posture.md) |
 | Trace confirmed navigation errors, their dates, fixes and deployment limits | [Error record](operations/error_record.md) |

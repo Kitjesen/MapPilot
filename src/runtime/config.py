@@ -1,7 +1,7 @@
 """Unified configuration loader.
 
 Reads the selected robot model's RobotConfig.
-Modules access config via: cfg = load_config(); cfg.speed.max_speed
+Modules access config via: cfg = load_config(); cfg.speed.max_linear
 
 ProductControl sets ``LINGTU_CONFIG_PATH`` for a selected real robot. Without
 an explicit path, this module returns neutral development defaults.
@@ -29,8 +29,6 @@ class SpeedConfig:
 
     max_linear: float = 1.0
     max_angular: float = 1.0
-    max_speed: float = 0.875
-    autonomy_speed: float = 0.875
 
 
 @dataclass
@@ -103,6 +101,15 @@ class CameraConfig:
 
     capture_driver: str = "orbbec_native"
     serial_number: str = ""
+    # Optional acquisition overrides; width/height below remain calibration defaults.
+    capture_color_width: int | None = None
+    capture_color_height: int | None = None
+    capture_color_fps: int | None = None
+    capture_depth_width: int | None = None
+    capture_depth_height: int | None = None
+    capture_depth_fps: int | None = None
+    video_encoder: str | None = None
+    video_fps: int | None = None
     # Extrinsics: camera position in body frame (m)
     position_x: float = 0.15
     position_y: float = 0.0
@@ -164,14 +171,13 @@ class CameraConfig:
 
 @dataclass
 class LidarConfig:
-    """LiDAR sensor mounting extrinsics and publish settings.
+    """LiDAR installation network and calibrated mounting transform.
 
     offset_x/y/z + roll/pitch/yaw define the body→lidar static transform
     used by static_transform_publisher and C++ coordinate transforms.
     """
 
-    frame_id: str = "livox_frame"
-    publish_freq: float = 10.0
+    frame_id: str | None = None  # An installation-specific TF alias; otherwise use RuntimeFrames.
     # Network (Livox MID-360). These are consumed by the Livox driver JSON generator.
     network_interface: str = ""
     lidar_ip: str = ""

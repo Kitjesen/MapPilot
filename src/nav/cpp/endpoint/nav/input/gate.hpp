@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -31,22 +33,21 @@ SourceStampDecision classifySourceOrder(double previous_stamp_s, double incoming
                                         double clock_rebase_threshold_s);
 
 struct InputGateConfig {
-  double odom_max_age_s{0.25};
-  double tf_max_age_s{0.25};
-  double cloud_max_age_s{0.35};
+  double odom_max_age_s{::lingtu::settings::control::native_nav::odom_max_age_s};
+  double tf_max_age_s{::lingtu::settings::control::native_nav::tf_max_age_s};
+  double cloud_max_age_s{::lingtu::settings::control::native_nav::cloud_max_age_s};
   // Retained in config/status; current valid inputs admit motion without a frame-count gate.
-  std::uint32_t recovery_frames{1};
-  double future_tolerance_s{0.05};
+  double future_tolerance_s{::lingtu::settings::control::native_nav::input_future_tolerance_s};
   bool require_odom{true};
   bool require_cloud{true};
-  double traversability_max_age_s{1.5};
-  double localization_health_max_age_s{0.5};
-  double driver_control_max_age_s{0.35};
+  double traversability_max_age_s{::lingtu::settings::local::native_nav::traversability_max_age_s};
+  double localization_health_max_age_s{::lingtu::settings::control::native_nav::localization_health_max_age_s};
+  double driver_control_max_age_s{::lingtu::settings::control::native_nav::driver_control_max_age_s};
   bool require_traversability{false};
   bool require_localization_health{false};
   bool require_driver_control{false};
   double odom_max_speed_mps{3.0};
-  double local_collision_max_age_s{0.5};
+  double local_collision_max_age_s{::lingtu::settings::local::parameters::local_collision_max_age_s};
   bool require_local_collision{false};
 };
 

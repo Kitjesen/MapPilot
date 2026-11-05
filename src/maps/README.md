@@ -224,13 +224,24 @@ The navigation OctoMap records its build evidence for diagnostics:
   work is tracked in the [map-editing queue](../../docs/roadmap.md#地图编辑与人工障碍约束2026-10-21).
 
 Deploy `mapd`, `lingtu-mapctl`, and `prune` together. The save transaction must
-preserve `scan_origin.txt`, poses, patches, and `map.pcd.preclean` for calibrated
+preserve `scan_origin.txt`, poses, patches, and `map.before_clean.pcd` for calibrated
 visibility cleanup and later reprocessing. Preserve an existing map while
 evaluating a cleaned copy; never fill missing floor support just to pass a path
 check. If automatic PGO is skipped, inspect `map_optimization.json` rather than
 interpreting a successful save as a successful global optimization.
 
+The [map file and save-task guide](../../docs/operations/map-files.md) defines
+the permanent artifacts, legacy `map.pcd.preclean` compatibility, failed-save
+evidence and retry behavior. Standalone prune still emits `map.clean.pcd` for
+inspection; new formal map packages keep `map.pcd` as the current point cloud.
+
 ## Responsibilities
+
+SaveMap first durably archives the SLAM snapshot. `auto_process` defaults to true;
+false leaves the operation `CAPTURED` until `process_save_map`. `source_saved`
+is derived from the accepted receipt and retained source, not from the final map.
+Capture archives survive processing success, failure and cancellation. Processing
+works on a copy and keeps the existing final-map commit/rollback boundary.
 
 - `mapd` owns realtime map state, saved-map management, and DDS map output.
 - `MapStore` owns saved-map content identity and active-map state.
@@ -400,7 +411,7 @@ dead writer is recovered before the stale build lock is removed: incomplete
 publishes roll back, while a committed epoch keeps the new artifacts. Ordinary
 readers stay fail-closed while that recovery is pending.
 
-The canonical control action names live in `cpp/mapd/service_dispatch.cpp`. Add
+The canonical control action names live in `cpp/mapd/dispatch.cpp`. Add
 one name for a new operation; do not add spelling aliases or a Python command
 router.
 

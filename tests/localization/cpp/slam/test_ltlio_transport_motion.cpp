@@ -102,6 +102,7 @@ lio::Config config() {
   value.point_filter_num = 1;
   value.blind_m = 0.1;
   value.scan_resolution = 0.1;
+  value.elevator_enabled = true;
   value.automatic_door = false;
   return value;
 }

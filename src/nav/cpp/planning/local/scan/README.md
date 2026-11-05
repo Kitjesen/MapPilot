@@ -5,6 +5,51 @@ It contains LingTu's ROS-free port of
 [wuyi2121/SCAN-Planner](https://github.com/wuyi2121/SCAN-Planner) pinned to
 commit `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
 
+## Autonomous retry contract (2026-11-05)
+
+Autonomous SCAN uses the upstream local retry lifecycle: one failed planning
+round increments the counter, successful planning resets it, and 1000 consecutive
+failed rounds enter emergency stop. Once measured 3-D speed is below 0.1 m/s,
+the exhausted route clears its target and waits for a new one. The native
+adapter reports `NoPath` through the existing task stop/failure transaction;
+it does not turn exhaustion into another global replan.
+
+Executor no longer injects autonomous SCAN Recovery targets, direct rotations,
+or a second stall/retry limit. CMU and assisted teleop keep their existing
+recovery behavior. Native asynchronous trajectory handoff and multi-horizon
+reference continuation remain adaptations, as does final-command Body/braking
+control. A final-control rejection can discard a spline independently of the
+solver's failure counter; that counter is not a whole-task timeout.
+
+Scheduling targets match upstream: FSM 100 Hz, follower/control 100 Hz and
+future-collision callback 20 Hz. The MuJoCo harness reads the resolved Product
+frequency unless its fixture explicitly overrides it. These are callback
+periods, not a guarantee of 100 solver completions per second.
+
+## Current collision contract (2026-11-05)
+
+Ordinary SCAN candidate planning now uses the pinned upstream twin-cylinder
+queries against Mapd's inflated 3-D occupancy. Control-point and trajectory
+headings come from adjacent positions, not the controller's preview yaw.
+Rebound and refinement check the upstream leading two-thirds interval with
+its endpoint-chord sampling. The FSM continues checking ahead during execution;
+an optimizer acceptance alone does not certify the unchecked final approach.
+
+The extra candidate BODY2 yaw sweeps, dense whole-curve acceptance and predicted
+obstacle-volume veto have been removed. Mapd inflation still uses the selected
+platform dimensions and clearance; Thunder does not inherit upstream's example
+Go2 radius. Measured obstacles still affect every planning attempt. Dynamic
+predictions and measured multipart-body/braking checks remain at final command
+control. A ready spline is not permission to bypass that owner.
+
+The follower retains upstream's 0.8 s direction preview. Explicit body-heading
+requests, native asynchronous handoff, reference initialization,
+solver-result repairs and command-continuity limits remain local adaptations.
+Body/support metadata alone no longer selects exact-boundary route fitting.
+This restores the planning collision contract, not the entire navigation stack
+byte for byte. Earlier dated evidence below describes its own revision; the
+collision and heading behavior in this section supersedes those experiments.
+
 ## Planning lifecycle and source layout
 
 `upstream/` identifies the algorithm's origin, not an unmodified vendor copy.
@@ -61,23 +106,22 @@ not just its storage or transport; details and limits are recorded in
 
 LingTu's process and map adaptations live at the boundary:
 
-- With no request body model, `grid.*` exposes Mapd's inflated bitmap through the official
+- For SCAN planning, `grid.*` exposes Mapd's inflated bitmap through the official
   `GridMap::getInflateOccupancy()` query. It does not build, inflate, score, or
   smooth another map. The segment query also reads this bitmap, traversing
   cells between successive front/rear cylinder-center samples without
   allocating a temporary map or container. Global step-height and slope search
-  settings are not reimplemented in this adapter. Routes can carry the shared
-  support query described below. The seven-point support gate and
+  settings are not reimplemented in this adapter. The seven-point support gate and
   its per-probe free-ray requirement have been removed; sparse ground returns
   cannot invalidate an otherwise geometry-valid local collision bitmap. Mapd still
   retains the measured occupied/free evidence. OctoPlanner selects the terrain
-  layer; SCAN checks the optimized curve against the shared support query when
-  supplied. A zero collision result means no
+  layer; the current SCAN grid no longer checks the optimized curve against a
+  saved-map support query. A zero collision result means no
   inflated obstacle was found at the queried cells; it does not assert that
   those cells have measured free-space evidence. In this twin-cylinder mode,
   `knownFreeStorage` remains evidence, not an additional local collision gate.
-  The explicit body mode below instead requires raw occupied
-  evidence and does not query the inflated bitmap.
+  Final-command Body queries below instead require raw occupied evidence.
+  They are separate from SCAN candidate acceptance.
   Point and DDA segment indexing share `GridAxis` with the snapshot view. The
   origin is split into an integer base and fractional phase: only the phase is
   subtracted before floor, then the base is removed. Aligned windows retain
@@ -106,9 +150,8 @@ Mapd uses the upstream map profile: `0.05 m`, `200 x 200 x 100`, `5 m` rays,
 `p_hit=0.85`, `p_miss=0.30`, `p_min=0.12`, `p_max=0.98`, and `p_occ=0.80`.
 Inflation is maintained incrementally when occupancy changes. The SCAN profile
 disables time-based occupancy decay: cells clear only through ray misses or a
-rolling-window eviction, as in the pinned upstream GridMap. Requests without a
-selected multipart Body use the platform's configured twin-cylinder radius and
-offset. The ring buffer and packed collision bitmap only reduce memory moves
+rolling-window eviction, as in the pinned upstream GridMap. SCAN requests use the platform's configured twin-cylinder radius and
+offset, independently of multipart Body metadata. The ring buffer and packed collision bitmap only reduce memory moves
 and DDS payload; they preserve the logical GridMap result. Product speed limits
 may be lower than the upstream launch defaults; they are explicit runtime
 inputs. The native follower adds command-continuity bounds; heading alignment
@@ -128,23 +171,16 @@ limits do not establish contact stability or controller-specific terrain
 capability.
 
 Ordinary autonomous routes retain OctoPlanner's support, step and slope checks.
-When the activated route carries its immutable reconstructed support query,
-Executor forwards it and the reference support-height metadata through the
-asynchronous SCAN request. The existing final spline-segment query samples
-support at half-voxel spacing. The nearest 3-D reference segment selects a
-ground-height band, including either tread of a height-changing edge; the
-query uses map coordinates even when SCAN plans in odometry coordinates.
-This is a LingTu extension to the pinned SCAN map adapter. It prevents an
-optimized curve from crossing missing terrain while using the same inferred
-surface as global planning. It does not demand a measured floor in every body
-column or a fixed base-to-ground distance at every sample. Base heave does not
-change the selected reference layer. Static body and braking collision checks
-retain their measured-terrain handling. Individual foot support is not a Body
-collision prerequisite, and these queries do not plan footsteps.
+The SCAN grid no longer rechecks local curves against the saved-map support
+surface. It still uses the live collision map and its measured terrain data to
+interpret body and braking collisions. A clear collision query does not prove
+that a local detour is supported or that it is safe to cross a drop-off; that
+capability needs separate evidence and validation. Individual foot support is
+not a Body collision prerequisite, and these queries do not plan footsteps.
 
 Global planning returns XYZ routes with 3-D support queries; it no longer
 searches intermediate body yaw or checks multipart turn sweeps. SCAN uses the
-selected Body with the local request's heading or yaw envelope. Explicit pose
+inflated twin-cylinder map with tangent or explicit request heading. Explicit pose
 routes and declared stairs retain their execution contracts. This geometric
 capability is not a qualification of a locomotion controller or gait.
 
@@ -349,20 +385,16 @@ retain their position, height, heading and planar-stop requirements. These stop
 decisions do not remove the planner's three-dimensional derivative limits,
 measured body collision queries or braking checks.
 
-Without a fixed body heading, local target admission uses the reference tangent
-at that target, with a nearby-reference fallback at zero terminal velocity.
-It no longer places the body along the chord from the current position to a
-target after a bend. The optimized trajectory still undergoes its own sweep
-checks. During each ordered candidate-validation or collision-lookahead pass,
-quiet-speed samples retain the last reliable reference tangent. A slowing tail
-therefore does not rotate back to the request's initial yaw at every sample.
-An entirely quiet-speed curve with no reliable reference tangent still uses the
-measured heading. This direction is used only for collision queries; physical
-velocity/acceleration samples remain unchanged. No query-order state is cached
-inside Grid. Regression evidence is recorded in
-`build/startup-cleanup-20261027/README.md`.
+Without a fixed body heading, local target admission uses the upstream chord
+from odometry to the selected target. Candidate samples use neighboring
+positions; they do not share the follower's preview angle or simulate its yaw
+response. Fixed-heading native requests retain their explicit target heading.
 
-## Primitive body geometry, support contact and pose-route segments
+## Final-command body geometry and native pose-route segments
+
+The multipart queries described here belong to native motion/braking checks.
+The SCAN backend builds its planning Grid without Body or observedBody, so these
+raw-body checks do not veto ordinary candidate optimization.
 
 `LocalPlanRequest::body` optionally shares the immutable model selected by
 RobotConfig and forwarded with the route. Global XYZ search does not use this
@@ -380,8 +412,8 @@ the parts from the planning frame into the collision snapshot's grid frame.
 `body_model_missing`. Task owns each snapshot across asynchronous callbacks.
 Replacing the stable model invalidates cached trajectories; a fresh equivalent
 articulation snapshot does not replace the guide identity or reset the FSM.
-Collision callbacks query the latest snapshot, so a changed part pose can
-invalidate an existing trajectory. This asynchronous update is not an immediate
+Final-command callbacks query the latest snapshot, so a changed part pose can
+stop execution of an existing trajectory. This asynchronous update is not an immediate
 motion-stop guarantee; the caller's final command checks remain necessary.
 
 This mode reads `measuredOccupiedStorage` from the
@@ -409,7 +441,7 @@ checks remain with the global planner; Body models do not bypass those checks.
 
 The explicit `support_contact` label retains only geometric bottom contact:
 occupied material entirely below the source primitive's unpadded lowest point
-may touch that part. Global BodyQuery and SCAN share this rule in
+may touch that part. Native Body queries share this rule in
 [`collision/body.cpp`](../../../collision/body.cpp). Walls, risers and material
 extending into the primitive remain collisions. There is no 5 mm penetration /
 30 mm ground-gap gate or required free cell above each foot. Available original
@@ -418,7 +450,7 @@ collision geometry, not per-foot load-bearing admission. BODY2's final per-part
 bit is reserved and ignored by the reader; current exporters write zero.
 
 For live queries, mapd publishes conservative per-cell bounds of retained
-sensor hits alongside the same collision bitmap. SCAN can exclude the voxel's
+sensor hits alongside the same collision bitmap. Native Body queries can exclude the voxel's
 empty vertical extent when all of those hits are below the part's bottom;
 missing hit bounds retain the voxel collision. Bounds include sensor noise and
 retain extrema until that cell is cleared, so this does not itself separate
@@ -449,19 +481,19 @@ the same Body in relative motion, splitting at the prediction horizon and
 covering motion between samples. No twin-cylinder radius is added to Body
 queries. The no-body offline prediction path retains its prior behavior.
 
-Pose-route moving segments (`body` plus `bodyHeading`) must end at the exact
+Pose-route moving segments (explicit `bodyHeading`) must end at the exact
 turn centre, with their requested terminal velocity. Backend derives the
 internal `preserve_boundary_` condition and the manager reuses its exact P/V/A
 boundary restoration and physical-limit retiming. This prevents the ordinary
 least-squares spline fit from ending centimetres before a collision-checked
-turn centre. Any retimed result still passes full-duration collision validation;
+turn centre. Retimed results use the upstream candidate collision sampler;
 MotionIntent's FSM and target-selection semantics are unchanged. Task and
 Backend include immutable body identity in cached-result invalidation, so a
 model replacement cannot reuse a spline approved for a previous model.
 
 `test_scan_body`, `test_body_support_map`,
 `LocalPlanTask.BodyModelReplacementDiscardsCachedSplineWithoutNewRouteOrFrame`,
-`LocalPlanTask.ObservedBodySnapshotsUpdateCollisionWithoutReplacingGuideIdentity`
+`LocalPlanTask.ObservedBodySnapshotsDoNotReplaceCylinderPlanningEvidence`
 and `ScanBackend.BodyPoseSegmentsPreserveExactTurnCentreAndStoppedEndpoint`
 cover raw geometry, local support, snapshot ownership, model replacement and
 endpoint contracts. These native library interfaces do not activate a body
@@ -481,7 +513,7 @@ rebuild the planner again until a new input has arrived. Disabling collision
 queries still preserves the configured positive grid resolution needed by
 the upstream optimizer's sampling loops.
 
-## Dynamic prediction query semantics
+## Dynamic prediction queries for native motion
 
 MotionLayer's dynamic confirmation counts a voxel's free-to-hit transition
 only in the frame where it occurs. An old free observation is not another
@@ -528,13 +560,12 @@ with decaying confidence; the rejected fit does not refresh that state or its
 expiry. Stopped, reversed, excessive-speed and unconfirmed motion retain their
 existing rejection rules, while current returns remain measured obstacles.
 
-SCAN's untimed point/segment geometry queries use the predicted object's
-position at the request time, accounting for observation age. They do not
-collapse the remaining future sweep into a currently occupied region.
-The optimizer's candidate validation, FSM collision checks and braking queries
-continue comparing robot and obstacle at corresponding times. The explicit
-boundary-departure exception still checks the full remaining sweep because
-that geometric escape has no arrival-time schedule.
+Native motion queries use predicted-object positions at the request time or
+braking time, accounting for observation age. SCAN candidate and FSM occupancy
+queries use the measured inflated map only, as in the pinned upstream; they do
+not accept or reject a route using these forecast volumes. Final control keeps
+its existing timed obstacle checks. This does not give SCAN predictive evasive
+maneuvers or guarantee that a moving obstacle cannot hit a stopped robot.
 
 References for time-indexed collision queries are
 [TEB's dynamic obstacle constraint](https://github.com/rst-tu-dortmund/teb_local_planner/blob/noetic-devel/include/teb_local_planner/g2o_types/edge_dynamic_obstacle.h)
@@ -547,8 +578,7 @@ change, not an upstream SCAN feature.
 
 `ScanPredictions` covers current occupancy, future crossing, time-separated
 passage, observation age, real measured obstacles, expiration and braking.
-Untimed search is only candidate generation: timed validation may reject a
-candidate without finding a temporally feasible alternative. This is not a
+Final command control may stop a candidate without finding a temporally feasible alternative. This is not a
 complete space-time optimizer. The existing cluster cylinder, prediction
 horizon and robot dimensions are unchanged. Shape-preserving voxel prediction
 from [PredOcc](https://github.com/siyuanwu99/pred-occ-planner) is a future
@@ -680,8 +710,8 @@ original corner.
 The complete reference is a guide for SCAN, not an executable trajectory.
 Executor no longer requires a whole-reference Grid preflight before SCAN can
 plan; a distant obstacle or the live window's extent cannot reject the reference
-at this seam. SCAN checks its actual optimized spline with the multipart Body.
-The follower uses the same zero-preview tangent as Grid, its normal heading
+at this seam. SCAN checks its optimized spline with the inflated twin cylinders.
+The follower uses its configured preview, its normal heading
 gate and physical body-axis/yaw limits. Curvature speed is limited by radius
 times the moving follower's physical yaw-rate capability. The extra `.6` and
 terminal-alignment yaw clamps on moving splines are gone. The redundant
@@ -691,8 +721,12 @@ the selected body at measured pose/twist and checks braking motion.
 
 `supportHeightM` and `supportHeightToleranceM` come from the accepted global
 request through Route and LocalPlanRequest. They remain route/global height
-metadata; Grid no longer turns them into a requirement for observed floor under
-every part's XY projection. That whole-body column gate was a LingTu extension,
+metadata; SCAN no longer receives the prepared global support-surface callback.
+Grid checks the actual trajectory against measured 3D occupancy and predictions,
+without repeating global support admission along local trajectory, braking or
+boundary-departure segments. That callback gate was a LingTu extension and was
+removed on 2026-11-01. A collision-free local deviation does not independently
+establish ground below it. The earlier whole-body column gate was also a LingTu extension,
 not upstream SCAN behavior, and was removed on 2026-10-26. It has no replacement
 flag or hidden fallback. Global 3-D support, step and slope checks remain in
 their existing owner. Local measured-obstacle collision, swept motion and final

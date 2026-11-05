@@ -113,10 +113,11 @@ class MapClient:
         name: str | None = None,
         *,
         request_id: str | None = None,
+        auto_process: bool = True,
     ) -> CommandResult:
         """Queue a durable save of the current SLAM map."""
         resolved_request_id = str(request_id or "").strip() or _new_request_id()
-        body: dict[str, Any] = {"request_id": resolved_request_id}
+        body: dict[str, Any] = {"request_id": resolved_request_id, "auto_process": auto_process}
         if name:
             body["name"] = name
         result = self._client._command("/api/v1/map/save", body)
@@ -131,14 +132,17 @@ class MapClient:
         request_id: str | None = None,
         timeout: float = 300.0,
         poll_interval: float = 1.0,
+        auto_process: bool = True,
+        wait_for_source: bool = False,
     ) -> dict[str, Any]:
-        """Save the current map and wait for its durable terminal result."""
+        """Wait for processing, or just the archive when manual/source waiting is selected."""
         deadline = time.monotonic() + timeout
         resolved_request_id = str(request_id or "").strip() or _new_request_id()
         while True:
             receipt = self.save(
                 name,
                 request_id=resolved_request_id,
+                auto_process=auto_process,
             )
             operation_id, submission_unknown = _validated_map_save_receipt(
                 receipt,
@@ -157,6 +161,8 @@ class MapClient:
             _validate_save_operation_identity(response, operation_id)
             operation = _mapping(response.get("operation"))
             state = str(operation.get("state") or "").strip().upper()
+            if (wait_for_source or not auto_process) and operation.get("source_saved") is True:
+                return response
             if state == "SUCCEEDED":
                 return response
             if state in {"FAILED", "CANCELLED", "CANCELED"}:
@@ -192,11 +198,24 @@ class MapClient:
         encoded_operation_id = quote(operation_id, safe="")
         return self._client._command(f"/api/v1/maps/operations/{encoded_operation_id}/retry")
 
+    def process_operation(self, operation_id: str) -> CommandResult:
+        """Process an existing saved source without requesting another SLAM snapshot."""
+        encoded_operation_id = quote(operation_id, safe="")
+        return self._client._command(f"/api/v1/maps/operations/{encoded_operation_id}/process")
+
     def download_pcd(self, name: str, target: str | Path) -> Path:
         """Stream a saved map PCD artifact to ``target`` atomically."""
-        destination = Path(target)
         encoded_name = quote(name, safe="")
-        request = urllib.request.Request(self._client.base_url + f"/api/v1/maps/{encoded_name}/pcd")
+        return self._download(f"/api/v1/maps/{encoded_name}/pcd", target)
+
+    def download_source(self, operation_id: str, target: str | Path) -> Path:
+        """Stream this operation's archived source PCD, including after processing fails."""
+        encoded_operation_id = quote(operation_id, safe="")
+        return self._download(f"/api/v1/maps/operations/{encoded_operation_id}/source/pcd", target)
+
+    def _download(self, path: str, target: str | Path) -> Path:
+        destination = Path(target)
+        request = urllib.request.Request(self._client.base_url + path)
         if self._client._api_key:
             request.add_header("X-API-Key", self._client._api_key)
         temporary_path: Path | None = None

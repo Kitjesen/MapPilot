@@ -71,6 +71,64 @@ int main()try {
   SurfaceGraph stair_graph(stairs,.05,config,[](const auto&){return true;},slope);
   require(!stair_graph.plan({.025,.025,0},{2.025,.025,1},slope).empty(),
           "5cm risers lost the 10cm slope-admissible connection");
+  for(double resolution : {.05,.10,.20}) {
+    std::vector<PointPose> flight;
+    for(int x=0;x<=40;++x)
+      flight.push_back({(x+.5)*resolution,.5*resolution,(x/2)*resolution});
+    auto stair_config=config;
+    stair_config.snap_search_radius_cells=2;
+    const auto stair_edge=[&](const PointPose &a,const PointPose &b) {
+      return slope(a,b) && std::hypot(a.x-b.x,a.y-b.y)<=2.01*resolution;
+    };
+    SurfaceGraph flight_graph(flight,resolution,stair_config,[](const auto&){return true;},stair_edge);
+    for(bool reverse : {false,true}) {
+      const auto path=flight_graph.plan(reverse?flight.back():flight.front(),
+                                       reverse?flight.front():flight.back(),stair_edge);
+      require(!path.empty(),"coarse surface graph disconnected a slope-admissible stair flight");
+      for(std::size_t i=1;i<path.size();++i)
+        require(stair_edge(path[i-1],path[i]),"stair route skipped its continuous edge check");
+    }
+    const double barrier=19.75*resolution;
+    const auto blocked_stair=[&](const PointPose &a,const PointPose &b) {
+      return stair_edge(a,b) && !((a.x<barrier&&b.x>=barrier)||(b.x<barrier&&a.x>=barrier));
+    };
+    SurfaceGraph blocked_flight(flight,resolution,stair_config,[](const auto&){return true;},blocked_stair);
+    require(blocked_flight.plan(flight.front(),flight.back(),blocked_stair).empty(),
+            "stair connection skipped a blocked edge");
+    stair_config.max_step_height=resolution*.5;
+    SurfaceGraph high_risers(flight,resolution,stair_config,[](const auto&){return true;},stair_edge);
+    require(high_risers.plan(flight.front(),flight.back(),stair_edge).empty(),
+            "longer connection bypassed the step-height limit");
+    stair_config.max_step_height=config.max_step_height;
+    stair_config.max_slope=.2;
+    SurfaceGraph steep_flight(flight,resolution,stair_config,[](const auto&){return true;},stair_edge);
+    require(steep_flight.plan(flight.front(),flight.back(),stair_edge).empty(),
+            "longer connection bypassed the slope limit");
+  }
+  // Quantize the same 4m, 1:2 physical ramp instead of scaling its dimensions with the grid.
+  for(double resolution : {.05,.10,.20}) {
+    std::vector<PointPose> ramp;
+    for(int x=0;x<int(std::lround(4./resolution));++x) {
+      const double world_x=(x+.5)*resolution;
+      ramp.push_back({world_x,0,std::floor(.5*world_x/resolution)*resolution});
+    }
+    auto ramp_config=config;
+    ramp_config.max_slope=std::tan(std::acos(-1.)/6.);
+    ramp_config.snap_search_radius_cells=2;
+    const auto ramp_edge=[&](const PointPose &a,const PointPose &b) {
+      return std::abs(a.z-b.z)<=ramp_config.max_slope*std::abs(a.x-b.x)+1e-7 &&
+          std::abs(a.z-b.z)<=ramp_config.max_step_height+1e-7 &&
+          std::abs(a.x-b.x)<=.401;
+    };
+    SurfaceGraph ramp_graph(ramp,resolution,ramp_config,[](const auto&){return true;},ramp_edge);
+    const PointPose bottom{.4,0,.2},top{3.6,0,1.8};
+    for(bool reverse : {false,true}) {
+      const auto path=ramp_graph.plan(reverse?top:bottom,reverse?bottom:top,ramp_edge);
+      require(!path.empty(),"map resolution changed connectivity of the same physical ramp");
+      for(std::size_t i=1;i<path.size();++i)
+        require(ramp_edge(path[i-1],path[i]),"quantized ramp bypassed its metric edge contract");
+    }
+  }
   std::vector<PointPose> elevated;
   for(int x=8;x<=60;++x)for(int y=-5;y<=5;++y)elevated.push_back({x*.05,y*.05,.2});
   const auto bent_entry=[&](const PointPose &a,const PointPose &b) {
@@ -131,9 +189,11 @@ int main()try {
     return false;
   });
   require(candidate_checked,"refined candidate skipped current geometry");
-  require(fallback.size()==coarse.size(),"invalid fine candidate discarded the original corridor");
-  for(std::size_t i=0;i<coarse.size();++i)
-    require(same(fallback[i],coarse[i]),"invalid fine candidate changed the original corridor");
+  require(!fallback.empty(),"invalid fine edge prevented any valid route");
+  require(same(fallback.front(),plane_start)&&same(fallback.back(),plane_goal),"detour moved endpoints");
+  for(std::size_t i=1;i<fallback.size();++i)
+    require(!blocked(fallback[i-1],fallback[i]),"detour used the blocked edge");
+  require(length(fallback)<=length(coarse)+1e-8,"detour exceeds the valid corridor length");
   bool cancel_refinement=false;
   require(plane_graph.plan(plane_start,plane_goal,[&](const auto&a,const auto&b) {
     cancel_refinement|=blocked(a,b);

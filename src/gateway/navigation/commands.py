@@ -5,9 +5,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from runtime.msgs import NavigationCommandKind, NavigationCommandReceipt
+
 
 class CommandBoundaryError(RuntimeError):
     """Raised when a required product command cannot reach its endpoint."""
+
+    def __init__(self, message: str, *, receipt: Mapping[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.receipt = receipt
 
 
 def _has_positive_mapping_ack(result: Any) -> bool:
@@ -46,9 +52,12 @@ def submit_goal(
         result = operation(goal, task_id=task_id, request_id=request_id, action="goal", **limits)
     except Exception as exc:
         raise CommandBoundaryError(str(exc)) from exc
-    if not _has_positive_mapping_ack(result):
+    native_ack = result.get("native_ack") if isinstance(result, Mapping) else None
+    if not _has_positive_mapping_ack(result) or (
+        isinstance(native_ack, Mapping) and native_ack.get("accepted") is False
+    ):
         reason = result.get("message") if isinstance(result, Mapping) else "invalid goal service response"
-        raise CommandBoundaryError(str(reason))
+        raise CommandBoundaryError(str(reason), receipt=result if isinstance(result, Mapping) else None)
     receipt = dict(result)
     expected_task_id = str(task_id or "").strip()
     returned_task_id = str(receipt.get("task_id") or "").strip()
@@ -133,6 +142,28 @@ def _submit_task_control(
     return receipt
 
 
+def submit_speed_limit(
+    owner: Any, max_speed_mps: float, *, task_id: str, request_id: str,
+) -> dict[str, Any]:
+    commands = navigation_commands(owner)
+    operation = getattr(commands, "set_task_speed_limit", None)
+    if not callable(operation):
+        raise CommandBoundaryError("native task speed-limit capability is unavailable")
+    try:
+        receipt = operation(task_id=task_id, request_id=request_id, max_speed_mps=max_speed_mps)
+    except Exception as exc:
+        raise CommandBoundaryError(str(exc)) from exc
+    if not isinstance(receipt, NavigationCommandReceipt):
+        raise CommandBoundaryError("native task speed limit returned an invalid receipt")
+    if (receipt.kind != int(NavigationCommandKind.TASK_SPEED_LIMIT) or
+            receipt.task_id != task_id or receipt.request_id != request_id):
+        raise CommandBoundaryError("native task speed limit returned mismatched command identity")
+    if not receipt.accepted:
+        raise CommandBoundaryError(receipt.reason, receipt=receipt.to_dict())
+    return {"accepted": True, "task_id": task_id, "request_id": request_id,
+            "native_request_id": receipt.request_id, "native_ack": receipt.to_dict()}
+
+
 def submit_pause(
     owner: Any,
     reason: str,
@@ -210,4 +241,5 @@ __all__ = [
     "submit_goal",
     "submit_pause",
     "submit_resume",
+    "submit_speed_limit",
 ]

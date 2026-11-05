@@ -38,7 +38,7 @@ _DEFAULT_CAPABILITIES = (
 
 
 def test_navigation_task_enums_are_append_only_and_paused_is_not_terminal():
-    assert [int(kind) for kind in NavigationCommandKind] == [1, 2, 4, 5, 6, 7, 8, 9]
+    assert [int(kind) for kind in NavigationCommandKind] == [1, 2, 4, 5, 6, 7, 8, 9, 10]
     assert [int(state) for state in NavigationGoalState] == list(range(1, 7))
 
     terminal_states = {
@@ -97,6 +97,7 @@ class _Library:
         self.lingtu_nav_client_cancel_task_with_receipt_v1 = _Function(self._cancel_task_with_receipt)
         self.lingtu_nav_client_pause_task_with_receipt_v1 = _Function(self._pause_task_with_receipt)
         self.lingtu_nav_client_resume_task_with_receipt_v1 = _Function(self._resume_task_with_receipt)
+        self.lingtu_nav_client_set_task_speed_limit_with_receipt_v1 = _Function(self._set_task_speed_limit)
         self.lingtu_nav_client_stop = _Function(self._stop)
         self.lingtu_nav_client_stop_with_id = _Function(self._stop_with_id)
         self.lingtu_nav_client_estop = _Function(self._estop)
@@ -229,6 +230,14 @@ class _Library:
             request_id=request_id,
             kind=8,
             reason=b"pause_requested",
+        )
+        return 0
+
+    def _set_task_speed_limit(self, handle, task_id, request_id, max_speed_mps, timeout_ms, receipt):
+        self.calls.append(("speed_limit", handle, task_id, request_id, max_speed_mps, timeout_ms))
+        self._navigation_command_receipt(
+            receipt, task_id=task_id, request_id=request_id, kind=10,
+            reason=b"task_speed_limit_updated",
         )
         return 0
 
@@ -1715,3 +1724,20 @@ def test_semantic_view_query_keeps_native_handle_alive_until_call_finishes(tmp_p
     assert close_returned.is_set()
     assert query_result[0]["request_id"] == "semantic-view-1"
     assert library.calls[-1] == ("destroy", 41)
+
+
+def test_native_client_updates_task_speed_through_receipt_abi(tmp_path):
+    library = _Library()
+    client = NativeNavigationClient(
+        tmp_path / "liblingtu_nav_client.so", timeout_ms=250, library=library,
+    )
+    receipt = client.set_task_speed_limit("task-1", 0.3, request_id="speed-1")
+    client.close()
+    assert receipt.accepted
+    assert receipt.kind == 10
+    assert receipt.task_id == "task-1"
+    assert receipt.request_id == "speed-1"
+    assert library.calls == [
+        ("create", 0), ("speed_limit", 41, b"task-1", b"speed-1", 0.3, 250),
+        ("destroy", 41),
+    ]

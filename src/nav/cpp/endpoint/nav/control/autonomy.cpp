@@ -116,8 +116,7 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
       });
       result.timing.final_control_ms += elapsedMs(final_start);
       output.cmd_vel = final.decision.cmd;
-      // A feasible trajectory can still be rejected by measured-motion braking.
-      // Pending replans must not erase this independent recovery trigger.
+      // CMU recovery retains final-motion blockage across pending replans.
       if (actions_.report_final_motion_blocked &&
           (final.decision.reason == "scan_actual_motion_blocked" ||
            linearSpeed(output.cmd_vel) > 1e-6 || std::abs(output.cmd_vel.wz) > 1e-6)) {
@@ -155,7 +154,13 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
     result.delta.cmd_vel_count = input.publish_cmd_vel ? 1U : 0U;
     result.delta.output_count = 1U;
 
-    if (output.recovery_exhausted) {
+    if (output.planning_failed) {
+      result.outcome.kind = input.rolling_segment_active
+                                ? AutonomyTickOutcomeKind::kRollingRecoveryExhausted
+                                : AutonomyTickOutcomeKind::kGoalFailed;
+      result.outcome.reason = output.reason;
+      result.outcome.terminal_failure_intent = true;
+    } else if (output.recovery_exhausted) {
       result.outcome.reason = output.reason.empty() ? "local_recovery_exhausted" : output.reason;
       result.outcome.kind = input.rolling_segment_active
                                 ? AutonomyTickOutcomeKind::kRollingRecoveryExhausted

@@ -1,4 +1,6 @@
+import type { Locale } from '../i18n.ts'
 import type { PlanPreviewResponse, OdometryEvent } from '../types/index.ts'
+import { formatCommandError, isGatewayApiError } from './api.ts'
 import { operatorReasonMessage } from './navigationStatus.ts'
 
 export function navigationPreviewErrorMessage(error: string): string {
@@ -9,8 +11,22 @@ export function navigationPreviewErrorMessage(error: string): string {
   for (const prefix of ['规划失败：', '无法生成路线：']) {
     if (error.startsWith(prefix)) return prefix + operatorReasonMessage(error.slice(prefix.length), 'zh')
   }
-  if (error.startsWith('发送目标失败')) return '目标提交失败'
   return error
+}
+
+export function navigationGoalErrorMessage(error: unknown, locale: Locale): string {
+  if (isGatewayApiError(error)) {
+    if (error.errorCode === 'native_command_unconfirmed') {
+      return locale === 'zh' ? '未收到导航服务确认，请先查看当前任务，再重新操作。'
+        : 'Navigation did not confirm the request. Check the current task before trying again.'
+    }
+    if (error.errorCode === 'native_command_rejected' && error.detail && typeof error.detail === 'object'
+      && 'reason_code' in error.detail && typeof error.detail.reason_code === 'string') {
+      const reason = operatorReasonMessage(error.detail.reason_code, locale)
+      return locale === 'zh' ? `目标未接受：${reason}` : `Goal not accepted: ${reason}`
+    }
+  }
+  return formatCommandError(error, locale === 'zh' ? '发送目标失败' : 'Goal submission failed')
 }
 
 export function navigationPreviewIsCurrent(preview: PlanPreviewResponse | null, pose: Pick<OdometryEvent, 'x' | 'y' | 'z'> | null): boolean {

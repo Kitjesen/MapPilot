@@ -1,0 +1,13 @@
+# Product motion budget; physical driver limits remain in RobotConfig.
+# Each body axis allows 1 m/s; the path speed norm allows sqrt(2) m/s.
+native_nav:
+  follower:
+    max_speed_mps: 1.4142135623730951
+    max_accel_mps2: 4.0
+    max_yaw_accel_rad_s2: 4.0
+    max_yaw_rate_rad_s: 0.8  # Autonomous Products explicitly select their 1 rad/s limit.
+  braking_deceleration_mps2: 4.0
+parameters:
+  scan_follower:
+    max_vx_mps: 1.0
+    max_vy_mps: 1.0

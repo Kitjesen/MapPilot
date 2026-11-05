@@ -86,6 +86,11 @@ without a separate map-generation barrier. The endpoint owns input freshness
 and final checked output; Recovery owns only its bounded candidate search and
 execution progress.
 
+The input gate resumes on the first valid sample. The retired
+`--input-recovery-frames` and `LINGTU_NAV_INPUT_RECOVERY_FRAMES` settings had
+no effect on that rule and have been removed from native launch and MuJoCo
+acceptance configuration.
+
 Finding a collision-free path does not prove that the selected locomotion
 policy can execute it. Record the robot, policy, body part set and measured
 motion for each MuJoCo trial; do not apply historical 4998-controller results

@@ -101,6 +101,7 @@ module NavigationCommandKind {
   const long RESUME_AUTONOMY = 7;
   const long PAUSE_TASK = 8;
   const long RESUME_TASK = 9;
+  const long TASK_SPEED_LIMIT = 10;
 };
 
 module OperatorMotionAction {

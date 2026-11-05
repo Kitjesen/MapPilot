@@ -9,6 +9,14 @@ On Windows x64, use the same CMake install rules with
 `--prefix install/windows-x64/Release`. The Linux OTA packager does not package
 Windows binaries.
 
+Component defaults come from `config/system/settings/*.yaml`. Native builds
+generate `lingtu/settings.hpp` with `scripts/build/settings.py` using the project's
+existing Python/PyYAML dependency. CMake tracks both the YAML and generator:
+an ordinary rebuild updates the header after either changes. Generated headers
+stay in the build directory and are installed with public headers; never edit
+them or copy their values into C++ initializers. The direct Orbbec build script
+runs the same generator. No YAML parser is added to the native hot path.
+
 ## Field runtime
 
 | Target | Command |
@@ -162,12 +170,13 @@ can be rebuilt independently. Keep `$slamDeps` and `$ddsSdk` set to the actual
 prefixes used by that build so Windows can find their DLLs:
 
 ```powershell
-cmake --build build/slam-core-windows-x64 --config Release --target test_ltlio_mock_flow online_mapping_test --parallel 4
+cmake --build build/slam-core-windows-x64 --config Release --target test_ltlio_mock_flow online_mapping_worker_test --parallel 4
 $env:PATH = "$(Join-Path $slamDeps 'bin');$(Join-Path $ddsSdk 'bin');$env:PATH"
-ctest --test-dir build/slam-core-windows-x64 -C Release --output-on-failure -R '^(messages_ltlio_mock_flow|online_mapping)$'
+ctest --test-dir build/slam-core-windows-x64 -C Release --output-on-failure -R '^(messages_ltlio_mock_flow|online_mapping_worker)$'
 ```
 
-These two checks passed on Windows for commit `53b2845c` on 2026-09-17.
+The earlier versions of these checks passed on Windows for commit `53b2845c` on
+2026-09-17; the online worker target was renamed during the 2026-11-02 cleanup.
 They exercise native SLAM flow and synthetic online loop correction, not
 supervised robot motion or complete saved-map navigation acceptance.
 
@@ -192,8 +201,9 @@ or algorithm-validation path.
 
 ## Optional research builds
 
-- `fetch_erasor2.sh` restores the optional map-cleaning comparison source used
-  by `build_prune.sh`.
+- Optional map-cleaning experiments and their build/fetch entrypoints live in
+  [`research/maps/`](../../research/maps/README.md). `build_prune.sh` builds only
+  the production cleaner and does not configure ERASOR2, Patchwork++ or UFOMap.
 
 `fetch_orbbec_sdk.sh` fetches the field-tested standalone Orbbec SDK v2.8.7
 into ignored `build/deps/orbbec-sdk/`; the native camera does not use a ROS2

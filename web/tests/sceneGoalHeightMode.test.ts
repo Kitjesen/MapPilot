@@ -268,7 +268,7 @@ test('preview, explicit submission and the displayed circle share the requested 
     formatCommandAck: () => 'accepted',
   }
   const context = {
-    api, pendingGoal, goalAcceptanceRadius: 0.8, goalMaxSpeed: 0.4, goalYaw: Math.PI / 2,
+    api, pendingGoal, goalAcceptanceRadius: 0.8, goalMaxSpeed: 0.4 as number | null, goalYaw: Math.PI / 2,
     goalPreviewRequest: { current: 0 }, normalizeGoalHeight: (z: number) => z,
     previewDisabledReason: '', goalSendPending: false, goalPreviewPending: false,
     previewCurrent: true, canSendGoal: true,
@@ -285,7 +285,27 @@ test('preview, explicit submission and the displayed circle share the requested 
     assert.equal(request.acceptance_radius_m, 0.8)
     assert.equal(request.z, 1.25)
     assert.equal(request.yaw, Math.PI / 2, 'preview and dispatch must use the displayed target heading')
+    assert.equal(request.max_speed_mps, 0.4)
   }
+  context.goalMaxSpeed = null
+  await preview(pendingGoal.x, pendingGoal.y, pendingGoal.z)
+  await submit()
+  for (const request of requests.slice(2)) {
+    assert.equal('max_speed_mps' in JSON.parse(JSON.stringify(request)), false,
+      'default speed must leave the limit to the active navigation configuration')
+  }
+  context.goalMaxSpeed = 1.0
+  await preview(pendingGoal.x, pendingGoal.y, pendingGoal.z)
+  await submit()
+  for (const request of requests.slice(4)) assert.equal(request.max_speed_mps, 1.0)
+})
+
+test('goal speed starts and resets to the active navigation configuration', () => {
+  const state = findNode(node => ts.isVariableDeclaration(node)
+    && node.name.getText(file) === '[goalMaxSpeed, setGoalMaxSpeed]') as ts.VariableDeclaration
+  assert.ok(state.initializer && ts.isCallExpression(state.initializer))
+  assert.equal(state.initializer.arguments[0].getText(file), 'null')
+  assert.match(source, /setGoalMaxSpeed\(null\); setGoalAcceptanceRadius\(0\.45\)/)
 })
 
 test('reconnection invalidates preview while map or product changes also clear the target', () => {

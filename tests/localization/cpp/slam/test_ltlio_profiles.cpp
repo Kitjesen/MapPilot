@@ -1,4 +1,5 @@
 #include "slam.hpp"
+#include "profile.hpp"
 #include "ltlio/frontend.hpp"
 
 #include <Eigen/Geometry>
@@ -54,7 +55,7 @@ struct Sensor {
 };
 
 Sensor sensor(const std::filesystem::path& profile) {
-  const auto yaml = YAML::LoadFile(profile.string());
+  const auto yaml = readProfile(profile);
   Sensor value;
   value.config.config_path = profile.string();
   value.body_from_imu = matrix(yaml["navigation_body_from_imu_rotation"]);
@@ -242,7 +243,7 @@ std::filesystem::path noiseProfile(const std::filesystem::path& profile,
                                   const std::filesystem::path& directory,
                                   const std::string& name,
                                   const YAML::Node& densities) {
-  auto yaml = YAML::LoadFile(profile.string());
+  auto yaml = readProfile(profile);
   for (const char* key : {"na", "ng", "nba", "nbg"}) yaml.remove(key);
   for (const auto& entry : densities)
     yaml[entry.first.as<std::string>()] = entry.second;
@@ -311,7 +312,7 @@ void checkCalibratedImuNoise(const std::filesystem::path& profile,
 void checkElevatorEntryProfile(const std::filesystem::path& profile,
                               const std::filesystem::path& directory) {
   std::filesystem::create_directories(directory);
-  const auto base = YAML::LoadFile(profile.string());
+  const auto base = readProfile(profile);
   auto write = [&](const std::string& name, const YAML::Node& yaml) {
     const auto path = directory / (name + ".yaml");
     std::ofstream file(path);
@@ -352,6 +353,35 @@ void checkElevatorEntryProfile(const std::filesystem::path& profile,
   }
   std::cout << "elevator_entry: backend YAML validation and accepted-scan behavior passed\n";
 }
+void checkSharedProfile(const std::filesystem::path& source, const std::filesystem::path& output) {
+  std::filesystem::create_directories(output);
+  YAML::Node common;
+  common["slam"] = readProfile(source);
+  common["slam"]["elevator_mode"] = "invalid";
+  common["slam"]["elevator_entry"]["hold_s"] = 3.25;
+  const auto common_path = output / "common.yaml";
+  std::ofstream(common_path) << common;
+  YAML::Node profile;
+  profile["defaults"] = "common.yaml";
+  const auto path = output / "robot.yaml";
+  std::ofstream(path) << profile;
+  SlamConfig config;
+  config.config_path = path.string();
+  auto backend = makeLtlioBackend();
+  require(backend->configure(config).message == "invalid_elevator_mode",
+          "native backend did not read the common algorithm settings");
+  profile["elevator_mode"] = "off";
+  profile["elevator_entry"]["range_m"] = 4.25;
+  std::ofstream(path) << profile;
+  require(backend->configure(config).ok, "installation override did not replace common setting");
+  near(readProfile(path)["scan_resolution"].as<double>(), 0.25, 1e-12,
+       "common scan resolution was not retained with an installation override");
+  const auto entry = readProfile(path)["elevator_entry"];
+  near(entry["hold_s"].as<double>(), 3.25, 1e-12,
+       "partial elevator override discarded the shared hold time");
+  near(entry["range_m"].as<double>(), 4.25, 1e-12,
+       "installation elevator range did not override the common setting");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -361,6 +391,7 @@ int main(int argc, char** argv) {
       ("lingtu-profiles-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   try {
     const auto go2 = repository / "config/robots/unitree/go2/sensors/mid360_ltlio.yaml";
+    checkSharedProfile(go2, output / "shared");
     if (argc > 1) {
       if (std::string(argv[1]) == "--elevator-entry" && argc == 2) {
         checkElevatorEntryProfile(go2, output / "elevator-entry");

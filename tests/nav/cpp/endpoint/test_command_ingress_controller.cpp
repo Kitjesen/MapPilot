@@ -275,6 +275,30 @@ void testTaskIdStableAcrossRequestRetries() {
           "one request id must not alias two task ids");
   require(dispatches == 1, "conflicting task identity dispatched work");
 }
+void testSpeedLimitUpdatesAreRequestScoped() {
+  CommandIngressController controller;
+  int dispatches = 0;
+  const auto dispatch = [&](NavigationCommandKind, const CommandPayload &) {
+    ++dispatches;
+    return CommandAck{true, "task_speed_limit_updated"};
+  };
+  auto update = request("operator", "speed-1", NavigationCommandKind::TaskSpeedLimit);
+  update.payload.goal[7] = 0.6;
+  require(!controller.handle(update, dispatch).ack.accepted && dispatches == 0,
+          "speed update without task identity dispatched");
+  update.task_id = "navigation-task-1";
+  require(controller.handle(update, dispatch).dispatched,
+          "first speed update did not dispatch");
+  require(controller.handle(update, dispatch).replayed && dispatches == 1,
+          "speed update retry was not idempotent");
+  update.payload.goal[7] = 0.3;
+  require(controller.handle(update, dispatch).ack.reason == "idempotency_conflict",
+          "changed speed under the same request id did not conflict");
+  update.request_id = "speed-2";
+  require(controller.handle(update, dispatch).dispatched && dispatches == 2,
+          "a subsequent speed update for the same task was suppressed");
+}
+
 void testPendingControlReceiptCompletesWithOriginalRequest() {
   CommandIngressController controller;
   const auto control = request("client-a", "resume-wait", NavigationCommandKind::ResumeAutonomy);
@@ -308,6 +332,7 @@ int main() {
     testTaskIdStableAcrossRequestRetries();
     testTaskPauseResumeCommandsAreDistinctUserActions();
     testPendingControlReceiptCompletesWithOriginalRequest();
+    testSpeedLimitUpdatesAreRequestScoped();
   } catch (const std::exception &exc) {
     std::fprintf(stderr, "test_command_ingress_controller: FAIL: %s\n", exc.what());
     return 1;

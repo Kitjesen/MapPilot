@@ -39,6 +39,7 @@ using lingtu::nav::endpoint::MotionStopBarrier;
 using lingtu::nav::endpoint::MotionStopTerminalBarrierResult;
 using lingtu::nav::endpoint::NavigationGoalStatusOutbox;
 using lingtu::nav::endpoint::StopConfirmationState;
+using lingtu::nav::endpoint::StopConfirmationEvidencePolicy;
 
 void require(bool condition, const char *message) {
   if (!condition) {
@@ -50,6 +51,7 @@ struct Fixture {
   lingtu::nav::plan::MapIdentity map_identity{"field", 7, "map"};
   bool writes_allowed{true};
   StopConfirmationState confirmation{StopConfirmationState::Confirmed};
+  std::vector<std::optional<StopConfirmationEvidencePolicy>> evidence_policies;
   std::vector<GoalPlanStatus> observed;
   std::vector<GoalPlanStatus> write_attempts;
   std::vector<std::string> reported_errors;
@@ -132,7 +134,10 @@ struct Fixture {
     actions.publish_zero = [] { return true; };
     actions.last_output_sequence = [] { return 1U; };
     actions.publish_sequenced_zero = [] { return std::optional<std::uint64_t>{1U}; };
-    actions.confirm_zero = [this](std::uint64_t) { return confirmation; };
+    actions.confirm_zero = [this](std::uint64_t, auto policy) {
+      evidence_policies.push_back(policy);
+      return confirmation;
+    };
     actions.clear_global_path = [] {};
     return actions;
   }
@@ -187,7 +192,74 @@ struct Fixture {
     require(coordinator.terminalPending(), "fixture terminal intent was not retained");
     return result;
   }
+
+  GoalReplanRuntimeResult reachedIntent() {
+    lingtu::nav::endpoint::GoalReplanRuntimeFrameInput frame;
+    frame.steady_now_s = frame.wall_now_s = 10.0;
+    frame.fresh_admission = admission();
+    lingtu::nav::endpoint::GoalReplanRuntimeAutonomyEvent event;
+    event.outcome.kind = lingtu::nav::endpoint::AutonomyTickOutcomeKind::kGoalReached;
+    event.goal_snapshot = goal_plan.snapshot();
+    const auto result = coordinator.handleAutonomyOutcome(frame, event);
+    require(result.terminal_after_stop.has_value(), "fixture did not create a reached intent");
+    return result;
+  }
 };
+
+void testOnlyReachedUsesDriverAckWithoutAdditionalOdometry() {
+  Fixture reached;
+  reached.activateGoal();
+  reached.confirmation = StopConfirmationState::Pending;
+  const auto intent = reached.reachedIntent();
+  require(!reached.transaction.advance(intent).action_committed,
+          "reached committed before the zero command ACK");
+  require(reached.evidence_policies.back() == StopConfirmationEvidencePolicy::DriverAckOnly,
+          "reached retained the additional odometry wait");
+  (void)reached.motion_stop.poll();
+  require(reached.evidence_policies.back() == StopConfirmationEvidencePolicy::DriverAckOnly,
+          "pending reached transaction lost its evidence policy");
+  reached.confirmation = StopConfirmationState::Confirmed;
+  require(reached.transaction.advance(reached.coordinator.replayPendingTerminal()).delivery_acknowledged,
+          "reached did not finish on the matching zero ACK");
+
+  Fixture failed;
+  failed.activateGoal();
+  require(failed.transaction.advance(failed.terminalIntent()).delivery_acknowledged,
+          "failed terminal did not complete");
+  require(!failed.evidence_policies.back(), "failed terminal weakened its stop evidence");
+}
+
+void testSafetyStopAndEstopReplaceReachedEvidencePolicy() {
+  for (const bool estop : {false, true}) {
+    Fixture fixture;
+    fixture.activateGoal();
+    fixture.confirmation = StopConfirmationState::Pending;
+    (void)fixture.transaction.advance(fixture.reachedIntent());
+    require(fixture.evidence_policies.back() == StopConfirmationEvidencePolicy::DriverAckOnly,
+            "reached fixture did not select ACK-only");
+    const auto stopped = estop ? fixture.transaction.estopWhileTerminalPending("operator_request")
+                               : fixture.transaction.stopWhileTerminalPending();
+    require(stopped.pending && !stopped.terminal_committed,
+            "safety replacement committed before complete stop evidence");
+    require(!fixture.evidence_policies.back(),
+            "safety replacement reused the reached ACK-only policy");
+    (void)fixture.motion_stop.poll();
+    require(!fixture.evidence_policies.back(),
+            "pending safety replacement recovered the weaker reached policy");
+    const auto replay = fixture.transaction.advance(fixture.coordinator.replayPendingTerminal());
+    require(!replay.action_committed && !fixture.evidence_policies.back(),
+            "ordinary terminal replay weakened the safety replacement policy");
+    if (estop) {
+      require(fixture.latched_estop_reasons == std::vector<std::string>{"operator_request"},
+              "ordinary replay overwrote the latched estop reason");
+      (void)fixture.transaction.stopWhileTerminalPending();
+      (void)fixture.transaction.advance(fixture.coordinator.replayPendingTerminal());
+      require(!fixture.evidence_policies.back() &&
+                  fixture.latched_estop_reasons == std::vector<std::string>{"operator_request"},
+              "a later stop weakened the estop evidence or changed its latch reason");
+    }
+  }
+}
 
 void testSuccessfulTerminalTransactionCommitsDeliversAndAcknowledges() {
   Fixture fixture;
@@ -449,6 +521,8 @@ void testTaskCancelAcceptsPendingStopWithoutEarlyTerminal() {
 
 int main() {
   try {
+    testOnlyReachedUsesDriverAckWithoutAdditionalOdometry();
+    testSafetyStopAndEstopReplaceReachedEvidencePolicy();
     testTaskCancelAcceptsPendingStopWithoutEarlyTerminal();
     testSuccessfulTerminalTransactionCommitsDeliversAndAcknowledges();
     testPendingDeliveryReplayAcknowledgesWithoutRepeatingCommit();

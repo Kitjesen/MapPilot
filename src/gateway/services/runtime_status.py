@@ -513,6 +513,11 @@ def _frame_mismatch(
     }
 
 
+def robot_model(gw: Any) -> str | None:
+    plan = getattr(gw, "_compiled_run_plan", None)
+    return str(getattr(plan, "robot", None) or os.environ.get("LINGTU_ROBOT") or "").strip() or None
+
+
 def runtime_identity(gw: Any | None = None) -> dict[str, Any]:
     """Return the public Gateway runtime identity."""
 

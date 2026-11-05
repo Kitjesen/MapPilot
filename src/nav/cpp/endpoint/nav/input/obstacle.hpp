@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -18,29 +20,29 @@ std::size_t appendPredictedObstacleCloud(std::vector<float> &out,
                                          std::size_t max_prediction_points);
 
 struct MotionLayerConfig {
-  double voxel_size_m{0.08};
-  double decay_s{0.45};
+  double voxel_size_m{::lingtu::settings::local::native_nav::scan_motion_voxel_size_m};
+  double decay_s{::lingtu::settings::local::native_nav::live_obstacle_decay_s};
   double inflation_radius_m{0.12};
-  double ray_clear_max_range_m{3.5};
-  double ray_clearing_interval_s{0.10};
-  std::size_t max_clearing_rays{512};
-  int min_hits{1};
+  double ray_clear_max_range_m{::lingtu::settings::local::native_nav::live_obstacle_ray_clear_max_range_m};
+  double ray_clearing_interval_s{::lingtu::settings::local::native_nav::live_obstacle_ray_clearing_interval_s};
+  std::size_t max_clearing_rays{::lingtu::settings::local::native_nav::live_obstacle_max_clearing_rays};
+  int min_hits{::lingtu::settings::local::native_nav::live_obstacle_min_hits};
   std::uint32_t static_min_frames{3};
   std::uint32_t free_min_frames{2};
   std::uint32_t static_free_min_frames{4};
-  std::size_t dynamic_min_cells{8};
+  std::size_t dynamic_min_cells{::lingtu::settings::local::native_nav::dynamic_min_cells};
   // Frames with cluster-level evidence that occupied returns entered observed free space.
   std::uint32_t dynamic_free_min_frames{3};
-  double dynamic_min_speed_mps{0.25};
+  double dynamic_min_speed_mps{::lingtu::settings::local::native_nav::dynamic_min_speed_mps};
   double dynamic_max_speed_mps{2.50};
   double dynamic_max_z_speed_mps{0.75};
   double dynamic_min_dir_cos{0.30};
   double dynamic_min_height_m{0.10};
   double dynamic_max_height_m{2.20};
-  std::uint32_t dynamic_confirm_frames{4};
+  std::uint32_t dynamic_confirm_frames{::lingtu::settings::local::native_nav::dynamic_confirm_frames};
   double dynamic_track_ttl_s{0.60};
   double dynamic_match_distance_m{0.50};
-  bool ray_clearing_enabled{true};
+  bool ray_clearing_enabled{::lingtu::settings::local::native_nav::live_obstacle_ray_clearing};
 };
 
 struct MotionLayerStats {

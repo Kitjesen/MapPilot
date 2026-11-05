@@ -190,19 +190,8 @@ std::optional<BoundedGoalReplanGoal> GoalReplanRuntimeCoordinator::trackedGoal()
                                *tracked.map_identity};
 }
 
-GoalPlanAdmissionContext
-GoalReplanRuntimeCoordinator::normalizedAdmission(const GoalPlanAdmissionContext &context) {
-  GoalPlanAdmissionContext result = context;
-  // replanActive uses the existing blocker contract for execution-input recovery.
-  if (!result.input_ready && result.driver_control_blocker.empty()) {
-    result.driver_control_blocker =
-        inputGateStopReason(result.input_gate_reason);
-  }
-  return result;
-}
-
 std::string
-GoalReplanRuntimeCoordinator::admissionFailure(const GoalReplanRuntimeFrameInput &input,
+GoalReplanRuntimeCoordinator::replacementStateFailure(const GoalReplanRuntimeFrameInput &input,
                                                const GoalPlanSnapshot &snapshot) {
   const auto &context = input.fresh_admission;
   if (!std::isfinite(context.autonomy_request_not_before_s) ||
@@ -357,6 +346,12 @@ GoalReplanRuntimeResult GoalReplanRuntimeCoordinator::replayPendingTerminal() co
   GoalReplanRuntimeResult result;
   (void)surfacePendingTerminal(result);
   return result;
+}
+
+void GoalReplanRuntimeCoordinator::requirePendingTerminalOdometry() {
+  if (pending_terminal_stop_policy_ == TerminalStopPolicy::kReached) {
+    pending_terminal_stop_policy_ = TerminalStopPolicy::kGenericStop;
+  }
 }
 
 bool GoalReplanRuntimeCoordinator::terminalPending() const {
@@ -585,7 +580,7 @@ GoalReplanRuntimeCoordinator::handleGoalReached(const GoalReplanRuntimeFrameInpu
   }
 
   attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Reached, kGoalReachedReason,
-                         false);
+                         false, TerminalStopPolicy::kReached);
   return result;
 }
 
@@ -911,7 +906,7 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
   }
 
   if (replacement_plan_in_progress_) {
-    const std::string admission_error = admissionFailure(input, before);
+    const std::string admission_error = replacementStateFailure(input, before);
     const bool input_hold =
         !input.fresh_admission.input_ready &&
         admission_error == inputGateStopReason(input.fresh_admission.input_gate_reason);
@@ -1215,15 +1210,7 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
       return result;
     }
 
-    const std::string admission_error = admissionFailure(input, replan_snapshot);
-    if (!admission_error.empty()) {
-      (void)bounded_.completeReplan(*current, input.steady_now_s, false);
-      result.reason = admission_error;
-      attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed, result.reason,
-                             true);
-      return result;
-    }
-    GoalPlanAdmissionContext replan_admission = normalizedAdmission(input.fresh_admission);
+    GoalPlanAdmissionContext replan_admission = input.fresh_admission;
     replan_admission.temporary_overlay = {};
     const GoalPlanSubmitResult started = goal_plan_.replanActive(replan_admission);
     if (!started.accepted) {

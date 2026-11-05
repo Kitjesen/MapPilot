@@ -1,6 +1,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -174,30 +175,6 @@ int runTests() {
 
   {
     std::vector<GoalPlanStatus> goal_statuses;
-    bool goal_preempted = false;
-    GoalPlanController observed_controller(
-        [](const lingtu::nav::plan::GlobalPlanRequest &input,
-           const lingtu::nav::plan::GlobalPlanCancelCheck &cancel) {
-          require(input.observed_free && input.observed_free({{1,2,3},{.1,.1,.1}}),
-                  "goal request lost the live free snapshot");
-          require(input.observed_occupied && input.observed_occupied({1,2,3},.2,.1,.3,false),
-                  "goal request lost the raw occupied snapshot");
-          return planImmediately(input,cancel);
-        }, make_admission_actions(&goal_statuses,&goal_preempted,true));
-    auto observed_context=context;
-    observed_context.observed_free=[](const auto &box) { return box.center.z==3; };
-    observed_context.observed_occupied=[](const auto &center, double radius,
-                                        double below, double above, bool hemisphere) {
-      return center.z==3 && radius==.2 && below==.1 && above==.3 && !hemisphere;
-    };
-    require(observed_controller.submit(request,observed_context).accepted,
-            "observed goal fixture could not start");
-    require(waitForCompletion(observed_controller,context.frame_epoch,20.0).path_activated,
-            "live snapshot callbacks did not reach the asynchronous global job");
-  }
-
-  {
-    std::vector<GoalPlanStatus> goal_statuses;
     std::vector<GoalPlanPathActivation> activations;
     bool goal_preempted = false;
     auto goal_actions = make_admission_actions(&goal_statuses, &goal_preempted, true);
@@ -209,10 +186,6 @@ int runTests() {
            const lingtu::nav::plan::GlobalPlanCancelCheck &cancel) {
           auto result = planImmediately(input, cancel);
           result.path.back().x -= 0.14;
-          result.support_surface=[](const lingtu::nav::collision::Vec3 &ground,
-                                    double tolerance) -> std::optional<double> {
-            return std::abs(ground.z)<=tolerance ? std::optional<double>{0.0} : std::nullopt;
-          };
           return result;
         }, std::move(goal_actions));
     require(shifted_controller.submit(request, context).accepted,
@@ -224,9 +197,6 @@ int runTests() {
                 activations.front().requested_goal->x == request.target->position.x &&
                 activations.front().path.back().x == request.target->position.x - 0.14,
             "goal activation replaced the requested arrival position with a shifted endpoint");
-    require(activations.front().support_surface &&
-                activations.front().support_surface({0,0,0},.05)==std::optional<double>{0.0},
-            "goal activation lost the immutable reconstructed support query");
   }
 
   for (int support_case = 0; support_case < 4; ++support_case) {
@@ -737,9 +707,8 @@ int runTests() {
   expect_resume_rejection(blocked_resume_context, "driver_control_stale");
 
   blocked_resume_context.driver_control_blocker = "profile_transition";
-  blocked_resume_context.profile_transition_pending = true;
   blocked_resume_context.input_ready = false;
-  expect_resume_wait(blocked_resume_context, "resume_waiting_for_profile");
+  expect_resume_rejection(blocked_resume_context, "profile_transition");
   blocked_resume_context.motion_allowed = false;
   expect_resume_rejection(blocked_resume_context, "estop_latched");
 
@@ -828,6 +797,12 @@ int runTests() {
                 observed_requests.front().temporary_overlay.empty(),
             "ordinary planning unexpectedly carried a temporary overlay");
 
+    auto invalid_replan = overlay_context;
+    invalid_replan.map_position->x = std::numeric_limits<double>::quiet_NaN();
+    require(overlay_controller.replanActive(invalid_replan).reason == "invalid_replan_admission" &&
+                observed_requests.size() == 1U && !overlay_controller.snapshot().busy,
+            "replan admission submitted an invalid start to the planner");
+
     require(overlay_controller.replanActive(overlay_context).accepted,
             "overlay replan was rejected");
     overlay_completion = {};
@@ -885,15 +860,13 @@ int runTests() {
     body->parts.push_back(box);
     auto body_context = context;
     body_context.body = body;
-    body_context.map_yaw_rad = 0.7;
 
     require(body_controller.submit(request, body_context).accepted,
             "body goal was rejected");
     require(wait_body_completion().path_activated && body_requests.size() == 1U,
             "body goal did not activate");
-    require(body_requests.front().body == body && body_requests.front().start.yaw == 0.7 &&
-                body_requests.front().goal.yaw == request.target->yaw,
-            "goal admission dropped the body, start yaw or optional goal yaw");
+    require(!body_requests.front().start.yaw && !body_requests.front().goal.yaw,
+            "global request must carry XYZ only");
 
     require(body_activations.size() == 1U && body_activations.front().body == body &&
                 body_activations.front().path.size() == 2U &&
@@ -905,13 +878,13 @@ int runTests() {
     fresh_body->margin_m = 0.03;
     body_context.body = fresh_body;
     body_context.map_position = nav_kernel::Vec3{2.0, 3.0, 0.5};
-    body_context.map_yaw_rad = -0.4;
 
     require(body_controller.replanActive(body_context).accepted,
             "body replan was rejected");
     require(wait_body_completion().path_activated && body_requests.size() == 2U,
             "body replan did not activate");
-    require(body_requests.back().body == fresh_body && body_requests.back().start.x == 2.0 &&
+    require(body_requests.back().start.x == 2.0 &&
+                !body_requests.back().start.yaw && !body_requests.back().goal.yaw &&
                 body_activations.back().body == fresh_body &&
                 body_activations.back().pose_points.empty(),
             "XYZ replan reused an old model or added mandatory heading stages");
@@ -921,15 +894,14 @@ int runTests() {
     replacement.task_id = "replacement-body-task";
     replacement.request_id = "replacement-body-goal";
     replacement.target->yaw.reset();
-    body_context.map_yaw_rad = 1.0;
     require(body_controller.submit(replacement, body_context).accepted,
             "replacement body goal was rejected");
     auto replacement_completion = wait_body_completion();
     require(replacement_completion.terminal_after_stop.has_value() &&
                 !replacement_completion.path_activated && body_activations.size() == 2U,
             "replacement body route bypassed the active task stop barrier");
-    require(!body_requests.back().goal.yaw && body_requests.back().start.yaw == 1.0,
-            "replacement fabricated a goal yaw or lost the fresh start yaw");
+    require(!body_requests.back().goal.yaw && !body_requests.back().start.yaw,
+            "replacement global request must carry XYZ only");
     replacement_completion.terminal_after_stop->commit();
     require(body_controller.activateDeferredReplacement(51.0, body_context).path_activated,
             "deferred replacement body route did not activate after stop");
@@ -956,6 +928,57 @@ int runTests() {
     require(invalid_completion.completion_consumed && !invalid_completion.counted_failure &&
                 invalid_activated,
             "XYZ-only result was incorrectly rejected because body headings were absent");
+  }
+
+  {
+    std::vector<GoalPlanStatus> speed_statuses;
+    std::vector<GoalPlanPathActivation> speed_activations;
+    bool speed_preempted = false;
+    auto speed_actions = make_admission_actions(&speed_statuses, &speed_preempted, true);
+    speed_actions.activate_path = [&](const GoalPlanPathActivation &activation) {
+      speed_activations.push_back(activation);
+    };
+    GoalPlanController speed_controller(planImmediately, std::move(speed_actions));
+    auto speed_request = request;
+    speed_request.target->max_speed_mps = 1.0;
+    require(!speed_controller.setTaskSpeedLimit(request.task_id, 0.4, 1.0).first,
+            "speed update accepted without an active task");
+    require(speed_controller.submit(speed_request, context).accepted &&
+                waitForCompletion(speed_controller, context.frame_epoch, 60.0).path_activated,
+            "speed fixture did not activate");
+    const auto before = speed_controller.snapshot();
+    const auto status_count = speed_statuses.size();
+    for (double invalid : {0.0, -1.0, 1.01, std::numeric_limits<double>::infinity(),
+                           std::numeric_limits<double>::quiet_NaN()}) {
+      require(!speed_controller.setTaskSpeedLimit(request.task_id, invalid, 1.0).first,
+              "invalid speed limit was accepted");
+    }
+    require(!speed_controller.setTaskSpeedLimit("other-task", 0.4, 1.0).first,
+            "speed update changed another task");
+    require(speed_controller.setTaskSpeedLimit(request.task_id, 0.6, 1.0).first,
+            "active task speed update was rejected");
+    const auto after = speed_controller.snapshot();
+    require(after.active_task_id == before.active_task_id &&
+                after.active_request_id == before.active_request_id &&
+                after.active_goal_epoch == before.active_goal_epoch && !after.busy &&
+                speed_activations.size() == 1 && speed_statuses.size() == status_count,
+            "speed update reset the route, lifecycle or task identity");
+    require(speed_controller.replanActive(context).accepted,
+            "speed fixture replan was rejected");
+    require(speed_controller.setTaskSpeedLimit(request.task_id, 0.3, 1.0).first,
+            "in-flight replan blocked the task speed update");
+    require(waitForCompletion(speed_controller, context.frame_epoch, 61.0).path_activated &&
+                speed_activations.back().max_speed_mps == 0.3,
+            "in-flight replan restored its captured higher speed limit");
+    require(speed_controller.replanActive(context).accepted &&
+                waitForCompletion(speed_controller, context.frame_epoch, 62.0).path_activated &&
+                speed_activations.back().max_speed_mps == 0.3,
+            "subsequent replan lost the task speed limit");
+    auto terminal = speed_controller.deferActiveTerminalWithTicket(
+        NavigationGoalState::Reached, "goal_reached");
+    terminal.commit();
+    require(!speed_controller.setTaskSpeedLimit(request.task_id, 0.4, 1.0).first,
+            "completed task accepted a speed update");
   }
 
   {

@@ -72,6 +72,27 @@ std::vector<Vec3> straightPath(double length = 3.0) {
 
 }  // namespace
 
+TEST(FollowerRecovery, FixedRotationKeepsRequestedDirectionAndRate) {
+  for (const int direction : {-1, 0, 1}) {
+    const auto command = Follower::rotationCommand(direction, 0.7);
+    EXPECT_DOUBLE_EQ(command.vx, 0.0);
+    EXPECT_DOUBLE_EQ(command.vy, 0.0);
+    EXPECT_DOUBLE_EQ(command.wz, direction * 0.7);
+  }
+}
+
+TEST(FollowerRecovery, ShortLateralEscapeMovesWithoutTurningOrPrematureArrival) {
+  Follower follower;
+  FollowerParams ordinary;
+  ordinary.stopDisThre = 0.3;
+  const auto params = recoveryFollowerParams(ordinary, 0.4, 1.0);
+  const auto command = followPath(follower, {{0, 0, 0}, {0, -0.2, 0}}, params, 1.0).cmd;
+  EXPECT_NEAR(command.vx, 0.0, 1e-12);
+  EXPECT_LT(command.vy, 0.0);
+  EXPECT_DOUBLE_EQ(command.wz, 0.0);
+  EXPECT_LE(std::hypot(command.vx, command.vy), 0.4);
+}
+
 TEST(FollowerPath, AcceleratesUsingElapsedControlTime) {
   FollowerParams params;
   params.maxSpeed = 1.0;
@@ -118,6 +139,7 @@ TEST(FollowerSpline, TangentModeTracksSplineCurvatureWithoutWaitingForYawError) 
   const double curvatureRate=(velocity.x()*acceleration.y()-velocity.y()*acceleration.x())/
       velocity.head<2>().squaredNorm();
   auto params=FollowerParams{};params.spline.timeForward=0;
+  params.maxYawAccelRadS2 = 0.0;
   Follower follower;
   const auto output=followSpline(follower,spline,params,1,{position.x(),position.y(),position.z()},yaw);
   EXPECT_NEAR(output.tracking.headingErrorRad,0,1e-12);
@@ -191,6 +213,7 @@ TEST(FollowerPath, DirectionThresholdControlsLinearAcceleration) {
 TEST(FollowerPath, CmuProfileMatchesUpstreamAndKeepsDriveMode) {
   FollowerParams base;
   base.maxSpeed = 0.5;
+  base.maxAccel = 2.0;
   base.maxYawRateRadS = 0.55;
   base.headingAlignEnterRad = 0.8;
   base.headingAlignExitRad = 0.3;
@@ -283,6 +306,7 @@ TEST(FollowerPath, CmuDeceleratesInsteadOfHardStoppingForHeadingError) {
 TEST(FollowerPath, YawRateLimitUsesRadiansPerSecond) {
   FollowerParams params;
   params.maxYawRateRadS = 0.4;
+  params.maxYawAccelRadS2 = 0.0;
   params.yawRateGain = 10.0;
   params.stopYawRateGain = 10.0;
   params.maxAccel = 100.0;
@@ -449,6 +473,7 @@ TEST(FollowerPath, FixedOffsetCommandMatchesGolden) {
   params.maxSpeed = 1.0;
   params.maxAccel = 1000.0;
   params.maxYawRateRadS = M_PI / 2.0;
+  params.maxYawAccelRadS2 = 0.0;
   params.headingAlignEnterRad = 1.5;
   params.headingAlignExitRad = 0.75;
   params.twoWayDrive = false;
@@ -505,7 +530,7 @@ TEST(FollowerSpline, RepeatedPhysicalTimeDoesNotRunAhead) {
   EXPECT_NEAR(resumed.cmd.vx - moving.cmd.vx, 0.05 * 0.1 * params.spline.positionGain, 1e-9);
 }
 
-TEST(FollowerSpline, DefaultsUseLingTuOneMeterPerSecondMotionLimits) {
+TEST(FollowerSpline, DefaultsUseSharedBodyAxisAndYawLimits) {
   const SplineFollowerParams params;
 
   EXPECT_DOUBLE_EQ(params.timeForward, 0.8);
@@ -514,7 +539,7 @@ TEST(FollowerSpline, DefaultsUseLingTuOneMeterPerSecondMotionLimits) {
   EXPECT_DOUBLE_EQ(params.yawGain, 1.5);
   EXPECT_DOUBLE_EQ(params.maxVx, 1.0);
   EXPECT_DOUBLE_EQ(params.maxVy, 1.0);
-  EXPECT_DOUBLE_EQ(params.maxYawRateRadS, 1.0);
+  EXPECT_DOUBLE_EQ(params.maxYawRateRadS, 0.8);
   EXPECT_DOUBLE_EQ(params.finishDistance, 0.15);
 }
 
@@ -1038,6 +1063,7 @@ TEST(FollowerSpline, UsesOfficialFeedForwardAndLiveWorldPoseError) {
 TEST(FollowerSpline, ResolvesRequestedSpeedIntoControllerLimits) {
   FollowerParams params;
   params.maxAccel = 1000.0;
+  params.maxSpeed = 1.0;
   params.spline.positionGain = 0.0;
   params.spline.headingErrorThreshold = 2.0;
   const SplineTarget trajectory =

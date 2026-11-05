@@ -49,13 +49,13 @@ test('a locked visual target does not claim that the robot is moving', () => {
 
   assert.equal(view.visual.label, '目标已锁定')
   assert.equal(view.motion.observation, '静止观测')
-  assert.equal(view.motion.stopConfirmation, '未请求停稳')
+  assert.equal(view.motion.stopConfirmation, '未请求停止确认')
   assert.equal(view.motion.stopConfirmed, false)
   assert.doesNotMatch(`${view.visual.label}${view.motion.observation}`, /正在跟人|已停稳/)
 })
 
 test('normal native motion and visual cancellation receipts do not become failures', () => {
-  for (const reason of ['motion_clear', 'nonzero_output_published', 'stop_confirmed']) {
+  for (const reason of ['motion_clear', 'nonzero_output_published', 'stop_confirmed', 'zero_command_accepted']) {
     const view = presentVisualFollowStatus(visual({
       navigation_state: 'cancel_requested', navigation_reason: 'visual_servo_stop',
     }), navigation({
@@ -89,7 +89,7 @@ test('reacquisition and verification reasons explain the visual stage', () => {
   assert.equal(position.visual.message, 'The observed position was rejected')
 })
 
-test('only confirmed stop confirmation reports a confirmed physical stop', () => {
+test('stop command confirmation remains separate from observed motion', () => {
   for (const stop_confirmation of ['NOT_REQUESTED', 'PENDING', 'FAILED', 'UNKNOWN'] as const) {
     const view = presentVisualFollowStatus(visual({ state: 'stopping' }), navigation({
       motion: {
@@ -112,7 +112,7 @@ test('only confirmed stop confirmation reports a confirmed physical stop', () =>
     },
   }), 'zh')
   assert.equal(confirmed.motion.stopConfirmed, true)
-  assert.equal(confirmed.motion.stopConfirmation, '已确认停稳')
+  assert.equal(confirmed.motion.stopConfirmation, '停止命令已确认')
 })
 
 test('native task reasons are attached to follow navigation only for the same task', () => {
@@ -142,7 +142,7 @@ test('navigation hold remains separate from visual target visibility', () => {
   assert.equal(view.navigation?.message, '检测到近场障碍，已请求停车。')
   assert.equal(view.motion.permission, '运动保持')
   assert.equal(view.motion.observation, '运动中')
-  assert.equal(view.motion.stopConfirmation, '等待停稳确认')
+  assert.equal(view.motion.stopConfirmation, '等待停止确认')
 })
 
 test('accepted acknowledgement yields to the current matching native hold', () => {

@@ -116,7 +116,7 @@ struct Fixture {
     actions.publish_zero = [] { return true; };
     actions.last_output_sequence = [] { return 1U; };
     actions.publish_sequenced_zero = [] { return std::optional<std::uint64_t>{1U}; };
-    actions.confirm_zero = [](std::uint64_t) { return StopConfirmationState::Confirmed; };
+    actions.confirm_zero = [](std::uint64_t, auto) { return StopConfirmationState::Confirmed; };
     actions.clear_global_path = [] {};
     return actions;
   }

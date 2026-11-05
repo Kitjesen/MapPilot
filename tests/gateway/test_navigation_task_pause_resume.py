@@ -404,3 +404,49 @@ def test_task_pause_rejects_an_ack_with_the_wrong_identity_or_state(
     assert response.status_code == 409
     assert response.json()["error"] == "native_command_rejected"
 
+
+
+def test_speed_limit_route_preserves_task_and_uses_native_receipt() -> None:
+    from runtime.msgs import NavigationCommandKind, NavigationCommandReceipt
+
+    class Commands:
+        def __init__(self):
+            self.calls = []
+
+        def set_task_speed_limit(self, *, task_id, request_id, max_speed_mps):
+            self.calls.append((task_id, request_id, max_speed_mps))
+            return NavigationCommandReceipt(
+                True, int(NavigationCommandKind.TASK_SPEED_LIMIT), task_id,
+                request_id, time.time(), "task_speed_limit_updated",
+            )
+
+    commands = Commands()
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway.on_system_modules({"nav.commands": commands})
+    assert gateway._lease.acquire("web", 30.0)
+    client = TestClient(gateway._app)
+    response = client.post(
+        "/api/v1/navigation/tasks/task-1/speed-limit",
+        json={"client_id": "web", "request_id": "speed-1", "max_speed_mps": 0.3},
+    )
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["task_id"] == "task-1"
+    assert payload["native_ack"]["kind"] == 10
+    assert payload["native_ack"]["reason"] == "task_speed_limit_updated"
+    assert payload["execution_confirmed"] is False
+    assert commands.calls == [("task-1", "speed-1", 0.3)]
+    conflict = client.post(
+        "/api/v1/navigation/tasks/task-1/speed-limit",
+        json={"client_id": "web", "request_id": "speed-2", "task_id": "task-2",
+              "max_speed_mps": 0.4},
+    )
+    assert conflict.status_code == 409
+    for speed in [0, -0.1]:
+        invalid = client.post(
+            "/api/v1/navigation/tasks/task-1/speed-limit",
+            json={"client_id": "web", "request_id": "invalid", "max_speed_mps": speed},
+        )
+        assert invalid.status_code == 422
+    assert len(commands.calls) == 1

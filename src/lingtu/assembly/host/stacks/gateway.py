@@ -50,6 +50,12 @@ def gateway(
     }
     if measurement_sensor_ids is not None:
         gateway_config["measurement_sensor_ids"] = measurement_sensor_ids
+    if run_plan is not None and run_plan.env == "real":
+        environment = run_plan.process_environment
+        if environment.get("LINGTU_DRIVER_BACKEND") == "doso":
+            from runtime.adapters.brainstem.source import Observations
+
+            gateway_config["observations"] = Observations(environment)
     bp.add(GatewayModule, alias="GatewayModule", **gateway_config)
 
     MCPServerModule = optional_stack_module(

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -11,17 +13,19 @@
 
 namespace lingtu::maps::layers {
 
+namespace map_defaults = lingtu::settings::maps::maps;
+
 inline constexpr double kPi = 3.141592653589793238462643383279502884;
 
 // Geometric surface evidence, not a declaration of traversability. Callers own
 // robot-relative ground seeding, connectivity and collision policy.
 struct GroundSurfaceConfig {
   double sample_resolution_m{0.05};
-  int min_support_columns{3};
+  int min_support_columns{map_defaults::surface::min_columns};
   double min_cluster_fraction{0.35};
   double cluster_height_m{0.12};
   double max_slope_deg{35.0};
-  double max_residual_m{0.04};
+  double max_residual_m{map_defaults::surface::residual_m};
   int neighbor_radius_cells{1};
 };
 

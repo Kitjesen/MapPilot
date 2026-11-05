@@ -2,6 +2,8 @@
 // Numerical implementation provenance and licenses remain beside the sources.
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include "geometry_diagnostics.hpp"
 
 #include <Eigen/Core>
@@ -15,50 +17,53 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace lingtu::ltlio {
+
+namespace slam_defaults = lingtu::settings::slam::slam;
 
 using Cloud = pcl::PointCloud<pcl::PointXYZINormal>;
 
 struct Config {
     Eigen::Matrix3d imu_from_lidar_rotation = Eigen::Matrix3d::Identity();
     Eigen::Vector3d imu_from_lidar_translation = Eigen::Vector3d::Zero();
-    bool elevator_enabled = true;
-    bool automatic_door = true;
-    double elevator_entry_range_m = 3.0;
-    double elevator_entry_hold_s = 2.0;
-    double elevator_entry_motion_m = 0.15; // Maximum 3D excursion during the entry hold.
-    bool estimate_extrinsics = false; // Unsupported: constructor rejects true.
-    std::size_t imu_init_samples = 200;
-    int point_filter_num = 2;
-    double blind_m = 0.8;
-    double max_range_m = std::numeric_limits<double>::infinity();
-    double scan_resolution = 0.0; // Zero retains point-count adaptive sampling.
+    bool elevator_enabled = std::string_view{slam_defaults::elevator_mode} != "off";
+    bool automatic_door = std::string_view{slam_defaults::elevator_mode} == "auto";
+    double elevator_entry_range_m = slam_defaults::elevator_entry::range_m;
+    double elevator_entry_hold_s = slam_defaults::elevator_entry::hold_s;
+    double elevator_entry_motion_m = slam_defaults::elevator_entry::motion_m; // Maximum 3D excursion during the entry hold.
+    bool estimate_extrinsics = slam_defaults::esti_il; // Unsupported: constructor rejects true.
+    std::size_t imu_init_samples = slam_defaults::imu_init_num;
+    int point_filter_num = slam_defaults::lidar_filter_num;
+    double blind_m = slam_defaults::lidar_min_range;
+    double max_range_m = slam_defaults::lidar_max_range;
+    double scan_resolution = slam_defaults::scan_resolution; // Zero retains point-count adaptive sampling.
     // Independently selectable for fixed-input ablations before field acceptance.
     // With scale-aware sampling, scan_resolution is the initial voxel size.
-    bool scale_aware_sampling_enabled = false;
-    bool hybrid_enabled = false;
-    bool correspondence_pruning_enabled = false;
-    double hybrid_point_weight = 0.05;
-    double hybrid_point_initial_threshold_m = 0.5;
-    double map_resolution = 0.05;
-    double cube_len = 1500.0;
-    double det_range = 200.0;
-    double move_thresh = 1.5;
-    int max_map_points = 0;
-    double stationary_thresh = 0.0; // Map insertion distance, not a ZUPT threshold.
-    int near_search_num = 5; // Neighbors nominate cells with retained plane support.
-    int ieskf_max_iter = 4;
-    double lidar_cov_inv = 1000.0;
-    double max_update_translation_m = 0.0;
-    double max_update_rotation_rad = 0.0;
-    double max_update_velocity_delta_mps = 0.0;
+    bool scale_aware_sampling_enabled = slam_defaults::scale_aware_sampling_enabled;
+    bool hybrid_enabled = slam_defaults::hybrid_enabled;
+    bool correspondence_pruning_enabled = slam_defaults::correspondence_pruning_enabled;
+    double hybrid_point_weight = slam_defaults::hybrid_point_weight;
+    double hybrid_point_initial_threshold_m = slam_defaults::hybrid_point_initial_threshold_m;
+    double map_resolution = slam_defaults::map_resolution;
+    double cube_len = slam_defaults::cube_len;
+    double det_range = slam_defaults::det_range;
+    double move_thresh = slam_defaults::move_thresh;
+    int max_map_points = slam_defaults::max_map_points;
+    double stationary_thresh = slam_defaults::stationary_thresh; // Map insertion distance, not a ZUPT threshold.
+    int near_search_num = slam_defaults::near_search_num; // Neighbors nominate cells with retained plane support.
+    int ieskf_max_iter = slam_defaults::ieskf_max_iter;
+    double lidar_cov_inv = slam_defaults::lidar_cov_inv;
+    double max_update_translation_m = slam_defaults::max_update_translation_m;
+    double max_update_rotation_rad = slam_defaults::max_update_rotation_rad;
+    double max_update_velocity_delta_mps = slam_defaults::max_update_velocity_delta_mps;
     // Zero disables the additional stationary-window checks for exact upstream replay.
     double imu_static_acc_thresh = 0.0;
     double imu_static_gyro_thresh = 0.0;
-    int zupt_min_static_frames = 5;
-    double zupt_sigma_v = 0.02;
+    int zupt_min_static_frames = slam_defaults::zupt_min_static_frames;
+    double zupt_sigma_v = slam_defaults::zupt_sigma_v;
     double acc_scale = 1.0; // Input acceleration times this scale is SI m/s².
     // Continuous-time IMU process-noise coefficients (SI density squared).
     // YAML na/ng/nba/nbg remain densities; the backend squares them once.
@@ -66,8 +71,8 @@ struct Config {
     double gyro_noise_variance = 1e-5;
     double acc_bias_noise_variance = 1e-6;
     double gyro_bias_noise_variance = 1e-6;
-    std::size_t max_imu_buffer = 4000;
-    std::size_t max_lidar_buffer = 64;
+    std::size_t max_imu_buffer = slam_defaults::max_imu_buffer;
+    std::size_t max_lidar_buffer = slam_defaults::max_lidar_buffer;
 };
 
 struct ImuSample {

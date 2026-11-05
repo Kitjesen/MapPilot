@@ -258,6 +258,7 @@ lio::Config frontendConfig() {
   settings.point_filter_num = 1;
   settings.blind_m = 0.1;
   settings.scan_resolution = 0.1;
+  settings.elevator_enabled = true;
   settings.automatic_door = true;
   return settings;
 }

@@ -11,6 +11,8 @@
  */
 #pragma once
 
+#include <lingtu/settings.hpp>
+
 #include <functional>
 #include <memory>
 #include <optional>
@@ -24,30 +26,42 @@ namespace nav_kernel {
 class LocalPlan;
 
 struct SplineFollowerParams {
-  double timeForward = 0.8;
-  double headingErrorThreshold = 0.8;
-  double positionGain = 0.8;
-  double yawGain = 1.5;
-  double maxVx = kDefaultLinearSpeedMps;
-  double maxVy = kDefaultLinearSpeedMps;
-  double maxYawRateRadS = 1.0;
-  double finishDistance = 0.15;
+  double timeForward{::lingtu::settings::follower::parameters::scan_follower::time_forward_s};
+  double headingErrorThreshold{::lingtu::settings::follower::parameters::scan_follower::heading_error_rad};
+  double positionGain{::lingtu::settings::follower::parameters::scan_follower::position_gain};
+  double yawGain{::lingtu::settings::follower::parameters::scan_follower::yaw_gain};
+  double maxVx{::lingtu::settings::limits::parameters::scan_follower::max_vx_mps};
+  double maxVy{::lingtu::settings::limits::parameters::scan_follower::max_vy_mps};
+  double maxYawRateRadS{::lingtu::settings::limits::native_nav::follower::max_yaw_rate_rad_s};
+  double finishDistance{::lingtu::settings::follower::parameters::scan_follower::finish_distance_m};
+};
+
+struct CmuFollowerProfile {
+  double lookahead_m{::lingtu::settings::follower::native_nav::cmu::follower_lookahead_m};
+  double yaw_gain{::lingtu::settings::follower::native_nav::cmu::follower_yaw_gain};
+  double nominal_dt_s{::lingtu::settings::follower::native_nav::cmu::follower_nominal_dt_s};
+  double switch_time_s{::lingtu::settings::follower::native_nav::cmu::follower_switch_time_s};
+  double heading_align_rad{::lingtu::settings::follower::native_nav::cmu::follower_heading_align_rad};
+  double omni_goal_m{::lingtu::settings::follower::native_nav::cmu::follower_omni_goal_m};
+  double omni_heading_rad{::lingtu::settings::follower::native_nav::cmu::follower_omni_heading_rad};
+  double stop_distance_m{::lingtu::settings::follower::native_nav::cmu::follower_stop_distance_m};
+  double slowdown_distance_m{::lingtu::settings::follower::native_nav::cmu::follower_slowdown_distance_m};
 };
 
 struct FollowerParams {
-  double baseLookAheadDis = 0.3;
+  double baseLookAheadDis{::lingtu::settings::follower::native_nav::follower::lookahead_m};
   double lookAheadRatio = 0.5;
   double minLookAheadDis = 0.2;
   double maxLookAheadDis = 2.0;
   double yawRateGain = 7.5;
   double stopYawRateGain = 7.5;
-  double maxYawRateRadS = 0.7853981633974483;
-  double headingAlignEnterRad = 0.7853981633974483;
-  double headingAlignExitRad = 0.35;
-  double maxSpeed = kDefaultLinearSpeedMps;
-  double minSpeed = 0.0;
-  double maxAccel = 2.0;  // m/s^2
-  double maxYawAccelRadS2 = 0.0;  // rad/s^2; <=0 disables rate limiting
+  double maxYawRateRadS{::lingtu::settings::limits::native_nav::follower::max_yaw_rate_rad_s};
+  double headingAlignEnterRad{::lingtu::settings::follower::native_nav::follower::align_enter_rad};
+  double headingAlignExitRad{::lingtu::settings::follower::native_nav::follower::align_exit_rad};
+  double maxSpeed{::lingtu::settings::limits::native_nav::follower::max_speed_mps};
+  double minSpeed{::lingtu::settings::follower::native_nav::follower::min_speed_mps};
+  double maxAccel{::lingtu::settings::limits::native_nav::follower::max_accel_mps2};  // m/s^2
+  double maxYawAccelRadS2{::lingtu::settings::limits::native_nav::follower::max_yaw_accel_rad_s2};  // rad/s^2; <=0 disables rate limiting
   double linearStopThreshold = 1e-4;
   double nominalDt = 0.01;
   double maxDt = 0.10;
@@ -56,17 +70,19 @@ struct FollowerParams {
   double switchTimeThre = 1.0;
   double omniDirGoalThre = 1.0;
   double omniDirDiffThre = 1.5;  // rad, about 86 deg
-  double stopDisThre = 0.2;
+  double stopDisThre{::lingtu::settings::follower::native_nav::follower::goal_tolerance_m};
   double slowDwnDisThre = 1.0;
   bool cornerGate = false;
   bool twoWayDrive = true;
   bool noRotAtGoal = true;
   SplineFollowerParams spline{};
+  CmuFollowerProfile cmu{};
 };
 
 // Apply the upstream CMU pathFollower profile while preserving the Product's
 // selected maximum speed and external slow/stop inputs.
 FollowerParams cmuFollowerParams(FollowerParams params);
+FollowerParams recoveryFollowerParams(FollowerParams params, double speed, double localRange);
 
 enum class FollowerAlgorithm {
   Path,
@@ -139,6 +155,9 @@ class Follower {
   Follower &operator=(const Follower &) = delete;
 
   FollowerOutput follow(const LocalPlan &plan, const FollowerState &state);
+  [[nodiscard]] static double turnRate(double yawError, double gain,
+                                       double minRate, double maxRate);
+  [[nodiscard]] static Twist rotationCommand(int direction, double rate);
   // Feed back the command accepted by final control, without advancing time.
   void commitApplied(const Twist &command);
   void stopLinear();

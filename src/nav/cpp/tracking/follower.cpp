@@ -651,26 +651,44 @@ const AlgorithmRegistry &builtinAlgorithms() {
 }  // namespace
 
 FollowerParams cmuFollowerParams(FollowerParams params) {
-  constexpr double kLookAheadM = 0.5;
-  params.baseLookAheadDis = kLookAheadM;
+  const auto &profile = params.cmu;
+  params.baseLookAheadDis = profile.lookahead_m;
   params.lookAheadRatio = 0.0;
-  params.minLookAheadDis = kLookAheadM;
-  params.maxLookAheadDis = kLookAheadM;
-  params.yawRateGain = 1.5;
-  params.stopYawRateGain = 1.5;
+  params.minLookAheadDis = profile.lookahead_m;
+  params.maxLookAheadDis = profile.lookahead_m;
+  params.yawRateGain = profile.yaw_gain;
+  params.stopYawRateGain = profile.yaw_gain;
   params.minSpeed = 0.0;
   params.linearStopThreshold = params.maxAccel / 100.0;
-  params.nominalDt = 0.01;
-  params.switchTimeThre = 1.0;
-  params.headingAlignEnterRad = 0.4;
-  params.headingAlignExitRad = 0.4;
-  params.omniDirGoalThre = 0.4;
-  params.omniDirDiffThre = 1.5;
-  params.stopDisThre = 0.3;
-  params.slowDwnDisThre = 0.75;
+  params.nominalDt = profile.nominal_dt_s;
+  params.switchTimeThre = profile.switch_time_s;
+  params.headingAlignEnterRad = profile.heading_align_rad;
+  params.headingAlignExitRad = profile.heading_align_rad;
+  params.omniDirGoalThre = profile.omni_goal_m;
+  params.omniDirDiffThre = profile.omni_heading_rad;
+  params.stopDisThre = profile.stop_distance_m;
+  params.slowDwnDisThre = profile.slowdown_distance_m;
   params.turnSpeedYawRateStart = 0.0;
   params.turnSpeedMinScale = 1.0;
   params.cornerGate = false;
+  params.noRotAtGoal = true;
+  return params;
+}
+
+FollowerParams recoveryFollowerParams(FollowerParams params, double speed, double localRange) {
+  params.maxSpeed = speed;
+  params.minSpeed = 0.0;
+  // Recovery completes within 0.125 m; its follower must not stop outside that radius.
+  params.stopDisThre = 0.08;
+  params.slowDwnDisThre = 0.0;
+  params.yawRateGain = 0.0;
+  params.stopYawRateGain = 0.0;
+  params.maxYawRateRadS = 0.0;
+  params.twoWayDrive = false;
+  params.headingAlignEnterRad = kPi + 0.1;
+  params.headingAlignExitRad = kPi;
+  params.omniDirDiffThre = kPi + 0.1;
+  params.omniDirGoalThre = std::max(2.0, localRange);
   params.noRotAtGoal = true;
   return params;
 }
@@ -780,6 +798,15 @@ Follower &Follower::operator=(Follower &&) noexcept = default;
 
 FollowerOutput Follower::follow(const LocalPlan &plan, const FollowerState &state) {
   return impl_->follow(plan, state);
+}
+
+double Follower::turnRate(double yawError, double gain, double minRate, double maxRate) {
+  const double rate = std::clamp(gain * yawError, -maxRate, maxRate);
+  return rate == 0.0 ? 0.0 : std::copysign(std::max(std::abs(rate), minRate), rate);
+}
+
+Twist Follower::rotationCommand(int direction, double rate) {
+  return {0.0, 0.0, static_cast<double>(direction) * rate};
 }
 
 void Follower::stopLinear() {

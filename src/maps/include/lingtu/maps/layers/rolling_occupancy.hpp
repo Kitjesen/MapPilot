@@ -1,5 +1,10 @@
 #pragma once
 
+#include <lingtu/settings.hpp>
+
+#include <algorithm>
+#include <cmath>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -12,6 +17,8 @@
 
 namespace lingtu::maps::layers {
 
+namespace map_defaults = lingtu::settings::maps::maps;
+
 enum class OccupancyState : std::uint8_t {
   kUnknown = 0U,
   kFree = 1U,
@@ -19,27 +26,27 @@ enum class OccupancyState : std::uint8_t {
 };
 
 struct RollingOccupancyConfig {
-  std::int32_t size_x{200};
-  std::int32_t size_y{200};
-  std::int32_t size_z{100};
-  double resolution_m{0.05};
-  double max_ray_range_m{5.0};
-  double hit_log_odds{1.7346010553881064};
-  double miss_log_odds{0.8472978603872036};
-  double min_log_odds{-1.9924301646902063};
-  double max_log_odds{3.8918202981106256};
-  double occupied_probability{0.80};
-  double inflation_radius_m{0.25};
-  double inflation_z_up_m{0.10};
-  double inflation_z_down_m{0.10};
+  std::int32_t size_x{map_defaults::occupancy::size_x};
+  std::int32_t size_y{map_defaults::occupancy::size_y};
+  std::int32_t size_z{map_defaults::occupancy::size_z};
+  double resolution_m{map_defaults::occupancy::resolution_m};
+  double max_ray_range_m{map_defaults::occupancy::ray_m};
+  double hit_log_odds{std::log(map_defaults::occupancy::p_hit / (1.0 - map_defaults::occupancy::p_hit))};
+  double miss_log_odds{-std::log(map_defaults::occupancy::p_miss / (1.0 - map_defaults::occupancy::p_miss))};
+  double min_log_odds{std::log(map_defaults::occupancy::p_min / (1.0 - map_defaults::occupancy::p_min))};
+  double max_log_odds{std::log(map_defaults::occupancy::p_max / (1.0 - map_defaults::occupancy::p_max))};
+  double occupied_probability{map_defaults::occupancy::p_occ};
+  double inflation_radius_m{map_defaults::inflation::radius_m};
+  double inflation_z_up_m{map_defaults::inflation::z_up_m};
+  double inflation_z_down_m{map_defaults::inflation::z_down_m};
   double ground_height_m{0.0};
   double local_update_range_x_m{0.0};
   double local_update_range_y_m{0.0};
   double local_update_range_z_m{0.0};
-  std::int32_t roll_margin_x{96};
-  std::int32_t roll_margin_y{96};
-  std::int32_t roll_margin_z{46};
-  std::int64_t decay_after_ns{0};
+  std::int32_t roll_margin_x{std::clamp(size_x / 2 - std::max(1, static_cast<int>(std::ceil(map_defaults::occupancy::slide_m / resolution_m))), 0, (size_x - 1) / 2)};
+  std::int32_t roll_margin_y{std::clamp(size_y / 2 - std::max(1, static_cast<int>(std::ceil(map_defaults::occupancy::slide_m / resolution_m))), 0, (size_y - 1) / 2)};
+  std::int32_t roll_margin_z{std::clamp(size_z / 2 - std::max(1, static_cast<int>(std::ceil(map_defaults::occupancy::slide_m / resolution_m))), 0, (size_z - 1) / 2)};
+  std::int64_t decay_after_ns{std::llround(map_defaults::occupancy::decay_after_s * 1e9)};
   double decay_factor{0.90};
   bool auto_roll{true};
   bool reject_out_of_order{true};

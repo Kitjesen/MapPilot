@@ -7,6 +7,15 @@
 
 namespace {
 
+nav_kernel::VelocitySmootherConfig smootherFixture() {
+  nav_kernel::VelocitySmootherConfig config;
+  config.x = {-1.0, 1.0, 2.0, 2.0, 0.0};
+  config.y = {-0.5, 0.5, 2.0, 2.0, 0.0};
+  config.yaw = {-1.5, 1.5, 2.0, 3.0, 0.0};
+  return config;
+}
+
+
 int failures = 0;
 
 void Expect(bool condition, const std::string &message) {
@@ -22,7 +31,7 @@ void ExpectNear(double actual, double expected, double tolerance, const std::str
 }
 
 void TestConfigurationAndInputValidation() {
-  nav_kernel::VelocitySmoother smoother;
+  nav_kernel::VelocitySmoother smoother(smootherFixture());
   nav_kernel::VelocitySmootherConfig invalid = smoother.config();
   invalid.x.minimum = 0.1;
   std::string error;
@@ -36,7 +45,7 @@ void TestConfigurationAndInputValidation() {
 }
 
 void TestAccelerationDecelerationAndReversal() {
-  nav_kernel::VelocitySmootherConfig config;
+  auto config = smootherFixture();
   config.x.acceleration = 1.0;
   config.x.deceleration = 2.0;
   nav_kernel::VelocitySmoother smoother(config);
@@ -54,7 +63,7 @@ void TestAccelerationDecelerationAndReversal() {
 }
 
 void TestProportionalScaling() {
-  nav_kernel::VelocitySmootherConfig config;
+  auto config = smootherFixture();
   config.scale_velocities = true;
   config.x = {-1.0, 1.0, 1.0, 2.0, 0.0};
   config.y = {-1.0, 1.0, 0.5, 2.0, 0.0};
@@ -73,7 +82,7 @@ void TestProportionalScaling() {
 }
 
 void TestTimeoutAndHardStop() {
-  nav_kernel::VelocitySmootherConfig config;
+  auto config = smootherFixture();
   config.target_timeout_s = 0.25;
   nav_kernel::VelocitySmoother smoother(config);
 
@@ -94,7 +103,7 @@ void TestTimeoutAndHardStop() {
 }
 
 void TestClosedLoopFeedbackFreshness() {
-  nav_kernel::VelocitySmootherConfig config;
+  auto config = smootherFixture();
   config.feedback_mode = nav_kernel::VelocityFeedbackMode::kClosedLoop;
   config.feedback_timeout_s = 0.1;
   nav_kernel::VelocitySmoother smoother(config);
@@ -115,7 +124,7 @@ void TestClosedLoopFeedbackFreshness() {
 }
 
 void TestDeadbandAndTimestampFailures() {
-  nav_kernel::VelocitySmootherConfig config;
+  auto config = smootherFixture();
   config.x.deadband = 0.15;
   nav_kernel::VelocitySmoother smoother(config);
 
@@ -132,7 +141,7 @@ void TestDeadbandAndTimestampFailures() {
 }
 
 void TestTimeoutBoundaryFailsClosed() {
-  nav_kernel::VelocitySmootherConfig config;
+  auto config = smootherFixture();
   config.target_timeout_s = 0.25;
   nav_kernel::VelocitySmoother smoother(config);
 
@@ -148,7 +157,7 @@ void TestTimeoutBoundaryFailsClosed() {
 }
 
 void TestDtClampingBoundsStepGrowth() {
-  nav_kernel::VelocitySmootherConfig config;  // x accel 2.0, max_step_s 0.2
+  auto config = smootherFixture();  // x accel 2.0, max_step_s 0.2
   config.target_timeout_s = 1.0;              // keep the target fresh across the gap
   nav_kernel::VelocitySmoother smoother(config);
 
@@ -169,7 +178,7 @@ void TestDtClampingBoundsStepGrowth() {
 }
 
 void TestMultiStepReversalSequence() {
-  nav_kernel::VelocitySmootherConfig config;  // x accel 2.0, decel 2.0
+  auto config = smootherFixture();  // x accel 2.0, decel 2.0
   config.target_timeout_s = 2.0;              // keep the target fresh through the sequence
   nav_kernel::VelocitySmoother smoother(config);
 
@@ -225,7 +234,7 @@ void TestMultiStepReversalSequence() {
 }
 
 void TestFeedbackValidationAndRecovery() {
-  nav_kernel::VelocitySmootherConfig config;
+  auto config = smootherFixture();
   config.feedback_mode = nav_kernel::VelocityFeedbackMode::kClosedLoop;
   config.feedback_timeout_s = 0.1;
   std::string error;
@@ -268,7 +277,7 @@ void TestFeedbackValidationAndRecovery() {
 }
 
 void TestStopRecoveryRampsFromZero() {
-  nav_kernel::VelocitySmoother smoother;
+  nav_kernel::VelocitySmoother smoother(smootherFixture());
   Expect(smoother.SetTarget({1.0, 0.0, 0.0}, 0.0), "target accepted");
   (void)smoother.Step(0.0);
   ExpectNear(smoother.Step(0.1).command.vx, 0.2, 1e-9, "ramp in progress before stop");
@@ -282,7 +291,7 @@ void TestStopRecoveryRampsFromZero() {
 }
 
 void TestConfigureFailurePathsAndReconfigure() {
-  nav_kernel::VelocitySmoother smoother;
+  nav_kernel::VelocitySmoother smoother(smootherFixture());
   std::string error;
 
   auto expect_rejected = [&smoother, &error](
@@ -353,7 +362,7 @@ void TestConfigureFailurePathsAndReconfigure() {
 }
 
 void TestYawAccelerationAtFiftyHertz() {
-  nav_kernel::VelocitySmootherConfig config;
+  auto config = smootherFixture();
   config.yaw.acceleration = 1.2;
   config.yaw.deceleration = 2.4;
   config.target_timeout_s = 2.0;
@@ -382,7 +391,7 @@ void TestYawAccelerationAtFiftyHertz() {
 }
 
 void TestCommitAppliedRebasesNextStepWithoutChangingTarget() {
-  nav_kernel::VelocitySmootherConfig config;
+  auto config = smootherFixture();
   config.target_timeout_s = 1.0;
   nav_kernel::VelocitySmoother smoother(config);
 
@@ -403,7 +412,7 @@ void TestCommitAppliedRebasesNextStepWithoutChangingTarget() {
 void TestCommitAppliedRejectsInvalidStateWithoutMutation() {
   auto expect_rejected = [](const nav_kernel::Twist &applied, double timestamp_s,
                             const std::string &expected_error, const std::string &message) {
-    nav_kernel::VelocitySmootherConfig config;
+    auto config = smootherFixture();
     config.target_timeout_s = 1.0;
     nav_kernel::VelocitySmoother smoother(config);
     Expect(smoother.SetTarget({1.0, 0.0, 0.0}, 0.0), message + " setup target accepted");
@@ -439,7 +448,7 @@ void TestCommitAppliedRejectsInvalidStateWithoutMutation() {
 }
 
 void TestDeadbandDoesNotDiscardRateLimitedProgress() {
-  nav_kernel::VelocitySmootherConfig config;
+  auto config = smootherFixture();
   config.x.acceleration = 0.1;
   config.x.deadband = 0.025;
   config.target_timeout_s = 1.0;

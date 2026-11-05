@@ -454,9 +454,10 @@ def test_host_bus_projects_map_scene_only_after_aligned_mapd_state() -> None:
 
 
 @pytest.mark.parametrize("scene_generation", [4, 6])
-def test_host_bus_map_readiness_accepts_fresh_async_scene_but_rejects_capacity(scene_generation) -> None:
+@pytest.mark.parametrize("env", ["real", "sim"])
+def test_host_bus_map_readiness_accepts_fresh_async_scene_but_rejects_capacity(scene_generation, env) -> None:
     timestamp_s = time.time()
-    bus = HostBus(require_map_scene=True, map_scene_max_age_s=2.0)
+    bus = HostBus(env=env, require_map_scene=True, map_scene_max_age_s=2.0)
 
     class Session:
         def __init__(self):
@@ -497,6 +498,34 @@ def test_host_bus_map_readiness_accepts_fresh_async_scene_but_rejects_capacity(s
     session.capacity_rejections = 1
     bus._poll_map_scene()
     assert bus.map_readiness() == "map_scene_capacity_rejected"
+
+
+@pytest.mark.parametrize(("env", "scene_offset", "expected"), [
+    ("real", -30.0, "map_scene_timestamp_stale"),
+    ("real", 30.0, "map_scene_timestamp_stale"),
+    ("sim", -30.0, None),
+    ("sim", 30.0, None),
+    ("sim", float("nan"), "map_scene_timestamp_stale"),
+    ("sim", float("inf"), "map_scene_timestamp_stale"),
+])
+def test_host_bus_map_scene_uses_its_environment_clock(env, scene_offset, expected) -> None:
+    timestamp_s = time.time()
+    bus = HostBus(env=env, require_map_scene=True)
+
+    class Session:
+        def take_map_scene(self):
+            return _map_scene_payload(timestamp_s + scene_offset)
+
+        def read_map_scene_health(self):
+            return _map_scene_health(timestamp_s)
+
+    bus._session = Session()
+    bus._map_scene_enabled = True
+    bus._poll_map_scene()
+
+    assert bus.map_readiness() == expected
+    bus._map_health["state_timestamp_s"] -= 30.0
+    assert bus.map_readiness() == "mapd_state_timestamp_stale"
 
 
 def test_host_bus_projects_native_traversability_as_latest_control_risk() -> None:

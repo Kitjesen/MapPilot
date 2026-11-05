@@ -1,10 +1,12 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <fstream>
 #include <memory>
 #include <vector>
 
 #include "collision/body.hpp"
+#include "collision/body_io.hpp"
 #include "collision/terrain.hpp"
 #include "collision_bitmap.hpp"
 #include "planning/local/scan/grid.hpp"
@@ -59,6 +61,91 @@ TEST_F(ScanBodyTest, UsesRawEvidenceWithoutInflatingBodyTwice) {
   EXPECT_EQ(grid.inflatedOccupancy({0,0,.5},0),0);
   request.body.reset();
   EXPECT_EQ(Grid(params,request).inflatedOccupancy({0,0,.5},0),1);
+}
+
+TEST_F(ScanBodyTest, ThunderCompoundClearsGroundAndRejectsBodyObstacles) {
+  std::ifstream input(LINGTU_TEST_THUNDER_BODY);
+  ASSERT_TRUE(input.is_open());
+  body = c::readBody(input);
+  ASSERT_EQ(body->parts.size(), 8U);
+  body->margin_m = 0;
+  body->horizontal_margin_m = .08;
+  request.body = body;
+  const Vec3 center{0, 0, .435};
+  for (int y = -8; y < 8; ++y) for (int x = -8; x < 8; ++x)
+    raw.occupy({(x + .5) * .1, (y + .5) * .1, -.05});
+  snapshot();
+  EXPECT_EQ(Grid(params, request).inflatedOccupancy(center, 0), 0);
+
+  raw.occupy({.45, .05, .45});
+  snapshot();
+  EXPECT_EQ(Grid(params, request).inflatedOccupancy(center, 0), 1);
+
+  raw.clear();
+  raw.occupy({.05, .35, .45});
+  snapshot();
+  EXPECT_EQ(Grid(params, request).inflatedOccupancy(center, 0), 1);
+
+  raw.clear();
+  raw.occupy({-.35, .05, .65});
+  snapshot();
+  EXPECT_EQ(Grid(params, request).inflatedOccupancy(center, 0), 1);
+
+  raw.clear();
+  raw.occupy({.05, .45, .45});
+  snapshot();
+  EXPECT_EQ(Grid(params, request).inflatedOccupancy(center, 0), 0);
+  EXPECT_EQ(Grid(params, request).inflatedOccupancy(center, std::acos(-1.) / 2), 1);
+
+  // The raised rear sensor does not fill the space over the front shoulders.
+  const c::Aabb upper_front{{.32, .20, .64}, {.025, .025, .025}};
+  for (const auto& part : body->parts) {
+    EXPECT_FALSE(part.support_contact);
+    EXPECT_FALSE(c::intersects(part, {{0, 0, .435}, 0}, upper_front, 0, .08));
+  }
+}
+
+TEST_F(ScanBodyTest, ThunderMarginComparisonUsesSameMeasuredAndPredictedObstacles) {
+  std::ifstream input(LINGTU_TEST_THUNDER_BODY);
+  ASSERT_TRUE(input.is_open());
+  body = c::readBody(input);
+  ASSERT_EQ(body->parts.size(), 8U);
+  body->margin_m = 0;
+  request.body = body;
+  raw = CollisionBitmap({-2,-2,-1},{2,2,2},.05);
+  inflated = CollisionBitmap({-2,-2,-1},{2,2,2},.05);
+  params.scan.voxelResolution = .05;
+  const Vec3 center{0,.03,.435};
+  for (const double margin : {0.0,.04,.08}) {
+    raw.clear();
+    for (double x=-.575; x<=.575; x+=.05) {
+      raw.occupy({x,.425,.425});
+      raw.occupy({x,-.425,.425});
+    }
+    snapshot();
+    body->horizontal_margin_m = margin;
+    const Grid corridor(params,request);
+    ASSERT_TRUE(corridor.valid()) << corridor.reason();
+    const int straight = corridor.segmentInflatedOccupancy(
+        {-.3,.03,.435},0,{.3,.03,.435},0);
+    const int turn = corridor.segmentInflatedOccupancy(
+        center,0,center,.12);
+    raw.clear();
+    snapshot();
+    const nav_kernel::PredictedObstacle crossing{{0,-.8,.435},{0,.8,.435},.05,.3,.6};
+    request.clock.timestampS=1;
+    request.environment.predictions={&crossing,1,4,1,1};
+    const Grid dynamic(params,request);
+    const int moving = dynamic.trajectoryOccupancy(center,{},center,{},0,1);
+    const int after = dynamic.trajectoryOccupancy(center,{},center,{},1,2);
+    request.environment.predictions={};
+    std::cout << "Thunder margin " << margin << " corridor=" << straight
+              << " turn=" << turn << " crossing=" << moving << '\n';
+    EXPECT_EQ(straight, margin == .08 ? 1 : 0);
+    EXPECT_EQ(turn, margin == 0.0 ? 0 : 1);
+    EXPECT_EQ(moving,1);
+    EXPECT_EQ(after,0);
+  }
 }
 
 TEST_F(ScanBodyTest, HorizontalMarginRejectsWallWithoutAddingVerticalClearance) {
@@ -200,24 +287,6 @@ TEST_F(ScanBodyTest, ClearanceDepartureSharesTheInitialSweepCoverage) {
   EXPECT_EQ(*request.environment.collision.measuredOccupiedStorage,evidence);
 }
 
-TEST_F(ScanBodyTest, ClearanceDepartureCannotCrossMissingSupport) {
-  body->parts.front().half_size = {.2,.1,.1};
-  body->horizontal_margin_m = .08;
-  raw.occupy({-.25,.05,.55});
-  snapshot();
-  const nav_kernel::Pose start{{.0005,0,.5},0};
-  const std::vector<Vec3> reference{start.position,{.3005,0,.5}};
-  request.objective = nav_kernel::RouteTarget{{reference.data(),2,1}};
-  request.supportHeightM = .5;
-  request.supportHeightToleranceM = .05;
-  request.supportSurface = [](const c::Vec3 &ground,double) -> std::optional<double> {
-    return ground.x > .1 && ground.x < .2 ? std::nullopt : std::optional<double>(0);
-  };
-  EXPECT_FALSE(Grid(params,request).boundaryDepartureFree(start,reference.back()));
-  request.supportSurface = [](const c::Vec3 &,double) {return std::optional<double>(0);};
-  EXPECT_TRUE(Grid(params,request).boundaryDepartureFree(start,reference.back()));
-}
-
 TEST_F(ScanBodyTest, ClearStartCannotExcludeNearbyBufferDuringMeasuredBraking) {
   body->parts.front().half_size = {.3,.11,.1};
   body->horizontal_margin_m = .08;
@@ -311,7 +380,7 @@ TEST_F(ScanBodyTest, ClearanceDepartureBrakingKeepsNewObstacleBuffersAndPredicti
   EXPECT_FALSE(predicted.boundaryDepartureMotionFree(start,{.1,0,0},moving,.2,.35,.5,1));
 }
 
-TEST_F(ScanBodyTest, ClearanceDepartureChecksBrakingArcSupportAndCoupledStopDistance) {
+TEST_F(ScanBodyTest, ClearanceDepartureRetainsTheCoupledStopDistance) {
   body->parts.front().half_size = {.2,.05,.1};
   body->horizontal_margin_m = .08;
   raw.occupy({-.25,.05,.55});
@@ -320,16 +389,6 @@ TEST_F(ScanBodyTest, ClearanceDepartureChecksBrakingArcSupportAndCoupledStopDist
   const nav_kernel::Twist moving{.1,0,-.08};
   ASSERT_TRUE(Grid(params,request).boundaryDepartureMotionFree(start,{.1,0,0},moving,.2,.35,.5,1));
   EXPECT_FALSE(Grid(params,request).boundaryDepartureMotionFree(start,{.1,0,0},moving,.2,.35,.5,.01));
-  const std::vector<Vec3> reference{start.position,{.36,0,.5}};
-  request.objective = nav_kernel::RouteTarget{{reference.data(),2,1}};
-  request.supportHeightM = .5;
-  request.supportHeightToleranceM = .05;
-  request.supportSurface = [](const c::Vec3 &ground,double) -> std::optional<double> {
-    return ground.y < -.0003 ? std::nullopt : std::optional<double>(0);
-  };
-  Grid supported(params,request);
-  ASSERT_TRUE(supported.boundaryDepartureFree(start,reference.back()));
-  EXPECT_FALSE(supported.boundaryDepartureMotionFree(start,{.1,0,0},moving,.2,.35,.5,1));
 }
 
 TEST_F(ScanBodyTest, OptionalFeetDoNotRequireFullBodyGroundColumns) {
@@ -549,37 +608,67 @@ TEST_F(ScanBodyTest, SlowingFutureSegmentRetainsItsApproachHeading) {
                                      {0,.01,.5},{},1,1.5),1);
 }
 
-TEST_F(ScanBodyTest, CompleteCurveValidationRetainsHeadingAcrossMultipleQuietTailSegments) {
+TEST_F(ScanBodyTest, UpstreamCandidateDoesNotRequireMeasuredTurnSweep) {
   using namespace nav_kernel::local::scan::upstream;
-  raw.occupy({.25,.95,.55});
+  raw.occupy({.25,.25,.55});
   snapshot();
-  request.robot.pose.position = {0,-1,.5};
   Grid grid(params,request);
-  ASSERT_TRUE(grid.valid());
-  Eigen::MatrixXd controls(3,9);
+  ASSERT_EQ(grid.segmentInflatedOccupancy({0,0,.5},0,
+      {0,0,.5},std::acos(-1.)/2),1);
+  auto map = std::make_shared<GridMap>(grid);
+  EXPECT_EQ(map->getInflateOccupancy({0,0,.5},0),0);
+  EXPECT_EQ(map->getInflateOccupancy({0,0,.5},std::acos(-1.)/2),0);
+  Eigen::MatrixXd controls(3,6);
   controls.row(0).setZero();
-  controls.row(1) << -1.2,-1,-.8,0,.5,.8,1,1,1;
+  controls.row(1) << -.2,0,.2,.4,.6,.8;
   controls.row(2).setConstant(.5);
-  const UniformBspline trajectory(controls,3,.5);
-  const auto velocity = trajectory.getDerivative();
-  const double duration = trajectory.getTimeSum();
-  int quiet_segments = 0;
-  for (double t=duration-.3; t<duration; t+=.01)
-    if (velocity.evaluateDeBoorT(t).head<2>().norm()<=.03) ++quiet_segments;
-  ASSERT_GT(quiet_segments,5);
   BsplineOptimizer optimizer;
-  optimizer.setEnvironment(std::make_shared<GridMap>(grid));
-  EXPECT_TRUE(optimizer.checkTrajectoryCollisionFree(trajectory))
-      << optimizer.optimizationDebug().reason;
+  optimizer.setEnvironment(map);
+  EXPECT_TRUE(optimizer.checkTrajectoryCollisionFree(UniformBspline(controls,3,.5)));
 
-  // A wholly quiet curve has no earlier commanded turn to borrow.
-  controls.row(1) << .8,.85,.9,.95,1,1,1,1,1;
-  const UniformBspline quiet(controls,3,3);
-  const Eigen::Vector3d quiet_start = quiet.evaluateDeBoorT(0);
-  request.robot.pose.position = {quiet_start.x(),quiet_start.y(),quiet_start.z()};
-  Grid quiet_grid(params,request);
-  optimizer.setEnvironment(std::make_shared<GridMap>(quiet_grid));
-  EXPECT_FALSE(optimizer.checkTrajectoryCollisionFree(quiet));
+  inflated.occupy({0,params.scan.cylinderOffset,.5});
+  snapshot();
+  Grid occupied(params,request);
+  map->setGrid(&occupied);
+  EXPECT_NE(map->getInflateOccupancy({0,0,.5},std::acos(-1.)/2),0);
+  EXPECT_FALSE(optimizer.checkTrajectoryCollisionFree(UniformBspline(controls,3,.5)));
+}
+
+TEST_F(ScanBodyTest, UpstreamRefinementChecksLeadingTwoThirds) {
+  using namespace nav_kernel::local::scan::upstream;
+  inflated.occupy({1.05,0,.5});
+  snapshot();
+  Grid grid(params,request);
+  auto map = std::make_shared<GridMap>(grid);
+  Eigen::MatrixXd controls(3,9);
+  for (int i=0; i<9; ++i) controls.col(i) = Eigen::Vector3d((i-1)*.2,0,.5);
+  const UniformBspline curve(controls,3,.5);
+  BsplineOptimizer optimizer;
+  optimizer.setEnvironment(map);
+  ASSERT_NE(map->getInflateOccupancy({1.05,0,.5},0),0);
+  EXPECT_TRUE(optimizer.checkTrajectoryCollisionFree(curve));
+  inflated.occupy({.35,0,.5});
+  snapshot();
+  Grid blocked(params,request);
+  map->setGrid(&blocked);
+  EXPECT_FALSE(optimizer.checkTrajectoryCollisionFree(curve));
+}
+
+TEST(ScanHeading, PreviewClampsAtEndpointAndFallsBackLikeController) {
+  using namespace nav_kernel::local::scan::upstream;
+  Eigen::MatrixXd controls(3,6);
+  controls.row(0) << 0,.01,.02,.03,.04,.05;
+  controls.row(1).setZero();
+  controls.row(2).setConstant(.5);
+  const UniformBspline curve(controls,3,.5);
+  const auto velocity=curve.getDerivative();
+  const double end=curve.getTimeSum();
+  EXPECT_GT(curve.headingDirection(end-.01,velocity,.8).x(),.9);
+  EXPECT_GT(curve.headingDirection(end,velocity,.8).x(),.9);
+  EXPECT_EQ(curve.headingDirection(end,velocity,0).squaredNorm(),0);
+  controls.row(0).setZero();
+  const UniformBspline stopped(controls,3,.5);
+  EXPECT_EQ(stopped.headingDirection(end,stopped.getDerivative(),.8).squaredNorm(),0);
 }
 
 TEST_F(ScanBodyTest, TranslationChecksBetweenFreeEndpointsAndBrakingUsesActualYaw) {

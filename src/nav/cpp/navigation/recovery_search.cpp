@@ -75,7 +75,6 @@ class RecoverySearchImplementation {
       out.status = RecoverySearchStatus::RotationReady;
       out.action = nav_kernel::RecoveryAction::Rotate;
       out.rotationDeltaRad = bestDelta;
-      out.directCommand.wz = std::copysign(p_.rotationRate, bestDelta);
       out.safetyFailure = RecoverySafetyFailure::None;
       out.diagnostics.selectedRotationRad = bestDelta;
       out.diagnostics.selectedForwardReachM = bestReach;
@@ -265,7 +264,6 @@ class RecoverySearchImplementation {
         finite(p_.rotationSampleStepRad) &&
         p_.rotationSampleStepRad > 0.0 &&
         p_.rotationSampleStepRad <= p_.minRotationRad &&
-        finite(p_.rotationRate) && p_.rotationRate > 0.0 &&
         finite(p_.clearanceWeight) && p_.clearanceWeight >= 0.0 &&
         finite(p_.goalDirectionWeight) && p_.goalDirectionWeight >= 0.0 &&
         p_.maxSearchNodes > 0 && p_.maxObstaclePoints >= 0;

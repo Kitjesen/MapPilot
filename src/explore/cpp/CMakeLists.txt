@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 project(lingtu_explore_cpp LANGUAGES C CXX)
 
 option(LINGTU_EXPLORE_CPP_BUILD_TESTS "Build LingTu explore C++ tests" OFF)
+include("${CMAKE_CURRENT_LIST_DIR}/../../../scripts/build/cmake/settings.cmake")
 
 add_library(lingtu_explore_core
   frontier.cpp
@@ -10,6 +11,7 @@ add_library(lingtu_explore_core
   tare_policy.cpp)
 
 target_compile_features(lingtu_explore_core PUBLIC cxx_std_17)
+target_link_libraries(lingtu_explore_core PUBLIC "$<BUILD_INTERFACE:lingtu_settings>")
 target_include_directories(lingtu_explore_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   $<INSTALL_INTERFACE:include/explore/cpp>)

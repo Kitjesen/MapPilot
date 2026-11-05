@@ -52,20 +52,16 @@ add_library(map_optimization STATIC
   gravity_graph.cpp
   loop_constraints.cpp
   map.cpp
-  online_graph.cpp
   pgo.cpp)
-if(NOT TARGET lingtu_online_mapping)
-  add_subdirectory(online)
+if(NOT TARGET lingtu_mapping_io)
+  add_subdirectory(io)
 endif()
 find_package(Threads REQUIRED)
 include("${LINGTU_ROOT}/scripts/build/cmake/gtsam.cmake")
-if(NOT TARGET lingtu_online_mapping_backend)
-  add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../online_mapping" "${CMAKE_CURRENT_BINARY_DIR}/online_mapping_backend")
-endif()
 target_include_directories(map_optimization
   PUBLIC "${LINGTU_ROOT}/src" "${PGO_KERNEL_DIR}/include")
 target_compile_definitions(map_optimization PUBLIC LT_POSE_GRAPH_OPT_STATIC)
-target_link_libraries(map_optimization PUBLIC pose_graph_opt Threads::Threads gtsam lingtu_online_mapping)
+target_link_libraries(map_optimization PUBLIC pose_graph_opt Threads::Threads gtsam lingtu_mapping_io)
 if(WIN32)
   target_link_libraries(map_optimization PUBLIC ws2_32 userenv bcrypt ntdll)
 elseif(UNIX)
@@ -89,10 +85,6 @@ if(BUILD_TESTING)
   add_executable(pgo_test "${LINGTU_MAP_OPTIMIZATION_TESTS_DIR}/pgo_test.cpp")
   target_link_libraries(pgo_test PRIVATE map_optimization)
   add_test(NAME pgo_core COMMAND pgo_test)
-  add_executable(online_graph_test "${LINGTU_MAP_OPTIMIZATION_TESTS_DIR}/online_graph_test.cpp")
-  target_link_libraries(online_graph_test PRIVATE map_optimization)
-  add_test(NAME online_graph COMMAND online_graph_test)
-  set_tests_properties(online_graph PROPERTIES TIMEOUT 30)
   add_executable(loop_information_test
     "${LINGTU_MAP_OPTIMIZATION_TESTS_DIR}/loop_information_test.cpp")
   target_link_libraries(loop_information_test PRIVATE map_optimization)

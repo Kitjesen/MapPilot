@@ -44,7 +44,7 @@
  *   trackingReferenceSeparated() 判断实测位置是否已明显偏离计划参考。
  *   planFromCurrentTraj()        选择未来接管边界或实测边界，组织替换轨迹求解。
  *   callReboundReplan()          选择局部目标，调用 Manager 的局部优化并收集结果。
- *   trajectoryClear()            按到达时间检查指定样条区间的占据与扫掠。
+ *   trajectoryClear()            Check cylinder occupancy over the requested spline interval.
  *   preferExecutingTail()        比较候选与旧段的目标/时长，判断是否继续有效旧尾段。
  *
  * 异步接管与停止：
@@ -146,7 +146,7 @@ FsmOutput PlannerFsm::tick(const FsmInput &input) {
         changeState(ScanReplanState::EXEC_TRAJ);
         escapeEmergency_ = true;
       } else {
-        if (!localTargetBlocked_) ++replanFailCount_;
+        ++replanFailCount_;
         changeState(ScanReplanState::GEN_NEW_TRAJ);
       }
       break;
@@ -155,9 +155,11 @@ FsmOutput PlannerFsm::tick(const FsmInput &input) {
     case ScanReplanState::REPLAN_TRAJ:
       if (planFromCurrentTraj(input.nowS, output)) {
         replanFailCount_ = 0;
-        changeState(ScanReplanState::EXEC_TRAJ);
+        // A speed bridge awaiting physical reception still needs its continuation.
+        if (speedTransitionEndS_ <= 0.0 || (handoffLeadTimeS_ && !executionFrozen_))
+          changeState(ScanReplanState::EXEC_TRAJ);
       } else {
-        if (!localTargetBlocked_) ++replanFailCount_;
+        ++replanFailCount_;
         changeState(localTargetBlocked_ ? ScanReplanState::GEN_NEW_TRAJ
                                        : ScanReplanState::REPLAN_TRAJ);
       }
@@ -252,13 +254,12 @@ FsmOutput PlannerFsm::tick(const FsmInput &input) {
     }
 
     case ScanReplanState::EMERGENCY_STOP: {
-      // Base heave and terrain height changes do not mean horizontal travel continues.
-      const bool planarStopped = odomVel_.allFinite() && odomVel_.head<2>().norm() < 0.1;
+      const bool stopped = odomVel_.allFinite() && odomVel_.norm() < 0.1;
       if (escapeEmergency_) {
         callEmergencyStop(odomPos_, input.nowS, output);
-      } else if (params_.enableFailSafe && !needHoverStop_ && planarStopped) {
+      } else if (params_.enableFailSafe && !needHoverStop_ && stopped) {
         changeState(ScanReplanState::GEN_NEW_TRAJ);
-      } else if (params_.enableFailSafe && needHoverStop_ && planarStopped) {
+      } else if (params_.enableFailSafe && needHoverStop_ && stopped) {
         needHoverStop_ = false;
         if (plannerManager_.pp_.motion_intent_ && haveTarget_) {
           // Held input keeps the same reference after a stop. Retry it once
@@ -299,13 +300,6 @@ FsmOutput PlannerFsm::checkFutureCollision(const FsmInput &input) {
   const double oldEnd = pendingTrajectory_
                            ? std::min(info.duration_, pendingTrajectory_->start_time_ - info.start_time_)
                            : info.duration_;
-  // A quiet tail retains the last reliable heading within this ordered query.
-  Eigen::Vector3d lastHeadingVelocity = Eigen::Vector3d::Zero();
-  const auto headingVelocity = [&](const Eigen::Vector3d &velocity) -> Eigen::Vector3d {
-    if (!velocity.allFinite()) return velocity;
-    if (velocity.head<2>().norm() > 0.03) lastHeadingVelocity = velocity;
-    return lastHeadingVelocity;
-  };
   for (double time = std::max(0.0, currentTime); time < oldEnd; time += timeStep) {
     if (currentTime < twoThirdsTime && time >= twoThirdsTime) {
       break;
@@ -315,11 +309,8 @@ FsmOutput PlannerFsm::checkFutureCollision(const FsmInput &input) {
     const double nextTime = std::min(time + timeStep, oldEnd);
     const Eigen::Vector3d nextPosition =
         info.position_traj_.evaluateDeBoorT(nextTime);
-    const Eigen::Vector3d tangent = headingVelocity(info.velocity_traj_.evaluateDeBoorT(time));
-    const Eigen::Vector3d nextTangent = headingVelocity(info.velocity_traj_.evaluateDeBoorT(nextTime));
-    if (plannerManager_.grid_map_->getTrajectoryOccupancySegment(
-            position, tangent, nextPosition, nextTangent,
-            time - currentTime, nextTime - currentTime) == 0) {
+    if (plannerManager_.grid_map_->getInflateOccupancy(
+            position, estimateYawFromSegment(position, nextPosition)) == 0) {
       continue;
     }
 
@@ -341,7 +332,7 @@ FsmOutput PlannerFsm::checkFutureCollision(const FsmInput &input) {
   if (pendingTrajectory_) {
     const bool clear = trajectoryClear(*pendingTrajectory_,
         std::max(0.0, input.nowS - pendingTrajectory_->start_time_),
-        pendingTrajectory_->duration_, input.nowS);
+        pendingTrajectory_->duration_);
     // Reception can happen while the geometry query runs. Never discard an
     // already received curve or offer a query result after its deadline.
     reconcileHandoff(input, output);
@@ -655,25 +646,14 @@ bool PlannerFsm::isWaypointSequenceMode() const noexcept {
 }
 
 bool PlannerFsm::trajectoryClear(const LocalTrajData &trajectory, double beginS,
-                                    double endS, double nowS) const {
+                                    double endS) const {
   if (!plannerManager_.grid_map_) return false;
-  Eigen::Vector3d lastHeadingVelocity = Eigen::Vector3d::Zero();
-  const auto headingVelocity = [&](const Eigen::Vector3d &velocity) -> Eigen::Vector3d {
-    if (!velocity.allFinite()) return velocity;
-    if (velocity.head<2>().norm() > 0.03) lastHeadingVelocity = velocity;
-    return lastHeadingVelocity;
-  };
   for (double time = std::max(0.0, beginS); time < endS; time += kTickPeriodS) {
     const double next = std::min(time + kTickPeriodS, endS);
-    const Eigen::Vector3d tangent = headingVelocity(trajectory.velocity_traj_.evaluateDeBoorT(time));
-    const Eigen::Vector3d nextTangent = headingVelocity(trajectory.velocity_traj_.evaluateDeBoorT(next));
-    if (plannerManager_.grid_map_->getTrajectoryOccupancySegment(
-            trajectory.position_traj_.evaluateDeBoorT(time),
-            tangent,
-            trajectory.position_traj_.evaluateDeBoorT(next),
-            nextTangent,
-            std::max(0.0, trajectory.start_time_ + time - nowS),
-            std::max(0.0, trajectory.start_time_ + next - nowS)) != 0)
+    const Eigen::Vector3d position = trajectory.position_traj_.evaluateDeBoorT(time);
+    const Eigen::Vector3d nextPosition = trajectory.position_traj_.evaluateDeBoorT(next);
+    if (plannerManager_.grid_map_->getInflateOccupancy(
+            position, estimateYawFromSegment(position, nextPosition)) != 0)
       return false;
   }
   return true;
@@ -700,10 +680,9 @@ bool PlannerFsm::preferExecutingTail(const LocalTrajData &previous,
     return false;
   const Eigen::Vector3d position = previous.position_traj_.evaluateDeBoorT(currentTime);
   if ((position - odomPos_).norm() > std::max(0.0, params_.replanThreshold) ||
-      plannerManager_.grid_map_->getTrajectoryOccupancySegment(
-          odomPos_, odomVel_, position, previous.velocity_traj_.evaluateDeBoorT(currentTime),
-          0.0, 0.0) != 0) return false;
-  return trajectoryClear(previous, currentTime, previous.duration_, nowS);
+      plannerManager_.grid_map_->getInflateOccupancySegment(
+          odomPos_, getOdomYaw(), position, getOdomYaw()) != 0) return false;
+  return trajectoryClear(previous, currentTime, previous.duration_);
 }
 
 bool PlannerFsm::reconcileHandoff(const FsmInput &input, FsmOutput &output) {
@@ -778,7 +757,7 @@ bool PlannerFsm::planFromCurrentTraj(double nowS, FsmOutput &output,
           handoff < previous.start_time_ + speedTransitionEndS_)
         return false;
       if (handoff <= nowS ||
-          !trajectoryClear(previous, currentTime, handoff - previous.start_time_, nowS))
+          !trajectoryClear(previous, currentTime, handoff - previous.start_time_))
         return false;
       const double boundaryTime = handoff - previous.start_time_;
       startPt_ = previous.position_traj_.evaluateDeBoorT(boundaryTime);
@@ -788,11 +767,9 @@ bool PlannerFsm::planFromCurrentTraj(double nowS, FsmOutput &output,
       // arrival times. No control points are moved after collision validation.
       const bool preserveBoundary = plannerManager_.pp_.preserve_boundary_;
       plannerManager_.pp_.preserve_boundary_ = true;
-      plannerManager_.grid_map_->setTrajectoryTimeOffset(handoff - nowS);
       bool success = callReboundReplan(true, false, nowS, output);
       if (!success && plannerManager_.currentTimeS(nowS) < handoff)
         success = callReboundReplan(true, true, nowS, output);
-      plannerManager_.grid_map_->setTrajectoryTimeOffset(0.0);
       plannerManager_.pp_.preserve_boundary_ = preserveBoundary;
       if (!latestHandoffS && preferExecutingTail(previous, success ? &info : nullptr,
                                                  boundaryTime, plannerManager_.currentTimeS(nowS))) {
@@ -965,15 +942,9 @@ bool PlannerFsm::getLocalTarget() {
     }
     previousPosition = position;
   }
-  const auto targetOccupancy = [&](const Eigen::Vector3d &point, double time) {
-    auto &reference = plannerManager_.global_data_;
-    Eigen::Vector3d tangent = reference.getVelocity(time);
-    if (tangent.head<2>().squaredNorm() < 1e-8) {
-      tangent = reference.getPosition(std::min(duration, time + timeStep)) -
-                reference.getPosition(std::max(0.0, time - timeStep));
-    }
+  const auto targetOccupancy = [&](const Eigen::Vector3d &point) {
     return plannerManager_.grid_map_->getInflateOccupancy(
-        point, estimateYawFromSegment(Eigen::Vector3d::Zero(), tangent));
+        point, estimateYawFromSegment(odomPos_, point));
   };
   const auto usableTarget = [&](const Eigen::Vector3d &point, double time) {
     // A short clear route prefix is useful progress; velocity intents retain
@@ -983,7 +954,7 @@ bool PlannerFsm::getLocalTarget() {
                                (point - endPt_).norm() < 1e-6;
     return time >= projectionTime &&
            ((point - startPt_).norm() >= minimumProgress || finalApproach) &&
-           targetOccupancy(point, time) == 0;
+           targetOccupancy(point) == 0;
   };
   const bool referenceClear = usableTarget(localTargetPt_, targetTime) &&
       (!plannerManager_.pp_.motion_intent_ ||

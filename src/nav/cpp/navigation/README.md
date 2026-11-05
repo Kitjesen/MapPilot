@@ -4,6 +4,29 @@ This directory owns execution of an already admitted route or assisted-motion
 intent. It does not own global search, DDS, backend selection, or final robot
 velocity.
 
+## 中文导览
+
+这个目录负责把“已经接受的路线或遥控意图”变成**候选速度**。它不负责生成全局路线，也不直接驱动机器人。普通导航的主线是：
+
+```text
+全局规划产生路线 → Executor 请求局部规划 → Follower 跟踪局部结果
+                 → 返回候选速度 → 端点 FinalControl 做最终检查和发布
+```
+
+| 文件 | 作用 |
+| --- | --- |
+| [`executor.hpp / executor.cpp`](executor.cpp) | 执行入口：接收路线或遥控意图，协调局部规划、跟踪和恢复，返回候选速度及状态。 |
+| [`route.hpp / route.cpp`](route.hpp) | 描述路线、目标和约束；从路线准备局部参考、计算路线进度和到达位置。 |
+| [`pose_route.hpp / pose_route.cpp`](pose_route.cpp) | 把带方向的路线整理成行走或转身阶段，并对适合的阶段生成连续参考。 |
+| [`state.cpp`](state.cpp) | 根据里程计计算运动状态，并判断运动是否有进展。 |
+| [`recovery.hpp / recovery.cpp`](recovery.cpp) | 路线受阻或运动停滞时，管理恢复动作及重试。 |
+| [`recovery_search.hpp / recovery_search.cpp`](recovery_search.cpp) | 为 CMU 平移恢复搜索路径，并检查旋转恢复，供 Recovery 内部使用。 |
+| [`stairs.hpp / stairs.cpp`](stairs.cpp) | 实验性的楼梯段匹配和进出梯状态；正式导航端点目前未接通这套流程，不等于 SCAN 的三维上下楼算法。 |
+
+局部规划算法位于 `../planning/local/`，轨迹跟踪位于 `../tracking/`；最终运动检查由 `../endpoint/nav/control/` 所有。要读正常导航，先看 `route.hpp` 的 `Route`，再看 `executor.hpp` 的 `ExecutionInput` / `ExecutionOutput` 和 `Executor::tick()`；需要排查某种具体行为时，再进入对应实现。
+
+`route.cpp` 和 `state.cpp` 是同一个 `Executor` 类的实现文件，不是另外两个管理器。辅助遥控的平移意图也可进入 `Executor::tick()`；纯原地转向则由遥控端点分流后进行最终检查。
+
 ## Data flow
 
 Explicit `Route.posePoints` plus `Route.body` supports fixed-heading movement,
@@ -41,12 +64,11 @@ through the platform configuration and record the actual part set used by a
 trial. See `docs/design/navigation-body-model-and-motion-posture.md` and
 `docs/operations/error_record.md` for current failures and validation boundaries.
 
-Articulated arrivals measure a half-second stable 3D pose/yaw window so short
-balancing velocity spikes cannot prevent completion forever. Every sample
-must still be in the task's goal region, timestamps must advance, and drift
-restarts the window. Yaw acquisition first enters half the task tolerance and
-then retains the full tolerance while dwelling, avoiding boundary chatter.
-Ordinary routes without observed body geometry keep the existing rate check.
+Arrival checks the task position, its requested final yaw when present, and one
+valid low-speed odometry observation. It does not accumulate a half-second
+settling window. Successful goal termination additionally waits for the driver
+to acknowledge the zero command; that acknowledgement alone does not prove
+continuous physical stillness.
 
 Entering the goal region does not interrupt a moving SCAN terminal spline.
 While its applied-command baseline exceeds the existing 0.03 m/s quiet bound,
@@ -60,7 +82,7 @@ measured terminal connector collapses to one point during deceleration.
 ```text
 GlobalPlanner -> Route -> Executor -> LocalPlanner -> LocalPlan -> Follower
                               |                         |
-                              +------ Recovery ---------+
+                              +------ Recovery ---------+ (CMU / teleop)
                                                         |
                                                  MotionCandidate
                                                         |
@@ -71,21 +93,26 @@ GlobalPlanner -> Route -> Executor -> LocalPlanner -> LocalPlan -> Follower
   reference, and computes a bounded segment where the execution mode needs it.
 - `executor.*` calls one already configured `LocalPlanner`, then one
   `Follower`, and returns execution state plus a pre-safety command.
-- `recovery.*` is invoked only when the typed planning state or measured
-  progress requires recovery.
+- `recovery.*` coordinates CMU / assisted-teleop recovery. Autonomous SCAN
+  owns its local retries without this additional loop.
 - `state.cpp` owns odometry-derived kinematics and measured progress.
 - `stairs.*` resolves measured stair surfaces against the actual 3D route and
   owns Executor's entry/profile/exit phases. It does not recognize point clouds,
   run global search, choose concrete platform models, or publish commands.
 
-Recovery is an execution branch, not a second global route. Its verified
-`path_body` is sent directly to the recovery follower while the normal route
-follower is held. Only an exhausted recovery is reported to the endpoint as a
-typed `local_recovery_exhausted` event; the goal owner may then request one
-fresh global route. Inspection navigation uses the same retained-goal retry
-path as an ordinary goal: a temporary local failure or replan with no path
-does not end the waypoint. Explicit task cancellation and inspection action
-failures retain their existing business policy.
+Autonomous SCAN retries inside its FSM at the upstream 100 Hz target period,
+with a separate 20 Hz future-collision callback. After 1000 consecutive failed
+planning rounds it stops, waits for measured 3-D speed below 0.1 m/s, clears
+the local target and reports `NoPath`. Executor forwards `planning_failed` to
+the existing task termination transaction, which confirms stopping and fails
+the goal without an automatic global retry. It does not insert temporary
+recovery goals, direct recovery rotations or an independent stall latch.
+Solver duration and native handoff/command holds make this a failure-count
+limit, not a fixed elapsed-time limit. FinalControl still checks final commands.
+
+CMU recovery exhaustion retains its typed `local_recovery_exhausted` event and
+the existing retained-goal retry path. Explicit cancellation, inspection action
+failures and assisted teleop retain their existing business policy.
 
 The endpoint's goal controller also retains an accepted initial goal when an
 ordinary search finds no path or times out. It uses the existing pending request
@@ -94,16 +121,9 @@ Until a route is activated the state remains Planning. Invalid requests,
 algorithm exceptions, map replacement and explicit cancellation retain their
 terminal handling; preview requests never start this motion-task retry loop.
 
-Recovery searches against the current geometry on each attempt. Finishing a
-recovery action or rejecting a candidate does not require another map sequence,
-epoch or generation before trying again. The endpoint owns input freshness;
-Recovery owns candidate selection and its remaining-path collision checks.
-
-An explicitly supplied collision Grid remains authoritative in recovery even
-when `checkObstacle` is false, matching normal SCAN Body queries. The recovery
-search's boolean controls point-cloud fallback, not whether a supplied Grid is
-queried. An unchanged but current map can therefore produce another checked
-candidate, or reject every candidate when the measured obstacle is still there.
+CMU and teleop Recovery use current geometry through RecoverySearch. A supplied
+Grid remains authoritative for those geometric checks when point sampling is
+disabled. This separate policy does not participate in autonomous SCAN.
 
 The five responsibilities are:
 
@@ -111,14 +131,17 @@ The five responsibilities are:
 | --- | --- | --- |
 | Global planner | A route through the saved 3D map | Local control or recovery |
 | LocalPlanner | An executable local path or spline using live collision data | Global search, task progress, recovery state, or final command publication |
-| Recovery | Recovery session state and its bounded translation/rotation search | Replace the global route or publish velocity |
-| Executor | Route/recovery progress and a candidate command through the follower | Final authority arbitration |
+| Recovery | Temporary goals, measured completion and retries; rotation/CMU candidate search | Replace the global route or publish velocity |
+| Executor | Route/recovery coordination and a candidate command | Goal admission or final authority arbitration |
 | FinalControl | The checked final command | Search routes or choose recovery candidates |
 
-`Recovery` is Executor's recovery state, not a separate global planner. It
-tracks the selected candidate's progress and retries. Its candidate search is
-an internal implementation detail of the same component; no other module
-owns, schedules, or calls a recovery planner.
+The endpoint's `GoalPlanController` owns goal admission, cancellation and
+replanning. `Executor` coordinates an admitted route and assisted motion; it is
+not the task manager or the hardware driver.
+
+`Recovery` is Executor's CMU/teleop recovery state, not a separate global planner.
+It tracks the selected candidate's progress and retries. Its rotation and CMU
+search remain internal details.
 
 `LocalPlanner` is the module name. SCAN is the default algorithm behind that
 interface; CMU remains an explicitly selected alternative. Executor calls the
@@ -163,6 +186,14 @@ CMU/SCAN, inspect backend strings, or manage SCAN task reuse and continuity.
 The endpoint composition root chooses and configures the Planner before
 constructing Executor.
 
+For terminal alignment, the follower computes the yaw command and
+LocalPlanner checks the turn sweep. These remain separate
+in-place stages, not ordinary spline following. LocalPlanner also owns the
+grid queries for pose-stage reconnect and assisted boundary departure.
+These geometry queries retain the existing SCAN Grid implementation even
+when CMU is selected; this change does not add a CMU-specific checker.
+FinalControl checks braking with the configured runtime values when enabled.
+
 Composition selects `PlanningFrame::Map` for SCAN and `PlanningFrame::Odom`
 for CMU. SCAN's complete reference, robot kinematics, collision queries and
 spline tracking share map coordinates; the Follower still returns body-frame
@@ -206,7 +237,12 @@ hard-stop policy, and the final velocity publication.
 
 ## Stair segments
 
-The endpoint reads recognized, map-bound stair geometry and attaches matching
+The following describes an experimental native prototype. The navigation
+endpoint does not currently attach stair segments, request stair profiles, or
+run the stair entry/exit handoff. Stair recognition, model switching, and
+physical stair traversal have not been validated for deployment.
+
+In the prototype, map-bound stair geometry can be attached as matching
 `StairSegment` values to `Route`. Matching samples the actual 3D route against
 the measured tread elevations and flight width; an XY/AABB overlap does not
 attach a stair requirement. Both directions, partial flight routes and multiple

@@ -9,6 +9,24 @@ import pytest
 from lingtu.sdk import LingTuClient
 
 
+def test_map_source_download_uses_operation_identity(monkeypatch, tmp_path):
+    wire = b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\npcd-bytes"
+    response = HTTPResponse(Mock(makefile=lambda *args: BytesIO(wire)))
+    response.begin()
+    urls = []
+
+    def open_response(request, **_kwargs):
+        urls.append(request.full_url)
+        return response
+
+    monkeypatch.setattr("urllib.request.urlopen", open_response)
+    target = tmp_path / "source.pcd"
+    robot = LingTuClient()
+    assert robot.map.download_source("saved_1", target) == target
+    assert urls == [robot.base_url + "/api/v1/maps/operations/saved_1/source/pcd"]
+    assert target.read_bytes() == b"pcd-bytes"
+
+
 @pytest.mark.parametrize("payload", [b"partial", b""])
 def test_truncated_download_preserves_existing_map(monkeypatch, tmp_path, payload):
     # HTTPResponse.read(size) can return early EOF without IncompleteRead.

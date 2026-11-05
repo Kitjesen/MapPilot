@@ -8,6 +8,9 @@
 #include <vector>
 
 #include "control/autonomy.hpp"
+#include "control/final.hpp"
+#include "app/config/config.hpp"
+#include "app/state.hpp"
 #include "app/loop.hpp"
 #include "../collision_bitmap.hpp"
 #include "planning/local/scan/grid.hpp"
@@ -837,24 +840,23 @@ void testActualPureYawBrakingStopsBeforeCommitAndAllowsClearTurn() {
     require(grid.brakingOccupancy(*fixture.map_body, measured, .35, .5, 1) ==
                 (blocked ? 1 : 0),
             "real measured-yaw braking sweep must distinguish the occupied corner");
+    lingtu::nav::endpoint::CliConfig config;
+    config.control_mode = lingtu::nav::endpoint::ControlMode::Autonomy;
+    config.velocity_smoother.x.deceleration = .5;
+    config.velocity_smoother.y.deceleration = .5;
+    config.velocity_smoother.yaw.deceleration = 1;
+    params.backend = nav_kernel::LocalPlannerBackend::Scan;
+    params.checkObstacle = true;
+    collision_request.robot.pose = *fixture.map_body;
+    lingtu::nav::endpoint::FinalSafetyInput safety_input{config, params, collision_request};
+    safety_input.has_pose = true;
+    safety_input.measured = measured;
+    safety_input.measured_velocity_valid = true;
     fixture.final_actions.command_safety =
         [&](const CommandSafetyConfig &config, const nav_kernel::Twist &command, double age) {
       ++fixture.command_safety_calls;
       fixture.command_safety_input = command;
-      auto decision = lingtu::nav::endpoint::evaluateCommandSafety(config, command, age);
-      // Match the final runtime boundary: unsafe measured braking requires zero;
-      // otherwise shorten the shaped command's actual-pose braking arc if needed.
-      const double scale = grid.brakingOccupancy(*fixture.map_body, measured, .35, .5, 1) != 0
-                               ? 0.0 : grid.brakingScale(*fixture.map_body, decision.cmd, .35, .5, 1);
-      decision.cmd.vx *= scale;
-      decision.cmd.vy *= scale;
-      decision.cmd.wz *= scale;
-      if (scale <= 0) {
-        decision.stopped = true;
-        decision.limited = true;
-        decision.reason = "scan_actual_motion_blocked";
-      }
-      return decision;
+      return lingtu::nav::endpoint::evaluateFinalSafety(safety_input, config, command, age);
     };
     AutonomyTickController controller(fixture.actions, fixture.control());
     const auto result = controller.tick(fixture.input());
@@ -879,6 +881,330 @@ void testActualPureYawBrakingStopsBeforeCommitAndAllowsClearTurn() {
               "clear actual rotation must commit and publish the shaped nonzero command");
     }
   }
+}
+
+struct FinalSafetyFixture {
+  lingtu::nav::endpoint::CliConfig config;
+  nav_kernel::LocalPlannerParams params;
+  nav_kernel::LocalPlanRequest request;
+  lingtu::nav::tests::CollisionBitmap bitmap{{-2,-2,-1}, {2,2,2}, .05};
+  CommandSafetyConfig safety;
+  lingtu::nav::endpoint::FinalSafetyInput input{config, params, request};
+
+  FinalSafetyFixture() {
+    config.control_mode = lingtu::nav::endpoint::ControlMode::Autonomy;
+    config.velocity_smoother.x.deceleration = .5;
+    config.velocity_smoother.y.deceleration = .5;
+    config.velocity_smoother.yaw.deceleration = 1;
+    params.backend = nav_kernel::LocalPlannerBackend::Scan;
+    params.checkObstacle = true;
+    params.scan.voxelResolution = .05;
+    params.scan.cylinderOffset = .25;
+    request.robot.pose = {{.05,.45,.55},0};
+    request.environment.collision = bitmap.view();
+    input.has_pose = true;
+    input.measured_velocity_valid = true;
+  }
+
+  CommandSafetyDecision evaluate(const nav_kernel::Twist &command) {
+    return lingtu::nav::endpoint::evaluateFinalSafety(input, safety, command, 0);
+  }
+};
+
+void testFinalSafetyUsesTheActiveTaskBudgetForDeadband() {
+  FinalSafetyFixture fixture;
+  fixture.params.checkObstacle = false;
+  fixture.input.has_route = true;
+  fixture.input.active_max_speed_mps = 0.02;
+  fixture.safety.min_motion_speed_mps = 0.03;
+  const auto decision = fixture.evaluate({0.2, 0.0, 0.0});
+  require(!decision.stopped && near(decision.cmd.vx, 0.02),
+          "the active task speed cap must not turn all legal motion into a deadband stop");
+  require(fixture.safety.min_motion_speed_mps == 0.03,
+          "task speed updates must preserve the configured deadband");
+}
+
+void testTurnUsesFinalConfiguredBraking() {
+  FinalSafetyFixture fixture;
+  auto body = std::make_shared<lingtu::nav::collision::Body>();
+  lingtu::nav::collision::Part part;
+  part.link = "base";
+  part.half_size = {.2, .1, .1};
+  body->parts.push_back(part);
+  fixture.request.body = body;
+  auto &view = fixture.request.environment.collision;
+  view.measuredOccupiedStorage = std::make_shared<const std::vector<std::uint8_t>>(
+      view.inflatedBits, view.inflatedBits + view.inflatedBytes);
+  view.knownFreeStorage = std::make_shared<const std::vector<std::uint8_t>>(
+      view.inflatedBytes, 255U);
+  const auto &pose = fixture.request.robot.pose;
+  nav_kernel::PredictedObstacle crossing{{pose.position.x, pose.position.y + .35, .55},
+                                         {pose.position.x, pose.position.y - .65, .55},
+                                         .04, .4, .7};
+  fixture.request.environment.predictions = {&crossing, 1, 3, 1, 1};
+  fixture.request.clock.timestampS = 1;
+  fixture.config.tick_hz = 100;
+  fixture.config.velocity_smoother.yaw.deceleration = 4;
+  fixture.safety.cmd_max_age_s = .01;
+  const nav_kernel::Twist command{0, 0, .2};
+  const nav_kernel::local::scan::Grid grid(fixture.params, fixture.request);
+  require(grid.segmentInflatedOccupancy(pose.position, pose.yaw, pose.position, .1) == 0 &&
+              grid.brakingOccupancy(pose, command, .1, .5, 1) == 1,
+          "fixture must distinguish a clear turn from the old fixed braking prediction");
+  require(!fixture.evaluate(command).limited,
+          "configured fast braking must permit the clear command");
+  nav_kernel::LocalPlanner planner(fixture.params);
+  require(planner.turnClear(fixture.request, .1),
+          "turn geometry must not override final control with fixed braking values");
+  fixture.config.tick_hz = 10;
+  fixture.config.velocity_smoother.yaw.deceleration = 1;
+  fixture.safety.cmd_max_age_s = .1;
+  require(fixture.evaluate(command).limited,
+          "final control must still limit the command when configured braking intersects");
+}
+
+struct RuntimeFinalFixture {
+  FinalSafetyFixture geometry;
+  lingtu::nav::endpoint::EndpointState state;
+  lingtu::nav::navigation::Executor executor{
+      {}, nav_kernel::LocalPlanner{geometry.params}};
+  FinalControl control{geometry.config, geometry.params, state, executor};
+
+  RuntimeFinalFixture() {
+    state.map_body = geometry.request.robot.pose;
+    state.odom_velocity_valid = true;
+    replaceMap();
+  }
+
+  void replaceMap() {
+    const auto view = geometry.bitmap.view();
+    auto &map = state.local_collision_map;
+    map.inflated_occupied_bits = std::make_shared<const std::vector<std::uint8_t>>(
+        view.inflatedBits, view.inflatedBits + view.inflatedBytes);
+    map.size_x = view.sizeX;
+    map.size_y = view.sizeY;
+    map.size_z = view.sizeZ;
+    map.resolution = view.resolution;
+    map.aabb_min = view.aabbMin;
+    map.aabb_max = view.aabbMax;
+    map.complete = true;
+  }
+
+  lingtu::nav::endpoint::FinalResult finalize(const nav_kernel::Twist &command) {
+    return control.finalize({lingtu::nav::endpoint::FinalMode::kAutonomyPath,
+                             geometry.safety, command, 0, 0, false, true, 42});
+  }
+};
+
+void testRuntimeFinalControlUsesActiveRouteBody() {
+  RuntimeFinalFixture fixture;
+  fixture.geometry.params.scan.cylinderOffset = 0;
+  fixture.geometry.bitmap.occupy({.35, .45, .55});
+  fixture.replaceMap();
+  auto &map = fixture.state.local_collision_map;
+  map.measured_occupied_bits = map.inflated_occupied_bits;
+  map.known_free_bits = std::make_shared<const std::vector<std::uint8_t>>(
+      map.inflated_occupied_bits->size(), 255U);
+  require(!fixture.finalize({0, 0, .2}).decision.stopped,
+          "fixture obstacle must not collide with the fallback point body");
+  auto body = std::make_shared<lingtu::nav::collision::Body>();
+  lingtu::nav::collision::Part part;
+  part.link = "base";
+  part.half_size = {.4, .1, .1};
+  body->parts.push_back(part);
+  lingtu::nav::navigation::Route route;
+  route.body = body;
+  route.points = {{.05, .45, .55}, {1, .45, .55}};
+  fixture.executor.setRoute(std::move(route));
+  require(fixture.finalize({0, 0, .2}).decision.stopped,
+          "final braking must use the same active route body as local planning");
+}
+
+void testRuntimeFinalControlReadsCurrentPoseEachCycle() {
+  RuntimeFinalFixture fixture;
+  require(!fixture.finalize({-.5, 0, 0}).decision.stopped,
+          "a clear runtime pose must allow the checked command");
+  fixture.state.map_body.reset();
+  require(fixture.finalize({-.5, 0, 0}).decision.stopped,
+          "removing the runtime pose must invalidate the next command");
+  fixture.state.map_body = fixture.geometry.request.robot.pose;
+  require(!fixture.finalize({-.5, 0, 0}).decision.stopped,
+          "restoring the runtime pose must allow motion without rebuilding control");
+}
+
+void testRuntimeFinalControlUsesObservedBody() {
+  RuntimeFinalFixture fixture;
+  auto body = std::make_shared<lingtu::nav::collision::Body>();
+  body->margin_m = 0;
+  lingtu::nav::collision::Part part;
+  part.link = "base";
+  part.half_size = {.4, .1, .1};
+  body->parts.push_back(part);
+  lingtu::nav::navigation::Route route;
+  route.body = body;
+  route.points = {{.05, .45, .55}, {1, .45, .55}};
+  fixture.executor.setRoute(std::move(route));
+  const auto replace = [&] {
+    fixture.replaceMap();
+    auto &map = fixture.state.local_collision_map;
+    map.measured_occupied_bits = map.inflated_occupied_bits;
+    map.known_free_bits = std::make_shared<const std::vector<std::uint8_t>>(
+        map.inflated_occupied_bits->size(), 255U);
+  };
+  fixture.geometry.bitmap.occupy({.35, .45, .55});
+  replace();
+  require(fixture.finalize({0, 0, .2}).decision.stopped,
+          "nominal horizontal body must reproduce the low obstacle overlap");
+  auto observed = std::make_shared<lingtu::nav::collision::Body>(*body);
+  const double c = std::cos(.7), s = std::sin(.7);
+  observed->parts.front().rotation = {c, 0, -s, 0, 1, 0, s, 0, c};
+  fixture.state.observed_body = observed;
+  require(!fixture.finalize({0, 0, .2}).decision.stopped,
+          "final control must use measured tilt when the low obstacle is clear");
+  fixture.geometry.bitmap.occupy({.35, .45, .85});
+  replace();
+  require(fixture.finalize({0, 0, .2}).decision.stopped,
+          "measured body must still stop for an obstacle at its actual height");
+}
+
+void testRuntimeFinalControlUsesReplacedMapEachCycle() {
+  RuntimeFinalFixture fixture;
+  fixture.state.odom_linear_velocity_body.x = .5;
+  require(!fixture.finalize({-.5, 0, 0}).decision.stopped,
+          "an empty runtime map must allow measured forward braking");
+  fixture.geometry.bitmap.occupy({.70, .45, .55});
+  fixture.replaceMap();
+  const auto blocked = fixture.finalize({-.5, 0, 0});
+  require(blocked.decision.stopped &&
+              blocked.decision.reason == "scan_actual_motion_blocked",
+          "a replacement map must block unsafe measured momentum on the next cycle");
+  fixture.geometry.bitmap.clear();
+  fixture.replaceMap();
+  require(!fixture.finalize({-.5, 0, 0}).decision.stopped,
+          "a later clear map must release motion without retaining the old snapshot");
+}
+
+void testRuntimeFinalControlReadsMeasuredVelocityEachCycle() {
+  RuntimeFinalFixture fixture;
+  fixture.geometry.bitmap.occupy({.70, .45, .55});
+  fixture.replaceMap();
+  fixture.state.odom_linear_velocity_body.x = -.5;
+  require(!fixture.finalize({-.5, 0, 0}).decision.stopped,
+          "safe measured reverse motion must allow the reverse command");
+  fixture.state.odom_linear_velocity_body.x = .5;
+  require(fixture.finalize({-.5, 0, 0}).decision.stopped,
+          "a newly measured forward velocity must not reuse the old safe reverse state");
+}
+
+void testRuntimeFinalControlStopRestartsYawWithOneAccelerationStep() {
+  RuntimeFinalFixture fixture;
+  fixture.geometry.params.checkObstacle = false;
+  lingtu::nav::endpoint::FinalInput input{
+      lingtu::nav::endpoint::FinalMode::kTeleopCommand, fixture.geometry.safety,
+      {0, 0, 1}, 0, 0, false, true, 42, 1, .01};
+  require(near(fixture.control.finalize(input).decision.cmd.wz, .01),
+          "the initial direct turn must use one nominal acceleration step");
+  input.now_s = 42.1;
+  require(near(fixture.control.finalize(input).decision.cmd.wz, .11),
+          "continued direct turning must accumulate the elapsed acceleration budget");
+  fixture.control.stop(42.1, "test_stop");
+  input.now_s = 42.11;
+  require(near(fixture.control.finalize(input).decision.cmd.wz, .01),
+          "a stopped direct turn must restart from zero instead of the prior yaw command");
+}
+
+void testFinalSafetyKeepsMeasuredAndCommandBrakingDistinct() {
+  FinalSafetyFixture fixture;
+  fixture.bitmap.occupy({.70,.45,.55});
+  const nav_kernel::local::scan::Grid grid(fixture.params, fixture.request);
+  const auto &pose = fixture.request.robot.pose;
+  require(grid.brakingOccupancy(pose, {.5,0,0}, .35,.5,1) == 1 &&
+              grid.brakingOccupancy(pose, {-.5,0,0}, .35,.5,1) == 0,
+          "fixture must have clear reverse braking and unsafe forward braking");
+
+  fixture.input.measured = {.5,0,0};
+  const auto measured_blocked = fixture.evaluate({-.5,0,0});
+  require(measured_blocked.stopped && measured_blocked.limited &&
+              measured_blocked.reason == "scan_actual_motion_blocked" &&
+              near(measured_blocked.cmd.vx,0),
+          "a safe reverse request must not hide unsafe measured forward momentum");
+
+  fixture.input.measured = {-.5,0,0};
+  const auto limited = fixture.evaluate({.5,0,0});
+  require(!limited.stopped && limited.slowed && limited.limited &&
+              limited.reason == "scan_actual_motion_limited" &&
+              limited.cmd.vx > 0 && limited.cmd.vx < .5,
+          "safe measured motion must still limit an unsafe forward command");
+  require(grid.brakingOccupancy(pose,limited.cmd,.35,.5,1) == 0,
+          "the final limited command must have a clear braking sweep");
+  const auto accepted = fixture.evaluate({-.5,0,0});
+  require(!accepted.stopped && near(accepted.cmd.vx,-.5),
+          "clear measured and commanded braking must retain the request");
+
+  fixture.input.has_pose = false;
+  const auto missing_pose = fixture.evaluate({-.5,0,0});
+  require(missing_pose.stopped && missing_pose.reason == "scan_actual_motion_blocked",
+          "missing actual pose must not authorize a nonzero checked command");
+}
+
+void testFinalSafetyPreservesVerifiedBoundaryDeparture() {
+  FinalSafetyFixture fixture;
+  fixture.params.scan.voxelResolution = .1;
+  fixture.params.scan.cylinderOffset = 0;
+  fixture.config.recovery_translation_speed_mps = .2;
+  auto body = std::make_shared<lingtu::nav::collision::Body>();
+  body->horizontal_margin_m = .08;
+  lingtu::nav::collision::Part part;
+  part.link = "base";
+  part.half_size = {.3,.11,.1};
+  body->parts.push_back(part);
+  fixture.request.body = body;
+  fixture.request.robot.pose = {{.01,0,.5},0};
+  lingtu::nav::tests::CollisionBitmap raw{{-2,-2,-1},{2,2,2},.1};
+  raw.occupy({-.35,.05,.55});
+  fixture.request.environment.collision = raw.view();
+  auto &view = fixture.request.environment.collision;
+  view.measuredOccupiedStorage = std::make_shared<const std::vector<std::uint8_t>>(
+      view.inflatedBits, view.inflatedBits + view.inflatedBytes);
+  view.knownFreeStorage = std::make_shared<const std::vector<std::uint8_t>>(
+      view.inflatedBytes,255U);
+  fixture.input.measured = {.1,0,0};
+  const nav_kernel::local::scan::Grid grid(fixture.params,fixture.request);
+  require(grid.inflatedOccupancy(fixture.request.robot.pose.position,0) == 1 &&
+              grid.boundaryDepartureMotionFree(fixture.request.robot.pose,
+                  {.1,0,0},fixture.input.measured,.2,.35,.5,1),
+          "fixture must overlap only a clearance margin with a checked departure");
+
+  const auto unverified = fixture.evaluate({.1,0,0});
+  require(unverified.stopped, "ordinary motion cannot use the recovery departure exception");
+  fixture.safety.verified_recovery_translation = true;
+  const auto verified = fixture.evaluate({.1,0,0});
+  require(!verified.stopped && verified.reason == "scan_boundary_departure" &&
+              near(verified.cmd.vx,.1),
+          "a verified collision-checked departure must remain executable");
+  fixture.input.measured_velocity_valid = false;
+  require(fixture.evaluate({.1,0,0}).stopped,
+          "boundary departure requires the measured motion used for its sweep");
+}
+
+void testFinalSafetyRetainsRouteLimitAndManualScope() {
+  FinalSafetyFixture fixture;
+  fixture.input.has_route = true;
+  fixture.input.active_max_speed_mps = .2;
+  const auto limited = fixture.evaluate({.5,0,0});
+  require(!limited.stopped && near(limited.cmd.vx,.2),
+          "an autonomous route must retain its active speed limit at the final boundary");
+  fixture.input.operator_takeover = true;
+  require(near(fixture.evaluate({.5,0,0}).cmd.vx,.5),
+          "operator takeover must not inherit the autonomous route speed limit");
+  fixture.input.has_pose = false;
+  fixture.input.manual_mode = true;
+  require(!fixture.evaluate({.5,0,0}).stopped,
+          "manual mode must retain its existing bypass of SCAN geometry");
+  const auto stale = lingtu::nav::endpoint::evaluateFinalSafety(
+      fixture.input, fixture.safety, {.5,0,0}, 1);
+  require(stale.stopped && stale.reason == "stale",
+          "manual mode must still enforce the command freshness limit");
 }
 
 void testBrakingSlowdownRetainsActiveTrajectory() {
@@ -937,6 +1263,20 @@ void testReachedOutcomesDistinguishInspectionArrival() {
           "rolling reach must not notify inspection as a generic arrival");
 }
 
+void testPlannerExhaustionTerminatesWithoutGlobalRetry() {
+  Fixture fixture;
+  fixture.next_output.active = true;
+  fixture.next_output.planning_failed = true;
+  fixture.next_output.reason = "local_no_path";
+  AutonomyTickController controller(fixture.actions, fixture.control());
+  const auto result = controller.tick(fixture.input(true, true, false));
+  require(result.outcome.kind == AutonomyTickOutcomeKind::kGoalFailed &&
+              result.outcome.terminal_failure_intent && !result.outcome.replan_trigger,
+          "SCAN exhaustion must terminate instead of triggering another global plan");
+  require(near(result.publish.command.vx,0) && near(result.publish.command.vy,0) &&
+              near(result.publish.command.wz,0), "exhausted planner must not move");
+}
+
 }  // namespace
 
 int main() {
@@ -959,10 +1299,22 @@ int main() {
     testUnpublishedCommandDoesNotAdvanceSmootherCommit();
     testVerifiedRecoveryCommandUsesPlannerDecision();
     testRecoveryOutcomesDistinguishRollingAndGenericGoals();
+    testPlannerExhaustionTerminatesWithoutGlobalRetry();
     testRecoveryMotionIsNotPreemptedByTaskReplanning();
     testReachedOutcomesDistinguishInspectionArrival();
     testActualCollisionRestartsPlannerInsteadOfHoldingUnsafeTrackingTarget();
     testActualPureYawBrakingStopsBeforeCommitAndAllowsClearTurn();
+    testRuntimeFinalControlUsesActiveRouteBody();
+    testRuntimeFinalControlUsesObservedBody();
+    testTurnUsesFinalConfiguredBraking();
+    testFinalSafetyKeepsMeasuredAndCommandBrakingDistinct();
+    testFinalSafetyPreservesVerifiedBoundaryDeparture();
+    testFinalSafetyRetainsRouteLimitAndManualScope();
+    testFinalSafetyUsesTheActiveTaskBudgetForDeadband();
+    testRuntimeFinalControlReadsCurrentPoseEachCycle();
+    testRuntimeFinalControlUsesReplacedMapEachCycle();
+    testRuntimeFinalControlReadsMeasuredVelocityEachCycle();
+    testRuntimeFinalControlStopRestartsYawWithOneAccelerationStep();
     testBrakingSlowdownRetainsActiveTrajectory();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "test_autonomy_tick_controller: FAIL: %s\n", error.what());

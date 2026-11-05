@@ -27,7 +27,6 @@ fi
 : "${LINGTU_LIVOX_NET_IFACE:=}"
 : "${LINGTU_LIVOX_HOST_IP:=}"
 : "${LINGTU_LIVOX_LIDAR_IP:=}"
-: "${LINGTU_LIVOX_BIND_LIDAR_IP:=0}"
 
 prepend_cyclonedds_libs() {
     local prefix="${LINGTU_CYCLONEDDS_PREFIX:-}"

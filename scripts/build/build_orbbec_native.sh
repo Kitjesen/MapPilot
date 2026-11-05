@@ -61,7 +61,13 @@ install_orbbec_runtime_lib() {
 
 install_orbbec_runtime_lib
 
+if [[ -z "${LINGTU_PYTHON:-}" && -x .venv/bin/python ]]; then
+  LINGTU_PYTHON=.venv/bin/python
+fi
+"${LINGTU_PYTHON:-python3}" scripts/build/settings.py config/system/settings \
+  "$OUT_DIR/generated/lingtu/settings.hpp"
 c++ -std=c++17 -O2 \
+  -I"$OUT_DIR/generated" \
   -I"$SDK_ROOT/include" \
   -I"$SRC_DIR" \
   -I"$IMPL_DIR" \

@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <utility>
 
 #include "message/protocol/navigation.hpp"
 #include "app/goal/task.hpp"
@@ -39,10 +40,8 @@ struct GoalPlanAdmissionContext {
   bool autonomy_mode{false};
   std::string control_mode_name{"autonomy"};
   std::string driver_control_blocker;
-  bool profile_transition_pending{false};
   double autonomy_request_not_before_s{0.0};
   std::optional<nav_kernel::Vec3> map_position;
-  double map_yaw_rad{0.0};
   bool odometry_ready{false};
   bool input_ready{true};
   std::string input_gate_reason;
@@ -56,8 +55,6 @@ struct GoalPlanAdmissionContext {
   lingtu::nav::plan::GlobalPlanTemporaryOverlay temporary_overlay{};
   bool replan_pending{false};
   std::shared_ptr<const lingtu::nav::collision::Body> body{};
-  std::function<bool(const lingtu::nav::collision::Aabb &)> observed_free{};
-  decltype(lingtu::nav::plan::GlobalPlanRequest{}.observed_occupied) observed_occupied{};
 };
 
 struct GoalPlanAdvanceContext {
@@ -104,7 +101,6 @@ struct GoalPlanPathActivation {
   std::optional<double> support_height_m{};
   std::optional<double> support_height_tolerance_m{};
   std::optional<nav_kernel::Vec3> requested_goal;
-  lingtu::nav::collision::SupportQuery support_surface;
 };
 
 struct GoalPlanDiagnostics {
@@ -247,6 +243,8 @@ class GoalPlanController {
   [[nodiscard]] GoalPlanTerminalCommitWithTicket
   deferActiveTerminalWithTicket(lingtu::message::NavigationGoalState state,
                                 const std::string &reason);
+  [[nodiscard]] std::pair<bool, std::string> setTaskSpeedLimit(
+      const std::string &task_id, double max_speed_mps, double configured_max_speed_mps);
   void invalidateForHold(const std::string &reason);
   [[nodiscard]] GoalPlanSnapshot snapshot() const;
 

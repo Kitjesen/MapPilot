@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { ArrowLeft, Map, FolderOpen, Trash2, RefreshCw, Save, Pencil, Navigation, ChevronDown, Check, MoreHorizontal, X, Search } from 'lucide-react'
 import type { MapInfo, SessionEvent, ToastKind } from '../types'
 import * as api from '../services/api'
-import { formatMapSaveProgress, pendingMapSaveStatus, savedMapStatus, mapSaveProgressValue, mapSaveElapsedMs, formatMapSaveElapsed, type MapSaveStatus } from '../services/mapSavePresentation.ts'
+import { formatMapSaveProgress, pendingMapSaveStatus, savedMapStatus, archivedMapStatus, failedMapSaveStatus, mapSaveProgressValue, mapSaveElapsedMs, formatMapSaveElapsed, mappingCapacityNotice, type MapSaveStatus } from '../services/mapSavePresentation.ts'
 import { mapIsActivationReady, mapSaveBlockedReason, mapUseStatus, navigationGoalQueueReady } from '../services/mapReadiness'
 import { PointCloudViewer } from './PointCloudViewer'
 import { PromptModal, ConfirmModal } from './Modal'
+import { MapSaveHistory } from './MapSaveHistory'
 import { text, type Locale } from '../i18n'
 import { isObservationMode } from '../services/observationMode.ts'
 import { parseInitialPose, type InitialPoseInput, type LocalizationInitialPose } from '../services/localizationInitialPose.ts'
@@ -20,6 +21,7 @@ interface MapViewProps {
   productSwitchMessage: string
   onReturnLive: () => void
   session: SessionEvent['data'] | null
+  slamDiag: Record<string, unknown> | null
   showToast: (msg: string, kind?: ToastKind) => void
   locale: Locale
 }
@@ -86,11 +88,13 @@ export function MapView({
   productSwitchMessage,
   onReturnLive,
   session,
+  slamDiag,
   showToast,
   locale,
 }: MapViewProps) {
   const observe = isObservationMode()
   const saveBlockedReason = mapSaveBlockedReason(session)
+  const capacityNotice = mappingCapacityNotice(session?.product, slamDiag)
   const [maps,        setMaps       ] = useState<MapInfo[]>([])
   const [loading,     setLoading    ] = useState(true)
   const [error,       setError      ] = useState('')
@@ -101,6 +105,7 @@ export function MapView({
 
   // Modal state
   const [saveOpen,   setSaveOpen  ] = useState(false)
+  const [autoProcess, setAutoProcess] = useState(true)
   const [resolution, setResolution] = useState(0.1)
   const [resolutionCopyOpen, setResolutionCopyOpen] = useState(false)
   const [resolutionBuild, setResolutionBuild] = useState<{
@@ -165,7 +170,7 @@ export function MapView({
 
   const handleDelete = (name: string) => setDeleteFrom(name)
   const handleRename = (name: string) => setRenameFrom(name)
-  const handleSave = () => setSaveOpen(true)
+  const handleSave = () => { setAutoProcess(true); setSaveOpen(true) }
 
   const confirmDelete = async () => {
     const name = deleteFrom
@@ -207,8 +212,9 @@ export function MapView({
       detail: existing ? formatMapSaveProgress(existing) : '正在提交保存请求',
     })
     try {
-      const admission = existing ?? await api.saveMap(name)
+      const admission = existing ?? await api.saveMap(name, autoProcess)
       const outcome = await api.waitForMapSaveOperation(admission, {
+        until: 'source',
         onProgress: progress => {
           updateProgress(progress)
           setSaveStatus({ name, state: 'saving', detail: formatMapSaveProgress(progress) })
@@ -216,6 +222,13 @@ export function MapView({
       })
       if (outcome.state === 'pending') {
         setSaveStatus(pendingMapSaveStatus(outcome.result, outcome.reason))
+        return
+      }
+      if (outcome.state === 'source_saved') {
+        updateProgress(outcome.result)
+        setSaveStatus(archivedMapStatus(outcome.result))
+        setLibraryOpen(true)
+        showToast(`PCD 已保存 ${outcome.result.name}`, 'success')
         return
       }
       const r = outcome.result
@@ -233,11 +246,7 @@ export function MapView({
     catch (e: unknown) {
       updateProgress()
       const message = e instanceof Error ? e.message : String(e)
-      setSaveStatus({
-        name,
-        state: 'failed',
-        detail: message || '保存失败，请检查 Gateway 日志。',
-      })
+      setSaveStatus(failedMapSaveStatus(name, e))
       showToast(`保存失败：${message}`, 'error')
     }
   }
@@ -356,6 +365,7 @@ export function MapView({
         </div>
       </header>
       {productSwitchMessage && <div className={styles.saveNotice} role="status">{productSwitchMessage}</div>}
+      {capacityNotice && <div className={styles.saveNotice} role="status">{capacityNotice}</div>}
       {resolutionBuild && <div className={styles.saveNotice} role="status">
         <span>{resolutionBuild.message}</span>
         {resolutionBuild.state === 'failed' && <button className={styles.quietButton}
@@ -399,7 +409,7 @@ export function MapView({
         }} />
       {saveStatus && <div
         className={`${styles.saveNotice} ${saveStatus.state === 'failed' ? styles.saveError : ''}`} role="status">
-        <span>{saveStatus.name}：{saveStatus.state === 'failed' ? '保存失败：' : ''}{saveStatus.detail}</span>
+        <span>{saveStatus.name}：{saveStatus.state === 'failed' ? saveStatus.operation?.operation?.source_saved ? '处理失败：' : '保存失败：' : ''}{saveStatus.detail}</span>
         <span className={styles.saveTiming}>
           {saveActive ? '已等待' : '耗时'} {formatMapSaveElapsed(saveTiming.elapsedMs + (saveActive ? Math.max(0, saveClock - saveTiming.observedAt) : 0))}
           {saveActive && <>
@@ -410,7 +420,7 @@ export function MapView({
         {saveStatus.summary && <span>{saveStatus.summary}</span>}
         {saveStatus.state === 'pending' && <button className={styles.quietButton}
           onClick={() => void confirmSave(saveStatus.name, saveStatus.operation)}><RefreshCw size={16} />继续查询</button>}
-        {(saveStatus.state === 'failed' || saveStatus.state === 'saved') && <button className={styles.iconButton}
+        {(saveStatus.state === 'failed' || saveStatus.state === 'saved' || saveStatus.state === 'archived') && <button className={styles.iconButton}
           onClick={() => setSaveStatus(null)} aria-label="关闭保存提示"><X size={16} /></button>}
       </div>}
       <div className={styles.mapWorkspace}>
@@ -441,6 +451,11 @@ export function MapView({
                 onPreview={togglePreview} onRename={handleRename} onDelete={handleDelete} />)}
             </ul>}
             {!loading && maps.length > 0 && filteredMaps.length === 0 && <p className={styles.stateMsg}>没有找到匹配的地图</p>}
+            <MapSaveHistory refreshKey={`${session?.product_session_id ?? ''}:${saveStatus?.state ?? ''}`}
+              readOnly={observe}
+              currentOperationId={saveStatus && 'operation' in saveStatus ? saveStatus.operation?.operation_id : undefined}
+              onContinue={result => void confirmSave(result.name, result)}
+              onComplete={result => void confirmSave(result.name, result)} />
           </div>
         </aside>}
         <div className={styles.mapCanvas}>
@@ -457,14 +472,19 @@ export function MapView({
       <PromptModal
         open={saveOpen}
         title="保存地图"
-        message="保存当前建图，完成后可查看整图。同名会替换原地图；要保留原图请使用新名称。"
+        message={`${capacityNotice ? `${capacityNotice} ` : ''}先保存建图点云存档，可下载 PCD。处理成功后，同名会替换原地图；要保留原图请使用新名称。`}
         placeholder="例如 building_2f"
         confirmLabel="保存"
         icon={<Save size={18} />}
         validate={nameValidator}
         onConfirm={confirmSave}
         onCancel={() => setSaveOpen(false)}
-      />
+      >
+        <label style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'flex-start' }}>
+          <input type="checkbox" checked={autoProcess} onChange={event => setAutoProcess(event.target.checked)} />
+          <span>保存点云后自动后台处理<br /><small>取消勾选后，可从保存记录开始处理。</small></span>
+        </label>
+      </PromptModal>
 
       <PromptModal
         open={renameFrom != null}

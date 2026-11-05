@@ -5,8 +5,13 @@
 #include <vector>
 
 #include "navigation/executor.hpp"
+#include "input/frame.hpp"
 
 namespace lingtu::nav::endpoint {
+
+std::shared_ptr<const collision::Body> observedBody(
+    const std::shared_ptr<const collision::Body> &body,
+    const std::optional<RigidTransform> &pose);
 
 struct TimingDiagnostics;
 struct TraversabilityGrid;

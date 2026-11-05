@@ -1,5 +1,6 @@
 #include "lingtu/maps/save.hpp"
 #include "lingtu/maps/io/json.hpp"
+#include "lingtu/maps/io/pcd.hpp"
 #include "lingtu/maps/octomap/io.hpp"
 
 #include <atomic>
@@ -9,11 +10,13 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -268,9 +271,9 @@ std::filesystem::path WorkMapDir(
     const std::string& job_id,
     const std::string& map_id) {
 #if defined(_WIN32)
-  return std::filesystem::temp_directory_path() / "lt_maps" / job_id / "s" / map_id;
+  return std::filesystem::temp_directory_path() / "lt_maps" / job_id / "maps" / map_id;
 #else
-  return store.RootDir() / ".save_jobs" / job_id / "work" / "s" / map_id;
+  return store.RootDir() / ".save_jobs" / job_id / "work" / "maps" / map_id;
 #endif
 }
 
@@ -295,6 +298,126 @@ void WaitPhase(SaveMapEngine& engine, const std::string& id, SavePhase phase) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   Fail("SaveMap job did not enter expected phase");
+}
+
+void TestManualSource(const std::filesystem::path& root) {
+  MapStore store(MapStoreConfig{root / "manual_maps"});
+  const auto source = root / "manual_source";
+  WriteAsciiPcd(source / "map.pcd");
+  const auto source_bytes = ReadFile(source / "map.pcd");
+  auto request = Request("manual_source", "manual_map");
+  request.auto_process = false;
+  std::filesystem::path archived_source;
+  {
+    SaveMapEngine engine(store);
+    Require(engine.Begin(request).accepted, "manual source request rejected");
+    Require(!engine.GetSource(request.request_id).has_value() &&
+                !engine.Process(request.request_id).accepted,
+            "processing accepted a source before its receipt");
+    const auto captured = engine.ProvideSnapshot(request.request_id, Snapshot("manual_capture", source));
+    Require(captured.accepted && captured.status.state == SaveJobState::kCaptured &&
+                captured.status.phase == SavePhase::kCapture && captured.status.source_saved,
+            "manual source was not durably captured before processing");
+    const auto path = engine.GetSource(request.request_id);
+    Require(path.has_value() && ReadFile(*path) == source_bytes &&
+                !std::filesystem::exists(store.MapPath(request.map_id)),
+            "raw capture changed bytes or published a map before processing");
+    archived_source = *path;
+    auto conflicting = request;
+    conflicting.auto_process = true;
+    Require(!engine.Begin(conflicting).accepted,
+            "request id reused with a different processing policy");
+  }
+  {
+    SaveMapEngine engine(store);
+    const auto restored = engine.GetStatus(request.request_id);
+    Require(restored.has_value() && restored->state == SaveJobState::kCaptured && restored->source_saved &&
+                !std::filesystem::exists(store.MapPath(request.map_id)),
+            "manual capture was processed automatically after restart");
+    const auto cancelled = engine.Cancel(request.request_id);
+    Require(cancelled.accepted && cancelled.status.state == SaveJobState::kCancelled &&
+                cancelled.status.source_saved && engine.GetSource(request.request_id) == archived_source,
+            "cancelling manual processing lost the source archive");
+    Require(engine.Process(request.request_id).accepted,
+            "manual processing could not start from a cancelled archive");
+    const auto replay = engine.Process(request.request_id);
+    Require(replay.accepted && replay.replayed, "manual start was not idempotent");
+    const auto completed = WaitTerminal(engine, request.request_id);
+    Require(completed.state == SaveJobState::kSucceeded && completed.source_saved &&
+                ReadFile(archived_source) == source_bytes,
+            "successful processing lost or changed the raw source");
+    Require(engine.Process(request.request_id).replayed,
+            "processing an already completed job started it again");
+  }
+  // Older successful jobs deleted their raw capture and had no auto_process field.
+  std::filesystem::remove_all(archived_source.parent_path());
+  const auto state_path = store.RootDir() / ".save_jobs" / request.request_id / "job.state";
+  auto state = ReadFile(state_path);
+  Require(state.find("source_saved=") == std::string::npos,
+          "source_saved was persisted as a second source of truth");
+  const auto field = state.find("auto_process=");
+  Require(field != std::string::npos, "processing policy was not persisted");
+  state.erase(field, state.find('\n', field) - field + 1U);
+  std::ofstream(state_path, std::ios::binary | std::ios::trunc) << state;
+  {
+    SaveMapEngine engine(store);
+    const auto historical = engine.GetStatus(request.request_id);
+    Require(historical.has_value() && historical->state == SaveJobState::kSucceeded &&
+                !historical->source_saved && !engine.GetSource(request.request_id).has_value(),
+            "old completed job claimed a deleted raw source");
+    request.auto_process = true;
+    Require(engine.Begin(request).accepted, "old processing policy did not default to automatic");
+  }
+}
+
+void TestRetryAfterFailure(const std::filesystem::path& root) {
+  MapStore store(MapStoreConfig{root / "retry_maps"});
+  const auto source = root / "retry_source";
+  WriteAsciiPcd(source / "map.pcd");
+  std::atomic<bool> fail_commit{true};
+  SaveMapHooks hooks;
+  hooks.forced_failure = [&](const std::string&, SavePhase phase) -> std::optional<std::string> {
+    if (phase == SavePhase::kCommit && fail_commit.load()) return "retry fixture failure";
+    return std::nullopt;
+  };
+  SaveMapEngine engine(store, hooks);
+  const auto request = Request("retry_after_failure", "retry_map");
+  const auto begun = engine.Begin(request);
+  Require(begun.accepted, "retry fixture request rejected");
+  const auto job_dir = store.RootDir() / ".save_jobs" / request.request_id;
+  const auto work_dir = WorkMapDir(store, request.request_id, request.map_id).parent_path().parent_path();
+  const auto status_json = lingtu::maps::SaveMapStatusJson(begun.status);
+  Require(lingtu::maps::JsonObjectStringAtPath(status_json, {"job_dir"}) == job_dir.string() &&
+              lingtu::maps::JsonObjectStringAtPath(status_json, {"work_dir"}) == work_dir.string(),
+          "native status does not locate the job and platform workspace");
+  Require(engine.ProvideSnapshot(request.request_id, Snapshot("retry_capture", source)).accepted,
+          "retry fixture snapshot rejected");
+  const auto failed = WaitTerminal(engine, request.request_id);
+  Require(failed.state == SaveJobState::kFailed && failed.phase == SavePhase::kCommit && failed.source_saved,
+          "failed save lost its actual commit phase");
+  const auto captured = ReadFile(failed.capture_dir / "map.pcd");
+  Require(!captured.empty() && std::filesystem::is_regular_file(work_dir / "source" / "map.pcd") &&
+              std::filesystem::is_directory(work_dir / "maps") &&
+              !std::filesystem::exists(work_dir / "i"),
+          "failed save did not retain its capture and clearly named workspace");
+  Require(!failed.source_report_json.empty() && !failed.artifact_report_json.empty(),
+          "retry fixture did not produce both processing reports");
+  fail_commit.store(false);
+  const auto retried = engine.Retry(request.request_id);
+  Require(retried.accepted && retried.status.state == SaveJobState::kQueued &&
+              retried.status.source_report_json.empty() && retried.status.artifact_report_json.empty(),
+          "retry retained reports from the previous attempt");
+  const auto saved = WaitTerminal(engine, request.request_id);
+  const auto saved_points = lingtu::maps::LoadPcdXyz(saved.map_dir / "map.pcd");
+  Require(saved.state == SaveJobState::kSucceeded && saved.phase == SavePhase::kDone &&
+              saved_points.ok && saved_points.points.size() == 4U &&
+              saved_points.points.front().x == 0.0F && saved_points.points.back().x == 0.5F,
+          "retry did not finish from the retained capture");
+  Require(saved.source_saved && std::filesystem::is_regular_file(saved.capture_dir / "map.pcd") &&
+              !std::filesystem::exists(work_dir) &&
+              std::filesystem::is_regular_file(job_dir / "job.state") &&
+              std::filesystem::is_regular_file(job_dir / "events.jsonl"),
+          "successful retry lost its source archive or retained its workspace");
 }
 
 void TestDerivedArtifactInvalidation(const std::filesystem::path& root) {
@@ -374,11 +497,93 @@ void TestDerivedArtifactInvalidation(const std::filesystem::path& root) {
           "missing optimization report was not reported as unknown");
 }
 
+void TestSavedSourceFiltering(const std::filesystem::path& root) {
+  const auto source = root / "source_filtering";
+  const std::vector<lingtu::maps::PointXyz> points{
+      {0, 0, 0}, {0.1F, 0.1F, 0.1F}, {1, 0, 0},
+      {std::numeric_limits<float>::quiet_NaN(), 0, 0}};
+  std::string error;
+  Require(lingtu::maps::WriteBinaryXyzPcd(source / "map.pcd", points, &error), error);
+  MapStore store(MapStoreConfig{root / "source_filtering_maps"});
+  lingtu::maps::MapPipelineCore pipeline(store);
+  lingtu::maps::SourceCommitOptions options;
+  options.dynamic_filter_enabled = false;
+
+  const auto saved = pipeline.CommitSavedSourceJson("unfiltered", source, options);
+  Require(lingtu::maps::JsonObjectBoolAtPath(saved, {"success"}) == true, saved);
+  Require(lingtu::maps::JsonObjectNumberAtPath(saved, {"source_point_count"}) == 3 &&
+              lingtu::maps::JsonObjectNumberAtPath(saved, {"point_count"}) == 3,
+          "unfiltered source commit lost finite point counts");
+  const auto retained = lingtu::maps::LoadPcdXyz(store.MapPath("unfiltered") / "map.pcd");
+  Require(retained.ok && retained.points.size() == 3U && retained.points[1].x == 0.1F,
+          "unfiltered source commit changed the finite points");
+
+  options.voxel_size = 0.5;
+  const auto reduced = pipeline.CommitSavedSourceJson("voxel", source, options);
+  Require(lingtu::maps::JsonObjectBoolAtPath(reduced, {"success"}) == true, reduced);
+  Require(lingtu::maps::JsonObjectNumberAtPath(reduced, {"source_point_count"}) == 3 &&
+              lingtu::maps::JsonObjectNumberAtPath(reduced, {"point_count"}) == 2,
+          "voxel source commit changed the source or filtered point count");
+  const auto filtered = lingtu::maps::LoadPcdXyz(store.MapPath("voxel") / "map.pcd");
+  Require(filtered.ok && filtered.points.size() == 2U && filtered.points[1].x == 1,
+          "voxel source commit did not retain one point per voxel");
+}
+
+#if defined(_WIN32)
+void TestCrossVolumeCommit(const std::filesystem::path& source_root) {
+  const auto working_directory = std::filesystem::current_path();
+  if (working_directory.root_name() == source_root.root_name()) return;
+  const auto job_id = "cross_volume_" +
+      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+  const auto root = working_directory / ("lingtu_maps_" + job_id);
+  Require(std::filesystem::create_directory(root), "cross-volume test root already exists");
+  const auto source = source_root / job_id;
+  WriteAsciiPcd(source / "map.pcd", 3.0);
+  std::atomic<bool> copied{false};
+  {
+    MapStore store(MapStoreConfig{root});
+    SaveMapHooks hooks;
+    hooks.before_phase = [&](const std::string& id, SavePhase phase) {
+      if (phase != SavePhase::kCommit) return;
+      Require(std::filesystem::is_regular_file(WorkMapDir(store, id, "map") / "map.pcd") &&
+                  std::filesystem::is_regular_file(
+                      root / (".save-staging-" + id) / "map.pcd"),
+              "cross-volume staging did not use the copy fallback");
+      copied.store(true);
+    };
+    SaveMapEngine engine(store, hooks);
+    const auto request = Request(job_id, "map");
+    Require(engine.Begin(request).accepted, "cross-volume save request rejected");
+    Require(engine.ProvideSnapshot(job_id, Snapshot(job_id, source)).accepted,
+            "cross-volume snapshot rejected");
+    const auto status = WaitTerminal(engine, job_id);
+    Require(copied.load() && status.state == SaveJobState::kSucceeded,
+            "cross-volume save failed: " + status.message);
+    const auto saved = lingtu::maps::LoadPcdXyz(status.map_dir / "map.pcd");
+    Require(saved.ok && saved.points.size() == 4U && saved.points[0].x == 3.0F,
+            "cross-volume save changed the committed points");
+    Require(status.source_saved && std::filesystem::is_regular_file(status.capture_dir / "map.pcd") &&
+                !std::filesystem::exists(WorkMapDir(store, job_id, "map")) &&
+                !std::filesystem::exists(root / (".save-staging-" + job_id)),
+            "cross-volume save lost its archive or retained staging data");
+  }
+  std::filesystem::remove_all(root);
+  std::cout << "cross-volume commit verified " << source_root.root_name()
+            << " -> " << working_directory.root_name() << '\n';
+}
+#endif
+
 }  // namespace
 
 int main() {
   const auto root = TempRoot();
+  TestManualSource(root);
+  TestRetryAfterFailure(root);
   TestDerivedArtifactInvalidation(root);
+  TestSavedSourceFiltering(root);
+#if defined(_WIN32)
+  TestCrossVolumeCommit(root);
+#endif
   const auto source_v1 = root / "snapshots" / "v1";
   WriteAsciiPcd(source_v1 / "map.pcd", 0.0);
   std::ofstream(source_v1 / "scan_origin.txt") << "lidar_origin_in_patch 0.16 0 0.12\n";
@@ -536,8 +741,11 @@ int main() {
     for (const auto* filename : {"poses.raw.txt", "trajectory.raw.txt"})
       Require(ReadFile(status.map_dir / filename) == ReadFile(source_v1 / filename),
               "SaveMap lost original LIO evidence");
-    Require(ReadFile(status.map_dir / "map.pcd.preclean") == ReadFile(source_v1 / "map.pcd.preclean"),
+    Require(ReadFile(status.map_dir / "map.before_clean.pcd") == ReadFile(source_v1 / "map.pcd.preclean"),
             "SaveMap lost the original pre-cleaning backup");
+    Require(!std::filesystem::exists(status.map_dir / "map.pcd.preclean") &&
+                !std::filesystem::exists(status.map_dir / "map.clean.pcd"),
+            "SaveMap published redundant legacy cleaning outputs");
     Require(lingtu::maps::JsonObjectBoolAtPath(
                 status.source_report_json, {"optimization", "performed"}) == false &&
                 lingtu::maps::JsonObjectStringAtPath(
@@ -586,8 +794,8 @@ int main() {
             "SaveMap journal is missing MAP_COMMITTED");
     Require(journal.find("SUCCEEDED:DONE") != std::string::npos,
             "SaveMap journal is missing terminal success");
-    Require(!std::filesystem::exists(status.capture_dir),
-            "successful SaveMap retained its capture staging directory");
+    Require(status.source_saved && std::filesystem::is_regular_file(status.capture_dir / "map.pcd"),
+            "successful SaveMap lost its source archive");
 
     const auto record = store.GetMapRecord("warehouse");
     Require(record.has_value(), "MapRecord missing after SaveMap");
@@ -668,6 +876,7 @@ int main() {
   }
 
   {
+    const auto old_metadata = ReadFile(store.MapPath("warehouse") / "metadata.json");
     SaveMapHooks artifact_hooks;
     artifact_hooks.before_phase = [&](const std::string& job_id, SavePhase phase) {
       if (phase != SavePhase::kVerify) return;
@@ -676,7 +885,7 @@ int main() {
                       std::ios::binary | std::ios::trunc);
       } else if (job_id == "wrong_metadata_frame") {
         std::ofstream metadata(
-            WorkMapDir(store, job_id, "wrong_metadata_map") / "metadata.json",
+            WorkMapDir(store, job_id, "warehouse") / "metadata.json",
             std::ios::binary | std::ios::trunc);
         metadata << "{\"frame_id\":\"odom\"}\n";
       }
@@ -684,7 +893,7 @@ int main() {
     SaveMapEngine checked(store, artifact_hooks);
     for (const auto& fixture : std::vector<std::pair<std::string, std::string>>{
              {"empty_required_artifact", "empty_required_map"},
-             {"wrong_metadata_frame", "wrong_metadata_map"}}) {
+             {"wrong_metadata_frame", "warehouse"}}) {
       auto checked_request = Request(fixture.first, fixture.second);
       checked_request.require.occupancy = fixture.first == "empty_required_artifact";
       Require(checked.Begin(checked_request).accepted, "artifact validation request rejected");
@@ -694,8 +903,17 @@ int main() {
       const auto checked_status = WaitTerminal(checked, fixture.first);
       Require(checked_status.state == SaveJobState::kFailed,
               "SaveMap committed an empty artifact or invalid metadata frame");
-      Require(!std::filesystem::exists(store.MapPath(fixture.second)),
-              "failed artifact validation committed a map directory");
+      Require(std::filesystem::is_regular_file(checked_status.capture_dir / "map.pcd"),
+              "failed artifact validation lost the captured source");
+      Require(!std::filesystem::exists(WorkMapDir(store, fixture.first, fixture.second)) &&
+                  !std::filesystem::exists(store.RootDir() / (".save-staging-" + fixture.first)),
+              "failed artifact validation retained transferred staging");
+      if (fixture.second == "warehouse")
+        Require(ReadFile(store.MapPath("warehouse") / "metadata.json") == old_metadata,
+                "failed artifact validation replaced the existing map");
+      else
+        Require(!std::filesystem::exists(store.MapPath(fixture.second)),
+                "failed artifact validation committed a map directory");
     }
   }
 
@@ -1107,6 +1325,33 @@ int main() {
 
   const auto source_v2 = root / "snapshots" / "v2";
   WriteAsciiPcd(source_v2 / "map.pcd", 10.0);
+  {
+    SaveMapEngine* running = nullptr;
+    SaveMapHooks hooks;
+    hooks.before_phase = [&](const std::string& job_id, SavePhase phase) {
+      if (phase != SavePhase::kCommit) return;
+      Require(!std::filesystem::exists(WorkMapDir(store, job_id, "warehouse")) &&
+                  std::filesystem::is_regular_file(
+                      store.RootDir() / (".save-staging-" + job_id) / "map.pcd"),
+              "commit did not transfer the private map staging directory");
+      Require(running->Cancel(job_id).accepted, "commit-stage cancellation was rejected");
+    };
+    SaveMapEngine engine(store, hooks);
+    running = &engine;
+    const auto request = Request("cancel_commit_stage", "warehouse");
+    Require(engine.Begin(request).accepted, "commit-stage cancel request rejected");
+    Require(engine.ProvideSnapshot(request.request_id, Snapshot("commit_cancel", source_v2)).accepted,
+            "commit-stage cancel snapshot rejected");
+    const auto status = WaitTerminal(engine, request.request_id);
+    Require(status.state == SaveJobState::kCancelled &&
+                std::filesystem::is_regular_file(status.capture_dir / "map.pcd"),
+            "commit-stage cancellation lost the captured source");
+    Require(!std::filesystem::exists(store.RootDir() / ".save-staging-cancel_commit_stage"),
+            "commit-stage cancellation retained staging");
+    Require(store.ContentEpoch("warehouse") == v1_epoch &&
+                ReadFile(store.MapPath("warehouse") / "map.pcd") == v1_content,
+            "commit-stage cancellation replaced the existing map");
+  }
   SaveMapHooks fail_hooks;
   fail_hooks.forced_failure = [](const std::string& job_id, SavePhase phase)
       -> std::optional<std::string> {
@@ -1156,8 +1401,9 @@ int main() {
     Require(engine.Begin(request).accepted, "cancel request setup failed");
     const auto cancelled = engine.Cancel("cancel_before_snapshot");
     Require(cancelled.accepted, "cancel request rejected");
-    Require(cancelled.status.state == SaveJobState::kCancelled,
-            "waiting job did not cancel immediately");
+    Require(cancelled.status.state == SaveJobState::kCancelled &&
+                cancelled.status.phase == SavePhase::kCapture,
+            "waiting cancellation lost its capture phase");
     const auto retried = engine.Retry("cancel_before_snapshot");
     Require(retried.accepted, "cancelled SaveMap job could not be retried");
     Require(retried.status.state == SaveJobState::kWaitingSnapshot,
@@ -1340,36 +1586,46 @@ int main() {
             "map rename bypassed the active SaveMap write lock");
     Require(engine.Cancel("cancel_running").accepted, "running cancel call rejected");
     const auto status = WaitTerminal(engine, "cancel_running");
-    Require(status.state == SaveJobState::kCancelled, "running process did not cancel");
+    Require(status.state == SaveJobState::kCancelled && status.phase == SavePhase::kOptimizeSource,
+            "running cancellation lost its optimization phase");
     Require(!std::filesystem::exists(store.MapPath("cancel_map")),
             "cancelled save committed a map");
   }
 
-  std::atomic<bool> entered_validate{false};
-  std::atomic<bool> release_validate{false};
+  std::atomic<bool> entered_commit{false};
+  std::atomic<bool> release_commit{false};
   SaveMapHooks recovery_hooks;
   recovery_hooks.before_phase = [&](const std::string& job_id, SavePhase phase) {
-    if (job_id == "recover_job" && phase == SavePhase::kValidate) {
-      entered_validate.store(true);
-      while (!release_validate.load()) {
+    if (job_id == "recover_job" && phase == SavePhase::kCommit) {
+      entered_commit.store(true);
+      while (!release_commit.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
       }
     }
   };
   auto interrupted = std::make_unique<SaveMapEngine>(store, recovery_hooks);
-  const auto recover_request = Request("recover_job", "recovered_map");
+  auto recover_request = Request("recover_job", "recovered_map");
+  recover_request.auto_process = false;
   Require(interrupted->Begin(recover_request).accepted, "recovery request rejected");
   Require(interrupted->ProvideSnapshot("recover_job", Snapshot("recover_snapshot", source_v2)).accepted,
           "recovery snapshot rejected");
+  Require(interrupted->Process("recover_job").accepted, "manual recovery processing did not start");
   const auto enter_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while (!entered_validate.load() && std::chrono::steady_clock::now() < enter_deadline) {
+  while (!entered_commit.load() && std::chrono::steady_clock::now() < enter_deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
-  Require(entered_validate.load(), "recovery job did not enter validation");
+  Require(entered_commit.load(), "recovery job did not enter commit");
+  const auto recovery_capture = store.RootDir() / ".save_jobs/recover_job/capture/map.pcd";
+  Require(!std::filesystem::exists(WorkMapDir(store, "recover_job", "recovered_map")) &&
+              std::filesystem::is_regular_file(recovery_capture),
+          "commit-stage recovery fixture did not preserve the captured source");
   std::thread shutdown([engine = std::move(interrupted)]() mutable { engine.reset(); });
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  release_validate.store(true);
+  release_commit.store(true);
   shutdown.join();
+  Require(std::filesystem::is_regular_file(recovery_capture) &&
+              !std::filesystem::exists(store.RootDir() / ".save-staging-recover_job"),
+          "interrupted commit lost its capture or retained transferred staging");
 
   {
     SaveMapEngine recovered(store);

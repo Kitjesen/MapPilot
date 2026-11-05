@@ -32,9 +32,9 @@ collision model for navigation. The catalog resolves its package-relative path
 into `physics.plan.json`; the Product compiler passes that resolved asset to
 native navigation as `LINGTU_NAV_BODY_FILE`. Simulation never reads the real
 RobotConfig to choose this model. Thunder V4 uses
-`collision/thunderv4_nominal.body2`, exported from its MJCF nominal standing
-pose by `tools/robot/export_navigation_bodies.py`; that same export also writes
-the real platform's model copy.
+`collision/thunderv4_navigation.body2`, an overall box derived from its MJCF
+nominal footprint and upper-body height by `tools/robot/export_navigation_bodies.py`.
+That same export also writes the real platform's model copy.
 
 ## Entry points
 

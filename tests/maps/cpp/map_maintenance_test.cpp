@@ -86,6 +86,15 @@ int main() {
   assert(std::filesystem::is_regular_file(package / "map" / "map.pcd"));
   assert(ReadText(package / "package_manifest.txt").find("version=") == std::string::npos);
 
+  WriteText(root / "field" / "map.pcd", "current-active-map");
+  WriteText(root / "field" / ".content_epoch", "17\n");
+  const auto active_import = maintenance.ImportMapPackage(package, "field", false);
+  assert(!active_import.report.ok);
+  assert(HasIssue(active_import.report, "active_map_conflict"));
+  assert(ReadText(root / "field" / "map.pcd") == "current-active-map");
+  assert(ReadText(root / "field" / ".content_epoch") == "17\n");
+  assert(ReadText(root / "active_map.txt") == "field\n");
+
   auto package_lock = lingtu::maps::MapLock::TryAcquire(
       root, "__map_packages__", "test-package-contention");
   assert(package_lock.has_value());
@@ -101,6 +110,20 @@ int main() {
   assert(imported.map_id == "imported");
   assert(ReadText(root / "imported" / "map.pcd") == "field-map");
   assert(!std::filesystem::exists(root / "imported" / "stale.bin"));
+
+  config.active_state_filename = "custom_active_map.txt";
+  MapPackageMaintenance custom_maintenance(config);
+  WriteText(root / "custom_active_map.txt", "imported\n");
+  WriteText(root / "imported" / "map.pcd", "custom-active-map");
+  WriteText(root / "imported" / ".content_epoch", "23\n");
+  const auto custom_active_import =
+      custom_maintenance.ImportMapPackage(package, "imported", false);
+  assert(!custom_active_import.report.ok);
+  assert(HasIssue(custom_active_import.report, "active_map_conflict"));
+  assert(ReadText(root / "imported" / "map.pcd") == "custom-active-map");
+  assert(ReadText(root / "imported" / ".content_epoch") == "23\n");
+  assert(ReadText(root / "custom_active_map.txt") == "imported\n");
+  assert(ReadText(root / "active_map.txt") == "field\n");
   std::filesystem::create_directories(root / "broken");
   const auto corrupt = maintenance.AuditMaps();
   assert(!corrupt.ok);
