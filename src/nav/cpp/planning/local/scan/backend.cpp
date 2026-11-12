@@ -283,9 +283,6 @@ class Backend::Impl {
     debug_ = {};
     debug_.backend = LocalPlannerBackend::Scan;
     debug_.timestampS = input.clock.timestampS;
-    debug_.scanAttempt = lastAttempt_;
-    debug_.collisionEvidence = lastCollisionEvidence_;
-    debug_.lastScanFailure = lastFailure_;
 
     const auto stop = [this, started](LocalPlanStatus status,
                                       std::string reason) {
@@ -376,38 +373,25 @@ class Backend::Impl {
          lastSupportHeightToleranceM_.has_value()!=input.supportHeightToleranceM.has_value());
     const bool speedReduction = activeSpline != nullptr && !referenceRejected_ &&
         plan.max_vel_ < activeSpline->maxLinearSpeedMps && !retainedLowerLimit;
+    FsmOdometry odometry;
+    odometry.position = eigenPoint(input.robot.pose.position);
+    odometry.velocity = input.robot.kinematics.valid
+                            ? eigenPoint(input.robot.kinematics.linearVelocity)
+                            : Eigen::Vector3d::Zero();
+    odometry.orientation =
+        Eigen::AngleAxisd(input.robot.pose.yaw, Eigen::Vector3d::UnitZ());
     GridBinding binding(*gridMap_, grid);
     if (speedReduction && !headingChanged && input.robot.kinematics.valid &&
         std::hypot(input.robot.kinematics.linearVelocity.x,
                    input.robot.kinematics.linearVelocity.y) > 1e-6) {
-      Eigen::Vector3d velocity = eigenPoint(input.robot.kinematics.linearVelocity);
-      const auto &previous = manager_->local_data_;
-      const double elapsed = std::clamp(input.clock.timestampS - previous.start_time_,
-                                        0.0, previous.duration_);
-      Eigen::Vector3d acceleration = Eigen::Vector3d::Zero();
-      if (previous.duration_ > 0.0) {
-        velocity.z() = previous.velocity_traj_.evaluateDeBoorT(elapsed).z();
-        acceleration = previous.acceleration_traj_.evaluateDeBoorT(elapsed);
-        if (acceleration.norm() > plan.max_acc_) acceleration.setZero();
-      } else {
-        velocity.z() = 0.0;
-      }
-      double transitionEndS = 0.0;
-      if (manager_->decelerate(eigenPoint(input.robot.pose.position), velocity, acceleration,
-              2.0 * handoffLeadTimeS_ + 3.0 * PlannerFsm::kTickPeriodS,
-              input.clock.timestampS, transitionEndS)) {
-        fsm_->adoptSpeedTransition(transitionEndS);
-        BsplineTrajectory trajectory;
-        trajectory.positionPoints = manager_->local_data_.position_traj_.getControlPoint();
-        trajectory.knots = manager_->local_data_.position_traj_.getKnot();
-        trajectory.order = 3;
-        trajectory.trajectoryId = manager_->local_data_.traj_id_;
-        trajectory.startTimeS = manager_->local_data_.start_time_;
+      FsmOutput transitionOutput;
+      if (fsm_->startSpeedTransition(odometry, input.clock.timestampS,
+                                     handoffLeadTimeS_, transitionOutput)) {
+        const auto &trajectory = *transitionOutput.trajectory;
         SplineTarget transition = splineTarget(trajectory, plan.max_vel_);
-        transition.speedTransitionEndS = transitionEndS;
+        transition.speedTransitionEndS = transitionOutput.speedTransitionEndS;
         active_ = LocalPlan::spline(std::move(transition));
         activeSpeedBound_ = SplineView(std::get<SplineTarget>(active_->target())).speedBound();
-        speedReductionPending_ = false;
         emergencyStopped_ = false;
         debug_.valid = true;
         debug_.searchReason = "scan_speed_transition";
@@ -417,12 +401,11 @@ class Backend::Impl {
       }
       // A blocked deceleration is a real motion constraint. Do not publish
       // unchecked geometry or resume the superseded fast trajectory.
-      fsm_->abandonTrajectory();
       active_.reset();
       emergencyStopped_ = true;
       return stop(LocalPlanStatus::NearFieldStop, "scan_speed_transition_blocked");
     }
-    if (headingChanged || (speedReduction && !speedReductionPending_)) {
+    if (headingChanged || speedReduction) {
       // A new body heading invalidates the previous collision footprint.
       // Executor also holds the old trajectory during a speed reduction. Its
       // derivatives are no longer the robot's motion state, so start a fresh
@@ -432,27 +415,26 @@ class Backend::Impl {
       manager_->local_data_.traj_id_ = trajectoryId;
       fsm_ = std::make_unique<PlannerFsm>(*manager_, fsmParameters(params_, plan));
       referenceInitialized_ = false;
-      speedReductionPending_ = true;
       active_.reset();
       activeSpline = nullptr;
     }
 
     FsmInput fsmInput;
     fsmInput.nowS = input.clock.timestampS;
-    FsmOdometry odometry;
-    odometry.position = eigenPoint(input.robot.pose.position);
-    odometry.velocity = input.robot.kinematics.valid
-                            ? eigenPoint(input.robot.kinematics.linearVelocity)
-                            : Eigen::Vector3d::Zero();
-    odometry.orientation =
-        Eigen::AngleAxisd(input.robot.pose.yaw, Eigen::Vector3d::UnitZ());
     fsmInput.odometry = odometry;
     fsmInput.executionFrozen = input.clock.executionFrozen;
     if (executionFeedback_) {
       const ExecutionFeedback execution = executionFeedback_();
+      fsmInput.nowS = execution.nowS;
       fsmInput.executingTrajectoryId = execution.trajectoryId;
       fsmInput.executionStartTimeS = execution.startTimeS;
       fsmInput.executionFrozen = execution.frozen || execution.trajectoryId == 0;
+      if (execution.progress && execution.trajectoryId > 0 &&
+          execution.progress->trajectoryId == execution.trajectoryId) {
+        const auto &progress = *execution.progress;
+        fsmInput.executionTimeS = progress.executionTimeS +
+            (execution.frozen ? 0.0 : execution.nowS - progress.sampleTimeS);
+      }
       if (execution.trajectoryId == manager_->local_data_.traj_id_ &&
           execution.trajectoryId > 0 && !execution.frozen)
         fsmInput.handoffLeadTimeS = handoffLeadTimeS_;
@@ -536,7 +518,6 @@ class Backend::Impl {
         active_ = next;
         activeSpeedBound_ = SplineView(std::get<SplineTarget>(next.target())).speedBound();
         emergencyStopped_ = false;
-        speedReductionPending_ = false;
         debug_.valid = true;
         debug_.trajectoryPointCount =
             static_cast<int>(output.trajectory->positionPoints.cols());
@@ -580,16 +561,12 @@ class Backend::Impl {
     lastSupportHeightToleranceM_.reset();
     referenceInitialized_ = false;
     referenceRejected_ = false;
-    speedReductionPending_ = false;
     emergencyStopped_ = false;
     lastFrameEpoch_ = 0;
     lastRouteGeneration_ = 0;
     lastCollisionEvidence_.reset();
     debug_ = {};
     debug_.backend = LocalPlannerBackend::Scan;
-    debug_.scanAttempt = lastAttempt_;
-    debug_.collisionEvidence = lastCollisionEvidence_;
-    debug_.lastScanFailure = lastFailure_;
     lastObservedAttemptId_ = 0;
     lastTimedAttemptId_ = 0;
     handoffLeadTimeS_ = 0.05;
@@ -597,7 +574,13 @@ class Backend::Impl {
     initializeOfficialCore();
   }
 
-  LocalPlannerDebugSnapshot debugSnapshot() const { return debug_; }
+  LocalPlannerDebugSnapshot debugSnapshot() const {
+    LocalPlannerDebugSnapshot snapshot = debug_;
+    snapshot.scanAttempt = lastAttempt_;
+    snapshot.collisionEvidence = lastCollisionEvidence_;
+    snapshot.lastScanFailure = lastFailure_;
+    return snapshot;
+  }
 
   void setExecutionFeedback(std::function<ExecutionFeedback()> feedback) {
     executionFeedback_ = std::move(feedback);
@@ -614,18 +597,15 @@ class Backend::Impl {
     lastObservedAttemptId_ = attempt.attemptId;
     lastAttempt_ = attemptDiagnostics(attempt);
     lastAttempt_.timestampS = input.clock.timestampS;
-    debug_.scanAttempt = lastAttempt_;
 
     // The final attempted result at the tick boundary defines a failure episode.
     // Failed internal retries followed by success in this tick do not start one.
     if (attempt.success) {
       failureEpisodeActive_ = false;
       lastCollisionEvidence_.reset();
-      debug_.collisionEvidence.reset();
       return;
     }
     lastCollisionEvidence_ = measuredCollisionEvidence(input, lastAttempt_, params_.scan);
-    debug_.collisionEvidence = lastCollisionEvidence_;
     if (failureEpisodeActive_)
       return;
     failureEpisodeActive_ = true;
@@ -678,12 +658,11 @@ class Backend::Impl {
       failure->candidateControlPoints.push_back(
           planningPoint(attempt.candidateControlPoints.col(column)));
     lastFailure_ = std::move(failure);
-    debug_.lastScanFailure = lastFailure_;
   }
 
   void initializeOfficialCore() {
     const PlanParameters plan = planParameters(params_);
-    manager_ = std::make_unique<SCANPlannerManager>();
+    if (!manager_) manager_ = std::make_unique<SCANPlannerManager>();
     manager_->initPlanModules(plan, optimizerParameters(params_, plan), gridMap_);
     fsm_ = std::make_unique<PlannerFsm>(*manager_,
                                            fsmParameters(params_, plan));
@@ -742,7 +721,6 @@ class Backend::Impl {
   std::optional<double> lastSupportHeightToleranceM_;
   bool referenceInitialized_{false};
   bool referenceRejected_{false};
-  bool speedReductionPending_{false};
   bool emergencyStopped_{false};
   std::uint64_t lastFrameEpoch_{0};
   std::uint64_t lastRouteGeneration_{0};

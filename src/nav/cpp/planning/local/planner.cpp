@@ -367,8 +367,8 @@ class LocalPlanner::Impl {
     if (cancel && cancel())
       return LocalPlan::stopped(LocalPlanStatus::Cancelled);
     if (params_.backend == LocalPlannerBackend::Scan) {
-      const local::scan::Update update = task_->update(request);
-      last_debug_ = update.debug;
+      local::scan::Update update = task_->update(request);
+      last_debug_ = std::move(update.debug);
       return update.plan;
     }
     return cmu_->plan(request);

@@ -6,10 +6,9 @@
 
 #include <algorithm>
 #include <cmath>
-#include <map>
 #include <optional>
-#include <type_traits>
 #include <utility>
+#include <variant>
 
 namespace nav_kernel {
 namespace {
@@ -18,22 +17,6 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr double kSpeedEpsilon = 1e-4;
 constexpr double kCornerCos = 0.7071067811865476;  // 45 degrees
 constexpr double kCornerReachM = 0.10;
-
-using FollowerTarget = std::variant<std::reference_wrapper<const std::vector<Vec3>>,
-                                    std::reference_wrapper<const SplineTarget>>;
-
-struct FollowerInput : FollowerState {
-  explicit FollowerInput(const std::vector<Vec3> &path) : target(std::cref(path)) {}
-  explicit FollowerInput(const SplineTarget &spline) : target(std::cref(spline)) {}
-
-  [[nodiscard]] FollowerAlgorithm algorithm() const noexcept {
-    return std::holds_alternative<std::reference_wrapper<const std::vector<Vec3>>>(target)
-               ? FollowerAlgorithm::Path
-               : FollowerAlgorithm::Spline;
-  }
-
-  FollowerTarget target;
-};
 
 double wrapPi(double angle) {
   angle = std::fmod(angle + kPi, 2.0 * kPi);
@@ -94,27 +77,10 @@ bool updateHeadingAlignment(bool active, double heading_error,
   return magnitude >= enter;
 }
 
-class Algorithm {
+class PathAlgorithm {
  public:
-  virtual ~Algorithm() = default;
-  virtual FollowerOutput follow(const FollowerInput &input) = 0;
-  virtual void commitApplied(const Twist &) {}
-  virtual void stopLinear() = 0;
-  virtual void resetTarget() = 0;
-  virtual void resetIntent() = 0;
-  virtual void reset() = 0;
-  [[nodiscard]] virtual FollowerDiagnostics diagnostics() const = 0;
-};
-
-class PathAlgorithm final : public Algorithm {
- public:
-  FollowerOutput follow(const FollowerInput &input) override {
+  FollowerOutput follow(const std::vector<Vec3> &path, const FollowerState &input) {
     FollowerOutput output;
-    const auto *target =
-        std::get_if<std::reference_wrapper<const std::vector<Vec3>>>(&input.target);
-    if (target == nullptr)
-      return output;
-    const std::vector<Vec3> &path = target->get();
     const FollowerParams &params = input.params;
 
     if (!std::isfinite(input.vehicleRelative.x) || !std::isfinite(input.vehicleRelative.y) ||
@@ -139,24 +105,24 @@ class PathAlgorithm final : public Algorithm {
       state_.lastPathPoint = 0;
       state_.lastPathSize = path_size;
     }
-    state_.pathPoint = state_.lastPathPoint > 2 ? state_.lastPathPoint - 2 : 0;
+    int path_point = state_.lastPathPoint > 2 ? state_.lastPathPoint - 2 : 0;
 
     double dx = 0.0;
     double dy = 0.0;
     const double lookahead_squared = lookahead_distance * lookahead_distance;
     const int path_point_limit =
-        params.cornerGate ? cornerLimit(path, state_.pathPoint, input.vehicleRelative)
+        params.cornerGate ? cornerLimit(path, path_point, input.vehicleRelative)
                           : path_size - 1;
-    while (state_.pathPoint < path_point_limit) {
-      dx = path[state_.pathPoint].x - input.vehicleRelative.x;
-      dy = path[state_.pathPoint].y - input.vehicleRelative.y;
+    while (path_point < path_point_limit) {
+      dx = path[path_point].x - input.vehicleRelative.x;
+      dy = path[path_point].y - input.vehicleRelative.y;
       if (dx * dx + dy * dy >= lookahead_squared)
         break;
-      ++state_.pathPoint;
+      ++path_point;
     }
-    dx = path[state_.pathPoint].x - input.vehicleRelative.x;
-    dy = path[state_.pathPoint].y - input.vehicleRelative.y;
-    state_.lastPathPoint = state_.pathPoint;
+    dx = path[path_point].x - input.vehicleRelative.x;
+    dy = path[path_point].y - input.vehicleRelative.y;
+    state_.lastPathPoint = path_point;
 
     const double distance = std::hypot(dx, dy);
     const double path_direction = std::atan2(dy, dx);
@@ -225,7 +191,9 @@ class PathAlgorithm final : public Algorithm {
     const double max_yaw_rate = std::max(0.0, params.maxYawRateRadS);
     yaw_rate = clamp(yaw_rate, -max_yaw_rate, max_yaw_rate);
 
-    if (path_size <= 1 || (distance < params.stopDisThre && params.noRotAtGoal)) {
+    const bool force_yaw_stop =
+        path_size <= 1 || (distance < params.stopDisThre && params.noRotAtGoal);
+    if (force_yaw_stop) {
       yaw_rate = 0.0;
     }
 
@@ -275,8 +243,6 @@ class PathAlgorithm final : public Algorithm {
 
     if (input.safetyStop >= 1)
       state_.vehicleSpeed = 0.0;
-    const bool force_yaw_stop =
-        path_size <= 1 || (distance < params.stopDisThre && params.noRotAtGoal);
     if (input.safetyStop >= 2 || force_yaw_stop) {
       yaw_rate = 0.0;
       state_.yawCommand = 0.0;
@@ -302,20 +268,19 @@ class PathAlgorithm final : public Algorithm {
     return output;
   }
 
-  void stopLinear() override {
+  void stopLinear() {
     state_.vehicleSpeed = 0.0;
     state_.linearCommand = {};
     state_.directionTransition = false;
   }
 
-  void resetTarget() override {
-    state_.pathPoint = 0;
+  void resetTarget() {
     state_.lastPathPoint = 0;
     state_.lastPathSize = 0;
     state_.headingAlignmentActive = false;
   }
 
-  void resetIntent() override {
+  void resetIntent() {
     resetTarget();
     state_.vehicleSpeed = 0.0;
     state_.yawCommand = 0.0;
@@ -325,9 +290,9 @@ class PathAlgorithm final : public Algorithm {
         std::hypot(state_.linearCommand.vx, state_.linearCommand.vy) > kSpeedEpsilon;
   }
 
-  void reset() override { state_ = {}; }
+  void reset() { state_ = {}; }
 
-  FollowerDiagnostics diagnostics() const override {
+  FollowerDiagnostics diagnostics() const {
     return {
         true,
         FollowerAlgorithm::Path,
@@ -340,7 +305,6 @@ class PathAlgorithm final : public Algorithm {
   struct State {
     double vehicleSpeed{0.0};
     double yawCommand{0.0};
-    int pathPoint{0};
     int lastPathPoint{0};
     int lastPathSize{0};
     bool forward{true};
@@ -352,9 +316,9 @@ class PathAlgorithm final : public Algorithm {
   } state_;
 };
 
-class SplineAlgorithm final : public Algorithm {
+class SplineAlgorithm {
  public:
-  FollowerOutput follow(const FollowerInput &input) override {
+  FollowerOutput follow(const SplineTarget &spline, const FollowerState &input) {
     FollowerOutput output;
     if (!std::isfinite(input.currentTime) || !std::isfinite(input.vehicleYawRelative) ||
         !std::isfinite(input.vehicleRelative.x) || !std::isfinite(input.vehicleRelative.y) ||
@@ -364,11 +328,6 @@ class SplineAlgorithm final : public Algorithm {
       stopLinear();
       return output;
     }
-    const auto *target =
-        std::get_if<std::reference_wrapper<const SplineTarget>>(&input.target);
-    if (target == nullptr) return output;
-    const SplineTarget &spline = target->get();
-
     const SplineFollowerParams &scan = input.params.spline;
     const double requestedLimit = std::min(
         std::hypot(scan.maxVx, scan.maxVy),
@@ -397,18 +356,14 @@ class SplineAlgorithm final : public Algorithm {
                                  : requestedLimit;
 
     // Command time stays independent of the reference clock reset by a new ID.
+    const double elapsed = lastInputTime_ ? input.currentTime - *lastInputTime_ : 0.0;
     double commandDt = clamp(input.params.nominalDt, 0.0, std::max(0.0, input.params.maxDt));
-    if (lastInputTime_) {
-      const double elapsed = input.currentTime - *lastInputTime_;
-      if (elapsed >= 0.0 &&
-          elapsed <= local::scan::upstream::ClosedLoopController::kMaxUpdateGapS + 1e-9)
-        commandDt = std::min(elapsed, std::max(0.0, input.params.maxDt));
-      else if (!paused_ || elapsed <= 0.0)
-        commandDt = 0.0;
-      // A declared pause resumes with one command step, not the whole hold.
-    }
+    // A declared pause resumes with one command step, not the whole hold.
+    if (lastInputTime_ && (!paused_ || elapsed <= 0.0))
+      commandDt = clamp(elapsed, 0.0, std::max(0.0, input.params.maxDt));
     // Endpoint holds stop execution without restarting the upstream spline.
     const bool referenceHeld = paused_ || externalHold;
+    const double referenceDt = referenceHeld ? 0.0 : std::max(0.0, elapsed);
     if (referenceHeld && lastInputTime_ && input.currentTime > *lastInputTime_)
       pausedTime_ += input.currentTime - *lastInputTime_;
     lastInputTime_ = input.currentTime;
@@ -454,7 +409,7 @@ class SplineAlgorithm final : public Algorithm {
       const double phase = newTrajectory
           ? (spline.startTimeS >= 0.0 && !referenceHeld
                  ? std::max(0.0, input.currentTime - spline.startTimeS) : 0.0)
-          : tracking_.executionTimeS + commandDt;
+          : tracking_.executionTimeS + referenceDt;
       if (phase < spline.speedTransitionEndS) {
         const Vec3 velocity = splineView_->velocity(phase);
         speedLimit = std::max(speedLimit, std::hypot(velocity.x, velocity.y));
@@ -488,6 +443,16 @@ class SplineAlgorithm final : public Algorithm {
     output.executionFrozen = controlled.executionFrozen;
     output.finished = controlled.finished && !waitingForReduction;
     output.awaitingTrajectory = invalidatedTrajectoryId_.has_value();
+    const double remaining = std::max(0.0, output.endDistance - params.finishDistance);
+    const double minVy = std::min({scan.minVy, params.maxVy,
+        std::sqrt(2.0 * input.params.maxAccel * remaining)});
+    if (!externalHold && std::abs(output.cmd.vy) > kSpeedEpsilon &&
+        std::abs(output.cmd.vy) < minVy) {
+      // Shape the target before the acceleration ramp and final collision check.
+      output.cmd.vy = std::copysign(minVy, output.cmd.vy);
+      const double maxVx = std::sqrt(std::max(0.0, speedLimit * speedLimit - minVy * minVy));
+      output.cmd.vx = clamp(output.cmd.vx, -maxVx, maxVx);
+    }
     if (!hasMotionCommand_) {
       const auto &measured = input.measuredBodyTwist;
       if (input.measuredBodyTwistValid && std::isfinite(measured.vx) &&
@@ -498,7 +463,7 @@ class SplineAlgorithm final : public Algorithm {
       hasMotionCommand_ = true;
     }
     if (!output.finished) {
-      if (!controlled.executionFrozen && !externalHold) {
+      if (!externalHold) {
         // Bound the physical XY velocity change in one world frame. Rotating
         // the body frame alone must not look like extra acceleration.
         const double c = std::cos(input.vehicleYawRelative);
@@ -551,7 +516,7 @@ class SplineAlgorithm final : public Algorithm {
                        controlled.executionTimeS, controlled.durationS,
                        controlled.positionErrorM, controlled.yawError,
                        controlled.endDistance, output.executionFrozen,
-                       output.finished, speedLimit};
+                       output.finished, speedLimit, input.currentTime};
     lastCommand_ = output.cmd;
     lastCommandYaw_ = input.vehicleYawRelative;
     tracking_ = output.tracking;
@@ -560,23 +525,23 @@ class SplineAlgorithm final : public Algorithm {
     return output;
   }
 
-  void commitApplied(const Twist &command) override {
+  void commitApplied(const Twist &command) {
     if (controller_.hasTrajectory() && hasMotionCommand_)
       lastCommand_ = command;
   }
 
-  void stopLinear() override {
+  void stopLinear() {
     paused_ = true;
     lastCommand_ = {};
     hasMotionCommand_ = true;
     tracking_.executionFrozen = true;
   }
 
-  void resetTarget() override { reset(); }
+  void resetTarget() { reset(); }
 
-  void resetIntent() override { reset(); }
+  void resetIntent() { reset(); }
 
-  void reset() override {
+  void reset() {
     controller_.reset();
     lastInputTime_.reset();
     pausedTime_ = 0.0;
@@ -589,7 +554,7 @@ class SplineAlgorithm final : public Algorithm {
     splineView_.reset();
   }
 
-  FollowerDiagnostics diagnostics() const override {
+  FollowerDiagnostics diagnostics() const {
     return {
         controller_.hasTrajectory(),
         FollowerAlgorithm::Spline,
@@ -598,6 +563,7 @@ class SplineAlgorithm final : public Algorithm {
         tracking_,
     };
   }
+
 
  private:
   local::scan::upstream::ClosedLoopController controller_{};
@@ -612,41 +578,6 @@ class SplineAlgorithm final : public Algorithm {
   double splineSpeedBound_{0.0};
   std::optional<SplineView> splineView_;
 };
-
-using AlgorithmFactory = std::unique_ptr<Algorithm> (*)();
-
-class AlgorithmRegistry {
- public:
-  void registerAlgorithm(FollowerAlgorithm algorithm, AlgorithmFactory factory) {
-    factories_.insert_or_assign(algorithm, factory);
-  }
-
-  [[nodiscard]] std::unique_ptr<Algorithm> create(FollowerAlgorithm algorithm) const {
-    const auto found = factories_.find(algorithm);
-    return found == factories_.end() ? nullptr : found->second();
-  }
-
- private:
-  std::map<FollowerAlgorithm, AlgorithmFactory> factories_;
-};
-
-std::unique_ptr<Algorithm> makePathAlgorithm() {
-  return std::make_unique<PathAlgorithm>();
-}
-
-std::unique_ptr<Algorithm> makeSplineAlgorithm() {
-  return std::make_unique<SplineAlgorithm>();
-}
-
-const AlgorithmRegistry &builtinAlgorithms() {
-  static const AlgorithmRegistry registry = [] {
-    AlgorithmRegistry result;
-    result.registerAlgorithm(FollowerAlgorithm::Path, &makePathAlgorithm);
-    result.registerAlgorithm(FollowerAlgorithm::Spline, &makeSplineAlgorithm);
-    return result;
-  }();
-  return registry;
-}
 
 }  // namespace
 
@@ -705,89 +636,70 @@ const char *followerAlgorithmName(FollowerAlgorithm algorithm) noexcept {
 
 class Follower::Impl {
  public:
-  Impl() {
-    registerAlgorithm(FollowerAlgorithm::Path);
-    registerAlgorithm(FollowerAlgorithm::Spline);
-  }
-
-  FollowerOutput follow(const FollowerInput &input) {
-    const FollowerAlgorithm requested = input.algorithm();
-    const auto found = algorithms_.find(requested);
-    if (found == algorithms_.end())
-      return {};
-
-    if (!active_.has_value() || *active_ != requested) {
-      if (active_.has_value())
-        algorithms_.at(*active_)->reset();
-      found->second->reset();
-      active_ = requested;
-    }
-    return found->second->follow(input);
-  }
-
   FollowerOutput follow(const LocalPlan &plan, const FollowerState &state) {
-    return std::visit(
-        [this, &state](const auto &target) {
-          using Target = std::decay_t<decltype(target)>;
-          FollowerState effective = state;
-          if constexpr (std::is_same_v<Target, PathTarget>) {
-            if (effective.standardPathProfile)
-              effective.params = cmuFollowerParams(effective.params);
-          }
-          FollowerInput input = [&target] {
-            if constexpr (std::is_same_v<Target, PathTarget>) {
-              return FollowerInput(target.points);
-            } else {
-              return FollowerInput(target);
-            }
-          }();
-          static_cast<FollowerState &>(input) = effective;
-          return follow(input);
-        },
-        plan.target());
+    auto input = state;
+    const auto *path = std::get_if<PathTarget>(&plan.target());
+    if (plan.ready()) {
+      const auto requested = path ? FollowerAlgorithm::Path : FollowerAlgorithm::Spline;
+      if (active_ != requested) {
+        path_.reset();
+        spline_.reset();
+        active_ = requested;
+      }
+    }
+    if (path && input.standardPathProfile) input.params = cmuFollowerParams(input.params);
+
+    if (!plan.ready() && !path) {
+      FollowerOutput result;
+      result.awaitingTrajectory = true;
+      return result;
+    }
+    // A reference hold must not overwrite the last command confirmed by final control.
+    if (!path && hasApplied_) spline_.commitApplied(applied_);
+    auto result = path ? path_.follow(path->points, input)
+                      : spline_.follow(std::get<SplineTarget>(plan.target()), input);
+    return result;
   }
 
   void commitApplied(const Twist &command) {
-    if (active_.has_value())
-      algorithms_.at(*active_)->commitApplied(command);
+    applied_ = command;
+    hasApplied_ = true;
+    if (active_ == FollowerAlgorithm::Spline) spline_.commitApplied(command);
   }
 
   void stopLinear() {
-    for (auto &entry : algorithms_)
-      entry.second->stopLinear();
+    path_.stopLinear();
+    spline_.stopLinear();
   }
 
   void resetTarget() {
-    if (active_.has_value())
-      algorithms_.at(*active_)->resetTarget();
+    if (active_ == FollowerAlgorithm::Path) path_.resetTarget();
+    else if (active_ == FollowerAlgorithm::Spline) spline_.resetTarget();
   }
 
   void resetIntent() {
-    if (active_.has_value())
-      algorithms_.at(*active_)->resetIntent();
+    if (active_ == FollowerAlgorithm::Path) path_.resetIntent();
+    else if (active_ == FollowerAlgorithm::Spline) spline_.resetIntent();
   }
 
   void reset() {
-    for (auto &entry : algorithms_)
-      entry.second->reset();
+    hasApplied_ = false;
+    path_.reset();
+    spline_.reset();
     active_.reset();
   }
 
   FollowerDiagnostics diagnostics() const {
-    if (!active_.has_value())
-      return {};
-    return algorithms_.at(*active_)->diagnostics();
+    auto result = active_ == FollowerAlgorithm::Path ? path_.diagnostics()
+        : active_ == FollowerAlgorithm::Spline ? spline_.diagnostics() : FollowerDiagnostics{};
+    return result;
   }
 
  private:
-  void registerAlgorithm(FollowerAlgorithm algorithm) {
-    std::unique_ptr<Algorithm> instance = builtinAlgorithms().create(algorithm);
-    if (instance != nullptr) {
-      algorithms_.insert_or_assign(algorithm, std::move(instance));
-    }
-  }
-
-  std::map<FollowerAlgorithm, std::unique_ptr<Algorithm>> algorithms_;
+  PathAlgorithm path_;
+  SplineAlgorithm spline_;
+  Twist applied_{};
+  bool hasApplied_{false};
   std::optional<FollowerAlgorithm> active_;
 };
 
@@ -800,9 +712,8 @@ FollowerOutput Follower::follow(const LocalPlan &plan, const FollowerState &stat
   return impl_->follow(plan, state);
 }
 
-double Follower::turnRate(double yawError, double gain, double minRate, double maxRate) {
-  const double rate = std::clamp(gain * yawError, -maxRate, maxRate);
-  return rate == 0.0 ? 0.0 : std::copysign(std::max(std::abs(rate), minRate), rate);
+double Follower::turnRate(double yawError, double gain, double maxRate) {
+  return std::clamp(gain * yawError, -maxRate, maxRate);
 }
 
 Twist Follower::rotationCommand(int direction, double rate) {

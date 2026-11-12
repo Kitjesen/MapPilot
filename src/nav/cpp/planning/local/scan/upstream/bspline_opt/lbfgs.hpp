@@ -357,7 +357,7 @@ namespace lbfgs
     {                                                                \
         (cm) = (v)-r * d;                                            \
     }                                                                \
-    else if (a < 0)                                                  \
+    else if (d > 0)                                                  \
     {                                                                \
         (cm) = (xmax);                                               \
     }                                                                \

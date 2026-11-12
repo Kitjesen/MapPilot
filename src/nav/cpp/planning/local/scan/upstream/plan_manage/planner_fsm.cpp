@@ -139,6 +139,11 @@ FsmOutput PlannerFsm::tick(const FsmInput &input) {
 
     case ScanReplanState::GEN_NEW_TRAJ: {
       setStartStateFromOdomOrCurrentTraj(input.nowS);
+      // Use the emergency-stop settling criterion for an autonomous restart.
+      if (!plannerManager_.pp_.motion_intent_ && odomVel_.norm() < 0.1) {
+        startVel_.setZero();
+        startAcc_.setZero();
+      }
       const bool randomPolyInit = continuouslyCalledTimes_ != 1;
       if (callReboundReplan(true, randomPolyInit, input.nowS, output)) {
         referenceReplacementPending_ = false;
@@ -300,6 +305,7 @@ FsmOutput PlannerFsm::checkFutureCollision(const FsmInput &input) {
   const double oldEnd = pendingTrajectory_
                            ? std::min(info.duration_, pendingTrajectory_->start_time_ - info.start_time_)
                            : info.duration_;
+  std::optional<double> heading;
   for (double time = std::max(0.0, currentTime); time < oldEnd; time += timeStep) {
     if (currentTime < twoThirdsTime && time >= twoThirdsTime) {
       break;
@@ -309,8 +315,10 @@ FsmOutput PlannerFsm::checkFutureCollision(const FsmInput &input) {
     const double nextTime = std::min(time + timeStep, oldEnd);
     const Eigen::Vector3d nextPosition =
         info.position_traj_.evaluateDeBoorT(nextTime);
-    if (plannerManager_.grid_map_->getInflateOccupancy(
-            position, estimateYawFromSegment(position, nextPosition)) == 0) {
+    if (plannerManager_.grid_map_->getTrajectoryOccupancy(
+            position, info.velocity_traj_.evaluateDeBoorT(time),
+            nextPosition, info.velocity_traj_.evaluateDeBoorT(nextTime),
+            time, nextTime, &heading) == 0) {
       continue;
     }
 
@@ -356,6 +364,36 @@ bool PlannerFsm::hasTarget() const noexcept {
   return haveTarget_;
 }
 
+bool PlannerFsm::startSpeedTransition(const FsmOdometry &odometry, double nowS,
+                                     double handoffLeadTimeS, FsmOutput &output) {
+  const auto initialState = state_;
+  Eigen::Vector3d velocity = odometry.velocity;
+  const auto &previous = plannerManager_.local_data_;
+  const double elapsed = std::clamp(nowS - previous.start_time_, 0.0, previous.duration_);
+  Eigen::Vector3d acceleration = Eigen::Vector3d::Zero();
+  if (previous.duration_ > 0.0) {
+    velocity.z() = previous.velocity_traj_.evaluateDeBoorT(elapsed).z();
+    acceleration = previous.acceleration_traj_.evaluateDeBoorT(elapsed);
+    if (acceleration.norm() > plannerManager_.pp_.max_acc_) acceleration.setZero();
+  } else {
+    velocity.z() = 0.0;
+  }
+  double transitionEndS = 0.0;
+  if (!plannerManager_.decelerate(odometry.position, velocity, acceleration,
+          2.0 * handoffLeadTimeS + 3.0 * kTickPeriodS, nowS, transitionEndS)) {
+    // A rejected bridge must also withdraw any unreceived faster trajectory.
+    abandonTrajectory();
+    output = finalizeOutput({}, initialState);
+    return false;
+  }
+  adoptSpeedTransition(transitionEndS);
+  output = {};
+  setTrajectoryOutput(output);
+  output.speedTransitionEndS = transitionEndS;
+  output = finalizeOutput(std::move(output), initialState);
+  return true;
+}
+
 void PlannerFsm::adoptSpeedTransition(double transitionEndS) {
   if (pendingHandoff_) pendingHandoff_->withdraw();
   pendingHandoff_.reset();
@@ -385,12 +423,22 @@ void PlannerFsm::abandonTrajectory() {
 void PlannerFsm::updateRuntimeInput(const FsmInput &input) {
   handoffLeadTimeS_ = input.handoffLeadTimeS;
   LocalTrajData &trajectory = plannerManager_.local_data_;
-  if (input.executionStartTimeS && input.executingTrajectoryId == trajectory.traj_id_ &&
+  if (input.executionTimeS && input.executingTrajectoryId == trajectory.traj_id_ &&
+      input.executingTrajectoryId > 0) {
+    // The follower owns elapsed execution; sampled freeze flags can miss transitions.
+    trajectory.start_time_ = input.nowS - *input.executionTimeS;
+    acknowledgedTrajectoryId_ = input.executingTrajectoryId;
+    lastFreezeUpdateTimeS_ = input.nowS;
+    freezeClockReady_ = true;
+  } else if (input.executionStartTimeS && input.executingTrajectoryId == trajectory.traj_id_ &&
       input.executingTrajectoryId != acknowledgedTrajectoryId_) {
     // The first spline starts when the executor receives it, after planning.
     trajectory.start_time_ = *input.executionStartTimeS;
     acknowledgedTrajectoryId_ = input.executingTrajectoryId;
-    lastFreezeUpdateTimeS_ = input.nowS;
+    // Keep the unaccounted reception interval without refreezing settled time.
+    lastFreezeUpdateTimeS_ = freezeClockReady_
+        ? std::max(lastFreezeUpdateTimeS_, *input.executionStartTimeS)
+        : *input.executionStartTimeS;
     freezeClockReady_ = true;
   }
   motionIntentMaxDeviationRad_ = input.motionIntentMaxDeviationRad;
@@ -648,12 +696,15 @@ bool PlannerFsm::isWaypointSequenceMode() const noexcept {
 bool PlannerFsm::trajectoryClear(const LocalTrajData &trajectory, double beginS,
                                     double endS) const {
   if (!plannerManager_.grid_map_) return false;
+  std::optional<double> heading;
   for (double time = std::max(0.0, beginS); time < endS; time += kTickPeriodS) {
     const double next = std::min(time + kTickPeriodS, endS);
     const Eigen::Vector3d position = trajectory.position_traj_.evaluateDeBoorT(time);
     const Eigen::Vector3d nextPosition = trajectory.position_traj_.evaluateDeBoorT(next);
-    if (plannerManager_.grid_map_->getInflateOccupancy(
-            position, estimateYawFromSegment(position, nextPosition)) != 0)
+    if (plannerManager_.grid_map_->getTrajectoryOccupancy(
+            position, trajectory.velocity_traj_.evaluateDeBoorT(time),
+            nextPosition, trajectory.velocity_traj_.evaluateDeBoorT(next),
+            time, next, &heading) != 0)
       return false;
   }
   return true;
@@ -914,7 +965,10 @@ bool PlannerFsm::getLocalTarget() {
   const double maxVelocity = plannerManager_.pp_.max_vel_;
   const double maxAcceleration = plannerManager_.pp_.max_acc_;
   const double duration = plannerManager_.global_data_.global_duration_;
-  double timeStep = maxVelocity > 1e-6 ? params_.planningHorizon / 20.0 / maxVelocity : 0.01;
+  // A coarse projection can land beyond the last clear goal-adjacent cells.
+  double timeStep = maxVelocity > 1e-6
+      ? std::min(params_.planningHorizon / 20.0,
+                 plannerManager_.grid_map_->getResolution()) / maxVelocity : 0.01;
   timeStep = std::max(timeStep, 0.01);
 
   double projectionTime = 0.0;

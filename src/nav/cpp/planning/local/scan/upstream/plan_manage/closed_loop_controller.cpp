@@ -68,8 +68,7 @@ ClosedLoopControllerOutput ClosedLoopController::step(
     return output;
   }
 
-  double dt = state.nowS - lastUpdateTimeS_;
-  if (dt < 0.0 || dt > kMaxUpdateGapS) dt = 0.0;
+  const double dt = std::max(0.0, state.nowS - lastUpdateTimeS_);
 
   const double evaluationTime = std::min(executionTimeS_, durationS_);
   Eigen::Vector3d desiredPosition =

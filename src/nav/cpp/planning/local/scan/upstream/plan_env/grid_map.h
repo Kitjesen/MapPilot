@@ -2,6 +2,7 @@
 
 #include <Eigen/Eigen>
 #include <memory>
+#include <optional>
 
 namespace nav_kernel::local::scan {
 class Grid;
@@ -23,6 +24,10 @@ class GridMap {
                                         double yaw) const noexcept;
   [[nodiscard]] int getInflateOccupancySegment(const Eigen::Vector3d &start, double startYaw,
                                                const Eigen::Vector3d &end, double endYaw) const noexcept;
+  [[nodiscard]] int getTrajectoryOccupancy(const Eigen::Vector3d &start,
+      const Eigen::Vector3d &velocity, const Eigen::Vector3d &end,
+      const Eigen::Vector3d &endVelocity, double startTime, double endTime,
+      std::optional<double> *previousHeading = nullptr) const noexcept;
 
  private:
   const Grid *grid_{nullptr};

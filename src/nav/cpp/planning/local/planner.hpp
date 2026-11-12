@@ -20,6 +20,7 @@
 
 #include "nav_kernel/types.hpp"
 #include "collision/terrain.hpp"
+#include "lingtu/maps/no_go.hpp"
 
 namespace lingtu::nav::collision { struct Body; class Terrain; }
 
@@ -284,6 +285,7 @@ struct EnvironmentView {
   LocalCollisionMapView collision{};
   LocalTraversabilityView traversability{};
   PredictionView predictions{};
+  std::shared_ptr<const std::vector<lingtu::maps::NoGoRegion>> no_go_regions{};
 };
 
 using PlanIdentity = LocalPlanIdentity;
@@ -300,6 +302,12 @@ struct PlanClock {
   }
 };
 
+struct LocalExecutionProgress {
+  std::int64_t trajectoryId{0};
+  double sampleTimeS{0.0};
+  double executionTimeS{0.0};
+};
+
 struct LocalPlanRequest {
   RobotState robot{};
   LocalObjective objective{RouteTarget{}};
@@ -310,6 +318,8 @@ struct LocalPlanRequest {
   EnvironmentView environment{};
   PlanIdentity identity{};
   PlanClock clock{};
+  // Last completed follower sample, in the same clock domain as this request.
+  std::optional<LocalExecutionProgress> execution{};
   // Resolved runtime linear-speed ceiling; zero uses configured planner limits.
   double maxLinearSpeedMps{0.0};
   // Optional body heading in the planning frame, independent of route tangent.

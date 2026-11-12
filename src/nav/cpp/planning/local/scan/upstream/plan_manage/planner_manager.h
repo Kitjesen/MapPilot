@@ -100,11 +100,20 @@ class SCANPlannerManager {
   double reference_progress_{0.0};
 
   void updateTrajInfo(const UniformBspline &position_traj, double nowS);
+  bool retime(UniformBspline &trajectory, const Eigen::Vector3d &start,
+              const Eigen::Vector3d &target,
+              std::vector<Eigen::Vector3d> &derivatives, double &interval,
+              bool preserveBoundary);
+  static void setSplineBoundary(Eigen::MatrixXd &controls, double interval,
+                                 const Eigen::Vector3d &start,
+                                 const Eigen::Vector3d &target,
+                                 const std::vector<Eigen::Vector3d> &derivatives);
+  static double dynamicTimeRatio(const UniformBspline &trajectory,
+                                 const PlanParameters &params);
   bool checkDynamicFeasibility(UniformBspline position_traj);
   void reparamBspline(UniformBspline &bspline,
                       std::vector<Eigen::Vector3d> &start_end_derivative,
-                      double ratio, Eigen::MatrixXd &ctrl_pts, double &dt,
-                      double &time_inc);
+                      double ratio, Eigen::MatrixXd &ctrl_pts, double &dt);
   bool refineTrajAlgo(UniformBspline &traj,
                       std::vector<Eigen::Vector3d> &start_end_derivative,
                       double ratio, double &ts,

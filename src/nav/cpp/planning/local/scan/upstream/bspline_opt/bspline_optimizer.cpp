@@ -31,8 +31,6 @@ void BsplineOptimizer::setEnvironment(const GridMap::Ptr &env) {
 double BsplineOptimizer::estimateSegmentYaw(const Eigen::Vector3d &from,
                                             const Eigen::Vector3d &to) const {
   Eigen::Vector2d diff(to(0) - from(0), to(1) - from(1));
-  if (diff.squaredNorm() < 1e-8)
-    return 0.0;
   return std::atan2(diff(1), diff(0));
 }
 
@@ -871,6 +869,164 @@ bool BsplineOptimizer::BsplineOptimizeTrajRefine(const Eigen::MatrixXd &init_poi
   return flag_success;
 }
 
+bool BsplineOptimizer::refineConstrained(
+    const Eigen::MatrixXd &init_points, double ts, Eigen::MatrixXd &optimal_points,
+    double maxBodyVx, double maxBodyVy, std::optional<double> bodyYaw) {
+  debug_ = {};
+  setControlPoints(init_points);
+  setBsplineInterval(ts);
+  iter_num_ = 0;
+  const int count = static_cast<int>(cps_.points.cols());
+  variable_num_ = 3 * (count - 2 * order_);
+  std::vector<double> variables(static_cast<std::size_t>(variable_num_));
+  memcpy(variables.data(), cps_.points.data() + 3 * order_,
+         variables.size() * sizeof(double));
+
+  struct Context {
+    BsplineOptimizer *optimizer;
+    double rho{1.0};
+    bool useBodyLimits;
+    Eigen::Matrix<double, 2, 3> bodyAxes;
+    Eigen::Vector2d bodyLimits;
+    std::vector<double> multipliers;
+    std::vector<double> constraints;
+  } context;
+  context.optimizer = this;
+  context.useBodyLimits = bodyYaw && maxBodyVx > 0.0 && maxBodyVy > 0.0;
+  const double yaw = bodyYaw.value_or(0.0);
+  const double cosine = std::cos(yaw), sine = std::sin(yaw);
+  context.bodyAxes << cosine, sine, 0.0, -sine, cosine, 0.0;
+  context.bodyLimits << maxBodyVx, maxBodyVy;
+  const int velocityConstraints = context.useBodyLimits ? 3 : 1;
+  context.multipliers.resize(count - 2 + velocityConstraints * (count - 3), 0.0);
+  context.constraints = context.multipliers;
+
+  auto evaluate = +[](void *data, const double *values, double *gradient, int size) {
+    auto &context = *static_cast<Context *>(data);
+    auto &optimizer = *context.optimizer;
+    double cost;
+    optimizer.combineCostRefine(values, gradient, cost, size);
+    const auto &points = optimizer.cps_.points;
+    const double h = optimizer.bspline_interval_;
+    const double accelerationLimitSquared = optimizer.max_acc_ * optimizer.max_acc_;
+    const double velocityLimitSquared = optimizer.max_vel_ * optimizer.max_vel_;
+    Eigen::MatrixXd additional = Eigen::MatrixXd::Zero(3, points.cols());
+    std::size_t constraint = 0;
+    auto penalty = [&](double value) {
+      context.constraints[constraint] = value;
+      const double multiplier = context.multipliers[constraint++];
+      const double shifted = std::max(0.0, multiplier + context.rho * value);
+      cost += (shifted * shifted - multiplier * multiplier) / (2.0 * context.rho);
+      return shifted;
+    };
+
+    for (int i = 0; i + 2 < points.cols(); ++i) {
+      const Eigen::Vector3d acceleration =
+          (points.col(i) - 2.0 * points.col(i + 1) + points.col(i + 2)) / (h * h);
+      const bool adjustable = i + 2 >= optimizer.order_ &&
+                              i < points.cols() - optimizer.order_;
+      // Only the remaining XY budget can move. Fixed endpoint and Z limits
+      // must remain feasible when they already lie on the physical bound.
+      const double margin = adjustable ? 1e-6 * std::max(
+          0.0, 1.0 - acceleration.z() * acceleration.z() / accelerationLimitSquared) : 0.0;
+      const double weight = penalty(
+          acceleration.squaredNorm() / accelerationLimitSquared - 1.0 + margin);
+      const Eigen::Vector3d derivative =
+          2.0 * weight * acceleration / (accelerationLimitSquared * h * h);
+      additional.col(i) += derivative;
+      additional.col(i + 1) -= 2.0 * derivative;
+      additional.col(i + 2) += derivative;
+    }
+    for (int i = 1; i + 2 < points.cols(); ++i) {
+      const Eigen::Vector3d velocity = (points.col(i + 1) - points.col(i)) / h;
+      const bool adjustable = i + 1 >= optimizer.order_ &&
+                              i < points.cols() - optimizer.order_;
+      const double margin = adjustable ? 1e-6 * std::max(
+          0.0, 1.0 - velocity.z() * velocity.z() / velocityLimitSquared) : 0.0;
+      const double weight = penalty(
+          velocity.squaredNorm() / velocityLimitSquared - 1.0 + margin);
+      Eigen::Vector3d derivative = 2.0 * weight * velocity / (velocityLimitSquared * h);
+      if (context.useBodyLimits) {
+        for (int axis = 0; axis < 2; ++axis) {
+          const double bodyVelocity = context.bodyAxes.row(axis).dot(velocity);
+          const double limitSquared = context.bodyLimits(axis) * context.bodyLimits(axis);
+          const double axisMargin = adjustable ? 1e-6 : 0.0;
+          const double axisWeight = penalty(bodyVelocity * bodyVelocity / limitSquared -
+                                             1.0 + axisMargin);
+          derivative += 2.0 * axisWeight * bodyVelocity / (limitSquared * h) *
+                        context.bodyAxes.row(axis).transpose();
+        }
+      }
+      additional.col(i) -= derivative;
+      additional.col(i + 1) += derivative;
+    }
+    additional.row(2).setZero();
+    for (int i = 0; i < size; ++i)
+      gradient[i] += additional.data()[3 * optimizer.order_ + i];
+    return cost;
+  };
+
+  lbfgs::lbfgs_parameter_t parameters;
+  lbfgs::lbfgs_load_default_parameters(&parameters);
+  parameters.mem_size = 16;
+  parameters.max_iterations = 200;
+  // Stop an inexact inner solve before line search polishes floating-point noise.
+  parameters.past = 3;
+  parameters.delta = 1e-8;
+  double previousViolation = std::numeric_limits<double>::infinity();
+  std::vector<double> gradient(variables.size());
+  for (int outer = 0; outer < 16; ++outer) {
+    parameters.g_epsilon = std::clamp(previousViolation * 0.01, 1e-8, 1e-4);
+    double cost;
+    const int result = lbfgs::lbfgs_optimize(
+        variable_num_, variables.data(), &cost, evaluate, nullptr, nullptr, &context, &parameters);
+    // A failed line search leaves its last trial in cps_.points. Re-evaluate
+    // the solver's accepted variables before exposing controls or constraints.
+    evaluate(&context, variables.data(), gradient.data(), variable_num_);
+    optimal_points = cps_.points;
+    debug_.optimizerReturnCodeValid = true;
+    debug_.optimizerReturnCode = result;
+    if (result != lbfgs::LBFGS_CONVERGENCE && result != lbfgs::LBFGSERR_MAXIMUMITERATION &&
+        result != lbfgs::LBFGS_ALREADY_MINIMIZED && result != lbfgs::LBFGS_STOP) {
+      debug_.reason = "optimizer_error";
+      return false;
+    }
+
+    const auto speedRatio = [&](const Eigen::Vector3d &velocity) {
+      double ratio = velocity.norm() / max_vel_;
+      if (context.useBodyLimits) {
+        const Eigen::Vector2d bodyVelocity = context.bodyAxes * velocity;
+        ratio = std::max({ratio, std::abs(bodyVelocity.x()) / maxBodyVx,
+                          std::abs(bodyVelocity.y()) / maxBodyVy});
+      }
+      return ratio;
+    };
+    const UniformBspline position(cps_.points, 3, ts);
+    const UniformBspline velocity = position.getDerivative();
+    const auto velocityControls = velocity.getControlPoint();
+    const auto accelerationControls = velocity.getDerivative().getControlPoint();
+    double physicalRatio = std::max({
+        1.0, speedRatio(velocity.evaluateDeBoorT(0.0)),
+        speedRatio(velocity.evaluateDeBoorT(position.getTimeSum())),
+        std::sqrt(accelerationControls.colwise().norm().maxCoeff() / max_acc_)});
+    for (int i = 1; i + 1 < velocityControls.cols(); ++i)
+      physicalRatio = std::max(physicalRatio, speedRatio(velocityControls.col(i)));
+    if (physicalRatio <= 1.0 + 1e-9)
+      return checkTrajectoryCollisionFree(position);
+
+    const double violation = std::max(
+        0.0, *std::max_element(context.constraints.begin(), context.constraints.end()));
+    for (std::size_t i = 0; i < context.constraints.size(); ++i)
+      context.multipliers[i] = std::max(
+          0.0, context.multipliers[i] + context.rho * context.constraints[i]);
+    if (violation > previousViolation * 0.5)
+      context.rho *= 10.0;
+    previousViolation = violation;
+  }
+  debug_.reason = "dynamic_constraint";
+  return false;
+}
+
 bool BsplineOptimizer::rebound_optimize() {
   iter_num_ = 0;
   int start_id = order_;
@@ -881,7 +1037,7 @@ bool BsplineOptimizer::rebound_optimize() {
   int restart_nums = 0, rebound_times = 0;
   bool flag_force_return, flag_occ, success;
   new_lambda2_ = lambda2_;
-  constexpr int MAX_RESART_NUMS_SET = 3;
+  constexpr int MAX_RESART_NUMS_SET = 4;
   do {
     /* ---------- prepare ---------- */
     min_cost_ = std::numeric_limits<double>::max();
@@ -914,35 +1070,10 @@ bool BsplineOptimizer::rebound_optimize() {
       flag_force_return = false;
 
       UniformBspline traj = UniformBspline(cps_.points, 3, bspline_interval_);
-      double tm, tmp;
-      static_cast<void>(traj.getTimeSpan(tm, tmp));
-      const double t_step = (tmp - tm) /
-          ((traj.evaluateDeBoorT(tmp) - traj.evaluateDeBoorT(tm)).norm() /
-           grid_map_->getResolution());
-      for (double t = tm; t < tmp * 2.0 / 3.0; t += t_step)
-      {
-        Eigen::Vector3d pos = traj.evaluateDeBoorT(t);
-        const double next_t = std::min(t + t_step, tmp);
-        const Eigen::Vector3d pos_next = traj.evaluateDeBoorT(next_t);
-        const int collision_state = grid_map_->getInflateOccupancy(
-            pos, estimateSegmentYaw(pos, pos_next));
-        flag_occ = collision_state != 0;
-        if (flag_occ) {
-          debug_.collisionValid = true;
-          debug_.collisionPosition = pos;
-          debug_.collisionTimeS = t;
-          debug_.collisionState = collision_state;
-          // cout << "hit_obs, t=" << t << " P=" << traj.evaluateDeBoorT(t).transpose() << endl;
-
-          if (t <= bspline_interval_)  // First 3 control points in obstacles!
-          {
-            debug_.reason = "collision_at_trajectory_start";
-            return false;
-          }
-
-          break;
-        }
-      }
+      flag_occ = !checkTrajectoryCollisionFree(traj);
+      if (flag_occ)
+        debug_.reason = debug_.collisionTimeS <= bspline_interval_
+                            ? "collision_at_trajectory_start" : "collision_restart_limit";
 
       if (!flag_occ) {
         success = true;
@@ -950,7 +1081,6 @@ bool BsplineOptimizer::rebound_optimize() {
         debug_.collisionValid = false;
       } else  // restart
       {
-        debug_.reason = "collision_restart_limit";
         restart_nums++;
         initControlPoints(cps_.points, false);
         new_lambda2_ *= 2;
@@ -973,15 +1103,19 @@ bool BsplineOptimizer::rebound_optimize() {
 bool BsplineOptimizer::checkTrajectoryCollisionFree(const UniformBspline &traj) {
   double tm, tmp;
   static_cast<void>(traj.getTimeSpan(tm, tmp));
-  const double t_step = (tmp - tm) /
+  const auto velocity = traj.getDerivative();
+  std::optional<double> heading;
+  const double t_step = std::min(0.01, (tmp - tm) /
       ((traj.evaluateDeBoorT(tmp) - traj.evaluateDeBoorT(tm)).norm() /
-       grid_map_->getResolution());
+       grid_map_->getResolution()));
   for (double t = tm; t < tmp * 2.0 / 3.0; t += t_step) {
     Eigen::Vector3d pos = traj.evaluateDeBoorT(t);
     const double next_t = std::min(t + t_step, tmp);
     const Eigen::Vector3d pos_next = traj.evaluateDeBoorT(next_t);
-    const int collision_state = grid_map_->getInflateOccupancy(
-        pos, estimateSegmentYaw(pos, pos_next));
+    // Use the execution check's measured start yaw and quiet-motion heading.
+    const int collision_state = grid_map_->getTrajectoryOccupancy(
+        pos, velocity.evaluateDeBoorT(t), pos_next, velocity.evaluateDeBoorT(next_t),
+        t - tm, next_t - tm, &heading);
     if (collision_state != 0) {
       debug_.reason = "collision_after_refine";
       debug_.collisionValid = true;

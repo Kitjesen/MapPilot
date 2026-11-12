@@ -72,22 +72,18 @@ Eigen::VectorXd UniformBspline::evaluateDeBoor(double u) const {
   int knot = degree_;
   while (knots_(knot + 1) < bounded) ++knot;
 
-  std::vector<Eigen::VectorXd> values;
-  values.reserve(static_cast<std::size_t>(degree_ + 1));
-  for (int index = 0; index <= degree_; ++index) {
-    values.push_back(controlPoints_.col(knot - degree_ + index));
-  }
+  Eigen::MatrixXd values = controlPoints_.middleCols(knot - degree_, degree_ + 1);
   for (int level = 1; level <= degree_; ++level) {
     for (int index = degree_; index >= level; --index) {
       const double alpha =
           (bounded - knots_(index + knot - degree_)) /
           (knots_(index + 1 + knot - level) -
            knots_(index + knot - degree_));
-      values[index] =
-          (1.0 - alpha) * values[index - 1] + alpha * values[index];
+      values.col(index) =
+          (1.0 - alpha) * values.col(index - 1) + alpha * values.col(index);
     }
   }
-  return values[degree_];
+  return values.col(degree_);
 }
 
 Eigen::VectorXd UniformBspline::evaluateDeBoorT(double time) const {

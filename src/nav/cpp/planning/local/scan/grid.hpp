@@ -29,7 +29,9 @@ class Grid {
                                           const Vec3 &end, double endYaw) const noexcept;
   [[nodiscard]] int trajectoryOccupancy(const Vec3 &start, const Vec3 &velocity,
                                          const Vec3 &end, const Vec3 &endVelocity,
-                                         double startAheadS, double endAheadS) const noexcept;
+                                         double startAheadS, double endAheadS,
+                                         bool checkPredictions = true,
+                                         std::optional<double> *previousHeading = nullptr) const noexcept;
   [[nodiscard]] std::size_t predictionCount() const noexcept { return predictions_.size(); }
   // A straight, fixed-heading exit may leave its initially occupied boundary
   // cell, but must end free and cannot enter any other occupied cell.
@@ -46,6 +48,9 @@ class Grid {
                                     double yawDeceleration) const noexcept;
 
  private:
+  [[nodiscard]] bool noGoPose(const Vec3 &center, double yaw, double padding = 0.0) const noexcept;
+  [[nodiscard]] bool noGoSweep(const Vec3 &start, double startYaw,
+                                const Vec3 &end, double endYaw) const noexcept;
   [[nodiscard]] bool atRobotPosition(const Vec3 &point) const noexcept;
   [[nodiscard]] int occupiedState(const Vec3 &planningPoint) const noexcept;
   [[nodiscard]] int measuredSegmentOccupancy(const Vec3 &start, double startYaw,
@@ -74,6 +79,7 @@ class Grid {
   bool checkObstacle_{false};
   double configuredResolution_{0.0};
   double cylinderOffset_{0.0};
+  double cylinderRadius_{0.0}, clearanceBelow_{0.0}, clearanceAbove_{0.0};
   std::vector<double> bodyHeadings_{};
   double headingSweepPadding_{0.0};
   double robotYaw_{0.0};
@@ -81,6 +87,7 @@ class Grid {
   double predictionAgeS_{0.0}, predictionHorizonS_{1.0};
   LocalCollisionMapView collision_{};
   std::shared_ptr<const lingtu::nav::collision::Body> body_{};
+  std::shared_ptr<const std::vector<lingtu::maps::NoGoRegion>> no_go_regions_;
   std::vector<PredictedObstacle> predictions_;
   std::string reason_{"collision_map_invalid"};
 };

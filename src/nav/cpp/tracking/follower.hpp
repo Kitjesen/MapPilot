@@ -32,6 +32,7 @@ struct SplineFollowerParams {
   double yawGain{::lingtu::settings::follower::parameters::scan_follower::yaw_gain};
   double maxVx{::lingtu::settings::limits::parameters::scan_follower::max_vx_mps};
   double maxVy{::lingtu::settings::limits::parameters::scan_follower::max_vy_mps};
+  double minVy{::lingtu::settings::follower::parameters::scan_follower::min_vy_mps};
   double maxYawRateRadS{::lingtu::settings::limits::native_nav::follower::max_yaw_rate_rad_s};
   double finishDistance{::lingtu::settings::follower::parameters::scan_follower::finish_distance_m};
 };
@@ -121,6 +122,7 @@ struct FollowerTracking {
   bool executionFrozen{false};
   bool finished{false};
   double speedLimitMps{0.0};
+  double sampleTimeS{0.0};
 };
 
 struct FollowerOutput {
@@ -156,7 +158,7 @@ class Follower {
 
   FollowerOutput follow(const LocalPlan &plan, const FollowerState &state);
   [[nodiscard]] static double turnRate(double yawError, double gain,
-                                       double minRate, double maxRate);
+                                       double maxRate);
   [[nodiscard]] static Twist rotationCommand(int direction, double rate);
   // Feed back the command accepted by final control, without advancing time.
   void commitApplied(const Twist &command);

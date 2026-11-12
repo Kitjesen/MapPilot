@@ -22,7 +22,7 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-enum class ScanWork { Input, Fsm, Collision };
+enum class Work { Input, Fsm, Collision };
 
 bool sameIntent(const std::optional<LocalMotionIntent> &left,
                 const std::optional<LocalMotionIntent> &right) {
@@ -38,136 +38,93 @@ bool sameIntent(const std::optional<LocalMotionIntent> &left,
          std::abs(left->maxDirectionDeviationDeg - right->maxDirectionDeviationDeg) <= 1e-6;
 }
 
-struct OwnedRequest {
+struct Input {
   void assign(const LocalPlanRequest &source,
-              std::shared_ptr<const std::vector<std::uint8_t>> collisionBits,
-              bool replaceGuide = true) {
-    robot = source.robot;
-    identity = source.identity;
-    clock = source.clock;
-    maxLinearSpeedMps = source.maxLinearSpeedMps;
-    bodyHeading = source.bodyHeading;
-    body = source.body;
-    observedBody = source.observedBody;
-    supportHeightM=source.supportHeightM;
-    supportHeightToleranceM=source.supportHeightToleranceM;
-    environment = source.environment;
-    environment.obstacles = {};
-    environment.traversability = {};
+              std::shared_ptr<const std::vector<std::uint8_t>> collision,
+              bool replaceGuide) {
+    LocalPlanRequest next = source;
+    if (replaceGuide) {
+      const auto &reference = *source.referenceRoute();
+      route = std::make_shared<const std::vector<Vec3>>(
+          reference.points, reference.points + reference.count);
+      next.reference = {route->data(), reference.count, reference.generation};
+      next.objective = source.intent()
+          ? LocalObjective{MotionIntentTarget{*source.intent(), next.reference}}
+          : LocalObjective{RouteTarget{next.reference}};
+    } else {
+      next.objective = request.objective;
+      next.reference = request.reference;
+    }
+    next.environment.obstacles = {};
+    next.environment.traversability = {};
     const auto &predicted = source.environment.predictions;
     predictions.clear();
     if (predicted.count > 0 && predicted.fresh(source.clock.timestampS))
       predictions.assign(predicted.obstacles, predicted.obstacles + predicted.count);
-    environment.predictions.obstacles = nullptr;
-    collision = std::move(collisionBits);
-    if (replaceGuide) {
-      if (const LocalRouteView *sourceRoute = source.referenceRoute()) {
-        routeView = *sourceRoute;
-        routeView.points = nullptr;
-        if (sourceRoute->points != nullptr && sourceRoute->count > 0) {
-          const auto end = sourceRoute->points + sourceRoute->count;
-          route = std::make_shared<const std::vector<Vec3>>(sourceRoute->points, end);
-        } else {
-          route.reset();
-        }
-      } else {
-        routeView = {};
-        route.reset();
-      }
-      if (const LocalMotionIntent *sourceIntent = source.intent()) {
-        intent = *sourceIntent;
-      } else {
-        intent.reset();
-      }
-    }
-  }
-
-  LocalPlanRequest view() const {
-    LocalPlanRequest request;
-    request.robot = robot;
-    request.identity = identity;
-    request.clock = clock;
-    request.maxLinearSpeedMps = maxLinearSpeedMps;
-    request.bodyHeading = bodyHeading;
-    request.body = body;
-    request.observedBody = observedBody;
-    request.supportHeightM=supportHeightM;
-    request.supportHeightToleranceM=supportHeightToleranceM;
-
-    LocalRouteView routeViewCopy = routeView;
-    routeViewCopy.points = route && !route->empty() ? route->data() : nullptr;
-    routeViewCopy.count = route ? static_cast<int>(route->size()) : 0;
-    request.objective = intent ? LocalObjective{MotionIntentTarget{*intent, routeViewCopy}}
-                               : LocalObjective{RouteTarget{routeViewCopy}};
-    request.reference = routeViewCopy;
-
-    request.environment = environment;
-    request.environment.predictions.obstacles = predictions.data();
-    request.environment.predictions.count = predictions.size();
-    request.environment.collision.inflatedBits =
-        collision && !collision->empty() ? collision->data() : nullptr;
-    request.environment.collision.inflatedBytes = collision ? collision->size() : 0U;
-    request.environment.collision.inflatedStorage = collision;
-    return request;
-  }
-
-  RobotState robot{};
-  PlanIdentity identity{};
-  PlanClock clock{};
-  double maxLinearSpeedMps{0.0};
-  std::optional<double> bodyHeading;
-  std::shared_ptr<const lingtu::nav::collision::Body> body;
-  std::shared_ptr<const lingtu::nav::collision::Body> observedBody;
-  std::optional<double> supportHeightM;
-  std::optional<double> supportHeightToleranceM;
-  LocalRouteView routeView{};
-  EnvironmentView environment{};
-  std::optional<LocalMotionIntent> intent;
-  std::shared_ptr<const std::vector<Vec3>> route;
-  std::shared_ptr<const std::vector<std::uint8_t>> collision;
-  std::vector<PredictedObstacle> predictions;
-};
-
-struct InputSnapshot {
-  void assign(std::uint64_t epochValue, const LocalPlanRequest &source,
-              std::shared_ptr<const std::vector<std::uint8_t>> collision,
-              bool replaceGuide = true) {
-    epoch = epochValue;
-    request.assign(source, std::move(collision), replaceGuide);
+    next.environment.predictions.obstacles = nullptr;
+    auto &map = next.environment.collision;
+    map.inflatedStorage = std::move(collision);
+    map.inflatedBits = map.inflatedStorage ? map.inflatedStorage->data() : nullptr;
+    map.inflatedBytes = map.inflatedStorage ? map.inflatedStorage->size() : 0U;
+    request = std::move(next);
     receivedAt = Clock::now();
   }
 
-  LocalPlanRequest view(Clock::time_point now) const {
-    LocalPlanRequest output = request.view();
-    output.clock.timestampS = output.clock.afterElapsed(
+  double time(Clock::time_point now) const {
+    return request.clock.afterElapsed(
         std::chrono::duration<double>(now - receivedAt).count());
+  }
+
+  LocalPlanRequest view(Clock::time_point now) const {
+    LocalPlanRequest output = request;
+    // Copying Input shares the route/map, but gives predictions new storage.
+    output.environment.predictions.obstacles = predictions.data();
+    output.environment.predictions.count = predictions.size();
+    output.clock.timestampS = time(now);
     return output;
   }
 
-  std::uint64_t epoch{0};
-  OwnedRequest request;
+  LocalPlanRequest request;
+  std::shared_ptr<const std::vector<Vec3>> route;
+  std::vector<PredictedObstacle> predictions;
   Clock::time_point receivedAt;
 };
 
-struct Completion {
-  std::uint64_t epoch{0};
+struct Guide {
   std::uint64_t frameEpoch{0};
   std::uint64_t routeGeneration{0};
   std::optional<LocalMotionIntent> intent;
   std::optional<double> bodyHeading;
   std::shared_ptr<const lingtu::nav::collision::Body> body;
+};
+
+Guide guideOf(const LocalPlanRequest &request) {
+  const auto *intent = request.intent();
+  return {request.identity.frameEpoch, request.referenceRoute()->generation,
+          intent ? std::optional<LocalMotionIntent>{*intent} : std::nullopt,
+          request.bodyHeading, request.body};
+}
+
+bool sameFrameAndBody(const Guide &left, const Guide &right) {
+  return left.frameEpoch == right.frameEpoch &&
+         left.bodyHeading == right.bodyHeading && left.body == right.body;
+}
+
+bool sameGuide(const Guide &left, const Guide &right) {
+  return sameFrameAndBody(left, right) &&
+         left.routeGeneration == right.routeGeneration &&
+         sameIntent(left.intent, right.intent);
+}
+
+struct Completion {
+  Guide guide;
   LocalPlan plan{};
   LocalPlannerDebugSnapshot debug{};
   std::shared_ptr<upstream::TrajectoryHandoff> handoff;
 };
 
-struct PublishedPlan {
-  std::uint64_t epoch{0};
-  std::uint64_t frameEpoch{0};
-  std::uint64_t routeGeneration{0};
-  std::optional<LocalMotionIntent> intent;
-  std::optional<double> bodyHeading;
-  std::shared_ptr<const lingtu::nav::collision::Body> body;
+struct Publication {
+  Guide guide;
   LocalPlanStatus status{LocalPlanStatus::Pending};
   std::int64_t trajectoryId{0};
   int slowdownLevel{0};
@@ -176,11 +133,7 @@ struct PublishedPlan {
 };
 
 struct WorkerDebug {
-  std::uint64_t frameEpoch{0};
-  std::uint64_t routeGeneration{0};
-  std::optional<LocalMotionIntent> intent;
-  std::optional<double> bodyHeading;
-  std::shared_ptr<const lingtu::nav::collision::Body> body;
+  Guide guide;
   LocalPlannerDebugSnapshot debug{};
 };
 
@@ -189,34 +142,9 @@ struct PollResult {
   std::optional<WorkerDebug> debug;
 };
 
-bool sameGuide(std::uint64_t routeGeneration, std::uint64_t frameEpoch,
-               const std::optional<LocalMotionIntent> &intent,
-               const std::optional<double> &bodyHeading,
-               const std::shared_ptr<const lingtu::nav::collision::Body> &body,
-               const LocalPlanRequest &request) {
-  const LocalRouteView *route = request.referenceRoute();
-  const std::optional<LocalMotionIntent> requestIntent =
-      request.intent() == nullptr ? std::nullopt
-                                  : std::optional<LocalMotionIntent>{*request.intent()};
-  return route != nullptr && routeGeneration == route->generation &&
-         frameEpoch == request.identity.frameEpoch && sameIntent(intent, requestIntent) &&
-         bodyHeading == request.bodyHeading &&
-         body == request.body;
-}
-
-bool sameGuide(const WorkerDebug &debug, const LocalPlanRequest &request) {
-  return sameGuide(debug.routeGeneration, debug.frameEpoch, debug.intent,
-                   debug.bodyHeading, debug.body, request);
-}
-
-PublishedPlan publicationOf(const Completion &completion) {
-  PublishedPlan result;
-  result.epoch = completion.epoch;
-  result.frameEpoch = completion.frameEpoch;
-  result.routeGeneration = completion.routeGeneration;
-  result.intent = completion.intent;
-  result.bodyHeading = completion.bodyHeading;
-  result.body = completion.body;
+Publication publicationOf(const Completion &completion) {
+  Publication result;
+  result.guide = completion.guide;
   result.status = completion.plan.status();
   result.slowdownLevel = completion.plan.hints().slowdownLevel;
   result.retainRouteGuide = completion.plan.hints().retainRouteGuide;
@@ -226,25 +154,13 @@ PublishedPlan publicationOf(const Completion &completion) {
   return result;
 }
 
-bool samePublication(const PublishedPlan &left, const PublishedPlan &right) {
-  const bool samePlan = left.epoch == right.epoch &&
-                        left.bodyHeading == right.bodyHeading && left.body == right.body &&
-                        left.frameEpoch == right.frameEpoch && left.handoff == right.handoff &&
-                        left.trajectoryId != 0 &&
-                        left.trajectoryId == right.trajectoryId &&
-                        left.status == right.status &&
-                        left.slowdownLevel == right.slowdownLevel &&
-                        left.retainRouteGuide == right.retainRouteGuide;
-  if (samePlan)
-    return true;
-  return left.epoch == right.epoch && left.frameEpoch == right.frameEpoch &&
-         left.handoff == right.handoff &&
-         left.bodyHeading == right.bodyHeading && left.body == right.body &&
-         left.routeGeneration == right.routeGeneration &&
-         sameIntent(left.intent, right.intent) && left.status == right.status &&
+bool samePublication(const Publication &left, const Publication &right) {
+  return sameFrameAndBody(left.guide, right.guide) &&
+         left.handoff == right.handoff && left.status == right.status &&
          left.trajectoryId == right.trajectoryId &&
          left.slowdownLevel == right.slowdownLevel &&
-         left.retainRouteGuide == right.retainRouteGuide;
+         left.retainRouteGuide == right.retainRouteGuide &&
+         (left.trajectoryId != 0 || sameGuide(left.guide, right.guide));
 }
 
 Clock::duration timerPeriod(double seconds) {
@@ -264,30 +180,26 @@ void advanceTimer(Clock::time_point &deadline, Clock::duration period, Clock::ti
 class Task::Impl {
  public:
   explicit Impl(const LocalPlannerParams &params)
-      : planner_(params), configuredSpeedLimit_(std::max(0.05, params.scan.maxVelocity)) {
-    planner_.setExecutionFeedback([this] {
+      : backend_(params), configuredSpeedLimit_(std::max(0.05, params.scan.maxVelocity)) {
+    backend_.setExecutionFeedback([this] {
       std::lock_guard<std::mutex> lock(mutex_);
-      const auto request = input_.view(Clock::now());
-      return ExecutionFeedback{request.clock.timestampS, executingTrajectoryId_,
-                                executionStartTimeS_, request.clock.executionFrozen};
+      return ExecutionFeedback{input_.time(Clock::now()), executingTrajectoryId_,
+                                executionStartTimeS_, input_.request.clock.executionFrozen,
+                                input_.request.execution};
     });
   }
 
   ~Impl() { stop(); }
 
   bool configure() {
-    if (configured_)
+    if (worker_.joinable())
       return true;
     const Clock::time_point now = Clock::now();
     nextFsmTick_ = now + timerPeriod(Backend::fsmPeriodS());
     nextCollisionTick_ = now + timerPeriod(Backend::collisionPeriodS());
-    timersArmed_ = true;
-    configured_ = true;
     worker_ = std::thread([this]() { run(); });
     return true;
   }
-
-  bool configured() const { return configured_; }
 
   std::shared_ptr<const ScanFailureSnapshot> lastScanFailure() const {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -298,7 +210,7 @@ class Task::Impl {
     const auto receivedAt = Clock::now();
     Update output;
     output.debug.backend = LocalPlannerBackend::Scan;
-    if (!configured_) {
+    if (!worker_.joinable()) {
       output.plan = LocalPlan::stopped(LocalPlanStatus::NotConfigured);
       return output;
     }
@@ -310,19 +222,20 @@ class Task::Impl {
     }
 
     // Initialization depends on metadata availability, not its numeric values.
-    if (supportHeightM_.has_value()!=request.supportHeightM.has_value() ||
-        supportHeightToleranceM_.has_value()!=request.supportHeightToleranceM.has_value()) {
+    if (hasSupportHeight_ != request.supportHeightM.has_value() ||
+        hasSupportTolerance_ != request.supportHeightToleranceM.has_value()) {
       reset();
-      supportHeightM_=request.supportHeightM;
-      supportHeightToleranceM_=request.supportHeightToleranceM;
+      hasSupportHeight_ = request.supportHeightM.has_value();
+      hasSupportTolerance_ = request.supportHeightToleranceM.has_value();
     }
-    if (current_ && (current_->frameEpoch != request.identity.frameEpoch ||
-                     current_->bodyHeading != request.bodyHeading || current_->body != request.body))
-      current_.reset();
-    if (latest_ && !sameGuide(latest_->routeGeneration, latest_->frameEpoch,
-                              latest_->intent, latest_->bodyHeading,
-                              latest_->body, request))
-      latest_.reset();
+    const Guide guide = guideOf(request);
+    if (accepted_) {
+      // Keep an executing curve while a new route is being planned, but not an old stop.
+      const bool matches = accepted_->plan.ready()
+          ? sameFrameAndBody(accepted_->guide, guide)
+          : sameGuide(accepted_->guide, guide);
+      if (!matches) accepted_.reset();
+    }
     if (waiting_ && effectiveSpeedLimit(request.maxLinearSpeedMps) <
                         std::get<SplineTarget>(waiting_->plan.target()).maxLinearSpeedMps) {
       waiting_->handoff->withdraw();
@@ -330,32 +243,25 @@ class Task::Impl {
     }
     // Publish before polling so a lower cap can discard a queued old offer
     // before that offer is acknowledged by this physical control tick.
-    publish(request);
+    publish(request, guide);
     const PollResult polled = poll();
     const auto accept = [&](const Completion &completion) {
-      latest_ = completion;
-      if (!completion.plan.ready()) {
-        current_.reset();
-        return;
-      }
-      current_ = completion;
-      const auto id = std::get<SplineTarget>(current_->plan.target()).trajectoryId;
+      accepted_ = completion;
+      if (!completion.plan.ready()) return;
+      const auto id = std::get<SplineTarget>(accepted_->plan.target()).trajectoryId;
       if (!completion.handoff &&
           (executingTrajectoryId_ == 0 ||
            (request.clock.executionFrozen && id != executingTrajectoryId_))) {
-        auto spline = std::get<SplineTarget>(current_->plan.target());
+        auto spline = std::get<SplineTarget>(accepted_->plan.target());
         spline.startTimeS = request.clock.timestampS;
-        current_->plan = LocalPlan::spline(std::move(spline), current_->plan.hints());
+        accepted_->plan = LocalPlan::spline(std::move(spline), accepted_->plan.hints());
       }
-      const auto &spline = std::get<SplineTarget>(current_->plan.target());
+      const auto &spline = std::get<SplineTarget>(accepted_->plan.target());
       executingTrajectoryId_ = spline.trajectoryId;
       executionStartTimeS_ = spline.startTimeS;
     };
     if (polled.completion &&
-        sameGuide(polled.completion->routeGeneration,
-                  polled.completion->frameEpoch,
-                  polled.completion->intent, polled.completion->bodyHeading,
-                  polled.completion->body, request)) {
+        sameGuide(polled.completion->guide, guide)) {
       const auto *spline = std::get_if<SplineTarget>(&polled.completion->plan.target());
       if (polled.completion->handoff) {
         // Receiving a future offer does not acknowledge execution. The next
@@ -375,8 +281,7 @@ class Task::Impl {
       const double nowS = request.clock.afterElapsed(
           std::chrono::duration<double>(Clock::now() - receivedAt).count());
       const auto &spline = std::get<SplineTarget>(waiting_->plan.target());
-      if (!sameGuide(waiting_->routeGeneration, waiting_->frameEpoch, waiting_->intent,
-                     waiting_->bodyHeading, waiting_->body, request) ||
+      if (!sameGuide(waiting_->guide, guide) ||
           request.clock.executionFrozen || nowS > waiting_->handoff->deadlineS) {
         waiting_->handoff->withdraw();
         waiting_.reset();
@@ -386,16 +291,11 @@ class Task::Impl {
       }
     }
     const LocalPlannerDebugSnapshot *workerDebug =
-        polled.debug && sameGuide(*polled.debug, request) ? &polled.debug->debug : nullptr;
+        polled.debug && sameGuide(polled.debug->guide, guide) ? &polled.debug->debug : nullptr;
 
-    if (current_) {
-      output.plan = current_->plan;
-      output.debug = workerDebug != nullptr ? *workerDebug : current_->debug;
-      return output;
-    }
-    if (latest_ && latest_->plan.status() != LocalPlanStatus::Pending) {
-      output.plan = latest_->plan;
-      output.debug = workerDebug != nullptr ? *workerDebug : latest_->debug;
+    if (accepted_ && accepted_->plan.status() != LocalPlanStatus::Pending) {
+      output.plan = accepted_->plan;
+      output.debug = workerDebug != nullptr ? *workerDebug : accepted_->debug;
       return output;
     }
     output.plan = LocalPlan::stopped(LocalPlanStatus::Pending);
@@ -411,13 +311,12 @@ class Task::Impl {
   }
 
   void reset() {
-    current_.reset();
+    accepted_.reset();
     waiting_.reset();
-    latest_.reset();
     collisionSnapshot_.reset();
     collisionGeneration_ = 0;
     collisionResetEpoch_ = 0;
-    if (!configured_)
+    if (!worker_.joinable())
       return;
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -425,18 +324,16 @@ class Task::Impl {
       // the core again. New input re-arms reset through publish().
       if (!hasInput_)
         return;
-      ++epoch_;
       cancelGeneration_.fetch_add(1U, std::memory_order_relaxed);
       hasInput_ = false;
       executingTrajectoryId_ = 0;
       completed_.reset();
       workerDebug_.reset();
-      publishedPlan_.reset();
+      publication_.reset();
       inputEventPending_ = false;
       const Clock::time_point now = Clock::now();
       nextFsmTick_ = now + timerPeriod(Backend::fsmPeriodS());
       nextCollisionTick_ = now + timerPeriod(Backend::collisionPeriodS());
-      timersArmed_ = true;
       resetRequested_ = true;
     }
     cv_.notify_one();
@@ -474,17 +371,12 @@ class Task::Impl {
     return snapshot;
   }
 
-  void publish(const LocalPlanRequest &request) {
+  void publish(const LocalPlanRequest &request, const Guide &guide) {
     const auto collision = collisionSnapshot(request);
     bool wakeWorker = false;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      const bool guideChanged =
-          !hasInput_ ||
-          !sameGuide(input_.request.routeView.generation,
-                     input_.request.identity.frameEpoch,
-                     input_.request.intent, input_.request.bodyHeading,
-                     input_.request.body, request);
+      const bool guideChanged = !hasInput_ || !sameGuide(guideOf(input_.request), guide);
       const bool speedReduced = hasInput_ &&
           effectiveSpeedLimit(request.maxLinearSpeedMps) + 1e-9 <
               effectiveSpeedLimit(input_.request.maxLinearSpeedMps);
@@ -495,23 +387,17 @@ class Task::Impl {
       if (speedReduced) {
         if (completed_ && completed_->handoff) completed_->handoff->withdraw();
         completed_.reset();
-        publishedPlan_.reset();
+        publication_.reset();
       }
-      input_.assign(epoch_, request, collision, guideChanged);
-      if (current_) {
-        const auto &spline = std::get<SplineTarget>(current_->plan.target());
+      input_.assign(request, collision, guideChanged);
+      if (accepted_ && accepted_->plan.ready()) {
+        const auto &spline = std::get<SplineTarget>(accepted_->plan.target());
         executingTrajectoryId_ = spline.trajectoryId;
         executionStartTimeS_ = spline.startTimeS;
       } else {
         executingTrajectoryId_ = 0;
       }
       hasInput_ = true;
-      if (!timersArmed_) {
-        const Clock::time_point now = Clock::now();
-        nextFsmTick_ = now + timerPeriod(Backend::fsmPeriodS());
-        nextCollisionTick_ = now + timerPeriod(Backend::collisionPeriodS());
-        timersArmed_ = true;
-      }
       // The official /initial_path subscriber has queue size one and runs in
       // the same callback queue as the timers. Preserve that latest-only,
       // serialized input event instead of waiting for the next FSM timer.
@@ -534,8 +420,6 @@ class Task::Impl {
   void stop() {
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (stopping_)
-        return;
       stopping_ = true;
       cancelGeneration_.fetch_add(1U, std::memory_order_relaxed);
       hasInput_ = false;
@@ -549,11 +433,11 @@ class Task::Impl {
     const Clock::duration fsmPeriod = timerPeriod(Backend::fsmPeriodS());
     const Clock::duration collisionPeriod =
         timerPeriod(Backend::collisionPeriodS());
-    InputSnapshot snapshot;
+    Input snapshot;
 
     for (;;) {
       std::uint64_t cancelGeneration = 0U;
-      ScanWork work = ScanWork::Fsm;
+      Work work = Work::Fsm;
       bool reset = false;
       {
         std::unique_lock<std::mutex> lock(mutex_);
@@ -565,14 +449,14 @@ class Task::Impl {
             reset = true;
             break;
           }
-          if (!hasInput_ || !timersArmed_) {
+          if (!hasInput_) {
             cv_.wait(lock);
             continue;
           }
 
           if (inputEventPending_) {
             inputEventPending_ = false;
-            work = ScanWork::Input;
+            work = Work::Input;
             snapshot = input_;
             cancelGeneration =
                 cancelGeneration_.load(std::memory_order_relaxed);
@@ -588,9 +472,9 @@ class Task::Impl {
           }
 
           work = collisionDue && (!fsmDue || nextCollisionTick_ < nextFsmTick_)
-                     ? ScanWork::Collision
-                     : ScanWork::Fsm;
-          if (work == ScanWork::Fsm)
+                     ? Work::Collision
+                     : Work::Fsm;
+          if (work == Work::Fsm)
             advanceTimer(nextFsmTick_, fsmPeriod, now);
           else
             advanceTimer(nextCollisionTick_, collisionPeriod, now);
@@ -602,26 +486,21 @@ class Task::Impl {
       }
 
       if (reset) {
-        planner_.reset();
+        backend_.reset();
         continue;
       }
       LocalPlanRequest request = snapshot.view(Clock::now());
       Completion completion;
-      completion.epoch = snapshot.epoch;
-      completion.frameEpoch = request.identity.frameEpoch;
-      completion.routeGeneration = snapshot.request.routeView.generation;
-      completion.intent = snapshot.request.intent;
-      completion.bodyHeading = snapshot.request.bodyHeading;
-      completion.body = snapshot.request.body;
+      completion.guide = guideOf(request);
       try {
         const LocalPlanCancel isCancelled = [this, cancelGeneration]() {
           return cancelGeneration_.load(std::memory_order_relaxed) != cancelGeneration;
         };
-        completion.plan = work == ScanWork::Collision
-                              ? planner_.checkCollision(request, isCancelled)
-                              : planner_.tick(request, isCancelled);
-        completion.debug = planner_.debugSnapshot();
-        completion.handoff = planner_.handoff();
+        completion.plan = work == Work::Collision
+                              ? backend_.checkCollision(request, isCancelled)
+                              : backend_.tick(request, isCancelled);
+        completion.debug = backend_.debugSnapshot();
+        completion.handoff = backend_.handoff();
       } catch (const std::exception &error) {
         completion.plan = LocalPlan::stopped(LocalPlanStatus::InvalidInput);
         completion.debug.searchReason = std::string("planner_exception:") + error.what();
@@ -632,28 +511,24 @@ class Task::Impl {
 
       std::lock_guard<std::mutex> lock(mutex_);
       if (cancelGeneration_.load(std::memory_order_relaxed) == cancelGeneration &&
-          !resetRequested_ && completion.epoch == epoch_ && !stopping_ && hasInput_ &&
-          input_.epoch == completion.epoch) {
+          !resetRequested_ && !stopping_ && hasInput_) {
         if (completion.debug.lastScanFailure)
           lastScanFailure_ = completion.debug.lastScanFailure;
-        workerDebug_ = WorkerDebug{completion.frameEpoch, completion.routeGeneration,
-                                   completion.intent, completion.bodyHeading,
-                                   completion.body, completion.debug};
-        const PublishedPlan publication = publicationOf(completion);
-        if (!publishedPlan_ || !samePublication(*publishedPlan_, publication)) {
-          publishedPlan_ = publication;
+        workerDebug_ = WorkerDebug{completion.guide, completion.debug};
+        const Publication publication = publicationOf(completion);
+        if (!publication_ || !samePublication(*publication_, publication)) {
+          publication_ = publication;
           completed_ = std::move(completion);
         }
       }
     }
   }
 
-  Backend planner_;
+  Backend backend_;
   const double configuredSpeedLimit_;
-  bool configured_{false};
   mutable std::mutex mutex_;
   std::condition_variable cv_;
-  InputSnapshot input_;
+  Input input_;
   bool hasInput_{false};
   std::int64_t executingTrajectoryId_{0};
   double executionStartTimeS_{0.0};
@@ -661,24 +536,22 @@ class Task::Impl {
   std::optional<Completion> completed_;
   std::optional<WorkerDebug> workerDebug_;
   std::shared_ptr<const ScanFailureSnapshot> lastScanFailure_;
-  std::optional<PublishedPlan> publishedPlan_;
-  std::uint64_t epoch_{1};
+  std::optional<Publication> publication_;
   bool resetRequested_{false};
   bool stopping_{false};
-  bool timersArmed_{false};
   bool inputEventPending_{false};
   Clock::time_point nextFsmTick_{};
   Clock::time_point nextCollisionTick_{};
   std::thread worker_;
 
-  std::optional<Completion> current_;
+  // Control-thread state; the worker reads the locked execution feedback above.
+  std::optional<Completion> accepted_;
   std::optional<Completion> waiting_;
-  std::optional<Completion> latest_;
   std::shared_ptr<const std::vector<std::uint8_t>> collisionSnapshot_;
   std::uint64_t collisionGeneration_{0};
   std::uint64_t collisionResetEpoch_{0};
-  std::optional<double> supportHeightM_;
-  std::optional<double> supportHeightToleranceM_;
+  bool hasSupportHeight_{false};
+  bool hasSupportTolerance_{false};
 };
 
 Task::Task(const LocalPlannerParams &params)
@@ -688,10 +561,6 @@ Task::~Task() = default;
 
 bool Task::configure() {
   return impl_->configure();
-}
-
-bool Task::configured() const {
-  return impl_->configured();
 }
 
 Update Task::update(const LocalPlanRequest &request) {

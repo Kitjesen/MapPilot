@@ -1,9 +1,59 @@
 # SCAN backend
 
+## Moving-boundary curve repair (2026-11-07)
+
+Time reallocation now refits the original rebound curve on every attempt;
+it does not carry a previously warped interior into the next attempt. Physical
+endpoint P/V/A remains fixed. Constrained refine uses the existing costs and
+L-BFGS, with the same final speed, acceleration and 3-D collision requirements.
+Vertical derivative violations are resolved through time allocation while Z
+stays fixed inside the optimizer. No platform limit or public setting changed.
+The inherited L-BFGS cubic fallback direction is also corrected against its
+original library. See `upstream/UPSTREAM.md` and
+`docs/research/tora-retiming-fix-20261107.md` for source pins and evidence.
+
+## Formal twin-cylinder envelope (2026-11-05)
+
+The native endpoint no longer loads BODY2 or creates an OBB fallback. Ordinary
+SCAN and final braking query the same Mapd-inflated twin cylinders. Thunder's
+real and sim declarations use radius 0.32 m, offset 0.23 m and body-relative
+height [-0.05,+0.35] m. The radius includes the fitted horizontal allowance;
+it is not applied a second time in final control. Go2 keeps its own parameters.
+The generic Body query library and explicit experimental requests remain, but
+are not selected by the formal endpoint. Earlier entries describing a formal
+multipart braking model are historical. Global XYZ still uses the same radius
+as a corridor approximation, not a full yaw search. See the current decision in
+`docs/design/navigation-body-model-and-motion-posture.md` for coverage limits.
+
 This directory implements the SCAN algorithm behind `nav_kernel::LocalPlanner`.
 It contains LingTu's ROS-free port of
 [wuyi2121/SCAN-Planner](https://github.com/wuyi2121/SCAN-Planner) pinned to
 commit `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
+
+## Short approaches and obstacle corners (2026-11-05)
+
+The current repairs keep the same 3-D inflation, clearance and arrival tolerance:
+
+- Reference projection and occupied-target retreat use the voxel scale, so a
+  coarse projection cannot skip the final clear approach cells.
+- Sub-spacing approaches, above-cap moving starts and rest-to-rest segments
+  reuse exact-boundary fitting during retiming. Zero boundary derivatives let
+  time dilation preserve a clear corner's geometry while reducing acceleration.
+- An offset robot does not turn a straight reference into a mandatory sideways
+  return. Collinear fitting samples are removed before joining an offset start;
+  actual route bends and height changes remain in the seed.
+- DynAStar only stamps nodes admitted by the current search.
+- Candidate collision checks match the execution check's 10 ms sampling.
+  Collisions in the first interval use the bounded optimization retries because
+  editable controls still affect the cylinder heading. There are four passes,
+  with the upstream initial collision weight unchanged at 1.
+- New autonomous trajectories use the existing 0.1 m/s emergency-stop settling
+  criterion for a rest boundary. Moving handoffs and MotionIntent keep their
+  established boundaries.
+
+These are local differences from the pinned upstream; see
+[`upstream/UPSTREAM.md`](upstream/UPSTREAM.md) for causes and the recorded fixture.
+Matched component and MuJoCo evidence is in `build/scan-continuation-20261105/`.
 
 ## Autonomous retry contract (2026-11-05)
 
@@ -46,6 +96,7 @@ The follower retains upstream's 0.8 s direction preview. Explicit body-heading
 requests, native asynchronous handoff, reference initialization,
 solver-result repairs and command-continuity limits remain local adaptations.
 Body/support metadata alone no longer selects exact-boundary route fitting.
+The short-approach rule above applies independently of that metadata.
 This restores the planning collision contract, not the entire navigation stack
 byte for byte. Earlier dated evidence below describes its own revision; the
 collision and heading behavior in this section supersedes those experiments.
@@ -60,6 +111,8 @@ the pinned source. Its components have separate responsibilities:
 | --- | --- |
 | [`PlannerFsm`](upstream/plan_manage/planner_fsm.h) | Accept targets and decide when to plan, replan, execute, hand off, finish or stop. |
 | [`SCANPlannerManager`](upstream/plan_manage/planner_manager.h) | Run one planning attempt: initialize, optimize, check feasibility and adjust trajectory timing. |
+| [`seed.cpp`](upstream/plan_manage/seed.cpp) | Build velocity-ramp and reference-path seeds and allocate reference durations; owns no execution state. |
+| [`retiming.cpp`](upstream/plan_manage/retiming.cpp) | Implement manager timing, exact-boundary and feasibility operations; retains the manager's existing state and diagnostics. |
 | [`plan_container.hpp`](upstream/plan_manage/plan_container.hpp) | Store reference and local trajectory data. |
 | [`ClosedLoopController`](upstream/plan_manage/closed_loop_controller.h) | Compute velocity commands from the trajectory reference and measured state. |
 
@@ -221,11 +274,48 @@ the whole FSM and optimization history.
 
 ## Input lifetime and scheduling
 
+[`task.cpp`](task.cpp) is the native asynchronous adapter between
+`LocalPlanner::plan()` and SCAN's `Backend`. It does not calculate the path or
+the final velocity command. The control thread submits input and receives the
+accepted result; one worker runs `Backend::tick()` and `checkCollision()` in
+sequence. Planning runs outside the mailbox lock, so execution feedback can
+still be read while the solver is working.
+
+| Entry | Responsibility |
+| --- | --- |
+| `configure()` | Start the worker and initialize the two callback deadlines. |
+| `update()` | Capture the latest input, receive results and accept a due trajectory handoff. |
+| `pause()` | Mark reference execution frozen; keep the worker and collision callbacks running. |
+| `reset()` | Cancel old work, discard accepted/waiting results and ask the worker to reset Backend. |
+| `lastScanFailure()` | Return the last accepted failure evidence, including across resets. |
+| Destructor | Cancel outstanding work, wake the worker and join its thread. |
+
+`accepted_` is the one result selected by the control thread. An executing
+curve may survive a route update while its replacement is planned; a stopped
+result from the old route does not. `waiting_` remains separate because a future
+handoff has not yet been accepted. Worker diagnostics update even when the
+published plan has not changed. A single cancellation generation rejects old
+work after route changes, speed reductions or reset; map reset epochs and
+coordinate-frame epochs keep their separate meanings.
+
+Follower owns elapsed execution. `LocalPlanRequest::execution` carries its
+trajectory ID, sample time and elapsed phase through Task's existing snapshot.
+Backend accepts that phase only for the executing ID and extrapolates elapsed
+time only while unfrozen. FSM matches its current ID again before aligning the
+trajectory epoch, settling that callback's freeze interval at the same time.
+Candidate P/V/A is evaluated at the scheduled future handoff, and the receiving
+follower starts at the candidate's actual age. This permits asynchronous planning
+without independently integrating the same freeze history twice. The manager
+solves a curve; Task/FSM own offer, reception and cancellation, and Follower owns
+how far the accepted curve has actually executed.
+
 `Task::update()` borrows caller views only during the call. Task takes one
-immutable copy when the reference generation changes; input and timer work
+immutable route copy when the guide identity changes; input and timer work
 share that copy. The endpoint's immutable collision storage is shared when
 available; borrowed bitmaps are copied once per map epoch/generation. Neither
 100 Hz FSM nor 20 Hz collision callbacks copy the full reference route.
+`Input` stores the request directly with its owned route/map data. Predictions
+are copied with the worker input and rebound to that copy before Backend uses them.
 
 Mapd rebuilds the exported collision bitmap only when its collision generation
 changes (including a sliding-window change). Repeated observations still
@@ -351,6 +441,14 @@ time and Follower's retained progress; an allowed rotation remains available.
 Ordinary input holds retain the trajectory. A requested replan invalidates the
 old planner result and follower target together. Resetting only Follower would
 replay a retained spline from its beginning.
+
+An autonomous final-motion collision refusal now calls
+`Executor::reportFinalMotionBlocked()`, which resets the SCAN task and follower
+target together. The next control update waits for a newly planned curve from
+the measured state. The rejected curve cannot resume after a one-cycle pause.
+The global route remains owned by Executor.
+Local reset retains Manager and its allocated A* node pool while clearing
+trajectory/reference state and recreating the small Optimizer and FSM objects.
 
 The stair-width check also discards a rejected local trajectory instead of
 freezing it indefinitely. The next local attempt uses measured motion while

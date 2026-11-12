@@ -3,6 +3,7 @@
 
 #include <Eigen/Eigen>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -92,6 +93,10 @@ class BsplineOptimizer {
                                   double ts);  // must be called after initControlPoints()
   bool BsplineOptimizeTrajRefine(const Eigen::MatrixXd &init_points, const double ts,
                                  Eigen::MatrixXd &optimal_points);
+  // Preserve endpoint P/V/A and Z while enforcing physical motion limits.
+  bool refineConstrained(const Eigen::MatrixXd &init_points, double ts,
+                         Eigen::MatrixXd &optimal_points, double maxBodyVx,
+                         double maxBodyVy, std::optional<double> bodyYaw);
   // Upstream refinement checks the closest two thirds; the FSM checks execution.
   bool checkTrajectoryCollisionFree(const UniformBspline &trajectory);
 

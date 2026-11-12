@@ -60,7 +60,6 @@ struct ClosedLoopControllerOutput {
 
 class ClosedLoopController {
  public:
-  static constexpr double kMaxUpdateGapS = 0.2;
   bool setTrajectory(const BsplineTrajectory &trajectory, double nowS);
   ClosedLoopControllerOutput step(const ClosedLoopControllerState &state,
                                   const ClosedLoopControllerParams &params);

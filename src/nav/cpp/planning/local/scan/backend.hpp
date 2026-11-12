@@ -14,6 +14,7 @@ struct ExecutionFeedback {
   std::int64_t trajectoryId{0};
   double startTimeS{0.0};
   bool frozen{false};
+  std::optional<LocalExecutionProgress> progress{};
 };
 
 class Backend {

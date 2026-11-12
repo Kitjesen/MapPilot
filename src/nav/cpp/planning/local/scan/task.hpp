@@ -12,10 +12,11 @@ struct Update {
   LocalPlannerDebugSnapshot debug{};
 };
 
-// Serialized SCAN timer runtime. One worker owns the mutable upstream FSM and
-// runs its 100 Hz state callback and independent 20 Hz collision callback.
-// Lower speed limits enqueue a latest-only input event ahead of the timers;
-// the currently executing curve remains available until its replacement arrives.
+// Runs SCAN on one worker thread while the control thread keeps following its plan.
+// configure: start the worker and its 100 Hz FSM / 20 Hz collision timers.
+// update: own the latest input, receive results, and accept a due trajectory handoff.
+// pause: hold reference time; reset: cancel work and discard the accepted plan.
+// Backend runs SCAN callbacks. Task owns input lifetime and result delivery.
 class Task {
  public:
   explicit Task(const LocalPlannerParams &params);
@@ -25,7 +26,6 @@ class Task {
   Task &operator=(const Task &) = delete;
 
   bool configure();
-  [[nodiscard]] bool configured() const;
   // Views are borrowed for this call. The worker owns immutable route/map
   // snapshots; replacing route geometry requires a new reference generation.
   Update update(const LocalPlanRequest &request);

@@ -1,5 +1,420 @@
 # SCAN-Planner upstream
 
+## 2026-11-11: remove performance-based motion holds
+
+Pinned SCAN remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
+The `LoopGuard` integration described on 2026-11-09 below has been removed,
+including its admission fields and recovery wait. SCAN's 100 Hz target cadence,
+planner/controller behavior and collision checks are unchanged. Loop timing is
+diagnostic; it no longer independently locks motion or delays initial readiness
+until 100 timing samples exist. Missing timing metrics no longer veto Gateway
+readiness. The existing JSON `control_loop_hold` field is emitted as false.
+
+In a native component replay, 200 fresh commands spaced 20 ms apart caused 101
+hold decisions in the previous guard, despite zero driver watchdog stops.
+The replacement test preserves the performance warning and verifies that the
+driver accepts that command stream, still stops at a real 200 ms command gap,
+and rejects an expired command afterward. Input freshness, final collision and
+braking, operator/estop ownership, fault holds and confirmed task termination
+retain their existing owners. This removes a LingTu restriction; it is not a
+field qualification or a claim that upstream provides our hardware watchdog.
+Evidence is retained in `artifacts/field/go2-mapping-20261111/loop-cleanup.md`.
+
+## 2026-11-09: restore upstream inflated-voxel cylinder queries
+
+At the user's request, the twin-cylinder hit-bound experiment was removed.
+Pinned SCAN `348e8a590a50a5a6bbab8d8c6dcfd171f009be26` queries the inflated
+3-D occupancy buffer. Grid again queries that buffer at the front/rear cylinder
+centers, even when mapd also supplies measured hit bounds. No switch between
+the two representations remains in the twin-cylinder path.
+
+The existing explicit multipart Body query and its measurement evidence are
+separate and unchanged. The requested lateral target minimum, final command
+checks and collision-to-replanning feedback also remain. This restores the
+cylinder map-query representation, not a byte-identical ROS runtime.
+Historical experiment results remain in `artifacts/nav/cylinder-hits-20261109/`;
+restoration verification is in `artifacts/nav/cylinder-restore-20261109/`.
+
+## 2026-11-09: configured minimum nonzero lateral target
+
+Pinned SCAN `348e8a590a50a5a6bbab8d8c6dcfd171f009be26` clips body-axis
+velocities at their maxima; it has no minimum lateral speed. At the user's
+request, LingTu's Follower adapter now applies `scan_follower.min_vy_mps`
+before its existing acceleration limiter and final collision check. The `nav`
+Product selects 0.35 m/s from Thunder CTS39 response trials; the shared default
+is zero and other Products retain it. This is local tuning, not an upstream
+default or a hardware qualification.
+
+Zero, completion and alignment targets stay zero. The floor retains direction,
+respects the current lateral/total speed caps and the endpoint braking budget
+`sqrt(2 * acceleration * remaining distance outside the finish tolerance)`,
+and cannot override an external hold or final safety stop. Acceleration, reversal and safety limiting may still
+produce commands below the target floor. It is not a minimum applied actuator
+velocity. Matched tests and simulation evidence live in
+`artifacts/nav/lateral-min-20261109/`; the preceding physical response study is
+`artifacts/nav/lateral-response-20261109/`.
+
+## 2026-11-09: point-goal arrival precedes the spline clock
+
+Pinned SCAN remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`. Its controller
+requires both elapsed spline time and endpoint XY error for completion. LingTu's
+ordinary point-goal Executor now hands off to its existing stop transaction as
+soon as the requested position is inside the task's XY and height tolerances.
+It no longer waits for the spline clock and then generates a short return curve
+whose tangent can command a large final turn. Explicit pose stages retain their
+existing timing and stair-arrival rules. The 15 cm nav position tolerance and
+the controller itself are unchanged; this is not a new terminal-yaw controller.
+The 2026-11-08 ordinary spline-time completion description below is superseded.
+Matched native regressions, physical runs and fixed Nav2 goal-checker references
+are in `artifacts/nav/arrival-fix-20261109/`.
+
+## 2026-11-08: navigation speed and tracking
+
+Pinned upstream remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
+The `nav` Product now requests forward speed 1.2 m/s, acceleration 0.75 m/s²
+and position gain 1.5, compared with the prior local 1.0 / 0.5 / 0.8.
+Upstream examples use 0.75 m/s, 0.5 m/s² and gain 0.8; these are local tuning,
+not upstream defaults. The 0.8 s heading preview and 0.8 rad alignment gate remain.
+Real RobotConfig still bounds forward speed; the configured Thunder real limit is
+unchanged at 1.0 m/s. Planner and command acceleration share the Product budget.
+Final control uses SCAN's X/Y budgets for autonomous motion, retaining operator
+budgets during takeover. No minimum lateral command or policy remapping is added.
+Matched MuJoCo trials, the slower-turning speed-only counterexample, policy
+response curves and replay videos: `artifacts/nav/speed-tracking-20261108/`.
+Each candidate has one run; the evidence is component simulation with truth
+localization, not NX motion qualification.
+
+## 2026-11-08: remove local terminal-heading control (current)
+
+Pinned upstream remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
+Ordinary navigation again follows spline heading and completes from spline time
+and position, without explicit final yaw, terminal minimum rate, heading
+hysteresis, time/distance-based goal-yaw takeover or a second terminal controller.
+`FollowerGoal`, execution `Route.finalYaw` and the `goal_follower` settings and
+native bindings are deleted. Trailing yaw-only pose stages are discarded.
+Intermediate explicit pose turns retain geometry checks and reuse the SCAN
+proportional yaw gain and rate cap, without a separate minimum turn rate.
+
+The native integration still applies configured acceleration limits during
+normal heading alignment. The reference freezes, but translation decelerates;
+external collision/emergency stops retain immediate zero. This platform command
+limit is an explicit remaining adaptation, not a claim of byte-identical ROS
+code. Task position/height validation and final stop acknowledgement also remain.
+Matched tests and scenes: `build/scan-upstream-goal-20261108/`.
+
+The terminal-heading entries below are historical and are superseded by this
+removal; their physical results do not describe the current controller.
+
+## Final-heading approach, 2026-11-08
+
+Pinned SCAN `348e8a590a50a5a6bbab8d8c6dcfd171f009be26` follows spline
+heading with a 0.8-second preview and has no explicit final-yaw contract.
+LingTu keeps that preview for ordinary tracking. Its Follower now retains an
+explicit goal yaw when the preview reaches the final spline endpoint, not only
+after the robot crosses the accepted XY radius. Recorded S-turn navigation
+missed that radius by 0.7 mm and then turned from about 19 to 118 degrees toward
+a return spline before turning back to zero. Intermediate endpoints retain
+normal tracking heading. Goal tolerances and SCAN geometry checks are unchanged.
+
+The active final curve converges using its existing finish distance, or yields
+to a measured stop inside the goal region, rather than being cut off on first
+crossing the goal radius. A robot already stopped there need not be pulled back
+to an older reference. A follow-up heading
+trial exposed 5 mm of post-arrival position drift beyond the accepted radius
+when this convergence was cut short; the trial remains in the evidence.
+The same terminal update decelerates translation and controls yaw.
+The terminal hold remains active inside the accepted position region; crossing
+0.03 m/s no longer resumes tracking there. This replaces the separate `braking_` latch and
+does not add a timer or parameter. Two new regressions fail before this repair;
+the intermediate-endpoint control passes both versions. Matched evidence lives
+under `build/follower-approach-20261108/`.
+
+A repeated reference hold could also clear the spline's command history after
+FinalControl had confirmed a nonzero command. The wrapper now feeds that same
+confirmed value back before spline tracking; it does not introduce another
+limiter. The recorded caller-pattern regression previously resumed at 0.005 m/s
+from an applied 0.4 m/s despite a 0.005 m/s per-tick limit.
+
+## Speed-transition ownership, 2026-11-08
+
+Pinned SCAN remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`; the checked
+speed-transition prefix is a LingTu adaptation. Its acceptance/withdrawal is
+now one `PlannerFsm::startSpeedTransition()` operation. Manager still computes
+and collision-checks the curve. Backend converts the returned trajectory and
+existing status instead of separately calling Manager, adopting/abandoning the
+FSM trajectory, and copying the core's control points and epoch itself.
+The existing bridge-rejection regression now calls this operation and verifies
+that an unreceived faster offer is withdrawn without caller-side cleanup.
+
+Backend's `speedReductionPending_` was removed: setting it true also cleared
+`active_`, while both assignments to `active_` cleared the flag. The speed
+reduction predicate requires that same active curve, so its extra flag guard
+could not change the decision. Numeric limits, bridge duration, sampling and
+stop reasons are retained. This is the first bounded ownership cleanup, not a
+claim that Backend's remaining lifecycle decisions have all been removed.
+See `docs/research/scan-ownership-cleanup-20261108.md` for the remaining scope.
+
+## Manager responsibility split, 2026-11-07
+
+`planner_manager.cpp` now coordinates an attempt and owns its state. Stateless
+reference/velocity-ramp seed construction lives in `seed.cpp`; `retiming.cpp`
+implements the manager's private timing, boundary and feasibility operations.
+The full retiming branch has one entry, `retime()`, instead of being embedded in
+`reboundReplan()`. Its failure diagnostics and collision checks are retained;
+only the caller increments the existing consecutive-failure counter.
+
+The unused `reparamBspline` duration-increase output and its two discarded local
+variables were removed. No state owner, public planning API, numeric threshold,
+search budget or solver objective changed. The main source went from 1,021 to
+525 lines; this is responsibility separation, not a claim of halving total code.
+The pinned official manager has 555 lines, but local physical-boundary and
+reference adaptations still exist in their named files. All 160 SCAN tests pass
+after the split. See `docs/research/scan-manager-responsibilities-20261107.md`.
+
+## Constrained moving-boundary refinement, 2026-11-07
+
+Boundary follow-up: the existing fixed-endpoint precondition now uses
+`PlanParameters::speedRatio()` for both endpoint velocities, matching the
+physical validator's norm and body-axis limits. A fixed 0.4 m/s lateral start
+under a 0.35 m/s body cap previously exhausted 16 time candidates despite a
+legal 1 m/s norm limit. It now rejects without stretching that immutable
+boundary. This completes LingTu's body-axis adaptation; it adds no upstream
+parameter or separate validation layer. Four start/end and heading cases fail
+before the change and pass after; see `artifacts/nav/tora-boundaries-20261107/`.
+
+Pinned SCAN `348e8a590a50a5a6bbab8d8c6dcfd171f009be26` refits the whole
+curve when reallocating time, then applies soft smoothness, fitness and
+feasibility costs. LingTu's previous exact-boundary loop instead retained the
+last interior controls while increasing the interval and resetting endpoint
+P/V/A. Captured Tora garage candidates first self-intersected inside that loop.
+
+Moving-boundary time allocation now always starts from the original rebound
+curve, reuses `reparamBspline`, restores the original physical P/V/A, and builds
+the fitness reference from the newly fitted curve. A failed candidate contributes
+only its time deficit to the next attempt. `lengthenTime` stretches only the
+middle `T - 4*h`, so its ratio is compensated to allocate the requested total
+time. The existing bounded time attempts remain; no warped interior is reused.
+Fixed vertical derivative violations are handled by time allocation because
+the optimizer retains Z and cannot repair them by moving XY.
+
+The new `refineConstrained` entry reuses the existing costs and L-BFGS with
+local augmented-Lagrangian multipliers for the actual speed norm, observed
+body-axis capacities and acceleration norm. It retains fixed endpoint controls
+and Z. A `1e-6` internal squared-constraint margin applies only to adjustable
+XY capacity; final acceptance still uses the original physical time ratio
+`<= 1 + 1e-9` and existing 3-D collision checks. Negative solver errors remain
+failures. Its inner solver uses the existing `past=3`, `delta=1e-8` stopping
+criterion so accepted feasible iterates are not polished into floating-point
+line-search exhaustion. The ordinary upstream-style refine entry is unchanged.
+
+SCAN's `CUBIC_MINIMIZER2_LBFGS` also contains an inherited direction error:
+the fallback uses `a < 0`, although `a` is a normalized interpolation quantity.
+The original liblbfgs at `5ad02fbefefdeff339ab03635e673571055a0644` uses
+`d > 0`, the actual trial direction. The port now matches that expression.
+A captured bracket regression fails before this one-line fix and passes after;
+real line-search failures still preserve rollback and reject the candidate.
+
+Verification: all 154 `test_scan_planner` cases, 3 refine-solver cases, 10
+elevation cases and 4 spline-velocity cases passed. The new recorded manager
+regression detects two self-intersections and three backward excursions before
+the repair and passes afterward. Sources, fixed inputs and matched garage
+records are indexed in `docs/research/tora-retiming-fix-20261107.md`.
+This is native component evidence, not field qualification. The two nested
+bounded loops can exceed the old worst-case solve work; field timing remains
+unqualified and the existing handoff deadline still governs acceptance.
+
+## Execution feedback clock boundaries, 2026-11-07
+
+Pinned SCAN `348e8a590a50a5a6bbab8d8c6dcfd171f009be26` shifts the planner
+epoch from a received frozen flag. LingTu also acknowledges reception of the
+first spline and schedules future spline handoffs. The first acknowledgement
+previously discarded the pending frozen interval between reception and that
+acknowledgement; it now retains the later of reception and the last settled
+clock boundary. Already settled moving time is not frozen a second time.
+
+The backend now pairs the latest execution ID/start/frozen feedback with that
+same feedback's `nowS`, instead of the older planning request timestamp.
+Task already supplies all four values under its existing mutex and clock-domain
+contract; no new clock, threshold or execution protocol is introduced.
+
+Three deterministic regressions fail before these changes and pass after.
+The affected full suites pass 158 SCAN and 28 Task cases; three follower and
+two Executor timing regressions also pass. See
+`artifacts/nav/tora-boundaries-20261107/clock/` for red/green and full-suite logs.
+These fixes alone did not resolve the captured garage handoff phase discrepancy:
+the follow-up reached with zero self-intersections, but its maximum tracking
+error was 21.046 mm. A bounded trace then measured the old planner epoch 10 ms
+ahead of the follower before the first handoff; the candidate's boundary P/V/A
+and the single reception-age calculation matched. See the `handoff/` evidence.
+
+The native execution path now supplies the follower's existing elapsed phase,
+its sample time and trajectory ID with each planning request. Task copies that
+sample through its existing locked feedback. Backend extrapolates only while
+unfrozen and only for the acknowledged execution ID; FSM also requires its own
+current trajectory ID before aligning the epoch. A matched sample settles the
+freeze boundary, so the same callback cannot add frozen time again. Consumers
+without a phase sample retain the existing boolean/first-ack behavior. This
+completes a local asynchronous handoff contract; upstream supplies only a
+frozen boolean. No execution history queue, new tuning parameter or trajectory
+shape change is needed.
+
+Final verification passes 160 SCAN, 29 Task and 66 follower tests. The reverse
+garage reaches with 45 complete curves, no strict XY self-intersections and
+maximum tracking error 2.593 mm; first-handoff error stays near 2.12 mm instead
+of the previous 11.7/21.0 mm jump. Executor passes 104 of 129 cases. All 25
+failures also fail at exactly the same assertion-line sets in an independently
+built pre-follow-up variant, so this is not a claim that the whole navigation
+suite is green. The full results and baseline construction are recorded in
+`artifacts/nav/tora-boundaries-20261107/verification.json` and `executor-baseline/`.
+
+## Execution clock cleanup, 2026-11-06
+
+Pinned SCAN `348e8a590a50a5a6bbab8d8c6dcfd171f009be26` sets controller
+`dt` to zero after a gap above 0.2 s, then continues computing the command
+from the retained spline. It does not stop or discard that spline for this
+condition. LingTu's Executor had added a separate `suspendAutonomy()` and
+zero-output branch using the same threshold. That branch, its timestamp state,
+and its controller dependency have been removed.
+
+The native controller now advances by the full nonnegative execution-time
+delta. This differs from the pinned controller: the native planner derives
+progress from the same execution clock and does not receive the follower's
+discarded time, so retaining the upstream gap clamp would desynchronize their
+reference phases. Explicit holds and heading alignment still freeze execution.
+Follower command changes retain the existing `maxDt` acceleration budget;
+resuming an explicit pause uses the existing nominal command step. The checked
+deceleration prefix now uses reference elapsed time for its speed allowance,
+independently of that bounded command step.
+
+Real execution uses steady time. The simulation clock boundary already rejects
+backward physics time; removing Executor's duplicate check does not bypass it.
+No collision, input-age, driver watchdog, or runtime-health threshold changed.
+Matched 0.3/0.5 s delay regressions and the pinned upstream source copies are in
+`artifacts/nav/clock-gap-20261106/`. These software inputs isolate the timing
+change; they do not identify the cause of every pause in the physical L trials.
+Verification: four new behavior tests failed against the preceding sources;
+the final affected suites passed 88 tests, the input-projector executable passed,
+and the native Windows navd build linked successfully. No new physical run or
+field deployment was performed for this cleanup.
+
+## Quiet trajectory heading, 2026-11-06
+
+The physical 90 cm L-corridor fixture exposed a local start check deriving
+74.48 degrees from 6 micrometres of spline displacement while the measured
+body heading was 13.71 degrees and free. Pinned SCAN
+`348e8a590a50a5a6bbab8d8c6dcfd171f009be26` uses finite displacement here and
+returns zero yaw below squared displacement `1e-8`; the prior LingTu version
+removed that zero-heading fallback to avoid turning northbound paths east.
+Neither rule represents a known quiet body heading.
+
+Optimizer rebound/refine/retiming, active and pending trajectory checks, retained
+tails and speed-transition validation now share the native velocity-based segment
+query. At the physical start it uses measured yaw; moving future boundaries use
+their own direction. A per-validation optional heading preserves the preceding
+future direction through a quiet tail. This state is local to one traversal.
+The 0.03 m/s quiet rule is LingTu behavior, not an upstream parameter claim.
+Candidate/FSM map checks still exclude forecasts; final-control prediction checks
+remain enabled. Moving turns and their swept collision are still checked.
+
+The earlier duplicate rebound validation loop was removed. Native SCAN regression:
+149 tests passed, including tiny/0.02 m/s displacement, future moving boundaries,
+quiet northbound tails, real turning collisions and prediction separation.
+This does not unify the global XYZ route with local yaw, or the follower's
+configured 0.8 s heading preview with every collision sample. Physical narrow
+passage tests remain unsuccessful; see
+`docs/research/narrow-passages-physical-20261106.md` and
+`artifacts/nav/narrow-passages-20261106/`.
+
+## Formal envelope unification, 2026-11-05
+
+Against pinned SCAN `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`, the native
+endpoint now uses the twin-cylinder geometry for both planning and final braking.
+BODY2 loading and the dimension-derived OBB fallback were removed from the
+endpoint. Mapd inflates once. Thunder uses radius 0.32 m, offset 0.23 m and
+body-relative vertical bounds [-0.05,+0.35] m, fitted to the nominal MJCF body
+height band with approximately 5 cm XY allowance. These are platform values,
+not upstream Go2's 0.25/0.18 m example. Joint motion, lower-leg clearance and
+field performance are not qualified by this fit. Native braking and prediction
+remain local extensions; their geometry no longer switches to multipart Body.
+Matched motion evidence belongs to `build/thunder-twin-20261105/`.
+
+## Short-approach and corner repairs, 2026-11-05
+
+Reference: `wuyi2121/SCAN-Planner@348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
+The manager reuses exact-boundary retiming for approaches shorter than its
+existing control-point spacing. A captured moving terminal approach failed with
+the ordinary least-squares fit and succeeds with the exact physical boundary.
+Longer moving routes retain their previous fitting mode unless the measured
+start speed exceeds the new cap. Rest-to-rest segments also use exact boundary
+controls: a captured clear stair-post candidate reached 5.314 m/s², exceeding
+the final 5.2 m/s² acceptance limit after ordinary refinement. Time dilation
+with zero endpoint derivatives keeps the clear curve and meets the configured
+4 m/s² acceleration limit. This uses the existing retiming implementation,
+without relaxing its limits or adding another retry policy. The regression
+uses the recorded 5 cm bitmap in `fixtures/scan_rest_corner.bits` (origin
+`(0.5,2.75,0.25)`, `100 x 50 x 30`, X-fast/LSB-first), its saved route, and a
+settled start from the same stopped episode. A blocked speed bridge exposed a replacement
+whose approximate fit shifted the start by 5 cm and retained 0.19 m/s at its
+stop endpoint; the same exact-boundary mode now preserves that moving boundary. No body yaw or new
+configuration threshold is introduced. Pinned upstream rejects targets closer
+than 0.2 m; the native clicked-goal contract already permits shorter continuations.
+
+Upstream getLocalTarget also uses planning_horizon / 20 / max_vel while searching
+around a blocked endpoint. The port caps both reference projection and target search at resolution / max_vel
+to avoid projecting beyond or skipping the last clear approach cells. In the recorded flat case the
+selected endpoint moves from 18.1 cm to 12.6 cm short of the clicked goal, within
+the unchanged 15 cm task tolerance. The blocked endpoint itself remains blocked.
+
+Upstream DynAStar marks neighbor->rounds before checking occupancy. The port now
+marks only admitted nodes, together with their new cost and parent. This is a
+search-state correction, not an extra collision gate or yaw search dimension.
+
+The initial collision weight remains upstream's 1. The bounded optimization
+loop permits four passes instead of three, reaching the next existing doubled
+collision weight only after collision failure. This resolves the saved post
+request. Raising the initial weight to 4 also solved that snapshot but regressed
+the matched box run, so that Product override was discarded. Inflation,
+clearance distance, body dimensions, arrival tolerances and final safety remain.
+Evidence: `build/scan-continuation-20261105/` (native replay and matched MuJoCo).
+
+Two further integration corrections use the same collision geometry:
+
+- Test the original guide's curvature before joining the measured start. A
+  lateral offset after avoiding a new box must not create a mandatory bend
+  back into the old, straight global route. Collinear densification samples are
+  removed before the measured endpoints join the guide, so a curved route does
+  not force a return to the first sample on its straight approach. Real 3-D
+  bends remain in the seed. A same-map stopped-post replay failed before this
+  connector correction and succeeds after it without increasing the four-pass
+  optimization limit.
+- A collision in the first spline interval now uses the existing bounded
+  collision-cost retries. Fixed boundary controls do not fix the finite-segment
+  cylinder heading: later editable controls still affect it. Candidate checks
+  also cap their time step at the execution check's 10 ms. The previous mean
+  distance step accepted a recorded curve that the execution check rejected
+  20 ms into the curve. Occupied candidates still fail after bounded retries.
+- Upstream's `estimateSegmentYaw` substitutes east (0 rad) when squared sample
+  displacement is below `1e-8`. With 10 ms sampling, a valid rest-to-rest northbound
+  curve crosses that cutoff; slowing the same geometry changes its apparent
+  collision. The port uses `atan2` for nonzero displacements regardless of their
+  length. The same 23 cm cylinder offsets reject east and admit north in the
+  regression; two time scales retain the same collision result.
+
+Autonomous GEN_NEW_TRAJ also uses the existing upstream emergency-stop settling
+criterion (measured 3-D speed below 0.1 m/s) for a rest boundary. The recorded
+stopped body swayed at roughly 1 cm/s; using that transient direction as the
+initial cylinder tangent prevented restart. This does not alter moving spline
+handoffs or MotionIntent boundaries. The moving short-approach regression still
+asserts its measured initial velocity exactly. Applying this settling criterion
+to new autonomous trajectories is a local difference, not an upstream default.
+
+These are local repairs against the pinned upstream, not its default behavior.
+The cropped MID360 bitmap in `tests/nav/cpp/fixtures/scan_stair_post.bits` retains
+its 5 cm occupancy at origin `(0.5, 2.75, 0.25)`, dimensions `80 x 50 x 30`,
+X-fast, LSB-first bits. It comes from the same Thunder stair-post failure and
+contains no raw sensor identifiers. It exercises candidate geometry, not robot
+arrival or physical contact.
+
 ## Autonomous retry restoration, 2026-11-05
 
 Reference: `wuyi2121/SCAN-Planner@348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
@@ -213,7 +628,7 @@ or qualify the formal product's physical execution.
 
 ## Bounded velocity initialization extension
 
-`planner_manager.cpp::boundedVelocitySeed` joins acceleration, cruise and
+`seed.cpp::boundedVelocitySeed` joins acceleration, cruise and
 braking polynomials for both RouteTarget and MotionIntent. Its three-dimensional
 boundary velocities and configured velocity, acceleration and jerk limits set
 the ramps. This avoids repeatedly restarting a slow single polynomial over an
@@ -908,3 +1323,325 @@ The matching `test_teleop_safety` and `test_autonomy_tick_controller` regression
 exercise low body-axis budgets, low path-norm budgets, an active-task speed cap,
 and a smaller configured deadband. Both added cases failed against the prior
 implementation. Physical motion validation is recorded separately.
+
+
+### 2026-11-06: shared nominal translation acceleration
+
+The shared `limits.yaml` translation acceleration changes from 4 to 0.5 m/s².
+SCAN, Follower and the X/Y velocity smoother still derive this value from one
+source. The pinned upstream commit above uses 0.5 m/s² in
+`src/planner/plan_manage/launch/advanced_param.xml`; its 0.75 m/s speed default
+is not adopted here. LingTu retains its axis speed budgets, 4 m/s² braking,
+yaw limits, cylinder dimensions and additive optimizer feasibility tolerance.
+This is a nominal planning/command limit, not a measured physical acceleration.
+
+Frozen Thunder v39 MuJoCo / MID360 flat-box comparisons are recorded in
+`build/nav-accel-20261106/report.md`. Under the same experiment process priority,
+4 m/s² reached 1/2 goals, 1 m/s² reached 2/3, and 0.5 m/s² reached 3/3;
+the latter includes one uninstrumented run. All had zero box contacts.
+The first final-control veto could have a clear proposed-command braking arc
+while the measured-velocity braking arc collided. Later vetoes included a
+front-cylinder overlap with noisy box-corner occupancy. Lower acceleration
+reduces this mismatch; it does not remove final braking or prove field readiness.
+
+
+### 2026-11-06: admit reachable A* guide endpoints
+
+Pinned SCAN `348e8a590a50a5a6bbab8d8c6dcfd171f009be26` admits an A* endpoint
+using the start/end chord yaw, then checks neighbors at eight discrete incoming
+yaws. A recorded Thunder box-corner endpoint was free at -9.55 degrees but
+occupied at every one of those eight yaws. Search exhausted 3,921 nodes on each
+retry, returning no rebound guide and eventually causing an emergency stop.
+The existing endpoint adjustment now also requires one admissible incoming
+heading. This changes only the optimizer's internal guide endpoint; final
+spline collision checks, robot dimensions and the navigation goal are retained.
+
+The 750-byte `tests/nav/cpp/fixtures/scan_guide_endpoint.bits` fixture is a crop
+of the captured 5 cm inflated map: origin (2,-1,0.4), size (60,50,2), X-fast,
+LSB-first. The regression proves the old admission/search disagreement and
+requires a guide whose actual incoming samples pass the same occupancy query.
+
+Evidence: `build/nav-twist-20261106/`. Two frozen baseline MuJoCo runs stopped
+locally and restarted; two otherwise matched candidate runs reached without that
+emergency-stop transition (10.705/10.905 s versus 8.905/8.505 s; zero box contacts).
+Nominal translation acceleration stayed 0.5 m/s². On the original video's two
+reconstructed curves, 54 identical-state comparisons of the pinned official
+heading formula and the native core differed by at most 3.4e-16 rad/s. This is
+an A* endpoint consistency repair, not a changed tracking law or field claim.
+
+
+### 2026-11-06: preserve the terminal spline while settling
+
+Pinned SCAN `348e8a590a50a5a6bbab8d8c6dcfd171f009be26` retains its received
+spline in the closed-loop controller and applies position feedback at its end.
+LingTu adds measured-rest confirmation for ordinary XYZ arrival. That confirmation
+used to reset the planner and follower before rest was established. In a recorded
+Thunder run, a drift from inside 15 cm to 15.6–16.2 cm started a new return curve,
+triggered the normal heading-alignment branch and turned from -25 to -62.6 degrees.
+
+The ordinary-goal settling branch now reuses `pauseLinearMotion()` when a SCAN
+spline is active. Existing explicit pose-stage transitions and all arrival,
+collision and velocity limits retain their behavior. No new terminal heading
+policy or threshold is introduced. The regression replays a 14-to-16 cm drift in
+both Map and Odom frames: the old implementation requests a 180-degree turn;
+the repaired implementation corrects position and returns inside the same radius.
+Evidence and matched physical runs are in `build/nav-terminal-20261106/`.
+
+A second captured interaction kept ordinary arrival waiting on nonzero feedback
+commands after measured motion was already quiet, allowing a new short spline
+to request another heading. The arrival branch now permits an ordinary goal on
+its existing measured-rest predicate even with residual feedback commands. The
+same position/height radius, 0.03 m/s 3-D speed and 0.08 rad/s yaw-rate checks
+remain. The regression distinguishes measured motion at 0.06 m/s from rest at
+the same in-radius pose; explicit pose-stage scheduling is not changed.
+
+### 2026-11-06: honor an explicitly requested goal heading
+
+The pinned upstream `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`
+`scan_replan_fsm.cpp` takes XYZ goals; `closed_loop_controller.cpp` derives yaw
+from the spline and stops on terminal position error. LingTu's goal API also
+accepts an optional heading. Route activation had discarded that value, so a
+zero-degree goal could report arrival at -35.1 degrees.
+
+`Executor::setRoute` now forwards `finalYaw` and `yawToleranceRad` to the existing
+arrival controller. A missing heading remains position-only; zero is a specified
+heading. Follower computes the turn command, local turn queries and endpoint
+FinalControl retain their collision responsibilities. The existing heading latch
+keeps position correction aimed at the requested heading after turn-induced drift.
+No gains, tolerances, stopping bounds or new planning stages were introduced.
+Regressions cover zero yaw, angle wrapping, requested tolerance, measured rest,
+Map/Odom correction and route replacement/resume. Matched physical evidence is
+recorded in `build/nav-goal-yaw-20261106/`.
+
+Physical acceptance remains incomplete: two repaired runs report native arrival
+but end at -5.415 and -5.525 degrees after stopping, just outside the unchanged
+5-degree tolerance. The CTS v39 policy responds very slowly to .2 rad/s pure
+turn commands and recoils after zero. One run also exceeds the existing reverse
+command fraction gate. The bounded alternative turn/settle probe is recorded in
+the report, but its policy-specific tuning has not been merged or validated as
+full navigation. Do not equate passing the forwarding regression with completed
+physical pose-arrival acceptance.
+
+### 2026-11-07: remove duplicate follower dispatch
+
+Pinned SCAN `348e8a590a50a5a6bbab8d8c6dcfd171f009be26` publishes a B-spline
+from its replanning FSM. Its closed-loop controller directly consumes that spline
+and odometry, computes a command, and zeros the command after trajectory time and
+position tolerance are satisfied. It does not implement LingTu's optional final
+heading or post-stop pose confirmation contract.
+
+LingTu retains both CMU path and SCAN spline tracking. `LocalPlan::target()` already
+identifies them, so Follower now calls the matching implementation directly.
+The second reference-wrapper target variant, input conversion, algorithm base,
+factory registry and instance map were removed. Typed targets are borrowed from
+the existing plan payload. Switching target kinds resets private execution state;
+pause, reset, applied-command feedback and CMU profile selection retain their
+semantics. Controller equations, acceleration budgets and tolerances are unchanged.
+
+This removes dispatch scaffolding only. The Executor-owned terminal turn/arrival
+branch remains a known separate concern; no claim of fixing CTS stop recoil or
+fully unifying terminal control follows from this cleanup. Focused follower and
+execution evidence is recorded in `build/follower-cleanup-20261106/` (work started
+before midnight).
+
+### 2026-11-07: explicit goal completion belongs to Follower
+
+Pinned SCAN remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`. Its ordinary
+spline controller and replanning FSM are unchanged by this work. Requested final
+heading and post-zero pose confirmation are LingTu contracts, not upstream defaults.
+
+Follower now owns the terminal turn, heading latch, measured-motion settling and
+applied-zero evidence. Executor retains trajectory selection and local 3D turn
+collision checks. A turn already admitted at the goal continues through small
+position drift; SCAN reconnects position after heading alignment, and completion
+still requires the original position/height/yaw tolerances. Repeated odometry
+samples cannot advance the settling interval. Turn commands obey angular
+acceleration and platform rate limits; measured turn speed informs braking.
+
+Defaults live once in `config/system/settings/follower.yaml` under
+`parameters.goal_follower`, including the 0.4 rad/s minimum turn command tested
+with Thunder CTS v39. Native defaults are generated from that file. This is not
+hardware calibration evidence for every RobotConfig. Matched same-box runs and
+all failed trials are recorded in `build/nav-converge-20261107/`; task arrival
+and the broader motion-quality gates are reported separately.
+
+### 2026-11-07: simplify goal admission and terminal correction
+
+The same pinned upstream controller still has no requested final-yaw or post-zero
+completion contract. Reviewing the recorded same-box run exposed a local
+integration problem: a short position correction rotated the body to about
+-152 degrees before terminal control returned it to the requested zero heading.
+
+Follower now admits the goal heading on first entering the accepted position
+range, brakes translation with the existing acceleration limit, then finishes
+heading or requests SCAN position correction under that heading. Changing the
+planner's heading contract while still tracking would invalidate the current
+spline, so the brake precedes that change. Final command collision arbitration
+remains in place. Goal yaw uses the accepted tolerance; the extra 0.5-degree
+threshold was removed. Applied zero and the configured 0.2-second stopped
+observation remain: removing the interval produced post-arrival yaw beyond
+5 degrees in both matched trials. These are LingTu terminal semantics,
+not changes to the upstream spline solver. Matched evidence is in
+`build/wrapper-cleanup-20261107/`.
+
+Position correction outside the accepted radius keeps running under that same
+heading; the terminal brake is not re-entered on each correction tick. Also,
+crossing the yaw tolerance decelerates the applied angular command using the
+existing acceleration limit. Abruptly replacing it with zero caused repeated
+stop/recoil/restart motion at the tolerance edge in the same-box experiment.
+
+### 2026-11-08: one follower update owns goal completion
+
+Pinned upstream remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`. Its controller
+stops on spline time and position; explicit final yaw remains a LingTu task
+requirement. The six-scene MuJoCo suite exposed alternating `follow`/`finish`
+branches and repeated resetting of the 0.2 s observation at the 15 cm boundary.
+
+`Follower::follow` now receives the accepted goal and owns the complete update.
+The public `finish` entry and settling-time parameter are removed. Current pose
+and measured rest decide completion; applied-command feedback remains for rate
+limits and the endpoint still confirms task stop. Tracking converges inside the
+task radius using existing quiet-speed/position-gain settings. The solver and
+final collision arbitration are unchanged by this task. Verification and physical
+results are recorded in `build/follower-unified-20261108/`.
+
+The first no-timer physical trials reported arrival but ended at 13.07 and
+12.02 degrees after observing until 45 s, outside the accepted 10-degree band.
+Follower therefore keeps an active turn until the inner half of its accepted
+yaw band, then decelerates. An initially stationary, already-accepted heading
+still completes immediately. This small control hysteresis is a local response
+to measured recoil, not an upstream SCAN default or a tighter task tolerance.
+
+### 2026-11-08: continuous terminal-heading control
+
+Pinned SCAN remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`; its ordinary
+controller derives heading from the spline with a 0.8 s preview. Explicit final
+yaw is a LingTu contract. The local integration used that time window to admit
+final yaw even when a retimed short curve and heading freeze prevented its clock
+from reaching the window. It also switched from spline yaw gain to terminal
+minimum-rate/hysteresis control only after entering terminal hold.
+
+Follower now admits the final heading when either the existing time preview or
+its speed-times-preview distance covers the remaining 3D curve. Intermediate
+endpoints and longer remaining bends retain spline heading. Approach and hold
+reuse the existing terminal turn calculation and applied-command feedback.
+Normal heading alignment decelerates translation with the existing limit while
+freezing reference progress; external safety stops retain immediate zero output.
+The lower terminal yaw-rate target no longer bypasses angular acceleration.
+There are no new configuration values, public control stages or solver changes.
+Matched regressions and physical trial results are retained in
+`build/turn-continuity-20261108/`.
+
+### 2026-11-09: distinguish final braking refusals
+
+The pinned upstream remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
+LingTu's final measured-motion and candidate-command braking checks are local
+integration behavior. Candidate scale-zero refusals now report
+`scan_command_motion_blocked`; measured-motion refusals retain
+`scan_actual_motion_blocked`. Autonomy handles both with the same existing
+pause and blocked feedback. Geometry, reaction time, limits and output commands
+are unchanged. Viewer and saved-route diagnostic callers use the same names.
+Partial candidate scaling reports `scan_command_motion_limited`; the former
+`scan_actual_motion_limited` name incorrectly described which input was scaled.
+The single-use measured-query lambda and its duplicate pose check were removed
+without changing short-circuit behavior. Follow-up review evidence is in
+`artifacts/nav/door-review-20261109/`.
+
+The door investigation captured an unsafe measured braking arc despite a clear
+candidate arc, followed by a separate static inflated-cell refusal. Native replay
+also reproduces that static refusal with zero reaction time. This diagnostic
+change does not claim to fix door traversal. Evidence and the already completed
+ordinary point-goal clock-wait fix are separated in
+`docs/research/door-navigation-20261109.md`.
+
+### 2026-11-09: discard a curve refused by final collision control
+
+Pinned SCAN remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`. Its future
+collision callback replans before emergency stopping. LingTu's final-command
+arbiter is an additional integration boundary. Its collision refusal previously
+paused the follower while retaining the accepted curve, allowing the next
+control update to try that curve again.
+
+Executor now uses its existing local reset when autonomous SCAN reports a final
+motion block. This cancels queued results and clears the accepted planner curve
+and follower target together. The retained global route is submitted again with
+the current measured state. Ordinary pauses keep their existing reference-time
+semantics. The saved-route component benchmark forwards the same block feedback.
+
+`Executor.FinalBlockReplansFromCurrentPose` fails with the old implementation
+returning the old curve after a measured-position change. The corrected build
+passes this regression and four related execution tests, plus the native
+autonomy and teleoperation controller tests. Evidence is in
+`artifacts/nav/stop-cycle-20261109/`. The physical door reruns did not pass idle
+control-loop startup readiness and issued no navigation goal, so this change
+has no new successful MuJoCo traversal claim.
+
+### 2026-11-09: retain A* storage across local resets
+
+Pinned SCAN remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
+LingTu's Backend reset previously rebuilt Manager and its 100 x 100 x 100
+individually allocated A* nodes. Repeated final-motion refusals therefore
+incurred node-pool destruction and reconstruction before the next solve.
+
+Backend now retains Manager. Its existing initialization entry clears trajectory,
+reference, progress, failure and time-source state, replaces the small Optimizer
+and FSM objects, and transfers the existing AStar into the new Optimizer.
+AStar's existing same-size initialization reuses its node pool. Search rounds
+continue increasing so old node marks remain distinct from the next search.
+Task cancellation and old-result invalidation keep their existing ownership.
+
+The direct native reset microbenchmark records 1,010,105 normal new/new[] calls
+and 56,083,632 requested bytes per reset before, versus 2 calls and 1,440 bytes
+after. Five-run median reset time is 398.0651 ms before and 0.0018 ms after.
+This scope excludes Task cancellation, the next solve and physical motion.
+Eleven planner tests, four Task tests and three Executor tests pass, including
+an updated-map reset regression and final-refused curve invalidation.
+Evidence and the exact incremental patch are retained in
+`artifacts/nav/reset-reuse-20261109/`.
+
+### 2026-11-09 — reduce repeated work during sampling
+
+Pinned SCAN remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
+The de Boor evaluator previously assembled a vector of separately allocated
+dynamic control vectors on every call. It now uses one owning temporary Matrix
+with the same descending recurrence, knot selection and clamping. Supported
+dimensions and degrees remain generic. The regression compares the frozen old
+recurrence for 1, 3 and 5 dimensions, degrees 0 through 5, nonuniform knots and
+samples inside and outside the time span.
+
+LingTu's independent no-go policy is a local extension. Its trajectory and
+segment query entries previously checked the same no-go sweep again in their
+shared measured-segment query. The shared query now owns that check, including
+when ordinary occupancy checking is disabled. Prediction and measured-geometry
+queries retain their existing acceptance results.
+
+A standalone native Release benchmark evaluates cubic position and its velocity
+and acceleration 600,000 times per round. Five-round median time is 579.0454 ms
+before and 274.8653 ms after, with identical checksums. This measures spline
+evaluation only. It does not measure full-navigation speed or Eigen allocation
+counts. Source, build logs, targeted tests and results are retained in
+`artifacts/nav/runtime-waste-20261109/`.
+
+### 2026-11-09 — shorten control reasons and consolidate loop recovery
+
+Pinned SCAN remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
+Final braking and control-loop holding are LingTu integration responsibilities.
+Their current reason names are `brake_blocked` for measured-motion braking,
+`cmd_blocked` for a refused command and `cmd_limited` for partial command
+scaling. Autonomy, replay diagnostics, simulation acceptance and Web presentation
+consume those names. Historical reason strings remain in recorded evidence
+and display-only readers.
+
+Goal admission and background completion now carry manual takeover and loop
+holding separately. They report `takeover_active` and `loop_hold` respectively,
+while preserving the previous combined blocking decision. Generic control
+interruptions keep their existing ownership. LoopGuard consolidates duplicated
+recovery counting and exposes one snapshot query. A frozen old/new state-machine
+comparison and focused regressions are retained in
+`artifacts/nav/control-cleanup-20261109/`.
+
+The DDS navigation-state projection now includes that same loop-hold fact in
+its existing `hold_reason` field. DDS and detailed JSON status use one boolean
+query per publication. LoopGuard's `held()` query derives from its existing
+state without constructing a full decision. Message and state-projection
+regressions are retained in `artifacts/message/contracts-20261109/`.

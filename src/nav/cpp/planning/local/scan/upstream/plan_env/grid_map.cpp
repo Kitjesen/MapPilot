@@ -38,4 +38,16 @@ int GridMap::getInflateOccupancySegment(const Eigen::Vector3d &start, double sta
   return 0;
 }
 
+int GridMap::getTrajectoryOccupancy(const Eigen::Vector3d &start,
+    const Eigen::Vector3d &velocity, const Eigen::Vector3d &end,
+    const Eigen::Vector3d &endVelocity, double startTime, double endTime,
+    std::optional<double> *previousHeading) const noexcept {
+  if (grid_ == nullptr) return -1;
+  // Candidate generation keeps measured occupancy separate from final-control forecasts.
+  return grid_->trajectoryOccupancy(
+      {start.x(), start.y(), start.z()}, {velocity.x(), velocity.y(), velocity.z()},
+      {end.x(), end.y(), end.z()}, {endVelocity.x(), endVelocity.y(), endVelocity.z()},
+      startTime, endTime, false, previousHeading);
+}
+
 }  // namespace nav_kernel::local::scan::upstream

@@ -66,6 +66,7 @@ struct FsmInput {
   std::optional<double> motionIntentMaxDeviationRad{};
   std::optional<Eigen::Vector3d> goal{};
   std::optional<std::vector<Eigen::Vector3d>> referencePath{};
+  std::optional<double> executionTimeS{};
 };
 
 struct FsmOutput {
@@ -83,6 +84,7 @@ struct FsmOutput {
   bool handoffMissed{false};
   std::shared_ptr<TrajectoryHandoff> handoff{};
   std::optional<BsplineTrajectory> trajectory{};
+  double speedTransitionEndS{0.0};
 };
 
 class PlannerFsm {
@@ -95,6 +97,8 @@ class PlannerFsm {
 
   FsmOutput tick(const FsmInput &input);
   FsmOutput checkFutureCollision(const FsmInput &input);
+  bool startSpeedTransition(const FsmOdometry &odometry, double nowS,
+                            double handoffLeadTimeS, FsmOutput &output);
   void adoptSpeedTransition(double transitionEndS);
   void abandonTrajectory();
 

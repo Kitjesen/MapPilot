@@ -42,9 +42,13 @@ Grid::Grid(const LocalPlannerParams &params, const LocalPlanRequest &input)
     : checkObstacle_(params.checkObstacle || input.body != nullptr || input.observedBody != nullptr),
       configuredResolution_(params.scan.voxelResolution),
       cylinderOffset_(std::max(0.0, params.scan.cylinderOffset)),
+      cylinderRadius_(std::max(0.0, params.scan.cylinderRadius)),
+      clearanceBelow_(std::max(0.0, params.scan.bodyClearanceBelow)),
+      clearanceAbove_(std::max(0.0, params.scan.bodyClearanceAbove)),
       robotYaw_(input.robot.pose.yaw),
       robotPosition_(input.robot.pose.position),
-      collision_(input.environment.collision), body_(input.observedBody ? input.observedBody : input.body) {
+      collision_(input.environment.collision), body_(input.observedBody ? input.observedBody : input.body),
+      no_go_regions_(input.environment.no_go_regions) {
   if (input.observedBody && !input.body) {
     reason_ = "body_model_missing";
     return;
@@ -197,8 +201,62 @@ bool Grid::obstacleFree(const Vec3 &center, double yaw) const noexcept {
   return inflatedOccupancy(center, yaw) == 0;
 }
 
+bool Grid::noGoPose(const Vec3 &center, double yaw, double padding) const noexcept {
+  if (!no_go_regions_ || no_go_regions_->empty()) return false;
+  namespace c = lingtu::nav::collision;
+  const double cosine = std::cos(collision_.gridFromPlanningYaw);
+  const double sine = std::sin(collision_.gridFromPlanningYaw);
+  const c::Pose pose{{collision_.gridFromPlanningTranslation.x + cosine*center.x - sine*center.y,
+                      collision_.gridFromPlanningTranslation.y + sine*center.x + cosine*center.y,
+                      collision_.gridFromPlanningTranslation.z + center.z},
+                     yaw + collision_.gridFromPlanningYaw};
+  for (const auto &region : *no_go_regions_) {
+    const c::Aabb box{{(region.min[0]+region.max[0])*.5,
+                       (region.min[1]+region.max[1])*.5,
+                       (region.min[2]+region.max[2])*.5},
+                      {(region.max[0]-region.min[0])*.5,
+                       (region.max[1]-region.min[1])*.5,
+                       (region.max[2]-region.min[2])*.5}};
+    if (body_) {
+      for (const auto &part : body_->parts)
+        if (c::intersects(part, pose, box, body_->margin_m + padding,
+                          body_->horizontal_margin_m)) return true;
+      continue;
+    }
+    if (pose.position.z + clearanceAbove_ + padding < region.min[2] ||
+        pose.position.z - clearanceBelow_ - padding > region.max[2]) continue;
+    for (double sign : {-1.0, 1.0}) {
+      const double x = pose.position.x + sign*cylinderOffset_*std::cos(pose.yaw);
+      const double y = pose.position.y + sign*cylinderOffset_*std::sin(pose.yaw);
+      const double dx = std::max({region.min[0]-x, 0.0, x-region.max[0]});
+      const double dy = std::max({region.min[1]-y, 0.0, y-region.max[1]});
+      if (dx*dx + dy*dy <= std::pow(cylinderRadius_ + padding, 2)) return true;
+    }
+  }
+  return false;
+}
+
+bool Grid::noGoSweep(const Vec3 &start, double startYaw,
+                      const Vec3 &end, double endYaw) const noexcept {
+  if (!no_go_regions_ || no_go_regions_->empty()) return false;
+  if (noGoPose(start, startYaw) || noGoPose(end, endYaw)) return true;
+  const double angle = normalizeAngle(endYaw-startYaw);
+  const double travel = body_ ? lingtu::nav::collision::sweepBound(*body_,
+      {{start.x,start.y,start.z}, startYaw}, {{end.x,end.y,end.z},endYaw})
+      : std::sqrt(std::pow(end.x-start.x,2)+std::pow(end.y-start.y,2)+std::pow(end.z-start.z,2))
+          + cylinderOffset_*std::abs(angle);
+  const int samples = std::max(1, static_cast<int>(std::ceil(travel/bodySweepSpacingM)));
+  for (int i=0; i<samples; ++i) {
+    const double t=(i+.5)/samples;
+    if (noGoPose({start.x+t*(end.x-start.x), start.y+t*(end.y-start.y),
+                   start.z+t*(end.z-start.z)}, startYaw+t*angle, travel/(2*samples))) return true;
+  }
+  return false;
+}
+
 int Grid::inflatedOccupancy(const Vec3 &center, double yaw) const noexcept {
   if (!valid()) return -1;
+  if (noGoPose(center, yaw)) return 1;
   if (!checkObstacle_) return 0;
   if (timedPredictionIntersects(center, yaw, center, yaw, 0.0, 0.0)) return 1;
   if (body_) return measuredSegmentOccupancy(center, yaw, center, yaw);
@@ -209,8 +267,9 @@ int Grid::inflatedOccupancy(const Vec3 &center, double yaw) const noexcept {
 
 int Grid::cylinderOccupancy(const Vec3 &center, double yaw) const noexcept {
   if (!valid()) return -1;
-  if (!checkObstacle_) return 0;
   if (!bodyHeadings_.empty()) yaw = bodyHeadings_.back();
+  if (noGoPose(center, yaw)) return 1;
+  if (!checkObstacle_) return 0;
   const double c = std::cos(yaw);
   const double s = std::sin(yaw);
   const int front = occupiedState({center.x + cylinderOffset_ * c,
@@ -223,8 +282,8 @@ int Grid::cylinderOccupancy(const Vec3 &center, double yaw) const noexcept {
 int Grid::segmentInflatedOccupancy(const Vec3 &start, double startYaw,
                                     const Vec3 &end, double endYaw) const noexcept {
   if (!valid()) return -1;
-  if (!checkObstacle_) return 0;
-  if (timedPredictionIntersects(start, startYaw, end, endYaw, 0.0, 0.0)) return 1;
+  if (checkObstacle_ &&
+      timedPredictionIntersects(start, startYaw, end, endYaw, 0.0, 0.0)) return 1;
   return measuredSegmentOccupancy(start, startYaw, end, endYaw);
 }
 
@@ -381,15 +440,18 @@ bool Grid::bodyPredictionIntersects(const Vec3 &start, double startYaw,
 
 int Grid::trajectoryOccupancy(const Vec3 &start, const Vec3 &velocity,
                                const Vec3 &end, const Vec3 &endVelocity,
-                               double startAheadS, double endAheadS) const noexcept {
+                               double startAheadS, double endAheadS,
+                               bool checkPredictions,
+                               std::optional<double> *previousHeading) const noexcept {
   if (!valid() || !std::isfinite(startAheadS) || !std::isfinite(endAheadS) ||
       startAheadS < 0.0 || endAheadS < startAheadS) return -1;
-  if (!checkObstacle_) return 0;
   const auto heading = [&](const Vec3 &v, double previousYaw) {
     // Quiet motion preserves the known heading rather than replaying the request yaw.
     return std::hypot(v.x, v.y) <= 0.03 ? previousYaw : std::atan2(v.y, v.x);
   };
-  double startYaw = startAheadS <= 1e-9 ? robotYaw_ : heading(velocity, robotYaw_);
+  const double knownYaw = previousHeading ? previousHeading->value_or(robotYaw_) : robotYaw_;
+  double startYaw = startAheadS <= 1e-9 && atRobotPosition(start)
+                        ? robotYaw_ : heading(velocity, knownYaw);
   double endYaw = heading(endVelocity, startYaw);
   if (!bodyHeadings_.empty()) {
     if (startAheadS <= 1e-9 && atRobotPosition(start)) {
@@ -398,13 +460,18 @@ int Grid::trajectoryOccupancy(const Vec3 &start, const Vec3 &velocity,
     }
     startYaw = endYaw = bodyHeadings_.back();
   }
-  if (timedPredictionIntersects(start, startYaw, end, endYaw, startAheadS, endAheadS)) return 1;
+  // The next sample must retain the future heading when this curve slows down.
+  if (previousHeading) *previousHeading = endYaw;
+  if (checkObstacle_ && checkPredictions &&
+      timedPredictionIntersects(start, startYaw, end, endYaw, startAheadS, endAheadS)) return 1;
   return measuredSegmentOccupancy(start, startYaw, end, endYaw, false);
 }
 
 int Grid::measuredSegmentOccupancy(const Vec3 &start, double startYaw,
                                    const Vec3 &end, double endYaw,
                                    bool useBodyHeading) const noexcept {
+  if (noGoSweep(start, startYaw, end, endYaw)) return 1;
+  if (!checkObstacle_) return 0;
   if (body_) {
     if (useBodyHeading && !bodyHeadings_.empty()) {
       const double targetYaw = bodyHeadings_.back();
@@ -461,6 +528,7 @@ int Grid::bodyPoseOccupancy(const Vec3 &center, double yaw,
   namespace c = lingtu::nav::collision;
   if (!valid() || !body_ || !std::isfinite(center.x) || !std::isfinite(center.y) ||
       !std::isfinite(center.z) || !std::isfinite(yaw)) return -1;
+  if (noGoPose(center, yaw, extraMargin)) return 1;
   const double cosine = std::cos(collision_.gridFromPlanningYaw);
   const double sine = std::sin(collision_.gridFromPlanningYaw);
   const c::Pose pose{{collision_.gridFromPlanningTranslation.x + cosine * center.x - sine * center.y,
@@ -801,6 +869,7 @@ Grid Grid::excludingCells(const std::vector<std::size_t> &cells) const {
 }
 
 bool Grid::boundaryDepartureFree(const Pose &start, const Vec3 &end) const noexcept {
+  if (noGoSweep(start.position, start.yaw, end, start.yaw)) return false;
   if (body_) {
     if (!valid() || std::abs(start.position.z - end.z) > 1e-6 ||
         distance2D(start.position, end) > 0.5 ||

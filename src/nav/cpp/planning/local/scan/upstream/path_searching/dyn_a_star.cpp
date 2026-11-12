@@ -131,12 +131,24 @@ bool AStar::convertAndAdjust(Eigen::Vector3d start, Eigen::Vector3d end,
     } while (occupied != 0);
   }
 
-  occupied = occupancy(indexToCoordinate(endIndex), pathYaw);
+  const auto endOccupancy = [&] {
+    const auto point = indexToCoordinate(endIndex);
+    const int state = occupancy(point, pathYaw);
+    if (state != 0) return state;
+    // A guide endpoint must also admit one of the search's eight incoming headings.
+    for (int dx = -1; dx <= 1; ++dx)
+      for (int dy = -1; dy <= 1; ++dy)
+        if ((dx != 0 || dy != 0) &&
+            occupancy(point, std::atan2(static_cast<double>(dy), static_cast<double>(dx))) == 0)
+          return 0;
+    return 1;
+  };
+  occupied = endOccupancy();
   if (occupied != 0) {
     do {
       end += direction * stepSize_;
       if (!coordinateToIndex(end, endIndex)) return false;
-      occupied = occupancy(indexToCoordinate(endIndex), pathYaw);
+      occupied = endOccupancy();
       if (occupied == -1) return false;
     } while (occupied != 0);
   }
@@ -247,8 +259,6 @@ AStarResult AStar::search(double stepSize, Eigen::Vector3d start,
         neighbor->index = neighborIndex;
         const bool explored = neighbor->rounds == rounds_;
         if (explored && neighbor->state == GridNode::State::ClosedSet) continue;
-        neighbor->rounds = rounds_;
-
         const double yaw = std::atan2(static_cast<double>(dy),
                                       static_cast<double>(dx));
         if (occupancy(indexToCoordinate(neighborIndex), yaw) != 0) continue;
@@ -258,6 +268,7 @@ AStarResult AStar::search(double stepSize, Eigen::Vector3d start,
             std::sqrt(static_cast<double>(dx * dx + dy * dy + dz * dz));
         const double tentativeScore = current->gScore + stepCost;
         if (!explored) {
+          neighbor->rounds = rounds_;
           neighbor->state = GridNode::State::OpenSet;
           neighbor->cameFrom = current;
           neighbor->gScore = tentativeScore;
