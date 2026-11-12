@@ -74,4 +74,6 @@ tools/robot/go2_mid360_ground_mount/raised_box/**/*.STL filter=lfs diff=lfs merg
 tools/robot/go2_mid360_ground_mount/raised_box/**/*.3mf filter=lfs diff=lfs merge=lfs -text
 tools/robot/go2_mid360_ground_mount/raised_box/**/*.zip filter=lfs diff=lfs merge=lfs -text
 web/public/assets/robots/go2/meshes/**/*.dae filter=lfs diff=lfs merge=lfs -text
+config/robots/paxini/tora_double_one_x/description/meshes/**/*.stl filter=lfs diff=lfs merge=lfs -text
+config/robots/paxini/tora_double_one_x/description/meshes/**/*.dae filter=lfs diff=lfs merge=lfs -text
 docs/research/papers/*.pdf filter=lfs diff=lfs merge=lfs -text

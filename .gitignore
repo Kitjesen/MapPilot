@@ -171,6 +171,8 @@ CLAUDE.md
 # 鈹€鈹€ Keys / credentials 鈥?NEVER commit 鈹€鈹€
 keys/
 *.pem
+!/tests/lingtu/sdk/fixtures/tls/ca.pem
+!/tests/lingtu/sdk/fixtures/tls/server.pem
 
 # 鈹€鈹€ Build / dist artifacts 鈹€鈹€
 dist/
@@ -258,3 +260,4 @@ CUsers*/
 /.tripo/
 /sim/.promotion-locks/
 /*.obj
+/web/ui-test-output.txt
