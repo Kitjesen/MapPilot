@@ -7,7 +7,7 @@ import ts from 'typescript'
 import * as api from '../src/services/api.ts'
 import * as presentation from '../src/services/mapSavePresentation.ts'
 
-test('history loads on mounting and only button clicks retry or cancel the selected operation', async () => {
+test('save data polls independently of details and only actions retry or cancel', async () => {
   const originalFetch = globalThis.fetch
   const requests: string[] = []
   const continued: api.SaveMapResult[] = []
@@ -47,8 +47,9 @@ test('history loads on mounting and only button clicks retry or cancel the selec
         return slots[index]
       },
     }
-    const module = { exports: {} as { MapSaveHistory: (props: object) => unknown } }
-    const source = readFileSync(new URL('../src/components/MapSaveHistory.tsx', import.meta.url), 'utf8')
+    const module = { exports: {} as { MapSaveHistory: (props: object) => unknown; useMapSaves: (props: object) => { history: api.MapSaveOperationList } } }
+    for (const path of ['../src/hooks/useMapSaves.ts', '../src/components/MapSaveHistory.tsx']) {
+    const source = readFileSync(new URL(path, import.meta.url), 'utf8')
     const compiled = ts.transpileModule(source, {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
     }).outputText
@@ -65,6 +66,7 @@ test('history loads on mounting and only button clicks retry or cancel the selec
         throw new Error(`Unexpected import ${name}`)
       },
     })
+    }
     type Element = { type: string; props: {
       children?: unknown; onClick?: () => void; disabled?: boolean; href?: string
       onChange?: (event: { target: { value: string } }) => void
@@ -78,26 +80,24 @@ test('history loads on mounting and only button clicks retry or cancel the selec
     let readOnly = false
     const render = () => {
       cursor = 0
-      return module.exports.MapSaveHistory({ refreshKey: 'session-1', readOnly,
+      const saves = module.exports.useMapSaves({ refreshKey: 'session-1',
         onContinue: (result: api.SaveMapResult) => continued.push(result),
         onComplete: (result: api.SaveMapResult) => completed.push(result) })
+      return module.exports.MapSaveHistory({ saves, operations: saves.history.operations, readOnly })
     }
     render()
     const cleanup = effects[0]()
     await new Promise(setImmediate)
     assert.deepEqual(requests, ['GET /api/v1/maps/operations'])
     let tree = elements(render())
-    assert.ok(tree.some(element => element.type === 'p' && element.props.children === '保存点云'))
+    assert.ok(tree.some(element => element.type === 'p' && [element.props.children].flat().includes('保存点云')))
     assert.equal(tree.some(element => element.type === 'p' && element.props.children === '等待地图快照'), false,
       'stored CAPTURED source still appeared to be waiting for a snapshot')
     effects.at(-1)!()
     assert.equal(completed.length, 0)
     assert.equal(tree.find(element => element.type === 'a')?.props.href, '/api/v1/maps/operations/captured-1/source/pcd')
-    tree.find(element => element.type === 'button' && element.props.children === '失败')!.props.onClick!()
-    tree = elements(render())
-    assert.equal(tree.some(element => element.type === 'button' && element.props.children === '取消保存'), false)
-    tree.find(element => element.type === 'button' && element.props.children === '全部')!.props.onClick!()
-    tree = elements(render())
+    assert.equal(tree.some(element => element.props.children === '按状态筛选'), false)
+    assert.equal(tree.some(element => element.type === 'button' && element.props.children === '全部'), false)
     const retry = tree.find(element => element.type === 'button' && element.props.children === '重试保存')!
     assert.ok(retry)
     retry.props.onClick!()

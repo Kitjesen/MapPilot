@@ -3,6 +3,7 @@ import { ChevronDown, LocateFixed, RefreshCw, Route } from 'lucide-react'
 import { text, type Locale } from '../i18n'
 import * as api from '../services/api'
 import { selectDisplayedFollowTask } from '../services/followTask'
+import { mapLocalizationLabel, mapLocalizationState } from '../services/mapLabel.ts'
 import { liveNavigationStatus } from '../services/navigationStatus'
 import { presentVisualFollowStatus } from '../services/visualFollowStatus'
 import type { FollowTaskRef, SSEState, ToastKind } from '../types'
@@ -10,6 +11,8 @@ import styles from './RobotStatusPanel.module.css'
 
 interface RobotStatusPanelProps {
   sseState: SSEState
+  localNowS: number
+  onRefresh: () => Promise<void>
   showToast: (message: string, kind?: ToastKind) => void
   locale: Locale
   motionStartAllowed: boolean
@@ -22,24 +25,25 @@ function value(value: string | null | undefined, fallback: string): string {
 
 export function RobotStatusPanel({
   sseState,
+  localNowS,
+  onRefresh,
   showToast,
   locale,
   motionStartAllowed,
   motionStartBlockedReason,
 }: RobotStatusPanelProps) {
-  const [refreshedSession, setRefreshedSession] = useState<typeof sseState.session>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [relocalizing, setRelocalizing] = useState(false)
   const [visualTarget, setVisualTarget] = useState('')
   const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null)
   const [visualCommand, setVisualCommand] = useState<'find' | 'follow' | 'stop' | null>(null)
   const [acceptedFollowTask, setAcceptedFollowTask] = useState<FollowTaskRef | null>(null)
-  const session = sseState.session ?? refreshedSession
+  const session = sseState.session
   const visualServo = sseState.visualServoStatus
   const followStatus = visualServo
     ? presentVisualFollowStatus(
         visualServo,
-        liveNavigationStatus(sseState, Date.now() / 1000),
+        liveNavigationStatus(sseState, localNowS),
         locale,
       )
     : null
@@ -71,7 +75,7 @@ export function RobotStatusPanel({
   const refresh = useCallback(async () => {
     setRefreshing(true)
     try {
-      setRefreshedSession(await api.fetchSession())
+      await onRefresh()
     } catch (error) {
       showToast(
         `${text(locale, 'Status refresh failed', '状态刷新失败')}: ${error instanceof Error ? error.message : String(error)}`,
@@ -80,7 +84,7 @@ export function RobotStatusPanel({
     } finally {
       setRefreshing(false)
     }
-  }, [locale, showToast])
+  }, [locale, onRefresh, showToast])
 
   const activeMap = session?.active_map ?? null
   const canRelocalize = Boolean(
@@ -120,7 +124,7 @@ export function RobotStatusPanel({
   )
   const map = value(activeMap, text(locale, 'No map', '无地图'))
   const cloudPoints = sseState.mapCloud?.count ?? 0
-  const ready = session?.localizer_ready === true
+  const localizationState = mapLocalizationState(sseState, localNowS)
 
   const runVisualServo = useCallback(async (mode: 'find' | 'follow' | 'stop') => {
     const target = visualTarget.trim() || visualServo?.target?.trim() || ''
@@ -195,8 +199,8 @@ export function RobotStatusPanel({
         <div><span>{text(locale, 'Operating mode', '运行模式')}</span><strong>{product}</strong></div>
         <div>
           <span>{text(locale, 'Localization state', '定位状态')}</span>
-          <strong className={ready ? styles.ready : styles.waiting}>
-            {ready ? text(locale, 'Localization ready', '定位就绪') : text(locale, 'Awaiting localization', '等待定位')}
+          <strong className={localizationState === 'tracking' ? styles.ready : styles.waiting}>
+            {mapLocalizationLabel(localizationState, locale)}
           </strong>
         </div>
         <div className={styles.mapField}><span>{text(locale, 'Map', '地图')}</span><strong>{map}</strong></div>

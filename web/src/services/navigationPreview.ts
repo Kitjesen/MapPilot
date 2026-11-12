@@ -9,9 +9,26 @@ export function navigationPreviewErrorMessage(error: string): string {
     return '路线预览服务不可用'
   }
   for (const prefix of ['规划失败：', '无法生成路线：']) {
-    if (error.startsWith(prefix)) return prefix + operatorReasonMessage(error.slice(prefix.length), 'zh')
+    if (error.startsWith(prefix)) return prefix + error.slice(prefix.length).split('；').map(code => {
+      const message = operatorReasonMessage(code, 'zh')
+      return message.startsWith('导航状态：') ? '导航未通过，请查看详细原因。' : message
+    }).join('；').replace(/。；/g, '；')
   }
   return error
+}
+
+/** The response goal is the request; only a feasible path supplies its planned endpoint. */
+export function navigationPlanEndpoint(preview: PlanPreviewResponse | null, requested: { x: number; y: number; z?: number } | null) {
+  if (!preview?.ok || !preview.feasible || preview.frame_id !== 'map' || !requested || !preview.goal) return null
+  if (!['x', 'y', 'z'].every(axis => {
+    const key = axis as 'x' | 'y' | 'z'
+    return Number.isFinite(requested[key]) && Number.isFinite(preview.goal[key])
+      && Math.abs(preview.goal[key] - requested[key]!) <= 1e-4
+  })) return null
+  const end = preview.path?.at(-1)
+  if (!end || ![end.x, end.y, end.z].every(Number.isFinite)) return null
+  return { x: end.x, y: end.y, z: end.z,
+    offset: Math.hypot(end.x - requested.x, end.y - requested.y, end.z - requested.z!) }
 }
 
 export function navigationGoalErrorMessage(error: unknown, locale: Locale): string {

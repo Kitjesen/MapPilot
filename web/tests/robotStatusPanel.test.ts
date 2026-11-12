@@ -14,18 +14,19 @@ const localization = readFileSync(new URL('../src/components/LocalizationCard.ts
 test('console shows current robot state without Product switch preview', () => {
   assert.match(app, /<RobotStatusPanel/)
   assert.doesNotMatch(app, /ProductModePanel/)
-  assert.match(panel, /fetchSession\(\)/)
+  assert.match(panel, /await onRefresh\(\)/)
+  assert.match(app, /onRefresh=\{sseState\.refresh\}/)
   assert.match(panel, /globalRelocalize\(activeMap\)/)
   assert.doesNotMatch(panel, /target_product|ProductControl|copy.*command/i)
 })
 
 test('compact console labels Product and localization evidence without claiming motion readiness', () => {
   assert.match(panel, /'Operating mode', '运行模式'/)
-  assert.match(panel, /'Localization ready', '定位就绪'/)
+  assert.match(panel, /mapLocalizationLabel\(localizationState, locale\)/)
+  assert.doesNotMatch(panel, /refreshedSession|localizer_ready/)
   assert.doesNotMatch(panel, /'Task', '任务'|'State', '状态'/)
-  assert.match(localization, /sseState\.session\?\.pose_fresh/)
-  assert.match(localization, /数据已过期/)
-  assert.match(localization, /已收到里程计/)
+  assert.match(localization, /mapLocalizationLabel\(localizationState, locale\)/)
+  assert.match(localization, /sseState\.stateSnapshot\?\.localization\?\.pose_fresh/)
   assert.doesNotMatch(localization, /已锁定|未锁定/)
 })
 

@@ -1,5 +1,5 @@
 import type { MapEditOperation, MapEditSource } from '../types/mapEdit.ts'
-import { validMapEditBounds } from './mapEdit.ts'
+import { validMapEditOperation } from './mapEdit.ts'
 
 export interface MapEditDraft {
   source: MapEditSource
@@ -28,11 +28,7 @@ function isDraft(value: unknown): value is MapEditDraft {
     || !Array.isArray(history.edits) || history.edits.length === 0
     || !Number.isInteger(history.cursor) || (history.cursor as number) < 0
     || (history.cursor as number) > history.edits.length) return false
-  return history.edits.every((edit: unknown) => {
-    if (!isRecord(edit) || (edit.operation !== 'delete_inside' && edit.operation !== 'keep_inside')
-      || !isRecord(edit.bounds) || !isRecord(edit.bounds.min) || !isRecord(edit.bounds.max)) return false
-    return validMapEditBounds(edit.bounds as unknown as MapEditOperation['bounds'])
-  })
+  return history.edits.every(validMapEditOperation)
 }
 
 export function readMapDraft(source: MapEditSource, storage?: MapDraftStorage): MapDraftResult | null {
@@ -57,10 +53,7 @@ export function writeMapDraft(draft: MapEditDraft, storage?: MapDraftStorage): b
       source: { name: draft.source.name, contentEpoch: draft.source.contentEpoch, frameId: draft.source.frameId },
       name: draft.name,
       history: {
-        edits: draft.history.edits.map(({ operation, bounds }) => ({ operation, bounds: {
-          min: { x: bounds.min.x, y: bounds.min.y, z: bounds.min.z },
-          max: { x: bounds.max.x, y: bounds.max.y, z: bounds.max.z },
-        } })),
+        edits: structuredClone(draft.history.edits),
         cursor: draft.history.cursor,
       },
       status: draft.status,

@@ -163,8 +163,24 @@ test('operator reason copy distinguishes blockers and preserves an unknown reaso
   assert.equal(operatorReasonMessage('support_disconnected', 'zh'), '起点与目标之间的地面支撑尚未连通。')
   assert.equal(operatorReasonMessage('input_gate_collision_stale', 'zh'), '等待实时雷达地图更新。')
   assert.equal(operatorReasonMessage('driver_control_stale', 'zh'), '等待驱动连接恢复。')
+  assert.equal(operatorReasonMessage('takeover_active', 'zh'), '人工接管尚未退出，请恢复自主导航。')
   assert.equal(operatorReasonMessage('operator_takeover_resume_required', 'zh'), '人工接管尚未退出，请恢复自主导航。')
   assert.equal(operatorReasonMessage('control_hold', 'zh'), '运动暂时保持，等待控制恢复。')
+})
+
+test('short motion reasons', () => {
+  const reasons = [
+    ['brake_blocked', '制动空间受阻，已请求停车。', 'Braking space is blocked. A stop was requested.'],
+    ['cmd_blocked', '速度指令没有可用制动空间，已请求停车。', 'The command has no braking space. A stop was requested.'],
+    ['cmd_limited', '速度指令已按制动空间降低。', 'Command speed was reduced to fit braking space.'],
+    ['loop_hold', '控制循环暂停运动，等待恢复。', 'Motion is held while the control loop recovers.'],
+    ['takeover_active', '人工接管尚未退出，请恢复自主导航。', 'Manual takeover is still active; resume autonomous navigation.'],
+  ] as const
+  for (const [reason, zh, en] of reasons) {
+    assert.equal(operatorReasonMessage(reason, 'zh'), zh)
+    assert.equal(operatorReasonMessage(reason, 'en'), en)
+    assert.equal(operatorReasonMessage(`input_gate_${reason}:detail`, 'zh'), zh)
+  }
 })
 
 test('follow admission failures have truthful operator copy without claiming a stop', () => {
@@ -230,6 +246,18 @@ test('ordinary driver faults are not presented as a planned profile transition',
   for (const reason of ['driver_control_stale', 'driver_control_motor_fault', 'input_gate_driver_control_rejected']) {
     assert.doesNotMatch(operatorReasonMessage(reason, 'zh'), /切换行走模式/)
     assert.doesNotMatch(operatorReasonMessage(reason, 'en'), /profile is changing/)
+  }
+})
+
+test('stop and SDK timeouts do not claim takeover or a confirmed stop', () => {
+  for (const reason of [
+    'stop_confirmation_timeout_stop_remains_latched',
+    'driver_control_transport_error:stop_unconfirmed:stop_timeout:code=3104',
+    'input_gate_driver_control_rpc_timeout:code=3104',
+  ]) {
+    assert.match(operatorReasonMessage(reason, 'zh'), /超时/)
+    assert.match(operatorReasonMessage(reason, 'en'), /timed out/)
+    assert.doesNotMatch(operatorReasonMessage(reason, 'zh'), /人工接管|已停稳|已停车|拒绝/)
   }
 })
 

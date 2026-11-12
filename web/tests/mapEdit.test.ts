@@ -1,9 +1,27 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { applyMapEditOperations, mapEditCloudBounds, mapEditNameError, mapEditSelectionImpact, mapEditWireOperations, suggestedEditedMapName, validMapEditBounds } from '../src/services/mapEdit.ts'
+import { applyMapEditOperations, isMapCrop, validMapEditOperation, mapEditCloudBounds, mapEditNameError, mapEditSelectionImpact, mapEditWireOperations, suggestedEditedMapName, validMapEditBounds } from '../src/services/mapEdit.ts'
 import type { MapEditOperation } from '../src/types/mapEdit.ts'
 
 const box = { min: { x: -1, y: -1, z: 0 }, max: { x: 1, y: 1, z: 2 } }
+
+test('manual planes preserve source points, map axes, ordered crop and undo', () => {
+  for (const axis of ['x', 'y', 'z'] as const) {
+    const plane = { operation: 'add_plane', bounds: box, axis, offset: .5, spacing: 1 } as const
+    assert.equal(validMapEditOperation(plane), true)
+    const source = [9, 8, 7]
+    const result = applyMapEditOperations(source, [plane])
+    assert.equal(result.length, 30)
+    assert.deepEqual(result.slice(0, 3), source)
+    for (let i = 3 + ['x', 'y', 'z'].indexOf(axis); i < result.length; i += 3) assert.equal(result[i], .5)
+    assert.deepEqual(applyMapEditOperations(source, [plane, { operation: 'delete_inside', bounds: box }]), source)
+    assert.deepEqual(applyMapEditOperations(source, []), source)
+    assert.equal(validMapEditOperation({ ...plane, spacing: .00001 }), false)
+    assert.equal(validMapEditOperation({ ...plane, offset: 20 }), false)
+    assert.deepEqual(mapEditWireOperations([plane])[0], { ...plane,
+      bounds: { min_x: -1, min_y: -1, min_z: 0, max_x: 1, max_y: 1, max_z: 2 } })
+  }
+})
 
 test('source subset edits include box faces, preserve coordinates and never mutate the source', () => {
   const original = [-2, 0, 1, -1, 0, 0, 0, 0, 2, 0, 0, 3, 2, 0, 0]
@@ -87,4 +105,34 @@ test('the suggested name fits even when a valid source map already uses all 100 
   }
   const editedSource = `${'a'.repeat(93)}-edited`
   assert.equal(mapEditNameError(suggestedEditedMapName(editedSource), editedSource), null)
+})
+
+const filterOperations: MapEditOperation[] = [
+  { operation: 'voxel', voxel_size: .1 },
+  { operation: 'statistical', neighbors: 20, std_ratio: 1.5 },
+  { operation: 'radius', radius: .2, min_points: 12 },
+  { operation: 'clusters', radius: .2, neighbors: 20, min_cluster_points: 100 },
+  { operation: 'plane_crop', distance_threshold: .05, margin: .5 },
+]
+
+test('native cleaning parameters keep their ordered values alongside physical crop bounds', () => {
+  const operations = [filterOperations[0], { operation: 'keep_inside', bounds: box } as MapEditOperation, ...filterOperations.slice(1)]
+  const wire = mapEditWireOperations(operations)
+  assert.deepEqual(wire[0], filterOperations[0])
+  assert.deepEqual(wire[1], { operation: 'keep_inside', bounds: { min_x: -1, min_y: -1, min_z: 0, max_x: 1, max_y: 1, max_z: 2 } })
+  assert.deepEqual(wire.slice(2), filterOperations.slice(1))
+  assert.equal(operations.every(validMapEditOperation), true)
+  assert.equal(operations.filter(isMapCrop).length, 1)
+})
+
+test('cleaning cannot silently run through the browser crop preview', () => {
+  assert.throws(() => applyMapEditOperations([0, 0, 0], filterOperations), /原生地图预览/)
+  for (const edit of [
+    { operation: 'voxel', voxel_size: 0 },
+    { operation: 'statistical', neighbors: 2.5, std_ratio: 1.5 },
+    { operation: 'radius', radius: .2, min_points: NaN },
+    { operation: 'clusters', radius: .2, neighbors: 20, min_cluster_points: -1 },
+    { operation: 'plane_crop', distance_threshold: .05, margin: -1 },
+  ]) assert.equal(validMapEditOperation(edit), false)
+  assert.equal(validMapEditOperation({ operation: 'plane_crop', distance_threshold: .05, margin: 0 }), true)
 })

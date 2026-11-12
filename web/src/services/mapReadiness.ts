@@ -43,8 +43,8 @@ export function mapIsActivationReady(
 
 export function mapUseStatus(map: MapInfo | undefined, loadedForNavigation = false) {
   if (loadedForNavigation) return {
-    label: '已加载到现场',
-    detail: '当前导航会话已加载此地图，定位与路线预览请在现场查看。',
+    label: '已加载到导航',
+    detail: '当前导航会话已加载此地图，定位与路线预览请在导航页查看。',
   }
   if (!map) return { label: '读取中', detail: '正在读取地图状态。' }
   if (mapIsActivationReady(map)) return {

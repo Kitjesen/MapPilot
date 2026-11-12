@@ -1,15 +1,16 @@
 import * as THREE from 'three'
 import type { Octomap } from '../../../services/octomap.ts'
-import { writeCloudHeightColor } from '../../../services/cloudHeightColor.ts'
+import { cloudColorRange, writeCloudHeightColor } from '../../../services/cloudHeightColor.ts'
 
 export const OCTOMAP_VIEW_RADIUS_M = 10
 
-export function createOctomapLayer(map: Octomap, centerX: number, centerY: number, colorMode: 'height' | 'neutral', scale = 1): THREE.InstancedMesh | null {
-  const { cells, bounds } = map
+export function createOctomapLayer(map: Octomap, centerX: number, centerY: number, colorMode: 'height' | 'neutral', scale = 1, viewRadius = OCTOMAP_VIEW_RADIUS_M): THREE.InstancedMesh | null {
+  const { cells } = map
+  const colorRange = cloudColorRange(cells, 4)
   const selected: number[] = []
   for (let i = 0; i < cells.length; i += 4) {
-    if (Math.abs(cells[i] - centerX) <= OCTOMAP_VIEW_RADIUS_M
-      && Math.abs(cells[i + 1] - centerY) <= OCTOMAP_VIEW_RADIUS_M) selected.push(i)
+    if (Math.abs(cells[i] - centerX) <= viewRadius
+      && Math.abs(cells[i + 1] - centerY) <= viewRadius) selected.push(i)
   }
   if (!selected.length) return null
   // Aggregate occupied leaves into aligned OctoMap parents for display only.
@@ -38,7 +39,7 @@ export function createOctomapLayer(map: Octomap, centerX: number, centerY: numbe
     transform.makeScale(size, size, size).setPosition(x, z, -y)
     mesh.setMatrixAt(index, transform)
     if (colorMode === 'height') {
-      writeCloudHeightColor(z, rgb, 0, bounds.min[2], bounds.max[2])
+      writeCloudHeightColor(z, rgb, 0, colorRange?.min, colorRange?.max)
       color.setRGB(rgb[0], rgb[1], rgb[2])
     } else color.setHex(0xc3c6c9)
     mesh.setColorAt(index, color)

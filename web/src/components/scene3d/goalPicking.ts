@@ -4,6 +4,15 @@ import { pickOctomapSurface } from './layers/octomapLayer.ts'
 
 export type GoalPickMode = 'plane' | 'surface'
 
+export function pickGoalHeading(raycaster: THREE.Raycaster, goal: { x: number; y: number; z?: number }): number | null {
+  if (!Number.isFinite(goal.z)) return null
+  const point = raycaster.ray.intersectPlane(
+    new THREE.Plane(new THREE.Vector3(0, 1, 0), -goal.z!), new THREE.Vector3(),
+  )
+  if (!point || Math.hypot(point.x - goal.x, -point.z - goal.y) < 1e-5) return null
+  return Math.atan2(-point.z - goal.y, point.x - goal.x)
+}
+
 /** Picking only proposes a target; the native planner still evaluates the route. */
 export function pickNavigationPoint(
   raycaster: THREE.Raycaster,

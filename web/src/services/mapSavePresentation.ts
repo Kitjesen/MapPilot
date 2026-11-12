@@ -1,4 +1,45 @@
 import { MapSaveError, type MapSaveOperationStatus, type MapSaveProcessingStep, type SaveMapResult } from './api.ts'
+import type { MapInfo } from '../types/index.ts'
+import { mapIsActivationReady } from './mapReadiness.ts'
+
+export interface MapLibraryEntry {
+  name: string
+  map?: MapInfo
+  operations: MapSaveOperationStatus[]
+}
+
+export function mapLibraryEntries(maps: MapInfo[], operations: MapSaveOperationStatus[]): MapLibraryEntry[] {
+  const entries = new Map<string, MapLibraryEntry>(maps.map(map => [map.name, { name: map.name, map, operations: [] }]))
+  for (const operation of [...operations].sort((a, b) => (b.created_at_ns ?? 0) - (a.created_at_ns ?? 0))) {
+    const name = operation.map_id || operation.name || '未命名地图'
+    const entry = entries.get(name) ?? { name, operations: [] }
+    entry.operations.push(operation)
+    entries.set(name, entry)
+  }
+  return [...entries.values()]
+}
+
+export function mapLibraryStatus(map?: MapInfo, operation?: MapSaveOperationStatus, unavailable = false) {
+  if (unavailable) return { kind: 'attention', label: '保存状态待确认', detail: '暂时无法更新保存记录，请刷新后确认。' } as const
+  if (operation && mapSaveStateLabel(operation.state) === '进行中') return {
+    kind: 'busy', label: operation.cancel_requested ? '取消待确认'
+      : operation.state === 'QUEUED' ? '等待处理'
+      : operation.phase ? mapSavePhaseLabel(operation.phase) : '正在保存',
+    detail: operation.source_saved ? '原始点云已保存，导航地图仍在处理。' : '正在保存建图数据。',
+  } as const
+  if (operation && operation.state !== 'SUCCEEDED') return {
+    kind: 'attention', label: mapSaveStateLabel(operation.state),
+    detail: map && mapIsActivationReady(map) ? '本次更新尚未完成，已有导航地图仍保留。'
+      : operation.source_saved ? '原始点云已保存，导航地图尚未就绪。' : '地图尚未保存完成。',
+  } as const
+  if (map && mapIsActivationReady(map)) return {
+    kind: 'ready', label: '地图就绪', detail: '导航数据齐全，使用前仍需完成定位。',
+  } as const
+  return {
+    kind: 'attention', label: map ? '地图未就绪' : '仅有保存记录',
+    detail: map ? '地图信息不完整，暂不能用于导航。' : '当前地图库中没有这张地图，可在记录中查看存档。',
+  } as const
+}
 
 interface MapSaveStatusDetails {
   name: string
@@ -32,6 +73,10 @@ const REASONS: Record<string, string> = {
   snapshot_session_expired: '原建图会话已结束，请重新保存地图。',
   source_not_saved: '点云尚未存档，请先完成保存。',
   saved_source_missing: '点云存档文件不可用，请核对保存记录。',
+  job_not_ready: '请等待当前保存任务结束后再重新优化。',
+  patch_bundle_incomplete: '缺少完整的分帧扫描或位姿，无法重新优化。',
+  active_map_conflict: '该地图正在使用，暂时不能重新处理。',
+  pgo_timeout: '几何优化超时，原始点云仍保留。',
   cancelled: '已取消',
   canceled: '已取消',
 }
@@ -70,11 +115,11 @@ export function failedMapSaveStatus(name: string, error: unknown): MapSaveStatus
 export function archivedMapStatus(result: SaveMapResult & { operation_id: string }): MapSaveStatus {
   const operation = result.operation
   if (operation?.state === 'FAILED') return failedMapSaveStatus(
-    result.name, new MapSaveError('请查看保存记录中的失败原因。', result),
+    result.name, new MapSaveError('请点击地图状态图标查看失败原因。', result),
   )
   return {
     name: result.name, state: 'archived', operation: result,
-    detail: operation?.state === 'CAPTURED' ? 'PCD 已保存，可在保存记录中开始处理。' : 'PCD 已保存，后台处理进度见保存记录。',
+    detail: operation?.state === 'CAPTURED' ? 'PCD 已保存，可点击地图状态图标开始处理。' : 'PCD 已保存，可点击地图状态图标查看处理进度。',
     summary: '此处保存的是建图点云存档。导航产物完成后会更新地图库。',
   }
 }
@@ -133,8 +178,10 @@ function processingReason(step?: MapSaveProcessingStep): string {
 
 export function formatMapSaveProgress(result: SaveMapResult): string {
   const operation = result.operation
-  const phase = operation?.phase ? PHASES[operation.phase.toUpperCase()] : undefined
-  const label = operation?.state === 'QUEUED' ? '排队等待保存' : phase ?? '等待保存结果'
+  const phase = operation?.phase === 'OPTIMIZE_SOURCE' && operation.source_operation_id
+    ? '重新对齐扫描' : operation?.phase ? PHASES[operation.phase.toUpperCase()] : undefined
+  const label = operation?.state === 'QUEUED'
+    ? operation.source_operation_id ? '排队等待重新优化' : '排队等待保存' : phase ?? '等待保存结果'
   const progress = operation?.progress
   return typeof progress === 'number' && Number.isFinite(progress)
     ? `${label} · ${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%`

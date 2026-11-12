@@ -71,25 +71,27 @@ test('the canvas click that dismisses a menu cannot select a goal, while the nex
     assert.equal(selector, 'details[name="lingtu-menu"][open]')
     return menu.open ? [menu] : []
   } }
-  let stopped = 0
-  const event = { target: {}, shiftKey: true, preventDefault() {}, stopPropagation() { stopped++ } }
-  down(document, ref, event)
+  const stopped = { down: 0, up: 0 }
+  const event = { target: {}, shiftKey: true, preventDefault() {} }
+  const downEvent = { ...event, stopPropagation() { stopped.down++ } }
+  const upEvent = { ...event, stopPropagation() { stopped.up++ } }
+  down(document, ref, downEvent)
   assert.equal(menu.open, false, 'canvas pointerdown must close the open menu')
-  up(event, ref)
-  assert.equal(stopped, 1, 'document menu dismissal must not erase the captured click guard')
-  down(document, ref, event)
-  up(event, ref)
-  assert.equal(stopped, 1, 'the next ordinary or Shift click must propagate normally')
+  up(upEvent, ref)
+  assert.deepEqual(stopped, { down: 1, up: 1 }, 'dismissal consumes both the gesture start and goal-selecting mouseup')
+  down(document, ref, downEvent)
+  up(upEvent, ref)
+  assert.deepEqual(stopped, { down: 1, up: 1 }, 'the next ordinary or Shift click must propagate normally')
   menu.open = true
-  down(document, ref, event)
+  down(document, ref, downEvent)
   assert.equal(menu.open, false)
-  up(event, ref)
-  assert.equal(stopped, 2, 'touch-generated compatibility mouseup follows the same pointerdown guard')
+  up(upEvent, ref)
+  assert.deepEqual(stopped, { down: 2, up: 2 }, 'touch-generated compatibility mouseup follows the same pointerdown guard')
   menu.open = true
-  down(document, ref, { ...event, target: insideMenu })
+  down(document, ref, { ...downEvent, target: insideMenu })
   assert.equal(menu.open, true, 'controls inside the open view menu must remain clickable')
-  up(event, ref)
-  assert.equal(stopped, 2, 'a click inside the menu is not a canvas dismissal')
+  up(upEvent, ref)
+  assert.deepEqual(stopped, { down: 2, up: 2 }, 'a click inside the menu is not a canvas dismissal')
 })
 
 test('scene retains operational controls while showing failures outside collapsed details', () => {
@@ -97,7 +99,7 @@ test('scene retains operational controls while showing failures outside collapse
   assert.match(sceneSource, /onClick=\{handleRestartLocalization\}/)
   assert.match(sceneSource, /onClick=\{handleGlobalRelocalize\}/)
   assert.match(sceneSource, /onClick=\{handleRelocalize\}/)
-  assert.match(sceneSource, /!observe && hasGoal && <div className=\{styles.motionActions\}/)
+  assert.doesNotMatch(sceneSource, /handleCancelNavigation|cancelNavigation\('web_cancel'\)/)
   assert.doesNotMatch(sceneSource, /onClick=\{handleStop\}/)
   const alertStart = sceneSource.indexOf('styles.sceneAlert}')
   assert.ok(alertStart > sceneSource.indexOf('styles.canvasWrap'))
@@ -114,9 +116,6 @@ test('scene retains operational controls while showing failures outside collapse
 test('mapping opens on the cumulative map and keeps the local projection explicitly non-traversable', () => {
   assert.match(sceneSource, /useState<'coverage' \| 'points' \| 'global'>\('global'\)/)
   assert.match(sceneSource, /mappingView === 'coverage'\) scene3DRef\.current\?\.topView\(6\)/)
-  assert.match(sceneSource, />局部投影<\/button>/)
-  assert.match(sceneSource, />局部地图<\/button>/)
-  assert.match(sceneSource, />整图<\/button>/)
   assert.match(sceneSource, /<section aria-label="建图显示图例">/)
   assert.match(sceneSource, /<summary>图例与说明<\/summary>/)
   assert.match(sceneSource, /地面相对高度 · 不代表可通行/)

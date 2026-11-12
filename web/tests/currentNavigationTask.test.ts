@@ -190,6 +190,29 @@ test('sendGoal begins tracking the accepted navigation task', async (t) => {
   )
 })
 
+test('goal preview and submission omit an unspecified yaw but preserve explicit zero', async (t) => {
+  const originalFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = originalFetch })
+  const bodies: Array<Record<string, unknown>> = []
+  globalThis.fetch = async (_url, options) => {
+    bodies.push(JSON.parse(String(options?.body)))
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    })
+  }
+  for (const yaw of [undefined, 0, 1.2]) {
+    const options = { z: .4, yaw, source: 'map_click' as const, target_type: 'map_point' as const }
+    await api.constructGoalCandidate({ x: 1, y: 2, ...options })
+    await api.sendGoal(1, 2, options)
+    for (const body of bodies.splice(0)) {
+      assert.equal('yaw' in body, yaw !== undefined)
+      assert.equal(body.yaw, yaw)
+      assert.equal(body.source, 'map_click')
+      assert.equal(body.z, .4)
+    }
+  }
+})
+
 test('navigateClick replaces the tracked task with the accepted task identity', async (t) => {
   const originalFetch = globalThis.fetch
   t.after(() => {

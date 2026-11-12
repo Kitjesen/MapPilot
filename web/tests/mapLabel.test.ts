@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mapLocalizationState, shortMapLabel } from '../src/services/mapLabel.ts'
+import { mapLocalizationLabel, mapLocalizationState, shortMapLabel } from '../src/services/mapLabel.ts'
 import type { SSEState } from '../src/types/index.ts'
 
 test('map labels preserve complete readable names so layout decides when to ellipsize', () => {
@@ -36,4 +36,11 @@ test('localization problems are preserved instead of becoming a normal status', 
     assert.equal(mapLocalizationState(stream({ state, pose_fresh: true }), 1003), state)
   }
   assert.equal(mapLocalizationState(stream({ state: 'unexpected' }), 1003), 'unknown')
+})
+
+test('all localization surfaces share connection, aging and tracking labels', () => {
+  assert.equal(mapLocalizationLabel('disconnected', 'zh'), '连接断开')
+  assert.equal(mapLocalizationLabel('stale', 'zh'), '数据已过期')
+  assert.equal(mapLocalizationLabel('tracking', 'zh'), '定位跟踪中')
+  assert.equal(mapLocalizationLabel('tracking', 'en'), 'Tracking')
 })

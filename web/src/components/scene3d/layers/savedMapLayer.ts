@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { MapSceneEvent, MapSceneLayer } from '../../../types'
 import { DEFAULT_POINT_SIZE, pointSizeToWorld } from './liveCloudLayer.ts'
 import { lingtuToThree } from '../../../services/coordinateFrame.ts'
-import { cloudHeightRange, writeCloudHeightColor } from '../../../services/cloudHeightColor.ts'
+import { cloudColorRange, writeCloudHeightColor } from '../../../services/cloudHeightColor.ts'
 
 export const SAVED_MAP_Z_FLOOR = Number.NEGATIVE_INFINITY
 export const SAVED_MAP_Z_CEIL = Number.POSITIVE_INFINITY
@@ -54,7 +54,7 @@ export function createSavedMapLayer(
   const semantic = colorMode === 'semantic' ? semanticPointLayer(mapScene, totalTriples) : null
   const positions = new Float32Array(totalTriples * 3)
   const colors = new Float32Array(totalTriples * 3)
-  const heightRange = cloudHeightRange(savedMapFlat)
+  const heightRange = cloudColorRange(savedMapFlat)
   let length = 0
 
   for (let i = 0; i + 2 < savedMapFlat.length; i += 3) {

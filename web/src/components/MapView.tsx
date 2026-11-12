@@ -1,13 +1,17 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { ArrowLeft, Map, FolderOpen, Trash2, RefreshCw, Save, Pencil, Navigation, ChevronDown, Check, MoreHorizontal, X, Search } from 'lucide-react'
+import { ArrowLeft, Ban, BoxSelect, BrushCleaning, Layers, MapPin, Navigation, Pencil, RefreshCw, Save, X } from 'lucide-react'
+import { useMapSettings } from '../hooks/useMapSettings.ts'
 import type { MapInfo, SessionEvent, ToastKind } from '../types'
 import * as api from '../services/api'
 import { formatMapSaveProgress, pendingMapSaveStatus, savedMapStatus, archivedMapStatus, failedMapSaveStatus, mapSaveProgressValue, mapSaveElapsedMs, formatMapSaveElapsed, mappingCapacityNotice, type MapSaveStatus } from '../services/mapSavePresentation.ts'
 import { mapIsActivationReady, mapSaveBlockedReason, mapUseStatus, navigationGoalQueueReady } from '../services/mapReadiness'
-import { PointCloudViewer } from './PointCloudViewer'
+import type { MapEditorTool } from './MapEditor.tsx'
 import { PromptModal, ConfirmModal } from './Modal'
-import { MapSaveHistory } from './MapSaveHistory'
-import { text, type Locale } from '../i18n'
+import { MapStatusIcon } from './MapLibrary.tsx'
+import { MapGallery } from './MapGallery.tsx'
+import { useMapSaves } from '../hooks/useMapSaves.ts'
+import { mapLibraryEntries, mapLibraryStatus } from '../services/mapSavePresentation.ts'
+import type { Locale } from '../i18n'
 import { isObservationMode } from '../services/observationMode.ts'
 import { parseInitialPose, type InitialPoseInput, type LocalizationInitialPose } from '../services/localizationInitialPose.ts'
 import { mapEditNameError } from '../services/mapEdit.ts'
@@ -18,90 +22,50 @@ interface MapViewProps {
   onUseMap: (name: string, initialPose?: LocalizationInitialPose) => void
   productSwitchAllowed: boolean
   productSwitchReason: string
-  productSwitchMessage: string
   onReturnLive: () => void
+  returnLabel?: string
+  onMapEditorExitGuardChange?: (guard: ((proceed: () => void) => void) | null) => void
   session: SessionEvent['data'] | null
   slamDiag: Record<string, unknown> | null
   showToast: (msg: string, kind?: ToastKind) => void
   locale: Locale
 }
-// ── Map card ───────────────────────────────────────────────────
-interface CardProps {
-  m: MapInfo
-  selected: boolean
-  readOnly: boolean
-  onPreview:  (name: string) => void
-  onRename:   (name: string) => void
-  onDelete:   (name: string) => void
-}
-
-const MAP_EVIDENCE_LABEL: Record<string, string> = {
-  saved_rays: '射线建图',
-  preview: '点云预览',
-}
-
-function MapCard({ m, selected, readOnly, onPreview, onRename, onDelete }: CardProps) {
-  const [detailsOpen, setDetailsOpen] = useState(false)
-  const activationBlockers = m.activation_blockers ?? []
-  return (
-    <li className={`${styles.mapRow} ${selected ? styles.mapRowSelected : ''}`}>
-      <div className={styles.mapRowMain}>
-        <button className={styles.mapChoice} onClick={() => onPreview(m.name)}
-          disabled={!m.has_pcd} aria-pressed={selected} title={m.name}>
-          <Map size={17} strokeWidth={1.6} />
-          <span className={styles.mapName}>{m.name}</span>
-          {selected && <Check size={16} />}
-        </button>
-        <button className={styles.iconButton} onClick={() => setDetailsOpen(value => !value)}
-          aria-expanded={detailsOpen} aria-label={`${m.name} 详情与操作`} title="详情与操作">
-          <MoreHorizontal size={18} />
-        </button>
-      </div>
-      {activationBlockers[0]
-        ? <span className={styles.rowHint}>无法用于导航：{activationBlockers[0]}</span>
-        : !m.has_pcd && <span className={styles.rowHint}>暂无点云</span>}
-      {detailsOpen && <div className={styles.rowDetails}>
-        <p>{mapIsActivationReady(m) ? '导航数据齐全，使用前仍需定位' : '导航数据未就绪'}</p>
-        {activationBlockers.map(blocker => <p key={blocker}>阻塞原因：{blocker}</p>)}
-        {m.is_active && <p>当前加载的地图</p>}
-        <div className={styles.mapMeta}>
-          {m.has_pcd && <span>点云</span>}{m.has_octomap && <span>规划地图</span>}
-          {m.map_evidence && MAP_EVIDENCE_LABEL[m.map_evidence] && <span>{MAP_EVIDENCE_LABEL[m.map_evidence]}</span>}
-          {!!m.size_mb && <span>{m.size_mb.toFixed(1)} MB</span>}
-          {!!m.patch_count && <span>{m.patch_count} 子图</span>}
-        </div>
-        {!readOnly && <div className={styles.rowActions}>
-          <button className={styles.quietButton} onClick={() => onRename(m.name)}><Pencil size={15} />重命名</button>
-          <button className={styles.dangerButton} onClick={() => onDelete(m.name)}><Trash2 size={15} />删除</button>
-        </div>}
-      </div>}
-    </li>
-  )
-}
-
 // ── Main ───────────────────────────────────────────────────────
 export function MapView({
   initialSelectedMap,
   onUseMap,
   productSwitchAllowed,
   productSwitchReason,
-  productSwitchMessage,
   onReturnLive,
+  returnLabel = '导航',
+  onMapEditorExitGuardChange,
   session,
   slamDiag,
   showToast,
-  locale,
 }: MapViewProps) {
   const observe = isObservationMode()
+  const mapSettings = useMapSettings()
   const saveBlockedReason = mapSaveBlockedReason(session)
   const capacityNotice = mappingCapacityNotice(session?.product, slamDiag)
   const [maps,        setMaps       ] = useState<MapInfo[]>([])
   const [loading,     setLoading    ] = useState(true)
   const [error,       setError      ] = useState('')
   const [selectedMap, setSelectedMap] = useState<string | null>(initialSelectedMap)
-  const [libraryOpen, setLibraryOpen] = useState(initialSelectedMap === null)
-  const [search, setSearch] = useState('')
+  const selectedInfo = maps.find(map => map.name === selectedMap)
   const [previewRefresh, setPreviewRefresh] = useState(0)
+  const [editTool, setEditTool] = useState<MapEditorTool | null>(null)
+  const editing = editTool !== null
+  const [managementAvailable, setManagementAvailable] = useState(false)
+  const registerEditGuard = useCallback((guard: ((proceed: () => void) => void) | null) => {
+    onMapEditorExitGuardChange?.(guard)
+  }, [onMapEditorExitGuardChange])
+  useEffect(() => {
+    let active = true
+    void api.fetchAppCapabilities().then(result => {
+      if (active) setManagementAvailable(result.features.map_management === true)
+    }, () => { if (active) setManagementAvailable(false) })
+    return () => { active = false }
+  }, [session?.product_session_id])
 
   // Modal state
   const [saveOpen,   setSaveOpen  ] = useState(false)
@@ -157,7 +121,6 @@ export function MapView({
       if (request !== listRequest.current) return null
       setMaps([])
       setSelectedMap(null)
-      setLibraryOpen(true)
       setError(`无法获取地图列表: ${e instanceof Error ? e.message : String(e)}`)
       return null
     } finally { if (request === listRequest.current) setLoading(false) }
@@ -178,7 +141,7 @@ export function MapView({
     if (!name) return
     try {
       await api.deleteMap(name); showToast(`已删除: ${name}`, 'success')
-      if (selectedMap === name) { setSelectedMap(null); setLibraryOpen(true) }
+      if (selectedMap === name) setSelectedMap(null)
       void loadMaps()
     } catch { showToast(`删除失败: ${name}`, 'error') }
   }
@@ -189,7 +152,7 @@ export function MapView({
     try {
       await api.renameMap(oldName, newName); showToast(`已重命名: ${newName}`, 'success')
       if (selectedMap === oldName) setSelectedMap(newName); void loadMaps()
-    } catch { showToast('重命名失败', 'error') }
+    } catch (cause) { showToast(cause instanceof Error ? cause.message : '重命名失败', 'error') }
   }
   const confirmSave = async (name: string, existing?: api.SaveMapResult & { operation_id: string }) => {
     setSaveOpen(false)
@@ -227,7 +190,6 @@ export function MapView({
       if (outcome.state === 'source_saved') {
         updateProgress(outcome.result)
         setSaveStatus(archivedMapStatus(outcome.result))
-        setLibraryOpen(true)
         showToast(`PCD 已保存 ${outcome.result.name}`, 'success')
         return
       }
@@ -237,7 +199,6 @@ export function MapView({
       setSaveStatus(savedMapStatus(r))
       hasAutoSelected.current = true
       setSelectedMap(savedName)
-      setLibraryOpen(false)
       showToast(`已保存 ${savedName}`, 'success')
       if (r.warnings?.length) showToast(r.warnings.join('；'), 'info')
       await loadMaps()
@@ -257,11 +218,10 @@ export function MapView({
     return null
   }
 
-  const togglePreview = (name: string) => {
+  const selectMap = useCallback((name: string) => {
     hasAutoSelected.current = true
     setSelectedMap(name)
-    setLibraryOpen(false)
-  }
+  }, [])
 
   const refreshMapsAndPreview = async () => {
     if (await loadMaps()) setPreviewRefresh(value => value + 1)
@@ -296,75 +256,65 @@ export function MapView({
     }
   }
 
-  const filteredMaps = maps.filter(map => map.name.toLowerCase().includes(search.trim().toLowerCase()))
-  const selectedInfo = maps.find(map => map.name === selectedMap)
+  const saves = useMapSaves({
+    refreshKey: `${session?.product_session_id ?? ''}:${saveStatus?.state ?? ''}`,
+    currentOperationId: saveStatus && 'operation' in saveStatus ? saveStatus.operation?.operation_id : undefined,
+    onContinue: result => void confirmSave(result.name, result),
+    onComplete: result => void confirmSave(result.name, result),
+  })
+  const entries = mapLibraryEntries(maps, saves.history.operations)
+  const settingsRefresh = useCallback(() => {
+    void loadMaps()
+    setPreviewRefresh(value => value + 1)
+  }, [loadMaps])
+  const setSettingsMap = mapSettings?.setMap
+  useEffect(() => {
+    setSettingsMap?.(selectedInfo?.content_epoch ? { name: selectedInfo.name,
+      contentEpoch: selectedInfo.content_epoch, active: selectedInfo.is_active === true,
+      readOnly: observe || !managementAvailable, onChanged: settingsRefresh } : null)
+    return () => setSettingsMap?.(null)
+  }, [selectedInfo?.name, selectedInfo?.content_epoch, selectedInfo?.is_active,
+    observe, managementAvailable, settingsRefresh, setSettingsMap])
   const selectedNavigationMap = selectedMap !== null && session !== null
     && navigationGoalQueueReady(session, selectedMap)
   const selectedStatus = mapUseStatus(selectedInfo, selectedNavigationMap)
+  const selectedIcon = mapLibraryStatus(selectedInfo, entries.find(entry => entry.name === selectedMap)?.operations[0], Boolean(saves.error))
+  const editAvailable = Boolean(managementAvailable && selectedInfo?.has_pcd && selectedInfo.content_epoch)
 
   return (
-    <section className={styles.mapTab} aria-label="已保存地图">
+    <section className={styles.mapTab} data-gallery-open="true" aria-label="已保存地图">
+      {!editing && <div className={styles.toolsBar} role="group" aria-label="地图工具">
+        {!observe && <>
+          <button type="button" aria-label="裁剪点云" data-tool="crop" disabled={!editAvailable}
+            title={managementAvailable ? '框选三维范围，删除选中或仅保留选区' : '地图编辑服务未连接'}
+            onClick={() => setEditTool('crop')}><BoxSelect size={16} /><span>裁剪</span></button>
+          <button type="button" aria-label="清洗点云" data-tool="clean" disabled={!editAvailable || !mapSettings}
+            title={managementAvailable ? '降采样、离群点过滤和小簇清理，预览后另存' : '地图编辑服务未连接'}
+            onClick={() => setEditTool('clean')}><BrushCleaning size={16} /><span>清洗</span></button>
+          <span className={styles.toolDivider} aria-hidden="true" />
+        </>}
+        <button type="button" aria-label="设置禁行区" data-tool="no-go" disabled={observe || !editAvailable || selectedInfo?.is_active}
+          title={selectedInfo?.is_active ? '退出当前地图导航后修改区域' : '在地图上框选并命名禁行区或玻璃障碍'} onClick={() => setEditTool('region')}>
+          <Ban size={16} /><span>禁区</span></button>
+        <button type="button" disabled={observe || !editAvailable} aria-label="人工补面" data-tool="surface"
+          title="框选地面或墙面缺口，预览人工补面后另存并重建" onClick={() => setEditTool('surface')}>
+          <Layers size={16} /><span>补面</span></button>
+        <button type="button" disabled={observe || !editAvailable} aria-label="编辑巡检点" data-tool="point"
+          title="在地图设置巡检点、区域名称与到点动作" onClick={() => setEditTool('point')}>
+          <MapPin size={16} /><span>巡检点</span></button>
+      </div>}
       <header className={styles.mapHeader}>
-        <button className={styles.backButton} onClick={onReturnLive}><ArrowLeft size={17} />现场</button>
-        <span className={styles.headerDivider} />
-        <button className={styles.mapSelector} onClick={() => setLibraryOpen(value => !value)}
-          aria-expanded={libraryOpen} aria-controls="saved-map-library" title={selectedMap ?? '选择地图'}>
-          <Map size={17} strokeWidth={1.6} />
-          <span>{selectedMap ?? '选择地图'}</span><ChevronDown size={15} />
-        </button>
-        {selectedMap && <details className={styles.snapshotInfo} key={selectedMap}>
-          <summary aria-label={`地图状态：${selectedStatus.label}`}>{selectedStatus.label}</summary>
-          <div className={styles.snapshotPopover}>
-            <strong>地图状态</strong>
-            <p>{selectedStatus.detail}</p>
-            {selectedInfo && <dl className={styles.snapshotArtifacts}>
-              <div><dt>保存点云</dt><dd>{selectedInfo.has_pcd ? '已保存' : '缺失'}</dd></div>
-              <div><dt>规划地图</dt><dd data-missing={!selectedInfo.has_octomap}>{selectedInfo.has_octomap ? '已保存' : '缺失'}</dd></div>
-            </dl>}
-            {!observe && selectedInfo?.has_pcd && selectedInfo.content_epoch && <>
-              <label className={styles.resolutionOption}>全局导航地图分辨率
-                <select aria-label="全局导航地图分辨率" value={resolution} onChange={event => setResolution(Number(event.target.value))}>
-                  <option value={0.05}>5 cm</option>
-                  <option value={0.06}>6 cm</option>
-                  <option value={0.1}>10 cm</option>
-                  <option value={0.2}>20 cm</option>
-                </select>
-              </label>
-              <button className={styles.quietButton} disabled={resolutionBuild?.state === 'copying' || resolutionBuild?.state === 'building'}
-                onClick={() => setResolutionCopyOpen(true)}>另存为此分辨率导航地图</button>
-              <p>重建全局规划实际读取的地图，实时局部避障保持原有精度。原图保留，生成后需使用新地图导航。</p>
-            </>}
-            {!!selectedInfo?.activation_blockers?.length && <details>
-              <summary>服务原因</summary>
-              {selectedInfo.activation_blockers.map(blocker => <p key={blocker}>{blocker}</p>)}
-            </details>}
-            {saveStatus?.state === 'saved' && saveStatus.name === selectedMap && <details>
-              <summary>保存详情</summary>
-              <p>{saveStatus.detail}</p><p>{saveStatus.location}</p><p>{saveStatus.summary}</p>
-            </details>}
-          </div>
-        </details>}
+        <button className={styles.backButton} onClick={onReturnLive}><ArrowLeft size={17} />{returnLabel}</button>
         <div className={styles.headerActions}>
-          <button className={styles.quietButton} onClick={() => void refreshMapsAndPreview()}
-            aria-label="刷新地图" title="服务重连后重新读取地图">
-            <RefreshCw size={16} />刷新地图
-          </button>
-          {!observe && selectedMap && selectedInfo && mapIsActivationReady(selectedInfo) && !selectedNavigationMap && (
-            <button className={styles.primaryButton} disabled={!productSwitchAllowed}
-              title={productSwitchReason || '加载这张地图并切换导航'} onClick={() => setUseMapFrom(selectedMap)}>
-              <Navigation size={16} />使用此地图导航
-            </button>
-          )}
-          {!observe && selectedNavigationMap && <button className={styles.primaryButton}
-            onClick={onReturnLive}><Navigation size={16} />在现场中导航</button>}
-          {!observe && session?.product === 'map' && <button className={styles.primaryButton}
+          <button className={styles.quietButton} disabled={editing} onClick={() => void refreshMapsAndPreview()}
+            aria-label="刷新地图" title="重新读取地图"><RefreshCw size={16} /></button>
+          {!observe && !editing && session?.product === 'map' && <button className={styles.primaryButton}
             onClick={handleSave} disabled={Boolean(saveBlockedReason) || saveStatus?.state === 'saving' || saveStatus?.state === 'pending'}
             title={saveBlockedReason || '保存当前建图并查看整图'}>
             <Save size={16} />{saveStatus?.state === 'saving' ? '保存中…' : '保存地图'}
           </button>}
         </div>
       </header>
-      {productSwitchMessage && <div className={styles.saveNotice} role="status">{productSwitchMessage}</div>}
       {capacityNotice && <div className={styles.saveNotice} role="status">{capacityNotice}</div>}
       {resolutionBuild && <div className={styles.saveNotice} role="status">
         <span>{resolutionBuild.message}</span>
@@ -381,8 +331,8 @@ export function MapView({
       <ConfirmModal open={useMapFrom !== null} title="使用此地图导航"
         message={<>
           <p>{session?.product === 'map'
-          ? '将结束本次建图并加载所选地图。请确认最新补扫已保存；随后在现场选择目标并预览路线。'
-          : '将停止当前任务并加载所选地图，随后在现场选择目标并预览路线。'}</p>
+          ? '将结束本次建图并加载所选地图。请确认最新补扫已保存；随后在导航页选择目标并预览路线。'
+          : '将停止当前任务并加载所选地图，随后在导航页选择目标并预览路线。'}</p>
           <label className={styles.poseOption}>
             <input type="checkbox" checked={useInitialPose} onChange={event => setUseInitialPose(event.target.checked)} />
             指定初始位姿
@@ -407,7 +357,7 @@ export function MapView({
             setUseMapFrom(null)
           } catch (cause) { showToast(cause instanceof Error ? cause.message : String(cause), 'error') }
         }} />
-      {saveStatus && <div
+      {saveStatus && !['archived', 'saved'].includes(saveStatus.state) && <div
         className={`${styles.saveNotice} ${saveStatus.state === 'failed' ? styles.saveError : ''}`} role="status">
         <span>{saveStatus.name}：{saveStatus.state === 'failed' ? saveStatus.operation?.operation?.source_saved ? '处理失败：' : '保存失败：' : ''}{saveStatus.detail}</span>
         <span className={styles.saveTiming}>
@@ -424,49 +374,60 @@ export function MapView({
           onClick={() => setSaveStatus(null)} aria-label="关闭保存提示"><X size={16} /></button>}
       </div>}
       <div className={styles.mapWorkspace}>
-        {libraryOpen && <aside id="saved-map-library" className={styles.library} aria-label="地图库">
-          <div className={styles.libraryHeader}>
-            <h2>{text(locale, 'Maps', '地图库')}<span>{maps.length}</span></h2>
-            <button className={styles.iconButton} onClick={loadMaps} aria-label="刷新地图库" title="刷新">
-              <RefreshCw size={16} /></button>
-            <button className={styles.iconButton} onClick={() => setLibraryOpen(false)} aria-label="收起地图库" title="收起">
-              <X size={17} /></button>
-          </div>
-          {(maps.length > 6 || search) && <label className={styles.searchField}>
-            <Search size={16} /><input aria-label="搜索地图" placeholder="搜索地图" value={search}
-              onChange={event => setSearch(event.target.value)} />
-          </label>}
-          <div className={styles.libraryScroll}>
-            {loading && <p className={styles.stateMsg} role="status">正在读取地图…</p>}
-            {error && <div className={styles.stateMsg} role="status">
-              <p>{error}</p>{maps.length > 0 && <p>以下为上次读取的地图。</p>}
-              <button className={styles.quietButton} onClick={() => void loadMaps()}>重试</button>
-            </div>}
-            {!loading && !error && maps.length === 0 && <div className={styles.emptyLibrary}>
-              <FolderOpen size={28} strokeWidth={1.3} /><p>还没有保存的地图</p>
-            </div>}
-            {!loading && <ul className={styles.mapList}>
-              {filteredMaps.map(map => <MapCard key={map.name} m={map} selected={selectedMap === map.name}
-                readOnly={observe}
-                onPreview={togglePreview} onRename={handleRename} onDelete={handleDelete} />)}
-            </ul>}
-            {!loading && maps.length > 0 && filteredMaps.length === 0 && <p className={styles.stateMsg}>没有找到匹配的地图</p>}
-            <MapSaveHistory refreshKey={`${session?.product_session_id ?? ''}:${saveStatus?.state ?? ''}`}
-              readOnly={observe}
-              currentOperationId={saveStatus && 'operation' in saveStatus ? saveStatus.operation?.operation_id : undefined}
-              onContinue={result => void confirmSave(result.name, result)}
-              onComplete={result => void confirmSave(result.name, result)} />
-          </div>
-        </aside>}
-        <div className={styles.mapCanvas}>
-          {selectedMap && selectedInfo ? <PointCloudViewer mapName={selectedMap}
-              contentEpoch={selectedInfo.content_epoch} productSessionId={session?.product_session_id}
-              refreshToken={previewRefresh} /> : <div className={styles.emptyCanvas}>
-              <Map size={36} strokeWidth={1.2} /><h2>查看已保存的地图</h2>
-              <p>选择一张地图，查看完整建图范围。</p>
-              {!libraryOpen && <button className={styles.quietButton} onClick={() => setLibraryOpen(true)}>打开地图库</button>}
-            </div>}
-        </div>
+        <aside id="saved-map-library" className={styles.library} aria-label="地图库">
+          <MapGallery key={previewRefresh} open entries={entries} selectedMap={selectedMap} saves={saves}
+            loading={loading} error={error} readOnly={observe} onSelect={selectMap}
+            onRename={handleRename} onDelete={handleDelete}
+            onRefresh={() => { void refreshMapsAndPreview(); void saves.load() }}
+            editing={editTool && !observe && managementAvailable ? {
+              tool: editTool, onClose: () => setEditTool(null),
+              onOpenMap: name => { setEditTool(null); selectMap(name); void loadMaps() },
+              onMapsChanged: () => void loadMaps(), onExitGuardChange: registerEditGuard,
+            } : null}
+            actions={<>
+                {selectedMap && <details className={styles.mapDetailsToggle} key={selectedMap} data-hover-menu>
+                  <summary aria-label={`地图状态：${selectedIcon.label}`} title={selectedIcon.label} data-status={selectedIcon.kind}><MapStatusIcon kind={selectedIcon.kind} /></summary>
+                  <div className={styles.mapDetailsBody}>
+                    <strong>{selectedIcon.label}</strong>
+                    <p>{selectedIcon.detail}</p>
+                    {selectedNavigationMap && <p>{selectedStatus.detail}</p>}
+                    {selectedInfo && <dl className={styles.snapshotArtifacts}>
+                      <div><dt>保存点云</dt><dd>{selectedInfo.has_pcd ? '已保存' : '缺失'}</dd></div>
+                      <div><dt>规划地图</dt><dd data-missing={!selectedInfo.has_octomap}>{selectedInfo.has_octomap ? '已保存' : '缺失'}</dd></div>
+                    </dl>}
+                    {!observe && !editing && selectedInfo?.has_pcd && selectedInfo.content_epoch && <>
+                      <label className={styles.resolutionOption}>全局导航地图分辨率
+                        <select aria-label="全局导航地图分辨率" value={resolution} onChange={event => setResolution(Number(event.target.value))}>
+                          <option value={0.05}>5 cm</option>
+                          <option value={0.06}>6 cm</option>
+                          <option value={0.1}>10 cm</option>
+                          <option value={0.2}>20 cm</option>
+                        </select>
+                      </label>
+                      <button className={styles.quietButton} disabled={resolutionBuild?.state === 'copying' || resolutionBuild?.state === 'building'}
+                        onClick={() => setResolutionCopyOpen(true)}>另存为此分辨率导航地图</button>
+                      <p>重建全局规划实际读取的地图，实时局部避障保持原有精度。原图保留，生成后需使用新地图导航。</p>
+                    </>}
+                    {!!selectedInfo?.activation_blockers?.length && <details>
+                      <summary>服务原因</summary>
+                      {selectedInfo.activation_blockers.map(blocker => <p key={blocker}>{blocker}</p>)}
+                    </details>}
+                    {saveStatus?.state === 'saved' && saveStatus.name === selectedMap && <details>
+                      <summary>保存详情</summary>
+                      <p>{saveStatus.detail}</p><p>{saveStatus.location}</p><p>{saveStatus.summary}</p>
+                    </details>}
+                  </div>
+                </details>}
+                {!observe && !editing && selectedMap && selectedInfo && mapIsActivationReady(selectedInfo) && !selectedNavigationMap && (
+                  <button className={styles.primaryButton} disabled={!productSwitchAllowed}
+                    title={productSwitchReason || '加载这张地图并切换导航'} onClick={() => setUseMapFrom(selectedMap)}>
+                    <Navigation size={16} />使用此地图导航
+                  </button>
+                )}
+                {!observe && !editing && selectedNavigationMap && <button className={styles.primaryButton}
+                  onClick={onReturnLive}><Navigation size={16} />返回{returnLabel}</button>}
+            </>} />
+        </aside>
       </div>
 
       <PromptModal
@@ -482,7 +443,7 @@ export function MapView({
       >
         <label style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'flex-start' }}>
           <input type="checkbox" checked={autoProcess} onChange={event => setAutoProcess(event.target.checked)} />
-          <span>保存点云后自动后台处理<br /><small>取消勾选后，可从保存记录开始处理。</small></span>
+          <span>保存点云后自动后台处理<br /><small>取消勾选后，点击地图库中的状态图标开始处理。</small></span>
         </label>
       </PromptModal>
 

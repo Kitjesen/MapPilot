@@ -29,13 +29,15 @@ const recordingApiSource = readFileSync(
 
 test('recording is discoverable in scene tools and unavailable in observation mode', () => {
   assert.match(sceneViewSource, /<CircleDot size=\{12\} \/>/)
-  assert.match(sceneViewSource, /recordingPanelOpen \? '收起数据' : '数据流与录制'/)
+  assert.match(sceneViewSource, /setRecordingView\(view => view === 'record' \? null : 'record'\)/)
+  assert.match(sceneViewSource, /setRecordingView\(view => view === 'history' \? null : 'history'\)/)
+  assert.match(sceneViewSource, /view=\{recordingView \?\? 'record'\} onViewChange=\{setRecordingView\}/)
   assert.match(sceneViewSource, /<div id="scene-recording">/)
   assert.doesNotMatch(sceneViewSource, /<FloatingWidget/)
   assert.match(sceneViewSource, /<RecordingPanel[\s\S]*embedded/)
   assert.match(sceneViewSource, /!observe && <div[\s\S]*id="scene-panel-tools"[\s\S]*recordingPanelOpen/)
   assert.doesNotMatch(sceneViewSource, /sceneDebugTools && !observe && recordingPanelOpen/)
-  assert.match(sceneViewSource, /className=\{styles\.toolGroup\}[\s\S]*数据记录/)
+  assert.doesNotMatch(sceneViewSource, /运行概览|taskOverview|robotOverview/)
   assert.doesNotMatch(appSource, /RecordingPanel/)
   assert.doesNotMatch(topbarSource, /key: 'recording'/)
 })

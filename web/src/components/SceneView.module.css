@@ -6,8 +6,8 @@
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  padding: 12px;
-  gap: 16px;
+  padding: 0;
+  gap: 0;
 }
 
 /* Layer button interactions are shared by all display choices. */
@@ -64,8 +64,8 @@
   box-shadow: var(--shadow-sm);
   transition: transform var(--duration-ui) var(--ease-out), background-color var(--duration-ui);
 }
-.layerBtn[aria-pressed='true']::before { background: var(--accent); }
-.layerBtn[aria-pressed='true']::after { background: var(--on-accent); transform: translateX(12px); }
+.layerBtn[aria-pressed='true']::before { background: var(--control-hover); }
+.layerBtn[aria-pressed='true']::after { background: var(--text-dim); transform: translateX(12px); }
 
 .layerBtnActive {
   composes: layerBtn;
@@ -107,14 +107,13 @@
 
 .toolbarBtnPrimary {
   composes: toolbarBtn;
-  color: var(--bg-layer-1);
-  background: var(--text);
+  color: var(--text);
+  background: var(--control-bg);
 }
 
 .toolbarBtnPrimary:hover {
-  background: var(--text);
-  color: var(--bg-layer-1);
-  opacity: .88;
+  background: var(--control-hover);
+  color: var(--text);
 }
 
 /* ── Main workspace ────────────────────────────────────────────── */
@@ -123,9 +122,9 @@
   display: grid;
   position: relative;
   --camera-width: clamp(220px, 24vw, 320px);
-  --scene-tools-width: 108px;
+  --camera-empty-top: 16px;
   --scene-tools-inset: 16px;
-  --scene-panel-top: 80px;
+  --scene-panel-top: calc(var(--camera-empty-top) + 64px + var(--robot-summary-height, 0px));
   --scene-panel-bottom: var(--scene-task-inset, 140px);
   grid-template-columns: minmax(0, 1fr);
   grid-template-areas: 'canvas';
@@ -416,126 +415,6 @@
   font-size: 10.5px;
 }
 
-.mapGroup {
-  margin-bottom: 8px;
-}
-
-.mapGroupTitle {
-  font-size: var(--t-overline-size);
-  font-weight: var(--t-overline-weight);
-  letter-spacing: var(--t-overline-track);
-  text-transform: uppercase;
-  color: var(--t-overline-color);
-  padding: 6px 8px 4px;
-}
-
-.mapItem {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s-2);
-  padding: var(--s-2) var(--s-3);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--r-full);
-  color: var(--t-label-color);
-  font-size: var(--t-label-size);
-  font-weight: var(--t-label-weight);
-  cursor: pointer;
-  transition: all 0.15s var(--ease-out);
-  text-align: left;
-  width: 100%;
-  min-width: 0;
-}
-
-.mapItem > span:first-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mapItem:hover {
-  background: var(--bg-layer-2);
-  color: var(--text);
-}
-
-.mapItemActive {
-  composes: mapItem;
-  background: var(--text);
-  border-color: var(--text);
-  color: var(--bg-layer-1);
-}
-
-.mapItemActive::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--bg-layer-1);
-  box-shadow: none;
-  flex-shrink: 0;
-}
-
-.mapBadge {
-  font-family: var(--font-mono);
-  font-size: var(--t-caption-size);
-  font-weight: var(--t-caption-weight);
-  padding: 1px 6px;
-  border-radius: var(--r-xs);
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--t-caption-color);
-  letter-spacing: 0.04em;
-  font-variant-numeric: tabular-nums;
-  flex: 0 0 auto;
-}
-
-.mapItemActive .mapBadge {
-  background: color-mix(in srgb, var(--bg-layer-1) 16%, transparent);
-  color: var(--bg-layer-1);
-}
-
-/* ── Context menu (right-click on map item) ─────────────────── */
-
-.contextMenu {
-  background: rgba(14, 15, 21, 0.95);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  border: 1px solid var(--border-hi);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-lg);
-  padding: 4px;
-  min-width: 160px;
-  animation: fade-in 0.12s var(--ease-out);
-}
-
-.contextMenuItem {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 12px;
-  background: transparent;
-  border: none;
-  border-radius: var(--r-sm);
-  color: var(--t-label-color);
-  font-size: var(--t-label-size);
-  font-weight: var(--t-label-weight);
-  cursor: pointer;
-  transition: background 0.1s, color 0.1s;
-  text-align: left;
-}
-
-.contextMenuItem:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text);
-}
-
-.contextMenuDanger:hover {
-  background: rgba(248, 113, 113, 0.12);
-  color: var(--red);
-}
-
 .emptyState {
   display: flex;
   flex-direction: column;
@@ -580,8 +459,8 @@
   align-items: center;
   gap: 5px;
   padding: 6px 12px;
-  background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.32);
+  background: var(--control-bg);
+  border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--text);
   font-size: var(--t-caption-size);
@@ -592,15 +471,15 @@
 }
 
 .emptyCta:hover {
-  background: rgba(255, 255, 255, 0.22);
-  border-color: rgba(255, 255, 255, 0.5);
-  color: var(--on-accent);
+  background: var(--control-hover);
+  border-color: var(--border-hi);
+  color: var(--text);
   transform: translateY(-1px);
 }
 
 .emptyCta:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.4);
+  outline: 2px solid var(--border-focus);
+  outline-offset: 3px;
 }
 
 /* ── Center canvas area ────────────────────────────────────────── */
@@ -613,10 +492,10 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: #171b20;
-  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
-  border-radius: 24px;
-  box-shadow: var(--shadow-sm);
+  background: var(--bg);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
   overflow: hidden;
 }
 
@@ -624,7 +503,7 @@
   flex: 1;
   position: relative;
   min-height: 0;
-  background: #171b20;
+  background: var(--bg);
 }
 
 .canvasControls {
@@ -672,86 +551,64 @@
 
 .mapTools {
   position: absolute;
-  top: 16px;
+  top: var(--camera-empty-top);
   right: var(--scene-tools-inset);
-  width: var(--scene-tools-width);
   z-index: 19;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 10px;
+  max-width: calc(100% - var(--scene-tools-inset) * 2);
 }
-.canvasWrap:has(.cameraPip) .mapTools { top: calc(var(--camera-width) * .75 + 28px); }
+.sceneToolGroup {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 16px;
+  background: var(--bg-layer-1);
+  box-shadow: var(--shadow-sm);
+}
 .cameraToggle {
-  display: grid;
-  place-items: center;
-  width: 50px;
-  height: 50px;
-  border: 1px solid #ffffffbf;
-  border-radius: 15px;
-  background: #fafaf9;
-  color: #252b31;
-  box-shadow: 0 4px 16px #0002;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 68px;
+  min-height: 44px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  white-space: nowrap;
   cursor: pointer;
   list-style: none;
 }
+.cameraEntry { min-width: 108px; }
 .cameraToggle::-webkit-details-marker { display: none; }
-.cameraToggle:hover, .cameraToggle[aria-expanded='true'], .viewMenu[open] > summary { background: #e9ecee; }
-.cameraToggle:focus-visible { outline: 2px solid #edf1f5; outline-offset: 3px; }
+.cameraToggle:hover, .cameraToggle[aria-expanded='true'] { background: var(--bg-layer-2); }
+.cameraToggle:focus-visible { outline: 2px solid var(--text); outline-offset: -3px; }
 .mapTools .teleopToggle {
-  display: flex;
-  justify-content: center;
-  width: 100%;
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 4px;
   gap: 8px;
-  padding: 0 8px;
-  border-color: #ffffff30;
-  background: #20262c;
-  color: #f4f5f6;
+  padding: 0 12px;
+  background: var(--bg-layer-1);
+  color: var(--text);
   font: inherit;
   font-size: 14px;
   white-space: nowrap;
 }
 .mapTools .teleopToggle:hover,
-.mapTools .teleopToggle[aria-pressed='true'] { background: #343d45; }
-.viewMenu { position: relative; }
-.viewMenuPanel {
-  position: absolute;
-  top: 0;
-  right: calc(100% + 10px);
-  width: 220px;
-  padding: 7px;
-  background: #fafaf9;
-  color: #252b31;
-  border: 1px solid #ffffff80;
-  border-radius: 16px;
-  box-shadow: 0 8px 28px #0003;
-}
-.viewMenuItem {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 44px;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-size: 14px;
-  cursor: pointer;
-}
-.viewMenuItem:hover { background: #252b310a; }
-.viewMenuItem:disabled { opacity: .45; cursor: not-allowed; }
-
+.mapTools .teleopToggle[aria-pressed='true'] { background: var(--control-bg); }
 .navigationModeSwitch {
   display: inline-flex;
   gap: 3px;
   padding: 4px;
   border: 0;
   border-radius: var(--r-full);
-  background: #e9ecee;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 12%);
+  background: var(--bg-layer-2);
+  box-shadow: var(--shadow-sm);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
 }
@@ -766,26 +623,26 @@
   border: 0;
   border-radius: var(--r-full);
   background: transparent;
-  color: #5e6871;
+  color: var(--text-dim);
   font: 500 var(--t-label-size)/1 var(--font-ui);
   cursor: pointer;
   transition: color 140ms ease, background-color 140ms ease, transform 140ms ease;
 }
 
 .navigationModeSwitch button:hover:not(:disabled) {
-  color: #17212b;
-  background: rgb(23 33 43 / 8%);
+  color: var(--text);
+  background: var(--control-hover);
 }
 
 .navigationModeSwitch button:disabled { cursor: not-allowed; opacity: .55; }
 
 .navigationModeSwitch .navigationModeActive {
-  color: #17212b;
-  background: #eef2f6;
-  box-shadow: 0 2px 7px rgb(0 0 0 / 18%);
+  color: var(--text);
+  background: var(--bg-layer-1);
+  box-shadow: var(--shadow-sm);
 }
 
-.navigationModeSwitch button:focus-visible { outline-color: #dbe2e8; }
+.navigationModeSwitch button:focus-visible { outline-color: var(--border-focus); }
 
 
 .hintBadge {
@@ -827,9 +684,9 @@
 .sidePanel {
   position: absolute;
   top: var(--scene-panel-top);
-  right: calc(var(--scene-tools-inset) + var(--scene-tools-width) + 12px);
+  right: var(--scene-tools-inset);
   z-index: 18;
-  width: min(328px, calc(100% - var(--scene-tools-inset) * 2 - var(--scene-tools-width) - 12px));
+  width: min(328px, calc(100% - var(--scene-tools-inset) * 2));
   max-height: calc(100% - var(--scene-panel-top) - var(--scene-panel-bottom));
   display: flex;
   flex-direction: column;
@@ -1137,9 +994,9 @@
 
 .goalBadgeActive {
   composes: goalBadge;
-  background: var(--text);
-  color: var(--bg-layer-1);
-  border: 1px solid var(--text);
+  background: var(--control-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
 }
 
 .goalBadgeIdle {
@@ -1147,43 +1004,6 @@
   background: rgba(255, 255, 255, 0.04);
   color: var(--text-faint);
   border: 1px solid var(--border);
-}
-
-/* Emergency stop mini-button */
-.cancelNavBtn {
-  width: 100%;
-  padding: var(--s-3);
-  background: rgba(148, 163, 184, 0.08);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  color: var(--text-dim);
-  font-size: var(--t-caption-size);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: all 0.15s var(--ease-out);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-}
-
-.cancelNavBtn:hover {
-  background: rgba(148, 163, 184, 0.14);
-  border-color: var(--border-hi);
-  color: var(--text);
-}
-
-.cancelNavBtn:disabled {
-  opacity: 0.42;
-  cursor: not-allowed;
-}
-
-.cancelNavBtn:disabled:hover {
-  background: rgba(148, 163, 184, 0.08);
-  border-color: var(--border);
-  color: var(--text-dim);
 }
 
 /* ── SLAM mode inline switcher ─────────────────────────────────── */
@@ -1244,13 +1064,13 @@
 
 .cameraPip {
   position: absolute;
-  top: 16px;
-  right: 16px;
+  top: calc(var(--camera-empty-top) + 64px + var(--robot-summary-height, 0px));
+  right: var(--scene-tools-inset);
   z-index: 14;
   width: var(--camera-width);
   max-width: calc(100% - 32px);
   background: #171b20;
-  border: 1px solid #ffffff42;
+  border: 0;
   border-radius: 20px;
   overflow: hidden;
   box-shadow: 0 6px 24px #0002;
@@ -1262,14 +1082,12 @@
   z-index: 2;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
   padding: 8px;
   background: linear-gradient(#0004, transparent);
 }
-.cameraState { display: inline-flex; align-items: center; gap: 7px; min-width: 0; min-height: 36px; padding: 0 9px; color: #fff; background: #151b23a8; border-radius: 10px; font-size: 13px; }
-.cameraState > svg { flex-shrink: 0; }
-.cameraState > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cameraState { color: var(--text-dim); font-size: 12px; font-weight: 400; }
 .cameraPipWithGoal { width: var(--camera-width); }
 
 .cameraPipMedia {
@@ -1294,16 +1112,14 @@
   pointer-events: none;
 }
 
-.cameraDockEmpty { width: min(340px, calc(100% - 24px)); }
-.cameraDockEmpty .cameraPipHeader { position: relative; background: none; }
-.cameraDockEmpty .cameraState { color: #c6cdd5; background: transparent; }
-.cameraDockEmpty .cameraPipMedia { position: absolute; inset: 0; height: 100%; aspect-ratio: auto; }
+/* The pending video needs a measurable container before its first frame. */
+.cameraDockEmpty { opacity: 0; pointer-events: none; }
 
 .cameraPipHeader button { display: grid; place-items: center; min-width: 44px; min-height: 44px; border-radius: 12px; background: #fafaf9; border: 0; color: #252b31; cursor: pointer; }
 .cameraPipHeader button:hover { background: #e9ecee; }
 .cameraPip .cameraPipHeader button:focus-visible { outline: 2px solid #ededed; outline-offset: -4px; }
-.workspace:has(.cameraPip) { --scene-panel-top: calc(var(--camera-width) * .75 + 28px); }
-.workspace:has(.cameraPip) > .drawer { top: var(--scene-panel-top); max-height: calc(100% - var(--scene-panel-top) - var(--scene-panel-bottom)); }
+.workspace:has(.cameraPip:not(.cameraDockEmpty)) { --scene-panel-top: calc(var(--camera-empty-top) + var(--robot-summary-height, 0px) + var(--camera-width) * .75 + 76px); }
+.workspace > .drawer { top: var(--scene-panel-top); max-height: calc(100% - var(--scene-panel-top) - var(--scene-panel-bottom)); }
 
 /* ── Relocalize panel ──────────────────────────────────────────── */
 
@@ -1530,20 +1346,6 @@
 /* ── Goal confirm panel ────────────────────────────────────────── */
 
 .goalConfirmPanel {
-  --text: #eef2f6;
-  --text-dim: #c4cdd6;
-  --text-faint: #adb8c4;
-  --t-label-color: #c4cdd6;
-  --t-caption-color: #adb8c4;
-  --t-body-color: #dbe2e8;
-  --t-title-color: #eef2f6;
-  --border: #ffffff26;
-  --glass-hi: #26313d;
-  --glass-lo: #1d2732;
-  --accent: #e5eaf0;
-  --accent-glow: #ffffff14;
-  --on-accent: #17212b;
-  --bg-layer-2: #25303b;
   position: absolute;
   bottom: 12px;
   left: 12px;
@@ -1559,11 +1361,10 @@
   overflow: auto;
   overscroll-behavior: contain;
   color: var(--text);
-  background: rgb(20 28 36 / 92%);
-  backdrop-filter: blur(16px);
+  background: var(--bg-layer-1);
   border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
   border-radius: var(--r-lg);
-  box-shadow: 0 22px 54px rgb(8 12 16 / 28%);
+  box-shadow: var(--shadow-md);
   pointer-events: all;
   z-index: 11;
   animation: goal-card-enter 170ms var(--ease-out);
@@ -1596,7 +1397,7 @@
 }
 .routeDetailsLink:disabled { opacity: .45; cursor: default; }
 .goalFocusButton { min-height: 44px; margin: -6px 0; padding: 0; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text); font-family: inherit; cursor: pointer; }
-.goalFocusButton:hover:not(:disabled) { color: #f2c97d; }
+.goalFocusButton:hover:not(:disabled) { color: var(--text-dim); }
 .goalFocusButton:disabled { cursor: default; }
 .goalFocusButton:focus-visible { outline: 2px solid var(--text); outline-offset: 4px; }
 .goalMetrics { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 8px 0 14px; border-bottom: 1px solid var(--border); }
@@ -1608,7 +1409,7 @@
 .goalSelectionHint { margin: 0; font-size: var(--type-caption); line-height: 1.5; color: var(--text-dim); }
 .goalPlanSummary[data-state]::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 8px; border-radius: 50%; background: var(--text-dim); vertical-align: middle; }
 .goalPlanSummary[data-state='ready']::before { background: #a7c1af; }
-.goalPlanSummary[data-state='error'] { color: #edbc6a; }
+.goalPlanSummary[data-state='error'] { color: var(--warn); }
 .goalPlanSummary[data-state='error']::before { background: currentColor; }
 
 .routeDraftList {
@@ -1807,7 +1608,6 @@
 .mappingObservationLegend { display: flex; flex-wrap: wrap; gap: 12px; font-size: var(--t-body-size); color: var(--t-body-color); }
 .mappingObservationLegend span { display: inline-flex; align-items: center; gap: 6px; }
 .mappingObservationLegend i { width: 12px; height: 12px; border-radius: 3px; }
-.mappingViewSwitch { display: flex; border: 1px solid var(--border); border-radius: 9px; padding: 2px; }
 .mappingTruth { margin: 0; color: var(--text); font-weight: 620; }
 .observationArea { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .unobservedSwatch { background: rgba(83, 88, 94, 0.39); }
@@ -1932,9 +1732,9 @@
 .goalRetryBtn:disabled { opacity: .45; cursor: not-allowed; }
 
 .singleGoalPanel .goalConfirmActions > .goalConfirmBtn:first-child:not(:disabled) {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
+  background: var(--control-bg);
+  border-color: var(--control-bg);
+  color: var(--text);
 }
 
 .singleGoalPanel .goalConfirmActions > .goalConfirmBtn:first-child:hover:not(:disabled) {
@@ -1987,7 +1787,6 @@
   .goalConfirmActions > button { min-height: 44px; padding: 7px 10px; font-size: var(--t-label-size); }
   .goalConfirmActions > button:first-child { flex-basis: auto; }
   .goalCancelBtn { min-height: 36px; padding: 7px 10px; }
-  .mapTools { top: 8px; right: 8px; }
   .navigationModeSwitch button { padding: 0 8px; }
   .routePointActions button { width: 34px; height: 34px; }
 }
@@ -2073,13 +1872,13 @@
   border-color: rgba(245, 158, 11, 0.45);
 }
 
-.sceneLayerLegendStale small { color: #fbbf24; }
+.sceneLayerLegendStale small { color: var(--warn); }
 
 .sceneLayerLegendError {
   border-color: rgba(239, 68, 68, 0.5);
 }
 
-.sceneLayerLegendError small { color: #fca5a5; }
+.sceneLayerLegendError small { color: var(--red); }
 
 .elevationRamp {
   width: 142px;
@@ -2191,8 +1990,8 @@
 .legendCandidate { background: #d8dee9; }
 .legendSelected { background: #35f26d; }
 
-.toolbarBtnSelected { composes: toolbarBtn; color: var(--bg-layer-1); background: var(--text); }
-.toolbarBtnSelected:hover { color: var(--bg-layer-1); background: var(--text); }
+.toolbarBtnSelected { composes: toolbarBtn; color: var(--text); background: var(--control-bg); }
+.toolbarBtnSelected:hover { color: var(--text); background: var(--control-bg); }
 .toolbarBtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 .menuLabel { color: var(--t-label-color); font-size: var(--t-label-size); }
@@ -2242,8 +2041,6 @@
 .units { color: var(--t-caption-color); font-size: var(--t-caption-size); line-height: 1.55; margin: 7px 0 12px; overflow-wrap: anywhere; }
 .statusDetails { margin-top: 13px; font-size: var(--t-label-size); }
 .statusDetails summary { color: var(--text-dim); cursor: pointer; }
-.motionActions { display: grid; grid-template-columns: 1fr; gap: 8px; padding: 15px; }
-.motionActions button { min-height: 36px; padding: 8px; border-radius: 7px; font-size: var(--t-body-size); box-shadow: none; }
 .routeKey { background: #089cc6; }
 .globalKey { background: #6d8fae; }
 .trailKey { background: #98a5b2; }
@@ -2275,7 +2072,7 @@
 }
 .workspaceTabs { display: flex; margin: 10px 12px 2px; padding: 4px; gap: 4px; border: 0; border-radius: var(--r-full); background: var(--bg-layer-2); }
 .workspaceTabs button { flex: 1; padding: 8px 10px; color: var(--t-body-color); background: transparent; border: 0; border-radius: var(--r-full); cursor: pointer; font: inherit; font-size: var(--t-body-size); font-weight: 500; }
-.workspaceTabs button[aria-selected='true'] { color: var(--bg-layer-1); background: var(--text); }
+.workspaceTabs button[aria-selected='true'] { color: var(--text); background: var(--control-bg); }
 .mapToolbar { display: flex; gap: 7px; margin: 4px 0 12px; }
 .mapToolbar button:first-child { flex: 1; }
 .mapWorkbench > summary { cursor: pointer; color: var(--t-body-color); font-size: var(--t-body-size); padding: 2px 0; }
@@ -2301,16 +2098,12 @@
   .workspaceTabs { flex-shrink: 0; }
 }
 
-.mapRow { display: flex; align-items: center; gap: 2px; }
-.mapRow > .mapItem, .mapRow > .mapItemActive { flex: 1; min-width: 0; }
-.mapActionsButton { display: grid; place-items: center; padding: 6px; color: var(--text-dim); background: transparent; border: 0; border-radius: 5px; cursor: pointer; }
-.mapActionsButton:hover { color: var(--text); background: var(--glass-hi); }
 
 .sidePanel { align-self: start; }
 .robotLocalization { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0 20px; font-size: var(--type-secondary); color: var(--text-dim); }
 .robotLocalization strong { padding: 4px 10px; border-radius: var(--r-full); background: var(--bg-layer-2); color: var(--text-dim); font-size: var(--type-caption); font-weight: 500; }
 .robotLocalization strong[data-available='true'] { background: color-mix(in srgb, var(--signal-mint) 10%, var(--bg-layer-1)); color: var(--signal-mint); }
-.robotNotice { padding: 12px; margin: 14px 0; border-radius: var(--r-md); background: var(--warn-glow); color: var(--warn); }
+.robotNotice { padding: 12px; margin: 14px 0; border-radius: var(--r-md); background: var(--bg-layer-2); color: var(--text-dim); }
 .robotNotice .statusLine { margin: 0; color: inherit; }
 .robotNotice button { margin-top: 10px; }
 .speedOverview { display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; margin: 4px 0 22px; }
@@ -2383,13 +2176,13 @@
   background: var(--bg-layer-1);
   box-shadow: var(--shadow-md);
 }
-.mappingDisplayOptions .mappingViewSwitch { grid-column: 1 / -1; }
-.mappingDisplayOptions .mappingViewSwitch button { flex: 1; }
+.mappingDisplayOptions .navigationModeSwitch { grid-column: 1 / -1; display: flex; }
+.mappingDisplayOptions .navigationModeSwitch button { flex: 1; }
 .mappingDisplayOptions button[aria-label] > span { display: inline; }
 .inspectorTabs { display: flex; gap: 3px; padding: 3px; min-height: 42px; border: 0; border-radius: var(--r-full); background: var(--bg-layer-2); box-shadow: none; flex-shrink: 0; }
 .inspectorTabs button { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 8px; border: 0; border-radius: var(--r-full); background: transparent; color: var(--t-label-color); font: inherit; font-size: var(--t-label-size); font-weight: 500; cursor: pointer; }
 .inspectorTabs button:hover { color: var(--text); }
-.inspectorTabs button[aria-selected='true'] { background: var(--text); color: var(--bg-layer-1); font-weight: 500; box-shadow: var(--shadow-sm); }
+.inspectorTabs button[aria-selected='true'] { background: var(--control-bg); color: var(--text); font-weight: 500; box-shadow: var(--shadow-sm); }
 .inspectorBody { flex: 0 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 2px; border-radius: 12px; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--border-hi) transparent; scrollbar-gutter: stable; animation: inspector-reveal var(--duration-ui) var(--ease-out); }
 .inspectorBody::-webkit-scrollbar { width: 5px; }
 .inspectorBody::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: var(--r-full); }
@@ -2398,7 +2191,6 @@
   .inspectorBody::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
   .inspectorBody::-webkit-scrollbar-track { background: transparent; }
 }
-.sidePanel .motionActions { flex-shrink: 0; margin: 0; padding: 4px; }
 .inspectorBody > .statCard:last-child { border-bottom: 0; }
 .inspectorBody > .statCard > .statusLine { margin-bottom: 8px; }
 .inspectorBody > .statCard > .statusDetails { margin-top: 9px; padding-top: 8px; }
@@ -2444,9 +2236,9 @@
   line-height: var(--leading-caption);
   transition: color var(--duration-ui), background-color var(--duration-ui);
 }
-.layerTileGrid .layerBtn[aria-pressed='true'] { color: var(--bg-layer-1); font-weight: 500; background: var(--text); }
+.layerTileGrid .layerBtn[aria-pressed='true'] { color: var(--text); font-weight: 500; background: var(--control-bg); }
 .layerTileGrid .layerBtn:hover, .layerTileGrid .layerBtn:focus-visible { background: var(--bg-layer-2); }
-.layerTileGrid .layerBtn[aria-pressed='true']:hover, .layerTileGrid .layerBtn[aria-pressed='true']:focus-visible { background: var(--text); }
+.layerTileGrid .layerBtn[aria-pressed='true']:hover, .layerTileGrid .layerBtn[aria-pressed='true']:focus-visible { background: var(--control-hover); }
 .layerTileGrid .layerBtn > svg { width: 16px; height: 16px; color: currentColor; }
 .layerTileGrid .layerBtn::before,
 .layerTileGrid .layerBtn::after { content: none; }
@@ -2556,7 +2348,7 @@
 .backToInspector:hover { background: var(--accent-glow); }
 @keyframes inspector-reveal { from { opacity: .5; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 420px) {
-  .sceneView { padding: 10px 10px var(--scene-bottom-inset, 10px); gap: 12px; }
+  .sceneView { padding: 0; gap: 0; }
 }
 
 /* Inspection and control share the side column; neither covers the map. */
@@ -2566,18 +2358,18 @@
 .scanSurfaceKey { background: #587b95; }
 
 /* Mapping keeps the live canvas primary; details open only on request. */
-.sceneView.mappingScene { padding: 12px 12px var(--scene-bottom-inset, 12px); gap: 0; }
+.sceneView.mappingScene { padding: 0; gap: 0; }
 .mappingScene .workspace { gap: 12px; }
 .workspace.inspectorCollapsed {
   grid-template-columns: minmax(0, 1fr);
   grid-template-areas: 'canvas';
 }
-.mappingScene .canvasArea { border: 0; border-radius: 24px; }
+.mappingScene .canvasArea { border: 0; border-radius: 0; }
 .mappingScene .cameraActions { gap: 3px; }
 .mappingScene .cameraActions .toolbarBtnPrimary {
-  color: var(--bg-layer-1);
-  background: var(--text);
-  border-color: var(--text);
+  color: var(--text);
+  background: var(--control-bg);
+  border-color: var(--control-bg);
 }
 .mappingScene .cameraActions .toolbarBtnPrimary:hover { opacity: .88; }
 .mappingScene .drawer {
@@ -2615,6 +2407,7 @@
 
 /* A temporary goal sits above the persistent current-task controls. */
 .navigationPanels { position: absolute; left: 50%; bottom: 20px; display: flex; flex-direction: column; gap: 12px; width: min(520px, calc(100% - 280px)); transform: translateX(-50%); pointer-events: none; z-index: 16; }
+.navigationPanels:has([data-agent-conversation] [role='log']) { z-index: 26; }
 .navigationPanels > * { pointer-events: auto; }
 .navigationPanels > .routeDraftPanel { position: relative; inset: auto; width: 100%; max-height: min(48dvh, 380px); }
 .taskPanelSlot { display: flex; flex-direction: column; gap: 10px; flex: 0 0 auto; width: 100%; overflow: visible; }
@@ -2623,36 +2416,37 @@
 .taskPanelSlot[hidden], .taskPanelSlot:empty { display: none; }
 .navigationPanels[data-map-editing='true'] { width: min(650px, calc(100% - 280px)); }
 .navigationPanels[data-map-editing='true'] .taskPanelSlot > [data-instruction-bar][data-state='idle'] { display: none; }
-.goalConfirmPanel.singleGoalPanel { position: relative; inset: auto; width: 100%; max-width: 100%; max-height: none; overflow: visible; flex: 0 0 auto; gap: 0; padding: 8px 16px; background: rgb(23 27 31 / 97%); }
-.singleGoalPanel .goalConfirmHeader { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-.singleGoalPanel .goalFocusButton { min-height: 36px; margin: 0; font-size: 16px; }
+.goalConfirmPanel.singleGoalPanel { position: relative; inset: auto; align-self: center; width: min(420px, 100%); max-width: 100%; max-height: none; overflow: visible; flex: 0 0 auto; grid-template-columns: auto minmax(0, 1fr) 28px; gap: 0 8px; padding: 6px 10px; border: 0; border-radius: 16px; background: var(--bg-layer-1); animation: goal-card-enter 180ms var(--ease-out); }
+.singleGoalPanel .goalConfirmHeader { display: contents; }
+.singleGoalPanel .goalFocusButton { grid-column: 1; grid-row: 1; min-height: 28px; margin: 0; font-size: 12px; }
+.singleGoalPanel .goalDismissBtn { grid-column: 3; grid-row: 1; width: 28px; height: 28px; }
+.singleGoalPanel > :is(.goalHeadingRow, .goalPositionDetails, .goalOffsetNotice, .goalErrorDetails, .goalFooter, .goalSecondaryAction) { grid-column: 1 / -1; }
 .goalDismissBtn { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 10px; background: transparent; color: var(--text-dim); cursor: pointer; }
-.goalDismissBtn:hover:not(:disabled) { background: #ffffff0d; color: var(--text); }
+.goalDismissBtn:hover:not(:disabled) { background: var(--bg-layer-2); color: var(--text); }
 .goalDismissBtn:disabled { opacity: .4; cursor: not-allowed; }
 .goalDismissBtn:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
-.singleGoalPanel .goalMetrics { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0; padding: 8px 0; border-top: 1px solid var(--border); border-bottom: 0; }
-.singleGoalPanel .goalMetrics > div { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.singleGoalPanel .goalMetrics > div + div { padding-left: 14px; }
-.singleGoalPanel .goalMetrics strong { font-size: 24px; white-space: nowrap; }
-.singleGoalPanel .goalMetrics span { font-size: 13px; }
-.singleGoalPanel .goalMetrics small { font-size: 13px; }
-.goalFooter { position: static; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
-.singleGoalPanel .goalPlanSummary { min-width: 0; font-size: 13px; line-height: 1.45; white-space: normal; overflow: visible; }
+.singleGoalPanel .goalMetrics { grid-column: 2; grid-row: 1; display: flex; justify-content: flex-end; gap: 16px; margin: 0; padding: 0; border: 0; }
+.singleGoalPanel .goalMetrics > div { display: flex; align-items: baseline; gap: 6px; min-width: 0; line-height: 1.2; }
+.singleGoalPanel .goalMetrics strong { font-size: 16px; white-space: nowrap; }
+.singleGoalPanel .goalMetrics span { font-size: 12px; }
+.singleGoalPanel .goalMetrics small { font-size: 12px; }
+.goalFooter { position: static; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px; padding-top: 3px; border-top: 0; }
+.singleGoalPanel .goalPlanSummary { min-width: 0; font-size: 12px; line-height: 1.45; white-space: normal; overflow: visible; }
 .singleGoalPanel .goalPlanSummary[data-state='ready']::before { background: #bcc6c0; }
-.singleGoalPanel .goalPlanSummary[data-state='blocked'] { color: #edbc6a; }
+.singleGoalPanel .goalPlanSummary[data-state='blocked'] { color: var(--warn); }
 .singleGoalPanel .goalPlanSummary[data-state='blocked']::before { background: currentColor; }
 .singleGoalPanel .goalSettings { position: static; grid-column: auto; }
-.singleGoalPanel .goalSettings > summary { min-height: 44px; padding: 6px 10px; background: #ffffff0a; }
+.singleGoalPanel .goalSettings > summary { min-height: 30px; padding: 4px 7px; font-size: 12px; background: transparent; }
 .singleGoalPanel .goalSettings[open] > summary { margin: 0; width: auto; }
-.singleGoalPanel .goalSettingsBody { position: absolute; left: auto; right: calc(100% + 12px); bottom: 0; width: 300px; z-index: 22; max-height: min(420px, calc(100dvh - 160px)); margin: 0; padding: 16px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: 16px; background: #20262c; box-shadow: 0 14px 38px #0005; }
+.singleGoalPanel .goalSettingsBody { position: absolute; left: auto; right: calc(100% + 12px); bottom: 0; width: 300px; z-index: 22; max-height: min(420px, calc(100dvh - 160px)); margin: 0; padding: 16px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: 16px; background: var(--bg-layer-1); box-shadow: var(--shadow-lg); }
 .singleGoalPanel .goalControlGroup { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .goalSettingsFooter { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; color: var(--text-dim); font-size: 13px; }
 .goalSettingsFooter button { flex-shrink: 0; min-height: 36px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: transparent; cursor: pointer; }
 .singleGoalPanel .goalSelect { padding: 0 6px; }
-.singleGoalPanel :is(.goalConfirmBtn, .goalRetryBtn) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 8px 14px; border: 0; border-radius: 15px; background: #fff; color: #171b1f; font-size: 14px; font-weight: 600; white-space: nowrap; }
-.singleGoalPanel :is(.goalConfirmBtn, .goalRetryBtn):hover:not(:disabled) { background: #e9edf1; }
+.singleGoalPanel :is(.goalConfirmBtn, .goalRetryBtn) { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 32px; padding: 5px 10px; border: 0; border-radius: 10px; background: var(--control-bg); color: var(--text); font-size: 12px; font-weight: 500; white-space: nowrap; transition: background-color 140ms, transform 140ms; }
+.singleGoalPanel :is(.goalConfirmBtn, .goalRetryBtn):hover:not(:disabled) { background: var(--control-hover); }
 .singleGoalPanel :is(.goalConfirmBtn, .goalRetryBtn):disabled { opacity: .45; cursor: not-allowed; }
-.singleGoalPanel :is(.goalConfirmBtn, .goalRetryBtn):focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+.singleGoalPanel :is(.goalConfirmBtn, .goalRetryBtn):focus-visible { outline: 2px solid var(--border-focus); outline-offset: 3px; }
 .goalSecondaryAction { margin-top: 10px; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: #ffffff0a; cursor: pointer; }
 .goalSecondaryAction:disabled { opacity: .45; cursor: not-allowed; }
 .goalErrorDetails { border-top: 1px solid var(--border); padding-top: 8px; }
@@ -2664,9 +2458,6 @@
 @media (max-width: 560px) {
   .singleGoalPanel .goalControlGroup { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .singleGoalPanel .goalMetrics { gap: 8px; }
-  .singleGoalPanel .goalMetrics > div { gap: 6px; }
-  .singleGoalPanel .goalMetrics > div + div { padding-left: 10px; }
-  .singleGoalPanel .goalMetrics strong { font-size: 22px; }
   .goalFooter { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
   .singleGoalPanel .goalPlanSummary { grid-column: 1 / -1; }
   .singleGoalPanel .goalSettings { justify-self: start; }
@@ -2674,71 +2465,67 @@
 
 .cameraActions { display: flex; flex-shrink: 0; align-items: center; gap: 6px; }
 .cameraPipHeader .cameraActions { width: auto; }
-.cameraPip.cameraPipExpanded { display: flex; flex-direction: column; width: min(700px, calc(100% - 48px)); max-height: calc(100% - var(--scene-task-inset, 32px) - 16px); z-index: 24; }
+.cameraPip.cameraPipExpanded { display: flex; flex-direction: column; width: min(700px, calc(100% - 48px)); max-height: calc(100% - var(--scene-task-inset, 32px) - var(--camera-empty-top) - 64px); z-index: 24; }
 .cameraPipExpanded .cameraPipMedia { flex: 0 1 auto; min-height: 0; }
 @media (max-width: 760px) {
-  .cameraPip.cameraPipExpanded { width: calc(100% - 24px); max-height: calc(100% - var(--scene-task-inset, 32px) - 76px); }
+  .cameraPip.cameraPipExpanded { width: calc(100% - 24px); }
   .cameraActions { gap: 4px; }
 }
 @media (max-width: 760px) {
   .navigationPanels { bottom: calc(72px + env(safe-area-inset-bottom)); width: min(520px, calc(100% - 24px)); }
   .navigationPanels[data-map-editing='true'] { width: min(650px, calc(100% - 24px)); }
-  .workspace { --camera-width: 180px; --scene-tools-width: 44px; --scene-tools-inset: 12px; --scene-panel-top: 76px; }
-  .cameraPip { top: 76px; right: 12px; }
-  .mapTools { top: 76px; right: 12px; gap: 8px; }
-  .canvasWrap:has(.cameraPip) .mapTools { top: calc(var(--camera-width) * .75 + 88px); }
-  .cameraToggle { width: 44px; height: 44px; border-radius: 13px; }
-  .mapTools .teleopToggle { padding: 0; }
+  .workspace { --camera-width: 180px; --scene-tools-inset: 12px; }
+  .mapTools .teleopToggle { min-width: 44px; width: 44px; padding: 0; }
   .mapTools .teleopToggle > span { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .workspace > .drawer { right: 68px; width: min(328px, calc(100% - 80px)); max-height: calc(100% - var(--scene-panel-top) - var(--scene-panel-bottom)); }
-  .workspace:has(.cameraPip) { --scene-panel-top: calc(var(--camera-width) * .75 + 88px); }
-  .workspace:has(.cameraPip) > .drawer { top: var(--scene-panel-top); }
+  .workspace > .drawer { right: 12px; width: min(328px, calc(100% - 24px)); }
 }
 
 @media (min-width: 1680px) {
-  .workspace:has(.cameraPip) > .sidePanel {
-    --scene-panel-top: 16px;
+  .workspace:has(.cameraPip:not(.cameraDockEmpty)) > .sidePanel {
+    --scene-panel-top: calc(var(--camera-empty-top) + 64px + var(--robot-summary-height, 0px));
     right: calc(var(--camera-width) + var(--scene-tools-inset) + 12px);
   }
 }
 
 @media (max-height: 520px) and (min-width: 600px) {
-  .cameraPip { top: 16px; }
-  .cameraPip.cameraPipExpanded { max-height: calc(100% - var(--scene-task-inset, 32px) - 16px); }
-  .canvasWrap:has(.cameraPip) .mapTools { top: calc(var(--camera-width) * .75 + 28px); }
   .navigationPanels { left: 112px; right: 76px; bottom: max(16px, env(safe-area-inset-bottom)); width: auto; transform: none; }
   .navigationPanels[data-map-editing='true'] { width: auto; }
 }
 
-.routePointNumber { background: #ffffff08; cursor: pointer; }
-.routePointNumber:hover { background: #ffffff20; }
+@media (max-width: 1200px) { .workspace { --camera-empty-top: 76px; } }
+@media (max-width: 700px) { .workspace { --camera-empty-top: 144px; } }
+
+.routePointNumber { background: var(--bg-layer-2); cursor: pointer; }
+.routePointNumber:hover { background: var(--control-hover); }
 .routePointNumber:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 
 /* Fullscreen overrides mapping and narrow-screen layout, keeping the map primary. */
-.sceneView.sceneFullscreen {
-  position: fixed;
-  inset: 0;
-  z-index: 10;
-  padding: 0;
-  gap: 0;
-  overflow: hidden;
-}
+.goalHeadingRow { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; margin:0; }
+.goalHeadingRow label { display:flex; flex-basis:100%; align-items:center; gap:6px; font-size:14px; color:var(--text-dim); }
+.goalHeadingRow input { width:96px; height:36px; min-height:36px; padding:3px 8px; border:1px solid var(--border); border-radius:8px; background:var(--bg-layer-2); color:var(--text); font-size:18px; font-weight:600; line-height:1.2; font-variant-numeric:tabular-nums; }
+.goalHeadingRow input::placeholder { color:var(--text-dim); font-size:14px; font-weight:400; }
+.goalHeadingRow button { display:flex; align-items:center; justify-content:center; gap:5px; min-height:36px; padding:5px 10px; border:1px solid var(--border); border-radius:8px; background:transparent; color:var(--text); cursor:pointer; }
+.goalHeadingRow button[aria-pressed="true"] { background:var(--control-bg); border-color:var(--text-dim); }
+.goalHeadingRow :is(button,input):focus-visible { outline:2px solid var(--text); outline-offset:2px; }
+.goalHeadingRow button:disabled { opacity:.45; cursor:not-allowed; }
+.goalOffsetNotice { margin:2px 0 6px; color:var(--text-dim); font-size:12px; }
+.goalPositionDetails > summary { width:fit-content; min-height:28px; padding:4px 0; color:var(--text-dim); font-size:12px; cursor:pointer; }
+.goalPositionDetails > summary:focus-visible { outline:2px solid var(--text); outline-offset:2px; }
+.goalEndpoints { display:grid; gap:5px; max-height:18dvh; overflow:auto; margin:0 0 8px; font-size:12px; line-height:1.5; font-variant-numeric:tabular-nums; }
+.goalEndpoints > div { display:flex; justify-content:space-between; gap:10px; }
+.goalEndpoints dt { flex-shrink:0; color:var(--text-dim); }
+.goalEndpoints dd { margin:0; text-align:right; overflow-wrap:anywhere; }
+.goalEndpoints [data-kind="planned"] dd { color:var(--text); }
+.goalEndpoints dd span { color:var(--text-dim); }
 
-.sceneView.sceneFullscreen .workspace {
-  flex: 1;
-  height: 100%;
-  grid-template-areas: 'canvas';
-  grid-template-columns: minmax(0, 1fr);
-}
 
-.sceneView.sceneFullscreen .workspace.inspectorCollapsed {
-  grid-template-areas: 'canvas';
-  grid-template-columns: minmax(0, 1fr);
-}
+.centerTelemetry { position: absolute; z-index: 14; top: 16px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; justify-content: center; gap: 18px; max-width: calc(100% - 320px); min-height: 40px; padding: 8px 18px; border-radius: 16px; background: var(--bg-layer-1); box-shadow: var(--shadow-sm); pointer-events: none; }
+.centerTelemetry > span { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; font-size: 12px; color: var(--text-dim); }
+.centerTelemetry strong { min-width: 18px; font-size: 14px; font-weight: 550; font-variant-numeric: tabular-nums; color: var(--text); }
+.centerTelemetry small { font-size: 11px; }
+@media (max-width: 700px) { .centerTelemetry { top: 78px; gap: 12px; padding: 8px 12px; max-width: calc(100% - 24px); } .centerTelemetry > span { gap: 4px; font-size: 11px; } .centerTelemetry strong { font-size: 13px; } }
 
-.sceneView.sceneFullscreen .canvasArea {
-  height: 100%;
-  min-height: 0;
-  border: 0;
-  border-radius: 0;
-}
+.goalPreviewReason { margin: 6px 0 10px; color: var(--text-dim); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.singleGoalPanel :is(.goalConfirmBtn, .goalRetryBtn):active:not(:disabled) { transform: scale(.97); }
+.singleGoalPanel .goalSettings[open] .goalSettingsBody { animation: scene-surface-enter 160ms var(--ease-out); }
+@media (pointer: coarse) { .singleGoalPanel :is(.goalConfirmBtn, .goalRetryBtn), .singleGoalPanel .goalSettings > summary, .singleGoalPanel .goalFocusButton, .singleGoalPanel .goalDismissBtn { min-height: 40px; } }

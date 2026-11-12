@@ -14,6 +14,12 @@ import { estimateSceneTime, freshSource } from './sceneTelemetry.ts'
 /** Older navigation status is presented as unknown, never as the last good state. */
 export const NAVIGATION_STATUS_MAX_AGE_S = 7
 
+/** HTTP snapshots and SSE share Gateway timestamps; delayed replies must not rewind them. */
+export function latestNavigationStatus(current: NavigationStatusResponse | null, incoming: NavigationStatusResponse | null | undefined): NavigationStatusResponse | null {
+  if (!incoming || !Number.isFinite(incoming.ts)) return current
+  return current && current.ts > incoming.ts ? current : incoming
+}
+
 /** Return navigation status only while the stream is connected and the status is fresh. */
 export function liveNavigationStatus(
   sseState: Pick<SSEState, 'connected' | 'navigationStatus' | 'stateSnapshot' | 'stateSnapshotReceivedAt'>,
@@ -167,6 +173,28 @@ export function operatorReasonMessage(reason: string, locale: Locale): string {
   if (!value) return ''
 
   const messages: Array<[string, string, string]> = [
+    ['navigation_session_inactive', '机器人导航服务未启动', 'Robot navigation service is not active'],
+    ['preview_result_invalid', '预览未返回与所选位置对应的有效终点，请重试。', 'The preview did not return a valid endpoint for the selected target. Try again.'],
+    ['goal_outside_static_map', '目标超出当前地图范围，请在地图内重新选点。', 'The goal is outside the current map. Select a point inside it.'],
+    ['goal_snap_exhausted', '目标附近没有满足地面支撑与通行条件的位置，请重新选点。', 'No nearby goal meets ground support and passage requirements. Select another point.'],
+    ['start_occupied', '机器人当前位置与地图障碍相交，请检查定位和周围环境。', 'The robot position intersects a mapped obstacle. Check localization and the surroundings.'],
+    ['start_unsupported', '机器人当前位置缺少有效地面支撑，请检查定位和地图。', 'The robot position lacks valid ground support. Check localization and the map.'],
+    ['start_temporary_obstacle', '导航起点被当前障碍占用，请先检查周围环境。', 'The navigation start is occupied by a current obstacle. Check the surroundings.'],
+    ['start_outside_static_map', '机器人当前位置超出地图范围，请检查定位或加载的地图。', 'The robot position is outside the map. Check localization or the loaded map.'],
+    ['start_snap_exhausted', '无法确定可执行的导航起点，请检查定位与地面支撑。', 'No executable start was found. Check localization and ground support.'],
+    ['goal_not_reached', '规划终点未满足目标容差，请调整目标位置。', 'The planned endpoint does not meet the goal tolerance. Adjust the target.'],
+    ['search_iteration_limit', '路径搜索达到计算上限，尚未找到可用路线。', 'The search budget was exhausted before a usable route was found.'],
+    ['preview_timeout', '路线预览超时，请稍后重试。', 'The route preview timed out. Try again.'],
+    ['preview_cancelled', '路线预览已取消。', 'The route preview was cancelled.'],
+    ['planner_error', '规划服务发生错误，请查看详细原因。', 'The planner reported an error. See the details.'],
+    ['planner_busy', '规划器正在处理其他请求，请稍后重试。', 'The planner is busy. Try again shortly.'],
+    ['navigation_busy', '导航正在处理其他任务，请先查看当前任务。', 'Navigation is busy. Check the current task first.'],
+    ['odometry_not_ready', '机器人定位尚未就绪，请等待有效位置。', 'Robot localization is not ready. Wait for a valid pose.'],
+    ['map_odom_tf_not_ready', '地图与定位坐标尚未对齐，请等待定位就绪。', 'Map and localization frames are not aligned yet.'],
+    ['active_octomap_not_configured', '当前导航地图尚未加载，请先选择可用于导航的地图。', 'No navigation map is configured. Load a navigation-ready map.'],
+    ['planner_map_identity_missing', '无法核实规划使用的地图，请重新加载导航地图。', 'The planner map identity is missing. Reload the navigation map.'],
+    ['active_map_changed_during_planning', '规划期间地图已改变，请重新预览路线。', 'The map changed during planning. Preview the route again.'],
+    ['frame_epoch_changed', '规划期间坐标基准已改变，请重新预览路线。', 'The coordinate frame changed during planning. Preview the route again.'],
     ['operator_pause', '任务已由操作者暂停。', 'The task was paused by the operator.'],
     ['support_disconnected', '起点与目标之间的地面支撑尚未连通。', 'The observed ground support does not yet connect the start and goal.'],
     ['start_body_occupied', '起点机身与地图障碍物相交。', 'The robot body intersects a mapped obstacle at the start.'],
@@ -181,8 +209,14 @@ export function operatorReasonMessage(reason: string, locale: Locale): string {
     ['driver_control_stale', '等待驱动连接恢复。', 'Waiting for the driver connection to recover.'],
     ['driver_control_not_ready', '等待驱动就绪。', 'Waiting for the driver to become ready.'],
     ['driver_control_rejected', '驱动尚未允许接收运动指令。', 'The driver is not ready to accept motion commands.'],
+    ['takeover_active', '人工接管尚未退出，请恢复自主导航。', 'Manual takeover is still active; resume autonomous navigation.'],
+    // Recorded status retains the earlier takeover reason.
     ['operator_takeover_resume_required', '人工接管尚未退出，请恢复自主导航。', 'Manual takeover is still active; resume autonomous navigation.'],
+    ['loop_hold', '控制循环暂停运动，等待恢复。', 'Motion is held while the control loop recovers.'],
     ['control_hold', '运动暂时保持，等待控制恢复。', 'Motion is held while control recovers.'],
+    ['brake_blocked', '制动空间受阻，已请求停车。', 'Braking space is blocked. A stop was requested.'],
+    ['cmd_blocked', '速度指令没有可用制动空间，已请求停车。', 'The command has no braking space. A stop was requested.'],
+    ['cmd_limited', '速度指令已按制动空间降低。', 'Command speed was reduced to fit braking space.'],
     ['estop_latched', '急停仍处于锁定状态。', 'The emergency stop remains latched.'],
     ['zero_barrier_pending', '等待前一个控制来源结束运动。', 'Waiting for the previous control source to finish motion.'],
     ['authority_busy', '另一个操作端正在控制机器人。', 'Another operator is controlling the robot.'],
@@ -222,6 +256,12 @@ export function operatorReasonMessage(reason: string, locale: Locale): string {
     ['visual_servo_perception_stale', '相机感知已过期，已请求取消视觉导航。', 'Camera perception is stale; cancellation of visual navigation was requested.'],
   ]
   const nativeReason = value.startsWith('input_gate_') ? value.slice('input_gate_'.length) : value
+  if (nativeReason.startsWith('stop_confirmation_timeout_')) {
+    return locale === 'zh' ? '停车确认超时，运动指令已保持，请检查机器人状态。' : 'Stop confirmation timed out; motion commands are held. Check the robot state.'
+  }
+  if (nativeReason.includes('stop_timeout:') || nativeReason.includes('rpc_timeout:')) {
+    return locale === 'zh' ? '机器人运动接口响应超时，运动指令已保持。' : 'The robot motion API timed out; motion commands are held.'
+  }
   const match = messages.find(([code]) => nativeReason === code || nativeReason.startsWith(`${code}:`))
   if (match) return locale === 'zh' ? match[1] : match[2]
 

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import * as THREE from 'three'
-import { pickNavigationPoint } from '../src/components/scene3d/goalPicking.ts'
+import { pickNavigationPoint, pickGoalHeading } from '../src/components/scene3d/goalPicking.ts'
 import { updateCloudHeightRange } from '../src/components/scene3d/layers/layerUtils.ts'
 
 function cloud(...positions: number[]) {
@@ -111,4 +111,17 @@ test('scene uses explicit surface mode, keeps mapping/Shift semantics, and forwa
   assert.match(source, /pickNavigationPoint\(raycaster\.current, pickableClouds, pickingZ, mode, octomapRef\.current\)/)
   assert.match(source, /onRelocalize\(wx, wy\)/)
   assert.match(source, /onPendingGoal\?\.\(wx, wy, wz, mode\)/)
+})
+
+
+test('heading picking stays on the goal height and uses map XY yaw', () => {
+  const goal = { x: 2, y: 3, z: 1.8 }
+  for (const [dx, dy, expected] of [[1, 0, 0], [0, 1, Math.PI / 2], [-1, 0, Math.PI], [0, -1, -Math.PI / 2]]) {
+    const r = new THREE.Raycaster(new THREE.Vector3(goal.x + dx, 10, -goal.y - dy), new THREE.Vector3(0, -1, 0))
+    assert.ok(Math.abs(pickGoalHeading(r, goal)! - expected) < 1e-9)
+  }
+  assert.equal(pickGoalHeading(new THREE.Raycaster(new THREE.Vector3(2.01, 10, -3), new THREE.Vector3(0, -1, 0)), goal), 0)
+  assert.equal(pickGoalHeading(new THREE.Raycaster(new THREE.Vector3(2, 10, -3), new THREE.Vector3(0, -1, 0)), goal), null)
+  assert.equal(pickGoalHeading(new THREE.Raycaster(new THREE.Vector3(2, 10, -3), new THREE.Vector3(1, 0, 0)), goal), null)
+  assert.equal(pickGoalHeading(ray(), { x: 0, y: 0 }), null)
 })

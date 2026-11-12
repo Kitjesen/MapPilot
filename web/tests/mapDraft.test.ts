@@ -115,3 +115,20 @@ test('unavailable browser storage and failed storage operations do not block edi
   assert.equal(writeMapDraft(original), false)
   assert.equal(removeMapDraft(original.source), false)
 })
+
+test('mixed cleaning history roundtrips with undo position and can be restored as an unconfirmed save', () => {
+  const storage = memoryStorage(), original = draft()
+  original.history.edits.push(
+    { operation: 'voxel', voxel_size: .1 },
+    { operation: 'statistical', neighbors: 20, std_ratio: 1.5 },
+    { operation: 'radius', radius: .2, min_points: 12 },
+    { operation: 'clusters', radius: .2, neighbors: 20, min_cluster_points: 100 },
+    { operation: 'plane_crop', distance_threshold: .05, margin: .5 },
+  )
+  original.history.cursor = 5
+  assert.equal(writeMapDraft(original, storage), true)
+  assert.deepEqual(readMapDraft(original.source, storage), { kind: 'ready', draft: original })
+  original.status = 'unconfirmed'
+  assert.equal(writeMapDraft(original, storage), true)
+  assert.deepEqual(readMapDraft(original.source, storage), { kind: 'unconfirmed', draft: original })
+})

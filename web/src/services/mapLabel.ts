@@ -1,3 +1,4 @@
+import { text, type Locale } from '../i18n.ts'
 import type { SSEState } from '../types/index.ts'
 import { estimateSceneTime, freshSource } from './sceneTelemetry.ts'
 
@@ -33,4 +34,19 @@ export function mapLocalizationState(
     case 'no_odometry': return localization
     default: return 'unknown'
   }
+}
+
+export function mapLocalizationLabel(state: MapLocalizationState, locale: Locale): string {
+  return {
+    disconnected: text(locale, 'Disconnected', '连接断开'),
+    waiting: text(locale, 'Waiting for data', '等待数据'),
+    stale: text(locale, 'Data stale', '数据已过期'),
+    tracking: text(locale, 'Tracking', '定位跟踪中'),
+    initializing: text(locale, 'Initializing', '初始化中'),
+    relocalizing: text(locale, 'Relocalizing', '重定位中'),
+    degraded: text(locale, 'Degraded', '定位退化'),
+    lost: text(locale, 'Lost', '定位丢失'),
+    no_odometry: text(locale, 'Waiting for odometry', '等待里程计'),
+    unknown: text(locale, 'Unknown', '未知'),
+  }[state]
 }

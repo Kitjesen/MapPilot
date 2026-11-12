@@ -12,7 +12,7 @@ export interface ScreenRectangle {
 
 /** A screen rectangle selects observed map points, not a floor or a traversable volume. */
 export function selectSavedMapBounds(
-  savedMapFlat: readonly number[],
+  savedMapFlat: ArrayLike<number>,
   savedPoints: THREE.Points,
   camera: THREE.Camera,
   viewport: { width: number; height: number },

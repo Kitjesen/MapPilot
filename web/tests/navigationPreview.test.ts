@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { GatewayApiError, previewNavigationPlan } from '../src/services/api.ts'
-import { navigationGoalErrorMessage, navigationPreviewErrorMessage, navigationPreviewIsCurrent, sceneGoalHeight, navigationSupportHeightFromRunPlan } from '../src/services/navigationPreview.ts'
+import { navigationGoalErrorMessage, navigationPreviewErrorMessage, navigationPreviewIsCurrent, navigationPlanEndpoint, sceneGoalHeight, navigationSupportHeightFromRunPlan } from '../src/services/navigationPreview.ts'
 import type { PlanPreviewResponse } from '../src/types/index.ts'
 
 const originalFetch = globalThis.fetch
@@ -103,4 +103,36 @@ test('surface picks use the selected RunPlan support height once across levels',
   }
   assert.equal(sceneGoalHeight(.435, undefined, 'surface', .435), null)
   assert.equal(sceneGoalHeight(.435, 3.6, 'plane', null), 3.6)
+})
+
+
+test('planned endpoint comes from the native feasible path without replacing the selected target', () => {
+  const requested = { x: 2, y: 3, z: .435 }
+  const end = { x: 2.1, y: 3, z: .455 }
+  const preview = { ok: true, feasible: true, frame_id: 'map', goal: { ...requested }, path: [{ x: 0, y: 0, z: .435 }, end] } as PlanPreviewResponse
+  const resolved = navigationPlanEndpoint(preview, requested)
+  assert.ok(resolved)
+  assert.deepEqual([resolved.x, resolved.y, resolved.z], [end.x, end.y, end.z])
+  assert.ok(Math.abs(resolved.offset - Math.hypot(.1, .02)) < 1e-9)
+  assert.deepEqual(requested, { x: 2, y: 3, z: .435 })
+  assert.equal(navigationPlanEndpoint({ ...preview, path: [] }, requested), null)
+  assert.equal(navigationPlanEndpoint({ ...preview, feasible: false }, requested), null)
+  assert.equal(navigationPlanEndpoint({ ...preview, frame_id: 'odom' }, requested), null)
+  assert.equal(navigationPlanEndpoint({ ...preview, path: [{ ...end, z: NaN }] }, requested), null)
+  assert.equal(navigationPlanEndpoint(preview, { ...requested, x: 8 }), null)
+  assert.equal(navigationPlanEndpoint(preview, { ...requested, z: undefined }), null)
+  assert.equal(navigationPlanEndpoint({ ...preview, path: [requested] }, requested)?.offset, 0)
+})
+
+test('preview refusal codes distinguish invalid goals, support, computation and unknown failures', () => {
+  for (const [reason, message] of [
+    ['goal_outside_static_map', '目标超出当前地图范围'], ['start_unsupported', '缺少有效地面支撑'],
+    ['start_occupied', '与地图障碍相交'], ['goal_snap_exhausted', '满足地面支撑与通行条件'],
+    ['active_octomap_not_configured', '导航地图尚未加载'], ['odometry_not_ready', '定位尚未就绪'],
+    ['search_iteration_limit', '计算上限'], ['preview_timeout', '预览超时'],
+    ['active_map_changed_during_planning', '地图已改变'], ['preview_result_invalid', '有效终点'],
+  ]) assert.ok(navigationPreviewErrorMessage(`无法生成路线：${reason}`).includes(message))
+  assert.doesNotMatch(navigationPreviewErrorMessage('无法生成路线：goal_snap_exhausted'), /目标.*被障碍占据/)
+  assert.equal(navigationPreviewErrorMessage('无法生成路线：new_native_reason'), '无法生成路线：导航未通过，请查看详细原因。')
+  assert.match(navigationPreviewErrorMessage('无法生成路线：start_unsupported；preview_timeout'), /地面支撑.*超时/)
 })

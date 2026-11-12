@@ -12,8 +12,10 @@ import {
   retryMapSaveOperation,
   cancelMapSaveOperation,
   processMapSaveOperation,
+  reoptimizeMapSaveOperation,
   mapSaveSourceUrl,
   MapSaveError,
+  type MapSaveOperationStatus,
   type SaveMapResult,
 } from '../src/services/api.ts'
 import { formatMapSaveProgress, pendingMapSaveStatus, savedMapStatus, archivedMapStatus, failedMapSaveStatus, mapSavePhaseLabel, mapSaveStateLabel, mapSaveReason, mapSaveElapsedMs, mapSaveProgressValue, formatMapSaveElapsed, mappingCapacityNotice, mappingFailureNotice, type MapSaveStatus } from '../src/services/mapSavePresentation.ts'
@@ -402,6 +404,148 @@ test('manual processing uses the same operation and capture download has a task 
   assert.equal(result.operation_id, 'save-17')
   assert.deepEqual(requests, ['POST /api/v1/maps/operations/save-17/process'])
   assert.equal(mapSaveSourceUrl('save-17'), '/api/v1/maps/operations/save-17/source/pcd')
+})
+
+test('reoptimization submits an explicit request identity and follows the new task', async () => {
+  const requests: Array<{ url: string; method: string; body?: unknown }> = []
+  globalThis.fetch = async (input, init) => {
+    requests.push({ url: String(input), method: init?.method ?? 'GET',
+      ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) })
+    return Response.json({ ...admission(), operation_id: 'optimize-18', operation: {
+      operation_id: 'optimize-18', source_operation_id: 'save/17', source_saved: true,
+      state: init?.method === 'POST' ? 'QUEUED' : 'SUCCEEDED',
+    } }, { status: init?.method === 'POST' ? 202 : 200 })
+  }
+  const started = await reoptimizeMapSaveOperation('save/17', 'optimize-request-1')
+  assert.equal(started.operation_id, 'optimize-18')
+  assert.match(formatMapSaveProgress(started), /排队等待重新优化/)
+  const completed = await waitForMapSaveOperation(started, { pollIntervalMs: 0 })
+  assert.equal(completed.state, 'saved')
+  assert.deepEqual(requests, [
+    { url: '/api/v1/maps/operations/save%2F17/reoptimize', method: 'POST', body: { request_id: 'optimize-request-1' } },
+    { url: '/api/v1/maps/operations/optimize-18', method: 'GET' },
+  ])
+})
+
+test('reoptimization keeps the native failure reason', async () => {
+  globalThis.fetch = async () => Response.json({ ok: false, success: false,
+    reason_code: 'patch_bundle_incomplete', message: 'Original scans are missing.' }, { status: 409 })
+  await assert.rejects(reoptimizeMapSaveOperation('save-17'), error => {
+    assert.ok(error instanceof MapSaveError)
+    assert.equal(error.result.reason_code, 'patch_bundle_incomplete')
+    assert.equal(error.message, 'Original scans are missing.')
+    assert.match(mapSaveReason(error.result), /缺少完整的分帧扫描或位姿/)
+    return true
+  })
+})
+
+interface HistoryElement { type: string; props: Record<string, unknown> & { children?: unknown } }
+
+function historyHarness(operations: MapSaveOperationStatus[], reoptimize: typeof reoptimizeMapSaveOperation) {
+  const state: unknown[] = [{ operations, ts: 1 }]
+  const refs: Array<{ current: unknown }> = []
+  let stateIndex = 0
+  let refIndex = 0
+  let effects: Array<() => void> = []
+  const continued: SaveMapResult[] = []
+  const completed: SaveMapResult[] = []
+  let history = operations
+  let snapshot: { error: string; feedback: { error?: boolean } | null }
+  const jsx = (type: string, props: HistoryElement['props']) => ({ type, props })
+  const exports: Record<string, unknown> = {}
+  for (const path of ['../src/hooks/useMapSaves.ts', '../src/components/MapSaveHistory.tsx']) {
+  const code = ts.transpileModule(readFileSync(new URL(path, import.meta.url), 'utf8'), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText
+  runInNewContext(code, { exports, AbortController, setTimeout, clearTimeout, require: (name: string) => {
+    if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx }
+    if (name === 'react') return {
+      useState: (initial: unknown) => {
+        const index = stateIndex++
+        if (!(index in state)) state[index] = initial
+        return [state[index], (value: unknown) => { state[index] = value }]
+      },
+      useRef: (initial: unknown) => refs[refIndex++] ?? (refs[refIndex - 1] = { current: initial }),
+      useEffect: (effect: () => void) => { effects.push(effect) },
+      useCallback: (callback: unknown) => callback,
+    }
+    if (name.endsWith('/api.ts')) return { MapSaveError, makeRequestId: () => 'stable-optimize-request',
+      reoptimizeMapSaveOperation: reoptimize,
+      fetchMapSaveOperations: async () => ({ operations: history, ts: 2 }), mapSaveSourceUrl }
+    if (name.endsWith('/mapSavePresentation.ts')) return { mapSaveStateLabel, mapSavePhaseLabel, mapSaveReason }
+    return { default: {} }
+  } })
+  }
+  return {
+    continued, completed,
+    get snapshot() { return snapshot },
+    setHistory: (value: MapSaveOperationStatus[]) => { history = value; state[0] = { operations: value, ts: 3 } },
+    render: (readOnly = false) => {
+      stateIndex = 0; refIndex = 0; effects = []
+      const component = exports.MapSaveHistory as (props: Record<string, unknown>) => HistoryElement
+      const renderSaveHook = exports.useMapSaves as (props: Record<string, unknown>) => { history: { operations: MapSaveOperationStatus[] }; error: string; feedback: { error?: boolean } | null }
+      const saves = renderSaveHook({ refreshKey: '',
+        onContinue: (value: SaveMapResult) => continued.push(value),
+        onComplete: (value: SaveMapResult) => completed.push(value) })
+      snapshot = saves
+      const root = component({ operations: saves.history.operations, saves, readOnly })
+      const elements: HistoryElement[] = []
+      const visit = (value: unknown) => {
+        if (Array.isArray(value)) { value.forEach(visit); return }
+        if (!value || typeof value !== 'object' || !('props' in value)) return
+        const element = value as HistoryElement
+        elements.push(element); visit(element.props.children)
+      }
+      visit(root)
+      effects[2]()
+      return elements
+    },
+  }
+}
+
+test('history starts a new optimization, reuses an uncertain request and refreshes on completion', async () => {
+  const source = { operation_id: 'save-17', map_id: 'warehouse', state: 'SUCCEEDED', source_saved: true }
+  const optimized = { operation_id: 'optimize-18', map_id: 'warehouse', source_operation_id: 'save-17', state: 'QUEUED', source_saved: true }
+  const requests: string[] = []
+  let calls = 0
+  const h = historyHarness([source], async (_id, requestId) => {
+    requests.push(requestId!)
+    if (++calls === 1) throw new TypeError('Network disconnected')
+    h.setHistory([optimized, source])
+    return { ...admission(), operation_id: 'optimize-18', operation: optimized }
+  })
+  const button = (readOnly = false) => h.render(readOnly).find(element => element.type === 'button' && element.props.children === '重新优化')!
+  assert.equal(button().props.disabled, false)
+  assert.ok(h.render().some(element => element.type === 'p'
+    && element.props.children === '按这次存档重新生成，完成后替换同名地图。'))
+  assert.equal(button(true).props.disabled, true)
+  ;(button().props.onClick as () => void)()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(h.continued.length, 0)
+  h.render()
+  assert.equal(h.snapshot.error, '', 'one rejected action must not mark every map status unavailable')
+  assert.equal(h.snapshot.feedback?.error, true)
+  ;(button().props.onClick as () => void)()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(requests, ['stable-optimize-request', 'stable-optimize-request'])
+  assert.equal(h.continued[0].operation_id, 'optimize-18')
+  assert.equal(button().props.disabled, true)
+  h.setHistory([{ ...optimized, state: 'SUCCEEDED' }, source])
+  h.render()
+  assert.equal(h.completed.length, 1)
+  assert.equal(h.completed[0].operation_id, 'optimize-18')
+})
+
+test('history only offers reoptimization for successful tasks with saved source', () => {
+  const h = historyHarness([
+    { operation_id: 'done-without-source', state: 'SUCCEEDED', source_saved: false },
+    { operation_id: 'captured', state: 'CAPTURED', source_saved: true },
+    { operation_id: 'failed', state: 'FAILED', source_saved: true },
+  ], reoptimizeMapSaveOperation)
+  const elements = h.render()
+  assert.equal(elements.filter(element => element.type === 'button' && element.props.children === '重新优化').length, 0)
+  assert.equal(elements.filter(element => element.type === 'p'
+    && element.props.children === '按这次存档重新生成，完成后替换同名地图。').length, 0)
 })
 
 test('save history lists durable states and retries through the operation endpoint to a real terminal result', async () => {

@@ -72,3 +72,16 @@ test('display aggregation aligns negative coordinates, keeps coarse leaves and n
   assert.deepEqual(map.cells, original)
   mesh.dispose(); mesh.geometry.dispose(); (mesh.material as THREE.Material).dispose()
 })
+
+test('saved-map viewing includes occupied leaves beyond the live local window', () => {
+  const map: Octomap = { resolution: .1, cells: new Float32Array([.05, .05, .05, .1, 30.05, .05, .05, .1]),
+    bounds: { min: [0, 0, 0], max: [30.1, .1, .1] } }
+  const local = createOctomapLayer(map, 0, 0, 'height')!
+  const full = createOctomapLayer(map, 0, 0, 'height', 1, Infinity)!
+  assert.equal(local.count, 1)
+  assert.equal(full.count, 2)
+  assert.equal((full.userData.nativeIndices as number[]).length, map.cells.length / 4)
+  for (const mesh of [local, full]) {
+    mesh.dispose(); mesh.geometry.dispose(); (mesh.material as THREE.Material).dispose()
+  }
+})
