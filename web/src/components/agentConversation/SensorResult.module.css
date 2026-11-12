@@ -1,0 +1,25 @@
+.card { margin: 5px 0 8px 22px; min-width: 0; font-size: 12px; }
+.card header { display: flex; align-items: center; gap: 6px; min-height: 25px; }
+.card header > svg { color: var(--chat-link); }
+.card header strong { font-size: 12px; font-weight: 500; }
+.card header > span { margin-left: auto; color: var(--text-dim); font-size: 11px; }
+.card p { display: flex; align-items: center; gap: 5px; margin: 5px 0; color: var(--text-dim); font-size: 11px; overflow-wrap: anywhere; }
+.capabilities, .volts { display: flex; flex-wrap: wrap; gap: 5px 10px; }
+.capabilities > span { color: var(--text-dim); }
+.capabilities > span[data-configured='true'] { color: var(--text); }
+.capabilities p { flex-basis: 100%; }
+.vectors { margin: 3px 0; }
+.vectors > div { display: flex; flex-wrap: wrap; gap: 3px 12px; padding: 4px 0; }
+.vectors dt { width: 108px; color: var(--text-dim); }
+.vectors dd { display: flex; gap: 10px; margin: 0; font-variant-numeric: tabular-nums; }
+.vectors b { font-weight: 500; }
+.scroll { overflow: auto; max-height: 210px; }
+.card table { width: 100%; border-collapse: collapse; white-space: nowrap; font-size: 11px; }
+.card th, .card td { padding: 4px 7px; text-align: right; font-variant-numeric: tabular-nums; }
+.card th { color: var(--text-dim); font-weight: 400; }
+.card th:first-child { text-align: left; }
+.card tbody tr + tr { border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent); }
+.image { display: block; width: 100%; max-height: 280px; object-fit: contain; border-radius: 10px; background: var(--bg-layer-2); }
+.viewer { position: relative; height: 232px; margin-top: 6px; overflow: hidden; border-radius: 10px; background: var(--bg-layer-2); }
+.viewer canvas[role='img'] { left: 0; bottom: 0; width: 64px; height: 64px; }
+.card .stale { color: var(--warn); }

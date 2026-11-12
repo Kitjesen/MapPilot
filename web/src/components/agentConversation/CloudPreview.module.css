@@ -1,0 +1,20 @@
+.card { margin: 5px 0 7px 22px; min-width: 0; color: var(--text); }
+.card > header { display: flex; align-items: center; gap: 6px; min-height: 24px; font-size: 12px; }
+.card > header > svg { color: var(--chat-link); }
+.card > header > strong { font-weight: 500; }
+.card > header > span { margin-left: auto; color: var(--text-dim); font-size: 11px; }
+.card .identity, .card .hint { margin: 3px 0; color: var(--text-dim); font-size: 11px; overflow-wrap: anywhere; }
+.card .stats { display: flex; flex-wrap: wrap; gap: 3px 10px; color: var(--text-dim); font-size: 11px; margin: 2px 0 5px; }
+.viewer { position: relative; height: 232px; margin: 6px 0; border-radius: 10px; overflow: hidden; background: var(--bg-layer-2); }
+.viewer canvas[role='img'] { left: 0; bottom: 0; width: 64px; height: 64px; }
+.card .empty { padding: 14px 0; color: var(--text-dim); }
+.card .error { color: var(--red); font-size: 12px; margin: 4px 0; }
+.card > footer { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.card > footer > :is(button,a) { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 4px 7px; background: transparent; color: var(--text-dim); border: 0; border-radius: 7px; font: inherit; font-size: 11px; text-decoration: none; cursor: pointer; }
+.card > footer > :is(button,a):hover { color: var(--text); background: var(--bg-layer-2); }
+.card > footer > button:disabled { opacity: .5; cursor: default; }
+.card > footer > :is(button,a):focus-visible { outline: 2px solid var(--chat-link); outline-offset: 1px; }
+.card .thumbnail { position: relative; display: block; width: 100%; padding: 0; margin-top: 6px; overflow: hidden; border: 0; border-radius: 10px; background: var(--bg-layer-2); }
+.thumbnail img { display: block; width: 100%; height: 232px; object-fit: contain; }
+.thumbnail span { position: absolute; display: flex; align-items: center; gap: 5px; right: 8px; bottom: 8px; padding: 4px 7px; border-radius: 6px; background: var(--bg-layer-1); color: var(--text-dim); font-size: 11px; }
+@media (pointer: coarse) { .card > footer > :is(button,a) { min-height: 40px; } }

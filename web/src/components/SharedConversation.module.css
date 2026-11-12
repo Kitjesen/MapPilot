@@ -1,0 +1,74 @@
+.page { width: 100%; height: 100dvh; overflow-y: auto; background: #fbfaf8; color: #262938; }
+.content { width: min(800px, 100%); margin: 0 auto; padding: 28px 32px 80px; }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 40px; margin-bottom: 48px; }
+.wordmark { font-size: 23px; font-weight: 650; letter-spacing: -1.2px; }
+.wordmarkDot { color: #777199; }
+.pdfButton { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 9px 14px; border: 0; border-radius: 999px; background: #ecebf0; color: #353646; cursor: pointer; font-size: 13px; font-weight: 550; }
+.pdfButton:hover { background: #e2e0e8; }
+.pdfButton:disabled { cursor: wait; opacity: .65; }
+.header { padding-bottom: 30px; }
+.badge { display: inline-flex; align-items: center; gap: 6px; color: #6c6b79; font-size: 12px; }
+.header h1 { margin: 16px 0 12px; font-size: clamp(26px, 4vw, 34px); font-weight: 600; letter-spacing: -.8px; line-height: 1.4; overflow-wrap: anywhere; }
+.header time { font-size: 12px; color: #777581; }
+.snapshotNote { margin-top: 12px; font-size: 13px; line-height: 1.7; color: #777581; }
+.exportInfo { margin: -12px 0 32px; color: #777581; font-size: 12px; line-height: 1.7; }
+.pdfWarning { margin-top: 12px; color: #805f32; }
+.pdfWarning button { margin-top: 6px; border: 0; background: transparent; color: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.status { padding: 20px 0; color: #6c6b79; font-size: 14px; }
+.status p { margin: 0; }
+.status button { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; padding: 7px 11px; min-height: 36px; border: 0; border-radius: 10px; background: #ecebf0; color: #454653; cursor: pointer; }
+.status button:hover { background: #e2e0e8; }
+.pdfButton:focus-visible, .pdfWarning button:focus-visible, .status button:focus-visible { outline: 2px solid #777199; outline-offset: 3px; }
+.messages { display: flex; flex-direction: column; gap: 34px; }
+.message { max-width: 100%; min-width: 0; overflow-wrap: anywhere; font-size: 15px; line-height: 1.85; }
+.role { margin-bottom: 7px; color: #777581; font-size: 12px; font-weight: 550; }
+.message p { margin: 0; white-space: pre-wrap; }
+.user { align-self: flex-end; max-width: 90%; padding: 14px 19px; border-radius: 22px 22px 6px 22px; background: #efedf1; }
+.assistant { align-self: stretch; }
+.assistant .role { color: #514f68; }
+.richText p { white-space: normal; }
+.richText img { display: block; max-width: 100%; max-height: 480px; height: auto; margin: 16px 0; border-radius: 12px; object-fit: contain; }
+.richText p + p { margin-top: 16px; }
+.richText h1, .richText h2, .richText h3 { margin: 24px 0 10px; font-size: 1.1em; line-height: 1.5; }
+.richText ul, .richText ol { margin: 10px 0; padding-left: 24px; }
+.richText li + li { margin-top: 5px; }
+.richText a { color: #555087; text-decoration: underline; text-underline-offset: 3px; }
+.richText a:hover { color: #373158; }
+.richText a:focus-visible { outline: 2px solid #777199; outline-offset: 3px; }
+.richText blockquote { margin: 16px 0; padding: 1px 0 1px 16px; border-left: 2px solid #c5c0d2; color: #676477; }
+.richText code { padding: 2px 5px; border-radius: 4px; background: #efedf1; font-size: .9em; }
+.richText pre { max-width: 100%; overflow-x: auto; margin: 14px 0; padding: 16px; border-radius: 12px; background: #efedf1; }
+.richText pre code { padding: 0; white-space: pre; }
+.richText :global(.table-scroll) { max-width: 100%; overflow-x: auto; }
+.richText table { border-collapse: collapse; }
+.richText th, .richText td { padding: 8px 11px; border: 1px solid #dfdce5; text-align: left; }
+.richText :global(.heading-anchor), .richText :global(.code-toolbar) { display: none; }
+@media (max-width: 600px) {
+  .content { padding: 20px 20px 48px; }
+  .topbar { margin-bottom: 34px; }
+  .header h1 { letter-spacing: -.4px; }
+  .message { font-size: 15px; }
+  .user { max-width: 95%; padding: 12px 16px; }
+}
+@media (pointer: coarse) { .pdfButton, .pdfWarning button, .status button { min-height: 44px; } }
+@media print {
+  @page { margin: 18mm 16mm; }
+  :global(html):has(.page), :global(body):has(.page), :global(#root):has(.page) { height: auto; overflow: visible; background: white; }
+  .page { height: auto; overflow: visible; background: white; color: #111; }
+  .content { width: 100%; padding: 0; }
+  .topbar { margin-bottom: 24px; }
+  .pdfButton, .exportInfo, .status button { display: none; }
+  .header { padding-bottom: 24px; }
+  .header h1 { font-size: 24pt; }
+  .badge, .header time, .snapshotNote, .role, .assistant .role { color: #555; }
+  .messages { display: block; }
+  .message { margin-bottom: 24px; font-size: 11pt; line-height: 1.7; }
+  .user { margin-left: auto; background: #f3f3f3; }
+  .richText pre, .richText pre code { white-space: pre-wrap; overflow-wrap: anywhere; overflow: visible; }
+  .richText :global(.table-scroll) { overflow: visible; }
+  .richText table { width: 100%; table-layout: fixed; font-size: 9pt; }
+  .richText th, .richText td { overflow-wrap: anywhere; }
+  .richText img { max-height: 220mm; break-inside: avoid; }
+  .richText h1, .richText h2, .richText h3, .role { break-after: avoid; }
+  .richText a { color: #111; }
+}

@@ -1,0 +1,25 @@
+.queue { position: relative; margin: 0 16px 4px; padding: 6px 0; border-top: 1px solid var(--border); color: var(--text-dim); font-size: 12px; }
+.queue header { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.row { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, 28px); align-items: center; gap: 2px; min-height: 30px; }
+.row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 13px; line-height: 1.5; }
+.row .promote { grid-column: 2; }
+.row .edit { grid-column: 3; }
+.row .cancel { grid-column: 4; }
+.row button { width: 28px; height: 28px; }
+.row[aria-busy='true'] > span { color: var(--chat-link); }
+.spinner { animation: queueSpin 900ms linear infinite; }
+@keyframes queueSpin { to { transform: rotate(360deg); } }
+.queue button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; border: 0; border-radius: 6px; padding: 5px; background: transparent; color: inherit; font: inherit; cursor: pointer; transition: background 120ms, color 120ms; }
+.queue button:hover { background: var(--bg-layer-2); color: var(--chat-link); }
+.queue button:focus-visible { outline: 2px solid #6a9ee8; outline-offset: 2px; }
+.queue button:disabled { opacity: .45; cursor: default; }
+.more { margin-top: 2px; }
+.editor { padding-top: 6px; }
+.editor textarea { box-sizing: border-box; width: 100%; resize: vertical; border: 1px solid var(--border); border-radius: 8px; padding: 7px; font: inherit; font-size: 14px; color: var(--text); background: var(--bg-layer-1); }
+.editor > div { display: flex; justify-content: flex-end; gap: 8px; }
+.queue p { color: #b64a4a; margin: 4px 0 0; }
+@media (prefers-reduced-motion: reduce) { .queue button { transition: none; } .spinner { animation: none; } }
+@media (pointer: coarse) {
+  .row { grid-template-columns: minmax(0, 1fr) repeat(3, 44px); }
+  .queue button { min-width: 44px; min-height: 44px; }
+}

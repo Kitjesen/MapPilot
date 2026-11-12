@@ -1,0 +1,48 @@
+.dialog, .dialog:has(input) { width: min(700px, calc(100vw - 32px)); padding: 20px; border-radius: 22px; box-sizing: border-box; }
+.dialog h2 { font-size: 16px; font-weight: 550; }
+.dialog button { font: inherit; font-size: 12px; cursor: pointer; color: var(--text); }
+.close { margin-left: auto; display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 50%; background: transparent; }
+.layout { display: grid; grid-template-columns: 180px minmax(0, 1fr); align-items: start; gap: 24px; margin-top: 4px; }
+.preview { display: grid; place-items: center; min-width: 0; }
+.stage { display: grid; place-items: center; width: 100%; min-height: 190px; padding: 0; border: 0; border-radius: 18px; background: var(--bg-layer-2); }
+.motionPicker { display: grid; gap: 6px; width: 100%; margin-top: 14px; font-size: 11px; color: var(--text-dim); }
+.motionPicker select { width: 100%; min-height: 32px; padding: 5px 7px; border: 0; border-radius: 8px; background: var(--bg-layer-2); color: var(--text); font: inherit; font-size: 12px; }
+.previewNote { margin-top: 8px; font-size: 10px; color: var(--text-dim); }
+.form { display: grid; align-content: start; gap: 7px; min-width: 0; }
+.tabs { display: flex; justify-content: center; gap: 4px; }
+.tabs button { min-height: 28px; padding: 4px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-dim); }
+.tabs button[aria-selected='true'] { background: var(--bg-layer-2); color: var(--text); }
+.form label { display: grid; gap: 5px; font-size: 12px; }
+.nameField > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.nameField input { text-align: center; }
+.form input, .form select, .form textarea { min-width: 0; width: 100%; border: 0; border-radius: 8px; padding: 7px 9px; color: var(--text); background: var(--bg-layer-2); font: inherit; font-size: var(--type-secondary); }
+.form textarea { resize: vertical; min-height: 76px; max-height: 140px; }
+.form fieldset { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 0; min-width: 0; }
+.optionLabel { flex-shrink: 0; font-size: 12px; color: var(--text-dim); }
+.form .shapeField { display: block; padding: 0; }
+.shapeLibrary { max-height: 294px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 0 7px 6px 0; }
+.shapeLibrary section + section { margin-top: 16px; }
+.shapeLibrary h3 { display: flex; align-items: center; gap: 8px; margin: 10px 0 7px; font-size: 11px; font-weight: 500; color: var(--text-dim); }
+.shapeLibrary h3 span { font-size: 10px; opacity: .65; }
+.shapes { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 5px; }
+.shapes button { display: grid; place-items: center; gap: 3px; min-width: 0; min-height: 57px; padding: 5px 2px; border: 0; border-radius: 10px; background: transparent; }
+.shapes button > span { font-size: 10px; color: var(--text-dim); }
+.shapes button[aria-pressed='true'] { background: var(--bg-layer-2); box-shadow: inset 0 0 0 1px var(--border-hi); }
+.colors { display: grid; grid-template-columns: repeat(6, 24px); gap: 8px; padding-right: 4px; }
+.colors button { width: 24px; height: 24px; padding: 0; border: 3px solid var(--bg-layer-1); border-radius: 50%; box-shadow: 0 0 0 1px transparent; }
+.colors button[aria-pressed='true'] { box-shadow: 0 0 0 1px var(--text-dim); }
+.sizes { display: flex; gap: 3px; padding: 3px; border-radius: 10px; background: var(--bg-layer-2); }
+.sizes button { min-height: 28px; padding: 4px 11px; border: 0; border-radius: 7px; background: transparent; color: var(--text-dim); }
+.sizes button[aria-pressed='true'] { color: var(--text); background: var(--bg-layer-1); box-shadow: var(--shadow-sm); }
+.form footer { display: flex; justify-content: flex-end; align-items: center; gap: 6px; margin-top: 4px; }
+.form footer button { display: flex; align-items: center; justify-content: center; gap: 5px; min-height: 32px; padding: 6px 12px; border: 0; border-radius: 9px; background: transparent; }
+.form footer .reset { margin-right: auto; padding-left: 0; color: var(--text-dim); }
+.form footer .save { padding-inline: 18px; background: var(--control-bg); }
+.note { margin: 0; overflow: hidden; font-size: 10px; color: var(--text-dim); line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.form > .note { text-align: center; }
+.error { font-size: 12px; color: var(--red); margin: 0; }
+.dialog button:disabled, .form :disabled { opacity: .5; cursor: default; }
+.dialog :is(button,input,textarea,select):focus-visible { outline: 2px solid var(--text-dim); outline-offset: 2px; }
+.dialog button:hover:not(:disabled, .stage, [aria-pressed='true']) { background-color: var(--bg-layer-2); }
+@media (max-width: 570px) { .layout { grid-template-columns: 1fr; gap: 16px; }.stage { min-height: 150px; }.preview { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }.stage, .previewNote { grid-column: 1 / -1; }.motionPicker { margin-top: 0; }.shapes { grid-template-columns: repeat(5, minmax(0, 1fr)); }.shapeLibrary { max-height: 235px; } }
+@media (pointer: coarse) { .tabs button, .form footer button, .form input, .form select, .sizes button, .motionPicker select { min-height: 44px; }.shapes button { min-height: 60px; }.colors { grid-template-columns: repeat(6, 32px); gap: 4px; }.colors button { width: 32px; height: 32px; } }

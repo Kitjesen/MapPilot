@@ -1,0 +1,28 @@
+.card { margin: 6px 0 8px 22px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--bg-layer-1); }
+.card .toggle { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 54px; padding: 10px 12px; border: 0; border-radius: 0; color: var(--text); background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.toggle:hover { background: var(--bg-layer-2); }
+.toggle:focus-visible { outline: 2px solid var(--chat-link); outline-offset: -3px; }
+.icon { display: grid; place-items: center; flex: 0 0 30px; height: 30px; border-radius: 9px; color: var(--chat-link); background: color-mix(in srgb, var(--chat-link) 8%, var(--bg-layer-1)); }
+.title { display: flex; flex: 1; align-items: baseline; flex-wrap: wrap; gap: 7px; font-size: 13px; }
+.title small, .action { font-size: 12px; color: var(--text-dim); }
+.chevron { flex-shrink: 0; color: var(--text-dim); transition: transform 240ms ease; }
+.toggle[aria-expanded='true'] .chevron { transform: rotate(180deg); }
+.disclosure { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 320ms cubic-bezier(.22,1,.36,1), opacity 180ms ease; }
+.disclosure[data-open='true'] { grid-template-rows: 1fr; opacity: 1; }
+.body { min-height: 0; overflow: hidden; }
+.placeholder { height: 230px; display: grid; place-items: center; font-size: 12px; color: var(--text-dim); }
+@media(prefers-reduced-motion:reduce) { .disclosure,.chevron { transition: none; } }
+
+.content { padding: 8px 12px 12px; font-size: 13px; }
+.tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.tabs button { border: 0; border-radius: 7px; padding: 7px 10px; font: inherit; color: var(--text-dim); background: var(--bg-layer-2); cursor: pointer; }
+.tabs button[aria-pressed='true'] { color: var(--chat-link); background: color-mix(in srgb,var(--chat-link) 9%,white); }
+.facts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:0 0 12px; }
+.facts dt { color:var(--text-dim); font-size:12px; margin-bottom:4px; }
+.facts dd { margin:0; }
+.raw { max-height:200px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:12px var(--font-ui); }
+.content button, .content select { font-family: inherit; font-size: 12px; color: var(--text); border: 1px solid var(--border); border-radius: 7px; background: var(--bg-layer-1); }
+.content button { cursor: pointer; }
+.content button:hover { background: var(--bg-layer-2); }
+.content button:focus-visible, .content select:focus-visible { outline: 2px solid var(--chat-link); outline-offset: 2px; }
+.content button:disabled { cursor: default; opacity: .5; }

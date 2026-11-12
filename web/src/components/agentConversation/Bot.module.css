@@ -1,0 +1,52 @@
+.bot { display: block; flex-shrink: 0; width: 48px; height: 48px; overflow: visible; }
+.bot[data-size='32'] { width: 32px; height: 32px; }
+.bot[data-size='64'] { width: 64px; height: 64px; }
+.head, .orientation, .motion { transform-origin: 8px 10px; }
+.head { animation: breathe 7.8s ease-in-out infinite; }
+.orientation { transform: rotate(var(--look-tilt, 0deg)); transition: transform 240ms ease-out; }
+.silhouette { fill: var(--bot-fill); transition: fill 160ms ease; }
+.eyes { fill: var(--bot-eyes); }
+.lids { transform-origin: 8px 7.6px; }
+.gaze { transform: translate(var(--look-x, 0px), var(--look-y, 0px)); transition: transform 180ms ease-out; }
+.attention { animation: glance 10.4s ease-in-out infinite; }
+.bot[data-state='processing'] .motion { animation: ponder 6.4s ease-in-out infinite; }
+.bot[data-state='working'] .motion { animation: focus 3.2s ease-in-out infinite; }
+.bot[data-state='working'] .attention { animation: observe 7.6s ease-in-out infinite; }
+.bot[data-state='writing'] .attention { animation: read 4.6s ease-in-out infinite; }
+.bot[data-state='waiting'] .motion { transform: rotate(-5deg); }
+.bot[data-state='waiting'] .attention { animation: none; transform: translateY(-.3px); }
+.bot[data-state='error'] .motion { transform: translateY(.25px) rotate(3deg); }
+.bot[data-state='error'] .attention, .bot[data-state='unavailable'] .attention { animation: none; }
+.bot[data-state='unavailable'] { opacity: .65; }
+.bot[data-greeting='true'] .motion { animation: greet 700ms ease-out; }
+.effect { transform-origin: 8px 8px; animation: turn 5s linear infinite; opacity: .65; }
+.bot[data-activity='radar'] .attention { animation: glance 4s ease-in-out infinite; }
+.bot[data-activity='writing'] .attention { animation: read 3s ease-in-out infinite; }
+.bot[data-activity='orbit'] .motion { animation: ponder 4s ease-in-out infinite; }
+.bot[data-activity='sending'] .motion, .bot[data-activity='uploading'] .motion { animation: lift 2.8s ease-in-out infinite; }
+.bot[data-activity='receiving'] .motion { animation: lift 2.8s ease-in-out reverse infinite; }
+.bot[data-activity='dictating'] .motion { animation: listen 2.6s ease-in-out infinite; }
+.bot[data-activity='bouncing'] .motion { animation: hop 2.6s ease-in-out infinite; }
+.bot[data-activity='alerting'] .motion { animation: nudge 3.2s ease-in-out infinite; }
+.bot[data-activity='turntable'] .orientation { animation: turn 6s ease-in-out infinite; }
+.bot[data-activity='showcase'] .motion { animation: showcase 6s ease-in-out infinite; }
+@keyframes breathe { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-.16px); } }
+@keyframes glance { 0%, 28%, 64%, 100% { transform: translate(0); } 35%, 48% { transform: translate(.3px, -.12px); } 77%, 86% { transform: translate(-.22px, .08px); } }
+@keyframes ponder { 0%, 18%, 100% { transform: rotate(0); } 35%, 65% { transform: rotate(-4deg) translateY(-.12px); } 83% { transform: rotate(1deg); } }
+@keyframes focus { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(.2px) rotate(1.5deg); } }
+@keyframes observe { 0%, 22%, 72%, 100% { transform: translate(0); } 33%, 58% { transform: translate(.35px, .12px); } }
+@keyframes read { 0%, 100% { transform: translate(-.3px, .1px); } 74% { transform: translate(.35px, .1px); } 86% { transform: translate(-.3px, .1px); } }
+@keyframes greet { 0%, 100% { transform: translateY(0) scale(1); } 35% { transform: translateY(-.65px) scale(1.03, .97); } 65% { transform: translateY(.15px) scale(.99, 1.02); } }
+@keyframes turn { to { transform: rotate(360deg); } }
+@keyframes lift { 0%, 35%, 100% { transform: translateY(0); } 65% { transform: translateY(-.8px) scale(.96, 1.03); } }
+@keyframes listen { 0%, 100% { transform: scale(1); } 30%, 70% { transform: scale(1.035, .97); } 50% { transform: scale(.98, 1.035); } }
+@keyframes hop { 0%, 35%, 100% { transform: translateY(0); } 55% { transform: translateY(-1px) scale(.97, 1.03); } 70% { transform: translateY(.2px) scale(1.03, .97); } }
+@keyframes nudge { 0%, 25%, 75%, 100% { transform: rotate(0); } 38%, 60% { transform: rotate(-6deg); } 48%, 68% { transform: rotate(6deg); } }
+@keyframes showcase { 0%, 100% { transform: rotate(0) scale(1); } 30% { transform: rotate(-8deg) scale(1.04); } 65% { transform: rotate(6deg) scale(.98, 1.02); } }
+.bot[data-paused='true'] .head, .bot[data-paused='true'] .motion, .bot[data-paused='true'] .attention, .bot[data-paused='true'] .orientation, .bot[data-paused='true'] .effect { animation-play-state: paused; }
+.bot[data-animated='false'] .head, .bot[data-animated='false'] .motion, .bot[data-animated='false'] .attention, .bot[data-animated='false'] .orientation, .bot[data-animated='false'] .effect { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .bot[data-state] .head, .bot[data-state] .motion, .bot[data-state] .attention, .bot[data-state] .orientation, .bot[data-state] .effect { animation: none; }
+  .bot .orientation, .bot .gaze, .bot .silhouette { transition: none; }
+  .bot .orientation, .bot .gaze { transform: none; }
+}

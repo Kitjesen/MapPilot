@@ -1,0 +1,21 @@
+.card { --plan-accent: color-mix(in srgb, var(--text) 65%, #92839f); margin: 8px 0; padding: 16px; border: 1px solid color-mix(in srgb, var(--text) 7%, transparent); border-radius: 14px; background: color-mix(in srgb, var(--text) 2%, var(--bg-layer-1)); color: var(--text); }
+.details > summary { display: flex; flex-direction: column; gap: 8px; border-radius: 6px; cursor: pointer; list-style: none; }
+.details > summary::-webkit-details-marker { display: none; }
+.draft { color: var(--plan-accent); font-size: 12px; font-weight: 500; }
+.title { font-size: 15px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.description { color: var(--text-dim); font-size: 14px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--plan-accent); font-size: 12px; line-height: 1.5; }
+.details[open] .toggle > svg { transform: rotate(180deg); }
+.steps { display: grid; gap: 14px; margin: 16px 0 0; padding: 0 0 0 22px; font-size: 14px; line-height: 1.65; }
+.steps > li { padding-left: 3px; overflow-wrap: anywhere; }
+.steps > li::marker { color: var(--plan-accent); font-size: 12px; font-weight: 600; }
+.steps strong { font-weight: 550; }
+.card .steps p { margin: 4px 0 0; color: var(--text-dim); font-size: 14px; line-height: 1.65; white-space: pre-wrap; }
+.actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text-dim); font: inherit; font-size: 12px; cursor: pointer; }
+.actions button:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 5%, transparent); color: var(--text); }
+.actions button:disabled { opacity: .6; cursor: progress; }
+.card button:focus-visible, .details > summary:focus-visible, .fallback textarea:focus-visible { outline: 2px solid var(--plan-accent); outline-offset: 3px; }
+.card .fallback p, .card .error { margin: 10px 0 6px; color: var(--red); font-size: 13px; line-height: 1.6; }
+.fallback textarea { display: block; box-sizing: border-box; width: 100%; padding: 10px; border: 0; border-radius: 8px; background: var(--bg-layer-2); color: var(--text); font: inherit; font-size: 13px; line-height: 1.6; resize: vertical; }
+@media (pointer: coarse) { .details > summary { min-height: 44px; } .actions button { min-height: 44px; } }
