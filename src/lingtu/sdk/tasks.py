@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlencode
 
-from ._common import _new_request_id
+from ._common import _download_file, _new_request_id
 from .models import CommandResult
 
 if TYPE_CHECKING:
@@ -162,6 +163,60 @@ class TaskClient:
             path = f"{path}?{urlencode({'map_id': normalized_map_id})}"
         return self._client._get(path)
 
+    def inspection_route(self, route_id: str, *, map_id: str | None = None) -> dict[str, Any]:
+        """Read one stored native inspection route."""
+        path = f"/api/v1/inspection/routes/{quote(route_id, safe='')}"
+        if map_id is not None:
+            path += "?" + urlencode({"map_id": map_id})
+        return self._client._get(path)
+
+    def save_inspection_route(self, route: dict[str, Any]) -> dict[str, Any]:
+        """Create or update a route with its map epoch and revision."""
+        return self._client._request_json("/api/v1/inspection/routes", route)
+
+    def delete_inspection_route(self, route_id: str, *, map_id: str | None = None) -> dict[str, Any]:
+        """Delete one stored route through the native inspection owner."""
+        path = f"/api/v1/inspection/routes/{quote(route_id, safe='')}"
+        if map_id is not None:
+            path += "?" + urlencode({"map_id": map_id})
+        return self._client._request_json(path, method="DELETE")
+
+    def inspection_tasks(
+        self, *, map_id: str | None = None, route_id: str | None = None,
+        include_terminal: bool = False, limit: int = 20,
+    ) -> dict[str, Any]:
+        """List retained inspection task projections with server-side filters."""
+        parameters = {key: value for key, value in {
+            "map_id": map_id, "route_id": route_id,
+            "include_terminal": str(include_terminal).lower(), "limit": limit,
+        }.items() if value is not None}
+        return self._client._get("/api/v1/inspection/tasks?" + urlencode(parameters))
+
+    def list_inspection_evidence(self, *, limit: int = 20) -> dict[str, Any]:
+        """List recent evidence verified by the inspection store."""
+        return self._client._get("/api/v1/inspection/evidence?" + urlencode({"limit": limit}))
+
+    def inspection_evidence(self, evidence_id: str) -> dict[str, Any]:
+        """Read one verified evidence manifest."""
+        return self._client._get(f"/api/v1/inspection/evidence/{quote(evidence_id, safe='')}")
+
+    def review_inspection_evidence(self, evidence_id: str, verdict: str, *, note: str = "") -> dict[str, Any]:
+        """Record a human finding while retaining the original capture result."""
+        return self._client._request_json(
+            f"/api/v1/inspection/evidence/{quote(evidence_id, safe='')}/review",
+            {"verdict": verdict, "note": note},
+        )
+
+    def download_inspection_artifact(self, evidence_id: str, kind: str, target: str | Path) -> Path:
+        """Download one verified evidence artifact by kind."""
+        path = f"/api/v1/inspection/evidence/{quote(evidence_id, safe='')}/artifacts/{quote(kind, safe='')}"
+        return _download_file(self._client, path, target)
+
+    def download_inspection_measurement(self, evidence_id: str, sensor_id: str, target: str | Path) -> Path:
+        """Download a verified measurement using its sensor identity."""
+        path = f"/api/v1/inspection/evidence/{quote(evidence_id, safe='')}/measurements/{quote(sensor_id, safe='')}"
+        return _download_file(self._client, path, target)
+
     def start_inspection(
         self,
         route_id: str,
@@ -169,6 +224,8 @@ class TaskClient:
         map_id: str | None = None,
         revision: int = 0,
         request_id: str | None = None,
+        expected_product_session_id: str | None = None,
+        expected_env: str | None = None,
     ) -> CommandResult:
         """Submit a stored route for native inspection execution."""
         normalized_route_id = str(route_id or "").strip()
@@ -183,6 +240,10 @@ class TaskClient:
         normalized_map_id = str(map_id or "").strip()
         if normalized_map_id:
             body["map_id"] = normalized_map_id
+        if expected_product_session_id is not None:
+            body["expected_product_session_id"] = expected_product_session_id
+        if expected_env is not None:
+            body["expected_env"] = expected_env
         result = self._client._command("/api/v1/inspection/tasks", body)
         if result.request_id is None:
             result.request_id = resolved_request_id
@@ -199,9 +260,14 @@ class TaskClient:
         *,
         reason: str = "operator_pause",
         request_id: str | None = None,
+        expected_product_session_id: str | None = None,
+        expected_env: str | None = None,
     ) -> CommandResult:
         """Request a pause for one inspection task."""
-        return self._control_inspection(task_id, "pause", reason, request_id)
+        return self._control_inspection(
+            task_id, "pause", reason, request_id,
+            expected_product_session_id=expected_product_session_id, expected_env=expected_env,
+        )
 
     def resume_inspection(
         self,
@@ -209,9 +275,14 @@ class TaskClient:
         *,
         reason: str = "operator_resume",
         request_id: str | None = None,
+        expected_product_session_id: str | None = None,
+        expected_env: str | None = None,
     ) -> CommandResult:
         """Request resumption of one paused inspection task."""
-        return self._control_inspection(task_id, "resume", reason, request_id)
+        return self._control_inspection(
+            task_id, "resume", reason, request_id,
+            expected_product_session_id=expected_product_session_id, expected_env=expected_env,
+        )
 
     def cancel_inspection(
         self,
@@ -219,9 +290,14 @@ class TaskClient:
         *,
         reason: str = "operator_cancel",
         request_id: str | None = None,
+        expected_product_session_id: str | None = None,
+        expected_env: str | None = None,
     ) -> CommandResult:
         """Request cancellation of one inspection task."""
-        return self._control_inspection(task_id, "cancel", reason, request_id)
+        return self._control_inspection(
+            task_id, "cancel", reason, request_id,
+            expected_product_session_id=expected_product_session_id, expected_env=expected_env,
+        )
 
     def inspection_report(self, task_id: str) -> dict[str, Any]:
         """Read the business report for one inspection task."""
@@ -234,16 +310,21 @@ class TaskClient:
         action: str,
         reason: str,
         request_id: str | None,
+        *,
+        expected_product_session_id: str | None = None,
+        expected_env: str | None = None,
     ) -> CommandResult:
         encoded_task_id = self._inspection_task_id(task_id)
         resolved_request_id = str(request_id or "").strip() or _new_request_id()
-        result = self._client._command(
-            f"/api/v1/inspection/tasks/{encoded_task_id}/{action}",
-            {
-                "reason": str(reason or "").strip() or f"operator_{action}",
-                "request_id": resolved_request_id,
-            },
-        )
+        body = {
+            "reason": str(reason or "").strip() or f"operator_{action}",
+            "request_id": resolved_request_id,
+        }
+        if expected_product_session_id is not None:
+            body["expected_product_session_id"] = expected_product_session_id
+        if expected_env is not None:
+            body["expected_env"] = expected_env
+        result = self._client._command(f"/api/v1/inspection/tasks/{encoded_task_id}/{action}", body)
         if result.request_id is None:
             result.request_id = resolved_request_id
         return result

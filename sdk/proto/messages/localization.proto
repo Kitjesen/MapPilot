@@ -1,0 +1,41 @@
+// Restored from the public gateway descriptors. See README.md.
+syntax = "proto3";
+
+package doso.v1;
+import "common.proto";
+import "google/protobuf/struct.proto";
+
+message PoseSample {
+  .doso.v1.Pose pose = 1;
+  string frame_id = 2;
+  .google.protobuf.Struct details = 3;
+  optional double received_age_ms = 4;
+  optional bool fresh = 5;
+}
+
+message Relocalize {
+  .doso.v1.Command command = 1;
+  string map_name = 2;
+  .doso.v1.Pose initial_pose = 3;
+}
+
+message LocalizationState {
+  .doso.v1.LocalizationQuality quality = 1;
+  string map_name = 2;
+  string reason = 3;
+  .doso.v1.SampleTime time = 4;
+  string source_state = 5;
+  optional bool ready = 6;
+  optional bool pose_fresh = 7;
+}
+
+enum LocalizationQuality {
+  LOCALIZATION_QUALITY_UNKNOWN = 0;
+  LOCALIZATION_QUALITY_INITIALIZING = 1;
+  LOCALIZATION_QUALITY_LOCALIZED = 2;
+  LOCALIZATION_QUALITY_LOST = 3;
+  LOCALIZATION_QUALITY_DEGRADED = 4;
+  LOCALIZATION_QUALITY_RELOCALIZING = 5;
+  LOCALIZATION_QUALITY_NO_ODOMETRY = 6;
+  LOCALIZATION_QUALITY_TRACKING = 7;
+}

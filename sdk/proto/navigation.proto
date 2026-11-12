@@ -1,0 +1,19 @@
+// Restored from the public gateway descriptors. See README.md.
+syntax = "proto3";
+
+package doso.v1;
+import "common.proto";
+import public "messages/navigation.proto";
+
+service Navigation {
+  rpc Go (.doso.v1.Goal) returns (.doso.v1.Receipt);
+  rpc Status (.doso.v1.Empty) returns (.doso.v1.Snapshot);
+  rpc Path (.doso.v1.Empty) returns (.doso.v1.Snapshot);
+  rpc Route (.doso.v1.Empty) returns (.doso.v1.NavigationPath);
+  rpc WatchPath (.doso.v1.Empty) returns (stream .doso.v1.NavigationPath);
+  rpc Task (.doso.v1.TaskQuery) returns (.doso.v1.Task);
+  rpc Cancel (.doso.v1.CancelTask) returns (.doso.v1.Receipt);
+  rpc Pause (.doso.v1.TaskControl) returns (.doso.v1.Receipt);
+  rpc Resume (.doso.v1.TaskControl) returns (.doso.v1.Receipt);
+  rpc Watch (.doso.v1.TaskQuery) returns (stream .doso.v1.Task);
+}

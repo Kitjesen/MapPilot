@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,8 @@ from lingtu.sdk.client import (
     RobotState,
     SessionInfo,
 )
+from lingtu.sdk.sockets import AsyncFeed, AsyncTeleop
+from lingtu.sdk.streams import Event, async_events
 
 
 class AsyncLingTuClient:
@@ -35,8 +38,10 @@ class AsyncLingTuClient:
         port: int = 5050,
         api_key: str | None = None,
         timeout: float = 10.0,
+        *,
+        base_url: str | None = None,
     ) -> None:
-        self._client = LingTuClient(host, port, api_key=api_key, timeout=timeout)
+        self._client = LingTuClient(host, port, api_key=api_key, timeout=timeout, base_url=base_url)
 
     @property
     def navigation(self) -> AsyncNavigationClient:
@@ -71,29 +76,48 @@ class AsyncLingTuClient:
     async def __aenter__(self) -> AsyncLingTuClient:
         return self
 
+    def events(
+        self, *, topic: str | None = None, include_elevation: bool = False,
+        last_event_id: str | None = None,
+    ) -> AsyncIterator[Event]:
+        """Iterate Gateway events with async for. Close the iterator on early exit."""
+        return async_events(
+            self._client, topic=topic, include_elevation=include_elevation, last_event_id=last_event_id,
+        )
+
     async def __aexit__(self, *_args: object) -> None:
         await self.close()
+
+    def watch_cloud(self, *, timeout: float | None = None) -> AsyncFeed:
+        """Create a binary cloud feed. Open it with an async context manager."""
+        return AsyncFeed(self._client, "/ws/cloud", timeout=timeout)
+
+    def watch_scan(self, *, timeout: float | None = None) -> AsyncFeed:
+        """Create a binary scan feed. Open it with an async context manager."""
+        return AsyncFeed(self._client, "/ws/scan", timeout=timeout)
+
+    def watch_camera(self, *, timeout: float | None = None, viewer_token: str | None = None) -> AsyncFeed:
+        """Create an async JPEG feed with an optional live-media viewing credential."""
+        return AsyncFeed(self._client, "/ws/camera", timeout=timeout, viewer_token=viewer_token)
+
+    def teleop(self, *, client_id: str = "sdk", timeout: float | None = None) -> AsyncTeleop:
+        """Create one async operator session. Opening it reserves a Gateway controller slot."""
+        return AsyncTeleop(self._client, client_id=client_id, timeout=timeout)
 
     async def close(self) -> None:
         """Close resources owned by the canonical client."""
         await asyncio.to_thread(self._client.close)
 
     async def go(
-        self,
-        x: float,
-        y: float,
-        yaw: float = 0.0,
-        *,
-        request_id: str | None = None,
+        self, x: float, y: float, yaw: float | None = None, *,
+        z: float = 0.0, task_id: str | None = None, request_id: str | None = None,
+        acceptance_radius_m: float | None = None, max_speed_mps: float | None = None,
+        client_id: str = "sdk",
     ) -> CommandResult:
-        """Navigate to map coordinates."""
-        return await asyncio.to_thread(
-            self._client.go,
-            x,
-            y,
-            yaw,
-            request_id=request_id,
-        )
+        """Delegate to the navigation domain."""
+        return await asyncio.to_thread(self._client.navigation.go, x, y, yaw, z=z, task_id=task_id, request_id=request_id,
+            acceptance_radius_m=acceptance_radius_m, max_speed_mps=max_speed_mps,
+            client_id=client_id)
 
     async def go_to(self, target: str) -> CommandResult:
         """Navigate by semantic target."""
@@ -223,18 +247,23 @@ class AsyncLingTuClient:
         """Stop robot motion."""
         return await asyncio.to_thread(self._client.stop)
 
-    async def cancel(self, reason: str = "client_cancel") -> CommandResult:
-        """Cancel the current navigation mission."""
-        return await asyncio.to_thread(self._client.cancel, reason)
+    async def cancel(
+        self, reason: str = "client_cancel", *, task_id: str | None = None,
+        request_id: str | None = None, client_id: str = "sdk",
+    ) -> CommandResult:
+        """Cancel without issuing an emergency stop."""
+        return await asyncio.to_thread(self._client.navigation.cancel, reason, task_id=task_id, request_id=request_id, client_id=client_id)
 
     async def navigate_click(
-        self,
-        x: float,
-        y: float,
-        yaw: float = 0.0,
+        self, x: float, y: float, yaw: float | None = None, *,
+        z: float = 0.0, task_id: str | None = None, request_id: str | None = None,
+        acceptance_radius_m: float | None = None, max_speed_mps: float | None = None,
+        client_id: str = "sdk",
     ) -> CommandResult:
-        """Navigate to a map-viewer click point."""
-        return await asyncio.to_thread(self._client.navigate_click, x, y, yaw)
+        """Delegate to the navigation domain."""
+        return await asyncio.to_thread(self._client.navigation.go_to_click, x, y, yaw, z=z, task_id=task_id, request_id=request_id,
+            acceptance_radius_m=acceptance_radius_m, max_speed_mps=max_speed_mps,
+            client_id=client_id)
 
     async def wait_until_arrived(
         self,
@@ -293,6 +322,8 @@ class AsyncLingTuClient:
         map_id: str | None = None,
         revision: int = 0,
         request_id: str | None = None,
+        expected_product_session_id: str | None = None,
+        expected_env: str | None = None,
     ) -> CommandResult:
         """Submit a stored route for native inspection execution."""
         return await asyncio.to_thread(
@@ -301,6 +332,8 @@ class AsyncLingTuClient:
             map_id=map_id,
             revision=revision,
             request_id=request_id,
+            expected_product_session_id=expected_product_session_id,
+            expected_env=expected_env,
         )
 
     async def inspection_task(self, task_id: str) -> dict[str, Any]:
@@ -313,6 +346,8 @@ class AsyncLingTuClient:
         *,
         reason: str = "operator_pause",
         request_id: str | None = None,
+        expected_product_session_id: str | None = None,
+        expected_env: str | None = None,
     ) -> CommandResult:
         """Request a pause for one inspection task."""
         return await asyncio.to_thread(
@@ -320,6 +355,8 @@ class AsyncLingTuClient:
             task_id,
             reason=reason,
             request_id=request_id,
+            expected_product_session_id=expected_product_session_id,
+            expected_env=expected_env,
         )
 
     async def resume_inspection(
@@ -328,6 +365,8 @@ class AsyncLingTuClient:
         *,
         reason: str = "operator_resume",
         request_id: str | None = None,
+        expected_product_session_id: str | None = None,
+        expected_env: str | None = None,
     ) -> CommandResult:
         """Request resumption of one paused inspection task."""
         return await asyncio.to_thread(
@@ -335,6 +374,8 @@ class AsyncLingTuClient:
             task_id,
             reason=reason,
             request_id=request_id,
+            expected_product_session_id=expected_product_session_id,
+            expected_env=expected_env,
         )
 
     async def cancel_inspection(
@@ -343,6 +384,8 @@ class AsyncLingTuClient:
         *,
         reason: str = "operator_cancel",
         request_id: str | None = None,
+        expected_product_session_id: str | None = None,
+        expected_env: str | None = None,
     ) -> CommandResult:
         """Request cancellation of one inspection task."""
         return await asyncio.to_thread(
@@ -350,6 +393,8 @@ class AsyncLingTuClient:
             task_id,
             reason=reason,
             request_id=request_id,
+            expected_product_session_id=expected_product_session_id,
+            expected_env=expected_env,
         )
 
     async def inspection_report(self, task_id: str) -> dict[str, Any]:
@@ -365,12 +410,14 @@ class AsyncLingTuClient:
         name: str | None = None,
         *,
         request_id: str | None = None,
+        auto_process: bool = True,
     ) -> CommandResult:
         """Submit a durable map-save operation."""
         return await asyncio.to_thread(
             self._client.save_map,
             name,
             request_id=request_id,
+            auto_process=auto_process,
         )
 
     async def save_map_and_wait(
@@ -380,6 +427,8 @@ class AsyncLingTuClient:
         request_id: str | None = None,
         timeout: float = 300.0,
         poll_interval: float = 1.0,
+        auto_process: bool = True,
+        wait_for_source: bool = False,
     ) -> dict[str, Any]:
         """Submit a map save and wait for its terminal result."""
         return await asyncio.to_thread(
@@ -388,6 +437,8 @@ class AsyncLingTuClient:
             request_id=request_id,
             timeout=timeout,
             poll_interval=poll_interval,
+            auto_process=auto_process,
+            wait_for_source=wait_for_source,
         )
 
     async def get_map_operation(self, operation_id: str) -> dict[str, Any]:
@@ -456,9 +507,9 @@ class AsyncLingTuClient:
         """Delete a tagged location."""
         return await asyncio.to_thread(self._client.delete_location, name)
 
-    async def camera_snapshot(self) -> bytes:
+    async def camera_snapshot(self, *, viewer_token: str | None = None) -> bytes:
         """Return the latest camera image."""
-        return await asyncio.to_thread(self._client.camera_snapshot)
+        return await asyncio.to_thread(self._client.camera_snapshot, viewer_token=viewer_token)
 
     async def slam_status(self) -> dict[str, Any]:
         """Return SLAM status."""
@@ -485,6 +536,7 @@ class AsyncLingTuClient:
         task_id: str | None = None,
         camera: bool | None = None,
         minimum_free_gib: int | None = None,
+        topics: list[str] | None = None,
     ) -> CommandResult:
         """Start a native recording."""
         return await asyncio.to_thread(
@@ -495,11 +547,12 @@ class AsyncLingTuClient:
             task_id=task_id,
             camera=camera,
             minimum_free_gib=minimum_free_gib,
+            topics=topics,
         )
 
-    async def recording_stop(self) -> CommandResult:
-        """Stop the active recording."""
-        return await asyncio.to_thread(self._client.recording_stop)
+    async def recording_stop(self, *, expected_session_id: str | None = None) -> CommandResult:
+        """Stop the current recording, optionally requiring its session identity."""
+        return await asyncio.to_thread(self._client.recording_stop, expected_session_id=expected_session_id)
 
     async def recording_status(self) -> dict[str, Any]:
         """Return recording status."""
@@ -544,3 +597,18 @@ class AsyncLingTuClient:
     async def runtime_contract(self) -> dict[str, Any]:
         """Return the runtime interface contract."""
         return await asyncio.to_thread(self._client.runtime_contract)
+
+    async def process_map_operation(self, operation_id: str) -> CommandResult:
+        """Process an archived map-save source."""
+        return await asyncio.to_thread(self._client.process_map_operation, operation_id)
+
+    async def download_map_source(self, operation_id: str, target: str | Path) -> Path:
+        """Download the archived source of a map-save operation."""
+        return await asyncio.to_thread(self._client.download_map_source, operation_id, target)
+
+    async def memory_temporal_semantic_embedding(
+        self, embedding: list[float], *, since: str | None = None,
+        top_k: int = 10, label: str | None = None,
+    ) -> dict[str, Any]:
+        """Search temporal memory with the store's embedding model."""
+        return await asyncio.to_thread(self._client.memory_temporal_semantic_embedding, embedding, since=since, top_k=top_k, label=label)

@@ -1,0 +1,26 @@
+@PACKAGE_INIT@
+
+if(NOT TARGET LingtuSdkCore)
+    add_library(LingtuSdkCore SHARED IMPORTED)
+    if(WIN32)
+        set_and_check(_lingtu_core "@PACKAGE_CMAKE_INSTALL_BINDIR@/lingtu_sdk.dll")
+        set_and_check(_lingtu_import "@PACKAGE_CMAKE_INSTALL_LIBDIR@/lingtu_sdk.dll.lib")
+        set_target_properties(LingtuSdkCore PROPERTIES
+            IMPORTED_LOCATION "${_lingtu_core}"
+            IMPORTED_IMPLIB "${_lingtu_import}"
+        )
+        unset(_lingtu_import)
+    elseif(APPLE)
+        set_and_check(_lingtu_core "@PACKAGE_CMAKE_INSTALL_LIBDIR@/liblingtu_sdk.dylib")
+        set_target_properties(LingtuSdkCore PROPERTIES IMPORTED_LOCATION "${_lingtu_core}")
+    else()
+        set_and_check(_lingtu_core "@PACKAGE_CMAKE_INSTALL_LIBDIR@/liblingtu_sdk.so")
+        set_target_properties(LingtuSdkCore PROPERTIES
+            IMPORTED_LOCATION "${_lingtu_core}" IMPORTED_NO_SONAME TRUE
+        )
+    endif()
+    unset(_lingtu_core)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/LingTuSDKTargets.cmake")
+check_required_components(LingTuSDK)

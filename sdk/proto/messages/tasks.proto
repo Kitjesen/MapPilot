@@ -1,0 +1,49 @@
+// Restored from the public gateway descriptors. See README.md.
+syntax = "proto3";
+
+package doso.v1;
+import "common.proto";
+import "google/protobuf/struct.proto";
+
+message Instruction {
+  .doso.v1.Command command = 1;
+  string text = 2;
+  optional string run_id = 3;
+  bool control_only = 4;
+}
+
+message RunQuery {
+  string run_id = 1;
+}
+
+message CancelRun {
+  .doso.v1.Command command = 1;
+  string run_id = 2;
+}
+
+message Run {
+  string run_id = 1;
+  bool found = 2;
+  .google.protobuf.Struct details = 3;
+}
+
+message TaskRunState {
+  string run_id = 1;
+  .doso.v1.TaskRunStatus status = 2;
+  string reason_code = 3;
+  string reason = 4;
+  .doso.v1.SampleTime time = 5;
+  string task_type = 6;
+  string phase = 7;
+  optional double progress = 8;
+  string result = 9;
+}
+
+enum TaskRunStatus {
+  TASK_RUN_STATUS_UNKNOWN = 0;
+  TASK_RUN_STATUS_QUEUED = 1;
+  TASK_RUN_STATUS_RUNNING = 2;
+  TASK_RUN_STATUS_SUCCEEDED = 3;
+  TASK_RUN_STATUS_FAILED = 4;
+  TASK_RUN_STATUS_CANCELLED = 5;
+}

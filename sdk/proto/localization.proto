@@ -1,0 +1,14 @@
+// Restored from the public gateway descriptors. See README.md.
+syntax = "proto3";
+
+package doso.v1;
+import "common.proto";
+import public "messages/localization.proto";
+
+service Localization {
+  rpc Status (.doso.v1.Empty) returns (.doso.v1.Snapshot);
+  rpc State (.doso.v1.Empty) returns (.doso.v1.LocalizationState);
+  rpc Pose (.doso.v1.Empty) returns (.doso.v1.PoseSample);
+  rpc WatchPose (.doso.v1.Empty) returns (stream .doso.v1.PoseSample);
+  rpc Relocalize (.doso.v1.Relocalize) returns (.doso.v1.Receipt);
+}

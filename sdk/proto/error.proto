@@ -1,0 +1,5 @@
+// Restored from the public gateway descriptors. See README.md.
+syntax = "proto3";
+
+package doso.v1;
+import public "messages/error.proto";

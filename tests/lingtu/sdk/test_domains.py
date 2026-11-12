@@ -78,7 +78,7 @@ def test_domain_calls_and_legacy_calls_keep_http_configuration_and_receipts(monk
         assert request.full_url == "http://robot.local:6060/api/v1/goal"
         assert request.get_header("X-api-key") == "test-key"
         assert request_call.kwargs["timeout"] == 2.5
-        assert json.loads(request.data) == {"x": 1.0, "y": 2.0, "yaw": 0.5, "request_id": "goal-1"}
+        assert json.loads(request.data) == {"x": 1.0, "y": 2.0, "z": 0.0, "yaw": 0.5, "request_id": "goal-1", "client_id": "sdk"}
 
 
 def test_navigation_cancel_and_emergency_stop_remain_distinct(monkeypatch):
@@ -91,7 +91,7 @@ def test_navigation_cancel_and_emergency_stop_remain_distinct(monkeypatch):
 
     cancel_request, stop_request = [entry.args[0] for entry in transport.call_args_list]
     assert cancel_request.full_url.endswith("/api/v1/navigation/cancel")
-    assert json.loads(cancel_request.data) == {"reason": "operator_cancel"}
+    assert json.loads(cancel_request.data) == {"reason": "operator_cancel", "client_id": "sdk"}
     assert stop_request.full_url.endswith("/api/v1/stop")
     assert json.loads(stop_request.data) == {}
 
@@ -128,3 +128,41 @@ def test_original_response_imports_refer_to_the_same_public_types():
         "LocalizationClient",
     ):
         assert getattr(legacy, name) is getattr(sdk, name), name
+
+
+@pytest.mark.parametrize("click", [False, True])
+@pytest.mark.parametrize("yaw", [None, 0.0, 1.2])
+def test_goal_fields_reach_real_gateway_model(monkeypatch, click, yaw):
+    from gateway.navigation.goals import construct_goal_from_request
+    from gateway.schemas import ClickNavRequest, GoalRequest
+    captured = []
+    def transport(request, **kwargs):
+        captured.append(json.loads(request.data))
+        return io.BytesIO(b'{"accepted":true}')
+    monkeypatch.setattr("urllib.request.urlopen", transport)
+    robot = sdk.LingTuClient()
+    operation = robot.navigation.go_to_click if click else robot.navigation.go
+    operation(2, 3, yaw, z=4.5, task_id="task-3d", request_id="goal-3d",
+              max_speed_mps=0.3, acceptance_radius_m=0.12)
+    model = (ClickNavRequest if click else GoalRequest)(**captured[0])
+    goal = construct_goal_from_request(model)
+    assert (goal.x, goal.y, goal.z, goal.yaw) == (2, 3, 4.5, yaw)
+    assert goal.max_speed_mps == 0.3 and goal.acceptance_radius_m == 0.12
+
+
+@pytest.mark.parametrize("action", ["pause", "resume", "cancel", "set_speed_limit"])
+def test_navigation_controls_keep_task_identity(monkeypatch, action):
+    transport = Mock(return_value=io.BytesIO(b'{"accepted":true,"execution_confirmed":false}'))
+    monkeypatch.setattr("urllib.request.urlopen", transport)
+    nav = sdk.LingTuClient().navigation
+    if action == "cancel":
+        result = nav.cancel(task_id="task/1", request_id="control-1")
+    elif action == "set_speed_limit":
+        result = nav.set_speed_limit("task/1", 0.2, request_id="control-1")
+    else:
+        result = getattr(nav, action)("task/1", request_id="control-1")
+    request = transport.call_args.args[0]
+    assert request.full_url.endswith("/tasks/task%2F1/" + ("speed-limit" if action == "set_speed_limit" else action))
+    assert json.loads(request.data)["task_id"] == "task/1"
+    assert json.loads(request.data)["request_id"] == "control-1"
+    assert result.raw["execution_confirmed"] is False

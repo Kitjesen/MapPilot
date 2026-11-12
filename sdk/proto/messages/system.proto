@@ -1,0 +1,98 @@
+// Restored from the public gateway descriptors. See README.md.
+syntax = "proto3";
+
+package doso.v1;
+import "common.proto";
+
+message Ping {
+  string status = 1;
+}
+
+message Handshake {
+  uint32 protocol_version = 1;
+  string client_id = 2;
+  string sdk_version = 3;
+}
+
+message HandshakeReply {
+  uint32 protocol_version = 1;
+  .doso.v1.SystemInfo info = 8;
+  reserved 2 to 7;
+}
+
+message SystemInfo {
+  optional string firmware_version = 1;
+  optional string robot_version = 2;
+  optional string robot_id = 3;
+}
+
+message RobotStatus {
+  string mode = 1;
+  optional bool ready = 2;
+  .doso.v1.SampleTime time = 3;
+  .doso.v1.HealthStatus health = 4;
+  optional bool software_emergency_stop = 5;
+  optional bool hardware_emergency_stop = 6;
+  string reason = 7;
+}
+
+message ReadinessState {
+  string status = 1;
+  optional bool ready = 2;
+  optional bool data_ready = 3;
+  optional bool motion_ready = 4;
+  optional bool non_motion_safe = 5;
+  repeated string reasons = 6;
+  repeated string advisories = 7;
+}
+
+message BatteryState {
+  optional double percent = 1;
+  optional double voltage_v = 2;
+  optional double temperature_c = 3;
+  optional bool charging = 4;
+  .doso.v1.SampleTime time = 5;
+  optional double current_a = 6;
+}
+
+message Fault {
+  string source = 1;
+  string code = 2;
+  .doso.v1.FaultSeverity severity = 3;
+  string message = 4;
+  optional bool active = 5;
+  .doso.v1.SampleTime time = 6;
+}
+
+message FaultReport {
+  .doso.v1.HealthStatus health = 1;
+  repeated .doso.v1.Fault faults = 2;
+  repeated string observed_sources = 3;
+  repeated string unavailable_sources = 4;
+}
+
+message ControlState {
+  optional bool available = 1;
+  optional bool held_by_client = 2;
+  string owner = 3;
+  .doso.v1.SampleTime time = 4;
+  uint64 owner_epoch = 5;
+  optional bool holding = 6;
+  string reason = 7;
+  optional double received_age_ms = 8;
+  bool fresh = 9;
+}
+
+enum HealthStatus {
+  HEALTH_STATUS_UNKNOWN = 0;
+  HEALTH_STATUS_OK = 1;
+  HEALTH_STATUS_WARNING = 2;
+  HEALTH_STATUS_ERROR = 3;
+}
+
+enum FaultSeverity {
+  FAULT_SEVERITY_UNKNOWN = 0;
+  FAULT_SEVERITY_WARNING = 1;
+  FAULT_SEVERITY_ERROR = 2;
+  FAULT_SEVERITY_FATAL = 3;
+}

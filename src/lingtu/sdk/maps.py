@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import tempfile
 import time
-import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
-from ._common import _CONNECTION_ERROR, _new_request_id
+from ._common import _CONNECTION_ERROR, _download_file, _new_request_id
 from .models import (
     CommandResult,
     MapInfo,
@@ -188,6 +186,17 @@ class MapClient:
         encoded_operation_id = quote(operation_id, safe="")
         return self._client._get(f"/api/v1/maps/operations/{encoded_operation_id}")
 
+    def operations(self, limit: int = 100) -> dict[str, Any]:
+        """List durable save operations, including archived sources."""
+        return self._client._get("/api/v1/maps/operations?" + urlencode({"limit": limit}))
+
+    def reoptimize_operation(self, operation_id: str, *, request_id: str | None = None) -> CommandResult:
+        """Realign this operation's archived scans and rebuild its navigation map."""
+        return self._client._command(
+            f"/api/v1/maps/operations/{quote(operation_id, safe='')}/reoptimize",
+            {"request_id": request_id or _new_request_id()},
+        )
+
     def cancel_operation(self, operation_id: str) -> CommandResult:
         """Request cancellation of one map-save operation."""
         encoded_operation_id = quote(operation_id, safe="")
@@ -213,41 +222,134 @@ class MapClient:
         encoded_operation_id = quote(operation_id, safe="")
         return self._download(f"/api/v1/maps/operations/{encoded_operation_id}/source/pcd", target)
 
+    def download_octomap(self, name: str, target: str | Path) -> Path:
+        """Stream the saved OctoMap artifact to ``target`` atomically."""
+        return self._download(f"/api/v1/maps/{quote(name, safe='')}/octomap", target)
+
+    def surface(
+        self, name: str, *, headroom_m: float | None = None, radius_m: float | None = None,
+        max_hole_area_m2: float | None = None, max_slope: float | None = None,
+    ) -> dict[str, Any]:
+        """Preview observed and inferred support surfaces using native geometry."""
+        parameters = {key: value for key, value in {
+            "headroom_m": headroom_m, "radius_m": radius_m,
+            "max_hole_area_m2": max_hole_area_m2, "max_slope": max_slope,
+        }.items() if value is not None}
+        query = "?" + urlencode(parameters) if parameters else ""
+        return self._client._get(f"/api/v1/maps/{quote(name, safe='')}/surface{query}")
+
+    def no_go(self, name: str) -> dict[str, Any]:
+        """Read independent 3D no-go regions and their content epoch."""
+        return self._client._get(f"/api/v1/maps/{quote(name, safe='')}/no_go")
+
+    def set_no_go(
+        self, name: str, region: dict[str, Any], *, expected_content_epoch: int,
+    ) -> CommandResult:
+        """Add or replace a region with ``id``, ``min`` and ``max`` XYZ bounds."""
+        return self._client._command(f"/api/v1/maps/{quote(name, safe='')}/no_go", {
+            "region": region, "expected_content_epoch": expected_content_epoch,
+        }, method="PUT")
+
+    def delete_no_go(self, name: str, region_id: str, *, expected_content_epoch: int) -> CommandResult:
+        """Delete one no-go region against the version returned by ``no_go``."""
+        query = urlencode({"expected_content_epoch": expected_content_epoch})
+        return self._client._command(
+            f"/api/v1/maps/{quote(name, safe='')}/no_go/{quote(region_id, safe='')}?{query}",
+            method="DELETE",
+        )
+
+    def preview_edits(
+        self, name: str, operations: list[dict[str, Any]], *, expected_source_content_epoch: int,
+    ) -> dict[str, Any]:
+        """Preview native point-cloud edit operations against a saved source version."""
+        return self._client._request_json(f"/api/v1/maps/{quote(name, safe='')}/edit_preview", {
+            "operations": operations, "expected_source_content_epoch": expected_source_content_epoch,
+        })
+
+    def save_as(
+        self, name: str, new_name: str, operations: list[dict[str, Any]], *,
+        expected_source_content_epoch: int,
+    ) -> CommandResult:
+        """Save edited source as another map. Pass an empty operation list to copy."""
+        return self._client._command(f"/api/v1/maps/{quote(name, safe='')}/save_as", {
+            "name": new_name, "operations": operations,
+            "expected_source_content_epoch": expected_source_content_epoch,
+        })
+
+    def crop(
+        self, name: str, bounds: dict[str, Any], *, invert: bool = False, voxel_size: float = 0.0,
+    ) -> CommandResult:
+        """Crop the saved source in place, invalidating derived navigation artifacts."""
+        return self._client._command(f"/api/v1/maps/{quote(name, safe='')}/crop", {
+            "bounds": bounds, "invert": invert, "voxel_size": voxel_size,
+        })
+
+    def edit_voxels(
+        self, name: str, x: float, y: float, z: float, *, state: str,
+        radius_m: float = 0.2, shape: str = "sphere",
+    ) -> CommandResult:
+        """Edit saved OctoMap occupancy. State is occupied, free, preblocked or traversable."""
+        return self._client._command(f"/api/v1/maps/{quote(name, safe='')}/voxels/edit", {
+            "center": [x, y, z], "state": state, "radius_m": radius_m, "shape": shape,
+        })
+
+    def voxel_edits(self, name: str) -> dict[str, Any]:
+        """Read the saved OctoMap edit overlay."""
+        return self._client._get(f"/api/v1/maps/{quote(name, safe='')}/voxels/edits")
+
+    def mark_zone(
+        self, name: str, x: float, y: float, z: float, *, state: str,
+        radius_m: float = 0.2, shape: str = "sphere",
+    ) -> CommandResult:
+        """Mark a saved OctoMap zone as occupied, free, preblocked or traversable."""
+        return self._client._command(f"/api/v1/maps/{quote(name, safe='')}/mark_zone", {
+            "center": [x, y, z], "state": state, "radius_m": radius_m, "shape": shape,
+        })
+
+    def build_occupancy(self, name: str) -> CommandResult:
+        """Build a 2D occupancy artifact from the saved source."""
+        return self._client._command(f"/api/v1/maps/{quote(name, safe='')}/build_occupancy")
+
+    def validate_plan(
+        self, name: str, x: float, y: float, *, z: float = 0.0,
+        frame_id: str = "map", acceptance_radius_m: float | None = None,
+    ) -> dict[str, Any]:
+        """Preview a route on the active saved map without publishing a motion goal."""
+        body: dict[str, Any] = {"x": x, "y": y, "z": z, "frame_id": frame_id}
+        if acceptance_radius_m is not None:
+            body["acceptance_radius_m"] = acceptance_radius_m
+        return self._client._request_json(f"/api/v1/maps/{quote(name, safe='')}/validate_plan", body)
+
+    def build_octomap(
+        self, name: str, *, resolution: float | None = None, frame_id: str | None = None,
+        source_profile: str | None = None, data_source: str | None = None,
+        slam_source: str | None = None, localization_source: str | None = None,
+        mapping_source: str | None = None,
+    ) -> CommandResult:
+        """Rebuild the saved source's OctoMap using native mapd."""
+        options = {key: value for key, value in {
+            "resolution": resolution, "frame_id": frame_id, "source_profile": source_profile,
+            "data_source": data_source, "slam_source": slam_source,
+            "localization_source": localization_source, "mapping_source": mapping_source,
+        }.items() if value is not None}
+        return self._client._command(f"/api/v1/maps/{quote(name, safe='')}/build_octomap", options)
+
+    def import_pcd(
+        self, name: str, source_path: str, *, voxel_size: float = 0.0,
+        bounds: dict[str, Any] | None = None,
+    ) -> CommandResult:
+        """Import a PCD already in the Gateway's map exchange directory."""
+        body: dict[str, Any] = {"name": name, "source_path": source_path, "voxel_size": voxel_size}
+        if bounds is not None:
+            body["bounds"] = bounds
+        return self._client._command("/api/v1/maps/import_pcd", body)
+
+    def delete(self, name: str) -> CommandResult:
+        """Delete a saved map. Native mapd rejects deletion of an active map."""
+        return self._client._command(f"/api/v1/maps/{quote(name, safe='')}", method="DELETE")
+
     def _download(self, path: str, target: str | Path) -> Path:
-        destination = Path(target)
-        request = urllib.request.Request(self._client.base_url + path)
-        if self._client._api_key:
-            request.add_header("X-API-Key", self._client._api_key)
-        temporary_path: Path | None = None
-        try:
-            with urllib.request.urlopen(request, timeout=self._client._timeout) as response:
-                content_length = response.headers.get("Content-Length")
-                expected_bytes = int(content_length) if content_length is not None else None
-                received_bytes = 0
-                with tempfile.NamedTemporaryFile(
-                    mode="wb",
-                    dir=destination.parent,
-                    prefix=f".{destination.name}.",
-                    suffix=".part",
-                    delete=False,
-                ) as output:
-                    temporary_path = Path(output.name)
-                    while True:
-                        chunk = response.read(1024 * 1024)
-                        if not chunk:
-                            break
-                        output.write(chunk)
-                        received_bytes += len(chunk)
-                    if expected_bytes is not None and received_bytes != expected_bytes:
-                        raise OSError(
-                            f"Incomplete map download: expected {expected_bytes} bytes, received {received_bytes}"
-                        )
-            temporary_path.replace(destination)
-        except BaseException:
-            if temporary_path is not None:
-                temporary_path.unlink(missing_ok=True)
-            raise
-        return destination
+        return _download_file(self._client, path, target)
 
     def rename(self, old_name: str, new_name: str) -> CommandResult:
         """Rename a saved map."""
@@ -263,7 +365,7 @@ class MapClient:
 
     def saved_points(self, name: str) -> dict[str, Any]:
         """Get a saved map point cloud as JSON."""
-        return self._client._get(f"/api/v1/maps/{name}/points")
+        return self._client._get(f"/api/v1/maps/{quote(name, safe='')}/points")
 
     def locations(self) -> dict[str, Any]:
         """List tagged navigation locations."""

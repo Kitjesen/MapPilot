@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import urllib.request
-from typing import Any
+from typing import Any, cast
+from urllib.parse import urlsplit
 
 from lingtu.sdk.client import LingTuClient
 
@@ -20,16 +21,24 @@ class LingTuMCP:
         *,
         host: str | None = None,
         port: int = _MCP_PORT,
-        timeout: float = 10.0,
+        timeout: float | None = None,
+        api_key: str | None = None,
     ) -> None:
         if host:
             resolved_host = host
         elif client is not None:
-            resolved_host = client.base_url.split("://", 1)[1].rsplit(":", 1)[0]
+            resolved_host = cast(str, urlsplit(client.base_url).hostname)
         else:
             resolved_host = "127.0.0.1"
+        if ":" in resolved_host and not resolved_host.startswith("["):
+            resolved_host = f"[{resolved_host}]"
         self._base = f"http://{resolved_host}:{port}"
-        self._timeout = timeout
+        self._timeout = client._timeout if client is not None else 10.0
+        self._api_key = client._api_key if client is not None else None
+        if timeout is not None:
+            self._timeout = timeout
+        if api_key is not None:
+            self._api_key = api_key
         self._request_id = 0
 
     def call(self, tool: str, params: dict[str, Any] | None = None) -> Any:
@@ -44,12 +53,6 @@ class LingTuMCP:
                 "params": {"name": tool, "arguments": params or {}},
             },
         )
-        if "error" in body:
-            error = body["error"]
-            raise MCPError(
-                int(error.get("code", -1)),
-                str(error.get("message", "Unknown error")),
-            )
         result = body.get("result", {})
         if result.get("isError"):
             text = next(
@@ -96,9 +99,18 @@ class LingTuMCP:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        return self._read(request)
+        body = self._read(request)
+        if "error" in body:
+            error = body["error"]
+            raise MCPError(
+                int(error.get("code", -1)),
+                str(error.get("message", "Unknown error")),
+            )
+        return body
 
     def _read(self, request: urllib.request.Request) -> dict[str, Any]:
+        if self._api_key:
+            request.add_header("X-API-Key", self._api_key)
         with urllib.request.urlopen(request, timeout=self._timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
         if not isinstance(payload, dict):

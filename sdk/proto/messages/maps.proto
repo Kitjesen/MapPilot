@@ -1,0 +1,112 @@
+// Restored from the public gateway descriptors. See README.md.
+syntax = "proto3";
+
+package doso.v1;
+import "common.proto";
+import "google/protobuf/struct.proto";
+
+message SaveMap {
+  .doso.v1.Command command = 1;
+  optional string name = 2;
+}
+
+message MapQuery {
+  string operation_id = 1;
+}
+
+message MapRecord {
+  string name = 1;
+  optional bool can_activate = 2;
+  bool has_pcd = 3;
+  bool has_octomap = 4;
+  repeated string activation_blockers = 5;
+}
+
+message MapList {
+  repeated .doso.v1.MapRecord maps = 1;
+  string active = 2;
+  .google.protobuf.Struct details = 3;
+}
+
+message MapContentRequest {
+  string map_name = 1;
+}
+
+message MapContentInfo {
+  string map_id = 1;
+  optional uint64 content_epoch = 2;
+  optional string frame_id = 3;
+  uint64 size_bytes = 4;
+}
+
+message MapContent {
+  oneof value {
+    .doso.v1.MapContentInfo info = 1;
+    bytes chunk = 2;
+  }
+}
+
+message MapOperation {
+  string operation_id = 1;
+  .doso.v1.MapState state = 2;
+  string reason = 3;
+  .google.protobuf.Struct details = 4;
+  string reason_code = 5;
+}
+
+message SwitchProduct {
+  .doso.v1.Command command = 1;
+  .doso.v1.Product product = 2;
+  string expected_product_session_id = 3;
+  optional string map_name = 4;
+  .doso.v1.Pose initial_pose = 5;
+}
+
+message ProductQuery {
+  string request_id = 1;
+}
+
+message ProductOperation {
+  string request_id = 1;
+  .doso.v1.ProductState state = 2;
+  bool active = 3;
+  string reason = 4;
+  .google.protobuf.Struct details = 5;
+  string reason_code = 6;
+}
+
+message MapGrid {
+  string frame_id = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+  double resolution_m = 4;
+  .doso.v1.Pose origin = 5;
+  bytes cells = 6;
+  .doso.v1.SampleTime time = 7;
+  string map_id = 8;
+  optional uint64 content_epoch = 9;
+}
+
+enum MapState {
+  MAP_UNKNOWN = 0;
+  MAP_WAITING_SNAPSHOT = 1;
+  MAP_QUEUED = 2;
+  MAP_RUNNING = 3;
+  MAP_SUCCEEDED = 4;
+  MAP_FAILED = 5;
+  MAP_CANCELLED = 6;
+}
+
+enum Product {
+  PRODUCT_UNKNOWN = 0;
+  PRODUCT_MAP = 1;
+  PRODUCT_NAV = 2;
+}
+
+enum ProductState {
+  PRODUCT_STATE_UNKNOWN = 0;
+  PRODUCT_RUNNING = 1;
+  PRODUCT_SUCCEEDED = 2;
+  PRODUCT_FAILED = 3;
+  PRODUCT_INTERRUPTED = 4;
+}

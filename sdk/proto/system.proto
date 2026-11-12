@@ -1,0 +1,20 @@
+// Restored from the public gateway descriptors. See README.md.
+syntax = "proto3";
+
+package doso.v1;
+import "common.proto";
+import public "messages/system.proto";
+
+service System {
+  rpc Handshake (.doso.v1.Handshake) returns (.doso.v1.HandshakeReply);
+  rpc Ping (.doso.v1.Empty) returns (.doso.v1.Ping);
+  rpc State (.doso.v1.Empty) returns (.doso.v1.Snapshot);
+  rpc RobotStatus (.doso.v1.Empty) returns (.doso.v1.RobotStatus);
+  rpc Health (.doso.v1.Empty) returns (.doso.v1.Snapshot);
+  rpc Faults (.doso.v1.Empty) returns (.doso.v1.FaultReport);
+  rpc WatchFaults (.doso.v1.Empty) returns (stream .doso.v1.FaultReport);
+  rpc Readiness (.doso.v1.Empty) returns (.doso.v1.Snapshot);
+  rpc Capabilities (.doso.v1.Empty) returns (.doso.v1.Snapshot);
+  rpc Session (.doso.v1.Empty) returns (.doso.v1.Snapshot);
+  rpc ProductStatus (.doso.v1.Empty) returns (.doso.v1.Snapshot);
+}

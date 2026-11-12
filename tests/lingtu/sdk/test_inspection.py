@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import json
+import urllib.error
+from io import BytesIO
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from lingtu.sdk import AsyncLingTuClient, CommandResult, LingTuClient
 
@@ -30,8 +35,10 @@ def test_inspection_routes_queries_the_selected_map(mock_urlopen: Mock) -> None:
 
 
 @patch("urllib.request.urlopen")
+@pytest.mark.parametrize("binding", [{}, {"expected_product_session_id": "session-1", "expected_env": "sim"}])
 def test_start_inspection_preserves_task_and_reusable_request_id(
     mock_urlopen: Mock,
+    binding: dict[str, str],
 ) -> None:
     mock_urlopen.return_value = _http_response(
         {
@@ -49,6 +56,7 @@ def test_start_inspection_preserves_task_and_reusable_request_id(
         map_id="factory",
         revision=4,
         request_id="request-1",
+        **binding,
     )
 
     assert isinstance(result, CommandResult)
@@ -62,14 +70,17 @@ def test_start_inspection_preserves_task_and_reusable_request_id(
         "map_id": "factory",
         "revision": 4,
         "request_id": "request-1",
+        **binding,
     }
 
 
 @pytest.mark.parametrize("action", ["pause", "resume", "cancel"])
+@pytest.mark.parametrize("binding", [{}, {"expected_product_session_id": "session-1", "expected_env": "sim"}])
 @patch("urllib.request.urlopen")
 def test_control_inspection_uses_task_identity_and_request_id(
     mock_urlopen: Mock,
     action: str,
+    binding: dict[str, str],
 ) -> None:
     mock_urlopen.return_value = _http_response(
         {
@@ -86,6 +97,7 @@ def test_control_inspection_uses_task_identity_and_request_id(
         "task/1",
         reason=f"operator_{action}",
         request_id=f"request-{action}",
+        **binding,
     )
 
     assert result.task_id == "task/1"
@@ -98,6 +110,7 @@ def test_control_inspection_uses_task_identity_and_request_id(
     assert json.loads(request.data) == {
         "reason": f"operator_{action}",
         "request_id": f"request-{action}",
+        **binding,
     }
 
 
@@ -138,6 +151,8 @@ async def test_async_inspection_methods_delegate_to_the_sync_client() -> None:
         map_id="factory",
         revision=4,
         request_id="request-1",
+        expected_product_session_id="session-1",
+        expected_env="sim",
     )
 
     assert result.task_id == "inspection-task-1"
@@ -146,4 +161,55 @@ async def test_async_inspection_methods_delegate_to_the_sync_client() -> None:
         map_id="factory",
         revision=4,
         request_id="request-1",
+        expected_product_session_id="session-1",
+        expected_env="sim",
     )
+
+
+@pytest.mark.parametrize("action", ["start", "pause", "resume", "cancel"])
+@pytest.mark.parametrize(("binding", "reason"), [
+    ({"expected_product_session_id": "older-session"}, "inspection_product_session_mismatch"),
+    ({"expected_env": "real"}, "inspection_expected_env_mismatch"),
+])
+def test_binding_rejection_comes_from_gateway(monkeypatch, action, binding, reason):
+    from gateway.routes import inspection
+
+    monkeypatch.setattr(inspection, "runtime_identity", lambda _gw: {
+        "state": "active", "env": "sim", "product_session_id": "session-1",
+    })
+    timeline = Mock()
+    timeline.query.return_value = {"product_session_id": "session-1"}
+    monkeypatch.setattr(inspection, "ensure_inspection_task_timeline", lambda _gw: timeline)
+    native = Mock()
+    monkeypatch.setattr(inspection, "_run_native_task_command", native)
+    app = FastAPI()
+    inspection.register_inspection_routes(app, SimpleNamespace())
+
+    with TestClient(app) as http:
+        def transport(request, **_options):
+            response = http.request(
+                request.get_method(), request.full_url, content=request.data,
+                headers=dict(request.header_items()),
+            )
+            assert response.status_code == 409, response.text
+            raise urllib.error.HTTPError(request.full_url, 409, "Gateway conflict", response.headers, BytesIO(response.content))
+
+        monkeypatch.setattr("urllib.request.urlopen", transport)
+        result = getattr(LingTuClient().tasks, f"{action}_inspection")("task-1", **binding)
+
+    assert not result.ok
+    assert result.raw["error"] == reason
+    native.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["start", "pause", "resume", "cancel"])
+async def test_async_grouped_binding_reaches_http(monkeypatch, action):
+    transport = Mock(return_value=_http_response({"ok": True, "accepted": True}))
+    monkeypatch.setattr("urllib.request.urlopen", transport)
+    await getattr(AsyncLingTuClient().tasks, f"{action}_inspection")(
+        "task-1", expected_product_session_id="session-1", expected_env="sim",
+    )
+    body = json.loads(transport.call_args.args[0].data)
+    assert body["expected_product_session_id"] == "session-1"
+    assert body["expected_env"] == "sim"

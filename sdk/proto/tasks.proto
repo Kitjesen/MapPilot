@@ -1,0 +1,13 @@
+// Restored from the public gateway descriptors. See README.md.
+syntax = "proto3";
+
+package doso.v1;
+import "common.proto";
+import public "messages/tasks.proto";
+
+service Tasks {
+  rpc Send (.doso.v1.Instruction) returns (.doso.v1.Receipt);
+  rpc Get (.doso.v1.RunQuery) returns (.doso.v1.Run);
+  rpc Watch (.doso.v1.RunQuery) returns (stream .doso.v1.Run);
+  rpc Cancel (.doso.v1.CancelRun) returns (.doso.v1.Receipt);
+}

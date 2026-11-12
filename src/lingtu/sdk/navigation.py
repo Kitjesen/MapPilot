@@ -31,30 +31,98 @@ class NavigationClient:
         self._client = client
 
     def go(
-        self,
-        x: float,
-        y: float,
-        yaw: float = 0.0,
-        *,
-        request_id: str | None = None,
+        self, x: float, y: float, yaw: float | None = None, *,
+        z: float = 0.0, task_id: str | None = None, request_id: str | None = None,
+        acceptance_radius_m: float | None = None, max_speed_mps: float | None = None,
+        client_id: str = "sdk",
     ) -> CommandResult:
-        """Navigate to map coordinates."""
+        """Navigate in the active map; omitted yaw requests position only."""
+        return self._goal("/api/v1/goal", x, y, yaw, z=z, task_id=task_id, request_id=request_id,
+            acceptance_radius_m=acceptance_radius_m, max_speed_mps=max_speed_mps,
+            client_id=client_id)
+
+    def go_to_click(
+        self, x: float, y: float, yaw: float | None = None, *,
+        z: float = 0.0, task_id: str | None = None, request_id: str | None = None,
+        acceptance_radius_m: float | None = None, max_speed_mps: float | None = None,
+        client_id: str = "sdk",
+    ) -> CommandResult:
+        """Navigate to a 3D map click. Yaw is radians, omitted yaw requests position only."""
+        return self._goal("/api/v1/navigate/click", x, y, yaw, z=z, task_id=task_id, request_id=request_id,
+            acceptance_radius_m=acceptance_radius_m, max_speed_mps=max_speed_mps,
+            client_id=client_id)
+
+    def _goal(
+        self, path: str, x: float, y: float, yaw: float | None, *, z: float,
+        task_id: str | None, request_id: str | None, acceptance_radius_m: float | None,
+        max_speed_mps: float | None, client_id: str,
+    ) -> CommandResult:
         resolved_request_id = str(request_id or "").strip() or _new_request_id()
-        result = self._client._command(
-            "/api/v1/goal",
-            {"x": x, "y": y, "yaw": yaw, "request_id": resolved_request_id},
-        )
+        body = {"x": x, "y": y, "z": z, "yaw": yaw,
+                "request_id": resolved_request_id, "client_id": client_id}
+        body.update({key: value for key, value in {
+            "task_id": task_id, "acceptance_radius_m": acceptance_radius_m,
+            "max_speed_mps": max_speed_mps,
+        }.items() if value is not None})
+        result = self._client._command(path, body)
         if result.request_id is None:
             result.request_id = resolved_request_id
         return result
 
-    def go_to_click(self, x: float, y: float, yaw: float = 0.0) -> CommandResult:
-        """Navigate to a map-viewer click point."""
-        return self._client._command("/api/v1/navigate/click", {"x": x, "y": y, "yaw": yaw})
+    def select_planner(
+        self, name: str, *, request_id: str | None = None, client_id: str = "sdk",
+    ) -> CommandResult:
+        """Select SCAN/CMU while idle; success means the native switch completed."""
+        return self._client._command("/api/v1/navigation/planner", {
+            "name": name, "request_id": request_id or _new_request_id(), "client_id": client_id,
+        })
 
-    def cancel(self, reason: str = "client_cancel") -> CommandResult:
-        """Gracefully cancel the current navigation mission."""
-        return self._client._command("/api/v1/navigation/cancel", {"reason": reason})
+    def cancel(
+        self, reason: str = "client_cancel", *, task_id: str | None = None,
+        request_id: str | None = None, client_id: str = "sdk",
+    ) -> CommandResult:
+        """Cancel an identified task, or the current task when omitted."""
+        if task_id is not None:
+            return self._control("cancel", task_id, reason, request_id, client_id)
+        body = {"reason": reason, "client_id": client_id}
+        if request_id is not None:
+            body["request_id"] = request_id
+        return self._client._command("/api/v1/navigation/cancel", body)
+
+    def pause(
+        self, task_id: str, *, reason: str = "operator_pause",
+        request_id: str | None = None, client_id: str = "sdk",
+    ) -> CommandResult:
+        """Request pause; the receipt does not confirm physical standstill."""
+        return self._control("pause", task_id, reason, request_id, client_id)
+
+    def resume(
+        self, task_id: str, *, reason: str = "operator_resume",
+        request_id: str | None = None, client_id: str = "sdk",
+    ) -> CommandResult:
+        """Continue the same task without submitting a new goal."""
+        return self._control("resume", task_id, reason, request_id, client_id)
+
+    def set_speed_limit(
+        self, task_id: str, max_speed_mps: float, *,
+        request_id: str | None = None, client_id: str = "sdk",
+    ) -> CommandResult:
+        """Set the active task speed limit through native admission."""
+        return self._control("speed-limit", task_id, "", request_id, client_id,
+                             max_speed_mps=max_speed_mps)
+
+    def _control(
+        self, action: str, task_id: str, reason: str, request_id: str | None,
+        client_id: str, **fields: float,
+    ) -> CommandResult:
+        task_id = str(task_id).strip()
+        if not task_id:
+            raise ValueError("task_id is required")
+        body = {"task_id": task_id, "request_id": request_id or _new_request_id(),
+                "client_id": client_id, "reason": reason, **fields}
+        return self._client._command(
+            f"/api/v1/navigation/tasks/{quote(task_id, safe='')}/{action}", body,
+        )
 
     def wait_until_arrived(
         self,
@@ -103,6 +171,10 @@ class NavigationClient:
     def path(self) -> dict[str, Any]:
         """Get the latest planned global path as a list of poses."""
         return self._client._get("/api/v1/path")
+
+    def goal_status(self, request_id: str) -> dict[str, Any]:
+        """Reconcile a goal submission using its caller-selected request identity."""
+        return self._client._get(f"/api/v1/navigation/goals/{quote(request_id, safe='')}")
 
     def start_exploration(self) -> CommandResult:
         """Start autonomous frontier exploration."""

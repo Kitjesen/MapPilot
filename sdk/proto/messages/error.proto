@@ -1,0 +1,10 @@
+// Restored from the public gateway descriptors. See README.md.
+syntax = "proto3";
+
+package doso.v1;
+import "google/protobuf/struct.proto";
+
+message ErrorDetail {
+  string reason_code = 1;
+  .google.protobuf.Struct details = 2;
+}

@@ -11,8 +11,10 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from collections.abc import Generator
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from ._common import _connection_error_payload
 from .localization import LocalizationClient as LocalizationClient
@@ -33,6 +35,8 @@ from .models import SessionInfo as SessionInfo
 from .models import _parse_command_result
 from .navigation import NavigationClient as NavigationClient
 from .observations import ObservationClient as ObservationClient
+from .sockets import Feed, Teleop
+from .streams import Event, events
 from .system import SystemClient as SystemClient
 from .tasks import TaskClient as TaskClient
 
@@ -46,8 +50,22 @@ class LingTuClient:
         port: int = 5050,
         api_key: str | None = None,
         timeout: float = 10.0,
+        *,
+        base_url: str | None = None,
     ) -> None:
-        self.base_url = f"http://{host}:{port}"
+        if base_url is None:
+            self.base_url = f"http://{host}:{port}"
+        else:
+            origin = urlsplit(base_url)
+            if (
+                origin.scheme not in {"http", "https"} or not origin.hostname
+                or origin.username is not None or origin.password is not None
+                or origin.path not in {"", "/"} or origin.query or origin.fragment
+            ):
+                raise ValueError("base_url must be an HTTP(S) origin without credentials, path, query or fragment")
+            if origin.port == 0:
+                raise ValueError("base_url port must be between 1 and 65535")
+            self.base_url = origin.geturl().rstrip("/")
         self._api_key = api_key
         self._timeout = timeout
         self._navigation = NavigationClient(self)
@@ -90,19 +108,42 @@ class LingTuClient:
     def __enter__(self) -> LingTuClient:
         return self
 
+    def events(
+        self, *, topic: str | None = None, include_elevation: bool = False,
+        last_event_id: str | None = None,
+    ) -> Generator[Event, None, None]:
+        """Subscribe to Gateway events. Close the iterator when stopping early."""
+        return events(self, topic=topic, include_elevation=include_elevation, last_event_id=last_event_id)
+
     def __exit__(self, *args: object) -> None:
         self.close()
 
+    def watch_cloud(self, *, timeout: float | None = None) -> Feed:
+        """Create a binary cloud feed. Open it with a context manager."""
+        return Feed(self, "/ws/cloud", timeout=timeout)
+
+    def watch_scan(self, *, timeout: float | None = None) -> Feed:
+        """Create a binary scan feed. Open it with a context manager."""
+        return Feed(self, "/ws/scan", timeout=timeout)
+
+    def watch_camera(self, *, timeout: float | None = None, viewer_token: str | None = None) -> Feed:
+        """Create a JPEG feed with an optional live-media viewing credential."""
+        return Feed(self, "/ws/camera", timeout=timeout, viewer_token=viewer_token)
+
+    def teleop(self, *, client_id: str = "sdk", timeout: float | None = None) -> Teleop:
+        """Create one operator session. Opening it reserves a Gateway controller slot."""
+        return Teleop(self, client_id=client_id, timeout=timeout)
+
     def go(
-        self,
-        x: float,
-        y: float,
-        yaw: float = 0.0,
-        *,
-        request_id: str | None = None,
+        self, x: float, y: float, yaw: float | None = None, *,
+        z: float = 0.0, task_id: str | None = None, request_id: str | None = None,
+        acceptance_radius_m: float | None = None, max_speed_mps: float | None = None,
+        client_id: str = "sdk",
     ) -> CommandResult:
-        """Compatibility alias for navigation.go()."""
-        return self.navigation.go(x, y, yaw, request_id=request_id)
+        """Delegate to the navigation domain."""
+        return self.navigation.go(x, y, yaw, z=z, task_id=task_id, request_id=request_id,
+            acceptance_radius_m=acceptance_radius_m, max_speed_mps=max_speed_mps,
+            client_id=client_id)
 
     def go_to(self, target: str) -> CommandResult:
         """Navigate by semantic label or natural-language instruction."""
@@ -207,13 +248,23 @@ class LingTuClient:
         """Compatibility alias for system.emergency_stop()."""
         return self.system.emergency_stop()
 
-    def cancel(self, reason: str = "client_cancel") -> CommandResult:
-        """Compatibility alias for navigation.cancel()."""
-        return self.navigation.cancel(reason)
+    def cancel(
+        self, reason: str = "client_cancel", *, task_id: str | None = None,
+        request_id: str | None = None, client_id: str = "sdk",
+    ) -> CommandResult:
+        """Cancel without issuing an emergency stop."""
+        return self.navigation.cancel(reason, task_id=task_id, request_id=request_id, client_id=client_id)
 
-    def navigate_click(self, x: float, y: float, yaw: float = 0.0) -> CommandResult:
-        """Compatibility alias for navigation.go_to_click()."""
-        return self.navigation.go_to_click(x, y, yaw)
+    def navigate_click(
+        self, x: float, y: float, yaw: float | None = None, *,
+        z: float = 0.0, task_id: str | None = None, request_id: str | None = None,
+        acceptance_radius_m: float | None = None, max_speed_mps: float | None = None,
+        client_id: str = "sdk",
+    ) -> CommandResult:
+        """Delegate to the navigation domain."""
+        return self.navigation.go_to_click(x, y, yaw, z=z, task_id=task_id, request_id=request_id,
+            acceptance_radius_m=acceptance_radius_m, max_speed_mps=max_speed_mps,
+            client_id=client_id)
 
     def wait_until_arrived(
         self,
@@ -267,9 +318,14 @@ class LingTuClient:
         map_id: str | None = None,
         revision: int = 0,
         request_id: str | None = None,
+        expected_product_session_id: str | None = None,
+        expected_env: str | None = None,
     ) -> CommandResult:
         """Compatibility alias for tasks.start_inspection()."""
-        return self.tasks.start_inspection(route_id, map_id=map_id, revision=revision, request_id=request_id)
+        return self.tasks.start_inspection(
+            route_id, map_id=map_id, revision=revision, request_id=request_id,
+            expected_product_session_id=expected_product_session_id, expected_env=expected_env,
+        )
 
     def inspection_task(self, task_id: str) -> dict[str, Any]:
         """Compatibility alias for tasks.inspection_task()."""
@@ -281,9 +337,14 @@ class LingTuClient:
         *,
         reason: str = "operator_pause",
         request_id: str | None = None,
+        expected_product_session_id: str | None = None,
+        expected_env: str | None = None,
     ) -> CommandResult:
         """Compatibility alias for tasks.pause_inspection()."""
-        return self.tasks.pause_inspection(task_id, reason=reason, request_id=request_id)
+        return self.tasks.pause_inspection(
+            task_id, reason=reason, request_id=request_id,
+            expected_product_session_id=expected_product_session_id, expected_env=expected_env,
+        )
 
     def resume_inspection(
         self,
@@ -291,9 +352,14 @@ class LingTuClient:
         *,
         reason: str = "operator_resume",
         request_id: str | None = None,
+        expected_product_session_id: str | None = None,
+        expected_env: str | None = None,
     ) -> CommandResult:
         """Compatibility alias for tasks.resume_inspection()."""
-        return self.tasks.resume_inspection(task_id, reason=reason, request_id=request_id)
+        return self.tasks.resume_inspection(
+            task_id, reason=reason, request_id=request_id,
+            expected_product_session_id=expected_product_session_id, expected_env=expected_env,
+        )
 
     def cancel_inspection(
         self,
@@ -301,9 +367,14 @@ class LingTuClient:
         *,
         reason: str = "operator_cancel",
         request_id: str | None = None,
+        expected_product_session_id: str | None = None,
+        expected_env: str | None = None,
     ) -> CommandResult:
         """Compatibility alias for tasks.cancel_inspection()."""
-        return self.tasks.cancel_inspection(task_id, reason=reason, request_id=request_id)
+        return self.tasks.cancel_inspection(
+            task_id, reason=reason, request_id=request_id,
+            expected_product_session_id=expected_product_session_id, expected_env=expected_env,
+        )
 
     def inspection_report(self, task_id: str) -> dict[str, Any]:
         """Compatibility alias for tasks.inspection_report()."""
@@ -398,9 +469,9 @@ class LingTuClient:
         """Compatibility alias for map.delete_location()."""
         return self.map.delete_location(name)
 
-    def camera_snapshot(self) -> bytes:
+    def camera_snapshot(self, *, viewer_token: str | None = None) -> bytes:
         """Compatibility alias for observations.camera_snapshot()."""
-        return self.observations.camera_snapshot()
+        return self.observations.camera_snapshot(viewer_token=viewer_token)
 
     def slam_status(self) -> dict[str, Any]:
         """Compatibility alias for system.slam_status()."""
@@ -427,6 +498,7 @@ class LingTuClient:
         task_id: str | None = None,
         camera: bool | None = None,
         minimum_free_gib: int | None = None,
+        topics: list[str] | None = None,
     ) -> CommandResult:
         """Compatibility alias for observations.start_recording()."""
         return self.observations.start_recording(
@@ -436,11 +508,12 @@ class LingTuClient:
             task_id=task_id,
             camera=camera,
             minimum_free_gib=minimum_free_gib,
+            topics=topics,
         )
 
-    def recording_stop(self) -> CommandResult:
+    def recording_stop(self, *, expected_session_id: str | None = None) -> CommandResult:
         """Compatibility alias for observations.stop_recording()."""
-        return self.observations.stop_recording()
+        return self.observations.stop_recording(expected_session_id=expected_session_id)
 
     def recording_status(self) -> dict[str, Any]:
         """Compatibility alias for observations.recording_status()."""
@@ -496,11 +569,13 @@ class LingTuClient:
         raw = self._request_json(path, data, method=method)
         return _parse_command_result(raw)
 
-    def _get(self, path: str) -> dict[str, Any]:
+    def _get(self, path: str, *, headers: dict[str, str] | None = None) -> dict[str, Any]:
         url = self.base_url + path
         req = urllib.request.Request(url)
         if self._api_key:
             req.add_header("X-API-Key", self._api_key)
+        for name, value in (headers or {}).items():
+            req.add_header(name, value)
         try:
             with urllib.request.urlopen(req, timeout=self._timeout) as r:
                 return cast(dict[str, Any], json.loads(r.read()))
@@ -546,3 +621,18 @@ class LingTuClient:
     def close(self) -> None:
         """Close any held resources (no-op for the stdlib client)."""
         pass
+
+    def process_map_operation(self, operation_id: str) -> CommandResult:
+        """Process an archived map-save source."""
+        return self.map.process_operation(operation_id)
+
+    def download_map_source(self, operation_id: str, target: str | Path) -> Path:
+        """Download the archived source of a map-save operation."""
+        return self.map.download_source(operation_id, target)
+
+    def memory_temporal_semantic_embedding(
+        self, embedding: list[float], *, since: str | None = None,
+        top_k: int = 10, label: str | None = None,
+    ) -> dict[str, Any]:
+        """Search temporal memory with the store's embedding model."""
+        return self.observations.search_memory_embedding(embedding, since=since, top_k=top_k, label=label)

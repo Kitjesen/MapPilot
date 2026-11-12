@@ -37,7 +37,7 @@ def test_truncated_download_preserves_existing_map(monkeypatch, tmp_path, payloa
     target = tmp_path / "map.pcd"
     target.write_bytes(b"previous-map")
 
-    with pytest.raises(OSError, match="Incomplete map download"):
+    with pytest.raises(OSError, match="Incomplete download"):
         LingTuClient().download_map_pcd("yard", target)
 
     assert target.read_bytes() == b"previous-map"

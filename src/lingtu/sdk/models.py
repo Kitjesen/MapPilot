@@ -114,6 +114,9 @@ class SessionInfo:
     active_map: str | None = None
     slam_profile: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
+    env: str | None = None
+    product: str | None = None
+    product_session_id: str | None = None
 
 
 @dataclass

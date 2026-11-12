@@ -3,11 +3,50 @@
 from __future__ import annotations
 
 import secrets
+import tempfile
 import time
-from typing import Any
+import urllib.request
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .client import LingTuClient
 
 _CONNECTION_ERROR = "robot not reachable"
 _ULID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def _download_file(client: LingTuClient, path: str, target: str | Path) -> Path:
+    """Replace the destination only after the complete authenticated transfer."""
+    destination = Path(target)
+    request = urllib.request.Request(client.base_url + path)
+    if client._api_key:
+        request.add_header("X-API-Key", client._api_key)
+    temporary_path: Path | None = None
+    try:
+        with urllib.request.urlopen(request, timeout=client._timeout) as response:
+            content_length = response.headers.get("Content-Length")
+            expected_bytes = int(content_length) if content_length is not None else None
+            received_bytes = 0
+            with tempfile.NamedTemporaryFile(
+                mode="wb", dir=destination.parent, prefix=f".{destination.name}.",
+                suffix=".part", delete=False,
+            ) as output:
+                temporary_path = Path(output.name)
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    output.write(chunk)
+                    received_bytes += len(chunk)
+                if expected_bytes is not None and received_bytes != expected_bytes:
+                    raise OSError(f"Incomplete download: expected {expected_bytes} bytes, received {received_bytes}")
+        temporary_path.replace(destination)
+    except BaseException:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
+    return destination
 
 
 def _connection_error_payload(path: str, exc: BaseException) -> dict[str, Any]:

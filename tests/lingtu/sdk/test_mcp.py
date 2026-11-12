@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from lingtu.sdk import LingTuClient
 from lingtu.sdk.mcp import LingTuMCP, MCPError
 
 
@@ -71,6 +72,13 @@ def test_list_tools_returns_server_catalog(urlopen) -> None:
 
 
 @patch("urllib.request.urlopen")
+def test_list_tools_preserves_json_rpc_error(urlopen) -> None:
+    urlopen.return_value = _Response({"error": {"code": -32601, "message": "tools unavailable"}})
+    with pytest.raises(MCPError, match="tools unavailable"):
+        LingTuMCP().list_tools()
+
+
+@patch("urllib.request.urlopen")
 def test_health_uses_health_endpoint(urlopen) -> None:
     urlopen.return_value = _Response({"ok": True})
 
@@ -78,3 +86,33 @@ def test_health_uses_health_endpoint(urlopen) -> None:
     request = urlopen.call_args.args[0]
     assert request.full_url == "http://robot:8090/health"
     assert request.get_method() == "GET"
+
+
+@pytest.mark.parametrize("override", [False, True])
+@pytest.mark.parametrize("operation", ["health", "list_tools", "call"])
+@patch("urllib.request.urlopen")
+def test_mcp_inherits_connection_settings(urlopen, operation, override):
+    urlopen.return_value = _Response({"result": {"tools": []}})
+    root = LingTuClient("robot.local", api_key="parent-key", timeout=2.5)
+    options = {"api_key": "override-key", "timeout": 4.0} if override else {}
+    client = LingTuMCP(root, **options)
+    getattr(client, operation)("tool") if operation == "call" else getattr(client, operation)()
+    request = urlopen.call_args.args[0]
+    assert request.full_url.startswith("http://robot.local:8090/")
+    assert request.get_header("X-api-key") == ("override-key" if override else "parent-key")
+    assert urlopen.call_args.kwargs["timeout"] == (4.0 if override else 2.5)
+
+
+@patch("urllib.request.urlopen")
+def test_mcp_inherits_ipv6_origin_without_port(urlopen):
+    urlopen.return_value = _Response({"ok": True})
+    root = LingTuClient(base_url="https://[::1]")
+    assert LingTuMCP(root).health() == {"ok": True}
+    assert urlopen.call_args.args[0].full_url == "http://[::1]:8090/health"
+
+
+@patch("urllib.request.urlopen")
+def test_mcp_accepts_literal_ipv6_host(urlopen):
+    urlopen.return_value = _Response({"ok": True})
+    assert LingTuMCP(host="::1").health() == {"ok": True}
+    assert urlopen.call_args.args[0].full_url == "http://[::1]:8090/health"

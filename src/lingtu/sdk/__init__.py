@@ -1,7 +1,8 @@
 """Public synchronous and asynchronous clients for the LingTu Gateway.
 
 Domain clients share Gateway address, authentication and timeout settings.
-All clients use only the Python standard library; commands retain the Gateway's admission semantics.
+HTTP and SSE use the Python standard library. WebSocket sessions use the optional websocket extra.
+Commands retain the Gateway's admission semantics.
 """
 
 from __future__ import annotations
@@ -35,10 +36,13 @@ from .models import (
 )
 from .navigation import NavigationClient
 from .observations import ObservationClient
+from .sockets import AsyncFeed, AsyncTeleop, Feed, Teleop
+from .streams import Event
 from .system import SystemClient
 from .tasks import TaskClient
 
 __all__ = [
+    "AsyncFeed",
     "AsyncLingTuClient",
     "AsyncLocalizationClient",
     "AsyncMapClient",
@@ -46,7 +50,10 @@ __all__ = [
     "AsyncObservationClient",
     "AsyncSystemClient",
     "AsyncTaskClient",
+    "AsyncTeleop",
     "CommandResult",
+    "Event",
+    "Feed",
     "HealthStatus",
     "LingTuClient",
     "LocalizationClient",
@@ -66,4 +73,5 @@ __all__ = [
     "SessionInfo",
     "SystemClient",
     "TaskClient",
+    "Teleop",
 ]

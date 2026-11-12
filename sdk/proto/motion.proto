@@ -1,0 +1,35 @@
+// Restored from the public gateway descriptors. See README.md.
+syntax = "proto3";
+
+package doso.v1;
+import "common.proto";
+import public "messages/motion.proto";
+import public "messages/controller.proto";
+
+service Motion {
+  rpc Controller (.doso.v1.Empty) returns (.doso.v1.ControllerState);
+  rpc ExternalControl (stream .doso.v1.ExternalControlRequest) returns (stream .doso.v1.ExternalControlReply);
+  rpc StandUp (.doso.v1.Command) returns (.doso.v1.Receipt);
+  rpc SitDown (.doso.v1.Command) returns (.doso.v1.Receipt);
+  rpc EnableMotors (.doso.v1.Command) returns (.doso.v1.Receipt);
+  rpc DisableMotors (.doso.v1.Command) returns (.doso.v1.Receipt);
+  rpc Profile (.doso.v1.Empty) returns (.doso.v1.ProfileInfo);
+  rpc SwitchProfile (.doso.v1.SwitchProfileRequest) returns (.doso.v1.Receipt);
+  rpc Stop (.doso.v1.Command) returns (.doso.v1.Receipt);
+  rpc StopMotion (.doso.v1.Command) returns (.doso.v1.Receipt);
+  rpc ClearEmergencyStop (.doso.v1.Command) returns (.doso.v1.Receipt);
+  rpc Resume (.doso.v1.Command) returns (.doso.v1.Receipt);
+  rpc ControlStatus (.doso.v1.Empty) returns (.doso.v1.BodyControlStatus);
+  rpc ControlState (.doso.v1.Empty) returns (.doso.v1.ControlState);
+  rpc WatchControlState (.doso.v1.Empty) returns (stream .doso.v1.ControlState);
+  rpc Velocity (.doso.v1.Empty) returns (.doso.v1.VelocitySample);
+  rpc WatchVelocity (.doso.v1.Empty) returns (stream .doso.v1.VelocitySample);
+  rpc Odometry (.doso.v1.Empty) returns (.doso.v1.OdometrySample);
+  rpc WatchOdometry (.doso.v1.Empty) returns (stream .doso.v1.OdometrySample);
+  rpc Status (.doso.v1.Empty) returns (.doso.v1.Snapshot);
+  rpc WatchState (.doso.v1.Empty) returns (stream .doso.v1.Snapshot);
+  rpc WatchStateAt (.doso.v1.WatchStateRequest) returns (stream .doso.v1.Snapshot);
+  rpc BodyState (.doso.v1.Empty) returns (.doso.v1.BodyState);
+  rpc WatchBodyState (.doso.v1.Empty) returns (stream .doso.v1.BodyState);
+  rpc Teleop (stream .doso.v1.TeleopRequest) returns (stream .doso.v1.TeleopReply);
+}

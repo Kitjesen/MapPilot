@@ -1,0 +1,16 @@
+// Restored from the public gateway descriptors. See README.md.
+syntax = "proto3";
+
+package doso.v1;
+import "common.proto";
+import public "messages/maps.proto";
+
+service Maps {
+  rpc List (.doso.v1.Empty) returns (.doso.v1.MapList);
+  rpc PointCloud (.doso.v1.MapContentRequest) returns (stream .doso.v1.MapContent);
+  rpc Grid (.doso.v1.MapContentRequest) returns (.doso.v1.MapGrid);
+  rpc Save (.doso.v1.SaveMap) returns (.doso.v1.Receipt);
+  rpc Operation (.doso.v1.MapQuery) returns (.doso.v1.MapOperation);
+  rpc Switch (.doso.v1.SwitchProduct) returns (.doso.v1.ProductOperation);
+  rpc ProductOperation (.doso.v1.ProductQuery) returns (.doso.v1.ProductOperation);
+}

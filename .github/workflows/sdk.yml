@@ -1,0 +1,64 @@
+name: External SDKs
+
+on:
+  pull_request:
+    paths:
+      - "sdk/**"
+      - "src/lingtu/sdk/**"
+      - "src/lingtu/control_server.py"
+      - "src/gateway/**"
+      - "pyproject.toml"
+      - "tests/lingtu/sdk/**"
+      - "tests/lingtu/test_control_server.py"
+      - "tests/gateway/test_body_http.py"
+      - "tests/contracts/test_public_proto.py"
+      - "tests/contracts/test_sdk_package.py"
+      - "tools/sdk/**"
+      - ".github/workflows/sdk.yml"
+  workflow_dispatch:
+
+jobs:
+  python:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e ".[dev]" "setuptools>=77" "websockets>=15"
+      - run: python -m pytest -q tests/lingtu/sdk tests/lingtu/test_control_server.py tests/gateway/test_body_http.py tests/contracts/test_public_proto.py tests/contracts/test_sdk_package.py
+      - run: python tools/sdk/package_python.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-sdk-${{ matrix.os }}-${{ matrix.python }}
+          path: build/sdk/dist/*
+
+  native:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install "websockets>=15"
+      - run: cargo test --locked --manifest-path sdk/rust/Cargo.toml --all-targets
+      - run: cargo fmt --manifest-path sdk/rust/Cargo.toml -- --check
+      - run: cargo clippy --locked --manifest-path sdk/rust/Cargo.toml --all-targets -- -D warnings
+      - run: cargo package --locked --manifest-path sdk/rust/Cargo.toml
+      - run: cmake -S sdk/cpp -B build/sdk/cpp -DBUILD_TESTING=ON
+      - run: cmake --build build/sdk/cpp --config Release
+      - run: ctest --test-dir build/sdk/cpp -C Release --output-on-failure
+      - run: cpack --config build/sdk/cpp/CPackConfig.cmake -C Release -B build/sdk/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-sdk-${{ matrix.os }}
+          path: |
+            build/sdk/dist/*
+            sdk/rust/target/package/*.crate

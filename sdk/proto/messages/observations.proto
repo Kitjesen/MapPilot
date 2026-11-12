@@ -1,0 +1,101 @@
+// Restored from the public gateway descriptors. See README.md.
+syntax = "proto3";
+
+package doso.v1;
+import "common.proto";
+import "google/protobuf/duration.proto";
+
+message Vector3 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+message Quaternion {
+  double w = 1;
+  double x = 2;
+  double y = 3;
+  double z = 4;
+}
+
+message ImuSample {
+  .doso.v1.Vector3 angular_velocity_rad_s = 1;
+  .doso.v1.Quaternion orientation_world_to_body = 2;
+  .doso.v1.Vector3 linear_acceleration_m_s2 = 3;
+  .google.protobuf.Duration source_elapsed = 4;
+}
+
+message JointState {
+  uint32 id = 1;
+  double position_rad = 2;
+  double velocity_rad_s = 3;
+  double torque_nm = 4;
+  uint32 status_code = 5;
+}
+
+message JointSample {
+  repeated .doso.v1.JointState joints = 1;
+  .google.protobuf.Duration source_elapsed = 2;
+}
+
+message MotorState {
+  uint32 id = 1;
+  bool online = 2;
+  uint32 status_code = 3;
+  double temperature_c = 4;
+  repeated uint32 errors = 5;
+}
+
+message MotorStates {
+  repeated .doso.v1.MotorState motors = 1;
+}
+
+message MotorVoltagesResponse {
+  repeated double volts = 1;
+}
+
+message CameraFrame {
+  bytes jpeg = 1;
+}
+
+message CloudRequest {
+  .doso.v1.CloudKind kind = 1;
+}
+
+message CloudFrame {
+  bytes pcld = 1;
+}
+
+message CameraInfo {
+  optional string camera_id = 1;
+  optional uint32 width_px = 2;
+  optional uint32 height_px = 3;
+  string encoding = 4;
+  optional string frame_id = 5;
+}
+
+message CameraSample {
+  .doso.v1.CameraFrame frame = 1;
+  .doso.v1.CameraInfo info = 2;
+  .doso.v1.SampleTime time = 3;
+  optional uint64 sequence = 4;
+}
+
+message FootContact {
+  string foot_id = 1;
+  optional bool contact = 2;
+  .doso.v1.Vector3 force_n = 3;
+  string frame_id = 4;
+  .doso.v1.SampleTime time = 5;
+}
+
+message LightSample {
+  double lux = 1;
+  .doso.v1.SampleTime time = 2;
+}
+
+enum CloudKind {
+  CLOUD_KIND_UNSPECIFIED = 0;
+  CLOUD_KIND_MAP = 1;
+  CLOUD_KIND_SCAN = 2;
+}

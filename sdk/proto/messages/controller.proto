@@ -1,0 +1,60 @@
+// Restored from the public gateway descriptors. See README.md.
+syntax = "proto3";
+
+package doso.v1;
+import "common.proto";
+
+message ControllerState {
+  .doso.v1.ControllerMode mode = 1;
+  string session_id = 2;
+  bool active = 3;
+  bool motor_output_enabled = 4;
+  uint64 last_sequence = 5;
+  string reason = 6;
+  optional double received_age_ms = 7;
+  bool fresh = 8;
+  bool motor_disable_confirmed = 9;
+  uint32 joint_count = 10;
+}
+
+message JointCommand {
+  double q = 1;
+  double dq = 2;
+  double kp = 3;
+  double kd = 4;
+  double tau = 5;
+}
+
+message JointTargets {
+  repeated .doso.v1.JointCommand joints = 1;
+}
+
+message ExternalControlRequest {
+  .doso.v1.Command command = 1;
+  uint64 sequence = 2;
+  uint64 input_window = 3;
+  oneof action {
+    .doso.v1.Empty enter = 4;
+    .doso.v1.Empty enable = 5;
+    .doso.v1.Empty heartbeat = 6;
+    .doso.v1.JointTargets frame = 7;
+    .doso.v1.Empty close = 8;
+    .doso.v1.Empty disable = 9;
+  }
+}
+
+message ExternalControlReply {
+  string request_id = 1;
+  uint64 sequence = 2;
+  bool accepted = 3;
+  string reason = 4;
+  bool ingress_accepted = 5;
+  uint64 input_window = 6;
+  .doso.v1.ControllerState state = 7;
+}
+
+enum ControllerMode {
+  CONTROLLER_MODE_UNKNOWN = 0;
+  CONTROLLER_MODE_BUILTIN = 1;
+  CONTROLLER_MODE_EXTERNAL = 2;
+}

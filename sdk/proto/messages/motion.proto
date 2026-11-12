@@ -1,0 +1,120 @@
+// Restored from the public gateway descriptors. See README.md.
+syntax = "proto3";
+
+package doso.v1;
+import "common.proto";
+import "observations.proto";
+import public "messages/system.proto";
+
+message WatchStateRequest {
+  uint32 frequency_hz = 1;
+}
+
+message BodyState {
+  .doso.v1.BodyKind kind = 1;
+  .doso.v1.BodyTransition transition = 2;
+  string gesture_name = 3;
+}
+
+message BodyControlStatus {
+  .doso.v1.BodyState body = 1;
+  bool motor_output_enabled = 2;
+  .doso.v1.BodyControlOwner source_owner = 3;
+  bool critical_motor_fault = 4;
+  bool grpc_lease_active = 5;
+  uint32 lease_remaining_ms = 6;
+  uint64 last_accepted_sequence = 7;
+  int32 source_last_decision = 8;
+  bool source_ready_for_walk = 9;
+  string source_owner_id = 10;
+  uint64 accepted_count = 11;
+  uint64 rejected_count = 12;
+}
+
+message ProfileInfo {
+  string current = 1;
+  repeated string available = 2;
+  repeated string descriptions = 3;
+  string current_description = 4;
+}
+
+message SwitchProfileRequest {
+  .doso.v1.Command command = 1;
+  string name = 2;
+}
+
+message VelocitySample {
+  .doso.v1.Vector3 linear_m_s = 1;
+  .doso.v1.Vector3 angular_rad_s = 2;
+  string frame_id = 3;
+  .doso.v1.SampleTime time = 4;
+  optional double received_age_ms = 5;
+  optional bool fresh = 6;
+  string source = 7;
+}
+
+message OdometrySample {
+  .doso.v1.Vector3 position_m = 1;
+  .doso.v1.Quaternion orientation = 2;
+  .doso.v1.Vector3 linear_velocity_m_s = 3;
+  .doso.v1.Vector3 angular_velocity_rad_s = 4;
+  string parent_frame = 5;
+  string child_frame = 6;
+  .doso.v1.SampleTime time = 7;
+  optional double received_age_ms = 8;
+  optional bool fresh = 9;
+  string source = 10;
+}
+
+message TeleopVelocity {
+  double vx_m_s = 1;
+  double vy_m_s = 2;
+  double yaw_rad_s = 3;
+  bool deadman = 4;
+  bool manual_mode = 5;
+}
+
+message TeleopRequest {
+  .doso.v1.Command command = 1;
+  uint64 input_window = 2;
+  oneof action {
+    .doso.v1.Empty input = 3;
+    .doso.v1.TeleopVelocity velocity = 4;
+    .doso.v1.Empty hold = 5;
+    .doso.v1.Empty close = 6;
+    .doso.v1.Empty claim = 8;
+  }
+  uint64 sequence = 7;
+}
+
+message TeleopReply {
+  string request_id = 1;
+  bool accepted = 2;
+  string reason = 3;
+  uint64 input_window = 4;
+  bool ingress_accepted = 5;
+  bool final_output_confirmed = 6;
+  uint64 sequence = 7;
+  .doso.v1.ControlState control = 8;
+}
+
+enum BodyKind {
+  BODY_KIND_ZERO = 0;
+  BODY_KIND_GROUNDED = 1;
+  BODY_KIND_STANDING = 2;
+  BODY_KIND_WALKING = 3;
+  BODY_KIND_TRANSITIONING = 4;
+}
+
+enum BodyTransition {
+  BODY_TRANSITION_NONE = 0;
+  BODY_TRANSITION_STAND_UP = 1;
+  BODY_TRANSITION_SIT_DOWN = 2;
+  BODY_TRANSITION_GESTURE = 3;
+}
+
+enum BodyControlOwner {
+  BODY_CONTROL_OWNER_NONE = 0;
+  BODY_CONTROL_OWNER_GRPC = 1;
+  BODY_CONTROL_OWNER_YUNZHUO = 2;
+}

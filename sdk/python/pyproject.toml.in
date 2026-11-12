@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lingtu-sdk"
+version = "@VERSION@"
+description = "Python client for the LingTu Gateway"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+websocket = ["websockets>=15"]
+
+[project.scripts]
+lingtu-sdk = "lingtu.sdk.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["lingtu", "lingtu.sdk"]

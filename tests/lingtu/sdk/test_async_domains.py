@@ -118,7 +118,7 @@ async def test_recording_capture_and_emergency_stop_keep_distinct_routes(monkeyp
         camera=True,
         minimum_free_gib=12,
     )
-    await robot.observations.stop_recording()
+    await robot.observations.stop_recording(expected_session_id="recording-1")
     await robot.system.emergency_stop()
 
     requests = [call.args[0] for call in transport.call_args_list]
@@ -135,6 +135,7 @@ async def test_recording_capture_and_emergency_stop_keep_distinct_routes(monkeyp
         "camera": True,
         "minimum_free_gib": 12,
     }
+    assert json.loads(requests[1].data) == {"expected_session_id": "recording-1"}
 
 
 @pytest.mark.asyncio

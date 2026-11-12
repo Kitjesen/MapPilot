@@ -188,7 +188,9 @@ class TestLingTuClient(unittest.TestCase):
         self.assertEqual(json.loads(request.data), {
             "x": 10.0,
             "y": 5.0,
-            "yaw": 0.0,
+            "yaw": None,
+            "z": 0.0,
+            "client_id": "sdk",
             "request_id": "goal-123",
         })
 
@@ -1324,9 +1326,9 @@ class TestLingTuClient(unittest.TestCase):
 
     @patch("urllib.request.urlopen")
     def test_memory_temporal_semantic(self, mock_urlopen) -> None:
-        self._mock_http(mock_urlopen, {"results": []})
-        mem = self.robot.memory_temporal_semantic("where was the backpack?")
-        self.assertIsInstance(mem, dict)
+        with self.assertRaisesRegex(NotImplementedError, "search_memory_embedding"):
+            self.robot.memory_temporal_semantic("where was the backpack?")
+        mock_urlopen.assert_not_called()
 
     # ------------------------------------------------------------------
     # Lease

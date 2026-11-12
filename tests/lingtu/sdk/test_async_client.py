@@ -26,16 +26,17 @@ class TestAsyncLingTuClient(unittest.IsolatedAsyncioTestCase):
 
     async def test_go_delegates_all_arguments(self) -> None:
         expected = CommandResult(ok=True, request_id="request-1")
-        self.client.go.return_value = expected
+        self.client.navigation.go.return_value = expected
 
         result = await self.robot.go(1.0, 2.0, 0.5, request_id="request-1")
 
         self.assertIs(result, expected)
-        self.client.go.assert_called_once_with(
+        self.client.navigation.go.assert_called_once_with(
             1.0,
             2.0,
             0.5,
-            request_id="request-1",
+            request_id="request-1", z=0.0, task_id=None,
+            acceptance_radius_m=None, max_speed_mps=None, client_id="sdk",
         )
 
     async def test_follow_lifecycle_delegates_exact_owner_identity(self) -> None:
@@ -153,6 +154,7 @@ class TestAsyncLingTuClient(unittest.IsolatedAsyncioTestCase):
             task_id="inspection-task-1",
             camera=True,
             minimum_free_gib=12,
+            topics=["/nav/state"],
         )
 
         self.assertIs(result, expected)
@@ -163,6 +165,7 @@ class TestAsyncLingTuClient(unittest.IsolatedAsyncioTestCase):
             task_id="inspection-task-1",
             camera=True,
             minimum_free_gib=12,
+            topics=["/nav/state"],
         )
 
     async def test_save_map_and_wait_delegates_timeout_contract(self) -> None:
@@ -174,6 +177,8 @@ class TestAsyncLingTuClient(unittest.IsolatedAsyncioTestCase):
             request_id="request-2",
             timeout=30.0,
             poll_interval=0.25,
+            auto_process=False,
+            wait_for_source=True,
         )
 
         self.assertIs(result, expected)
@@ -182,6 +187,8 @@ class TestAsyncLingTuClient(unittest.IsolatedAsyncioTestCase):
             request_id="request-2",
             timeout=30.0,
             poll_interval=0.25,
+            auto_process=False,
+            wait_for_source=True,
         )
 
     async def test_download_map_pcd_returns_delegate_path(self) -> None:

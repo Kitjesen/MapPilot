@@ -1,0 +1,20 @@
+// Restored from the public gateway descriptors. See README.md.
+syntax = "proto3";
+
+package doso.v1;
+import "common.proto";
+import public "messages/observations.proto";
+
+service Observations {
+  rpc Scene (.doso.v1.Empty) returns (.doso.v1.Snapshot);
+  rpc CameraStatus (.doso.v1.Empty) returns (.doso.v1.Snapshot);
+  rpc WatchImu (.doso.v1.Empty) returns (stream .doso.v1.ImuSample);
+  rpc WatchJoints (.doso.v1.Empty) returns (stream .doso.v1.JointSample);
+  rpc Motors (.doso.v1.Empty) returns (.doso.v1.MotorStates);
+  rpc MotorVoltages (.doso.v1.Empty) returns (.doso.v1.MotorVoltagesResponse);
+  rpc CameraFrame (.doso.v1.Empty) returns (.doso.v1.CameraFrame);
+  rpc WatchCamera (.doso.v1.Empty) returns (stream .doso.v1.CameraFrame);
+  rpc CameraSample (.doso.v1.Empty) returns (.doso.v1.CameraSample);
+  rpc WatchCameraSamples (.doso.v1.Empty) returns (stream .doso.v1.CameraSample);
+  rpc WatchPointCloud (.doso.v1.CloudRequest) returns (stream .doso.v1.CloudFrame);
+}
