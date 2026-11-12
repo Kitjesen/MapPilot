@@ -33,12 +33,4 @@ PointXYZI transformPoint(const PointXYZI &pt, const Pose &pose) {
   return out;
 }
 
-VoxelKey voxelKey(const PointXYZI &pt, float voxel_size_m) {
-  return {
-      static_cast<int>(std::floor(pt.x / voxel_size_m)),
-      static_cast<int>(std::floor(pt.y / voxel_size_m)),
-      static_cast<int>(std::floor(pt.z / voxel_size_m)),
-  };
-}
-
 }  // namespace lingtu::map_cleaning

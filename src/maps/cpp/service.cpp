@@ -6,6 +6,7 @@
 #include "lingtu/maps/graph.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cctype>
 #include <cmath>
@@ -669,7 +670,8 @@ std::string MapsServiceCore::GetMapPointsJson(
     if (!record.has_value()) {
       return FailureJson("get_map_points", "map not found: " + id, "map_not_found");
     }
-    const auto pcd_path = store_.ContentPath(id) / "map.pcd";
+    const auto content_dir = store_.ContentPath(id);
+    const auto pcd_path = content_dir / "map.pcd";
     if (!std::filesystem::is_regular_file(pcd_path)) {
       return FailureJson(
           "get_map_points",
@@ -685,6 +687,16 @@ std::string MapsServiceCore::GetMapPointsJson(
           "get_map_points",
           "map build is running: " + id,
           "map_build_in_progress");
+    }
+    std::string built_at_ms = "null";
+    std::ifstream metadata_file(content_dir / "metadata.json", std::ios::binary);
+    const std::string metadata((std::istreambuf_iterator<char>(metadata_file)), {});
+    if (const auto stamp = JsonObjectStringAtPath(metadata, {"created_at"})) {
+      std::int64_t value = 0;
+      const auto parsed = std::from_chars(stamp->data(), stamp->data() + stamp->size(), value);
+      if (parsed.ec == std::errc{} && parsed.ptr == stamp->data() + stamp->size() && value > 0) {
+        built_at_ms = std::to_string(value);
+      }
     }
     const auto total = loaded.points.size();
     const std::uint64_t limit =
@@ -712,6 +724,7 @@ std::string MapsServiceCore::GetMapPointsJson(
         "\"success\":true,"
         "\"map_id\":" + JsonString(id) + ","
         "\"content_epoch\":" + std::to_string(record->content_epoch) + ","
+        "\"built_at_ms\":" + built_at_ms + ","
         "\"frame_id\":" + JsonString(record->scope.frame_id) + ","
         "\"pcd\":" + JsonString(pcd_path.string()) + ","
         "\"point_count\":" + std::to_string(total) + ","

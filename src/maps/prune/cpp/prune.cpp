@@ -11,17 +11,14 @@ void printHelp() {
   std::cout
       << "Usage: prune --map-dir MAP_DIR [options]\n"
       << "\n"
-      << "LingTu-owned saved-map dynamic ghost pruner for S100P/MID-360 field maps.\n"
-      << "It does not include, link, or require ERASOR2. Multiple later observed rays\n"
-      << "must contradict a historical point before it can be removed.\n"
+      << "DUFOMap saved-map cleanup using calibrated scan origins and recorded poses.\n"
       << "\n"
       << "Options:\n"
       << "  --map-dir PATH              Saved map directory\n"
       << "  --out-clean PATH            Output cleaned PCD (default map.clean.pcd)\n"
       << "  --out-removed PATH          Output removed candidate PCD (default map.removed.pcd)\n"
-      << "  --voxel-size M              Evidence voxel size (default 0.20)\n"
+      << "  --voxel-size M              DUFOMap resolution in meters (default 0.05)\n"
       << "  --sensor-origin X Y Z       LiDAR origin in scan coordinates; otherwise read scan_origin.txt\n"
-      << "  --min-free-frames N         Later free-space frames required (default 3, minimum 2)\n"
       << "  --dry-run                   Analyze and print JSON; write no files\n"
       << "  --apply                     Preserve map.before_clean.pcd (or the existing legacy backup), then replace map.pcd\n"
       << "  --overwrite                 Replace existing output files\n"
@@ -54,7 +51,14 @@ int main(int argc, char **argv) {
     } else if (arg == "--out-removed" && nextValue(i, argc, argv, value)) {
       options.output_removed_pcd = value;
     } else if (arg == "--voxel-size" && nextValue(i, argc, argv, value)) {
-      options.voxel_size_m = std::strtof(value.c_str(), nullptr);
+      try {
+        std::size_t parsed = 0;
+        options.voxel_size_m = std::stod(value, &parsed);
+        if (parsed != value.size()) throw std::invalid_argument(value);
+      } catch (const std::exception&) {
+        std::cerr << "--voxel-size requires a numeric value\n";
+        return 2;
+      }
     } else if (arg == "--sensor-origin" && i + 3 < argc) {
       std::array<float, 3> origin{};
       try {
@@ -69,8 +73,6 @@ int main(int argc, char **argv) {
         return 2;
       }
       options.sensor_origin = origin;
-    } else if (arg == "--min-free-frames" && nextValue(i, argc, argv, value)) {
-      options.min_free_frames = static_cast<std::uint32_t>(std::strtoul(value.c_str(), nullptr, 10));
     } else if (arg == "--apply") {
       options.apply_to_map = true;
     } else if (arg == "--dry-run") {

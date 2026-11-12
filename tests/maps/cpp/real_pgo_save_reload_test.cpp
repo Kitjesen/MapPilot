@@ -85,6 +85,9 @@ int main(int argc, char** argv) {
         ("lingtu-real-pgo-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(!fs::exists(root), "evidence directory must be new");
     const auto snapshot = WriteSnapshot(root / "snapshot");
+    const std::string online_report =
+        R"({"schema":"lingtu.map_optimization.v1","backend":"lio_sam_isam2","success":true,"performed":true,"pose_count":25,"loop_count":1})";
+    std::ofstream(snapshot.source_dir / "map_optimization.json") << online_report;
     const MapStoreConfig config{root / "maps"};
     SaveMapRequest request;
     request.request_id = "native-real-pgo-save";
@@ -107,7 +110,22 @@ int main(int argc, char** argv) {
       std::ofstream(root / "save-result.json") << SaveMapStatusJson(*result);
       Require(result->state == SaveJobState::kSucceeded,
               "real PGO save failed: " + result->reason_code + ": " + result->message);
-      const auto report = Read(result->map_dir / "map_optimization.json");
+      Require(Read(result->map_dir / "map_optimization.json") == online_report,
+              "normal online save did not preserve its optimization report");
+      const auto initial_epoch = store.ContentEpoch(request.map_id);
+      const auto started = engine.Reoptimize(request.request_id, "native-real-reoptimize");
+      Require(started.accepted && started.status.source_job_id == request.request_id,
+              "reoptimization request rejected");
+      const auto optimized = engine.Wait(started.status.job_id, std::chrono::seconds(120));
+      Require(optimized && optimized->state == SaveJobState::kSucceeded,
+              "real reoptimization failed: " + (optimized ? optimized->message : "missing result"));
+      std::ofstream(root / "reoptimize-result.json") << SaveMapStatusJson(*optimized);
+      Require(Read(result->capture_dir / "map_optimization.json") == online_report &&
+                  Read(optimized->capture_dir / "map_optimization.json") == online_report,
+              "reoptimization changed the archived online evidence");
+      Require(store.ContentEpoch(request.map_id) > initial_epoch,
+              "reoptimization did not commit a new map identity");
+      const auto report = Read(optimized->map_dir / "map_optimization.json");
       Require(JsonObjectBoolAtPath(report, {"performed"}) == true, "PGO was skipped");
       Require(JsonObjectStringAtPath(report, {"code"}) == "optimized", "PGO did not optimize");
       Require(store.CheckMapActivation(request.map_id).ok, "saved navigation artifacts invalid");
@@ -127,7 +145,12 @@ int main(int argc, char** argv) {
       Require(reloaded.SetActiveMap(request.map_id, true).ok, "strict test-store activation failed");
       Require(reloaded.ActiveMapId() == request.map_id, "wrong map activated");
       Require(reloaded.ClearActiveMap().ok, "test-store deactivation failed");
+      const auto optimized = recovered.GetStatus("native-real-reoptimize");
+      Require(optimized && optimized->state == SaveJobState::kSucceeded &&
+                  optimized->source_job_id == request.request_id,
+              "reoptimization task identity did not reload");
       // A real subprocess launch failure must not replace the last good map.
+      fs::remove(snapshot.source_dir / "map_optimization.json");
       request.request_id = "native-real-pgo-failure";
       request.pgo.executable = (root / "missing-pgo.exe").string();
       Require(recovered.Begin(request).accepted, "failure test request rejected");
@@ -140,7 +163,7 @@ int main(int argc, char** argv) {
               "failed save replaced the last good map");
     }
     std::ofstream(root / "verification.json")
-        << "{\"scope\":\"synthetic_native_save_reload\",\"optimized\":true,\"reloaded\":true,"
+        << "{\"scope\":\"synthetic_native_save_reload\",\"optimized\":true,\"reoptimized\":true,\"reloaded\":true,"
            "\"strict_activation\":true,\"failed_replacement_preserved\":true,\"product_run\":false}\n";
     std::cout << "real PGO save/reload passed; evidence: " << root << '\n';
     return 0;

@@ -76,10 +76,19 @@ class MapsServiceCore {
       const std::string &source_map_id, const std::string &target_map_id,
       std::uint64_t expected_source_content_epoch,
       const std::vector<SourceEditOperation> &operations);
+  std::string PreviewSourceEditsJson(
+      const std::string &map_id, std::uint64_t expected_source_content_epoch,
+      const std::vector<SourceEditOperation> &operations);
   std::string BuildOccupancySnapshotJson(const std::string &map_id);
   std::string BuildOctomapArtifactJson(const std::string &map_id,
                                        const OctomapBuildOptions &options);
   std::string GetVoxelEditsJson(const std::string &map_id) const;
+  std::string GetNoGoRegionsJson(const std::string& map_id) const;
+  std::string GetSurfaceMapJson(const std::string& map_id, const SurfaceMapOptions& options) const;
+  std::string SetNoGoRegionJson(const std::string& map_id, const NoGoRegion& region,
+                                std::uint64_t expected_content_epoch);
+  std::string DeleteNoGoRegionJson(const std::string& map_id, const std::string& region_id,
+                                   std::uint64_t expected_content_epoch);
   std::string EditOctomapVoxelsJson(const std::string &map_id, const OctomapEditOptions &options);
   std::string BuildNavigationPackageJson(const std::string &map_id,
                                          const OctomapBuildOptions &options, bool include_esdf,
@@ -96,6 +105,7 @@ class MapsServiceCore {
   std::string CancelSaveMapJson(const std::string &job_id);
   std::string RetrySaveMapJson(const std::string &job_id);
   std::string ProcessSaveMapJson(const std::string &job_id);
+  std::string ReoptimizeSaveMapJson(const std::string &job_id, const std::string &request_id);
   std::optional<std::filesystem::path> SaveMapSource(const std::string &job_id) const;
   std::string AuditMapsJson(bool dry_run) const;
   std::string QuarantineCorruptMapsJson(bool dry_run);

@@ -39,6 +39,7 @@ add_library(lingtu_maps_artifacts STATIC
   cpp/build/grids.cpp
   cpp/io/json.cpp
   cpp/storage/stairs.cpp
+  cpp/storage/no_go.cpp
 )
 target_link_libraries(lingtu_maps_artifacts PUBLIC lingtu_maps_contract)
 set_target_properties(lingtu_maps_artifacts PROPERTIES
@@ -46,6 +47,7 @@ set_target_properties(lingtu_maps_artifacts PROPERTIES
 )
 
 add_library(lingtu_maps STATIC
+  cpp/edit.cpp
   cpp/layers/block_grid.cpp
   cpp/storage/health.cpp
   cpp/storage/lock.cpp
@@ -86,6 +88,18 @@ if(WIN32)
   target_link_libraries(lingtu_maps PRIVATE ws2_32)
 endif()
 if(octomap_FOUND)
+  if(NOT TARGET lingtu_maps_surface)
+    add_library(lingtu_maps_surface STATIC cpp/layers/surface.cpp)
+    target_include_directories(lingtu_maps_surface PUBLIC include ${OCTOMAP_INCLUDE_DIRS})
+    target_link_libraries(lingtu_maps_surface PUBLIC lingtu_maps_contract)
+    if(DEFINED OCTOMAP_LIBRARIES)
+      target_link_libraries(lingtu_maps_surface PUBLIC ${OCTOMAP_LIBRARIES})
+    else()
+      target_link_libraries(lingtu_maps_surface PUBLIC octomap)
+    endif()
+    set_target_properties(lingtu_maps_surface PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  endif()
+  target_link_libraries(lingtu_maps PRIVATE lingtu_maps_surface)
   target_compile_definitions(lingtu_maps PRIVATE LINGTU_MAPS_HAS_OCTOMAP=1)
   if(DEFINED OCTOMAP_INCLUDE_DIRS)
     target_include_directories(lingtu_maps PRIVATE ${OCTOMAP_INCLUDE_DIRS})
@@ -327,6 +341,11 @@ if(BUILD_TESTING)
   target_link_libraries(lingtu_maps_point_cloud_import_test PRIVATE lingtu_maps)
   add_test(NAME lingtu_maps_point_cloud_import_test COMMAND lingtu_maps_point_cloud_import_test)
 
+  add_executable(lingtu_maps_point_cloud_edit_test
+    ${_LINGTU_MAPS_TEST_DIR}/point_cloud_edit_test.cpp)
+  target_link_libraries(lingtu_maps_point_cloud_edit_test PRIVATE lingtu_maps)
+  add_test(NAME lingtu_maps_point_cloud_edit_test COMMAND lingtu_maps_point_cloud_edit_test)
+
   add_executable(lingtu_maps_map_health_test ${_LINGTU_MAPS_TEST_DIR}/map_health_test.cpp)
   target_link_libraries(lingtu_maps_map_health_test PRIVATE lingtu_maps)
   add_test(NAME lingtu_maps_map_health_test COMMAND lingtu_maps_map_health_test)
@@ -349,6 +368,16 @@ if(BUILD_TESTING)
   add_executable(lingtu_maps_ground_surface_test ${_LINGTU_MAPS_TEST_DIR}/ground_surface_test.cpp)
   target_link_libraries(lingtu_maps_ground_surface_test PRIVATE lingtu_maps)
   add_test(NAME lingtu_maps_ground_surface_test COMMAND lingtu_maps_ground_surface_test)
+  if(octomap_FOUND)
+    add_executable(lingtu_maps_surface_completion_test ${_LINGTU_MAPS_TEST_DIR}/surface_completion_test.cpp)
+    target_link_libraries(lingtu_maps_surface_completion_test PRIVATE lingtu_maps_surface)
+    add_test(NAME lingtu_maps_surface_completion_test COMMAND lingtu_maps_surface_completion_test)
+    if(MSVC)
+      target_compile_options(lingtu_maps_surface_completion_test PRIVATE /UNDEBUG)
+    else()
+      target_compile_options(lingtu_maps_surface_completion_test PRIVATE -UNDEBUG)
+    endif()
+  endif()
   target_link_libraries(lingtu_maps_mapd_engine_test PRIVATE lingtu_maps)
   add_test(
     NAME lingtu_maps_mapd_engine_test
@@ -366,6 +395,7 @@ if(BUILD_TESTING)
   )
   target_link_libraries(lingtu_maps_mapd_service_dispatch_test PRIVATE lingtu_maps)
   if(octomap_FOUND)
+    target_link_libraries(lingtu_maps_mapd_service_dispatch_test PRIVATE lingtu_maps_surface)
     target_compile_definitions(
       lingtu_maps_mapd_service_dispatch_test
       PRIVATE LINGTU_MAPS_HAS_OCTOMAP=1
@@ -451,6 +481,7 @@ if(BUILD_TESTING)
   target_link_libraries(lingtu_maps_save_map_test PRIVATE lingtu_maps)
   if(octomap_FOUND)
     target_compile_definitions(lingtu_maps_save_map_test PRIVATE LINGTU_MAPS_HAS_OCTOMAP=1)
+    target_include_directories(lingtu_maps_save_map_test PRIVATE ${OCTOMAP_INCLUDE_DIRS})
   endif()
   add_test(NAME lingtu_maps_save_map_test COMMAND lingtu_maps_save_map_test)
 

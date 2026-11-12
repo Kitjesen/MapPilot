@@ -23,6 +23,7 @@
 #endif
 
 #include "lingtu/maps/io/json.hpp"
+#include "lingtu/maps/io/pcd.hpp"
 #include "mapd/query.hpp"
 #include "lingtu/maps/mapd/protocol.hpp"
 #include "mapd/server.hpp"
@@ -279,7 +280,9 @@ int main() {
   assert(lingtu::maps::JsonObjectStringAtPath(captured, {"status", "state"}) == "CAPTURED");
 
   MapQueryCore query(service);
-  QueryServer server(query, QueryServerConfig{socket_path, 1024U * 1024U, 50U});
+  QueryServerConfig server_config{socket_path};
+  server_config.handshake_timeout_ms = 50U;
+  QueryServer server(query, server_config);
   server.Start();
 
   const auto source = Query(socket_path, Opcode::kOpenArtifact, R"({"job_id":"source-job"})");
@@ -399,9 +402,35 @@ int main() {
     assert(activation.json.find("\"reason_code\":\"unknown_action\"") != std::string::npos);
   }
 
+  const auto preview_dir = maps_root / "preview";
+  std::filesystem::create_directories(preview_dir);
+  std::vector<lingtu::maps::PointXyz> preview_points;
+  preview_points.reserve(60000U);
+  for (std::size_t i = 0; i < 60000U; ++i)
+    preview_points.push_back({i < 30000U ? 123.456789F : -123.456789F,
+                              234.567891F, 345.678912F});
+  std::string pcd_error;
+  assert(lingtu::maps::WriteBinaryXyzPcd(preview_dir / "map.pcd", preview_points, &pcd_error));
+  Write(preview_dir / "metadata.json", R"({"frame_id":"map"})");
+  const auto preview_request =
+      std::string{R"({"action":"preview_source_edits","map_id":"preview","expected_source_content_epoch":)"} +
+      std::to_string(service.Store().ContentEpoch("preview")) +
+      R"(,"operations":[{"operation":"delete_inside","bounds":{"min_x":0,"max_x":1000,"min_y":0,"max_y":1000,"min_z":0,"max_z":1000}}]})";
+  const auto preview = Query(socket_path, Opcode::kService, preview_request);
+  assert(preview.status == Status::kOk);
+  assert(preview.json.size() > 1024U * 1024U);
+  assert(lingtu::maps::JsonObjectNumberAtPath(preview.json, {"point_count"}) == 30000.0);
+  assert(lingtu::maps::JsonObjectNumberAtPath(preview.json, {"removed_points"}) == 30000.0);
+
   server.Stop();
   server.Stop();
   assert(!std::filesystem::exists(socket_path));
+  QueryServer smaller_server(query, QueryServerConfig{socket_path, 1024U * 1024U, 50U});
+  smaller_server.Start();
+  const auto oversized = Query(socket_path, Opcode::kService, preview_request);
+  assert(oversized.status == Status::kError);
+  assert(lingtu::maps::JsonObjectStringAtPath(oversized.json, {"reason_code"}) == "response_too_large");
+  smaller_server.Stop();
   std::filesystem::remove_all(root);
   return 0;
 }

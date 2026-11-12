@@ -29,7 +29,7 @@ int main(int argc,char** argv) {
     if(!saved.success)throw std::runtime_error(saved.message);
     const double saved_ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
     lingtu::maps::cleaning::Config config;
-    config.max_ray_length_m=options.max_ray_length_m;
+    config.max_ray_length_m=20.F;
     lingtu::maps::cleaning::IncrementalCleaner live(config);
     std::vector<double> latency;
     std::size_t total_points=0;
@@ -56,7 +56,6 @@ int main(int argc,char** argv) {
     std::ofstream report(output/"replay.report.json");
     report<<"{\"frames\":"<<order.size()<<",\"input_points\":"<<total_points
           <<",\"saved_source_points\":"<<saved.source_points<<",\"saved_removed_points\":"<<saved.removed_points
-          <<",\"saved_surface_protected\":"<<saved.kept_supported_surface_points
           <<",\"saved_ms\":"<<saved_ms<<",\"live_cells\":"<<points.size()<<",\"live_removal_events\":"<<live.RemovedCount()
           <<",\"capacity_rejections\":"<<live.CapacityRejections()<<",\"p50_observe_ms\":"<<latency[latency.size()/2]
           <<",\"p95_observe_ms\":"<<latency[static_cast<std::size_t>(.95*(latency.size()-1))]

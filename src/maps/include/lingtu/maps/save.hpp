@@ -67,6 +67,7 @@ struct MapSnapshot {
 
 struct SaveMapRequest {
   std::string request_id;
+  std::string source_job_id;
   std::string map_id;
   std::string product_session_id;
   SaveRequirements require;
@@ -84,6 +85,7 @@ struct SaveMapRequest {
 struct SaveMapStatus {
   std::string job_id;
   std::string request_id;
+  std::string source_job_id;
   std::string map_id;
   std::string product_session_id;
   SaveJobState state{SaveJobState::kWaitingSnapshot};
@@ -133,6 +135,7 @@ class SaveMapEngine {
   SaveMapResult Cancel(const std::string &job_id);
   SaveMapResult Retry(const std::string &job_id);
   SaveMapResult Process(const std::string &job_id);
+  SaveMapResult Reoptimize(const std::string &job_id, const std::string &request_id);
   std::optional<std::filesystem::path> GetSource(const std::string &job_id) const;
   std::optional<SaveMapStatus> GetStatus(const std::string &job_id) const;
   std::vector<SaveMapStatus> ListStatuses(std::size_t limit = 100U) const;
@@ -147,6 +150,7 @@ class SaveMapEngine {
   std::string CancelJson(const std::string &job_id);
   std::string RetryJson(const std::string &job_id);
   std::string ProcessJson(const std::string &job_id);
+  std::string ReoptimizeJson(const std::string &job_id, const std::string &request_id);
   std::string GetStatusJson(const std::string &job_id) const;
   std::string ListStatusesJson(std::size_t limit = 100U) const;
 

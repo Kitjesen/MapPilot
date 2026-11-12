@@ -11,7 +11,7 @@
 #include "core/io.hpp"
 #include "core/save.hpp"
 #include "core/text.hpp"
-#include "core/visibility.hpp"
+#include "core/dufo.hpp"
 
 namespace fs = std::filesystem;
 
@@ -41,15 +41,6 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
       return fail("conflicting_mode", "--dry-run cannot be combined with --apply");
     }
 
-    if (options.min_free_frames < 2 || !std::isfinite(options.ray_tolerance_m)
-        || options.ray_tolerance_m <= 0 || !std::isfinite(options.endpoint_margin_m)
-        || options.endpoint_margin_m < options.ray_tolerance_m
-        || !std::isfinite(options.endpoint_confirm_radius_m)
-        || options.endpoint_confirm_radius_m <= 0
-        || options.endpoint_confirm_radius_m > options.endpoint_margin_m
-        || !std::isfinite(options.max_ray_length_m) || options.max_ray_length_m <= 0) {
-      return fail("bad_visibility_threshold", "visibility requires at least two frames and finite positive distances");
-    }
     const fs::path map_dir = fs::absolute(options.map_dir);
     const fs::path map_pcd = map_dir / "map.pcd";
     const fs::path patches_dir = map_dir / "patches";
@@ -137,7 +128,7 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
     };
     if (!std::all_of(source_map.begin(), source_map.end(), finite_point))
       return fail("invalid_map_point", "map.pcd contains non-finite coordinates");
-    VisibilityEvidence visibility(source_map, options);
+    DufoMap evidence(options.voxel_size_m);
     std::uint64_t matched_patches = 0;
     bool has_scan_points = false;
     for (const fs::path &patch : patches) {
@@ -154,7 +145,7 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
       if (!std::isfinite(pose.tx) || !std::isfinite(pose.ty) || !std::isfinite(pose.tz)
           || !std::isfinite(norm2) || norm2 < 1e-12)
         return fail("invalid_scan_pose", "scan pose is not a finite rigid transform: " + patch_name);
-      visibility.observe(points, pose);
+      evidence.observe(points, pose, *options.sensor_origin);
       has_scan_points = has_scan_points || !points.empty();
       ++matched_patches;
     }
@@ -163,39 +154,20 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
       return fail("no_matched_patch_evidence", "no patch PCD files matched poses.txt");
     }
 
-    std::vector<PointXYZI> kept;
-    std::vector<PointXYZI> removed;
-    kept.reserve(source_map.size());
-
-    const auto supported_surfaces = visibility.supportedSurfaces();
+    const auto remove_mask = evidence.removeMask(source_map);
     StaticCleanerResult result;
-    for (std::size_t index = 0; index < source_map.size(); ++index) {
-      const auto& pt = source_map[index];
-      if (visibility.contradicted(index)) {
-        ++result.free_space_candidate_points;
-        if (supported_surfaces[index]) {
-          ++result.kept_supported_surface_points;
-          kept.push_back(pt);
-        } else {
-          removed.push_back(pt);
-        }
-      } else {
-        ++result.kept_uncontradicted_points;
-        kept.push_back(pt);
-      }
-    }
+    result.removed_points = std::count(remove_mask.begin(), remove_mask.end(), std::uint8_t{1});
+    result.kept_points = source_map.size() - result.removed_points;
 
     result.success = true;
     result.reason_code = options.dry_run ? "analyzed" : "cleaned";
     result.message = options.dry_run ? "analysis completed; no files written"
-        : "prune completed with multi-frame observed free-space contradictions";
+        : "DUFOMap saved-map cleanup completed";
     result.dry_run = options.dry_run;
     result.unmatched_patch_count = patches.size() - matched_patches;
     result.patch_count = matched_patches;
     result.pose_count = poses.size();
     result.source_points = source_map.size();
-    result.kept_points = kept.size();
-    result.removed_points = removed.size();
     if (!options.dry_run) {
       fs::create_directories(clean_path.parent_path());
       fs::create_directories(removed_path.parent_path());
@@ -203,7 +175,7 @@ StaticCleanerResult cleanStaticMap(const StaticCleanerOptions &requested) {
           map_pcd, clean_path, removed_path, backup_path,
           tmp_map_path, options.overwrite, options.apply_to_map,
       };
-      const auto saved = writeCleanedMap(save_options, kept, removed);
+      const auto saved = writeCleanedMap(save_options, remove_mask);
       result.success = saved.success;
       if (!saved.success) {
         result.reason_code = saved.reason_code;
@@ -240,15 +212,9 @@ std::string toJson(const StaticCleanerResult &result) {
   out << "  \"removed_points\": " << result.removed_points << ",\n";
   out << "  \"removed_fraction\": " << (result.source_points
       ? static_cast<double>(result.removed_points) / result.source_points : 0.0) << ",\n";
-  out << "  \"decision_counts\": {\n";
-  out << "    \"kept_uncontradicted\": " << result.kept_uncontradicted_points << ",\n";
-  out << "    \"kept_supported_surface\": " << result.kept_supported_surface_points << ",\n";
-  out << "    \"removed_free_space_contradiction\": " << result.removed_points << "\n  },\n";
-  out << "  \"free_space_candidate_points\": " << result.free_space_candidate_points << ",\n";
-  out << "  \"removal_semantics\": \"multi_frame_observed_free_space_not_semantic_motion\",\n";
-  out << "  \"algorithm\": \"prune.visibility_surface_v4\",\n";
-  out << "  \"license_boundary\": \"LingTu visibility and local-surface core; "
-         "does not include or link ERASOR2 code\"\n";
+  out << "  \"removal_semantics\": \"dufomap_seen_free_not_semantic_motion\",\n";
+  out << "  \"algorithm\": \"dufomap.9e239ddd_ufomap.fcb20f44\",\n";
+  out << "  \"license_boundary\": \"DUFOMap and UFOMap BSD-3-Clause notices accompany the binary\"\n";
   out << "}\n";
   return out.str();
 }

@@ -2,10 +2,9 @@
 
 `IncrementalCleaner` is retained for recorded-scan experiments. It is not linked
 into mapd or the native SLAM whole-map preview. Those paths keep their original
-map aggregation. Save-time `prune` retains a fixed index over original map points
-and owns the header-only surface preservation helper in
-`src/maps/prune/cpp/core/surface.hpp`, also used by this experiment. Its final
-surface checks do not use the ground adapter or cached ground labels.
+map aggregation. Save-time `prune` now uses the pinned DUFOMap/UFOMap backend.
+The old header-only planar helper is retained here as `surface.hpp` solely for
+this offline experiment. It is no longer part of the production classifier.
 
 The integration adapts DUFOMap's conservative measured free-space principle and
 FreeDOM's incremental historical relabeling. It is not a port of either complete

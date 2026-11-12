@@ -1,0 +1,16 @@
+SurfaceIndex retains code adapted from DimOS:
+Copyright 2025 Dimensional Inc., Apache License 2.0.
+https://github.com/dimensionalOS/dimos/blob/26144f7fd8424bdc33ab97dcd58e9497f2d413ee/dimos/navigation/global_planner/mls_planner/rust/src/surfaces.rs
+
+LingTu's 2026 adaptation includes immutable OctoMap columns, separate inferred
+support and occupied-height acceleration blocks. On 2026-11-08 the shared
+implementation moved from the global planner to Maps. Per-height morphological
+closing was replaced by bounded-hole selection, local observed-boundary plane
+fitting and known-free exclusion. No CuPy/OpenCV/Rust implementation was copied.
+
+The bounded internal-hole selection was informed by the MIT-licensed
+elevation_mapping_cupy ROS2 inpainting implementation at
+d9e1c9fe42ea3d463519333a443da99f680adde8. LingTu's implementation keeps distinct
+3D heights and evaluates original OctoMap evidence instead of image inpainting.
+
+The Apache 2.0 license text is supplied in LICENSE-Apache-2.0.

@@ -15,6 +15,9 @@ std::vector<PointXYZI> readPcd(const std::filesystem::path &path);
 
 void writePcd(const std::filesystem::path &path, const std::vector<PointXYZI> &points);
 
+void partitionPcd(const std::filesystem::path &source, const std::filesystem::path &clean,
+    const std::filesystem::path &removed, const std::vector<std::uint8_t> &remove_mask);
+
 std::unordered_map<std::string, Pose> readLingtuPoses(const std::filesystem::path &path,
     std::vector<std::string>* patch_order = nullptr);
 

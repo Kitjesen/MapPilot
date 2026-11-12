@@ -7,6 +7,8 @@
 #include <string>
 
 #include "lingtu/maps/io/pcd.hpp"
+#include "lingtu/maps/edit.hpp"
+#include "lingtu/maps/no_go.hpp"
 #include "lingtu/maps/storage/store.hpp"
 
 namespace lingtu::maps {
@@ -41,11 +43,6 @@ struct OctomapBuildOptions {
   std::function<bool()> cancel_requested;
 };
 
-struct SourceEditOperation {
-  std::string operation;
-  PcdBounds bounds;
-};
-
 struct SourceCommitOptions {
   double voxel_size{0.0};
   bool dynamic_filter_enabled{map_defaults::save::dynamic_filter};
@@ -64,6 +61,13 @@ struct OctomapEditOptions {
   double radius_m{0.20};
   double timeout_sec{15.0};
   std::function<bool()> cancel_requested;
+};
+
+struct SurfaceMapOptions {
+  double headroom_m{0.6};
+  double radius_m{::lingtu::settings::global::native_nav::global::surface_closing_radius_m};
+  double max_hole_area_m2{::lingtu::settings::global::native_nav::global::surface_max_hole_area_m2};
+  double max_slope{::lingtu::settings::global::native_nav::global::surface_max_slope};
 };
 
 class MapPipelineCore {
@@ -88,11 +92,20 @@ class MapPipelineCore {
       const std::string& source_map_id, const std::string& target_map_id,
       std::uint64_t expected_source_content_epoch,
       const std::vector<SourceEditOperation>& operations);
+  std::string PreviewSourceEditsJson(
+      const std::string& map_id, std::uint64_t expected_source_content_epoch,
+      const std::vector<SourceEditOperation>& operations);
   std::string BuildOccupancySnapshotJson(const std::string& map_id);
   std::string BuildOctomapArtifactJson(
       const std::string& map_id,
       const OctomapBuildOptions& options);
   std::string GetVoxelEditsJson(const std::string& map_id) const;
+  std::string GetNoGoRegionsJson(const std::string& map_id) const;
+  std::string GetSurfaceMapJson(const std::string& map_id, const SurfaceMapOptions& options) const;
+  std::string SetNoGoRegionJson(const std::string& map_id, const NoGoRegion& region,
+                                std::uint64_t expected_content_epoch);
+  std::string DeleteNoGoRegionJson(const std::string& map_id, const std::string& region_id,
+                                   std::uint64_t expected_content_epoch);
   std::string EditOctomapVoxelsJson(
       const std::string& map_id,
       const OctomapEditOptions& options);
@@ -106,6 +119,8 @@ class MapPipelineCore {
   std::string BuildTraversabilityArtifactJson(const std::string& map_id);
   std::string BuildSemanticArtifactJson(const std::string& map_id);
  private:
+  std::string WriteNoGoRegionJson(const std::string& map_id, const NoGoRegion& region,
+                                  std::uint64_t expected_content_epoch, bool remove);
   struct BuildLockResult {
     bool ok{false};
     std::string message;

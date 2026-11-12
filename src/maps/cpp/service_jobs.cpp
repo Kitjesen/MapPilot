@@ -66,6 +66,12 @@ std::string MapsServiceCore::SaveEditedSourceJson(
                                         expected_source_content_epoch, operations);
 }
 
+std::string MapsServiceCore::PreviewSourceEditsJson(
+    const std::string &map_id, std::uint64_t expected_source_content_epoch,
+    const std::vector<SourceEditOperation> &operations) {
+  return pipeline_.PreviewSourceEditsJson(map_id, expected_source_content_epoch, operations);
+}
+
 std::string MapsServiceCore::BuildOccupancySnapshotJson(const std::string &map_id) {
   return pipeline_.BuildOccupancySnapshotJson(map_id);
 }
@@ -77,6 +83,25 @@ std::string MapsServiceCore::BuildOctomapArtifactJson(const std::string &map_id,
 
 std::string MapsServiceCore::GetVoxelEditsJson(const std::string &map_id) const {
   return pipeline_.GetVoxelEditsJson(map_id);
+}
+
+std::string MapsServiceCore::GetNoGoRegionsJson(const std::string& map_id) const {
+  return pipeline_.GetNoGoRegionsJson(map_id);
+}
+
+std::string MapsServiceCore::GetSurfaceMapJson(const std::string& map_id,
+                                             const SurfaceMapOptions& options) const {
+  return pipeline_.GetSurfaceMapJson(map_id, options);
+}
+
+std::string MapsServiceCore::SetNoGoRegionJson(const std::string& map_id,
+    const NoGoRegion& region, std::uint64_t expected_content_epoch) {
+  return pipeline_.SetNoGoRegionJson(map_id, region, expected_content_epoch);
+}
+
+std::string MapsServiceCore::DeleteNoGoRegionJson(const std::string& map_id,
+    const std::string& region_id, std::uint64_t expected_content_epoch) {
+  return pipeline_.DeleteNoGoRegionJson(map_id, region_id, expected_content_epoch);
 }
 
 std::string MapsServiceCore::EditOctomapVoxelsJson(const std::string &map_id,
@@ -137,6 +162,11 @@ std::string MapsServiceCore::RetrySaveMapJson(const std::string &job_id) {
 
 std::string MapsServiceCore::ProcessSaveMapJson(const std::string &job_id) {
   return SaveEngine().ProcessJson(job_id);
+}
+
+std::string MapsServiceCore::ReoptimizeSaveMapJson(const std::string &job_id,
+                                                  const std::string &request_id) {
+  return SaveEngine().ReoptimizeJson(job_id, request_id);
 }
 
 std::optional<std::filesystem::path> MapsServiceCore::SaveMapSource(const std::string &job_id) const {

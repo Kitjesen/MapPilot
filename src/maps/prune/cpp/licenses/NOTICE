@@ -1,0 +1,25 @@
+LingTu saved-map cleanup follows DUFOMap's scan integration and seen-free
+classification, using the UFOMap mapping library.
+
+DUFOMap
+https://github.com/KTH-RPL/dufomap
+Source revision 9e239ddd5995136e14f5212f33382a6ebc59e518
+Copyright (c) 2024, Daniel Duberg
+BSD-3-Clause. See DUFOMap-BSD-3-Clause.txt.
+
+UFOMap
+https://github.com/UnknownFreeOccupied/ufomap
+Source revision fcb20f445d257280c039c07ab756c9d5b37ebd78
+Copyright (c) 2024, Daniel Duberg
+Copyright (c) 2022, Daniel Duberg, KTH Royal Institute of Technology
+BSD-3-Clause. See UFOMap-BSD-3-Clause.txt.
+
+LingTu guards x86 intrinsics headers with __BMI2__ in build-local header copies,
+retaining the upstream portable implementation for ARM targets.
+The coordinate-to-key conversion adds the map offset before the unsigned cast,
+avoiding undefined conversion of negative floating-point coordinates on ARM.
+
+LingTu integrates saved scans directly in map coordinates, retains calibrated
+sensor origins, and classifies original point records through a removal mask.
+The standalone DUFOMap command-line reader and writer are replaced by LingTu's
+saved-map input and transactional field-preserving output.

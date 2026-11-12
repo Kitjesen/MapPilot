@@ -22,28 +22,4 @@ struct Pose {
   double qz{0.0};
 };
 
-struct VoxelKey {
-  int x{0};
-  int y{0};
-  int z{0};
-
-  bool operator==(const VoxelKey &other) const {
-    return x == other.x && y == other.y && z == other.z;
-  }
-};
-
-struct VoxelKeyHash {
-  std::size_t operator()(const VoxelKey &key) const {
-    std::size_t h = 1469598103934665603ULL;
-    auto mix = [&](int value) {
-      h ^= static_cast<std::uint64_t>(static_cast<std::int64_t>(value));
-      h *= 1099511628211ULL;
-    };
-    mix(key.x);
-    mix(key.y);
-    mix(key.z);
-    return h;
-  }
-};
-
 }  // namespace lingtu::map_cleaning

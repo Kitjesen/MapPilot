@@ -2,6 +2,7 @@
 #include "lingtu/maps/io/json.hpp"
 #include "lingtu/maps/io/pcd.hpp"
 #include "lingtu/maps/octomap/io.hpp"
+#include "lingtu/maps/no_go.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -16,6 +17,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -300,6 +302,184 @@ void WaitPhase(SaveMapEngine& engine, const std::string& id, SavePhase phase) {
   Fail("SaveMap job did not enter expected phase");
 }
 
+void TestReoptimize(const std::filesystem::path& root) {
+  const auto source = root / "reoptimize-source";
+  WriteCompletePatchBundle(source, 3.0, 2U);
+  const std::string online_report =
+      R"({"schema":"lingtu.map_optimization.v1","backend":"lio_sam_isam2","success":true,"performed":true,"pose_count":2,"loop_count":1})";
+  std::ofstream(source / "map_optimization.json") << online_report;
+  MapStore store(MapStoreConfig{root / "reoptimize-store"});
+  const auto optimizer = WriteFakePgo(root);
+  {
+    SaveMapEngine engine(store);
+    auto request = Request("original", "reoptimized");
+    request.pgo.executable = optimizer.string();
+    Require(engine.Begin(request).accepted, "reoptimization source request rejected");
+    Require(engine.ProvideSnapshot("original", Snapshot("original", source)).accepted,
+            "reoptimization source snapshot rejected");
+    const auto original = WaitTerminal(engine, "original");
+    Require(original.state == SaveJobState::kSucceeded, "online source save failed");
+    Require(ReadFile(original.map_dir / "map_optimization.json") == online_report,
+            "normal online save unexpectedly ran offline optimization");
+    const auto before_epoch = store.ContentEpoch("reoptimized");
+    const auto started = engine.Reoptimize("original", "reoptimize");
+    Require(started.accepted && !started.replayed && started.status.job_id == "reoptimize" &&
+                started.status.source_job_id == "original",
+            "reoptimization did not create a separate task");
+    Require(engine.Reoptimize("original", "reoptimize").replayed,
+            "same reoptimization request was started twice");
+    const auto conflict = engine.Reoptimize("other", "reoptimize");
+    Require(!conflict.accepted && conflict.reason_code == "idempotency_conflict",
+            "reoptimization request_id accepted another source");
+    const auto optimized = WaitTerminal(engine, "reoptimize");
+    Require(optimized.state == SaveJobState::kSucceeded,
+            "online snapshot was not reoptimized: " + optimized.message);
+    Require(lingtu::maps::JsonObjectStringAtPath(
+                ReadFile(optimized.map_dir / "map_optimization.json"), {"code"}) == "optimized" &&
+                store.ContentEpoch("reoptimized") > before_epoch,
+            "reoptimization did not publish a new optimized map version");
+    Require(ReadFile(original.capture_dir / "map_optimization.json") == online_report &&
+                ReadFile(optimized.capture_dir / "map_optimization.json") == online_report &&
+                engine.GetStatus("original")->state == SaveJobState::kSucceeded,
+            "reoptimization altered the original online report or task");
+  }
+  const auto reoptimize_dir = store.RootDir() / ".save_jobs" / "reoptimize";
+  ReplaceStateValue(reoptimize_dir / "job.state", "state", "QUEUED");
+  ReplaceStateValue(reoptimize_dir / "job.state", "map_committed", "0");
+  std::filesystem::rename(reoptimize_dir / "capture", reoptimize_dir / "completed-capture");
+  {
+    std::atomic<bool> fail_before_copy{true};
+    SaveMapHooks hooks;
+    hooks.forced_failure = [&](const std::string& id, SavePhase phase) -> std::optional<std::string> {
+      if (id == "reoptimize-copy-fail" && phase == SavePhase::kValidate &&
+          fail_before_copy.exchange(false)) return "archive copy has not started";
+      return std::nullopt;
+    };
+    SaveMapEngine recovered(store, hooks);
+    const auto status = WaitTerminal(recovered, "reoptimize");
+    Require(status.state == SaveJobState::kSucceeded && status.source_job_id == "original" &&
+                status.source_saved && status.recovered &&
+                recovered.Reoptimize("original", "reoptimize").replayed,
+            "queued reoptimization did not recover before its archive copy");
+    Require(recovered.Reoptimize("original", "reoptimize-copy-fail").accepted,
+            "pre-copy reoptimization failure was not queued");
+    const auto before_copy = WaitTerminal(recovered, "reoptimize-copy-fail");
+    Require(before_copy.state == SaveJobState::kFailed && !before_copy.source_saved,
+            "archive was copied before the pre-copy failure");
+    const auto retry = recovered.Retry("reoptimize-copy-fail");
+    Require(retry.accepted && retry.status.state == SaveJobState::kQueued &&
+                WaitTerminal(recovered, "reoptimize-copy-fail").state == SaveJobState::kSucceeded,
+            "reoptimization retry requested a live SLAM snapshot instead of its archive");
+    const auto original = recovered.GetStatus("original");
+    const auto current = ReadFile(store.MapPath("reoptimized") / "map_optimization.json");
+    std::ofstream(original->capture_dir / "auto_skip") << "1\n";
+    Require(recovered.Reoptimize("original", "reoptimize-skip").accepted,
+            "no-loop reoptimization was not queued");
+    const auto skipped = WaitTerminal(recovered, "reoptimize-skip");
+    Require(skipped.state == SaveJobState::kFailed && skipped.reason_code == "no_verified_loops" &&
+                skipped.source_saved,
+            "unperformed reoptimization was reported as successful");
+    Require(ReadFile(store.MapPath("reoptimized") / "map_optimization.json") == current,
+            "failed reoptimization replaced the valid map");
+    std::filesystem::remove(original->capture_dir / "patches" / "000001.pcd");
+    const auto missing = recovered.Reoptimize("original", "reoptimize-incomplete");
+    Require(!missing.accepted && missing.reason_code == "patch_bundle_incomplete" &&
+                !recovered.GetStatus("reoptimize-incomplete").has_value(),
+            "reoptimization accepted an incomplete patch bundle");
+  }
+
+  const auto failed_source = root / "reoptimize-fail-source";
+  WriteCompletePatchBundle(failed_source, 4.0, 2U);
+  std::ofstream(failed_source / "map_optimization.json") << online_report;
+  SaveMapEngine engine(store);
+  auto request = Request("original-fail", "reoptimize-fail-map");
+  request.pgo.executable = WriteFakePgo(root, true).string();
+  Require(engine.Begin(request).accepted &&
+              engine.ProvideSnapshot(request.request_id, Snapshot("fail-source", failed_source)).accepted,
+          "failing optimizer source was rejected");
+  const auto saved = WaitTerminal(engine, request.request_id);
+  Require(saved.state == SaveJobState::kSucceeded, "online save ran the failing offline optimizer");
+  const auto saved_map = ReadFile(saved.map_dir / "map.pcd");
+  Require(engine.Reoptimize(request.request_id, "reoptimize-fail").accepted,
+          "failing reoptimization was not queued");
+  const auto failed = WaitTerminal(engine, "reoptimize-fail");
+  Require(failed.state == SaveJobState::kFailed && failed.reason_code == "pgo_failed" &&
+              failed.source_saved && ReadFile(saved.map_dir / "map.pcd") == saved_map &&
+              ReadFile(saved.capture_dir / "map_optimization.json") == online_report,
+          "optimizer failure lost or replaced the original map");
+}
+
+void TestNoGoSave(const std::filesystem::path& root) {
+  const auto original_source = root / "no-go-original-source";
+  const auto replacement_source = root / "no-go-replacement-source";
+  const std::string online_report =
+      R"({"schema":"lingtu.map_optimization.v1","backend":"lio_sam_isam2","success":true,"performed":true,"pose_count":2,"loop_count":1})";
+  for (const auto& entry : {std::make_pair(original_source, 3.0),
+                            std::make_pair(replacement_source, 4.0)}) {
+    WriteCompletePatchBundle(entry.first, entry.second, 2U);
+    std::ofstream(entry.first / "map_optimization.json") << online_report;
+  }
+  MapStore store(MapStoreConfig{root / "no-go-save-store"});
+  SaveMapEngine engine(store);
+  auto request = Request("no-go-original", "restricted");
+  request.pgo.executable = WriteFakePgo(root).string();
+  Require(engine.Begin(request).accepted &&
+              engine.ProvideSnapshot(request.request_id, Snapshot("original", original_source)).accepted,
+          "no-go source save was rejected");
+  const auto original = WaitTerminal(engine, request.request_id);
+  Require(original.state == SaveJobState::kSucceeded, "no-go source save failed");
+
+  lingtu::maps::MapPipelineCore pipeline(store);
+  const lingtu::maps::NoGoRegion region{"door", {1, 2, 0}, {2, 3, 2}};
+  Require(lingtu::maps::JsonObjectBoolAtPath(
+      pipeline.SetNoGoRegionJson("restricted", region, store.ContentEpoch("restricted")),
+      {"success"}) == true, "could not add the saved no-go policy");
+  const auto map_dir = store.MapPath("restricted");
+  const auto policy_path = map_dir / lingtu::maps::kNoGoFilename;
+  const auto policy = ReadFile(policy_path);
+  const auto before = ReadFile(map_dir / "map.pcd");
+  auto epoch = store.ContentEpoch("restricted");
+  Require(!std::filesystem::exists(original.capture_dir / lingtu::maps::kNoGoFilename),
+          "no-go policy incorrectly appeared in the original scan archive");
+
+  auto replacement = Request("no-go-replacement", "restricted");
+  Require(engine.Begin(replacement).accepted &&
+              engine.ProvideSnapshot(replacement.request_id, Snapshot("replacement", replacement_source)).accepted,
+          "no-go same-name save was rejected");
+  const auto saved = WaitTerminal(engine, replacement.request_id);
+  Require(saved.state == SaveJobState::kSucceeded &&
+              ReadFile(map_dir / "map.pcd") != before && store.ContentEpoch("restricted") > epoch,
+          "no-go same-name save did not publish replacement geometry");
+  Require(ReadFile(policy_path) == policy && lingtu::maps::ReadNoGoRegions(map_dir).size() == 1,
+          "same-name SaveMap lost or changed the saved no-go policy");
+
+  epoch = store.ContentEpoch("restricted");
+  Require(engine.Reoptimize("no-go-original", "no-go-reoptimize").accepted,
+          "no-go reoptimization was rejected");
+  const auto optimized = WaitTerminal(engine, "no-go-reoptimize");
+  Require(optimized.state == SaveJobState::kSucceeded && store.ContentEpoch("restricted") > epoch &&
+              ReadFile(policy_path) == policy,
+          "reoptimization from an older scan archive lost the current no-go policy");
+
+  const auto good_map = ReadFile(map_dir / "map.pcd");
+  const auto good_tree = ReadFile(map_dir / "octomap.ot");
+  const auto good_metadata = ReadFile(map_dir / "metadata.json");
+  epoch = store.ContentEpoch("restricted");
+  const std::string invalid_policy = "{invalid no-go policy\n";
+  std::ofstream(policy_path, std::ios::binary | std::ios::trunc) << invalid_policy;
+  auto invalid = Request("no-go-invalid", "restricted");
+  Require(engine.Begin(invalid).accepted &&
+              engine.ProvideSnapshot(invalid.request_id, Snapshot("invalid-policy", replacement_source)).accepted,
+          "invalid-policy save was not admitted for processing");
+  const auto failed = WaitTerminal(engine, invalid.request_id);
+  Require(failed.state == SaveJobState::kFailed && failed.source_saved,
+          "invalid no-go policy was silently replaced by a successful save");
+  Require(store.ContentEpoch("restricted") == epoch && ReadFile(map_dir / "map.pcd") == good_map &&
+              ReadFile(map_dir / "octomap.ot") == good_tree &&
+              ReadFile(map_dir / "metadata.json") == good_metadata && ReadFile(policy_path) == invalid_policy,
+          "invalid no-go policy failure changed the previous map, identity or policy evidence");
+}
+
 void TestManualSource(const std::filesystem::path& root) {
   MapStore store(MapStoreConfig{root / "manual_maps"});
   const auto source = root / "manual_source";
@@ -497,6 +677,47 @@ void TestDerivedArtifactInvalidation(const std::filesystem::path& root) {
           "missing optimization report was not reported as unknown");
 }
 
+void TestRealSavedSourceCleaner(const std::filesystem::path& root, const std::string& command) {
+  const auto source=root/"dufo_source";
+  std::filesystem::create_directories(source/"patches");
+  std::ofstream(source/"map.pcd")
+      << "VERSION 0.7\nFIELDS x y z intensity normal_x normal_y normal_z curvature\n"
+         "SIZE 4 4 4 4 4 4 4 4\nTYPE F F F F F F F F\nCOUNT 1 1 1 1 1 1 1 1\n"
+         "WIDTH 3\nHEIGHT 1\nPOINTS 3\nDATA ascii\n"
+         "2.025 .025 .025 11 0 0 1 .1\n4 0 0 12 0 1 0 .2\n10 10 10 13 1 0 0 .3\n";
+  const auto original=ReadFile(source/"map.pcd");
+  std::ofstream(source/"patches/a.pcd")
+      << "VERSION 0.7\nFIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\n"
+         "WIDTH 2\nHEIGHT 1\nPOINTS 2\nDATA ascii\n2.025 .025 .025\n4 0 0\n";
+  std::ofstream scan(source/"patches/b.pcd");
+  scan<<"VERSION 0.7\nFIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\n"
+        "WIDTH 1681\nHEIGHT 1\nPOINTS 1681\nDATA ascii\n";
+  for(int y=-20;y<=20;++y)for(int z=-20;z<=20;++z)scan<<"4 "<<.05*y<<' '<<.05*z<<'\n';
+  scan.close();
+  std::ofstream(source/"poses.txt")<<"a.pcd 0 0 0 1 0 0 0\nb.pcd 0 0 0 1 0 0 0\n";
+  std::ofstream(source/"scan_origin.txt")<<"lidar_origin_in_patch 0 0 0\n";
+  MapStore store(MapStoreConfig{root/"dufo_maps"});
+  lingtu::maps::MapPipelineCore pipeline(store);
+  lingtu::maps::SourceCommitOptions options;
+  options.dynamic_filter_required=true;
+  options.dynamic_filter_command='"'+command+'"';
+  const auto result=pipeline.CommitSavedSourceJson("dufo",source,options);
+  Require(lingtu::maps::JsonObjectBoolAtPath(result,{"success"})==true,result);
+  Require(result.find("dufomap.")!=std::string::npos,"save pipeline did not call the DUFOMap binary");
+  const auto committed=store.MapPath("dufo");
+  const auto loaded=lingtu::maps::LoadPcdXyz(committed/"map.pcd");
+  Require(loaded.ok && loaded.points.size()==2,"committed clean map did not load");
+  Require(ReadFile(committed/"map.before_clean.pcd")==original,"save commit lost full-field original backup");
+  Require(ReadFile(committed/"map.removed.pcd").find("normal_x normal_y normal_z curvature")!=std::string::npos,
+      "save commit lost removed-point fields");
+  const auto good_map=ReadFile(committed/"map.pcd");
+  std::filesystem::remove(source/"scan_origin.txt");
+  const auto failed=pipeline.CommitSavedSourceJson("dufo",source,options);
+  Require(lingtu::maps::JsonObjectBoolAtPath(failed,{"success"})==false,"missing origin accepted by save pipeline");
+  Require(ReadFile(committed/"map.pcd")==good_map,"failed cleanup replaced the previous map");
+  std::cout<<"real DUFOMap save, reload, backup and failed replacement verified\n";
+}
+
 void TestSavedSourceFiltering(const std::filesystem::path& root) {
   const auto source = root / "source_filtering";
   const std::vector<lingtu::maps::PointXyz> points{
@@ -575,9 +796,16 @@ void TestCrossVolumeCommit(const std::filesystem::path& source_root) {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
   const auto root = TempRoot();
+  if (argc == 2) {
+    TestRealSavedSourceCleaner(root, argv[1]);
+    std::filesystem::remove_all(root);
+    return 0;
+  }
   TestManualSource(root);
+  TestReoptimize(root);
+  TestNoGoSave(root);
   TestRetryAfterFailure(root);
   TestDerivedArtifactInvalidation(root);
   TestSavedSourceFiltering(root);
@@ -1026,6 +1254,7 @@ int main() {
   std::ofstream(sam_source / "map_optimization.json") << sam_report;
   std::ofstream(sam_source / "keyframes.timestamps.txt") << "scan_0.pcd 1\nscan_1.pcd 2\n";
   std::ofstream(sam_source / "sam_loops.json") << "{\"schema\":\"lingtu.sam_loops.v1\",\"records\":[]}";
+  std::ofstream(sam_source / "mapping_state.yaml") << "schema: lingtu.mapping_archive.v1\ncomplete: true\nsource_epoch: 7\n";
   // The evidence sidecar must survive the native map build/save transaction.
   {
     SaveMapEngine engine(store);
@@ -1042,6 +1271,8 @@ int main() {
             "SAM replay timestamps lost in save");
     Require(ReadFile(status.map_dir / "sam_loops.json") == ReadFile(sam_source / "sam_loops.json"),
             "SAM loop evidence changed or disappeared in save");
+    Require(ReadFile(status.map_dir / "mapping_state.yaml") == ReadFile(sam_source / "mapping_state.yaml"),
+            "mapping continuation metadata changed or disappeared in save");
   }
   std::ofstream(sam_source / "map_optimization.json")
       << R"({"backend":"lio_sam_isam2","success":true,"pose_count":1})";

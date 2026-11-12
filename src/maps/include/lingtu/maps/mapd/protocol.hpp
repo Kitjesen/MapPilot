@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <lingtu/settings.hpp>
+
 namespace lingtu::maps::mapd::query {
 
 constexpr char kRequestMagic[4] = {'L', 'T', 'M', 'P'};
@@ -12,7 +14,7 @@ constexpr std::size_t kRequestHeaderSize = 18U;
 constexpr std::size_t kResponseHeaderSize = 16U;
 constexpr std::size_t kMaxRequestIdBytes = 128U;
 // The Web's 80k-point saved-map preview exceeds 1 MiB at normal XYZ precision.
-constexpr std::size_t kDefaultMaxJsonBytes = 4U * 1024U * 1024U;
+constexpr std::size_t kDefaultMaxJsonBytes = lingtu::settings::maps::maps::capacity::query_json_bytes;
 constexpr const char* kDefaultSocketPath = "/run/lingtu-mapd/mapd.sock";
 
 enum class Opcode : std::uint8_t {

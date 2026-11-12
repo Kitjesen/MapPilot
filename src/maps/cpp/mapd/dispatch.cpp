@@ -145,20 +145,56 @@ class Fields {
       const auto &edit = value.AsObject("operation");
       SourceEditOperation parsed;
       parsed.operation = edit.at("operation").AsString("operation");
-      const auto &bounds = edit.at("bounds").AsObject("bounds");
-      auto number = [&](const char *key) {
-        const auto *value = std::get_if<double>(&bounds.at(key).value);
-        if (value == nullptr || !std::isfinite(*value))
-          throw std::invalid_argument(std::string("invalid bounds field: ") + key);
-        return *value;
+      auto number = [&](const JsonValue::Object &fields, const char *key, double fallback) {
+        const auto field = fields.find(key);
+        if (field == fields.end()) return fallback;
+        const auto *number = std::get_if<double>(&field->second.value);
+        if (number == nullptr || !std::isfinite(*number))
+          throw std::invalid_argument(std::string("invalid edit field: ") + key);
+        return *number;
       };
-      parsed.bounds = {true, number("min_x"), number("min_y"), number("min_z"),
-                      number("max_x"), number("max_y"), number("max_z")};
+      const auto integer = [&](const char *key, int fallback) {
+        const double value = number(edit, key, fallback);
+        if (std::floor(value) != value || value < 0 ||
+            value > std::numeric_limits<int>::max())
+          throw std::invalid_argument(std::string("invalid integer edit field: ") + key);
+        return static_cast<int>(value);
+      };
+      if (parsed.operation == "delete_inside" || parsed.operation == "keep_inside" || parsed.operation == "add_plane") {
+        const auto &bounds = edit.at("bounds").AsObject("bounds");
+        const auto coordinate = [&](const char *key) {
+          if (bounds.find(key) == bounds.end())
+            throw std::invalid_argument(std::string("missing bounds field: ") + key);
+          return number(bounds, key, 0);
+        };
+        parsed.bounds = {true, coordinate("min_x"), coordinate("min_y"), coordinate("min_z"),
+                        coordinate("max_x"), coordinate("max_y"), coordinate("max_z")};
+        if (parsed.operation == "add_plane") {
+          parsed.axis = edit.at("axis").AsString("axis");
+          parsed.offset = number(edit, "offset", parsed.offset);
+          parsed.spacing = number(edit, "spacing", parsed.spacing);
+        }
+      } else if (parsed.operation == "voxel") {
+        parsed.voxel_size = number(edit, "voxel_size", parsed.voxel_size);
+      } else if (parsed.operation == "statistical") {
+        parsed.neighbors = integer("neighbors", parsed.neighbors);
+        parsed.std_ratio = number(edit, "std_ratio", parsed.std_ratio);
+      } else if (parsed.operation == "radius") {
+        parsed.radius = number(edit, "radius", parsed.radius);
+        parsed.min_points = integer("min_points", parsed.min_points);
+      } else if (parsed.operation == "clusters") {
+        parsed.radius = number(edit, "radius", parsed.radius);
+        parsed.neighbors = integer("neighbors", parsed.neighbors);
+        parsed.min_cluster_points = integer("min_cluster_points", parsed.min_cluster_points);
+      } else if (parsed.operation == "plane_crop") {
+        parsed.distance_threshold = number(edit, "distance_threshold", parsed.distance_threshold);
+        parsed.margin = number(edit, "margin", parsed.margin);
+      }
       result.push_back(std::move(parsed));
     }
     return result;
   } catch (const std::out_of_range &) {
-    throw std::invalid_argument("each edit requires operation and complete bounds");
+    throw std::invalid_argument("each edit requires an operation and its parameters");
   }
   std::string String(const char *key) const {
     const auto value = JsonObjectStringAtPath(json_, {key});
@@ -289,6 +325,8 @@ std::string Invoke(MapsServiceCore &service, mapd::SaveCoordinator *save_coordin
   }
   if (action == "process_save_map")
     return service.ProcessSaveMapJson(f.String("job_id"));
+  if (action == "reoptimize_save_map")
+    return service.ReoptimizeSaveMapJson(f.String("job_id"), f.String("request_id"));
   if (action == "get_save_map_status")
     return service.GetSaveMapStatusJson(f.String("job_id"));
   if (action == "list_save_map_jobs")
@@ -362,6 +400,9 @@ std::string Invoke(MapsServiceCore &service, mapd::SaveCoordinator *save_coordin
     options.dynamic_filter_timeout_sec = f.NumberOr("dynamic_filter_timeout_sec", options.dynamic_filter_timeout_sec);
     return service.CommitSavedSourceJson(f.String("map_id"), f.String("source_dir"), options);
   }
+  if (action == "preview_source_edits")
+    return service.PreviewSourceEditsJson(f.String("map_id"),
+        f.U64Or("expected_source_content_epoch", 0U), f.Edits());
   if (action == "save_edited_source")
     return service.SaveEditedSourceJson(f.String("map_id"), f.String("new_map_id"),
         f.U64Or("expected_source_content_epoch", 0U), f.Edits());
@@ -381,6 +422,28 @@ std::string Invoke(MapsServiceCore &service, mapd::SaveCoordinator *save_coordin
   }
   if (action == "get_voxel_edits")
     return service.GetVoxelEditsJson(f.String("map_id"));
+  if (action == "get_no_go_regions")
+    return service.GetNoGoRegionsJson(f.String("map_id"));
+  if (action == "get_surface_map") {
+    SurfaceMapOptions options;
+    options.headroom_m = f.NumberOr("headroom_m", options.headroom_m);
+    options.radius_m = f.NumberOr("radius_m", options.radius_m);
+    options.max_hole_area_m2 = f.NumberOr("max_hole_area_m2", options.max_hole_area_m2);
+    options.max_slope = f.NumberOr("max_slope", options.max_slope);
+    return service.GetSurfaceMapJson(f.String("map_id"), options);
+  }
+  if (action == "set_no_go_region") {
+    NoGoRegion region{f.String("region_id"),
+        {f.Number("min_x"), f.Number("min_y"), f.Number("min_z")},
+        {f.Number("max_x"), f.Number("max_y"), f.Number("max_z")}};
+    region.label = f.StringOr("region_label", "");
+    region.kind = f.StringOr("region_kind", "no_go");
+    return service.SetNoGoRegionJson(f.String("map_id"), region,
+                                     f.U64Or("expected_content_epoch", 0U));
+  }
+  if (action == "delete_no_go_region")
+    return service.DeleteNoGoRegionJson(f.String("map_id"), f.String("region_id"),
+                                        f.U64Or("expected_content_epoch", 0U));
   if (action == "edit_octomap_voxels") {
     OctomapEditOptions options;
     options.state = f.String("state");
@@ -445,7 +508,8 @@ DispatchResult DispatchServiceJson(MapsServiceCore &service,
   } catch (const std::domain_error &) {
     return {false, Failure(action, "unknown_action", "unknown service action: " + action)};
   } catch (const std::invalid_argument &exc) {
-    return {false, Failure(action, "invalid_request", exc.what())};
+    const bool source_edit = action == "save_edited_source" || action == "preview_source_edits";
+    return {false, Failure(action, source_edit ? "invalid_operations" : "invalid_request", exc.what())};
   } catch (const std::exception &exc) {
     return {false, Failure(action, "internal_error", exc.what())};
   }

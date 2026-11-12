@@ -25,7 +25,7 @@ struct SaveResult {
   std::filesystem::path backup_pcd;
 };
 
-SaveResult writeCleanedMap(const SaveOptions &options, const std::vector<PointXYZI> &kept,
-                           const std::vector<PointXYZI> &removed);
+SaveResult writeCleanedMap(const SaveOptions &options,
+                          const std::vector<std::uint8_t> &remove_mask);
 
 }  // namespace lingtu::map_cleaning

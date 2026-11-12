@@ -5,6 +5,7 @@
 #include "lingtu/maps/io/patch_bundle.hpp"
 #include "lingtu/maps/build/pipeline.hpp"
 #include "lingtu/maps/io/json.hpp"
+#include "lingtu/maps/no_go.hpp"
 
 #include <cassert>
 #include <chrono>
@@ -357,7 +358,164 @@ void TestVoxelEditsSetState(MapStore& store, const std::filesystem::path& root) 
   const auto saved = lingtu::maps::LoadOctomapTree(map_dir / "octomap.ot");
   assert(saved->search(weak)->getLogOdds() == weak_log_odds);
 }
+
+void TestVoxelEditRebuild(MapStore& store, const std::filesystem::path& root) {
+  const std::string map_id = "edit_rebuild";
+  assert(store.CreateMap(map_id).ok);
+  const auto dir = root / map_id;
+  WriteValidPlanningArtifacts(dir);
+  lingtu::maps::MapPipelineCore pipeline(store);
+  lingtu::maps::OctomapBuildOptions build;
+  build.resolution = .1;
+  assert(lingtu::maps::JsonObjectBoolAtPath(
+      pipeline.BuildOctomapArtifactJson(map_id, build), {"success"}) == true);
+  const auto edit = [&](double x, double y, const char* state) {
+    lingtu::maps::OctomapEditOptions options;
+    options.state = state;
+    options.x_m = x;
+    options.y_m = y;
+    options.z_m = .5;
+    options.radius_m = .15;
+    assert(lingtu::maps::JsonObjectBoolAtPath(
+        pipeline.EditOctomapVoxelsJson(map_id, options), {"success"}) == true);
+  };
+  edit(0, 0, "free");
+  edit(2, 2, "preblocked");
+  edit(3, 3, "occupied");
+  edit(3, 3, "clear");
+  const auto read = [](const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(file), {});
+  };
+  const auto journal = read(dir / "voxel_edits.jsonl");
+  const auto check = [&] {
+    const auto tree = lingtu::maps::LoadOctomapTree(dir / "octomap.ot");
+    assert(tree && tree->getResolution() == build.resolution);
+    const auto occupied = [&](double x, double y) {
+      const auto* node = tree->search(x, y, .5);
+      assert(node);
+      return tree->isNodeOccupied(node);
+    };
+    assert(!occupied(0, 0));
+    assert(occupied(2, 2));
+    assert(!occupied(3, 3));
+    assert(read(dir / "voxel_edits.jsonl") == journal);
+    const auto metadata = read(dir / "metadata.json");
+    assert(lingtu::maps::JsonObjectNumberAtPath(metadata, {"manual_voxel_edits", "count"}) == 4);
+    assert(lingtu::maps::JsonObjectBoolAtPath(
+        metadata, {"artifacts", "octomap", "manual_voxel_edit"}) == true);
+    assert(lingtu::maps::JsonObjectStringAtPath(metadata, {"builder_version"}) == "0.3.2");
+    assert(lingtu::maps::JsonObjectNumberAtPath(
+        metadata, {"artifacts", "octomap", "stats", "valid_endpoints"}).has_value());
+  };
+  // Navigation-package builds force the same-resolution replay; artifact builds
+  // exercise the same world-space edits at a different voxel resolution.
+  assert(lingtu::maps::JsonObjectBoolAtPath(
+      pipeline.BuildNavigationPackageJson(map_id, build, false, false), {"success"}) == true);
+  check();
+  build.resolution = .2;
+  assert(lingtu::maps::JsonObjectBoolAtPath(
+      pipeline.BuildOctomapArtifactJson(map_id, build), {"success"}) == true);
+  check();
+  const auto octomap = read(dir / "octomap.ot");
+  const auto metadata = read(dir / "metadata.json");
+  const auto epoch = store.ContentEpoch(map_id);
+  WriteText(dir / "voxel_edits.jsonl", journal + "{}\n");
+  build.resolution = .05;
+  const auto failed = pipeline.BuildOctomapArtifactJson(map_id, build);
+  assert(lingtu::maps::JsonObjectBoolAtPath(failed, {"success"}) == false);
+  assert(read(dir / "octomap.ot") == octomap);
+  assert(read(dir / "metadata.json") == metadata);
+  assert(read(dir / "voxel_edits.jsonl") == journal + "{}\n");
+  assert(store.ContentEpoch(map_id) == epoch);
+}
 #endif
+
+void TestNoGoRegions(MapStore& store, const std::filesystem::path& root) {
+  using namespace lingtu::maps;
+  const std::string id = "no_go_map";
+  assert(store.CreateMap(id).ok);
+  WriteValidPlanningArtifacts(root / id);
+  MapPipelineCore pipeline(store);
+  const auto read = [](const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    return std::string{std::istreambuf_iterator<char>(file), {}};
+  };
+  const auto original_pcd = read(root / id / "map.pcd");
+  const auto original_tree = read(root / id / "octomap.ot");
+  const NoGoRegion downstairs{"stairs", {.2, .3, .1}, {.8, .9, 1.0}, "east glass", "glass"};
+  auto epoch = store.ContentEpoch(id);
+  assert(JsonObjectBoolAtPath(pipeline.SetNoGoRegionJson(id, downstairs, epoch), {"success"}) == true);
+  assert(store.ContentEpoch(id) > epoch);
+  assert(read(root / id / "map.pcd") == original_pcd);
+  assert(read(root / id / "octomap.ot") == original_tree);
+  auto regions = ReadNoGoRegions(root / id);
+  assert(regions.size() == 1 && regions.front().id == "stairs");
+  assert(regions.front().label == "east glass" && regions.front().kind == "glass");
+  assert(IntersectsNoGo(regions[0], {.4, .5, .5}, {.5, .6, .7}));
+  assert(!IntersectsNoGo(regions[0], {.4, .5, 2.0}, {.5, .6, 2.2}));
+  assert(SegmentIntersectsNoGo(regions[0], {0, .5, .5}, {1, .5, .5}));
+  assert(!SegmentIntersectsNoGo(regions[0], {0, .5, 2}, {1, .5, 2}));
+  assert(SegmentIntersectsNoGo(regions[0], {0, 1.0, .5}, {1, 1.0, .5}, {.1, .1, .1}));
+  assert(JsonObjectBoolAtPath(pipeline.DeleteNoGoRegionJson(id, "stairs", epoch), {"success"}) == false);
+  epoch = store.ContentEpoch(id);
+  assert(JsonObjectBoolAtPath(pipeline.SetNoGoRegionJson(id,
+      {"invalid", {0, 0, 0}, {1, 1, 0}}, epoch), {"success"}) == false);
+  assert(store.ContentEpoch(id) == epoch);
+  assert(JsonObjectBoolAtPath(pipeline.SetNoGoRegionJson(id,
+      {"upstairs", {.2, .3, 3}, {.8, .9, 4}}, epoch), {"success"}) == true);
+  regions = ReadNoGoRegions(root / id);
+  assert(regions.size() == 2);
+  const auto policy = read(root / id / kNoGoFilename);
+  const auto copied = pipeline.SaveEditedSourceJson(id, "no_go_copy", store.ContentEpoch(id), {});
+  assert(JsonObjectBoolAtPath(copied, {"success"}) == true);
+  assert(read(root / "no_go_copy" / kNoGoFilename) == policy);
+#if defined(LINGTU_MAPS_HAS_OCTOMAP)
+  OctomapBuildOptions options;
+  options.resolution = .2;
+  assert(JsonObjectBoolAtPath(pipeline.BuildOctomapArtifactJson("no_go_copy", options), {"success"}) == true);
+  assert(read(root / "no_go_copy" / kNoGoFilename) == policy);
+#endif
+  epoch = store.ContentEpoch(id);
+#if defined(_WIN32)
+  _putenv_s("LINGTU_MAPS_INJECT_PUBLISH_FAILURE_AFTER", "1");
+#else
+  setenv("LINGTU_MAPS_INJECT_PUBLISH_FAILURE_AFTER", "1", 1);
+#endif
+  const auto failed = pipeline.DeleteNoGoRegionJson(id, "stairs", epoch);
+#if defined(_WIN32)
+  _putenv_s("LINGTU_MAPS_INJECT_PUBLISH_FAILURE_AFTER", "");
+#else
+  unsetenv("LINGTU_MAPS_INJECT_PUBLISH_FAILURE_AFTER");
+#endif
+  assert(JsonObjectBoolAtPath(failed, {"success"}) == false);
+  assert(store.ContentEpoch(id) == epoch);
+  assert(read(root / id / kNoGoFilename) == policy);
+  assert(JsonObjectBoolAtPath(pipeline.DeleteNoGoRegionJson(id, "stairs", epoch), {"success"}) == true);
+  regions = ReadNoGoRegions(root / id);
+  assert(regions.size() == 1 && regions.front().id == "upstairs");
+  assert(read(root / id / "map.pcd") == original_pcd);
+  assert(read(root / id / "octomap.ot") == original_tree);
+  assert(JsonObjectBoolAtPath(pipeline.GetNoGoRegionsJson(id), {"success"}) == true);
+  SourceCommitOptions source_options;
+  source_options.dynamic_filter_enabled = false;
+  assert(JsonObjectBoolAtPath(pipeline.CommitSavedSourceJson(id, root / "no_go_copy", source_options),
+                              {"success"}) == true);
+  // A same-map save preserves user restrictions when the capture has no policy file.
+  std::filesystem::remove(root / "no_go_copy" / kNoGoFilename);
+  assert(JsonObjectBoolAtPath(pipeline.CommitSavedSourceJson(id, root / "no_go_copy", source_options),
+                              {"success"}) == true);
+  assert(ReadNoGoRegions(root / id).size() == 2);
+  const auto preserved_policy = read(root / id / kNoGoFilename);
+  PcdBounds bounds{true, -1, -1, -1, 2, 2, 2};
+  assert(JsonObjectBoolAtPath(pipeline.CropPcdJson(id, bounds, false, 0), {"success"}) == true);
+  assert(read(root / id / kNoGoFilename) == preserved_policy);
+  WriteText(root / "no_go_copy" / kNoGoFilename, "{}");
+  bool malformed = false;
+  try { static_cast<void>(ReadNoGoRegions(root / "no_go_copy")); }
+  catch (const std::exception&) { malformed = true; }
+  assert(malformed);
+}
 
 }  // namespace
 
@@ -795,12 +953,54 @@ int main() {
   assert(store.ContentEpoch("ray_support") == source_epoch);
   assert(lingtu::maps::LoadOctomapTree(ray_dir / "octomap.ot")->getResolution() == .1);
 
+  lingtu::maps::SourceEditOperation manual;
+  manual.operation = "add_plane";
+  manual.bounds = {true, 3, 3, -.5, 4, 4, .5};
+  manual.axis = "z";
+  manual.offset = 0;
+  manual.spacing = .1;
+  const auto patch_preview = pipeline.PreviewSourceEditsJson("ray_support", source_epoch, {manual});
+  assert(lingtu::maps::JsonObjectBoolAtPath(patch_preview, {"success"}) == true);
+  assert(lingtu::maps::JsonObjectNumberAtPath(patch_preview, {"added_points"}) == 121);
+  assert(lingtu::maps::JsonObjectNumberAtPath(patch_preview, {"removed_points"}) == 0);
+  assert(lingtu::maps::JsonObjectBoolAtPath(pipeline.SaveEditedSourceJson(
+      "ray_support", "manual_patch", source_epoch, {manual}), {"success"}) == true);
+  const auto patch_epoch = store.ContentEpoch("manual_patch");
+  assert(std::filesystem::is_regular_file(root / "manual_patch" / "point_edits.json"));
+  for (double resolution : {.1, .2}) {
+    auto patch_options = finer_options;
+    patch_options.resolution = resolution;
+    assert(lingtu::maps::JsonObjectBoolAtPath(pipeline.BuildOctomapArtifactJson(
+        "manual_patch", patch_options), {"success"}) == true);
+    const auto patch_tree = lingtu::maps::LoadOctomapTree(root / "manual_patch" / "octomap.ot");
+    const auto* patch_hit = patch_tree->search(3.5, 3.5, 0);
+    assert(patch_hit && patch_tree->isNodeOccupied(patch_hit));
+    assert(patch_tree->search(3.5, 3.5, .5) == nullptr);
+  }
+  assert(store.ContentEpoch("manual_patch") >= patch_epoch);
+  assert(lingtu::maps::JsonObjectBoolAtPath(pipeline.SaveEditedSourceJson(
+      "manual_patch", "manual_copy", store.ContentEpoch("manual_patch"), {}), {"success"}) == true);
+  assert(lingtu::maps::JsonObjectBoolAtPath(pipeline.BuildOctomapArtifactJson(
+      "manual_copy", finer_options), {"success"}) == true);
+  const auto copied_patch = lingtu::maps::LoadOctomapTree(root / "manual_copy" / "octomap.ot");
+  assert(copied_patch->isNodeOccupied(copied_patch->search(3.5, 3.5, 0)));
+  assert(copied_patch->search(3.5, 3.5, .5) == nullptr);
+  assert(lingtu::maps::JsonObjectBoolAtPath(pipeline.CropPcdJson("manual_copy",
+      {true, -10, -10, -10, 3.55, 4, 4}, false, 0), {"success"}) == true);
+  assert(lingtu::maps::JsonObjectBoolAtPath(pipeline.BuildOctomapArtifactJson(
+      "manual_copy", finer_options), {"success"}) == true);
+  const auto cropped_patch = lingtu::maps::LoadOctomapTree(root / "manual_copy" / "octomap.ot");
+  assert(cropped_patch->isNodeOccupied(cropped_patch->search(3.5, 3.5, 0)));
+  assert(cropped_patch->search(3.9, 3.5, 0) == nullptr);
+
   TestOctomapRoundTripKeepsEvidence(root);
   TestSavedRayEvidence(store, root);
   TestPointCloudPreview(store, root);
   TestVoxelEditsSetState(store, root);
+  TestVoxelEditRebuild(store, root);
 #endif
 
+  TestNoGoRegions(store, root);
   std::filesystem::remove_all(root);
   return 0;
 }

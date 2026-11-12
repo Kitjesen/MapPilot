@@ -692,22 +692,24 @@ int main(int argc, char **argv) {
         AdvanceDeadline(next_scene, Period(options.scene_hz), now);
       }
       if (now >= next_state) {
-        const auto &value = current_view(SnapshotDetail::kComplete);
-        state = value.state;
-        if (!publications.realtime_clouds.PublishedFor(state)) {
-          publications.realtime_clouds.Complete(dds.PublishRealtimeClouds(state, value.snapshot),
-                                                value.snapshot.generation, state.live);
-          AdvanceDeadline(next_cloud, Period(options.cloud_hz), now);
-        }
-        if (!publications.map_layers.PublishedFor(state)) {
-          publications.map_layers.Complete(dds.PublishMapLayers(state, value.snapshot),
-                                           value.snapshot.generation, state.live);
-          AdvanceDeadline(next_map, Period(options.map_hz), now);
-        }
-        if (!publications.scene.PublishedFor(state)) {
-          publications.scene.Complete(dds.PublishScene(state, value.snapshot),
-                                      value.snapshot.generation, state.live);
-          AdvanceDeadline(next_scene, Period(options.scene_hz), now);
+        if (complete_view || !publications.CurrentGenerationPublishedWhenStateArrives(state)) {
+          const auto &value = current_view(SnapshotDetail::kComplete);
+          state = value.state;
+          if (!publications.realtime_clouds.PublishedFor(state)) {
+            publications.realtime_clouds.Complete(dds.PublishRealtimeClouds(state, value.snapshot),
+                                                  value.snapshot.generation, state.live);
+            AdvanceDeadline(next_cloud, Period(options.cloud_hz), now);
+          }
+          if (!publications.map_layers.PublishedFor(state)) {
+            publications.map_layers.Complete(dds.PublishMapLayers(state, value.snapshot),
+                                             value.snapshot.generation, state.live);
+            AdvanceDeadline(next_map, Period(options.map_hz), now);
+          }
+          if (!publications.scene.PublishedFor(state)) {
+            publications.scene.Complete(dds.PublishScene(state, value.snapshot),
+                                        value.snapshot.generation, state.live);
+            AdvanceDeadline(next_scene, Period(options.scene_hz), now);
+          }
         }
         publications.state.Complete(
             dds.PublishState(state, publications, activation.ActiveIdentity()), state.generation,

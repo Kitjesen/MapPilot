@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "lingtu/maps/build/process.hpp"
+#include "lingtu/maps/no_go.hpp"
 #include "lingtu/maps/io/json.hpp"
 #include "lingtu/maps/storage/lock.hpp"
 #include "lingtu/maps/io/patch_bundle.hpp"
@@ -336,6 +337,9 @@ std::string RequestCanonical(const SaveMapRequest &request) {
       << request.minimum_point_count << '\n' << request.auto_process;
   if (!request.product_session_id.empty()) {
     out << '\n' << request.product_session_id;
+  }
+  if (!request.source_job_id.empty()) {
+    out << "\nsource_job_id=" << request.source_job_id;
   }
   return out.str();
 }
@@ -817,6 +821,7 @@ std::string SaveMapStatusJson(const SaveMapStatus &status) {
          "\"request_id\":" +
          JsonString(status.request_id) +
          ","
+         "\"source_job_id\":" + JsonString(status.source_job_id) + "," +
          "\"map_id\":" +
          JsonString(status.map_id) +
          ","
@@ -916,6 +921,9 @@ class SaveMapEngine::Impl {
     request.map_id = MapStore::NormalizeMapId(request.map_id);
     if (!IsValidJobId(request.request_id)) {
       throw std::invalid_argument("request_id must contain only letters, digits, '_' or '-'");
+    }
+    if (!request.source_job_id.empty()) {
+      throw std::invalid_argument("use Reoptimize to process an archived SaveMap source");
     }
     if (request.minimum_point_count == 0U) {
       throw std::invalid_argument("minimum_point_count must be positive");
@@ -1219,7 +1227,8 @@ class SaveMapEngine::Impl {
     if (!IsTerminal(job.status.state)) {
       return {false, false, "job_not_terminal", Status(job)};
     }
-    if (Source(job).has_value()) return QueueProcessing(job, "RETRY_REQUESTED");
+    if (Source(job).has_value() || !job.request.source_job_id.empty())
+      return QueueProcessing(job, "RETRY_REQUESTED");
     job.status.cancel_requested = false;
     job.status.reason_code.clear();
     job.status.completed_at_ns = 0;
@@ -1257,9 +1266,60 @@ class SaveMapEngine::Impl {
     }
     if (job.accepting_snapshot)
       return {false, false, "snapshot_capture_in_progress", Status(job)};
-    if (!Source(job).has_value())
+    if (!Source(job).has_value() && job.request.source_job_id.empty())
       return {false, false, "source_not_saved", Status(job)};
     return QueueProcessing(job, "PROCESS_REQUESTED");
+  }
+
+  SaveMapResult Reoptimize(const std::string &job_id, const std::string &request_id) {
+    if (!IsValidJobId(request_id)) {
+      throw std::invalid_argument("request_id must contain only letters, digits, '_' or '-'");
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto existing = jobs_.find(request_id);
+    if (existing != jobs_.end()) {
+      auto replay = Status(*existing->second);
+      replay.replayed = true;
+      if (existing->second->request.source_job_id != job_id) {
+        replay.reason_code = "idempotency_conflict";
+        replay.message = "request_id already belongs to a different SaveMap request";
+        return {false, true, replay.reason_code, replay};
+      }
+      return {true, true, {}, replay};
+    }
+    const auto found = jobs_.find(job_id);
+    if (found == jobs_.end())
+      return {false, false, "job_not_found", MissingStatus(job_id, "job_not_found")};
+    const auto &source = *found->second;
+    auto rejected = Status(source);
+    const auto reject = [&rejected](const char *reason, const char *message) {
+      rejected.reason_code = reason;
+      rejected.message = message;
+      return SaveMapResult{false, false, reason, rejected};
+    };
+    if (!IsTerminal(source.status.state) && source.status.state != SaveJobState::kCaptured)
+      return reject("job_not_ready", "wait for the current map save to finish");
+    if (!Source(source).has_value())
+      return reject("source_not_saved", "the archived map source is unavailable");
+    if (!HasCompletePatchBundle(source.status.capture_dir))
+      return reject("patch_bundle_incomplete", "reoptimization requires saved poses and all scan patches");
+
+    auto job = std::make_shared<Job>();
+    job->request = source.request;
+    job->request.request_id = request_id;
+    job->request.source_job_id = job_id;
+    job->request.auto_process = true;
+    job->snapshot = source.snapshot;
+    job->status.job_id = request_id;
+    job->status.request_id = request_id;
+    job->status.source_job_id = job_id;
+    job->status.map_id = source.request.map_id;
+    job->status.product_session_id = source.request.product_session_id;
+    job->status.capture_dir = JobDir(request_id) / "capture";
+    job->snapshot->source_dir = job->status.capture_dir;
+    job->status.created_at_ns = NowNs();
+    jobs_.emplace(request_id, job);
+    return QueueProcessing(*job, "REOPTIMIZE_REQUESTED");
   }
 
   std::optional<std::filesystem::path> GetSource(const std::string &job_id) const {
@@ -1427,6 +1487,7 @@ class SaveMapEngine::Impl {
     AppendKey(out, "schema", kJobSchemaVersion);
     AppendKey(out, "job_id", job.status.job_id);
     AppendKey(out, "request_id", job.request.request_id);
+    AppendKey(out, "source_job_id", job.request.source_job_id);
     AppendKey(out, "map_id", job.request.map_id);
     AppendKey(out, "product_session_id", job.request.product_session_id);
     AppendKey(out, "state", SaveJobStateName(job.status.state));
@@ -1536,6 +1597,7 @@ class SaveMapEngine::Impl {
     auto job = std::make_shared<Job>();
     job->loaded_schema = schema;
     job->request.request_id = GetValue(values, "request_id");
+    job->request.source_job_id = GetValue(values, "source_job_id");
     job->request.auto_process = ParseBool(GetValue(values, "auto_process", "1"));
     job->request.map_id = GetValue(values, "map_id");
     job->request.product_session_id = GetValue(values, "product_session_id");
@@ -1585,6 +1647,7 @@ class SaveMapEngine::Impl {
 
     job->status.job_id = GetValue(values, "job_id", job->request.request_id);
     job->status.request_id = job->request.request_id;
+    job->status.source_job_id = job->request.source_job_id;
     job->status.map_id = job->request.map_id;
     job->status.product_session_id = job->request.product_session_id;
     job->status.state = ParseState(GetValue(values, "state"));
@@ -1629,6 +1692,8 @@ class SaveMapEngine::Impl {
     }
 
     if (job->status.job_id != directory_job_id ||
+        (!job->request.source_job_id.empty() &&
+         (!IsValidJobId(job->request.source_job_id) || job->request.source_job_id == directory_job_id)) ||
         (!job->request.product_session_id.empty() &&
          !IsValidProductSessionId(job->request.product_session_id)) ||
         job->request.minimum_point_count == 0U || !IsBasename(job->request.pgo.constraints_file) ||
@@ -1771,7 +1836,8 @@ class SaveMapEngine::Impl {
             job->status.completed_at_ns = NowNs();
           }
         } else if (job->snapshot.has_value() &&
-                   IsNonEmptyRegularFile(job->status.capture_dir / "map.pcd")) {
+                   (IsNonEmptyRegularFile(job->status.capture_dir / "map.pcd") ||
+                    !job->request.source_job_id.empty())) {
           if (std::filesystem::is_directory(commit_backup) && !std::filesystem::exists(map_dir)) {
             std::error_code restore_error;
             std::filesystem::rename(commit_backup, map_dir, restore_error);
@@ -1998,6 +2064,17 @@ class SaveMapEngine::Impl {
                 "checking required snapshot inputs");
       if (!BeforePhase(job, SavePhase::kValidate, &map_lock))
         return;
+      const bool reoptimize = !job->request.source_job_id.empty();
+      if (reoptimize) {
+        const auto archived_source = JobDir(job->request.source_job_id) / "capture";
+        if (!HasCompletePatchBundle(archived_source)) {
+          finish(SaveJobState::kFailed, "reoptimization requires saved poses and all scan patches",
+                 "patch_bundle_incomplete");
+          return;
+        }
+        CopyTree(archived_source, job->status.capture_dir, true);
+        SyncTree(job->status.capture_dir);
+      }
       const auto capture_pcd = job->status.capture_dir / "map.pcd";
       if (!IsNonEmptyRegularFile(capture_pcd)) {
         finish(SaveJobState::kFailed, "captured map.pcd is missing or empty", "snapshot_invalid");
@@ -2026,12 +2103,12 @@ class SaveMapEngine::Impl {
         return;
       const auto constraints = source_work / job->request.pgo.constraints_file;
       std::filesystem::path processed_source = source_work;
-      const bool explicit_constraints = std::filesystem::is_regular_file(constraints);
+      const bool explicit_constraints = !reoptimize && std::filesystem::is_regular_file(constraints);
       const auto online_report_path = source_work / "map_optimization.json";
       const auto online_report = std::filesystem::is_regular_file(online_report_path)
           ? ReadText(online_report_path) : std::string{};
       const bool online_sam = JsonObjectStringAtPath(online_report, {"backend"}) == "lio_sam_isam2";
-      if (online_sam) {
+      if (online_sam && !reoptimize) {
         std::size_t count = 0;
         if (explicit_constraints || JsonObjectBoolAtPath(online_report, {"success"}) != true ||
             !HasCompletePatchBundle(source_work) ||
@@ -2042,7 +2119,8 @@ class SaveMapEngine::Impl {
           return;
         }
       }
-      const bool auto_constraints = !online_sam && !explicit_constraints && HasCompletePatchBundle(source_work);
+      const bool auto_constraints = reoptimize ||
+          (!online_sam && !explicit_constraints && HasCompletePatchBundle(source_work));
       if (explicit_constraints || auto_constraints) {
         ProcessRunOptions options;
         options.cwd = source_work;
@@ -2060,7 +2138,7 @@ class SaveMapEngine::Impl {
           return;
         }
         if (result.timed_out) {
-          if (explicit_constraints) {
+          if (explicit_constraints || reoptimize) {
             finish(SaveJobState::kFailed, "pose graph optimization timed out", "pgo_timeout");
             return;
           }
@@ -2088,6 +2166,10 @@ class SaveMapEngine::Impl {
             return;
           }
           if (!cli->performed) {
+            if (reoptimize) {
+              finish(SaveJobState::kFailed, cli->message, cli->code);
+              return;
+            }
             if (explicit_constraints || !IsAllowedAutoPgoSkip(*cli)) {
               finish(SaveJobState::kFailed,
                      "pose graph optimizer returned an invalid not-performed result",
@@ -2208,6 +2290,11 @@ class SaveMapEngine::Impl {
       std::filesystem::remove_all(commit_stage);
       std::filesystem::remove_all(commit_backup);
       StageMapForCommit(staging_map, commit_stage);
+      if (std::filesystem::exists(map_dir / kNoGoFilename)) {
+        static_cast<void>(ReadNoGoRegions(map_dir));
+        std::filesystem::copy_file(map_dir / kNoGoFilename, commit_stage / kNoGoFilename,
+                                   std::filesystem::copy_options::overwrite_existing);
+      }
       VerifyRequiredArtifacts(commit_stage, job->request);
       WriteTextAtomic(commit_stage / MapStore::ContentEpochFilename(),
                       std::to_string(store_.AllocateContentEpoch()) + "\n");
@@ -2320,6 +2407,10 @@ SaveMapResult SaveMapEngine::Process(const std::string &job_id) {
   return impl_->Process(job_id);
 }
 
+SaveMapResult SaveMapEngine::Reoptimize(const std::string &job_id, const std::string &request_id) {
+  return impl_->Reoptimize(job_id, request_id);
+}
+
 std::optional<std::filesystem::path> SaveMapEngine::GetSource(const std::string &job_id) const {
   return impl_->GetSource(job_id);
 }
@@ -2392,6 +2483,15 @@ std::string SaveMapEngine::RetryJson(const std::string &job_id) {
 std::string SaveMapEngine::ProcessJson(const std::string &job_id) {
   const auto result = Process(job_id);
   return "{\"action\":\"process_save_map\",\"accepted\":" +
+         std::string(result.accepted ? "true" : "false") + ",\"replayed\":" +
+         (result.replayed ? "true" : "false") + ",\"reason_code\":" +
+         JsonString(result.reason_code) + ",\"status\":" + SaveMapStatusJson(result.status) + "}";
+}
+
+std::string SaveMapEngine::ReoptimizeJson(const std::string &job_id,
+                                         const std::string &request_id) {
+  const auto result = Reoptimize(job_id, request_id);
+  return "{\"action\":\"reoptimize_save_map\",\"accepted\":" +
          std::string(result.accepted ? "true" : "false") + ",\"replayed\":" +
          (result.replayed ? "true" : "false") + ",\"reason_code\":" +
          JsonString(result.reason_code) + ",\"status\":" + SaveMapStatusJson(result.status) + "}";

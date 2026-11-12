@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <limits>
+#include <numeric>
 #include <stdexcept>
 
 #include "core/text.hpp"
@@ -11,6 +13,7 @@ namespace lingtu::map_cleaning {
 namespace {
 
 struct PcdHeader {
+  std::vector<std::string> lines;
   std::vector<std::string> fields;
   std::vector<int> sizes;
   std::vector<char> types;
@@ -28,24 +31,20 @@ int fieldIndex(const PcdHeader &header, const std::string &name) {
   return -1;
 }
 
-std::vector<int> fieldOffsets(const PcdHeader &header) {
-  std::vector<int> offsets(header.fields.size(), 0);
-  int offset = 0;
+std::vector<std::size_t> fieldOffsets(const PcdHeader &header, bool binary) {
+  std::vector<std::size_t> offsets(header.fields.size(), 0);
+  std::size_t offset = 0;
   for (std::size_t i = 0; i < header.fields.size(); ++i) {
     offsets[i] = offset;
-    const int count = i < header.counts.size() ? std::max(1, header.counts[i]) : 1;
-    const int size = i < header.sizes.size() ? header.sizes[i] : 4;
-    offset += count * size;
+    offset += static_cast<std::size_t>(header.counts[i]) * (binary ? header.sizes[i] : 1);
   }
   return offsets;
 }
 
-int pointStride(const PcdHeader &header) {
-  int stride = 0;
+std::size_t pointStride(const PcdHeader &header) {
+  std::size_t stride = 0;
   for (std::size_t i = 0; i < header.fields.size(); ++i) {
-    const int count = i < header.counts.size() ? std::max(1, header.counts[i]) : 1;
-    const int size = i < header.sizes.size() ? header.sizes[i] : 4;
-    stride += count * size;
+    stride += static_cast<std::size_t>(header.counts[i]) * header.sizes[i];
   }
   return stride;
 }
@@ -57,7 +56,7 @@ T readPod(const char *ptr) {
   return value;
 }
 
-float readScalar(const char *row, const PcdHeader &header, const std::vector<int> &offsets,
+float readScalar(const char *row, const PcdHeader &header, const std::vector<std::size_t> &offsets,
                  int idx) {
   if (idx < 0 || idx >= static_cast<int>(header.fields.size())) {
     return 0.0F;
@@ -80,6 +79,9 @@ float readScalar(const char *row, const PcdHeader &header, const std::vector<int
   if (type == 'U' && size == 4) {
     return static_cast<float>(readPod<std::uint32_t>(ptr));
   }
+  if (type == 'U' && size == 8) {
+    return static_cast<float>(readPod<std::uint64_t>(ptr));
+  }
   if (type == 'I' && size == 1) {
     return static_cast<float>(readPod<std::int8_t>(ptr));
   }
@@ -89,13 +91,18 @@ float readScalar(const char *row, const PcdHeader &header, const std::vector<int
   if (type == 'I' && size == 4) {
     return static_cast<float>(readPod<std::int32_t>(ptr));
   }
-  return 0.0F;
+  if (type == 'I' && size == 8) {
+    return static_cast<float>(readPod<std::int64_t>(ptr));
+  }
+  throw std::runtime_error("unsupported PCD scalar field: " + header.fields[idx]);
 }
 
 PcdHeader readPcdHeader(std::ifstream &in, const std::filesystem::path &path) {
   PcdHeader header;
   std::string line;
+  bool has_points = false;
   while (std::getline(in, line)) {
+    header.lines.push_back(line);
     const std::string cleaned = trim(line);
     if (cleaned.empty() || cleaned[0] == '#') {
       continue;
@@ -121,13 +128,14 @@ PcdHeader readPcdHeader(std::ifstream &in, const std::filesystem::path &path) {
       }
     } else if (key == "POINTS" && parts.size() >= 2) {
       header.points = static_cast<std::uint64_t>(std::stoull(parts[1]));
+      has_points = true;
     } else if (key == "DATA" && parts.size() >= 2) {
       header.data = parts[1];
       break;
     }
   }
 
-  if (header.fields.empty() || header.data.empty()) {
+  if (header.fields.empty() || header.data.empty() || !has_points) {
     throw std::runtime_error("invalid PCD header: " + path.string());
   }
   if (header.sizes.empty()) {
@@ -146,7 +154,70 @@ PcdHeader readPcdHeader(std::ifstream &in, const std::filesystem::path &path) {
   if (fieldIndex(header, "x") < 0 || fieldIndex(header, "y") < 0 || fieldIndex(header, "z") < 0) {
     throw std::runtime_error("PCD is missing x/y/z fields: " + path.string());
   }
+  for (std::size_t i = 0; i < header.fields.size(); ++i) {
+    const auto size = header.sizes[i];
+    const auto type = header.types[i];
+    if (header.counts[i] <= 0 ||
+        !((type == 'F' && (size == 4 || size == 8)) ||
+          ((type == 'I' || type == 'U') && (size == 1 || size == 2 || size == 4 || size == 8)))) {
+      throw std::runtime_error("unsupported PCD field metadata: " + path.string());
+    }
+  }
+  for (const auto *name : {"x", "y", "z", "intensity"}) {
+    const auto index = fieldIndex(header, name);
+    if (index >= 0 && header.counts[index] != 1)
+      throw std::runtime_error("PCD geometry and intensity fields require COUNT 1: " + path.string());
+  }
+  if (header.data != "ascii" && header.data != "binary")
+    throw std::runtime_error("unsupported PCD DATA mode: " + header.data);
+  if (header.data == "binary") {
+    const auto payload = in.tellg();
+    in.seekg(0, std::ios::end);
+    const auto bytes = in.tellg() - payload;
+    in.seekg(payload);
+    const auto stride = pointStride(header);
+    if (header.points > std::numeric_limits<std::uint64_t>::max() / stride || bytes < 0 ||
+        static_cast<std::uint64_t>(bytes) != header.points * stride)
+      throw std::runtime_error("truncated or inconsistent binary PCD point data: " + path.string());
+  }
   return header;
+}
+
+void writePartitionHeader(std::ofstream &out, const PcdHeader &header, std::uint64_t points) {
+  bool has_width = false, has_height = false;
+  for (const auto &line : header.lines) {
+    const auto parts = splitWords(line);
+    const auto key = parts.empty() ? std::string() : parts.front();
+    if (key == "WIDTH") {
+      out << "WIDTH " << points << '\n';
+      has_width = true;
+    } else if (key == "HEIGHT") {
+      out << "HEIGHT 1\n";
+      has_height = true;
+    } else if (key == "POINTS") {
+      out << "POINTS " << points << '\n';
+    } else if (key == "DATA") {
+      if (!has_width) out << "WIDTH " << points << '\n';
+      if (!has_height) out << "HEIGHT 1\n";
+      out << line << '\n';
+    } else {
+      out << line << '\n';
+    }
+  }
+}
+
+bool readAsciiRow(std::ifstream &in, const PcdHeader &header, const std::filesystem::path &path,
+                  std::string &line, std::vector<std::string> &values) {
+  while (std::getline(in, line)) {
+    const auto cleaned = trim(line);
+    if (cleaned.empty() || cleaned.front() == '#') continue;
+    values = splitWords(line);
+    const auto expected = std::accumulate(header.counts.begin(), header.counts.end(), std::size_t{0});
+    if (values.size() != expected)
+      throw std::runtime_error("inconsistent ASCII PCD point data: " + path.string());
+    return true;
+  }
+  return false;
 }
 
 }  // namespace
@@ -165,18 +236,16 @@ std::vector<PointXYZI> readPcd(const std::filesystem::path &path) {
   points.reserve(static_cast<std::size_t>(header.points));
 
   if (header.data == "ascii") {
+    const auto offsets = fieldOffsets(header, false);
     std::string line;
-    while (std::getline(in, line)) {
-      const std::vector<std::string> values = splitWords(line);
-      if (values.size() < header.fields.size()) {
-        continue;
-      }
+    std::vector<std::string> values;
+    while (readAsciiRow(in, header, path, line, values)) {
       PointXYZI pt;
-      pt.x = std::stof(values[static_cast<std::size_t>(x_idx)]);
-      pt.y = std::stof(values[static_cast<std::size_t>(y_idx)]);
-      pt.z = std::stof(values[static_cast<std::size_t>(z_idx)]);
+      pt.x = std::stof(values[offsets[x_idx]]);
+      pt.y = std::stof(values[offsets[y_idx]]);
+      pt.z = std::stof(values[offsets[z_idx]]);
       pt.intensity =
-          intensity_idx >= 0 ? std::stof(values[static_cast<std::size_t>(intensity_idx)]) : 1.0F;
+          intensity_idx >= 0 ? std::stof(values[offsets[intensity_idx]]) : 1.0F;
       points.push_back(pt);
     }
     if (points.size() != header.points)
@@ -188,12 +257,12 @@ std::vector<PointXYZI> readPcd(const std::filesystem::path &path) {
     throw std::runtime_error("unsupported PCD DATA mode: " + header.data);
   }
 
-  const int stride = pointStride(header);
-  const std::vector<int> offsets = fieldOffsets(header);
-  std::vector<char> row(static_cast<std::size_t>(stride));
+  const auto stride = pointStride(header);
+  const auto offsets = fieldOffsets(header, true);
+  std::vector<char> row(stride);
   for (std::uint64_t i = 0; i < header.points; ++i) {
-    in.read(row.data(), stride);
-    if (in.gcount() != stride) {
+    in.read(row.data(), static_cast<std::streamsize>(stride));
+    if (in.gcount() != static_cast<std::streamsize>(stride)) {
       throw std::runtime_error("truncated PCD point data: " + path.string());
     }
     PointXYZI pt;
@@ -205,6 +274,46 @@ std::vector<PointXYZI> readPcd(const std::filesystem::path &path) {
     points.push_back(pt);
   }
   return points;
+}
+
+void partitionPcd(const std::filesystem::path &source, const std::filesystem::path &clean,
+    const std::filesystem::path &removed, const std::vector<std::uint8_t> &remove_mask) {
+  std::ifstream in(source, std::ios::binary);
+  if (!in) throw std::runtime_error("failed to open PCD: " + source.string());
+  const auto header = readPcdHeader(in, source);
+  if (remove_mask.size() != header.points ||
+      !std::all_of(remove_mask.begin(), remove_mask.end(), [](auto value) { return value <= 1; }))
+    throw std::runtime_error("PCD partition mask must contain one 0/1 entry per source point");
+  const auto removed_count = static_cast<std::uint64_t>(std::count(remove_mask.begin(), remove_mask.end(), 1));
+  std::ofstream clean_out(clean, std::ios::binary), removed_out(removed, std::ios::binary);
+  if (!clean_out || !removed_out)
+    throw std::runtime_error("failed to open PCD partition outputs");
+  writePartitionHeader(clean_out, header, header.points - removed_count);
+  writePartitionHeader(removed_out, header, removed_count);
+  if (header.data == "binary") {
+    std::vector<char> row(pointStride(header));
+    for (const auto remove : remove_mask) {
+      in.read(row.data(), static_cast<std::streamsize>(row.size()));
+      if (in.gcount() != static_cast<std::streamsize>(row.size()))
+        throw std::runtime_error("truncated PCD point data: " + source.string());
+      auto &out = remove ? removed_out : clean_out;
+      out.write(row.data(), static_cast<std::streamsize>(row.size()));
+    }
+  } else {
+    std::string line;
+    std::vector<std::string> values;
+    for (const auto remove : remove_mask) {
+      if (!readAsciiRow(in, header, source, line, values))
+        throw std::runtime_error("truncated ASCII PCD point data: " + source.string());
+      (remove ? removed_out : clean_out) << line << '\n';
+    }
+    if (readAsciiRow(in, header, source, line, values))
+      throw std::runtime_error("inconsistent ASCII PCD point count: " + source.string());
+  }
+  clean_out.flush();
+  removed_out.flush();
+  if (!clean_out || !removed_out)
+    throw std::runtime_error("failed to finish PCD partition outputs");
 }
 
 void writePcd(const std::filesystem::path &path, const std::vector<PointXYZI> &points) {

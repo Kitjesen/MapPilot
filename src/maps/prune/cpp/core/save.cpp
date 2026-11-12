@@ -1,5 +1,6 @@
 #include "core/save.hpp"
 
+#include <algorithm>
 #include <system_error>
 #include <utility>
 
@@ -20,13 +21,13 @@ SaveResult saveFail(std::string reason, std::string message) {
 
 }  // namespace
 
-SaveResult writeCleanedMap(const SaveOptions &options, const std::vector<PointXYZI> &kept,
-                           const std::vector<PointXYZI> &removed) {
-  if (options.apply_to_map && kept.empty()) {
+SaveResult writeCleanedMap(const SaveOptions &options,
+                          const std::vector<std::uint8_t> &remove_mask) {
+  if (options.apply_to_map &&
+      std::all_of(remove_mask.begin(), remove_mask.end(), [](auto value) { return value == 1; })) {
     return saveFail("empty_clean_map", "refusing to replace map.pcd with an empty result; use --dry-run to inspect");
   }
-  writePcd(options.clean_pcd, kept);
-  writePcd(options.removed_pcd, removed);
+  partitionPcd(options.map_pcd, options.clean_pcd, options.removed_pcd, remove_mask);
 
   if (options.apply_to_map) {
     std::error_code ec;

@@ -14,9 +14,44 @@
 #include "mapd/dispatch.hpp"
 #include "lingtu/maps/mapd/protocol.hpp"
 #include "lingtu/maps/service.hpp"
+#if defined(LINGTU_MAPS_HAS_OCTOMAP)
+#include <octomap/OcTree.h>
+#endif
 #include "lingtu/maps/storage/stairs.hpp"
 
 namespace {
+#if defined(LINGTU_MAPS_HAS_OCTOMAP)
+void TestSurfacePreview(const std::filesystem::path& root) {
+  using namespace lingtu::maps;
+  using mapd::query::DispatchServiceJson;
+  MapsServiceCore service(MapsServiceConfig{MapStoreConfig{root}});
+  assert(service.Store().CreateMap("surface").ok);
+  const auto dir = service.Store().MapPath("surface");
+  { std::ofstream metadata(dir / "metadata.json"); metadata << R"({"frame_id":"map"})"; }
+  octomap::OcTree tree(.1);
+  for (int z : {-1, 19}) for (int x=-5; x<=5; ++x) for (int y=-5; y<=5; ++y)
+    if (x || y) tree.updateNode((x+.5)*.1, (y+.5)*.1, (z+.5)*.1, true, true);
+  tree.updateInnerOccupancy();
+  assert(tree.write((dir / "octomap.ot").string()));
+  const auto epoch = service.Store().ContentEpoch("surface");
+  auto result = DispatchServiceJson(service, R"({"action":"get_surface_map","map_id":"surface"})");
+  assert(result.ok);
+  assert(JsonObjectNumberAtPath(result.json, {"inferred_count"}) == 2);
+  assert(JsonObjectNumberAtPath(result.json, {"observed_count"}) == 240);
+  assert(JsonObjectNumberAtPath(result.json, {"content_epoch"}) == epoch);
+  const auto parsed = ParseJson(result.json).AsObject("surface");
+  const auto& xyz = parsed.at("inferred_xyz").AsArray("points");
+  assert(xyz.size() == 6);
+  tree.updateNode(.05,.05,-.05,false,true);
+  tree.updateInnerOccupancy();
+  assert(tree.write((dir / "octomap.ot").string()));
+  result = DispatchServiceJson(service, R"({"action":"get_surface_map","map_id":"surface"})");
+  assert(result.ok);
+  assert(JsonObjectNumberAtPath(result.json, {"inferred_count"}) == 1);
+  assert(service.Store().ContentEpoch("surface") == epoch);
+  assert(!DispatchServiceJson(service, R"({"action":"get_surface_map","map_id":"surface","radius_m":-1})").ok);
+}
+#endif
 
 std::filesystem::path TempRoot() {
   const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -226,6 +261,62 @@ void TestEditedSource(const std::filesystem::path &root) {
         ",\"operations\":" + edits + "}";
   };
   const std::string edits = R"([{"operation":"delete_inside","bounds":{"min_x":1,"max_x":1,"min_y":0,"max_y":0,"min_z":0,"max_z":0}},{"operation":"keep_inside","bounds":{"min_x":0,"max_x":2,"min_y":0,"max_y":0,"min_z":0,"max_z":0}}])";
+  const auto preview_request = [&](std::int64_t version, const std::string &edits) {
+    return "{\"action\":\"preview_source_edits\",\"map_id\":\"original\","
+        "\"expected_source_content_epoch\":" + std::to_string(version) +
+        ",\"operations\":" + edits + "}";
+  };
+  const std::string voxel_edits = R"([{"operation":"voxel","voxel_size":2}])";
+  const auto preview = DispatchServiceJson(service, preview_request(epoch, voxel_edits));
+  if (!preview.ok) std::cerr << preview.json << std::endl;
+  assert(preview.ok);
+  assert(JsonObjectNumberAtPath(preview.json, {"point_count"}) == 2.0);
+  assert(JsonObjectNumberAtPath(preview.json, {"removed_points"}) == 2.0);
+  assert(JsonObjectNumberAtPath(preview.json, {"source_content_epoch"}) == static_cast<double>(epoch));
+  assert(JsonObjectStringAtPath(preview.json, {"frame_id"}) == "floor_903");
+  assert(JsonObjectBoolAtPath(preview.json, {"preview_sample"}) == false);
+  const auto preview_json = ParseJson(preview.json);
+  const auto &preview_points = preview_json.AsObject("preview").at("preview_points").AsArray("points");
+  const auto &preview_removed = preview_json.AsObject("preview").at("preview_removed").AsArray("removed");
+  assert(preview_points.size() == 6U && preview_removed.size() == 6U);
+  assert(std::get<double>(preview_points[3].value) == 2.0);
+  assert(std::get<double>(preview_removed[0].value) == 1.0);
+  assert(service.Store().ContentEpoch("original") == epoch);
+  assert(LoadPcdXyz(dir / "map.pcd").points.size() == points.size());
+  assert(!DispatchServiceJson(service, preview_request(epoch + 1, voxel_edits)).ok);
+  const auto invalid_preview = DispatchServiceJson(service,
+      preview_request(epoch, R"([{"operation":"radius","radius":0}])"));
+  assert(!invalid_preview.ok);
+  assert(JsonObjectStringAtPath(invalid_preview.json, {"reason_code"}) == "invalid_operations");
+  const auto missing_bounds = DispatchServiceJson(service,
+      preview_request(epoch, R"([{"operation":"keep_inside"}])"));
+  assert(!missing_bounds.ok);
+  assert(JsonObjectStringAtPath(missing_bounds.json, {"reason_code"}) == "invalid_operations");
+  for (const std::string operation : {
+           R"([{"operation":"statistical","neighbors":2,"std_ratio":1.5}])",
+           R"([{"operation":"radius","radius":1.1,"min_points":2}])",
+           R"([{"operation":"clusters","radius":1.1,"neighbors":2,"min_cluster_points":3}])"}) {
+    const auto filtered = DispatchServiceJson(service, preview_request(epoch, operation));
+    if (!filtered.ok) std::cerr << filtered.json << std::endl;
+    assert(filtered.ok);
+    assert(JsonObjectNumberAtPath(filtered.json, {"point_count"}) == 4.0);
+  }
+  const auto no_plane = DispatchServiceJson(service,
+      preview_request(epoch, R"([{"operation":"plane_crop","distance_threshold":0.05,"margin":0.5}])"));
+  assert(!no_plane.ok);
+  assert(JsonObjectStringAtPath(no_plane.json, {"reason_code"}) == "edit_failed");
+  const auto filtered_save = DispatchServiceJson(service, request("filtered", epoch, voxel_edits));
+  assert(filtered_save.ok);
+  const auto filtered_points = LoadPcdXyz(root / "filtered/map.pcd");
+  assert(filtered_points.ok && filtered_points.points.size() == 2U);
+  assert(filtered_points.points[0].x == 0 && filtered_points.points[1].x == 2);
+  assert(HasSavedRays(root / "filtered"));
+  const auto filtered_retry = DispatchServiceJson(service, request("filtered", epoch, voxel_edits));
+  assert(filtered_retry.ok && JsonObjectBoolAtPath(filtered_retry.json, {"replayed"}) == true);
+  const auto changed_parameters = DispatchServiceJson(service,
+      request("filtered", epoch, R"([{"operation":"voxel","voxel_size":3}])"));
+  assert(!changed_parameters.ok);
+  assert(JsonObjectStringAtPath(changed_parameters.json, {"reason_code"}) == "target_exists");
   const auto copied = DispatchServiceJson(service, request("resolution_copy", epoch, "[]"));
   assert(copied.ok);
   assert(JsonObjectNumberAtPath(copied.json, {"removed_points"}) == 0.0);
@@ -283,6 +374,10 @@ void TestEditedSource(const std::filesystem::path &root) {
     assert(!DispatchServiceJson(service, request("busy", epoch, edits)).ok);
   }
   const std::string all_points = R"([{"operation":"delete_inside","bounds":{"min_x":-1,"max_x":4,"min_y":-1,"max_y":1,"min_z":-1,"max_z":1}}])";
+  const auto empty_preview = DispatchServiceJson(service, preview_request(epoch, all_points));
+  assert(empty_preview.ok);
+  assert(JsonObjectNumberAtPath(empty_preview.json, {"point_count"}) == 0.0);
+  assert(JsonObjectNumberAtPath(empty_preview.json, {"removed_points"}) == 4.0);
   assert(!DispatchServiceJson(service, request("empty", epoch, all_points)).ok);
   assert(!std::filesystem::exists(root / "empty"));
 #if defined(_WIN32)
@@ -326,6 +421,11 @@ int main() {
   _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
   const auto root = TempRoot();
+#if defined(LINGTU_MAPS_HAS_OCTOMAP)
+  const auto surface_root = TempRoot();
+  TestSurfacePreview(surface_root);
+  std::filesystem::remove_all(surface_root);
+#endif
   lingtu::maps::MapsServiceCore service(
       lingtu::maps::MapsServiceConfig{lingtu::maps::MapStoreConfig{root}});
   using lingtu::maps::mapd::query::DispatchServiceJson;
@@ -337,6 +437,20 @@ int main() {
   auto created = DispatchServiceJson(service, R"({"action":"create_map","map_id":"dispatch_map"})");
   assert(created.ok);
   assert(created.json.find("\"map_dir\"") == std::string::npos);
+  const auto no_go_epoch = service.Store().ContentEpoch("dispatch_map");
+  const auto no_go_set = DispatchServiceJson(service,
+      "{\"action\":\"set_no_go_region\",\"map_id\":\"dispatch_map\",\"region_id\":\"door\","
+      "\"expected_content_epoch\":" + std::to_string(no_go_epoch) +
+      ",\"min_x\":0,\"min_y\":1,\"min_z\":2,\"max_x\":1,\"max_y\":2,\"max_z\":3}");
+  assert(no_go_set.ok);
+  assert(DispatchServiceJson(service,
+      R"({"action":"get_no_go_regions","map_id":"dispatch_map"})").ok);
+  const auto no_go_delete = DispatchServiceJson(service,
+      "{\"action\":\"delete_no_go_region\",\"map_id\":\"dispatch_map\",\"region_id\":\"door\","
+      "\"expected_content_epoch\":" + std::to_string(service.Store().ContentEpoch("dispatch_map")) + "}");
+  assert(no_go_delete.ok);
+  assert(!DispatchServiceJson(service,
+      R"({"action":"set_no_go_region","map_id":"dispatch_map","region_id":"bad"})").ok);
   auto relisted = DispatchServiceJson(service, R"({"action":"list_maps"})");
   assert(relisted.ok);
   assert(relisted.json.find("\"map_dir\"") == std::string::npos);
@@ -402,6 +516,19 @@ int main() {
   assert(lingtu::maps::JsonObjectStringAtPath(legacy_begin.json, {"reason_code"}) ==
          "unknown_action");
 
+  const auto reoptimize_missing = DispatchServiceJson(
+      service, R"({"action":"reoptimize_save_map","job_id":"missing","request_id":"reoptimize"})");
+  assert(lingtu::maps::JsonObjectStringAtPath(reoptimize_missing.json, {"reason_code"}) ==
+         "job_not_found");
+  for (const std::string request : {
+           R"({"action":"reoptimize_save_map","job_id":"missing"})",
+           R"({"action":"reoptimize_save_map","request_id":"reoptimize"})",
+           R"({"action":"reoptimize_save_map","job_id":"missing","request_id":12})",
+       }) {
+    const auto invalid = DispatchServiceJson(service, request);
+    assert(lingtu::maps::JsonObjectStringAtPath(invalid.json, {"reason_code"}) == "invalid_request");
+  }
+
   auto natural_u64 = DispatchServiceJson(service, R"({"action":"get_map_points","max_points":1})");
   assert(lingtu::maps::JsonObjectStringAtPath(natural_u64.json, {"reason_code"}) !=
          "invalid_request");
@@ -447,6 +574,28 @@ int main() {
   }
   const auto imported = service.ImportPcdJson("preview", source, 0.0, {});
   assert(lingtu::maps::JsonObjectBoolAtPath(imported, {"success"}) == true);
+  const auto preview_metadata = service.Store().ContentPath("preview") / "metadata.json";
+  const auto check_preview_stamp = [&service](const std::string& expected) {
+    const auto result = DispatchServiceJson(
+        service, R"({"action":"get_map_points","map_id":"preview","max_points":1})");
+    assert(result.ok);
+    assert(lingtu::maps::IsValidJsonObject(result.json));
+    assert(result.json.find("\"built_at_ms\":" + expected + ",") != std::string::npos);
+    assert(lingtu::maps::JsonObjectNumberAtPath(result.json, {"returned"}) == 1);
+  };
+  std::filesystem::remove(preview_metadata);
+  check_preview_stamp("null");
+  for (const auto* metadata : {
+           R"({})", R"({"created_at":1760000000000})", R"({"created_at":"0"})",
+           R"({"created_at":"-1"})", R"({"created_at":"1760000000000ms"})",
+           R"({"created_at":"99999999999999999999999999999"})", "{broken"}) {
+    { std::ofstream file(preview_metadata); file << metadata; }
+    check_preview_stamp("null");
+  }
+  { std::ofstream file(preview_metadata); file << R"({"created_at":"1760000000000"})"; }
+  check_preview_stamp("1760000000000");
+  { std::ofstream file(preview_metadata); file << R"({"created_at":"1760000001234"})"; }
+  check_preview_stamp("1760000001234");
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)
   const auto build_source = root / "build-defaults.pcd";
   {

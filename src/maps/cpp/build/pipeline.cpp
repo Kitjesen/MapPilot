@@ -38,6 +38,7 @@
 
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)
 #include "lingtu/maps/octomap/io.hpp"
+#include "lingtu/maps/layers/surface.hpp"
 #include "lingtu/maps/octomap/sampled.hpp"
 #include "lingtu/maps/octomap/rays.hpp"
 #endif
@@ -207,7 +208,7 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
                          const OctomapBuildOptions &options,
                          bool manual_voxel_edit = false, std::size_t manual_edit_count = 0U,
                          const std::string &last_edit_json = "null",
-                         std::string saved_ray_stats = {}) {
+                          std::string saved_ray_stats = {}, bool replayed_edits = false) {
   std::string builder_version = kBuilderVersion;
   std::ifstream previous_file(map_dir / "metadata.json");
   const std::string previous{std::istreambuf_iterator<char>(previous_file), {}};
@@ -216,7 +217,7 @@ std::string MetadataJson(const std::string &map_id, const std::filesystem::path 
   // activation or motion gate; MapStore validates the OctoMap artifact while
   // OctoPlanner3D and SCAN decide whether the current geometry is usable.
   bool navigation_ready = saved_rays;
-  if (manual_voxel_edit) {
+  if (manual_voxel_edit && !replayed_edits) {
     saved_rays = JsonObjectStringAtPath(previous,
         {"artifacts", "octomap", "evidence_source"}) == "saved_rays";
     navigation_ready = saved_rays &&
@@ -497,7 +498,7 @@ std::vector<std::string> SourceMapMutationArtifactNames() {
       "map.pcd",       "occupancy.npz",      "map.pgm",
       "map.yaml",      "octomap.ot",         "octomap.bt",
       "metadata.json", "voxel_edits.json",
-      "voxel_edits.jsonl",
+      "voxel_edits.jsonl", "point_edits.json",
       "esdf.npz",      "traversability.npz",
   };
 }
@@ -510,6 +511,7 @@ std::vector<std::string> SavedSourceArtifactNames() {
   names.push_back("trajectory.raw.txt");
   names.push_back("keyframes.timestamps.txt");
   names.push_back("sam_loops.json");
+  names.push_back("mapping_state.yaml");
   names.push_back("patches");
   names.push_back("patch_bundle.manifest");
   names.push_back("map.clean.pcd");
@@ -518,6 +520,7 @@ std::vector<std::string> SavedSourceArtifactNames() {
   names.push_back("map.pcd.preclean");
   names.push_back("scan_origin.txt");
   names.push_back("map_optimization.json");
+  names.push_back(kNoGoFilename);
   return names;
 }
 
@@ -915,21 +918,13 @@ struct OctomapEditRun {
   std::uint64_t changed_voxels{0U};
 };
 
-OctomapEditRun RunNativeOctomapEdit(const std::filesystem::path &input,
-                                    const std::filesystem::path &output,
-                                    const OctomapEditOptions &options) {
 #if defined(LINGTU_MAPS_HAS_OCTOMAP)
+OctomapEditRun ApplyNativeOctomapEdit(octomap::OcTree &tree,
+                                     const OctomapEditOptions &options) {
   OctomapEditRun result;
   result.mode = "native_octomap";
   result.effective_state =
       options.state == "occupied" || options.state == "preblocked" ? "occupied" : "free";
-  auto loaded_tree = LoadOctomapTree(input);
-  if (!loaded_tree) {
-    result.reason_code = "octomap_read_failed";
-    result.message = "OctoMap artifact is empty or unreadable";
-    return result;
-  }
-  auto& tree = *loaded_tree;
   const double resolution = tree.getResolution();
   if (!(resolution > 0.0) || !std::isfinite(resolution)) {
     result.reason_code = "invalid_octomap_resolution";
@@ -986,16 +981,33 @@ OctomapEditRun RunNativeOctomapEdit(const std::filesystem::path &input,
     tree.setNodeValue(key, target_log_odds, true);
   }
   result.edited_voxels = keys.size();
+  result.ok = true;
+  result.message = "OctoMap edited by embedded C++ implementation";
+  return result;
+}
+#endif
+
+OctomapEditRun RunNativeOctomapEdit(const std::filesystem::path &input,
+                                    const std::filesystem::path &output,
+                                    const OctomapEditOptions &options) {
+#if defined(LINGTU_MAPS_HAS_OCTOMAP)
+  auto loaded_tree = LoadOctomapTree(input);
+  if (!loaded_tree) {
+    return {false, "octomap_read_failed", "OctoMap artifact is empty or unreadable",
+            "native_octomap", "", 0U, 0U};
+  }
+  auto &tree = *loaded_tree;
+  auto result = ApplyNativeOctomapEdit(tree, options);
+  if (!result.ok) return result;
   tree.updateInnerOccupancy();
   tree.prune();
   std::filesystem::create_directories(output.parent_path());
   if (!SaveOctomapTree(tree, output, input.extension() == ".bt")) {
+    result.ok = false;
     result.reason_code = "octomap_write_failed";
     result.message = "OctoMap write failed";
     return result;
   }
-  result.ok = true;
-  result.message = "OctoMap edited by embedded C++ implementation";
   return result;
 #else
   (void)input;
@@ -1058,6 +1070,62 @@ bool ReadVoxelEditJournal(const std::filesystem::path &path, std::vector<std::st
   return true;
 }
 
+std::vector<bool> ManualPointFlags(const std::filesystem::path &map_dir, std::size_t count) {
+  std::vector<bool> flags(count, false);
+  const auto path = map_dir / "point_edits.json";
+  if (!std::filesystem::exists(path)) return flags;
+  std::string text, error;
+  if (!ReadTextFileLimited(path, 64U * 1024U * 1024U, &text, &error))
+    throw std::runtime_error(error);
+  const auto document = ParseJson(text);
+  for (const auto &value : document.AsObject("point edits").at("manual_indices").AsArray("manual indices")) {
+    const auto *index = std::get_if<double>(&value.value);
+    if (!index || !std::isfinite(*index) || *index < 0 || std::floor(*index) != *index || *index >= count)
+      throw std::runtime_error("manual point provenance does not match map.pcd");
+    flags[static_cast<std::size_t>(*index)] = true;
+  }
+  return flags;
+}
+
+std::string ManualPointsJson(const std::vector<std::size_t> &selected,
+                            const std::vector<bool> &source_manual) {
+  std::ostringstream out;
+  out << "{\"schema_version\":1,\"source\":\"operator\",\"manual_indices\":[";
+  bool first = true;
+  for (std::size_t i = 0; i < selected.size(); ++i) {
+    const auto index = selected[i];
+    if (index < source_manual.size() && !source_manual[index]) continue;
+    if (!first) out << ",";
+    out << i;
+    first = false;
+  }
+  return out.str() + "]}";
+}
+
+OctomapEditOptions ParseVoxelEdit(const std::string &entry) {
+  const auto state = JsonObjectStringAtPath(entry, {"state"});
+  const auto shape = JsonObjectStringAtPath(entry, {"shape"});
+  const auto x = JsonObjectNumberAtPath(entry, {"center", "x"});
+  const auto y = JsonObjectNumberAtPath(entry, {"center", "y"});
+  const auto z = JsonObjectNumberAtPath(entry, {"center", "z"});
+  const auto radius = JsonObjectNumberAtPath(entry, {"radius"});
+  if (!state || (*state != "occupied" && *state != "preblocked" && *state != "free" &&
+                 *state != "traversable" && *state != "clear") ||
+      !shape || (*shape != "sphere" && *shape != "box") || !x || !y || !z ||
+      std::abs(*x) > 500.0 || std::abs(*y) > 500.0 || std::abs(*z) > 500.0 ||
+      !radius || *radius <= 0.0 || *radius > 10.0) {
+    throw std::runtime_error("voxel_edits.jsonl contains an invalid native edit");
+  }
+  OctomapEditOptions options;
+  options.state = *state;
+  options.shape = *shape;
+  options.x_m = *x;
+  options.y_m = *y;
+  options.z_m = *z;
+  options.radius_m = *radius;
+  return options;
+}
+
 std::string VoxelEditsArrayJson(const std::vector<std::string> &edits) {
   std::ostringstream out;
   out << '[';
@@ -1110,11 +1178,20 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
   tree.setClampingThresMin(kSavedMapSensorModel.clamping_min);
   tree.setClampingThresMax(kSavedMapSensorModel.clamping_max);
   const bool saved_rays = HasSavedRays(map_dir);
+  const auto manual = ManualPointFlags(map_dir, loaded.points.size());
+  std::vector<PointXyz> measured;
+  const bool has_manual = std::find(manual.begin(), manual.end(), true) != manual.end();
+  if (has_manual) {
+    measured.reserve(loaded.points.size());
+    for (std::size_t i = 0; i < loaded.points.size(); ++i)
+      if (!manual[i]) measured.push_back(loaded.points[i]);
+  }
+  const auto &observations = has_manual ? measured : loaded.points;
   SavedRayOctomapStats saved_ray_stats;
   std::string saved_ray_stats_json;
   if (saved_rays) {
     try {
-      saved_ray_stats = PopulateSavedRayOctomap(tree, map_dir, loaded.points, options.cancel_requested);
+      saved_ray_stats = PopulateSavedRayOctomap(tree, map_dir, observations, options.cancel_requested);
       std::ostringstream stats;
       stats << "{\"valid_endpoints\":" << saved_ray_stats.valid_endpoints
             << ",\"retained_endpoints\":" << saved_ray_stats.retained_endpoints
@@ -1132,7 +1209,7 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
     using namespace sampled_octomap;
     std::unordered_set<VoxelKey, VoxelKeyHash> support_keys;
     const auto occupied = buildOccupiedKeys(
-        loaded.points, tree, options.support_dilation_cells, support_keys);
+        observations, tree, options.support_dilation_cells, support_keys);
     if (occupied.empty()) {
       return "{"
              "\"action\":\"build_octomap\","
@@ -1156,7 +1233,23 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
                        std::max(0, options.free_dilation_cells), occupied);
     }
   }
+  // An operator patch contributes occupied geometry, never synthetic rays or
+  // observed free space. Keep its source indices across rebuilds and later edits.
+  for (std::size_t i = 0; i < manual.size(); ++i) if (manual[i]) {
+    const auto &p = loaded.points[i];
+    tree.setNodeValue(octomap::point3d(p.x, p.y, p.z), tree.getClampingThresMaxLog(), true);
+  }
+  std::vector<std::string> edits;
+  std::string journal_error;
+  if (!ReadVoxelEditJournal(map_dir / "voxel_edits.jsonl", &edits, &journal_error)) {
+    throw std::runtime_error(journal_error);
+  }
+  for (const auto &entry : edits) {
+    const auto edited = ApplyNativeOctomapEdit(tree, ParseVoxelEdit(entry));
+    if (!edited.ok) throw std::runtime_error(edited.message);
+  }
   tree.updateInnerOccupancy();
+  if (!edits.empty()) tree.prune();
   std::filesystem::create_directories(octomap_path.parent_path());
   if (!SaveOctomapTree(tree, octomap_path)) {
     return "{"
@@ -1170,7 +1263,8 @@ std::string BuildNativeOctomapInDirectory(const std::string &map_id,
   if (!WriteTextFile(
           metadata_path,
           MetadataJson(map_id, map_dir, pcd_path, octomap_path, options,
-                       false, 0U, "null", saved_ray_stats_json))) {
+                        !edits.empty(), edits.size(), edits.empty() ? "null" : edits.back(),
+                        saved_ray_stats_json, true))) {
     return "{"
            "\"action\":\"build_octomap\","
            "\"success\":false,"
@@ -1675,17 +1769,45 @@ std::string RunSavedSourceCleanerJson(const std::filesystem::path &source_dir,
          std::string(process.stderr_truncated ? "true" : "false") + "}";
 }
 
+std::vector<std::pair<const char *, double>> SourceEditParameters(const SourceEditOperation &edit) {
+  if (edit.operation == "voxel") return {{"voxel_size", edit.voxel_size}};
+  if (edit.operation == "statistical")
+    return {{"neighbors", edit.neighbors}, {"std_ratio", edit.std_ratio}};
+  if (edit.operation == "radius") return {{"radius", edit.radius}, {"min_points", edit.min_points}};
+  if (edit.operation == "clusters")
+    return {{"radius", edit.radius}, {"neighbors", edit.neighbors},
+            {"min_cluster_points", edit.min_cluster_points}};
+  if (edit.operation == "plane_crop")
+    return {{"distance_threshold", edit.distance_threshold}, {"margin", edit.margin}};
+  const auto &b = edit.bounds;
+  return {{"min_x", b.min_x}, {"min_y", b.min_y}, {"min_z", b.min_z},
+          {"max_x", b.max_x}, {"max_y", b.max_y}, {"max_z", b.max_z}};
+}
+
+bool SourceEditHasBounds(const SourceEditOperation &edit) {
+  return edit.operation == "delete_inside" || edit.operation == "keep_inside" || edit.operation == "add_plane";
+}
+
 std::string SourceEditsJson(const std::vector<SourceEditOperation> &operations) {
   std::ostringstream out;
   out << std::setprecision(std::numeric_limits<double>::max_digits10) << "[";
   for (std::size_t i = 0; i < operations.size(); ++i) {
     if (i != 0U) out << ",";
     const auto &edit = operations[i];
-    const auto &b = edit.bounds;
-    out << "{\"operation\":" << JsonString(edit.operation)
-        << ",\"bounds\":{\"min_x\":" << b.min_x << ",\"min_y\":" << b.min_y
-        << ",\"min_z\":" << b.min_z << ",\"max_x\":" << b.max_x
-        << ",\"max_y\":" << b.max_y << ",\"max_z\":" << b.max_z << "}}";
+    out << "{\"operation\":" << JsonString(edit.operation);
+    const bool bounds = SourceEditHasBounds(edit);
+    if (bounds) out << ",\"bounds\":{";
+    bool first = true;
+    for (const auto &field : SourceEditParameters(edit)) {
+      if (!bounds || !first) out << ",";
+      out << JsonString(field.first) << ":" << field.second;
+      first = false;
+    }
+    if (bounds) out << "}";
+    if (edit.operation == "add_plane")
+      out << ",\"axis\":" << JsonString(edit.axis) << ",\"offset\":" << edit.offset
+          << ",\"spacing\":" << edit.spacing;
+    out << "}";
   }
   return out.str() + "]";
 }
@@ -1696,22 +1818,40 @@ bool SourceEditsMatch(const std::string &metadata,
     const auto doc = ParseJson(metadata);
     const auto &saved = doc.AsObject("metadata").at("edit_operations").AsArray("edit_operations");
     if (saved.size() != operations.size()) return false;
-    const std::array<const char *, 6> keys{"min_x", "min_y", "min_z", "max_x", "max_y", "max_z"};
     for (std::size_t i = 0; i < saved.size(); ++i) {
+      const auto &edit = operations[i];
       const auto &item = saved[i].AsObject("operation");
-      if (item.at("operation").AsString("operation") != operations[i].operation) return false;
-      const auto &bounds = item.at("bounds").AsObject("bounds");
-      const auto &b = operations[i].bounds;
-      const std::array<double, 6> values{b.min_x, b.min_y, b.min_z, b.max_x, b.max_y, b.max_z};
-      for (std::size_t j = 0; j < keys.size(); ++j) {
-        const auto *number = std::get_if<double>(&bounds.at(keys[j]).value);
-        if (number == nullptr || *number != values[j]) return false;
+      if (item.at("operation").AsString("operation") != edit.operation) return false;
+      if (edit.operation == "add_plane" &&
+          (item.at("axis").AsString("axis") != edit.axis ||
+           std::get<double>(item.at("offset").value) != edit.offset ||
+           std::get<double>(item.at("spacing").value) != edit.spacing)) return false;
+      const auto &parameters = SourceEditHasBounds(edit)
+          ? item.at("bounds").AsObject("bounds") : item;
+      for (const auto &field : SourceEditParameters(edit)) {
+        const auto *number = std::get_if<double>(&parameters.at(field.first).value);
+        if (number == nullptr || *number != field.second) return false;
       }
     }
     return true;
   } catch (const std::exception &) {
     return false;
   }
+}
+
+void WriteEditPreview(std::ostream &out, const std::vector<PointXyz> &points,
+                      const std::vector<bool> &selected, bool keep, std::size_t count) {
+  const auto samples = std::min<std::size_t>(count, 30000U);
+  std::size_t ordinal = 0;
+  std::size_t emitted = 0;
+  out << "[";
+  for (std::size_t i = 0; i < points.size() && emitted < samples; ++i) {
+    if (selected[i] != keep) continue;
+    if (ordinal++ != emitted * count / samples) continue;
+    if (emitted++ != 0U) out << ",";
+    out << points[i].x << "," << points[i].y << "," << points[i].z;
+  }
+  out << "]";
 }
 
 std::string SourceBuildOptionsJson(const OctomapBuildOptions &options) {
@@ -1736,12 +1876,15 @@ void CopySavedSourceAuxiliaryArtifacts(const std::filesystem::path &source_dir,
            "trajectory.raw.txt",
            "keyframes.timestamps.txt",
            "sam_loops.json",
+           "mapping_state.yaml",
            "patches",
            "patch_bundle.manifest",
            "map.removed.pcd",
            "map.before_clean.pcd",
            "scan_origin.txt",
            "map_optimization.json",
+            "no_go.json",
+           "point_edits.json",
        }) {
     auto source = source_dir / filename;
     if (std::strcmp(filename, "map.before_clean.pcd") == 0 &&
@@ -2138,6 +2281,12 @@ std::string MapPipelineCore::CommitSavedSourceJson(const std::string &map_id,
       return FailureJson("commit_saved_source", error, "pcd_write_failed");
     }
     CopySavedSourceAuxiliaryArtifacts(source_dir, staging_map_dir);
+    if (!std::filesystem::exists(staging_map_dir / kNoGoFilename) &&
+        std::filesystem::exists(map_dir / kNoGoFilename)) {
+      static_cast<void>(ReadNoGoRegions(map_dir));
+      if (!CopyPathRecursive(map_dir / kNoGoFilename, staging_map_dir / kNoGoFilename, &error))
+        throw std::runtime_error(error);
+    }
     std::string optimization = "null";
     const auto optimization_path = staging_map_dir / "map_optimization.json";
     if (std::filesystem::is_regular_file(optimization_path)) {
@@ -2266,6 +2415,21 @@ std::string MapPipelineCore::CropPcdJson(const std::string &map_id, const PcdBou
     options.bounds = bounds;
     options.invert_bounds = invert;
     auto kept = FilterPcdPoints(loaded.points, options);
+    std::string manual_json;
+    if (std::filesystem::exists(map_dir / "point_edits.json")) {
+      SourceEditOperation crop;
+      crop.operation = invert ? "delete_inside" : "keep_inside";
+      crop.bounds = bounds;
+      std::vector<SourceEditOperation> edits{crop};
+      if (voxel_size > 0) {
+        SourceEditOperation voxel;
+        voxel.operation = "voxel";
+        voxel.voxel_size = voxel_size;
+        edits.push_back(voxel);
+      }
+      const auto selected = SelectSourceEdits(loaded.points, edits);
+      manual_json = ManualPointsJson(selected, ManualPointFlags(map_dir, loaded.points.size()));
+    }
     if (kept.empty()) {
       return FailureJson("crop", "crop would remove all map points", "empty_after_crop");
     }
@@ -2298,6 +2462,7 @@ std::string MapPipelineCore::CropPcdJson(const std::string &map_id, const PcdBou
     const auto staging_map_dir = transaction_dir / "staging_map";
     std::filesystem::create_directories(staging_map_dir);
     const auto staged_pcd_path = staging_map_dir / "map.pcd";
+    if (!manual_json.empty()) WriteText(staging_map_dir / "point_edits.json", manual_json);
     std::string error;
     if (!WriteBinaryXyzPcd(staged_pcd_path, kept, &error)) {
       WriteStatus(id, build_id, "SOURCE_MAP_CROP", "FAILED", 0.0, error);
@@ -2379,6 +2544,69 @@ std::string MapPipelineCore::CropPcdJson(const std::string &map_id, const PcdBou
   }
 }
 
+std::string MapPipelineCore::PreviewSourceEditsJson(
+    const std::string &map_id, std::uint64_t expected_source_content_epoch,
+    const std::vector<SourceEditOperation> &operations) {
+  constexpr const char *action = "preview_source_edits";
+  try {
+    ValidateSourceEdits(operations);
+  } catch (const std::invalid_argument &exc) {
+    return FailureJson(action, exc.what(), "invalid_operations");
+  }
+  std::string source;
+  try {
+    source = MapStore::NormalizeMapId(map_id);
+  } catch (const std::invalid_argument &exc) {
+    return FailureJson(action, exc.what(), "invalid_map_name");
+  }
+  try {
+    std::vector<PointXyz> points;
+    std::int64_t source_epoch = 0;
+    std::string frame_id;
+    {
+      auto source_lock = MapLock::TryAcquire(store_.RootDir(), source, "map-edit-preview");
+      if (!source_lock)
+        return FailureJson(action, "source map is busy", "build_in_progress");
+      const auto source_dir = store_.MapPath(source);
+      if (!std::filesystem::is_regular_file(source_dir / "map.pcd"))
+        return FailureJson(action, "source map not found", "map_not_found");
+      source_epoch = store_.ContentEpoch(source);
+      if (expected_source_content_epoch == 0U ||
+          expected_source_content_epoch != static_cast<std::uint64_t>(source_epoch))
+        return FailureJson(action, "source map changed; reload before editing", "source_epoch_mismatch");
+      auto loaded = LoadPcdXyz(source_dir / "map.pcd");
+      if (!loaded.ok || loaded.points.empty())
+        return FailureJson(action, "source point cloud is unreadable", "map_pcd_unreadable");
+      points = std::move(loaded.points);
+      frame_id = MetadataOptions(source_dir / "metadata.json").frame_id;
+    }
+    const auto original_count = points.size();
+    const auto indices = ApplySourceEdits(points, operations);
+    std::vector<bool> selected(points.size(), false);
+    for (const auto index : indices) selected[index] = true;
+    const auto retained = std::count_if(indices.begin(), indices.end(),
+        [&](std::size_t index) { return index < original_count; });
+    const auto removed = original_count - retained;
+    const auto added = indices.size() - retained;
+    std::ostringstream out;
+    out << std::setprecision(std::numeric_limits<float>::max_digits10)
+        << "{\"action\":\"preview_source_edits\",\"success\":true,\"map_id\":" << JsonString(source)
+        << ",\"source_content_epoch\":" << source_epoch << ",\"frame_id\":" << JsonString(frame_id)
+        << ",\"point_count\":" << indices.size() << ",\"removed_points\":" << removed
+        << ",\"added_points\":" << added
+        << ",\"preview_sample\":" << (indices.size() > 30000U || removed > 30000U ? "true" : "false")
+        << ",\"preview_points\":";
+    WriteEditPreview(out, points, selected, true, indices.size());
+    out << ",\"preview_removed\":";
+    points.resize(original_count);
+    WriteEditPreview(out, points, selected, false, removed);
+    out << "}";
+    return out.str();
+  } catch (const std::exception &exc) {
+    return FailureJson(action, exc.what(), "edit_failed");
+  }
+}
+
 std::string MapPipelineCore::SaveEditedSourceJson(
     const std::string &source_map_id, const std::string &target_map_id,
     std::uint64_t expected_source_content_epoch,
@@ -2392,14 +2620,10 @@ std::string MapPipelineCore::SaveEditedSourceJson(
     target = MapStore::NormalizeMapId(target_map_id);
     if (source == target)
       return FailureJson(action, "edited map requires a new name", "target_exists");
-    // An empty edit list copies the measured source and rays for a new-resolution map.
-    for (const auto &edit : operations) {
-      const auto &b = edit.bounds;
-      if ((edit.operation != "delete_inside" && edit.operation != "keep_inside") || !b.enabled ||
-          !std::isfinite(b.min_x) || !std::isfinite(b.min_y) || !std::isfinite(b.min_z) ||
-          !std::isfinite(b.max_x) || !std::isfinite(b.max_y) || !std::isfinite(b.max_z) ||
-          b.min_x > b.max_x || b.min_y > b.max_y || b.min_z > b.max_z)
-        return FailureJson(action, "invalid edit operation or bounds", "invalid_operations");
+    try {
+      ValidateSourceEdits(operations);
+    } catch (const std::invalid_argument &exc) {
+      return FailureJson(action, exc.what(), "invalid_operations");
     }
     auto target_lock = MapLock::TryAcquire(store_.RootDir(), target, "map-edit-target");
     if (!target_lock)
@@ -2453,13 +2677,18 @@ std::string MapPipelineCore::SaveEditedSourceJson(
     if (!loaded.ok || loaded.points.empty())
       return FailureJson(action, "source point cloud is unreadable", "map_pcd_unreadable");
     const auto original_count = loaded.points.size();
-    auto kept = std::move(loaded.points);
-    for (const auto &edit : operations) {
-      PcdFilterOptions filter;
-      filter.bounds = edit.bounds;
-      filter.invert_bounds = edit.operation == "delete_inside";
-      kept = FilterPcdPoints(kept, filter);
+    const auto source_manual = ManualPointFlags(source_dir, original_count);
+    std::vector<std::size_t> selected;
+    try {
+      selected = ApplySourceEdits(loaded.points, operations);
+    } catch (const std::exception &exc) {
+      return FailureJson(action, exc.what(), "edit_failed");
     }
+    std::vector<PointXyz> kept;
+    kept.reserve(selected.size());
+    for (const auto index : selected) kept.push_back(loaded.points[index]);
+    const auto removed = original_count - std::count_if(selected.begin(), selected.end(),
+        [&](std::size_t index) { return index < original_count; });
     if (kept.empty())
       return FailureJson(action, "edits would remove every map point", "empty_after_crop");
     const auto build_id = MakeBuildId("SOURCE_MAP_EDIT");
@@ -2477,7 +2706,14 @@ std::string MapPipelineCore::SaveEditedSourceJson(
     // Subset edits keep point coordinates unchanged. Preserve original measured
     // rays only as a complete bundle, never fabricate evidence from edited points.
     const bool saved_rays = HasSavedRays(source_dir);
-    std::vector<std::string> names{"map.pcd", "metadata.json"};
+    std::vector<std::string> names{"map.pcd", "metadata.json", "point_edits.json"};
+    WriteText(staged / "point_edits.json", ManualPointsJson(selected, source_manual));
+    if (std::filesystem::exists(source_dir / kNoGoFilename)) {
+      static_cast<void>(ReadNoGoRegions(source_dir));
+      if (!CopyPathRecursive(source_dir / kNoGoFilename, staged / kNoGoFilename, &error))
+        throw std::runtime_error(error);
+      names.emplace_back(kNoGoFilename);
+    }
     if (saved_rays) {
       for (const auto *name : {"poses.txt", "patches", "patch_bundle.manifest", "scan_origin.txt"}) {
         if (!CopyPathRecursive(source_dir / name, staged / name, &error))
@@ -2494,7 +2730,7 @@ std::string MapPipelineCore::SaveEditedSourceJson(
         ",\"source_content_epoch\":" + std::to_string(source_epoch) +
         ",\"edit_operations\":" + SourceEditsJson(operations) +
         ",\"point_count\":" + std::to_string(kept.size()) +
-        ",\"removed_points\":" + std::to_string(original_count - kept.size()) +
+        ",\"removed_points\":" + std::to_string(removed) +
         ",\"saved_rays_preserved\":" + (saved_rays ? "true" : "false") + "," +
         provenance.substr(1, provenance.size() - 2) +
         ",\"artifacts\":{\"map_pcd\":{\"path\":\"map.pcd\",\"frame_id\":" +
@@ -2511,7 +2747,7 @@ std::string MapPipelineCore::SaveEditedSourceJson(
     WriteStatus(target, build_id, "SOURCE_MAP_EDIT", "SUCCEEDED", 1.0, "edited source saved");
     std::filesystem::remove_all(LockPath(target));
     std::filesystem::remove_all(transaction_dir);
-    return result_json(source_epoch, kept.size(), original_count - kept.size(), saved_rays,
+    return result_json(source_epoch, kept.size(), removed, saved_rays,
                        options, false);
   } catch (const std::exception &exc) {
     if (created_target && !committed)
@@ -2776,6 +3012,8 @@ std::string MapPipelineCore::BuildOctomapArtifactJson(const std::string &map_id,
         BackupNamedArtifacts(store_, id, map_dir, transaction_dir, OctomapArtifactNames());
 
     CopySavedSourceAuxiliaryArtifacts(map_dir, staging_map_dir);
+    if (!StageExistingArtifact(map_dir, staging_map_dir, "voxel_edits.jsonl", &stage_error))
+      throw std::runtime_error(stage_error);
     const auto octomap = BuildOctomapArtifactInDirectory(id, staging_map_dir, options, true);
     if (!JsonSucceeded(octomap)) {
       RollbackTransactionArtifacts(backups);
@@ -2886,6 +3124,151 @@ std::string MapPipelineCore::GetVoxelEditsJson(const std::string &map_id) const 
         VoxelEditsArrayJson(edits) + "}";
   } catch (const std::exception &exc) {
     return FailureJson("get_voxel_edits", exc.what(), "invalid_map_name");
+  }
+}
+
+std::string MapPipelineCore::GetNoGoRegionsJson(const std::string& map_id) const {
+  try {
+    const auto id = MapStore::NormalizeMapId(map_id);
+    const auto dir = store_.MapPath(id);
+    if (!std::filesystem::is_directory(dir))
+      return FailureJson("get_no_go_regions", "map not found", "map_not_found");
+    const auto regions = NoGoRegionsJson(ReadNoGoRegions(dir));
+    return "{\"action\":\"get_no_go_regions\",\"success\":true,\"map_id\":" +
+        JsonString(id) + ",\"content_epoch\":" + std::to_string(store_.ContentEpoch(id)) +
+        "," + regions.substr(1);
+  } catch (const std::exception& error) {
+    return FailureJson("get_no_go_regions", error.what(), "no_go_invalid");
+  }
+}
+
+std::string MapPipelineCore::GetSurfaceMapJson(const std::string& map_id,
+                                              const SurfaceMapOptions& options) const {
+  constexpr const char* action = "get_surface_map";
+  if (!std::isfinite(options.headroom_m) || options.headroom_m <= 0 ||
+      !std::isfinite(options.radius_m) || options.radius_m < 0 ||
+      !std::isfinite(options.max_hole_area_m2) || options.max_hole_area_m2 < 0 ||
+      !std::isfinite(options.max_slope) || options.max_slope < 0)
+    return FailureJson(action, "invalid surface preview parameters", "invalid_surface_options");
+#if defined(LINGTU_MAPS_HAS_OCTOMAP)
+  try {
+    const auto id = MapStore::NormalizeMapId(map_id);
+    auto lock = MapLock::TryAcquire(store_.RootDir(), id, "surface-preview");
+    if (!lock) return FailureJson(action, "map is busy", "build_in_progress");
+    const auto dir = store_.MapPath(id);
+    if (!std::filesystem::is_directory(dir)) return FailureJson(action, "map not found", "map_not_found");
+    auto tree = LoadOctomapTree(dir / "octomap.ot");
+    if (!tree) return FailureJson(action, "saved OctoMap is unavailable", "octomap_missing");
+    const layers::SurfaceIndex surface(*tree, options.headroom_m, options.radius_m,
+                                       options.max_hole_area_m2, options.max_slope);
+    std::vector<layers::SurfaceCell> observed;
+    for (const auto& cell : surface.surfaces(options.headroom_m))
+      if (!surface.inferred(cell.x, cell.y, cell.z, cell.z)) observed.push_back(cell);
+    const auto inferred = surface.inferredPoints();
+    const double resolution = surface.resolution();
+    std::ostringstream out;
+    out << std::setprecision(9) << "{\"success\":true,\"action\":\"get_surface_map\","
+        << "\"schema\":\"lingtu.surface_map.v1\",\"map_id\":" << JsonString(id)
+        << ",\"content_epoch\":" << store_.ContentEpoch(id)
+        << ",\"frame_id\":" << JsonString(MetadataOptions(dir / "metadata.json").frame_id)
+        << ",\"resolution\":" << resolution
+        << ",\"options\":{\"headroom_m\":" << options.headroom_m << ",\"radius_m\":" << options.radius_m
+        << ",\"max_hole_area_m2\":" << options.max_hole_area_m2 << ",\"max_slope\":" << options.max_slope << "}"
+        << ",\"observed_count\":" << observed.size() << ",\"inferred_count\":" << inferred.size()
+        << ",\"inferred_area_m2\":" << inferred.size()*resolution*resolution
+        << ",\"sampled\":" << (observed.size()>30000 || inferred.size()>30000 ? "true" : "false")
+        << ",\"stats\":{\"bounded_hole_slices\":" << surface.stats().bounded_holes
+        << ",\"filled_hole_slices\":" << surface.stats().filled_holes
+        << ",\"free_rejected\":" << surface.stats().free_rejected << "}";
+    const auto write = [&](const char* key, const auto& cells) {
+      out << ",\"" << key << "\":[";
+      const auto count = std::min<std::size_t>(cells.size(), 30000);
+      for (std::size_t i=0; i<count; ++i) {
+        if (i) out << ',';
+        const auto& cell = cells[i*cells.size()/count];
+        out << (cell.x+.5)*resolution << ',' << (cell.y+.5)*resolution << ',' << (cell.z+1)*resolution;
+      }
+      out << ']';
+    };
+    write("observed_xyz", observed);
+    write("inferred_xyz", inferred);
+    out << '}';
+    return out.str();
+  } catch (const std::exception& error) {
+    return FailureJson(action, error.what(), "surface_preview_failed");
+  }
+#else
+  return FailureJson(action, "native OctoMap support is unavailable", "octomap_unavailable");
+#endif
+}
+
+std::string MapPipelineCore::SetNoGoRegionJson(const std::string& map_id,
+    const NoGoRegion& region, std::uint64_t expected_content_epoch) {
+  return WriteNoGoRegionJson(map_id, region, expected_content_epoch, false);
+}
+
+std::string MapPipelineCore::DeleteNoGoRegionJson(const std::string& map_id,
+    const std::string& region_id, std::uint64_t expected_content_epoch) {
+  return WriteNoGoRegionJson(map_id, {region_id, {}, {}}, expected_content_epoch, true);
+}
+
+std::string MapPipelineCore::WriteNoGoRegionJson(const std::string& map_id,
+    const NoGoRegion& region, std::uint64_t expected_content_epoch, bool remove) {
+  const std::string action = remove ? "delete_no_go_region" : "set_no_go_region";
+  std::string id;
+  std::filesystem::path transaction_dir;
+  bool locked = false;
+  try {
+    if (remove) ValidateNoGoRegion({region.id, {0, 0, 0}, {1, 1, 1}});
+    else ValidateNoGoRegion(region);
+    id = MapStore::NormalizeMapId(map_id);
+    const auto dir = store_.MapPath(id);
+    if (!std::filesystem::is_directory(dir))
+      return FailureJson(action, "map not found", "map_not_found");
+    if (!expected_content_epoch || store_.ContentEpoch(id) != expected_content_epoch)
+      return FailureJson(action, "map changed; refresh before editing regions", "source_epoch_mismatch");
+    static_cast<void>(RecoverInterruptedBuild(id));
+    const auto build_id = MakeBuildId("NO_GO");
+    const auto lock = TryCreateBuildLock(id, build_id + "\nNO_GO\n");
+    if (!lock.ok) return FailureJson(action, lock.message, lock.reason_code);
+    locked = true;
+    if (store_.ContentEpoch(id) != expected_content_epoch)
+      throw std::runtime_error("map changed before no-go update");
+    auto regions = ReadNoGoRegions(dir);
+    const auto found = std::find_if(regions.begin(), regions.end(), [&](const auto& value) {
+      return value.id == region.id;
+    });
+    if (remove) {
+      if (found != regions.end()) regions.erase(found);
+    } else if (found == regions.end()) regions.push_back(region);
+    else *found = region;
+    transaction_dir = BuildDir(id) / (build_id + "_transaction");
+    const auto staged = transaction_dir / "staging_map";
+    std::filesystem::create_directories(staged);
+    WriteText(staged / kNoGoFilename, NoGoRegionsJson(regions) + "\n");
+    const auto backups = BackupNamedArtifacts(store_, id, dir, transaction_dir, {kNoGoFilename});
+    std::string error;
+    if (!PublishTransactionArtifacts(store_, id, staged, backups, &error)) {
+      if (!TransactionNeedsRecovery(error)) {
+        std::filesystem::remove_all(LockPath(id));
+        std::filesystem::remove_all(transaction_dir);
+      }
+      return FailureJson(action, error, "transaction_commit_failed");
+    }
+    std::filesystem::remove_all(LockPath(id));
+    locked = false;
+    std::filesystem::remove_all(transaction_dir);
+    return "{\"action\":" + JsonString(action) + ",\"success\":true,\"map_id\":" +
+        JsonString(id) + ",\"content_epoch\":" + std::to_string(store_.ContentEpoch(id)) +
+        "," + NoGoRegionsJson(regions).substr(1);
+  } catch (const std::invalid_argument& error) {
+    if (locked) std::filesystem::remove_all(LockPath(id));
+    if (!transaction_dir.empty()) std::filesystem::remove_all(transaction_dir);
+    return FailureJson(action, error.what(), "invalid_no_go_region");
+  } catch (const std::exception& error) {
+    if (locked) std::filesystem::remove_all(LockPath(id));
+    if (!transaction_dir.empty()) std::filesystem::remove_all(transaction_dir);
+    return FailureJson(action, error.what(), "no_go_update_failed");
   }
 }
 
@@ -3247,6 +3630,9 @@ std::string MapPipelineCore::BuildNavigationPackageJson(const std::string &map_i
     }
 
     CopySavedSourceAuxiliaryArtifacts(map_dir, staging_map_dir);
+    std::string journal_stage_error;
+    if (!StageExistingArtifact(map_dir, staging_map_dir, "voxel_edits.jsonl", &journal_stage_error))
+      throw std::runtime_error(journal_stage_error);
     const auto octomap = BuildOctomapArtifactInDirectory(id, staging_map_dir, options, false);
     if (!JsonSucceeded(octomap)) {
       RollbackTransactionArtifacts(backups);

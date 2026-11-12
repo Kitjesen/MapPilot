@@ -1,5 +1,5 @@
 #include "cleaning/incremental.hpp"
-#include "core/surface.hpp"
+#include "cleaning/surface.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>

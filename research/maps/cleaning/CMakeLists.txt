@@ -7,7 +7,6 @@ add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../ground" "${CMAKE_CURRENT_BINARY
 add_library(lingtu_maps_cleaning STATIC incremental.cpp)
 target_compile_features(lingtu_maps_cleaning PUBLIC cxx_std_20)
 target_include_directories(lingtu_maps_cleaning PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
-target_include_directories(lingtu_maps_cleaning PRIVATE "${LINGTU_ROOT}/src/maps/prune/cpp")
 target_link_libraries(lingtu_maps_cleaning PUBLIC lingtu_maps_ground)
 
 add_subdirectory("${LINGTU_ROOT}/src/maps/prune/cpp" "${CMAKE_CURRENT_BINARY_DIR}/prune" EXCLUDE_FROM_ALL)

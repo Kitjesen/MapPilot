@@ -101,14 +101,49 @@ The `map` Product starts LiDAR, IMU, SLAM, maps, navigation, driver, camera, and
 Host because mapping needs those dependencies. The `maps` / `mapd` process owns
 live map state and saved-map lifecycle.
 
-### Saved point-cloud subset edits
+### Saved point-cloud edits
 
-The Web editor submits ordered inclusive XYZ boxes to native
-`save_edited_source` through Gateway's `POST /api/v1/maps/{name}/save_as`.
-`delete_inside` removes points in a box; `keep_inside` removes points outside it.
-mapd checks the source content epoch under its map lock and transactionally saves
-the complete filtered XYZ cloud under a new name. The source stays unchanged;
-retained points keep their coordinates without downsampling.
+The Web editor supports inclusive XYZ-box deletion/cropping and five manually
+applied filters. It keeps an ordered operation history with original/draft
+comparison, removed-point display, undo/redo and save-as under a new name.
+
+| Operation | Selection rule |
+| --- | --- |
+| `delete_inside` / `keep_inside` | Remove points inside/outside the selected XYZ box. |
+| `voxel` | Keep the first measured source point in each voxel. |
+| `statistical` | Filter by mean k-neighbor distance and its standard deviation. |
+| `radius` | Keep points with enough neighbors inside the configured radius. |
+| `clusters` | DBSCAN clustering followed by the configured minimum cluster size. |
+| `plane_crop` | RANSAC plane detection followed by expanded plane-bound cropping. |
+
+Pure box-edit histories preview immediately against the browser-loaded cloud.
+Histories containing a filter use Gateway's
+`POST /api/v1/maps/{name}/edit_preview` → native `preview_source_edits`.
+mapd reads the complete source under its content-epoch lock and runs the same
+`SelectSourceEdits()` function used by `save_edited_source`. The response gives
+exact complete-source counts and up to 30,000 retained and removed points each.
+`preview_sample` identifies sampled display arrays. The browser keeps those
+counts separate from selected-point counts in the displayed preview.
+
+Saving sends the same ordered history through `POST /api/v1/maps/{name}/save_as`.
+mapd checks the source content epoch and transactionally writes the selected
+XYZ source records under a new name. The original map stays intact. All filters
+select measured source points and retain their coordinates. Voxel filtering
+chooses a measured representative point to preserve saved-ray matching.
+Plane cropping selects existing points inside expanded bounds around detected
+planes. It does not generate ground points or fill terrain holes. Filters are
+applied by the operator and are separate from save-time DUFOMap cleanup.
+
+Preview is a synchronous management request. Neighborhood queries use a shared
+native KD-tree; RANSAC scores a bounded deterministic sample and measures the
+chosen planes against the full source. On the matched local million-point
+plane fixture, the split-axis repair reduced statistical filtering from
+78.370 s to 6.596 s and radius filtering from 7.690 s to 2.471 s, with equal
+retained/removed counts. Concurrent management pings still waited 6.537 s and
+2.414 s. These measurements identify the remaining management-thread wait.
+The [implementation and validation record](../../artifacts/maps/pcd-editor-20261107/README.md)
+links the source fixture, normal-entry query probe, component UI replay and
+separate native save/rebuild results.
 
 An empty ordered edit list copies the source unchanged for resolution comparison.
 New mapping sessions save a 10 cm OctoMap by default. The Web map-status panel
@@ -213,9 +248,11 @@ The navigation OctoMap records its build evidence for diagnostics:
   not supported. `clear` writes known free space; it does not remove an edit
   and restore the original sensor evidence.
 - Voxel edits persist in the saved OctoMap and `voxel_edits.jsonl`. Reopening
-  that artifact retains them, but rebuilding from PCD or saved rays does not
-  replay the journal and replaces their occupancy effect. Some source-edit
-  operations also remove the journal with other derived artifacts.
+  that artifact retains them. Rebuilding that map from PCD or saved rays replays
+  the journal in order, including at a new resolution, before committing the new
+  OctoMap. An invalid journal fails the build and preserves the previous map.
+  Source-edit operations that create new source geometry may remove the journal
+  with other derived artifacts.
 - Editing a saved OctoMap does not refresh a running navigation process's
   private map snapshot or inject the edit into mapd's live collision bitmap.
   Global planning can consume the edited artifact after loading it; local
@@ -414,6 +451,66 @@ readers stay fail-closed while that recovery is pending.
 The canonical control action names live in `cpp/mapd/dispatch.cpp`. Add
 one name for a new operation; do not add spelling aliases or a Python command
 router.
+
+`reoptimize_save_map(job_id, request_id)` creates a separate background save job
+from an existing job's complete archived scans and poses. Its `source_job_id`
+identifies that archive; the original job and capture stay intact. The worker
+runs `lt_pgo --auto-constraints` even for an online LIO-SAM snapshot, then builds
+and atomically commits the normal navigation artifacts. An optimizer skip or
+failure is a failed reoptimization, leaving the current map intact. Ordinary
+saves still reuse complete online optimization results. The existing active-map
+mutation rule also applies: stop using a map before replacing its artifacts.
+
+## Multi-layer surface completion
+
+`layers/surface.hpp` and `cpp/layers/surface.cpp` own the shared `SurfaceIndex`
+used by global navigation and mapd's saved-map preview. It selects bounded
+internal holes on separate expected height sheets, fits observed boundaries and
+rejects candidates in known-free ground cells. Inferred cells never modify the
+source tree or become evidence for further expansion. A new map rebuilds both
+support and navigation connections; live per-frame regional updates are separate
+work.
+
+The native read action is `get_surface_map`; the Gateway route is
+`GET /api/v1/maps/{name}/surface`. It returns frame/content epoch, actual options,
+full observed/inferred counts and separate XYZ arrays (at most 30,000 samples per
+class). The Web uses these arrays directly in Navigation voxels → 补全支撑.
+Preview parameters in Settings → Map do not change navigation configuration.
+Navigation uses `config/system/settings/global.yaml` and the selected robot's
+clearance. The shared defaults are radius 0.20 m, area 0.16 m² and fit slope 0.7;
+the old immediate-neighbor `support_radius_cells` fill has been removed.
+
+The display and planner both use prepared inferred support, not invented
+occupied voxels. Original point clouds remain available. See
+`docs/research/surface-completion-20261108.md` for matched data and limitations.
+
+## Independent no-go regions
+
+`no_go.json` stores user restrictions separately from measured PCD and OctoMap
+occupancy. Regions are finite 3D axis-aligned boxes in the `map` frame, with
+stable IDs and independent height ranges. Removing a region never clears a
+measured obstacle. The shared `lingtu/maps/no_go.hpp` defines region geometry
+and strict loading through the lightweight `lingtu_maps_artifacts` target.
+
+```json
+{"schema":"lingtu.no_go.v1","frame_id":"map","regions":[
+  {"id":"closed-door","min":[1,2,0],"max":[2,3,2]}
+]}
+```
+
+Native actions are `get_no_go_regions`, `set_no_go_region` and
+`delete_no_go_region`. Writes require `map_id`, `region_id`, and
+`expected_content_epoch`; set also requires `min_x/min_y/min_z/max_x/max_y/max_z`.
+Existing active-map mutation rules apply. A write atomically publishes the
+policy file with a new map content epoch, preserving sensor artifacts. Invalid
+bounds, stale epochs and failed publishes do not replace the current policy.
+
+Coordinate-preserving point-cloud save-as copies restrictions. Cropping and
+rebuilding navigation artifacts retain them. A same-name saved-source commit
+keeps the existing policy when the capture supplies none. Map package export
+and rename retain the policy with the rest of the map directory. These storage
+rules support shared planner consumption; the corresponding global/local
+navigation integration owns enforcement, not OctoMap occupancy rewriting.
 
 ## Build And Test
 
