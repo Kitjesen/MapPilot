@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LingTu · 动效选型</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<!-- Interactive motion proposals for the existing LingTu white UI. All states are local fixtures; no robot or model endpoints. -->
+<header class="top"><a href="#" class="brand">LingTu <span>/ 动效选型</span></a><span class="sandbox"><i></i>演示数据 · 不发送指令</span></header>
+<main>
+  <section class="intro"><div><p class="eyebrow">INTERACTION STUDIES / 01</p><h1>动效实验室<span>12 × 3</span></h1><p class="sub">同一个操作，三种表达。可以按场景混选。</p></div><button id="play-all" class="primary">依次播放全部 <span>↗</span></button></section>
+  <section class="controls" aria-label="全局演示设置">
+    <div id="directions" class="segments" aria-label="统一切换风格"><button data-style="A" aria-pressed="false">A <span>轻量</span></button><button data-style="B" aria-pressed="true">B <span>连贯</span></button><button data-style="C" aria-pressed="false">C <span>柔弹</span></button></div>
+    <div class="settings"><label>速度 <select id="speed"><option value="1">正常</option><option value="2">慢放 ½</option></select></label><label><input id="reduce" type="checkbox">减少动态</label></div>
+  </section>
+  <nav class="filters" aria-label="场景分类"><button data-filter="all" aria-pressed="true">全部 <small>12</small></button><button data-filter="chat" aria-pressed="false">对话与工具</button><button data-filter="task" aria-pressed="false">任务与审批</button><button data-filter="status" aria-pressed="false">状态与设置</button></nav>
+  <section id="gallery" class="gallery" aria-label="动效方案"></section>
+  <details class="sources"><summary>参考来源与适用边界</summary><p>这是选型原型。动画由示例状态触发，不代表机器人动作或模型执行。正式接入时使用真实服务回执，急停与安全拒绝不等待动画。</p><a href="https://github.com/benjitaylor/skills" target="_blank" rel="noreferrer">Stageshow ↗</a><a href="https://github.com/ibelick/motion-primitives" target="_blank" rel="noreferrer">Motion Primitives ↗</a><a href="https://github.com/assistant-ui/assistant-ui" target="_blank" rel="noreferrer">assistant-ui ↗</a><a href="https://github.com/motiondivision/motion" target="_blank" rel="noreferrer">Motion ↗</a></details>
+</main>
+<footer class="selectionbar"><div><strong id="selected-count">已选 0 / 12</strong><span id="selection-hint">每个场景点「选用」</span></div><button id="show-selection">查看选择</button><button id="copy" class="primary">复制选择</button></footer>
+<dialog id="selection-dialog"><header><h2>我的动效选择</h2><button id="close-dialog" aria-label="关闭选择">×</button></header><textarea id="selection-text" readonly aria-label="选择清单"></textarea><p>选择保存在当前浏览器。复制后发到对话里即可。</p></dialog>
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="app.js"></script>
+</body></html>

@@ -1,0 +1,22 @@
+{
+  "type": "design",
+  "designSystems": [],
+  "primaryDesignSystem": null,
+  "assets": {
+    "LingTu 动效选型": {
+      "versions": [
+        {
+          "path": "index.html",
+          "createdAt": "2026-11-12T14:24:18.564Z",
+          "status": "needs-review",
+          "viewport": {
+            "width": 1440,
+            "height": 1000
+          }
+        }
+      ]
+    }
+  },
+  "createdAt": "2026-11-12T14:24:18.566Z",
+  "updatedAt": "2026-11-12T14:34:13.906Z"
+}
