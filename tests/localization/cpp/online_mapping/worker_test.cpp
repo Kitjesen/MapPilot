@@ -144,6 +144,7 @@ int main() {
     loop_options.online_mapping.min_time_s = 30;
     loop_options.online_mapping.submap_half_window = 2;
     mapping::Worker loop_mapper(loop_options);
+    std::vector<mapping::MappingFrame> archive;
     std::shared_ptr<const mapping::Snapshot> closed;
     for (int i=0;i<22;++i) {
       auto sample=frame(i<=10?i:21-i);
@@ -152,6 +153,7 @@ int main() {
       sample.keyframe.pose.x+=i*(.075/21);
       sample.keyframe.pose.z+=i*(.045/21);
       if(i==3) sample.body_cloud={{0,0,0,1}};
+      archive.push_back(sample);
       require(loop_mapper.enqueue(std::move(sample)).ok,"SAM input rejected");
       closed=finish(loop_mapper);
     }
@@ -171,6 +173,36 @@ int main() {
       for (auto target:record.target_frames)
         require(target<record.current && (record.current-target)*3.>30,
                 "recent keyframe leaked into loop target");
+    mapping::Worker restarted(loop_options);
+    const auto recovered_graph = restarted.restore(archive, closed->loop_records,
+                                                   loop_options.online_mapping, 37);
+    require(recovered_graph->loop_constraints == closed->loop_constraints &&
+            recovered_graph->keyframes.size() == closed->keyframes.size(),
+            "restart lost graph nodes or accepted factors");
+    for (std::size_t i = 0; i < closed->keyframes.size(); ++i) {
+      const auto& a = closed->keyframes[i].pose;
+      const auto& b = recovered_graph->keyframes[i].pose;
+      require(std::hypot(a.x-b.x, a.y-b.y, a.z-b.z) < 1e-8,
+              "restored graph differs from saved optimization");
+    }
+    auto continuation = frame(1);
+    continuation.keyframe.patch_name = "22.pcd";
+    continuation.stamp_s = 70;
+    continuation.relocalized = true;
+    require(restarted.enqueue(std::move(continuation)).ok, "restored graph cannot append");
+    const auto extended = finish(restarted);
+    require(extended->keyframes.size() == 23 && extended->segment_starts == std::vector<std::size_t>{22},
+            "new session was not linked through measured registration");
+    auto invalid = closed->loop_records;
+    invalid.back().accepted = true;
+    invalid.back().previous = 300;
+    bool rejected = false;
+    try { restarted.restore(archive, invalid, loop_options.online_mapping, 99); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    require(rejected && !restarted.busy(), "invalid archive was accepted");
+    auto last = frame(2); last.stamp_s=73; last.keyframe.patch_name="23.pcd";
+    require(restarted.enqueue(last).ok && finish(restarted)->keyframes.size() == 24,
+            "failed restore destroyed the current graph");
     std::cout << "online mapping passed\n";
   } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }
 }

@@ -102,6 +102,9 @@ lio::Config config() {
   value.point_filter_num = 1;
   value.blind_m = 0.1;
   value.scan_resolution = 0.1;
+  // Match the backend fixture rather than the field mapping defaults.
+  value.map_resolution = 0.05;
+  value.stationary_thresh = 0.0;
   value.elevator_enabled = true;
   value.automatic_door = false;
   return value;

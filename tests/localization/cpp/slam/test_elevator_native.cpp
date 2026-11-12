@@ -40,6 +40,7 @@ native::Config config() {
   value.imu_init_samples = 20;
   value.point_filter_num = 1;
   value.blind_m = 0.1;
+  value.elevator_enabled = true;
   value.automatic_door = false;
   return value;
 }
@@ -711,6 +712,7 @@ void checkSavedMapLocalization(const slam::SlamConfig& settings,
 void testConvergenceDiagnostics() {
   auto settings = config();
   settings.elevator_enabled = false;
+  settings.max_range_m = 50.0; // Let the 40 m fixture reach matching rather than range filtering.
   native::Frontend frontend(settings);
   ImuCursor cursor;
   native::Result result;

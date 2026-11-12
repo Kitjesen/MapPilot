@@ -5,6 +5,7 @@
 #include "messages.h"
 
 #include <chrono>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -86,6 +87,12 @@ std::string normalizedCommand(std::string command) {
   if (command == "track-against-map" || command == "track_against_map") {
     return "track_against_map";
   }
+  for (const auto* action : {"pause-mapping", "resume-mapping", "restore-mapping", "start-mapping", "start-localization"}) {
+    if (command == action) {
+      std::replace(command.begin(), command.end(), '-', '_');
+      return command;
+    }
+  }
   return command;
 }
 
@@ -100,23 +107,29 @@ CliConfig parseArgs(int argc, char** argv) {
         "[--timeout-s SECONDS]\n"
         "       slamctl status [--domain-id N] [--timeout-s SECONDS]\n"
         "       slamctl track-against-map [--domain-id N] "
-        "[--timeout-s SECONDS]");
+        "[--timeout-s SECONDS]\n"
+        "       slamctl pause-mapping|resume-mapping [--domain-id N]\n"
+        "       slamctl restore-mapping PATH [--x X --y Y --z Z --yaw YAW] (standalone only)\n"
+        "       slamctl start-mapping|start-localization PATH (standalone only)");
   }
   cfg.command = normalizedCommand(argv[1]);
   if (cfg.command != "load_map" && cfg.command != "relocalize" &&
       cfg.command != "global_relocalize" &&
-      cfg.command != "query_status" && cfg.command != "track_against_map") {
+      cfg.command != "query_status" && cfg.command != "track_against_map" &&
+      cfg.command != "pause_mapping" && cfg.command != "resume_mapping" &&
+      cfg.command != "restore_mapping" && cfg.command != "start_mapping" &&
+      cfg.command != "start_localization") {
     throw std::runtime_error("unsupported command: " + cfg.command);
   }
   int i = 2;
   if (i < argc && std::string(argv[i]).rfind("--", 0) != 0) {
-    if (cfg.command != "load_map") {
+    if (cfg.command != "load_map" && cfg.command != "restore_mapping" && cfg.command != "start_localization") {
       throw std::runtime_error(
           "map paths are selected by ProductControl; relocalization uses the map already loaded by slamd");
     }
     cfg.path = argv[i++];
   }
-  if (cfg.command == "load_map" && cfg.path.empty()) {
+  if ((cfg.command == "load_map" || cfg.command == "restore_mapping" || cfg.command == "start_localization") && cfg.path.empty()) {
     throw std::runtime_error("missing map path");
   }
   for (; i < argc; ++i) {

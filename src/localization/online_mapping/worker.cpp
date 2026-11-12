@@ -80,8 +80,7 @@ struct Worker::State {
     }
   }
 
-  void accept(MappingFrame frame) {
-    if (failed) throw std::runtime_error("LIO-SAM worker failed; new session required");
+  static Frame input(const MappingFrame& frame) {
     online_mapping::Cloud::Ptr cloud(new online_mapping::Cloud);
     cloud->reserve(frame.body_cloud.size());
     for (const auto& point : frame.body_cloud) {
@@ -92,11 +91,21 @@ struct Worker::State {
     const auto& p = frame.keyframe.pose;
     Eigen::Quaterniond q(p.qw,p.qx,p.qy,p.qz);
     const gtsam::Pose3 odom(gtsam::Rot3(q.normalized()), {p.x,p.y,p.z});
-    const auto loop = backend.append({frame.stamp_s, odom, cloud});
+    return {frame.stamp_s, odom, cloud, frame.relocalized};
+  }
+
+  void accept(MappingFrame frame) {
+    if (failed) throw std::runtime_error("LIO-SAM worker failed; new session required");
+    const auto loop = backend.append(input(frame));
     // Backend owns the sole full cloud retained by this worker. The capture
     // journal independently owns the original scan for lossless saving.
     std::vector<Point>().swap(frame.body_cloud);
     frames.push_back(std::move(frame));
+    updatePoses();
+    code = loop.accepted ? "loop_corrected" : "accumulating";
+  }
+
+  void updatePoses() {
     for (std::size_t i=0;i<frames.size();++i) {
       const auto& pose=backend.poses()[i];
       const auto rotation=pose.rotation().toQuaternion();
@@ -109,7 +118,6 @@ struct Worker::State {
       optimized[i] = {frames[i].keyframe.patch_name, {pose.x(),pose.y(),pose.z(),
                       rotation.w(),rotation.x(),rotation.y(),rotation.z()}};
     }
-    code = loop.accepted ? "loop_corrected" : "accumulating";
   }
 
   std::shared_ptr<Snapshot> snapshot(
@@ -127,6 +135,7 @@ struct Worker::State {
     result->optimization_failures = optimization_failures;
     result->online_mapping_config = options.online_mapping;
     result->loop_records = backend.records();
+    result->segment_starts = backend.segmentStarts();
     result->cloud_bytes = backend.cloudBytes();
     if (frames.empty()) return result;
     result->stamp_s = frames.back().stamp_s;
@@ -193,6 +202,32 @@ void Worker::configure(const online_mapping::Config& config) {
   online_mapping::Backend validated(config);
   options_.online_mapping = config;
   reset(epoch_);
+}
+
+std::shared_ptr<const Snapshot> Worker::restore(std::vector<MappingFrame> frames,
+    const std::vector<LoopResult>& records, const Config& config, std::uint64_t source_epoch) {
+  if (busy()) throw std::runtime_error("online_mapping_busy_retry_restore");
+  if (frames.empty() || frames.size() > options_.max_keyframes)
+    throw std::invalid_argument("mapping_archive_exceeds_capacity");
+  auto candidate = std::make_shared<State>(config);
+  std::vector<Frame> inputs;
+  inputs.reserve(frames.size());
+  for (auto& frame : frames) {
+    inputs.push_back(State::input(frame));
+    std::vector<Point>().swap(frame.body_cloud);
+  }
+  candidate->backend.restore(std::move(inputs), records);
+  candidate->frames = std::move(frames);
+  candidate->updatePoses();
+  candidate->code = "mapping_archive_restored";
+  auto options = options_;
+  options.online_mapping = config;
+  const auto snapshot = candidate->snapshot(source_epoch, options);
+  reset(source_epoch);
+  options_ = options;
+  queued_frames_ = candidate->frames.size();
+  state_ = std::move(candidate);
+  return snapshot;
 }
 
 void Worker::reset(std::uint64_t source_epoch) {

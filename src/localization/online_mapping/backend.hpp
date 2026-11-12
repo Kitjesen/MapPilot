@@ -42,6 +42,7 @@ struct Frame {
   double stamp_s;
   gtsam::Pose3 odom;
   Cloud::ConstPtr cloud;
+  bool relocalized = false;
 };
 
 struct LoopResult {
@@ -71,7 +72,8 @@ struct LoopResult {
 gtsam::SharedNoiseModel loopNoise(const Config& config,
                                 const std::array<double, 6>& variance);
 void writeLoopEvidence(std::ostream& out, const Config& config,
-                       const std::vector<LoopResult>& records);
+                       const std::vector<LoopResult>& records,
+                       const std::vector<std::size_t>& segment_starts = {});
 
 // Single background-worker owner. Inputs must be continuous, uncorrected LIO
 // keyframes with body-local deskewed clouds; never previously optimized poses.
@@ -79,14 +81,17 @@ class Backend {
  public:
   explicit Backend(Config config = {});
   LoopResult append(Frame frame);
+  void restore(std::vector<Frame> frames, const std::vector<LoopResult>& records);
   const std::vector<gtsam::Pose3>& poses() const { return poses_; }
   std::size_t loops() const { return loops_; }
   double error() const;
   const std::vector<LoopResult>& records() const { return records_; }
   Cloud::ConstPtr cloud(std::size_t index) const { return frames_.at(index).cloud; }
   std::size_t cloudBytes() const;
+  std::vector<std::size_t> segmentStarts() const;
 
  private:
+  LoopResult append(Frame frame, const LoopResult* recorded);
   Cloud::Ptr submap(const std::vector<std::size_t>& indices) const;
   LoopResult closeLoop();
   void updateEstimates();

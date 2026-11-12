@@ -48,6 +48,27 @@ Backend::Backend(Config config) : config_(config), isam_(parameters()) {
 }
 
 LoopResult Backend::append(Frame frame) {
+  return append(std::move(frame), nullptr);
+}
+
+void Backend::restore(std::vector<Frame> frames, const std::vector<LoopResult>& records) {
+  if (!frames_.empty() || frames.empty() || frames.size() != records.size())
+    throw std::invalid_argument("incomplete mapping archive");
+  for (std::size_t i = 0; i < frames.size(); ++i) {
+    const auto& r = records[i];
+    if (r.current != i || r.stamp_s != frames[i].stamp_s ||
+        (r.accepted && (r.previous < 0 || static_cast<std::size_t>(r.previous) >= i ||
+                        !r.measurement.matrix().allFinite())))
+      throw std::invalid_argument("invalid archived loop identity");
+    if (r.accepted)
+      for (double variance : r.variance)
+        if (!std::isfinite(variance) || variance <= 0)
+          throw std::invalid_argument("invalid archived loop variance");
+    append(std::move(frames[i]), &r);
+  }
+}
+
+LoopResult Backend::append(Frame frame, const LoopResult* recorded) {
   if (!std::isfinite(frame.stamp_s) || !frame.odom.matrix().allFinite() ||
       !frame.cloud || frame.cloud->empty() ||
       (!frames_.empty() && frame.stamp_s <= frames_.back().stamp_s))
@@ -66,6 +87,11 @@ LoopResult Backend::append(Frame frame) {
     const auto delta = frames_.back().odom.between(frame.odom);
     gtsam::Vector6 variance;
     for (int i = 0; i < 6; ++i) variance[i] = config_.odom_variance[i];
+    // Across a restart the link is measured by map registration, not LIO.
+    if (frame.relocalized) {
+      variance.head<3>().setConstant(config_.rotation_sigma_rad * config_.rotation_sigma_rad);
+      variance.tail<3>().setConstant(config_.translation_sigma_m * config_.translation_sigma_m);
+    }
     factors.add(gtsam::BetweenFactor<gtsam::Pose3>(index-1, index, delta,
         gtsam::noiseModel::Diagonal::Variances(variance)));
     initial.insert(index, poses_.back().compose(delta));
@@ -81,8 +107,17 @@ LoopResult Backend::append(Frame frame) {
   filtered_.push_back(filtered);
   updateEstimates();
   const auto started = std::chrono::steady_clock::now();
-  auto result = closeLoop();
-  result.elapsed_ms = std::chrono::duration<double, std::milli>(
+  auto result = recorded ? *recorded : closeLoop();
+  if (recorded && recorded->accepted) {
+    gtsam::NonlinearFactorGraph loops;
+    loops.add(gtsam::BetweenFactor<gtsam::Pose3>(index, recorded->previous,
+        recorded->measurement, loopNoise(config_, recorded->variance)));
+    isam_.update(loops, gtsam::Values());
+    for (int i = 0; i < 6; ++i) isam_.update();
+    updateEstimates();
+    ++loops_;
+  }
+  if (!recorded) result.elapsed_ms = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now()-started).count();
   records_.push_back(result);
   return result;
@@ -372,7 +407,15 @@ std::size_t Backend::cloudBytes() const {
   return bytes;
 }
 
-void writeLoopEvidence(std::ostream& out, const Config& c, const std::vector<LoopResult>& records) {
+std::vector<std::size_t> Backend::segmentStarts() const {
+  std::vector<std::size_t> result;
+  for (std::size_t i = 1; i < frames_.size(); ++i)
+    if (frames_[i].relocalized) result.push_back(i);
+  return result;
+}
+
+void writeLoopEvidence(std::ostream& out, const Config& c, const std::vector<LoopResult>& records,
+                       const std::vector<std::size_t>& segment_starts) {
   out << std::setprecision(17)
       << "{\"schema\":\"lingtu.sam_loops.v1\",\"config\":{\"radius_m\":" << c.radius_m
       << ",\"min_time_s\":" << c.min_time_s << ",\"submap_half_window\":" << c.submap_half_window
@@ -409,6 +452,9 @@ void writeLoopEvidence(std::ostream& out, const Config& c, const std::vector<Loo
     out << "],\"measurement_xyz_qwxyz\":[" << r.measurement.x() << ',' << r.measurement.y() << ','
         << r.measurement.z() << ',' << q.w() << ',' << q.x() << ',' << q.y() << ',' << q.z() << "]}";
   }
+  out << "],\"segment_starts\":[";
+  for (std::size_t i = 0; i < segment_starts.size(); ++i)
+    out << (i ? "," : "") << segment_starts[i];
   out << "]}\n";
 }
 }  // namespace lingtu::localization::online_mapping

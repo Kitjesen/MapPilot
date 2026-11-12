@@ -14,6 +14,7 @@ struct MappingFrame {
   map_optimization::Keyframe keyframe;
   double stamp_s = 0.0;
   std::vector<map_optimization::Point> body_cloud;
+  bool relocalized = false;
 };
 
 struct WorkerOptions {
@@ -37,6 +38,7 @@ struct Snapshot {
   std::size_t optimization_failures = 0;
   online_mapping::Config online_mapping_config;
   std::vector<online_mapping::LoopResult> loop_records;
+  std::vector<std::size_t> segment_starts;
   double worker_ms = 0;
   double preview_ms = 0;
   std::size_t cloud_bytes = 0;
@@ -63,6 +65,8 @@ class Worker {
   void configure(const Config& config);
   const Config& config() const { return options_.online_mapping; }
   EnqueueResult enqueue(MappingFrame frame);
+  std::shared_ptr<const Snapshot> restore(std::vector<MappingFrame> frames,
+      const std::vector<LoopResult>& records, const Config& config, std::uint64_t source_epoch);
   std::shared_ptr<const Snapshot> update();
   bool busy() const { return job_.valid() || !pending_.empty(); }
   bool canEnqueue() const {

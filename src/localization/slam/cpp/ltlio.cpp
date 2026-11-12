@@ -7,6 +7,7 @@
 #include "native_relocalizer.hpp"
 #include "relocalization_gate.hpp"
 #include "localization/online_mapping/worker.hpp"
+#include "localization/online_mapping/archive.hpp"
 #include "localization/map_optimization/pose_math.hpp"
 #include "localization/online_mapping/config_yaml.hpp"
 
@@ -130,6 +131,7 @@ struct PatchSnapshot {
   double stamp_s = 0.0;
   Pose3d pose;
   Cloud cloud;
+  bool relocalized = false;
 };
 
 struct SavedPatch {
@@ -643,6 +645,7 @@ struct SaveCapture {
   std::shared_ptr<const online_mapping::Snapshot> correction;
   std::shared_ptr<const online_mapping::Snapshot> evidence;
   online_mapping::Config online_mapping_config;
+  online_mapping::ArchiveInfo archive_info;
   bool sam_snapshot = false;
   std::uint64_t dropped_patches = 0;
   Eigen::Vector3d lidar_origin;
@@ -762,8 +765,12 @@ Status writeCapturedMapFiles(SaveCapture& capture, SaveComputeState& result) {
     capture.cloud.clear();
     for (std::size_t i = 0; i < capture.patches.size(); ++i) {
       const auto& pose = capture.correction->keyframes[i].pose;
-      capture.patches[i].pose = slamPose(pose);
+      capture.patches[i].pose = slamPose(map_optimization::compose_pose(
+          capture.archive_info.map_from_archive, pose));
     }
+  } else {
+    for (auto& patch : capture.patches)
+      patch.pose = composePoses(slamPose(capture.archive_info.map_from_archive), patch.pose);
   }
   // The localization tree is downsampled. Preserve recorded surface returns
   // even when pose-graph optimization did not run. Without a correction keep
@@ -781,6 +788,9 @@ Status writeCapturedMapFiles(SaveCapture& capture, SaveComputeState& result) {
           map_optimization::inverse_pose(graphPose(capture.patches[anchor].source->pose)));
       sample.odom_body = slamPose(map_optimization::compose_pose(correction, graphPose(sample.odom_body)));
     }
+  } else {
+    for (auto& sample : capture.trajectory)
+      sample.odom_body = composePoses(slamPose(capture.archive_info.map_from_archive), sample.odom_body);
   }
   const auto cloud_status = writeCapturedCloud(capture, result);
   if (!cloud_status.ok) return cloud_status;
@@ -797,7 +807,8 @@ Status writeCapturedMapFiles(SaveCapture& capture, SaveComputeState& result) {
     std::ofstream loops(capture.pcd.parent_path() / "sam_loops.json");
     online_mapping::writeLoopEvidence(loops, capture.online_mapping_config,
         capture.evidence ? capture.evidence->loop_records
-                         : std::vector<online_mapping::LoopResult>{});
+                         : std::vector<online_mapping::LoopResult>{},
+        capture.evidence ? capture.evidence->segment_starts : std::vector<std::size_t>{});
     loops.flush();
     if (!loops) return Status::Error("write_sam_loop_evidence_failed");
     std::ofstream report(capture.pcd.parent_path() / "map_optimization.json");
@@ -816,7 +827,10 @@ Status writeCapturedMapFiles(SaveCapture& capture, SaveComputeState& result) {
     report.flush();
     if (!report) return Status::Error("write_online_graph_report_failed");
   }
-
+  // Replace provenance on every save, so a partial snapshot cannot inherit an old graph marker.
+  online_mapping::writeArchiveInfo(capture.pcd.parent_path(), capture.archive_info,
+      capture.sam_snapshot && capture.evidence && capture.dropped_patches == 0 &&
+      capture.evidence->keyframes.size() == capture.patches.size());
 
   return Status::Ok("map_snapshot_staged");
 }
@@ -964,10 +978,7 @@ class LtlioBackend final : public ISlamBackend {
   ~LtlioBackend() override { clearGeometryExports(); }
 
   std::optional<MapGeometrySnapshot> mapGeometrySnapshot() override {
-    if (mode_ != SlamMode::Mapping) {
-      clearGeometryExports();
-      return std::nullopt;
-    }
+    if (mode_ != SlamMode::Mapping) return std::nullopt;
     if ((geometry_pending_ && geometry_pending_->reset_epoch != source_epoch_) ||
         (geometry_confirmed_ && geometry_confirmed_->reset_epoch != source_epoch_))
       clearGeometryExports();
@@ -995,7 +1006,7 @@ class LtlioBackend final : public ISlamBackend {
       if (complete) {
         std::vector<SavedPatch> patches;
         for (std::size_t i = 0; i < keyframes.size(); ++i) {
-          const auto map_pose = composePoses(has_map_lio_pose_ ? map_lio_pose_ : Pose3d{},
+          const auto map_pose = composePoses(mapFromArchive(),
                                              slamPose(keyframes[i].pose));
           patches.push_back({patch_history_[i], map_pose});
         }
@@ -1076,24 +1087,120 @@ class LtlioBackend final : public ISlamBackend {
   }
 
   Status setMode(SlamMode mode, const std::string& map_path) override {
-    mode_ = mode;
-    map_path_ = map_path;
-    if (mode_ == SlamMode::Mapping) {
-      advanceRelocalizationMapEpoch();
-      map_loaded_ = false;
-      map_bounds_ready_ = false;
-    }
-    if (mode_ == SlamMode::Localization && !map_path.empty()) {
+    if (save_job_) return Status::Error("map_snapshot_in_progress");
+    if (mode == SlamMode::Mapping && !map_path.empty()) return restoreMapping(map_path);
+    if (mode == SlamMode::Mapping && restore_needs_alignment_)
+      return Status::Error("mapping_restore_relocalization_required");
+    if (mode == SlamMode::Mapping && !mapping_reference_compatible_)
+      return Status::Error("mapping_reference_mismatch");
+    if (mode == SlamMode::Localization && !map_path.empty()) {
       const Status status = loadMap(map_path);
-      if (!status.ok) {
-        state_ = SlamState::Lost;
-        reason_ = status.message;
-        return status;
-      }
+      if (!status.ok) return status;
+      has_map_lio_pose_ = false;
+      map_lio_pose_ = Pose3d{};
+      map_body_pose_at_relocalization_.reset();
+      map_cloud_map_.reset();
+      relocalization_state_ = "required";
     }
+    advanceRelocalizationMapEpoch();
+    mode_ = mode;
+    if (!map_path.empty()) map_path_ = map_path;
+    mapping_paused_ = false;
     state_ = mode_ == SlamMode::Mapping ? SlamState::Mapping : SlamState::Localizing;
     reason_ = "mode_set";
     return Status::Ok(reason_);
+  }
+
+  Status pauseMapping(bool paused) override {
+    if (mode_ != SlamMode::Mapping) return Status::Error("mapping_mode_required");
+    mapping_paused_ = paused;
+    updateOnlineMapping();
+    return Status::Ok(paused ? "mapping_paused" : "mapping_resumed");
+  }
+
+  Status restoreMapping(const std::string& map_path) override {
+    if (save_job_ || online_mapping_.busy()) return Status::Error("mapping_busy_retry_restore");
+    if (!patch_history_.empty()) return Status::Error("mapping_archive_already_active");
+    try {
+      const auto pcd = mapPcdPath(map_path);
+      auto archive = online_mapping::readArchive(pcd.parent_path(),
+          std::min(runtime_config_.max_patch_snapshots, online_mapping_.capacity()));
+      const auto expected = archiveInfo();
+      const auto samePose = [](const auto& a, const auto& b) {
+        const auto delta = map_optimization::compose_pose(a, map_optimization::inverse_pose(b));
+        return std::hypot(delta.x, delta.y, delta.z) < 1e-8 &&
+            std::hypot(delta.qx, delta.qy, delta.qz) < 1e-8;
+      };
+      if (archive.info.map_frame != expected.map_frame || archive.info.body_frame != expected.body_frame ||
+          !samePose(archive.info.body_from_imu, expected.body_from_imu) ||
+          !samePose(archive.info.imu_from_lidar, expected.imu_from_lidar))
+        return Status::Error("mapping_archive_calibration_mismatch");
+      auto relocalizer = std::make_shared<NativeRelocalizer>();
+      std::string message;
+      if (!relocalizer->loadMap(pcd.string(), &message)) return Status::Error(message);
+      CloudType cloud;
+      if (pcl::io::loadPCDFile<PointType>(pcd.string(), cloud) < 0)
+        return Status::Error("map_pcd_load_failed");
+      std::deque<std::shared_ptr<const PatchSnapshot>> patches;
+      for (const auto& frame : archive.frames) {
+        auto patch = std::make_shared<PatchSnapshot>();
+        patch->name = frame.keyframe.patch_name;
+        patch->sequence = archive.next_sequence - archive.frames.size() + patches.size();
+        if (patchName(patch->sequence) != patch->name)
+          return Status::Error("mapping_archive_patch_sequence_mismatch");
+        patch->stamp_s = frame.stamp_s;
+        patch->pose = slamPose(frame.keyframe.pose);
+        patch->relocalized = frame.relocalized;
+        patch->cloud.frame_id = config_.body_frame;
+        patch->cloud.stamp_s = frame.stamp_s;
+        for (const auto& p : frame.body_cloud) {
+          PointXYZIT point;
+          point.x=p.x; point.y=p.y; point.z=p.z; point.intensity=p.intensity;
+          patch->cloud.points.push_back(point);
+        }
+        patches.push_back(std::move(patch));
+      }
+      std::vector<OdomSample> trajectory;
+      std::ifstream input(pcd.parent_path() / "trajectory.raw.txt");
+      OdomSample sample;
+      while (input >> sample.stamp_s >> sample.odom_body.x >> sample.odom_body.y >> sample.odom_body.z
+                   >> sample.odom_body.qx >> sample.odom_body.qy >> sample.odom_body.qz >> sample.odom_body.qw) {
+        if (!finite(sample.stamp_s) || !validPose(sample.odom_body))
+          return Status::Error("mapping_archive_invalid_trajectory");
+        trajectory.push_back(sample);
+      }
+      if (!input.eof() || trajectory.empty()) return Status::Error("mapping_archive_invalid_trajectory");
+      const auto restored = online_mapping_.restore(std::move(archive.frames), archive.records,
+                                                    archive.config, source_epoch_);
+      global_mapping_ = restored;
+      archive_source_epoch_ = archive.info.source_epoch;
+      mapping_reference_compatible_ = true;
+      online_mapping_state_ = restored->code;
+      patch_history_ = std::move(patches);
+      pose_history_ = std::move(trajectory);
+      next_patch_to_queue_ = patch_history_.size();
+      patch_sequence_ = archive.next_sequence;
+      last_patch_stamp_s_ = patch_history_.back()->stamp_s;
+      last_patch_pose_ = patch_history_.back()->pose;
+      has_last_patch_pose_ = true;
+      archive_from_saved_map_ = inversePose(slamPose(archive.info.map_from_archive));
+      restore_needs_alignment_ = true;
+      relocalizer_ = std::move(relocalizer);
+      updateMapBounds(cloud);
+      advanceRelocalizationMapEpoch();
+      map_loaded_ = true;
+      has_map_lio_pose_ = false;
+      saved_map_points_ = static_cast<int>(cloud.size());
+      map_path_ = pcd.string();
+      mode_ = SlamMode::Localization;
+      mapping_paused_ = true;
+      state_ = SlamState::Localizing;
+      relocalization_state_ = "required";
+      reason_ = "mapping_restored_relocalization_required";
+      return Status::Ok(reason_);
+    } catch (const std::exception& error) {
+      return Status::Error(std::string("mapping_restore_failed: ") + error.what());
+    }
   }
 
   Status feedImu(const ImuSample& sample) override {
@@ -1540,6 +1647,7 @@ class LtlioBackend final : public ISlamBackend {
     capture.pcd = mapPcdPath(pcd_path);
     capture.sam_snapshot = mode_ == SlamMode::Mapping;
     capture.online_mapping_config = online_mapping_.config();
+    capture.archive_info = archiveInfo();
     if (capture.sam_snapshot) capture.evidence = global_mapping_;
     capture.trajectory = pose_history_;
     capture.patches.reserve(patch_history_.size());
@@ -1553,24 +1661,31 @@ class LtlioBackend final : public ISlamBackend {
     const bool capacity_reached = mappingCapacityReached();
     if (capacity_reached) {
       // The map archive is frozen, while LIO continues matching new scans.
-      capture.stamp_s = patch_history_.back()->stamp_s;
+      const double archive_stamp = patch_history_.back()->stamp_s;
+      if (patch_history_.back()->observation_sequence != 0)
+        capture.stamp_s = archive_stamp - archive_time_offset_s_;
       capture.trajectory.erase(std::remove_if(capture.trajectory.begin(), capture.trajectory.end(),
-          [&](const OdomSample& sample) { return sample.stamp_s > capture.stamp_s; }),
+          [&](const OdomSample& sample) { return sample.stamp_s > archive_stamp; }),
           capture.trajectory.end());
     }
     if (corrected_save) {
       capture.correction = global_mapping_;
     } else if (!capacity_reached && runtime_config_.odom_prior_enabled && !odom_prior_map_.empty()) {
       capture.cloud = odomPriorMapPclCloud();
+      if (has_map_lio_pose_) {
+        CloudType::Ptr local(new CloudType(std::move(capture.cloud)));
+        capture.cloud = *transformCloud(local, rotationFromPose(map_lio_pose_),
+            V3D(map_lio_pose_.x, map_lio_pose_.y, map_lio_pose_.z));
+      }
     } else if (!capacity_reached && frontend_) {
       // Static scan patches remain authoritative after any transport: the
       // upstream local matching tree may still contain cabin surfaces.
       if (frontend_result_ && !frontend_result_->state.in_elevator &&
           frontend_result_->elevator.entries == 0) {
         const auto cloud = frontend_->mapSnapshot();
-        capture.cloud = *transformCloud(cloud,
-            rotationFromPose(frontend_anchor_),
-            V3D(frontend_anchor_.x, frontend_anchor_.y, frontend_anchor_.z));
+        const auto transform = composePoses(has_map_lio_pose_ ? map_lio_pose_ : Pose3d{}, frontend_anchor_);
+        capture.cloud = *transformCloud(cloud, rotationFromPose(transform),
+            V3D(transform.x, transform.y, transform.z));
       }
     }
     // During transport, static patches are the save source. The cabin-relative
@@ -1581,7 +1696,7 @@ class LtlioBackend final : public ISlamBackend {
     auto compute = std::make_shared<SaveComputeState>();
     AsyncSaveJob job;
     job.source_epoch = source_epoch_;
-    job.observation_sequence = capacity_reached
+    job.observation_sequence = capacity_reached && patch_history_.back()->observation_sequence != 0
         ? patch_history_.back()->observation_sequence : observation_sequence_;
     job.compute = compute;
     try {
@@ -1642,8 +1757,17 @@ class LtlioBackend final : public ISlamBackend {
     if (!candidate->loadMap(pcd.string(), &relocalizer_message)) {
       return Status::Error(relocalizer_message);
     }
+    bool compatible = patch_history_.empty() && mapping_reference_compatible_;
+    if (!compatible) {
+      try {
+        compatible = online_mapping::readArchiveInfo(pcd.parent_path()).source_epoch == archive_source_epoch_;
+      } catch (const std::exception&) {
+        // Fixed-map localization remains supported; it cannot resume an unrelated graph.
+      }
+    }
     // A failed candidate must leave the current map, bounds and alignment usable.
     relocalizer_ = std::move(candidate);
+    mapping_reference_compatible_ = compatible;
     updateMapBounds(cloud);
     advanceRelocalizationMapEpoch();
     saved_map_cloud_map_.reset();
@@ -1862,9 +1986,28 @@ class LtlioBackend final : public ISlamBackend {
     }
   }
 
+  Pose3d mapFromArchive() const {
+    return composePoses(has_map_lio_pose_ ? map_lio_pose_ : Pose3d{}, inversePose(archive_from_lio_));
+  }
+
+  online_mapping::ArchiveInfo archiveInfo() const {
+    const auto pose = [](const M3D& rotation, const V3D& translation) {
+      const Eigen::Quaterniond q(rotation);
+      return map_optimization::Pose{translation.x(), translation.y(), translation.z(),
+                                    q.w(), q.x(), q.y(), q.z()};
+    };
+    return {archive_source_epoch_, graphPose(mapFromArchive()),
+        pose(runtime_config_.navigation_body_from_imu_rotation, runtime_config_.navigation_body_from_imu_translation),
+        pose(frontend_config_.imu_from_lidar_rotation, frontend_config_.imu_from_lidar_translation),
+        config_.map_frame, config_.body_frame};
+  }
+
   void recordTrajectory(const OdomSample& sample) {
-    if (mappingCapacityReached()) return;
-    pose_history_.push_back(sample);
+    if (mode_ != SlamMode::Mapping || mapping_paused_ || mappingCapacityReached()) return;
+    auto stored = sample;
+    stored.stamp_s += archive_time_offset_s_;
+    stored.odom_body = composePoses(archive_from_lio_, sample.odom_body);
+    pose_history_.push_back(stored);
     if (pose_history_.size() > 10000) pose_history_.erase(pose_history_.begin());
   }
 
@@ -2349,6 +2492,13 @@ class LtlioBackend final : public ISlamBackend {
         ? composePoses(result.map_odom, inversePose(lio_from_odom_)) : result.map_odom;
     map_body_pose_at_relocalization_ = result.map_body;
     has_map_lio_pose_ = true;
+    if (restore_needs_alignment_) {
+      archive_from_lio_ = composePoses(archive_from_saved_map_, map_lio_pose_);
+      archive_time_offset_s_ = std::max(0.0,
+          last_patch_stamp_s_ + std::max(0.001, runtime_config_.patch_min_interval_s) - last_stamp_s_);
+      next_patch_relocalized_ = true;
+      restore_needs_alignment_ = false;
+    }
     if (registered_cloud_body_ && odometry_lio_body_) {
       auto map_cloud = std::make_shared<Cloud>(*registered_cloud_body_);
       map_cloud->frame_id = config_.map_frame;
@@ -2443,7 +2593,9 @@ class LtlioBackend final : public ISlamBackend {
     const bool preserve_catastrophic_fault = catastrophic_health_fault_latched_;
     const std::string preserved_catastrophic_reason = catastrophic_health_fault_reason_;
     const auto saved_relocalizer = relocalizer_;
+    const bool had_archive = !patch_history_.empty();
     resetCore();
+    if (had_archive) mapping_reference_compatible_ = false;
     relocalizer_ = saved_relocalizer;
     last_stamp_s_ = new_timestamp_s;
     has_map_lio_pose_ = false;
@@ -2467,8 +2619,16 @@ class LtlioBackend final : public ISlamBackend {
   void resetCore() {
     clearGeometryExports();
     ++source_epoch_;
+    archive_source_epoch_ = source_epoch_;
+    mapping_reference_compatible_ = true;
     online_mapping_.reset(source_epoch_);
     global_mapping_.reset();
+    mapping_paused_ = false;
+    restore_needs_alignment_ = false;
+    next_patch_relocalized_ = false;
+    archive_from_lio_ = Pose3d{};
+    archive_from_saved_map_ = Pose3d{};
+    archive_time_offset_s_ = 0.0;
     global_map_cloud_.reset();
     online_mapping_state_ = "waiting_for_keyframes";
     resetFrontend();
@@ -2721,17 +2881,17 @@ class LtlioBackend final : public ISlamBackend {
   }
 
   void recordPatchSnapshot() {
-    if (mappingCapacityReached()) return;
+    if (mode_ != SlamMode::Mapping || mapping_paused_ || mappingCapacityReached()) return;
     if (!(registered_cloud_body_ != nullptr) || registered_cloud_body_->points.empty()) {
       return;
     }
     if (!odometry_lio_body_.has_value()) {
       return;
     }
-    const double stamp = registered_cloud_body_->stamp_s > 0.0
+    const double stamp = (registered_cloud_body_->stamp_s > 0.0
         ? registered_cloud_body_->stamp_s
-        : last_stamp_s_;
-    const Pose3d pose = *odometry_lio_body_;
+        : last_stamp_s_) + archive_time_offset_s_;
+    const Pose3d pose = composePoses(archive_from_lio_, *odometry_lio_body_);
     const double min_interval_s = std::max(0.0, runtime_config_.patch_min_interval_s);
     const double min_translation_m = std::max(0.0, runtime_config_.patch_min_translation_m);
     const double min_rotation_rad = std::max(0.0, runtime_config_.patch_min_rotation_rad);
@@ -2748,7 +2908,7 @@ class LtlioBackend final : public ISlamBackend {
       if (!time_ready) {
         return;
       }
-      if (!motion_ready && !rotation_ready) {
+      if (!motion_ready && !rotation_ready && !next_patch_relocalized_) {
         return;
       }
     }
@@ -2760,6 +2920,8 @@ class LtlioBackend final : public ISlamBackend {
     patch->stamp_s = stamp;
     patch->pose = pose;
     patch->cloud = *registered_cloud_body_;
+    patch->relocalized = next_patch_relocalized_;
+    next_patch_relocalized_ = false;
     patch_history_.push_back(std::move(patch));
     pumpOnlineMappingFrames();
     const std::size_t max_snapshots =
@@ -2782,9 +2944,9 @@ class LtlioBackend final : public ISlamBackend {
       if (!update->keyframes.empty()) {
         auto cloud = std::make_shared<Cloud>();
         cloud->frame_id = config_.map_frame;
-        cloud->stamp_s = update->stamp_s;
+        cloud->stamp_s = update->stamp_s - archive_time_offset_s_;
         cloud->points.reserve(update->cloud.size());
-        const Pose3d tf = has_map_lio_pose_ ? map_lio_pose_ : Pose3d{};
+        const Pose3d tf = mapFromArchive();
         // One transform per snapshot; keep double precision until the output.
         const Eigen::Matrix3d rotation =
             Eigen::Quaterniond(tf.qw, tf.qx, tf.qy, tf.qz).toRotationMatrix();
@@ -2847,6 +3009,7 @@ class LtlioBackend final : public ISlamBackend {
       online_mapping::MappingFrame frame;
       frame.keyframe = {patch.name, graphPose(patch.pose)};
       frame.stamp_s = patch.stamp_s;
+      frame.relocalized = patch.relocalized;
       frame.body_cloud.reserve(patch.cloud.points.size());
       for (const auto& point : patch.cloud.points)
         frame.body_cloud.push_back({point.x, point.y, point.z, point.intensity});
@@ -3017,6 +3180,14 @@ class LtlioBackend final : public ISlamBackend {
   std::uint64_t saved_map_observation_sequence_ = 0U;
   std::uint64_t saved_map_revision_ = 0;
   online_mapping::Worker online_mapping_;
+  bool mapping_paused_ = false;
+  bool restore_needs_alignment_ = false;
+  bool next_patch_relocalized_ = false;
+  Pose3d archive_from_lio_;
+  std::uint64_t archive_source_epoch_ = 0;
+  bool mapping_reference_compatible_ = true;
+  Pose3d archive_from_saved_map_;
+  double archive_time_offset_s_ = 0.0;
   std::shared_ptr<const online_mapping::Snapshot> global_mapping_;
   std::filesystem::path geometry_root_;
   std::optional<MapGeometrySnapshot> geometry_pending_;

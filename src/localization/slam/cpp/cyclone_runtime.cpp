@@ -1959,11 +1959,14 @@ int main(int argc, char** argv) {
     if (!status.ok) {
       throw std::runtime_error("SLAM configure failed: " + status.message);
     }
-    const SlamMode runtime_mode = modeFromString(cli.mode);
-    status = backend->setMode(runtime_mode, cli.map_path);
+    SlamMode runtime_mode = modeFromString(cli.mode);
+    bool resume_after_alignment = runtime_mode == SlamMode::Mapping && !cli.map_path.empty();
+    status = resume_after_alignment ? backend->restoreMapping(cli.map_path)
+                                    : backend->setMode(runtime_mode, cli.map_path);
     if (!status.ok) {
-      std::fprintf(stderr, "SLAM mode set returned: %s\n", status.message.c_str());
+      throw std::runtime_error("SLAM mode set failed: " + status.message);
     }
+    if (resume_after_alignment) runtime_mode = SlamMode::Localization;
 
     DdsRuntime dds(cli.domain_id);
     const auto period = std::chrono::duration<double>(1.0 / cli.tick_hz);
@@ -2016,7 +2019,7 @@ int main(int argc, char** argv) {
     bool track_against_map_enabled =
         runtime_mode == SlamMode::Localization &&
         !cli.map_path.empty() &&
-        (!product_managed || envOrEmpty("LINGTU_ENV") == "sim");
+        (resume_after_alignment || !product_managed || envOrEmpty("LINGTU_ENV") == "sim");
     const bool repeat_track_against_map = cli.track_against_map_period_s > 0.0;
     std::string track_against_map_path = cli.map_path;
     std::optional<Pose3d> track_against_map_seed = startup_track_seed;
@@ -2204,6 +2207,46 @@ int main(int argc, char** argv) {
               out,
               runtime_mode == SlamMode::Localization,
               track_against_map_enabled,
+              track_against_map_failures);
+          dds.writeRelocalizationResponse(response.msg);
+          return;
+        }
+        if (action == "pause_mapping" || action == "resume_mapping" ||
+            action == "restore_mapping" || action == "start_mapping" || action == "start_localization") {
+          const std::string path = request.map_path ? request.map_path : "";
+          if (manual_relocalization.pending() || backend->relocalizeAsyncInFlight()) {
+            command_status = Status::Error("async_relocalization_in_progress");
+          } else if (product_managed && action != "pause_mapping" && action != "resume_mapping") {
+            command_status = Status::Error("product_control_mode_switch_required");
+          } else if ((action == "restore_mapping" || action == "start_localization") && path.empty()) {
+            command_status = Status::Error("missing_map_path");
+          } else if (action == "pause_mapping" || action == "resume_mapping") {
+            command_status = backend->pauseMapping(action == "pause_mapping");
+          } else if (action == "restore_mapping") {
+            command_status = backend->restoreMapping(path);
+            if (command_status.ok) {
+              runtime_mode = SlamMode::Localization;
+              resume_after_alignment = true;
+            }
+          } else {
+            const auto mode = action == "start_mapping" ? SlamMode::Mapping : SlamMode::Localization;
+            command_status = backend->setMode(mode, path);
+            if (command_status.ok) {
+              runtime_mode = mode;
+              resume_after_alignment = false;
+            }
+          }
+          if (command_status.ok && action != "pause_mapping" && action != "resume_mapping") {
+            track_against_map_path = path;
+            track_against_map_seed = request.has_initial_pose
+                ? std::optional<Pose3d>{poseFromDds(request.initial_pose)} : std::nullopt;
+            track_against_map_enabled = runtime_mode == SlamMode::Localization;
+            last_track_against_map_s = 0;
+            last_track_against_map_scan_s = -1;
+            track_against_map_failures = 0;
+          }
+          auto response = relocalizationResponse(request, command_status.ok, command_status.message,
+              backend->outputs(), runtime_mode == SlamMode::Localization, track_against_map_enabled,
               track_against_map_failures);
           dds.writeRelocalizationResponse(response.msg);
           return;
@@ -2515,6 +2558,15 @@ int main(int argc, char** argv) {
         }
       }
       travel_distance.update(out);
+      if (resume_after_alignment && out.relocalization_state == "completed" && out.map_odom_tf) {
+        const auto resumed = backend->setMode(SlamMode::Mapping, {});
+        if (resumed.ok) {
+          runtime_mode = SlamMode::Mapping;
+          resume_after_alignment = false;
+          track_against_map_enabled = false;
+          out = backend->outputs();
+        }
+      }
       dds.drainGeometryApplied([&](const lingtu_dds_SlamMapGeometryApplied& ack) {
         backend->acknowledgeMapGeometry(ack.reset_epoch, ack.graph_revision, ack.success,
                                         ack.message ? ack.message : "");

@@ -171,6 +171,7 @@ void frontendInsertionAndRejection() {
     config.blind_m = 0.1;
     config.scan_resolution = 0.25;
     config.map_resolution = 0.01;
+    config.stationary_thresh = 0.0; // Exercise insertion on each stationary scan.
     config.max_update_translation_m = 0.001;
     lio::Frontend frontend(config);
     int imu_index = 0;

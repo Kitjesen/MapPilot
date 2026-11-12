@@ -10,8 +10,8 @@ targets. Its Markdown files are documentation, not runtime inputs:
 - [迁移记录](../../../docs/research/localization-opt-migration.md) is a historical migration and acceptance record. It preserves
   past decisions, measurements, warnings, and field evidence; changing it does
   not change the running system.
-- [后续计划](../../../docs/roadmap/localization-opt-next-steps.md) is the active work plan for the remaining map-optimization
-  gates. It is not a second scheduler or a build configuration.
+- [September handoff](../../../docs/operations/localization-opt-handoff-20260917.md) records the 2026-09-17 migration context.
+  Current delivery priorities belong to the [Roadmap](../../../docs/roadmap.md#current-delivery-cycle).
 
 When these documents disagree with CMake or code, use the code and the current
 tests as the source of runtime behavior. Keep product policy and deployment

@@ -318,6 +318,8 @@ class ISlamBackend {
 
   virtual Status configure(const SlamConfig&) = 0;
   virtual Status setMode(SlamMode mode, const std::string& map_path) = 0;
+  virtual Status pauseMapping(bool) { return Status::Error("mapping_pause_unsupported"); }
+  virtual Status restoreMapping(const std::string&) { return Status::Error("mapping_restore_unsupported"); }
   // Estimator transport mode. This does not command the robot or an elevator.
   virtual Status setElevator(bool) { return Status::Error("elevator_unsupported"); }
 

@@ -43,6 +43,26 @@ Explicit adaptations:
   including target membership, accepted measurement/noise and rejection reason.
 - GPS factors and the unused external-loop ROS interface are not included.
 
+2026-11-09 mapping archive continuation (local adaptation):
+
+- Restore the original keyframe odometry and accepted loop measurements into
+  a new iSAM2 using the saved noise/configuration. Do not rerun old ICP decisions
+  or use corrected output poses as new odometry measurements. Pending unaccepted
+  hypotheses are reverified by subsequent new scans.
+- A restarted estimator has no continuous odometry link to the old session.
+  After verified map registration, the first new frame carries an explicit
+  registration link with the existing translation/rotation verification sigmas,
+  rather than claiming the upstream odometry variance for that gap. Those
+  sigmas are engineering values, not a measured registration covariance.
+- Reuse the saved source epoch as private archive provenance so localization
+  against an unrelated map cannot silently resume the retained graph. Product
+  run identity remains `product_session_id`.
+- Matched native test: restoring the same 22-frame closed-loop fixture retains
+  node/loop counts and anchored positions within 1e-8 m; then a registered new
+  segment is appended. Cross-process and DDS evidence is recorded in
+  `docs/research/mapping-restore-20261109.md`. This is not an upstream feature
+  parity claim or a field qualification.
+
 This is an extracted backend candidate, not a claim that the entire LIO-SAM
 sensor pipeline has been ported or that the production process already uses it.
 The ROS Velodyne/Ouster feature frontend is not substituted for MID-360 Fast-LIO.

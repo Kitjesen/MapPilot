@@ -912,6 +912,7 @@ def _odometry_from_status_snapshot(payload: Mapping[str, Any]) -> Odometry | Non
             orientation=orientation,
         ),
         twist=Twist(linear=linear, angular=angular),
+        twist_available=True,
         ts=_float(payload.get("stamp_s"), 0.0),
         frame_id=str(raw_odom.get("frame_id") or topic_default_frame_id(TOPICS.odometry)),
         child_frame_id=str(raw_odom.get("child_frame_id") or body_frame_id()),

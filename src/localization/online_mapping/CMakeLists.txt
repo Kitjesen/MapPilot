@@ -26,6 +26,8 @@ if(TARGET yaml-cpp::yaml-cpp)
 else()
   set(ONLINE_MAPPING_YAML_TARGET yaml-cpp)
 endif()
+target_sources(lingtu_online_mapping PRIVATE archive.cpp)
+target_link_libraries(lingtu_online_mapping PRIVATE lingtu_mapping_io ${ONLINE_MAPPING_YAML_TARGET})
 add_executable(lt_mapping_replay "${LINGTU_ROOT}/tools/diagnostics/mapping_replay.cpp")
 target_link_libraries(lt_mapping_replay PRIVATE
   lingtu_online_mapping lingtu_mapping_io ${ONLINE_MAPPING_YAML_TARGET})
