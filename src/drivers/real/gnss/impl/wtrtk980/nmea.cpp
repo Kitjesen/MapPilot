@@ -71,8 +71,12 @@ void parse_rmc(const std::vector<std::string>& parts, lingtu::gnss::FixSample& s
   if (parts.size() > 1 && !parts[1].empty()) {
     state.timestamp_utc = parts[1];
   }
-  if (parts.size() > 2 && parts[2] == "A" && state.fix_type == 0) {
-    state.fix_type = 1;
+  if (parts.size() > 2) {
+    if (parts[2] != "A") {
+      state.fix_type = 0;
+    } else if (state.fix_type == 0) {
+      state.fix_type = 1;
+    }
   }
   if (parts.size() > 6) {
     state.latitude_deg = nmea_coord_to_decimal(parts[3], parts[4]);

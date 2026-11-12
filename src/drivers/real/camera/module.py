@@ -413,6 +413,10 @@ class OrbbecNativeCameraModule(Module, layer=1):
         elif kind == _KIND_DEPTH:
             self._publish_depth(record)
 
+    def get_camera_intrinsics(self) -> CameraIntrinsics | None:
+        """Return the latest source color calibration after mounting rotation."""
+        return self._last_info
+
     def _publish_intrinsics(self, record: dict[str, object]) -> None:
         intrinsics = CameraIntrinsics(
             fx=float(record["fx"]),
@@ -421,6 +425,7 @@ class OrbbecNativeCameraModule(Module, layer=1):
             cy=float(record["cy"]),
             width=int(record["width"]),
             height=int(record["height"]),
+            frame_id=self._frame_id,
             depth_scale=float(record["depth_scale"]) or 0.001,
             dist_k1=float(record.get("dist_k1", 0.0)),
             dist_k2=float(record.get("dist_k2", 0.0)),
@@ -496,6 +501,7 @@ class OrbbecNativeCameraModule(Module, layer=1):
                 cy=float(cx),
                 width=h,
                 height=w,
+                frame_id=intrinsics.frame_id,
                 depth_scale=intrinsics.depth_scale,
                 dist_k1=intrinsics.dist_k1,
                 dist_k2=intrinsics.dist_k2,
@@ -511,6 +517,7 @@ class OrbbecNativeCameraModule(Module, layer=1):
                 cy=float(h - 1 - cy),
                 width=w,
                 height=h,
+                frame_id=intrinsics.frame_id,
                 depth_scale=intrinsics.depth_scale,
                 dist_k1=intrinsics.dist_k1,
                 dist_k2=intrinsics.dist_k2,
@@ -523,9 +530,10 @@ class OrbbecNativeCameraModule(Module, layer=1):
                 fx=fy,
                 fy=fx,
                 cx=float(cy),
-                cy=float(w - cx),
+                cy=float(w - 1 - cx),
                 width=h,
                 height=w,
+                frame_id=intrinsics.frame_id,
                 depth_scale=intrinsics.depth_scale,
                 dist_k1=intrinsics.dist_k1,
                 dist_k2=intrinsics.dist_k2,

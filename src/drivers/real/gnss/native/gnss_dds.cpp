@@ -23,11 +23,13 @@ int main(int argc, char** argv) {
   std::signal(SIGINT, stop_signal);
   std::signal(SIGTERM, stop_signal);
 
+  std::optional<lingtu::drivers::gnss::Module> module;
   try {
-    auto module = lingtu::drivers::gnss::Module(
-        lingtu::drivers::gnss::config_from_args(argc, argv));
-    const auto& cfg = module.config();
-    auto& status = module.status();
+    module.emplace(lingtu::drivers::gnss::config_from_args(argc, argv));
+    const auto& cfg = module->config();
+    auto& status = module->status();
+    status.device = cfg.device;
+    lingtu::drivers::gnss::write_status_file(cfg.status_file, status);
 
     lingtu::drivers::gnss::DdsModule dds(cfg);
     lingtu::drivers::wtrtk980::SerialReader reader(cfg.device, cfg.baud, cfg.timeout_ms);
@@ -49,9 +51,9 @@ int main(int argc, char** argv) {
       const auto line = reader.read_line();
       const double stamp_s = lingtu::drivers::gnss::now_seconds();
       if (!line) {
-        if (stamp_s >= next_status_s) {
-          status.last_error = "nmea_timeout";
-          status.last_ts = stamp_s;
+        const bool had_location = status.location.has_value();
+        status.update({}, "nmea_timeout", stamp_s);
+        if (had_location || stamp_s >= next_status_s) {
           lingtu::drivers::gnss::write_status_file(cfg.status_file, status);
           next_status_s = stamp_s + 1.0;
         }
@@ -63,6 +65,7 @@ int main(int argc, char** argv) {
         continue;
       }
 
+      const bool had_location = status.location.has_value();
       const auto& fix = parser.state();
       const std::string error = fix.has_fix ? "" : "no_fix";
       dds.publish_status(fix, reader.device(), error, stamp_s, status);
@@ -74,7 +77,7 @@ int main(int argc, char** argv) {
         }
       }
 
-      if (stamp_s >= next_status_s) {
+      if ((had_location && !status.location) || stamp_s >= next_status_s) {
         lingtu::drivers::gnss::write_status_file(cfg.status_file, status);
         next_status_s = stamp_s + 1.0;
       }
@@ -86,6 +89,10 @@ int main(int argc, char** argv) {
     lingtu::drivers::gnss::write_status_file(cfg.status_file, status);
     return 0;
   } catch (const std::exception& exc) {
+    if (module) {
+      module->status().update({}, exc.what(), lingtu::drivers::gnss::now_seconds());
+      lingtu::drivers::gnss::write_status_file(module->config().status_file, module->status());
+    }
     std::fprintf(stderr, "lingtu_gnss_dds failed: %s\n", exc.what());
     return 1;
   }

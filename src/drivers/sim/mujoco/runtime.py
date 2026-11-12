@@ -157,15 +157,15 @@ class LiveViewer:
             navigation_message = str(gate.get("reason") or "waiting for navigation status")
         elif safety.get("applied") and safety.get("stopped"):
             reason = safety.get("reason")
-            navigation_message = (
-                "Obstacle within stopping distance; stopped"
-                if reason == "scan_actual_motion_blocked"
-                else "Stopped: " + str(reason or "motion blocked")
-            )
-        elif not health.get("ready"):
-            navigation_message = str(health.get("reason") or "waiting for control loop health")
-        elif authority.get("control_loop_hold"):
-            navigation_message = "control loop motion hold"
+            navigation_message = {
+                "brake_blocked": "Obstacle within stopping distance; stopped",
+                "cmd_blocked": "Candidate command has no braking space",
+                # Recorded sessions retain the earlier reason names.
+                "scan_actual_motion_blocked": "Obstacle within stopping distance; stopped",
+                "scan_command_motion_blocked": "Candidate command has no braking space",
+            }.get(reason, "Stopped: " + str(reason or "motion blocked"))
+        elif authority.get("hold_reason"):
+            navigation_message = str(authority["hold_reason"])
         elif plan.get("reason") == "planning":
             navigation_message = "planning route..."
         elif local.get("active"):
@@ -184,7 +184,7 @@ class LiveViewer:
             navigation_message = "ready for a goal"
         controls = "Left click: goal | Drag: orbit"
         status_text = message + "\nNavigation: " + navigation_message
-        if health.get("ready") and not health.get("healthy") and not authority.get("control_loop_hold"):
+        if health.get("ready") and not health.get("healthy"):
             status_text += "\nTiming warning: " + str(health.get("reason") or "control loop delayed")
         if self._read_keyboard_status is not None:
             controls += "\nWASD: move | Q/E: turn | Space: stop"

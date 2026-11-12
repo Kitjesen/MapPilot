@@ -9,7 +9,7 @@ The Go2/NX live result below does not establish that Thunder or G20 is ready.
 The [delivery and acceptance guide](DELIVERY.md) records the supported-source
 matrix, effective device configuration, release procedure and remaining field
 qualification. A source adapter or active service is not a product acceptance.
-For isolated receiver qualification, the [foreground video Gateway](../../../../../gateway/VIDEO_TEST.md)
+For isolated receiver qualification, the [foreground video Gateway](../../../../../gateway/VIDEO_PROBE.md)
 exposes real status and WHEP without starting a navigation Product. It is a
 development test entry point, not a camera-only production deployment mode.
 

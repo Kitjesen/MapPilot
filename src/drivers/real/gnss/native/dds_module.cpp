@@ -132,9 +132,7 @@ class DdsModule::Impl {
     auto msg = to_status_msg(fix, config_, device, error, stamp_s);
     log_dds_error(dds_write(status_writer_, &msg), "dds_write(gnss_status)");
     status.statuses += 1;
-    status.last_fix_type = fix.fix_type;
-    status.last_ts = stamp_s;
-    status.last_error = error;
+    status.update(fix, error, stamp_s);
   }
 
   std::array<double, 9> publish_fix(

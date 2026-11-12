@@ -366,6 +366,11 @@ class DdsModule::Impl {
       msg.twist.twist.linear.y = prior.vy;
       msg.twist.twist.linear.z = prior.vz;
     }
+    if (prior.has_angular_velocity != 0) {
+      msg.twist.twist.angular.x = prior.wx;
+      msg.twist.twist.angular.y = prior.wy;
+      msg.twist.twist.angular.z = prior.wz;
+    }
   }
 
   static void write_float(

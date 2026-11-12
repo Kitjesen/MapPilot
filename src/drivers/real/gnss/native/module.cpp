@@ -9,6 +9,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -17,6 +19,21 @@ namespace {
 
 constexpr double kEarthRadiusM = 6378137.0;
 constexpr double kPi = 3.14159265358979323846;
+
+void write_json_string(std::ostream& out, const std::string& value) {
+  out << '"';
+  for (unsigned char c : value) {
+    if (c == '"' || c == '\\') {
+      out << '\\' << c;
+    } else if (c < 0x20) {
+      const char* hex = "0123456789abcdef";
+      out << "\\u00" << hex[c >> 4] << hex[c & 0xf];
+    } else {
+      out << c;
+    }
+  }
+  out << '"';
+}
 
 std::string env_string(const char* name, std::string fallback) {
   const char* value = std::getenv(name);
@@ -67,6 +84,21 @@ std::optional<Origin> env_origin() {
 }  // namespace
 
 Module::Module(Config config) : config_(std::move(config)) {}
+
+void Status::update(
+    const lingtu::gnss::FixSample& fix, const std::string& error, double stamp_s) {
+  last_fix_type = fix.fix_type;
+  last_ts = stamp_s;
+  last_error = error;
+  location.reset();
+  if (error.empty() && fix.has_fix && fix.fix_type >= 1 && fix.fix_type <= 8 &&
+      fix.latitude_deg && fix.longitude_deg &&
+      std::isfinite(*fix.latitude_deg) && std::abs(*fix.latitude_deg) <= 90.0 &&
+      std::isfinite(*fix.longitude_deg) && std::abs(*fix.longitude_deg) <= 180.0) {
+    location = Location{*fix.latitude_deg, *fix.longitude_deg, fix.fix_type,
+                        stamp_s, std::nullopt};
+  }
+}
 
 double now_seconds() {
   const auto now = std::chrono::system_clock::now().time_since_epoch();
@@ -185,25 +217,54 @@ void write_status_file(const std::string& path, const Status& status) {
   if (path.empty()) {
     return;
   }
+  const std::string temporary = path + ".tmp";
   try {
     const auto parent = std::filesystem::path(path).parent_path();
     if (!parent.empty()) {
       std::filesystem::create_directories(parent);
     }
-    std::ofstream out(path, std::ios::trunc);
+    std::ofstream out;
+    out.exceptions(std::ios::failbit | std::ios::badbit);
+    out.open(temporary, std::ios::trunc);
+    out << std::setprecision(std::numeric_limits<double>::max_digits10);
     out << "{"
         << "\"schema\":\"lingtu.gnss_dds_status.v1\","
         << "\"status\":\"" << (status.last_error.empty() ? "running" : "error") << "\","
-        << "\"device\":\"" << status.device << "\","
+        << "\"device\":";
+    write_json_string(out, status.device);
+    out << ","
         << "\"nmea_lines\":" << status.nmea_lines << ","
         << "\"fixes\":" << status.fixes << ","
         << "\"statuses\":" << status.statuses << ","
         << "\"odometry\":" << status.odometry << ","
         << "\"last_fix_type\":" << status.last_fix_type << ","
         << "\"last_ts\":" << status.last_ts << ","
-        << "\"last_error\":\"" << status.last_error << "\""
-        << "}\n";
-  } catch (...) {
+        << "\"last_error\":";
+    write_json_string(out, status.last_error);
+    out << ",\"location\":";
+    if (status.location) {
+      const auto& location = *status.location;
+      out << "{\"lat\":" << location.lat
+          << ",\"lon\":" << location.lon
+          << ",\"fix_type\":" << location.fix_type
+          << ",\"ts\":" << location.ts
+          << ",\"accuracy_m\":";
+      if (location.accuracy_m) {
+        out << *location.accuracy_m;
+      } else {
+        out << "null";
+      }
+      out << "}";
+    } else {
+      out << "null";
+    }
+    out << "}\n";
+    out.close();
+    std::filesystem::rename(temporary, path);
+  } catch (const std::exception& exc) {
+    std::error_code ignored;
+    std::filesystem::remove(temporary, ignored);
+    std::fprintf(stderr, "GNSS status write failed: %s\n", exc.what());
   }
 }
 

@@ -511,14 +511,23 @@ int run_stdin_records(
         return finish(1);
       }
     } else if (header.record_type == kRecordOdomPrior) {
-      if (header.count != 1 || header.payload_bytes != sizeof(WireOdomPrior)) {
+      if (header.count != 1 || (header.payload_bytes != sizeof(WireOdomPrior) &&
+          header.payload_bytes != lidar::kLegacyOdomPriorBytes)) {
         std::fprintf(stderr, "stdin odom prior payload size mismatch\n");
         return finish(2);
       }
       WireOdomPrior prior{};
-      if (!read_exact(&prior, sizeof(prior))) {
+      if (!read_exact(&prior, header.payload_bytes)) {
         std::fprintf(stderr, "stdin odom prior payload truncated\n");
         return finish(1);
+      }
+      if (header.payload_bytes == lidar::kLegacyOdomPriorBytes)
+        prior.has_angular_velocity = 0;
+      if (prior.has_angular_velocity > 1 ||
+          (prior.has_angular_velocity && (!std::isfinite(prior.wx) ||
+           !std::isfinite(prior.wy) || !std::isfinite(prior.wz)))) {
+        std::fprintf(stderr, "stdin odom prior angular velocity is invalid\n");
+        return finish(2);
       }
       ++odom_records;
       const std::uint64_t output_timestamp_ns =

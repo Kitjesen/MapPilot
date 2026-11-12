@@ -109,6 +109,7 @@ class DdsCameraModule(Module, layer=1):  # type: ignore[call-arg]
         self._last_color_ts = 0.0
         self._last_depth_ts = 0.0
         self._last_info_ts = 0.0
+        self._last_info: CameraIntrinsics | None = None
         self._frames = {"color": 0, "depth": 0, "info": 0}
         self._rejected = {"color": 0, "depth": 0, "info": 0}
         self._errors: dict[str, str] = {}
@@ -263,6 +264,10 @@ class DdsCameraModule(Module, layer=1):  # type: ignore[call-arg]
             self._running = False
             self.alive.publish(False)
 
+    def get_camera_intrinsics(self) -> CameraIntrinsics | None:
+        """Return the latest calibration published from the native SHM source."""
+        return self._last_info
+
     def _publish_frame(self, name: str, frame: FrameSnapshot) -> None:
         expected_kind = {
             "color": StreamKind.COLOR,
@@ -279,26 +284,26 @@ class DdsCameraModule(Module, layer=1):  # type: ignore[call-arg]
             self.depth_image.publish(self._decode_image(frame))
             self._last_depth_ts = received_s
         else:
-            self.camera_info.publish(
-                CameraIntrinsics(
-                    fx=frame.fx,
-                    fy=frame.fy,
-                    cx=frame.cx,
-                    cy=frame.cy,
-                    width=frame.width,
-                    height=frame.height,
-                    depth_scale=frame.depth_scale or 0.001,
-                    dist_k1=frame.dist_k1,
-                    dist_k2=frame.dist_k2,
-                    dist_p1=frame.dist_p1,
-                    dist_p2=frame.dist_p2,
-                    dist_k3=frame.dist_k3,
-                    ts=frame.timestamp_s,
-                    frame_id=frame.frame_id,
-                    source_generation=frame.source_generation,
-                    source_sequence=frame.sequence,
-                )
+            intrinsics = CameraIntrinsics(
+                fx=frame.fx,
+                fy=frame.fy,
+                cx=frame.cx,
+                cy=frame.cy,
+                width=frame.width,
+                height=frame.height,
+                depth_scale=frame.depth_scale or 0.001,
+                dist_k1=frame.dist_k1,
+                dist_k2=frame.dist_k2,
+                dist_p1=frame.dist_p1,
+                dist_p2=frame.dist_p2,
+                dist_k3=frame.dist_k3,
+                ts=frame.timestamp_s,
+                frame_id=frame.frame_id,
+                source_generation=frame.source_generation,
+                source_sequence=frame.sequence,
             )
+            self._last_info = intrinsics
+            self.camera_info.publish(intrinsics)
             self._last_info_ts = received_s
         self._frames[name] += 1
 

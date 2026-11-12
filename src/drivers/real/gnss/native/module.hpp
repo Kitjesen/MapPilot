@@ -31,6 +31,14 @@ struct Config {
   std::uint64_t max_samples{0};
 };
 
+struct Location {
+  double lat;
+  double lon;
+  int fix_type;
+  double ts;
+  std::optional<double> accuracy_m;
+};
+
 struct Status {
   std::uint64_t nmea_lines{0};
   std::uint64_t fixes{0};
@@ -40,6 +48,9 @@ struct Status {
   int last_fix_type{0};
   std::string device;
   std::string last_error;
+  std::optional<Location> location;
+
+  void update(const lingtu::gnss::FixSample& fix, const std::string& error, double stamp_s);
 };
 
 struct Enu {

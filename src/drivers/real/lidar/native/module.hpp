@@ -38,13 +38,19 @@ struct OdomPrior {
   double vy;
   double vz;
   std::uint8_t has_velocity;
-  std::uint8_t reserved[7];
+  std::uint8_t has_angular_velocity;
+  std::uint8_t reserved[6];
+  // Linear prior is world-frame; angular velocity is body-frame, like MuJoCo's free joint.
+  double wx;
+  double wy;
+  double wz;
 };
 #pragma pack(pop)
 
 static_assert(sizeof(Point) == 24, "unexpected point record size");
 static_assert(sizeof(ImuSample) == 24, "unexpected imu record size");
-static_assert(sizeof(OdomPrior) == 88, "unexpected odom prior record size");
+inline constexpr std::uint32_t kLegacyOdomPriorBytes = 88;
+static_assert(sizeof(OdomPrior) == 112, "unexpected odom prior record size");
 
 struct CliConfig {
   bool dds{false};
