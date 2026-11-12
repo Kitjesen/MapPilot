@@ -7,6 +7,7 @@ import math
 import shutil
 import subprocess
 from bisect import bisect_right
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -180,7 +181,7 @@ def _resample_rows_for_cfr(
         if target_stamp - source_stamp > frame_period_s * 0.5:
             held_frames += 1
 
-    gaps = [right - left for left, right in zip(stamps, stamps[1:])]
+    gaps = [right - left for left, right in pairwise(stamps)]
     source_duration_s = span_s + frame_period_s
     encoded_duration_s = len(output_rows) / frame_rate
     duration_error_s = abs(encoded_duration_s - source_duration_s)
@@ -345,7 +346,7 @@ def _local_path_bgr(row: dict[str, Any]) -> tuple[int, int, int]:
         return _STOPPED_BGR
     if _local_is_recovery(row):
         return _RECOVERY_BGR
-    if _selected_candidate(row) is not None:
+    if _local_tracking_active(row) or _selected_candidate(row) is not None:
         return _SELECTED_BGR
     return _INACTIVE_PATH_BGR
 
@@ -551,6 +552,21 @@ def _local_safety_stopped(row: dict[str, Any]) -> bool:
     diagnostics = row.get("local_diagnostics") or {}
     final_safety = diagnostics.get("final_safety") or {}
     return bool(diagnostics.get("near_field_stop")) or bool(final_safety.get("stopped"))
+
+
+def _local_tracking_active(row: dict[str, Any]) -> bool:
+    if not _nav_status_is_fresh(row):
+        return False
+    diagnostics = row.get("local_diagnostics") or {}
+    tracking = diagnostics.get("tracking") or {}
+    return (
+        bool(diagnostics.get("active"))
+        and bool(diagnostics.get("path_found"))
+        and bool(tracking.get("active"))
+        and not bool(tracking.get("execution_frozen"))
+        and not bool(tracking.get("finished"))
+        and len(row.get("local_path") or []) >= 2
+    )
 
 
 def _candidate_display_bgr(
@@ -854,15 +870,18 @@ def _render_local_planner_inset(
         )
         cv2.polylines(panel, [selected_polyline], False, _local_path_bgr(row), 5, cv2.LINE_AA)
 
-    half_length = max(3, int(round(0.50 * pixels_per_m)))
-    half_width = max(2, int(round(0.30 * pixels_per_m)))
-    cv2.rectangle(
+    cv2.arrowedLine(
         panel,
-        (center[0] - half_width, center[1] - half_length),
-        (center[0] + half_width, center[1] + half_length),
+        (center[0], center[1] + 12),
+        (center[0], center[1] - 12),
         (235, 226, 205),
         2,
         cv2.LINE_AA,
+        tipLength=0.4,
+    )
+    cv2.putText(
+        panel, "robot pose", (center[0] + 10, center[1] + 4),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.32, (235, 226, 205), 1, cv2.LINE_AA,
     )
     cv2.putText(
         panel,
@@ -887,6 +906,10 @@ def _render_local_planner_inset(
     elif _local_is_recovery(row):
         summary = f"RECOVERY PATH  |  {age_label}"
         summary_color = _RECOVERY_BGR
+    elif _local_tracking_active(row):
+        trajectory = (row["local_diagnostics"]["tracking"]).get("trajectory_id", 0)
+        summary = f"EXECUTING TRAJECTORY {trajectory}  |  {age_label}"
+        summary_color = _SELECTED_BGR
     elif selected_candidate is not None:
         summary = (
             f"reps {len(candidates)}  |  selected "
@@ -1053,7 +1076,7 @@ def _draw_path(
     if not np.array_equal(sampled[-1], points[-1]):
         sampled.append(points[-1])
     lifted = [point + np.asarray([0.0, 0.0, z_offset]) for point in sampled]
-    for start, end in zip(lifted, lifted[1:]):
+    for start, end in pairwise(lifted):
         _add_segment(mujoco, scene, start, end, radius, rgba)
 
 
@@ -1247,16 +1270,8 @@ def render_native_navigation_video(
     output_path = Path(output).expanduser().resolve()
     loaded_rows = _load_jsonl(log_path)
     if active_only:
-        driving_rows = [row for row in loaded_rows if bool(row.get("driving"))]
-        first_navigation_row = next(
-            (
-                index
-                for index, row in enumerate(driving_rows)
-                if bool((row.get("local_diagnostics") or {}).get("active"))
-            ),
-            0,
-        )
-        source_rows = driving_rows[first_navigation_row:]
+        # Status snapshots can lag actual motion; retain the whole driving phase.
+        source_rows = [row for row in loaded_rows if bool(row.get("driving"))]
     else:
         source_rows = loaded_rows
     if not source_rows:
@@ -1265,6 +1280,8 @@ def render_native_navigation_video(
     rows, timeline = _resample_rows_for_cfr(source_rows, float(fps))
     if not rows:
         return {"ok": False, "reason": "motion_log_has_no_valid_timestamps"}
+    timeline["source_sim_start_s"] = source_rows[0].get("sim_time_s")
+    timeline["source_sim_end_s"] = source_rows[-1].get("sim_time_s")
     camera_preset = str(camera_preset).strip().lower()
     if camera_preset not in {"overview", "follow"}:
         raise ValueError(f"unknown camera preset: {camera_preset}")

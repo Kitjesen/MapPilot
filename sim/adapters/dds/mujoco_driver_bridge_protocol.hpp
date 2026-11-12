@@ -88,8 +88,6 @@ struct ReadyMessage {
   std::string bridge_boot_id;
   std::string controller_boot_id;
   std::uint64_t accepted_sequence{0};
-  std::string accepted_producer_boot_id;
-  std::uint64_t accepted_output_sequence{0};
 };
 
 struct HelloMessage {

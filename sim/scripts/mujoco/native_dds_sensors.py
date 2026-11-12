@@ -2931,12 +2931,7 @@ class NativeDriverBridge:
         self._last_step_seq = 0
         self._heartbeat_refreshes = 0
         self._last_ready_sequence = 0
-        self._last_ready_producer_boot_id = ""
-        self._last_ready_output_sequence = 0
         self._ready_observed = False
-        self._observed_nav_ack_sequence = 0
-        self._observed_nav_ack_producer_boot_id = ""
-        self._observed_nav_ack_output_sequence = 0
         self._ready = False
         self._fault = ""
         self._reported_pid: int | None = None
@@ -3058,6 +3053,11 @@ class NativeDriverBridge:
                 _stop_relay(self.process)
             self._stdout_thread.join(timeout=1.0)
             self._stderr_thread.join(timeout=1.0)
+            print(
+                f"driver bridge startup: fault={self._fault or 'none'} "
+                f"pid={self._reported_pid} stderr={' | '.join(self._stderr_tail)}",
+                file=sys.stderr, flush=True,
+            )
             try:
                 self._ready_file.unlink(missing_ok=True)
             except OSError:
@@ -3183,28 +3183,13 @@ class NativeDriverBridge:
                 self._condition.notify_all()
                 return
             if prefix == self._READY_PREFIX:
-                if len(parts) != 6 or parts[1] != self.bridge_boot_id or parts[2] != self.controller_boot_id:
+                if len(parts) != 4 or parts[1] != self.bridge_boot_id or parts[2] != self.controller_boot_id:
                     raise ValueError("driver bridge READY identity mismatch")
                 accepted = _parse_positive_protocol_int(parts[3], "accepted_sequence")
-                producer = "" if parts[4] == "-" else parts[4]
-                output = _parse_protocol_uint64(parts[5], "accepted_output_sequence")
                 if accepted <= self._last_ready_sequence:
                     raise ValueError("driver bridge READY sequence did not advance")
-                if bool(producer) != bool(output) or (producer and not _safe_protocol_token(producer)):
-                    raise ValueError("driver bridge READY output identity is incomplete")
-                if producer and not _driver_producer_matches_host(
-                    producer,
-                    self.expected_host_boot_id,
-                ):
-                    raise ValueError("driver bridge READY producer identity mismatch")
                 self._last_ready_sequence = accepted
-                self._last_ready_producer_boot_id = producer
-                self._last_ready_output_sequence = output
                 self._ready_observed = True
-                if producer:
-                    self._observed_nav_ack_sequence = accepted
-                    self._observed_nav_ack_producer_boot_id = producer
-                    self._observed_nav_ack_output_sequence = output
                 self._ready = True
                 self._condition.notify_all()
                 return
@@ -3233,8 +3218,6 @@ class NativeDriverBridge:
                 # authority and output acknowledgement are cleared.
                 self._ready = False
                 self._last_ready_sequence = 0
-                self._last_ready_producer_boot_id = ""
-                self._last_ready_output_sequence = 0
                 self._condition.notify_all()
                 return
             if prefix == self._FAULT_PREFIX:
@@ -3464,13 +3447,6 @@ class NativeDriverBridge:
                 "driver_ready": self._ready,
                 "driver_ready_observed": self._ready_observed,
                 "accepted_sequence": self._last_ready_sequence,
-                "accepted_producer_boot_id": self._last_ready_producer_boot_id,
-                "accepted_output_sequence": self._last_ready_output_sequence,
-                "observed_output_ack": {
-                    "accepted_sequence": self._observed_nav_ack_sequence,
-                    "producer_boot_id": self._observed_nav_ack_producer_boot_id,
-                    "output_sequence": self._observed_nav_ack_output_sequence,
-                },
                 "stopped_evidence": dict(self._stopped_evidence),
                 "fault": self._fault,
                 "samples": self._samples,
@@ -5005,7 +4981,10 @@ def _acceptance_contacts(model: Any, data: Any) -> list[dict[str, Any]]:
             mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, int(contact.geom2))
             or ""
         )
-        if not (geom1.startswith("acceptance_") or geom2.startswith("acceptance_")):
+        if not (
+            geom1.startswith(("acceptance_", "obstacle_"))
+            or geom2.startswith(("acceptance_", "obstacle_"))
+        ):
             continue
         contacts.append(
             {
@@ -6350,8 +6329,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         elif not (motion_interval_completed or goal_reached_early):
             gaps.append("external_arm_motion_interval_incomplete")
     if str(args.command_source) == "dds":
-        observed_output_ack = driver_bridge_stats.get("observed_output_ack")
-        observed_output_ack = observed_output_ack if isinstance(observed_output_ack, dict) else {}
         if bool(driver_bridge_stats.get("failed_before_close")):
             gaps.append("native_driver_bridge_failed")
         if (driver_bridge_stats.get("process_cleanup") or {}).get("clean") is not True:
@@ -6363,17 +6340,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if (
             driver_bridge_stats.get("driver_ready") is not False
             or int(driver_bridge_stats.get("accepted_sequence") or 0) != 0
-            or str(driver_bridge_stats.get("accepted_producer_boot_id") or "")
-            or int(driver_bridge_stats.get("accepted_output_sequence") or 0) != 0
         ):
             gaps.append("native_driver_bridge_terminal_authority_not_cleared")
         if bool(args.require_cmd_vel) and int(driver_bridge_stats.get("nonzero_samples") or 0) <= 0:
             gaps.append("native_cmd_vel_nonzero_missing")
-        if bool(args.require_cmd_vel) and (
-            not str(observed_output_ack.get("producer_boot_id") or "")
-            or int(observed_output_ack.get("output_sequence") or 0) <= 0
-        ):
-            gaps.append("native_driver_bridge_output_ack_missing")
     gaps.extend(_native_sensor_publisher_gaps(publisher_cleanup))
     gaps.extend(cleanup_errors)
     if args.require_slam_output and not str(args.slam_status_json or ""):

@@ -43,41 +43,41 @@ std::vector<InspectionTaskEventFact> resumed_events(bool waiting = false) {
 
 int main() {
   const std::vector<FinalOutputFact> new_zero{{600, 7, 0, 0, 0, 0, 0, 0, "nav-b"}};
-  const std::vector<DriverControlFact> new_ack{{650, true, true, 7, "nav-b"}};
+  const std::vector<DriverControlFact> zero_state{{650, true}};
   for (const bool waiting : {false, true}) {
-    require(verify_inspection_task_timeline("task-a", resumed_events(waiting), new_zero, new_ack).ok,
+    require(verify_inspection_task_timeline("task-a", resumed_events(waiting), new_zero, zero_state).ok,
             "checkpoint pause and explicit resume did not qualify");
   }
   auto events = resumed_events();
   events[2].state = 3;
-  require(!verify_inspection_task_timeline("task-a", events, new_zero, new_ack).ok,
+  require(!verify_inspection_task_timeline("task-a", events, new_zero, zero_state).ok,
           "an arbitrary new-boot navigation event qualified as recovery");
   events = resumed_events();
   events[3].request_id = "start-request";
-  require(!verify_inspection_task_timeline("task-a", events, new_zero, new_ack).ok,
+  require(!verify_inspection_task_timeline("task-a", events, new_zero, zero_state).ok,
           "recovery resumed without an explicit operator request");
   events = resumed_events();
   events[3].state = 3;
-  require(!verify_inspection_task_timeline("task-a", events, new_zero, new_ack).ok,
+  require(!verify_inspection_task_timeline("task-a", events, new_zero, zero_state).ok,
           "navigation bypassed the recovery resume fact");
   events = resumed_events();
   ++events[2].event_sequence;
-  require(!verify_inspection_task_timeline("task-a", events, new_zero, new_ack).ok,
+  require(!verify_inspection_task_timeline("task-a", events, new_zero, zero_state).ok,
           "checkpoint recovery filled a missing event");
   events = resumed_events();
   events[2].map_content_epoch = 6;
-  require(!verify_inspection_task_timeline("task-a", events, new_zero, new_ack).ok,
+  require(!verify_inspection_task_timeline("task-a", events, new_zero, zero_state).ok,
           "recovery changed the map identity");
   events = resumed_events();
   require(!verify_inspection_task_timeline("task-a", events, new_zero,
-                                          {{650, true, true, 7, "nav-a"}}).ok,
-          "pre-restart driver acknowledgement qualified a new-boot stop");
+                                          {{550, true}}).ok,
+          "driver state from before the zero-output run qualified a stop");
   require(!verify_inspection_task_timeline("task-a", events,
-                                          {{600, 7, 0.1, 0, 0, 0, 0, 0, "nav-b"}}, new_ack).ok,
+                                          {{600, 7, 0.1, 0, 0, 0, 0, 0, "nav-b"}}, zero_state).ok,
           "nonzero final command qualified after recovery");
   require(!verify_inspection_task_timeline("task-a", events, new_zero,
-                                          {{650, true, true, 6, "nav-b"}}).ok,
-          "an older output acknowledgement qualified the final stop");
+                                          {{650, false}}).ok,
+          "nonzero driver output qualified the final stop");
 
   auto unrelated = event(150, 150, 3, "another-robot");
   unrelated.task_id = "task-unrelated";
@@ -85,7 +85,7 @@ int main() {
   unrelated.event_sequence = 153;
   unrelated.observed_time_ns = 750;
   events.push_back(unrelated);
-  require(verify_inspection_task_timeline("task-a", events, new_zero, new_ack).ok,
+  require(verify_inspection_task_timeline("task-a", events, new_zero, zero_state).ok,
           "an unrelated robot's incomplete history invalidated this task");
 
   auto accepted = event(100, 41, 1);
@@ -95,24 +95,24 @@ int main() {
   auto middle = event(300, 43, 3);
   require(verify_inspection_task_timeline("task-a", {accepted, unrelated, middle, terminal},
                                           {{600, 7, 0, 0, 0, 0, 0, 0, "nav-a"}},
-                                          {{650, true, true, 7, "nav-a"}}).ok,
+                                          {{650, true}}).ok,
           "a captured intermediate writer cursor was ignored");
   auto replay = terminal;
   replay.boot_id = "nav-b";
   replay.observed_time_ns = 800;
   require(verify_inspection_task_timeline("task-a", {accepted, unrelated, middle, terminal, replay},
                                           {{600, 7, 0, 0, 0, 0, 0, 0, "nav-a"}},
-                                          {{650, true, true, 7, "nav-a"}}).ok,
+                                          {{650, true}}).ok,
           "a terminal checkpoint replay was treated as a second completion");
   replay.point_index = 1;
   require(!verify_inspection_task_timeline("task-a", {accepted, unrelated, middle, terminal, replay},
                                            {{600, 7, 0, 0, 0, 0, 0, 0, "nav-a"}},
-                                           {{650, true, true, 7, "nav-a"}}).ok,
+                                           {{650, true}}).ok,
           "a different terminal fact was accepted as an unchanged replay");
 
   events = {event(100, 41, 1), event(200, 42, 13, "nav-a", "cancel_requested", "cancel-request"),
             event(700, 43, 9, "nav-b", "cancelled_after_restart", "cancel-request")};
-  require(verify_inspection_task_timeline("task-a", events, new_zero, new_ack).ok,
+  require(verify_inspection_task_timeline("task-a", events, new_zero, zero_state).ok,
           "pending cancellation did not survive a checkpoint restart");
 
   auto completed = event(200, 42, 4, "nav-a", "point_completed");
@@ -121,17 +121,17 @@ int main() {
   auto restored_completion = event(700, 43, 7, "nav-b", "route_complete");
   restored_completion.point_index = restored_completion.point_count;
   events = {accepted, completed, restored_completion};
-  require(verify_inspection_task_timeline("task-a", events, new_zero, new_ack).ok,
+  require(verify_inspection_task_timeline("task-a", events, new_zero, zero_state).ok,
           "a persisted final point completion did not survive restart");
   events.back().point_index = 1;
-  require(!verify_inspection_task_timeline("task-a", events, new_zero, new_ack).ok,
+  require(!verify_inspection_task_timeline("task-a", events, new_zero, zero_state).ok,
           "a new-boot success did not advance to the terminal cursor");
   events = {accepted, completed, restored_completion};
   ++events.back().loop_index;
-  require(!verify_inspection_task_timeline("task-a", events, new_zero, new_ack).ok,
+  require(!verify_inspection_task_timeline("task-a", events, new_zero, zero_state).ok,
           "a new-boot success silently advanced the saved loop");
   events = {accepted, event(200, 42, 3), restored_completion};
-  require(!verify_inspection_task_timeline("task-a", events, new_zero, new_ack).ok,
+  require(!verify_inspection_task_timeline("task-a", events, new_zero, zero_state).ok,
           "a new-boot success was accepted without a persisted point completion");
   return 0;
 }

@@ -721,13 +721,11 @@ def test_driver_bridge_applied_and_heartbeat_follow_successful_physics_step(
     )
     source._handle_stdout_line(
         f"LT_DRIVER_READY_V2\t{'a' * 32}\t{'b' * 32}"
-        "\t2\thost-boot-a:1234:567890\t91"
+        "\t2"
     )
     stats = source.stats()
     assert stats["driver_ready"] is True
     assert stats["accepted_sequence"] == 2
-    assert stats["accepted_producer_boot_id"] == "host-boot-a:1234:567890"
-    assert stats["accepted_output_sequence"] == 91
 
 
 def test_driver_bridge_rejects_command_from_unexpected_producer(monkeypatch, tmp_path):
@@ -740,24 +738,6 @@ def test_driver_bridge_rejects_command_from_unexpected_producer(monkeypatch, tmp
         )
 
 
-@pytest.mark.parametrize(
-    "producer",
-    (
-        "other-host:1234:567890",
-        "host-boot-a",
-        "host-boot-a:1234:0",
-    ),
-)
-def test_driver_bridge_rejects_ready_ack_from_unexpected_producer(
-    monkeypatch, tmp_path, producer
-):
-    source, _process, _events, _launched = _make_driver_bridge(monkeypatch, tmp_path)
-
-    with pytest.raises(ValueError, match="READY producer identity mismatch"):
-        source._handle_stdout_line(
-            f"LT_DRIVER_READY_V2\t{'a' * 32}\t{'b' * 32}"
-            f"\t2\t{producer}\t91"
-        )
 
 
 @pytest.mark.parametrize(
@@ -918,7 +898,7 @@ def test_driver_bridge_rejects_stopped_without_exact_physical_deactivate_evidenc
         source._handle_stdout_line(line)
 
 
-def test_driver_bridge_retains_historical_nav_ack_after_terminal_authority_is_cleared(
+def test_driver_bridge_clears_authority_after_physical_stop(
     monkeypatch, tmp_path
 ):
     source, process, _events, _launched = _make_driver_bridge(monkeypatch, tmp_path)
@@ -931,7 +911,7 @@ def test_driver_bridge_retains_historical_nav_ack_after_terminal_authority_is_cl
     source.complete_step(nav, step_seq=2)
     source._handle_stdout_line(
         f"LT_DRIVER_READY_V2\t{'a' * 32}\t{'b' * 32}"
-        "\t2\thost-boot-a:1234:567890\t91"
+        "\t2"
     )
 
     source.begin_deactivate()
@@ -953,13 +933,6 @@ def test_driver_bridge_retains_historical_nav_ack_after_terminal_authority_is_cl
     assert stats["driver_ready_observed"] is True
     assert stats["driver_ready"] is False
     assert stats["accepted_sequence"] == 0
-    assert stats["accepted_producer_boot_id"] == ""
-    assert stats["accepted_output_sequence"] == 0
-    assert stats["observed_output_ack"] == {
-        "accepted_sequence": 2,
-        "producer_boot_id": "host-boot-a:1234:567890",
-        "output_sequence": 91,
-    }
     assert stats["fault"] == ""
 
 

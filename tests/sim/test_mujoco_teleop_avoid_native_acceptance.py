@@ -1175,3 +1175,9 @@ def test_native_sensor_start_yaw_and_report_tail_remain_in_run_scope() -> None:
     assert args.start_yaw_deg == -90.0
     assert 'report["cmd_vel"] = driver_bridge_stats' in run_source
     assert run_source.rstrip().endswith("return report")
+
+
+def test_manifest_names_driver_state_without_velocity_ack():
+    manifest = json.loads(acceptance.DEFAULT_MANIFEST.read_text(encoding="utf-8"))
+    assert manifest["contracts"]["driver_state"] == "rt/driver/control_state"
+    assert "driver_ack" not in manifest["contracts"]

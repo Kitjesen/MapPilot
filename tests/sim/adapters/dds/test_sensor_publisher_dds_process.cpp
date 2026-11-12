@@ -129,6 +129,15 @@ std::string make_sensor_fixture() {
   append_record(records, 5, kBaseNs + 200000000ULL, 1002, 1, depth_payload);
 
   for (std::uint32_t i = 0; i < 30; ++i) {
+    lidar::OdomPrior prior{};
+    prior.qw = 1.0;
+    prior.has_angular_velocity = 1;
+    prior.wx = 0.1;
+    prior.wy = -0.2;
+    prior.wz = 0.3;
+    std::string odom_payload;
+    append_pod(odom_payload, prior);
+    append_record(records, 3, kBaseNs + i * 50000000ULL, i, 1, odom_payload);
     lidar::ImuSample imu{};
     imu.gyro_x = 0.25F;
     imu.gyro_y = -0.5F;
@@ -743,6 +752,21 @@ bool take_matching_imu(dds_entity_t reader) {
   return false;
 }
 
+bool take_matching_odom(dds_entity_t reader) {
+  void *samples[1]{};
+  dds_sample_info_t infos[1]{};
+  const auto count = dds_take(reader, samples, infos, 1, 1);
+  checked(count, "dds_take(odom)");
+  bool matched = false;
+  if (count > 0 && infos[0].valid_data) {
+    const auto &angular = static_cast<lingtu_dds_Odometry *>(samples[0])->twist.twist.angular;
+    matched = close_enough(angular.x, 0.1) && close_enough(angular.y, -0.2) &&
+              close_enough(angular.z, 0.3);
+  }
+  if (count > 0) checked(dds_return_loan(reader, samples, count), "dds_return_loan(odom)");
+  return matched;
+}
+
 bool take_matching_lidar(dds_entity_t reader) {
   void *samples[1]{};
   dds_sample_info_t infos[1]{};
@@ -1021,10 +1045,13 @@ int main(int argc, const char *const argv[]) {
     wait_for_ready_marker(publisher, ready);
     wait_for_reader_matches(publisher, imu_reader, lidar_packet_reader, lidar_frame_reader);
     require_no_camera_reader_matches(color_reader, depth_reader, info_reader);
+    const auto odom_reader = create_reader(participant, lingtu::message::kSlamOdomPrior,
+                                          &lingtu_dds_Odometry_desc);
     publisher.write_records(records);
     wait_for_camera_reader_matches(publisher, color_reader, depth_reader, info_reader);
 
     bool saw_imu = false;
+    bool saw_odom = false;
     bool saw_lidar_packet = false;
     bool saw_lidar_frame = false;
     bool saw_color = false;
@@ -1035,7 +1062,8 @@ int main(int argc, const char *const argv[]) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
     while (std::chrono::steady_clock::now() < deadline &&
            (!saw_imu || !saw_lidar_packet || !saw_lidar_frame || !saw_color || !saw_depth ||
-            !saw_info)) {
+            !saw_info || !saw_odom)) {
+      saw_odom = saw_odom || take_matching_odom(odom_reader);
       saw_imu = saw_imu || take_matching_imu(imu_reader);
       saw_lidar_packet = saw_lidar_packet || take_matching_lidar(lidar_packet_reader);
       saw_lidar_frame = saw_lidar_frame || take_matching_lidar(lidar_frame_reader);
@@ -1059,14 +1087,15 @@ int main(int argc, const char *const argv[]) {
                                     : std::string("unknown")));
     }
     if (!saw_imu || !saw_lidar_packet || !saw_lidar_frame || !saw_color || !saw_depth ||
-        !saw_info) {
+        !saw_info || !saw_odom) {
       throw std::runtime_error(std::string("publisher DDS samples missing: imu=") +
                                (saw_imu ? "yes" : "no") +
                                " lidar_packet=" + (saw_lidar_packet ? "yes" : "no") +
                                " lidar_frame=" + (saw_lidar_frame ? "yes" : "no") +
                                " camera_color=" + (saw_color ? "yes" : "no") +
                                " camera_depth=" + (saw_depth ? "yes" : "no") +
-                               " camera_info=" + (saw_info ? "yes" : "no"));
+                               " camera_info=" + (saw_info ? "yes" : "no") +
+                               " odom_angular=" + (saw_odom ? "yes" : "no"));
     }
     verify_simulation_clock_round_trip(argv[1], domain_id, participant);
     dds_delete(participant);

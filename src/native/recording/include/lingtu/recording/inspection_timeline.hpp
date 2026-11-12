@@ -43,17 +43,14 @@ struct FinalOutputFact {
 
 struct DriverControlFact {
   std::uint64_t observed_time_ns{0};
-  bool connected{false};
-  bool last_command_accepted{false};
-  std::uint64_t accepted_output_sequence{0};
-  std::string accepted_producer_boot_id;
+  bool zero_output{false};
 };
 
 struct InspectionTimelineReport {
   bool ok{false};
   std::size_t event_count{0};
   std::int32_t terminal_state{-1};
-  std::uint64_t confirmed_output_sequence{0};
+  std::uint64_t final_output_sequence{0};
   std::vector<std::string> errors;
 
   [[nodiscard]] std::string summary() const;

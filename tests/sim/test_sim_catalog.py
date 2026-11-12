@@ -371,25 +371,24 @@ def _isolated_thunderv4_catalog(tmp_path: Path) -> tuple[Path, Path]:
     return root, package_dir
 
 
-@pytest.mark.parametrize("body_file", ["../outside.body2", "collision/missing.body2"])
-def test_robot_navigation_body_must_be_a_present_package_file(tmp_path: Path, body_file: str) -> None:
+@pytest.mark.parametrize("radius", [0, -0.1])
+def test_robot_navigation_cylinder_radius_must_be_positive(tmp_path: Path, radius: float) -> None:
     root, package_dir = _isolated_thunderv4_catalog(tmp_path)
     manifest = package_dir / "robot.package.yaml"
     source = manifest.read_text(encoding="utf-8")
-    source = source.replace("body_file: collision/thunderv4_navigation.body2", f"body_file: {body_file}")
+    source = source.replace("collision_cylinder_radius_m: 0.32", f"collision_cylinder_radius_m: {radius}")
     manifest.write_text(source, encoding="utf-8")
 
-    with pytest.raises(CatalogError, match=r"navigation_geometry.body_file"):
+    with pytest.raises(CatalogError, match=r"navigation_geometry.collision_cylinder_radius_m"):
         CatalogResolver(root, [root / "sim" / "packages" / "robots"])
 
 
-def test_robot_navigation_body_resolves_with_the_selected_physics_model() -> None:
+def test_robot_navigation_cylinders_resolve_with_the_selected_physics_model() -> None:
     resolved = _resolver().resolve(THUNDER_CONTROLLED_HEADLESS_SESSION)
     robot = resolved.physics_plan["robots"][0]
-    body_file = robot["navigation_geometry"]["body_file"]
-
-    assert body_file == "sim/packages/robots/doso/thunder_v4/collision/thunderv4_navigation.body2"
-    assert (REPO_ROOT / body_file).is_file()
+    assert robot["navigation_geometry"]["collision_cylinder_radius_m"] == .32
+    assert robot["navigation_geometry"]["collision_cylinder_offset_m"] == .23
+    assert "body_file" not in robot["navigation_geometry"]
     assert robot["model"]["mjcf"] == "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml"
 
 

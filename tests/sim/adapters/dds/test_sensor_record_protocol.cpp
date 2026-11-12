@@ -192,6 +192,10 @@ void valid_imu_and_odom_decode() {
   prior.x = 1.0;
   prior.qw = 1.0;
   prior.has_velocity = 1;
+  prior.has_angular_velocity = 1;
+  prior.wx = 0.1;
+  prior.wy = -0.2;
+  prior.wz = 0.3;
   std::string odom_payload;
   append_pod(odom_payload, prior);
   std::istringstream odom_input(make_record(3, 300, 2, 1, odom_payload));
@@ -203,6 +207,25 @@ void valid_imu_and_odom_decode() {
   require(decoded_prior.x == 1.0, "odom x mismatch");
   require(decoded_prior.qw == 1.0, "odom orientation mismatch");
   require(decoded_prior.has_velocity == 1, "odom velocity flag mismatch");
+  require(decoded_prior.has_angular_velocity == 1 && decoded_prior.wx == 0.1 &&
+              decoded_prior.wy == -0.2 && decoded_prior.wz == 0.3,
+          "body angular velocity lost in decoding");
+  std::istringstream legacy_input(make_record(3, 300, 2, 1, odom_payload.substr(0, 88)));
+  require(lingtu::sim::dds_adapter::read_sensor_record(legacy_input, odom_record, error) ==
+              SensorRecordReadStatus::Ok, "legacy odometry must remain readable");
+  const auto legacy = lingtu::sim::dds_adapter::decode_odom_prior_payload(odom_record);
+  require(legacy.x == 1.0 && legacy.has_angular_velocity == 0 && legacy.wz == 0.0,
+          "legacy reserved byte must not become angular evidence");
+  prior.wz = std::numeric_limits<double>::quiet_NaN();
+  odom_record.payload.resize(sizeof(prior));
+  std::memcpy(odom_record.payload.data(), &prior, sizeof(prior));
+  bool rejected = false;
+  try {
+    lingtu::sim::dds_adapter::decode_odom_prior_payload(odom_record);
+  } catch (const std::runtime_error &) {
+    rejected = true;
+  }
+  require(rejected, "non-finite angular velocity was accepted");
 }
 
 void valid_camera_record_decodes() {

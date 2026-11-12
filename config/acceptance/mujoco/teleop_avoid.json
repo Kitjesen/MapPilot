@@ -195,8 +195,8 @@
     "operator_motion_ack": "rt/nav/operator_motion/ack",
     "operator_motion_status": "rt/nav/operator_motion/status",
     "navigation_command_transport": "typed_dds_request_ack",
-    "driver_ack": "rt/driver/control_state",
-    "locomotion_execution": "normalized command -> MuJoCo physics step -> physical APPLIED -> typed driver ACK",
+    "driver_state": "rt/driver/control_state",
+    "locomotion_execution": "velocity command -> MuJoCo physics step -> physical APPLIED -> typed driver state",
     "navigation_telemetry": [
       "rt/nav/local_path",
       "rt/nav/way_point"

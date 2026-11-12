@@ -13,7 +13,7 @@ class RobotState:
     position: np.ndarray          # [x, y, z] world frame
     orientation: np.ndarray       # [x, y, z, w] quaternion (ROS convention)
     linear_velocity: np.ndarray   # [vx, vy, vz] world frame
-    angular_velocity: np.ndarray  # [wx, wy, wz] world frame
+    angular_velocity: np.ndarray  # [wx, wy, wz] body frame (MuJoCo free-joint rotational velocity)
     joint_positions: np.ndarray   # (16,) leg joint positions rad, MuJoCo order
     joint_velocities: np.ndarray  # (16,) leg joint velocities rad/s
     imu_gyro: np.ndarray          # (3,) raw IMU-frame gyroscope rad/s

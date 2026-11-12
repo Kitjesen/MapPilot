@@ -204,7 +204,7 @@ std::string typed_preview(const TopicBinding &binding, void *sample) {
            ",\"ready\":" + (s.ready ? "true" : "false") +
            ",\"motors_enabled\":" + (s.motors_enabled ? "true" : "false") +
            ",\"control_assured\":" + (s.control_assured ? "true" : "false") +
-           ",\"accepted_output_sequence\":" + std::to_string(s.accepted_output_sequence) +
+           ",\"zero_output\":" + (s.zero_output ? "true" : "false") +
            ",\"owner\":" + text(s.owner) + ",\"reason\":" + text(s.reason) + "}";
   }
   if (type == "lingtu.dds.NavigationState") {

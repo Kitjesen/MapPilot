@@ -8,7 +8,6 @@
 #include "cmd_vel_writer_gate.hpp"
 #include "core.hpp"
 #include "mujoco_driver_bridge_protocol.hpp"
-#include "output_ack.hpp"
 
 namespace lingtu::sim::driver_bridge {
 
@@ -69,7 +68,7 @@ struct BridgeStatus {
   std::uint64_t accepted_sequence{0};
   std::uint32_t lease_remaining_ms{0};
   BridgeWalk applied_walk;
-  lingtu::driver::OutputAckEvidence output_ack;
+  bool zero_output{false};
   BridgeStopCause stop_cause{BridgeStopCause::None};
   BridgeFaultCode fault{BridgeFaultCode::None};
   std::string controller_boot_id;
@@ -130,7 +129,6 @@ class MujocoDriverBridgeCore final {
   BridgeConfig config_;
   lingtu::driver::Core motion_core_;
   lingtu::driver::CmdVelWriterGate writer_gate_;
-  lingtu::driver::OutputAckState output_ack_;
   BridgeLifecycle lifecycle_{BridgeLifecycle::AwaitWriter};
   BridgeFaultCode fault_{BridgeFaultCode::None};
   BridgeStopCause stop_cause_{BridgeStopCause::None};

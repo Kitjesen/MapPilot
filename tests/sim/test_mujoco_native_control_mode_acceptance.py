@@ -345,8 +345,8 @@ def test_run_mode_executes_pure_teleop_harness_as_non_product_diagnostic(
                     "motion": {"sim_path_length_xy_m": 0.2},
                     "cmd_vel": {
                         "nonzero_samples": 4,
-                        "accepted_producer_boot_id": "host",
-                        "accepted_output_sequence": 8,
+
+
                         "process_cleanup": {"clean": True},
                     },
                 },

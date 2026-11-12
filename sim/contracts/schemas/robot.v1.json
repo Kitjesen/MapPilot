@@ -186,14 +186,21 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "collision_cylinder_radius_m",
+        "collision_cylinder_offset_m",
         "collision_clearance_below_m",
         "collision_clearance_above_m",
         "support_height_m",
         "support_height_tolerance_m"
       ],
       "properties": {
-        "body_file": {
-          "$ref": "#/$defs/relative_path"
+        "collision_cylinder_radius_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "collision_cylinder_offset_m": {
+          "type": "number",
+          "minimum": 0
         },
         "collision_clearance_below_m": {
           "type": "number",

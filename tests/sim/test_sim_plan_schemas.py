@@ -304,24 +304,23 @@ def test_checked_in_robot_package_accepts_only_a_safe_source_mesh_root() -> None
         _validate(package, schema, schema)
 
 
-def test_checked_in_robot_package_selects_a_package_relative_compound_body() -> None:
+def test_checked_in_robot_package_selects_valid_twin_cylinders() -> None:
     schema = json.loads((SCHEMA_ROOT / "robot.v1.json").read_text(encoding="utf-8"))
     package = yaml.safe_load(THUNDER_ROBOT_PACKAGE.read_text(encoding="utf-8"))
 
-    assert package["navigation_geometry"]["body_file"] == "collision/thunderv4_navigation.body2"
+    assert package["navigation_geometry"]["collision_cylinder_radius_m"] == .32
     _validate(package, schema, schema)
 
-    package["navigation_geometry"]["body_file"] = "../outside.body2"
+    package["navigation_geometry"]["collision_cylinder_radius_m"] = 0
     with pytest.raises(SchemaError):
         _validate(package, schema, schema)
 
 
 @pytest.mark.parametrize("version", (1, 2))
-def test_physics_plan_robot_geometry_accepts_resolved_compound_body(version: int) -> None:
+def test_physics_plan_robot_geometry_accepts_resolved_twin_cylinders(version: int) -> None:
     schema = json.loads((SCHEMA_ROOT / f"physics-plan.v{version}.json").read_text(encoding="utf-8"))
     package = yaml.safe_load(THUNDER_ROBOT_PACKAGE.read_text(encoding="utf-8"))
     geometry = dict(package["navigation_geometry"])
-    geometry["body_file"] = "sim/packages/robots/doso/thunder_v4/collision/thunderv4_navigation.body2"
 
     _validate(geometry, schema["$defs"]["robot"]["properties"]["navigation_geometry"], schema)
 

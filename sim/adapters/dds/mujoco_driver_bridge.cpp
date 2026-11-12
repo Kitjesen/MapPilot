@@ -751,7 +751,6 @@ class DdsEndpoint final {
                           status.lifecycle == BridgeLifecycle::FaultClosed;
     profile_transition = profile_transition && !terminal;
     const bool connected = !status.controller_boot_id.empty() && !terminal;
-    const auto output_ack = status.output_ack;
     const bool walking = status.applied_walk.x != 0.0 || status.applied_walk.y != 0.0 ||
                          status.applied_walk.z != 0.0;
     const std::string fsm =
@@ -774,9 +773,7 @@ class DdsEndpoint final {
     message.lease_valid = status.lease_valid && !profile_transition;
     message.lease_remaining_ms = status.lease_remaining_ms;
     message.accepted_sequence = status.accepted_sequence;
-    message.accepted_producer_boot_id = const_cast<char *>(output_ack.producerBootId().c_str());
-    message.accepted_output_sequence = output_ack.outputSequence();
-    message.last_command_accepted = output_ack.accepted();
+    message.zero_output = status.zero_output;
     message.fsm = const_cast<char *>(fsm.c_str());
     message.owner = const_cast<char *>(owner.c_str());
     message.owner_id = const_cast<char *>(owner_id.c_str());
@@ -864,8 +861,6 @@ int run(const Config &config) {
         config.bridge_boot_id,
         status.controller_boot_id,
         status.accepted_sequence,
-        status.output_ack.producerBootId(),
-        status.output_ack.outputSequence(),
     }));
     last_ready_sequence = status.accepted_sequence;
     return true;

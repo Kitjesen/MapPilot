@@ -77,8 +77,8 @@
     "operator_motion_ack": "rt/nav/operator_motion/ack",
     "operator_motion_status": "rt/nav/operator_motion/status",
     "final_velocity": "rt/nav/cmd_vel",
-    "driver_ack": "rt/driver/control_state",
-    "locomotion_execution": "normalized command -> MuJoCo physics step -> physical APPLIED -> typed driver ACK",
+    "driver_state": "rt/driver/control_state",
+    "locomotion_execution": "velocity command -> MuJoCo physics step -> physical APPLIED -> typed driver state",
     "forbidden_runtime": [
       "SLAM",
       "mapd",

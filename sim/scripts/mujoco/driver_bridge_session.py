@@ -305,19 +305,15 @@ class DriverBridgeSession:
                         self._state = "command_available"
                         return True
                     continue
-                if len(fields) != 6 or fields[0] != "LT_DRIVER_READY_V2":
+                if len(fields) != 4 or fields[0] != "LT_DRIVER_READY_V2":
                     raise DriverBridgeSessionError("expected exact LT_DRIVER_READY_V2")
                 self._require_identity(fields[1], fields[2])
                 accepted_sequence = _positive_uint64(
                     fields[3], "accepted_sequence"
                 )
-                producer = "" if fields[4] == "-" else fields[4]
-                output_sequence = _uint64(fields[5], "accepted_output_sequence")
                 applied, _ = self._last_applied
                 if (
                     accepted_sequence != applied.bridge_command_seq
-                    or producer != applied.producer_boot_id
-                    or output_sequence != applied.output_sequence
                 ):
                     raise DriverBridgeSessionError(
                         "READY does not ACK the applied command"

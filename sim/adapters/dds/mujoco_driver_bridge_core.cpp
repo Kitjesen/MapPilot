@@ -232,11 +232,6 @@ std::optional<BridgeCommand> MujocoDriverBridgeCore::onApplied(const AppliedMess
   last_applied_walk_ = applied.walk;
   last_applied_step_seq_ = message.applied_step_seq;
 
-  if (applied.kind == BridgeCommandKind::Nav && stop_cause_ == BridgeStopCause::None) {
-    output_ack_.record(applied.producer_boot_id, applied.output_sequence, true, now);
-  } else {
-    output_ack_.invalidate();
-  }
 
   if (stop_cause_ != BridgeStopCause::None) {
     if (stop_cause_ == BridgeStopCause::Planned &&
@@ -328,7 +323,7 @@ std::optional<BridgeCommand> MujocoDriverBridgeCore::onDeactivate(const Deactiva
 std::optional<BridgeCommand> MujocoDriverBridgeCore::submitNav(const NavCommand &command) {
   if (terminal() || lifecycle_ != BridgeLifecycle::Ready ||
       stop_cause_ != BridgeStopCause::None) {
-    output_ack_.invalidate();
+
     return std::nullopt;
   }
   if (!checkDeadlines(command.arrival_time)) {
@@ -364,11 +359,10 @@ std::optional<BridgeCommand> MujocoDriverBridgeCore::submitNav(const NavCommand 
       lingtu::driver::CommandFreshnessInput{
           command.host_boot_id,
           command.producer_boot_id,
-          command.output_sequence,
           command.source_time.time_since_epoch(),
           command.arrival_time.time_since_epoch(),
       },
-      command.frame, command.vx, command.vy, command.wz);
+      command.frame, command.vx, command.vy, command.wz, command.arrival_time);
   if (!result.freshness.accepted || !result.action.has_value() ||
       result.action->reason != lingtu::driver::ActionReason::Command) {
     return requestStop(BridgeStopCause::RejectedCommand, command.arrival_time);
@@ -441,7 +435,10 @@ BridgeStatus MujocoDriverBridgeCore::status(TimePoint now) const {
       accepted_sequence_,
       leaseRemainingMs(now),
       last_applied_walk_,
-      output_ack_.current(now),
+      accepted_sequence_ != 0 && fault_ == BridgeFaultCode::None &&
+          (heartbeatFresh(now) || lifecycle_ == BridgeLifecycle::Stopped) &&
+          last_applied_walk_.x == 0.0 && last_applied_walk_.y == 0.0 &&
+          last_applied_walk_.z == 0.0 && !pending_ && !latest_,
       stop_cause_,
       fault_,
       controller_boot_id_,
@@ -494,7 +491,7 @@ std::optional<BridgeCommand> MujocoDriverBridgeCore::requestStop(BridgeStopCause
       (cause == BridgeStopCause::Planned && recoverableSafetyStop(stop_cause_))) {
     stop_cause_ = cause;
   }
-  output_ack_.invalidate();
+
   latest_.reset();
   lifecycle_ = BridgeLifecycle::DeactivatingZero;
   (void)motion_core_.forceStop(cause == BridgeStopCause::Planned
@@ -521,7 +518,7 @@ void MujocoDriverBridgeCore::completeStop(const AppliedMessage &message, TimePoi
   const auto cause = stop_cause_;
   stop_cause_ = BridgeStopCause::None;
   latest_.reset();
-  output_ack_.invalidate();
+
   if (cause == BridgeStopCause::Planned) {
     lifecycle_ = BridgeLifecycle::Stopped;
     stopped_evidence_ = StopMessage{
@@ -555,7 +552,7 @@ void MujocoDriverBridgeCore::fail(BridgeFaultCode fault) noexcept {
   stop_cause_ = BridgeStopCause::None;
   pending_.reset();
   latest_.reset();
-  output_ack_.invalidate();
+
   stopped_evidence_.reset();
   motion_core_.reset();
 }

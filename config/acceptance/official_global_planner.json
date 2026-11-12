@@ -30,7 +30,6 @@
     "snap_search_radius_cells": 2,
     "ground_support": true,
     "direct_support_only": false,
-    "support_radius_cells": 1,
     "support_depth_cells": 2,
     "support_height_m": 0.35,
     "support_height_tolerance_m": 0.05,

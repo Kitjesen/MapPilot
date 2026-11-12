@@ -37,7 +37,9 @@ inline std::string truthStatusSnapshot(
       << "\"x\":" << pose.x << ",\"y\":" << pose.y << ",\"z\":" << pose.z
       << ",\"qx\":" << pose.qx << ",\"qy\":" << pose.qy << ",\"qz\":" << pose.qz << ",\"qw\":" << pose.qw
       << "},\"twist\":{\"vx\":" << velocity[0] << ",\"vy\":" << velocity[1] << ",\"vz\":" << velocity[2]
-      << ",\"wx\":0,\"wy\":0,\"wz\":0}}}";
+      << ",\"wx\":" << (pose.has_angular_velocity ? pose.wx : 0.0)
+      << ",\"wy\":" << (pose.has_angular_velocity ? pose.wy : 0.0)
+      << ",\"wz\":" << (pose.has_angular_velocity ? pose.wz : 0.0) << "}}}";
   return out.str();
 }
 

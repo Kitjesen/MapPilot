@@ -64,8 +64,7 @@ void fillHeader(lingtu_dds_Header &header, double stamp_s, const char *frame_id)
 }
 
 void writeControlState(dds_entity_t writer, std::uint64_t accepted_sequence,
-                       const std::string &accepted_producer_boot_id,
-                       std::uint64_t accepted_output_sequence) {
+                       bool zero_output) {
   lingtu_dds_DriverControlState msg{};
   fillHeader(msg.header, nowSeconds(), "body");
   msg.connected = true;
@@ -76,9 +75,7 @@ void writeControlState(dds_entity_t writer, std::uint64_t accepted_sequence,
   msg.lease_valid = true;
   msg.lease_remaining_ms = 1000;
   msg.accepted_sequence = accepted_sequence;
-  msg.accepted_producer_boot_id = const_cast<char *>(accepted_producer_boot_id.c_str());
-  msg.accepted_output_sequence = accepted_output_sequence;
-  msg.last_command_accepted = true;
+  msg.zero_output = zero_output;
   msg.fsm = const_cast<char *>(accepted_sequence == 0 ? "standing" : "walking");
   msg.owner = const_cast<char *>("grpc");
   msg.owner_id = const_cast<char *>("lingtu-driver@robot");
@@ -173,8 +170,7 @@ int main(int argc, char **argv) {
                  cfg.domain_id, contract.dds_topic.data(), control_contract.dds_topic.data());
 
     std::uint64_t sequence = 0;
-    std::string accepted_producer_boot_id;
-    std::uint64_t accepted_output_sequence = 0;
+    bool zero_output = false;
     auto next_control_state = std::chrono::steady_clock::now();
     while (g_running) {
       void *samples[32]{};
@@ -189,8 +185,8 @@ int main(int argc, char **argv) {
         }
         const auto *msg = static_cast<const lingtu_dds_FinalVelocityCommand *>(samples[i]);
         ++sequence;
-        accepted_producer_boot_id = msg->producer_boot_id ? msg->producer_boot_id : "";
-        accepted_output_sequence = msg->output_seq;
+        zero_output = msg->twist.linear.x == 0.0 && msg->twist.linear.y == 0.0 &&
+                      msg->twist.angular.z == 0.0;
         std::printf("LT_CMD_V1\t%llu\t%.9f\t%.9f\t%.9f\t%.9f\n",
                     static_cast<unsigned long long>(sequence), sourceWallSeconds(*msg),
                     msg->twist.linear.x, msg->twist.linear.y, msg->twist.angular.z);
@@ -201,8 +197,7 @@ int main(int argc, char **argv) {
       }
       const auto heartbeat_now = std::chrono::steady_clock::now();
       if (heartbeat_now >= next_control_state) {
-        writeControlState(control_state_writer, sequence, accepted_producer_boot_id,
-                          accepted_output_sequence);
+        writeControlState(control_state_writer, sequence, zero_output);
         next_control_state = heartbeat_now + std::chrono::milliseconds(50);
       }
       if (count == 0) {

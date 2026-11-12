@@ -49,6 +49,10 @@ int main() {
       truth.vx = 0.75 * std::cos(yaw) - 0.2 * std::sin(yaw);
       truth.vy = 0.75 * std::sin(yaw) + 0.2 * std::cos(yaw);
       truth.vz = 0.1;
+      truth.has_angular_velocity = 1;
+      truth.wx = 0.125;
+      truth.wy = -0.25;
+      truth.wz = 0.5;
       const auto velocity = NavigationFixtureObservationState::bodyVelocity(truth);
       require(std::abs(velocity[0] - 0.75) < 1e-9, "truth world velocity was not rotated to body x");
       require(std::abs(velocity[1] - 0.2) < 1e-9, "truth world velocity was not rotated to body y");
@@ -61,7 +65,7 @@ int main() {
               "truth snapshot omitted map odometry");
       require(snapshot.find("\"x\":1,\"y\":2,\"z\":0.4") != std::string::npos,
               "truth snapshot changed actual pose");
-      require(snapshot.find("\"wx\":0,\"wy\":0,\"wz\":0") != std::string::npos,
+      require(snapshot.find("\"wx\":0.125,\"wy\":-0.25,\"wz\":0.5") != std::string::npos,
               "truth snapshot differs from source DDS angular twist");
     }
     NavigationFixtureObservationState state;

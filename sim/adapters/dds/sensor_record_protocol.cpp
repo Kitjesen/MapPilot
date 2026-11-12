@@ -20,7 +20,7 @@ constexpr std::array<char, 4> kMagic{{'L', 'T', 'U', '1'}};
 
 static_assert(sizeof(Point) == 24, "unexpected point payload size");
 static_assert(sizeof(ImuSample) == 24, "unexpected imu payload size");
-static_assert(sizeof(OdomPrior) == 88, "unexpected odom prior payload size");
+static_assert(sizeof(OdomPrior) == 112, "unexpected odom prior payload size");
 
 bool host_is_little_endian() noexcept {
   const std::uint16_t value = 1;
@@ -209,7 +209,8 @@ bool validate_sensor_record_header(const SensorRecordHeader &header, std::string
     return true;
   }
   if (header.type == SensorRecordType::OdomPrior) {
-    if (header.count != 1 || header.payload_bytes != sizeof(OdomPrior)) {
+    if (header.count != 1 || (header.payload_bytes != sizeof(OdomPrior) &&
+        header.payload_bytes != lingtu::drivers::lidar::kLegacyOdomPriorBytes)) {
       error = "LTU1 odom prior payload must contain exactly one OdomPrior";
       return false;
     }
@@ -277,7 +278,13 @@ ImuSample decode_imu_payload(const SensorRecord &record) {
 OdomPrior decode_odom_prior_payload(const SensorRecord &record) {
   require_record_type(record, SensorRecordType::OdomPrior);
   OdomPrior prior{};
-  std::memcpy(&prior, record.payload.data(), sizeof(prior));
+  std::memcpy(&prior, record.payload.data(), record.payload.size());
+  if (record.payload.size() == lingtu::drivers::lidar::kLegacyOdomPriorBytes)
+    prior.has_angular_velocity = 0;
+  if (prior.has_angular_velocity > 1 ||
+      (prior.has_angular_velocity && (!std::isfinite(prior.wx) ||
+       !std::isfinite(prior.wy) || !std::isfinite(prior.wz))))
+    throw std::runtime_error("LTU1 odom prior angular velocity is invalid");
   return prior;
 }
 

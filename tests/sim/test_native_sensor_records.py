@@ -376,6 +376,7 @@ def test_encode_odom_prior_matches_the_native_struct_layout() -> None:
         position=np.array([1.0, 2.0, 0.3], dtype=np.float64),
         orientation=np.array([0.0, 0.0, 0.5, 0.8660254], dtype=np.float64),
         linear_velocity=np.array([0.4, 0.0, -0.1], dtype=np.float64),
+        angular_velocity=np.array([0.1, -0.2, 0.3], dtype=np.float64),
     )
 
     encoded = encode_odom_prior(
@@ -386,10 +387,10 @@ def test_encode_odom_prior_matches_the_native_struct_layout() -> None:
     )
 
     assert encoded.header == bytes.fromhex(
-        "4c5455310300000000dd0ee902000000090000000100000058000000"
+        "4c5455310300000000dd0ee902000000090000000100000070000000"
     )
     assert encoded.payload == struct.pack(
-        "<ddddddddddB7x",
+        "<10dBB6x3d",
         1.0,
         2.0,
         0.3,
@@ -401,7 +402,22 @@ def test_encode_odom_prior_matches_the_native_struct_layout() -> None:
         0.0,
         -0.1,
         1,
+        1,
+        0.1,
+        -0.2,
+        0.3,
     )
+
+
+def test_odom_prior_without_angular_measurement() -> None:
+    state = types.SimpleNamespace(position=np.zeros(3), orientation=[0, 0, 0, 1],
+                                  linear_velocity=np.zeros(3))
+    encoded = encode_odom_prior(state, timestamp_s=1, sequence=1, has_velocity=True)
+    values = struct.unpack("<10dBB6x3d", encoded.payload)
+    assert values[11:] == (0, 0.0, 0.0, 0.0)
+    state.angular_velocity = [0, 0, float("nan")]
+    with pytest.raises(ValueError):
+        encode_odom_prior(state, timestamp_s=1, sequence=1, has_velocity=True)
 
 
 def test_registered_cloud_preserves_sensor_origin_separately_from_body_points() -> None:

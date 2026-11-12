@@ -410,17 +410,9 @@ std::string serializeReady(const ReadyMessage &ready) {
   if (ready.accepted_sequence == 0) {
     throw ProtocolError("accepted_sequence must be greater than zero");
   }
-  const bool has_output_identity =
-      !ready.accepted_producer_boot_id.empty() || ready.accepted_output_sequence != 0;
-  if (has_output_identity && (!validProducerToken(ready.accepted_producer_boot_id) ||
-                              ready.accepted_output_sequence == 0)) {
-    throw ProtocolError("READY output identity is incomplete");
-  }
   return checkedSerializedLine(std::string(kReadyName) + "\t" + ready.bridge_boot_id + "\t" +
                                ready.controller_boot_id + "\t" +
-                               std::to_string(ready.accepted_sequence) + "\t" +
-                               producerField(ready.accepted_producer_boot_id) + "\t" +
-                               std::to_string(ready.accepted_output_sequence));
+                               std::to_string(ready.accepted_sequence));
 }
 
 std::string serializeFault(const FaultMessage &fault) {

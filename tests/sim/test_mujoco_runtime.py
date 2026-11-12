@@ -220,23 +220,39 @@ def test_support_clearance_mixed_group_preserves_mesh_and_heightfield(surface):
         ({"ready": True}, {"active": True, "reason": "execution_stalled"},
          "Motion stalled; stopped. Change goal or use keyboard to back away", {"ready": True, "healthy": True}),
         ({"ready": True}, {"goal_reached": True}, "goal reached", {"ready": True, "healthy": True}),
-        ({"ready": True}, {}, "waiting for control loop health", {}),
-        ({"ready": True}, {"active": True}, "waiting for control loop health",
+        ({"ready": True}, {}, "ready for a goal", {}),
+        ({"ready": True}, {"active": True}, "active",
          {"ready": False, "healthy": True}),
-        ({"ready": True}, {}, "collecting samples",
+        ({"ready": True}, {}, "ready for a goal",
          {"ready": False, "reason": "collecting samples"}),
         ({"ready": True}, {}, "ready for a goal\nTiming warning: deadline_miss_ratio_high",
          {"ready": True, "healthy": False, "reason": "deadline_miss_ratio_high"}),
         ({"ready": True}, {"active": True, "reason": "tracking", "final_safety": {
+            "applied": True, "stopped": True, "reason": "brake_blocked"}},
+         "Obstacle within stopping distance; stopped\nTiming warning: deadline_miss_ratio_high",
+         {"ready": True, "healthy": False, "reason": "deadline_miss_ratio_high"}),
+        ({"ready": True}, {"active": True, "reason": "tracking", "final_safety": {
+            "applied": True, "stopped": True, "reason": "cmd_blocked"}},
+         "Candidate command has no braking space", {"ready": True, "healthy": True}),
+        ({"ready": True}, {"active": True, "reason": "tracking", "final_safety": {
             "applied": True, "stopped": True, "reason": "scan_actual_motion_blocked"}},
          "Obstacle within stopping distance; stopped\nTiming warning: deadline_miss_ratio_high",
          {"ready": True, "healthy": False, "reason": "deadline_miss_ratio_high"}),
+        ({"ready": True}, {"active": True, "reason": "tracking", "final_safety": {
+            "applied": True, "stopped": True, "reason": "scan_command_motion_blocked"}},
+         "Candidate command has no braking space", {"ready": True, "healthy": True}),
         ({"ready": True}, {"active": True, "final_safety": {
             "applied": True, "stopped": True, "reason": "traversability_blocked"}},
          "Stopped: traversability_blocked", {"ready": True, "healthy": True}),
     ],
 )
 def test_viewer_reports_current_navigation_gate(gate, local, expected, health):
+    texts = _navigation_text(gate, local, health)
+    assert texts[0][-1] == "Ready\nNavigation: " + expected + "\nKeyboard: operator ACK timed out"
+    assert "WASD: move" in texts[0][-2]
+
+
+def _navigation_text(gate, local, health, authority=None):
     from contextlib import nullcontext
 
     from drivers.sim.mujoco.runtime import LiveViewer
@@ -250,9 +266,15 @@ def test_viewer_reports_current_navigation_gate(gate, local, expected, health):
     viewer._viewer = types.SimpleNamespace(
         viewport=None, lock=nullcontext, set_texts=texts.append, poll_click=lambda: None,
     )
-    viewer._update_goal_input({"input_gate": gate, "last_local": local, "control_loop_health": health})
-    assert texts[0][-1] == "Ready\nNavigation: " + expected + "\nKeyboard: operator ACK timed out"
-    assert "WASD: move" in texts[0][-2]
+    viewer._update_goal_input({"input_gate": gate, "last_local": local,
+                              "control_loop_health": health, "control_authority": authority or {}})
+    return texts
+
+
+def test_viewer_preserves_native_hold_reason_without_performance_gate():
+    texts = _navigation_text({"ready": True}, {"active": True}, {},
+                             {"hold_reason": "stop_confirmation_timeout"})
+    assert "Navigation: stop_confirmation_timeout" in texts[0][-1]
 
 
 def test_live_viewer_start_does_not_wait_for_first_window_frame(monkeypatch):
@@ -790,6 +812,7 @@ def test_mujoco_native_dds_sensor_bridge_writes_odom_prior_record():
         position=np.array([1.0, 2.0, 0.3], dtype=np.float64),
         orientation=np.array([0.0, 0.0, 0.5, 0.8660254], dtype=np.float64),
         linear_velocity=np.array([0.4, 0.0, 0.0], dtype=np.float64),
+        angular_velocity=np.array([0.1, -0.2, 0.3], dtype=np.float64),
     )
     stream = io.BytesIO()
 
@@ -806,6 +829,8 @@ def test_mujoco_native_dds_sensor_bridge_writes_odom_prior_record():
     assert payload_bytes == bridge._ODOM_PRIOR_PAYLOAD.size
     assert values[:10] == pytest.approx((1.0, 2.0, 0.3, 0.0, 0.0, 0.5, 0.8660254, 0.4, 0.0, 0.0))
     assert values[10] == 1
+    assert values[11] == 1
+    assert values[12:] == pytest.approx((0.1, -0.2, 0.3))
 
 
 def test_mujoco_native_dds_sensor_bridge_writes_body_registered_cloud_record():

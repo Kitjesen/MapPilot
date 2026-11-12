@@ -2034,7 +2034,6 @@ def planner_constraint_overrides(args: argparse.Namespace) -> dict[str, Any]:
         # Nearby walls and floor edges must never substitute for support in the
         # same XY column.
         overrides["direct_support_only"] = True
-        overrides["support_radius_cells"] = 0
         resolution = float(getattr(args, "resolution", 0.18))
         overrides["support_depth_cells"] = max(
             1,

@@ -346,7 +346,7 @@ int main(int argc, char **argv) {
       }
       std::cout << "inspection_task_id=" << options.inspection_task_id
                 << " terminal_state=" << report.terminal_state
-                << " confirmed_output_sequence=" << report.confirmed_output_sequence << "\n";
+                << " final_output_sequence=" << report.final_output_sequence << "\n";
     }
 
     storage.commit();

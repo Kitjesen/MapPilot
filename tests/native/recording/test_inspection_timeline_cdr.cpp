@@ -177,12 +177,10 @@ int publish_drain_fixture(int domain_id, const std::filesystem::path &ready_path
     auto *driver = lingtu_dds_DriverControlState__alloc();
     *driver = {};
     set_header(driver->header);
-    driver->connected = true;
+    driver->connected = false;
     driver->ready = true;
     driver->lease_valid = true;
-    driver->accepted_producer_boot_id = text("nav-boot-1");
-    driver->accepted_output_sequence = 71;
-    driver->last_command_accepted = true;
+    driver->zero_output = true;
     driver->fsm = text("ready");
     driver->owner = text("nav");
     driver->owner_id = text("nav-boot-1");
@@ -243,12 +241,10 @@ int main(int argc, char **argv) {
   auto *driver = lingtu_dds_DriverControlState__alloc();
   *driver = {};
   set_header(driver->header);
-  driver->connected = true;
+  driver->connected = false;
   driver->ready = true;
   driver->lease_valid = true;
-  driver->accepted_producer_boot_id = text("nav-boot-1");
-  driver->accepted_output_sequence = 71;
-  driver->last_command_accepted = true;
+  driver->zero_output = true;
   driver->fsm = text("ready");
   driver->owner = text("nav");
   driver->owner_id = text("nav-boot-1");
@@ -266,7 +262,7 @@ int main(int argc, char **argv) {
   require(report.ok, "portable CDR timeline rejected valid task evidence");
   require(report.event_count == 2, "portable CDR timeline lost task events");
   require(report.terminal_state == 9, "portable CDR timeline lost terminal state");
-  require(report.confirmed_output_sequence == 71,
+  require(report.final_output_sequence == 71,
           "portable CDR timeline lost driver stop confirmation");
 
   lingtu::recording::InspectionTimelineCapture recovered_capture;
@@ -304,10 +300,8 @@ int main(int argc, char **argv) {
   auto *resumed_driver = lingtu_dds_DriverControlState__alloc();
   *resumed_driver = {};
   set_header(resumed_driver->header);
-  resumed_driver->connected = true;
-  resumed_driver->accepted_producer_boot_id = text("nav-boot-2");
-  resumed_driver->accepted_output_sequence = 7;
-  resumed_driver->last_command_accepted = true;
+  resumed_driver->connected = false;
+  resumed_driver->zero_output = true;
   resumed_driver->fsm = text("ready");
   resumed_driver->owner = text("nav");
   resumed_driver->owner_id = text("nav-boot-2");

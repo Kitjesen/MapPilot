@@ -25,7 +25,7 @@ MID360_ACCEL_MPS2_PER_G = 9.80665
 HEADER = struct.Struct("<4sB3xQIII")
 CAMERA_RECORD_HEADER = struct.Struct("<4sHHIIIIddddddIddddd")
 IMU_PAYLOAD = struct.Struct("<ffffff")
-ODOM_PRIOR_PAYLOAD = struct.Struct("<ddddddddddB7x")
+ODOM_PRIOR_PAYLOAD = struct.Struct("<10dBB6x3d")
 MAX_SENSOR_RECORD_PAYLOAD_BYTES = 256 * 1024 * 1024
 MAX_CAMERA_RECORD_PAYLOAD_BYTES = 128 * 1024 * 1024
 MAX_CAMERA_TIMESTAMP_S = (1 << 31) - 1
@@ -402,7 +402,12 @@ def encode_odom_prior(
     )
     if not all(math.isfinite(value) for value in values):
         raise ValueError("LTU1 odom prior values must be finite")
-    payload = ODOM_PRIOR_PAYLOAD.pack(*values, int(has_velocity))
+    angular = getattr(state, "angular_velocity", None)
+    has_angular = angular is not None
+    angular = np.asarray(angular if has_angular else (0.0, 0.0, 0.0), dtype=np.float64).reshape(-1)
+    if angular.size != 3 or not np.isfinite(angular).all():
+        raise ValueError("LTU1 odom prior body angular velocity must contain three finite values")
+    payload = ODOM_PRIOR_PAYLOAD.pack(*values, int(has_velocity), int(has_angular), *angular)
     return encode_record(
         RECORD_ODOM_PRIOR,
         timestamp_ns=_seconds_to_timestamp_ns("timestamp_s", timestamp_s),

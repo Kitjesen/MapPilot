@@ -170,7 +170,7 @@ void testActivationRequiresAppliedThenLaterHeartbeat() {
         "expired heartbeat must expose a zero remaining lease");
 }
 
-void testPhysicalNavAppliedPublishesExactOutputAck() {
+void testPhysicalNavAppliedState() {
   const auto start = TimePoint{} + 3s;
   MujocoDriverBridgeCore core(config());
   activateToReady(core, start);
@@ -182,21 +182,16 @@ void testPhysicalNavAppliedPublishesExactOutputAck() {
   check(emitted->walk.y == -0.5, "linear y must use real Core normalization");
   check(emitted->walk.z == 1.0, "bridge normalizes the configured angular limit for its controller");
   auto status = core.status(start + 4ms);
-  check(status.output_ack.producerBootId().empty(),
-        "Nav command must not ACK before physical APPLIED");
+  check(!status.zero_output, "pending movement must not report zero output");
   check(status.applied_walk.x == 0.0 && status.applied_walk.y == 0.0 &&
             status.applied_walk.z == 0.0,
         "accepted DDS input must not masquerade as a physically applied walk");
 
   (void)core.onApplied(appliedFor(*emitted, 3), start + 5ms);
   status = core.status(start + 5ms);
-  check(status.output_ack.accepted(), "matching Nav APPLIED must ACK");
-  check(status.output_ack.producerBootId() == "producer-a", "ACK must preserve producer identity");
-  check(status.output_ack.outputSequence() == 91, "ACK must preserve output identity");
+  check(!status.zero_output, "applied movement must not report zero output");
   check(status.accepted_sequence == emitted->bridge_command_seq,
         "accepted_sequence must be physical bridge command sequence");
-  check(status.accepted_sequence != status.output_ack.outputSequence(),
-        "bridge accepted_sequence and Nav output sequence must remain distinct");
   check(status.applied_walk.x == 1.0 && status.applied_walk.y == -0.5 &&
             status.applied_walk.z == 1.0,
         "BridgeStatus must expose only the physically APPLIED walk");
@@ -223,12 +218,10 @@ void testNavZeroWalkIsCanonicalAcrossWireAndAppliedAck() {
 
   (void)core.onApplied(appliedFor(*emitted, 3), start + 5ms);
   const auto status = core.status(start + 5ms);
-  check(status.output_ack.accepted(), "matching canonical-zero APPLIED must ACK");
-  check(status.output_ack.outputSequence() == 911,
-        "canonical-zero APPLIED ACK must preserve output identity");
+  check(status.zero_output, "applied zero must report zero output");
 }
 
-void testPendingNavPreservesLastPhysicalAckUntilReplacementIsApplied() {
+void testPendingNavDoesNotReportZero() {
   const auto start = TimePoint{} + 3500ms;
   MujocoDriverBridgeCore core(config());
   activateToReady(core, start);
@@ -236,25 +229,18 @@ void testPendingNavPreservesLastPhysicalAckUntilReplacementIsApplied() {
   const auto first = core.submitNav(nav(start + 4ms, 92));
   check(first.has_value(), "first ACK fixture command must emit");
   (void)core.onApplied(appliedFor(*first, 3), start + 5ms);
-  check(core.status(start + 5ms).output_ack.outputSequence() == 92,
-        "first command must establish physical ACK evidence");
 
   const auto second = core.submitNav(nav(start + 6ms, 93));
   check(second.has_value(), "second ACK fixture command must emit");
   const auto pending = core.status(start + 6ms);
-  check(pending.output_ack.accepted(),
-        "pending Nav must retain the last physically applied ACK evidence");
-  check(pending.output_ack.outputSequence() == 92,
-        "pending Nav must not masquerade as physically applied before APPLIED arrives");
+  check(!pending.zero_output, "pending movement is not zero output");
 
   (void)core.onApplied(appliedFor(*second, 4), start + 7ms);
   const auto applied = core.status(start + 7ms);
-  check(applied.output_ack.accepted(), "second physical APPLIED must restore accepted evidence");
-  check(applied.output_ack.outputSequence() == 93,
-        "restored ACK must identify the newly applied output");
+  check(!applied.zero_output, "applied movement is not zero output");
 }
 
-void testCoalescedNavPreservesAppliedAckWhileReleasingLatestCommand() {
+void testCoalescedNavReleasesLatestCommand() {
   const auto start = TimePoint{} + 3750ms;
   MujocoDriverBridgeCore core(config());
   activateToReady(core, start);
@@ -269,16 +255,10 @@ void testCoalescedNavPreservesAppliedAckWhileReleasingLatestCommand() {
   check(next->output_sequence == 95, "released command must preserve the newest output identity");
   const auto between = core.status(start + 6ms);
   check(between.has_pending, "released coalesced command must remain pending until APPLIED");
-  check(between.output_ack.accepted(),
-        "issuing the coalesced command must retain the first physical ACK");
-  check(between.output_ack.outputSequence() == 94,
-        "READY must identify the command that was physically applied, not the pending replacement");
 
   (void)core.onApplied(appliedFor(*next, 4), start + 7ms);
   const auto applied = core.status(start + 7ms);
-  check(applied.output_ack.accepted(), "coalesced replacement APPLIED must remain accepted");
-  check(applied.output_ack.outputSequence() == 95,
-        "physical replacement must advance ACK to the newest output identity");
+  check(!applied.zero_output, "applied movement is not zero output");
 }
 
 void testNavIngressUsesRealFreshnessAndNormalizationGates() {
@@ -315,9 +295,7 @@ void testNavIngressUsesRealFreshnessAndNormalizationGates() {
     check(cause == BridgeStopCause::InvalidCommand ||
               cause == BridgeStopCause::RejectedCommand,
           "invalid Nav input must preserve whether validation or the real motion gate rejected it");
-    check(core.status(start + 4ms).output_ack.producerBootId().empty(),
-          "invalid Nav input must not publish output ACK");
-  }
+    }
 }
 
 void testPendingCommandIsImmutableAndLatestIsCoalesced() {
@@ -372,8 +350,6 @@ void testQueuedNavUsesOriginalSourceTimeWhenReleased() {
         "queued Nav whose original source time expired must never be released as motion");
   check(core.status(start + 7ms).stop_cause == BridgeStopCause::QueuedCommandExpired,
         "queued Nav expiry must retain its exact stop cause");
-  check(core.status(start + 7ms).output_ack.producerBootId().empty(),
-        "expired queued Nav transition must not retain the first command ACK");
 }
 
 void testEveryAppliedEchoFieldIsFailClosed() {
@@ -455,8 +431,6 @@ void testAppliedStepMustBeLaterThanObservedHeartbeat() {
         "APPLIED older than an observed heartbeat must fail closed");
   check(status.fault == BridgeFaultCode::ProtocolViolation,
         "out-of-order physical APPLIED must be a protocol violation");
-  check(status.output_ack.producerBootId().empty(),
-        "out-of-order physical APPLIED must not publish output ACK");
 }
 
 void testApplyTimeoutIsTerminal() {
@@ -478,8 +452,6 @@ void testHeartbeatTimeoutRequiresAppliedPhysicalZeroBeforeFault() {
   const auto nav_command = core.submitNav(nav(start + 4ms, 611));
   check(nav_command.has_value(), "heartbeat-timeout fixture must emit Nav");
   (void)core.onApplied(appliedFor(*nav_command, 3), start + 5ms);
-  check(core.status(start + 5ms).output_ack.accepted(),
-        "heartbeat-timeout fixture needs accepted physical output evidence");
 
   const auto zero = core.poll(start + 3ms + config().heartbeat_timeout);
   check(zero.has_value(), "heartbeat timeout must emit a physical zero before faulting");
@@ -490,8 +462,6 @@ void testHeartbeatTimeoutRequiresAppliedPhysicalZeroBeforeFault() {
         "bridge must await physical zero APPLIED after heartbeat timeout");
   check(!stopping.ready, "heartbeat timeout must clear readiness immediately");
   check(!stopping.lease_valid, "heartbeat timeout must invalidate the controller lease");
-  check(stopping.output_ack.producerBootId().empty(),
-        "heartbeat timeout must clear stale output ACK before issuing zero");
 
   (void)core.onApplied(appliedFor(*zero, 4), start + 504ms);
   const auto stopped = core.status(start + 504ms);
@@ -519,8 +489,6 @@ void testHeartbeatTimeoutDuringPendingNavSuppressesAckAndThenZeros() {
   const auto stopping = core.status(start + 503ms);
   check(stopping.lifecycle == BridgeLifecycle::DeactivatingZero,
         "expired heartbeat must remain in the zero barrier");
-  check(stopping.output_ack.producerBootId().empty(),
-        "Nav APPLIED after heartbeat expiry must not publish output ACK");
 
   (void)core.onApplied(appliedFor(*zero, 4), start + 504ms);
   const auto stopped = core.status(start + 504ms);
@@ -581,8 +549,6 @@ void testLateEventsCannotBypassDeadlines() {
         "late APPLIED must fail at the apply deadline");
   check(applied_status.accepted_sequence != command->bridge_command_seq,
         "late APPLIED must not update accepted_sequence");
-  check(applied_status.output_ack.producerBootId().empty(),
-        "late APPLIED must not publish output ACK");
 
   MujocoDriverBridgeCore stale_submit(config());
   activateToReady(stale_submit, start + 2s);
@@ -597,7 +563,7 @@ void testLateEventsCannotBypassDeadlines() {
         "stale Nav zero APPLIED must preserve heartbeat-timeout root cause");
 }
 
-void testWriterLossAndAmbiguityRequireAppliedZero() {
+void testWriterLossUsesTimeoutAndAmbiguityStops() {
   for (const std::uint32_t writers : {0U, 2U}) {
     const auto start = TimePoint{} + 16s + std::chrono::seconds(writers);
     MujocoDriverBridgeCore core(config());
@@ -605,14 +571,19 @@ void testWriterLossAndAmbiguityRequireAppliedZero() {
     const auto nav_command = core.submitNav(nav(start + 4ms, 70 + writers));
     check(nav_command.has_value(), "writer fixture must emit Nav");
     (void)core.onApplied(appliedFor(*nav_command, 3), start + 5ms);
-    check(core.status(start + 5ms).output_ack.accepted(), "fixture needs ACK");
 
     const auto zero = core.onWriterCount(writers, start + 6ms);
+    if (writers == 0) {
+      check(!zero && core.status(start + 6ms).ready,
+            "writer disappearance must not create a second stop path");
+      const auto timeout_zero = core.poll(start + 4ms + config().limits.command_timeout);
+      check(timeout_zero && timeout_zero->kind == BridgeCommandKind::SafetyZero,
+            "missing input must still stop at the command timeout");
+      continue;
+    }
     check(zero.has_value(), "writer fault must emit a zero");
     check(!core.status(start + 6ms).ready, "writer fault must clear ready");
-    check(core.status(start + 6ms).output_ack.producerBootId().empty(),
-          "writer fault must clear output ACK");
-    check(zero->kind == BridgeCommandKind::WriterFaultZero, "writer fault must use typed zero");
+      check(zero->kind == BridgeCommandKind::WriterFaultZero, "writer fault must use typed zero");
 
     (void)core.onApplied(appliedFor(*zero, 4), start + 7ms);
     check(core.status(start + 7ms).lifecycle == BridgeLifecycle::FaultClosed,
@@ -632,8 +603,6 @@ void testPlannedDeactivateClearsAckAndStopsAfterZero() {
       core.onDeactivate(DeactivateMessage{kBridgeBoot, kControllerBoot, 3}, start + 6ms);
   check(zero.has_value(), "DEACTIVATE must emit a zero");
   check(!core.status(start + 6ms).ready, "DEACTIVATE must clear ready");
-  check(core.status(start + 6ms).output_ack.producerBootId().empty(),
-        "DEACTIVATE must clear ACK immediately");
   check(zero->kind == BridgeCommandKind::DeactivateZero, "DEACTIVATE must use planned zero kind");
   (void)core.onApplied(appliedFor(*zero, 4), start + 7ms);
   check(core.status(start + 7ms).lifecycle == BridgeLifecycle::Stopped,
@@ -718,8 +687,6 @@ void testPendingNavStopSuppressesAckThenEmitsZero() {
   check(zero->kind == BridgeCommandKind::DeactivateZero, "deactivation must retain typed zero");
   check(zero->bridge_command_seq == nav_command->bridge_command_seq + 1,
         "cancelling a nav must not reuse its command identity");
-  check(core.status(start + 6ms).output_ack.producerBootId().empty(),
-        "cancelled nav must never become an applied output ACK");
   check(!core.status(start + 6ms).has_latest, "deactivation must discard queued future nav");
   check(!core.stoppedEvidence().has_value(), "issuing zero is not physical stop evidence");
   (void)core.onApplied(appliedFor(*zero, 3), start + 7ms);
@@ -741,8 +708,6 @@ void testCancelledNavAppliedCannotAcknowledgeDeactivation() {
   check(core.status(start + 6ms).lifecycle == BridgeLifecycle::FaultClosed,
         "a cancelled nav APPLIED cannot substitute for applied stop zero");
   check(!core.stoppedEvidence().has_value(), "cancelled nav must not provide stop evidence");
-  check(core.status(start + 6ms).output_ack.producerBootId().empty(),
-        "cancelled nav must not provide execution evidence");
 }
 
 void testSafetyZeroReturnsToNonMotionReady() {
@@ -762,7 +727,6 @@ void testSafetyZeroReturnsToNonMotionReady() {
   (void)core.onApplied(appliedFor(*zero, 4), start + 7ms);
   const auto status = core.status(start + 7ms);
   check(status.ready, "fresh writer/controller may return non-motion Ready");
-  check(status.output_ack.producerBootId().empty(), "safety zero must leave output ACK empty");
   check(status.applied_walk.x == 0.0 && status.applied_walk.y == 0.0 &&
             status.applied_walk.z == 0.0,
         "physical safety zero must clear the applied walk evidence");
@@ -812,8 +776,6 @@ void testRealCoreWatchdogEmitsSafetyZero() {
   check(zero->kind == BridgeCommandKind::SafetyZero, "watchdog must use the typed safety zero");
   check(core.status(start + 104ms).stop_cause == BridgeStopCause::CommandTimeout,
         "real Core watchdog must report command_timeout instead of a generic lifecycle state");
-  check(core.status(start + 104ms).output_ack.producerBootId().empty(),
-        "watchdog stop must clear output ACK");
   (void)core.onApplied(appliedFor(*zero, 4), start + 105ms);
   check(core.status(start + 105ms).ready,
         "watchdog zero may return to non-motion Ready when heartbeat is fresh");
@@ -851,8 +813,6 @@ void testExpiredLatestNeverEmitsOldMotion() {
         "expired latest must never emit stale Nav motion");
   check(core.status(start + 105ms).stop_cause == BridgeStopCause::QueuedCommandExpired,
         "expired latest must retain the queued-command stop cause");
-  check(core.status(start + 105ms).output_ack.producerBootId().empty(),
-        "expired latest safety transition must clear ACK");
 }
 
 void testPrivateV2ParserAndSerializersAreStrict() {
@@ -891,8 +851,8 @@ void testPrivateV2ParserAndSerializersAreStrict() {
                 "\t2\tnav\tproducer-a\t91\t1\t-0.5\t1",
         "COMMAND serializer must be deterministic");
   check(lingtu::sim::driver_bridge::serializeReady(
-            ReadyMessage{bridge, controller, 2, "producer-a", 91}) ==
-            "LT_DRIVER_READY_V2\t" + bridge + "\t" + controller + "\t2\tproducer-a\t91",
+            ReadyMessage{bridge, controller, 2}) ==
+            "LT_DRIVER_READY_V2\t" + bridge + "\t" + controller + "\t2",
         "READY serializer must preserve distinct sequences");
   check(lingtu::sim::driver_bridge::serializeFault(
             FaultMessage{bridge, controller, BridgeFaultCode::ProtocolViolation}) ==
@@ -1009,10 +969,10 @@ int main() {
   try {
     testConstructionIsStrictAndSideEffectFree();
     testActivationRequiresAppliedThenLaterHeartbeat();
-    testPhysicalNavAppliedPublishesExactOutputAck();
+    testPhysicalNavAppliedState();
     testNavZeroWalkIsCanonicalAcrossWireAndAppliedAck();
-    testPendingNavPreservesLastPhysicalAckUntilReplacementIsApplied();
-    testCoalescedNavPreservesAppliedAckWhileReleasingLatestCommand();
+    testPendingNavDoesNotReportZero();
+    testCoalescedNavReleasesLatestCommand();
     testNavIngressUsesRealFreshnessAndNormalizationGates();
     testPendingCommandIsImmutableAndLatestIsCoalesced();
     testMatchingAppliedReleasesFreshLatest();
@@ -1025,7 +985,7 @@ int main() {
     testHeartbeatTimeoutDuringPendingNavSuppressesAckAndThenZeros();
     testEveryControlEntryUsesHeartbeatTimeoutZeroBarrier();
     testLateEventsCannotBypassDeadlines();
-    testWriterLossAndAmbiguityRequireAppliedZero();
+    testWriterLossUsesTimeoutAndAmbiguityStops();
     testPlannedDeactivateClearsAckAndStopsAfterZero();
     testPlannedDeactivatePublishesTypedPhysicalStopEvidence();
     testInvalidDeactivateAppliedNeverPublishesStopEvidence();

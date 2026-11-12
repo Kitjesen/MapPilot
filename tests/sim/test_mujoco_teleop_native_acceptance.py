@@ -44,14 +44,9 @@ def _valid_case() -> dict:
                 "driver_ready": False,
                 "driver_ready_observed": True,
                 "accepted_sequence": 0,
-                "accepted_producer_boot_id": "",
-                "accepted_output_sequence": 0,
+
+
                 "nonzero_samples": 8,
-                "observed_output_ack": {
-                    "accepted_sequence": 7,
-                    "producer_boot_id": "host-boot",
-                    "output_sequence": 42,
-                },
                 "stopped_evidence": {
                     "bridge_boot_id": "a" * 32,
                     "controller_boot_id": "b" * 32,
@@ -78,6 +73,8 @@ def test_manifest_is_pure_teleop_and_component_scoped() -> None:
     assert set(manifest["binaries"]) == set(acceptance.REQUIRED_BINARIES)
     assert "slam" not in manifest
     assert "traversability" not in manifest
+    assert manifest["contracts"]["driver_state"] == "rt/driver/control_state"
+    assert "driver_ack" not in manifest["contracts"]
 
 
 @pytest.mark.parametrize("value", ["-1", "233", "not-an-integer"])

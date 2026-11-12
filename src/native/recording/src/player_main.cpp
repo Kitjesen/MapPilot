@@ -550,7 +550,7 @@ int main(int argc, char **argv) {
       if (!options.inspection_task_id.empty()) {
         std::cout << ",\"inspection_task_id\":" << std::quoted(options.inspection_task_id)
                   << ",\"terminal_state\":" << inspection_report.terminal_state
-                  << ",\"confirmed_output_sequence\":" << inspection_report.confirmed_output_sequence;
+                  << ",\"final_output_sequence\":" << inspection_report.final_output_sequence;
       }
       std::cout << "}\n";
       return 0;
@@ -561,7 +561,7 @@ int main(int argc, char **argv) {
     if (!options.inspection_task_id.empty()) {
       std::cout << " inspection_task_id=" << options.inspection_task_id
                 << " terminal_state=" << inspection_report.terminal_state
-                << " confirmed_output_sequence=" << inspection_report.confirmed_output_sequence;
+                << " final_output_sequence=" << inspection_report.final_output_sequence;
     }
     std::cout << "\n";
     return 0;

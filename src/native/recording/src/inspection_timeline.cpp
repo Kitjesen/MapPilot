@@ -1,6 +1,7 @@
 #include "lingtu/recording/inspection_timeline.hpp"
 #include "message/generated/enums.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <sstream>
 #include <unordered_set>
@@ -235,24 +236,33 @@ verify_inspection_task_timeline(const std::string &task_id,
              last_output->producer_boot_id != terminal->boot_id) {
     add_error(report, "final zero-output evidence belongs to a different native boot");
   } else {
+    std::uint64_t last_motion_ns = identity.observed_time_ns;
+    for (const auto &output : outputs) {
+      if (output.observed_time_ns <= terminal->observed_time_ns && !zero_output(output)) {
+        last_motion_ns = std::max(last_motion_ns, output.observed_time_ns);
+      }
+    }
+    auto zero_started_ns = last_output->observed_time_ns;
+    for (const auto &output : outputs) {
+      if (output.observed_time_ns > last_motion_ns && zero_output(output) &&
+          output.producer_boot_id == terminal->boot_id) {
+        zero_started_ns = std::min(zero_started_ns, output.observed_time_ns);
+      }
+    }
     const DriverControlFact *confirmation = nullptr;
     for (const auto &state : driver_states) {
-      if (state.observed_time_ns < identity.observed_time_ns ||
-          state.observed_time_ns < last_output->observed_time_ns ||
-          state.observed_time_ns > terminal->observed_time_ns || !state.connected ||
-          !state.last_command_accepted ||
-          state.accepted_producer_boot_id != last_output->producer_boot_id ||
-          state.accepted_output_sequence < last_output->output_sequence) {
+      if (state.observed_time_ns <= zero_started_ns ||
+          state.observed_time_ns > terminal->observed_time_ns) {
         continue;
       }
       if (confirmation == nullptr || state.observed_time_ns > confirmation->observed_time_ns) {
         confirmation = &state;
       }
     }
-    if (confirmation == nullptr) {
-      add_error(report, "driver did not confirm the final zero-output sequence before terminal");
+    if (confirmation == nullptr || !confirmation->zero_output) {
+      add_error(report, "driver zero-output state was not observed before terminal");
     } else {
-      report.confirmed_output_sequence = last_output->output_sequence;
+      report.final_output_sequence = last_output->output_sequence;
     }
   }
 

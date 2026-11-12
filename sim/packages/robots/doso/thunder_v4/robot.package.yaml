@@ -19,7 +19,9 @@ visual:
 semantic:
   class: quadruped
 navigation_geometry:
-  body_file: collision/thunderv4_navigation.body2
+  # Matches the real RobotConfig; includes 5 cm XY allowance in the fitted body-height band.
+  collision_cylinder_radius_m: 0.32
+  collision_cylinder_offset_m: 0.23
   # base_link is near the torso bottom, not at half the standing robot height.
   # Fixed collision geoms span Z [-0.00209, 0.224772]. One 5 cm cell below
   # base_link leaves 4.79 cm below the rigid torso for map inflation.

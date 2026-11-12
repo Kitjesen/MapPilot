@@ -26,6 +26,25 @@ from lingtu.assembly.config.maps import default_map_settings, mapd_environment
 ROOT = Path(__file__).resolve().parents[2]
 
 
+@pytest.mark.parametrize("name", ["obstacle_5", "acceptance_box"])
+def test_motion_log_records_scene_contacts(name):
+    import mujoco
+    from sim.scripts.mujoco.formal_feeder import _PhysicalMotionEvidence
+
+    model = mujoco.MjModel.from_xml_string(f'''<mujoco><worldbody>
+      <geom name="{name}" type="box" pos="0 0 .4" size=".3 .3 .3"/>
+      <body name="base_link" pos=".35 0 .4"><freejoint/>
+        <geom name="robot" type="sphere" size=".1"/>
+      </body></worldbody></mujoco>''')
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    evidence = _PhysicalMotionEvidence()
+    evidence.observe_contacts(model, data)
+    assert evidence.entity_contact_steps == 1
+    recorded = sensors._acceptance_contacts(model, data)
+    assert any(name in (r["geom1"], r["geom2"]) and r["distance_m"] < 0 for r in recorded)
+
+
 def test_stair_evidence_requires_floor_and_real_model_restore():
     leg = {"goal": [5.9, 0.0, 1.15], "profile_sequence": ["stairs_up", "restore"]}
     limits = {"max_goal_height_error_m": 0.15}
@@ -324,7 +343,7 @@ def test_dynamic_acceptance_requires_actual_sensed_encounter_and_resumed_motion(
             "mocap_pose": {"position_m": [actor_x, 2, 0]},
             "lidar_world": [[actor_x, 2, .9]], "input_gate": {"ready": True},
             "odom_prior_velocity": {"valid": True, "velocity_mps": [0, speed, 0]},
-            "local_diagnostics": {"final_safety": {"stopped": stopped, "reason": "scan_actual_motion_blocked"}},
+            "local_diagnostics": {"final_safety": {"stopped": stopped, "reason": "brake_blocked"}},
         })
     log = tmp_path / "motion.jsonl"
 
@@ -1106,18 +1125,6 @@ def test_cpp_driver_bridge_timestamps_command_after_dds_take():
     assert "takeLatest(command_arrival)" not in source
 
 
-def test_nav_runtime_preserves_goal_during_transient_driver_blocker():
-    source = (ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "app" / "loop.cpp").read_text(
-        encoding="utf-8"
-    )
-
-    transition = source.split("const std::string driver_blocker", 1)[1].split(
-        "if (staged_inspection_goal", 1
-    )[0]
-    assert "clearEndpointMotion" in transition
-    assert "keepZeroFresh" in transition
-    assert "navigation_runtime_controller.interrupt" not in transition
-
 
 def test_cpp_driver_bridge_control_state_is_derived_from_physical_bridge_status():
     source = (ROOT / "sim" / "adapters" / "dds" / "mujoco_driver_bridge.cpp").read_text(
@@ -1126,16 +1133,12 @@ def test_cpp_driver_bridge_control_state_is_derived_from_physical_bridge_status(
 
     assert "lingtu::message::kDriverControlState" in source
     assert "lingtu_dds_DriverControlState_desc" in source
-    assert "const auto output_ack = status.output_ack" in source
     assert "message.ready = status.ready" in source
     assert "message.lease_valid = status.lease_valid" in source
     assert "message.accepted_sequence = status.accepted_sequence" in source
-    assert "output_ack.producerBootId()" in source
-    assert "output_ack.outputSequence()" in source
-    assert "output_ack.accepted()" in source
     assert "checked(dds_write(state_writer_, &message)" in source
     assert "message.ready = true" not in source
-    assert "message.last_command_accepted = true" not in source
+    assert "message.zero_output = status.zero_output" in source
 
 
 def test_native_navigation_phase_timeout_includes_wsl_shutdown_grace():
@@ -1154,7 +1157,7 @@ def test_native_navigation_resume_waits_for_control_loop_recovery(monkeypatch):
             {
                 "returncode": 1,
                 "stdout": "",
-                "stderr": "control_loop_recovery_pending",
+                "stderr": "loop_hold",
             },
             {"returncode": 0, "stdout": "accepted", "stderr": ""},
         ]
@@ -1654,13 +1657,8 @@ def test_terminal_driver_stop_evidence_requires_exact_zero_identity_and_cleanup(
             "controller_boot_id": "controller-boot",
             "driver_ready": False,
             "accepted_sequence": 0,
-            "accepted_producer_boot_id": "",
-            "accepted_output_sequence": 0,
-            "observed_output_ack": {
-                "accepted_sequence": 41,
-                "producer_boot_id": "host-boot:123:456",
-                "output_sequence": 17,
-            },
+
+
             "stopped_evidence": {
                 "bridge_boot_id": "bridge-boot",
                 "controller_boot_id": "controller-boot",
@@ -1683,7 +1681,6 @@ def test_terminal_driver_stop_evidence_requires_exact_zero_identity_and_cleanup(
 
     report = acceptance._terminal_driver_stop_evidence(
         sensor_report=sensor_report,
-        expected_host_boot_id="host-boot",
         process_cleanup=process_cleanup,
     )
 
@@ -1715,9 +1712,8 @@ def test_terminal_driver_stop_does_not_invent_prior_output_in_no_motion_phase():
             "controller_boot_id": "controller-boot",
             "driver_ready": False,
             "accepted_sequence": 0,
-            "accepted_producer_boot_id": "",
-            "accepted_output_sequence": 0,
-            "observed_output_ack": {},
+
+
             "stopped_evidence": {
                 "bridge_boot_id": "bridge-boot",
                 "controller_boot_id": "controller-boot",
@@ -1734,14 +1730,10 @@ def test_terminal_driver_stop_does_not_invent_prior_output_in_no_motion_phase():
 
     report = acceptance._terminal_driver_stop_evidence(
         sensor_report=sensor_report,
-        expected_host_boot_id="host-boot",
         process_cleanup=[{"name": "sensor", "clean": True}],
-        require_prior_output_ack=False,
     )
 
     assert report["ok"] is True
-    assert report["prior_output_ack"]["required"] is False
-    assert report["prior_output_ack"]["exact_identity_and_sequence"] is False
 
 
 @pytest.mark.parametrize(
@@ -1774,13 +1766,8 @@ def test_terminal_driver_stop_evidence_fails_closed(mutate, blocker):
             "controller_boot_id": "controller-boot",
             "driver_ready": False,
             "accepted_sequence": 0,
-            "accepted_producer_boot_id": "",
-            "accepted_output_sequence": 0,
-            "observed_output_ack": {
-                "accepted_sequence": 10,
-                "producer_boot_id": "host-boot:123:456",
-                "output_sequence": 9,
-            },
+
+
             "stopped_evidence": {
                 "bridge_boot_id": "bridge-boot",
                 "controller_boot_id": "controller-boot",
@@ -1798,7 +1785,6 @@ def test_terminal_driver_stop_evidence_fails_closed(mutate, blocker):
 
     report = acceptance._terminal_driver_stop_evidence(
         sensor_report=sensor_report,
-        expected_host_boot_id="host-boot",
         process_cleanup=[{"name": "sensor", "clean": True}],
     )
 
@@ -3086,6 +3072,29 @@ def test_navigation_video_snapshot_age_uses_joined_status_clock_not_planner_stea
     assert navigation_video._effective_local_candidates(row)
 
 
+@pytest.mark.parametrize("active_later", [False, True])
+def test_native_navigation_video_retains_motion_before_status_is_active(monkeypatch, tmp_path, active_later):
+    rows = [
+        {"driving": False, "cmd": [0, 0, 0]},
+        {"driving": True, "cmd": [0, 0, 0]},
+        {"driving": True, "cmd": [.5, 0, 0]},
+        {"driving": True, "cmd": [0, 0, 0], "local_diagnostics": {"active": active_later}},
+    ]
+    monkeypatch.setattr(navigation_video, "_load_jsonl", lambda path: rows)
+    captured = []
+
+    def capture(source, fps):
+        captured.extend(source)
+        return [], {}
+
+    monkeypatch.setattr(navigation_video, "_resample_rows_for_cfr", capture)
+    navigation_video.render_native_navigation_video(
+        world=tmp_path / "world.xml", policy_path=tmp_path / "policy.onnx",
+        motion_log=tmp_path / "motion.jsonl", output=tmp_path / "video.mp4", goal=[0, 0, 0],
+    )
+    assert captured == rows[1:]
+
+
 def test_native_navigation_video_preserves_source_timeline_with_cfr_holds():
     source_rows = [
         {"t": 10.0, "qpos": [0.0], "x": 0.0},
@@ -3351,6 +3360,60 @@ def test_native_navigation_video_shows_local_planner_decision_layers():
     assert '"--local-planner-debug-candidates"' in acceptance_source
     assert '"--local-map-debug-points"' in acceptance_source
     assert "render_native_navigation_video(" in acceptance_source
+
+
+def test_scan_video_shows_executing_path_after_replan_failure(monkeypatch):
+    cv2 = pytest.importorskip("cv2", reason="local-planner rendering requires the optional vision extra")
+    row = {
+        "t": 10.2,
+        "nav_status_stamp_s": 10.1,
+        "local_path": [[0.0, 0.0, 0.5], [1.0, 0.0, 0.5]],
+        "local_diagnostics": {
+            "active": True,
+            "path_found": True,
+            "tracking": {"active": True, "trajectory_id": 7},
+            "final_safety": {"stopped": False},
+        },
+        "local_planner_debug": {"valid": True, "timestamp_s": 10.1},
+        "local_planner_metrics": {"last_scan_failure": {"reason": "collision_restart_limit"}},
+        "local_candidates": [],
+    }
+    labels = []
+    arrows = []
+    monkeypatch.setattr(cv2, "putText", lambda image, text, *args: labels.append(text))
+    monkeypatch.setattr(cv2, "arrowedLine", lambda image, start, end, *args, **kwargs: arrows.append((start, end)))
+
+    navigation_video._render_local_planner_inset(np.zeros((720, 1280, 3), dtype=np.uint8), row)
+
+    assert navigation_video._local_path_bgr(row) == navigation_video._SELECTED_BGR
+    assert any(label.startswith("EXECUTING TRAJECTORY 7") for label in labels)
+    assert not any("NO SELECTED CANDIDATE" in label for label in labels)
+    assert "robot pose" in labels
+    assert ((220, 244), (220, 220)) in arrows
+
+
+@pytest.mark.parametrize("state", ["stale", "frozen", "finished", "inactive", "missing_path", "stopped"])
+def test_scan_video_does_not_mark_inactive_tracking_green(state):
+    row = {
+        "t": 10.2,
+        "nav_status_stamp_s": 10.1,
+        "local_path": [[0.0, 0.0, 0.5], [1.0, 0.0, 0.5]],
+        "local_diagnostics": {"active": True, "path_found": True, "tracking": {"active": True}},
+    }
+    if state == "stale":
+        row["t"] = 11.0
+    elif state == "frozen":
+        row["local_diagnostics"]["tracking"]["execution_frozen"] = True
+    elif state == "finished":
+        row["local_diagnostics"]["tracking"]["finished"] = True
+    elif state == "inactive":
+        row["local_diagnostics"]["active"] = False
+    elif state == "missing_path":
+        row["local_path"] = []
+    else:
+        row["local_diagnostics"]["final_safety"] = {"stopped": True}
+
+    assert navigation_video._local_path_bgr(row) != navigation_video._SELECTED_BGR
 
 
 def test_local_planner_visualization_uses_distinct_candidate_colors_and_selected_green():
@@ -3733,7 +3796,7 @@ def test_industrial_park_navigation_matches_global_and_local_clearance_contracts
     ).read_text(encoding="utf-8")
     assert "buildExecutorConfig(cfg)" in endpoint_source
     assert "out.footprintPadding = planner_obstacle_margin_m;" in config_source
-    assert endpoint_source.count("const auto safety_config = commandSafetyConfig(cfg);") == 1
+    assert endpoint_source.count("auto safety_config = commandSafetyConfig(cfg);") == 1
 
 
 def test_video_capture_uses_live_telemetry_rate_instead_of_encoder_fps():
@@ -3967,7 +4030,9 @@ def _complete_startup_dependencies(evidence, tmp_path: Path) -> Path:
     return status
 
 
-def test_navigation_fixture_startup_waits_for_complete_native_input_gate(tmp_path):
+@pytest.mark.parametrize("loop_health", [None, {"ready": False, "healthy": False},
+                                       {"ready": True, "healthy": False}])
+def test_navigation_fixture_startup_waits_for_complete_native_input_gate(tmp_path, loop_health):
     sensor = SimpleNamespace(poll=lambda: None)
     evidence = acceptance.NativeEvidence(
         last_nav={
@@ -3983,6 +4048,10 @@ def test_navigation_fixture_startup_waits_for_complete_native_input_gate(tmp_pat
         "traversability_status": tmp_path / "missing-traversability.json",
     }
     mapd_status = _complete_startup_dependencies(evidence, tmp_path)
+    if loop_health is None:
+        evidence.last_nav.pop("control_loop_health")
+    else:
+        evidence.last_nav["control_loop_health"] = loop_health
 
     ok, _ = acceptance._wait_for_startup(
         sensor=sensor,
@@ -4945,7 +5014,7 @@ def test_native_evidence_can_read_final_status_without_polluting_motion_health(t
     nav_status.write_text(
         json.dumps(
             {
-                "input_gate": {"ready": False, "reason": "driver_control_stale"},
+                "input_gate": {"ready": False, "reason": "collision_stale"},
                 "frame_gate": {"odom_rejected": 99},
             }
         ),
@@ -4961,7 +5030,7 @@ def test_native_evidence_can_read_final_status_without_polluting_motion_health(t
     assert evidence.motion_health_samples == 1
     assert evidence.input_gate_ready_samples == 1
     assert evidence.max_odom_tf_rejections == 1
-    assert evidence.last_nav["input_gate"]["reason"] == "driver_control_stale"
+    assert evidence.last_nav["input_gate"]["reason"] == "collision_stale"
 
 
 def test_motion_health_collection_stops_at_sensor_motion_complete_marker(tmp_path):
@@ -5598,6 +5667,7 @@ def test_no_motion_accepts_embedded_command_stopped_by_final_safety():
     sensor_report = {
         "command_source": "dds",
         "policy_loaded": True,
+        "motion": {"available": True},
         "cmd_vel": {"nonzero_samples": 0},
     }
 
@@ -5883,7 +5953,9 @@ def test_native_control_waits_for_business_ack_and_local_path_is_telemetry_only(
     assert "dds.publish(OutputEvent{LocalPathOutput{path}})" in telemetry_helper
     assert "drainLocalPath" not in endpoint_loop
 
-    planner_index = executor.index("local_planner_.plan(")
+    planner_index = executor.index("planLocal(")
+    route = (ROOT / "src/nav/cpp/navigation/route.cpp").read_text(encoding="utf-8")
+    assert "local_planner_.plan(request)" in route
     follower_index = executor.index("follower_.follow(", planner_index)
     assert planner_index < follower_index
 

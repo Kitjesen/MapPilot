@@ -208,14 +208,12 @@ struct ParsedReady {
 
 ParsedReady parse_ready(const std::string &line) {
   const auto fields = split_tabs(line);
-  require(fields.size() == 6 && fields[0] == "LT_DRIVER_READY_V2",
+  require(fields.size() == 4 && fields[0] == "LT_DRIVER_READY_V2",
           "malformed LT_DRIVER_READY_V2: " + line);
   return {
       fields[1],
       fields[2],
       parse_u64(fields[3], "accepted_sequence"),
-      fields[4] == "-" ? std::string{} : fields[4],
-      parse_u64(fields[5], "accepted_output_sequence"),
   };
 }
 
@@ -758,9 +756,7 @@ struct ObservedControlState {
   bool critical_fault{false};
   bool lease_valid{false};
   std::uint64_t accepted_sequence{0};
-  std::string accepted_producer_boot_id;
-  std::uint64_t accepted_output_sequence{0};
-  bool last_command_accepted{false};
+  bool zero_output{false};
   std::string fsm;
   std::string owner;
   std::string owner_id;
@@ -808,9 +804,7 @@ class ControlStateStream {
             static_cast<bool>(message->critical_fault),
             static_cast<bool>(message->lease_valid),
             message->accepted_sequence,
-            nullable_string(message->accepted_producer_boot_id),
-            message->accepted_output_sequence,
-            static_cast<bool>(message->last_command_accepted),
+            static_cast<bool>(message->zero_output),
             nullable_string(message->fsm),
             nullable_string(message->owner),
             nullable_string(message->owner_id),
@@ -931,11 +925,6 @@ dds_entity_t create_control_state_reader(dds_entity_t participant) {
                  "dds_create_reader(DriverControlState)");
 }
 
-bool exact_output_ack(const ObservedControlState &state,
-                      std::uint64_t output_sequence = kOutputSequence) {
-  return state.last_command_accepted && state.accepted_producer_boot_id == kProducerBootId &&
-         state.accepted_output_sequence == output_sequence;
-}
 
 void check_internal_zero(const ParsedBridgeCommand &command, std::string_view expected_kind) {
   check_command_identity(command);
@@ -1051,8 +1040,6 @@ int main(int argc, const char *const argv[]) {
     require(ready.controller_boot_id == kControllerBootId, "READY controller boot id mismatch");
     require(ready.accepted_sequence == activation.bridge_command_seq,
             "activation READY must identify the physically applied zero");
-    require(ready.producer_boot_id.empty() && ready.output_sequence == 0,
-            "activation READY must not invent a nav output identity");
 
     (void)control_states.drain();
     publish_nav_command(nav_writer);
@@ -1072,7 +1059,7 @@ int main(int argc, const char *const argv[]) {
     const auto before_applied = control_states.wait_for(
         [&](const ObservedControlState &state) {
           return state.accepted_sequence == activation.bridge_command_seq &&
-                 !state.last_command_accepted;
+                 !state.zero_output;
         },
         bounded_deadline(overall_deadline, std::chrono::milliseconds(150)));
     require(before_applied.connected && before_applied.ready && before_applied.lease_valid,
@@ -1083,8 +1070,7 @@ int main(int argc, const char *const argv[]) {
               "bridge faulted before the physical Nav APPLIED: " + *line);
       if (fields.front() == "LT_DRIVER_READY_V2") {
         const auto early_ready = parse_ready(*line);
-        require(!(early_ready.producer_boot_id == kProducerBootId &&
-                  early_ready.output_sequence == kOutputSequence),
+        require(early_ready.accepted_sequence != nav.bridge_command_seq,
                 "bridge emitted nav READY before matching physical APPLIED");
       }
     }
@@ -1097,13 +1083,11 @@ int main(int argc, const char *const argv[]) {
     require(nav_ready.bridge_boot_id == kBridgeBootId &&
                 nav_ready.controller_boot_id == kControllerBootId,
             "nav READY identity mismatch");
-    require(nav_ready.accepted_sequence == nav.bridge_command_seq &&
-                nav_ready.producer_boot_id == kProducerBootId &&
-                nav_ready.output_sequence == kOutputSequence,
+    require(nav_ready.accepted_sequence == nav.bridge_command_seq,
             "nav READY must identify the exact physically applied output");
     const auto accepted = control_states.wait_for(
         [&](const ObservedControlState &state) {
-          return exact_output_ack(state) && state.accepted_sequence == nav.bridge_command_seq;
+          return !state.zero_output && state.accepted_sequence == nav.bridge_command_seq;
         },
         bounded_deadline(overall_deadline, std::chrono::seconds(2)));
     require(accepted.connected && accepted.ready && accepted.motors_enabled &&
@@ -1111,9 +1095,7 @@ int main(int argc, const char *const argv[]) {
             "physical nav ACK must be published only in a ready, leased control state");
     require(accepted.owner == "grpc" && accepted.owner_id == "lingtu-driver@robot",
             "ready DriverControlState must expose the canonical simulation driver principal");
-    require(accepted.accepted_producer_boot_id == kProducerBootId &&
-                accepted.accepted_output_sequence == kOutputSequence &&
-                accepted.accepted_sequence == nav.bridge_command_seq,
+    require(!accepted.zero_output && accepted.accepted_sequence == nav.bridge_command_seq,
             "DriverControlState must publish the exact physically applied producer/output");
 
     const auto request_profile = [&](const char *requirement) {
@@ -1200,7 +1182,7 @@ int main(int argc, const char *const argv[]) {
     apply_profile_command(takeover);
     control_states.wait_for([&](const ObservedControlState &state) {
       return state.accepted_sequence == takeover.bridge_command_seq && state.ready &&
-          exact_output_ack(state, kOutputSequence + 1);
+          !state.zero_output;
     }, Clock::now() + std::chrono::milliseconds(250));
     request_profile("stairs_up");
     const auto resumed_zero = profile_zero();
@@ -1236,10 +1218,8 @@ int main(int argc, const char *const argv[]) {
             "the next Nav command must have been queued before the transition");
     const auto transition_ack = parse_ready(wait_for_protocol_line(
         bridge, "LT_DRIVER_READY_V2", Clock::now() + std::chrono::milliseconds(250)));
-    require(transition_ack.accepted_sequence == before_transition.bridge_command_seq &&
-                transition_ack.producer_boot_id == kProducerBootId &&
-                transition_ack.output_sequence == kOutputSequence + 2,
-            "profile transition must preserve the preceding physical Nav ACK");
+    require(transition_ack.accepted_sequence == before_transition.bridge_command_seq,
+            "profile transition must preserve the preceding physics application");
     control_states.wait_for([](const ObservedControlState &state) {
       return !state.ready && state.reason == "profile_transition";
     }, Clock::now() + std::chrono::milliseconds(250));
@@ -1261,11 +1241,11 @@ int main(int argc, const char *const argv[]) {
     const auto stopped = control_states.wait_for(
         [](const ObservedControlState &state) {
           return !state.connected && !state.ready && !state.lease_valid &&
-                 !state.last_command_accepted && state.reason == "stopped";
+                 state.zero_output && state.reason == "stopped";
         },
         bounded_deadline(overall_deadline, std::chrono::seconds(2)));
     require(!stopped.motors_enabled && !stopped.critical_fault &&
-                stopped.accepted_producer_boot_id.empty() && stopped.accepted_output_sequence == 0,
+                stopped.zero_output,
             "physical deactivation must publish a clean terminal control state");
     bridge.close_stdin();
 
@@ -1318,7 +1298,7 @@ int main(int argc, const char *const argv[]) {
                  state.reason == "requested_safety_stop";
         },
         bounded_deadline(overall_deadline, std::chrono::milliseconds(250)));
-    require(!stopping.last_command_accepted,
+    require(!stopping.zero_output,
             "signal stop must invalidate ACK while nav is still awaiting APPLIED");
 
     signal_bridge.write_line(applied_line(pending_nav, 3));

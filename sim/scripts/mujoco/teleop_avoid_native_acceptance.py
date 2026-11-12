@@ -542,7 +542,7 @@ def _binary_source_provenance(
             ROOT / "src" / "localization" / "ltlio" / "frontend.cpp",
             ROOT / "src" / "localization" / "ltlio" / "detail",
             ROOT / "src" / "localization" / "ltlio" / "CMakeLists.txt",
-            ROOT / "src" / "localization" / "localizer" / "src" / "localizers",
+            ROOT / "src" / "localization" / "relocalization" / "src" / "localizers",
             ROOT / "src" / "maps" / "cpp" / "semantic" / "store.cpp",
             ROOT / "src" / "maps" / "include" / "lingtu" / "maps" / "semantic" / "store.hpp",
             snapshot_file,
@@ -571,7 +571,6 @@ def _binary_source_provenance(
             driver_native / "core.hpp",
             driver_native / "cmd_vel_writer_gate.hpp",
             driver_native / "command_freshness_gate.hpp",
-            driver_native / "output_ack.hpp",
             *common_sources,
         ],
         "mapd": [

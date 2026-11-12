@@ -101,7 +101,6 @@ from sim.runtime.windows_cpu_isolation import (
     resolve_windows_cpu_isolation,
 )
 from sim.scripts.mujoco.native_dds_sensors import (
-    _driver_producer_matches_host,
     _linux_binary_command,
     _managed_wsl_command,
     _native_nav_goal_reached,
@@ -1995,15 +1994,10 @@ def _wait_for_startup(
             if slam_readiness == "mujoco_navigation_fixture"
             else True
         )
-        control_loop = nav.get("control_loop_health") or {}
-        control_loop_ready = bool(control_loop.get("ready")) and bool(
-            control_loop.get("healthy")
-        )
         runtime_ready = (
             slam_readiness is not None
             and bool(nav.get("has_odom"))
             and fixture_gate_ready
-            and control_loop_ready
             and (
                 not require_traversability
                 or int((traversability.get("counters") or {}).get("published") or 0) > 0
@@ -2113,7 +2107,7 @@ def _resume_when_ready(
         diagnostic = f"{result.get('stdout') or ''}\n{result.get('stderr') or ''}"
         if (
             int(result.get("returncode") or 0) == 0
-            or "control_loop_recovery_pending" not in diagnostic
+            or "loop_hold" not in diagnostic
             or time.monotonic() >= deadline
         ):
             outcome = dict(result)
@@ -2345,7 +2339,6 @@ def _planner_constraint_args(manifest: dict[str, Any]) -> list[str]:
         "snap_radius_cells": ("--octo-snap-radius-cells", int),
         "ground_support": ("--octo-ground-support", bool),
         "direct_support_only": ("--octo-direct-support-only", bool),
-        "support_radius_cells": ("--octo-support-radius-cells", int),
         "support_depth_cells": ("--octo-support-depth-cells", int),
         "support_height_m": ("--octo-support-height-m", float),
         "support_height_tolerance_m": ("--octo-support-height-tolerance-m", float),
@@ -3717,9 +3710,8 @@ def _run_phase(
                     )
                     if int(goal_result.get("returncode") or 0) == 0:
                         break
-                    if "operator_takeover_resume_required" not in str(
-                        goal_result.get("stderr") or ""
-                    ):
+                    goal_error = str(goal_result.get("stderr") or "")
+                    if not any(reason in goal_error for reason in ("takeover_active", "loop_hold")):
                         break
                     time.sleep(0.05)
                 if goal_result:
@@ -3773,9 +3765,7 @@ def _run_phase(
     sensor_acceptance = _navigation_sensor_assessment(sensor_report, thresholds)
     terminal_driver_stop = _terminal_driver_stop_evidence(
         sensor_report=sensor_report,
-        expected_host_boot_id=driver_runtime.host_boot_id,
         process_cleanup=process_cleanup,
-        require_prior_output_ack=bool(phase_cfg.get("publish_cmd_vel")),
     )
     video_report: dict[str, Any] = {
         "requested": record_video,
@@ -3939,9 +3929,7 @@ def _run_phase(
 def _terminal_driver_stop_evidence(
     *,
     sensor_report: Mapping[str, Any],
-    expected_host_boot_id: str,
     process_cleanup: Sequence[Mapping[str, Any]],
-    require_prior_output_ack: bool = True,
 ) -> dict[str, Any]:
     """Evaluate the strongest terminal stop proof emitted by the native bridge."""
 
@@ -3949,8 +3937,6 @@ def _terminal_driver_stop_evidence(
     driver = driver_value if isinstance(driver_value, Mapping) else {}
     stop_value = driver.get("stopped_evidence")
     stopped = stop_value if isinstance(stop_value, Mapping) else {}
-    ack_value = driver.get("observed_output_ack")
-    output_ack = ack_value if isinstance(ack_value, Mapping) else {}
     command_value = driver.get("last_command")
     last_command = command_value if isinstance(command_value, Mapping) else {}
     driver_cleanup_value = driver.get("process_cleanup")
@@ -3972,9 +3958,6 @@ def _terminal_driver_stop_evidence(
 
     stop_command_sequence = positive_int(stopped.get("bridge_command_seq"))
     applied_step_sequence = positive_int(stopped.get("applied_step_seq"))
-    observed_ack_sequence = positive_int(output_ack.get("accepted_sequence"))
-    observed_output_sequence = positive_int(output_ack.get("output_sequence"))
-    observed_producer = str(output_ack.get("producer_boot_id") or "")
     identity_matches = bool(
         bridge_boot_id
         and controller_boot_id
@@ -3986,11 +3969,6 @@ def _terminal_driver_stop_evidence(
         and stop_command_sequence is not None
         and applied_step_sequence is not None
         and str(stopped.get("kind") or "") == "deactivate_zero"
-    )
-    output_ack_exact = bool(
-        observed_ack_sequence is not None
-        and observed_output_sequence is not None
-        and _driver_producer_matches_host(observed_producer, expected_host_boot_id)
     )
 
     zero_values: dict[str, float] = {}
@@ -4009,8 +3987,6 @@ def _terminal_driver_stop_evidence(
     authority_cleared = bool(
         driver.get("driver_ready") is False
         and driver.get("accepted_sequence") == 0
-        and str(driver.get("accepted_producer_boot_id") or "") == ""
-        and driver.get("accepted_output_sequence") == 0
     )
     cleanup_entries = [item for item in process_cleanup if isinstance(item, Mapping)]
     owned_processes_stopped = bool(
@@ -4027,8 +4003,6 @@ def _terminal_driver_stop_evidence(
         blockers.append("driver_terminal_stop_ack_identity_mismatch")
     if not stop_ack_accepted:
         blockers.append("driver_terminal_stop_ack_missing_or_invalid_sequence")
-    if require_prior_output_ack and not output_ack_exact:
-        blockers.append("driver_terminal_prior_output_ack_identity_or_sequence_invalid")
     if not exact_zero:
         blockers.append("driver_terminal_logical_cmd_vel_not_exact_zero")
     if not (stop_ack_accepted and exact_zero):
@@ -4047,13 +4021,6 @@ def _terminal_driver_stop_evidence(
             "bridge_command_seq": stopped.get("bridge_command_seq"),
             "applied_step_seq": stopped.get("applied_step_seq"),
             "kind": str(stopped.get("kind") or ""),
-        },
-        "prior_output_ack": {
-            "required": require_prior_output_ack,
-            "exact_identity_and_sequence": output_ack_exact,
-            "accepted_sequence": output_ack.get("accepted_sequence"),
-            "producer_boot_id": observed_producer,
-            "output_sequence": output_ack.get("output_sequence"),
         },
         "logical_final_cmd_vel": {"exact_zero": exact_zero, **zero_values},
         "physical_stop": {

@@ -657,10 +657,6 @@ def _teleop_native_observations(source_report: Mapping[str, Any]) -> dict[str, A
     ]
     driver_cleanup = driver.get("process_cleanup")
     driver_cleanup = driver_cleanup if isinstance(driver_cleanup, Mapping) else {}
-    observed_output_ack = driver.get("observed_output_ack")
-    observed_output_ack = (
-        observed_output_ack if isinstance(observed_output_ack, Mapping) else {}
-    )
     return {
         "endpoint": {
             "control_mode": "teleop",
@@ -689,14 +685,6 @@ def _teleop_native_observations(source_report: Mapping[str, Any]) -> dict[str, A
             "final_cmd_topic": "rt/nav/cmd_vel",
             "final_cmd_writer": "navd",
             "nonzero_cmd_samples": int(driver.get("nonzero_samples") or 0),
-            "physical_output_ack": {
-                "producer_boot_id": str(
-                    observed_output_ack.get("producer_boot_id") or ""
-                ),
-                "output_sequence": int(
-                    observed_output_ack.get("output_sequence") or 0
-                ),
-            },
         },
         "runtime": {
             "processes": [

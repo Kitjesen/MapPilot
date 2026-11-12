@@ -260,14 +260,25 @@ void test_inspection_timeline_requires_terminal_stop_evidence() {
       {300, 70, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0, "nav-boot-1"},
       {400, 71, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "nav-boot-1"},
   };
-  const std::vector<DriverControlFact> driver_states{{450, true, true, 71, "nav-boot-1"}};
+  const std::vector<DriverControlFact> driver_states{{450, true}};
 
   const auto report = lingtu::recording::verify_inspection_task_timeline(
       "inspection-task-1", events, outputs, driver_states);
   require(report.ok, "valid inspection task evidence was rejected");
   require(report.terminal_state == 9, "inspection terminal state was not reported");
-  require(report.confirmed_output_sequence == 71,
+  require(report.final_output_sequence == 71,
           "confirmed zero-output sequence was not reported");
+
+  auto repeated_zeros = outputs;
+  repeated_zeros.push_back({480, 72, 0, 0, 0, 0, 0, 0, "nav-boot-1"});
+  require(lingtu::recording::verify_inspection_task_timeline(
+              "inspection-task-1", events, repeated_zeros, driver_states).ok,
+          "repeated zeros must not require a per-frame driver receipt");
+  auto lost_zero = driver_states;
+  lost_zero.push_back({490, false});
+  require(!lingtu::recording::verify_inspection_task_timeline(
+              "inspection-task-1", events, repeated_zeros, lost_zero).ok,
+          "latest nonzero state must invalidate older zero-output evidence");
 
   const auto missing_driver =
       lingtu::recording::verify_inspection_task_timeline("inspection-task-1", events, outputs, {});
@@ -276,8 +287,8 @@ void test_inspection_timeline_requires_terminal_stop_evidence() {
           "missing driver evidence did not produce an actionable error");
 
   const auto stale_driver = lingtu::recording::verify_inspection_task_timeline(
-      "inspection-task-1", events, outputs, {{450, true, true, 71, "old-nav-boot"}});
-  require(!stale_driver.ok, "terminal task accepted driver evidence from an old native boot");
+      "inspection-task-1", events, outputs, {{350, true}});
+  require(!stale_driver.ok, "terminal task accepted driver evidence from before the stop");
 }
 
 void test_inspection_timeline_rejects_stop_evidence_before_task_acceptance() {
@@ -289,7 +300,7 @@ void test_inspection_timeline_rejects_stop_evidence_before_task_acceptance() {
       {100, 71, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "nav-boot-1"},
   };
   const std::vector<DriverControlFact> stale_driver_states{
-      {150, true, true, 71, "nav-boot-1"},
+      {150, true},
   };
 
   const auto report = lingtu::recording::verify_inspection_task_timeline(
@@ -309,7 +320,7 @@ void test_inspection_timeline_rejects_gaps_identity_drift_and_false_zero() {
       {300, 70, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "nav-boot-1"},
       {400, 71, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, "nav-boot-1"},
   };
-  const std::vector<DriverControlFact> driver_states{{450, true, true, 71, "nav-boot-1"}};
+  const std::vector<DriverControlFact> driver_states{{450, true}};
 
   auto report = lingtu::recording::verify_inspection_task_timeline(
       "inspection-task-1", gap_events, nonzero_last_output, driver_states);
@@ -323,7 +334,7 @@ void test_inspection_timeline_rejects_gaps_identity_drift_and_false_zero() {
   drift_events[1].map_id = "map-b";
   report = lingtu::recording::verify_inspection_task_timeline(
       "inspection-task-1", drift_events, {{400, 80, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "nav-boot-1"}},
-      {{450, true, true, 80, "nav-boot-1"}});
+      {{450, true}});
   require(!report.ok, "task timeline passed after immutable map identity changed");
 }
 
@@ -334,7 +345,7 @@ void test_inspection_timeline_requires_acceptance_and_one_terminal() {
   };
   auto report = lingtu::recording::verify_inspection_task_timeline(
       "inspection-task-1", events, {{400, 90, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "nav-boot-1"}},
-      {{450, true, true, 90, "nav-boot-1"}});
+      {{450, true}});
   require(!report.ok, "task timeline passed without a captured acceptance event");
 
   events = {
@@ -344,7 +355,7 @@ void test_inspection_timeline_requires_acceptance_and_one_terminal() {
   };
   report = lingtu::recording::verify_inspection_task_timeline(
       "inspection-task-1", events, {{300, 100, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "nav-boot-1"}},
-      {{350, true, true, 100, "nav-boot-1"}});
+      {{350, true}});
   require(!report.ok, "task timeline passed with multiple terminal facts");
 }
 
