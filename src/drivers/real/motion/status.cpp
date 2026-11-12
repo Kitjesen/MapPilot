@@ -135,7 +135,6 @@ void recordFreshnessDecision(
     ++stats.freshness_accepted;
     return;
   }
-  stats.output_ack.invalidate();
   ++stats.freshness_rejected;
   switch (decision.reason) {
     case CommandFreshnessReason::Accepted:
@@ -145,15 +144,6 @@ void recordFreshnessDecision(
       break;
     case CommandFreshnessReason::ProducerBootMissing:
       ++stats.freshness_producer_boot_missing;
-      break;
-    case CommandFreshnessReason::ProducerRollback:
-      ++stats.freshness_producer_rollback;
-      break;
-    case CommandFreshnessReason::DuplicateSequence:
-      ++stats.freshness_duplicate_sequence;
-      break;
-    case CommandFreshnessReason::SequenceRollback:
-      ++stats.freshness_sequence_rollback;
       break;
     case CommandFreshnessReason::Future:
       ++stats.freshness_future;
@@ -271,7 +261,6 @@ void writeStatus(
   out << std::fixed << std::setprecision(6);
   const auto& counts = core.counters();
   const auto& velocity = core.lastVelocity();
-  const auto output_ack = stats.output_ack.current(OutputAckState::Clock::now());
   const double mean_commanded_linear =
       stats.velocity_tracking_samples == 0
           ? 0.0
@@ -376,11 +365,7 @@ void writeStatus(
       << "  \"last_error\": \"" << jsonEscape(stats.last_error) << "\",\n"
       << "  \"last_receive_s\": " << stats.last_receive_s << ",\n"
       << "  \"last_send_s\": " << stats.last_send_s << ",\n"
-      << "  \"output_ack\": {\"producer_boot_id\": \""
-      << jsonEscape(output_ack.producerBootId())
-      << "\", \"output_sequence\": " << output_ack.outputSequence()
-      << ", \"accepted\": "
-      << (output_ack.accepted() ? "true" : "false") << "},\n"
+      << "  \"zero_output\": " << (stats.zero_output ? "true" : "false") << ",\n"
       << "  \"counters\": {\n"
       << "    \"dds_samples\": " << stats.dds_samples << ",\n"
       << "    \"received\": " << counts.received << ",\n"
@@ -393,11 +378,9 @@ void writeStatus(
       << "    \"backend_errors\": " << stats.backend_errors << ",\n"
       << "    \"commands_sent\": " << stats.commands_sent << ",\n"
       << "    \"zeros_sent\": " << stats.zeros_sent << ",\n"
-      << "    \"dropped_disconnected\": " << stats.dropped_disconnected << ",\n"
       << "    \"command_rejections\": " << stats.command_rejections << ",\n"
       << "    \"lease_refreshes\": " << stats.lease_refreshes << ",\n"
       << "    \"lease_rejections\": " << stats.lease_rejections << ",\n"
-      << "    \"safety_stops\": " << stats.safety_stops << ",\n"
       << "    \"cmd_vel_writer_faults\": "
       << stats.cmd_vel_writer_faults << ",\n"
       << "    \"freshness_accepted\": " << stats.freshness_accepted << ",\n"
@@ -406,12 +389,6 @@ void writeStatus(
       << stats.freshness_boot_mismatch << ",\n"
       << "    \"freshness_producer_boot_missing\": "
       << stats.freshness_producer_boot_missing << ",\n"
-      << "    \"freshness_producer_rollback\": "
-      << stats.freshness_producer_rollback << ",\n"
-      << "    \"freshness_duplicate_sequence\": "
-      << stats.freshness_duplicate_sequence << ",\n"
-      << "    \"freshness_sequence_rollback\": "
-      << stats.freshness_sequence_rollback << ",\n"
       << "    \"freshness_future\": " << stats.freshness_future << ",\n"
       << "    \"freshness_expired\": " << stats.freshness_expired << "\n"
       << "  }\n"

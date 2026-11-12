@@ -4,7 +4,6 @@
 #include <csignal>
 #include <cstdio>
 #include <exception>
-#include <optional>
 #include <string>
 #include <thread>
 
@@ -13,6 +12,8 @@
 #include "config.hpp"
 #include "core.hpp"
 #include "dds.hpp"
+#include "posture.hpp"
+#include "message/protocol/navigation.hpp"
 #include "status.hpp"
 
 namespace {
@@ -26,10 +27,6 @@ void stopSignal(int) {
 double epochSeconds() {
   return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
-struct SequencedOutputIdentity {
-  std::string producer_boot_id;
-  std::uint64_t output_sequence{0};
-};
 
 bool isZeroVelocity(const lingtu::driver::Velocity &velocity) noexcept {
   return std::abs(velocity.vx_mps) <= 1e-9 &&
@@ -84,7 +81,9 @@ int main(int argc, char **argv) {
     lingtu::driver::CmdVelWriterGate cmd_vel_writer_gate;
     lingtu::driver::Core core(config.limits, dds.hostBootId());
     lingtu::driver::ProfileSwitch profile_switch(config.stairs_up_profile, config.stairs_down_profile);
+    lingtu::driver::PostureControl posture_control;
     auto last_zero_command = Clock::time_point{};
+    std::string zero_producer;
     lingtu::driver::RuntimeStats stats;
     stats.capabilities = body->capabilities();
 
@@ -95,56 +94,35 @@ int main(int argc, char **argv) {
     auto next_status = next_tick;
     auto next_control_state = next_tick;
     auto next_joint_state = next_tick;
+    auto next_external_state = next_tick;
     double last_joint_stamp_s = 0.0;
-    auto next_lease_refresh = next_tick;
     constexpr auto kControlStatePeriod = std::chrono::milliseconds(50);
     constexpr auto kJointStatePeriod = std::chrono::milliseconds(34);
-    std::uint64_t safety_stop_sequence = 0;
-    bool readiness_announced = false;
     bool cmd_vel_writer_fault_active = false;
 
     auto publish_control_state = [&]() {
-      const auto now = Clock::now();
-      stats.output_ack.expire(now);
-      const auto output_ack = stats.output_ack.current(now);
-      const bool published =
-          dds.writeControlState(stats.control, output_ack.accepted(), output_ack.producerBootId(),
-                                output_ack.outputSequence(), epochSeconds());
-      return published;
+      return dds.writeControlState(stats.control, stats.zero_output, epochSeconds());
     };
 
     auto apply_result = [&](const Result &result) {
-      stats.connected = result.transport_ok;
+      stats.connected = result.transport_ok && result.state.connected;
       stats.control = result.state;
       stats.body = body->state();
       stats.health = body->health();
-      stats.control.connected = result.transport_ok;
-      stats.ready = result.ok && stats.cmd_vel_writer_ready;
+      stats.control.connected = stats.connected;
+      stats.ready = result.state.ready;
       if (!result.transport_ok) {
         stats.control.ready = false;
         stats.control.control_assured = false;
         stats.control.lease_valid = false;
-        stats.control.reason = "transport_error";
-      }
-      if (!stats.cmd_vel_writer_ready) {
-        stats.ready = false;
-        stats.control.ready = false;
-        stats.control.control_assured = false;
-        stats.control.lease_valid = false;
-        stats.control.reason = stats.cmd_vel_writer_reason;
+        if (stats.control.reason.empty()) stats.control.reason = "transport_error";
       }
       stats.last_error = result.error;
     };
 
-    auto publish_stop = [&](const std::string &reason) {
-      ++safety_stop_sequence;
-      if (dds.writeNavigationStop(reason, safety_stop_sequence, epochSeconds())) {
-        ++stats.safety_stops;
-      }
-    };
-
     auto stop_and_release = [&](const std::string &success_reason,
                                 const std::string &failure_prefix) noexcept {
+      stats.zero_output = false;
       const Result result = body->stop();
       stats.backend_calls += result.calls;
       stats.ready = false;
@@ -156,6 +134,7 @@ int main(int argc, char **argv) {
       stats.control.ready = false;
       const bool acknowledged = result.confirmsStop();
       if (acknowledged) {
+        stats.zero_output = true;
         ++stats.zeros_sent;
         lingtu::driver::recordMotionOutput(
             stats, {}, stats.body, stats.last_output_kind, epochSeconds());
@@ -178,63 +157,57 @@ int main(int argc, char **argv) {
       return false;
     };
 
-    auto fail_closed = [&](const std::string &reason, bool preserve_current_rejection) {
-      // Preserve the triggering result before the stop/reconnect overwrites it.
+    auto stop_output = [&](std::string reason,
+                           const char *operation, double call_ms) {
+      // Preserve the triggering result before attempting zero output.
       std::fprintf(stderr,
-                   "lingtu_driver: fail_closed reason=%s backend_reason=%s "
-                   "backend_error=%s ready=%d connected=%d last_output=%s\n",
-                   reason.c_str(), stats.control.reason.c_str(), stats.last_error.c_str(),
+                   "lingtu_driver: stop_output operation=%s call_ms=%.1f reason=%s backend_reason=%s "
+                   "backend_error=%s body_age_ms=%.1f ready=%d connected=%d last_output=%s\n",
+                   operation, call_ms, reason.c_str(), stats.control.reason.c_str(), stats.last_error.c_str(),
+                   stats.body.observed_at == Clock::time_point{} ? -1.0 :
+                       std::chrono::duration<double, std::milli>(Clock::now() - stats.body.observed_at).count(),
                    stats.ready ? 1 : 0, stats.connected ? 1 : 0,
                    stats.last_output_kind.c_str());
       stats.last_output_kind = "control_loss_stop";
-      const bool stopped = stop_and_release(reason, reason + ":stop_unconfirmed");
-      core.reset();
-      stats.ready = false;
-      if (!preserve_current_rejection) {
-        stats.output_ack.invalidate();
+      // Stop this output without releasing the adapter or discarding newer input.
+      const auto stopped = body->move({});
+      stats.backend_calls += stopped.calls;
+      stats.zero_output = stopped.transport_ok && stopped.accepted;
+      if (stats.zero_output) {
+        ++stats.zeros_sent;
+        stats.last_send_s = epochSeconds();
+        lingtu::driver::recordMotionOutput(
+            stats, {}, body->state(), stats.last_output_kind, stats.last_send_s);
       }
-      stats.control.ready = false;
-      if (stopped && !reason.empty()) {
-        stats.control.reason = reason;
-      }
-      if (readiness_announced) {
-        publish_stop(std::string("driver_control_lost:") + stats.control.reason);
-      }
-      readiness_announced = false;
+      stats.last_error = reason;
       (void)publish_control_state();
       next_control_state = Clock::now() + kControlStatePeriod;
     };
 
-    auto send = [&](const Action &action, Clock::time_point now,
-                    std::optional<SequencedOutputIdentity> identity) -> bool {
+    auto send = [&](const Action &action, Clock::time_point now) {
+      const auto started = Clock::now();
+      stats.zero_output = false;
       const Result result = body->move(action.velocity);
+      const auto returned = Clock::now();
+      const double call_ms = std::chrono::duration<double, std::milli>(returned - started).count();
       stats.backend_calls += result.calls;
       stats.last_reason = lingtu::driver::reasonName(action.reason);
       apply_result(result);
-      const bool has_current_identity =
-          action.reason == ActionReason::Command && identity.has_value() &&
-          !identity->producer_boot_id.empty() && identity->output_sequence != 0;
-      const bool accepted = result.accepted;
-      if (has_current_identity && result.transport_ok) {
-        stats.output_ack.record(identity->producer_boot_id, identity->output_sequence, accepted,
-                                now);
-      } else {
-        stats.output_ack.invalidate();
-      }
       if (!result.transport_ok) {
         ++stats.backend_errors;
-        fail_closed("transport_error", false);
+        stop_output(stats.control.reason, isZeroVelocity(action.velocity) ? "zero" : "move", call_ms);
         next_probe = now + config.reconnect_delay;
-        return false;
+        return;
       }
-      if (!result.accepted || !result.ok) {
+      if (!result.accepted) {
         ++stats.command_rejections;
-        fail_closed(result.state.reason, has_current_identity && !result.accepted);
+        stop_output(result.state.reason,
+                    isZeroVelocity(action.velocity) ? "zero" : "move", call_ms);
         next_probe = now + config.reconnect_delay;
-        return false;
+        return;
       }
-      readiness_announced = true;
       stats.last_error.clear();
+      stats.zero_output = isZeroVelocity(action.velocity);
       stats.last_send_s = epochSeconds();
       stats.last_output_kind = outputKind(action);
       lingtu::driver::recordMotionOutput(
@@ -244,40 +217,29 @@ int main(int argc, char **argv) {
       } else {
         ++stats.zeros_sent;
       }
-      return true;
     };
 
     auto refresh_control = [&](Clock::time_point now) {
-      if (!stats.cmd_vel_writer_ready) {
-        return;
-      }
-      const bool acquiring = !stats.ready;
-      if (acquiring) {
-        // The acquisition zero proves control readiness, not nav output delivery.
-        stats.output_ack.invalidate();
-      }
       ++stats.lease_refreshes;
+      const auto started = Clock::now();
       const Result result = body->refresh();
+      const double call_ms = std::chrono::duration<double, std::milli>(Clock::now() - started).count();
       stats.backend_calls += result.calls;
       apply_result(result);
       if (!result.transport_ok) {
         ++stats.backend_errors;
-        fail_closed("transport_error", false);
+        stop_output(stats.control.reason, "refresh", call_ms);
         next_probe = now + config.reconnect_delay;
         return;
       }
-      if (!result.accepted || !result.ok) {
+      if (!result.accepted) {
         ++stats.lease_rejections;
-        fail_closed(result.state.reason, false);
+        stop_output(result.state.reason, "refresh", call_ms);
         next_probe = now + config.reconnect_delay;
         return;
       }
-      readiness_announced = true;
       stats.last_error.clear();
-      if (acquiring) {
-        stats.last_output_kind = "initial_zero";
-      }
-      next_lease_refresh = now + kLeaseRefreshPeriod;
+      next_probe = now + kLeaseRefreshPeriod;
     };
 
     auto update_cmd_vel_writer_gate = [&]() {
@@ -290,19 +252,10 @@ int main(int argc, char **argv) {
 
     auto fail_cmd_vel_writer_gate = [&](const lingtu::driver::CmdVelWriterDecision &decision) {
       ++stats.cmd_vel_writer_faults;
-      stats.ready = false;
-      stats.output_ack.invalidate();
-      stats.control.ready = false;
-      stats.control.reason = decision.reason;
       stats.last_output_kind = "writer_gate_stop";
       (void)stop_and_release(decision.reason, decision.reason + ":stop_unconfirmed");
-      stats.output_ack.invalidate();
+
       core.reset();
-      stats.control.ready = false;
-      if (readiness_announced) {
-        publish_stop(std::string("cmd_vel_writer_gate:") + decision.reason);
-      }
-      readiness_announced = false;
       cmd_vel_writer_fault_active = true;
       (void)publish_control_state();
       next_control_state = Clock::now() + kControlStatePeriod;
@@ -316,9 +269,7 @@ int main(int argc, char **argv) {
       try {
         (void)core.forceStop(reason);
         (void)stop_and_release("stop_confirmed", "stop_unconfirmed");
-        stats.output_ack.invalidate();
-        stats.ready = false;
-        stats.control.ready = false;
+
         (void)publish_control_state();
         next_control_state = Clock::now() + kControlStatePeriod;
       } catch (const std::exception &exc) {
@@ -369,32 +320,98 @@ int main(int argc, char **argv) {
         }
         cmd_vel_writer_fault_active = false;
 
-        const auto read = dds.takeLatest();
-        stats.dds_samples += read.valid_samples;
-        std::optional<Action> command_action;
-        if (read.latest) {
+        auto receive_command = [&]() {
+          auto latest = dds.takeLatest();
+          stats.dds_samples += latest.valid_samples;
+          if (!latest.latest) return;
           stats.last_receive_s = epochSeconds();
-          const auto command = core.accept(read.latest->freshnessInput(), read.latest->frame,
-                                           read.latest->vx, read.latest->vy, read.latest->wz);
+          const auto &sample = *latest.latest;
+          const auto command = core.accept(sample.freshnessInput(), "body",
+                                           sample.vx, sample.vy, sample.wz, sample.received_at);
           lingtu::driver::recordFreshnessDecision(stats, command.freshness);
-          command_action = command.action;
-          if (command.freshness.accepted && command.action &&
+          if (!command.freshness.accepted) return;
+          if (command.action &&
               command.action->reason == ActionReason::Command &&
               isZeroVelocity(command.action->velocity)) {
-            last_zero_command = now;
+            last_zero_command = sample.received_at;
+            zero_producer = sample.producer_boot_id;
           } else {
             last_zero_command = Clock::time_point{};
           }
-        }
+        };
+        receive_command();
         if (const auto request = dds.takeProfileRequest(epochSeconds())) {
-          profile_switch.request(*request, now);
+          if (!posture_control.holdsMotion()) profile_switch.request(*request, now);
+        }
+        if (const auto request = dds.takePostureRequest()) {
+          const auto reply = posture_control.request(*request, *body, zero_producer,
+              last_zero_command != Clock::time_point{} &&
+                  now - last_zero_command <= config.limits.command_timeout,
+              profile_switch.holdsMotion() && !profile_switch.needsCommand());
+          const bool disable = request->action ==
+              static_cast<int>(lingtu::message::NavigationCommandKind::DisableMotors);
+          if (disable && reply.result && reply.result->calls) {
+            profile_switch.cancel("operator_motor_disable");
+          } else if (reply.new_request && !disable &&
+                     (!reply.ack.final_result || reply.ack.accepted)) {
+            profile_switch.resetBlocked();
+          }
+          if (reply.result && reply.result->calls) {
+            stats.backend_calls += reply.result->calls;
+            apply_result(*reply.result);
+            stats.ready = reply.result->state.ready;
+          }
+          (void)dds.writePostureAck(reply.ack, epochSeconds());
+          next_control_state = now;
         }
         const bool held_before = profile_switch.holdsMotion();
-        profile_switch.step(*body, now, last_zero_command != Clock::time_point{} &&
-                            now - last_zero_command <= config.limits.command_timeout);
+        if (!body->externalSelected()) {
+          profile_switch.step(*body, now, last_zero_command != Clock::time_point{} &&
+                              now - last_zero_command <= config.limits.command_timeout);
+        }
         const bool profile_hold = profile_switch.holdsMotion();
-        if (profile_hold) {
-          if (!held_before) (void)body->stop();
+        const auto external = dds.takeExternal();
+        if (body->externalSelected()) {
+          const auto selected_session = body->externalState().session_id;
+          if (external.heartbeat_session == selected_session) {
+            const auto result = body->externalHeartbeat();
+            stats.backend_calls += result.calls;
+            apply_result(result);
+          }
+          if (external.frame && external.frame->session_id == selected_session) {
+            const auto result = body->externalFrame(*external.frame);
+            stats.backend_calls += result.calls;
+          }
+          const auto state = body->externalState();
+          stats.ready = false;
+          stats.control.ready = false;
+          stats.control.control_assured = false;
+          stats.control.lease_valid = false;
+          stats.control.motors_enabled = state.motors_enabled;
+          stats.control.owner = "external";
+          stats.control.reason = state.reason;
+          stats.zero_output = state.fresh && !state.motors_enabled && state.motor_disable_confirmed;
+          core.reset();
+        } else if (posture_control.holdsMotion()) {
+          if (now >= next_probe) {
+            const auto inspection = body->inspectControl();
+            stats.backend_calls += inspection.calls;
+            if (inspection.calls) apply_result(inspection);
+            posture_control.observeBody(body->state());
+            next_probe = now + std::chrono::milliseconds(100);
+          }
+          stats.ready = false;
+          stats.control.ready = false;
+          if (const auto action = core.take(Clock::now()); action && isZeroVelocity(action->velocity)) {
+            (void)stop_and_release("posture_hold_stop", "posture_hold_stop_unconfirmed");
+          }
+          posture_control.observeBody(body->state());
+          core.reset();
+        } else if (profile_hold) {
+          if (!held_before) {
+            stats.zero_output = false;
+            stats.zero_output = body->stop().confirmsStop();
+          }
           // A planned body/profile handoff has no velocity output and does not
           // acquire a walking lease while the platform is Grounded.
           stats.ready = false;
@@ -403,39 +420,26 @@ int main(int argc, char **argv) {
           stats.control.lease_valid = false;
           stats.control.reason = "profile_transition";
           stats.body = body->state();
-          stats.output_ack.invalidate();
+
           core.reset();
         } else {
           if (held_before) next_probe = now;
-          if ((!stats.ready && now >= next_probe) || (stats.ready && now >= next_lease_refresh)) {
+          if (now >= next_probe) {
             refresh_control(now);
           }
-          if (read.latest && command_action) {
-            if (stats.ready) {
-              if (send(*command_action, now,
-                       SequencedOutputIdentity{read.latest->producer_boot_id,
-                                               read.latest->output_seq})) {
-                next_control_state = now;
-              }
-            } else {
-              ++stats.dropped_disconnected;
-              core.reset();
-              stats.output_ack.invalidate();
-              next_control_state = now;
-            }
-          } else if (read.latest) {
-            stats.output_ack.invalidate();
-            next_control_state = now;
-          }
-          if (stats.ready) {
-            if (const auto stop = core.poll(now)) {
-              (void)send(*stop, now, std::nullopt);
-              stats.output_ack.invalidate();
-              next_control_state = now;
-            }
+          // SDK maintenance may block; use the newest command and recheck expiry afterward.
+          receive_command();
+          const auto send_time = Clock::now();
+          if (const auto action = core.take(send_time)) {
+            send(*action, send_time);
+            next_control_state = send_time;
           }
         }
 
+        if (now >= next_external_state) {
+          (void)dds.writeExternalState(body->externalState(), epochSeconds());
+          next_external_state = now + std::chrono::milliseconds(20);
+        }
         if (now >= next_control_state) {
           (void)publish_control_state();
           (void)dds.writeProfileState(profile_switch.status(), epochSeconds());

@@ -3,7 +3,6 @@
 #include "config.hpp"
 #include "core.hpp"
 #include "body.hpp"
-#include "output_ack.hpp"
 
 #include <cstdint>
 #include <string>
@@ -35,7 +34,7 @@ struct RuntimeStats {
   bool connected{false};
   bool ready{false};
   bool cmd_vel_writer_ready{false};
-  OutputAckState output_ack;
+  bool zero_output{false};
   std::uint32_t matched_cmd_vel_writers{0};
   Capabilities capabilities;
   ControlState control;
@@ -46,19 +45,14 @@ struct RuntimeStats {
   std::uint64_t backend_errors{0};
   std::uint64_t commands_sent{0};
   std::uint64_t zeros_sent{0};
-  std::uint64_t dropped_disconnected{0};
   std::uint64_t command_rejections{0};
   std::uint64_t lease_refreshes{0};
   std::uint64_t lease_rejections{0};
-  std::uint64_t safety_stops{0};
   std::uint64_t cmd_vel_writer_faults{0};
   std::uint64_t freshness_accepted{0};
   std::uint64_t freshness_rejected{0};
   std::uint64_t freshness_boot_mismatch{0};
   std::uint64_t freshness_producer_boot_missing{0};
-  std::uint64_t freshness_producer_rollback{0};
-  std::uint64_t freshness_duplicate_sequence{0};
-  std::uint64_t freshness_sequence_rollback{0};
   std::uint64_t freshness_future{0};
   std::uint64_t freshness_expired{0};
   double last_receive_s{0.0};

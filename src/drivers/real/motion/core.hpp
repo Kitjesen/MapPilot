@@ -70,8 +70,10 @@ class Core {
       std::string_view frame,
       double vx,
       double vy,
-      double wz);
+      double wz,
+      TimePoint received_at);
   std::optional<Action> poll(TimePoint now);
+  std::optional<Action> take(TimePoint now);
   Action forceStop(ActionReason reason) noexcept;
   void reset() noexcept;
 
@@ -94,9 +96,8 @@ class Core {
   Counters counters_;
   Velocity last_velocity_;
   TimePoint last_command_{};
-  bool has_command_{false};
   bool active_{false};
-  bool zero_sent_{true};
+  std::optional<Action> pending_;
 };
 
 const char* reasonName(ActionReason reason) noexcept;

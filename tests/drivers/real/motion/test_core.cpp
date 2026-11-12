@@ -76,7 +76,6 @@ void testFreshCommandIsAccepted() {
   const auto decision = gate.evaluate(CommandFreshnessInput{
       "host-boot",
       "producer-a",
-      1,
       1000ms,
       1050ms,
   });
@@ -85,55 +84,48 @@ void testFreshCommandIsAccepted() {
   check(decision.reason == CommandFreshnessReason::Accepted, "fresh command reason");
 }
 
-void testFreshnessRejectionsAreExplicitAndDoNotAdvanceSequence() {
+void testFreshnessRejectsInvalidClockAndExpiredInput() {
   CommandFreshnessGate gate(200ms, "host-boot");
 
   auto decision =
-      gate.evaluate(CommandFreshnessInput{"other-host-boot", "producer-a", 1, 1000ms, 1050ms});
+      gate.evaluate(CommandFreshnessInput{"other-host-boot", "producer-a", 1000ms, 1050ms});
   check(!decision.accepted, "boot mismatch must be rejected");
   check(decision.reason == CommandFreshnessReason::BootMismatch, "boot mismatch reason");
 
-  decision = gate.evaluate(CommandFreshnessInput{"host-boot", "", 1, 1000ms, 1050ms});
+  decision = gate.evaluate(CommandFreshnessInput{"host-boot", "", 1000ms, 1050ms});
   check(!decision.accepted, "missing producer boot id must be rejected");
   check(decision.reason == CommandFreshnessReason::ProducerBootMissing,
         "missing producer boot id reason");
 
-  decision = gate.evaluate(CommandFreshnessInput{"host-boot", "producer-a", 1, 1000ms, 1050ms});
-  check(decision.accepted, "boot mismatch must not consume sequence");
+  decision = gate.evaluate(CommandFreshnessInput{"host-boot", "producer-a", 1000ms, 1050ms});
+  check(decision.accepted, "a valid command must be accepted after a rejected host");
 
-  decision = gate.evaluate(CommandFreshnessInput{"host-boot", "producer-a", 1, 1060ms, 1070ms});
-  check(!decision.accepted, "duplicate sequence must be rejected");
-  check(decision.reason == CommandFreshnessReason::DuplicateSequence, "duplicate sequence reason");
-
-  decision = gate.evaluate(CommandFreshnessInput{"host-boot", "producer-a", 0, 1060ms, 1070ms});
-  check(!decision.accepted, "sequence rollback must be rejected");
-  check(decision.reason == CommandFreshnessReason::SequenceRollback, "sequence rollback reason");
-
-  decision = gate.evaluate(CommandFreshnessInput{"host-boot", "producer-a", 2, 1100ms, 1099ms});
+  decision = gate.evaluate(CommandFreshnessInput{"host-boot", "producer-a", 1100ms, 1099ms});
   check(!decision.accepted, "future command must be rejected");
   check(decision.reason == CommandFreshnessReason::Future, "future command reason");
 
-  decision = gate.evaluate(CommandFreshnessInput{"host-boot", "producer-a", 2, 1000ms, 1200ms});
+  decision = gate.evaluate(CommandFreshnessInput{"host-boot", "producer-a", 1000ms, 1200ms});
   check(!decision.accepted, "command at max age must be expired");
   check(decision.reason == CommandFreshnessReason::Expired, "expired command reason");
 
-  decision = gate.evaluate(CommandFreshnessInput{"host-boot", "producer-a", 2, 1180ms, 1200ms});
-  check(decision.accepted, "rejected timestamps must not consume sequence");
+  decision = gate.evaluate(CommandFreshnessInput{"host-boot", "producer-a", 1180ms, 1200ms});
+  check(decision.accepted, "a fresh command must be accepted after rejected timestamps");
 }
 
-void testProducerRestartAdvancesBySourceBoottime() {
+void testProducerSwitchDoesNotKeepHistory() {
   CommandFreshnessGate gate(200ms, "host-boot");
   auto decision =
-      gate.evaluate(CommandFreshnessInput{"host-boot", "producer-a", 10, 1000ms, 1010ms});
+      gate.evaluate(CommandFreshnessInput{"host-boot", "producer-a", 1000ms, 1010ms});
   check(decision.accepted, "first producer command must be accepted");
 
-  decision = gate.evaluate(CommandFreshnessInput{"host-boot", "producer-b", 1, 1100ms, 1110ms});
-  check(decision.accepted, "newer producer session must reset sequence");
+  decision = gate.evaluate(CommandFreshnessInput{"host-boot", "producer-b", 1100ms, 1110ms});
+  check(decision.accepted, "a fresh command from another producer must be accepted");
 
-  decision = gate.evaluate(CommandFreshnessInput{"host-boot", "producer-a", 11, 1150ms, 1160ms});
-  check(!decision.accepted, "older producer session must not flow back");
-  check(decision.reason == CommandFreshnessReason::ProducerRollback,
-        "older producer session reason");
+  decision = gate.evaluate(CommandFreshnessInput{"host-boot", "producer-a", 1150ms, 1160ms});
+  check(decision.accepted, "a fresh command must not be rejected by a retired-producer list");
+  decision = gate.evaluate(CommandFreshnessInput{"host-boot", "producer-b", 800ms, 1200ms});
+  check(!decision.accepted && decision.reason == CommandFreshnessReason::Expired,
+        "switching producers must not admit expired commands");
 }
 
 void testPhysicalVelocityLimitsAndFrames() {
@@ -188,16 +180,30 @@ void testWatchdogUsesElapsedTime() {
   check(core.active(), "new command restores active state");
 }
 
+void testTransportDelayDoesNotExtendCommandLifetime() {
+  Core core(Limits{1.0, 1.0, 200ms}, "host-boot");
+  const auto command = core.accept(
+      CommandFreshnessInput{"host-boot", "producer-a", 1000ms, 1190ms},
+      "body", 0.3, 0.0, 0.0, lingtu::driver::TimePoint{1190ms});
+  check(command.action.has_value(), "fresh delayed command rejected");
+  check(!core.poll(lingtu::driver::TimePoint{1199ms}), "command expired before its source deadline");
+  const auto stop = core.poll(lingtu::driver::TimePoint{1200ms});
+  check(stop && stop->reason == ActionReason::Watchdog,
+        "receipt time extended the source command lifetime");
+}
+
 void testRejectedFreshnessDoesNotRefreshWatchdog() {
   Core core(Limits{1.0, 1.0, 200ms}, "host-boot");
   const auto accepted = core.accept(
-      CommandFreshnessInput{"host-boot", "producer-a", 1, 1000ms, 1000ms}, "body", 0.5, 0.0, 0.0);
+      CommandFreshnessInput{"host-boot", "producer-a", 1000ms, 1000ms}, "body", 0.5, 0.0, 0.0,
+      lingtu::driver::TimePoint{1000ms});
   check(accepted.freshness.accepted, "fresh Core command must be admitted");
   check(accepted.action.has_value(), "fresh Core command must produce an action");
 
   const auto duplicate = core.accept(
-      CommandFreshnessInput{"host-boot", "producer-a", 1, 1150ms, 1150ms}, "body", 0.5, 0.0, 0.0);
-  check(!duplicate.freshness.accepted, "duplicate Core command must be rejected");
+      CommandFreshnessInput{"host-boot", "producer-a", 900ms, 1150ms}, "body", 0.5, 0.0, 0.0,
+      lingtu::driver::TimePoint{1150ms});
+  check(!duplicate.freshness.accepted, "expired Core command must be rejected");
   check(!duplicate.action.has_value(), "rejected freshness must not produce an action");
 
   const auto before_timeout =
@@ -372,7 +378,7 @@ void testCmdVelWriterGateRequiresExactlyOneWriter() {
   CmdVelWriterGate gate;
 
   auto decision = gate.update(0);
-  check(!decision.ready, "missing cmd_vel writer must not be ready");
+  check(decision.ready, "missing writer must defer to command expiry");
   check(!decision.requires_stop, "initial missing writer must not require duplicate stop");
   check(decision.reason == "missing_cmd_vel_writer", "missing cmd_vel writer reason");
 
@@ -391,22 +397,37 @@ void testCmdVelWriterGateRequiresExactlyOneWriter() {
   check(!decision.requires_stop, "ambiguous-to-single recovery must not force stop");
 
   decision = gate.update(0);
-  check(!decision.ready, "writer loss must fail closed");
-  check(decision.requires_stop, "single-to-zero transition must request stop");
+  check(decision.ready, "writer loss must defer to command expiry");
+  check(!decision.requires_stop, "writer loss must not add a second stop path");
 }
 
 }  // namespace
 
 int main() {
   try {
+    {
+      lingtu::driver::Core core({});
+      const auto now = lingtu::driver::Clock::now();
+      core.accept("body", 0.1, 0.0, 0.0, now);
+      core.accept("body", 0.3, 0.2, 0.0, now);
+      const auto latest = core.take(now);
+      check(latest && latest->velocity.vx_mps == 0.3 && latest->velocity.vy_mps == 0.2,
+            "latest frame replaces the pending velocity");
+      check(!core.take(now), "taking the latest frame must not replay old velocities");
+      const auto expired = core.take(now + core.limits().command_timeout);
+      check(expired && expired->reason == lingtu::driver::ActionReason::Watchdog,
+            "the last sent frame still expires when updates stop");
+      check(!core.take(now + core.limits().command_timeout), "expiry must stop once");
+    }
     testFreshCommandIsAccepted();
-    testFreshnessRejectionsAreExplicitAndDoNotAdvanceSequence();
-    testProducerRestartAdvancesBySourceBoottime();
+    testFreshnessRejectsInvalidClockAndExpiredInput();
+    testProducerSwitchDoesNotKeepHistory();
     testPhysicalVelocityLimitsAndFrames();
     testBodyCapabilitiesAreExplicit();
     testStopConfirmationRequiresTheWholeCommonContract();
     testInvalidInputStopsActiveMotion();
     testWatchdogUsesElapsedTime();
+    testTransportDelayDoesNotExtendCommandLifetime();
     testRejectedFreshnessDoesNotRefreshWatchdog();
     testDisconnectDropsStaleCommand();
     testInvalidLimitsFailClosed();

@@ -17,7 +17,8 @@ CmdVelWriterDecision CmdVelWriterGate::update(
   CmdVelWriterDecision decision;
   decision.matched_writers = matched_writers;
   decision.reason = cmdVelWriterReason(matched_writers);
-  decision.ready = matched_writers == 1;
+  // Missing input is handled by the command timeout, not a second stop path.
+  decision.ready = matched_writers <= 1;
   decision.requires_stop = ready_ && !decision.ready;
   ready_ = decision.ready;
   return decision;

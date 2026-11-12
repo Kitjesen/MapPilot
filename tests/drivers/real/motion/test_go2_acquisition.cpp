@@ -27,12 +27,27 @@ int main() {
   try {
     {
       auto body = makeBody();
+      require(body->refresh().ok, "acquisition failed");
+      fake_unitree::stop_code = 3104;
+      const auto stopped = body->stop();
+      require(!stopped.confirmsStop() && stopped.state.reason == "stop_timeout:code=3104",
+              "an SDK timeout must remain unconfirmed without claiming rejection");
+      const auto acquired = body->refresh();
+      require(!acquired.ok && acquired.error == "rpc_timeout:code=3104",
+              "reacquisition must retain the SDK timeout cause");
+    }
+    {
+      auto body = makeBody();
       require(!body->move({0.5, 0, 0}).accepted, "unconfigured movement accepted");
       expectCalls({});
-      require(body->refresh().state.ready, "acquisition failed");
+      const auto acquired = body->refresh();
+      require(acquired.state.ready && acquired.calls == 4, "acquisition call count incorrect");
       expectCalls({"stop", "get", "disable", "get"});
       fake_unitree::calls.clear();
-      for (int i = 0; i < 100; ++i) require(body->refresh().ok, "refresh failed");
+      for (int i = 0; i < 100; ++i) {
+        const auto refresh = body->refresh();
+        require(refresh.ok && refresh.calls == 0, "state-only refresh counted a vendor call");
+      }
       require(body->move({0.5, 0, 0}).accepted, "configured movement rejected");
       require(body->move({}).accepted, "zero rejected");
       expectCalls({"move", "stop"});
@@ -57,6 +72,7 @@ int main() {
       if (failure == 3) fake_unitree::failed_query = 2;
       if (failure == 4) fake_unitree::apply_setting = false;
       const auto result = body->refresh();
+      require(result.calls == fake_unitree::calls.size(), "failed acquisition call count incorrect");
       require(!result.ok && !result.state.ready && !result.error.empty(), "failure not reported");
       const auto previous_calls = fake_unitree::calls;
       require(!body->move({0.5, 0, 0}).accepted, "motion allowed after failed acquisition");
@@ -71,8 +87,16 @@ int main() {
       auto body = makeBody();
       require(body->refresh().ok, "initial acquisition failed");
       std::this_thread::sleep_for(std::chrono::milliseconds(550));
-      require(!body->refresh().ok, "stale state accepted");
-      // The driver main loop releases after a failed refresh before retrying.
+      const auto stale = body->refresh();
+      require(!stale.ok && stale.accepted && stale.transport_ok &&
+                  stale.error == "sport_state_stale",
+              "stale telemetry must remain diagnostic without changing the SDK result");
+      fake_unitree::calls.clear();
+      require(body->move({0.5, 0, 0}).accepted, "stale telemetry blocked the current command");
+      expectCalls({"move"});
+      require(body->act(lingtu::driver::BodyAction::Stand).accepted,
+              "SDK posture acceptance must not be rewritten by stale telemetry");
+      // An explicit release still requires initialization on the next acquisition.
       require(body->stop().confirmsStop(), "disconnect stop failed");
       fake_unitree::enabled = true;
       const unitree_go::msg::dds_::SportModeState_ state;

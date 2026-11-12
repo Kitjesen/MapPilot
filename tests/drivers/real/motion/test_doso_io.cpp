@@ -23,6 +23,7 @@
 #include "dds.hpp"
 #include "dds/dds.h"
 #include "doso.hpp"
+#include "posture.hpp"
 #include "messages.h"
 #include "transport/dds/qos.hpp"
 #include "message/generated/topics.hpp"
@@ -61,6 +62,17 @@ std::uint64_t boottimeNanoseconds() {
 
 class WalkService final : public brainstem::api::v1::RobotControl::Service {
  public:
+  grpc::Status GetControlStatus(grpc::ServerContext *, const google::protobuf::Empty *,
+                                brainstem::api::v1::ControlStatus *response) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    fillReady(*response);
+    response->set_owner(query_owner_);
+    response->set_owner_id(query_owner_ == brainstem::api::v1::CONTROL_OWNER_YUNZHUO
+                               ? "physical-remote" : "");
+    response->set_grpc_lease_active(false);
+    response->set_ready_for_walk(false);
+    return grpc::Status::OK;
+  }
   grpc::Status GetProfile(grpc::ServerContext *, const google::protobuf::Empty *,
                           brainstem::api::v1::ProfileInfo *response) override {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -80,11 +92,28 @@ class WalkService final : public brainstem::api::v1::RobotControl::Service {
   grpc::Status SwitchProfile(grpc::ServerContext *, const brainstem::api::v1::ProfileRequest *request,
                              brainstem::api::v1::ProfileInfo *response) override {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (fsm_kind_ != brainstem::api::v1::CMS_STATE_KIND_GROUNDED) {
-      return {grpc::StatusCode::FAILED_PRECONDITION, "must be Grounded"};
+    if (fsm_kind_ != brainstem::api::v1::CMS_STATE_KIND_GROUNDED || motors_enabled_ ||
+        query_owner_ != brainstem::api::v1::CONTROL_OWNER_NONE) {
+      return {grpc::StatusCode::FAILED_PRECONDITION, "must be Grounded, disabled and unowned"};
     }
+    ++switch_calls_;
     profile_ = request->name();
     response->set_current(profile_);
+    return grpc::Status::OK;
+  }
+  grpc::Status Enable(grpc::ServerContext *, const google::protobuf::Empty *,
+                       google::protobuf::Empty *) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ++enable_calls_;
+    motors_enabled_ = true;
+    return grpc::Status::OK;
+  }
+  grpc::Status Disable(grpc::ServerContext *, const google::protobuf::Empty *,
+                        google::protobuf::Empty *) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ++disable_calls_;
+    motors_enabled_ = false;
+    query_owner_ = brainstem::api::v1::CONTROL_OWNER_NONE;
     return grpc::Status::OK;
   }
   grpc::Status AcquireControl(grpc::ServerContext *,
@@ -221,16 +250,33 @@ class WalkService final : public brainstem::api::v1::RobotControl::Service {
     std::lock_guard<std::mutex> lock(mutex_);
     return sit_calls_;
   }
+  unsigned enableCalls() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return enable_calls_;
+  }
+  unsigned disableCalls() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return disable_calls_;
+  }
+  unsigned switchCalls() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return switch_calls_;
+  }
 
   void setFsm(brainstem::api::v1::CmsStateKind kind) {
     std::lock_guard<std::mutex> lock(mutex_);
     fsm_kind_ = kind;
   }
 
+  void setQueryOwner(brainstem::api::v1::ControlOwner owner) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    query_owner_ = owner;
+  }
+
  private:
   void fillReady(brainstem::api::v1::ControlStatus &status) {
     status.mutable_fsm()->set_kind(fsm_kind_);
-    status.set_motor_output_enabled(true);
+    status.set_motor_output_enabled(motors_enabled_);
     status.set_owner(brainstem::api::v1::CONTROL_OWNER_GRPC);
     status.set_grpc_lease_active(true);
     status.set_lease_remaining_ms(300);
@@ -247,7 +293,10 @@ class WalkService final : public brainstem::api::v1::RobotControl::Service {
   unsigned release_calls_{0};
   unsigned stand_calls_{0};
   unsigned sit_calls_{0};
+  unsigned enable_calls_{0}, disable_calls_{0}, switch_calls_{0};
+  bool motors_enabled_{true};
   brainstem::api::v1::CmsStateKind fsm_kind_{brainstem::api::v1::CMS_STATE_KIND_STANDING};
+  brainstem::api::v1::ControlOwner query_owner_{brainstem::api::v1::CONTROL_OWNER_YUNZHUO};
   bool reject_{false};
   bool mismatch_ack_{false};
   bool fail_release_{false};
@@ -303,54 +352,6 @@ class FinalVelocityWriter {
   dds_entity_t participant_{0};
   dds_entity_t writer_{0};
 };
-
-void testDriverSafetyStopUsesGlobalStopKind() {
-  constexpr int kDomain = 94;
-  const dds_entity_t participant =
-      checked(dds_create_participant(static_cast<dds_domainid_t>(kDomain), nullptr, nullptr),
-              "dds_create_participant(test_safety_stop)");
-  const dds_entity_t topic = checked(
-      dds_create_topic(participant, &lingtu_dds_NavigationCommandRequest_desc,
-                       lingtu::message::kNavCommandRequest.dds_topic.data(), nullptr, nullptr),
-      "dds_create_topic(test_safety_stop)");
-  auto qos = lingtu::dds::make_qos(
-      lingtu::dds::qos_for_topic(lingtu::message::kNavCommandRequest.dds_topic));
-  const dds_entity_t reader = checked(dds_create_reader(participant, topic, qos.get(), nullptr),
-                                      "dds_create_reader(test_safety_stop)");
-  lingtu::driver::DdsReader driver(kDomain);
-
-  bool observed = false;
-  for (std::uint64_t attempt = 1U; attempt <= 100U && !observed; ++attempt) {
-    check(driver.writeNavigationStop("brainstem_control_lost:transport_error", attempt, 123.0),
-          "driver safety stop write failed");
-    std::this_thread::sleep_for(10ms);
-    void *raw_sample = nullptr;
-    dds_sample_info_t info{};
-    const dds_return_t count = dds_take(reader, &raw_sample, &info, 1, 1);
-    check(count >= 0, "driver safety stop take failed");
-    if (count == 0) {
-      continue;
-    }
-    auto *message = static_cast<lingtu_dds_NavigationCommandRequest *>(raw_sample);
-    if (info.valid_data) {
-      check(message->kind ==
-                static_cast<std::int32_t>(lingtu::message::NavigationCommandKind::Stop),
-            "driver fail-safe must publish canonical global Stop");
-      check(message->task_id == nullptr || std::string(message->task_id).empty(),
-            "global Stop must not impersonate a task cancellation");
-      check(message->client_id != nullptr &&
-                std::string(message->client_id) == lingtu::driver::kBrainstemMotionPrincipal,
-            "driver safety stop must preserve source identity");
-      check(message->reason != nullptr &&
-                std::string(message->reason) == "brainstem_control_lost:transport_error",
-            "driver safety stop must preserve its fail-closed reason");
-      observed = true;
-    }
-    checked(dds_return_loan(reader, &raw_sample, 1), "dds_return_loan(test_safety_stop)");
-  }
-  check(observed, "driver safety stop was not observed on DDS");
-  dds_delete(participant);
-}
 
 void testProfileDdsFreshnessAndReadback() {
   constexpr int domain = 95;
@@ -446,18 +447,10 @@ void testFreshnessRejectionsAreVisibleInDriverStatus() {
   lingtu::driver::recordVelocityTracking(stats, {0.3, 0.0, 0.0}, stats.body);
   lingtu::driver::recordFreshnessDecision(stats,
                                           {true, lingtu::driver::CommandFreshnessReason::Accepted});
-  stats.output_ack.record("producer-before-rejection", 42, true,
-                          lingtu::driver::OutputAckState::Clock::now());
-  lingtu::driver::recordFreshnessDecision(
-      stats, {false, lingtu::driver::CommandFreshnessReason::DuplicateSequence});
+  stats.zero_output = true;
   lingtu::driver::recordFreshnessDecision(stats,
                                           {false, lingtu::driver::CommandFreshnessReason::Expired});
 
-  const auto output_ack = stats.output_ack.current(lingtu::driver::OutputAckState::Clock::now());
-  check(!output_ack.accepted(), "freshness rejection must invalidate ACK");
-  check(output_ack.producerBootId().empty(),
-        "freshness rejection must clear current producer identity");
-  check(output_ack.outputSequence() == 0, "freshness rejection must clear current output sequence");
 
   lingtu::driver::Config config;
   config.status_file = "/tmp/lingtu_driver_freshness_status_" +
@@ -471,15 +464,10 @@ void testFreshnessRejectionsAreVisibleInDriverStatus() {
   lingtu::driver::writeStatus(config, core, stats, adapter, 123.0);
 
   const std::string status = readTextFile(config.status_file);
-  check(status.find("\"output_ack\": {\"producer_boot_id\": \"\", "
-                    "\"output_sequence\": 0, \"accepted\": false}") != std::string::npos,
-        "status must not expose stale output ACK identity after rejection");
   check(status.find("\"freshness_accepted\": 1") != std::string::npos,
         "status must count accepted freshness envelopes");
-  check(status.find("\"freshness_rejected\": 2") != std::string::npos,
+  check(status.find("\"freshness_rejected\": 1") != std::string::npos,
         "status must count rejected freshness envelopes");
-  check(status.find("\"freshness_duplicate_sequence\": 1") != std::string::npos,
-        "status must expose duplicate sequence rejections");
   check(status.find("\"freshness_expired\": 1") != std::string::npos,
         "status must expose expired command rejections");
   check(status.find("\"last_freshness_reason\": \"expired\"") != std::string::npos,
@@ -583,6 +571,148 @@ void testDosoStandAndSitUseBrainstem() {
   server->Wait();
 }
 
+void testPostureDdsToBrainstem() {
+  WalkService service;
+  service.setFsm(brainstem::api::v1::CMS_STATE_KIND_GROUNDED);
+  service.setQueryOwner(brainstem::api::v1::CONTROL_OWNER_NONE);
+  grpc::ServerBuilder builder;
+  int port = 0;
+  builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+  builder.RegisterService(&service);
+  auto server = builder.BuildAndStart();
+  check(server != nullptr && port > 0, "posture mock server must start");
+  constexpr int domain = 96;
+  const auto participant = checked(dds_create_participant(domain, nullptr, nullptr), "posture participant");
+  const auto request_topic = checked(dds_create_topic(participant,
+      &lingtu_dds_MotionPostureRequest_desc, lingtu::message::kMotionPostureRequest.dds_topic.data(),
+      nullptr, nullptr), "posture request topic");
+  auto qos = lingtu::dds::make_qos(lingtu::dds::qos_for_topic(
+      lingtu::message::kMotionPostureRequest.dds_topic));
+  const auto writer = checked(dds_create_writer(participant, request_topic, qos.get(), nullptr),
+                              "posture request writer");
+  const auto ack_topic = checked(dds_create_topic(participant, &lingtu_dds_MotionPostureAck_desc,
+      lingtu::message::kMotionPostureAck.dds_topic.data(), nullptr, nullptr), "posture ACK topic");
+  const auto ack_reader = checked(dds_create_reader(participant, ack_topic, qos.get(), nullptr),
+                                  "posture ACK reader");
+  lingtu::driver::DdsReader driver(domain);
+  lingtu::driver::Doso body(dosoConfig(port));
+  lingtu::driver::PostureControl posture;
+  lingtu_dds_MotionPostureRequest wire{};
+  wire.host_boot_id = const_cast<char *>(driver.hostBootId().c_str());
+  wire.producer_boot_id = const_cast<char *>("nav-boot-posture");
+  wire.client_id = const_cast<char *>("sdk-posture");
+  wire.request_id = const_cast<char *>("stand-from-grounded");
+  wire.action = static_cast<int>(lingtu::message::NavigationCommandKind::Stand);
+  wire.profile_name = const_cast<char *>("");
+  for (int attempt = 0; attempt < 10; ++attempt) {
+    wire.source_boottime_ns = boottimeNanoseconds() - 2000000000ULL;
+    checked(dds_write(writer, &wire), "expired posture write");
+    std::this_thread::sleep_for(10ms);
+    check(!driver.takePostureRequest(), "expired posture request must not reach body action");
+  }
+  wire.host_boot_id = const_cast<char *>("previous-host-boot");
+  wire.source_boottime_ns = boottimeNanoseconds();
+  checked(dds_write(writer, &wire), "wrong boot posture write");
+  std::this_thread::sleep_for(20ms);
+  check(!driver.takePostureRequest(), "posture request from another host boot must be rejected");
+  wire.host_boot_id = const_cast<char *>(driver.hostBootId().c_str());
+  std::optional<lingtu::message::PostureRequest> request;
+  for (int attempt = 0; attempt < 100 && !request; ++attempt) {
+    wire.source_boottime_ns = boottimeNanoseconds();
+    checked(dds_write(writer, &wire), "posture request write");
+    std::this_thread::sleep_for(10ms);
+    request = driver.takePostureRequest();
+  }
+  check(request && request->producer_boot_id == "nav-boot-posture" &&
+        request->client_id == "sdk-posture" && request->request_id == "stand-from-grounded",
+        "posture DDS must preserve all request identities");
+  const auto reply = posture.request(*request, body, "", false, false);
+  check(reply.ack.accepted && service.standCalls() == 1 && service.calls() == 0,
+        "Grounded DDS stand must reach StandUp without walking commands");
+  bool observed = false;
+  for (int attempt = 0; attempt < 100 && !observed; ++attempt) {
+    check(driver.writePostureAck(reply.ack, 123.0), "posture ACK write");
+    std::this_thread::sleep_for(10ms);
+    void *sample = nullptr;
+    dds_sample_info_t info{};
+    const auto count = dds_take(ack_reader, &sample, &info, 1, 1);
+    check(count >= 0, "posture ACK take");
+    if (count == 0) continue;
+    const auto &ack = *static_cast<lingtu_dds_MotionPostureAck *>(sample);
+    observed = info.valid_data && ack.accepted && ack.final_result && ack.phase == 0 &&
+        ack.action == wire.action && std::string(ack.request_id) == wire.request_id &&
+        std::string(ack.client_id) == wire.client_id &&
+        std::string(ack.producer_boot_id) == wire.producer_boot_id;
+    checked(dds_return_loan(ack_reader, &sample, 1), "posture ACK loan");
+  }
+  check(observed, "driver ACK must carry the original posture identities");
+  check(posture.request(*request, body, "", false, false).ack.accepted && service.standCalls() == 1,
+        "replayed DDS request must reuse final ACK without another StandUp");
+  auto invoke = [&](lingtu::message::NavigationCommandKind action, const char *id, const char *profile) {
+    wire.action = static_cast<int>(action);
+    wire.request_id = const_cast<char *>(id);
+    wire.profile_name = const_cast<char *>(profile);
+    std::optional<lingtu::message::PostureRequest> received;
+    for (int attempt = 0; attempt < 100 && !received; ++attempt) {
+      wire.source_boottime_ns = boottimeNanoseconds();
+      checked(dds_write(writer, &wire), "motor/profile request write");
+      std::this_thread::sleep_for(10ms);
+      const auto candidate = driver.takePostureRequest();
+      if (candidate && candidate->request_id == id) received = candidate;
+    }
+    check(received && received->profile_name == profile, "DDS preserves explicit profile target");
+    const auto result = posture.request(*received, body, "", false, false);
+    check(result.ack.accepted, "DDS motor/profile command is accepted by actual adapter");
+    bool matched = false;
+    for (int attempt = 0; attempt < 100 && !matched; ++attempt) {
+      check(driver.writePostureAck(result.ack, 124.0), "motor/profile ACK write");
+      std::this_thread::sleep_for(10ms);
+      void *sample = nullptr;
+      dds_sample_info_t info{};
+      const auto count = dds_take(ack_reader, &sample, &info, 1, 1);
+      check(count >= 0, "motor/profile ACK take");
+      if (!count) continue;
+      const auto &ack = *static_cast<lingtu_dds_MotionPostureAck *>(sample);
+      matched = info.valid_data && ack.accepted && ack.action == wire.action &&
+          std::string(ack.request_id) == id && std::string(ack.profile_name) == profile;
+      checked(dds_return_loan(ack_reader, &sample, 1), "motor/profile ACK loan");
+    }
+    check(matched, "DDS ACK preserves motor action and target profile");
+    check(posture.request(*received, body, "", false, false).ack.accepted,
+          "replayed motor/profile request uses cached ACK");
+  };
+  invoke(lingtu::message::NavigationCommandKind::DisableMotors, "disable-from-sdk", "");
+  invoke(lingtu::message::NavigationCommandKind::SwitchProfile, "profile-from-sdk", "stair-test");
+  invoke(lingtu::message::NavigationCommandKind::EnableMotors, "enable-from-sdk", "");
+  check(service.disableCalls() == 1 && service.switchCalls() == 1 && service.enableCalls() == 1 &&
+      service.standCalls() == 1 && service.sitCalls() == 0 && service.calls() == 0,
+      "public motor/profile commands execute once without automatic posture or walking");
+  dds_delete(participant);
+  server->Shutdown();
+  server->Wait();
+}
+
+void testReadOnlyControlPreservesOwner() {
+  WalkService service;
+  grpc::ServerBuilder builder;
+  int port = 0;
+  builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+  builder.RegisterService(&service);
+  auto server = builder.BuildAndStart();
+  check(server != nullptr && port > 0, "inspection mock server must start");
+  lingtu::driver::Doso client(dosoConfig(port));
+  const auto observed = client.inspectControl();
+  check(observed.ok && observed.transport_ok && !observed.accepted,
+        "control query must remain read-only");
+  check(observed.state.owner == "yunzhuo" && observed.state.owner_id == "physical-remote",
+        "control query must preserve actual source owner");
+  check(service.calls() == 0 && service.releaseCalls() == 0 &&
+        service.standCalls() == 0 && service.sitCalls() == 0,
+        "inspection must not send walking or posture commands");
+  server->Shutdown();
+  server->Wait();
+}
+
 void testDosoProfileUsesIndependentActualReadback() {
   WalkService service;
   grpc::ServerBuilder builder;
@@ -593,25 +723,36 @@ void testDosoProfileUsesIndependentActualReadback() {
   check(server != nullptr && port > 0, "profile mock Brainstem server must start");
   lingtu::driver::Doso client(dosoConfig(port));
   const auto initial = client.readProfile();
-  check(initial.supported && initial.fresh && initial.requires_grounded && !initial.grounded &&
+  check(initial.supported && initial.fresh && initial.requires_grounded && initial.requires_disabled &&
+        initial.motors_enabled == true && !initial.control_free && !initial.grounded &&
         initial.current == "ordinary" && initial.available.size() == 2,
         "DOSO profile state must report actual controller and its Grounded prerequisite");
   check(!client.switchProfile("stair-test").ok, "standing profile switch must preserve server rejection");
   service.setFsm(brainstem::api::v1::CMS_STATE_KIND_GROUNDED);
   check(client.readProfile().grounded, "Grounded must come from actual body query");
+  check(!client.switchProfile("stair-test").ok, "Grounded still rejects profile switching with enabled gate");
+  service.setQueryOwner(brainstem::api::v1::CONTROL_OWNER_NONE);
+  const auto disabled = client.motorPower(false);
+  check(disabled.ok && disabled.accepted && !disabled.state.ready, "adapter exposes real Disable RPC");
+  const auto grounded_disabled = client.readProfile();
+  check(grounded_disabled.motors_enabled == false && grounded_disabled.control_free,
+        "profile state independently reads disabled gate and free control");
   const auto accepted = client.switchProfile("stair-test");
   check(accepted.ok && accepted.accepted && !accepted.state.ready,
         "switch ACK must not claim motion readiness");
   check(client.readProfile().current == "stair-test", "active profile must come from GetProfile");
+  check(client.motorPower(true).ok && client.readProfile().motors_enabled == true,
+        "adapter exposes Enable RPC with independent gate readback");
+  check(service.disableCalls() == 1 && service.enableCalls() == 1 && service.switchCalls() == 1,
+        "adapter forwards one hardware call for each explicit operation");
   server->Shutdown();
   server->Wait();
 }
 
-void testCurrentCommandRejectionIsTemporarilyCorrelatedInStatus() {
+void testZeroOutputStateInStatus() {
   lingtu::driver::RuntimeStats stats;
   stats.control.reason = "preempted";
-  const auto now = lingtu::driver::Clock::now();
-  stats.output_ack.record("producer-rejected", 73, false, now);
+  stats.zero_output = true;
 
   lingtu::driver::Config config;
   config.status_file = "/tmp/lingtu_driver_rejection_status_" +
@@ -623,18 +764,14 @@ void testCurrentCommandRejectionIsTemporarilyCorrelatedInStatus() {
   lingtu::driver::writeStatus(config, core, stats, adapter, 123.0);
 
   std::string status = readTextFile(config.status_file);
-  check(status.find("\"output_ack\": {\"producer_boot_id\": \"producer-rejected\", "
-                    "\"output_sequence\": 73, \"accepted\": false}") != std::string::npos,
-        "current command rejection must retain exact sequence identity");
+  check(status.find("\"zero_output\": true") != std::string::npos, "zero output serialized");
   check(status.find("\"decision\": \"preempted\"") != std::string::npos,
         "current command rejection must retain Brainstem reason");
 
-  stats.output_ack.expire(now + lingtu::driver::OutputAckState::kRejectedEvidenceLifetime);
+  stats.zero_output = false;
   lingtu::driver::writeStatus(config, core, stats, adapter, 124.0);
   status = readTextFile(config.status_file);
-  check(status.find("\"output_ack\": {\"producer_boot_id\": \"\", "
-                    "\"output_sequence\": 0, \"accepted\": false}") != std::string::npos,
-        "expired command rejection must not expose stale sequence identity");
+  check(status.find("\"zero_output\": false") != std::string::npos, "unknown output serialized");
 
   std::error_code remove_error;
   std::filesystem::remove(config.status_file, remove_error);
@@ -663,12 +800,11 @@ void testDdsToBrainstemPath() {
     sample = reader.takeLatest().latest;
   }
   check(sample.has_value(), "typed DDS reader must receive cmd_vel");
-  check(sample->frame == "body", "DDS frame must remain body");
-  check(sample->output_seq == 1, "DDS output sequence must be preserved");
   check(sample->producer_boot_id == "endpoint-process-a", "DDS producer boot id must be preserved");
 
   const auto accepted =
-      core.accept(sample->freshnessInput(), sample->frame, sample->vx, sample->vy, sample->wz);
+      core.accept(sample->freshnessInput(), "body", sample->vx, sample->vy, sample->wz,
+                  sample->received_at);
   check(accepted.freshness.accepted, "driver core must admit fresh DDS metadata");
   check(accepted.action.has_value(), "driver core must accept DDS command");
   const auto lease = client.refresh();
@@ -701,11 +837,12 @@ void testDdsToBrainstemPath() {
   }
   check(duplicate_sample.has_value(), "duplicate DDS sample must be observable");
   const auto duplicate =
-      core.accept(duplicate_sample->freshnessInput(), duplicate_sample->frame, duplicate_sample->vx,
-                  duplicate_sample->vy, duplicate_sample->wz);
-  check(!duplicate.freshness.accepted, "duplicate output sequence must be rejected");
-  check(!duplicate.action.has_value(), "duplicate command must not produce an RPC action");
-  check(service.calls() == 2, "duplicate command must not reach Brainstem");
+      core.accept(duplicate_sample->freshnessInput(), "body", duplicate_sample->vx,
+                  duplicate_sample->vy, duplicate_sample->wz, duplicate_sample->received_at);
+  check(duplicate.freshness.accepted, "latest input must not be rejected by a repeated sequence");
+  check(duplicate.action.has_value(), "latest input must produce the current velocity action");
+  check(client.move(duplicate.action->velocity).accepted, "latest command did not reach Brainstem");
+  check(service.calls() == 3, "latest command must be forwarded once");
 
   service.mismatchNextAck();
   const auto mismatched = client.move({});
@@ -872,12 +1009,13 @@ void testMutualTlsBrainstemPath() {
 int main() {
   try {
     testFinalVelocityQosExpiresQueuedMotion();
-    testDriverSafetyStopUsesGlobalStopKind();
     testProfileDdsFreshnessAndReadback();
     testFreshnessRejectionsAreVisibleInDriverStatus();
     testDosoStandAndSitUseBrainstem();
+    testReadOnlyControlPreservesOwner();
+    testPostureDdsToBrainstem();
     testDosoProfileUsesIndependentActualReadback();
-    testCurrentCommandRejectionIsTemporarilyCorrelatedInStatus();
+    testZeroOutputStateInStatus();
     testDdsToBrainstemPath();
     testStopAndReleaseRequiresAnAcknowledgedZeroAndRelease();
     testStopAndReleaseSurfacesReleaseTransportFailure();

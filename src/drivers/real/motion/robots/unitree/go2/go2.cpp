@@ -28,6 +28,8 @@ using LowStateSubscriber = unitree::robot::ChannelSubscriber<LowState>;
 
 constexpr char kSportStateTopic[] = "rt/sportmodestate";
 constexpr char kLowStateTopic[] = "rt/lowstate";
+// Unitree SDK2 internal_error.hpp: API response timeout, not a rejection.
+constexpr int kRpcTimeout = 3104;
 constexpr auto kStateMaxAge = std::chrono::milliseconds(500);
 constexpr std::array<const char *, 12> kJointNames{
     "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
@@ -109,50 +111,57 @@ class Go2 final : public Body {
   }
 
   Result refresh() override {
+    unsigned calls = 0;
     if (!initial_zero_acknowledged_) {
+      ++calls;
       const int result = client_->StopMove();
       initial_zero_acknowledged_ = result == 0;
       if (!initial_zero_acknowledged_) {
-        return resultForCode(result, false, "initial_stop_rejected");
+        return resultForCode(result, false, "initial_stop_rejected", calls);
       }
     }
     if (!factory_avoidance_disabled_) {
       // Configure only after the acquisition stop, never in the motion hot path.
       bool enabled = true;
+      ++calls;
       int result = avoidance_->SwitchGet(enabled);
       if (result != 0) {
-        return resultForCode(result, false, "factory_avoidance_query_failed");
+        return resultForCode(result, false, "factory_avoidance_query_failed", calls);
       }
       if (enabled) {
+        ++calls;
         result = avoidance_->SwitchSet(false);
         if (result != 0) {
-          return resultForCode(result, false, "factory_avoidance_disable_failed");
+          return resultForCode(result, false, "factory_avoidance_disable_failed", calls);
         }
+        ++calls;
         result = avoidance_->SwitchGet(enabled);
         if (result != 0) {
-          return resultForCode(result, false, "factory_avoidance_readback_failed");
+          return resultForCode(result, false, "factory_avoidance_readback_failed", calls);
         }
       }
       if (enabled) {
-        return resultForCode(0, false, "factory_avoidance_still_enabled");
+        return resultForCode(0, false, "factory_avoidance_still_enabled", calls);
       }
       factory_avoidance_disabled_ = true;
       std::fputs("lingtu_driver: Go2 factory avoidance disabled (confirmed)\n", stderr);
     }
-    return resultForCode(0, true, "ready");
+    return resultForCode(0, true, "ready", calls);
   }
 
   Result move(const Velocity &velocity) override {
     const bool zero = std::abs(velocity.vx_mps) <= 1e-9 && std::abs(velocity.vy_mps) <= 1e-9 &&
                       std::abs(velocity.yaw_rps) <= 1e-9;
     if (!zero && !factory_avoidance_disabled_) {
-      return resultForCode(0, false, "factory_avoidance_not_configured");
+      return resultForCode(0, false, "factory_avoidance_not_configured", 0);
     }
     if (!zero) {
-      const auto current_health = health();
-      if (!current_health.healthy) {
-        return resultForCode(0, false, current_health.reason);
+      const char *attitude_fault;
+      {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        attitude_fault = attitudeFaultLocked();
       }
+      if (attitude_fault) return resultForCode(0, false, attitude_fault, 0);
     }
     const int result = zero ? client_->StopMove()
                             : client_->Move(static_cast<float>(velocity.vx_mps),
@@ -192,7 +201,9 @@ class Go2 final : public Body {
     response.state.initial_zero_acknowledged = false;
     response.state.fsm = modeName(state_mode);
     response.state.reason =
-        stopped ? "stop_confirmed" : "stop_rejected:code=" + std::to_string(result);
+        stopped ? "stop_confirmed"
+                : (result == kRpcTimeout ? "stop_timeout:code=" : "stop_rejected:code=") +
+                      std::to_string(result);
     response.error = stopped ? "" : response.state.reason;
     response.stop_confirmed = stopped;
     return response;
@@ -218,7 +229,8 @@ class Go2 final : public Body {
         resultForCode(result, result == 0,
                       result == 0 ? std::string("body_action_accepted:") + bodyActionName(action)
                                   : std::string("body_action_rejected:") + bodyActionName(action));
-    if (result == 0 && response.transport_ok && !response.state.critical_fault) {
+    if (result == 0 && response.transport_ok && response.state.connected &&
+        !response.state.critical_fault) {
       response.ok = true;
       response.accepted = true;
       response.error.clear();
@@ -236,6 +248,7 @@ class Go2 final : public Body {
         state_received_ && std::chrono::steady_clock::now() - state_received_at_ <= kStateMaxAge;
     BodyState state;
     state.fresh = fresh;
+    state.observed_at = state_received_at_;
     state.posture = fresh ? postureForMode(state_mode_) : Posture::Unknown;
     if (fresh) {
       state.velocity = {
@@ -343,7 +356,7 @@ class Go2 final : public Body {
     state_received_at_ = std::chrono::steady_clock::now();
   }
 
-  Result resultForCode(int result, bool accepted, const std::string &reason) {
+  Result resultForCode(int result, bool accepted, const std::string &reason, unsigned calls = 1) {
     bool state_received = false;
     std::uint8_t state_mode = 255;
     std::chrono::steady_clock::time_point state_received_at;
@@ -357,19 +370,22 @@ class Go2 final : public Body {
     }
     const bool state_fresh =
         state_received && std::chrono::steady_clock::now() - state_received_at <= kStateMaxAge;
-    const bool transport_ok = result == 0 && state_fresh;
+    const bool transport_ok = result == 0;
     const bool mode_ready = readyMode(state_mode);
 
     Result response;
-    response.ok = accepted && transport_ok && mode_ready && initial_zero_acknowledged_ &&
+    response.calls = calls;
+    response.ok = accepted && transport_ok && state_fresh && mode_ready && initial_zero_acknowledged_ &&
                   factory_avoidance_disabled_ && attitude_fault == nullptr;
     response.transport_ok = transport_ok;
-    response.accepted = accepted && response.ok;
+    response.accepted = accepted && transport_ok;
     response.state.connected = state_fresh;
     response.state.ready = response.ok;
     response.state.motors_enabled = mode_ready;
     response.state.critical_fault = false;
     response.state.control_assured = response.ok;
+    response.state.owner = response.ok ? "driver" : "none";
+    response.state.owner_id = response.ok ? kDriverMotionPrincipal : "";
     response.state.lease_valid = false;
     response.state.initial_zero_acknowledged = initial_zero_acknowledged_;
     response.state.fsm = modeName(state_mode);
@@ -382,6 +398,7 @@ class Go2 final : public Body {
 
   static std::string failureReason(int result, bool state_fresh, bool mode_ready,
                                    const std::string &fallback) {
+    if (result == kRpcTimeout) return "rpc_timeout:code=" + std::to_string(result);
     if (result != 0) {
       return fallback + ":code=" + std::to_string(result);
     }

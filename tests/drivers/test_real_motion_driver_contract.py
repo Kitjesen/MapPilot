@@ -105,7 +105,7 @@ def test_native_driver_has_one_robot_interface_and_two_implementations() -> None
     assert "brainstem::Client" in doso
     assert "client.standUp()" in doso
     assert "client.sitDown()" in doso
-    assert "return {true, true, false, false};" in doso
+    assert "return {true, true, false, false, true, true};" in doso
     assert "mode == 8" not in go2
     assert 'set(LINGTU_DRIVER_BACKEND "" CACHE STRING' in cmake
     assert 'LINGTU_DRIVER_BACKEND STREQUAL "doso"' in cmake
@@ -130,13 +130,19 @@ def test_driver_common_velocity_is_physical_and_never_normalized() -> None:
     assert "no normalized `[-1, 1]` representation" in readme
 
 
-def test_fault_transition_stops_the_selected_backend_before_resetting_state() -> None:
+def test_send_failure_stops_output_without_resetting_adapter() -> None:
     main = _read("src/drivers/real/motion/main.cpp")
     go2 = _read("src/drivers/real/motion/robots/unitree/go2/go2.cpp")
-    fail_closed = main[main.index("auto fail_closed") : main.index("auto send")]
+    dds = _read("src/drivers/real/motion/dds.cpp")
+    stop_output = main[main.index("auto stop_output") : main.index("auto send")]
     go2_release = go2[go2.index("Result stop()") : go2.index("Result act(BodyAction action)")]
 
-    assert fail_closed.index("stop_and_release") < fail_closed.index("core.reset()")
+    assert "body->move({})" in stop_output
+    assert "stop_and_release" not in stop_output
+    assert "core.reset()" not in stop_output
+    assert "publish_control_state()" in stop_output
+    assert "writeNavigationStop" not in main + dds
+    assert "kNavCommandRequest" not in dds
     assert "client_->StopMove()" in go2_release
     assert 'stopped ? "stop_confirmed"' in go2_release
     assert "response.stop_confirmed = stopped" in go2_release
@@ -151,19 +157,19 @@ def test_driver_public_state_is_vendor_neutral() -> None:
     control = interface[interface.index("struct ControlState") : interface.index("struct AdapterDiagnostics")]
     assert "grpc" not in control
     assert "sdk2" not in control
-    assert "owner" not in control
+    assert 'std::string owner{"none"}' in control
     assert '\\"adapter\\"' in status
     assert '\\"last_velocity\\"' in status
     assert '\\"last_walk\\"' not in status
     assert '\\"brainstem\\"' not in status
-    assert 'kDriverOwner[] = "driver"' in dds
+    assert "msg.owner = const_cast<char*>(state.owner.c_str())" in dds
 
 
 def test_native_driver_tests_live_in_the_repository_test_tree() -> None:
     tests = ROOT / "tests" / "drivers" / "real" / "motion"
 
     assert (tests / "test_core.cpp").is_file()
-    assert (tests / "test_output_ack.cpp").is_file()
+    assert (tests / "test_loop.cpp").is_file()
     assert (tests / "test_status.cpp").is_file()
     assert (tests / "test_doso_io.cpp").is_file()
     assert not (tests / "test_thunder_io.cpp").exists()
@@ -184,7 +190,7 @@ def test_driver_service_consumes_the_product_session_without_user_identity() -> 
     assert "LINGTU_DRIVER_BACKEND" in runner
     assert "LINGTU_DRIVER_NETWORK_INTERFACE" in runner
     assert "LINGTU_DRIVER_NETWORK_ADDRESS" in runner
-    assert "LINGTU_DRIVER_PROBE_IP" in runner
+    assert "LINGTU_DRIVER_PROBE_IP" not in runner
     assert "ldd" in runner
     assert "sunrise" not in (unit + runner).lower()
 

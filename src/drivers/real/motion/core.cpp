@@ -48,7 +48,8 @@ FreshCommandResult Core::accept(
     std::string_view frame,
     double vx,
     double vy,
-    double wz) {
+    double wz,
+    TimePoint received_at) {
   ++counters_.received;
   const auto decision = freshness_gate_.evaluate(freshness);
   if (!decision.accepted) {
@@ -61,7 +62,8 @@ FreshCommandResult Core::accept(
           vx,
           vy,
           wz,
-          TimePoint{freshness.receive_boottime}),
+          // Transfer elapsed age, not CLOCK_BOOTTIME's epoch, into the local steady clock.
+          received_at - (freshness.receive_boottime - freshness.source_boottime)),
   };
 }
 
@@ -86,15 +88,14 @@ std::optional<Action> Core::acceptPayload(
       clampMagnitude(wz, limits_.max_angular_rps),
   };
   last_command_ = now;
-  has_command_ = true;
   active_ = true;
-  zero_sent_ = false;
   ++counters_.accepted;
-  return Action{last_velocity_, ActionReason::Command};
+  pending_ = Action{last_velocity_, ActionReason::Command};
+  return pending_;
 }
 
 std::optional<Action> Core::poll(TimePoint now) {
-  if (!has_command_ || !active_ || zero_sent_ || now < last_command_) {
+  if (!active_ || now < last_command_) {
     return std::nullopt;
   }
   if (now - last_command_ < limits_.command_timeout) {
@@ -104,26 +105,31 @@ std::optional<Action> Core::poll(TimePoint now) {
   return forceStop(ActionReason::Watchdog);
 }
 
+std::optional<Action> Core::take(TimePoint now) {
+  if (auto expired = poll(now)) return expired;
+  return std::exchange(pending_, std::nullopt);
+}
+
 Action Core::forceStop(ActionReason reason) noexcept {
   last_velocity_ = {};
   active_ = false;
-  zero_sent_ = true;
+  pending_.reset();
   return Action{last_velocity_, reason};
 }
 
 void Core::reset() noexcept {
   last_velocity_ = {};
-  has_command_ = false;
   active_ = false;
-  zero_sent_ = true;
+  pending_.reset();
 }
 
 std::optional<Action> Core::reject(ActionReason reason) {
-  if (!active_ && zero_sent_) {
+  if (!active_) {
     return std::nullopt;
   }
   ++counters_.invalid_stops;
-  return forceStop(reason);
+  pending_ = forceStop(reason);
+  return pending_;
 }
 
 const char* reasonName(ActionReason reason) noexcept {

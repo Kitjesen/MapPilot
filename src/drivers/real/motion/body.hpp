@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include "message/protocol/external.hpp"
 
 #include "core.hpp"
 
@@ -35,6 +36,8 @@ struct Capabilities {
   bool sit{false};
   bool recover{false};
   bool damp{false};
+  bool motor_power{false};
+  bool external_control{false};
 
   bool supports(BodyAction action) const noexcept {
     switch (action) {
@@ -53,6 +56,7 @@ struct Capabilities {
 
 struct BodyState {
   bool fresh{false};
+  Clock::time_point observed_at{};
   Posture posture{Posture::Unknown};
   Velocity velocity;
   bool velocity_available{false};
@@ -90,6 +94,8 @@ struct ControlState {
   bool initial_zero_acknowledged{false};
   std::string fsm{"unknown"};
   std::string reason{"not_connected"};
+  std::string owner{"none"};
+  std::string owner_id;
 };
 
 struct AdapterDiagnostics {
@@ -104,6 +110,7 @@ struct AdapterDiagnostics {
 
 struct Result {
   bool ok{false};
+  // Vendor-call outcome; asynchronous body-state freshness is a separate readiness condition.
   bool transport_ok{false};
   bool accepted{false};
   ControlState state;
@@ -125,6 +132,10 @@ struct ProfileState {
   std::string current;
   std::vector<std::string> available;
   std::string reason{"profile_unsupported"};
+  bool requires_disabled{false};
+  std::optional<bool> motors_enabled;
+  bool control_free{false};
+  bool critical_fault{false};
 };
 
 class Body {
@@ -138,16 +149,46 @@ class Body {
   // readiness. Callers must use Result::confirmsStop(), not transport success.
   virtual Result stop() noexcept = 0;
   virtual Result act(BodyAction action) = 0;
+  virtual Result motorPower(bool) {
+    Result result;
+    result.calls = 0;
+    result.error = "motor_power_unsupported";
+    result.state.reason = result.error;
+    return result;
+  }
+  virtual Result inspectControl() {
+    Result result;
+    result.calls = 0;
+    result.error = "control_inspection_unsupported";
+    result.state.reason = result.error;
+    return result;
+  }
   virtual Capabilities capabilities() const noexcept = 0;
   virtual BodyState state() const = 0;
   virtual std::optional<JointState> jointState() const { return std::nullopt; }
   virtual HealthState health() const = 0;
   virtual AdapterDiagnostics diagnostics() const = 0;
   virtual ProfileState readProfile() { return {}; }
+  virtual message::ExternalState externalState() const { return {}; }
+  virtual bool externalSelected() const { return false; }
+  virtual Result enterExternal(const std::string &) { return externalUnsupported(); }
+  virtual Result enableExternal() { return externalUnsupported(); }
+  virtual Result exitExternal() { return externalUnsupported(); }
+  virtual Result externalHeartbeat() { return externalUnsupported(); }
+  virtual Result externalFrame(const message::ExternalFrame &) { return externalUnsupported(); }
   virtual Result switchProfile(const std::string &) {
     Result result;
     result.calls = 0;
     result.error = "profile_unsupported";
+    result.state.reason = result.error;
+    return result;
+  }
+
+ private:
+  static Result externalUnsupported() {
+    Result result;
+    result.calls = 0;
+    result.error = "external_control_unsupported";
     result.state.reason = result.error;
     return result;
   }

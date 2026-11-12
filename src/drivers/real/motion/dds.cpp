@@ -112,6 +112,35 @@ struct DdsReader::Impl {
     profile_writer = checked(dds_create_writer(publisher, profile_state_topic,
         profile_state_qos.get(), nullptr), "dds_create_writer(profile_state)");
 
+    const auto posture_topic = checked(dds_create_topic(participant,
+        &lingtu_dds_MotionPostureRequest_desc,
+        message::kMotionPostureRequest.dds_topic.data(), nullptr, nullptr),
+        "dds_create_topic(posture_request)");
+    auto posture_qos = lingtu::dds::make_qos(lingtu::dds::qos_for_topic(
+        message::kMotionPostureRequest.dds_topic));
+    posture_reader = checked(dds_create_reader(subscriber, posture_topic,
+        posture_qos.get(), nullptr), "dds_create_reader(posture_request)");
+    const auto posture_ack_topic = checked(dds_create_topic(participant,
+        &lingtu_dds_MotionPostureAck_desc,
+        message::kMotionPostureAck.dds_topic.data(), nullptr, nullptr),
+        "dds_create_topic(posture_ack)");
+    auto posture_ack_qos = lingtu::dds::make_qos(lingtu::dds::qos_for_topic(
+        message::kMotionPostureAck.dds_topic));
+    posture_writer = checked(dds_create_writer(publisher, posture_ack_topic,
+        posture_ack_qos.get(), nullptr), "dds_create_writer(posture_ack)");
+    const auto external_topic = checked(dds_create_topic(participant,
+        &lingtu_dds_ExternalCommand_desc, message::kExternalCommand.dds_topic.data(), nullptr, nullptr),
+        "dds_create_topic(external_command)");
+    auto external_qos = lingtu::dds::make_qos(lingtu::dds::qos_for_topic(message::kExternalCommand.dds_topic));
+    external_reader = checked(dds_create_reader(subscriber, external_topic,
+        external_qos.get(), nullptr), "dds_create_reader(external_command)");
+    const auto external_state_topic = checked(dds_create_topic(participant,
+        &lingtu_dds_ExternalControlState_desc, message::kExternalControlState.dds_topic.data(), nullptr, nullptr),
+        "dds_create_topic(external_state)");
+    auto external_state_qos = lingtu::dds::make_qos(lingtu::dds::qos_for_topic(message::kExternalControlState.dds_topic));
+    external_writer = checked(dds_create_writer(publisher, external_state_topic,
+        external_state_qos.get(), nullptr), "dds_create_writer(external_state)");
+
     joint_state_topic = checked(
         dds_create_topic(participant, &lingtu_dds_JointState_desc,
                          lingtu::message::kRobotJointStates.dds_topic.data(), nullptr, nullptr),
@@ -122,21 +151,6 @@ struct DdsReader::Impl {
         dds_create_writer(publisher, joint_state_topic, joint_qos.get(), nullptr),
         "dds_create_writer(robot_joint_states)");
 
-    safety_stop_topic = checked(
-        dds_create_topic(
-            participant,
-            &lingtu_dds_NavigationCommandRequest_desc,
-            lingtu::message::kNavCommandRequest.dds_topic.data(),
-            nullptr,
-            nullptr),
-        "dds_create_topic(nav_command_request)");
-    auto safety_stop_qos = lingtu::dds::make_qos(
-        lingtu::dds::qos_for_topic(
-            lingtu::message::kNavCommandRequest.dds_topic));
-    safety_stop_writer = checked(
-        dds_create_writer(
-            publisher, safety_stop_topic, safety_stop_qos.get(), nullptr),
-        "dds_create_writer(nav_command_request)");
   }
 
   ~Impl() {
@@ -154,15 +168,104 @@ struct DdsReader::Impl {
   dds_entity_t control_state_writer{0};
   dds_entity_t profile_reader{0};
   dds_entity_t profile_writer{0};
+  dds_entity_t posture_reader{0};
+  dds_entity_t posture_writer{0};
+  dds_entity_t external_reader{0};
+  dds_entity_t external_writer{0};
   dds_entity_t joint_state_topic{0};
   dds_entity_t joint_state_writer{0};
-  dds_entity_t safety_stop_topic{0};
-  dds_entity_t safety_stop_writer{0};
   std::string host_boot_id;
 };
 
 DdsReader::DdsReader(int domain_id) : impl_(std::make_unique<Impl>(domain_id)) {}
 DdsReader::~DdsReader() = default;
+
+std::optional<message::PostureRequest> DdsReader::takePostureRequest() {
+  void *samples[8]{};
+  dds_sample_info_t infos[8]{};
+  const auto count = dds_take(impl_->posture_reader, samples, infos, 8, 8);
+  if (count < 0) throw std::runtime_error("dds_take(posture_request) failed");
+  std::optional<message::PostureRequest> latest;
+  const bool one_writer = dds_get_matched_publications(impl_->posture_reader, nullptr, 0) == 1;
+  const auto now_ns = boottimeNanoseconds();
+  for (dds_return_t i = 0; i < count; ++i) {
+    if (!infos[i].valid_data || !one_writer) continue;
+    const auto &msg = *static_cast<lingtu_dds_MotionPostureRequest *>(samples[i]);
+    if (!msg.host_boot_id || impl_->host_boot_id != msg.host_boot_id ||
+        msg.source_boottime_ns > now_ns || now_ns - msg.source_boottime_ns > 1000000000ULL ||
+        !msg.producer_boot_id || !*msg.producer_boot_id ||
+        !msg.client_id || !*msg.client_id || !msg.request_id || !*msg.request_id) continue;
+    latest = message::PostureRequest{msg.producer_boot_id, msg.client_id, msg.request_id,
+                                     msg.action, msg.phase, msg.profile_name ? msg.profile_name : "",
+                                     msg.external_session_id ? msg.external_session_id : ""};
+  }
+  if (count > 0) dds_return_loan(impl_->posture_reader, samples, count);
+  return latest;
+}
+
+bool DdsReader::writePostureAck(const message::PostureAck &ack, double stamp_s) {
+  lingtu_dds_MotionPostureAck msg{};
+  fillHeader(msg.header, stamp_s, "body");
+  msg.producer_boot_id = const_cast<char *>(ack.request.producer_boot_id.c_str());
+  msg.client_id = const_cast<char *>(ack.request.client_id.c_str());
+  msg.request_id = const_cast<char *>(ack.request.request_id.c_str());
+  msg.action = ack.request.action;
+  msg.phase = ack.request.phase;
+  msg.profile_name = const_cast<char *>(ack.request.profile_name.c_str());
+  msg.external_session_id = const_cast<char *>(ack.request.external_session_id.c_str());
+  msg.final_result = ack.final_result;
+  msg.accepted = ack.accepted;
+  msg.reason = const_cast<char *>(ack.reason.c_str());
+  return dds_write(impl_->posture_writer, &msg) >= 0;
+}
+
+DdsReader::ExternalRead DdsReader::takeExternal() {
+  ExternalRead result;
+  void *samples[32]{};
+  dds_sample_info_t infos[32]{};
+  const auto count = dds_take(impl_->external_reader, samples, infos, 32, 32);
+  if (count < 0) throw std::runtime_error("dds_take(external_command) failed");
+  const bool one_writer = dds_get_matched_publications(impl_->external_reader, nullptr, 0) == 1;
+  const auto now = boottimeNanoseconds();
+  for (dds_return_t i = 0; i < count; ++i) {
+    if (!one_writer || !infos[i].valid_data) continue;
+    const auto &msg = *static_cast<lingtu_dds_ExternalCommand *>(samples[i]);
+    if (!msg.host_boot_id || impl_->host_boot_id != msg.host_boot_id || !msg.session_id ||
+        !*msg.session_id || msg.source_boottime_ns > now ||
+        now - msg.source_boottime_ns > 300000000ULL) continue;
+    if (msg.heartbeat) {
+      result.heartbeat_session = msg.session_id;
+      continue;
+    }
+    message::ExternalFrame frame;
+    frame.session_id = msg.session_id;
+    frame.sequence = msg.frame_sequence;
+    frame.input_window = msg.input_window;
+    for (std::size_t joint = 0; joint < frame.joints.size(); ++joint) {
+      const auto &source = msg.joints[joint];
+      frame.joints[joint] = {source.q, source.dq, source.kp, source.kd, source.tau};
+    }
+    result.frame = std::move(frame);
+  }
+  if (count > 0) dds_return_loan(impl_->external_reader, samples, count);
+  return result;
+}
+
+bool DdsReader::writeExternalState(const message::ExternalState &state, double stamp_s) {
+  lingtu_dds_ExternalControlState msg{};
+  fillHeader(msg.header, stamp_s, "body");
+  msg.session_id = const_cast<char *>(state.session_id.c_str());
+  msg.selected = state.selected;
+  msg.active = state.active;
+  msg.motors_enabled = state.motors_enabled;
+  msg.last_sequence = state.last_sequence;
+  msg.reason = const_cast<char *>(state.reason.c_str());
+  msg.input_window = state.input_window;
+  msg.joint_count = state.joint_count;
+  msg.fresh = state.fresh;
+  msg.motor_disable_confirmed = state.motor_disable_confirmed;
+  return dds_write(impl_->external_writer, &msg) >= 0;
+}
 
 std::optional<ProfileRequest> DdsReader::takeProfileRequest(double wall_s) {
   void *samples[8]{};
@@ -233,11 +336,9 @@ ReadResult DdsReader::takeLatest() {
     latest.host_boot_id = msg.host_boot_id ? msg.host_boot_id : "";
     latest.producer_boot_id =
         msg.producer_boot_id ? msg.producer_boot_id : "";
-    latest.output_seq = msg.output_seq;
     latest.source_boottime_ns = msg.source_boottime_ns;
-    latest.source_wall_ns = msg.source_wall_ns;
+    latest.received_at = Clock::now();
     latest.receive_boottime_ns = boottimeNanoseconds();
-    latest.frame = "body";
     latest.vx = msg.twist.linear.x;
     latest.vy = msg.twist.linear.y;
     latest.wz = msg.twist.angular.z;
@@ -256,9 +357,7 @@ ReadResult DdsReader::takeLatest() {
 
 bool DdsReader::writeControlState(
     const ControlState& state,
-    bool last_command_accepted,
-    const std::string& accepted_producer_boot_id,
-    std::uint64_t accepted_output_sequence,
+    bool zero_output,
     double stamp_s) {
   lingtu_dds_DriverControlState msg{};
   fillHeader(msg.header, stamp_s, "body");
@@ -270,16 +369,10 @@ bool DdsReader::writeControlState(
   msg.lease_valid = state.lease_valid;
   msg.lease_remaining_ms = state.lease_remaining_ms;
   msg.accepted_sequence = state.accepted_sequence;
-  msg.accepted_producer_boot_id =
-      const_cast<char*>(accepted_producer_boot_id.c_str());
-  msg.accepted_output_sequence = accepted_output_sequence;
-  msg.last_command_accepted = last_command_accepted;
+  msg.zero_output = zero_output;
   msg.fsm = const_cast<char*>(state.fsm.c_str());
-  static char kDriverOwner[] = "driver";
-  static char kNoOwner[] = "none";
-  static char kEmpty[] = "";
-  msg.owner = state.control_assured ? kDriverOwner : kNoOwner;
-  msg.owner_id = state.control_assured ? const_cast<char*>(kDriverMotionPrincipal) : kEmpty;
+  msg.owner = const_cast<char*>(state.owner.c_str());
+  msg.owner_id = const_cast<char*>(state.owner_id.c_str());
   msg.reason = const_cast<char*>(state.reason.c_str());
   return dds_write(impl_->control_state_writer, &msg) >= 0;
 }
@@ -297,22 +390,6 @@ bool DdsReader::writeJointState(const JointState& state) {
   msg.velocity = {count, count, const_cast<double*>(state.velocity.data()), false};
   msg.effort = {count, count, const_cast<double*>(state.effort.data()), false};
   return dds_write(impl_->joint_state_writer, &msg) >= 0;
-}
-
-bool DdsReader::writeNavigationStop(
-    const std::string& reason,
-    std::uint64_t sequence,
-    double stamp_s) {
-  lingtu_dds_NavigationCommandRequest msg{};
-  fillHeader(msg.header, stamp_s, "body");
-  const std::string request_id =
-      "lingtu-driver-safety-" + std::to_string(sequence);
-  msg.client_id = const_cast<char*>(kDriverMotionPrincipal);
-  msg.request_id = const_cast<char*>(request_id.c_str());
-  msg.kind = static_cast<std::int32_t>(
-      lingtu::message::NavigationCommandKind::Stop);
-  msg.reason = const_cast<char*>(reason.c_str());
-  return dds_write(impl_->safety_stop_writer, &msg) >= 0;
 }
 
 }  // namespace lingtu::driver

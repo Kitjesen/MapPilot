@@ -87,6 +87,7 @@ def test_camera_module_reads_rgbd_frames_from_shm_without_python_dds(tmp_path):
         assert infos[-1].frame_id == "camera_link"
         assert infos[-1].source_generation == 42
         assert infos[-1].source_sequence == 7
+        assert module.get_camera_intrinsics() is infos[-1]
 
         health = module.health()
         assert alive[0] is True

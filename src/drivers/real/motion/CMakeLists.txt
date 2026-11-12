@@ -21,12 +21,37 @@ add_library(lingtu_driver_core STATIC
   cmd_vel_writer_gate.cpp
   command_freshness_gate.cpp
   profile_switch.cpp
+  posture.cpp
   core.cpp
   config.cpp)
 target_include_directories(lingtu_driver_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(lingtu_driver_core PUBLIC "${_LINGTU_ROOT}/src")
 target_compile_options(lingtu_driver_core PRIVATE ${_LINGTU_DRIVER_WARNINGS})
 
 if(BUILD_TESTING)
+  find_package(Threads REQUIRED)
+  add_library(driver_loop_test OBJECT main.cpp)
+  target_compile_definitions(driver_loop_test PRIVATE main=runDriver)
+  target_link_libraries(driver_loop_test PRIVATE lingtu_driver_core)
+  target_compile_options(driver_loop_test PRIVATE ${_LINGTU_DRIVER_WARNINGS})
+  add_executable(test_driver_loop "${_LINGTU_DRIVER_TEST_DIR}/test_loop.cpp" status.cpp
+    $<TARGET_OBJECTS:driver_loop_test>)
+  target_link_libraries(test_driver_loop PRIVATE lingtu_driver_core Threads::Threads)
+  target_compile_options(test_driver_loop PRIVATE ${_LINGTU_DRIVER_WARNINGS})
+  add_test(NAME test_driver_latest COMMAND test_driver_loop latest)
+  add_test(NAME test_driver_expired COMMAND test_driver_loop expired)
+  add_test(NAME test_driver_clock COMMAND test_driver_loop clock)
+  add_test(NAME test_driver_replace COMMAND test_driver_loop replace)
+  add_test(NAME test_driver_stale COMMAND test_driver_loop stale)
+  add_test(NAME test_driver_rejection COMMAND test_driver_loop rejection)
+  add_test(NAME test_driver_unready COMMAND test_driver_loop unready)
+  add_test(NAME test_driver_recovery COMMAND test_driver_loop recovery)
+  add_test(NAME test_driver_writer_missing COMMAND test_driver_loop writer_missing)
+
+  add_executable(test_posture "${_LINGTU_DRIVER_TEST_DIR}/test_posture.cpp")
+  target_link_libraries(test_posture PRIVATE lingtu_driver_core)
+  target_compile_options(test_posture PRIVATE ${_LINGTU_DRIVER_WARNINGS})
+  add_test(NAME test_posture COMMAND test_posture)
   add_executable(test_profile_switch "${_LINGTU_DRIVER_TEST_DIR}/test_profile_switch.cpp")
   target_link_libraries(test_profile_switch PRIVATE lingtu_driver_core)
   target_compile_options(test_profile_switch PRIVATE ${_LINGTU_DRIVER_WARNINGS})
@@ -36,9 +61,9 @@ if(BUILD_TESTING)
     robots/unitree/go2/go2.cpp)
   target_include_directories(test_go2_acquisition PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${_LINGTU_ROOT}/src"
     "${_LINGTU_DRIVER_TEST_DIR}/fake_unitree")
   target_compile_options(test_go2_acquisition PRIVATE ${_LINGTU_DRIVER_WARNINGS})
-  find_package(Threads REQUIRED)
   target_link_libraries(test_go2_acquisition PRIVATE Threads::Threads)
   add_test(NAME test_go2_acquisition COMMAND test_go2_acquisition)
 
@@ -47,16 +72,11 @@ if(BUILD_TESTING)
     robots/unitree/go2/go2.cpp)
   target_include_directories(test_go2_joint_telemetry PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${_LINGTU_ROOT}/src"
     "${_LINGTU_DRIVER_TEST_DIR}/fake_unitree")
   target_compile_options(test_go2_joint_telemetry PRIVATE ${_LINGTU_DRIVER_WARNINGS})
   target_link_libraries(test_go2_joint_telemetry PRIVATE Threads::Threads)
   add_test(NAME test_go2_joint_telemetry COMMAND test_go2_joint_telemetry)
-
-  add_executable(test_output_ack
-    "${_LINGTU_DRIVER_TEST_DIR}/test_output_ack.cpp")
-  target_include_directories(test_output_ack PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-  target_compile_options(test_output_ack PRIVATE ${_LINGTU_DRIVER_WARNINGS})
-  add_test(NAME test_output_ack COMMAND test_output_ack)
 
   add_executable(test_driver_core
     "${_LINGTU_DRIVER_TEST_DIR}/test_core.cpp")
@@ -155,6 +175,13 @@ if(LINGTU_DRIVER_BUILD_RUNTIME)
   install(TARGETS lingtu_driver
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
       COMPONENT lingtu_runtime)
+
+  if(BUILD_TESTING)
+    add_executable(test_driver_dds "${_LINGTU_DRIVER_TEST_DIR}/test_dds.cpp")
+    target_link_libraries(test_driver_dds PRIVATE lingtu_driver_io pthread)
+    target_compile_options(test_driver_dds PRIVATE ${_LINGTU_DRIVER_WARNINGS})
+    add_test(NAME test_driver_dds COMMAND test_driver_dds)
+  endif()
 
   if(BUILD_TESTING AND NOT TARGET test_driver_status)
     add_executable(test_driver_status

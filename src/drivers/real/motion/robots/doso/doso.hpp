@@ -21,12 +21,21 @@ class Doso final : public Body {
   Result move(const Velocity &velocity) override;
   Result stop() noexcept override;
   Result act(BodyAction action) override;
+  Result motorPower(bool enabled) override;
+  Result inspectControl() override;
   Capabilities capabilities() const noexcept override;
   BodyState state() const override;
   HealthState health() const override;
   AdapterDiagnostics diagnostics() const override;
   ProfileState readProfile() override;
   Result switchProfile(const std::string &name) override;
+  message::ExternalState externalState() const override;
+  bool externalSelected() const override;
+  Result enterExternal(const std::string &session_id) override;
+  Result enableExternal() override;
+  Result exitExternal() override;
+  Result externalHeartbeat() override;
+  Result externalFrame(const message::ExternalFrame &frame) override;
 
  private:
   struct Impl;

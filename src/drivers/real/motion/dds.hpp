@@ -3,6 +3,7 @@
 #include "command_freshness_gate.hpp"
 #include "body.hpp"
 #include "profile_switch.hpp"
+#include "message/protocol/posture.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -15,11 +16,9 @@ namespace lingtu::driver {
 struct TwistSample {
   std::string host_boot_id;
   std::string producer_boot_id;
-  std::uint64_t output_seq{0};
   std::uint64_t source_boottime_ns{0};
-  std::uint64_t source_wall_ns{0};
   std::uint64_t receive_boottime_ns{0};
-  std::string frame;
+  TimePoint received_at{};
   double vx{0.0};
   double vy{0.0};
   double wz{0.0};
@@ -28,7 +27,6 @@ struct TwistSample {
     return CommandFreshnessInput{
         host_boot_id,
         producer_boot_id,
-        output_seq,
         std::chrono::duration_cast<Boottime>(
             std::chrono::nanoseconds(source_boottime_ns)),
         std::chrono::duration_cast<Boottime>(
@@ -54,16 +52,18 @@ class DdsReader {
   std::uint32_t matchedCommandWriters() const;
   ReadResult takeLatest();
   std::optional<ProfileRequest> takeProfileRequest(double wall_s);
+  std::optional<message::PostureRequest> takePostureRequest();
+  bool writePostureAck(const message::PostureAck &ack, double stamp_s);
+  struct ExternalRead {
+    std::optional<message::ExternalFrame> frame;
+    std::string heartbeat_session;
+  };
+  ExternalRead takeExternal();
+  bool writeExternalState(const message::ExternalState &state, double stamp_s);
   bool writeProfileState(const ProfileStatus &state, double stamp_s);
   bool writeControlState(
       const ControlState& state,
-      bool last_command_accepted,
-      const std::string& accepted_producer_boot_id,
-      std::uint64_t accepted_output_sequence,
-      double stamp_s);
-  bool writeNavigationStop(
-      const std::string& reason,
-      std::uint64_t sequence,
+      bool zero_output,
       double stamp_s);
   bool writeJointState(const JointState& state);
 

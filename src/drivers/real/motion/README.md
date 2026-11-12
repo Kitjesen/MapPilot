@@ -18,6 +18,46 @@ contract to one vendor API. `Velocity` is always expressed as `vx_mps`,
 LingTu driver. The common driver owns DDS, command freshness, speed limits,
 single-writer enforcement, status, and shutdown safety.
 
+Navigation and the vendor control loop are separate processes. Final velocity is
+a best-effort DDS stream with one retained sample and a 200 ms lifespan; navd
+does not wait for reliable transport delivery or a vendor API response per
+velocity. Task requests retain reliable delivery. Core retains one latest
+velocity; there is no per-velocity acknowledgement or receipt matching.
+After synchronous vendor maintenance, the
+driver takes the latest velocity again and checks the existing command watchdog
+before sending it. DDS captures both boottime and local steady time; the driver
+transfers the elapsed command age between those clocks instead of comparing
+their epochs. Receipt does not restart the validity interval. Rejected newer
+samples do not discard an already accepted pending command. It never queues old
+velocities for later playback.
+Command sequence numbers do not gate velocity output. The newest DDS sample
+replaces the pending command; command expiration handles missing input. Multiple
+matched writers remain a control-source conflict. Losing the writer does not
+start a second stop/release path.
+The SDK remains serial on the driver thread; this does not make a blocked vendor
+call interruptible or turn the software watchdog into a hardware deadline.
+
+`DriverControlState.zero_output` reports a successfully applied zero output,
+including a checked stop. Unknown or failed output is false; it does not prove
+physical settling. Navigation stop confirmation observes state newer than its
+stop request and, where required, quiet odometry. SDK errors remain driver facts;
+goal, posture and control-ownership requests retain their discrete replies.
+
+Rebuild and deploy navd, driver and DDS consumers together: the control-state
+schema replaces the three navigation acknowledgement fields with `zero_output`.
+Old reliable-only readers cannot match a new best-effort velocity writer. The
+simulation bridge, command tap and recorder use the same shared profile and also
+need their matching build. Topic names and timeout settings remain the same.
+
+A normal SDK command failure triggers one zero-output attempt and reports the
+original error without releasing the adapter or clearing newer input. The next
+command can be sent without waiting for a locally inferred ready flag. Explicit
+shutdown, posture and control-source transitions retain their own stop semantics.
+Go2 SDK acceptance is separate from telemetry readiness: stale Sport state stays
+visible in diagnostics but does not reinterpret a successful SDK call as rejection.
+Navigation does not use driver telemetry as an admission gate. A failed DDS write
+records an error and attempts zero without latching an operator/fault hold.
+
 DOSO SDK 0.6 or newer owns gRPC, mTLS, Lease, sequence, retry, checked stop,
 and typed Brainstem control/body state. `Doso` only maps those public types to
 LingTu's neutral `Body` interface. The motion adapter does not start IMU or
@@ -33,6 +73,15 @@ refresh it. Samples expire after 500 ms, and publication sends only new
 samples, at most once per 34 ms. This telemetry does not depend on motion
 readiness or issue motion commands. Doso currently exposes no joint samples.
 
+Go2 body feedback comes from `rt/sportmodestate`. Every callback updates the
+receive timestamp, including stationary samples. A sample older than 500 ms
+is reported as `sport_state_stale`; it does not block velocity submission or
+change SDK acceptance. Invalid or excessive measured tilt still blocks motion. The
+driver keeps the triggering error when its subsequent stop also fails, and logs
+the operation, vendor-call duration and body-feedback age before attempting that
+stop. The Go2 adapter counts actual vendor calls; a cached-state refresh counts
+zero, while acquisition counts each stop/query/configuration call.
+
 `Body` also exposes the neutral actions `Stand`, `Sit`, `Recover`, and `Damp`,
 plus body and health snapshots. Go2 maps all four actions to SDK2. Doso maps
 `Stand` and `Sit` to its authenticated Brainstem posture RPCs and reports
@@ -47,6 +96,18 @@ driver. ProductControl publishes that value in `/run/lingtu/session.env` and
 restarts the driver when the resolved configuration changes.
 
 ## Stair controller profiles
+
+Rejected posture requests do not change the existing motion hold unless a
+body-changing operation was attempted. Cached replies and late cancellation
+also preserve the current hold and any pending standing confirmation. A request
+that only reads state cannot create a permanent stop. Operations with uncertain
+outcomes retain their hold until explicit recovery completes.
+
+Profile requests validate readback and model availability before stopping the
+body. A failure before any body operation is reported without holding velocity;
+a new task request can retry. Failures after stop/posture/motor/profile operations
+still require explicit recovery. Rejected posture requests do not reset such a
+failed profile transition.
 
 The same driver consumes `/driver/profile/request` and publishes
 `/driver/profile/state`. A request reuses the navigation `task_id` and asks for
@@ -71,8 +132,8 @@ request then reports `previous_profile_unknown`, never a guessed default.
 An explicit matching-task `hold` immediately suspends further body/profile
 actions while retaining the handoff. Losing requests, pausing or cancelling
 never restores a normal profile on the flight. A stale request stops further body/profile commands; a subsequent fresh
-request resumes the retained handoff. RPC failures wait for retry without a
-separate navigation replan budget.
+request resumes the retained handoff. An attempted body operation with a failed
+or uncertain result requires explicit recovery rather than automatic repetition.
 
 DOSO maps `Body::readProfile` and `switchProfile` to SDK 0.6's `GetProfile`,
 `GetCmsState`, and `SwitchProfile`. The server's Grounded prerequisite is
@@ -133,14 +194,15 @@ does not own a second copy.
 ## Brainstem lease timing
 
 `brainstem::Client::refresh()` performs one acquire-or-renew operation; the SDK
-does not create a background timer. LingTu calls it once when the command-writer
-gate becomes ready. After a successful acquisition, the polling loop schedules
+does not create a background timer. LingTu calls it on entry to the velocity
+channel when there is no command-writer conflict. After a successful acquisition, the polling loop schedules
 the next call no earlier than 100 ms later, so the effective cadence is at most
 10 Hz and is quantized by `poll_hz`; configuration rejects polling below 10 Hz.
 Brainstem's default gRPC motion lease is 300 ms, and every accepted checked
-velocity command also renews that lease. With no valid command writer it is not
-called; after a failure LingTu retries on `driver.reconnect_interval` instead of
-at 10 Hz.
+velocity command also renews that lease. Multiple command writers suspend this
+channel; a missing writer is handled by command expiration. After an SDK refresh
+failure LingTu retries maintenance on `driver.reconnect_interval`; this does not
+block new velocity submissions.
 
 On a fault or `SIGTERM`, the common loop calls `Body::stop()` before clearing
 runtime state. `Result::confirmsStop()` is true only after the vendor endpoint
