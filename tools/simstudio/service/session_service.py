@@ -39,12 +39,6 @@ _FORBIDDEN_KEY_NAMES = frozenset(
 )
 
 
-def _record_dict(record: Any) -> dict[str, Any]:
-    """Return the detached public representation of one Studio record."""
-
-    return record.to_dict()
-
-
 def _safe_identifier(value: Any, *, context: str) -> str:
     if not isinstance(value, str) or _SAFE_IDENTIFIER.fullmatch(value) is None:
         raise StoreValidationError(f"{context} must be a safe identifier")
@@ -172,17 +166,17 @@ class SessionAuthoringService:
             self._draft_payload(document),
             idempotency_key=idempotency_key,
         )
-        return _record_dict(record)
+        return record.to_dict()
 
     def get_session_draft(self, draft_id: str) -> dict[str, Any]:
         """Retrieve one draft by opaque ID."""
 
-        return _record_dict(self.store.get_session_draft(draft_id))
+        return self.store.get_session_draft(draft_id).to_dict()
 
     def list_session_drafts(self) -> list[dict[str, Any]]:
         """List drafts in the store's deterministic order."""
 
-        return [_record_dict(record) for record in self.store.list_session_drafts()]
+        return [record.to_dict() for record in self.store.list_session_drafts()]
 
     def update_session_draft(
         self,
@@ -201,7 +195,7 @@ class SessionAuthoringService:
             payload=self._draft_payload(document),
             idempotency_key=idempotency_key,
         )
-        return _record_dict(record)
+        return record.to_dict()
 
     def _existing_bundle_locked(self, draft: SessionDraftRecord) -> BundleRecord | None:
         """Find a bundle while the caller owns the Store operation lock."""
@@ -236,7 +230,7 @@ class SessionAuthoringService:
                 )
             existing = self._existing_bundle_locked(draft)
             if existing is not None:
-                return _record_dict(existing)
+                return existing.to_dict()
 
             intent = SessionIntent.load(draft.payload["intent"])
             output_dir = Path(f"bundle-{draft.id}-{draft.revision}")
@@ -272,17 +266,17 @@ class SessionAuthoringService:
                 status="ready",
                 idempotency_key=idempotency_key,
             )
-            return _record_dict(record)
+            return record.to_dict()
 
     def get_bundle(self, bundle_id: str) -> dict[str, Any]:
         """Retrieve bundle metadata by opaque ID."""
 
-        return _record_dict(self.store.get_bundle(bundle_id))
+        return self.store.get_bundle(bundle_id).to_dict()
 
     def list_bundles(self) -> list[dict[str, Any]]:
         """List compiled bundle metadata."""
 
-        return [_record_dict(record) for record in self.store.list_bundles()]
+        return [record.to_dict() for record in self.store.list_bundles()]
 
 
 __all__ = ["SessionAuthoringService"]

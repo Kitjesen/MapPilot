@@ -66,10 +66,6 @@ _RUNTIME_FACETS = ("control", "physics", "sensors", "visual")
 _RUNTIME_BINDING_STATES = frozenset({"UNBOUND", "PREPARED", "ACTIVE", "FAILED"})
 
 
-def _record_dict(record: RunRecord) -> dict[str, Any]:
-    return record.to_dict()
-
-
 def _event_payload(event: Mapping[str, Any] | None) -> dict[str, Any]:
     if not isinstance(event, Mapping):
         return {}
@@ -720,17 +716,17 @@ class RunService:
                 status=record.status,
             )
         self._ensure_artifact_directory(record.id)
-        return _record_dict(record)
+        return record.to_dict()
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         """Return one run record by opaque id."""
 
-        return _record_dict(self._run(run_id))
+        return self._run(run_id).to_dict()
 
     def list_runs(self) -> list[dict[str, Any]]:
         """Return all historical and active runs in store order."""
 
-        return [_record_dict(record) for record in self.store.list_runs()]
+        return [record.to_dict() for record in self.store.list_runs()]
 
     def prepare(
         self,
@@ -778,7 +774,7 @@ class RunService:
                 expected_revision=preparing.revision,
                 idempotency_key=idempotency_key,
             )
-            result = _record_dict(ready)
+            result = ready.to_dict()
             self._complete_lifecycle(reservation, result)
             return result
         except BaseException as exc:
@@ -865,7 +861,7 @@ class RunService:
                 expected_revision=expected_revision,
                 idempotency_key=idempotency_key,
             )
-            result = _record_dict(updated)
+            result = updated.to_dict()
             self._complete_lifecycle(reservation, result)
             return result
         except BaseException as exc:
@@ -947,7 +943,7 @@ class RunService:
                 status=record.status,
                 idempotency_key=idempotency_key,
             )
-            return _record_dict(updated)
+            return updated.to_dict()
         except BaseException:
             self._recordings.pop(run_id, None)
             if token is not None:
@@ -994,7 +990,7 @@ class RunService:
         )
         if result["state"] == "FAILED":
             raise RunServiceError(str(result["message"]))
-        return _record_dict(updated)
+        return updated.to_dict()
 
     def stop(
         self,
@@ -1038,7 +1034,7 @@ class RunService:
                 expected_revision=expected_revision,
                 idempotency_key=idempotency_key,
             )
-            result = _record_dict(updated)
+            result = updated.to_dict()
             self._complete_lifecycle(reservation, result)
         except BaseException as exc:
             self._abort_lifecycle(reservation)
@@ -1089,7 +1085,7 @@ class RunService:
                 expected_revision=expected_revision,
                 idempotency_key=idempotency_key,
             )
-            result = _record_dict(updated)
+            result = updated.to_dict()
             self._complete_lifecycle(reservation, result)
             return result
         except BaseException as exc:

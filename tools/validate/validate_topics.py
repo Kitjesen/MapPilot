@@ -48,12 +48,12 @@ CONFIG_SCAN_EXTENSIONS = (".yaml", ".yml")
 CONFIG_SCAN_EXCLUDES: set[str] = set()
 
 VERBOSE = "--verbose" in sys.argv
-RUNTIME_TOPIC_VALUE_RE = re.compile(
-    r"/(?:nav|slam|lidar|imu|camera|exploration)/[A-Za-z0-9_/\-]+"
+RUNTIME_TOPIC_PATTERN = (
+    r"/(?:(?:camera|driver|exploration|gnss|imu|lidar|maps|nav|robot|sensors|sim|slam)"
+    r"/[A-Za-z0-9_/\-]+|tf(?:_static)?)"
 )
-RUNTIME_TOPIC_LITERAL_RE = re.compile(
-    r"['\"](/(?:nav|slam|lidar|imu|camera|exploration)/[A-Za-z0-9_/\-]+)['\"]"
-)
+RUNTIME_TOPIC_VALUE_RE = re.compile(RUNTIME_TOPIC_PATTERN)
+RUNTIME_TOPIC_LITERAL_RE = re.compile(rf"['\"]({RUNTIME_TOPIC_PATTERN})['\"]")
 
 
 def _yaml_path_has_topic_context(path: tuple[str, ...]) -> bool:

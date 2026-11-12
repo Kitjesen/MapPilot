@@ -15,15 +15,17 @@ def test_repository_axes_and_generated_roots_have_one_meaning() -> None:
     gitignore = _read(".gitignore")
 
     for path in ("src/", "sim/", "build/", "install/", "dist/"):
-        assert path in readme
         assert path in layout
     for ignored in ("build/", "install/", "dist/"):
         assert ignored in gitignore
 
-    assert "simulation workspace" in readme
-    assert "env=sim" in readme
+    assert "docs/architecture.md" in readme
+    assert "simulation workspace" in layout
+    assert "env=sim" in layout
     for forbidden_root in ("real", "environments", "bin"):
-        assert not (ROOT / forbidden_root).exists()
+        directory = ROOT / forbidden_root
+        # Empty local directories are not part of the repository layout.
+        assert not directory.exists() or not any(directory.iterdir())
 
 
 def test_native_release_uses_canonical_install_tree_with_phase_one_compat() -> None:

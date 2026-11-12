@@ -253,7 +253,6 @@ def _verify_path(
         "body_clearance_below_m": "--body-clearance-below",
         "body_clearance_above_m": "--body-clearance-above",
         "direct_support_only": "--direct-support-only",
-        "support_radius_cells": "--support-radius-cells",
         "support_depth_cells": "--support-depth-cells",
         "support_height_m": "--support-height",
         "support_height_tolerance_m": "--support-height-tolerance",

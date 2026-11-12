@@ -1,4 +1,4 @@
-"""Read-only capture of native navigation decisions, driver ACKs and odometry.
+"""Read-only capture of native navigation decisions, driver state and odometry.
 
 This reports observed facts, not a collision-free navigation certification.
 No goals, leases or movement commands are sent.
@@ -20,9 +20,9 @@ def summarize(samples: list[dict]) -> dict:
         "unavailable_navigation_samples": 0,
         "prediction_samples": 0,
         "decisions": {},
-        "driver_matched_samples": 0,
+        "driver_ready_samples": 0,
         "moving_command_samples": 0,
-        "acknowledged_command_with_observed_motion_samples": 0,
+        "command_with_observed_motion_samples": 0,
         "wait_with_nonzero_command_samples": 0,
         "wait_with_fresh_quiet_odometry_samples": 0,
         "capture_errors": 0,
@@ -49,15 +49,9 @@ def summarize(samples: list[dict]) -> dict:
         command = nav.get("final_cmd_vel", {})
         moving = any(abs(command.get(axis, 0)) > 1e-6 for axis in ("vx", "vy", "wz"))
         result["moving_command_samples"] += int(moving)
-        output, driver = nav.get("final_output", {}), nav.get("driver_control", {})
-        matched = bool(
-            output.get("published") and output.get("output_sequence", 0) > 0
-            and driver.get("fresh") and driver.get("last_command_accepted")
-            and output.get("producer_boot_id")
-            and driver.get("accepted_producer_boot_id") == output.get("producer_boot_id")
-            and driver.get("accepted_output_sequence") == output.get("output_sequence")
-        )
-        result["driver_matched_samples"] += int(matched)
+        driver = nav.get("driver_control", {})
+        ready = driver.get("fresh") is True and driver.get("ready") is True
+        result["driver_ready_samples"] += int(ready)
         odom = sample["state"].get("localization", {}).get("odometry", {})
         gate = nav.get("input_gate", {})
         age, limit = gate.get("odom_age_s", -1), gate.get("odom_max_age_s", 0)
@@ -71,8 +65,8 @@ def summarize(samples: list[dict]) -> dict:
         if fresh:
             last_odom_stamp = stamp
             quiet = abs(speed) <= .03 and abs(yaw_rate) <= .08
-            result["acknowledged_command_with_observed_motion_samples"] += int(
-                matched and moving and not quiet)
+            result["command_with_observed_motion_samples"] += int(
+                ready and moving and not quiet)
             result["wait_with_fresh_quiet_odometry_samples"] += int(
                 decision in waiting_states and not moving and quiet)
         result["wait_with_nonzero_command_samples"] += int(decision in waiting_states and moving)
@@ -108,7 +102,7 @@ def main() -> None:
             time.sleep(max(0, .1 - (time.monotonic() - tick)))
     report = {"platform": args.platform, "url": args.url, "facts": summarize(rows),
               "scope": "Sampled status evidence; requires scene/video and distance review. "
-                       "Driver ACK is not proof of physical movement or stopping distance."}
+                       "Driver state is not proof of physical movement or stopping distance."}
     (args.output / "summary.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
 

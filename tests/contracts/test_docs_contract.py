@@ -17,6 +17,38 @@ def test_first_party_documentation_contract() -> None:
     assert violations == [], "\n".join(violations)
 
 
+def test_documentation_ownership_keeps_first_party_checks(monkeypatch, tmp_path) -> None:
+    from tools.validate import validate_docs
+
+    excluded = tuple(tmp_path / prefix.relative_to(validate_docs.ROOT) for prefix in validate_docs.EXCLUDED_MARKDOWN_PREFIXES)
+    monkeypatch.setattr(validate_docs, "ROOT", tmp_path)
+    monkeypatch.setattr(validate_docs, "SCAN_ROOTS", (tmp_path, tmp_path / "docs", tmp_path / "sim"))
+    monkeypatch.setattr(validate_docs, "EXCLUDED_MARKDOWN_PREFIXES", excluded)
+    monkeypatch.setattr(validate_docs, "DOCS_MARKDOWN", {"README.md"})
+    pages = {
+        "docs/README.md": "# Docs\n**Status:** Current\n**Audience:** Developers\n**Runs on:** Local\n",
+        "docs/assets/planning/README.md": "# Figures\n",
+        "docs/assets/demo/README.md": "# Screenshots\n",
+        "sim/packages/README.md": "# Owned models\n[Missing](missing.md)\n",
+        "sim/.imports/external_robots/upstream/README.md": "Upstream title\n[Missing](missing.md)\n",
+    }
+    for relative, text in pages.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    for relative in ("docs/assets/planning/figure.pdf", "docs/snapshot.pdf", "docs/assets/planning/snapshot.docx"):
+        (tmp_path / relative).touch()
+
+    violations, scanned = validate_docs.validate_repository(tmp_path)
+
+    assert scanned == 4
+    assert violations == [
+        "binary snapshot belongs outside docs or in generated artifacts: docs/assets/planning/snapshot.docx",
+        "binary snapshot belongs outside docs or in generated artifacts: docs/snapshot.pdf",
+        "broken local link: sim/packages/README.md -> missing.md",
+    ]
+
+
 def test_generated_api_documentation_is_current() -> None:
     """Generated route and MCP inventories must match current source."""
 

@@ -180,7 +180,7 @@ def test_selected_go2_model_regenerates_from_raised_installation(tmp_path):
     assert generated.read_bytes() == selected.read_bytes()
     assert report == json.loads(selected.with_suffix(".json").read_text(encoding="utf-8"))
     geometry = yaml.safe_load((selected.parent.parent / "robot.yaml").read_text(encoding="utf-8"))["geometry"]
-    assert geometry["navigation_body_file"] == "body/go2_raised_nominal.body2"
+    assert "navigation_body_file" not in geometry
     assert report["primitive_count"] == 17
     assert report["installation_qualified"] is False
     assert report["geometry_margin_m"] == 0
@@ -215,7 +215,7 @@ def test_thunder_model_regenerates_identically_for_real_and_sim(tmp_path):
     assert report == json.loads((ROOT / THUNDER_BODY).with_suffix(".json").read_text(encoding="utf-8"))
     assert report == json.loads((ROOT / THUNDER_SIM_BODY).with_suffix(".json").read_text(encoding="utf-8"))
     geometry = yaml.safe_load((ROOT / THUNDER_BODY).parent.parent.joinpath("robot.yaml").read_text(encoding="utf-8"))["geometry"]
-    assert geometry["navigation_body_file"] == "body/thunderv4_navigation.body2"
+    assert "navigation_body_file" not in geometry
     assert report["source_keyframe"] == "v4_nominal_stand"
     assert len(report["joint_angles"]) == 16
     assert report["primitive_count"] == 8

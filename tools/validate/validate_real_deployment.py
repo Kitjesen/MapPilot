@@ -26,8 +26,8 @@ from diagnostics.runtime_contract import (
     FIELD_DATA_SOURCE,
     REAL_RUNTIME_CONTRACT,
 )
-from lingtu.assembly.compile_plan import host_builder_for_resolved_product
 from lingtu.assembly.config.product import resolve_product_host_runtime
+from lingtu.assembly.host.build import host_builder
 from lingtu.assembly.host.plugin_catalog import install_builtin_plugin_catalog
 from lingtu.control import ProductControl
 from message.topics import topic_spec
@@ -261,7 +261,7 @@ def _validate_host_builder_graph(
     if graph_label in checked_graph_products:
         return
     checked_graph_products.add(graph_label)
-    bp = host_builder_for_resolved_product(product, config)
+    bp = host_builder(config, product=product)
     entry_classes = {entry.name: getattr(entry.module_cls, "__name__", str(entry.module_cls)) for entry in bp._entries}
     wires = {f"{wire.out_module}.{wire.out_port}->{wire.in_module}.{wire.in_port}" for wire in bp._wires}
 

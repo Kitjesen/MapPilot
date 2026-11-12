@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _is_test_path(path: PurePosixPath) -> bool:
@@ -18,6 +20,8 @@ def _is_allowed_exception(path: PurePosixPath) -> bool:
     value = path.as_posix()
     return (
         value.startswith("web/tests/")
+        # Independently distributed SDKs retain their native package test layout.
+        or value.startswith("sdk/")
         or value.startswith("tools/simstudio/ui/tests/")
         or value.startswith("tools/calibration/")
         or (
@@ -31,15 +35,18 @@ def _is_allowed_exception(path: PurePosixPath) -> bool:
 def test_repository_tests_live_under_tests() -> None:
     git = shutil.which("git")
     assert git is not None
-    tracked = subprocess.run(
-        [git, "ls-files"],
+    files = subprocess.run(
+        [git, "ls-files", "--cached", "--others", "--exclude-standard"],
+        cwd=ROOT,
         check=True,
         capture_output=True,
         text=True,
     ).stdout.splitlines()
 
     misplaced = []
-    for value in tracked:
+    for value in files:
+        if not (ROOT / value).is_file():
+            continue
         path = PurePosixPath(value)
         if value.startswith(("tests/", "research/", "third_party/")):
             continue

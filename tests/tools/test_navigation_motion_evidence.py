@@ -10,26 +10,24 @@ def sample():
             "last_local": {"dynamic_avoidance": "detour", "prediction_count": 1},
             "final_cmd_vel": {"vx": .3, "vy": 0, "wz": 0},
             "final_output": {"published": True, "output_sequence": 12, "producer_boot_id": "a"},
-            "driver_control": {"fresh": True, "last_command_accepted": True,
-                               "accepted_output_sequence": 12, "accepted_producer_boot_id": "a"},
+            "driver_control": {"fresh": True, "ready": True},
             "input_gate": {"odom_age_s": .02, "odom_max_age_s": .5},
         }},
         "state": {"localization": {"odometry": {"ts": 100, "vx": .2, "wz": 0}}},
     }
 
 
-def test_motion_requires_matching_ack_and_new_fresh_odometry():
+def test_motion_requires_ready_driver_and_new_fresh_odometry():
     first = sample()
     repeated_odom = deepcopy(first)
     repeated_odom["dds"]["nav_endpoint"]["stamp_s"] = 11
     result = summarize([first, first, repeated_odom])
     assert result["unique_navigation_samples"] == 2
-    assert result["acknowledged_command_with_observed_motion_samples"] == 1
-    for field, value in (("accepted_output_sequence", 11), ("accepted_producer_boot_id", "old"),
-                         ("fresh", False)):
+    assert result["command_with_observed_motion_samples"] == 1
+    for field, value in (("ready", False), ("fresh", False)):
         wrong = sample()
         wrong["dds"]["nav_endpoint"]["driver_control"][field] = value
-        assert summarize([wrong])["acknowledged_command_with_observed_motion_samples"] == 0
+        assert summarize([wrong])["command_with_observed_motion_samples"] == 0
 
 
 def test_stale_or_missing_odom_is_not_a_confirmed_stop():

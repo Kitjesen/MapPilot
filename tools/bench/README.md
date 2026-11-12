@@ -398,3 +398,21 @@ python tools/bench/render_water_bottle_video.py `
 This is a diagnostic simulation visualization. The dashed route is the native
 planner's returned preview; it is not an executed robot trajectory. The video
 report records `robot_motion_executed=false` and `motion_authorization=false`.
+
+## Saved-cloud WebGL drawing
+
+`node tools/bench/cloud-render-web.mjs` serves
+`http://127.0.0.1:5190/tests/cloud-render-bench.html` using the installed web
+dependencies. It proxies the local preview service on port 4326 and reads its
+`test6_cleaned` PCD without editing map data. Add `?power=high-performance` to
+request that WebGL context preference; inspect the returned GPU name because
+the browser may still choose integrated graphics.
+
+The page compares the former fragment height-color shader, the current shader,
+and an opaque diagnostic on the same full cloud and twelve interleaved views.
+It checks submitted point counts, GL errors, nonempty pixels, and old/new pixel
+differences. GPU timer queries and CPU plus pixel-readback timings are reported
+separately. The fixed 800x600/DPR-1 PCD-layer benchmark is **not** production
+interaction FPS. Results overwrite
+`artifacts/web/cloud-performance-20261110/result.json`; retain each run before
+changing the browser or GPU. No sampling mode is enabled in production.

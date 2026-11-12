@@ -34,6 +34,7 @@ SKIP_PARTS = {
     "__pycache__",
 }
 EXCLUDED_MARKDOWN_PREFIXES = (
+    ROOT / "sim" / ".imports" / "external_robots",
     ROOT / "src" / "drivers" / "real" / "camera" / "deps",
     ROOT / "src" / "drivers" / "real" / "lidar" / "deps",
     ROOT / "tools" / "calibration" / "camera_lidar",
@@ -54,6 +55,7 @@ DOCS_MARKDOWN = {
 }
 DOCS_RESEARCH_PREFIX = "research/"
 DOCS_RESEARCH_PAPERS_PREFIX = "research/papers/"
+DOCS_PLANNING_FIGURES_PREFIX = "assets/planning/"
 METADATA_RE = {
     "Status": re.compile(r"^\*\*Status:\*\*\s+\S", re.IGNORECASE),
     "Audience": re.compile(r"^\*\*Audience:\*\*\s+\S", re.IGNORECASE),
@@ -163,7 +165,7 @@ def validate_repository(root: Path = ROOT) -> tuple[list[str], int]:
     missing_docs = sorted(DOCS_MARKDOWN - docs_markdown)
     unexpected_docs = sorted(
         path for path in docs_markdown - DOCS_MARKDOWN
-        if not path.startswith(("operations/", "design/", "media/", DOCS_RESEARCH_PREFIX))
+        if not path.startswith(("operations/", "design/", "media/", "assets/", DOCS_RESEARCH_PREFIX))
     )
     if missing_docs:
         errors.append("missing maintained docs: " + ", ".join(missing_docs))
@@ -176,7 +178,9 @@ def validate_repository(root: Path = ROOT) -> tuple[list[str], int]:
         for path in (root / "docs").rglob(suffix)
         if not (
             path.suffix.lower() == ".pdf"
-            and path.relative_to(docs_root).as_posix().startswith(DOCS_RESEARCH_PAPERS_PREFIX)
+            and path.relative_to(docs_root).as_posix().startswith(
+                (DOCS_RESEARCH_PAPERS_PREFIX, DOCS_PLANNING_FIGURES_PREFIX)
+            )
         )
     )
     for path in binary_docs:

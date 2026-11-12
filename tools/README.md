@@ -105,3 +105,17 @@ licenses; experimental outputs belong in the selected output directory.
 
 Selected diagnostics may be installed for manual field use. Nothing in this
 directory is itself a systemd service entrypoint.
+
+## Real model connection checks
+
+Run `python -m tools.diagnostics.agent_console` from the repository root and open
+`http://127.0.0.1:4326/`. Build the UI first with `npm run build` in `web`.
+This local diagnostic Host runs the production Gateway and Agent modules, serves
+the production Web build, and makes real provider requests. It uses the Kimi
+connection declaration in `config/system/models.yaml`; API keys remain in the
+Host environment. Codex login uses LingTu's own account store.
+
+Only conversation/account HTTP writes are accepted. No robot, map runtime or
+Product is started. Field deployment still uses ProductControl and its RunPlan;
+this command is not a replacement for a real/sim Product launch.
+
