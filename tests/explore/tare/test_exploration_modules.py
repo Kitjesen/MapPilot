@@ -11,6 +11,8 @@ internal implementation details or algorithmic correctness.
 
 from __future__ import annotations
 
+import pytest
+
 # =============================================================================
 # TAREExplorerModule
 # =============================================================================
@@ -83,14 +85,13 @@ class TestTAREExplorerModule:
                 f"Out.{name}: expected {expected_type.__name__}, got {mod._ports_out[name].msg_type.__name__}"
             )
 
-    def test_preflight_returns_error_without_dds(self):
-        """Without cyclonedds, preflight() must return an error string."""
+    def test_setup_reports_missing_dds_kernel(self):
+        """DDS setup reports a missing native kernel directly."""
         from explore.tare.module import TAREExplorerModule
 
         mod = TAREExplorerModule(transport_mode="dds")
-        result = mod.preflight()
-        assert result is not None
-        assert "lingtu_explore_kernel" in result
+        with pytest.raises(RuntimeError, match="lingtu_explore_kernel"):
+            mod.setup()
 
     def test_lifecycle(self):
         """setup() -> start() -> stop() transitions without error."""

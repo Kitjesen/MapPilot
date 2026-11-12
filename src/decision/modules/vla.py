@@ -147,25 +147,20 @@ class VLAModule(Module, layer=4):
             "'explore' when the target is not visible, and 'stop' to halt."
         )
 
-    def preflight(self) -> str | None:
-        """Check API key availability for non-mock backends."""
-        if self._backend_name == "mock":
-            return None
+    def setup(self) -> None:
+        """Initialize backend, subscribe ports, and start executor."""
         env_map = {
             "openai": "OPENAI_API_KEY",
             "claude": "ANTHROPIC_API_KEY",
             "qwen": "DASHSCOPE_API_KEY",
         }
         env_var = self._api_key_env or env_map.get(self._backend_name, "")
-        if env_var and not os.environ.get(env_var) and not self._api_key:
-            return (
+        if self._backend_name != "mock" and env_var and not os.environ.get(env_var) and not self._api_key:
+            raise RuntimeError(
                 f"API key env var '{env_var}' not set for VLA backend "
                 f"'{self._backend_name}'. Set it or use backend='mock'."
             )
-        return None
 
-    def setup(self) -> None:
-        """Initialize backend, subscribe ports, and start executor."""
         self._backend = self._create_backend()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vla-infer")
 

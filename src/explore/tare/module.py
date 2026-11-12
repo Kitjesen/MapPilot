@@ -157,27 +157,23 @@ class TAREExplorerModule(ExploreModule, layer=5):
 
     # 鈹€鈹€ lifecycle 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-    def preflight(self) -> str | None:
-        """Verify external DDS mode: requires the native C++ kernel with DDS."""
-        if self._transport_mode == "in_process":
-            return None
-        try:
-            import lingtu_explore_kernel as _k
-
-            if not getattr(_k, "HAS_DDS", False):
-                return (
-                    "TAREExplorerModule requires lingtu_explore_kernel compiled "
-                    "with DDS support (LINGTU_EXPLORE_CPP_WITH_DDS=ON). "
-                    "Use transport_mode='in_process' as a fallback."
-                )
-        except ImportError:
-            return (
-                "TAREExplorerModule requires lingtu_explore_kernel for DDS bridge "
-                "support. Install the native kernel or use transport_mode='in_process'."
-            )
-        return None
-
     def setup(self) -> None:
+        if self._transport_mode != "in_process":
+            try:
+                import lingtu_explore_kernel as _k
+
+                if not getattr(_k, "HAS_DDS", False):
+                    raise RuntimeError(
+                        "TAREExplorerModule requires lingtu_explore_kernel compiled "
+                        "with DDS support (LINGTU_EXPLORE_CPP_WITH_DDS=ON). "
+                        "Use transport_mode='in_process' as a fallback."
+                    )
+            except ImportError:
+                raise RuntimeError(
+                    "TAREExplorerModule requires lingtu_explore_kernel for DDS bridge "
+                    "support. Install the native kernel or use transport_mode='in_process'."
+                ) from None
+
         self.odometry.subscribe(self._on_odom)
         self.exploration_grid.subscribe(self._on_exploration_grid)
         self.navigation_status.subscribe(self._on_navigation_status)

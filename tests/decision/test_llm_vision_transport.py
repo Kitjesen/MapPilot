@@ -276,9 +276,14 @@ def test_module_reports_resolved_model_and_entire_request_latency(transport, mon
         module.stop()
 
 
-def test_moonshot_alias_checks_the_same_key_at_preflight(monkeypatch):
+def test_moonshot_alias_uses_client_availability(monkeypatch):
     monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
-    assert "MOONSHOT_API_KEY" in (LLMModule(backend="moonshot").preflight() or "")
+    module = LLMModule(backend="moonshot")
+    try:
+        module.setup()
+        assert not module.client.is_available()
+    finally:
+        module.stop()
 
 
 def test_stream_is_closed_when_the_module_deadline_cancels_a_reply(transport):

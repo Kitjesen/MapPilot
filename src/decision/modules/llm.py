@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import threading
 import time
 from dataclasses import dataclass
@@ -108,26 +107,6 @@ class LLMModule(Module, layer=4):
         self._cb_cooldown: float = kw.get("circuit_breaker_cooldown", 60.0)
         self._consecutive_failures: int = 0
         self._circuit_open_until: float = 0.0  # time.time() when circuit re-closes
-
-    def preflight(self):
-        """Check API key availability before startup."""
-        from decision.llm.client import resolve_llm_backend
-
-        canonical = resolve_llm_backend(self._backend_name)
-        if canonical == "mock":
-            return None
-        defaults = {
-            "moonshot": "MOONSHOT_API_KEY",
-            "openai": "OPENAI_API_KEY",
-            "claude": "ANTHROPIC_API_KEY",
-            "qwen": "DASHSCOPE_API_KEY",
-        }
-        env_var = self._api_key_env or defaults.get(canonical, "")
-        if env_var and not os.environ.get(env_var):
-            return (
-                f"API key env var '{env_var}' not set for backend '{self._backend_name}'. Set it or use backend='mock'."
-            )
-        return None
 
     def setup(self) -> None:
         """Create LLM client and start async event loop."""

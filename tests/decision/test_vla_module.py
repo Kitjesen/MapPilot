@@ -97,19 +97,21 @@ def test_module_init(vla_module):
     assert "PerceptionModule" in module.SOFT_DEPENDS
 
 
-def test_preflight_mock():
-    """Preflight passes for mock backend without API keys."""
+def test_setup_mock():
+    """Mock setup needs no API keys."""
     module = VLAModule(backend="mock")
-    assert module.preflight() is None
+    try:
+        module.setup()
+    finally:
+        module.stop()
 
 
-def test_preflight_openai_missing_key():
-    """Preflight reports missing API key for openai backend."""
+def test_setup_openai_missing_key():
+    """Setup reports missing API credentials."""
     module = VLAModule(backend="openai", api_key="")
     with mock.patch.dict("os.environ", {}, clear=True):
-        result = module.preflight()
-    assert result is not None
-    assert "OPENAI_API_KEY" in result
+        with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
+            module.setup()
 
 
 # ---------------------------------------------------------------------------
