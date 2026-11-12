@@ -103,6 +103,15 @@ class NavigationCommandKind(IntEnum):
     PAUSE_TASK = 8
     RESUME_TASK = 9
     TASK_SPEED_LIMIT = 10
+    STAND = 11
+    SIT = 12
+    ENABLE_MOTORS = 13
+    DISABLE_MOTORS = 14
+    SWITCH_PROFILE = 15
+    ENTER_EXTERNAL = 16
+    EXIT_EXTERNAL = 17
+    ENABLE_EXTERNAL = 18
+    SELECT_PLANNER = 19
 
 
 class OperatorMotionAction(IntEnum):

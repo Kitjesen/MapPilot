@@ -17,7 +17,16 @@ inline bool isKnownNavigationCommandKind(std::int32_t value) noexcept {
       value == static_cast<std::int32_t>(NavigationCommandKind::ResumeAutonomy) ||
       value == static_cast<std::int32_t>(NavigationCommandKind::TaskPause) ||
       value == static_cast<std::int32_t>(NavigationCommandKind::TaskResume) ||
-      value == static_cast<std::int32_t>(NavigationCommandKind::TaskSpeedLimit);
+      value == static_cast<std::int32_t>(NavigationCommandKind::TaskSpeedLimit) ||
+      value == static_cast<std::int32_t>(NavigationCommandKind::Stand) ||
+      value == static_cast<std::int32_t>(NavigationCommandKind::Sit) ||
+      value == static_cast<std::int32_t>(NavigationCommandKind::EnableMotors) ||
+      value == static_cast<std::int32_t>(NavigationCommandKind::DisableMotors) ||
+      value == static_cast<std::int32_t>(NavigationCommandKind::SwitchProfile) ||
+      value == static_cast<std::int32_t>(NavigationCommandKind::EnterExternal) ||
+      value == static_cast<std::int32_t>(NavigationCommandKind::ExitExternal) ||
+      value == static_cast<std::int32_t>(NavigationCommandKind::EnableExternal) ||
+      value == static_cast<std::int32_t>(NavigationCommandKind::SelectPlanner);
 }
 
 inline const char* navigationCommandKindName(
@@ -41,6 +50,24 @@ inline const char* navigationCommandKindName(
       return "task_resume";
     case NavigationCommandKind::TaskSpeedLimit:
       return "task_speed_limit";
+    case NavigationCommandKind::Stand:
+      return "stand";
+    case NavigationCommandKind::Sit:
+      return "sit";
+    case NavigationCommandKind::EnableMotors:
+      return "enable_motors";
+    case NavigationCommandKind::DisableMotors:
+      return "disable_motors";
+    case NavigationCommandKind::SwitchProfile:
+      return "switch_profile";
+    case NavigationCommandKind::EnterExternal:
+      return "enter_external";
+    case NavigationCommandKind::ExitExternal:
+      return "exit_external";
+    case NavigationCommandKind::EnableExternal:
+      return "enable_external";
+    case NavigationCommandKind::SelectPlanner:
+      return "select_planner";
   }
   return "unknown";
 }

@@ -106,6 +106,15 @@ module NavigationCommandKind {
   const long PAUSE_TASK = 8;
   const long RESUME_TASK = 9;
   const long TASK_SPEED_LIMIT = 10;
+  const long STAND = 11;
+  const long SIT = 12;
+  const long ENABLE_MOTORS = 13;
+  const long DISABLE_MOTORS = 14;
+  const long SWITCH_PROFILE = 15;
+  const long ENTER_EXTERNAL = 16;
+  const long EXIT_EXTERNAL = 17;
+  const long ENABLE_EXTERNAL = 18;
+  const long SELECT_PLANNER = 19;
 };
 
 module OperatorMotionAction {
@@ -469,9 +478,7 @@ struct DriverControlState {
   boolean lease_valid;
   unsigned long lease_remaining_ms;
   unsigned long long accepted_sequence;
-  string accepted_producer_boot_id;
-  unsigned long long accepted_output_sequence;
-  boolean last_command_accepted;
+  boolean zero_output;
   string fsm;
   string owner;
   string owner_id;
@@ -492,6 +499,69 @@ struct MotionProfileState {
   string requested_profile;
   string active_profile;
   string reason;
+};
+@final
+struct MotionPostureRequest {
+  Header header;
+  string host_boot_id;
+  string producer_boot_id;
+  unsigned long long source_boottime_ns;
+  string client_id;
+  string request_id;
+  // NavigationCommandKind STAND, SIT, ENABLE_MOTORS, DISABLE_MOTORS or
+  // SWITCH_PROFILE. Phase 0 inspects, phase 1 follows
+  // nav's stop barrier. Phase 2 cancels an unexecuted request. Driver
+  // independently confirms the stop prerequisite before execution.
+  long action;
+  long phase;
+  string profile_name;
+  string external_session_id;
+};
+@final
+struct MotionPostureAck {
+  Header header;
+  string producer_boot_id;
+  string client_id;
+  string request_id;
+  long action;
+  long phase;
+  string profile_name;
+  string external_session_id;
+  boolean final_result;
+  boolean accepted;
+  string reason;
+};
+@final
+struct ExternalJointCommand {
+  double q;
+  double dq;
+  double kp;
+  double kd;
+  double tau;
+};
+@final
+struct ExternalCommand {
+  string host_boot_id;
+  string session_id;
+  unsigned long long frame_sequence;
+  unsigned long long source_boottime_ns;
+  unsigned long long input_window;
+  boolean heartbeat;
+  ExternalJointCommand joints[16];
+};
+@final
+struct ExternalControlState {
+  Header header;
+  string session_id;
+  boolean selected;
+  boolean active;
+  boolean motors_enabled;
+  unsigned long long last_sequence;
+  string reason;
+  unsigned long long input_window;
+  unsigned long joint_count;
+  boolean fresh;
+  boolean motor_disable_confirmed;
 };
 // Frozen authoritative keyframe scans and corrected poses in one map gauge.
 // SLAM retains the latest confirmed directory for late/restarted mapd readers.
@@ -785,6 +855,9 @@ struct NavigationCommandRequest {
   double max_speed_mps;
   double acceptance_radius_m;
   string reason;
+  string profile_name;
+  string external_session_id;
+  string local_planner;
 };
 @final
 struct NavigationCommandAck {

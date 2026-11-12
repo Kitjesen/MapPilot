@@ -80,6 +80,12 @@ inline constexpr TopicContract kExplorationStart{
 inline constexpr TopicContract kExplorationWayPoint{
     "/exploration/way_point", "rt/exploration/way_point", "lingtu.dds.PointStamped",
     dds::QosProfile::Event};
+inline constexpr TopicContract kExternalCommand{
+    "/driver/external/command", "rt/driver/external/command", "lingtu.dds.ExternalCommand",
+    dds::QosProfile::ControlCommand};
+inline constexpr TopicContract kExternalControlState{
+    "/driver/external/state", "rt/driver/external/state", "lingtu.dds.ExternalControlState",
+    dds::QosProfile::SystemStatus};
 inline constexpr TopicContract kNavGeofenceAlert{
     "/nav/geofence/alert", "rt/nav/geofence/alert", "lingtu.dds.GeofenceAlert",
     dds::QosProfile::SystemStatus};
@@ -185,6 +191,12 @@ inline constexpr TopicContract kMapsState{
 inline constexpr TopicContract kMapsVoxelCloud{
     "/maps/voxel_cloud", "rt/maps/voxel_cloud", "lingtu.dds.MapCloudLayer",
     dds::QosProfile::MapCloud};
+inline constexpr TopicContract kMotionPostureAck{
+    "/driver/posture/ack", "rt/driver/posture/ack", "lingtu.dds.MotionPostureAck",
+    dds::QosProfile::ControlCommand};
+inline constexpr TopicContract kMotionPostureRequest{
+    "/driver/posture/request", "rt/driver/posture/request", "lingtu.dds.MotionPostureRequest",
+    dds::QosProfile::ControlCommand};
 inline constexpr TopicContract kMotionProfileRequest{
     "/driver/profile/request", "rt/driver/profile/request", "lingtu.dds.MotionProfileRequest",
     dds::QosProfile::ControlCommand};
@@ -332,6 +344,8 @@ inline constexpr TopicContract kTopicContracts[] = {
     kNavExplorationSnapshot,
     kExplorationStart,
     kExplorationWayPoint,
+    kExternalCommand,
+    kExternalControlState,
     kNavGeofenceAlert,
     kNavGeofenceCommand,
     kNavGeofenceResponse,
@@ -367,6 +381,8 @@ inline constexpr TopicContract kTopicContracts[] = {
     kMapsScene,
     kMapsState,
     kMapsVoxelCloud,
+    kMotionPostureAck,
+    kMotionPostureRequest,
     kMotionProfileRequest,
     kMotionProfileState,
     kNavCommandAck,

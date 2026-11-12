@@ -44,7 +44,8 @@ inline void apply_qos_profile(dds_qos_t* qos, QosProfile profile) {
       dds_qset_deadline(qos, DDS_MSECS(50));
       break;
     case QosProfile::FinalVelocityCommand:
-      dds_qset_reliability(qos, DDS_RELIABILITY_RELIABLE, DDS_SECS(1));
+      // A newer velocity supersedes the old one; driver state reports the current output.
+      dds_qset_reliability(qos, DDS_RELIABILITY_BEST_EFFORT, 0);
       dds_qset_durability(qos, DDS_DURABILITY_VOLATILE);
       dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 1);
       dds_qset_deadline(qos, DDS_MSECS(50));

@@ -34,6 +34,8 @@ class RuntimeTopics:
     exploration_snapshot: str = "/nav/exploration_snapshot"
     exploration_start: str = "/exploration/start"
     exploration_way_point: str = "/exploration/way_point"
+    external_command: str = "/driver/external/command"
+    external_control_state: str = "/driver/external/state"
     geofence_alert: str = "/nav/geofence/alert"
     geofence_command: str = "/nav/geofence/command"
     geofence_response: str = "/nav/geofence/response"
@@ -73,6 +75,8 @@ class RuntimeTopics:
     maps_scene: str = "/maps/scene"
     maps_state: str = "/maps/state"
     maps_voxel_cloud: str = "/maps/voxel_cloud"
+    motion_posture_ack: str = "/driver/posture/ack"
+    motion_posture_request: str = "/driver/posture/request"
     motion_profile_request: str = "/driver/profile/request"
     motion_profile_state: str = "/driver/profile/state"
     nav_command_ack: str = "/nav/command/ack"
@@ -271,6 +275,18 @@ TOPIC_SPECS = {
         "rt/exploration/way_point",
         "lingtu.dds.PointStamped",
         "Event",
+    ),
+    "/driver/external/command": TopicSpec(
+        "/driver/external/command",
+        "rt/driver/external/command",
+        "lingtu.dds.ExternalCommand",
+        "ControlCommand",
+    ),
+    "/driver/external/state": TopicSpec(
+        "/driver/external/state",
+        "rt/driver/external/state",
+        "lingtu.dds.ExternalControlState",
+        "SystemStatus",
     ),
     "/nav/geofence/alert": TopicSpec(
         "/nav/geofence/alert",
@@ -481,6 +497,18 @@ TOPIC_SPECS = {
         "rt/maps/voxel_cloud",
         "lingtu.dds.MapCloudLayer",
         "MapCloud",
+    ),
+    "/driver/posture/ack": TopicSpec(
+        "/driver/posture/ack",
+        "rt/driver/posture/ack",
+        "lingtu.dds.MotionPostureAck",
+        "ControlCommand",
+    ),
+    "/driver/posture/request": TopicSpec(
+        "/driver/posture/request",
+        "rt/driver/posture/request",
+        "lingtu.dds.MotionPostureRequest",
+        "ControlCommand",
     ),
     "/driver/profile/request": TopicSpec(
         "/driver/profile/request",

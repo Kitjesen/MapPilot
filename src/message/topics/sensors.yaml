@@ -134,6 +134,34 @@ topics:
     message_type: lingtu.dds.MotionProfileState
     qos_profile: SystemStatus
     cpp_name: kMotionProfileState
+  motion_posture_request:
+    topic: /driver/posture/request
+    transport: dds
+    dds_topic: rt/driver/posture/request
+    message_type: lingtu.dds.MotionPostureRequest
+    qos_profile: ControlCommand
+    cpp_name: kMotionPostureRequest
+  motion_posture_ack:
+    topic: /driver/posture/ack
+    transport: dds
+    dds_topic: rt/driver/posture/ack
+    message_type: lingtu.dds.MotionPostureAck
+    qos_profile: ControlCommand
+    cpp_name: kMotionPostureAck
+  external_command:
+    topic: /driver/external/command
+    transport: dds
+    dds_topic: rt/driver/external/command
+    message_type: lingtu.dds.ExternalCommand
+    qos_profile: ControlCommand
+    cpp_name: kExternalCommand
+  external_control_state:
+    topic: /driver/external/state
+    transport: dds
+    dds_topic: rt/driver/external/state
+    message_type: lingtu.dds.ExternalControlState
+    qos_profile: SystemStatus
+    cpp_name: kExternalControlState
   robot_joint_states:
     topic: /robot/joint_states
     transport: dds

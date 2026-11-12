@@ -93,6 +93,15 @@ enum class NavigationCommandKind : std::int32_t {
   TaskPause = 8,
   TaskResume = 9,
   TaskSpeedLimit = 10,
+  Stand = 11,
+  Sit = 12,
+  EnableMotors = 13,
+  DisableMotors = 14,
+  SwitchProfile = 15,
+  EnterExternal = 16,
+  ExitExternal = 17,
+  EnableExternal = 18,
+  SelectPlanner = 19,
 };
 enum class OperatorMotionAction : std::int32_t {
   Claim = 1,

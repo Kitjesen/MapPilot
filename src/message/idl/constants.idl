@@ -102,6 +102,15 @@ module NavigationCommandKind {
   const long PAUSE_TASK = 8;
   const long RESUME_TASK = 9;
   const long TASK_SPEED_LIMIT = 10;
+  const long STAND = 11;
+  const long SIT = 12;
+  const long ENABLE_MOTORS = 13;
+  const long DISABLE_MOTORS = 14;
+  const long SWITCH_PROFILE = 15;
+  const long ENTER_EXTERNAL = 16;
+  const long EXIT_EXTERNAL = 17;
+  const long ENABLE_EXTERNAL = 18;
+  const long SELECT_PLANNER = 19;
 };
 
 module OperatorMotionAction {

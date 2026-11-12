@@ -18,6 +18,9 @@ struct NavigationCommandRequest {
   double max_speed_mps;
   double acceptance_radius_m;
   string reason;
+  string profile_name;
+  string external_session_id;
+  string local_planner;
 };
 @final
 struct NavigationCommandAck {

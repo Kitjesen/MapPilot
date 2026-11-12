@@ -33,8 +33,10 @@ values. The fields stay `long`: generating language enums does not change DDS
 layout or introduce a new wire enum type.
 
 Run `python tools/generate_topic_contracts.py --check` to detect stale generated
-files. `tests/runtime/test_message_enum_generation.py` freezes the existing
-wire values and compiles the C++ protocol consumers when a compiler is present.
+files. `tests/runtime/test_message_enum_generation.py` preserves frozen wire
+values while allowing additions, checks all current IDL constants against the
+generated Python enums, and compiles the C++ protocol consumers when a compiler
+is present.
 
 Do not add a second language-owned Topic table. Product and Env files may
 reference Topic names to declare wiring, but they do not redefine type or QoS.
@@ -61,6 +63,11 @@ physical mounting numbers there.
 `message/catalog.py` is the only YAML reader used by the generator, runtime
 routes, and Product graph. It validates topic declarations without importing
 Host runtime or Product assembly.
+
+Runtime decisions stay with their owning service. Navigation's `LoopGuard`
+decides whether a stalled control loop holds motion. The navigation status
+projection carries that fact through the existing `NavigationState.hold_reason`
+field, while the guard's counters and recovery policy stay inside navigation.
 
 In the diagnostics manifest, canonical topic formats now use fully qualified
 IDL names (for example `lingtu.dds.FinalVelocityCommand`). `required_fields`
