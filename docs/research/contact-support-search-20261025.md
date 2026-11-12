@@ -117,8 +117,10 @@ x86-64 ELF、动态库依赖全部可解析；原始日志与已有告警详见�
 - [Linux完整测试输出](../../build/contact-support-20261025/fde/linux-native-test-output.log)
 - [Linux正式导航构建](../../build/contact-support-20261025/fde/build-navd-linux.log)
 - [FDE接线与Linux记录](contact-support-delivery-20261025.md)
-- [runPlan回归源](../../src/nav/cpp/planning/global/octoplanner/body_query_smoke.cpp)
-- [直接heading回归源](../../src/nav/cpp/planning/global/octoplanner/heading_smoke.cpp)
+- 当轮 runPlan 回归源为 `src/nav/cpp/planning/global/octoplanner/body_query_smoke.cpp`。
+- 当轮直接 heading 回归源为 `src/nav/cpp/planning/global/octoplanner/heading_smoke.cpp`。
+
+这两个回归源已随旧接触与朝向搜索实现删除，以上名称保留用于解释当轮结果。
 
 后续工作保持聚焦：先验证接触模型的局部执行与当前控制器是否匹配，再决定是否
 值得扩展圆弧或缩紧碰撞包络。精确落脚控制继续作为单独的能力升级。

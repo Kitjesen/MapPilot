@@ -23,7 +23,7 @@ and which capabilities still need qualification. The shared delivery workflow is
 | Find a responsibility and its source of truth | [Architecture](architecture.md) |
 | See the current responsibility map and verified boundary gaps | [System responsibility map](design/system-responsibility-map.md) |
 | Find what each design document records and when to use it | [Design document index](design/README.md) |
-| Understand compound collision models, upstream references, turning posture and decision history | [Collision model and motion posture](design/navigation-body-model-and-motion-posture.md) |
+| Understand the current twin-cylinder envelope, geometry sources, turning posture and historical Body decisions | [Collision model and motion posture](design/navigation-body-model-and-motion-posture.md) |
 | Trace confirmed navigation errors, their dates, fixes and deployment limits | [Error record](operations/error_record.md) |
 | Follow Product lifecycle and native dataflow | [Runtime](runtime.md) |
 | Change code or simplify a directory | [Development](development.md) |
@@ -57,6 +57,7 @@ boundaries are:
 | `operations/` | Dated field incidents, handoffs and experiment records | A named run needs its context recorded |
 | [Design](design/README.md) | Design decisions and proposed interactions; history is marked separately | A design is considered or revised |
 | [Research](research/README.md) | External references, comparisons and experiments | Research evidence changes |
+| `assets/` | Reviewed illustrations and their provenance READMEs for published documentation | A published figure or its evidence description changes |
 | Package READMEs | Implementation, build and configuration details owned by that package | The owning package changes |
 
 Historical records and design notes are not proof of current readiness and are
@@ -66,6 +67,10 @@ relevant evidence, not simply to a design document or an old successful run.
 Keep one explanation per responsibility and link to it. Keep generated API
 inventories in sync with source. Store new run output in `artifacts/` or an
 external evidence store, and preserve active field records when simplifying.
+The [planning gallery](assets/planning/README.md) retains reviewed PDF figure
+exports alongside their previews. These published illustrations and the papers
+in `research/papers/` are the PDF collections maintained under `docs/`.
+Handbook snapshots and unreviewed run exports belong in generated artifacts.
 Generated evidence kept only in local `build/` or `artifacts/` directories is
 listed as a code-formatted repository path, rather than a checkout-local link.
 Retain its provenance and evidence limits; a path alone is not published proof.

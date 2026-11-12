@@ -25,13 +25,44 @@ before a switch, restart, or shutdown:
 
 ```bash
 bash /opt/lingtu/current/scripts/lingtu status --robot unitree/go2 --env real --json
-PYTHONPATH=/opt/lingtu/current/src "$LINGTU_PYTHON" -m diagnostics.field.doctor --non-motion --json --strict
 ```
 
-Use the selected map, fresh localization and odometry, navigation readiness,
-and driver stop confirmation to judge readiness. A connected Web page or
-`TRACKING` label alone is insufficient. The corresponding no-motion and
-supervised-motion procedures are in [Testing](testing.md#field-no-motion-order).
+There is no separate `contract` or `motion` preflight approval before ordinary
+use. ProductControl starts the services and completes map/localization handover;
+navigation owns goal admission and the inputs needed to plan and execute.
+Endpoint startup does not clear a stop or authorize motion.
+The systemd Host probe uses `startup_state`, not aggregate data/motion readiness.
+Generic status-file probes preserve `ready` and `status` as observations; they
+do not infer initialization failure from runtime values such as `ready=false`
+or `status=error`. File availability and configured freshness checks remain.
+The ordinary systemd startup path does not run DDS sample-count probes. Map
+activation and localization handover still use their owning lifecycle steps.
+
+Use diagnostics when investigating a problem, not as a required startup step:
+
+```bash
+PYTHONPATH=/opt/lingtu/current/src "$LINGTU_PYTHON" -m diagnostics.field.service_readiness --pretty
+```
+
+Optional `--dds-seconds` samples DDS traffic; `--strict` makes diagnostic failures
+affect the command's exit code. Neither option acquires control or publishes
+motion. Engineering acceptance remains in
+[Testing](testing.md#field-no-motion-order).
+
+Choose reports by the question being investigated:
+
+| Question | Source |
+| --- | --- |
+| Which Product and processes are running? | `lingtu status` |
+| Why did a task stop or reject a target? | Navigation status and the native command result |
+| Are services, files and communication available? | Optional `diagnostics.field.service_readiness` report; add `--dds-seconds` only to sample traffic |
+| Does this release/platform meet acceptance criteria? | The explicit procedures in `docs/testing.md` |
+
+In the diagnostic driver section, `ok` and `blockers` describe service/status
+availability. `motion.connected`, `motion.ready` and `motion.control` preserve
+the driver's report without recomputing motion permission. A successful service
+report does not mean the robot can move. The full diagnostic inventory can
+include services outside the selected Product; it is not a Product startup gate.
 
 ProductControl owns `switch`, `status`, and lifecycle `stop`. Web submits the
 same lifecycle requests; `systemctl` and `journalctl` are diagnostic tools,
@@ -253,12 +284,48 @@ a valid pose, inspect `/api/v1/localization/status`, verify the active map and
 robot position, and use the existing relocalization interface. Do not repeatedly
 submit the same goal or raise correction limits to hide the problem.
 
+## App closure and reconnection
+
+The robot owns motion and task execution. A client can disappear without sending
+a final message. The following behavior applies to App closure, backgrounding,
+power loss and network loss.
+
+| Situation | Robot behavior | Reconnection behavior |
+| --- | --- | --- |
+| Active manual control disappears | Native sample freshness expires and the operator lease is reclaimed through the existing zero-output barrier. | Previous stick and key input is cleared. New physical input is required. |
+| A viewer closes during autonomous navigation or inspection | The robot retains the task. Its normal execution and motion checks continue. An unused manual connection releases only its own permission. | Read current robot and task status. Opening the interface sends no task-start command. |
+| Manual takeover has paused an autonomous task | Manual input expires and stops. The autonomous task remains paused. | Explicit task resume continues the retained task. |
+| A mode-switch request was accepted before the App closed | ProductControl completes or rolls back the operation and retains its result independently of the client. | Query the original request ID and then read the current Product. |
+| The previous request cannot be found | The client cannot infer whether it was never received, its receipt expired or the robot rebooted. | Read current state and present the missing result. A reconnect does not resubmit the request. |
+| The user explicitly pauses, cancels or stops | Execute the selected operation and retain its outcome. | Restore the actual task, mode and operation state. |
+
+On connection, the Web selects the workspace for the robot's current Product.
+An explicit saved-map or workspace link takes precedence on initial connection.
+An old successful receipt does not select a workspace for an obsolete Product.
+Subsequent polls of the same Product session leave the user's workspace choice
+alone. The existing native timeouts and leases determine manual input expiry.
+
+Full Product shutdown also stops its Host and runtime Gateway. The independent
+control service keeps the public Web/API entry and accepted operation results
+available. Runtime APIs return `503 runtime_unavailable` while Host is stopped.
+Use the same `/api/v1/product-control` endpoint to query state or start a Product.
+After a confirmed stop, the Web shows standby and suspends runtime subscriptions
+and polling. Starting a Product restores them. Unexpected disconnections retain
+the existing reconnect behavior.
+The stopped-state Web map catalogue still depends on Host/mapd. An SDK can
+restart navigation with a known saved-map name through ProductControl.
+Local tests cover manual input expiry, passive
+disconnects, retained operation results and workspace restoration. Forced App
+termination and network loss still require platform-level validation.
+
 ## Web mapping and navigation switches
 
-Web mode switching requires the optional `lt-control` transport configured at
+Web mode switching and persistent remote access require `lt-control` configured at
 [first installation](getting-started.md#enable-web-mode-switching).
-Gateway forwards the Product-control routes; this service listens on loopback
-and invokes ProductControl. It does not bypass localization or motion checks.
+Its public entry calls the same ProductControl operations directly and streams
+runtime traffic to Host. The loopback transport serves cross-process callers.
+ProductControl owns lifecycle
+transactions and the native navigation/driver chain owns motion checks.
 After a disconnect, query the retained request ID before retrying. An interrupted
 request requires a fresh status check. Receipts in `/run/lingtu` do not survive
 a reboot.

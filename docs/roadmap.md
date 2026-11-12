@@ -16,6 +16,10 @@ documentation; architecture and evidence levels belong in
 
 ## Current delivery cycle
 
+2026-11-12 客户 Agent 交付子项记录在 [客户交付与响应清单](design/customer-agent-delivery.md)：
+Python 环境准备、普通建图／导航的基础对话、模型配置、响应测量及待验收功能。
+客户步骤见 [部署与首次使用](customer-deployment.md)。这些本地改进不替代下述原生／实机资格。
+
 2026-10-31 地图构建、恢复与导航验证按
 [地图交付计划](design/map-delivery-20261031.md)推进，优先处理 10 cm 路网与补面尺度，
 再对照真实地图、优化保存性能并验证恢复续建。计划记录了当前测试失败与实机资格边界。
@@ -499,7 +503,7 @@ research do not become prerequisites for the shared map/navigation delivery.
 | P1 | Dynamic-obstacle clearing and resource bounds | Labelled replay and long MID-360 runs meet residual, thin-obstacle, reset, CPU, memory, and DDS-volume limits |
 | P1 | Motion and collision-aware path smoothing | Ramp, reversal, rotation, emergency zero, and safety ordering pass with an explicit path-smoother failure policy |
 | P1 | Typed native map control/query | Persistent field operations no longer require a competing Python map-management path |
-| P1 | Online global mapping backend | Resolve rejected-keyframe coverage, verify corrected save/reload, measure paced ARM performance, then complete supervised mapping/navigation; follow [the mapping execution plan](roadmap/localization-opt-next-steps.md) |
+| P1 | Online global mapping backend | Resolve rejected-keyframe coverage, verify corrected save/reload, measure paced ARM performance, then complete supervised mapping/navigation; retain the dated [September mapping handoff](operations/localization-opt-handoff-20260917.md) as context |
 | P2 | Route, following, and docking Products | Each has an explicit Product, typed lifecycle, safety boundary, simulation evidence, and physical evidence where applicable |
 | P2 | Cross-language schema stability | DDS and shared-memory payloads carry explicit version, frame, timestamp, bounds, and compatibility tests |
 
@@ -559,7 +563,7 @@ physical device compatibility or supervised robot motion.
   output, and releasing input holds without losing the target.
 - [ ] Verify explicit TaskResume reconnects the retained 3-D route from the
   measured pose after manual movement, including backward/lateral repositioning;
-  preserve task identity, goal, speed, tolerances, and height calibration.
+  preserve task identity, goal, speed, tolerances, and route heights.
 - [ ] Verify an unused Claim closes without inserting zero into autonomy;
   actual takeover, input expiry/disconnect, cancellation and E-stop retain their
   declared stopping behavior. Source permission closure is not physical rest.

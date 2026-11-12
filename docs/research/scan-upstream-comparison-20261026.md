@@ -171,9 +171,10 @@ URDF 的 collision 原语 + 指定关节角
 ## 当前姿态和交付边界
 
 已有 80 cm L 形 URDF 回放存在长侧移、末端才转身，属于姿态失败，不能因为几何通过就关闭。
-本次阅读时 [heading.hpp](../../src/nav/cpp/planning/global/octoplanner/heading.hpp) 已出现
+本次阅读时的 `heading.hpp` 已出现
 forward_deviation_weight/translationCost 等并行调整；本文没有运行这条新姿态方案，
 不再把旧文档的“无前向偏好”当作所有当前源码的事实，也不把新代码当成验收已通过。
+该文件现已随旧朝向搜索删除，以上描述保留为 2026-10-26 的审查记录。
 需求与进度以 [机体模型和运动姿态](../design/navigation-body-model-and-motion-posture.md) 为入口。
 
 本轮修改支撑 footprint、部件几何复用和快照坐标索引，新增正式回归并重新构建受影响目标。

@@ -4,6 +4,39 @@ This directory contains research references used to shape product decisions.
 The papers and notes here are evidence for design choices, not evidence that
 LingTu already implements the techniques described in them.
 
+Use [Chat UI reuse](chat-ui-reuse-20261110.md) for Flowith identification,
+T3 Code and assistant-ui integration choices, current licenses and the existing
+conversation API boundary. This is source research, not a completed UI migration.
+
+Use [Astryx UI reference](astryx-ui.md) for the pinned Meta design-system source,
+the local checkout, Web compatibility and useful component entry points.
+
+Use [Mapping archive restoration](mapping-restore-20261109.md) for the native
+graph restore, registration before continuation, independent-process and DDS
+checks, and ProductControl cold-start wiring. Full Product hot switching is
+still unfinished; the note keeps that boundary separate from SLAM mode changes.
+
+Use [Navigation project comparison: Jie and DDDMR](navigation-project-comparison-20261107.md)
+for the 2026-11-07 pinned official-source review added alongside LingTu and DimOS.
+It distinguishes map editing, XYZ search, actual Go2 trajectory generators,
+collision geometry and dynamic clearing from author demonstrations. The two
+new projects have not been built or tested against LingTu in matched scenarios.
+
+Use [Tora garage navigation](tora-garage-navigation-20261106.md) for the fixed-URDF
+solid model, matched full-wheel/driving-envelope test, native global/SCAN ideal
+feedback and 1080p replay. It does not qualify wheel physics, sensors or hardware.
+
+Use [Narrow-passage physical trials](narrow-passages-physical-20261106.md) for
+the actual door/L-corridor/double-door failures, paired ray-noise evidence,
+quiet-heading repair and A* guide replay. The original narrow trials failed;
+the matched 1.20m and 1.50m L-corridors reached their goals, with pauses and
+diagnostic limitations still recorded rather than a complete acceptance claim.
+
+Use [Global/local collision comparison](global-local-collision-comparison-20261106.md)
+for the matched native XYZ, single-center, twin-cylinder and fixed-route heading
+experiments. It records path changes, timing and remaining posture limitations;
+the candidate is not connected to production navigation.
+
 Use [Map-cleaning production and research boundaries](map-cleaning-boundaries-20261105.md)
 for the ERASOR2/prune comparison, legacy adapter input limits, removed report-only
 computation and isolated research builds. It does not claim a glass-persistence fix
@@ -115,10 +148,9 @@ the implementation status. Downloaded papers are indexed in
 [papers/README.md](papers/README.md).
 
 For the localization map-optimization history, use the
-[migration and acceptance record](localization-opt-migration.md). The active
-remaining work is tracked separately in the
-[map-optimization next steps](../roadmap/localization-opt-next-steps.md);
-neither document is a runtime configuration or a second scheduler.
+[migration and acceptance record](localization-opt-migration.md) and the dated
+[September handoff](../operations/localization-opt-handoff-20260917.md).
+Current delivery work belongs to the [Roadmap](../roadmap.md#current-delivery-cycle).
 
 Use [Semantic-map dataset plan](semantic-dataset-plan.md) for the evidence
 ladder, current local dataset inventory, and the next multimodal recording

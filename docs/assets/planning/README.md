@@ -1,5 +1,9 @@
 # Global planning figures
 
+**Status:** Published figure gallery with historical offline results
+**Audience:** Documentation readers and planning researchers
+**Runs on:** Offline native planner evidence recorded on 2026-10-16
+
 Recorded on 2026-10-16. These six figures show LingTu's native OctoPlanner3D
 global routes over the upstream sample point clouds. The root README uses
 200 dpi previews; each linked PDF retains the publication export with

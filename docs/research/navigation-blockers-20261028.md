@@ -55,7 +55,10 @@ epoch/sequence 尚未积累足够历史而额外拒绝。缺地图、地图边�
 纯 Teleop 不要求 odom/cloud/traversability/定位健康；辅助避障遥控与它不同。
 相机画面、录制器、原始 IMU 可视化和电机关节曲线不是当前 SCAN 自主导航的额外准入项。
 
-### 全局规划与有向路线
+### 全局规划与有向路线（2026-10-28 审查）
+
+本节 `heading.cpp` 的条件属于当时的朝向搜索，该实现现已删除。原文件和行号以历史引用保留；
+当前全局入口见 [OctoPlanner3D](../../src/nav/cpp/planning/global/octoplanner/README.md)。
 
 | 条件与原因族 | 当前后果 | 源码与判断 |
 |---|---|---|
@@ -63,10 +66,10 @@ epoch/sequence 尚未积累足够历史而额外拒绝。缺地图、地图边�
 | 活动地图身份缺失、切换或规划期间变化；frame/goal 已变 | 等待地图，或废弃已失效的搜索结果 | [goal/task.cpp](../../src/nav/cpp/endpoint/nav/app/goal/task.cpp)、[goal/plan.cpp](../../src/nav/cpp/endpoint/nav/app/goal/plan.cpp)。地图短暂不可读与真正切图要区分 |
 | `start_outside_static_map`、`goal_outside_static_map` | 端点不在保存地图范围 | [core.cpp](../../src/nav/cpp/planning/global/octoplanner/octoplanner3d_core.cpp:425)。先看坐标、目标高度和地图覆盖 |
 | `start_snap_exhausted`、`goal_snap_exhausted` | 邻近范围找不到合适端点 | 同上。不能据此断言现实中没有通道 |
-| `body_pose_input_invalid`、`invalid_pose_request` | 请求的机体或位姿无效 | [heading.cpp](../../src/nav/cpp/planning/global/octoplanner/heading.cpp:102)。属于集成输入错误 |
-| `start_pose_blocked` | 起点支撑或边界不可用 | [heading.cpp](../../src/nav/cpp/planning/global/octoplanner/heading.cpp:133)。已删除机身起点单独否决；保存地图中起点占据时可连接同朝向的邻近空闲姿态，第一段交给实时 SCAN 验证。后续碰撞与支撑检查保留，不能把 start_pose_blocked 一律翻译成机身撞墙 |
-| `support_disconnected` | 独立支撑连通预搜索耗尽 | [heading.cpp](../../src/nav/cpp/planning/global/octoplanner/heading.cpp:235)。可能是保存地面缺失、错误高度或连通建模，不能翻译成 OBB 碰撞 |
-| 邻接移动的真实占据、支撑缺失、步高/坡度超限、转身/平移机身扫掠冲突 | 丢弃该条边，继续搜索；全部失败才无路 | [global_planner.cpp](../../src/nav/cpp/planning/global/octoplanner/vendor/planner/src/global_planner.cpp)、[heading.cpp](../../src/nav/cpp/planning/global/octoplanner/heading.cpp)。单条边失败不是任务失败 |
+| `body_pose_input_invalid`、`invalid_pose_request` | 请求的机体或位姿无效 | 当时的 `heading.cpp:102`。属于集成输入错误 |
+| `start_pose_blocked` | 起点支撑或边界不可用 | 当时的 `heading.cpp:133`。已删除机身起点单独否决；保存地图中起点占据时可连接同朝向的邻近空闲姿态，第一段交给实时 SCAN 验证。后续碰撞与支撑检查保留，不能把 start_pose_blocked 一律翻译成机身撞墙 |
+| `support_disconnected` | 独立支撑连通预搜索耗尽 | 当时的 `heading.cpp:235`。可能是保存地面缺失、错误高度或连通建模，不能翻译成 OBB 碰撞 |
+| 邻接移动的真实占据、支撑缺失、步高/坡度超限、转身/平移机身扫掠冲突 | 丢弃该条边，继续搜索；全部失败才无路 | [global_planner.cpp](../../src/nav/cpp/planning/global/octoplanner/vendor/planner/src/global_planner.cpp)、当时的 `heading.cpp`。单条边失败不是任务失败 |
 | `search_iteration_limit`、`global_planning_timeout`、`preview_timeout` | 本次搜索没有完成 | [task.hpp](../../src/nav/cpp/endpoint/nav/app/goal/task.hpp)、[core.cpp](../../src/nav/cpp/planning/global/octoplanner/octoplanner3d_core.cpp)。预览单独采用 7 s 截止，不应报成确定无路 |
 | `navigation_busy`、`planner_busy` | 此次预览未启动 | [loop.cpp](../../src/nav/cpp/endpoint/nav/app/loop.cpp:1211)。与运行中导航任务终止无关 |
 | `empty_path`、`goal_not_reached`、`body_pose_path_invalid`、`global_planner_exception` | 本次结果不可执行 | [plan.cpp](../../src/nav/cpp/endpoint/nav/app/goal/plan.cpp:453)。空结果、未到目标与算法异常应分开 |
@@ -88,7 +91,7 @@ epoch/sequence 尚未积累足够历史而额外拒绝。缺地图、地图边�
 | 条件与原因族 | 当前后果 | 来源与判断 |
 |---|---|---|
 | `no_global_path`、`pose_route_frame_changed`、`invalid_map_from_odom` | 无参考或参考坐标已失效，零输出 | [executor.cpp](../../src/nav/cpp/navigation/executor.cpp:473)。坐标换代应废弃旧参考，短暂掉数据不应无条件清目标 |
-| `scan_execution_clock_discontinuity` | 执行时间倒退或跳跃过大，挂起并重建轨迹 | [executor.cpp](../../src/nav/cpp/navigation/executor.cpp:494)。时钟接线条件，不是机身形状造成 |
+| 原 `scan_execution_clock_discontinuity` | **2026-11-06 已删除执行器中的这条停车分支。** 正向调度间隔不再单独清除轨迹；参考按实际时间前进，命令变化继续受原有限加速度约束 | [当前时钟适配说明](../../src/nav/cpp/planning/local/scan/upstream/UPSTREAM.md#execution-clock-cleanup-2026-11-06)。仿真时钟倒退仍由输入入口拒绝，显式暂停仍冻结参考 |
 | `collision_map_invalid`、分辨率不一致、`body_raw_evidence_missing`、无效 Body/yaw | 局部返回 InvalidInput | [grid.cpp](../../src/nav/cpp/planning/local/scan/grid.cpp:46)。组合模型不能把已经膨胀的格再次当原始实测障碍 |
 | 实测 occupied 与机身/扫掠相交，或扩展机身越出局部 AABB | 候选碰撞返回 1，数据范围不足返回 -1 | [grid.cpp](../../src/nav/cpp/planning/local/scan/grid.cpp:450)。窗口内未知空气跳过；窗口外缺数据与窗口内未知不能混为一谈 |
 | `scan_local_target_blocked`、`scan_target_rejected`、`scan_initialization_failed`、`scan_replan_failed`、首次 Pending | 没有可执行轨迹时零输出；仍安全的旧尾段可以继续 | [backend.cpp](../../src/nav/cpp/planning/local/scan/backend.cpp:520)。候选失败机制主要继承 SCAN；不是每次重规划均停车 |

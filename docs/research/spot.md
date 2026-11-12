@@ -210,7 +210,7 @@ Product 配置存在也不代表模型、外参或现场输入已满足运行条
 证据，而非复制页面对全局导航状态的判断。需区分“按配置完成原生停止确认”和
 “实测整机物理沉降”：停止证据策略可涉及驱动 ACK 和静止里程计，不能仅凭一个
 终态布尔值泛化为任何平台、任何姿态下都已物理停稳。任务字段应表达原生停止证据，
-机体运动观测单独保留。依据见[终态事务](../../src/nav/cpp/endpoint/nav/status/goal_terminal_transaction.cpp)
+机体运动观测单独保留。依据见[终态事务](../../src/nav/cpp/endpoint/nav/app/goal/terminal.cpp)
 与[停止证据投影](../../src/nav/cpp/endpoint/nav/status/nav_status_writer.cpp)。
 
 Host 重启时，[GoalService](../../src/nav/services/goals.py) 会恢复当前 Product session

@@ -126,7 +126,7 @@ OnlinePoseGraph 的 map_from_odom 输出使用同一计算。保存使用这些�
 上的重复采样导致额外拒绝，证实保持旧锚点会将局部失败放大为长段未接入图。
 并非原始点云被丢弃：OnlineMapping 保留这些帧，但只能沿用此前锚点的修正。
 
-这也是[迁移记录](../research/localization-opt-migration.md)和[后续计划](../roadmap/localization-opt-next-steps.md)曾记录的配准覆盖缺口类型，不能当成已经
+这也是[迁移记录](../research/localization-opt-migration.md)和[后续计划](localization-opt-handoff-20260917.md)曾记录的配准覆盖缺口类型，不能当成已经
 随重力补丁解决。保存时 assembly 要求完整相邻链，在线流程则允许跳过节点；
 本图第 3->4 边被拒绝，导致保存阶段额外优化被跳过，不代表在线没有优化过。
 加密采样没有改善整体通过率，因此未修改生产采样尺度或放宽几何门限。

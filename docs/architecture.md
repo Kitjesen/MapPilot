@@ -91,7 +91,7 @@ ProductControl; Host startup uses the resolved configuration.
 [`src/runtime/registry.py`](../src/runtime/registry.py) is the normal
 backend and capability registration boundary.
 
-The Module lifecycle is `preflight -> setup -> start -> stop`. Typed Ports and
+The Module lifecycle is `setup -> start -> stop`. Typed Ports and
 Wires describe in-process relationships; transports begin only at an explicit
 process, hardware, simulator, or external API seam.
 

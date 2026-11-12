@@ -53,11 +53,17 @@ Campus3 的原始进入事件在 bag 时间 `1775104997782072305 ns`，约为传
 
 ## 配置与对照方法
 
-唯一维护的公开数据配置在 [`elevator_ltlio.yaml`](../../config/acceptance/elevator_ltlio.yaml)。它使用数据采集设备的标定，不是 Go2 或其他机器人标定。
+本轮历史回放使用 `config/acceptance/elevator_ltlio.yaml`，对应已经退役的 24 维核心。
+原配置归档于 `build/ltlio-unified-20261017/retired-elevator-ltlio.yaml`。
+当前公开回放使用 [`elevator_native.yaml`](../../config/acceptance/elevator_native.yaml)，
+其单核心说明见 [acceptance 配置](../../config/acceptance/README.md)。两者使用数据集设备标定，
+本页旧核心结果不能作为当前配置的复跑结果。
 
 原先的静止 RMS 门限使 Office1 全程不能初始化。首 200 个样本的加速度 RMS 约 `0.20–0.21 m/s²`、陀螺 RMS 约 `0.0037–0.0038 rad/s`，因此只在数据配置中使用现有 `0.30 / 0.01` 门限。它们同时影响初始化与普通模式的静止判断，此变化同时用于 baseline 与电梯模式，不能归功于电梯算法。实机配置没有因此改变。
 
 普通 LIO 对照使用相同原始输入、外参、降采样和噪声参数，仅关闭电梯模式。运输模式各实现阶段的对照保持模式和事件输入一致。通过现有 `sam.min_time_s` 排除这些短序列中的闭环候选，主要查看前端 odom 输出。运行输出包括 `.odom.tum`、`.map.tum`、`.status.jsonl`、`.events.jsonl` 和 `.summary.json`。
+
+以下命令保留当轮调用方式。当前复跑入口见 [LTLIO 公开回放](../../src/localization/ltlio/README.md#verification-and-public-replay)。
 
 ```bash
 python -m tools.datasets.elevator_bag_to_ltu1 /data/Office1.bag build/elevator-input

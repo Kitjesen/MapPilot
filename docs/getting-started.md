@@ -114,6 +114,9 @@ in [Deployment](../scripts/deploy/README.md).
 
 ## First robot installation
 
+For the customer-facing installation sequence and the locked Python runtime
+preparation command, use [Customer deployment](customer-deployment.md).
+
 Build or obtain a release for the selected Linux target, then follow the
 [deployment instructions](../scripts/deploy/README.md) to install its versioned
 files, Python runtime, machine configuration, and service catalog. Production
@@ -126,11 +129,13 @@ sequence. The installer and ProductControl handle the declared lifecycle.
 
 ### Enable Web mode switching
 
-Gateway serves the operator Web application; its default port is `5050`.
-Open the configured target address from the operator computer. The optional
-`lt-control` loopback service lets Web requests use the same ProductControl
-entry as the CLI. On a deployment that includes it, set the actual robot in
-`/etc/lingtu/control.env`:
+`lt-control` serves the persistent operator Web/API entry on port `5050` and
+the loopback lifecycle transport on `5051`. The Product Host serves runtime
+HTTP on `5053`, as declared in `config/system/envs/real.yaml`. The entry streams
+runtime HTTP, SSE and WebSockets to Host and keeps the Web and lifecycle APIs
+available when the Product is stopped. Existing gRPC uses port `5052`.
+CLI lifecycle readiness queries use the Host endpoint from the RunPlan directly.
+Set the actual robot in `/etc/lingtu/control.env`:
 
 ```ini
 LINGTU_ROBOT=unitree/go2
@@ -138,22 +143,34 @@ LINGTU_ROBOT=unitree/go2
 # LINGTU_CONTROL_VARIANT=camera
 ```
 
+For an upgrade from a release where Host owns port `5050`, stop the old Product
+through ProductControl while the robot is stationary before enabling this entry.
+Generate a new RunPlan on the next start so Host uses its declared `5053` port.
 After the release and Python runtime are installed:
 
 ```bash
 sudo bash /opt/lingtu/current/scripts/deploy/thunder/install_catalog_service.sh control
 sudo systemctl enable --now lt-control.service
 curl http://127.0.0.1:5051/status
+curl http://127.0.0.1:5050/api/v1/product-control
 ```
 
-This starts the loopback control transport, not a mapping or navigation Product.
+Open `http://<robot>:5050/` before starting a Product or after stopping one.
+This starts the management entry. ProductControl starts the requested Product
+when an operator submits a switch.
 The deployed machine configuration owns addresses, ports, and credentials.
 For operational Web controls, continue with
 [Web mapping and navigation switches](operations.md#web-mapping-and-navigation-switches).
 
+For a local simulation, `python -m lingtu.control serve --robot doso/thunder_v4
+--env sim --backend mujoco` uses public port `15050` and forwards runtime HTTP
+to the existing sim Host port `5050`. `--public-port` and `--gateway-port` select
+concrete endpoints for a different local layout. Use the public port in the
+Web/SDK address when testing stop, query and restart.
+
 ## Continue with the first session
 
-On the installed target, follow [the session preflight](operations.md#before-each-session)
+On the installed target, follow [the session operations](operations.md#before-each-session)
 for read-only release, device, and readiness checks, then the mapping workflow
 in [Operations](operations.md#build-save-and-reload-a-map). Use the configured
 absolute `LINGTU_PYTHON` path for that release. Resolve reported issues before

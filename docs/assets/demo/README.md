@@ -1,5 +1,9 @@
 # Mapping and navigation demonstrations
 
+**Status:** Published screenshots with historical evidence descriptions
+**Audience:** Documentation readers and integration reviewers
+**Runs on:** Recorded field-map viewing and local UI fixtures
+
 Selected historical screenshots and results for the project README, assembled
 on 2026-10-16. Full run data remains in the local paths listed below.
 

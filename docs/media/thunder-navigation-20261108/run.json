@@ -1,0 +1,96 @@
+{
+  "source_run": "artifacts/nav/speed-tracking-20261108/runs/u_turn-formal",
+  "sources": {
+    "report": "artifacts/nav/speed-tracking-20261108/runs/u_turn-formal/motion/report.json",
+    "sensors": "artifacts/nav/speed-tracking-20261108/runs/u_turn-formal/motion/sensor_report.json",
+    "video": "artifacts/nav/speed-tracking-20261108/runs/u_turn-formal/render.json",
+    "configuration": "artifacts/nav/speed-tracking-20261108/runs/u_turn-formal/environment.json",
+    "scenario": "artifacts/nav/speed-tracking-20261108/runs/u_turn-formal/manifest.json"
+  },
+  "video": {
+    "file": "thunder-30m-navigation.mp4",
+    "bytes": 4096302,
+    "duration_s": 30.05,
+    "width": 1280,
+    "height": 720,
+    "fps": 20.0,
+    "frames": 601,
+    "codec": "h264_yuv420p",
+    "camera": "follow",
+    "decode_ok": true,
+    "preview": "preview.png"
+  },
+  "timeline": {
+    "active_only": true,
+    "source_driving_samples": 1501,
+    "first_sim_time_s": 2.8399999999999617,
+    "last_sim_time_s": 32.82999999999834,
+    "driving_span_s": 29.990000009536743,
+    "timeline_preserved": true,
+    "max_source_gap_s": 0.020000219345092773,
+    "tracking_elapsed_s": 29.319999999998338
+  },
+  "system": {
+    "global_planner": "OctoPlanner3D",
+    "local_planner": "SCAN",
+    "locomotion_policy": "policy_cts_moe_v39_61128.onnx",
+    "localization": "MuJoCo truth pose",
+    "physics_integrator": "euler",
+    "physics_timestep_s": 0.005
+  },
+  "parameters": {
+    "scan_max_vx_mps": 1.2,
+    "scan_max_vy_mps": 1.0,
+    "scan_planner_max_acceleration_mps2": 0.75,
+    "path_follower_max_acceleration_mps2": 0.75,
+    "scan_position_gain": 1.5
+  },
+  "route": {
+    "name": "warehouse U turn",
+    "start_release_xyz_yaw": [
+      2,
+      2,
+      0.6,
+      0
+    ],
+    "goal_body_xyz_yaw": [
+      12,
+      8,
+      0.435,
+      3.141592653589793
+    ],
+    "actual_path_length_xy_m": 29.737687146192076,
+    "net_displacement_xy_m": 11.687531655326085
+  },
+  "result": {
+    "component_pass": true,
+    "blockers": [],
+    "native_goal_reached": true,
+    "goal_error_xy_m": 0.10187874321278391,
+    "goal_error_z_m": 0.004623996432046529,
+    "tracking_rmse_xy_m": 0.0630547437588798,
+    "tracking_p95_xy_m": 0.12149382267478918,
+    "tracking_max_xy_m": 0.18435743322516143,
+    "tracking_samples": 1460,
+    "input_ready_fraction": 1.0,
+    "non_support_contact_steps": 0,
+    "contact_observation_steps": 6368,
+    "peak_xy_speed_mps": 1.208770501134718,
+    "control_overrun_peak_ms": 39.0972,
+    "terminal_stop_pass": true
+  },
+  "scope": {
+    "platform": "Local Windows MuJoCo native component simulation",
+    "simulation_only": true,
+    "hardware_motion": false,
+    "full_system_qualification": false,
+    "other_scenario": {
+      "source_report": "artifacts/nav/speed-tracking-20261108/runs/long_s-formal/motion/report.json",
+      "component_pass": false,
+      "native_goal_reached": true,
+      "blockers": [
+        "navigation_loop_overrun_peak_above_threshold"
+      ]
+    }
+  }
+}

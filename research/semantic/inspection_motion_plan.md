@@ -527,4 +527,4 @@ NX 的 ext4 错误计数已到 52。已下载 8 份地图及配置的完整压�
 - [巡检界面](../../web/src/components/InspectionWorkbench.tsx)、[现有地图/路径 API](../../src/gateway/maps/routes.py)。
 - [mapd 点位入口](../../src/gateway/maps/places.py)、[另一套 locations 入口](../../src/gateway/maps/locations.py)、[路线提交](../../src/gateway/routes/inspection.py)。
 - [巡检仿真验收范围](../../config/acceptance/mujoco/inspection.json)、[RGB-D 跟随场景](../../config/acceptance/mujoco/rgbd_follow.json)、[跟随仿真检测器](../../sim/scripts/mujoco/rgbd_follow_worker.py)。
-- [验证层级](../../docs/testing.md)、[当前路线图](../../docs/roadmap.md)、[全局建图后端计划](../../docs/roadmap/localization-opt-next-steps.md)。
+- [验证层级](../../docs/testing.md)、[当前路线图](../../docs/roadmap.md)、[全局建图后端计划](../../docs/operations/localization-opt-handoff-20260917.md)。

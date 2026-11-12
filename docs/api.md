@@ -8,6 +8,78 @@ This file combines the maintained integration contract with inventories
 generated from source. Do not hand-edit the method or route tables; run
 `python tools/docs/extract_api_docs.py`.
 
+## Conversation search and live text (2026-11-12)
+
+`GET /api/v1/agent/conversations/search?q=text&archived=false` searches user and
+assistant message bodies in the selected archive view. `q` is 1–200 characters
+(whitespace-only queries return no results). The response is `{results: [...]}`
+with at most 30 matches, each containing `conversation_id`, `title`, `message_id`,
+`seq`, `role` and a plain-text `snippet`. Tool output and model-internal records
+are excluded. Selecting a match reads existing history; it never submits a turn.
+
+The existing `agent_message` SSE event retains the persisted message identity:
+`conversation_id`, `id`, `turn_id`, `seq`, `revision`, `role`, `text`, `kind`,
+`created_at` and `metadata`. Streaming assistant messages use
+`metadata.status="streaming"`; each event contains the complete text accumulated
+for that message, not an append-only fragment. Later revisions replace earlier
+ones. Final/cancelled/failed state comes from the persisted turn and message;
+GET snapshots remain the recovery source after missing events or reconnecting.
+This does not introduce a second task owner or replay accepted requests.
+
+A generated plan is an assistant message with `kind="plan"` and
+`metadata.plan={title, summary?, steps:[{title, detail?}]}` (1–12 steps).
+`text` retains the full draft Markdown for copying, export, search and sharing.
+A completed plan turn means draft generation ended; it does not execute or
+approve steps and carries no execution-state or permission fields.
+
+`POST /api/v1/agent/conversations/{id}/fork` accepts `{message_id}` for a
+terminal assistant reply and returns the new conversation metadata (HTTP 201).
+The new conversation contains public user/assistant history and uploaded
+attachments through that reply, excluding unfinished or later turns. Its
+optional `forked_from` metadata contains `conversation_id`, `message_id`,
+`title` and `seq`. It has no copied run, queue, pending approval or share link.
+Forking does not submit a model request, replay tools or restore physical state.
+The source conversation, including its draft and active work, is unchanged.
+
+Map and selection context keep the existing `map_context` submission contract.
+The composer exposes inclusion controls; an accepted request keeps its original
+context on retry, even if the map, selection or draft controls subsequently change.
+
+## Robot observation tools (2026-11-12)
+
+`GET /api/v1/robot/capabilities` describes the selected observation sources;
+`GET /api/v1/robot/sensors/{sensor}` reads imu, joints, motors or voltages.
+Configured sources are not proof of live data. Preserve source clocks and units.
+`open_sensor_monitor(sensor)` opens an available sensor card, or `catalog` for
+source discovery and browser display settings. It does not record or configure devices.
+Joint/motor/voltage CSV exports contain browser polling samples; durable IMU
+records and native DDS/MCAP capture retain their separate owners.
+Conversation tools also expose camera snapshots, bounded LiDAR previews, native
+navigation diagnostics and operator-approved Host Python analysis. Python is not
+a security sandbox and is forbidden in read-only mode. See the
+[conversation design](design/conversation-workbench.md) for adapter and execution semantics.
+
+Live IMU monitoring uses `GET /api/v1/robot/imu/live?after=sequence`.
+`/api/v1/robot/imu/records` starts or lists durable monitoring records;
+`/{id}/stop`, `/{id}` and `/{id}/download?format=csv|jsonl` stop, review
+and export exactly that record. Closing a browser does not stop recording.
+These are adapter observations; native DDS MCAP capture remains separate.
+
+## Navigation goal semantics (2026-11-08)
+
+`navigation.go()` and `go_to_click()` accept keyword-only `z`, `task_id`,
+`request_id`, `acceptance_radius_m`, `max_speed_mps` and `client_id`.
+Ordinary navigation completes on XYZ position and does not execute a final-yaw
+alignment. Existing SDK, HTTP and gRPC Pose yaw fields remain pose metadata;
+passing zero or another yaw does not request an additional terminal turn.
+Intermediate explicit pose-route headings and teleop angular commands retain
+their movement semantics.
+
+`navigation.pause(task_id)`, `resume(task_id)`, `cancel(task_id=...)` and
+`set_speed_limit(task_id, max_speed_mps)` submit task-scoped commands. An accepted
+receipt is admission only. Observe the task to confirm execution, pause or
+cancellation; a client timeout neither cancels nor reissues movement.
+
 ## Integration boundaries
 
 | Surface | Endpoint | Owner |
@@ -15,6 +87,9 @@ generated from source. Do not hand-edit the method or route tables; run
 | REST and SSE | `http://<host>:5050` | Gateway routes and projections |
 | MCP | `http://<host>:8090/mcp` | `@skill` methods discovered in the Host |
 | Python SDK/CLI | `lingtu-sdk` and `lingtu.sdk` | Typed client facade |
+| C++ SDK | `sdk/cpp`, `LingTu::SDK` | C++17 facade over the shared Rust communication core |
+| Rust SDK | `sdk/rust` | HTTP/JSON, binary downloads, SSE and WebSocket client |
+| SDK live feeds and teleop | `ws://<host>:5050` or `wss://<host>:5050` | Gateway preview routes and native motion owner |
 | Camera Web media | Scene and Console: WHEP, with JPEG WebSocket fallback | Native media endpoint or optional go2rtc; Gateway signalling |
 
 `LingTuClient` and `AsyncLingTuClient` group operations into domain clients:
@@ -25,6 +100,27 @@ methods. Existing flat methods remain supported delegates. See the
 [Python SDK guide](../src/lingtu/README.md#remote-python-sdk) for classes
 and examples. Navigation cancellation and software emergency stop retain
 their separate `navigation.cancel()` and `system.emergency_stop()` meanings.
+Standalone installation, multi-language examples and public gRPC source are
+documented in [SDK](../sdk/README.md). Python map methods include source
+archiving/processing, reoptimization, OctoMap downloads, 3D no-go regions
+and source/voxel editing. `robot.events()` subscribes to Gateway SSE.
+
+Python and C++ expose `watch_cloud()`, `watch_scan()`, `watch_camera()` and
+`teleop()`. Rust exposes the same routes through `websocket(channel, media_token)`
+and `teleop(client_id)`. Python live sessions require the optional
+`lingtu-sdk[websocket]` extra. HTTP, downloads and SSE use its standard library.
+The camera Bearer viewer token is separate from the Gateway API key.
+
+Each explicit teleop velocity sample requests and consumes a fresh input window.
+Python and C++ call `move()` and Rust calls `move_once()`. The returned
+`ingress_ack` preserves `stage=gateway_queue_accepted` and the separate
+`final_cmd_vel_confirmed` and `motor_confirmed` evidence. `hold()` releases
+the deadman. Closing a session lets the Gateway hold and release its owner.
+
+Temporal memory accepts compatible query vectors through
+`search_memory_embedding()`. Text `search_memory()` reports unsupported until
+the backend declares a matching observation and text encoder. The temporal
+store currently lacks model/checkpoint identity for historical vectors.
 
 Gateway submits typed intent and projects runtime facts. It does not
 own Product lifecycle, maps, planning, final motion, or hardware.
@@ -48,10 +144,27 @@ Web mode switches use the separate loopback ProductControl transport:
 (`map` or `nav`), `map_name` (required for nav), and
 `expected_product_session_id` (empty only when no Product is running).
 `GET /api/v1/product-control/operations/{request_id}` retrieves the receipt.
+`POST /api/v1/product-control/stop` accepts `request_id` and the exact
+`expected_product_session_id`, then runs the existing ProductControl stop.
+SDK `system.product_status()`, `switch_product()`, `stop_product()` and `product_operation()`
+use this transport. Keep the returned operation identity while a switch
+restarts the Host, then query its retained result. The switch accepts the
+expected current Product session and an optional map-frame initial pose.
+A Product stop can also stop Gateway. Supply a stable request ID before
+submission. A disconnected reply leaves the result unconfirmed. The
+independent control service retains the result for lookup when Gateway
+returns or through its local control transport.
 Gateway only forwards these requests. A 202 response is admission, not
 completion. Query until `succeeded`, `failed`, or `interrupted`; reconnects
 must query the original ID, not create another switch. A successful switch
 does not authorize robot motion. See [Operations](./operations.md#web-mapping-and-navigation-switches).
+Python clients and CLI support an explicit HTTPS `base_url` / `--base-url`.
+Certificate verification remains enabled for HTTPS and WSS. C++/Rust WSS
+currently uses WebPKI roots and has no caller-supplied private CA option.
+SDK `navigation.goal_status(request_id)` reconciles an uncertain goal reply.
+`system.resume_motion()` releases native hold and preserves the original receipt.
+Python `stop_recording(expected_session_id=...)`, C++ `stop_recording(session_id)`
+and Rust `stop_recording_session(session_id)` carry native session matching.
 
 External map integrations operate on the canonical map identity
 `map_id + content_epoch` and maintained artifact contracts. They must
@@ -59,13 +172,7 @@ not invent version directories or bypass ProductControl activation.
 
 Live-mapping saves are durable operations. A successful admission is not a completed
 save: poll `GET /api/v1/maps/operations/{operation_id}` and inspect
-`operation.source_saved` and `operation.state`. `POST /api/v1/map/save` accepts
-`auto_process` (default `true`). Once the capture and receipt are durable,
-`source_saved=true` confirms the archive, independently of processing success.
-With `auto_process=false`, the task stays `CAPTURED` across restarts until
-`POST /api/v1/maps/operations/{operation_id}/process`. Processing uses the saved
-source and does not require a new SLAM session. The existing active-map mutation
-restriction still applies. A client wait timeout or a lost status response leaves the
+`operation.state`. A client wait timeout or a lost status response leaves the
 outcome unconfirmed; continue querying that operation instead of submitting
 another save. A `SUCCEEDED` detail includes the available
 `operation.processing.optimization` and `operation.processing.cleanup`
@@ -76,35 +183,14 @@ lists omit these summaries; fetch the individual detail. A same-name save may
 replace an inactive map; active-map changes are rejected. Saves do not activate
 a map or switch Product.
 
-The source remains archived after successful processing, failure or cancellation.
-`GET /api/v1/maps/operations/{operation_id}/source/pcd` streams that operation's
-PCD with `X-Lingtu-Operation-Id`; it does not claim a formal map content epoch.
-This uses the existing Linux descriptor transport. Old successful tasks whose
-sources were already deleted return `source_saved=false`; the endpoint never
-substitutes the processed map. Repeated process calls for queued/running/successful
-tasks return the existing result. There is no implicit reprocessing of a completed task.
-
-Python SDK examples:
-
-```python
-# Return once the point cloud is archived; processing continues in the background.
-saved = robot.map.save_and_wait("yard", wait_for_source=True)
-
-# Archive now, process later, retaining the same operation identity.
-saved = robot.map.save_and_wait("yard_later", auto_process=False)
-operation_id = saved["operation_id"]
-robot.map.download_source(operation_id, "yard_later.source.pcd")
-robot.map.process_operation(operation_id)
-```
-
-Failed/cancelled operations retain their last actual `phase`; only successful
-completion reaches `DONE`. Older records may still report `DONE` without a
-recoverable stage. `GET /api/v1/maps/operations` lists existing operations;
-`POST /api/v1/maps/operations/{operation_id}/retry` reuses a retained snapshot
-when available, and `/cancel` cancels that operation. Retry clears previous
-processing reports before rebuilding its working data. Native diagnostic
-paths (`job_dir`, `capture_dir`, `work_dir`) remain private to the native query
-interface. See [file retention](operations/map-files.md).
+`POST /api/v1/maps/operations/{operation_id}/reoptimize` with a new `request_id`
+starts a separate operation from the archived scans. The response identifies
+the new operation; `source_operation_id` points to the original save. Reuse the
+same request ID after an uncertain submission. This explicitly realigns scans,
+including captures already optimized online, and rebuilds navigation artifacts.
+It requires a complete patch bundle and an inactive target map. Original scans
+and the previous map remain available if processing fails. Unlike ordinary
+saving, an optimization skip is not reported as successful reoptimization.
 
 `GET /map/viewer?map=MAP_ID` returns a 307 redirect to `/?tab=map&map=MAP_ID`;
 without `map` it opens the product map library. The redirect does not activate
@@ -320,6 +406,19 @@ python tools/docs/extract_api_docs.py --check
 
 ## Navigation status
 
+Local planner selection uses `POST /api/v1/navigation/planner` with
+`{"name":"cmu","request_id":"planner-1","client_id":"sdk"}`.
+The synchronous and asynchronous SDKs expose `robot.navigation.select_planner(name)`.
+End the current task and release operator control first. The native endpoint
+prepares the selected backend off the control thread, confirms stop, and
+replaces its local planner and follower configuration without restarting navd.
+Only the Product/env-declared algorithms are selectable; CMU needs the robot's
+path library and SCAN needs the existing 100 Hz loop. Pending selection rejects
+new motion tasks; stop/estop cancels the selection. A successful kind-19 ACK
+means `planner_selected` or `planner_unchanged`, not readiness for motion.
+Use the normal navigation status to check required map/localization inputs.
+The new client and endpoint DDS contract must be deployed together.
+
 `GET /api/v1/navigation/status` and SSE `navigation_status` expose one root-level
 v3 contract. It answers four independent questions:
 Implementation lives in `src/gateway/navigation/`: `routes.py` registers the
@@ -424,6 +523,11 @@ target and validate recognition on recorded equipment images.
 retains the original capture/model result and never changes task motion.
 
 The Python SDK's `TaskClient` groups task operations under `robot.tasks`.
+`inspection_route()`, `save_inspection_route()` and `delete_inspection_route()`
+manage stored routes with their map epoch and revision. `inspection_tasks()`
+discovers retained tasks. `list_inspection_evidence()`, `inspection_evidence()`,
+`review_inspection_evidence()` and the two evidence download methods expose
+the existing evidence store and its verified artifacts.
 Inspection uses `inspection_routes`, `start_inspection`, `inspection_task`,
 `pause_inspection`, `resume_inspection`, `cancel_inspection`, and
 `inspection_report`; AsyncLingTuClient delegates
@@ -518,10 +622,6 @@ _ExplorationSupervisorModule — cross-process watchdog for TARE exploration._
 ## src/gateway/mcp_server.py
 _LingTu MCP Server -Model Context Protocol for AI agent control._
 
-`get_config` reports the RobotConfig driver limits as `speed.max_linear` and
-`speed.max_angular`; these are not the current task's navigation speed. The
-unused `speed.max_speed` field is no longer returned.
-
 | Tool | Module | Parameters | Returns | Description |
 | --- | --- | --- | --- | --- |
 | `get_health` | `MCPServerModule` | — | `str` | Return full system health: modules, connections, message counts. |
@@ -589,7 +689,7 @@ _VectorMemoryModule — CLIP embedding + ChromaDB vector search for fuzzy spatia
 | `get_navigation_status` | `NavSkills` | — | `str` | Read canonical native navigation mission status. UNKNOWN means feedback is absent or stale, not that the robot is idle or the task succeeded. Use get_navigation_result(request_id) to associate feedback with this adapter's specific submission. |
 | `get_navigation_result` | `NavSkills` | `request_id: str` | `str` | Read native lifecycle feedback for a request submitted by this navigation adapter. Pass request_id from the submission receipt. If found=false, do not infer completion. If found=true, inspect status for the actual native task and outcome. |
 | `start_inspection` | `NavSkills` | `route_id: str`, `revision: int` | `str` | Start a stored native inspection route. |
-| `navigate_to_deg` | `NavSkills` | `x: float`, `y: float`, `yaw_deg: float`, `z: float \| None` | `str` | Submit a map-frame navigation goal with heading in degrees. |
+| `navigate_to_deg` | `NavSkills` | `x: float`, `y: float`, `yaw_deg: float`, `z: float \| None` | `str` | Submit a map-frame position goal; yaw is pose metadata in degrees. |
 | `is_navigating` | `NavSkills` | — | `str` | Return whether a navigation mission is currently active. |
 | `get_navigation_progress` | `NavSkills` | — | `str` | Return a concise progress summary derived from mission status. |
 
@@ -632,16 +732,25 @@ Each source file has one complete table; the rows are the route contract.
 | `GET /api/v1/maps/operations` | List durable map-save operations | `MapSaveOperationResponse` | `list_map_operations` |
 | `GET /api/v1/maps/operations/{operation_id}` | Get a durable map-save operation | `MapSaveOperationResponse` | `get_map_operation` |
 | `POST /api/v1/maps/operations/{operation_id}/cancel` | Cancel a durable map-save operation | `MapSaveOperationResponse` | `cancel_map_operation` |
+| `POST /api/v1/maps/operations/{operation_id}/process` | Process an already saved point cloud | `MapSaveOperationResponse` | `process_map_operation` |
+| `POST /api/v1/maps/operations/{operation_id}/reoptimize` | Realign archived scans and rebuild the navigation map | `MapSaveOperationResponse` | `reoptimize_map_operation` |
 | `POST /api/v1/maps/operations/{operation_id}/retry` | Retry a failed durable map-save operation | `MapSaveOperationResponse` | `retry_map_operation` |
+| `GET /api/v1/maps/operations/{operation_id}/source/pcd` | Download the point cloud archived by this save operation | `—` | `get_operation_source` |
 | `DELETE /api/v1/maps/{name}` | Delete a saved map | `MapLifecycleResponse` | `delete_saved_map` |
 | `POST /api/v1/maps/{name}/build_occupancy` | Build a 2D occupancy artifact from a saved map | `MapLifecycleResponse` | `build_saved_map_occupancy` |
 | `POST /api/v1/maps/{name}/build_octomap` | Build OctoPlanner3D octomap.ot from saved map.pcd | `MapLifecycleResponse` | `build_saved_map_octomap` |
 | `POST /api/v1/maps/{name}/crop` | Crop a saved map point cloud and invalidate derived artifacts | `MapLifecycleResponse` | `crop_saved_map` |
+| `POST /api/v1/maps/{name}/edit_preview` | Preview edits on the complete saved point cloud | `—` | `preview_map_edits` |
 | `POST /api/v1/maps/{name}/mark_zone` | Mark occupied/free/preblocked/traversable zones in the saved OctoMap | `MapLifecycleResponse` | `mark_saved_map_zone` |
+| `GET /api/v1/maps/{name}/no_go` | Read independent 3D no-go regions | `—` | `get_no_go` |
+| `PUT /api/v1/maps/{name}/no_go` | Add or replace an independent 3D no-go region | `—` | `set_no_go` |
+| `DELETE /api/v1/maps/{name}/no_go/{region_id}` | Remove a no-go region without changing sensor occupancy | `—` | `delete_no_go` |
 | `GET /api/v1/maps/{name}/octomap` | Serve the native navigation OctoMap for inline preview | `—` | `get_map_octomap` |
 | `GET /api/v1/maps/{name}/pcd` | Serve raw PCD file for inline preview | `—` | `get_map_pcd` |
 | `GET /api/v1/maps/{name}/points` | Saved map point cloud as JSON | `MapPointsResponse` | `get_saved_map_points` |
+| `GET /api/v1/maps/{name}/preview` | Saved map thumbnail point sample | `MapPreviewResponse` | `get_saved_map_preview` |
 | `POST /api/v1/maps/{name}/save_as` | Copy a saved source, optionally applying point-cloud subset edits | `—` | `save_edited_map_as` |
+| `GET /api/v1/maps/{name}/surface` | Preview native observed and inferred support surfaces | `—` | `get_surface_map` |
 | `POST /api/v1/maps/{name}/validate_plan` | Preview a route on the active saved map without publishing a goal | `—` | `validate_saved_map_plan` |
 | `POST /api/v1/maps/{name}/voxels/edit` | Edit saved OctoMap voxels for OctoPlanner3D | `MapLifecycleResponse` | `edit_saved_map_voxels` |
 | `GET /api/v1/maps/{name}/voxels/edits` | Saved OctoMap voxel edit overlay | `—` | `get_saved_map_voxel_edits` |
@@ -681,6 +790,7 @@ Each source file has one complete table; the rows are the route contract.
 | `POST /api/v1/navigation/goal_candidate` | Construct and optionally preview a navigation goal without publishing it | `GoalCandidateResponse` | `post_navigation_goal_candidate` |
 | `GET /api/v1/navigation/goals/{request_id}` | Request-correlated native navigation lifecycle status | `NavigationGoalStatusQueryResponse` | `get_navigation_goal_status` |
 | `POST /api/v1/navigation/plan` | Preview navigation plan without publishing a goal | `PlanPreviewResponse` | `post_navigation_plan` |
+| `POST /api/v1/navigation/planner` | Select the local planner after ending the current navigation task | `ControlCommandResponse` | `post_navigation_planner` |
 | `POST /api/v1/navigation/resume` | Release a native motion hold without replaying previous motion | `ControlCommandResponse` | `post_navigation_resume` |
 | `GET /api/v1/navigation/status` | Public navigation status | `NavigationStatusResponse` | `get_navigation_status` |
 | `GET /api/v1/navigation/tasks/{task_id}` | Stable native navigation task lifecycle status | `NavigationTaskStatusQueryResponse` | `get_navigation_task_status` |
@@ -689,6 +799,13 @@ Each source file has one complete table; the rows are the route contract.
 | `POST /api/v1/navigation/tasks/{task_id}/resume` | Request continuation of the same paused navigation task | `ControlCommandResponse` | `post_navigation_task_resume` |
 | `POST /api/v1/navigation/tasks/{task_id}/speed-limit` | Update the active task speed limit while retaining its route | `ControlCommandResponse` | `post_navigation_task_speed_limit` |
 
+### src/gateway/routes/amap.py
+
+| Route | Summary | Response model | Handler |
+| --- | --- | --- | --- |
+| `GET /_AMapService/{path:path}` | — | `—` | `amap_proxy` |
+| `GET /api/v1/geography/map-config` | — | `—` | `map_config` |
+
 ### src/gateway/routes/app.py
 
 | Route | Summary | Response model | Handler |
@@ -696,12 +813,24 @@ Each source file has one complete table; the rows are the route contract.
 | `GET /api/v1/app/bootstrap` | App/Web bootstrap snapshot | `AppBootstrapResponse` | `app_bootstrap` |
 | `GET /api/v1/app/capabilities` | App/Web API capability manifest | `AppCapabilitiesResponse` | `app_capabilities` |
 | `GET /api/v1/app/traffic` | App/Web realtime traffic and client polling policy | `AppTrafficResponse` | `app_traffic` |
+| `GET /api/v1/geography/location` | Fresh WGS84 position from the robot GNSS owner | `—` | `geographic_location_snapshot` |
 
 ### src/gateway/routes/assets.py
 
 | Route | Summary | Response model | Handler |
 | --- | --- | --- | --- |
 | `GET /robot/meshes/{filename}` | Serve robot STL mesh files | `—` | `serve_robot_mesh` |
+
+### src/gateway/routes/body.py
+
+| Route | Summary | Response model | Handler |
+| --- | --- | --- | --- |
+| `POST /api/v1/motion/motors/disable` | — | `BodyCommandResponse` | `disable_motors` |
+| `POST /api/v1/motion/motors/enable` | — | `BodyCommandResponse` | `enable_motors` |
+| `POST /api/v1/motion/profile` | — | `BodyCommandResponse` | `switch_profile` |
+| `POST /api/v1/motion/sit` | — | `BodyCommandResponse` | `sit` |
+| `POST /api/v1/motion/stand` | — | `BodyCommandResponse` | `stand` |
+| `POST /api/v1/motion/stop` | — | `ControlCommandResponse` | `stop` |
 
 ### src/gateway/routes/camera.py
 
@@ -714,8 +843,31 @@ Each source file has one complete table; the rows are the route contract.
 
 | Route | Summary | Response model | Handler |
 | --- | --- | --- | --- |
+| `DELETE /api/v1/agent/connections/codex` | — | `—` | `disconnect_codex` |
+| `GET /api/v1/agent/connections/codex` | — | `—` | `codex_connection_status` |
+| `POST /api/v1/agent/connections/codex/login` | — | `—` | `codex_login` |
+| `DELETE /api/v1/agent/connections/codex/login/{login_id}` | — | `—` | `cancel_codex_login` |
+| `POST /api/v1/agent/connections/codex/login/{login_id}/poll` | — | `—` | `codex_login_status` |
+| `GET /api/v1/agent/conversations` | — | `—` | `list_conversations` |
+| `POST /api/v1/agent/conversations` | — | `—` | `create_conversation` |
+| `GET /api/v1/agent/conversations/search` | — | `—` | `search_conversations` |
+| `GET /api/v1/agent/conversations/{conversation_id}` | — | `—` | `get_conversation` |
+| `PATCH /api/v1/agent/conversations/{conversation_id}` | — | `—` | `update_conversation` |
+| `POST /api/v1/agent/conversations/{conversation_id}/approvals/{approval_id}` | — | `—` | `post_conversation_approval` |
+| `POST /api/v1/agent/conversations/{conversation_id}/attachments` | — | `—` | `upload_conversation_attachment` |
+| `GET /api/v1/agent/conversations/{conversation_id}/attachments/{attachment_id}` | — | `—` | `download_conversation_attachment` |
+| `POST /api/v1/agent/conversations/{conversation_id}/fork` | — | `—` | `fork_conversation` |
+| `POST /api/v1/agent/conversations/{conversation_id}/messages` | — | `—` | `post_conversation_message` |
+| `DELETE /api/v1/agent/conversations/{conversation_id}/queue/{turn_id}` | — | `—` | `cancel_queued_message` |
+| `PATCH /api/v1/agent/conversations/{conversation_id}/queue/{turn_id}` | — | `—` | `edit_queued_message` |
+| `POST /api/v1/agent/conversations/{conversation_id}/queue/{turn_id}/promote` | — | `—` | `promote_queued_message` |
+| `DELETE /api/v1/agent/conversations/{conversation_id}/share` | — | `—` | `revoke_conversation_share` |
+| `POST /api/v1/agent/conversations/{conversation_id}/share` | — | `—` | `share_conversation` |
+| `GET /api/v1/agent/conversations/{conversation_id}/turns/{turn_id}` | — | `—` | `get_conversation_turn` |
+| `GET /api/v1/agent/options` | — | `—` | `get_conversation_options` |
 | `GET /api/v1/agent/runs/{run_id}` | Read the current Agent run by identity | `—` | `get_agent_run` |
 | `POST /api/v1/agent/runs/{run_id}/cancel` | Cancel only the referenced Agent run | `ControlCommandResponse` | `cancel_agent_run` |
+| `GET /api/v1/agent/shares/{token}` | — | `—` | `get_shared_conversation` |
 | `POST /api/v1/estop/reset` | Explicitly release the native software emergency-stop latch | `ControlCommandResponse` | `post_estop_reset` |
 | `GET /api/v1/follow/{follow_task_id}` | Read one Follow execution | `—` | `get_follow_task` |
 | `POST /api/v1/follow/{follow_task_id}/cancel` | Cancel one Follow execution | `ControlCommandResponse` | `cancel_follow_task` |
@@ -773,6 +925,15 @@ Each source file has one complete table; the rows are the route contract.
 | `GET /api/v1/inspection/tasks/{task_id}/report` | Read the business result of one inspection task | `InspectionTaskReportResponse` | `get_inspection_task_report` |
 | `POST /api/v1/inspection/tasks/{task_id}/resume` | Request resume for one native inspection task | `InspectionTaskCommandResponse` | `resume_inspection_task` |
 
+### src/gateway/routes/inspection_schedules.py
+
+| Route | Summary | Response model | Handler |
+| --- | --- | --- | --- |
+| `GET /api/v1/inspection/schedules` | — | `—` | `list_inspection_schedules` |
+| `POST /api/v1/inspection/schedules` | — | `—` | `create_inspection_schedule` |
+| `DELETE /api/v1/inspection/schedules/{schedule_id}` | — | `—` | `delete_inspection_schedule` |
+| `PUT /api/v1/inspection/schedules/{schedule_id}` | — | `—` | `update_inspection_schedule` |
+
 ### src/gateway/routes/measurements.py
 
 | Route | Summary | Response model | Handler |
@@ -781,6 +942,19 @@ Each source file has one complete table; the rows are the route contract.
 | `GET /api/v1/measurements/{sensor_id}` | — | `—` | `get_measurement` |
 | `GET /api/v1/measurements/{sensor_id}/preview` | — | `—` | `get_measurement_preview` |
 | `GET /api/v1/measurements/{sensor_id}/raw` | — | `—` | `get_raw_measurement` |
+
+### src/gateway/routes/observations.py
+
+| Route | Summary | Response model | Handler |
+| --- | --- | --- | --- |
+| `GET /api/v1/robot/capabilities` | — | `—` | `robot_capabilities` |
+| `GET /api/v1/robot/imu/live` | Live samples from the selected robot IMU adapter | `—` | `imu_live` |
+| `GET /api/v1/robot/imu/records` | List saved IMU monitoring records | `—` | `imu_records` |
+| `POST /api/v1/robot/imu/records` | Start durable IMU monitoring record | `—` | `start_imu_record` |
+| `GET /api/v1/robot/imu/records/{identity}` | Review a recorded IMU trace | `—` | `imu_record` |
+| `GET /api/v1/robot/imu/records/{identity}/download` | Download complete IMU samples as CSV or JSONL | `—` | `imu_download` |
+| `POST /api/v1/robot/imu/records/{identity}/stop` | Stop exactly this IMU record | `—` | `stop_imu_record` |
+| `GET /api/v1/robot/sensors/{sensor}` | — | `—` | `robot_sensor` |
 
 ### src/gateway/routes/operations.py
 
@@ -809,7 +983,8 @@ Each source file has one complete table; the rows are the route contract.
 | --- | --- | --- | --- |
 | `GET /api/v1/product-control` | — | `—` | `control_status` |
 | `GET /api/v1/product-control/operations/{request_id}` | — | `—` | `control_operation` |
-| `POST /api/v1/product-control/switch` | — | `—` | `control_switch` |
+| `POST /api/v1/product-control/stop` | — | `—` | `control_mutation` |
+| `POST /api/v1/product-control/switch` | — | `—` | `control_mutation` |
 
 ### src/gateway/routes/realtime.py
 
@@ -872,7 +1047,7 @@ Each source file has one complete table; the rows are the route contract.
 | `GET /api/v1/webrtc/status` | Probe the selected media endpoint and camera display configuration | `WebRTCStatusResponse` | `media_status` |
 | `POST /api/v1/webrtc/whep` | Negotiate a video receiver with the media endpoint | `—` | `offer` |
 
-### src/gateway/video_test.py
+### src/gateway/video_probe.py
 
 | Route | Summary | Response model | Handler |
 | --- | --- | --- | --- |

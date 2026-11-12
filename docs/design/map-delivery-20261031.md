@@ -39,7 +39,7 @@
 
 - [x] 在 [surface_graph.cpp](../../src/nav/cpp/planning/global/octoplanner/surface_graph.cpp) 修正跨高度邻接候选范围。额外邻域只考虑升降候选，保留原步高、坡度与连续三维查询；未增加平地边或新参数。真实 GEODE 失败仍需独立定位。
 - [x] 在已有路网和准备地图回归中覆盖 5/10/20 cm、上下行、超坡度、墙体和分离楼层。红绿证据及九项回归位于 `build/surface-hop-20261101/`。
-- [ ] 在 [surface.cpp](../../src/nav/cpp/planning/global/octoplanner/surface.cpp) 评估按米定义补面证据范围。当前 XYZ 各 ±3 格随 5→10 cm 扩为 ±15→±30 cm，合成 50 cm 地面回波缺口因此获得推断支撑。
+- [ ] 在 [SurfaceIndex](../../src/maps/cpp/layers/surface.cpp) 评估按米定义补面证据范围。原 `octoplanner/surface.cpp` 已移入地图层；2026-11-01 对照中的 XYZ 各 ±3 格随 5→10 cm 扩为 ±15→±30 cm，合成 50 cm 地面回波缺口因此获得推断支撑。
 - [ ] 重跑缺口、小洞、台阶与双层场景，同时加入有向下观测的落差。记录观测支撑与推断支撑，避免把缺回波直接标为真实断崖。
 
 完成条件是跨高度连接回归通过、原有真实障碍与分离楼层回归保留，并逐例说明缺口接纳的依据。对固定 GEODE 28 请求重新计数，仍失败的请求继续留在后续分析中。
