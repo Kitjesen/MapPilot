@@ -86,19 +86,26 @@ else()
   )
 endif()
 
+if(NOT TARGET lingtu_maps_surface)
+  add_library(lingtu_maps_surface STATIC "${LINGTU_NAV_CPP_DIR}/../../maps/cpp/layers/surface.cpp")
+  target_include_directories(lingtu_maps_surface PUBLIC "${LINGTU_NAV_CPP_DIR}/../../maps/include")
+  target_link_libraries(lingtu_maps_surface PUBLIC "$<BUILD_INTERFACE:lingtu_settings>" octomap_vendor octomath_vendor)
+endif()
+
 add_library(octoplanner3d_global_planner STATIC
   "${OCTOPLANNER3D_SOURCE_DIR}/planner/src/global_planner.cpp"
-  surface.cpp
   surface_graph.cpp
   route_smoothing.cpp
 )
 target_include_directories(octoplanner3d_global_planner
   PUBLIC
+    "${LINGTU_NAV_CPP_DIR}/../../maps/include"
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${OCTOPLANNER3D_SOURCE_DIR}/planner/include"
     "${OCTOPLANNER3D_SOURCE_DIR}/octomap/include"
 )
 target_link_libraries(octoplanner3d_global_planner
+  PUBLIC lingtu_maps_surface
   PUBLIC "$<BUILD_INTERFACE:lingtu_settings>"
   PUBLIC
     octomap_vendor
@@ -132,6 +139,7 @@ endif()
 
 add_library(octoplanner3d_runtime STATIC
   octoplanner3d_core.cpp
+  prepared.cpp
 )
 target_include_directories(octoplanner3d_runtime
   PUBLIC
@@ -144,6 +152,13 @@ target_link_libraries(octoplanner3d_runtime
   PRIVATE
     octoplanner3d_global_planner
 )
+if(TARGET lingtu_maps_artifacts)
+  target_link_libraries(octoplanner3d_runtime PRIVATE lingtu_maps_artifacts)
+else()
+  target_sources(octoplanner3d_runtime PRIVATE
+    "${LINGTU_NAV_CPP_DIR}/../../maps/cpp/storage/no_go.cpp"
+    "${LINGTU_NAV_CPP_DIR}/../../maps/cpp/io/json.cpp")
+endif()
 if(OCTOPLANNER3D_RUNTIME_ENABLE_PCD_INPUT AND NOT OCTOPLANNER3D_ENABLE_PCD)
   message(FATAL_ERROR
     "OCTOPLANNER3D_RUNTIME_ENABLE_PCD_INPUT=ON requires the PCL-backed converter")
@@ -273,6 +288,14 @@ if(BUILD_TESTING)
       -P "${CMAKE_CURRENT_LIST_DIR}/edit_octomap_smoke.cmake")
 
   add_executable(octoplanner3d_no_air_climb_smoke no_air_climb_smoke.cpp)
+  add_executable(octoplanner3d_no_go_smoke no_go_smoke.cpp)
+  add_executable(octoplanner3d_prepared_cache_smoke prepared_cache_smoke.cpp)
+  target_include_directories(octoplanner3d_prepared_cache_smoke PRIVATE "${LINGTU_NAV_CPP_DIR}/../../maps/include")
+  target_link_libraries(octoplanner3d_prepared_cache_smoke PRIVATE octoplanner3d_runtime octomap_vendor octomath_vendor)
+  add_test(NAME octoplanner3d_prepared_cache_smoke COMMAND octoplanner3d_prepared_cache_smoke)
+  target_include_directories(octoplanner3d_no_go_smoke PRIVATE "${LINGTU_NAV_CPP_DIR}/../../maps/include")
+  target_link_libraries(octoplanner3d_no_go_smoke PRIVATE octoplanner3d_runtime octomap_vendor octomath_vendor)
+  add_test(NAME octoplanner3d_no_go_smoke COMMAND octoplanner3d_no_go_smoke)
   target_link_libraries(octoplanner3d_no_air_climb_smoke
     PRIVATE
       octoplanner3d_runtime

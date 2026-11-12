@@ -4,9 +4,12 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+
+namespace lingtu::maps { struct NoGoRegion; }
 
 namespace lingtu::nav::plan {
 
@@ -38,6 +41,8 @@ struct GlobalPlanTemporaryOverlay {
 
 struct GlobalPlannerOptions {
   double surface_closing_radius_m{::lingtu::settings::global::native_nav::global::surface_closing_radius_m};
+  double surface_max_hole_area_m2{::lingtu::settings::global::native_nav::global::surface_max_hole_area_m2};
+  double surface_max_slope{::lingtu::settings::global::native_nav::global::surface_max_slope};
   double search_resolution_m{::lingtu::settings::global::native_nav::global::search_resolution_m};
   double robot_radius{0.25};
   double body_clearance_below_m{0.0};
@@ -49,7 +54,6 @@ struct GlobalPlannerOptions {
   // default. A single missing floor voxel must not block an otherwise
   // supported stance; strict direct support remains available for diagnostics.
   bool direct_support_only{::lingtu::settings::global::native_nav::global::direct_support_only};
-  int support_radius_cells{::lingtu::settings::global::native_nav::global::support_radius_cells};
   int support_depth_cells{::lingtu::settings::global::native_nav::global::support_depth_cells};
   double support_height_m{::lingtu::settings::global::standalone::native_nav::global::support_height_m};
   double support_height_tolerance_m{::lingtu::settings::global::standalone::native_nav::global::support_height_tolerance_m};
@@ -94,6 +98,7 @@ struct GlobalPlanRequest {
   MapIdentity map_identity{};
   std::uint64_t map_generation{0U};
   GlobalPlanTemporaryOverlay temporary_overlay{};
+  std::shared_ptr<const std::vector<lingtu::maps::NoGoRegion>> no_go_regions{};
 };
 
 struct GlobalPlanResult {

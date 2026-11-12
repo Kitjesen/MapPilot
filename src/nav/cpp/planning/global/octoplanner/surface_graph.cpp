@@ -3,6 +3,7 @@
 // This C++ adaptation uses LingTu's three-dimensional pose and segment queries.
 #include "surface_graph.hpp"
 #include "route_smoothing.hpp"
+#include "lingtu/maps/io/binary.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -23,6 +24,84 @@ constexpr double infinity = std::numeric_limits<double>::infinity();
 GridIndex SurfaceGraph::key(const PointPose &point) const {
   return {static_cast<int>(std::floor(point.x/resolution_+1e-7)),
           static_cast<int>(std::floor(point.y/resolution_+1e-7)),0};
+}
+
+void SurfaceGraph::write(lingtu::maps::BinaryWriter& out) const {
+  out.value(resolution_);out.value<std::uint64_t>(cells_.size());
+  for(const auto& point:cells_){out.value(point.x);out.value(point.y);out.value(point.z);}
+  out.value<std::uint64_t>(neighbors_.size());
+  for(const auto& links:neighbors_) {
+    out.value<std::uint64_t>(links.size());
+    for(const auto& link:links){out.value<std::int32_t>(link.to);out.value(link.cost);}
+  }
+  out.vector(nodes_);out.vector(owner_);out.vector(predecessor_);out.vector(distances_);
+  out.value<std::uint64_t>(edges_.size());
+  for(const auto& edge:edges_) {
+    out.value<std::int32_t>(edge.a);out.value<std::int32_t>(edge.b);out.value(edge.cost);out.vector(edge.cells);
+  }
+  out.value<std::uint64_t>(node_edges_.size());
+  for(const auto& edges:node_edges_)out.vector(edges);
+}
+
+std::shared_ptr<SurfaceGraph> SurfaceGraph::read(lingtu::maps::BinaryReader& in,const PlannerConfig& config) {
+  auto graph=std::shared_ptr<SurfaceGraph>(new SurfaceGraph);
+  graph->config_=config;graph->resolution_=in.value<double>();
+  if(!std::isfinite(graph->resolution_) || graph->resolution_<=0)
+    throw std::runtime_error("invalid prepared graph resolution");
+  const auto cells=in.count(24);graph->cells_.reserve(cells);
+  for(std::size_t i=0;i<cells;++i) {
+    PointPose point{in.value<double>(),in.value<double>(),in.value<double>()};
+    if(!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z))
+      throw std::runtime_error("invalid prepared graph position");
+    graph->columns_[graph->key(point)].push_back(static_cast<int>(i));graph->cells_.push_back(point);
+  }
+  const auto neighbors=in.count(8);
+  if(neighbors!=cells)throw std::runtime_error("invalid prepared adjacency size");
+  graph->neighbors_.resize(neighbors);
+  const auto index=[](int id,std::size_t size) {
+    if(id<0 || static_cast<std::size_t>(id)>=size)throw std::runtime_error("invalid prepared graph index");
+  };
+  for(auto& links:graph->neighbors_) {
+    const auto count=in.count(12);links.reserve(count);
+    for(std::size_t i=0;i<count;++i) {
+      const auto to=in.value<std::int32_t>();const auto cost=in.value<double>();index(to,cells);
+      if(!std::isfinite(cost) || cost<=0)throw std::runtime_error("invalid prepared edge cost");
+      links.push_back({to,cost});
+    }
+  }
+  graph->nodes_=in.vector<int>();graph->owner_=in.vector<int>();
+  graph->predecessor_=in.vector<int>();graph->distances_=in.vector<double>();
+  const auto nodes=graph->nodes_.size();
+  if(graph->owner_.size()!=cells || graph->predecessor_.size()!=cells || graph->distances_.size()!=cells)
+    throw std::runtime_error("invalid prepared graph ownership size");
+  for(int id:graph->nodes_)index(id,cells);
+  for(std::size_t i=0;i<cells;++i) {
+    index(graph->owner_[i],nodes);
+    if(!std::isfinite(graph->distances_[i]) || graph->distances_[i]<0)
+      throw std::runtime_error("invalid prepared graph distance");
+    const int parent=graph->predecessor_[i];
+    if(parent!=-1) {
+      index(parent,cells);
+      if(graph->distances_[parent]>=graph->distances_[i])
+        throw std::runtime_error("cyclic prepared graph predecessor");
+    }
+  }
+  const auto edges=in.count(24);graph->edges_.reserve(edges);
+  for(std::size_t i=0;i<edges;++i) {
+    const auto a=in.value<std::int32_t>(),b=in.value<std::int32_t>();
+    const auto cost=in.value<double>();auto chain=in.vector<int>();index(a,nodes);index(b,nodes);
+    if(!std::isfinite(cost) || cost<0 || chain.empty())throw std::runtime_error("invalid prepared corridor");
+    for(int id:chain)index(id,cells);
+    graph->edges_.push_back({a,b,cost,std::move(chain)});
+  }
+  const auto adjacency=in.count(8);
+  if(adjacency!=nodes)throw std::runtime_error("invalid prepared node adjacency");
+  graph->node_edges_.reserve(adjacency);
+  for(std::size_t i=0;i<adjacency;++i) {
+    auto links=in.vector<int>();for(int id:links)index(id,edges);
+    graph->node_edges_.push_back(std::move(links));
+  }
+  return graph;
 }
 
 SurfaceGraph::SurfaceGraph(std::vector<PointPose> surfaces, double resolution,
@@ -59,7 +138,7 @@ SurfaceGraph::SurfaceGraph(std::vector<PointPose> surfaces, double resolution,
         if(hop>stride && rise<1e-6)continue;
         const double run=std::hypot(b.x-a.x,b.y-a.y);
         if((config.max_step_height>0 && rise>config.max_step_height+1e-6) ||
-           (config.max_slope>0 && rise>config.max_slope*run+1e-6))continue;
+           (config.support_height_m<=0 && config.max_slope>0 && rise>config.max_slope*run+1e-6))continue;
         if(!edge_check(a,b))continue;
         const double cost=distance(a,b)+std::max(0.,config.floor_change_penalty)*rise;
         neighbors_[i].push_back({j,cost});neighbors_[j].push_back({i,cost});
@@ -165,9 +244,6 @@ std::vector<SurfaceGraph::Attachment> SurfaceGraph::attachments(const PointPose 
     for(int id:col->second) {
       const auto &p=cells_[id];const double d=distance(point,p);
       if(d>radius+1e-6)continue;
-      if(goal && (d>config_.terminal_goal_tolerance_m+1e-6 ||
-          std::hypot(p.x-point.x,p.y-point.y)>config_.terminal_goal_xy_tolerance_m+1e-6 ||
-          std::abs(p.z-point.z)>config_.terminal_goal_z_tolerance_m+1e-6))continue;
       candidates.push_back({d,id});
     }
   }
@@ -180,7 +256,9 @@ std::vector<SurfaceGraph::Attachment> SurfaceGraph::attachments(const PointPose 
     std::vector<PointPose> path{point};
     for(int cell:chain)path.push_back(cells_[cell]);
     auto entry=std::vector<PointPose>{point,cells_[id]};
-    if(goal || checkRoute(entry,check,cancelled))
+    // The terminal is already resolved; this connector must reach it exactly.
+    if(goal)std::reverse(entry.begin(),entry.end());
+    if(checkRoute(entry,check,cancelled))
       out.push_back({owner_[id],d+distances_[id],std::move(path),id,1});
   }
   if(out.empty() && !candidates.empty())
@@ -258,7 +336,8 @@ std::optional<SurfaceGraph::Attachment> SurfaceGraph::localAttachment(
 }
 
 std::vector<PointPose> SurfaceGraph::plan(const PointPose &start,const PointPose &goal,
-    const EdgeCheck &check,const CancelCheck &cancelled) const {
+    const EdgeCheck &check,const CancelCheck &cancelled,const EdgeCheck &prepared_edge_check) const {
+  const auto &edge_check=prepared_edge_check ? prepared_edge_check : check;
   if(nodes_.empty() || (cancelled&&cancelled()))return {};
   const auto starts=attachments(start,false,check,cancelled);
   const auto goals=attachments(goal,true,check,cancelled);
@@ -303,7 +382,7 @@ std::vector<PointPose> SurfaceGraph::plan(const PointPose &start,const PointPose
       auto chain=edge.cells;if(!forward)std::reverse(chain.begin(),chain.end());
       std::vector<PointPose> segment;
       for(int cell:chain)segment.push_back(cells_[cell]);
-      if (!checkRoute(segment,check,cancelled)) continue;
+      if (!checkRoute(segment,edge_check,cancelled)) continue;
       auto &next=states[next_label];
       next.cost=cost+edge.cost;
       next.parent=label;
@@ -326,7 +405,7 @@ std::vector<PointPose> SurfaceGraph::plan(const PointPose &start,const PointPose
     for(const auto &point:terminal)
       if(path.empty() || distance(path.back(),point)>1e-7)path.push_back(point);
     if(!path.empty())path.back().yaw=goal.yaw ? goal.yaw : terminal.back().yaw;
-    auto refined=searchCells(starts,goals,allowed,check,cancelled,iterations,best);
+    auto refined=searchCells(starts,goals,allowed,check,cancelled,iterations,best,edge_check);
     const auto length=[](const auto &points) {
       double total=0;
       for(std::size_t i=1;i<points.size();++i)total+=distance(points[i-1],points[i]);
@@ -337,12 +416,13 @@ std::vector<PointPose> SurfaceGraph::plan(const PointPose &start,const PointPose
   }
   // A blocked corridor can still have a detour through its support cells.
   iterations=0;
-  return searchCells(starts,goals,{},check,cancelled,iterations);
+  return searchCells(starts,goals,{},check,cancelled,iterations,infinity,edge_check);
 }
 
 std::vector<PointPose> SurfaceGraph::searchCells(const std::vector<Attachment> &starts,
     const std::vector<Attachment> &goals,const std::vector<bool> &allowed,
-    const EdgeCheck &check,const CancelCheck &cancelled,int &iterations,double upper) const {
+    const EdgeCheck &check,const CancelCheck &cancelled,int &iterations,double upper,
+    const EdgeCheck &prepared_edge_check) const {
   struct State {
     double cost;
     int parent;
@@ -398,11 +478,11 @@ std::vector<PointPose> SurfaceGraph::searchCells(const std::vector<Attachment> &
       const auto &to=cells_[edge.to];
       const int next=edge.to;
       const double cost=state.cost+edge.cost;
-      const double estimate_cost=cost+estimate(edge.to);
-      if(estimate_cost>=upper)continue;
       const auto found=states.find(next);
       if(found!=states.end() && found->second.cost<=cost)continue;
-      if(!check(from,to))continue;
+      const double estimate_cost=cost+estimate(edge.to);
+      if(estimate_cost>=upper)continue;
+      if(!prepared_edge_check(from,to))continue;
       states.insert_or_assign(next,State{cost,cell,state.origin});
       queue.push({{next,0,0},estimate_cost,cost});
     }

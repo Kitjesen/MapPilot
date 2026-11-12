@@ -12,5 +12,9 @@ LingTu's 3D support, step/slope and cylinder checks, and retains native XYZ
 search when a cached static corridor cannot serve current observations.
 The Python/Rust bindings and Rust runtime dependencies are not included.
 
+2026-11-08: SurfaceIndex moved to src/maps/cpp/layers/surface.cpp for reuse by
+navigation and mapd. Its current completion method and attribution are described
+in src/maps/SURFACE_NOTICE. SurfaceGraph and route smoothing remain here.
+
 The existing OctoPlanner3D source remains under its accompanying MIT LICENSE.
 The applicable Apache 2.0 terms for this adaptation are in LICENSE-Apache-2.0.

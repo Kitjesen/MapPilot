@@ -24,6 +24,8 @@
 #include <vector>
 
 #include "octomap/OcTree.h"
+#include "lingtu/maps/no_go.hpp"
+#include "lingtu/maps/layers/surface.hpp"
 
 namespace global_planner
 {
@@ -95,6 +97,8 @@ struct ExternalBlockedRegion
 struct PlannerConfig
 {
   double surface_closing_radius_m{::lingtu::settings::global::native_nav::global::surface_closing_radius_m};
+  double surface_max_hole_area_m2{::lingtu::settings::global::native_nav::global::surface_max_hole_area_m2};
+  double surface_max_slope{::lingtu::settings::global::native_nav::global::surface_max_slope};
   double search_resolution_m{::lingtu::settings::global::native_nav::global::search_resolution_m};
   double robot_radius{0.20};
   double body_clearance_below_m{0.0};
@@ -105,10 +109,8 @@ struct PlannerConfig
   double terminal_goal_xy_tolerance_m{::lingtu::settings::global::native_nav::global::terminal_xy_tolerance_m};
   double terminal_goal_z_tolerance_m{::lingtu::settings::global::native_nav::global::terminal_z_tolerance_m};
   bool ground_support{::lingtu::settings::global::native_nav::global::ground_support};
-  // Normal navigation interpolates holes enclosed by neighbouring support.
-  // Direct-only support is an explicit diagnostic mode, not the default.
+  // Normal navigation consumes prepared inferred support; direct-only is diagnostic.
   bool direct_support_only{::lingtu::settings::global::native_nav::global::direct_support_only};
-  int support_radius_cells{::lingtu::settings::global::native_nav::global::support_radius_cells};
   int support_depth_cells{::lingtu::settings::global::native_nav::global::support_depth_cells};
   double support_height_m{::lingtu::settings::global::standalone::native_nav::global::support_height_m};
   double support_height_tolerance_m{::lingtu::settings::global::standalone::native_nav::global::support_height_tolerance_m};
@@ -125,9 +127,20 @@ struct PlannerConfig
   double same_floor_z_tolerance{::lingtu::settings::global::native_nav::global::same_floor_z_tolerance_m};
   int obstacle_clearance_radius_cells{::lingtu::settings::global::native_nav::global::obstacle_clearance_radius_cells};
   double obstacle_clearance_weight{::lingtu::settings::global::native_nav::global::obstacle_clearance_weight};
+
+  std::array<double,23> preparation() const {
+    return {surface_closing_radius_m,surface_max_hole_area_m2,surface_max_slope,
+      search_resolution_m,robot_radius,body_clearance_below_m,body_clearance_above_m,
+      double(ground_support),double(direct_support_only),double(support_depth_cells),
+      support_height_m,support_height_tolerance_m,double(support_patch_radius_cells),
+      double(support_patch_min_samples),double(enable_preblocked_costmap),
+      double(preblocked_costmap_radius_cells),preblocked_costmap_weight,
+      double(lowest_traversable_only),floor_change_penalty,max_step_height,max_slope,
+      double(obstacle_clearance_radius_cells),obstacle_clearance_weight};
+  }
 };
 
-class SurfaceIndex;
+using SurfaceIndex = lingtu::maps::layers::SurfaceIndex;
 class SurfaceGraph;
 
 class OctoPlanner3D
@@ -174,6 +187,7 @@ public:
   ~OctoPlanner3D();
 
   void setConfig(const PlannerConfig & config);
+  void setQuery(const PlannerConfig & config);
 
   void setCancelCheck(std::function<bool()> cancel_check);
   void setStartExemption(std::function<bool(const PointPose &, double)> check) {
@@ -182,8 +196,12 @@ public:
   const octomap::OcTree &map() const { return *octree_; }
 
   void setExternalPreblockedRegions(std::vector<ExternalBlockedRegion> regions);
+  void setNoGoRegions(std::shared_ptr<const std::vector<lingtu::maps::NoGoRegion>> regions);
 
-  void setOctomap(std::shared_ptr<octomap::OcTree> map);
+  void setOctomap(std::shared_ptr<octomap::OcTree> map,
+                 std::shared_ptr<const SurfaceIndex> surface = {},
+                 std::shared_ptr<SurfaceGraph> graph = {});
+  void writePrepared(lingtu::maps::BinaryWriter& out) const;
 
   void makePlan(const PointPose start,const PointPose goal);
 
@@ -247,7 +265,7 @@ private:
   double planningXYResolution() const;
   double planningZResolution() const;
   GridIndex worldToPlanningGrid(double x, double y, double z) const;
-  void anchorPlanningLattice(const PointPose & point);
+  void anchorPlanningLattice(const PointPose & point, double resolution = 0.0);
   octomap::point3d planningPoint(const GridIndex & idx) const;
   TraversabilityFailure queryWorld(const octomap::point3d &point, double radius,
                                    bool require_support, bool check_body = true) const;
@@ -257,17 +275,15 @@ private:
     octomap::point3d *failed_point = nullptr, bool check_body = true,
     bool endpoints_validated = false, bool require_support = true) const;
   PointPose planning_offset_{};
+  double planning_resolution_m_{0.0};
 
   bool isInsideMetricBounds(const GridIndex & idx) const;
 
   bool hasGroundSupport(
     const GridIndex & idx,
     bool direct_support_only,
-    int support_xy_radius_cells,
     int support_depth_cells,
-    double centre_offset = 0.0,
-    double centre_offset_x = 0.0,
-    double centre_offset_y = 0.0) const;
+    double centre_offset = 0.0) const;
   std::pair<int, int> supportDepthRange(int support_depth_cells, double centre_offset = 0.0) const;
   bool isSupportPatch(const GridIndex & support) const;
   bool isSupportCell(const GridIndex & support) const;
@@ -292,6 +308,8 @@ private:
   bool isPreblockedCell(const GridIndex & idx) const;
 
   void rebuildExternalPreblockedCells();
+  bool noGoIntersects(const octomap::point3d &from, const octomap::point3d &to,
+                      double radius) const;
 
   double getPreblockedCost(const GridIndex & idx) const;
 
@@ -313,7 +331,6 @@ private:
     double robot_radius,
     bool ground_support,
     bool direct_support_only,
-    int support_xy_radius_cells,
     int support_depth_cells) const;
 
   bool isCellTraversableDetailed(
@@ -321,7 +338,6 @@ private:
     double robot_radius,
     bool ground_support,
     bool direct_support_only,
-    int support_xy_radius_cells,
     int support_depth_cells,
     TraversabilityFailure * failure) const;
 
@@ -330,7 +346,6 @@ private:
     double robot_radius,
     bool ground_support,
     bool direct_support_only,
-    int support_xy_radius_cells,
     int support_depth_cells,
     TraversabilityFailure * failure) const;
 
@@ -340,13 +355,13 @@ private:
     int radius_cells,
     bool ground_support,
     bool direct_support_only,
-    int support_xy_radius_cells,
     int support_depth_cells,
     GridIndex & out,
     const PointPose * reference = nullptr,
     const PointPose * connection_start = nullptr,
     TraversabilityFailure *start_failure = nullptr) const;
 
+  bool resolveGoal();
   bool resolvePlanEndpoints(GridIndex & start, GridIndex & goal);
 
   std::vector<GridIndex> make26Directions() const;
@@ -356,7 +371,9 @@ private:
     GridIndex current) const;
 
   bool startPlan();
-  bool routeConnectionFree(const PointPose &from, const PointPose &to) const;
+  bool searchGrid(int max_iterations);
+  bool routeConnectionFree(const PointPose &from, const PointPose &to,
+                           bool endpoints_validated = false) const;
 
   double euclidean(const GridIndex & a, const GridIndex & b)
   {
@@ -379,7 +396,6 @@ private:
   double terminal_goal_z_tolerance_m_ = PlannerConfig{}.terminal_goal_z_tolerance_m;
   bool ground_support_ = PlannerConfig{}.ground_support;
   bool direct_support_only_ = PlannerConfig{}.direct_support_only;
-  int support_radius_cells_ = PlannerConfig{}.support_radius_cells;
   int support_depth_cells_ = PlannerConfig{}.support_depth_cells;
   double support_height_m_ = PlannerConfig{}.support_height_m;
   double support_height_tolerance_m_ = PlannerConfig{}.support_height_tolerance_m;
@@ -404,7 +420,6 @@ private:
 
   PointPose start_point_;
   PointPose goal_point_;
-  bool goal_connected_{false};
 
   EndpointResolutionInfo endpoint_resolution_{};
   SearchInfo search_info_{};
@@ -415,7 +430,7 @@ private:
 
   std::shared_ptr<octomap::OcTree> octree_;
   std::shared_ptr<const SurfaceIndex> surface_index_;
-  std::shared_ptr<const SurfaceGraph> surface_graph_;
+  std::shared_ptr<SurfaceGraph> surface_graph_;
   PlannerConfig graph_config_;
 
   std::unordered_set<GridIndex, GridIndexHash> traversable_cells_;
@@ -430,6 +445,7 @@ private:
   mutable OccupancyBlock * last_occupied_block_{nullptr};
   mutable std::unordered_map<GridIndex, bool, GridIndexHash> preblocked_cache_;
   std::vector<ExternalBlockedRegion> external_preblocked_regions_;
+  std::shared_ptr<const std::vector<lingtu::maps::NoGoRegion>> no_go_regions_;
   std::unordered_set<GridIndex, GridIndexHash> external_preblocked_cells_;
   mutable std::unordered_map<GridIndex, double, GridIndexHash> preblocked_costmap_;
   mutable std::unordered_map<GridIndex, double, GridIndexHash> obstacle_clearance_costmap_;

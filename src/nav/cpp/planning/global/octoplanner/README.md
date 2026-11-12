@@ -40,20 +40,107 @@ callbacks, compound Body or raw terrain points. The local planner and final
 control own current collision evidence and the selected execution geometry.
 Terminal yaw remains an execution objective kept by the task layer.
 
+The planner resolves the requested terminal once at map XY spacing. A valid
+physical target is retained; otherwise the nearest valid candidate must satisfy
+all configured XYZ, XY and Z tolerances. Both the surface graph and grid search
+connect to that same resolved terminal. Graph attachment radius controls the
+connector search, not another choice of final goal. Lattice-indexed body and
+snap caches are cleared when the query lattice changes; validated grid vertices
+reuse their collision result while continuous edges are still checked.
+
+Prepared graph vertices use the nearest collision-free stance within the
+existing support-height band, including voxel extent, rather than forcing
+every vertex to exactly ground plus nominal body height. Static body clearance,
+support and metric edge limits are checked at construction. Query-time checks
+still apply the request start exemption, no-go policy and temporary overlays.
+This changes the derived graph, not the saved OctoMap or the completion limits.
+
+## Persistent preparation and query controls
+
+`PlannerSession` saves completed support columns, occupancy lookup blocks and
+the validated surface graph in `<map-directory>/.nav/profile-N.bin` after the
+first successful preparation. Later processes restore that artifact instead
+of fitting the same holes and constructing the same graph again. Preparation
+is lazy at navigation startup; saving a new raw map alone does not generate
+the graph. The original OctoMap and point cloud remain measured evidence;
+inferred support is stored separately inside the prepared artifact.
+
+`navd` supplies the original map directory explicitly because its planner reads
+a private immutable snapshot. That snapshot retains the original modification
+time, so a new temporary filename does not invalidate preparation. Cache files
+are replaceable derived data: an unsupported/truncated artifact is rebuilt,
+and an unwritable directory leaves planning usable but prevents reuse after
+restart. The binary format has an explicit version and endianness marker;
+it is not a public interchange format. Copy the map directory, including `.nav`,
+to retain prepared profiles; downloading only a PCD does not include them.
+
+| Change | Effect |
+| --- | --- |
+| Map identity/version or source size/modification time | Reject stale disk preparation |
+| Robot envelope, support-height band, support/completion rules, search spacing, step/slope or graph costs | Select a matching profile, otherwise rebuild and save |
+| Goal XYZ/XY/Z tolerances, attachment radius, iteration limit, same-floor query preference | Update the existing planner and graph query without rebuilding |
+| Start/goal, request cancellation deadline, no-go policy, temporary request overlay | Apply to this request; do not persist as static geometry |
+
+`PlannerConfig::preparation()` declares preparation inputs; `setQuery()` updates
+the live query consumers. Identical map/preparation inputs reuse static edge
+validation during graph search. New endpoint connectors and smoothing chords
+still receive full 3D checks, as does the assembled route before smoothing.
+Requests carrying no-go regions or a temporary overlay retain full per-edge
+checks. This optimization adds no real-time occupancy input to global planning.
+
+The matched 903 replay, graph visualization, cache roundtrip and native snapshot
+test are recorded in `artifacts/nav/903-persistent-20261110/README.md`. These are
+offline planning and native contract results, not field-motion acceptance.
+
 ## XYZ search and prepared surfaces
+
+LingTu's independent `no_go.json` policy is a local extension to the pinned
+OctoPlanner3D commit `9a9cc431ea905a5878975cc6fbbce6c9618b31a4` above. It is
+not an upstream default. User regions remain finite 3D boxes, separate from
+sensor occupancy. Global endpoint checks, traversable nodes and continuous
+route segments reject intersection with those regions using the configured
+cylindrical body clearance; no new obstacle margin is added. The swept check
+uses circle/rectangle distance in XY and bounded vertical overlap, so a box
+corner is not expanded into a square and a thin region cannot fall between
+path samples. The saved OctoMap is unchanged.
+
+The active-map gate captures the policy alongside its private OctoMap snapshot
+and supplies that same immutable policy to planning. Standalone `runPlan`,
+cached sessions and offline projections also read the sidecar when no explicit
+validated request policy is provided. Malformed sidecars fail map preparation.
+Removing a restriction only changes policy; measured occupied nodes remain.
 
 The pinned OctoPlanner3D search uses position states. LingTu adds cached
 multi-layer support surfaces, sparse corridors, continuous 3D connections
 and validated route shortening and smoothing. Coarse, fine and fallback
 search key states by position. Connections check static occupancy, support,
-step and slope limits at map resolution. The default XY search spacing is
-0.10 m. Queries reuse the topology prepared for the map and its configuration.
+step and slope limits at map resolution. The nominal XY search spacing is
+0.10 m. If that lattice exhausts its open set, the query retries once with XY
+spacing at the finer OctoMap resolution, the same geometry checks and remaining total
+iteration budget. Cancellation and iteration-limit failures do not retry.
+Queries reuse the topology prepared for the map and its configuration; the
+retry does not rebuild it, and the next request starts at nominal spacing.
+This coarse-first search is a LingTu extension; the pinned upstream searches
+the OctoMap grid directly.
 
-The default 0.20 m surface closing is applied independently at each height.
-Inferred support needs nearby occupied evidence and headroom. It remains in
-the support index, separate from the persisted OctoMap. Strict direct support
-disables inference. Surface preparation and smoothing adapt the workflow of
-DimOS MLS at `26144f7fd8424bdc33ab97dcd58e9497f2d413ee`.
+The shared Maps SurfaceIndex selects bounded internal holes independently for
+each expected height sheet, fits the observed boundary and excludes candidates
+whose original 3D ground cell is known free. The existing radius setting is
+0.20 m; maximum hole area is 0.16 m² and the surface-fit slope limit is 0.7
+(rise/run), separate from robot climb limits. Open boundaries and oversized
+holes are not completed. Inferred support remains separate from measured
+OctoMap occupancy; it never becomes new fitting evidence. Support queries and
+smoothing use the prepared observed/inferred column and retain vertical
+tolerance; they no longer perform a second angular-neighbor fill. The obsolete
+`support_radius_cells` / `--octo-support-radius-cells` / environment setting was
+removed from current configs, launch adapters and tools. Recreate old RunPlans;
+use the physical surface radius and area options for completion. Direct-only
+mode disables inference.
+Map or surface-option changes rebuild the index and graph; this is a complete
+rebuild, not per-frame regional updating. The original DimOS workflow at
+`26144f7fd8424bdc33ab97dcd58e9497f2d413ee` and bounded-hole selection from
+elevation_mapping_cupy `d9e1c9fe42ea3d463519333a443da99f680adde8` inform this
+local implementation. See `src/maps/SURFACE_NOTICE` and the 2026-11-08 report.
 
 ## Saved point-cloud conversion
 

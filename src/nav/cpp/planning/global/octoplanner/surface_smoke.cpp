@@ -1,4 +1,4 @@
-#include "surface.hpp"
+#include "global_planner.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -32,7 +32,7 @@ struct OctoPlannerGridQueryTest {
     PlannerConfig config;
     config.robot_radius=.1; config.body_clearance_below_m=.1; config.body_clearance_above_m=.25;
     config.support_height_m=.35; config.support_height_tolerance_m=.05;
-    config.support_radius_cells=0; config.surface_closing_radius_m=0;
+    config.surface_closing_radius_m=0;
     OctoPlanner3D planner;
     planner.setConfig(config); planner.setOctomap(tree);
     const octomap::point3d body(.025,.025,.35);
@@ -41,6 +41,64 @@ struct OctoPlannerGridQueryTest {
     config.surface_closing_radius_m=.2; planner.setConfig(config);
     require(planner.queryWorld(body,.1,true)==OctoPlanner3D::TraversabilityFailure::None,
             "updated closing radius did not repair planner support");
+    const auto oldSurface=planner.supportSurface();
+    const auto oldGraph=planner.surface_graph_;
+    auto visibleHole=std::make_shared<octomap::OcTree>(*tree);
+    visibleHole->updateNode(.025,.025,-.025,false);
+    planner.setOctomap(visibleHole);
+    require(!planner.supportSurface()->inferred(0,0,-1,-1) &&
+            !planner.supportSurface()->height({.025,.025,0},.01),
+            "replacement free evidence retained old inferred height");
+    require(planner.queryWorld(body,.1,true)==OctoPlanner3D::TraversabilityFailure::GroundSupport,
+            "replacement free evidence retained cached planner support");
+    require(oldGraph && planner.surface_graph_ && oldGraph!=planner.surface_graph_ &&
+            oldSurface!=planner.supportSurface(),
+            "map replacement reused the old surface graph or index");
+    require(oldSurface->inferred(0,0,-1,-1), "map replacement mutated a retained surface snapshot");
+    planner.setOctomap(tree);
+
+    auto oneCellHole=std::make_shared<octomap::OcTree>(.05);
+    for (int x=-12;x<=12;++x) for (int y=-12;y<=12;++y)
+      if (x || y) oneCellHole->updateNode((x+.5)*.05,(y+.5)*.05,-.025,true,true);
+    oneCellHole->updateNode(-2,-2,-1,false);
+    oneCellHole->updateNode(2,2,3,false);
+    oneCellHole->updateInnerOccupancy();
+    PlannerConfig completionConfig=config;
+
+    OctoPlanner3D completion;
+    completion.setConfig(completionConfig); completion.setOctomap(oneCellHole);
+    require(completion.queryWorld(body,.1,true)==OctoPlanner3D::TraversabilityFailure::None,
+            "prepared support rejected a closed one-cell hole");
+    auto aboveFloor=std::make_shared<octomap::OcTree>(*oneCellHole);
+    aboveFloor->updateNode(.025,.025,.025,false);
+    completion.setOctomap(aboveFloor);
+    require(completion.queryWorld(body,.1,true)==OctoPlanner3D::TraversabilityFailure::None,
+            "prepared support confused air above floor with missing ground");
+    auto freeFloor=std::make_shared<octomap::OcTree>(*aboveFloor);
+    freeFloor->updateNode(.025,.025,-.025,false);
+    completion.setOctomap(freeFloor);
+    require(completion.queryWorld(body,.1,true)==OctoPlanner3D::TraversabilityFailure::GroundSupport,
+            "prepared support bypassed contradictory free evidence");
+    freeFloor->updateNode(.025,.025,-.025,true);
+    freeFloor->updateNode(.025,.025,-.025,true);
+    completion.setOctomap(freeFloor);
+    require(completion.queryWorld(body,.1,true)==OctoPlanner3D::TraversabilityFailure::None,
+            "new observed ground did not restore default planner support");
+    for (bool through : {false,true}) {
+      auto slot=std::make_shared<octomap::OcTree>(.05);
+      for (int x=-12;x<=12;++x) for (int y=-12;y<=12;++y)
+        if (x || (!through && y>0)) slot->updateNode((x+.5)*.05,(y+.5)*.05,-.025,true,true);
+      slot->updateNode(-2,-2,-1,false);
+      slot->updateNode(2,2,3,false);
+      slot->updateInnerOccupancy();
+      completion.setOctomap(slot);
+      require(!completion.supportSurface()->inferred(0,0,-1,-1) &&
+              !completion.supportSurface()->height({.025,.025,0},.05) &&
+              completion.queryWorld(body,.1,true)==OctoPlanner3D::TraversabilityFailure::GroundSupport,
+              "open or through slot bypassed prepared support");
+      require(completion.queryWorld({.125,.025,.35},.1,true)==OctoPlanner3D::TraversabilityFailure::None,
+              "slot rejection removed real support beside it");
+    }
     config.surface_closing_radius_m=0; planner.setConfig(config);
     require(!planner.poseSupportFree({.025,.025,.35}), "disabled repair reused stale support");
 

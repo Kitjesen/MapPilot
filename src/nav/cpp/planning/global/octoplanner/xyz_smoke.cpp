@@ -25,7 +25,7 @@ int main() try {
   request.options.support_height_m = .35;
   request.options.support_height_tolerance_m = .05;
   request.options.direct_support_only = true;
-  request.options.support_radius_cells = 0;
+
   request.options.max_step_height = .15;
   request.options.max_iterations = 20000;
   request.options.terminal_goal_tolerance_m = .01;
@@ -61,6 +61,33 @@ int main() try {
       require(cancelled.cancelled && cancelled.path.empty(), "cancellation returned an executable route");
     } else {
       require(!result.ok, scene == 1 ? "XYZ route crossed a solid wall" : "XYZ route crossed a ground gap");
+    }
+  }
+  for (const int opening_cells : {6, 5}) {
+    octomap::OcTree narrow(.05);
+    for (int x=-20; x<20; ++x) for (int y=-12; y<12; ++y) for (int z=-1; z<16; ++z) {
+      const bool wall = x == 0 && z >= 0 && !(y >= 0 && y < opening_cells);
+      narrow.updateNode((x+.5)*.05, (y+.5)*.05, (z+.5)*.05, z == -1 || wall, true);
+    }
+    narrow.updateInnerOccupancy();
+    require(narrow.write(path.string()), "could not save narrow-passage fixture");
+    auto passage = request;
+    passage.start = {-.75, 0, .35, {}};
+    passage.goal = {.75, 0, .35, {}};
+    passage.options.search_resolution_m = .1;
+    passage.options.robot_radius = .13;
+    const auto result = r::runPlan(path, passage);
+    if (opening_cells == 6) {
+      // A 30 cm opening leaves a 4 cm centre corridor around y=0.15;
+      // the start-anchored 10 cm lattice samples y=0.10 and y=0.20.
+      require(result.ok && result.reached_goal,
+              "coarse search lost a collision-free passage between its samples");
+      passage.options.max_iterations = 1;
+      const auto limited = r::runPlan(path, passage);
+      require(!limited.ok && limited.failure_reason == "search_iteration_limit",
+              "refinement bypassed the request search budget");
+    } else {
+      require(!result.ok, "refinement crossed an opening smaller than the body");
     }
   }
   {

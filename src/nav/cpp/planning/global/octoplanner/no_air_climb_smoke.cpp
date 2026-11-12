@@ -210,7 +210,7 @@ octoplanner3d::runtime::PlannerOptions testOptions()
   options.robot_radius = 0.1;
   options.snap_search_radius_cells = 2;
   options.direct_support_only = true;
-  options.support_radius_cells = 1;
+
   options.support_depth_cells = 2;
   options.max_step_height = 0.45;
   options.max_slope = 0.0;
@@ -283,7 +283,7 @@ int main()
     auto support_footprint_options = testOptions();
     support_footprint_options.snap_search_radius_cells = 4;
     support_footprint_options.robot_radius = 0.1;
-    support_footprint_options.support_radius_cells = 2;
+
     const auto unsupported_edge_start = plan(
       map_path.string(),
       {center(-18), center(7), center(1)},
@@ -631,7 +631,7 @@ int main()
     auto hump_options = testOptions();
     hump_options.robot_radius = 0.05;
     hump_options.snap_search_radius_cells = 1;
-    hump_options.support_radius_cells = 0;
+
     hump_options.enable_preblocked_costmap = false;
     hump_options.obstacle_clearance_radius_cells = 0;
     const auto hump_result = plan(

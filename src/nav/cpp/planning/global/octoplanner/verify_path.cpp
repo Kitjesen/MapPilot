@@ -44,7 +44,7 @@ struct Args
     config.body_clearance_above_m = 0.10;
     config.ground_support = true;
     config.direct_support_only = false;
-    config.support_radius_cells = 1;
+
     config.support_depth_cells = 2;
     config.support_height_m = 0.35;
     config.support_height_tolerance_m = 0.05;
@@ -200,8 +200,6 @@ Args parseArgs(int argc, char ** argv)
       args.config.body_clearance_above_m = parseDouble(next(), option);
     else if (option == "--direct-support-only")
       args.config.direct_support_only = parseBool(next(), option);
-    else if (option == "--support-radius-cells")
-      args.config.support_radius_cells = parseInt(next(), option);
     else if (option == "--support-depth-cells")
       args.config.support_depth_cells = parseInt(next(), option);
     else if (option == "--search-resolution")
@@ -381,7 +379,7 @@ struct OctoPlannerGridQueryTest
             OctoPlanner3D::TraversabilityFailure::None :
         planner.isPlanningCellTraversableDetailed(
             cell, config.robot_radius, config.ground_support,
-            config.direct_support_only, config.support_radius_cells,
+            config.direct_support_only,
             config.support_depth_cells, &failure);
       if (!traversable) {
         result.reason = std::string("point_") + failureName(failure);

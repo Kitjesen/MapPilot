@@ -1,5 +1,4 @@
 #include "global_planner.h"
-#include "surface.hpp"
 #include "surface_graph.hpp"
 #include <cmath>
 #include <iostream>
@@ -23,15 +22,81 @@ std::shared_ptr<octomap::OcTree> fixture(bool closed_wall) {
 }
 namespace global_planner {
 struct OctoPlannerGridQueryTest {
+  static void checkBodyHeight(OctoPlanner3D& planner) {
+    const PointPose from{-.5,0,.325},to{-.43,0,.375};
+    require(planner.metricConnectionWithinLimits(from,to) && planner.routeConnectionFree(from,to),
+            "body-height change over the same floor was treated as a terrain slope");
+    require(!planner.metricConnectionWithinLimits(from,{-.4,0,.465}),
+            "body-height exception accepted an unsupported steep climb");
+    require(!planner.metricConnectionWithinLimits(from,{.5,0,.525}),
+            "body-height exception bypassed the step limit");
+    require(!planner.metricConnectionWithinLimits(from,{-.5,0,.375}),
+            "body-height exception accepted a vertical-only climb");
+    auto raised=fixture(false);
+    raised->updateNode(-.375,.025,.075,true);raised->updateInnerOccupancy();
+    OctoPlanner3D steps;steps.setConfig(planner.graph_config_);steps.setOctomap(raised);
+    require(!steps.metricConnectionWithinLimits({-.475,.025,.325},{-.375,.025,.425}),
+            "body-height exception ignored a real change in observed floor height");
+  }
+  static void checkLatticeCache(OctoPlanner3D &planner,const PointPose &start) {
+    planner.anchorPlanningLattice(start,.1);
+    const auto cell=planner.worldToPlanningGrid(.225,-.075,.325);
+    const bool before=planner.isPlanningCellTraversableDetailed(cell,planner.robot_radius_,true,true,2,nullptr);
+    require(before,"lattice cache fixture must start with a free supported cell");
+    planner.anchorPlanningLattice(start,.05);
+    const bool expected=planner.queryWorld(planner.planningPoint(cell),planner.robot_radius_,true)==
+        OctoPlanner3D::TraversabilityFailure::None;
+    require(!expected,"lattice cache fixture must change the physical cell");
+    require(planner.isPlanningCellTraversableDetailed(cell,planner.robot_radius_,true,true,2,nullptr)==expected,
+            "fine lattice reused a body result from a different physical position");
+  }
+  static void checkGoalPolicy(OctoPlanner3D &planner,const PointPose &start,const PointPose &goal) {
+    planner.makePlan(start,goal);
+    std::vector<PointPose> graph_path;planner.getPlannerResults(graph_path);
+    require(!graph_path.empty() && planner.searchInfo().used_surface_graph,
+            "graph rejected an in-tolerance terminal accepted by grid search");
+    const auto graph=planner.surface_graph_;planner.surface_graph_.reset();
+    planner.makePlan(start,goal);
+    std::vector<PointPose> grid_path;planner.getPlannerResults(grid_path);
+    planner.surface_graph_=graph;
+    require(!grid_path.empty(),"resolved terminal could not attach to grid search");
+    const auto &a=graph_path.back(),&b=grid_path.back();
+    require(std::hypot(a.x-b.x,a.y-b.y,a.z-b.z)<1e-6,
+            "graph and grid selected different terminal positions");
+    require(planner.queryWorld({float(b.x),float(b.y),float(b.z)},planner.robot_radius_,true)==
+                OctoPlanner3D::TraversabilityFailure::None,
+            "resolved terminal violates support or body geometry");
+    require(std::hypot(b.x-goal.x,b.y-goal.y,b.z-goal.z)<=planner.terminal_goal_tolerance_m_+1e-6 &&
+            std::hypot(b.x-goal.x,b.y-goal.y)<=planner.terminal_goal_xy_tolerance_m_+1e-6 &&
+            std::abs(b.z-goal.z)<=planner.terminal_goal_z_tolerance_m_+1e-6,
+            "resolved terminal exceeds a configured goal tolerance");
+  }
   static void checkPreparedSupport(OctoPlanner3D &planner) {
     const auto &graph=*planner.surface_graph_;
     require(!graph.cells_.empty(),"prepared support topology is empty");
     for(std::size_t i=0;i<graph.cells_.size();++i) {
-      require(planner.poseSupportFree(graph.cells_[i]),"prepared cell lacks 3-D support");
+      const auto &point=graph.cells_[i];
+      require(planner.queryWorld({float(point.x),float(point.y),float(point.z)},planner.robot_radius_,true)==
+                  OctoPlanner3D::TraversabilityFailure::None,
+              "prepared cell violates static support or body geometry");
       for(const auto &edge:graph.neighbors_[i])
-        require(planner.supportConnectionFree(graph.cells_[i],graph.cells_[edge.to]),
-                "prepared edge bypassed support or metric motion limits");
+        require(planner.routeConnectionFree(point,graph.cells_[edge.to]),
+                "prepared edge bypassed static geometry or metric motion limits");
     }
+  }
+  static void checkStandingBand(OctoPlanner3D &planner) {
+    const PointPose nominal{-.475,.025,.325};
+    require(planner.queryWorld({-.475f,.025f,.325f},planner.robot_radius_,true)==
+                OctoPlanner3D::TraversabilityFailure::OccupiedBody,
+            "standing-band fixture must block the nominal body height");
+    const auto &graph=*planner.surface_graph_;
+    const auto column=graph.columns_.find(graph.key(nominal));
+    bool adjusted=false;
+    if(column!=graph.columns_.end())for(int id:column->second) {
+      const auto &point=graph.cells_[id];
+      adjusted|=point.z>nominal.z+.01 && point.z<=nominal.z+planner.support_height_tolerance_m_;
+    }
+    require(adjusted,"graph discarded a valid stance within the existing height band");
   }
 };
 }
@@ -59,7 +124,9 @@ int main()try {
   config.terminal_goal_z_tolerance_m=.05;config.enable_preblocked_costmap=false;
   const PointPose start{-.975,.025,.325},goal{.975,.025,.325};
   OctoPlanner3D planner;planner.setConfig(config);planner.setOctomap(fixture(false));
+  OctoPlannerGridQueryTest::checkBodyHeight(planner);
   OctoPlannerGridQueryTest::checkPreparedSupport(planner);
+  OctoPlannerGridQueryTest::checkLatticeCache(planner,start);
   const auto run=[&](const PointPose &target) {
     planner.makePlan(start,target);std::vector<PointPose> path;planner.getPlannerResults(path);return path;
   };
@@ -71,6 +138,8 @@ int main()try {
   require(std::hypot(before.back().x-goal.x,before.back().y-goal.y,before.back().z-goal.z)<1e-6,
           "valid raw goal was lost");
   for(const auto &p:before)require(std::abs(p.z-start.z)<.051,"route switched floors");
+  OctoPlannerGridQueryTest::checkGoalPolicy(planner,start,{.125,-.075,.325});
+  OctoPlannerGridQueryTest::checkGoalPolicy(planner,start,{.975,.025,.41});
   require(run({goal.x,goal.y,2.325}).empty(),"separate map floors were connected");
   planner.setOctomap(fixture(true));
   OctoPlannerGridQueryTest::checkPreparedSupport(planner);
@@ -82,6 +151,11 @@ int main()try {
     steps->updateNode((x+.5)*.05,(y+.5)*.05,(z+.5)*.05,z==tread||obstacle,true);
   }
   steps->updateInnerOccupancy();planner.setOctomap(steps);
+  OctoPlannerGridQueryTest::checkPreparedSupport(planner);
+  auto low_rail=fixture(false);
+  low_rail->updateNode(-.475,.125,.225,true);low_rail->updateInnerOccupancy();
+  planner.setOctomap(low_rail);
+  OctoPlannerGridQueryTest::checkStandingBand(planner);
   OctoPlannerGridQueryTest::checkPreparedSupport(planner);
   std::cout<<"Prepared surface integration passed: native graph selected, raw endpoints, separate floors and static wall\n";
   return 0;

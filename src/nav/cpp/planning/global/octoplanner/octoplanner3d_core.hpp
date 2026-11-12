@@ -32,7 +32,7 @@ bool pcdConversionEnabled();
 // validated map identity remains unchanged. OctoMap types stay private here.
 class PlannerSession {
 public:
-  PlannerSession();
+  explicit PlannerSession(std::filesystem::path cache_directory = {});
   ~PlannerSession();
 
   PlannerSession(const PlannerSession &) = delete;
@@ -53,6 +53,7 @@ public:
 
   std::size_t mapLoadCount() const;
   std::size_t prepareCount() const;
+  std::size_t cacheLoadCount() const;
   PlanningMapProjection project(
     const std::filesystem::path & map_path,
     const lingtu::nav::plan::MapIdentity & map_identity,
