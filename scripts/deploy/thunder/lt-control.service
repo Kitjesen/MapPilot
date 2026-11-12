@@ -1,5 +1,5 @@
 [Unit]
-Description=LingTu ProductControl web lifecycle transport
+Description=LingTu persistent Web and ProductControl entry
 After=network-online.target
 Wants=network-online.target
 
@@ -12,7 +12,7 @@ Environment=LINGTU_ENV=real
 EnvironmentFile=-/etc/lingtu/gateway.env
 EnvironmentFile=-/opt/lingtu/current/etc/lingtu/release-runtime.env
 EnvironmentFile=/etc/lingtu/control.env
-ExecStart=/bin/bash /opt/lingtu/current/scripts/lingtu serve --robot ${LINGTU_ROBOT} --env real --state-dir /run/lingtu
+ExecStart=/bin/bash /opt/lingtu/current/scripts/lingtu serve --robot ${LINGTU_ROBOT} --env real --state-dir /run/lingtu --public-port 5050 --gateway-port 5053
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=180

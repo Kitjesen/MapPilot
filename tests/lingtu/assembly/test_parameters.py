@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from lingtu.assembly.config.native_parameters import resolve_parameters
@@ -120,6 +122,15 @@ def test_scan_overrides_follow_the_existing_parameter_precedence() -> None:
     assert resolved.environment()["LINGTU_NAV_LOCAL_COLLISION_MAX_AGE_S"] == "0.75"
 
 
+def test_lateral_floor_reaches_native_environment_and_remains_overridable() -> None:
+    assert resolve_parameters().as_dict()["scan_follower.min_vy_mps"] == 0.0
+    resolved = resolve_parameters(
+        product_parameters={"scan_follower.min_vy_mps": 0.35},
+        session_overrides={"scan_follower.min_vy_mps": 0.25},
+    )
+    assert resolved.environment()["LINGTU_NAV_SCAN_MIN_VY_MPS"] == "0.25"
+
+
 @pytest.mark.parametrize("overrides", [
     {"scan_planner.max_velocity_mps": True},
     {"scan_planner.max_velocity_mps": float("nan")},
@@ -129,9 +140,19 @@ def test_scan_overrides_follow_the_existing_parameter_precedence() -> None:
     {"scan_planner.smooth_weight": -1.0},
     {"scan_planner.replan_distance_m": 0.05},
     {"scan_follower.max_vx_mps": 0.0},
+    {"scan_follower.min_vy_mps": -0.1},
+    {"scan_follower.min_vy_mps": float("nan")},
     {"scan_follower.max_yaw_rate_rad_s": 1.1},
     {"local_collision.max_age_s": 0.09},
 ])
 def test_invalid_scan_parameters_fail_before_launch(overrides) -> None:
     with pytest.raises(ValueError):
         resolve_parameters(session_overrides=overrides)
+
+
+def test_removed_terminal_settings_are_not_accepted():
+    with pytest.raises(ValueError):
+        resolve_parameters(product_parameters={"goal_follower.min_yaw_rate_rad_s": 0.35})
+    environment = resolve_parameters().environment()
+    assert "LINGTU_NAV_GOAL_MIN_YAW_RATE_RAD_S" not in environment
+    assert "LINGTU_NAV_GOAL_YAW_TOLERANCE_RAD" not in environment

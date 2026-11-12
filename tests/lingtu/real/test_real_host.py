@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import socket
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import grpc
 import pytest
 
 import lingtu.real.host as host_process
+from gateway.gateway_module import GatewayModule
+from gateway.rpc.generated import common_pb2 as common_pb
+from gateway.rpc.generated import system_pb2_grpc as system_rpc
 
 
 class _FakeGateway:
@@ -149,3 +155,74 @@ def test_run_stops_system_when_start_fails(
 def test_main_rejects_product_or_profile_arguments() -> None:
     with pytest.raises(SystemExit, match="does not accept CLI arguments"):
         host_process.main(["nav"])
+
+
+def test_deferred_real_host_serves_grpc_and_closes_it(tmp_path, monkeypatch):
+    events = []
+    plan = _FakePlan(events)
+    _patch_plan(monkeypatch, tmp_path, plan)
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+    gateway = GatewayModule(host="127.0.0.1", grpc_port=port)
+    gateway._drift_watchdog_enabled = False
+
+    def run_http(stop_event):
+        assert gateway._defer_server is True
+        assert gateway._server_thread is None
+        with grpc.insecure_channel(f"127.0.0.1:{port}") as channel:
+            assert system_rpc.SystemStub(channel).Ping(common_pb.Empty(), timeout=3).status == "ok"
+        return True
+
+    gateway._run_server = run_http
+    system = SimpleNamespace(get_module=lambda name: gateway, start=gateway.start, stop=gateway.stop)
+    monkeypatch.setattr(plan, "build", lambda: system)
+    assert host_process.run(threading.Event()) == 0
+    assert gateway._grpc_server is None
+    assert gateway._server_thread is None
+    with socket.socket() as client:
+        client.settimeout(0.3)
+        assert client.connect_ex(("127.0.0.1", port)) != 0
+
+
+def test_run_reports_shutdown_failure_after_success(tmp_path, monkeypatch):
+    _patch_plan(monkeypatch, tmp_path, _FakePlan([]))
+
+    def stop(system):
+        raise RuntimeError("cleanup failed")
+
+    monkeypatch.setattr(_FakeSystem, "stop", stop)
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        host_process.run(threading.Event())
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_deferred_real_host_bind_failure_cleans_up_without_masking_error(tmp_path, monkeypatch, caplog, cleanup_fails):
+    events = []
+    plan = _FakePlan(events)
+    _patch_plan(monkeypatch, tmp_path, plan)
+    with socket.socket() as occupied:
+        occupied.bind(("127.0.0.1", 0))
+        occupied.listen()
+        gateway = GatewayModule(host="127.0.0.1", grpc_port=occupied.getsockname()[1])
+        gateway._drift_watchdog_enabled = False
+        gateway._inspection_scheduler = SimpleNamespace(start=lambda: events.append("scheduler-start"),
+                                                       stop=lambda: events.append("scheduler-stop"))
+        gateway._run_server = lambda stopped: pytest.fail("HTTP must not run after gRPC bind failure")
+
+        def stop():
+            gateway.stop()
+            if cleanup_fails:
+                raise RuntimeError("cleanup failed")
+
+        system = SimpleNamespace(get_module=lambda name: gateway, start=gateway.start, stop=stop)
+        monkeypatch.setattr(plan, "build", lambda: system)
+        with pytest.raises(RuntimeError, match="bind"):
+            host_process.run(threading.Event())
+    assert events == ["scheduler-start", "scheduler-stop"]
+    assert gateway._stop_event.is_set()
+    assert gateway._grpc_server is None
+    assert gateway._server_thread is None
+    if cleanup_fails:
+        assert "Failed to stop Host after an earlier failure" in caplog.text
+        assert "cleanup failed" in caplog.text

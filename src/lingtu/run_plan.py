@@ -287,9 +287,9 @@ class RunPlan:
 
     def build(self) -> Any:
         """Build the Host module graph described by this plan."""
-        from lingtu.assembly.compile_plan import build_host_from_run_plan
+        from lingtu.assembly.compile_plan import host_builder_from_run_plan
 
-        return build_host_from_run_plan(self)
+        return host_builder_from_run_plan(self).build()
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize the RunPlan to its JSON-compatible structure."""
@@ -522,7 +522,7 @@ def _session_plan(value: Any, *, field: str, schema: str, session_id: str) -> di
 def _processes(value: Any, *, field: str) -> tuple[ProcessSpec, ...]:
     if not isinstance(value, list | tuple):
         raise ValueError(f"RunPlan {field} must be a list")
-    return _normalize_processes(tuple(_process(item, field=field) for item in value), field=field)
+    return tuple(_process(item, field=field) for item in value)
 
 
 def _normalize_processes(value: Any, *, field: str) -> tuple[ProcessSpec, ...]:

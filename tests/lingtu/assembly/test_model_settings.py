@@ -42,13 +42,13 @@ def test_shared_model_settings_are_snapshotted_in_each_plan(
         path = plan.write(tmp_path / f"{product}.json")
         assert secret not in path.read_text(encoding="utf-8")
 
+    assert _compile(graph, "nav").host_config["llm_model"] == "updated-kimi-model"
     models_path.unlink()
     restored = RunPlan.load(snapshot)
     assert restored.host_config == baseline.host_config
     builder = host_builder_from_run_plan(restored)
     llm = next(entry for entry in builder._entries if entry.name == "LLMModule")
     assert llm.config["model"] == baseline.host_config["llm_model"]
-    assert "llm_model" not in _compile(graph, "nav").host_config
     with pytest.raises(ValueError, match=r"models\.yaml"):
         _compile(graph, "nav", product_variant="semantic")
 

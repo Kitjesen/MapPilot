@@ -75,8 +75,9 @@ _GROUPS = {
             key: f"octoplanner3d_{key}"
             for key in (
                 "max_iterations", "snap_search_radius_cells", "ground_support",
-                "direct_support_only", "support_radius_cells", "support_depth_cells",
+                "direct_support_only", "support_depth_cells",
                 "search_resolution_m", "surface_closing_radius_m", "support_height_m",
+                "surface_max_hole_area_m2", "surface_max_slope",
                 "support_height_tolerance_m", "lowest_traversable_only", "floor_change_penalty",
                 "max_slope", "same_floor_preference", "obstacle_clearance_radius_cells",
                 "obstacle_clearance_weight", "support_patch_radius_cells", "support_patch_min_samples",

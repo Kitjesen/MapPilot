@@ -9,72 +9,7 @@ import time
 import unittest
 
 import numpy as np
-
-
-class TestLLMModulePreflight(unittest.TestCase):
-    """Test LLMModule.preflight() for various backends."""
-
-    def _make(self, **kw):
-        from decision.modules.llm import LLMModule
-
-        return LLMModule(**kw)
-
-    def test_preflight_mock_backend_ok(self):
-        m = self._make(backend="mock")
-        self.assertIsNone(m.preflight())
-
-    def test_preflight_kimi_without_key_fails(self):
-        saved = os.environ.pop("MOONSHOT_API_KEY", None)
-        try:
-            m = self._make(backend="kimi")
-            result = m.preflight()
-            self.assertIsNotNone(result)
-            self.assertIn("MOONSHOT_API_KEY", result)
-        finally:
-            if saved is not None:
-                os.environ["MOONSHOT_API_KEY"] = saved
-
-    def test_preflight_openai_without_key_fails(self):
-        saved = os.environ.pop("OPENAI_API_KEY", None)
-        try:
-            m = self._make(backend="openai")
-            result = m.preflight()
-            self.assertIsNotNone(result)
-            self.assertIn("OPENAI_API_KEY", result)
-        finally:
-            if saved is not None:
-                os.environ["OPENAI_API_KEY"] = saved
-
-    def test_preflight_claude_without_key_fails(self):
-        saved = os.environ.pop("ANTHROPIC_API_KEY", None)
-        try:
-            m = self._make(backend="claude")
-            result = m.preflight()
-            self.assertIsNotNone(result)
-            self.assertIn("ANTHROPIC_API_KEY", result)
-        finally:
-            if saved is not None:
-                os.environ["ANTHROPIC_API_KEY"] = saved
-
-    def test_preflight_custom_api_key_env(self):
-        """Custom api_key_env should be checked instead of default."""
-        saved = os.environ.pop("MY_CUSTOM_KEY", None)
-        try:
-            m = self._make(backend="kimi", api_key_env="MY_CUSTOM_KEY")
-            result = m.preflight()
-            self.assertIsNotNone(result)
-            self.assertIn("MY_CUSTOM_KEY", result)
-        finally:
-            if saved is not None:
-                os.environ["MY_CUSTOM_KEY"] = saved
-
-    def test_preflight_succeeds_when_key_present(self):
-        os.environ["MOONSHOT_API_KEY"] = "test-key-for-preflight"
-        try:
-            m = self._make(backend="kimi")
-            self.assertIsNone(m.preflight())
-        finally:
-            del os.environ["MOONSHOT_API_KEY"]
+import pytest
 
 
 class TestLLMCircuitBreaker(unittest.TestCase):
@@ -492,3 +427,25 @@ class TestGoalResult(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@pytest.mark.parametrize("backend,key", [("kimi", "MOONSHOT_API_KEY"), ("openai", "OPENAI_API_KEY"), ("claude", "ANTHROPIC_API_KEY")])
+def test_llm_client_reports_missing_credentials(monkeypatch, backend, key):
+    from decision.modules.llm import LLMModule
+    monkeypatch.delenv(key, raising=False)
+    module = LLMModule(backend=backend)
+    try:
+        module.setup()
+        assert not module.client.is_available()
+    finally:
+        module.stop()
+
+
+def test_llm_mock_setup_needs_no_credentials():
+    from decision.modules.llm import LLMModule
+    module = LLMModule(backend="mock")
+    try:
+        module.setup()
+        assert module.client is not None
+    finally:
+        module.stop()

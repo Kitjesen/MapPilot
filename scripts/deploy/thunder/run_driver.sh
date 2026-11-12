@@ -72,7 +72,6 @@ case "${BACKEND}" in
 go2)
   GO2_INTERFACE="${LINGTU_DRIVER_NETWORK_INTERFACE:-}"
   GO2_ADDRESS="${LINGTU_DRIVER_NETWORK_ADDRESS:-}"
-  GO2_PROBE_IP="${LINGTU_DRIVER_PROBE_IP:-}"
   UNITREE_PREFIX="${LINGTU_UNITREE_SDK2_PREFIX:-/opt/unitree_robotics}"
   if [[ -z "${GO2_INTERFACE}" ]] ||
       [[ ! "${GO2_INTERFACE}" =~ ^[A-Za-z0-9_.:-]+$ ]]; then
@@ -83,32 +82,16 @@ go2)
     echo "ERROR: Go2 requires LINGTU_DRIVER_NETWORK_ADDRESS as IPv4 CIDR." >&2
     exit 64
   fi
-  if ! valid_ipv4 "${GO2_PROBE_IP}"; then
-    echo "ERROR: Go2 requires LINGTU_DRIVER_PROBE_IP." >&2
-    exit 64
-  fi
   if [[ ! -d "/sys/class/net/${GO2_INTERFACE}" ]]; then
     echo "ERROR: Go2 network interface does not exist: ${GO2_INTERFACE}" >&2
     exit 69
   fi
-  if [[ ! -r "/sys/class/net/${GO2_INTERFACE}/carrier" ]]; then
-    echo "ERROR: Go2 network carrier state is unavailable: ${GO2_INTERFACE}" >&2
-    exit 69
-  fi
-  if [[ "$(< "/sys/class/net/${GO2_INTERFACE}/carrier")" != "1" ]]; then
-    echo "ERROR: Go2 network interface has no carrier: ${GO2_INTERFACE}" >&2
-    exit 69
-  fi
   if ! command -v ip >/dev/null 2>&1; then
-    echo "ERROR: Go2 startup preflight requires iproute2." >&2
+    echo "ERROR: Go2 network configuration requires iproute2." >&2
     exit 69
   fi
   if ! ip -o -4 addr show dev "${GO2_INTERFACE}" | awk '{print $4}' | grep -Fxq "${GO2_ADDRESS}"; then
     echo "ERROR: ${GO2_INTERFACE} does not own ${GO2_ADDRESS}." >&2
-    exit 69
-  fi
-  if ! ip -4 route get "${GO2_PROBE_IP}" oif "${GO2_INTERFACE}" >/dev/null 2>&1; then
-    echo "ERROR: ${GO2_PROBE_IP} is not routed through ${GO2_INTERFACE}." >&2
     exit 69
   fi
   if [[ "${LINGTU_DDS_NETWORK_INTERFACE:-}" != "${GO2_INTERFACE}" ]]; then

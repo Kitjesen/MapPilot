@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import stat
+from dataclasses import replace
 
 import pytest
 
@@ -10,6 +11,33 @@ from lingtu.control import ProductControl
 from lingtu.run_plan import RunPlan
 
 pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
+
+
+@pytest.fixture
+def process_plan(allow_unbuilt_process_artifacts) -> RunPlan:
+    return ProductControl(robot="unitree/go2", env="real", process_env={})._resolve("nav")
+
+
+@pytest.mark.parametrize("catalog", ["selected", "available"])
+@pytest.mark.parametrize(
+    ("field", "message"),
+    [
+        ("name", "duplicate process names"),
+        ("target", "duplicate process targets"),
+        ("provides", "duplicate role owner"),
+    ],
+)
+def test_run_plan_rejects_duplicate_processes(process_plan, catalog, field, message) -> None:
+    original = next(process for process in process_plan.processes if process.manager == "systemd")
+    duplicate = replace(
+        original, name="test_duplicate", target="lt-test-duplicate.service", provides=("test_duplicate",),
+    )
+    duplicate = replace(duplicate, **{field: getattr(original, field)})
+    payload = process_plan.as_dict()
+    payload["launch"]["process_catalog"][catalog].append(duplicate.as_dict())
+
+    with pytest.raises(ValueError, match=message):
+        RunPlan.from_dict(payload)
 
 
 @pytest.mark.parametrize("product", ["nav", "teleop_avoid"])

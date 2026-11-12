@@ -76,6 +76,15 @@ WIRE_VALUES = {
         "PAUSE_TASK": 8,
         "RESUME_TASK": 9,
         "TASK_SPEED_LIMIT": 10,
+        "STAND": 11,
+        "SIT": 12,
+        "ENABLE_MOTORS": 13,
+        "DISABLE_MOTORS": 14,
+        "SWITCH_PROFILE": 15,
+        "ENTER_EXTERNAL": 16,
+        "EXIT_EXTERNAL": 17,
+        "ENABLE_EXTERNAL": 18,
+        "SELECT_PLANNER": 19,
     },
     "OperatorMotionAction": {"CLAIM": 1, "RELEASE": 2, "HOLD": 3},
     "ExplorationCommandKind": {
@@ -91,9 +100,15 @@ WIRE_VALUES = {
 }
 
 
-def test_idl_and_python_preserve_wire_values() -> None:
-    assert load_constants() == WIRE_VALUES
+def test_idl_preserves_wire_values() -> None:
+    constants = load_constants()
     for name, values in WIRE_VALUES.items():
+        for member, value in values.items():
+            assert constants[name][member] == value, (name, member)
+
+
+def test_python_enums_match_idl() -> None:
+    for name, values in load_constants().items():
         assert {member.name: member.value for member in getattr(enums, name)} == values
 
 
@@ -108,7 +123,7 @@ def test_cpp_protocol_consumers_compile_with_preserved_values() -> None:
         pytest.skip("C++ compiler is not installed")
     source = "\n".join(
         f'#include "message/protocol/{domain}.hpp"'
-        for domain in ("navigation", "operator_motion", "inspection", "exploration", "geofence")
+        for domain in ("navigation", "operator_motion", "inspection", "exploration", "geofence", "posture", "external")
     )
     source += '\n#include "nav/cpp/endpoint/nav/status/navigation_state.hpp"'
     source += '\n#include "nav/inspection/inspection.hpp"\n'
@@ -116,7 +131,7 @@ def test_cpp_protocol_consumers_compile_with_preserved_values() -> None:
         "NavigationControlMode": "NavigationControlState",
         "NavigationLifecycle": "NavigationLifecycleState",
     }
-    for name, values in WIRE_VALUES.items():
+    for name, values in load_constants().items():
         for member, value in values.items():
             cpp_member = "".join(part.title() for part in member.split("_"))
             if name == "NavigationCommandKind":

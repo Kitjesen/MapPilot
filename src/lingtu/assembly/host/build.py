@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from lingtu.assembly.config.product import DEFAULT_GATEWAY_PORT
+from lingtu.products import product_name
 from lingtu.run_plan import RunPlan
 from runtime.host import HostBuilder
 from runtime.runtime_policy import normalize_slam_profile
@@ -40,6 +41,9 @@ def host_builder(
     **overrides: Any,
 ) -> HostBuilder:
     """Create a Product Host builder from an already resolved config."""
+
+    if product is not None:
+        product_name(product)
 
     cfg = dict(config or {})
     cfg.update({key: value for key, value in overrides.items() if value is not None})

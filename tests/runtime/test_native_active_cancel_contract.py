@@ -11,7 +11,7 @@ NAVIGATION_RUNTIME_SOURCE = (
     NAV_ENDPOINT / "app" / "navigation.cpp"
 )
 TERMINAL_TRANSACTION_SOURCE = (
-    NAV_ENDPOINT / "status" / "goal_terminal_transaction.cpp"
+    NAV_ENDPOINT / "app" / "goal" / "terminal.cpp"
 )
 RUNTIME_HEADER = NAV_ENDPOINT / "app" / "goal" / "runtime.hpp"
 RUNTIME_SOURCE = NAV_ENDPOINT / "app" / "goal" / "runtime.cpp"
@@ -96,7 +96,7 @@ def test_endpoint_replays_active_cancel_terminal_with_cancel_preserving_barrier(
         'return {false, "task_not_active"};',
     )
 
-    assert "motion_stop_.cancelPreservingGoalTerminal" in cancel_policy
+    assert "stop_.cancelPreservingGoalTerminal" in cancel_policy
     assert "motion_stop.cancelPreservingGoalTerminal" not in cancel_block
     assert "terminal_service_(runtime_result)" in cancel_block
     assert "navigation_runtime_controller.completeTerminal(runtime_result)" in endpoint_router
@@ -161,11 +161,11 @@ def test_runtime_external_goal_rejects_after_terminal_interrupt_without_submit_b
     submit_goal = _block_between(
         runtime,
         "NavigationRuntimeController::submitGoal",
-        "GoalTerminalTransactionResult",
+        "GoalTerminalResult",
     )
 
     interrupt_index = submit_goal.index("interrupt(GoalReplanRuntimeInterruption::kNewGoal")
-    retain_index = submit_goal.index("result.preemption_terminal = preemption.terminal_transaction")
+    retain_index = submit_goal.index("result.preemption_terminal = preemption.terminal")
     reject_index = submit_goal.index('"goal_terminal_pending"', retain_index)
     submit_index = submit_goal.index("goal_plan_.submit")
 

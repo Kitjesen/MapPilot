@@ -43,9 +43,6 @@ class GeometryConfig:
     collision_hard_margin: float = 0.15
     collision_clearance_below: float = 0.25
     collision_clearance_above: float = 0.35
-    # Optional offline-exported BODY2 collision model selected by RobotConfig.
-    # Native navigation consumes the fixed collision primitives, not URDF XML.
-    navigation_body_file: str = ""
     # Nominal standing body-origin height above support; zero means uncalibrated.
     support_height: float = 0.0
     support_height_tolerance: float = 0.0

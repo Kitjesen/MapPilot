@@ -80,14 +80,6 @@ _RESERVED_PRODUCT_OVERRIDE_KEYS = frozenset(
     }
 )
 
-# These are Host implementation defaults for the real environment, not a
-# physical RobotConfig and not a runtime selector. Product-owned values win.
-_REAL_HOST_DEFAULTS: Mapping[str, Any] = MappingProxyType(
-    {
-        "detector": "bpu",
-    }
-)
-
 _COMMON_HOST_DEFAULTS: Mapping[str, Any] = MappingProxyType(
     {
         "gateway_port": DEFAULT_GATEWAY_PORT,
@@ -97,6 +89,7 @@ _COMMON_HOST_DEFAULTS: Mapping[str, Any] = MappingProxyType(
 
 _HOST_CAPABILITY_FLAGS = {
     "gateway": "enable_gateway",
+    "conversation": "enable_conversation",
     "operator_motion": "enable_teleop",
     "navigation_skills": "enable_navigation",
     "goal_commands": "enable_goals",
@@ -303,12 +296,7 @@ def resolve_product_host_runtime(
         raise TypeError(
             f"Product {resolved_product_name!r} processes must be a list"
         )
-    product_slam_mode = str(resolved_product_spec.get("slam_mode") or "").strip().lower()
-    if product_slam_mode in {"mapping", "none"}:
-        env_config = _default_product_localization(
-            env_config,
-            localization="ltlio",
-        )
+    slam_mode = str(resolved_product_spec.get("slam_mode") or "").strip().lower()
     uses_lidar = "lidar" in product_processes
     resolved_env = resolve_env_spec(
         env,
@@ -316,7 +304,7 @@ def resolve_product_host_runtime(
         env_config=env_config,
         graph=graph,
     )
-    if product_slam_mode == "mapping" and resolved_env.config.localization == "truth":
+    if slam_mode == "mapping" and resolved_env.config.localization == "truth":
         raise ValueError(
             f"Product {resolved_product_name!r} with slam_mode='mapping' requires LTLIO localization"
         )
@@ -371,7 +359,7 @@ def resolve_product_host_runtime(
     )
 
     if resolved_env.name == "real":
-        _apply_defaults(config, _REAL_HOST_DEFAULTS)
+        config.setdefault("detector", "bpu")
 
     host_config = resolved_env.implementation.get("host_config")
     if not isinstance(host_config, Mapping):
@@ -380,7 +368,6 @@ def resolve_product_host_runtime(
         )
     config.update(host_config)
 
-    slam_mode = str(resolved_product_spec.get("slam_mode") or "").strip().lower()
     if slam_mode not in {"mapping", "localization", "none"}:
         raise ValueError(
             f"Product {resolved_product_name!r} has unsupported slam_mode {slam_mode!r}"
@@ -415,7 +402,7 @@ def resolve_product_host_runtime(
             config["lidar_ip"] = resolved_env.lidar_ip
 
     config.update(dict(overrides or {}))
-    if config["enable_semantic"]:
+    if config["enable_semantic"] or config["enable_conversation"]:
         config = {**_model_config(graph.root, config["llm"]), **config}
     return ResolvedProductHostConfig(
         robot=resolved_env.robot,
@@ -661,26 +648,6 @@ def _normalize_env_config(
     return normalized
 
 
-def _default_product_localization(
-    env_config: EnvConfig | Mapping[str, Any] | None,
-    *,
-    localization: str,
-) -> EnvConfig | Mapping[str, Any] | None:
-    """Keep products that generate maps on their estimator-backed path."""
-
-    if env_config is None:
-        return {"localization": localization}
-    if isinstance(env_config, EnvConfig):
-        if env_config.localization is None:
-            return replace(env_config, localization=localization)
-        return env_config
-    if isinstance(env_config, Mapping):
-        if "localization" in env_config:
-            return env_config
-        return {**env_config, "localization": localization}
-    return env_config
-
-
 def _single_sim_backend(graph: RuntimeGraph) -> str | None:
     sim = graph.envs.get("sim")
     if not isinstance(sim, Mapping):
@@ -759,11 +726,6 @@ def _require_supported_product(
             f"Env '{env.name}'{backend} does not support Product '{product}' "
             f"variant {product_variant!r}"
         )
-
-
-def _apply_defaults(config: dict[str, Any], defaults: Mapping[str, Any]) -> None:
-    for key, value in defaults.items():
-        config.setdefault(key, value)
 
 
 def _reject_reserved_overrides(overrides: Mapping[str, Any] | None) -> None:

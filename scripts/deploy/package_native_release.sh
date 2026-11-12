@@ -148,6 +148,7 @@ list_checkout_files() {
     git -C "${source_root}" ls-files \
       --others --exclude-standard -z -- \
       src config scripts tools web \
+      docs/customer-deployment.md docs/operations.md docs/getting-started.md \
       pyproject.toml uv.lock VERSION Makefile README.md
   } \
     | LC_ALL=C sort -zu \
@@ -207,6 +208,7 @@ run_self_test() {
 
   mkdir -p \
     "${test_root}/source/config" \
+    "${test_root}/source/docs" \
     "${test_root}/source/sim/runtime/qualification" \
     "${test_root}/source/src/diagnostics/field" \
     "${test_root}/source/src/localization/ltlio/config" \
@@ -236,6 +238,10 @@ run_self_test() {
   install -m 0644 \
     "${SCRIPT_ROOT}/scripts/deploy/python-runtime.sh" \
     "${test_root}/source/scripts/deploy/python-runtime.sh"
+  install -m 0644 "${SCRIPT_ROOT}/scripts/deploy/prepare_runtime.py" \
+    "${test_root}/source/scripts/deploy/prepare_runtime.py"
+  install -m 0644 "${SCRIPT_ROOT}/docs/customer-deployment.md" \
+    "${test_root}/source/docs/customer-deployment.md"
   printf 'internal only\n' > "${test_root}/source/src/nav/cpp/internal.hpp"
   : > "${test_root}/source/src/nav/inspection/__init__.py"
   printf 'runtime = True\n' > "${test_root}/source/src/nav/inspection/service.py"
@@ -433,6 +439,10 @@ PY
     <<<"${tar_listing}"
   grep -Fq 'lingtu-0.0.0-aarch64-native-release/install_nav.sh' \
     <<<"${tar_listing}"
+  grep -Fq 'lingtu-0.0.0-aarch64-native-release/scripts/deploy/prepare_runtime.py' \
+    <<<"${tar_listing}" || { echo "Package is missing Python runtime preparation" >&2; return 1; }
+  grep -Fq 'lingtu-0.0.0-aarch64-native-release/docs/customer-deployment.md' \
+    <<<"${tar_listing}" || { echo "Package is missing customer deployment instructions" >&2; return 1; }
   if grep -Fq 'lingtu-0.0.0-aarch64-native-release/web/' <<<"${tar_listing}"; then
     echo "native release unexpectedly contains the Web application" >&2
     return 1
@@ -951,7 +961,11 @@ list_checkout_files "${ROOT}" \
   --exclude='/**/__pycache__/' \
   --exclude='*.pyc' \
   --exclude='/tools/calibration/' \
-  --exclude='/docs/' \
+  --include='/docs/' \
+  --include='/docs/customer-deployment.md' \
+  --include='/docs/operations.md' \
+  --include='/docs/getting-started.md' \
+  --exclude='/docs/***' \
   --exclude='/integrations/' \
   --exclude='/launch/' \
   --exclude='/research/' \

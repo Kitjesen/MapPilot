@@ -33,6 +33,7 @@ def test_yaml_values_reach_map_service_environment():
     assert environment["LINGTU_MAPD_OCCUPANCY_SIZE_X"] == "80"
     assert environment["LINGTU_MAPD_SURFACE_RESIDUAL_M"] == "0.06"
     assert environment["LINGTU_SAVE_DYNAMIC_FILTER"] == "0"
+    assert environment["LINGTU_MAPD_QUERY_MAX_JSON_BYTES"] == str(4 * 1024 * 1024)
     assert settings == before
 
 

@@ -99,6 +99,10 @@ Product behavior and capabilities come from `config/system/products/*.yaml`;
 resolves these with the selected RobotConfig for `real` and the supported
 simulation inputs for `sim`.
 
+`ProductLifecycle.from_spec` reads lifecycle fields from the resolved Product
+declaration. Operator metadata and RunPlan compilation use this same parser.
+The compiled values are stored in the plan's `launch.session`.
+
 Native tuning values live in `config/system/settings/`. For the numeric
 `parameters` mapping, `config/native_parameters/` declares accepted names,
 types, bounds and environment keys. Resolution applies values in this order:

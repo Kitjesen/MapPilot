@@ -190,6 +190,9 @@ def _execute_locked_switch(
             )
             _validate_target(plan, request)
             report.phases.append("map_prepared")
+            if plan.product == "map":
+                # Recovery uses the archive but does not activate a fixed navigation map.
+                map_activation = None
         plan_path = root / f"plan-{product_session_id}.json"
         plan.write(plan_path)
         plan_created = True
@@ -757,7 +760,10 @@ def _saved_map_environment(
     environment.update(map_identity_environment(identity))
     slam_map_path = pointcloud_artifact(identity).uri
     planner = plan.native_nav.get("global_planner")
-    if planner == "octoplanner3d":
+    if plan.product == "map":
+        environment["OCTOPLANNER_MAP_PATH"] = ""
+        environment["FAR_OCCUPANCY_PATH"] = ""
+    elif planner == "octoplanner3d":
         environment["OCTOPLANNER_MAP_PATH"] = octomap_artifact(identity).uri
         environment["FAR_OCCUPANCY_PATH"] = ""
     elif planner == "far":
@@ -765,7 +771,7 @@ def _saved_map_environment(
         environment["FAR_OCCUPANCY_PATH"] = occupancy_artifact(identity).uri
     else:
         raise RuntimeError(f"unsupported native global planner: {planner}")
-    environment["LINGTU_SLAM_MODE"] = "localization"
+    environment["LINGTU_SLAM_MODE"] = "mapping" if plan.product == "map" else "localization"
     environment["LINGTU_SLAM_MAP"] = slam_map_path
     environment["EXPLORE_OCCUPANCY_PATH"] = (
         occupancy_artifact(identity).uri if plan.product == "explore" else ""
@@ -967,7 +973,7 @@ def _validate_sim_request(request: SwitchRequest) -> None:
     if request.map_name is not None:
         map_name = request.map_name
         target_product = product_name(str(request.target_product).strip())
-        allowed = target_product in {"nav", "tracking", "inspection"} or (
+        allowed = target_product in {"map", "nav", "tracking", "inspection"} or (
             target_product == "explore" and request.product_variant == "map"
         )
         if (

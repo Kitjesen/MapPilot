@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import math
 import os
@@ -19,7 +18,7 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, TypeGuard
+from typing import Any, Protocol
 
 from lingtu.products import ProductLifecycle, ProductName
 from lingtu.run_plan import RUN_PLAN_SCHEMA, RunPlan
@@ -47,49 +46,18 @@ _NAV_STOP_CONFIRMATION_RANGE_S = (0.5, 30.0)
 _NAV_STOP_CLIENT_MARGIN_DEFAULT_S = 3.0
 _NAV_STOP_CLIENT_MARGIN_RANGE_S = (1.0, 10.0)
 _NAV_STOP_SUBPROCESS_MARGIN_S = 2.0
-_STARTUP_ZERO_ACK_MAX_SEQUENCE_LAG = 2
 _SESSION_ROOT = "/run/lingtu"
 _SESSION_ROOT_ENV = "LINGTU_SESSION_ROOT"
 _SESSION_ENV_FILE = "session.env"
 _MAX_SESSION_ENV_BYTES = 256 * 1024
 _NAV_STATUS_PATH = Path("/dev/shm/lingtu/nav_endpoint_status.json")
 _DRIVER_STATUS_PATH = Path("/dev/shm/lingtu/driver_status.json")
-_DRIVER_MOTION_PRINCIPAL = "lingtu-driver@robot"
 _EXPLORE_STATUS_PATH = Path("/dev/shm/lingtu/explore_status.json")
 _SLAM_STATUS_PATH = Path("/tmp/lingtu_slam_status.json")
 _MAPD_STATUS_PATH = Path("/dev/shm/lingtu/mapd_status.json")
 _SLAM_SNAPSHOT_DIR = Path("/dev/shm/lingtu_slam")
 _RUNTIME_CLEANUP_ROOTS = ("/dev/shm", "/run", "/tmp")
-_TELEOP_AVOID_STARTUP_BLOCKERS = frozenset(
-    {
-        "real_runtime_evidence_missing_or_stale",
-        "native_resume_required",
-    }
-)
-_TELEOP_AUTONOMY_ONLY_BLOCKERS = frozenset(
-    {
-        "odometry_missing",
-        "frame_mismatch_odometry",
-        "frame_mismatch_costmap",
-        "frame_mismatch_goal",
-        "navigation_session_inactive",
-        "localization_degraded",
-        "localization_lost",
-        "localization_relocalizing",
-        "localization_initializing",
-        "localization_recovery_active",
-        "saved_map_relocalization_missing",
-        "pose_stale",
-        "map_artifact_gate_failed",
-        "real_runtime_evidence_missing_or_stale",
-        "native_global_planner_missing",
-        "native_global_planner_mismatch",
-        "native_planner_map_missing",
-        "native_teleop_local_planner_disabled",
-        "native_obstacle_check_disabled",
-        "native_traversability_cost_disabled",
-    }
-)
+
 
 
 @dataclass(frozen=True)
@@ -200,8 +168,6 @@ class SwitchBackend(Protocol):
         control_mode: str,
         timeout_s: float,
     ) -> None: ...
-
-    def wait_motion_output(self, control_mode: str, *, timeout_s: float) -> None: ...
 
     def wait_inspection(self, *, timeout_s: float) -> None: ...
 
@@ -565,7 +531,7 @@ class FieldBackend:
             raise RuntimeError(f"unsupported SLAM mode: {slam_mode}")
         if slam_mode == "localization" and map_identity is None:
             raise RuntimeError("localization requires an exact MapService map identity")
-        if slam_mode != "localization" and map_identity is not None:
+        if slam_mode not in {"mapping", "localization"} and map_identity is not None:
             raise RuntimeError(f"{slam_mode} must not inherit a saved-map identity")
 
         map_path = (
@@ -592,7 +558,9 @@ class FieldBackend:
             "EXPLORE_OCCUPANCY_PATH": "",
             **native,
         }
-        if map_identity is not None:
+        if map_identity is not None and slam_mode == "mapping":
+            environment.update(map_identity_environment(map_identity))
+        if map_identity is not None and slam_mode == "localization":
             planner = native["NAV_GLOBAL_PLANNER"]
             if planner == "octoplanner3d":
                 artifact = octomap_artifact(map_identity)
@@ -965,184 +933,22 @@ class FieldBackend:
         control_mode: str,
         timeout_s: float,
     ) -> None:
-        """Require Gateway readiness for the selected map and control mode."""
+        """Wait for the navigation endpoint, not permission to move."""
 
         deadline = self._monotonic() + timeout_s
-        nav: Mapping[str, Any] = {}
-        session: Mapping[str, Any] = {}
-        native: Mapping[str, Any] = {}
+        task: Mapping[str, Any] = {}
         while self._monotonic() < deadline:
             nav = self._http("GET", "/api/v1/navigation/status", timeout_s=3.0)
-            if map_name:
-                # ProductControl has already committed this map identity in
-                # the native activation transaction. The HTTP session view is
-                # a rich UI projection and may inspect large map bundles;
-                # navigation readiness must not block on that display path.
-                session = {"active_map": map_name}
             task = nav.get("task") if isinstance(nav.get("task"), Mapping) else {}
-            admission = (
-                nav.get("goal_admission")
-                if isinstance(nav.get("goal_admission"), Mapping)
-                else {}
-            )
-            control = nav.get("control") if isinstance(nav.get("control"), Mapping) else {}
-            motion = nav.get("motion") if isinstance(nav.get("motion"), Mapping) else {}
-            navigation_state_known = (
-                task.get("state")
-                in {
-                    "IDLE",
-                    "PLANNING",
-                    "EXECUTING",
-                    "RECOVERING",
-                    "PAUSED",
-                    "SUCCESS",
-                    "FAILED",
-                    "CANCELLED",
-                }
-                and admission.get("state") in {"ACCEPTING", "BLOCKED"}
-                and control.get("authority") in {"AUTONOMY", "OPERATOR", "NONE"}
-                and motion.get("permission") in {"CLEAR", "HELD", "ESTOPPED"}
-                and motion.get("observation") in {"MOVING", "QUIET"}
-                and motion.get("stop_confirmation")
-                in {"NOT_REQUESTED", "PENDING", "CONFIRMED", "FAILED"}
-            )
-            if control_mode == "autonomy":
-                ready = navigation_state_known and admission.get("state") == "ACCEPTING"
-            else:
-                readiness = self._http(
-                    "GET",
-                    "/api/v1/readiness",
-                    timeout_s=3.0,
-                )
-                runtime = readiness.get("runtime")
-                runtime = runtime if isinstance(runtime, Mapping) else {}
-                navigation = runtime.get("navigation")
-                navigation = navigation if isinstance(navigation, Mapping) else {}
-                native = (
-                    navigation.get("native_endpoint")
-                    if isinstance(navigation.get("native_endpoint"), Mapping)
-                    else {}
-                )
-                aggregate_blockers = [
-                    str(blocker)
-                    for blocker in native.get("blockers") or []
-                    if str(blocker)
-                ]
-                navigation_quiet = (
-                    navigation_state_known
-                    and motion.get("permission") != "ESTOPPED"
-                    and motion.get("observation") == "QUIET"
-                    and motion.get("stop_confirmation")
-                    in {"NOT_REQUESTED", "CONFIRMED"}
-                )
-                ready = navigation_quiet and bool(native.get("ok", False))
-                if control_mode == "teleop_avoid":
-                    input_gate = (
-                        native.get("input_gate")
-                        if isinstance(native.get("input_gate"), Mapping)
-                        else {}
-                    )
-                    loop_health = (
-                        native.get("control_loop_health")
-                        if isinstance(native.get("control_loop_health"), Mapping)
-                        else {}
-                    )
-                    ready = (
-                        navigation_quiet
-                        and native.get("status_available") is True
-                        and input_gate.get("ready") is True
-                        and loop_health.get("ready") is True
-                        and loop_health.get("healthy") is True
-                        and not any(
-                            blocker not in _TELEOP_AVOID_STARTUP_BLOCKERS
-                            for blocker in aggregate_blockers
-                        )
-                    )
-                elif control_mode == "teleop":
-                    ready = ready and not any(
-                        blocker not in _TELEOP_AUTONOMY_ONLY_BLOCKERS for blocker in aggregate_blockers
-                    )
-                if control_mode in {"teleop", "teleop_avoid"} and motion.get("permission") == "ESTOPPED":
-                    # A stopped operator Product must boot so the operator can
-                    # inspect it. This does not clear ESTOP or grant motion;
-                    # wait_motion_output still requires the driver's exact zero ACK.
-                    allowed = (
-                        _TELEOP_AVOID_STARTUP_BLOCKERS if control_mode == "teleop_avoid"
-                        else _TELEOP_AUTONOMY_ONLY_BLOCKERS
-                    )
-                    input_gate = native.get("input_gate") or {}
-                    loop_health = native.get("control_loop_health") or {}
-                    ready = (
-                        navigation_state_known
-                        and admission.get("state") == "BLOCKED"
-                        and motion.get("observation") == "QUIET"
-                        and motion.get("stop_confirmation") in {"NOT_REQUESTED", "CONFIRMED"}
-                        and native.get("status_available") is True
-                        and input_gate.get("ready") is True
-                        and loop_health.get("ready") is True
-                        and loop_health.get("healthy") is True
-                        and "native_estop_latched" in aggregate_blockers
-                        and not any(
-                            blocker not in allowed and blocker != "native_estop_latched"
-                            for blocker in aggregate_blockers
-                        )
-                    )
-            active_map = _text(session.get("active_map") or session.get("saved_active_map"))
-            if ready and (not map_name or active_map == map_name):
+            if task.get("state") in {
+                "IDLE", "PLANNING", "EXECUTING", "RECOVERING", "PAUSED",
+                "SUCCESS", "FAILED", "CANCELLED",
+            }:
                 return
             self._sleep(0.25)
         raise RuntimeError(
             "navigation did not become ready: "
-            f"state={task.get('state', 'UNKNOWN')} map={session.get('active_map')} "
-            f"goal_admission={admission} "
-            f"native_status_available={native.get('status_available')} "
-            f"native_blockers={native.get('blockers') or []} "
-            f"control_loop={native.get('control_loop_health') or {}}"
-        )
-
-    def wait_motion_output(self, control_mode: str, *, timeout_s: float) -> None:
-        """Require one exact idle-zero acknowledgement through the selected driver.
-
-        This gate runs before the RunPlan is committed.  It therefore reads the
-        two native status snapshots directly instead of relying on the active
-        Product projection, which intentionally does not exist yet.
-        """
-
-        expected_mode = _required_text(control_mode, "native control mode").lower()
-        if expected_mode not in {"teleop", "teleop_avoid"}:
-            raise RuntimeError(f"motion-output startup gate is unsupported for {expected_mode}")
-        nav_path = Path(self._environment.get("LINGTU_NAV_STATUS_FILE") or _NAV_STATUS_PATH)
-        driver_path = Path(self._environment.get("LINGTU_DRIVER_STATUS_FILE") or _DRIVER_STATUS_PATH)
-        nav_max_age_s = _positive_float(
-            self._environment.get("LINGTU_NAV_STATUS_MAX_AGE_S"),
-            1.0,
-        )
-        driver_max_age_s = _positive_float(
-            self._environment.get("LINGTU_DRIVER_STATUS_MAX_AGE_S"),
-            1.5,
-        )
-        expected_driver = _expected_driver_configuration(self._session_root)
-        deadline = self._monotonic() + timeout_s
-        last_reason = "native_status_missing"
-        last_evidence: Mapping[str, Any] = {}
-        while self._monotonic() < deadline:
-            nav = _read_json(nav_path)
-            driver = _read_json(driver_path)
-            last_reason, last_evidence = motion_output_startup_evidence(
-                nav,
-                driver,
-                expected_mode=expected_mode,
-                expected_driver=expected_driver,
-                wall_clock_s=self._wall_clock(),
-                nav_max_age_s=nav_max_age_s,
-                driver_max_age_s=driver_max_age_s,
-            )
-            if not last_reason:
-                return
-            self._sleep(0.1)
-        raise RuntimeError(
-            "field driver did not acknowledge the exact startup zero: "
-            f"reason={last_reason} evidence={dict(last_evidence)}"
+            f"mode={control_mode} map={map_name} state={task.get('state', 'UNKNOWN')}"
         )
 
     def wait_inspection(self, *, timeout_s: float) -> None:
@@ -1496,253 +1302,6 @@ def _nav_stop_timeout_budget(environment: Mapping[str, str]) -> tuple[int, float
     return client_timeout_ms, subprocess_timeout_s
 
 
-def motion_output_startup_evidence(
-    nav: Mapping[str, Any],
-    driver: Mapping[str, Any],
-    *,
-    expected_mode: str,
-    expected_driver: Mapping[str, str],
-    wall_clock_s: float,
-    nav_max_age_s: float,
-    driver_max_age_s: float,
-) -> tuple[str, Mapping[str, Any]]:
-    """Return an empty reason only for one physically acknowledged idle zero."""
-
-    final_output = nav.get("final_output") if isinstance(nav.get("final_output"), Mapping) else {}
-    driver_control = nav.get("driver_control") if isinstance(nav.get("driver_control"), Mapping) else {}
-    final_twist = nav.get("final_cmd_vel") if isinstance(nav.get("final_cmd_vel"), Mapping) else {}
-    operator_motion = nav.get("operator_motion") if isinstance(nav.get("operator_motion"), Mapping) else {}
-    operator_status = operator_motion.get("status") if isinstance(operator_motion.get("status"), Mapping) else {}
-    driver_dds = driver.get("dds") if isinstance(driver.get("dds"), Mapping) else {}
-    adapter = driver.get("adapter") if isinstance(driver.get("adapter"), Mapping) else {}
-    control = driver.get("control") if isinstance(driver.get("control"), Mapping) else {}
-    output_ack = driver.get("output_ack") if isinstance(driver.get("output_ack"), Mapping) else {}
-    producer_boot_id = str(final_output.get("producer_boot_id") or "").strip()
-    output_sequence = final_output.get("output_sequence")
-    accepted_output_sequence = driver_control.get("accepted_output_sequence")
-    driver_status_output_sequence = output_ack.get("output_sequence")
-    target_host, target_port = _target_endpoint(adapter.get("target"))
-    evidence = {
-        "nav_schema": nav.get("schema_version"),
-        "nav_age_s": _status_age_s(nav, wall_clock_s),
-        "control_mode": nav.get("control_mode"),
-        "final_cmd_vel": dict(final_twist),
-        "operator_motion": dict(operator_motion),
-        "producer_boot_id": producer_boot_id,
-        "output_sequence": output_sequence,
-        "driver_control": dict(driver_control),
-        "driver_schema": driver.get("schema_version"),
-        "driver_age_s": _status_age_s(driver, wall_clock_s),
-        "matched_cmd_vel_writers": driver_dds.get("matched_cmd_vel_writers"),
-        "driver_backend": driver.get("backend"),
-        "driver_target": adapter.get("target"),
-        "driver_protocol": adapter.get("protocol"),
-        "driver_host": target_host,
-        "driver_port": target_port,
-        "driver_owner": adapter.get("control_owner_id"),
-        "driver_fsm": control.get("fsm"),
-        "driver_output_ack": dict(output_ack),
-    }
-    if not nav or not driver:
-        return "native_status_missing", evidence
-    nav_age_s = evidence["nav_age_s"]
-    driver_age_s = evidence["driver_age_s"]
-    if not isinstance(nav_age_s, float) or not -0.05 <= nav_age_s <= nav_max_age_s:
-        return "nav_status_stale", evidence
-    if not isinstance(driver_age_s, float) or not -0.05 <= driver_age_s <= driver_max_age_s:
-        return "driver_status_stale", evidence
-    if nav.get("schema_version") != "lingtu.nav.endpoint.status.v1":
-        return "nav_status_schema_mismatch", evidence
-    if str(nav.get("control_mode") or "").strip().lower() != expected_mode:
-        return "nav_control_mode_mismatch", evidence
-    if (
-        operator_motion.get("interface_enabled") is not True
-        or operator_motion.get("authority_owner") != "native_endpoint"
-        or operator_motion.get("control_mode") != expected_mode
-        or operator_motion.get("control_ack_scope") != "claim_hold_release"
-        or operator_motion.get("sample_evidence") != "status_sequences"
-        or operator_motion.get("ack_publish_failed") != 0
-        or operator_motion.get("status_publish_failed") != 0
-    ):
-        return "operator_motion_interface_not_ready", evidence
-    if (
-        operator_status.get("has_active_authority") is not False
-        or operator_status.get("has_active_sample") is not False
-        or not _zero_native_twist(
-            operator_status.get("final_cmd_vel") if isinstance(operator_status.get("final_cmd_vel"), Mapping) else {}
-        )
-    ):
-        return "operator_motion_not_idle", evidence
-    if not _zero_native_twist(final_twist):
-        return "startup_output_not_zero", evidence
-    expected_backend = expected_driver.get("backend")
-    if (
-        driver.get("schema_version") != "lingtu.driver.status.v2"
-        or driver.get("role") != "driver"
-        or driver.get("backend") != expected_backend
-    ):
-        return "driver_status_schema_mismatch", evidence
-    if driver.get("connected") is not True or driver.get("ready") is not True:
-        return "driver_not_ready", evidence
-    if (
-        driver_dds.get("topic") != "/nav/cmd_vel"
-        or driver_dds.get("wire_topic") != "rt/nav/cmd_vel"
-        or driver_dds.get("cmd_vel_writer_ready") is not True
-        or driver_dds.get("matched_cmd_vel_writers") != 1
-    ):
-        return "cmd_vel_writer_ownership_invalid", evidence
-    if expected_backend == "doso":
-        expected_host = expected_driver.get("host") or ""
-        expected_port = int(expected_driver.get("port") or 0)
-        if (
-            not _remote_host(target_host)
-            or target_port is None
-            or (target_host, target_port) != (expected_host, expected_port)
-        ):
-            return "driver_target_invalid", evidence
-        expected_protocol = "brainstem_grpc"
-        expected_owner = "grpc"
-        expected_owner_id = _DRIVER_MOTION_PRINCIPAL
-        expected_lease = True
-    elif expected_backend == "go2":
-        expected_interface = expected_driver.get("network_interface") or ""
-        if adapter.get("target") != f"dds://{expected_interface}/rt/api/sport/request":
-            return "driver_target_invalid", evidence
-        expected_protocol = "unitree_sdk2"
-        expected_owner = "none"
-        expected_owner_id = ""
-        expected_lease = False
-    else:
-        return "driver_backend_invalid", evidence
-    if (
-        adapter.get("protocol") != expected_protocol
-        or adapter.get("control_owner") != expected_owner
-        or str(adapter.get("control_owner_id") or "") != expected_owner_id
-        or control.get("initial_zero_acknowledged") is not True
-        or control.get("motors_enabled") is not True
-        or control.get("critical_fault") is not False
-        or control.get("control_assured") is not True
-        or control.get("lease_valid") is not expected_lease
-        or str(control.get("fsm") or "").strip().lower() not in {"standing", "walking"}
-    ):
-        return "driver_control_not_ready", evidence
-    if (
-        final_output.get("published") is not True
-        or not producer_boot_id
-        or not _strict_positive_int(output_sequence)
-        or driver_control.get("received") is not True
-        or driver_control.get("ready") is not True
-        or driver_control.get("fresh") is not True
-        or driver_control.get("last_command_accepted") is not True
-        or driver_control.get("accepted_producer_boot_id") != producer_boot_id
-        or not _strict_positive_int(accepted_output_sequence)
-        or accepted_output_sequence > output_sequence
-        or output_sequence - accepted_output_sequence > _STARTUP_ZERO_ACK_MAX_SEQUENCE_LAG
-        or output_ack.get("accepted") is not True
-        or output_ack.get("producer_boot_id") != producer_boot_id
-        or not _strict_positive_int(driver_status_output_sequence)
-        or driver_status_output_sequence > accepted_output_sequence
-    ):
-        return "startup_zero_ack_identity_mismatch", evidence
-    return "", evidence
-
-
-def _status_age_s(payload: Mapping[str, Any], wall_clock_s: float) -> float | None:
-    stamp = payload.get("stamp_s")
-    if isinstance(stamp, bool):
-        return None
-    try:
-        parsed = float(stamp)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(parsed):
-        return None
-    return wall_clock_s - parsed
-
-
-def _zero_native_twist(value: Mapping[str, Any]) -> bool:
-    components: list[float] = []
-    for name in ("vx", "vy", "wz"):
-        raw = value.get(name)
-        if isinstance(raw, bool):
-            return False
-        try:
-            parsed = float(raw)
-        except (TypeError, ValueError):
-            return False
-        if not math.isfinite(parsed):
-            return False
-        components.append(parsed)
-    return all(abs(component) <= 1e-6 for component in components)
-
-
-def _strict_positive_int(value: Any) -> TypeGuard[int]:
-    return isinstance(value, int) and not isinstance(value, bool) and value > 0
-
-
-def _target_endpoint(target: Any) -> tuple[str, int | None]:
-    value = str(target or "").strip()
-    if not value:
-        return "", None
-    parsed = urllib.parse.urlsplit(value if "://" in value else f"//{value}")
-    try:
-        port = parsed.port
-    except ValueError:
-        return "", None
-    return parsed.hostname or "", port
-
-
-def _expected_driver_configuration(session_root: str | Path) -> dict[str, str]:
-    """Read the physical driver selection from the trusted Product session."""
-
-    path = Path(_session_env_path(session_root))
-    try:
-        raw = path.read_bytes()
-        if len(raw) > _MAX_SESSION_ENV_BYTES:
-            raise ValueError("Product session environment exceeds the byte limit")
-        text = raw.decode("utf-8")
-    except (OSError, UnicodeError, ValueError) as exc:
-        raise RuntimeError(f"Product session driver configuration is unavailable: {path}") from exc
-
-    values: dict[str, str] = {}
-    for line_number, raw_line in enumerate(text.splitlines(), start=1):
-        line = raw_line.strip()
-        if not line:
-            continue
-        match = re.fullmatch(r'([A-Z][A-Z0-9_]*)="((?:[^"\\]|\\.)*)"', line)
-        if match is None:
-            raise RuntimeError(f"invalid Product session environment line {line_number}: {path}")
-        key, escaped = match.groups()
-        if key in values:
-            raise RuntimeError(f"duplicate Product session environment key: {key}")
-        values[key] = escaped.replace('\\"', '"').replace("\\\\", "\\")
-
-    backend = values.get("LINGTU_DRIVER_BACKEND", "").strip()
-    if backend == "go2":
-        network_interface = values.get("LINGTU_DRIVER_NETWORK_INTERFACE", "").strip()
-        if re.fullmatch(r"[A-Za-z0-9_.:-]+", network_interface) is None:
-            raise RuntimeError("trusted Product session has invalid Go2 network interface")
-        return {
-            "backend": backend,
-            "network_interface": network_interface,
-        }
-    if backend == "doso":
-        host, port = _target_endpoint(values.get("LINGTU_DRIVER_TARGET"))
-        if not _remote_host(host) or port is None:
-            raise RuntimeError("trusted Product session has invalid Doso driver target")
-        return {"backend": backend, "host": host, "port": str(port)}
-    raise RuntimeError(f"trusted Product session has unsupported driver backend: {backend or '<unset>'}")
-
-
-def _remote_host(host: str) -> bool:
-    if not host:
-        return False
-    try:
-        return not ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return host.lower() not in {"localhost", "ip6-localhost"}
-
-
 def _read_json(path: Path) -> Mapping[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -1826,5 +1385,4 @@ __all__ = [
     "SessionFile",
     "SessionStage",
     "SwitchBackend",
-    "motion_output_startup_evidence",
 ]

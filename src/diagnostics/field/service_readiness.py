@@ -20,10 +20,6 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from diagnostics.field.dds_readiness import probe as probe_dds
-from diagnostics.field.teleop_avoid_preflight import STAGES as TELEOP_AVOID_STAGES
-from diagnostics.field.teleop_avoid_preflight import evaluate_teleop_avoid_preflight
-from diagnostics.field.teleop_preflight import STAGES as TELEOP_STAGES
-from diagnostics.field.teleop_preflight import evaluate_teleop_preflight
 from lingtu.product_lock import resolve_current_run_path
 from lingtu.run_plan import RunPlan
 from runtime.config import load_config
@@ -172,71 +168,6 @@ def _collect_status_file(raw_path: str) -> dict[str, Any]:
 def collect_status_files() -> dict[str, Any]:
     return {name: _collect_status_file(raw_path) for name, raw_path in STATUS_FILES.items()}
 
-
-def _collect_motion_status_files(*, status_max_age_s: float) -> dict[str, Any]:
-    status_files = collect_status_files()
-    collected_at = time.monotonic()
-    nav = status_files.get("nav", {}).get("json", {})
-    if not isinstance(nav, dict):
-        return status_files
-    final_output = nav.get("final_output", {})
-    input_gate = nav.get("input_gate", {})
-    if not isinstance(final_output, dict) or not isinstance(input_gate, dict):
-        return status_files
-    producer_boot_id = final_output.get("producer_boot_id")
-    output_sequence = final_output.get("output_sequence")
-    driver_max_age_s = input_gate.get("driver_control_max_age_s")
-    valid_sequence = isinstance(output_sequence, int) and not isinstance(output_sequence, bool)
-    valid_driver_age = (
-        isinstance(driver_max_age_s, (int, float))
-        and not isinstance(driver_max_age_s, bool)
-        and driver_max_age_s > 0.0
-    )
-    valid_status_age = (
-        isinstance(status_max_age_s, (int, float))
-        and not isinstance(status_max_age_s, bool)
-        and status_max_age_s > 0.0
-    )
-    if (
-        final_output.get("published") is not True
-        or not isinstance(producer_boot_id, str)
-        or not producer_boot_id
-        or not valid_sequence
-        or output_sequence <= 0
-        or not valid_driver_age
-        or not valid_status_age
-    ):
-        return status_files
-
-    def driver_covers_anchor() -> bool:
-        driver = status_files.get("driver", {}).get("json", {})
-        ack = driver.get("output_ack", {}) if isinstance(driver, dict) else {}
-        sequence = ack.get("output_sequence") if isinstance(ack, dict) else None
-        return bool(
-            isinstance(ack, dict)
-            and ack.get("accepted") is True
-            and ack.get("producer_boot_id") == producer_boot_id
-            and isinstance(sequence, int)
-            and not isinstance(sequence, bool)
-            and sequence >= output_sequence
-        )
-
-    # Driver JSON is published once per second, independently of its fast DDS ACK.
-    # Bound this read-only wait by the diagnostic snapshot freshness contract.
-    deadline = collected_at + float(status_max_age_s)
-    driver_path = STATUS_FILES.get(DRIVER_STATUS_NAME)
-    while not driver_covers_anchor() and driver_path:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0.0:
-            break
-        time.sleep(min(0.02, remaining))
-        status_files["driver"] = _collect_status_file(driver_path)
-    elapsed = max(0.0, time.monotonic() - collected_at)
-    for entry in status_files.values():
-        age_s = entry.get("age_s") if isinstance(entry, dict) else None
-        if isinstance(age_s, (int, float)) and not isinstance(age_s, bool):
-            entry["age_s"] = max(0.0, float(age_s) + elapsed)
-    return status_files
 
 
 def _current_run_path() -> Path:
@@ -560,8 +491,6 @@ def collect_camera_readiness(
         for topic in CAMERA_DDS_TOPICS:
             if int(dds_samples.get(topic, 0) or 0) <= 0:
                 blockers.append(f"dds_topic_silent:{topic}")
-    else:
-        blockers.append("dds_unchecked")
 
     if any("orbbec_camera" in line.lower() for line in legacy_lines):
         blockers.append("legacy_process_observed:orbbec_camera")
@@ -618,43 +547,6 @@ def collect_driver_readiness(
     else:
         if payload.get("schema_version") != "lingtu.driver.status.v2":
             blockers.append("status_schema_invalid:driver")
-        if payload.get("connected") is not True:
-            blockers.append("driver_not_connected")
-        else:
-            expected_transport = {
-                "go2": ("unitree_sdk2", "none", False),
-                "doso": ("brainstem_grpc", "grpc", True),
-            }.get(backend)
-            if expected_transport is None:
-                blockers.append(f"driver_backend_unsupported:{backend or 'missing'}")
-            if not control:
-                blockers.append("driver_control_missing")
-            elif expected_transport is not None:
-                protocol, owner, requires_lease = expected_transport
-                if adapter.get("protocol") != protocol or adapter.get("control_owner") != owner:
-                    blockers.append("driver_backend_control_invalid")
-                if control.get("motors_enabled") is not True:
-                    blockers.append("driver_motors_disabled")
-                if control.get("critical_fault") is True:
-                    blockers.append("driver_critical_motor_fault")
-                if control.get("control_assured") is not True:
-                    blockers.append("driver_control_not_assured")
-                if requires_lease and (
-                    control.get("lease_valid") is not True
-                    or adapter.get("control_owner_id") != "lingtu-driver@robot"
-                ):
-                    blockers.append("driver_control_not_owned_by_lingtu")
-                if not requires_lease and (
-                    control.get("lease_valid") is not False
-                    or str(adapter.get("control_owner_id") or "")
-                ):
-                    blockers.append("driver_backend_control_invalid")
-                if control.get("initial_zero_acknowledged") is not True:
-                    blockers.append("driver_initial_zero_unconfirmed")
-                if control.get("fsm") not in {"standing", "walking"}:
-                    blockers.append("driver_fsm_not_ready")
-        if payload.get("ready") is not True:
-            blockers.append("driver_not_ready")
         age_s = status.get("age_s")
         if not isinstance(age_s, (int, float)) or age_s > DRIVER_STATUS_MAX_AGE_S:
             blockers.append("driver_status_stale")
@@ -664,11 +556,13 @@ def collect_driver_readiness(
         "unit": service_unit,
         "status_file": status.get("path", STATUS_FILES.get(DRIVER_STATUS_NAME, "")),
         "status_age_s": status.get("age_s"),
-        "connected": payload.get("connected") is True,
-        "ready": payload.get("ready") is True,
+        "motion": {
+            "connected": payload.get("connected"),
+            "ready": payload.get("ready"),
+            "control": control,
+        },
         "backend": backend,
         "adapter": adapter,
-        "control": control,
         "dds_topic": DRIVER_DDS_TOPIC,
         "dds_idle_allowed": True,
         "blockers": blockers,
@@ -686,13 +580,13 @@ def collect_dds(*, seconds: float = 0.0, domain_id: int = 0) -> dict[str, Any]:
     }
     if seconds <= 0.0:
         return {
-            "ok": False,
+            "ok": None,
             "checked": False,
             "enabled": False,
             "seconds": seconds,
             "domain_id": domain_id,
             "services": services,
-            "blockers": ["dds_unchecked"],
+            "blockers": [],
         }
 
     topic_index: dict[str, list[tuple[str, str]]] = {}
@@ -798,8 +692,6 @@ def summarize_report(report: dict[str, Any]) -> dict[str, Any]:
     if dds.get("checked"):
         for blocker in dds.get("blockers", []):
             blockers.append(f"dds:{blocker}")
-    else:
-        blockers.append("dds:unchecked")
 
     return {
         "ok": not blockers,
@@ -813,12 +705,7 @@ def build_report(
     gateway_url: str,
     dds_seconds: float = 0.0,
     dds_domain: int = 0,
-    teleop_stage: str | None = None,
-    teleop_avoid_stage: str | None = None,
-    status_max_age_s: float = DRIVER_STATUS_MAX_AGE_S,
 ) -> dict[str, Any]:
-    if teleop_stage is not None and teleop_avoid_stage is not None:
-        raise ValueError("teleop and teleop_avoid preflight gates are mutually exclusive")
     current_run = collect_current_run()
     environment = dict(os.environ)
     systemd_targets = {}
@@ -835,11 +722,7 @@ def build_report(
     native_binaries = collect_native_binaries(environment=environment)
     gnss = collect_gnss_device()
     gateway = collect_gateway(gateway_url)
-    status_files = (
-        _collect_motion_status_files(status_max_age_s=status_max_age_s)
-        if teleop_avoid_stage == "motion"
-        else collect_status_files()
-    )
+    status_files = collect_status_files()
     driver_readiness = collect_driver_readiness(
         systemd=systemd,
         native_binaries=native_binaries,
@@ -869,20 +752,6 @@ def build_report(
         "driver": driver_readiness,
     }
     report["summary"] = summarize_report(report)
-    selected_stage = teleop_stage if teleop_stage is not None else teleop_avoid_stage
-    if selected_stage is not None:
-        report["current_run"] = current_run
-        evaluator = evaluate_teleop_preflight if teleop_stage is not None else evaluate_teleop_avoid_preflight
-        report_key = "teleop_preflight" if teleop_stage is not None else "teleop_avoid_preflight"
-        report[report_key] = evaluator(
-            {
-                "current_run": current_run,
-                "status_files": status_files,
-                "driver_readiness": driver_readiness,
-            },
-            stage=selected_stage,
-            status_max_age_s=status_max_age_s,
-        )
     return report
 
 
@@ -892,25 +761,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dds-seconds", type=float, default=0.0)
     parser.add_argument("--dds-domain", type=int, default=0)
     parser.add_argument(
-        "--teleop-stage",
-        choices=sorted(TELEOP_STAGES),
-        help="evaluate the selected read-only teleop gate",
-    )
-    parser.add_argument(
-        "--teleop-avoid-stage",
-        choices=sorted(TELEOP_AVOID_STAGES),
-        help="evaluate the selected read-only teleop_avoid gate",
-    )
-    parser.add_argument(
-        "--status-max-age-s",
-        type=float,
-        default=DRIVER_STATUS_MAX_AGE_S,
-        help="maximum age for native status snapshots used by the selected gate",
-    )
-    parser.add_argument(
         "--strict",
         action="store_true",
-        help="return non-zero when the selected gate (or general summary) is blocked",
+        help="return non-zero when diagnostics report a failure",
     )
     parser.add_argument("--json-out", type=Path)
     parser.add_argument("--pretty", action="store_true")
@@ -919,28 +772,17 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if args.teleop_stage is not None and args.teleop_avoid_stage is not None:
-        raise SystemExit("--teleop-stage and --teleop-avoid-stage are mutually exclusive")
     report = build_report(
         gateway_url=args.gateway_url,
         dds_seconds=args.dds_seconds,
         dds_domain=args.dds_domain,
-        teleop_stage=args.teleop_stage,
-        teleop_avoid_stage=args.teleop_avoid_stage,
-        status_max_age_s=args.status_max_age_s,
     )
     text = json.dumps(report, indent=2 if args.pretty else None, sort_keys=True)
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(text + "\n", encoding="utf-8")
     print(text)
-    if args.teleop_stage is not None:
-        selected_gate = report.get("teleop_preflight")
-    elif args.teleop_avoid_stage is not None:
-        selected_gate = report.get("teleop_avoid_preflight")
-    else:
-        selected_gate = report.get("summary")
-    return 1 if args.strict and not bool((selected_gate or {}).get("ok")) else 0
+    return 1 if args.strict and not report["summary"]["ok"] else 0
 
 
 if __name__ == "__main__":

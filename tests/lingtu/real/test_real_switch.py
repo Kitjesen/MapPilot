@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import threading
 import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,12 +11,12 @@ from types import SimpleNamespace
 import pytest
 
 from lingtu.control import ProductControl
+from lingtu.control_server import ControlOperations
 from lingtu.real.backend import (
     FieldBackend,
     MapActivationToken,
     SessionFile,
     SessionStage,
-    motion_output_startup_evidence,
 )
 from lingtu.run_plan import RunPlan
 from lingtu.switch_contracts import (
@@ -26,150 +27,6 @@ from lingtu.switch_contracts import (
     SwitchFailed,
     SwitchRequest,
 )
-
-
-def _go2_motion_startup_status() -> tuple[dict, dict]:
-    producer = "nav-boot-1"
-    sequence = 17
-    zero = {"vx": 0.0, "vy": 0.0, "wz": 0.0}
-    nav = {
-        "schema_version": "lingtu.nav.endpoint.status.v1",
-        "stamp_s": 100.0,
-        "control_mode": "teleop_avoid",
-        "final_cmd_vel": zero,
-        "operator_motion": {
-            "interface_enabled": True,
-            "authority_owner": "native_endpoint",
-            "control_mode": "teleop_avoid",
-            "control_ack_scope": "claim_hold_release",
-            "sample_evidence": "status_sequences",
-            "ack_publish_failed": 0,
-            "status_publish_failed": 0,
-            "status": {
-                "has_active_authority": False,
-                "has_active_sample": False,
-                "final_cmd_vel": zero,
-            },
-        },
-        "final_output": {
-            "published": True,
-            "producer_boot_id": producer,
-            "output_sequence": sequence,
-            "driver_delivery_accepted": True,
-        },
-        "driver_control": {
-            "received": True,
-            "ready": True,
-            "fresh": True,
-            "last_command_accepted": True,
-            "accepted_producer_boot_id": producer,
-            "accepted_output_sequence": sequence,
-        },
-    }
-    driver = {
-        "schema_version": "lingtu.driver.status.v2",
-        "role": "driver",
-        "backend": "go2",
-        "stamp_s": 100.0,
-        "connected": True,
-        "ready": True,
-        "dds": {
-            "topic": "/nav/cmd_vel",
-            "wire_topic": "rt/nav/cmd_vel",
-            "cmd_vel_writer_ready": True,
-            "matched_cmd_vel_writers": 1,
-        },
-        "adapter": {
-            "protocol": "unitree_sdk2",
-            "target": "dds://eth0/rt/api/sport/request",
-            "control_owner": "none",
-            "control_owner_id": "",
-        },
-        "control": {
-            "initial_zero_acknowledged": True,
-            "motors_enabled": True,
-            "critical_fault": False,
-            "control_assured": True,
-            "lease_valid": False,
-            "fsm": "standing",
-        },
-        "output_ack": {
-            "accepted": True,
-            "producer_boot_id": producer,
-            "output_sequence": sequence,
-        },
-    }
-    return nav, driver
-
-
-def test_go2_startup_uses_control_assurance_without_fabricated_sdk_lease() -> None:
-    nav, driver = _go2_motion_startup_status()
-
-    reason, _ = motion_output_startup_evidence(
-        nav,
-        driver,
-        expected_mode="teleop_avoid",
-        expected_driver={"backend": "go2", "network_interface": "eth0"},
-        wall_clock_s=100.1,
-        nav_max_age_s=1.0,
-        driver_max_age_s=1.0,
-    )
-
-    assert reason == ""
-
-    driver["adapter"]["control_owner"] = "sdk2"
-    driver["adapter"]["control_owner_id"] = "lingtu-driver@robot"
-    driver["control"]["lease_valid"] = True
-    reason, _ = motion_output_startup_evidence(
-        nav,
-        driver,
-        expected_mode="teleop_avoid",
-        expected_driver={"backend": "go2", "network_interface": "eth0"},
-        wall_clock_s=100.1,
-        nav_max_age_s=1.0,
-        driver_max_age_s=1.0,
-    )
-    assert reason == "driver_control_not_ready"
-
-
-def test_startup_zero_accepts_fresh_ack_snapshots_that_lag_the_20hz_output() -> None:
-    nav, driver = _go2_motion_startup_status()
-    nav["final_output"]["output_sequence"] = 20
-    nav["final_output"]["driver_delivery_accepted"] = False
-    nav["driver_control"]["accepted_output_sequence"] = 19
-    driver["output_ack"]["output_sequence"] = 9
-
-    reason, _ = motion_output_startup_evidence(
-        nav,
-        driver,
-        expected_mode="teleop_avoid",
-        expected_driver={"backend": "go2", "network_interface": "eth0"},
-        wall_clock_s=100.1,
-        nav_max_age_s=1.0,
-        driver_max_age_s=1.0,
-    )
-
-    assert reason == ""
-
-
-def test_startup_zero_rejects_a_driver_control_ack_more_than_two_outputs_behind() -> None:
-    nav, driver = _go2_motion_startup_status()
-    nav["final_output"]["output_sequence"] = 20
-    nav["final_output"]["driver_delivery_accepted"] = False
-    nav["driver_control"]["accepted_output_sequence"] = 17
-    driver["output_ack"]["output_sequence"] = 17
-
-    reason, _ = motion_output_startup_evidence(
-        nav,
-        driver,
-        expected_mode="teleop_avoid",
-        expected_driver={"backend": "go2", "network_interface": "eth0"},
-        wall_clock_s=100.1,
-        nav_max_age_s=1.0,
-        driver_max_age_s=1.0,
-    )
-
-    assert reason == "startup_zero_ack_identity_mismatch"
 
 
 class FakeRunner:
@@ -318,9 +175,6 @@ class FakeBackend:
 
     def wait_navigation(self, **_kwargs) -> None:
         self._event("wait_navigation")
-
-    def wait_motion_output(self, control_mode: str, *, timeout_s: float) -> None:
-        self._event("wait_motion_output")
 
     def wait_exploration(self, route: str, **_kwargs) -> None:
         self._event("wait_exploration")
@@ -502,6 +356,118 @@ def test_cold_switch_commits_map_and_current_product_identity(tmp_path) -> None:
     ]
 
 
+@pytest.mark.parametrize("ready", [True, False])
+def test_remote_switch_waits_for_readiness(tmp_path, monkeypatch, ready) -> None:
+    runner = FakeRunner()
+    backend = FakeBackend(fail_at=None if ready else "wait_navigation")
+    entered = threading.Event()
+    release = threading.Event()
+
+    def wait_navigation(**_kwargs):
+        entered.set()
+        assert release.wait(10), "test did not release readiness"
+        backend._event("wait_navigation")
+
+    monkeypatch.setattr(backend, "wait_navigation", wait_navigation)
+    def field_backend(**kwargs):
+        assert kwargs["gateway_url"] == "http://127.0.0.1:5053"
+        return backend
+
+    monkeypatch.setattr("lingtu.real.switch.FieldBackend", field_backend)
+    control = _control(runner)
+    operations = ControlOperations(control, tmp_path)
+    request_id = "remote-switch"
+    try:
+        operations.submit({
+            "request_id": request_id,
+            "product": "nav",
+            "map_name": "plant-a",
+            "expected_product_session_id": "",
+        })
+        assert entered.wait(30), "switch did not reach readiness"
+        assert operations.get(request_id)["state"] == "running"
+        assert not (tmp_path / "current.json").exists()
+    finally:
+        release.set()
+        operations.close()
+
+    result = operations.get(request_id)
+    assert result["state"] == ("succeeded" if ready else "failed")
+    assert result["result"]["ok"] is ready
+    assert (tmp_path / "current.json").exists() is ready
+    if ready:
+        current = json.loads((tmp_path / "current.json").read_text(encoding="utf-8"))
+        assert current["product_session_id"] == result["result"]["product_session_id"]
+        assert "commit_map" in backend.events
+    else:
+        assert "failed at wait_navigation" in result["message"]
+        assert "commit_map" not in backend.events
+        assert "rollback_session" in backend.events
+
+    restored = ControlOperations(control, tmp_path)
+    try:
+        assert restored.get(request_id) == result
+    finally:
+        restored.close()
+
+
+def test_switch_reuses_verified_plan(tmp_path, monkeypatch) -> None:
+    loads = []
+    original_load = RunPlan.load
+
+    def load(cls, path):
+        loads.append(Path(path))
+        return original_load(path)
+
+    monkeypatch.setattr(RunPlan, "load", classmethod(load))
+    report = _control(FakeRunner())._switch(_request(), backend=FakeBackend(), state_dir=tmp_path)
+
+    assert report.ok
+    assert loads == [Path(report.run_plan_path)]
+
+
+def test_staged_plan_change_blocks_start(tmp_path, monkeypatch) -> None:
+    runner = FakeRunner()
+    backend = FakeBackend()
+    stage_session = backend.stage_session
+
+    def stage(path, plan, environment, **kwargs):
+        staged = stage_session(path, plan, environment, **kwargs)
+        plan.with_process_environment({**plan.process_environment, "LINGTU_CONTROL_TEST": "changed"}).write(path)
+        return staged
+
+    monkeypatch.setattr(backend, "stage_session", stage)
+    with pytest.raises(SwitchFailed, match="published RunPlan changed after staging"):
+        _control(runner)._switch(_request(), backend=backend, state_dir=tmp_path)
+
+    assert "apply" not in runner.calls
+    assert "rollback_session" in backend.events
+    assert not (tmp_path / "current.json").exists()
+
+
+def test_mapping_restore_passes_archive_and_seed_without_activating_fixed_map(tmp_path) -> None:
+    runner = FakeRunner()
+    backend = FakeBackend()
+    report = _control(runner)._switch(
+        SwitchRequest(target_product="map", map_name="plant-a", initial_pose=(1.0, 2.0, 0.4, 0.3)),
+        backend=backend, state_dir=tmp_path,
+    )
+    assert report.ok
+    assert "prepare_map" in backend.events
+    assert "stage_map" not in backend.events
+    assert "prepare_localization" not in backend.events
+    plan = RunPlan.load(report.run_plan_path)
+    environment = FieldBackend(environment={"NAV_MAP_DIR": "/maps"})._session_environment(
+        run_plan_path=Path(report.run_plan_path), plan=plan,
+        native_environment=plan.native_process_environment, slam_mode="mapping",
+        map_identity=_map_identity("plant-a", 7), product_session_id=report.product_session_id,
+    )
+    assert environment["LINGTU_SLAM_MODE"] == "mapping"
+    assert environment["LINGTU_SLAM_MAP"] == "/maps/plant-a/map.pcd"
+    assert environment["LINGTU_SLAM_TRACK_INITIAL_Z"] == "0.4"
+    assert environment["OCTOPLANNER_MAP_PATH"] == ""
+
+
 def test_initial_pose_cannot_be_silently_ignored(tmp_path) -> None:
     runner = FakeRunner()
     backend = FakeBackend()
@@ -621,60 +587,9 @@ def test_http_returns_explicitly_allowed_error_status(monkeypatch) -> None:
     assert response == {"detail": "maps.service is unavailable", "_http_status": 503}
 
 
-@pytest.mark.parametrize("healthy", [True, False])
-def test_teleop_avoid_startup_checks_evaluated_readiness_before_commit(monkeypatch, healthy) -> None:
-    clock = iter((0.0, 0.0, 2.0))
-    backend = FieldBackend(environment={}, monotonic=lambda: next(clock), sleep=lambda _seconds: None)
-    calls: list[str] = []
-    navigation = {
-        "task": {"state": "IDLE", "task_id": "", "reason": ""},
-        "goal_admission": {"state": "BLOCKED"},
-        "control": {"authority": "NONE", "resume_required": True, "reason": ""},
-        "motion": {
-            "permission": "HELD",
-            "observation": "QUIET",
-            "stop_confirmation": "CONFIRMED",
-            "reason": "",
-        },
-    }
-    readiness = {
-        "runtime": {
-            "navigation": {
-                "native_endpoint": {
-                    "ok": False,
-                    "status_available": True,
-                    "blockers": ["native_resume_required"],
-                    "input_gate": {"ready": True},
-                    "control_loop_health": {
-                        "ready": True,
-                        "healthy": healthy,
-                        "reason": "ready" if healthy else "deadline_miss_ratio_high",
-                    },
-                },
-            },
-        },
-    }
-
-    def http(_method, path, *, timeout_s):
-        assert timeout_s == 3.0
-        calls.append(path)
-        return readiness if path == "/api/v1/readiness" else navigation
-
-    monkeypatch.setattr(backend, "_http", http)
-
-    if healthy:
-        backend.wait_navigation(map_name="", control_mode="teleop_avoid", timeout_s=1.0)
-    else:
-        with pytest.raises(RuntimeError, match=r"control_loop=.*deadline_miss_ratio_high"):
-            backend.wait_navigation(map_name="", control_mode="teleop_avoid", timeout_s=1.0)
-
-    assert calls == [
-        "/api/v1/navigation/status",
-        "/api/v1/readiness",
-    ]
 
 
-def test_saved_map_navigation_startup_still_checks_active_map(monkeypatch) -> None:
+def test_navigation_startup_uses_status_after_map_activation(monkeypatch) -> None:
     backend = FieldBackend(environment={})
     calls: list[str] = []
 
@@ -706,51 +621,6 @@ def test_saved_map_navigation_startup_still_checks_active_map(monkeypatch) -> No
     assert calls == ["/api/v1/navigation/status"]
 
 
-@pytest.mark.parametrize("control_mode", ["teleop", "teleop_avoid", "autonomy"])
-@pytest.mark.parametrize("fault", [None, "moving", "stop_failed", "input", "loop", "stale", "driver"])
-def test_operator_product_can_boot_estopped_without_granting_motion(monkeypatch, control_mode, fault):
-    clock = iter((0.0, 0.0, 2.0))
-    backend = FieldBackend(environment={}, monotonic=lambda: next(clock), sleep=lambda _: None)
-    navigation = {
-        "task": {"state": "IDLE"},
-        "goal_admission": {"state": "BLOCKED"},
-        "control": {"authority": "NONE", "resume_required": True},
-        "motion": {"permission": "ESTOPPED", "observation": "QUIET", "stop_confirmation": "CONFIRMED"},
-    }
-    native = {
-        "ok": False, "status_available": True, "blockers": ["native_estop_latched"],
-        "input_gate": {"ready": True}, "control_loop_health": {"ready": True, "healthy": True},
-    }
-    if fault == "moving":
-        navigation["motion"]["observation"] = "MOVING"
-    elif fault == "stop_failed":
-        navigation["motion"]["stop_confirmation"] = "FAILED"
-    elif fault == "input":
-        native["input_gate"]["ready"] = False
-    elif fault == "loop":
-        native["control_loop_health"]["healthy"] = False
-    elif fault == "stale":
-        native["status_available"] = False
-    elif fault == "driver":
-        native["blockers"].append("native_driver_not_ready")
-
-    def http(method, path, *, timeout_s):
-        assert method == "GET"
-        assert timeout_s == 3.0
-        if path == "/api/v1/readiness":
-            return {"runtime": {"navigation": {"native_endpoint": native}}}
-        assert path == "/api/v1/navigation/status"
-        return navigation
-
-    monkeypatch.setattr(backend, "_http", http)
-    if fault is None and control_mode != "autonomy":
-        backend.wait_navigation(map_name="", control_mode=control_mode, timeout_s=1.0)
-    else:
-        with pytest.raises(RuntimeError, match="navigation did not become ready"):
-            backend.wait_navigation(map_name="", control_mode=control_mode, timeout_s=1.0)
-    assert navigation["motion"]["permission"] == "ESTOPPED"
-    assert native["ok"] is False
-    assert navigation["goal_admission"]["state"] == "BLOCKED"
 
 
 def test_navigation_startup_fails_closed_when_navigation_state_is_unknown(monkeypatch) -> None:
@@ -872,11 +742,12 @@ def test_failed_switch_restores_map_quiesces_processes_and_removes_session(tmp_p
     assert not (tmp_path / "current.json").exists()
 
 
-def test_failed_switch_restores_previous_run_and_keeps_committed_record(tmp_path) -> None:
+@pytest.mark.parametrize("previous_product", ["teleop", "map"])
+def test_failed_switch_restores_previous_run_and_keeps_committed_record(tmp_path, previous_product) -> None:
     runner = FakeRunner()
     control = _control(runner)
     control._switch(
-        SwitchRequest(target_product="teleop"),
+        SwitchRequest(target_product=previous_product, map_name="plant-a" if previous_product == "map" else None),
         backend=FakeBackend(),
         state_dir=tmp_path,
     )
@@ -1126,6 +997,7 @@ def test_session_stage_and_rollback_install_then_remove_one_session(monkeypatch,
     assert list(files) == [str(tmp_path / "session.env")]
     session_environment = next(iter(files.values()))
     assert 'LINGTU_PRODUCT_SESSION_ID="product-session-1234"' in session_environment
+    assert 'LINGTU_NAV_STATUS_S="0.2"' in session_environment
     assert 'LINGTU_DRIVER_NETWORK_ADDRESS="192.168.123.18/24"' in session_environment
     assert 'LINGTU_DRIVER_PROBE_IP="192.168.123.161"' in session_environment
     assert '<NetworkInterfaceAddress>eth0</NetworkInterfaceAddress>' in session_environment
@@ -1164,3 +1036,22 @@ def test_stop_confirms_native_zero_without_gateway_session_call(monkeypatch) -> 
             "7000",
         ]
     ]
+
+
+@pytest.mark.parametrize("control_mode", ["teleop", "teleop_avoid", "autonomy"])
+@pytest.mark.parametrize("permission", ["CLEAR", "HELD", "ESTOPPED"])
+def test_navigation_startup_does_not_rejudge_motion(monkeypatch, control_mode, permission):
+    backend = FieldBackend(environment={})
+    navigation = {
+        "task": {"state": "IDLE"},
+        "goal_admission": {"state": "BLOCKED"},
+        "motion": {"permission": permission, "stop_confirmation": "FAILED"},
+    }
+    def http(method, path, *, timeout_s):
+        assert method == "GET"
+        assert path == "/api/v1/navigation/status"
+        return navigation
+    monkeypatch.setattr(backend, "_http", http)
+    backend.wait_navigation(map_name="", control_mode=control_mode, timeout_s=1.0)
+    assert navigation["goal_admission"]["state"] == "BLOCKED"
+    assert navigation["motion"]["permission"] == permission

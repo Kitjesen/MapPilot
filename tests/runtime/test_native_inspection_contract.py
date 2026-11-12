@@ -141,9 +141,9 @@ def test_inspection_resume_requires_autonomy_control_before_executor_resume() ->
         "CommandKind::kCancel", 1
     )[0]
 
-    assert "actions_.operator_takeover_latched()" in resume_block
+    assert "actions_.motion_held()" in resume_block
     assert "inspection_resume_requires_autonomy" in resume_block
-    assert resume_block.index("operator_takeover_latched") < resume_block.index("executor_.Resume")
+    assert resume_block.index("motion_held") < resume_block.index("executor_.Resume")
 
 
 def test_active_map_change_clears_inspection_motion_immediately() -> None:
@@ -186,23 +186,22 @@ def test_autonomy_input_gate_zero_intent_is_published_without_nav_output() -> No
     assert "dds.writeCmdVel" not in projection
 
 
-def test_autonomy_rechecks_inputs_after_planning_before_nonzero_publish() -> None:
+def test_autonomy_publishes_planner_output_without_a_second_send_gate() -> None:
     endpoint = Path("src/nav/cpp/endpoint/nav/app/loop.cpp").read_text(encoding="utf-8")
     projection = endpoint.split("runtime_actions.apply_autonomy_outputs =", 1)[1].split(
         "if (autonomy_result.clear_local_path)", 1
     )[0]
 
-    guard_index = projection.index("input_gate_state = evaluate_input_gate()")
-    readiness_index = projection.index("enforcePostPlanningInputReadiness(", guard_index)
-    stop_index = projection.index("motion_stop.holdEndpointMotion(reason)", readiness_index)
-    blocked_index = projection.index("if (post_planning_readiness.stop_required)", stop_index)
-    failure_index = projection.index("record_zero_publish_failure(", blocked_index)
-    publish_index = projection.index("FinalVelocityOutput{autonomy_result.publish.command}")
-
-    assert guard_index < readiness_index < stop_index < blocked_index < failure_index < publish_index
-    assert "} else {" in projection[failure_index:publish_index]
-    assert "manual_mode" not in projection[readiness_index:blocked_index]
-    assert "motion_stop.clearEndpointMotion" not in projection
+    assert "FinalVelocityOutput{autonomy_result.publish.command}" in projection
+    assert "enforcePostPlanningInputReadiness" not in projection
+    assert "post_planning_readiness" not in projection
+    failure = endpoint.split("auto fail_output =", 1)[1].split("  };", 1)[0]
+    assert "hold(" not in failure
+    assert "motion_stop.keepZeroFresh()" in failure
+    main = Path("src/nav/cpp/endpoint/nav/main.cpp").read_text(encoding="utf-8")
+    zero = main.split("auto publish_zero_command =", 1)[1].split("    };", 1)[0]
+    assert "hold(" not in zero
+    assert "FinalVelocityOutput{autonomy_result.publish.command}" in projection
 
 
 def test_local_recovery_exhaustion_routes_into_inspection_failure_policy() -> None:
@@ -236,7 +235,7 @@ def test_safety_stop_transitions_use_single_coordinator() -> None:
         "src/nav/cpp/endpoint/nav/safety/stop.cpp"
     ).read_text(encoding="utf-8")
     transaction = Path(
-        "src/nav/cpp/endpoint/nav/status/goal_terminal_transaction.cpp"
+        "src/nav/cpp/endpoint/nav/app/goal/terminal.cpp"
     ).read_text(encoding="utf-8")
     runtime = Path(
         "src/nav/cpp/endpoint/nav/app/navigation.cpp"
@@ -254,26 +253,25 @@ def test_safety_stop_transitions_use_single_coordinator() -> None:
     assert "motion_stop_.cancel()" not in cancel_router
     assert "GoalReplanRuntimeInterruption::kStop" in endpoint
     assert "navigation_runtime_controller.interrupt(" in endpoint
-    assert "motion_stop_.stopPreservingGoalTerminal(" in transaction
-    assert "motion_stop_.stopWithoutTerminalCommit(" in transaction
+    assert "stop_.stopPreservingGoalTerminal(" in transaction
+    assert "stop_.stopWithoutTerminalCommit(" in transaction
     assert "motion_stop.stop()" not in endpoint
     assert "GoalReplanRuntimeInterruption::kEstop" in endpoint
-    assert "motion_stop_.estopPreservingGoalTerminal(" in transaction
+    assert "stop_.estopPreservingGoalTerminal(" in transaction
     assert "motion_stop.estopWithoutTerminalCommit(" in endpoint
     assert "motion_stop.estop(reason)" not in endpoint
-    assert "GoalReplanRuntimeInterruption::kDriverAuthorityLost" in endpoint
-    assert 'motion_stop.clearEndpointMotion("driver_control_lost:" + driver_blocker)' in endpoint
-    assert "motion_stop.driverAuthorityLost(driver_blocker)" not in endpoint
+    assert "GoalReplanRuntimeInterruption::kDriverAuthorityLost" not in endpoint
+    assert "driver_authority_previous" not in endpoint
     assert "auto confirm_last_zero" not in endpoint
-    assert "goal_terminal_transaction_.advance(runtime_result" in runtime
+    assert "goal_terminal_.advance(runtime_result" in runtime
     terminal_block = transaction.split(
-        "GoalTerminalTransaction::advance", 1
-    )[1].split("GoalTerminalTransaction::stopWhileTerminalPending", 1)[0]
+        "GoalTerminal::advance", 1
+    )[1].split("GoalTerminal::stopPending", 1)[0]
     confirmation_block = coordinator.split(
         "MotionStopBarrier::confirmAndCommitTerminal", 1
     )[1].split("MotionStopResult MotionStopBarrier::confirmLastZero", 1)[0]
-    assert "motion_stop_.stopPreservingGoalTerminal(terminal.commit)" in terminal_block
-    assert "motion_stop_.commitGoalTerminalAfterStop" in terminal_block
+    assert "stop_.stopPreservingGoalTerminal(terminal.commit)" in terminal_block
+    assert "stop_.commitGoalTerminalAfterStop" in terminal_block
     assert "confirmTransition(" in confirmation_block
     assert "commit_terminal()" in confirmation_block
     poll_block = coordinator.split("MotionStopBarrier::poll()", 1)[1].split(

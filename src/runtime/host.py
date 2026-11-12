@@ -435,11 +435,6 @@ class HostBuilder:
 # ---------------------------------------------------------------------------
 
 
-def _transport_cache_key(spec: Any) -> tuple[str, str]:
-    """Return a stable per-build key for a delivery specification."""
-    return wire_delivery_cache_key(spec)
-
-
 def _resolve_transport_cached(
     spec: Any,
     cache: dict[tuple[str, str], Transport] | None,
@@ -449,26 +444,13 @@ def _resolve_transport_cached(
         return None
     if cache is None:
         return resolve_wire_delivery(spec)
-    key = _transport_cache_key(spec)
+    key = wire_delivery_cache_key(spec)
     transport = cache.get(key)
     if transport is None:
         transport = resolve_wire_delivery(spec)
         if transport is not None:
             cache[key] = transport
     return transport
-
-
-def _transport_name(transport: Any) -> str:
-    """Return a readable delivery/backend name for diagnostics."""
-    return wire_delivery_name(transport)
-
-
-def _explicit_topic(spec: _WireSpec) -> str | None:
-    return explicit_wire_topic(spec)
-
-
-def _transport_topic(spec: _WireSpec) -> str:
-    return default_wire_topic(spec)
 
 
 def _record_connection_metadata(
@@ -530,7 +512,7 @@ def _do_wire(
         )
 
     key = (spec.out_module, spec.out_port, spec.in_module, spec.in_port)
-    explicit_topic = _explicit_topic(spec)
+    explicit_topic = explicit_wire_topic(spec)
     delivery_spec = spec.delivery_spec
     transport = _resolve_transport_cached(delivery_spec, transport_cache)
     if transport is None:
@@ -544,10 +526,10 @@ def _do_wire(
             topic=explicit_topic,
         )
     else:
-        topic = explicit_topic or _transport_topic(spec)
+        topic = explicit_topic or default_wire_topic(spec)
         out._bind_transport(transport, topic)
         transport.subscribe(topic, inp._deliver)
-        transport_name = _transport_name(transport)
+        transport_name = wire_delivery_name(transport)
         mode = f"transport({transport_name})"
         _record_connection_metadata(
             connection_metadata,
@@ -818,16 +800,6 @@ class SystemHandle:
                 )
             self._stop_modules([name], timeout_per_module=5.0)
             touched.discard(name)
-
-        for name in self._startup_order:
-            try:
-                reason = self._modules[name].preflight()
-            except Exception as exc:
-                logger.exception("Module %s preflight() raised", name)
-                _module_failure(name, "preflight", exc)
-                continue
-            if reason:
-                _module_failure(name, "preflight", reason)
 
         for name in self._startup_order:
             if name in failed:

@@ -179,12 +179,10 @@ class MapIdentity:
 def pointcloud_artifact(identity: MapIdentity) -> MapArtifactIdentity:
     """Return the unique point-cloud artifact for one map identity."""
 
-    matches = [
-        artifact
-        for artifact in identity.artifacts
-        if artifact.artifact_type.strip().upper()
-        in {"POINTCLOUD", "POINT_CLOUD", "PCD"}
-    ]
+    matches = _map_artifacts(
+        identity,
+        accepted_types={"POINTCLOUD", "POINT_CLOUD", "PCD"},
+    )
     if len(matches) != 1:
         raise RuntimeError(
             f"MapService map {identity.map_id!r} must have exactly one "

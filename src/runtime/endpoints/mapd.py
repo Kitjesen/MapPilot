@@ -207,10 +207,7 @@ class MapClient:
         if not action_value:
             raise ValueError("action must be a non-empty string")
         body: dict[str, Any] = {"action": action_value}
-        for name, value in arguments.items():
-            if value is not None and not isinstance(value, (str, bool, int, float)):
-                raise TypeError(f"service argument {name!r} must be a JSON scalar")
-            body[str(name)] = value
+        body.update(arguments)
         try:
             response, _ = self._request(_SERVICE, body)
             return response

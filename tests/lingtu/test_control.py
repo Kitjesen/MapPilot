@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from sim.catalog import CatalogResolver
 
+import lingtu.control as control_module
 from lingtu.assembly.graph import (
     ProcessArtifact,
     ProcessCommand,
@@ -18,7 +19,7 @@ from lingtu.control import ExpectedProductMismatch, ProductControl
 from lingtu.control import main as control_main
 from lingtu.real.systemd import ProcessReport
 from lingtu.run_plan import CURRENT_RUN_SCHEMA, RunPlan
-from lingtu.switch_contracts import SwitchFailed, SwitchReport, SwitchRequest
+from lingtu.switch_contracts import ProcessFailed, SwitchFailed, SwitchReport, SwitchRequest
 
 pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
 
@@ -202,6 +203,41 @@ def test_product_control_cli_preserves_switch_failure_report(monkeypatch, capsys
     assert payload["product"] == "nav"
 
 
+@pytest.mark.parametrize("json_args", [[], ["--json"]])
+def test_cli_process_failure(monkeypatch, capsys, json_args) -> None:
+    report = ProcessReport(
+        product="nav", env="real", action="stop", status="failed", error="motion stop failed",
+    )
+
+    def fail_stop(self, **kwargs):
+        raise ProcessFailed(report)
+
+    monkeypatch.setattr(ProductControl, "stop", fail_stop)
+    assert control_main(["stop", "--robot", "unitree/go2", *json_args]) == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "status": report.status,
+        "robot": "unitree/go2",
+        "env": report.env,
+        "product": report.product,
+        "error": report.error,
+    }
+
+
+@pytest.mark.parametrize(
+    ("args", "error"),
+    [
+        (["status", "nav"], "status does not accept a Product selector"),
+        (["stop", "nav"], "stop does not accept a Product selector"),
+        (["status", "nav", "--expected-product", "map"], "--expected-product is only valid with stop"),
+        (["status", "nav", "--local-planner", "scan"], "--local-planner is only valid with switch"),
+    ],
+)
+def test_cli_selector_errors(capsys, args, error) -> None:
+    assert control_main(args) == 2
+    assert json.loads(capsys.readouterr().out) == {"ok": False, "error": error}
+
+
 @pytest.mark.parametrize("action", ("reapply", "quiesce", "restart"))
 def test_product_control_rejects_retired_actions(action: str) -> None:
     with pytest.raises(SystemExit) as exc_info:
@@ -257,7 +293,7 @@ def test_product_control_selects_scan_in_sim_without_changing_product_identity()
         process_env={},
     )
 
-    plan = control._resolve("nav", local_planner="scan")
+    plan = control._resolve("nav", local_planner=" SCAN ")
     teleop = control._resolve("teleop")
 
     assert plan.product == "nav"
@@ -308,7 +344,7 @@ def test_product_control_resolves_explore_variants_separately() -> None:
     )
 
     live = control._resolve("explore", product_variant="live")
-    mapped = control._resolve("explore", product_variant="map")
+    mapped = control._resolve("explore", product_variant=" map ")
 
     assert live == control._resolve("explore", product_variant="live")
     assert live == control._resolve("explore")
@@ -328,6 +364,7 @@ def test_product_control_resolves_explore_variants_separately() -> None:
 def test_product_control_selects_explore_variant_from_map_request(
     map_name: str | None,
     expected_variant: str,
+    tmp_path: Path,
 ) -> None:
     control = ProductControl(
         FakeRunner(),  # type: ignore[arg-type]
@@ -341,6 +378,7 @@ def test_product_control_selects_explore_variant_from_map_request(
             target_product="explore",
             map_name=map_name,
         ),
+        state_dir=tmp_path,
         dry_run=True,
     )
 
@@ -364,6 +402,45 @@ def test_product_control_resolves_robot_and_env_together() -> None:
     assert plan.robot == "doso/thunder_v4"
     assert plan.process_control == "subprocess"
     assert plan.simulation["session"]["runtime"]["backend"] == "mujoco"
+
+
+@pytest.mark.parametrize("env", ["real", "sim"])
+def test_product_control_public_switch_compiles_once_with_parameters(
+    env: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    compiled_plans = []
+    compile_plan = control_module.compile_run_plan
+
+    def compile_requested_plan(*args, **kwargs):
+        plan = compile_plan(*args, **kwargs)
+        compiled_plans.append(plan)
+        return plan
+
+    monkeypatch.setattr(control_module, "compile_run_plan", compile_requested_plan)
+    control = ProductControl(
+        FakeRunner(),  # type: ignore[arg-type]
+        robot="doso/thunder_v4",
+        env=env,
+        process_env={},
+    )
+    overrides = {"scan_planner.max_velocity_mps": 0.42}
+
+    result = control.switch(
+        "nav",
+        map_name="yard",
+        local_planner=" SCAN ",
+        parameter_overrides=overrides,
+        state_dir=tmp_path,
+        dry_run=True,
+    )
+
+    assert result["ok"] is True
+    assert result["local_planner"] == "scan"
+    assert len(compiled_plans) == 1
+    assert overrides.items() <= compiled_plans[0].parameters.items()
+    assert compiled_plans[0].native_process_environment["LINGTU_NAV_SCAN_PLANNER_MAX_VELOCITY_MPS"] == "0.42"
 
 
 def test_product_control_public_switch_hides_the_internal_plan(tmp_path: Path) -> None:
@@ -391,6 +468,7 @@ def test_product_control_public_switch_hides_the_internal_plan(tmp_path: Path) -
         "product_session_id": None,
         "phases": ["preflight"],
         "cleanup": [],
+        "degraded": {},
         "readiness": None,
         "error": None,
     }
@@ -646,7 +724,7 @@ def test_product_control_does_not_expose_run_plans_as_products() -> None:
     assert not hasattr(ProductControl, "quiesce_product")
 
 
-def test_product_control_cli_plans_switch_without_field_side_effects(capsys) -> None:
+def test_product_control_cli_plans_switch_without_field_side_effects(capsys, tmp_path: Path) -> None:
     exit_code = control_main(
         [
             "switch",
@@ -655,6 +733,8 @@ def test_product_control_cli_plans_switch_without_field_side_effects(capsys) -> 
             "unitree/go2",
             "--env",
             "real",
+            "--state-dir",
+            str(tmp_path),
             "--dry-run",
             "--json",
         ]
@@ -673,6 +753,7 @@ def test_product_control_cli_plans_switch_without_field_side_effects(capsys) -> 
         "product_session_id": None,
         "phases": ["preflight"],
         "cleanup": [],
+        "degraded": {},
         "readiness": None,
         "error": None,
     }
@@ -730,7 +811,7 @@ def test_product_control_cli_preserves_explicit_pose_dimensions(monkeypatch, cap
     assert json.loads(capsys.readouterr().out)["ok"] is True
 
 
-def test_product_control_cli_human_output_names_robot(capsys) -> None:
+def test_product_control_cli_human_output_names_robot(capsys, tmp_path: Path) -> None:
     exit_code = control_main(
         [
             "switch",
@@ -739,6 +820,8 @@ def test_product_control_cli_human_output_names_robot(capsys) -> None:
             "unitree/go2",
             "--env",
             "real",
+            "--state-dir",
+            str(tmp_path),
             "--dry-run",
         ]
     )
@@ -815,14 +898,22 @@ def test_product_control_status_reads_current_without_writing(tmp_path: Path) ->
         "env": "real",
         "product": "teleop",
         "local_planner": "cmu",
+        "processes": {},
+        "degraded": {},
         "error": None,
     }
     assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
 
 
+@pytest.mark.parametrize(
+    ("error", "supervisor_error"),
+    [("critical simulation process exited: mujoco_feeder", False), (None, False), ("RPC failed", True)],
+)
 def test_sim_status_reports_monitored_process_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    error: str | None,
+    supervisor_error: bool,
 ) -> None:
     control = ProductControl(
         robot="doso/thunder_v4",
@@ -845,7 +936,7 @@ def test_sim_status_reports_monitored_process_failure(
         env="sim",
         action="apply",
         status="failed",
-        error="critical simulation process exited: mujoco_feeder",
+        error=error,
     )
 
     class FailedSupervisor:
@@ -853,6 +944,8 @@ def test_sim_status_reports_monitored_process_failure(
             pass
 
         def status(self, *_args, **_kwargs) -> ProcessReport:
+            if supervisor_error:
+                raise control_module.SimulationSupervisorError(error)
             return failed
 
     monkeypatch.setattr("lingtu.control.SimulationSupervisorClient", FailedSupervisor)
@@ -1263,7 +1356,7 @@ def test_product_control_cli_stop_reports_expected_product_mismatch(
     )
 
     payload = json.loads(capsys.readouterr().out)
-    assert exit_code != 0
+    assert exit_code == 3
     assert payload == {
         "ok": False,
         "reason": "current_product_mismatch",

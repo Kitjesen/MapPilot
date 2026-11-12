@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
@@ -14,11 +14,11 @@ from typing import Any
 import lingtu.sim.switch as sim_switch
 from lingtu.assembly.compile_plan import compile_run_plan
 from lingtu.assembly.config.native_navigation import local_planner_name
-from lingtu.assembly.graph import ProcessSpec
 from lingtu.product_lock import (
     CURRENT_RUN_FILE_NAME,
     ProductControlLock,
     resolve_current_run_path,
+    resolve_product_state_dir,
 )
 from lingtu.products import product_name
 from lingtu.real.backend import FieldBackend, SwitchBackend
@@ -127,19 +127,13 @@ class ProductControl:
         if not requested_product:
             raise RuntimeError("LINGTU_PRODUCT is required for Product control")
         selected_product = product_name(requested_product)
-        selected_variant = (
-            str(product_variant).strip() if product_variant is not None else None
-        )
-        selected_local_planner = (
-            local_planner_name(local_planner) if local_planner is not None else None
-        )
         plan = compile_run_plan(
             selected_product,
             self.env,
             robot=self.robot or None,
-            local_planner=selected_local_planner,
+            local_planner=local_planner,
             env_config=self._env_config or None,
-            product_variant=selected_variant,
+            product_variant=product_variant,
             parameter_overrides=parameter_overrides,
         )
         self._require_plan_robot(plan)
@@ -262,17 +256,7 @@ class ProductControl:
                 "ProductControl.switch cannot execute a RunPlan controlled by "
                 f"{plan.process_control!r}"
             )
-        if dry_run:
-            return execute_switch(
-                self,
-                request,
-                backend=backend,
-                environment=self._process_env,
-                state_dir=state_dir,
-                dry_run=True,
-                resolved_plan=plan,
-            )
-        with self._mutation(state_dir):
+        with nullcontext() if dry_run else self._mutation(state_dir):
             return execute_switch(
                 self,
                 request,
@@ -290,10 +274,7 @@ class ProductControl:
     ) -> dict[str, Any]:
         """Return the current Product without changing runtime state."""
 
-        root = ProductControlLock(
-            state_dir,
-            environment=self._process_env,
-        ).state_dir
+        root = resolve_product_state_dir(state_dir, environment=self._process_env)
         try:
             plan, plan_path, product_session_id = self._current_plan_and_path(root)
         except _CurrentProductNotFound:
@@ -306,6 +287,15 @@ class ProductControl:
                 "local_planner": None,
                 "error": None,
             }
+        result: dict[str, Any] = {
+            "ok": True,
+            "status": "active",
+            "product_session_id": product_session_id,
+            "robot": self.robot,
+            "env": plan.env,
+            "product": plan.product,
+            "local_planner": plan.native_nav.get("local_planner"),
+        }
         if plan.env == "sim" and plan.process_control == "subprocess":
             try:
                 report = SimulationSupervisorClient(root).status(
@@ -314,27 +304,11 @@ class ProductControl:
                     timeout_s=1.0,
                 )
             except SimulationSupervisorError as exc:
-                return {
-                    "ok": False,
-                    "status": "failed",
-                    "product_session_id": product_session_id,
-                    "robot": self.robot,
-                    "env": plan.env,
-                    "product": plan.product,
-                    "local_planner": plan.native_nav.get("local_planner"),
-                    "error": str(exc),
-                }
+                result.update(ok=False, status="failed", error=str(exc))
+                return result
             if not report.ok:
-                return {
-                    "ok": False,
-                    "status": "failed",
-                    "product_session_id": product_session_id,
-                    "robot": self.robot,
-                    "env": plan.env,
-                    "product": plan.product,
-                    "local_planner": plan.native_nav.get("local_planner"),
-                    "error": report.error,
-                }
+                result.update(ok=False, status="failed", error=report.error)
+                return result
         optional_processes: dict[str, Mapping[str, Any]] = {}
         degraded: dict[str, Mapping[str, Any]] = {}
         if plan.process_control == "systemd":
@@ -349,18 +323,8 @@ class ProductControl:
                         "reason": ", ".join(detail.get("blockers", ())) or "not_ready",
                         "evidence": detail,
                     }
-        return {
-            "ok": True,
-            "status": "active",
-            "product_session_id": product_session_id,
-            "robot": self.robot,
-            "env": plan.env,
-            "product": plan.product,
-            "local_planner": plan.native_nav.get("local_planner"),
-            "processes": optional_processes,
-            "degraded": degraded,
-            "error": None,
-        }
+        result.update(processes=optional_processes, degraded=degraded, error=None)
+        return result
 
     def stop(
         self,
@@ -400,33 +364,6 @@ class ProductControl:
             "stop_evidence": dict(report.stop_evidence),
             "error": report.error,
         }
-
-    def _apply_plan_for_switch(
-        self,
-        path: str | Path,
-        *,
-        previous_plan: RunPlan | None = None,
-        dry_run: bool = False,
-        on_process_ready: Callable[[ProcessSpec], None] | None = None,
-        on_process_started: Callable[[ProcessSpec], None] | None = None,
-    ) -> ProcessReport:
-        """Internal switch primitive for the resolved preflight artifact."""
-
-        plan = RunPlan.load(path)
-        runner = self._systemd_runner()
-        if previous_plan is None:
-            return runner.apply_deferred(
-                plan, dry_run=dry_run, on_process_ready=on_process_ready,
-                on_process_started=on_process_started,
-            )
-        return runner.transition(
-            previous_plan,
-            plan,
-            dry_run=dry_run,
-            defer_rollback=True,
-            on_process_ready=on_process_ready,
-            on_process_started=on_process_started,
-        )
 
     def _quiesce_plan_for_switch(
         self,
@@ -523,7 +460,11 @@ class ProductControl:
             if not dry_run:
                 field_environment = dict(self._process_env)
                 field_environment["LINGTU_SESSION_ROOT"] = str(root)
-                active_backend = backend or FieldBackend(environment=field_environment)
+                active_backend = backend or FieldBackend(
+                    environment=field_environment,
+                    gateway_url=field_environment.get("GW")
+                    or f"http://127.0.0.1:{plan.host_config.get('gateway_port', 5050)}",
+                )
                 active_backend.stop_motion(current)
             report = self._systemd_runner().stop(plan, dry_run=dry_run)
             if report.ok and active_backend is not None:
@@ -706,6 +647,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--state-dir", type=Path)
     parser.add_argument("--port", type=int, default=5051, help="Loopback control port for serve")
+    parser.add_argument("--public-port", type=int, help="Persistent Web/API port for serve (real 5050, sim 15050)")
+    parser.add_argument("--gateway-port", type=int, help="Product Host HTTP port for serve (real 5053, sim 5050)")
     parser.add_argument(
         "--initial-pose", nargs="+", type=float, metavar="COORD",
         help="Map-frame body seed: X Y Z YAW; X Y YAW retains Z=0.",
@@ -746,6 +689,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = _parser().parse_args(argv)
     control: ProductControl | None = None
+    exit_code = 0
     try:
         if args.local_planner and args.action != "switch":
             raise ValueError("--local-planner is only valid with switch")
@@ -771,12 +715,18 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.expected_product and args.action != "stop":
             raise ValueError("--expected-product is only valid with stop")
+        if args.action != "serve" and (args.public_port is not None or args.gateway_port is not None):
+            raise ValueError("--public-port and --gateway-port are only valid with serve")
+        if args.action in {"status", "stop"} and args.product:
+            raise ValueError(f"{args.action} does not accept a Product selector")
         if args.action == "serve":
             from lingtu.control_server import serve
 
             if args.product or args.map_name or args.dry_run or args.initial_pose or args.set:
                 raise ValueError("serve accepts fixed robot/env configuration, not a switch request")
             serve(control, state_dir=args.state_dir, port=args.port,
+                  public_port=args.public_port if args.public_port is not None else (5050 if args.env == "real" else 15050),
+                  gateway_port=args.gateway_port if args.gateway_port is not None else (5053 if args.env == "real" else 5050),
                   variant=args.variant or os.environ.get("LINGTU_CONTROL_VARIANT"))
             return 0
         elif args.action == "switch":
@@ -798,12 +748,8 @@ def main(argv: list[str] | None = None) -> int:
                 dry_run=args.dry_run,
             )
         elif args.action == "status":
-            if args.product:
-                raise ValueError("status does not accept a Product selector")
             payload = control.status(state_dir=args.state_dir)
         elif args.action == "stop":
-            if args.product:
-                raise ValueError("stop does not accept a Product selector")
             if args.expected_product:
                 payload = control._stop(
                     expected_product=args.expected_product,
@@ -819,55 +765,37 @@ def main(argv: list[str] | None = None) -> int:
             raise AssertionError(f"unsupported ProductControl action: {args.action}")
     except SwitchFailed as exc:
         report = exc.report
-        print(
-            json.dumps(
-                {
-                    **report.as_dict(),
-                    "robot": control.robot if control is not None else args.robot,
-                    "product": report.target_product,
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
-        return 1
+        payload = {
+            **report.as_dict(),
+            "robot": control.robot if control is not None else args.robot,
+            "product": report.target_product,
+        }
+        exit_code = 1
     except ProcessFailed as exc:
         report = exc.report
-        print(
-            json.dumps(
-                {
-                    "ok": False,
-                    "status": report.status,
-                    "robot": control.robot if control is not None else args.robot,
-                    "env": report.env,
-                    "product": report.product,
-                    "error": report.error,
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
-        return 1
+        payload = {
+            "ok": False,
+            "status": report.status,
+            "robot": control.robot if control is not None else args.robot,
+            "env": report.env,
+            "product": report.product,
+            "error": report.error,
+        }
+        exit_code = 1
     except ExpectedProductMismatch as exc:
-        print(
-            json.dumps(
-                {
-                    "ok": False,
-                    "reason": exc.reason,
-                    "error": str(exc),
-                    "expected_product": exc.expected_product,
-                    "current_product": exc.current_product,
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
-        return 3
+        payload = {
+            "ok": False,
+            "reason": exc.reason,
+            "error": str(exc),
+            "expected_product": exc.expected_product,
+            "current_product": exc.current_product,
+        }
+        exit_code = 3
     except Exception as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False, indent=2))
-        return 2
-    _print(payload, json_output=args.json)
-    return 0
+        payload = {"ok": False, "error": str(exc)}
+        exit_code = 2
+    _print(payload, json_output=args.json or exit_code != 0)
+    return exit_code
 
 
 def _parameter_overrides(values: list[str]) -> dict[str, str]:

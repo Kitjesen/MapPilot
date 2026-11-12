@@ -298,23 +298,6 @@ class Module:
 
     # -- lifecycle -----------------------------------------------------------
 
-    def preflight(self) -> str | None:
-        """Pre-startup check 鈥?verify required resources are available.
-
-        Called before setup(). Return ``None`` if all checks pass, or a string
-        describing what is missing/wrong.  Returning a non-None value causes
-        the module to be marked as *failed* in SystemHandle.start() (same
-        treatment as a setup() exception).
-
-        Override in subclasses that need pre-flight validation::
-
-            def preflight(self) -> Optional[str]:
-                if not os.path.exists(self._model_path):
-                    return f"Model file not found: {self._model_path}"
-                return None
-        """
-        return None
-
     def startup_readiness(self) -> str | None:
         """Return why startup is not ready, or None when ready."""
 

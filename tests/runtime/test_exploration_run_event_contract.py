@@ -76,7 +76,7 @@ def test_exploration_run_terminal_requires_native_motion_stop_confirmation() -> 
     event = _event(
         state=int(ExplorationRunState.COMPLETED),
         motion_stop_confirmed=True,
-        motion_stop_reason="driver_ack_and_odometry_still",
+        motion_stop_reason="zero_output_and_odometry_still",
     )
     assert event.terminal is True
 

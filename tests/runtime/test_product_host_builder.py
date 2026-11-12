@@ -6,7 +6,6 @@ import decision.modules.visual_servo as visual_servo_module
 from decision.modules.visual_servo import VisualServoModule
 from lingtu.assembly.compile_plan import (
     compile_run_plan,
-    host_builder_for_resolved_product,
     host_builder_from_run_plan,
 )
 from lingtu.assembly.config.product import resolve_product_host_config
@@ -16,6 +15,15 @@ from lingtu.assembly.host.plugin_catalog import install_builtin_plugin_catalog
 from perception.backends import DinoEncoderProvider
 
 install_builtin_plugin_catalog()
+
+
+@pytest.mark.parametrize(("env", "port"), [("real", 5053), ("sim", 5050)])
+def test_gateway_port_reaches_host(env, port, allow_unbuilt_process_artifacts) -> None:
+    plan = compile_run_plan("map", env, robot="unitree/go2" if env == "real" else "doso/thunder_v4")
+    builder = host_builder_from_run_plan(plan)
+    gateway = next(entry for entry in builder._entries if entry.alias == "GatewayModule")
+    assert plan.host_config["gateway_port"] == port
+    assert gateway.config["port"] == port
 
 
 def test_direct_host_builder_defaults_to_stub_driver() -> None:
@@ -73,7 +81,7 @@ def test_product_model_config_reaches_all_semantic_clients(product: str) -> None
         llm_api_key_env="TEST_LLM_KEY",
         llm_timeout_sec=7.5,
     )
-    builder = host_builder_for_resolved_product(product, config)
+    builder = host_builder(config, product=product)
     entries = {item.alias: item for item in builder._entries}
 
     for alias in ("SemanticPlannerModule", "AgentPlannerModule"):
@@ -312,14 +320,14 @@ def test_real_product_host_builds_without_python_robot_driver(product: str) -> N
     config = resolve_product_host_config(product, "real", robot="unitree/go2")
     assert config["enable_robot_driver"] is False
     assert "enable_map_modules" not in config
-    host_builder = host_builder_for_resolved_product(product, config)
-    assert "ThunderDriver" not in host_builder.export_graph().module_names
+    builder = host_builder(config, product=product)
+    assert "ThunderDriver" not in builder.export_graph().module_names
 
 
 def test_inspection_product_only_loads_declared_semantic_planning_modules() -> None:
     config = resolve_product_host_config("inspection", "real", robot="unitree/go2")
-    host_builder = host_builder_for_resolved_product("inspection", config)
-    names = host_builder.export_graph().module_names
+    builder = host_builder(config, product="inspection")
+    names = builder.export_graph().module_names
 
     assert "SemanticPlannerModule" in names
     assert "LLMModule" in names
@@ -327,7 +335,7 @@ def test_inspection_product_only_loads_declared_semantic_planning_modules() -> N
     assert "VisualServoModule" in names
     wires = {
         f"{wire.out_module}.{wire.out_port}->{wire.in_module}.{wire.in_port}"
-        for wire in host_builder.export_graph().explicit_wires
+        for wire in builder.export_graph().explicit_wires
     }
     assert {
         "host.bus.navigation_goal_status->nav.goals.navigation_goal_status",

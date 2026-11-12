@@ -19,6 +19,21 @@ control.status()
 control.stop()
 ```
 
+To continue a previously saved mapping archive after restart, use
+`control.switch("map", map_name="office", initial_pose=(x, y, z, yaw))`.
+The native SLAM service restores original keyframes and accepted constraints,
+registers the current scan against the saved map, then starts appending frames.
+The initial pose is optional when global localization is available. Archives
+must contain the new `mapping_state.yaml`, original patches/poses/timestamps
+and `sam_loops.json`; a PCD or OctoMap alone is insufficient. Old map packages
+without that metadata remain navigation maps, not restorable mapping archives.
+
+The same request is supported by `python -m lingtu.control switch map --map
+office --robot <vendor/model> --env real --initial-pose X Y Z YAW --json` and
+the existing `/api/v1/product-control/switch` route (`product: "map"`,
+`map_name: "office"`). Product switching still uses the existing cold lifecycle;
+the standalone SLAM mode commands do not constitute a complete Product hot switch.
+
 ## Public API
 
 | Entry | Purpose |
@@ -40,9 +55,12 @@ value as `switch(expected_product_session_id=...)` to reject a stale request
 under the existing mutation lock, before resolving or stopping a Product.
 
 `python -m lingtu.control serve --robot unitree/go2 --env real` exposes a
-loopback transport on port 5051. It runs outside Host, so an accepted switch
-continues when Host restarts. Gateway forwards requests; it does not own the
-transaction. Request receipts survive transport restarts in the selected state
+persistent Web/API entry on 5050 and loopback lifecycle transport on 5051.
+The real Product Host uses HTTP port 5053. `gateway.entry` serves Web assets,
+dispatches lifecycle requests and streams runtime HTTP/SSE/WebSockets to Host.
+It runs inside the independent control service and survives Product shutdown.
+The simulation entry defaults to public 15050 and the existing Host port 5050.
+Request receipts survive transport restarts in the selected state
 directory; unfinished requests are reported as interrupted and never replayed.
 The Web offers mapping and saved-map navigation only. See
 [operations](../../docs/operations.md#web-mapping-and-navigation-switches)
@@ -67,6 +85,12 @@ precedence, and internal path changes.
 
 ## Remote Python SDK
 
+The external SDK distributions and shared protocol sources are documented in
+[SDK](../../sdk/README.md). Build the standalone Python wheel and source
+archive with `python tools/sdk/package_python.py`. The client distribution
+uses the `lingtu.sdk` import. Its base HTTP, download and SSE implementation has
+zero runtime dependencies. WebSocket sessions use the optional `websocket` extra.
+
 `LingTuClient` configures one Gateway address, API key and request timeout. Its
 domain clients share that configuration and own their request construction and
 result handling. This is shared connection configuration, not a shared TCP
@@ -74,15 +98,17 @@ session: constructing a client makes no network request, and the stdlib HTTP
 implementation opens each request through `urllib.request.urlopen`. The SDK
 does not acquire robot control or start a Product when it is constructed.
 `AsyncLingTuClient` exposes the same domains and method names;
-await its methods. Both clients use the Python standard library.
+await its request methods and use `async for` with `events()`.
+HTTP, downloads and SSE use the Python standard library. Live WebSocket
+sessions use the optional `websocket` extra.
 
 | Property | Client | Responsibility |
 | --- | --- | --- |
 | `navigation` | `NavigationClient` | Goals, navigation status, paths, exploration, position and relocalization |
-| `map` | `MapClient` | Saved maps, durable save operations, downloads, point clouds and tagged places |
+| `map` | `MapClient` | Saved maps, durable operations, downloads, surfaces, 3D no-go regions and source/voxel editing |
 | `tasks` | `TaskClient` | Text instructions, Agent runs, Follow executions, inspection routes, task control and reports |
 | `observations` | `ObservationClient` | Scene graphs, camera snapshots, retained observations and native recordings |
-| `system` | `SystemClient` | State, health, session, capabilities, readiness, diagnostics, software emergency stop and control leases |
+| `system` | `SystemClient` | State, health, session, readiness, diagnostics, stop, body commands and control leases |
 
 These five entry points group caller workflows. Localization prepares and
 observes live navigation; maps own durable spatial assets. Task methods keep
@@ -115,7 +141,11 @@ saved = robot.map.save_and_wait("mapping_capture")
 ```
 
 `map.save_and_wait()` follows the durable operation identity until its actual
-result; saving does not activate that map. After ProductControl selects the
+result. Use `auto_process=False` to archive for later manual processing, or
+`wait_for_source=True` to return after archiving while processing continues.
+`process_operation()` starts processing an archived source, and
+`download_source()` retrieves its PCD even when later processing failed.
+Saving does not activate that map. After ProductControl selects the
 navigation map, relocalize on the current active map with a known pose seed:
 
 ```python
@@ -165,6 +195,15 @@ classes can also be constructed with an existing root client, for example
 historical `robot.localization` entry also delegates its relocalization and map
 tracking methods to `navigation`; use the five domains above for new integrations.
 Audio has not been added to the public SDK.
+`robot.events()` provides SSE subscriptions in both clients. Use
+`contextlib.closing` or `aclosing` to release a subscription on early exit.
+`watch_cloud()`, `watch_scan()` and `watch_camera()` provide binary WebSocket
+subscriptions using explicit sync/async contexts. Camera reads accept an
+independent `viewer_token`. `teleop()` exposes an operator session whose
+`move()` obtains a fresh input window, and whose `hold()` releases the deadman.
+The returned ingress receipt preserves its queue stage and confirmation fields.
+`observations.search_memory_embedding()` takes a vector from the observation
+store's encoder. Text search reports the missing matching encoder explicitly.
 The complete external contract is documented in [API](../../docs/api.md).
 
 ## Layout
@@ -173,6 +212,7 @@ The complete external contract is documented in [API](../../docs/api.md).
 | --- | --- |
 | `control.py` | Public `switch`, `status`, `stop` and the CLI |
 | `control_server.py` | Loopback request receipts and forwarding into ProductControl, outside Host |
+| `products.py` | Shared lifecycle parsing through `ProductLifecycle.from_spec` and operator metadata |
 | `run_plan.py` | Internal resolved Product data and JSON load/save |
 | `real/` | Real-robot switch transaction and systemd ownership |
 | `sim/` | Simulation switch transaction and direct child ownership |

@@ -1,4 +1,4 @@
-"""Tests for enterprise-grade features: redaction, preflight, graceful shutdown, port metrics."""
+"""Tests for enterprise-grade features: redaction, graceful shutdown, port metrics."""
 
 from __future__ import annotations
 
@@ -56,53 +56,6 @@ class TestRedactSecretsFilter(unittest.TestCase):
         result = f.filter(record)
         self.assertTrue(result)
         self.assertEqual(record.getMessage(), "Normal log message")
-
-
-# ── Module.preflight() ───────────────────────────────────────────────────────
-
-class _FailingPreflight(Module, layer=0):
-    out: Out[int]
-
-    def preflight(self):
-        return "missing required resource"
-
-
-class _PassingPreflight(Module, layer=0):
-    out: Out[int]
-
-    def preflight(self):
-        return None
-
-
-class TestModulePreflight(unittest.TestCase):
-
-    def test_default_preflight_returns_none(self):
-        m = Module()
-        self.assertIsNone(m.preflight())
-
-    def test_failing_preflight_returns_reason(self):
-        m = _FailingPreflight()
-        self.assertEqual(m.preflight(), "missing required resource")
-
-    def test_passing_preflight_returns_none(self):
-        m = _PassingPreflight()
-        self.assertIsNone(m.preflight())
-
-    def test_preflight_integrated_in_system_start(self):
-        """Failing preflight → module marked as failed, not started."""
-        from runtime.host import HostBuilder
-        bp = HostBuilder()
-        bp.add(_FailingPreflight, name="Fail")
-        bp.add(_PassingPreflight, name="Pass")
-        system = bp.build()
-        system.start()
-
-        # Failed module key is class name, not the `name` param
-        failed_keys = list(system._failed_modules.keys())
-        self.assertTrue(any("FailingPreflight" in k for k in failed_keys),
-                        f"Expected failing module in {failed_keys}")
-        self.assertFalse(any("PassingPreflight" in k for k in failed_keys))
-        system.stop()
 
 
 # ── Graceful shutdown with timeout ───────────────────────────────────────────

@@ -121,7 +121,7 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
         "goal_reached_m": 0.15,
         "path_follower_goal_tolerance_m": 0.15,
         "path_follower_lookahead_m": 0.35,
-        "path_follower_max_accel_mps2": 4.0,
+        "path_follower_max_accel_mps2": 0.75,
         "path_follower_max_speed_mps": math.sqrt(2.0),
         "path_follower_max_yaw_accel_rad_s2": 4.0,
         "path_follower_max_yaw_rate_rad_s": 1.0,
@@ -155,7 +155,7 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
         "LINGTU_NAV_DYNAMIC_CONFIRM_FRAMES": "4",
         "LINGTU_NAV_PATH_FOLLOWER_GOAL_TOLERANCE_M": "0.15",
         "LINGTU_NAV_PATH_FOLLOWER_LOOKAHEAD_M": "0.35",
-        "LINGTU_NAV_PATH_FOLLOWER_MAX_ACCEL_MPS2": "4",
+        "LINGTU_NAV_PATH_FOLLOWER_MAX_ACCEL_MPS2": "0.75",
         "LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS": "1.4142135623731",
         "LINGTU_NAV_PATH_FOLLOWER_MIN_SPEED_MPS": "0.08",
         "LINGTU_NAV_PATH_FOLLOWER_MAX_YAW_RATE_RAD_S": "1",
@@ -224,7 +224,8 @@ def test_go2_standing_height_reaches_native_planner() -> None:
     assert compiled.environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_M"] == "0.35"
     assert compiled.environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_TOLERANCE_M"] == "0.05"
     assert compiled.environment["LINGTU_NAV_OCTO_DIRECT_SUPPORT_ONLY"] == "0"
-    assert compiled.environment["LINGTU_NAV_OCTO_SUPPORT_RADIUS_CELLS"] == "1"
+    assert float(compiled.environment["LINGTU_NAV_OCTO_SURFACE_MAX_HOLE_AREA_M2"]) == .16
+    assert float(compiled.environment["LINGTU_NAV_OCTO_SURFACE_MAX_SLOPE"]) == .7
     assert compiled.environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"] == "0.25"
     assert compiled.environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"] == "0.25"
     assert compiled.environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] == "0.19"
@@ -479,7 +480,7 @@ def test_cmu_octoplanner_default_radius_keeps_the_width_contract(
     ("robot", "radius", "below", "above"),
     [
         ("unitree/go2", 0.25, 0.10, 0.25),
-        ("doso/thunder_v4", 0.40, 0.25, 0.35),
+        ("doso/thunder_v4", 0.32, 0.05, 0.35),
     ],
 )
 def test_scan_global_corridor_uses_robot_width_and_vertical_clearance(
@@ -561,7 +562,7 @@ def test_product_smoother_uses_the_complete_shared_motion_profile(product: str) 
     for axis in ("X", "Y"):
         assert environment[f"LINGTU_NAV_SMOOTHER_{axis}_MIN_MPS"] == "-1"
         assert environment[f"LINGTU_NAV_SMOOTHER_{axis}_MAX_MPS"] == "1"
-        assert environment[f"LINGTU_NAV_SMOOTHER_{axis}_ACCEL_MPS2"] == "4"
+        assert environment[f"LINGTU_NAV_SMOOTHER_{axis}_ACCEL_MPS2"] == ("0.75" if product == "nav" else "0.5")
         assert environment[f"LINGTU_NAV_SMOOTHER_{axis}_DECEL_MPS2"] == "4"
     assert environment["LINGTU_NAV_SMOOTHER_YAW_MIN_RADPS"] == "-1"
     assert environment["LINGTU_NAV_SMOOTHER_YAW_MAX_RADPS"] == "1"

@@ -308,10 +308,6 @@ class _ServiceInspector:
                 row["status"] = status
                 if isinstance(payload.get("ready"), bool):
                     row["ready"] = payload["ready"]
-                    if payload["ready"] is False:
-                        blockers.append(f"status_file_not_ready:{file_name}")
-                if status in {"error", "failed", "fatal"}:
-                    blockers.append(f"status_file_error:{file_name}")
                 if spec.name == "video":
                     row["source_fresh"] = payload.get("source_fresh")
                     row["source_generation"] = payload.get("source_generation")
@@ -422,34 +418,16 @@ class _ServiceInspector:
                 payload = json.loads(response_body)
             except (json.JSONDecodeError, UnicodeDecodeError):
                 blockers.append("http_invalid_json")
-        if isinstance(payload, dict):
-            for field in ("data_ready", "non_motion_safe"):
-                if field not in payload:
-                    blockers.append(f"http_payload_missing:{field}")
-                elif type(payload[field]) is not bool:
-                    blockers.append(f"http_payload_invalid_type:{field}")
-                elif payload[field] is False:
-                    blockers.append(
-                        "http_data_not_ready" if field == "data_ready" else "http_non_motion_safe_false"
-                    )
-            for field in ("failed_modules", "critical_failed_modules"):
-                if field not in payload:
-                    blockers.append(f"http_payload_missing:{field}")
-                    continue
-                value = payload.get(field)
-                if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
-                    blockers.append(f"http_payload_invalid_type:{field}")
-                elif value:
-                    blockers.append(f"http_{field}:{','.join(value)}")
-        safe_degraded = (
-            status_code == 503
-            and isinstance(payload, dict)
-            and payload.get("data_ready") is True
-            and payload.get("non_motion_safe") is True
-            and payload.get("failed_modules") == []
-            and payload.get("critical_failed_modules") == []
-        )
-        if status_code is not None and not 200 <= status_code < 300 and not safe_degraded:
+        host_ready = isinstance(payload, dict) and payload.get("startup_state") == "ready"
+        if not isinstance(payload, dict):
+            blockers.append("http_payload_invalid")
+        elif not host_ready:
+            blockers.append(f"http_startup_not_ready:{payload.get('startup_state', 'missing')}")
+        # /ready also reports runtime input and motion conditions. A degraded
+        # response does not undo successful Host initialization.
+        if status_code is not None and not 200 <= status_code < 300 and not (
+            status_code == 503 and host_ready
+        ):
             blockers.append(f"http_status:{status_code}")
         return {
             "ok": not blockers,
@@ -511,7 +489,7 @@ class ServiceReadiness:
     def _inspect(self, process: ProcessSpec) -> Mapping[str, Any]:
         return self._manager.status_details(
             process.name,
-            dds_check=True,
+            dds_check=False,
             http_check=True,
             target=process.target,
         )[process.name]
@@ -638,7 +616,7 @@ class SystemdRunner:
                 if conflicting_process is None:
                     if not self._manager.active(target):
                         continue
-                    self._stop_target(target, float(timeouts.get(target, 15)))
+                    self._manager.stop(target, float(timeouts.get(target, 15)))
                 else:
                     if conflicting_process.lifecycle == "persistent":
                         continue
@@ -813,7 +791,7 @@ class SystemdRunner:
                 if conflicting_process is None:
                     if not self._manager.active(target):
                         continue
-                    self._stop_target(target, float(timeouts.get(target, 15)))
+                    self._manager.stop(target, float(timeouts.get(target, 15)))
                 else:
                     if conflicting_process.lifecycle == "persistent":
                         continue
@@ -1176,7 +1154,7 @@ class SystemdRunner:
                 if process is None:
                     if not self._manager.active(target):
                         continue
-                    self._stop_target(target, float(timeouts.get(target, 15)))
+                    self._manager.stop(target, float(timeouts.get(target, 15)))
                 else:
                     if not self._should_stop_process(process):
                         continue
@@ -1375,11 +1353,6 @@ class SystemdRunner:
         if remaining <= 0:
             raise ProcessError("process stage deadline expired")
         return remaining
-
-    def _stop_target(self, target: str, timeout_s: float) -> None:
-        """Stop a conflict tombstone that is not tied to a selected process."""
-
-        self._manager.stop(target, timeout_s)
 
     def _stop_process(
         self,

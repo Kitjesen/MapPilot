@@ -5,6 +5,19 @@ assets. Product startup remains owned by ProductControl.
 
 ## Main commands
 
+Customer instructions are in [`docs/customer-deployment.md`](../../docs/customer-deployment.md),
+also included in new native archives. Prepare the locked Python runtime with:
+
+```bash
+python3 scripts/deploy/prepare_runtime.py --package-dir <extracted-release>
+sudo python3 scripts/deploy/prepare_runtime.py --package-dir <extracted-release> --apply
+```
+
+The first command is read-only. The second creates a new version-specific
+environment and checks installed imports; it does not activate a release or
+start a Product. Use its printed installer command to select that interpreter.
+Native system libraries and a complete offline bundle remain separate requirements.
+
 ```bash
 # Product-scoped checkout build and activation; not a release-package input
 bash scripts/deploy/deploy_robot.sh teleop_avoid
@@ -87,12 +100,14 @@ sudo tar -xzf lingtu-2.3.0-web.tar.gz -C /opt/lingtu/web/2.3.0
 ```
 
 Set `LINGTU_WEB_DIST=/opt/lingtu/web/2.3.0` in the existing
-`/etc/lingtu/gateway.env` before activating the new robot release. Gateway
-reads the directory when Host starts. A robot release upgrade then leaves this
+`/etc/lingtu/gateway.env` before activating the new robot release. The persistent
+`lt-control` entry reads the directory at service startup. A robot release upgrade leaves this
 independent Web directory intact. For a Web-only update, prepare a new directory,
-change that one setting, and use the existing ProductControl lifecycle while
-stationary; do not replace files underneath a live browser session. Restore the
-previous directory setting to roll back the Web build.
+change that setting, wait for any lifecycle operation to finish and restart
+`lt-control.service` while stationary. Existing browser connections reconnect.
+The Product keeps running and native input expiry handles disconnected manual
+control. Restore the previous directory setting and restart the entry to roll
+back the Web build.
 
 Without an explicit directory, a development checkout still serves
 `web/dist/` when present. Without either, Gateway serves APIs with no dashboard.
@@ -168,8 +183,10 @@ dependencies; do not assume the system `python3` has them.
 
 This archive assumes a prepared Linux target. It does not currently include a
 Python interpreter/virtual environment or an offline wheelhouse. The Python
-selection helper chooses an existing interpreter; it does not install the
-locked application dependencies. The target also needs native shared libraries
+selection helper chooses an existing interpreter. The separate
+`prepare_runtime.py --apply` entry installs locked Host/Gateway/Agent dependencies into a new environment
+and verifies imports; it needs uv plus network access or a prepared uv cache.
+The target also needs native shared libraries
 not explicitly staged by the install rules, such as the matching SLAM and
 transport dependencies. Packaging success does not prove these are installed.
 

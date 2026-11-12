@@ -11,6 +11,7 @@ from lingtu.assembly.config.endpoint_bindings import (
 from lingtu.run_plan import RunPlan
 from runtime.host import HostBuilder, autoconnect
 
+from .conversation import conversation
 from .driver import driver
 from .exploration import exploration
 from .gateway import gateway
@@ -101,6 +102,9 @@ def compose_full_stack_modules(
         else HostBuilder(),
         measurements(**config),
         memory(semantic_save_dir) if enable_semantic_planning else HostBuilder(),
+        conversation(**{**config, "llm": llm})
+        if config.get("enable_conversation") and not (enable_semantic and enable_semantic_planning)
+        else HostBuilder(),
         planner_stack(
             llm,
             semantic_save_dir,

@@ -134,10 +134,11 @@ def test_driver_accepts_forwarded_sigterm_without_masking_watchdog_failure() -> 
     assert "Restart=on-failure" in text
 
 
-def test_go2_launcher_validates_network_routing_without_rewriting_dds() -> None:
+def test_go2_launcher_uses_network_config_without_transient_link_gate() -> None:
     text = _read("run_driver.sh")
 
-    assert '[[ ! -r "/sys/class/net/${GO2_INTERFACE}/carrier" ]]' in text
+    assert "/carrier" not in text
+    assert "ip -4 route get" not in text
     assert '[[ "${LINGTU_DDS_NETWORK_INTERFACE:-}" != "${GO2_INTERFACE}" ]]' in text
     assert "<NetworkInterfaceAddress>${GO2_INTERFACE}</NetworkInterfaceAddress>" not in text
     assert 'export LINGTU_DDS_NETWORK_INTERFACE=' not in text

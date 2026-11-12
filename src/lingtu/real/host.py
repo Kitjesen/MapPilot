@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import signal
 import sys
@@ -10,6 +11,8 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from lingtu.run_plan import RunPlan
+
+logger = logging.getLogger(__name__)
 
 
 def run(stop_event: threading.Event | None = None) -> int:
@@ -32,7 +35,13 @@ def run(stop_event: threading.Event | None = None) -> int:
         stopped_cleanly = bool(gateway._run_server(event))
         return 0 if stopped_cleanly or event.is_set() else 1
     finally:
-        system.stop()
+        failed = sys.exc_info()[0] is not None
+        try:
+            system.stop()
+        except Exception:
+            if not failed:
+                raise
+            logger.exception("Failed to stop Host after an earlier failure")
 
 
 def main(argv: Sequence[str] | None = None) -> int:

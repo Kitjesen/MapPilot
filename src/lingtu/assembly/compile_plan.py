@@ -35,7 +35,8 @@ from lingtu.assembly.graph import (
     valid_process_name,
 )
 from lingtu.assembly.graph.loader import RuntimeGraph, product_requirements
-from lingtu.products import product_name
+from lingtu.assembly.host.build import host_builder
+from lingtu.products import ProductLifecycle, product_name
 from lingtu.run_plan import RunPlan
 from runtime.host import HostBuilder
 
@@ -46,29 +47,6 @@ _CMU_PROFILES = {
 
 _SIM_TRUTH_SLAM_CONFIG = "src/localization/ltlio/config/sim_mid360.yaml"
 _SIM_LTLIO_SLAM_CONFIG = "src/localization/ltlio/config/sim_mid360_slam.yaml"
-
-
-def host_builder_for_resolved_product(
-    product: str,
-    config: Mapping[str, Any],
-    *,
-    required_topics: tuple[str, ...] = (),
-    required_capabilities: tuple[str, ...] = (),
-    run_plan: RunPlan | None = None,
-) -> HostBuilder:
-    """Return a Host builder for an already resolved field Product."""
-
-    product_name(product)
-
-    from lingtu.assembly.host.build import host_builder
-
-    return host_builder(
-        config,
-        product=product,
-        required_topics=required_topics,
-        required_capabilities=required_capabilities,
-        run_plan=run_plan,
-    )
 
 
 def compile_run_plan(
@@ -168,7 +146,8 @@ def compile_run_plan(
     )
     if env_name == "sim":
         geometry = simulation["physics_plan"]["robots"][0].get("navigation_geometry", {})
-        for name in ("collision_clearance_below_m", "collision_clearance_above_m"):
+        for name in ("collision_cylinder_radius_m", "collision_cylinder_offset_m",
+                     "collision_clearance_below_m", "collision_clearance_above_m"):
             if name in geometry:
                 resolved_config.setdefault(name, geometry[name])
         for name in ("support_height_m", "support_height_tolerance_m"):
@@ -191,16 +170,16 @@ def compile_run_plan(
     critical_modules = _string_tuple(product_spec.get("critical_modules"))
     if measurements_enabled:
         critical_modules = (*critical_modules, *(name for name in ("measurements", "sensor.controls") if name not in critical_modules))
-    host_builder = host_builder_for_resolved_product(
-        resolved_product,
+    builder = host_builder(
         resolved_config,
+        product=resolved_product,
         required_topics=required_topics,
         required_capabilities=required_capabilities,
     )
     if route_contract:
-        host_builder.route_contract(route_contract)
+        builder.route_contract(route_contract)
     if critical_modules:
-        host_builder.require_modules(*critical_modules)
+        builder.require_modules(*critical_modules)
     from lingtu.assembly.config.validation import validate_product
 
     issues = validate_product(
@@ -208,7 +187,7 @@ def compile_run_plan(
         product_spec=product_spec,
         implementation=implementation,
         config=resolved_config,
-        module_names=host_builder.module_names,
+        module_names=builder.module_names,
         env_name=env_name,
     )
     if issues:
@@ -221,7 +200,7 @@ def compile_run_plan(
         process_conflicts,
         owner=f"env {env_name}",
     )
-    lifecycle = _compile_lifecycle(resolved_product, product_spec)
+    lifecycle = ProductLifecycle.from_spec(resolved_product, product_spec).as_dict()
     compiled_native_nav = compile_native_nav_config(
         resolved_product,
         {
@@ -254,10 +233,6 @@ def compile_run_plan(
         roles=product_roles,
         process_control=process_control,
     )
-    if env_name == "sim":
-        body_file = simulation["physics_plan"]["robots"][0].get("navigation_geometry", {}).get("body_file")
-        if body_file:
-            process_environment["LINGTU_NAV_BODY_FILE"] = (_REPO_ROOT / body_file).resolve().as_posix()
     product_parameters = product_spec.get("parameters", {})
     if not isinstance(product_parameters, Mapping):
         raise ValueError(f"Product {resolved_product!r} parameters must be a mapping")
@@ -321,7 +296,7 @@ def compile_run_plan(
         env=env_name,
         robot=resolved.robot,
         process_control=process_control,
-        modules=host_builder.module_names,
+        modules=builder.module_names,
         processes=processes,
         available_processes=available_processes,
         support_processes=support_processes,
@@ -506,7 +481,7 @@ def _bind_measurements(
 def host_builder_from_run_plan(plan: RunPlan) -> HostBuilder:
     """Recreate only the Host graph declared by a RunPlan."""
 
-    config = dict(plan.host_config)
+    config = plan.host_config
     route_contract = route_contract_name_for_resolved_config(config)
     if route_contract != plan.route_contract:
         raise ValueError(
@@ -514,30 +489,23 @@ def host_builder_from_run_plan(plan: RunPlan) -> HostBuilder:
             f"plan={plan.route_contract!r} config={route_contract!r}"
         )
     validate_route_contract_for_resolved_config(config)
-    host_builder = host_builder_for_resolved_product(
-        plan.product,
+    builder = host_builder(
         config,
+        product=plan.product,
         required_topics=plan.required_topics,
         required_capabilities=plan.required_capabilities,
         run_plan=plan,
     )
     if plan.route_contract:
-        host_builder.route_contract(plan.route_contract)
+        builder.route_contract(plan.route_contract)
     if plan.critical_modules:
-        host_builder.require_modules(*plan.critical_modules)
-    if host_builder.module_names != plan.modules:
+        builder.require_modules(*plan.critical_modules)
+    if builder.module_names != plan.modules:
         raise ValueError(
             "RunPlan Host modules do not match the current assembly: "
-            f"plan={plan.modules!r} assembly={host_builder.module_names!r}"
+            f"plan={plan.modules!r} assembly={builder.module_names!r}"
         )
-    return host_builder
-
-
-def build_host_from_run_plan(plan: RunPlan) -> Any:
-    """Build a Host from immutable Product data without resolving processes."""
-
-    host_builder = host_builder_from_run_plan(plan)
-    return host_builder.build()
+    return builder
 
 
 def route_contract_name_for_resolved_config(config: Mapping[str, Any]) -> str | None:
@@ -639,16 +607,6 @@ def _process_environment(
             "LINGTU_DRIVER_STAIRS_UP_PROFILE": driver.stairs_up_profile,
             "LINGTU_DRIVER_STAIRS_DOWN_PROFILE": driver.stairs_down_profile,
         }
-        body_file = str(robot_config.geometry.navigation_body_file or "").strip()
-        if body_file:
-            if Path(body_file).is_absolute() or ".." in Path(body_file).parts:
-                raise ValueError("geometry.navigation_body_file must be a relative path")
-            if env_spec.robot_config_ref is None:
-                raise RuntimeError("navigation body model requires RobotConfig path")
-            body_path = (env_spec.robot_config_ref.parent / body_file).resolve()
-            if not body_path.is_file():
-                raise ValueError(f"navigation body model does not exist: {body_path}")
-            values["LINGTU_NAV_BODY_FILE"] = body_path.as_posix()
         if driver.backend == "go2":
             interface = driver.network_interface.strip()
             if re.fullmatch(r"[A-Za-z0-9_.:-]+", interface) is None:
@@ -678,10 +636,20 @@ def _process_environment(
             if env_spec.config.localization == "truth"
             else _SIM_LTLIO_SLAM_CONFIG
         )
+    navigation = settings.get("native_nav", {})
+    local_planners = navigation.get("local_planners", [navigation.get("local_planner", "scan")])
+    qualified = env_spec.implementation.get("local_planners", ())
+    local_planners = [name for name in local_planners if name in qualified]
+    if "nav" in roles:
+        environment["LINGTU_NAV_LOCAL_PLANNERS"] = ",".join(local_planners)
+    cmu_selectable = (
+        lifecycle["native_control_mode"] == "autonomy"
+        and "cmu" in local_planners and env_spec.robot in _CMU_PROFILES
+    )
     cmu_planning_enabled = native_environment.get("LINGTU_NAV_LOCAL_PLANNER_BACKEND") == "cmu" and (
         "traversability" in roles or native_environment.get("LINGTU_TELEOP_LOCAL_PLANNER") == "1"
     )
-    if cmu_planning_enabled:
+    if cmu_planning_enabled or cmu_selectable:
         try:
             profile = _CMU_PROFILES[env_spec.robot]
         except KeyError as exc:
@@ -721,31 +689,6 @@ def _product_roles(
     ):
         raise ValueError(f"Product {product!r} has invalid or duplicate process roles")
     return roles
-
-
-def _compile_lifecycle(product: str, spec: Mapping[str, Any]) -> dict[str, Any]:
-    """Copy the Product lifecycle fields needed by the runtime."""
-
-    def required(name: str) -> str:
-        value = str(spec.get(name) or "").strip()
-        if not value:
-            raise ValueError(f"Product {product!r} must declare {name}")
-        return value
-
-    return {
-        "product": product,
-        "product_variant": spec.get("product_variant"),
-        "label": str(spec.get("label") or product.replace("_", " ").title()),
-        "session_mode": required("session_mode"),
-        "native_control_mode": required("native_control_mode"),
-        "slam_mode": required("slam_mode"),
-        "requires_map": bool(spec.get("requires_map", False)),
-        "switch_policy": required("switch_policy"),
-        "default_for_session_mode": bool(spec.get("default_for_session_mode", False)),
-        "online_hot_switch_supported": bool(
-            spec.get("online_hot_switch_supported", False)
-        ),
-    }
 
 
 def _env_parameters(

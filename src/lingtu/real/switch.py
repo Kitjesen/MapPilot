@@ -61,23 +61,6 @@ class SwitchControl(Protocol):
 
     env: str
 
-    def _resolve(
-        self,
-        product: str | None = None,
-        *,
-        product_variant: str | None = None,
-        local_planner: str | None = None,
-    ) -> RunPlan: ...
-
-    def _apply_plan_for_switch(
-        self,
-        path: str | Path,
-        *,
-        previous_plan: RunPlan | None = None,
-        dry_run: bool = False,
-        on_process_ready: Callable[[ProcessSpec], None] | None = None,
-    ) -> ProcessReport: ...
-
     def _systemd_runner(self) -> SystemdRunner: ...
 
     def _quiesce_plan_for_switch(
@@ -121,12 +104,16 @@ def execute_switch(
     environment: Mapping[str, str] | None = None,
     state_dir: str | Path | None = None,
     dry_run: bool = False,
-    resolved_plan: RunPlan | None = None,
+    resolved_plan: RunPlan,
 ) -> SwitchReport:
-    """Compile once, apply one selective process transition, and fail closed."""
+    """Apply one resolved selective process transition and fail closed."""
 
     process_environment = environment if environment is not None else os.environ
-    backend = backend or FieldBackend(environment=process_environment)
+    backend = backend or FieldBackend(
+        environment=process_environment,
+        gateway_url=process_environment.get("GW")
+        or f"http://127.0.0.1:{resolved_plan.host_config.get('gateway_port', 5050)}",
+    )
     systemd_runner = control._systemd_runner()
     target_product = product_name(required_text(request.target_product, "target Product"))
     runtime_env = control.env
@@ -155,11 +142,7 @@ def execute_switch(
     previous: _CommittedSystemdPlan | None = None
     transition_report: ProcessReport | None = None
     try:
-        plan = resolved_plan or control._resolve(
-            target_product,
-            product_variant=request.product_variant,
-            local_planner=request.local_planner,
-        )
+        plan = resolved_plan
         if plan.product != target_product:
             raise RuntimeError("resolved RunPlan Product does not match switch request")
         if request.product_variant is not None and plan.product_variant != request.product_variant:
@@ -184,12 +167,25 @@ def execute_switch(
             raise RuntimeError(f"unsupported Product switch lifecycle: {required_lifecycle or 'missing'}")
         initial_pose = _initial_pose(request.initial_pose)
         map_name = _requested_map(target_lifecycle, request.map_name)
-        if map_name and target_lifecycle.slam_mode != "localization":
+        if map_name and target_lifecycle.slam_mode not in {"mapping", "localization"}:
             raise RuntimeError(f"Product {target_product} does not accept a saved map")
-        if initial_pose is not None and target_lifecycle.slam_mode != "localization":
+        if initial_pose is not None and target_lifecycle.slam_mode != "localization" and not (
+            target_lifecycle.slam_mode == "mapping" and map_name
+        ):
             raise RuntimeError(f"Product {target_product} does not accept an initial localization pose")
         if initial_pose is not None and not request.relocalize:
             raise RuntimeError("initial_pose requires relocalize=True")
+        if target_lifecycle.slam_mode == "mapping" and map_name and initial_pose is not None:
+            x, y, *rest = initial_pose
+            z, yaw = rest if len(rest) == 2 else (0.0, rest[0])
+            plan = plan.with_process_environment({
+                **plan.process_environment,
+                "LINGTU_SLAM_TRACK_INITIAL_X": str(x),
+                "LINGTU_SLAM_TRACK_INITIAL_Y": str(y),
+                "LINGTU_SLAM_TRACK_INITIAL_Z": str(z),
+                "LINGTU_SLAM_TRACK_INITIAL_YAW": str(yaw),
+            })
+            native_environment = plan.native_process_environment
         report.phases.append("preflight")
         if dry_run:
             report.ok = True
@@ -296,19 +292,29 @@ def execute_switch(
 
         def on_process_started(process: ProcessSpec) -> None:
             nonlocal map_activation
-            if process.name == "maps" and map_name:
+            if process.name == "maps" and map_name and target_lifecycle.slam_mode == "localization":
                 map_activation = backend.stage_map(map_name)
                 if map_activation.target != map_identity:
                     raise RuntimeError("saved map changed after Product session staging")
                 report.phases.append("map_staged")
 
         try:
-            transition_report = control._apply_plan_for_switch(
-                run_plan_path,
-                previous_plan=previous.plan if previous is not None else None,
-                on_process_ready=localize,
-                on_process_started=on_process_started,
-            )
+            if previous is None:
+                transition_report = systemd_runner.apply_deferred(
+                    plan,
+                    dry_run=False,
+                    on_process_ready=localize,
+                    on_process_started=on_process_started,
+                )
+            else:
+                transition_report = systemd_runner.transition(
+                    previous.plan,
+                    plan,
+                    dry_run=False,
+                    defer_rollback=True,
+                    on_process_ready=localize,
+                    on_process_started=on_process_started,
+                )
         except ProcessFailed as exc:
             transition_report = exc.report
             raise
@@ -335,12 +341,6 @@ def execute_switch(
                 timeout_s=45.0,
             )
             report.phases.append("goal_acceptance_ready")
-        if target_lifecycle.native_control_mode in {"teleop", "teleop_avoid"}:
-            backend.wait_motion_output(
-                target_lifecycle.native_control_mode,
-                timeout_s=10.0,
-            )
-            report.phases.append("motion_output_ready")
         if target_lifecycle.session_mode == "exploring":
             backend.wait_exploration(
                 _explore_route(target_lifecycle.slam_mode),
@@ -692,7 +692,7 @@ def _restore_previous_product_session(
     )
     if lifecycle.requires_map and (not map_name or map_identity is None):
         raise RuntimeError("previous Product map binding is incomplete")
-    if not lifecycle.requires_map and map_identity is not None:
+    if not lifecycle.requires_map and lifecycle.slam_mode != "mapping" and map_identity is not None:
         raise RuntimeError("previous Product has an unexpected map binding")
 
     backend.wait_native_nav(plan.native_process_environment, timeout_s=10.0)
@@ -715,11 +715,6 @@ def _restore_previous_product_session(
             map_name=map_name,
             control_mode=lifecycle.native_control_mode,
             timeout_s=45.0,
-        )
-    if lifecycle.native_control_mode in {"teleop", "teleop_avoid"}:
-        backend.wait_motion_output(
-            lifecycle.native_control_mode,
-            timeout_s=10.0,
         )
     if lifecycle.session_mode == "exploring":
         backend.wait_exploration(

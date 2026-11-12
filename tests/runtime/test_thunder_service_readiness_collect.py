@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+from lingtu.run_plan import CURRENT_RUN_SCHEMA, RunPlan
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "src" / "diagnostics" / "field" / "service_readiness.py"
@@ -154,7 +157,7 @@ def test_thunder_service_readiness_report_shape(monkeypatch) -> None:
         in report["summary"]["blockers"]
     )
     assert "gnss:gnss_device_missing:/dev/wtrtk980" in report["summary"]["blockers"]
-    assert "dds:unchecked" in report["summary"]["blockers"]
+    assert "dds:unchecked" not in report["summary"]["blockers"]
     assert report["dds"]["services"]["camera"]["dds_topics"] == [
         "rt/camera/color",
         "rt/camera/depth",
@@ -164,112 +167,11 @@ def test_thunder_service_readiness_report_shape(monkeypatch) -> None:
     assert report["gateway"]["services_status"]["status"] == 404
 
 
-def test_motion_status_collection_waits_for_driver_ack_to_cover_nav_anchor(
-    monkeypatch,
-) -> None:
-    module = _load_module()
-    status_files = {
-        "nav": {
-            "exists": True,
-            "age_s": 0.01,
-            "json": {
-                "input_gate": {"driver_control_max_age_s": 0.35},
-                "final_output": {
-                    "published": True,
-                    "producer_boot_id": "nav-boot",
-                    "output_sequence": 20649,
-                },
-            },
-        },
-        "driver": {
-            "exists": True,
-            "age_s": 0.01,
-            "json": {
-                "output_ack": {
-                    "accepted": True,
-                    "producer_boot_id": "nav-boot",
-                    "output_sequence": 20620,
-                }
-            },
-        },
-    }
-    driver_sequences = iter((20646, 20649))
-    clock = iter((10.0, 10.0, 10.8, 11.0))
-    monkeypatch.setattr(module, "collect_status_files", lambda: status_files)
-    monkeypatch.setattr(
-        module,
-        "_collect_status_file",
-        lambda _path: {
-            "exists": True,
-            "age_s": 0.01,
-            "json": {
-                "output_ack": {
-                    "accepted": True,
-                    "producer_boot_id": "nav-boot",
-                    "output_sequence": next(driver_sequences),
-                }
-            },
-        },
-    )
-    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
-    monkeypatch.setattr(module.time, "monotonic", lambda: next(clock))
-
-    result = module._collect_motion_status_files(status_max_age_s=3.0)
-
-    assert result["nav"]["json"]["final_output"]["output_sequence"] == 20649
-    assert result["driver"]["json"]["output_ack"]["output_sequence"] == 20649
-    assert result["nav"]["age_s"] == pytest.approx(1.01)
 
 
-def test_motion_status_collection_stops_at_status_freshness_deadline(
-    monkeypatch,
-) -> None:
-    module = _load_module()
-    status_files = {
-        "nav": {
-            "exists": True,
-            "age_s": 0.01,
-            "json": {
-                "input_gate": {"driver_control_max_age_s": 0.35},
-                "final_output": {
-                    "published": True,
-                    "producer_boot_id": "nav-boot",
-                    "output_sequence": 20649,
-                },
-            },
-        },
-        "driver": {
-            "exists": True,
-            "age_s": 0.01,
-            "json": {
-                "output_ack": {
-                    "accepted": True,
-                    "producer_boot_id": "nav-boot",
-                    "output_sequence": 20620,
-                }
-            },
-        },
-    }
-    clock = iter((10.0, 10.0, 11.2, 13.01, 13.01))
-    reads = 0
-
-    def read_driver(_path):
-        nonlocal reads
-        reads += 1
-        return status_files["driver"]
-
-    monkeypatch.setattr(module, "collect_status_files", lambda: status_files)
-    monkeypatch.setattr(module, "_collect_status_file", read_driver)
-    monkeypatch.setattr(module.time, "monotonic", lambda: next(clock))
-    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
-
-    result = module._collect_motion_status_files(status_max_age_s=3.0)
-
-    assert reads == 2
-    assert result["driver"]["json"]["output_ack"]["output_sequence"] == 20620
 
 
-def test_motion_report_anchors_status_after_slow_collectors(monkeypatch) -> None:
+def test_report_collects_status_after_slow_collectors(monkeypatch) -> None:
     module = _load_module()
     events = []
 
@@ -294,7 +196,7 @@ def test_motion_report_anchors_status_after_slow_collectors(monkeypatch) -> None
     )
     monkeypatch.setattr(module, "collect_gnss_device", collected("gnss", {"blockers": []}))
     monkeypatch.setattr(module, "collect_gateway", collected("gateway", {}))
-    monkeypatch.setattr(module, "_collect_motion_status_files", collected("motion_status", {}))
+    monkeypatch.setattr(module, "collect_status_files", collected("motion_status", {}))
     monkeypatch.setattr(
         module,
         "collect_driver_readiness",
@@ -303,16 +205,7 @@ def test_motion_report_anchors_status_after_slow_collectors(monkeypatch) -> None
     monkeypatch.setattr(module, "collect_lidar_imu_ownership", lambda **_: {"blockers": []})
     monkeypatch.setattr(module, "collect_camera_readiness", lambda **_: {"blockers": []})
     monkeypatch.setattr(module, "collect_current_run", lambda: {})
-    monkeypatch.setattr(
-        module,
-        "evaluate_teleop_avoid_preflight",
-        lambda *_args, **_kwargs: {"ok": False, "blockers": []},
-    )
-
-    module.build_report(
-        gateway_url="http://127.0.0.1:5050",
-        teleop_avoid_stage="motion",
-    )
+    module.build_report(gateway_url="http://127.0.0.1:5050")
 
     assert events == [
         "processes",
@@ -943,14 +836,11 @@ def test_driver_readiness_uses_connection_heartbeat_not_idle_cmd_samples() -> No
         },
     )
     assert disconnected["ok"] is False
-    assert disconnected["blockers"] == [
-        "driver_not_connected",
-        "driver_not_ready",
-        "driver_status_stale",
-    ]
+    assert disconnected["blockers"] == ["driver_status_stale"]
+    assert disconnected["motion"]["connected"] is False
 
 
-def test_driver_readiness_requires_motor_enable_and_lingtu_lease() -> None:
+def test_driver_report_separates_service_from_motion() -> None:
     module = _load_module()
     result = module.collect_driver_readiness(
         systemd={
@@ -988,14 +878,10 @@ def test_driver_readiness_requires_motor_enable_and_lingtu_lease() -> None:
             }
         },
     )
-    assert result["ok"] is False
-    assert result["blockers"] == [
-        "driver_backend_control_invalid",
-        "driver_motors_disabled",
-        "driver_control_not_assured",
-        "driver_control_not_owned_by_lingtu",
-        "driver_not_ready",
-    ]
+    assert result["ok"] is True
+    assert result["blockers"] == []
+    assert result["motion"]["ready"] is False
+    assert result["motion"]["control"]["motors_enabled"] is False
 
 
 def test_driver_readiness_accepts_go2_sdk2_control() -> None:
@@ -1043,7 +929,7 @@ def test_thunder_service_readiness_collector_lists_catalog_dds_topics() -> None:
 
     assert report["checked"] is False
     assert report["domain_id"] == 7
-    assert report["blockers"] == ["dds_unchecked"]
+    assert report["blockers"] == []
     assert report["services"]["lidar"]["dds_topics"] == [
         "rt/lidar/raw_frame",
         "rt/imu/raw",
@@ -1094,3 +980,76 @@ def test_driver_dds_topic_may_be_silent_while_idle(monkeypatch) -> None:
     slam_odometry = report["services"]["slam"]["details"]["rt/slam/odometry"]
     assert slam_odometry["frame_id"] == "map"
     assert slam_odometry["points"] == 42
+
+
+def test_optional_dds_sampling_is_not_a_summary_failure() -> None:
+    module = _load_module()
+    assert module.summarize_report({"dds": {"checked": False}})["ok"] is True
+    failed = module.summarize_report({"dds": {"checked": True, "blockers": ["dds_topic_silent:test"]}})
+    assert failed["blockers"] == ["dds:dds_topic_silent:test"]
+
+
+def test_current_run_collector_loads_current_run_plan(monkeypatch, tmp_path: Path) -> None:
+    module = _load_module()
+    run_plan = RunPlan.create(
+        product="teleop_avoid",
+        env="real",
+        robot="unitree/go2",
+        process_control="systemd",
+        modules=(),
+        processes=(),
+        available_processes=(),
+        stop_before_start=(),
+        required_topics=(),
+        required_capabilities=(),
+        critical_modules=(),
+        native_nav={
+            "control_mode": "teleop_avoid",
+            "publish_cmd_vel": True,
+            "check_obstacle": True,
+            "use_traversability_cost": True,
+            "allow_teleop_takeover": False,
+            "teleop_local_planner": True,
+            "global_planner": "octoplanner3d",
+        },
+        route_contract="robot",
+        host_config={},
+        lifecycle={"product": "teleop_avoid"},
+    )
+    run_plan_path = tmp_path / "runtime.json"
+    run_plan.write(run_plan_path)
+    active_path = tmp_path / "active-runtime.json"
+    active_path.write_text(
+        json.dumps(
+            {
+                "schema_version": CURRENT_RUN_SCHEMA,
+                "product": "teleop_avoid",
+                "env": "real",
+                "run_plan_path": str(run_plan_path),
+                "product_session_id": ("a" * 32),
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LINGTU_CURRENT_FILE", str(active_path))
+
+    result = module.collect_current_run()
+
+    assert result["plan_verified"] is True
+    assert result["state"]["product_session_id"] == ("a" * 32)
+    assert result["run_plan"]["identity"] == run_plan.as_dict()["identity"]
+    assert result["verified_contract"]["native_nav"]["control_mode"] == "teleop_avoid"
+
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("ok", [False, True])
+def test_diagnostic_exit_status_is_opt_in(monkeypatch, capsys, strict, ok):
+    module = _load_module()
+    monkeypatch.setattr(module, "parse_args", lambda: SimpleNamespace(
+        gateway_url="http://127.0.0.1:5050", dds_seconds=0.0, dds_domain=0,
+        json_out=None, pretty=False, strict=strict,
+    ))
+    monkeypatch.setattr(module, "build_report", lambda **_: {"summary": {"ok": ok}})
+    assert module.main() == int(strict and not ok)
+    assert json.loads(capsys.readouterr().out)["summary"]["ok"] is ok

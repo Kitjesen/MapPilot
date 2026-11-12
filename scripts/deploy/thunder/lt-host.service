@@ -11,6 +11,7 @@ WorkingDirectory=/opt/lingtu/current
 Environment=HOME=/var/lib/lingtu
 Environment=LINGTU_REPO=/opt/lingtu/current
 EnvironmentFile=-/etc/lingtu/gateway.env
+EnvironmentFile=-/etc/lingtu/models.env
 EnvironmentFile=-/etc/lingtu/map-client.env
 EnvironmentFile=-/opt/lingtu/current/etc/lingtu/release-runtime.env
 Environment=LINGTU_SYSTEMD_UNIT=lt-host.service

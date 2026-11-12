@@ -870,7 +870,8 @@ def test_thunder_nav_dds_service_enables_bounded_local_planner_diagnostics() -> 
     config = _read("src/nav/cpp/endpoint/nav/app/config/parse.cpp")
 
     assert "LINGTU_INSPECTION_DIR=/var/lib/lingtu/inspection" in text
-    assert "LINGTU_NAV_STATUS_S=0.2" in text
+    assert "Environment=LINGTU_NAV_STATUS_S=" not in text
+    assert "EnvironmentFile=/run/lingtu/session.env" in text
     assert "LINGTU_NAV_LOCAL_PLANNER_DEBUG_CANDIDATES=18" in text
     assert "LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS=640" in text
     assert 'applyEnvDouble(cfg.status_s, "LINGTU_NAV_STATUS_S")' in config
@@ -950,7 +951,7 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     assert "StateDirectory=lingtu" in text
     assert "LINGTU_NAV_ESTOP_LATCH_FILE=/var/lib/lingtu/nav_estop_latched" in text
     assert "LINGTU_NAV_GEOFENCE_FILE=/var/lib/lingtu/nav_geofences.dat" in text
-    assert "LINGTU_NAV_STATUS_S=0.2" in text
+    assert "Environment=LINGTU_NAV_STATUS_S=" not in text
     assert "NAV_GLOBAL_PLANNER" in runner
     assert "OCTOPLANNER_MAP_PATH" in runner
     assert "FAR_OCCUPANCY_PATH" in runner
@@ -1068,7 +1069,6 @@ def test_native_endpoint_accepts_only_typed_command_and_operator_motion_inputs()
     assert "external_global_path" not in loop
     assert "decodePath(msg" not in loop
     assert "nav.setGlobalPath(path);" not in loop
-    assert "control_authority.activatePath();" not in loop
     assert "writer(lingtu::message::kNavGlobalPath.dds_topic.data()" in runtime
     assert "dds_write(global_path)" in runtime
 
@@ -1076,8 +1076,9 @@ def test_native_endpoint_accepts_only_typed_command_and_operator_motion_inputs()
 def test_native_endpoint_navigation_runtime_orders_ticketed_terminal_lifecycle() -> None:
     bootstrap = _read("src/nav/cpp/endpoint/nav/main.cpp")
     loop = _read("src/nav/cpp/endpoint/nav/app/loop.cpp")
+    loop_context = _read("src/nav/cpp/endpoint/nav/app/loop.hpp")
     controller = _read("src/nav/cpp/endpoint/nav/app/navigation.cpp")
-    terminal_transaction = _read("src/nav/cpp/endpoint/nav/status/goal_terminal_transaction.cpp")
+    terminal = _read("src/nav/cpp/endpoint/nav/app/goal/terminal.cpp")
     cmake = _read("src/nav/cpp/endpoint/CMakeLists.txt")
 
     callback = bootstrap.split("goal_plan_actions.publish_status", 1)[1].split(
@@ -1093,7 +1094,10 @@ def test_native_endpoint_navigation_runtime_orders_ticketed_terminal_lifecycle()
     assert "nav/status/navigation_goal_status_outbox.cpp" in cmake
     assert "nav/status/goal_terminal_status_delivery.cpp" in cmake
     assert "nav/app/navigation.cpp" in cmake
-    assert "NavigationRuntimeController navigation_runtime_controller" in loop
+    assert "NavigationRuntimeController navigation_runtime_controller" in bootstrap
+    assert "NavigationRuntimeController &navigation_runtime_controller;" in loop_context
+    assert "auto &navigation_runtime_controller = ctx.navigation_runtime_controller;" in loop
+    assert "navigation_runtime_controller.advanceFrame(runtime_frame, runtime_actions)" in loop
 
     for old_bypass in (
         "goal_plan.advance(",
@@ -1108,7 +1112,7 @@ def test_native_endpoint_navigation_runtime_orders_ticketed_terminal_lifecycle()
         "handleAutonomyOutcome",
         "drainPendingCycle",
         "decideGoalTerminalScheduling",
-        "goal_terminal_transaction.advance",
+        "goal_terminal.advance",
     ):
         assert controller_owned_operation not in loop
 
@@ -1133,20 +1137,20 @@ def test_native_endpoint_navigation_runtime_orders_ticketed_terminal_lifecycle()
         cursor = position + len(step)
     assert "if (!goal_replan_runtime_.terminalPending())" in frame_lifecycle
 
-    terminal_advance = terminal_transaction.split("GoalTerminalTransaction::advance(", 1)[1].split(
-        "GoalTerminalTransaction::stopWhileTerminalPending", 1
+    terminal_advance = terminal.split("GoalTerminal::advance(", 1)[1].split(
+        "GoalTerminal::stopPending", 1
     )[0]
     ordered_ticket_steps = (
-        "goal_terminal_delivery_.stage(",
-        "goal_terminal_delivery_.markCommitted(",
-        "goal_terminal_delivery_.flushAndAcknowledge(",
+        "delivery_.stage(",
+        "delivery_.markCommitted(",
+        "delivery_.flushAndAcknowledge(",
     )
     cursor = 0
     for step in ordered_ticket_steps:
         position = terminal_advance.find(step, cursor)
         assert position >= 0, f"missing ordered goal terminal ticket step: {step}"
         cursor = position + len(step)
-    assert "if (!goal_terminal_delivery_.isCommitted(runtime_result.terminal_intent_id))" in terminal_advance
+    assert "if (!delivery_.isCommitted(runtime_result.terminal_intent_id))" in terminal_advance
     assert "ack.accepted = terminal_delivery_acknowledged" not in loop
     assert "goal_status_outbox.flush" in loop
 
@@ -1156,8 +1160,13 @@ def test_native_endpoint_navigation_runtime_orders_ticketed_terminal_lifecycle()
     assert "goal_plan.deferAbort" not in inspection_stop
     assert "GoalReplanRuntimeInterruption::kInspectionPause" in inspection_stop
     assert "GoalReplanRuntimeInterruption::kInspectionCancel" in inspection_stop
-    assert "goal_terminal_delivery.stage" in inspection_stop
-    assert "goal_terminal_delivery.markCommitted" in inspection_stop
+    assert "navigation_runtime_controller.interruptRelated(" in inspection_stop
+    assert "goal_terminal_.commitRelated(goal_replan_runtime_.interrupt(" in controller
+    related_commit = terminal.split("GoalTerminal::commitRelated(", 1)[1].split(
+        "GoalTerminal::stopPending", 1
+    )[0]
+    assert "delivery_.stage(" in related_commit
+    assert "delivery_.markCommitted(" in related_commit
     # The ordinary MotionStop safety seam remains intentionally distinct from
     # inspection task pause/cancel, which is ticketed above.
     assert "motion_stop_actions.defer_goal_abort" in bootstrap
@@ -1165,7 +1174,7 @@ def test_native_endpoint_navigation_runtime_orders_ticketed_terminal_lifecycle()
 
 def test_native_endpoint_terminal_barrier_gates_ingress_and_stages_inspection_goals() -> None:
     loop = _read("src/nav/cpp/endpoint/nav/app/loop.cpp")
-    terminal_transaction = _read("src/nav/cpp/endpoint/nav/status/goal_terminal_transaction.cpp")
+    terminal = _read("src/nav/cpp/endpoint/nav/app/goal/terminal.cpp")
 
     assert "evaluateGoalTerminalIngress" in loop
     for ingress in (
@@ -1189,8 +1198,8 @@ def test_native_endpoint_terminal_barrier_gates_ingress_and_stages_inspection_go
         assert ingress in loop
     assert "k" + "Legacy" not in loop
 
-    assert "motion_stop_.stopPreservingGoalTerminal" in terminal_transaction
-    assert "motion_stop_.estopPreservingGoalTerminal" in terminal_transaction
+    assert "stop_.stopPreservingGoalTerminal" in terminal
+    assert "stop_.estopPreservingGoalTerminal" in terminal
     assert "motion_stop.stopPreservingGoalTerminal" not in loop
     assert "motion_stop.estopPreservingGoalTerminal" not in loop
     assert "inspection_command_coordinator.reject" in loop
@@ -1601,7 +1610,8 @@ def test_product_switch_control_owns_fail_closed_cleanup() -> None:
 
     assert "SwitchRequest," in source
     assert "def execute_switch(" in source
-    assert "control._apply_plan_for_switch(" in source
+    assert "systemd_runner.apply_deferred(" in source
+    assert "systemd_runner.transition(" in source
     assert "control._quiesce_plan_for_switch(plan)" in source
     assert "backend.rollback_session(session_stage)" in source
     assert "disable_boot_ownership" not in source
@@ -1614,10 +1624,10 @@ def test_product_switch_requires_confirmed_stop_before_runtime_staging() -> None
     stop = "backend.stop_motion(current_product)"
     map_stage = "backend.prepare_map(map_name)"
     config_stage = "backend.stage_session("
-    apply = "control._apply_plan_for_switch("
     assert source.index(stop) < source.index(map_stage)
     assert source.index(map_stage) < source.index(config_stage)
-    assert source.index(config_stage) < source.index(apply)
+    for apply in ("systemd_runner.apply_deferred(", "systemd_runner.transition("):
+        assert source.index(config_stage) < source.index(apply)
 
 
 def test_product_nav_switch_commits_only_after_runtime_readiness() -> None:
@@ -1625,15 +1635,15 @@ def test_product_nav_switch_commits_only_after_runtime_readiness() -> None:
 
     stop = "backend.stop_motion(current_product)"
     map_stage = "backend.prepare_map(map_name)"
-    apply = "control._apply_plan_for_switch("
     localization = "localize = _localization_startup("
     readiness = "backend.wait_navigation("
     commit = "_commit_current_run("
 
     assert source.index(stop) < source.index(map_stage)
-    assert source.index(map_stage) < source.index(apply)
-    assert source.index(map_stage) < source.index(localization) < source.index(apply)
-    assert source.index(apply) < source.index(readiness)
+    for apply in ("systemd_runner.apply_deferred(", "systemd_runner.transition("):
+        assert source.index(map_stage) < source.index(apply)
+        assert source.index(map_stage) < source.index(localization) < source.index(apply)
+        assert source.index(apply) < source.index(readiness)
     assert source.index(readiness) < source.index(commit)
 
 

@@ -248,6 +248,20 @@ def test_saved_map_record_accepts_one_planner_artifact(planner_artifact: str) ->
     }
 
 
+def test_mapping_restore_selects_archive_and_seed_without_fixed_planner_map() -> None:
+    request = SwitchRequest(target_product="map", map_name="yard", initial_pose=(1, 2, 0.4, 0.3))
+    sim_switch_module._validate_sim_request(request)
+    identity = sim_switch_module.map_identity_from_native(_native_identity("yard"), field_name="test map")
+    environment = sim_switch_module._saved_map_environment(
+        _plan("map"), identity, initial_pose=request.initial_pose,
+    )
+    assert environment["LINGTU_SLAM_MODE"] == "mapping"
+    assert environment["LINGTU_SLAM_MAP"] == "/maps/yard/map.pcd"
+    assert float(environment["LINGTU_SLAM_TRACK_INITIAL_Z"]) == 0.4
+    assert environment["OCTOPLANNER_MAP_PATH"] == ""
+    assert environment["FAR_OCCUPANCY_PATH"] == ""
+
+
 def test_explore_saved_map_environment_exposes_coverage_occupancy() -> None:
     identity = sim_switch_module.map_identity_from_native(
         _native_identity("yard"),
@@ -1124,7 +1138,7 @@ def test_saved_map_switch_rejects_untrusted_mapd_readiness_before_prepare(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     previous = _plan("teleop", with_maps=True)
-    _current_path, previous_path, _current_bytes = _write_current(tmp_path, previous)
+    _current_path, _previous_path, _current_bytes = _write_current(tmp_path, previous)
     readiness = tmp_path / "mapd.status.json"
     if failure == "absent":
         readiness.unlink()

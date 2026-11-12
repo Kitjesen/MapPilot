@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from types import MappingProxyType
 from typing import Any, Literal, cast
 
@@ -29,21 +29,30 @@ class ProductLifecycle:
     default_for_session_mode: bool = False
     online_hot_switch_supported: bool = False
 
+    @classmethod
+    def from_spec(cls, name: ProductName, product: Mapping[str, Any]) -> ProductLifecycle:
+        """Read lifecycle values from the supplied resolved Product declaration."""
+        return cls(
+            product=name,
+            label=str(product.get("label") or name.replace("_", " ").title()),
+            session_mode=_required_text(product, "session_mode"),
+            native_control_mode=_required_text(product, "native_control_mode"),
+            slam_mode=_required_text(product, "slam_mode"),
+            requires_map=bool(product.get("requires_map", False)),
+            switch_policy=_required_text(product, "switch_policy"),
+            product_variant=(
+                str(product["product_variant"]).strip()
+                if product.get("product_variant") is not None
+                else None
+            ),
+            default_for_session_mode=bool(product.get("default_for_session_mode", False)),
+            online_hot_switch_supported=bool(product.get("online_hot_switch_supported", False)),
+        )
+
     def as_dict(self) -> dict[str, Any]:
         """Return deterministic JSON-ready lifecycle data."""
 
-        return {
-            "product": self.product,
-            "label": self.label,
-            "session_mode": self.session_mode,
-            "native_control_mode": self.native_control_mode,
-            "slam_mode": self.slam_mode,
-            "requires_map": self.requires_map,
-            "switch_policy": self.switch_policy,
-            "product_variant": self.product_variant,
-            "default_for_session_mode": self.default_for_session_mode,
-            "online_hot_switch_supported": self.online_hot_switch_supported,
-        }
+        return asdict(self)
 
 
 def product_name(value: str) -> ProductName:
@@ -62,29 +71,10 @@ def _required_text(product: Mapping[str, Any], field: str) -> str:
     return value
 
 
-def _lifecycle_from_product(name: str, product: Mapping[str, Any]) -> ProductLifecycle:
-    return ProductLifecycle(
-        product=product_name(name),
-        label=str(product.get("label") or name.replace("_", " ").title()),
-        session_mode=_required_text(product, "session_mode"),
-        native_control_mode=_required_text(product, "native_control_mode"),
-        slam_mode=_required_text(product, "slam_mode"),
-        requires_map=bool(product.get("requires_map", False)),
-        switch_policy=_required_text(product, "switch_policy"),
-        product_variant=(
-            str(product["product_variant"]).strip()
-            if product.get("product_variant") is not None
-            else None
-        ),
-        default_for_session_mode=bool(product.get("default_for_session_mode", False)),
-        online_hot_switch_supported=bool(product.get("online_hot_switch_supported", False)),
-    )
-
-
 OPERATOR_PRODUCT_LIFECYCLES: Mapping[str, ProductLifecycle] = MappingProxyType(
     {
-        product_name(name): _lifecycle_from_product(
-            name,
+        name: ProductLifecycle.from_spec(
+            product_name(name),
             resolve_product_variant_spec(name, product),
         )
         for name, product in _PRODUCT_DEFINITIONS.items()
@@ -107,7 +97,7 @@ def product_lifecycle(
         _PRODUCT_DEFINITIONS[product],
         product_variant=product_variant,
     )
-    return _lifecycle_from_product(product, resolved)
+    return ProductLifecycle.from_spec(product, resolved)
 
 
 __all__ = [

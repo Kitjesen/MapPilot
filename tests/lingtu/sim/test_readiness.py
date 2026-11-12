@@ -830,7 +830,7 @@ def test_nav_readiness_sanitizes_native_nested_telemetry_extensions(
         {
             "age_s": 0.01,
             "reason": "",
-            "last_command_accepted": False,
+            "zero_output": False,
         }
     )
     payload["input_gate"].update(  # type: ignore[union-attr]
@@ -1331,17 +1331,11 @@ def test_local_endpoint_auth_file_cannot_alias_its_readiness_file(
         lambda value: value["native_product"].update(  # type: ignore[index,union-attr]
             {"product_session_id": "b" * 64}
         ),
-        lambda value: value["driver_control"].update(  # type: ignore[index,union-attr]
-            {"fresh": False}
-        ),
         lambda value: value["input_gate"].update(  # type: ignore[index,union-attr]
             {"ready": False}
         ),
         lambda value: value["input_gate"].update(  # type: ignore[index,union-attr]
             {"reason": "recovering"}
-        ),
-        lambda value: value["control_loop_health"].update(  # type: ignore[index,union-attr]
-            {"healthy": False}
         ),
     ),
 )
@@ -1359,38 +1353,32 @@ def test_nav_status_readiness_is_fail_closed(
         _load_nav(path)
 
 
-def test_nav_status_treats_valid_startup_state_as_pending(tmp_path: Path) -> None:
+def test_nav_status_waits_for_navigation_inputs(tmp_path: Path) -> None:
     path = tmp_path / "nav.status.json"
     payload = copy.deepcopy(_nav_payload())
-    payload["driver_control"].update(  # type: ignore[union-attr]
-        {"received": True, "ready": False, "fresh": False}
-    )
-    payload["input_gate"].update(  # type: ignore[union-attr]
-        {
-            "ready": False,
-            "driver_control_ready": False,
-            "reason": "driver_control_rejected",
-        }
-    )
+    payload["input_gate"].update({"ready": False, "reason": "collision_stale"})
     _write_fresh(path, payload, started_wall_ns=STARTED_WALL_NS)
-
-    with pytest.raises(SimReadinessPending, match="waiting for fresh Driver"):
+    with pytest.raises(SimReadinessPending, match="input gate is pending: collision_stale"):
         _load_nav(path)
 
 
-@pytest.mark.parametrize("value", (None, 0, 1, "true", [], {}))
-def test_nav_status_rejects_non_boolean_driver_readiness(
-    tmp_path: Path,
-    value: object,
+@pytest.mark.parametrize("metrics", (None, {"ready": False, "healthy": False},
+                                    {"ready": True, "healthy": False}))
+def test_nav_readiness_does_not_gate_on_driver_copy_or_performance(
+    tmp_path: Path, metrics: object,
 ) -> None:
     path = tmp_path / "nav.status.json"
     payload = copy.deepcopy(_nav_payload())
-    payload["driver_control"].update({"fresh": value})  # type: ignore[union-attr]
+    payload["driver_control"] = {"received": False, "ready": False, "fresh": False}
+    payload["input_gate"]["driver_control_ready"] = False
+    if metrics is None:
+        payload.pop("control_loop_health")
+        payload.pop("driver_control")
+        payload["input_gate"].pop("driver_control_ready")
+    else:
+        payload["control_loop_health"] = metrics
     _write_fresh(path, payload, started_wall_ns=STARTED_WALL_NS)
-
-    with pytest.raises(SimReadinessError, match="evidence is invalid") as caught:
-        _load_nav(path)
-    assert not isinstance(caught.value, SimReadinessPending)
+    _load_nav(path)
 
 
 def test_nav_status_readiness_requires_an_explicit_control_mode(

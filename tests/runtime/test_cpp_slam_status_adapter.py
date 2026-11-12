@@ -10,8 +10,8 @@ import pytest
 
 from gateway.services.loc_cache import LocCache
 from gateway.services.odometry import handle_odometry
-from lingtu.assembly.compile_plan import host_builder_for_resolved_product
 from lingtu.assembly.config.product import resolve_product_host_config
+from lingtu.assembly.host.build import host_builder
 from lingtu.assembly.host.stacks.localization import slam
 from localization.adapters.resolver import localization_adapter_module
 from localization.adapters.status import (
@@ -620,7 +620,7 @@ def test_real_product_host_builders_use_cpp_slam_status_adapter(
         robot="unitree/go2",
         product_variant=product_variant,
     )
-    bp = host_builder_for_resolved_product(product, config)
+    bp = host_builder(config, product=product)
     slam_entry = next(entry for entry in bp._entries if entry.name == "SlamAdapterModule")
 
     assert "_selection_kind" not in config

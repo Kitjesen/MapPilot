@@ -674,6 +674,8 @@ class Odometry:
     # The native DDS/ROS odometry wire format remains pose and twist only.
     session_distance_m: float | None = None
     session_distance_source: str | None = None
+    # Set by producers that provide measured/estimated six-axis twist.
+    twist_available: bool = False
 
     def __post_init__(self) -> None:
         if self.ts == 0.0:
@@ -726,6 +728,7 @@ class Odometry:
             "child_frame_id": self.child_frame_id,
             "session_distance_m": self.session_distance_m,
             "session_distance_source": self.session_distance_source,
+            "twist_available": self.twist_available,
         }
 
     @classmethod
@@ -738,6 +741,7 @@ class Odometry:
             child_frame_id=str(d.get("child_frame_id", NAV_BODY_FRAME_ID)),
             session_distance_m=d.get("session_distance_m"),
             session_distance_source=d.get("session_distance_source"),
+            twist_available=d.get("twist_available") is True,
         )
 
     def to_ros_dict(self) -> dict[str, Any]:

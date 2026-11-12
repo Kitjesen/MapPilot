@@ -16,6 +16,7 @@ SYSTEM_CONFIG_DIR = Path(__file__).resolve().parents[4] / "config" / "system"
 PRODUCT_HOST_CAPABILITIES = frozenset(
     {
         "gateway",
+        "conversation",
         "operator_motion",
         "navigation_skills",
         "goal_commands",

@@ -118,9 +118,9 @@ def test_validate_real_deployment_uses_native_command_service_chain() -> None:
         env="real",
         process_env={},
     )._resolve("nav")
-    host_builder = validator.host_builder_for_resolved_product(
-        plan.product,
-        dict(plan.host_config),
+    host_builder = validator.host_builder(
+        plan.host_config,
+        product=plan.product,
     )
     entries = {
         entry.name: getattr(entry.module_cls, "__name__", "")
@@ -139,19 +139,19 @@ def test_validate_real_deployment_uses_native_command_service_chain() -> None:
 def test_validate_real_deployment_rejects_ros_compat_graph_module(
     monkeypatch,
 ) -> None:
-    original = validator.host_builder_for_resolved_product
+    original = validator.host_builder
 
     class FakeROSBridge:
         pass
 
     FakeROSBridge.__module__ = "runtime.adapters.ros2.fake_bridge"
 
-    def _with_ros_bridge(product, config):
-        bp = original(product, config)
+    def _with_ros_bridge(config, *, product):
+        bp = original(config, product=product)
         bp.add(FakeROSBridge, alias="FakeROSBridge")
         return bp
 
-    monkeypatch.setattr(validator, "host_builder_for_resolved_product", _with_ros_bridge)
+    monkeypatch.setattr(validator, "host_builder", _with_ros_bridge)
 
     result = validator.validate()
 

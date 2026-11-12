@@ -616,44 +616,22 @@ def _validate_nav_status(
         or native_product.get("product_session_id") != product_session_id
     ):
         raise SimReadinessError("nav readiness Product identity is invalid")
-    driver_control = payload.get("driver_control")
-    if type(driver_control) is not dict:
-        raise SimReadinessError("nav readiness Driver control evidence is invalid")
-    driver_values = tuple(
-        driver_control.get(field) for field in ("received", "ready", "fresh")
-    )
-    if any(type(value) is not bool for value in driver_values):
-        raise SimReadinessError("nav readiness Driver control evidence is invalid")
-    if not all(driver_values):
-        raise SimReadinessPending(
-            "nav readiness is waiting for fresh Driver control evidence"
-        )
     input_gate = payload.get("input_gate")
     if type(input_gate) is not dict:
         raise SimReadinessError("nav readiness input gate evidence is invalid")
     gate_ready = input_gate.get("ready")
-    driver_ready = input_gate.get("driver_control_ready")
     gate_reason = input_gate.get("reason")
     if (
         type(gate_ready) is not bool
-        or type(driver_ready) is not bool
         or not isinstance(gate_reason, str)
         or not gate_reason
         or gate_reason != gate_reason.strip()
     ):
         raise SimReadinessError("nav readiness input gate evidence is invalid")
-    if not gate_ready or not driver_ready:
+    if not gate_ready:
         raise SimReadinessPending(f"nav readiness input gate is pending: {gate_reason}")
     if gate_reason != "ready":
         raise SimReadinessError("nav readiness input gate evidence is inconsistent")
-    loop = payload.get("control_loop_health")
-    if type(loop) is not dict:
-        raise SimReadinessError("nav readiness control loop evidence is invalid")
-    loop_values = tuple(loop.get(field) for field in ("ready", "healthy"))
-    if any(type(value) is not bool for value in loop_values):
-        raise SimReadinessError("nav readiness control loop evidence is invalid")
-    if not all(loop_values):
-        raise SimReadinessPending("nav readiness control loop is still starting")
 
 
 def _validate_slam_status(

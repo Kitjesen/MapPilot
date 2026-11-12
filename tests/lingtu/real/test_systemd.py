@@ -468,17 +468,19 @@ def test_service_readiness_allows_inactive_navigation_when_data_is_safe() -> Non
 
     detail = readiness.wait(process, 1.0)
 
-    assert calls == [("gateway", True, True, process.target)]
+    assert calls == [("gateway", False, True, process.target)]
     assert detail["ready"] is True
     assert detail["observed"]["http"]["payload"]["motion_ready"] is False
 
 
-def test_service_http_accepts_safe_degraded_readiness(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("data_ready,non_motion_safe", [(True, True), (False, False)])
+def test_service_http_accepts_started_host(monkeypatch: pytest.MonkeyPatch, data_ready, non_motion_safe) -> None:
     payload = {
+        "startup_state": "ready",
         "ready": False,
         "motion_ready": False,
-        "data_ready": True,
-        "non_motion_safe": True,
+        "data_ready": data_ready,
+        "non_motion_safe": non_motion_safe,
         "failed_modules": [],
         "critical_failed_modules": [],
     }
@@ -503,10 +505,11 @@ def test_service_http_accepts_safe_degraded_readiness(monkeypatch: pytest.Monkey
     assert observed["payload"] == payload
 
 
-def test_service_http_rejects_degraded_readiness_without_safe_stop(
+def test_service_http_rejects_unfinished_host(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = {
+        "startup_state": "starting",
         "ready": False,
         "motion_ready": False,
         "data_ready": True,
@@ -530,5 +533,32 @@ def test_service_http_rejects_degraded_readiness_without_safe_stop(
     observed = _ServiceInspector._http("gateway", blockers)
 
     assert observed["ok"] is False
-    assert "http_non_motion_safe_false" in blockers
+    assert "http_startup_not_ready:starting" in blockers
     assert "http_status:503" in blockers
+
+
+@pytest.mark.parametrize("service,blocked", [("driver", False), ("camera", False), ("maps", False), ("slam", False), ("gnss", False)])
+def test_service_startup_distinguishes_driver_motion_state(tmp_path, service, blocked):
+    from runtime.service_catalogs.real import service_spec
+
+    path = tmp_path / "status.json"
+    path.write_text(json.dumps({"ready": False, "status": "error"}), encoding="utf-8")
+    spec = replace(service_spec(service), files=(str(path),))
+    inspector = _ServiceInspector(now=lambda: path.stat().st_mtime)
+    blockers = []
+    observed = inspector._status_files(spec, blockers)
+    assert observed["files"][0]["ready"] is False
+    assert observed["files"][0]["status"] == "error"
+    assert bool(blockers) is blocked
+
+
+def test_driver_startup_still_requires_current_status(tmp_path):
+    from runtime.service_catalogs.real import service_spec
+
+    path = tmp_path / "status.json"
+    path.write_text(json.dumps({"ready": False, "status": "error"}), encoding="utf-8")
+    spec = replace(service_spec("driver"), files=(str(path),))
+    inspector = _ServiceInspector(now=lambda: path.stat().st_mtime + 10)
+    blockers = []
+    inspector._status_files(spec, blockers)
+    assert blockers == [f"status_file_stale:{path}"]

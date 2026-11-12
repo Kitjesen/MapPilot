@@ -51,11 +51,16 @@ class TestOdometry:
             pose=Pose(Vector3(5, 6, 7), Quaternion()),
             twist=Twist(Vector3(1, 0, 0), Vector3(0, 0, 0.5)),
             ts=100.0,
+            twist_available=True,
         )
         d = odom.to_dict()
         restored = Odometry.from_dict(d)
         assert restored.x == pytest.approx(5.0)
         assert restored.wz == pytest.approx(0.5)
+        assert restored.twist_available is True
+        d.pop("twist_available")
+        assert Odometry.from_dict(d).twist_available is False
+        assert Odometry().twist_available is False
 
 
 # ===== Path =====

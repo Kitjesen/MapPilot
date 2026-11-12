@@ -50,7 +50,7 @@ class _LifecycleModule(Module):
         name: str,
         events: list[str],
         *,
-        preflight_failure: str | None = None,
+        setup_reason: str | None = None,
         setup_failure: bool = False,
         start_failure: bool = False,
         readiness_result: str | None = None,
@@ -59,18 +59,16 @@ class _LifecycleModule(Module):
         super().__init__()
         self.name = name
         self.events = events
-        self.preflight_failure = preflight_failure
+        self.setup_reason = setup_reason
         self.setup_failure = setup_failure
         self.start_failure = start_failure
         self.readiness_result = readiness_result
         self.readiness_error = readiness_error
 
-    def preflight(self) -> str | None:
-        self.events.append(f"preflight:{self.name}")
-        return self.preflight_failure
-
     def setup(self) -> None:
         self.events.append(f"setup:{self.name}")
+        if self.setup_reason:
+            raise RuntimeError(self.setup_reason)
         if self.setup_failure:
             raise RuntimeError(f"{self.name} setup failed")
 
@@ -117,10 +115,10 @@ def test_module_default_startup_readiness_tracks_running_state() -> None:
     assert module.startup_readiness() is None
 
 
-def test_critical_preflight_failure_fails_closed() -> None:
+def test_critical_setup_reason_fails_closed() -> None:
     events: list[str] = []
     transport = _TrackingTransport()
-    critical = _LifecycleModule("critical", events, preflight_failure="sensor unavailable")
+    critical = _LifecycleModule("critical", events, setup_reason="sensor unavailable")
     later = _LifecycleModule("later", events)
     system = (
         HostBuilder()
@@ -131,13 +129,13 @@ def test_critical_preflight_failure_fails_closed() -> None:
     )
 
     assert system.startup_state == "built"
-    with pytest.raises(SystemStartupError, match=r"critical.*preflight"):
+    with pytest.raises(SystemStartupError, match=r"critical.*setup"):
         system.start()
 
     assert system.started is False
     assert system.startup_state == "failed"
-    assert system.failed_modules == {"critical": "preflight: sensor unavailable"}
-    assert system.critical_failures == {"critical": "preflight: sensor unavailable"}
+    assert system.failed_modules == {"critical": "setup: sensor unavailable"}
+    assert system.critical_failures == {"critical": "setup: sensor unavailable"}
     assert "start:later" not in events
     assert transport.closed is True
 
@@ -277,7 +275,7 @@ def test_stopped_and_failed_handles_cannot_restart() -> None:
     with pytest.raises(SystemStartupError, match="stopped"):
         ready_system.start()
 
-    failing = _LifecycleModule("critical", [], preflight_failure="no device")
+    failing = _LifecycleModule("critical", [], setup_reason="no device")
     failed_system = HostBuilder().add(failing, alias="critical").require_modules("critical").build()
     with pytest.raises(SystemStartupError):
         failed_system.start()

@@ -307,6 +307,31 @@ def test_service_sends_flat_json_and_returns_domain_failure() -> None:
     }
 
 
+@pytest.mark.parametrize("action", ["preview_source_edits", "save_edited_source"])
+def test_edit_operations_reach_the_native_wire(action: str) -> None:
+    transport = _ScriptedSocket(_response({"success": True}))
+    client = MapClient(connector=lambda: transport)
+    operations = [
+        {"operation": "keep_inside", "bounds": {"min_x": 0, "min_y": 0, "min_z": 0,
+                                               "max_x": 2, "max_y": 2, "max_z": 2}},
+        {"operation": "radius", "radius": 0.2, "min_points": 12},
+    ]
+    assert client.service(action, map_id="yard", expected_source_content_epoch=7,
+                          operations=operations)["success"] is True
+    *_, request_id_len, json_len = _REQUEST_HEADER.unpack(transport.sent[: _REQUEST_HEADER.size])
+    offset = _REQUEST_HEADER.size + request_id_len
+    assert json.loads(bytes(transport.sent[offset:offset + json_len])) == {
+        "action": action, "map_id": "yard", "expected_source_content_epoch": 7,
+        "operations": operations,
+    }
+
+
+def test_service_rejects_non_json_arguments_before_connecting() -> None:
+    client = MapClient(connector=lambda: pytest.fail("invalid data reached the socket"))
+    with pytest.raises(TypeError, match="JSON serializable"):
+        client.service("preview_source_edits", operations={object()})
+
+
 def test_reply_without_required_artifact_fd_is_rejected() -> None:
     transport = _ScriptedSocket(_response({"success": True}, has_fd=False))
     client = MapClient(connector=lambda: transport)

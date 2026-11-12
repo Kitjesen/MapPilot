@@ -7,6 +7,7 @@ import logging
 from runtime.host import HostBuilder
 from runtime.plugin_resolution import optional_stack_module, stack_module
 
+from .conversation import conversation
 from .memory import DEFAULT_SEMANTIC_DIR
 
 logger = logging.getLogger(__name__)
@@ -63,10 +64,6 @@ def planner(
                 seed_group="decision",
                 fallback="decision.modules.semantic_planner.SemanticPlannerModule",
             )
-            AgentPlannerModule = stack_module(
-                "agent_planner", "default", seed_group="decision",
-                fallback="decision.modules.agent_planner.AgentPlannerModule",
-            )
             bp.add(
                 SemanticPlannerModule,
                 alias="SemanticPlannerModule",
@@ -78,15 +75,13 @@ def planner(
                 llm_timeout_sec=llm_timeout_sec,
                 product_session_id=str(config.get("product_session_id", "")),
             )
-            bp.add(
-                AgentPlannerModule,
-                alias="AgentPlannerModule",
-                llm_backend=llm,
+            bp.merge(conversation(
+                llm,
                 llm_model=llm_model,
                 llm_base_url=llm_base_url,
                 llm_api_key_env=llm_api_key_env,
                 llm_timeout_sec=llm_timeout_sec,
-            )
+            ))
         except ImportError as e:
             logger.warning("Semantic planner not available: %s", e)
 

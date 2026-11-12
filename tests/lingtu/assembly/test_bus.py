@@ -329,7 +329,7 @@ def test_host_bus_projects_ordered_native_exploration_run_events() -> None:
             "map_content_epoch": 0,
             "reason": "duplicate_must_not_replace_truth",
             "motion_stop_confirmed": True,
-            "motion_stop_reason": "driver_ack_and_odometry_still",
+            "motion_stop_reason": "zero_output_and_odometry_still",
         },
     ]
 
