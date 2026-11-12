@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "client_export.h"
+#include "message/protocol/external.hpp"
 
 namespace lingtu::nav::commands {
 
@@ -128,6 +129,22 @@ struct OperatorMotionCommandReceipt {
   std::uint64_t final_output_sequence{0U};
   double endpoint_timestamp_s{0.0};
   std::string reason;
+};
+
+struct OperatorMotionStatusSnapshot {
+  double timestamp_s{0.0};
+  std::string active_source_id;
+  std::uint64_t active_source_epoch{0U};
+  bool has_active_authority{false};
+  bool holding{false};
+  bool has_active_sample{false};
+  std::uint64_t last_sample_sequence{0U};
+  std::uint64_t admitted_sequence{0U};
+  std::uint64_t final_output_sequence{0U};
+  std::string authority_reason;
+  std::string input_gate_reason;
+  double received_age_ms{0.0};
+  bool fresh{false};
 };
 
 struct PathPoint {
@@ -338,6 +355,10 @@ class LINGTU_NAV_CLIENT_API Client {
         double max_speed_mps,
         int timeout_ms = 1000,
         const std::string& request_id = {});
+    [[nodiscard]] NavigationCommandReceipt selectPlanner(
+        const std::string& name,
+        int timeout_ms = 10000,
+        const std::string& request_id = {});
     void stop(
         const std::string& reason,
         int timeout_ms = 1000,
@@ -353,6 +374,20 @@ class LINGTU_NAV_CLIENT_API Client {
     [[nodiscard]] NavigationCommandReceipt
     resumeAutonomyWithReceipt(const std::string &reason, int timeout_ms = 1000,
                               const std::string &request_id = {});
+    [[nodiscard]] NavigationCommandReceipt stand(
+        const std::string &reason, int timeout_ms = 10000, const std::string &request_id = {});
+    [[nodiscard]] NavigationCommandReceipt sit(
+        const std::string &reason, int timeout_ms = 10000, const std::string &request_id = {});
+    [[nodiscard]] NavigationCommandReceipt enableMotors(
+        const std::string &reason, int timeout_ms = 10000, const std::string &request_id = {});
+    [[nodiscard]] NavigationCommandReceipt disableMotors(
+        const std::string &reason, int timeout_ms = 10000, const std::string &request_id = {});
+    [[nodiscard]] NavigationCommandReceipt switchProfile(
+        const std::string &name, const std::string &reason, int timeout_ms = 10000,
+        const std::string &request_id = {});
+    [[nodiscard]] NavigationCommandReceipt externalControl(
+        std::int32_t kind, const std::string &session_id, const std::string &reason,
+        int timeout_ms, const std::string &request_id);
     void resumeAutonomy(
         const std::string& reason,
         int timeout_ms = 1000,
@@ -519,6 +554,11 @@ class LINGTU_NAV_CLIENT_API Client {
   OperatorMotionCommands& operatorMotion() noexcept { return operator_motion_; }
   [[nodiscard]] std::optional<NavigationStateSnapshot>
   latestNavigationState() const;
+  // Ownership fields are last-observed facts; use them only while fresh.
+  [[nodiscard]] std::optional<OperatorMotionStatusSnapshot>
+  latestOperatorMotionStatus(std::uint32_t max_age_ms = 250) const;
+  [[nodiscard]] std::optional<lingtu::message::ExternalState> externalStatus() const;
+  bool externalFrame(const lingtu::message::ExternalFrame &frame, bool heartbeat = false);
   [[nodiscard]] bool takeNavigationGoalStatus(
       NavigationGoalStatusSnapshot* status);
   [[nodiscard]] bool takeInspectionTaskEvent(

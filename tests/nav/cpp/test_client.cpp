@@ -1893,7 +1893,89 @@ void runTest() {
 
   lingtu_nav_client_handle c_client = lingtu_nav_client_create(domain_id);
   check(c_client != nullptr, "C navigation client creation failed");
+  for (const bool stand : {true, false}) {
+    lingtu_nav_navigation_command_receipt_v1 posture{};
+    posture.abi_version = LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION;
+    posture.struct_size = sizeof(posture);
+    const auto call = stand ? lingtu_nav_client_stand_with_receipt_v1
+                            : lingtu_nav_client_sit_with_receipt_v1;
+    const auto kind = stand ? CommandKind::Stand : CommandKind::Sit;
+    const char *request_id = stand ? "c-stand-001" : "c-sit-001";
+    sendAndReply(request_reader, ack_writer,
+        [&] {
+          check(call(c_client, request_id, "operator_posture", 1000, &posture) == 0,
+                "C posture receipt call failed");
+        },
+        [&](const lingtu_dds_NavigationCommandRequest &request) {
+          check(request.kind == static_cast<std::int32_t>(kind) &&
+                    std::string(request.request_id) == request_id &&
+                    (request.task_id == nullptr || std::string(request.task_id).empty()),
+                "posture DDS request must preserve action/request without a task identity");
+        }, stand, stand ? "body_action_accepted" : "control_busy");
+    check((posture.accepted != 0) == stand && posture.kind == static_cast<std::int32_t>(kind) &&
+              std::string(posture.request_id) == request_id &&
+              std::string(posture.reason) == (stand ? "body_action_accepted" : "control_busy"),
+          "C posture receipt must preserve the exact endpoint acceptance or rejection");
+  }
+  for (const bool enable : {true, false}) {
+    lingtu_nav_navigation_command_receipt_v1 power{};
+    power.abi_version = LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION;
+    power.struct_size = sizeof(power);
+    const auto call = enable ? lingtu_nav_client_enable_motors_with_receipt_v1
+                             : lingtu_nav_client_disable_motors_with_receipt_v1;
+    const auto kind = enable ? CommandKind::EnableMotors : CommandKind::DisableMotors;
+    const char *request_id = enable ? "c-enable-001" : "c-disable-001";
+    sendAndReply(request_reader, ack_writer,
+        [&] {
+          check(call(c_client, request_id, "operator_power", 1000, &power) == 0,
+                "C motor power receipt call failed");
+        },
+        [&](const lingtu_dds_NavigationCommandRequest &request) {
+          check(request.kind == static_cast<std::int32_t>(kind) &&
+                    std::string(request.request_id) == request_id,
+                "motor power request lost kind or identity");
+        }, true, enable ? "motors_enabled" : "motors_disabled");
+    check(power.accepted && power.kind == static_cast<std::int32_t>(kind),
+          "motor power receipt lost endpoint result");
+  }
+  lingtu_nav_navigation_command_receipt_v1 profile{};
+  profile.abi_version = LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION;
+  profile.struct_size = sizeof(profile);
+  sendAndReply(request_reader, ack_writer,
+      [&] {
+        check(lingtu_nav_client_switch_profile_with_receipt_v1(
+                  c_client, "c-profile-001", "stairs", "operator_profile", 1000, &profile) == 0,
+              "C profile switch receipt call failed");
+      },
+      [&](const lingtu_dds_NavigationCommandRequest &request) {
+        check(request.kind == static_cast<std::int32_t>(CommandKind::SwitchProfile) &&
+                  std::string(request.profile_name) == "stairs" &&
+                  std::string(request.reason) == "operator_profile",
+              "profile target must travel independently from reason");
+      }, false, "profile_requires_grounded");
+  check(!profile.accepted && profile.kind == 15 &&
+            std::string(profile.request_id) == "c-profile-001" &&
+            std::string(profile.reason) == "profile_requires_grounded",
+        "profile rejection lost correlation");
   lingtu_nav_navigation_command_receipt_v1 c_goal_receipt{};
+  lingtu_nav_navigation_command_receipt_v1 planner_receipt{};
+  check((lingtu_nav_client_capabilities() & LINGTU_NAV_CLIENT_CAP_PLANNER_SELECTION) != 0U,
+        "planner selection capability missing");
+  planner_receipt.abi_version = LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION;
+  planner_receipt.struct_size = sizeof(planner_receipt);
+  sendAndReply(request_reader, ack_writer,
+      [&] {
+        check(lingtu_nav_client_select_planner_with_receipt_v1(
+                  c_client, "scan", "planner-1", 1000, &planner_receipt) == 0,
+              "C planner selection receipt failed");
+      },
+      [&](const lingtu_dds_NavigationCommandRequest &request) {
+        check(request.kind == static_cast<std::int32_t>(CommandKind::SelectPlanner) &&
+                  std::string(request.local_planner) == "scan",
+              "planner selection lost its target");
+      }, false, "task_active");
+  check(!planner_receipt.accepted && std::string(planner_receipt.reason) == "task_active",
+        "planner rejection was reported as success");
   c_goal_receipt.abi_version =
       LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION;
   c_goal_receipt.struct_size = sizeof(c_goal_receipt);
@@ -3274,6 +3356,150 @@ void testClockOffsetTracksRealtimeRollback() {
       "clock offset projection must follow endpoint CLOCK_REALTIME rollback");
 }
 
+void testOperatorMotionStatusReader() {
+  const int domain = testDomain(TestDomainSlot::kOperatorReceipts);
+  lingtu::nav::commands::Client client(domain);
+  const auto handle = lingtu_nav_client_create(domain);
+  check(handle != nullptr, "status C client was not created");
+  const auto participant = checked(dds_create_participant(domain, nullptr, nullptr), "status participant");
+  const auto publisher = checked(dds_create_publisher(participant, nullptr, nullptr), "status publisher");
+  const auto writer = createWriter(participant, publisher, lingtu::message::kOperatorMotionStatus,
+                                    &lingtu_dds_OperatorMotionStatus_desc);
+  try {
+    check(!client.latestOperatorMotionStatus(), "status must be unknown before publication");
+    lingtu_nav_operator_motion_status_v1 output{};
+    output.abi_version = LINGTU_NAV_OPERATOR_MOTION_STATUS_ABI_VERSION;
+    output.struct_size = sizeof(output);
+    check(lingtu_nav_client_read_operator_motion_status_v1(handle, 250, &output) == 0,
+          "C status must be unknown before publication");
+    lingtu_dds_OperatorMotionStatus sample{};
+    sample.header.frame_id = const_cast<char *>("map");
+    sample.active_source_id = const_cast<char *>("sdk:status-test");
+    sample.active_source_epoch = 17;
+    sample.has_active_authority = true;
+    sample.holding = true;
+    sample.last_sample_sequence = 31;
+    sample.final_output_sequence = 400;
+    sample.authority_reason = const_cast<char *>("claimed");
+    sample.input_gate_reason = const_cast<char *>("ready");
+    const auto publish = [&](double stamp) {
+      sample.header.stamp.sec = static_cast<std::int32_t>(stamp);
+      sample.header.stamp.nanosec = static_cast<std::uint32_t>((stamp - sample.header.stamp.sec) * 1e9);
+      checked(dds_write(writer, &sample), "status write");
+    };
+    bool received = false;
+    for (int attempt = 0; attempt < 200 && !received; ++attempt) {
+      publish(nowSeconds() - 5.0);
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      const auto state = client.latestOperatorMotionStatus();
+      received = state.has_value() && !state->fresh;
+    }
+    check(received, "old queued status must not be fresh on receipt");
+    received = false;
+    for (int attempt = 0; attempt < 200 && !received; ++attempt) {
+      publish(nowSeconds());
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      const auto state = client.latestOperatorMotionStatus();
+      received = state && state->fresh && state->has_active_authority &&
+          lingtu_nav_client_read_operator_motion_status_v1(handle, 250, &output) == 1 && output.fresh;
+    }
+    check(received, "fresh authority status was not received");
+    check(output.active_source_epoch == 17 && std::string(output.active_source_id) == "sdk:status-test",
+          "native status identity was altered");
+    check(output.final_output_sequence == 400 && output.holding, "native status evidence was altered");
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    check(!client.latestOperatorMotionStatus(30)->fresh, "quiet status must expire by receipt age");
+    check(lingtu_nav_client_read_operator_motion_status_v1(handle, 30, &output) == 1 && !output.fresh,
+          "C ABI must retain stale evidence with fresh=false");
+    sample.has_active_authority = false;
+    sample.active_source_id = const_cast<char *>("");
+    sample.active_source_epoch = 0;
+    received = false;
+    for (int attempt = 0; attempt < 200 && !received; ++attempt) {
+      publish(nowSeconds());
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      const auto state = client.latestOperatorMotionStatus();
+      received = state && state->fresh && !state->has_active_authority;
+    }
+    check(received, "ownership release status did not replace the previous owner");
+  } catch (...) {
+    dds_delete(participant);
+    lingtu_nav_client_destroy(handle);
+    throw;
+  }
+  dds_delete(participant);
+  lingtu_nav_client_destroy(handle);
+}
+
+void testExternalDdsBridge() {
+  const int domain = testDomain(TestDomainSlot::kOperatorReceipts);
+  const auto participant = checked(dds_create_participant(domain, nullptr, nullptr), "external participant");
+  const auto subscriber = checked(dds_create_subscriber(participant, nullptr, nullptr), "external subscriber");
+  const auto publisher = checked(dds_create_publisher(participant, nullptr, nullptr), "external publisher");
+  const auto reader = createReader(participant, subscriber, lingtu::message::kExternalCommand,
+      &lingtu_dds_ExternalCommand_desc);
+  const auto writer = createWriter(participant, publisher, lingtu::message::kExternalControlState,
+      &lingtu_dds_ExternalControlState_desc);
+  const auto handle = lingtu_nav_client_create(domain);
+  check(handle != nullptr, "external C client was not created");
+  try {
+    lingtu_nav_external_state_v1 state{};
+    state.abi_version = 1;
+    state.struct_size = sizeof(state);
+    check(lingtu_nav_client_external_status_v1(handle, &state) == 0, "missing source must be unknown");
+    lingtu_dds_ExternalControlState sample{};
+    sample.session_id = const_cast<char *>("session-1");
+    sample.selected = true;
+    sample.active = true;
+    sample.last_sequence = 5;
+    sample.input_window = 9001;
+    sample.joint_count = 16;
+    sample.fresh = true;
+    sample.reason = const_cast<char *>("external_ready");
+    sample.motor_disable_confirmed = true;
+    for (int attempt = 0; attempt < 200 && !state.fresh; ++attempt) {
+      const auto now = nowSeconds();
+      sample.header.stamp.sec = static_cast<std::int32_t>(now);
+      sample.header.stamp.nanosec = static_cast<std::uint32_t>((now - sample.header.stamp.sec) * 1e9);
+      checked(dds_write(writer, &sample), "external state write");
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      (void)lingtu_nav_client_external_status_v1(handle, &state);
+    }
+    check(state.fresh && state.selected && state.input_window == 9001 && state.joint_count == 16 &&
+        state.last_sequence == 5 && std::string(state.session_id) == "session-1" &&
+        state.motor_disable_confirmed,
+        "external state must preserve robot window and accepted sequence");
+    lingtu_nav_external_joint_v1 joints[16]{};
+    for (int attempt = 0; attempt < 200 &&
+        dds_get_matched_publications(reader, nullptr, 0) != 1; ++attempt) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    joints[0].q = 0.25;
+    joints[15].tau = 1.75;
+    check(lingtu_nav_client_external_frame_v1(handle, "session-1", 7, 8999, joints, 16) == 0,
+        "external frame C call failed");
+    auto *frame = takeOne<lingtu_dds_ExternalCommand>(reader, 2000);
+    check(std::string(frame->session_id) == "session-1" && frame->frame_sequence == 7 &&
+        frame->input_window == 8999 && frame->joints[0].q == 0.25 && frame->joints[15].tau == 1.75,
+        "frame must carry its original window even after a newer status window arrives");
+    returnLoan(reader, frame);
+    check(lingtu_nav_client_external_frame_v1(handle, "session-1", 8, 9001, joints, 15) == -1,
+        "partial joint frames must be rejected");
+    check(lingtu_nav_client_external_heartbeat_v1(handle, "session-1") == 0,
+        "external heartbeat C call failed");
+    auto *heartbeat = takeOne<lingtu_dds_ExternalCommand>(reader, 2000);
+    check(heartbeat->heartbeat && std::string(heartbeat->session_id) == "session-1",
+        "heartbeat must preserve its session");
+    returnLoan(reader, heartbeat);
+  } catch (...) {
+    lingtu_nav_client_destroy(handle);
+    dds_delete(participant);
+    throw;
+  }
+  lingtu_nav_client_destroy(handle);
+  dds_delete(participant);
+}
+
 bool runNamedTest(const std::string &name) {
   using TestFunction = void (*)();
   const std::pair<const char *, TestFunction> tests[] = {
@@ -3288,6 +3514,8 @@ bool runNamedTest(const std::string &name) {
       {"inspection_commands", &testInspectionTaskCommands},
       {"operator_identity", &testOperatorMotionAckCorrelationUsesFullSourceIdentity},
       {"operator_receipts", &testOperatorMotionReceiptApis},
+      {"operator_status", &testOperatorMotionStatusReader},
+      {"external_bridge", &testExternalDdsBridge},
       {"estop_bypass", &testEstopBypassesGoalAckWait},
       {"ack_replay", &testNavigationAckTimeoutReplaysSameRequestWithoutRedispatch},
       {"source_stamp", &testSourceStampIsRefreshedAfterDiscovery},

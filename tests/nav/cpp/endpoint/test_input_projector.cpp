@@ -161,7 +161,6 @@ lingtu_dds_DriverControlState driverControlMessage(double stamp_s) {
   message.owner = const_cast<char *>("driver");
   message.owner_id = const_cast<char *>("lingtu-driver@robot");
   message.reason = const_cast<char *>("");
-  message.accepted_producer_boot_id = const_cast<char *>("");
   return message;
 }
 struct PointCloudFixture {
@@ -536,23 +535,22 @@ void testTfRejectsReverseMapOdomPayload() {
           "reverse TF must not be silently inverted into canonical state");
 }
 
-void testDriverProjectionCopiesLoansUsesSteadyFreshnessAndPreservesBlockerPrecedence() {
+void testDriverStatusRemainsVisibleWithoutBlockingNavigation() {
   EndpointState state;
   InputGateConfig gate_config;
   gate_config.require_odom = false;
   gate_config.require_cloud = false;
-  gate_config.require_driver_control = true;
+  gate_config.driver_control_max_age_s = 0.15;
   InputGate input_gate(gate_config);
   TransformBuffer pose_buffer;
   TransformBuffer map_odom_buffer;
   MotionLayer live_obstacles;
   InputConfig projector_config;
-  projector_config.driver_control_max_age_s = 0.35;
   InputProjector projector(state, input_gate, pose_buffer, map_odom_buffer, std::move(live_obstacles),
                                    projector_config, InputActions{});
 
-  require(projector.driverBlocker(steadyTime(1000.0)) == "driver_control_missing",
-          "missing driver control must have highest blocker precedence");
+  require(projector.evaluateGate(1000.0, steadyTime(1000.0)).ready,
+          "missing driver telemetry must not block navigation");
 
   auto disconnected = driverControlMessage(10.0);
   disconnected.ready = true;
@@ -563,11 +561,10 @@ void testDriverProjectionCopiesLoansUsesSteadyFreshnessAndPreservesBlockerPreced
   require(state.driver_control_generation == 1, "accepted driver state must advance generation");
   require(state.driver_control_reason == "disconnected",
           "fallback reason precedence must start disconnected");
-  require(projector.driverBlocker(steadyTime(1000.1)) == "driver_control_disconnected",
-          "fresh not-ready driver state must expose its detailed blocker");
+  require(projector.evaluateGate(1000.1, steadyTime(1000.1)).ready && !state.driver_control_ready,
+          "disconnected driver state must remain visible without blocking navigation");
 
   char producer_reason[] = "producer_fault";
-  char producer_boot[] = "boot-a";
   auto rejected = driverControlMessage(10.05);
   rejected.connected = true;
   rejected.ready = false;
@@ -575,14 +572,10 @@ void testDriverProjectionCopiesLoansUsesSteadyFreshnessAndPreservesBlockerPreced
   rejected.control_assured = true;
   rejected.lease_valid = true;
   rejected.reason = producer_reason;
-  rejected.accepted_producer_boot_id = producer_boot;
   projector.projectDriverControl(rejected, steadyTime(1000.1));
   producer_reason[0] = 'X';
-  producer_boot[0] = 'X';
   require(state.driver_control_reason == "producer_fault",
           "projector must own copied driver reason after DDS loan release");
-  require(state.driver_accepted_producer_boot_id == "boot-a",
-          "projector must own copied driver acknowledgement identity");
 
   auto ready = driverControlMessage(10.1);
   ready.connected = true;
@@ -592,7 +585,7 @@ void testDriverProjectionCopiesLoansUsesSteadyFreshnessAndPreservesBlockerPreced
   ready.lease_valid = false;
   projector.projectDriverControl(ready, steadyTime(1000.2));
   require(state.driver_control_ready, "fully ready driver state must admit motion");
-  require(projector.driverBlocker(steadyTime(1000.3)).empty(),
+  require(projector.evaluateGate(1000.3, steadyTime(1000.3)).ready,
           "fresh ready driver state must not block motion");
   require(std::abs(projector.driverAge(steadyTime(1000.3)) - 0.1) < 1e-9,
           "driver freshness must use the injected steady clock");
@@ -601,6 +594,8 @@ void testDriverProjectionCopiesLoansUsesSteadyFreshnessAndPreservesBlockerPreced
   require(gate_state.ready, "steady receipt must keep gate ready despite producer clock offset");
   require(std::abs(gate_state.driver_control_age_s - 0.1) < 1e-9,
           "InputSnapshot driver age must stay in the receiver steady-clock domain");
+  require(gate_state.driver_control_fresh,
+          "driver freshness must still be reported when admission does not require it");
 
   const auto clock_rebases_before = state.frames.clock_rebases;
   auto rebased = ready;
@@ -612,8 +607,9 @@ void testDriverProjectionCopiesLoansUsesSteadyFreshnessAndPreservesBlockerPreced
   require(state.driver_control_generation == 4, "driver clock rebase must be accepted");
   require(state.frames.clock_rebases == clock_rebases_before,
           "driver clock rebase must remain silent in frame diagnostics");
-  require(projector.driverBlocker(steadyTime(1001.0)) == "driver_control_stale",
-          "driver staleness must precede readiness details");
+  require(projector.evaluateGate(1001.0, steadyTime(1001.0)).ready &&
+              !projector.evaluateGate(1001.0, steadyTime(1001.0)).driver_control_fresh,
+          "stale driver telemetry must be visible without blocking navigation");
 }
 
 void testCloudTerrainAndSnapshotProjectionOwnDdsDataAndExactClocks() {
@@ -1421,7 +1417,7 @@ int main() {
   testOdometryRejectsDuplicateSourceStampWithoutPoisoningFiniteState();
   testOdometryRejectsNonCanonicalChildFrames();
   testTfRejectsReverseMapOdomPayload();
-  testDriverProjectionCopiesLoansUsesSteadyFreshnessAndPreservesBlockerPrecedence();
+  testDriverStatusRemainsVisibleWithoutBlockingNavigation();
   testCloudTerrainAndSnapshotProjectionOwnDdsDataAndExactClocks();
   testCloudMissingHeightUsesGroundSnapshotAndTerrainKeepsBodyDatum();
   testCloudClockRebaseClearsOldMotionLayerAndDerivedSnapshots();

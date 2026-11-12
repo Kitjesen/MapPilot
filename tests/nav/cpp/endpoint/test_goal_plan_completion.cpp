@@ -176,7 +176,7 @@ int main() {
     require(resumed.accepted && resumed.reason == "planning_started",
             "queued initial goal did not resume after pose recovery");
     const auto completed = waitForCompletion(
-        controller, GoalPlanAdvanceContext{admissionContext().frame_epoch, false, 10.1});
+        controller, GoalPlanAdvanceContext{admissionContext().frame_epoch, {}, 10.1});
     require(completed.path_activated && !controller.snapshot().pending_plan_queued,
             "queued initial goal did not activate after pose recovery");
   }
@@ -235,7 +235,7 @@ int main() {
     require(controller.resumePending(resumed_context, 100.0).accepted,
             "explicitly resumed queued goal did not restart planning");
     const auto completed = waitForCompletion(
-        controller, GoalPlanAdvanceContext{admissionContext().frame_epoch, false, 10.2});
+        controller, GoalPlanAdvanceContext{admissionContext().frame_epoch, {}, 10.2});
     require(completed.path_activated && recorder.activations.size() == 1U &&
                 recorder.activations.back().goal_yaw == paused_request.target->yaw &&
                 recorder.activations.back().max_speed_mps == paused_request.target->max_speed_mps &&
@@ -281,7 +281,7 @@ int main() {
                 controller.snapshot().pending_goal_epoch == planning_epoch,
             "in-flight planning pause did not move the same goal into pending state");
     const auto before_commit = recorder.statuses.size();
-    const auto frozen = controller.advance({admission.frame_epoch, false, 10.3});
+    const auto frozen = controller.advance({admission.frame_epoch, {}, 10.3});
     require(!frozen.path_activated && recorder.activations.empty() &&
                 recorder.statuses.size() == before_commit,
             "in-flight pause allowed a late plan to advance before stop confirmation");
@@ -294,12 +294,12 @@ int main() {
     require(resume.accepted && resume.commit,
             "paused in-flight plan could not prepare resume");
     resume.commit();
-    waitUntilNotBusy(controller, {admission.frame_epoch, false, 10.4});
+    waitUntilNotBusy(controller, {admission.frame_epoch, {}, 10.4});
     require(recorder.activations.empty() && controller.snapshot().pending_plan_queued,
             "late cancelled planning result activated before a fresh restart");
     require(controller.resumePending(admission, 100.0).accepted,
             "drained in-flight pause did not restart with fresh context");
-    const auto completed = waitForCompletion(controller, {admission.frame_epoch, false, 10.5});
+    const auto completed = waitForCompletion(controller, {admission.frame_epoch, {}, 10.5});
     require(completed.path_activated && recorder.activations.size() == 1U &&
                 controller.snapshot().active_request_id == "resume-planning" &&
                 controller.snapshot().active_goal_epoch == planning_epoch,
@@ -312,7 +312,7 @@ int main() {
     const auto admission = admissionContext();
     require(controller.submit(request(), admission).accepted,
             "resume-gap fixture could not start planning");
-    require(waitForCompletion(controller, GoalPlanAdvanceContext{admission.frame_epoch, false, 11.0})
+    require(waitForCompletion(controller, GoalPlanAdvanceContext{admission.frame_epoch, {}, 11.0})
                 .path_activated,
             "resume-gap fixture could not activate a path");
     auto pause = controller.deferPause(request().task_id, "pause-for-gap", "operator_pause");
@@ -350,12 +350,12 @@ int main() {
     auto limited_context = admissionContext();
     limited_context.planner_options.terminal_goal_z_tolerance_m = 0.1;
     require(controller.submit(limited, limited_context).accepted, "limited goal rejected");
-    (void)waitForCompletion(controller, GoalPlanAdvanceContext{4U, false, 10.1});
+    (void)waitForCompletion(controller, GoalPlanAdvanceContext{4U, {}, 10.1});
     require(recorder.activations.size() == 1, "limited path not activated");
     require(recorder.activations.back().max_speed_mps == 0.2, "speed limit lost on activation");
     require(recorder.activations.back().acceptance_radius_m == 0.3, "radius lost on activation");
     require(controller.replanActive(admissionContext()).accepted, "limited replan rejected");
-    (void)waitForCompletion(controller, GoalPlanAdvanceContext{4U, false, 10.2});
+    (void)waitForCompletion(controller, GoalPlanAdvanceContext{4U, {}, 10.2});
     require(recorder.activations.size() == 2, "limited replan not activated");
     require(recorder.activations.back().max_speed_mps == 0.2, "speed limit lost on replan");
     require(recorder.activations.back().acceptance_radius_m == 0.3, "radius lost on replan");
@@ -370,8 +370,7 @@ int main() {
           "stale-frame test could not start planning");
 
   const auto result = waitForCompletion(controller, GoalPlanAdvanceContext{
-                                                        admission.frame_epoch + 1U,
-                                                        false,
+                                                        admission.frame_epoch + 1U, {},
                                                         20.0,
                                                     });
 
@@ -408,8 +407,7 @@ int main() {
   require(exception_controller.submit(inspection_request, admission).accepted,
           "planner-exception test could not start planning");
   const auto exception_result = waitForCompletion(exception_controller, GoalPlanAdvanceContext{
-                                                                            admission.frame_epoch,
-                                                                            false,
+                                                                            admission.frame_epoch, {},
                                                                             21.0,
                                                                         });
   require(exception_result.completion_consumed, "planner exception was not consumed");
@@ -446,8 +444,7 @@ int main() {
   require(failure_controller.submit(request(), admission).accepted,
           "planner-failure test could not start planning");
   const auto failure_result = waitForCompletion(failure_controller, GoalPlanAdvanceContext{
-                                                                        admission.frame_epoch,
-                                                                        false,
+                                                                        admission.frame_epoch, {},
                                                                         22.0,
                                                                     });
   require(failure_result.completion_consumed, "planner failure was not consumed");
@@ -468,33 +465,32 @@ int main() {
               failure_snapshot.pending_request_id == request().request_id,
           "ordinary planner failure lost its accepted request");
 
-  Recorder takeover_recorder;
-  takeover_recorder.inspection_is_active = true;
-  GoalPlanController takeover_controller(successfulPlan, takeover_recorder.actions());
-  require(takeover_controller.submit(inspection_request, admission).accepted,
-          "operator-takeover test could not start planning");
-  const auto takeover_result = waitForCompletion(takeover_controller, GoalPlanAdvanceContext{
-                                                                          admission.frame_epoch,
-                                                                          true,
-                                                                          23.0,
-                                                                      });
-  require(takeover_result.completion_consumed, "takeover plan was not consumed");
-  require(!takeover_result.counted_failure, "takeover cancellation counted failure");
-  require(!takeover_result.path_activated, "takeover plan activated a path");
-  require(takeover_recorder.statuses.size() == 2U &&
-              takeover_recorder.statuses.back().state == NavigationGoalState::Cancelled,
-          "takeover plan did not publish Cancelled");
-  require(takeover_recorder.statuses.back().reason == "operator_takeover_discarded_plan",
-          "takeover cancellation reason changed");
-  require(takeover_recorder.inspection_pauses.size() == 1U &&
-              takeover_recorder.inspection_pauses.front() == "operator_takeover_discarded_plan",
-          "takeover did not pause inspection");
-  require(takeover_recorder.activations.empty(), "takeover installed a planner path");
-  const auto takeover_snapshot = takeover_controller.snapshot();
-  require(takeover_snapshot.planning_request_id.empty(), "takeover left planning identity live");
-  require(!takeover_snapshot.diagnostics.accepted &&
-              takeover_snapshot.diagnostics.reason == "operator_takeover_discarded_plan",
-          "takeover diagnostics changed");
+  for (const std::string reason : {"operator_takeover", "stop_confirmation_timeout"}) {
+    Recorder held_recorder;
+    held_recorder.inspection_is_active = true;
+    GoalPlanController held_controller(successfulPlan, held_recorder.actions());
+    require(held_controller.submit(inspection_request, admission).accepted,
+            "held-completion test could not start planning");
+    const auto held_result = waitForCompletion(
+        held_controller, GoalPlanAdvanceContext{admission.frame_epoch, reason, 23.0});
+    require(held_result.completion_consumed, "held plan was not consumed");
+    require(!held_result.counted_failure, "held cancellation counted failure");
+    require(!held_result.path_activated, "held plan activated a path");
+    require(held_recorder.statuses.size() == 2U &&
+                held_recorder.statuses.back().state == NavigationGoalState::Cancelled,
+            "held plan did not publish Cancelled");
+    require(held_recorder.statuses.back().reason == reason,
+            "held cancellation reason changed");
+    require(held_recorder.inspection_pauses.size() == 1U &&
+                held_recorder.inspection_pauses.front() == reason,
+            "held did not pause inspection");
+    require(held_recorder.activations.empty(), "held installed a planner path");
+    const auto held_snapshot = held_controller.snapshot();
+    require(held_snapshot.planning_request_id.empty(), "held left planning identity live");
+    require(!held_snapshot.diagnostics.accepted &&
+                held_snapshot.diagnostics.reason == reason,
+            "held diagnostics changed");
+  }
 
   Recorder empty_recorder;
   GoalPlanController empty_controller(
@@ -510,8 +506,7 @@ int main() {
   require(empty_controller.submit(request(), admission).accepted,
           "empty-path test could not start planning");
   const auto empty_result = waitForCompletion(empty_controller, GoalPlanAdvanceContext{
-                                                                    admission.frame_epoch,
-                                                                    false,
+                                                                    admission.frame_epoch, {},
                                                                     24.0,
                                                                 });
   require(empty_result.completion_consumed, "empty path was not consumed");
@@ -535,8 +530,7 @@ int main() {
   require(inspection_controller.submit(inspection_request, admission).accepted,
           "inspection-plan test could not start planning");
   const auto inspection_result = waitForCompletion(inspection_controller, GoalPlanAdvanceContext{
-                                                                              admission.frame_epoch,
-                                                                              false,
+                                                                              admission.frame_epoch, {},
                                                                               25.0,
                                                                           });
   require(inspection_result.completion_consumed, "inspection rejection was not consumed");
@@ -583,7 +577,7 @@ int main() {
   require(deferred_abort_controller.submit(request(), admission).accepted,
           "deferred-abort test could not start planning");
   require(waitForCompletion(deferred_abort_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 25.0})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 25.0})
               .path_activated,
           "deferred-abort test could not activate the goal");
   require(deferred_abort_recorder.statuses.size() == 2U &&
@@ -632,8 +626,7 @@ int main() {
           "stale-failure precedence test could not start planning");
   const auto stale_failure_result =
       waitForCompletion(stale_failure_controller, GoalPlanAdvanceContext{
-                                                      admission.frame_epoch + 1U,
-                                                      false,
+                                                      admission.frame_epoch + 1U, {},
                                                       26.0,
                                                   });
   require(stale_failure_result.completion_consumed,
@@ -669,7 +662,7 @@ int main() {
   require(planner_identity_missing_controller.submit(active_a_request, admission).accepted,
           "planner-identity-missing test could not start active A");
   require(waitForCompletion(planner_identity_missing_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 27.0})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 27.0})
               .path_activated,
           "planner-identity-missing test could not activate A");
   auto stale_b_request = request();
@@ -679,7 +672,7 @@ int main() {
           "planner-identity-missing test could not start B");
   auto planner_identity_missing_result =
       waitForCompletion(planner_identity_missing_controller,
-                        GoalPlanAdvanceContext{admission.frame_epoch, false, 28.0});
+                        GoalPlanAdvanceContext{admission.frame_epoch, {}, 28.0});
   require(planner_identity_missing_result.completion_consumed,
           "planner identity missing completion was not consumed");
   require(planner_identity_missing_result.counted_failure,
@@ -702,7 +695,7 @@ int main() {
   require(active_map_unavailable_controller.submit(active_a_request, admission).accepted,
           "active-map-unavailable test could not start active A");
   require(waitForCompletion(active_map_unavailable_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 29.0})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 29.0})
               .path_activated,
           "active-map-unavailable test could not activate A");
   require(active_map_unavailable_controller.submit(stale_b_request, admission).accepted,
@@ -711,7 +704,7 @@ int main() {
   active_map_unavailable_recorder.current_map.reason = "active_map_lookup_failed";
   auto active_map_unavailable_result =
       waitForCompletion(active_map_unavailable_controller,
-                        GoalPlanAdvanceContext{admission.frame_epoch, false, 30.0});
+                        GoalPlanAdvanceContext{admission.frame_epoch, {}, 30.0});
   require(active_map_unavailable_result.completion_consumed,
           "active map unavailable completion was not consumed");
   require(active_map_unavailable_result.map_identity_error == "active_map_lookup_failed",
@@ -744,7 +737,7 @@ int main() {
   require(active_map_changed_controller.submit(active_a_request, admission).accepted,
           "active-map-changed test could not start active A");
   require(waitForCompletion(active_map_changed_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 31.0})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 31.0})
               .path_activated,
           "active-map-changed test could not activate A");
   require(active_map_changed_controller.submit(stale_b_request, admission).accepted,
@@ -752,7 +745,7 @@ int main() {
   active_map_changed_recorder.current_map.identity =
       lingtu::nav::plan::MapIdentity{"field", 8, "map"};
   auto active_map_changed_result = waitForCompletion(
-      active_map_changed_controller, GoalPlanAdvanceContext{admission.frame_epoch, false, 32.0});
+      active_map_changed_controller, GoalPlanAdvanceContext{admission.frame_epoch, {}, 32.0});
   require(active_map_changed_result.completion_consumed,
           "active map changed completion was not consumed");
   require(active_map_changed_result.counted_failure, "active map changed did not count failure");
@@ -772,7 +765,7 @@ int main() {
   require(active_inspection_rejection_controller.submit(active_a_request, admission).accepted,
           "active-inspection-rejection test could not start active A");
   require(waitForCompletion(active_inspection_rejection_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 33.0})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 33.0})
               .path_activated,
           "active-inspection-rejection test could not activate A");
   active_inspection_rejection_recorder.inspection_is_active = true;
@@ -784,7 +777,7 @@ int main() {
           "active-inspection-rejection test could not start B");
   auto active_inspection_rejection_result =
       waitForCompletion(active_inspection_rejection_controller,
-                        GoalPlanAdvanceContext{admission.frame_epoch, false, 34.0});
+                        GoalPlanAdvanceContext{admission.frame_epoch, {}, 34.0});
   require(active_inspection_rejection_result.completion_consumed,
           "active inspection rejection completion was not consumed");
   require(!active_inspection_rejection_result.terminal_after_stop.has_value(),
@@ -812,7 +805,7 @@ int main() {
   require(far_single_point_controller.submit(request(), admission).accepted,
           "far single-point test could not start planning");
   require(waitForCompletion(far_single_point_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 33.0})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 33.0})
               .path_activated,
           "far single-point path was not activated");
   require(far_single_point_recorder.activations.size() == 1U &&
@@ -844,7 +837,7 @@ int main() {
   require(near_single_point_controller.submit(near_single_point_request, admission).accepted,
           "near single-point test could not start planning");
   require(waitForCompletion(near_single_point_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 34.0})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 34.0})
               .path_activated,
           "near single-point path was not activated");
   require(near_single_point_recorder.activations.size() == 1U &&
@@ -859,7 +852,7 @@ int main() {
   require(sequential_controller.submit(active_a_request, admission).accepted,
           "sequential-goal test could not start A");
   require(waitForCompletion(sequential_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 35.0})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 35.0})
               .path_activated,
           "sequential-goal test could not activate A");
   auto active_b_request = stale_b_request;
@@ -872,7 +865,7 @@ int main() {
   require(sequential_controller.submit(active_b_request, admission).accepted,
           "sequential-goal test could not start B");
   const auto replacement_ready = waitForCompletion(
-      sequential_controller, GoalPlanAdvanceContext{admission.frame_epoch, false, 36.0});
+      sequential_controller, GoalPlanAdvanceContext{admission.frame_epoch, {}, 36.0});
   require(replacement_ready.completion_consumed && !replacement_ready.path_activated,
           "sequential-goal test did not retain B behind A's terminal barrier");
   require(replacement_ready.terminal_after_stop.has_value() &&
@@ -928,7 +921,7 @@ int main() {
   require(active_hold_controller.submit(active_a_request, admission).accepted,
           "active-hold test could not start A");
   require(waitForCompletion(active_hold_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 37.0})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 37.0})
               .path_activated,
           "active-hold test could not activate A");
   active_hold_controller.invalidateForHold("localization_epoch_changed");
@@ -944,7 +937,7 @@ int main() {
   require(deferred_terminal_controller.submit(active_a_request, admission).accepted,
           "deferred-terminal test could not start A");
   require(waitForCompletion(deferred_terminal_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 37.5})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 37.5})
               .path_activated,
           "deferred-terminal test could not activate A");
   const auto deferred_terminal_before = deferred_terminal_controller.snapshot().diagnostics;
@@ -999,7 +992,7 @@ int main() {
   require(deferred_failed_controller.submit(active_a_request, admission).accepted,
           "deferred-failed test could not start A");
   require(waitForCompletion(deferred_failed_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 37.75})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 37.75})
               .path_activated,
           "deferred-failed test could not activate A");
   require(deferred_failed_controller.submit(active_b_request, admission).accepted,
@@ -1052,7 +1045,7 @@ int main() {
   require(replan_success_controller.submit(active_a_request, admission).accepted,
           "replan-success test could not start active A");
   require(waitForCompletion(replan_success_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 38.0})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 38.0})
               .path_activated,
           "replan-success test could not activate A");
   auto replan_context = admission;
@@ -1065,7 +1058,7 @@ int main() {
   require(replan_success_controller.snapshot().replan_attempt == 1U,
           "replan snapshot did not expose attempt count");
   const auto replan_success_result = waitForCompletion(
-      replan_success_controller, GoalPlanAdvanceContext{admission.frame_epoch, false, 39.0});
+      replan_success_controller, GoalPlanAdvanceContext{admission.frame_epoch, {}, 39.0});
   require(replan_success_result.completion_consumed, "replan-success completion was not consumed");
   require(replan_success_result.path_activated, "replan-success did not activate replacement path");
   require(!replan_success_result.terminal_after_stop.has_value(),
@@ -1116,7 +1109,7 @@ int main() {
     require(replan_failure_controller.submit(retained_goal_request, admission).accepted,
             "replan-failure test could not start active A");
     require(waitForCompletion(replan_failure_controller,
-                              GoalPlanAdvanceContext{admission.frame_epoch, false, 40.0})
+                              GoalPlanAdvanceContext{admission.frame_epoch, {}, 40.0})
                 .path_activated,
             "replan-failure test could not activate A");
     const auto active_before_failure = replan_failure_controller.snapshot();
@@ -1124,7 +1117,7 @@ int main() {
             "replan-failure test could not start replan");
     const auto replan_epoch = replan_failure_controller.snapshot().planning_goal_epoch;
     const auto replan_failure_result = waitForCompletion(
-        replan_failure_controller, GoalPlanAdvanceContext{admission.frame_epoch, false, 41.0});
+        replan_failure_controller, GoalPlanAdvanceContext{admission.frame_epoch, {}, 41.0});
     require(replan_failure_result.completion_consumed && replan_failure_result.counted_failure,
             "replan-failure completion was not consumed and counted");
     require(!replan_failure_result.path_activated &&
@@ -1152,7 +1145,7 @@ int main() {
     require(replan_failure_controller.replanActive(replan_context).accepted,
             "retained active goal could not retry after temporary replan failure");
     const auto retry_success = waitForCompletion(
-        replan_failure_controller, GoalPlanAdvanceContext{admission.frame_epoch, false, 41.5});
+        replan_failure_controller, GoalPlanAdvanceContext{admission.frame_epoch, {}, 41.5});
     require(retry_success.path_activated && !retry_success.terminal_after_stop.has_value() &&
                 replan_failure_controller.snapshot().active_task_id == retained_goal_request.task_id &&
                 replan_failure_controller.snapshot().active_request_id == retained_goal_request.request_id &&
@@ -1170,7 +1163,7 @@ int main() {
     require(replan_failure_controller.replanActive(replan_context).accepted,
             "retry-cancel test could not start another replan");
     const auto failed_again = waitForCompletion(
-        replan_failure_controller, GoalPlanAdvanceContext{admission.frame_epoch, false, 41.75});
+        replan_failure_controller, GoalPlanAdvanceContext{admission.frame_epoch, {}, 41.75});
     require(failed_again.completion_consumed && !failed_again.terminal_after_stop.has_value(),
             "second temporary replan failure terminated the retained goal");
     const auto pause_waiting = replan_failure_controller.deferPause(
@@ -1250,14 +1243,14 @@ int main() {
     require(terminal_replan_controller.submit(active_a_request, admission).accepted,
             "terminal-replan test could not start active A");
     require(waitForCompletion(terminal_replan_controller,
-                              GoalPlanAdvanceContext{admission.frame_epoch, false, 41.8})
+                              GoalPlanAdvanceContext{admission.frame_epoch, {}, 41.8})
                 .path_activated,
             "terminal-replan test could not activate A");
     require(terminal_replan_controller.replanActive(replan_context).accepted,
             "terminal-replan test could not start replan");
     const auto terminal_result = waitForCompletion(
         terminal_replan_controller,
-        GoalPlanAdvanceContext{admission.frame_epoch, terminal_kind == "operator_takeover", 41.9});
+        GoalPlanAdvanceContext{admission.frame_epoch, terminal_kind == "operator_takeover" ? "operator_takeover" : "", 41.9});
     const std::string expected_reason = terminal_kind == "exception"
                                             ? "global_planner_exception"
                                             : (terminal_kind == "cancelled" ? "cancelled" : "empty_path");
@@ -1280,7 +1273,7 @@ int main() {
   require(replan_map_drift_controller.submit(active_a_request, admission).accepted,
           "replan-map-drift test could not start active A");
   require(waitForCompletion(replan_map_drift_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 42.0})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 42.0})
               .path_activated,
           "replan-map-drift test could not activate A");
   require(replan_map_drift_controller.replanActive(replan_context).accepted,
@@ -1288,7 +1281,7 @@ int main() {
   replan_map_drift_recorder.current_map.identity =
       lingtu::nav::plan::MapIdentity{"field", 8, "map"};
   const auto replan_map_drift_result = waitForCompletion(
-      replan_map_drift_controller, GoalPlanAdvanceContext{admission.frame_epoch, false, 43.0});
+      replan_map_drift_controller, GoalPlanAdvanceContext{admission.frame_epoch, {}, 43.0});
   require(replan_map_drift_result.completion_consumed,
           "replan-map-drift completion was not consumed");
   require(replan_map_drift_result.terminal_after_stop.has_value() &&
@@ -1313,14 +1306,14 @@ int main() {
   require(replan_inspection_controller.submit(inspection_active_request, admission).accepted,
           "replan-inspection test could not start inspection active goal");
   require(waitForCompletion(replan_inspection_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 44.0})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 44.0})
               .path_activated,
           "replan-inspection test could not activate inspection goal");
   const auto replan_inspection_result = replan_inspection_controller.replanActive(replan_context);
   require(replan_inspection_result.accepted,
           "inspection-origin active goal rejected local-recovery replan");
   require(waitForCompletion(replan_inspection_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 44.5})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 44.5})
               .path_activated,
           "inspection replan did not activate a replacement path");
   require(replan_inspection_recorder.inspection_failures.empty() &&
@@ -1356,7 +1349,7 @@ int main() {
   require(replan_pause_controller.submit(active_a_request, admission).accepted,
           "replan-pause test could not start active A");
   require(waitForCompletion(replan_pause_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 44.25})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 44.25})
               .path_activated,
           "replan-pause test could not activate active A");
   require(replan_pause_controller.replanActive(replan_context).accepted,
@@ -1385,7 +1378,7 @@ int main() {
               lastStatus(replan_pause_recorder.statuses).state == NavigationGoalState::Paused,
           "stop-confirmed pause did not publish PAUSED for the active task");
   waitUntilNotBusy(replan_pause_controller,
-                   GoalPlanAdvanceContext{admission.frame_epoch, false, 44.5});
+                   GoalPlanAdvanceContext{admission.frame_epoch, {}, 44.5});
   const auto after_late_replan = replan_pause_controller.snapshot();
   require(!after_late_replan.busy && after_late_replan.active_paused &&
               after_late_replan.active_task_id == active_a_request.task_id &&
@@ -1405,7 +1398,7 @@ int main() {
   require(replan_pause_controller.replanActive(resume_cancelled_replan_context).accepted,
           "resumed in-flight replan pause could not restart planning");
   const auto resumed_replan = waitForCompletion(
-      replan_pause_controller, GoalPlanAdvanceContext{admission.frame_epoch, false, 44.75});
+      replan_pause_controller, GoalPlanAdvanceContext{admission.frame_epoch, {}, 44.75});
   require(resumed_replan.path_activated && !resumed_replan.terminal_after_stop.has_value() &&
               replan_pause_recorder.activations.size() == activation_count_before_pause + 1U &&
               replan_pause_controller.snapshot().active_request_id == "resume-after-replan-pause",
@@ -1431,7 +1424,7 @@ int main() {
   require(replan_supersede_controller.submit(active_a_request, admission).accepted,
           "replan-supersede test could not start active A");
   require(waitForCompletion(replan_supersede_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 45.0})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 45.0})
               .path_activated,
           "replan-supersede test could not activate A");
   require(replan_supersede_controller.replanActive(replan_context).accepted,
@@ -1457,7 +1450,7 @@ int main() {
   require(!resume_too_early.accepted && resume_too_early.reason == "pending_planner_not_drained",
           "pending resume did not wait for planner drain");
   waitUntilNotBusy(replan_supersede_controller,
-                   GoalPlanAdvanceContext{admission.frame_epoch, false, 46.0});
+                   GoalPlanAdvanceContext{admission.frame_epoch, {}, 46.0});
   require(replan_supersede_controller.snapshot().pending_plan_queued,
           "planner drain lost the queued superseding goal");
   auto fresh_supersede_context = admission;
@@ -1481,7 +1474,7 @@ int main() {
 
   const auto replan_supersede_result =
       waitForCompletion(replan_supersede_controller,
-                        GoalPlanAdvanceContext{fresh_supersede_context.frame_epoch, false, 47.0});
+                        GoalPlanAdvanceContext{fresh_supersede_context.frame_epoch, {}, 47.0});
   require(replan_supersede_result.completion_consumed && !replan_supersede_result.path_activated &&
               replan_supersede_result.terminal_after_stop.has_value(),
           "superseding goal did not wait behind A's terminal barrier after fresh resume");
@@ -1534,7 +1527,7 @@ int main() {
           "B active goal did not start replan attempts from one");
   require(
       waitForCompletion(replan_supersede_controller,
-                        GoalPlanAdvanceContext{fresh_supersede_context.frame_epoch, false, 48.0})
+                        GoalPlanAdvanceContext{fresh_supersede_context.frame_epoch, {}, 48.0})
           .path_activated,
       "B active goal replan did not complete");
 
@@ -1558,7 +1551,7 @@ int main() {
   require(replace_pending_controller.submit(active_a_request, admission).accepted,
           "replace-pending test could not start active A");
   require(waitForCompletion(replace_pending_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 48.5})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 48.5})
               .path_activated,
           "replace-pending test could not activate A");
   require(replace_pending_controller.replanActive(replan_context).accepted,
@@ -1599,7 +1592,7 @@ int main() {
     require(controller.submit(active_a_request, admission).accepted,
             "pending-gate test could not start active A");
     require(waitForCompletion(controller,
-                              GoalPlanAdvanceContext{admission.frame_epoch, false, base_time})
+                              GoalPlanAdvanceContext{admission.frame_epoch, {}, base_time})
                 .path_activated,
             "pending-gate test could not activate A");
     require(controller.replanActive(replan_context).accepted,
@@ -1607,7 +1600,7 @@ int main() {
     require(controller.submit(active_b_request, admission).accepted,
             "pending-gate test could not queue B");
     waitUntilNotBusy(controller,
-                     GoalPlanAdvanceContext{admission.frame_epoch, false, base_time + 1.0});
+                     GoalPlanAdvanceContext{admission.frame_epoch, {}, base_time + 1.0});
     require(controller.snapshot().pending_plan_queued,
             "pending-gate test lost queued B after drain");
   };
@@ -1643,7 +1636,7 @@ int main() {
   require(direct_replacement_cancel_controller.submit(active_a_request, admission).accepted,
           "direct replacement cancel test could not start active A");
   require(waitForCompletion(direct_replacement_cancel_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 48.55})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 48.55})
               .path_activated,
           "direct replacement cancel test could not activate A");
   const auto direct_replacement_submit =
@@ -1669,7 +1662,7 @@ int main() {
   cancel_direct_replacement.commit();
   cancel_direct_replacement.commit();
   waitUntilNotBusy(direct_replacement_cancel_controller,
-                   GoalPlanAdvanceContext{admission.frame_epoch, false, 48.6});
+                   GoalPlanAdvanceContext{admission.frame_epoch, {}, 48.6});
   require(direct_replacement_cancel_recorder.statuses.size() ==
                   direct_replacement_status_count + 1U &&
               lastStatus(direct_replacement_cancel_recorder.statuses).task_id ==
@@ -1703,7 +1696,7 @@ int main() {
   require(direct_replacement_failure_controller.submit(active_a_request, admission).accepted,
           "direct replacement failure test could not start active A");
   require(waitForCompletion(direct_replacement_failure_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 48.61})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 48.61})
               .path_activated,
           "direct replacement failure test could not activate A");
   require(direct_replacement_failure_controller.submit(active_b_request, admission).accepted,
@@ -1712,7 +1705,7 @@ int main() {
           "direct replacement B planning was projected before activation");
   const auto direct_replacement_failure =
       waitForCompletion(direct_replacement_failure_controller,
-                        GoalPlanAdvanceContext{admission.frame_epoch, false, 48.62});
+                        GoalPlanAdvanceContext{admission.frame_epoch, {}, 48.62});
   require(direct_replacement_failure.completion_consumed &&
               !direct_replacement_failure.path_activated &&
               !direct_replacement_failure.terminal_after_stop.has_value() &&
@@ -1732,14 +1725,14 @@ int main() {
   require(direct_replacement_stale_controller.submit(active_a_request, admission).accepted,
           "direct replacement stale test could not start active A");
   require(waitForCompletion(direct_replacement_stale_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 48.63})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 48.63})
               .path_activated,
           "direct replacement stale test could not activate A");
   require(direct_replacement_stale_controller.submit(active_b_request, admission).accepted,
           "direct replacement stale test could not start B");
   const auto direct_replacement_stale =
       waitForCompletion(direct_replacement_stale_controller,
-                        GoalPlanAdvanceContext{admission.frame_epoch + 1U, false, 48.64});
+                        GoalPlanAdvanceContext{admission.frame_epoch + 1U, {}, 48.64});
   require(direct_replacement_stale.completion_consumed,
           "stale direct replacement completion was not consumed");
   require(!direct_replacement_stale.path_activated, "stale direct replacement activated B path");
@@ -1782,7 +1775,7 @@ int main() {
   cancel_replacement.commit();
   cancel_replacement_copy.commit();
   waitUntilNotBusy(replacement_cancel_controller,
-                   GoalPlanAdvanceContext{admission.frame_epoch, false, 48.75});
+                   GoalPlanAdvanceContext{admission.frame_epoch, {}, 48.75});
   require(
       replacement_cancel_recorder.statuses.size() == replacement_cancel_status_count + 1U &&
           lastStatus(replacement_cancel_recorder.statuses).task_id == active_b_request.task_id &&
@@ -1819,7 +1812,7 @@ int main() {
   require(replacement_failure_controller.resumePending(admission, 100.0).accepted,
           "replacement-failure test could not start queued B planning");
   const auto replacement_failure_result = waitForCompletion(
-      replacement_failure_controller, GoalPlanAdvanceContext{admission.frame_epoch, false, 48.9});
+      replacement_failure_controller, GoalPlanAdvanceContext{admission.frame_epoch, {}, 48.9});
   require(replacement_failure_result.completion_consumed &&
               !replacement_failure_result.path_activated &&
               !replacement_failure_result.terminal_after_stop.has_value(),
@@ -1878,58 +1871,33 @@ int main() {
               pending_cancel_recorder.activations.size() == 1U,
           "cancelled pending task started after its terminal status");
 
-  Recorder pending_takeover_recorder;
-  GoalPlanController pending_takeover_controller(slow_supersede_planner,
-                                                 pending_takeover_recorder.actions());
-  queue_superseding_goal(pending_takeover_controller, 49.0);
-  auto takeover_resume_context = admission;
-  takeover_resume_context.operator_takeover_latched = true;
-  const auto takeover_resume = pending_takeover_controller.resumePending(takeover_resume_context, 100.0);
-  require(!takeover_resume.accepted &&
-              takeover_resume.reason == "operator_takeover_resume_required",
-          "pending resume did not reject fresh operator takeover");
-  require(!pending_takeover_controller.snapshot().pending_plan_queued,
-          "operator-takeover pending rejection left stale request queued");
-  require(pending_takeover_controller.snapshot().active_request_id == "goal-active-a",
-          "operator-takeover pending rejection detached active A before stop commit");
-  require_no_active_terminal_request(takeover_resume,
-                                     "operator-takeover rejection tried to terminate active A");
-  require_active_a_unchanged(pending_takeover_controller, pending_takeover_recorder,
-                             "operator-takeover rejection changed active A");
-  require(countStatus(pending_takeover_recorder.statuses, "goal-active-b",
-                      NavigationGoalState::Cancelled, "operator_takeover_resume_required") == 1U &&
-              !lastStatus(pending_takeover_recorder.statuses).project_to_navigation_state,
-          "operator-takeover rejection did not publish one non-projecting terminal for B");
-  require(countStatus(pending_takeover_recorder.statuses, "goal-active-b",
-                      NavigationGoalState::Planning, "planning_queued") == 1U,
-          "operator-takeover flow lost B's admitted queued status");
+  for (const std::string reason : {"operator_takeover", "stop_confirmation_timeout"}) {
+    Recorder pending_hold_recorder;
+    GoalPlanController pending_hold_controller(slow_supersede_planner,
+                                               pending_hold_recorder.actions());
+    queue_superseding_goal(pending_hold_controller, 49.0);
+    auto hold_context = admission;
+    hold_context.hold_reason = reason;
+    const auto hold_resume = pending_hold_controller.resumePending(hold_context, 100.0);
+    require(!hold_resume.accepted && hold_resume.reason == reason,
+            "pending resume did not reject fresh motion hold");
+    require(!pending_hold_controller.snapshot().pending_plan_queued,
+            "motion-hold pending rejection left stale request queued");
+    require(pending_hold_controller.snapshot().active_request_id == "goal-active-a",
+            "motion-hold pending rejection detached active A before stop commit");
+    require_no_active_terminal_request(hold_resume,
+                                       "motion-hold rejection tried to terminate active A");
+    require_active_a_unchanged(pending_hold_controller, pending_hold_recorder,
+                               "motion-hold rejection changed active A");
+    require(countStatus(pending_hold_recorder.statuses, "goal-active-b",
+                        NavigationGoalState::Cancelled, reason) == 1U &&
+                !lastStatus(pending_hold_recorder.statuses).project_to_navigation_state,
+            "motion-hold rejection did not publish one non-projecting terminal for B");
+    require(countStatus(pending_hold_recorder.statuses, "goal-active-b",
+                        NavigationGoalState::Planning, "planning_queued") == 1U,
+            "motion-hold flow lost B's admitted queued status");
+  }
 
-  Recorder pending_driver_recorder;
-  GoalPlanController pending_driver_controller(slow_supersede_planner,
-                                               pending_driver_recorder.actions());
-  queue_superseding_goal(pending_driver_controller, 50.0);
-  auto driver_resume_context = admission;
-  driver_resume_context.driver_control_blocker = "driver_control_map_identity_stale";
-  const auto driver_resume = pending_driver_controller.resumePending(driver_resume_context, 100.0);
-  require(!driver_resume.accepted && driver_resume.reason == "driver_control_map_identity_stale",
-          "pending resume did not reject fresh driver-control blocker");
-  require(pending_driver_controller.snapshot().pending_plan_queued,
-          "temporary driver-control gap dropped the queued request");
-  require(pending_driver_controller.snapshot().active_request_id == "goal-active-a",
-          "driver-control pending rejection detached active A before stop commit");
-  require_no_active_terminal_request(driver_resume,
-                                     "driver-control rejection tried to terminate active A");
-  require_active_a_unchanged(pending_driver_controller, pending_driver_recorder,
-                             "driver-control rejection changed active A");
-  require(countStatus(pending_driver_recorder.statuses, "goal-active-b",
-                      NavigationGoalState::Cancelled, "driver_control_map_identity_stale") == 0U,
-          "temporary driver-control gap cancelled the accepted request");
-  require(countStatus(pending_driver_recorder.statuses, "goal-active-b",
-                      NavigationGoalState::Planning, "planning_queued") == 1U,
-          "driver-control flow lost B's admitted queued status");
-  require(pending_driver_controller.resumePending(admission, 100.0).accepted &&
-              pending_driver_controller.snapshot().planning_request_id == "goal-active-b",
-          "queued request did not resume after driver-control recovered");
   for (const char *reason : {"local_collision_missing", "local_collision_future",
                              "collision_stale"}) {
     Recorder collision_recorder;
@@ -2146,7 +2114,7 @@ int main() {
   require(replan_options_controller.submit(active_a_request, original_options_context).accepted,
           "replan-options test could not start active A");
   require(waitForCompletion(replan_options_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 55.0})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 55.0})
               .path_activated,
           "replan-options test could not activate A");
   auto changed_options_context = original_options_context;
@@ -2155,7 +2123,7 @@ int main() {
   require(replan_options_controller.replanActive(changed_options_context).accepted,
           "replan-options test could not start replan");
   require(waitForCompletion(replan_options_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 56.0})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 56.0})
               .path_activated,
           "replan-options test could not complete replan");
   require(observed_replan_options.size() == 2U && observed_replan_options[0] == 123 &&
@@ -2167,7 +2135,7 @@ int main() {
   require(replan_hold_controller.submit(active_a_request, admission).accepted,
           "replan-hold test could not start active A");
   require(waitForCompletion(replan_hold_controller,
-                            GoalPlanAdvanceContext{admission.frame_epoch, false, 47.0})
+                            GoalPlanAdvanceContext{admission.frame_epoch, {}, 47.0})
               .path_activated,
           "replan-hold test could not activate A");
   require(replan_hold_controller.replanActive(replan_context).accepted,
@@ -2200,7 +2168,7 @@ int main() {
     if (has_active_path) {
       require(latest_controller.submit(active_a_request, admission).accepted,
               "latest-click fixture could not submit its existing path");
-      require(waitForCompletion(latest_controller, {admission.frame_epoch, false, 60.0})
+      require(waitForCompletion(latest_controller, {admission.frame_epoch, {}, 60.0})
                   .path_activated,
               "latest-click fixture could not activate its existing path");
     }
@@ -2237,7 +2205,7 @@ int main() {
                 countStatus(latest_recorder.statuses, second.request_id,
                             NavigationGoalState::Cancelled, "superseded_by_new_goal") == 1U,
             "superseded requests did not each receive exactly one terminal status");
-    waitUntilNotBusy(latest_controller, {admission.frame_epoch, false, 61.0});
+    waitUntilNotBusy(latest_controller, {admission.frame_epoch, {}, 61.0});
     require(!latest_controller.snapshot().busy && cancellation_seen.load(),
             "superseded search did not observe cancellation and drain");
     require(latest_recorder.activations.size() == (has_active_path ? 1U : 0U),
@@ -2248,7 +2216,7 @@ int main() {
     ++fresh.frame_epoch;
     require(latest_controller.resumePending(fresh, 100.0).accepted,
             "latest goal did not start after cancelled search drained");
-    const auto ready = waitForCompletion(latest_controller, {fresh.frame_epoch, false, 62.0});
+    const auto ready = waitForCompletion(latest_controller, {fresh.frame_epoch, {}, 62.0});
     if (has_active_path) {
       require(ready.terminal_after_stop.has_value() && !ready.path_activated,
               "replacement bypassed the active goal's stop confirmation");
@@ -2277,9 +2245,9 @@ int main() {
       require(cancelled.accepted, "queued click could not be cancelled");
       cancelled.commit();
     } else {
-      waitUntilNotBusy(queued_controller, {admission.frame_epoch, false, 63.0});
+      waitUntilNotBusy(queued_controller, {admission.frame_epoch, {}, 63.0});
       auto held = admission;
-      held.operator_takeover_latched = true;
+      held.hold_reason = "operator_takeover";
       require(!queued_controller.resumePending(held, 100.0).accepted,
               "queued click bypassed a later operator takeover");
     }

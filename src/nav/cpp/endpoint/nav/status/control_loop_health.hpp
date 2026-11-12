@@ -75,7 +75,7 @@ struct ControlLoopHealthSnapshot {
   std::size_t max_miss_streak{0};
   double p95_utilization{0.0};
   double max_utilization{0.0};
-  // Included only for status publication, not for the per-tick motion gate.
+  // Included only for status publication.
   ControlLoopHistory history;
 };
 
@@ -109,7 +109,7 @@ class ControlLoopHealth {
   std::size_t current_miss_streak_{0};
   std::size_t max_miss_streak_{0};
   // All callers run on the control thread. Reuse buffers and the same-sample
-  // snapshot for the motion gate and status publisher.
+  // snapshot for the status publisher.
   mutable std::array<std::vector<double>, 3> scratch_;
   mutable ControlLoopHealthSnapshot cached_;
   mutable bool cache_valid_{false};

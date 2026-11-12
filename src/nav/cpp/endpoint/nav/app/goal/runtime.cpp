@@ -67,9 +67,7 @@ std::string interruptionReason(GoalReplanRuntimeInterruption interruption) {
     case GoalReplanRuntimeInterruption::kShutdown:
       return "navd_shutdown";
     case GoalReplanRuntimeInterruption::kOperatorTakeover:
-      return "operator_takeover_resume_required";
-    case GoalReplanRuntimeInterruption::kDriverAuthorityLost:
-      return "driver_authority_lost";
+      return "operator_takeover";
     case GoalReplanRuntimeInterruption::kControlHold:
       return "control_hold";
     case GoalReplanRuntimeInterruption::kInspectionPause:
@@ -102,7 +100,6 @@ TerminalStopPolicy interruptionStopPolicy(GoalReplanRuntimeInterruption interrup
       return TerminalStopPolicy::kShutdown;
     case GoalReplanRuntimeInterruption::kNewGoal:
     case GoalReplanRuntimeInterruption::kOperatorTakeover:
-    case GoalReplanRuntimeInterruption::kDriverAuthorityLost:
     case GoalReplanRuntimeInterruption::kControlHold:
     case GoalReplanRuntimeInterruption::kInspectionPause:
     case GoalReplanRuntimeInterruption::kInspectionCancel:
@@ -207,20 +204,14 @@ GoalReplanRuntimeCoordinator::replacementStateFailure(const GoalReplanRuntimeFra
   if (input.rolling_segment_active || context.rolling_segment_active) {
     return "rolling_segment_replan_not_supported";
   }
-  if (input.control_hold) {
-    return "control_hold";
-  }
   if (!context.motion_allowed) {
     return "estop_latched";
   }
-  if (context.operator_takeover_latched) {
-    return "operator_takeover_resume_required";
+  if (!context.hold_reason.empty()) {
+    return context.hold_reason;
   }
   if (!context.autonomy_mode) {
     return std::string{"goal_not_allowed_in_"} + context.control_mode_name;
-  }
-  if (!context.driver_control_blocker.empty()) {
-    return context.driver_control_blocker;
   }
   if (!context.input_ready) {
     return inputGateStopReason(context.input_gate_reason);
@@ -372,50 +363,8 @@ GoalReplanRuntimeCoordinator::interrupt(GoalReplanRuntimeInterruption interrupti
   result.handled = true;
   result.interrupted = true;
   result.reason = interruptionReason(interruption);
-  if (interruption == GoalReplanRuntimeInterruption::kOperatorTakeover) {
-    const GoalPlanSnapshot snapshot = goal_plan_.snapshot();
-    if (snapshot.pause_pending || snapshot.active_paused) {
-      result.reason = snapshot.pause_pending ? "task_pause_pending" : "task_paused";
-      return result;
-    }
-
-    std::string task_id;
-    std::string request_id;
-    std::uint64_t goal_epoch = 0U;
-    if (!snapshot.active_task_id.empty()) {
-      task_id = snapshot.active_task_id;
-      request_id = snapshot.active_request_id;
-      goal_epoch = snapshot.active_goal_epoch;
-    } else if (!snapshot.planning_task_id.empty()) {
-      task_id = snapshot.planning_task_id;
-      request_id = snapshot.planning_request_id;
-      goal_epoch = snapshot.planning_goal_epoch;
-    } else if (snapshot.pending_plan_queued) {
-      task_id = snapshot.pending_task_id;
-      request_id = snapshot.pending_request_id;
-      goal_epoch = snapshot.pending_goal_epoch;
-    }
-    if (task_id.empty() || request_id.empty() || goal_epoch == 0U) {
-      return result;
-    }
-
-    GoalPlanTaskTransition pause =
-        goal_plan_.deferPause(task_id, request_id, "operator_takeover_resume_required");
-    if (!pause.accepted) {
-      result.reason = pause.reason;
-      return result;
-    }
-    const MotionStopResult stopped = motion_stop_.pauseTask(
-        std::move(pause.commit), "operator:" + task_id + std::to_string(goal_epoch));
-    result.zero_kept_fresh = stopped.accepted || stopped.pending;
-    result.reason = stopped.pending ? "task_pause_pending"
-                                    : (stopped.accepted ? "task_paused" : stopped.reason);
-    return result;
-  }
-  if (interruption == GoalReplanRuntimeInterruption::kDriverAuthorityLost &&
-      !replacement_plan_in_progress_) {
-    return result;
-  }
+  if (interruption == GoalReplanRuntimeInterruption::kOperatorTakeover)
+    return pause("operator_takeover");
   pending_replan_trigger_.reset();
 
   if (replacement_plan_in_progress_) {
@@ -449,6 +398,8 @@ GoalReplanRuntimeCoordinator::interrupt(GoalReplanRuntimeInterruption interrupti
   replacement_plan_in_progress_ = false;
 
   switch (interruption) {
+    case GoalReplanRuntimeInterruption::kOperatorTakeover:
+      break;  // Handled by pause above.
     case GoalReplanRuntimeInterruption::kNewGoal:
       // GoalPlan::submit owns queueing/cancelling the replan. Calling
       // invalidateForHold here would erase its pending B request.
@@ -508,11 +459,6 @@ GoalReplanRuntimeCoordinator::interrupt(GoalReplanRuntimeInterruption interrupti
       attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Cancelled, result.reason,
                              true);
       break;
-    case GoalReplanRuntimeInterruption::kDriverAuthorityLost:
-      // The input gate already commands an immediate zero. Keep the active
-      // route so a transient driver heartbeat or command timeout can recover
-      // without requiring the operator to submit the same goal again.
-      break;
     case GoalReplanRuntimeInterruption::kMapDrift:
       attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed, result.reason,
                              true);
@@ -571,11 +517,6 @@ GoalReplanRuntimeCoordinator::handleGoalReached(const GoalReplanRuntimeFrameInpu
     result.reason = "active_goal_map_identity_changed";
     attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed, result.reason,
                            true);
-    return result;
-  }
-  if (input.control_hold) {
-    result.handled = true;
-    result.reason = "goal_reached_control_hold_ignored";
     return result;
   }
 
@@ -717,7 +658,7 @@ GoalReplanRuntimeCoordinator::handleAutonomyOutcome(const GoalReplanRuntimeFrame
   if (!typed_replan_request ||
       ((event.inspection_active || frame.inspection_active) && !inspection_goal) ||
       event.rolling_segment_active || frame.rolling_segment_active ||
-      frame.fresh_admission.rolling_segment_active || frame.control_hold || frame.map_drift) {
+      frame.fresh_admission.rolling_segment_active || frame.map_drift) {
     return result;
   }
   const GoalReplanTrigger trigger = *event.outcome.replan_trigger;
@@ -817,8 +758,8 @@ GoalReplanRuntimeCoordinator::handleAutonomyOutcome(const GoalReplanRuntimeFrame
     return result;
   }
   if (!goalPlanAcceptsReplanTrigger(current_snapshot) || !frame.fresh_admission.motion_allowed ||
-      frame.fresh_admission.operator_takeover_latched || !frame.fresh_admission.autonomy_mode ||
-      !frame.fresh_admission.driver_control_blocker.empty() || !frame.fresh_admission.input_ready) {
+      !frame.fresh_admission.hold_reason.empty() ||
+      !frame.fresh_admission.autonomy_mode || !frame.fresh_admission.input_ready) {
     return result;
   }
 
@@ -859,6 +800,51 @@ GoalReplanRuntimeCoordinator::handleAutonomyOutcome(const GoalReplanRuntimeFrame
   return result;
 }
 
+GoalReplanRuntimeResult GoalReplanRuntimeCoordinator::pause(const std::string &reason) {
+  GoalReplanRuntimeResult result;
+  result.handled = true;
+  result.interrupted = true;
+  result.reason = reason;
+  const GoalPlanSnapshot snapshot = goal_plan_.snapshot();
+  if (snapshot.pause_pending || snapshot.active_paused) {
+    result.reason = snapshot.pause_pending ? "task_pause_pending" : "task_paused";
+    return result;
+  }
+
+  std::string task_id;
+  std::string request_id;
+  std::uint64_t goal_epoch = 0U;
+  if (!snapshot.active_task_id.empty()) {
+    task_id = snapshot.active_task_id;
+    request_id = snapshot.active_request_id;
+    goal_epoch = snapshot.active_goal_epoch;
+  } else if (!snapshot.planning_task_id.empty()) {
+    task_id = snapshot.planning_task_id;
+    request_id = snapshot.planning_request_id;
+    goal_epoch = snapshot.planning_goal_epoch;
+  } else if (snapshot.pending_plan_queued) {
+    task_id = snapshot.pending_task_id;
+    request_id = snapshot.pending_request_id;
+    goal_epoch = snapshot.pending_goal_epoch;
+  }
+  if (task_id.empty() || request_id.empty() || goal_epoch == 0U) {
+    return result;
+  }
+
+  GoalPlanTaskTransition pause =
+      goal_plan_.deferPause(task_id, request_id, reason);
+  if (!pause.accepted) {
+    result.reason = pause.reason;
+    return result;
+  }
+  const MotionStopResult stopped = motion_stop_.pauseTask(
+      std::move(pause.commit), "hold:" + task_id + std::to_string(goal_epoch));
+  result.zero_kept_fresh = stopped.accepted || stopped.pending;
+  result.reason = stopped.pending ? "task_pause_pending"
+                                  : (stopped.accepted ? "task_paused" : stopped.reason);
+  return result;
+}
+
 GoalReplanRuntimeResult
 GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameInput &input) {
   GoalReplanRuntimeResult result;
@@ -873,7 +859,7 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
     const auto paused_goal = current ? current : trackedGoal();
     result.plan_advance = goal_plan_.advance(
         GoalPlanAdvanceContext{input.fresh_admission.frame_epoch,
-                               input.fresh_admission.operator_takeover_latched,
+                               input.fresh_admission.hold_reason,
                                input.wall_now_s});
     if (paused_retry.state == BoundedGoalReplanState::kReplanInFlight && paused_goal &&
         !goal_plan_.snapshot().busy) {
@@ -882,6 +868,12 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
     result.handled = true;
     result.reason = before.pause_pending ? "task_pause_pending" : "task_paused";
     return result;
+  }
+
+  if (input.fresh_admission.motion_allowed &&
+      !input.fresh_admission.hold_reason.empty() &&
+      input.fresh_admission.hold_reason != "operator_takeover") {
+    return pause(input.fresh_admission.hold_reason);
   }
 
   if (!validTime(input.steady_now_s)) {
@@ -1000,34 +992,16 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
                                      pending_replan_trigger_.has_value() ||
                                      before.pending_plan_queued || replacement_plan_in_progress_;
   if (retry_runtime_active) {
-    if (input.control_hold) {
-      if (!motion_stop_.keepZeroFresh()) {
-        result.handled = true;
-        result.reason = "zero_refresh_failed";
-        if (const auto tracked = trackedGoal()) {
-          (void)bounded_.cancel(*tracked, input.steady_now_s, result.reason);
-        }
-        replacement_plan_in_progress_ = false;
-        attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed,
-                               result.reason, true);
-        return result;
-      }
-      result.handled = true;
-      result.reason = "control_hold_pending";
-      result.zero_kept_fresh = true;
-      return result;
-    }
     if (input.map_drift) {
       return interrupt(GoalReplanRuntimeInterruption::kMapDrift, input.steady_now_s);
     }
-    if (input.fresh_admission.operator_takeover_latched) {
+    if (!input.fresh_admission.hold_reason.empty()) {
       return interrupt(GoalReplanRuntimeInterruption::kOperatorTakeover, input.steady_now_s);
     }
     if (!input.fresh_admission.motion_allowed) {
       return interrupt(GoalReplanRuntimeInterruption::kEstop, input.steady_now_s);
     }
-    if (!input.fresh_admission.driver_control_blocker.empty() ||
-        !input.fresh_admission.input_ready) {
+    if (!input.fresh_admission.input_ready) {
       if (!motion_stop_.keepZeroFresh()) {
         result.handled = true;
         result.reason = "zero_refresh_failed";
@@ -1040,9 +1014,7 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
         return result;
       }
       result.handled = true;
-      result.reason = input.fresh_admission.driver_control_blocker.empty()
-                          ? "input_gate_hold_pending"
-                          : "driver_control_hold_pending";
+      result.reason = "input_gate_hold_pending";
       result.zero_kept_fresh = true;
       return result;
     }
@@ -1074,7 +1046,7 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
   const auto completion_goal = trackedGoal();
   result.plan_advance = goal_plan_.advance(
       GoalPlanAdvanceContext{input.fresh_admission.frame_epoch,
-                             input.fresh_admission.operator_takeover_latched, input.wall_now_s});
+                             input.fresh_admission.hold_reason, input.wall_now_s});
   GoalPlanSnapshot after = goal_plan_.snapshot();
 
   if (completing_replan && result.plan_advance.completion_consumed && completion_goal) {
@@ -1275,10 +1247,7 @@ GoalReplanRuntimeCoordinator::drainPendingCycle(const GoalReplanRuntimeFrameInpu
   const bool waiting_for_pose = resumed.reason == "map_odom_tf_not_ready" ||
                                 resumed.reason == "odometry_not_ready";
   const bool waiting_for_retry = resumed.reason == "planning_waiting";
-  const bool waiting_for_driver = !frame.fresh_admission.driver_control_blocker.empty() &&
-                                  resumed.reason == frame.fresh_admission.driver_control_blocker;
-  if (waiting_for_input || waiting_for_map || waiting_for_pose || waiting_for_retry ||
-      waiting_for_driver) {
+  if (waiting_for_input || waiting_for_map || waiting_for_pose || waiting_for_retry) {
     if (!motion_stop_.keepZeroFresh()) {
       result.reason = "zero_refresh_failed";
       attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed,
@@ -1286,9 +1255,7 @@ GoalReplanRuntimeCoordinator::drainPendingCycle(const GoalReplanRuntimeFrameInpu
       return result;
     }
     result.zero_kept_fresh = true;
-    if (waiting_for_driver) {
-      result.reason = "pending_waiting_for_driver";
-    } else if (waiting_for_input) {
+    if (waiting_for_input) {
       result.reason = "pending_waiting_for_inputs";
     } else if (waiting_for_map) {
       result.reason = "pending_waiting_for_map";

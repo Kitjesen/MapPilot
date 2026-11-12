@@ -38,7 +38,7 @@ AutonomyTickController::AutonomyTickController(AutonomyTickActions actions,
                                                FinalControl &final_control)
     : actions_(std::move(actions)), final_control_(final_control) {
   if (!actions_.steady_now_s || !actions_.read_plan ||
-      !actions_.current_map_identity || !actions_.tick_autonomy || !actions_.stop_linear_motion ||
+      !actions_.current_map_identity || !actions_.tick_autonomy ||
       !actions_.pause_linear_motion) {
     throw std::invalid_argument("autonomy tick actions must all be configured");
   }
@@ -108,8 +108,6 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
           FinalMode::kAutonomyPath,
           path_safety,
           path_follower_cmd,
-          0.0,
-          0.0,
           false,
           input.publish_cmd_vel,
           now_s,
@@ -117,19 +115,16 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
       result.timing.final_control_ms += elapsedMs(final_start);
       output.cmd_vel = final.decision.cmd;
       // CMU recovery retains final-motion blockage across pending replans.
+      const bool motion_blocked = final.decision.reason == "brake_blocked" ||
+                                  final.decision.reason == "cmd_blocked";
       if (actions_.report_final_motion_blocked &&
-          (final.decision.reason == "scan_actual_motion_blocked" ||
+          (motion_blocked ||
            linearSpeed(output.cmd_vel) > 1e-6 || std::abs(output.cmd_vel.wz) > 1e-6)) {
-        actions_.report_final_motion_blocked(
-            final.decision.reason == "scan_actual_motion_blocked", now_s);
+        actions_.report_final_motion_blocked(motion_blocked, now_s);
       }
       if (final.decision.stopped ||
           (linearSpeed(path_follower_cmd) > 1e-6 && linearSpeed(output.cmd_vel) <= 1e-6)) {
-        if (final.decision.reason == "scan_actual_motion_blocked") {
-          actions_.stop_linear_motion();
-        } else {
-          actions_.pause_linear_motion();
-        }
+        actions_.pause_linear_motion();
         output.trajectory_frozen = true;
         output.tracking.executionFrozen = true;
       }
@@ -144,8 +139,6 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
         output, final_safety.has_value() ? &*final_safety : nullptr,
         safety_applied);
     local.path_follower_cmd_vel = path_follower_cmd;
-    local.cmd_vel = output.cmd_vel;
-    local.reason = output.reason;
     result.local = std::move(local);
     result.publish.local_path = true;
     result.publish.waypoint = true;

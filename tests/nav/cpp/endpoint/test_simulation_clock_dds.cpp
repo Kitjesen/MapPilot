@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 #include "dds/runtime.hpp"
 #include "transport/dds/qos.hpp"
@@ -50,11 +51,60 @@ void testPhysicalClockRoundTrip() {
   }
   dds_delete(participant);
 }
+void testCollisionSamplesRemainOwnedAfterLoanReturn() {
+  constexpr int domain = 124;
+  lingtu::nav::endpoint::Dds input(domain, nullptr, false);
+  const auto participant = dds_create_participant(domain, nullptr, nullptr);
+  require(participant > 0, "map peer participant");
+  const auto topic = dds_create_topic(participant, &lingtu_dds_MapCollisionLayer_desc,
+      lingtu::message::kMapsLocalCollision.dds_topic.data(), nullptr, nullptr);
+  auto qos = lingtu::dds::make_qos(lingtu::dds::qos_for_topic(
+      lingtu::message::kMapsLocalCollision.dds_topic.data()));
+  const auto writer = dds_create_writer(participant, topic, qos.get(), nullptr);
+  require(writer > 0, "map peer writer");
+  std::vector<std::uint8_t> occupied(125, 1U), free(125, 0U);
+  lingtu_dds_MapCollisionLayer message{};
+  message.header.frame_id = const_cast<char *>("map");
+  message.header.stamp.sec = 1;
+  message.reset_epoch = message.observation_sequence = message.generation = 1;
+  message.live = message.complete = true;
+  message.resolution = .05;
+  message.size_x = message.size_y = message.size_z = 10;
+  message.aabb_max = {.5, .5, .5};
+  message.inflated_occupied_bits = {125, 125, occupied.data(), false};
+  message.measured_occupied_bits = message.inflated_occupied_bits;
+  message.known_free_bits = {125, 125, free.data(), false};
+  const auto receive = [&] {
+    for (int attempt = 0; attempt < 100; ++attempt) {
+      require(dds_write(writer, &message) == DDS_RETCODE_OK, "map write");
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      auto batch = input.takeSensors(100.0);
+      if (batch.local_collision) return std::move(*batch.local_collision);
+    }
+    throw std::runtime_error("map did not arrive");
+  };
+  const auto first = receive();
+  require(first.ok() && first.value.inflated_occupied_bits->front() == 1U,
+          "first map must decode intact");
+  occupied.assign(125, 2U);
+  message.generation = message.observation_sequence = 2;
+  message.inflated_occupied_bits._buffer = occupied.data();
+  message.measured_occupied_bits._buffer = occupied.data();
+  const auto second = receive();
+  require(second.ok() && second.value.generation == 2 &&
+              second.value.inflated_occupied_bits->front() == 2U &&
+              first.value.inflated_occupied_bits->front() == 1U,
+          "returned DDS loans must not overwrite retained map snapshots");
+  message.size_x = 0;
+  require(!receive().ok(), "loaned maps must retain boundary validation");
+  dds_delete(participant);
+}
 }  // namespace
 
 int main() {
   try {
     testPhysicalClockRoundTrip();
+    testCollisionSamplesRemainOwnedAfterLoanReturn();
     std::puts("test_simulation_clock_dds: PASS");
     return 0;
   } catch (const std::exception &error) {

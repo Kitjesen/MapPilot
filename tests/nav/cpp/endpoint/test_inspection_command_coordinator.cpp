@@ -88,7 +88,7 @@ struct Harness {
       log.emplace_back("load:" + map_id + ":" + route_id);
       return route_found ? std::optional<Route>{makeRoute(route_id)} : std::nullopt;
     };
-    result.operator_takeover_latched = [&]() {
+    result.motion_held = [&]() {
       log.emplace_back("takeover");
       return takeover;
     };
@@ -659,7 +659,7 @@ void testConstructorValidation() {
   invalid = complete;
   invalid.load_route = {};
   expectInvalid(h.executor, invalid);
-  invalid.operator_takeover_latched = {};
+  invalid.motion_held = {};
   expectInvalid(h.executor, invalid);
   invalid = complete;
   invalid.stop_and_commit = {};

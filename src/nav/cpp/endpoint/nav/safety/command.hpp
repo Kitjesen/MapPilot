@@ -32,13 +32,13 @@ struct TraversabilityGrid {
 };
 
 struct CommandSafetyConfig {
-  double cmd_max_age_s{::lingtu::settings::teleop::native_nav::teleop::cmd_max_age_s};
   double max_speed_mps{::lingtu::settings::teleop::native_nav::teleop::max_speed_mps};
   double max_yaw_rate{::lingtu::settings::teleop::native_nav::teleop::max_yaw_rate_rad_s};
   double min_motion_speed_mps{::lingtu::settings::teleop::native_nav::teleop::min_motion_speed_mps};
   bool verified_recovery_translation{false};
   // Body-axis bound, independent of the total planar speed above.
-  double max_axis_speed_mps{std::numeric_limits<double>::infinity()};
+  double max_vx_mps{std::numeric_limits<double>::infinity()};
+  double max_vy_mps{std::numeric_limits<double>::infinity()};
 };
 
 struct CommandSafetyDecision {
@@ -52,19 +52,11 @@ struct CommandSafetyDecision {
   double traversability_cost{-1.0};
 };
 
-using TeleopSafetyConfig = CommandSafetyConfig;
-using TeleopDecision = CommandSafetyDecision;
-
 double linearSpeed(const nav_kernel::Twist &cmd);
 
 CommandSafetyDecision
-evaluateCommandSafety(const CommandSafetyConfig &cfg, const nav_kernel::Twist &raw_request,
-                      double request_age_s);
+evaluateCommandSafety(const CommandSafetyConfig &cfg, const nav_kernel::Twist &raw_request);
 
-inline TeleopDecision
-arbitrateTeleopCommand(const TeleopSafetyConfig &cfg, const nav_kernel::Twist &raw_request,
-                       double request_age_s) {
-  return evaluateCommandSafety(cfg, raw_request, request_age_s);
-}
+
 
 }  // namespace lingtu::nav::endpoint

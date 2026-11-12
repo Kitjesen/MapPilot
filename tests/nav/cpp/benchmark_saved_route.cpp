@@ -1,6 +1,6 @@
 // Offline saved-map component experiment. No sensor, DDS, driver or physics loop.
 #include "app/config/config.hpp"
-#include "collision/body.hpp"
+#include "app/goal/task.hpp"
 #include "collision_bitmap.hpp"
 #include "lingtu/maps/octomap/io.hpp"
 #include "navigation/executor.hpp"
@@ -18,6 +18,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -66,6 +67,139 @@ void routeCsv(const fs::path& path, const std::vector<Vec3>& route,
   }
 }
 
+std::shared_ptr<const std::vector<std::uint8_t>> inflate(
+    const nav_kernel::LocalCollisionMapView& source, double radius, double down, double up) {
+  const int nx = source.sizeX, ny = source.sizeY, nz = source.sizeZ;
+  const std::size_t plane = static_cast<std::size_t>(nx) * ny;
+  const int down_cells = static_cast<int>(std::ceil(down/source.resolution));
+  const int up_cells = static_cast<int>(std::ceil(up/source.resolution));
+  const auto occupied = [&](int x, int y, int z) {
+    const auto i = static_cast<std::size_t>(z)*plane + y*nx + x;
+    return (source.inflatedBits[i/8] & (1U << (i%8))) != 0;
+  };
+  std::vector<std::uint8_t> vertical(source.cellCount(), 0);
+  for (int y=0; y<ny; ++y) for (int x=0; x<nx; ++x) {
+    int count = 0;
+    for (int z=0; z<=std::min(nz-1,down_cells); ++z) count += occupied(x,y,z);
+    for (int z=0; z<nz; ++z) {
+      vertical[static_cast<std::size_t>(z)*plane+y*nx+x] = count != 0;
+      if (z-up_cells >= 0) count -= occupied(x,y,z-up_cells);
+      if (z+down_cells+1 < nz) count += occupied(x,y,z+down_cells+1);
+    }
+  }
+  auto result = std::make_shared<std::vector<std::uint8_t>>((source.cellCount()+7)/8,0);
+  const int cells = static_cast<int>(std::ceil(radius/source.resolution));
+  // Match Mapd's strict XY radius and inclusive vertical cell offsets.
+  for (int dy=-cells; dy<=cells; ++dy) {
+    int span = cells;
+    while (span >= 0 && (span*span+dy*dy)*source.resolution*source.resolution >= radius*radius)
+      --span;
+    if (span < 0) continue;
+    for (int z=0; z<nz; ++z) for (int y=0; y<ny; ++y) {
+      const int source_y = y-dy;
+      if (source_y < 0 || source_y >= ny) continue;
+      const auto row = static_cast<std::size_t>(z)*plane+source_y*nx;
+      int count = 0;
+      for (int x=0; x<=std::min(nx-1,span); ++x) count += vertical[row+x];
+      for (int x=0; x<nx; ++x) {
+        const auto i = static_cast<std::size_t>(z)*plane+y*nx+x;
+        if (count) (*result)[i/8] |= static_cast<std::uint8_t>(1U << (i%8));
+        if (x-span >= 0) count -= vertical[row+x-span];
+        if (x+span+1 < nx) count += vertical[row+x+span+1];
+      }
+    }
+  }
+  return result;
+}
+
+void checkInflation() {
+  lingtu::nav::tests::CollisionBitmap source({0,0,0},{1.1,.9,.8},.1);
+  const std::vector<Vec3> occupied{{.05,.05,.05},{.55,.45,.35},{1.05,.85,.75}};
+  for (const auto& p : occupied) source.occupy(p);
+  const auto view = source.view();
+  const auto inflated = inflate(view,.32,.21,.11);
+  for (int z=0; z<view.sizeZ; ++z) for (int y=0; y<view.sizeY; ++y)
+    for (int x=0; x<view.sizeX; ++x) {
+      bool expected = false;
+      for (const auto& p : occupied) {
+        const int dx=x-static_cast<int>(std::floor(p.x/.1));
+        const int dy=y-static_cast<int>(std::floor(p.y/.1));
+        const int dz=z-static_cast<int>(std::floor(p.z/.1));
+        expected = expected || ((dx*dx+dy*dy)*.1*.1 < .32*.32 && dz>=-3 && dz<=2);
+      }
+      const auto i = (static_cast<std::size_t>(z)*view.sizeY+y)*view.sizeX+x;
+      if ((((*inflated)[i/8] & (1U<<(i%8))) != 0) != expected)
+        throw std::runtime_error("Fixture inflation differs from direct Mapd-offset enumeration");
+    }
+  std::cout << "Inflation matches direct offsets for interior and boundary obstacles\n";
+}
+
+std::unique_ptr<octomap::OcTree> buildSceneMap(std::istream& in) {
+  double resolution;
+  Vec3 low, high;
+  std::size_t count;
+  in >> resolution >> low.x >> low.y >> low.z >> high.x >> high.y >> high.z >> count;
+  if (!in || !std::isfinite(resolution) || resolution<=0 ||
+      low.x>=high.x || low.y>=high.y || low.z>=high.z)
+    throw std::runtime_error("Invalid scene grid bounds");
+  struct Box { int low[3], high[3]; };
+  std::vector<Box> boxes(count);
+  for (auto& box : boxes) {
+    Vec3 minimum, maximum;
+    in >> minimum.x >> minimum.y >> minimum.z >> maximum.x >> maximum.y >> maximum.z;
+    if (!in || minimum.x>=maximum.x || minimum.y>=maximum.y || minimum.z>=maximum.z)
+      throw std::runtime_error("Invalid scene obstacle");
+    const double lower[] = {minimum.x,minimum.y,minimum.z};
+    const double upper[] = {maximum.x,maximum.y,maximum.z};
+    for (int axis=0; axis<3; ++axis) {
+      box.low[axis] = static_cast<int>(std::floor(lower[axis]/resolution));
+      box.high[axis] = static_cast<int>(std::ceil(upper[axis]/resolution));
+    }
+  }
+  auto tree = std::make_unique<octomap::OcTree>(resolution);
+  for (int z=static_cast<int>(std::floor(low.z/resolution)); z<static_cast<int>(std::round(high.z/resolution)); ++z)
+    for (int y=static_cast<int>(std::floor(low.y/resolution)); y<static_cast<int>(std::round(high.y/resolution)); ++y)
+      for (int x=static_cast<int>(std::floor(low.x/resolution)); x<static_cast<int>(std::round(high.x/resolution)); ++x) {
+        Vec3 p{(x+.5)*resolution,(y+.5)*resolution,(z+.5)*resolution};
+        bool occupied = false;
+        // Include every cell with positive-volume overlap, retaining box edges.
+        for (const auto& box : boxes)
+          occupied = occupied || (x>=box.low[0] && x<box.high[0] && y>=box.low[1] &&
+              y<box.high[1] && z>=box.low[2] && z<box.high[2]);
+        auto* node = tree->updateNode(p.x,p.y,p.z,occupied,true);
+        node->setLogOdds(occupied ? 3.5F : -2.F);
+      }
+  tree->updateInnerOccupancy();
+  tree->prune();
+  return tree;
+}
+
+void generateMap(const fs::path& scene, const fs::path& destination) {
+  std::ifstream in(scene);
+  const auto tree = buildSceneMap(in);
+  if (!tree->write(destination.string())) throw std::runtime_error("Cannot save scene OctoMap");
+}
+
+void checkSceneVoxelization() {
+  std::istringstream scene(
+      "0.05\n-5 -0.2 -0.1\n-4.5 0.2 0.4\n2\n"
+      "-5 -0.2 -0.1 -4.5 0.2 0\n"
+      "-4.86 -0.04 0.07 -4.74 0.04 0.23\n");
+  const auto tree = buildSceneMap(scene);
+  const auto check = [&](const Vec3& point, bool expected) {
+    const auto* node = tree->search(point.x,point.y,point.z);
+    if (!node || tree->isNodeOccupied(node)!=expected)
+      throw std::runtime_error("Scene voxelization lost a box edge or occupied an adjacent free cell");
+  };
+  check({-4.875,.025,.075},true);
+  check({-4.725,.025,.075},true);
+  check({-4.925,.025,.075},false);
+  check({-4.675,.025,.075},false);
+  check({-4.975,.125,-.025},true);
+  check({-4.975,.125,.025},false);
+  std::cout << "Scene voxelization retains non-grid-aligned box edges and the exact ground top\n";
+}
+
 // This fixture samples every SCAN-resolution cell, not sparse leaf centres.
 // OcTree::search resolves coarse leaves over their entire represented cube.
 // Occupied, observed-free and unknown cells remain separate evidence classes.
@@ -73,15 +207,12 @@ class StaticCollision {
  public:
   StaticCollision(const octomap::OcTree& tree, const std::vector<Vec3>& route,
                   const lingtu::nav::endpoint::CliConfig& config,
-                  const nav_kernel::Pose& initial_pose,
-                  std::shared_ptr<const lingtu::nav::collision::Body> body)
+                  const nav_kernel::Pose& initial_pose)
       : resolution_(config.scan_planner.voxelResolution),
-        source_resolution_(tree.getResolution()), start_pose_(initial_pose), body_(std::move(body)) {
+        source_resolution_(tree.getResolution()), start_pose_(initial_pose) {
     Vec3 low = route.front(), high = low;
-    const auto body_bounds = lingtu::nav::collision::bounds(*body_, {{},0.0});
-    const double body_radius = std::hypot(std::abs(body_bounds.center.x)+body_bounds.half_size.x,
-                                        std::abs(body_bounds.center.y)+body_bounds.half_size.y);
-    const double margin = config.scan_planner.planningHorizon + body_radius + 1.0;
+    const double margin = config.scan_planner.planningHorizon +
+        config.collision_cylinder_radius_m + config.collision_cylinder_offset_m + 1.0;
     for (const auto& p : route) {
       low.x = std::min(low.x, p.x); low.y = std::min(low.y, p.y); low.z = std::min(low.z, p.z);
       high.x = std::max(high.x, p.x); high.y = std::max(high.y, p.y); high.z = std::max(high.z, p.z);
@@ -114,6 +245,8 @@ class StaticCollision {
       }
     }
     const auto occupied = occupied_->view();
+    inflated_storage_ = inflate(occupied, config.collision_cylinder_radius_m,
+        config.collision_clearance_above_m, config.collision_clearance_below_m);
     occupied_storage_ = std::make_shared<const std::vector<std::uint8_t>>(
         occupied.inflatedBits, occupied.inflatedBits + occupied.inflatedBytes);
     const auto known_free = free_->view();
@@ -123,6 +256,8 @@ class StaticCollision {
 
   nav_kernel::LocalCollisionMapView view(double now) const {
     auto result = occupied_->view(now, 1);
+    result.inflatedStorage = inflated_storage_;
+    result.inflatedBits = inflated_storage_->data();
     result.measuredOccupiedStorage = occupied_storage_;
     result.knownFreeStorage = free_storage_;
     result.live = false;
@@ -139,7 +274,6 @@ class StaticCollision {
         << ",\"observed_free_cells\":" << free_count_
         << ",\"unknown_cells\":" << unknown_count_;
     nav_kernel::LocalPlanRequest diagnostic;
-    diagnostic.body = body_;
     diagnostic.robot.pose = start_pose_;
     diagnostic.environment.collision = view(1);
     const nav_kernel::local::scan::Grid grid(params,diagnostic);
@@ -149,18 +283,17 @@ class StaticCollision {
     point(out,start_pose_.position);
     out << ",\"start_yaw_rad\":" << start_pose_.yaw
         << ",\"coarse_leaf_volume_preserved\":true,\"unknown_marked_free\":false,"
-        << "\"construction\":\"Exhaustive SCAN-resolution lookup into the unchanged OctoMap. Single OBB queries raw measured occupied and known-free; no cylinder preinflation and no floor removal.\","
-        << "\"limitation\":\"Static saved-map fixture, not live mapd. Unknown or outside body volume is rejected. Sensor/ray transport and driver are absent.\"}\n";
+        << "\"construction\":\"Exhaustive SCAN-resolution lookup into the unchanged OctoMap. Mapd-equivalent cylindrical inflation applied once to exhaustive occupied cells. Floor is retained.\","
+        << "\"limitation\":\"Static saved-map fixture, not live mapd. Observed-free and unknown evidence remain distinct. Sensor/ray transport and driver are absent.\"}\n";
   }
 
  private:
   double resolution_, source_resolution_;
   Vec3 minimum_{}, maximum_{};
   nav_kernel::Pose start_pose_{};
-  std::shared_ptr<const lingtu::nav::collision::Body> body_;
   std::uint64_t occupied_count_{0}, free_count_{0}, unknown_count_{0};
   std::unique_ptr<lingtu::nav::tests::CollisionBitmap> occupied_, free_;
-  std::shared_ptr<const std::vector<std::uint8_t>> occupied_storage_, free_storage_;
+  std::shared_ptr<const std::vector<std::uint8_t>> occupied_storage_, free_storage_, inflated_storage_;
 };
 
 void saveSpline(const fs::path& folder, const nav_kernel::LocalPlan& plan) {
@@ -192,9 +325,36 @@ void saveSpline(const fs::path& folder, const nav_kernel::LocalPlan& plan) {
   routeCsv(folder / "first-preview.csv", plan.previewPath());
 }
 
+lingtu::nav::plan::GlobalPlanResult planWithDeadline(
+    octoplanner3d::runtime::PlannerSession& session, const fs::path& map,
+    const lingtu::nav::plan::GlobalPlanRequest& request) {
+  const auto deadline = Clock::now() + lingtu::nav::endpoint::kDefaultGlobalPlanTimeout;
+  bool timed_out = false;
+  auto result = session.run(map, request.map_identity, request, [&] {
+    timed_out = timed_out || Clock::now()>=deadline;
+    return timed_out;
+  });
+  if (timed_out) {
+    result.ok = result.reached_goal = false;
+    result.cancelled = true;
+    result.path.clear();
+    result.failure_reason = lingtu::nav::endpoint::kGlobalPlanTimeoutReason;
+  }
+  return result;
+}
+
 int run(int argc, char** argv) {
-  if (argc != 10) throw std::runtime_error(
-      "Usage: benchmark_saved_route map.ot sx sy sz gx gy gz out_dir feedback_seconds; native nav configuration is read from the inherited RunPlan environment");
+  if (argc==2 && std::string(argv[1])=="--check-inflation") {
+    checkInflation();
+    checkSceneVoxelization();
+    return 0;
+  }
+  if (argc==4 && std::string(argv[1])=="--build-scene") {
+    generateMap(argv[2],argv[3]);
+    return 0;
+  }
+  if (argc != 10 && argc != 11) throw std::runtime_error(
+      "Usage: benchmark_saved_route map.ot sx sy sz gx gy gz out_dir feedback_seconds [goal_yaw]; native nav configuration is read from the inherited RunPlan environment");
   const fs::path map_path = argv[1], folder = argv[8];
   const double feedback_seconds = std::stod(argv[9]);
   if (!std::isfinite(feedback_seconds) || feedback_seconds < 0)
@@ -205,15 +365,10 @@ int run(int argc, char** argv) {
   const auto config = lingtu::nav::endpoint::parseArgs(1, config_argv);
   const auto params = lingtu::nav::endpoint::buildLocalPlannerParams(config);
   const auto executor_config = lingtu::nav::endpoint::buildExecutorConfig(config);
-  const auto body_geometry = executor_config.body;
   if (params.backend != nav_kernel::LocalPlannerBackend::Scan)
     throw std::runtime_error("RunPlan must explicitly select the scan backend");
-  if (!body_geometry || body_geometry->parts.size() != 1U ||
-      body_geometry->parts.front().shape != lingtu::nav::collision::Shape::Box)
-    throw std::runtime_error("RunPlan must provide the single navigation OBB");
-  const auto& box = body_geometry->parts.front();
   const auto safety_config = lingtu::nav::endpoint::commandSafetyConfig(config);
-  const double final_reaction_s = std::max(safety_config.cmd_max_age_s, 1.0/config.tick_hz);
+  const double final_reaction_s = 1.0 / config.tick_hz;
   const double final_linear_deceleration = std::min(
       config.velocity_smoother.x.deceleration, config.velocity_smoother.y.deceleration);
   const double final_yaw_deceleration = config.velocity_smoother.yaw.deceleration;
@@ -229,11 +384,7 @@ int run(int argc, char** argv) {
       << ",\"collision_above_m\":" << config.collision_clearance_above_m
       << ",\"scan_resolution_m\":" << params.scan.voxelResolution
       << ",\"speed_limit_mps\":" << executor_config.max_speed
-      << ",\"collision_shape\":\"single_obb\",\"body_parts\":" << body_geometry->parts.size()
-      << ",\"body_margin_m\":" << body_geometry->margin_m << ",\"body_center_m\":";
-  point(configuration,{box.center.x,box.center.y,box.center.z});
-  configuration << ",\"body_half_size_m\":";
-  point(configuration,{box.half_size.x,box.half_size.y,box.half_size.z});
+      << ",\"collision_shape\":\"double_cylinder\"";
   configuration << ",\"final_reaction_s\":" << final_reaction_s
       << ",\"final_linear_deceleration_mps2\":" << final_linear_deceleration
       << ",\"final_yaw_deceleration_radps2\":" << final_yaw_deceleration << "}\n";
@@ -243,19 +394,20 @@ int run(int argc, char** argv) {
   summary << "{\"qualification\":\"ideal_planar_component_feedback\","
       << "\"physical_simulation\":false,\"sensor_feedback\":false,\"z_evolved\":false,"
       << "\"final_geometry_braking_included\":true,\"final_safety_and_driver_included\":false,"
-      << "\"dds_lifecycle_included\":false,\"collision_shape\":\"single_obb\",\"map\":" << quoted(map_path.string());
+      << "\"dds_lifecycle_included\":false,\"collision_shape\":\"double_cylinder\",\"map\":" << quoted(map_path.string());
   lingtu::nav::plan::GlobalPlanRequest request;
   request.start = {std::stod(argv[2]),std::stod(argv[3]),std::stod(argv[4])};
   request.start.yaw = 0.0;
   request.goal = {std::stod(argv[5]),std::stod(argv[6]),std::stod(argv[7])};
+  if (argc == 11) request.goal.yaw = std::stod(argv[10]);
   request.options = config.octoplanner_options;
   request.map_identity = {"offline-saved-route", 1, "map"};
   octoplanner3d::runtime::PlannerSession session;
   auto started = Clock::now();
-  const auto cold = session.run(map_path, request.map_identity, request);
+  const auto cold = planWithDeadline(session, map_path, request);
   const double cold_request_ms = milliseconds(started);
   started = Clock::now();
-  const auto result = session.run(map_path, request.map_identity, request);
+  const auto result = planWithDeadline(session, map_path, request);
   const double cached_request_ms = milliseconds(started);
   summary << ",\"cold_request_ms\":" << cold_request_ms
       << ",\"cached_request_ms\":" << cached_request_ms
@@ -279,7 +431,7 @@ int run(int argc, char** argv) {
     const auto loads_before = activated_session.mapLoadCount();
     const auto prepares_before = activated_session.prepareCount();
     started = Clock::now();
-    const auto planned = activated_session.run(map_path, request.map_identity, sequential);
+    const auto planned = planWithDeadline(activated_session, map_path, sequential);
     summary << "{\"ordinal\":" << index + 1
         << ",\"request_ms\":" << milliseconds(started)
         << ",\"map_load_delta\":" << activated_session.mapLoadCount() - loads_before
@@ -317,14 +469,13 @@ int run(int argc, char** argv) {
   const double fixture_load_ms = milliseconds(started);
   if (!tree) throw std::runtime_error("Cannot load static collision source");
   started = Clock::now();
-  StaticCollision collision(*tree, route, config, body, body_geometry);
+  StaticCollision collision(*tree, route, config, body);
   const double fixture_ms = milliseconds(started);
   collision.write(folder / "collision-fixture.json", params);
   summary << ",\"fixture_map_load_ms\":" << fixture_load_ms
       << ",\"fixture_build_ms\":" << fixture_ms << ",\"local_attempted\":true";
   nav_kernel::local::scan::Backend backend(params);
   nav_kernel::LocalPlanRequest local;
-  local.body = body_geometry;
   local.bodyHeading = body.yaw;
   local.robot.pose = body;
   local.objective = nav_kernel::RouteTarget{{route.data(),static_cast<int>(route.size()),1}};
@@ -384,8 +535,7 @@ int run(int argc, char** argv) {
     lingtu::nav::navigation::Executor executor(executor_config, std::move(planner));
     lingtu::nav::navigation::Route active;
     active.points = route;
-    active.body = body_geometry;
-    active.finalYaw = request.goal.yaw;
+    active.requestedGoal = Vec3{request.goal.x,request.goal.y,request.goal.z};
     if (request.options.ground_support) {
       active.supportHeightM = request.options.support_height_m;
       active.supportHeightToleranceM = request.options.support_height_tolerance_m;
@@ -422,7 +572,6 @@ int run(int argc, char** argv) {
       last_input = input;
       last_time = now;
       nav_kernel::LocalPlanRequest diagnostic;
-      diagnostic.body = body_geometry;
       diagnostic.robot.pose = body;
       diagnostic.clock.timestampS = now;
       diagnostic.environment.collision = input.observation.collision;
@@ -449,15 +598,22 @@ int run(int argc, char** argv) {
       std::string final_reason = "accepted";
       if (final_scale <= 0.0) {
         applied_command = {};
-        final_reason = "scan_actual_motion_blocked";
+        final_reason = measured_blocked ? "brake_blocked"
+                                        : "cmd_blocked";
         ++final_blocked_ticks;
       } else if (final_scale < 1.0) {
         applied_command.vx *= final_scale;
         applied_command.vy *= final_scale;
         applied_command.wz *= final_scale;
-        final_reason = "scan_actual_motion_limited";
+        final_reason = "cmd_limited";
         ++final_limited_ticks;
       }
+      // Match FinalControl's applied-command feedback and AutonomyTick's stop pause.
+      executor.commitApplied(applied_command);
+      if (final_scale <= 0.0 || std::hypot(applied_command.vx, applied_command.vy) > 1e-6 ||
+          std::abs(applied_command.wz) > 1e-6)
+        executor.reportFinalMotionBlocked(final_scale <= 0.0, now);
+      if (final_scale <= 0.0) executor.pauseLinearMotion();
       const double final_geometry_ms = milliseconds(final_start);
       if (raw_command.vx != 0 || raw_command.vy != 0 || raw_command.wz != 0) ++raw_motion_ticks;
       if (applied_command.vx != 0 || applied_command.vy != 0 || applied_command.wz != 0)
@@ -501,6 +657,7 @@ int run(int argc, char** argv) {
     cancel_zero = cancel_command.vx == 0 && cancel_command.vy == 0 && cancel_command.wz == 0;
   }
   summary << ",\"feedback_seconds_requested\":" << feedback_seconds
+      << ",\"applied_command_feedback\":true,\"final_stop_pauses_execution\":true"
       << ",\"feedback_goal_reached\":" << (reached ? "true" : "false")
       << ",\"feedback_final_reason\":" << quoted(reason)
       << ",\"collision_state_count\":" << collision_state_count

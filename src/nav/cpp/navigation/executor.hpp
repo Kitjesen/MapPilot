@@ -27,10 +27,6 @@ struct ExecutorConfig {
   double waypoint_reached_m{::lingtu::settings::follower::native_nav::waypoint_reached_m};
   double goal_reached_m{::lingtu::settings::follower::native_nav::goal_reached_m};
   double goal_height_tolerance_m{::lingtu::settings::follower::native_nav::goal_height_tolerance_m};
-  double goal_yaw_tolerance_rad{0.08726646259971647};
-  double goal_yaw_kp{1.5};
-  double goal_yaw_min_rate{0.2};
-  double goal_yaw_max_rate{0.6};
   double max_speed{::lingtu::settings::limits::native_nav::follower::max_speed_mps};
   double teleop_intent_horizon_m{::lingtu::settings::teleop::native_nav::teleop::horizon_m};
   double teleop_intent_max_deviation_deg{::lingtu::settings::teleop::native_nav::teleop::max_deviation_deg};
@@ -96,6 +92,7 @@ struct ExecutionObservation {
   nav_kernel::LocalCollisionMapView collision{};
   nav_kernel::PlanClockMode clock_mode{nav_kernel::PlanClockMode::Steady};
   nav_kernel::PredictionView predictions{};
+  std::shared_ptr<const std::vector<lingtu::maps::NoGoRegion>> no_go_regions{};
 };
 
 struct TraversabilityGridView {
@@ -160,14 +157,29 @@ class Executor {
     return route_body_ ? route_body_ : config_.body;
   }
   void pauseLinearMotion();
-  void commitAppliedCommand(const nav_kernel::Twist &command);
+  // Record the command actually accepted by final control.
+  void commitApplied(const nav_kernel::Twist &command);
   void reportFinalMotionBlocked(bool blocked, double timestamp_s);
   void replanTeleop();
   void stopLinearMotion();
-  void suspendAutonomy();
+  // Reset local execution while retaining the admitted route and goal.
+  void resetMotion();
   void resumeRoute();
 
  private:
+  static constexpr double kPoseStagePositionToleranceM = 0.01;
+  static std::vector<nav_kernel::Vec3> planningPathToBody(
+      const nav_kernel::Pose &body, const std::vector<nav_kernel::Vec3> &path);
+  static std::vector<nav_kernel::Vec3> planningPathToMap(
+      const MapFromOdomTransform &transform, const std::vector<nav_kernel::Vec3> &path);
+  static nav_kernel::LocalPlanRequest makeLocalPlanRequest(
+      const nav_kernel::Pose &vehicle, const std::vector<nav_kernel::Vec3> &route,
+      const std::vector<nav_kernel::Vec3> *reference_route, std::uint64_t route_generation,
+      nav_kernel::LocalKinematicState kinematics, const ExecutionObservation &observation,
+      const float *obstacle_xyzh, int obstacle_count, double timestamp_s,
+      bool execution_frozen, const TraversabilityGridView &traversability,
+      bool include_traversability, const nav_kernel::LocalMotionIntent *intent = nullptr);
+
   struct SegmentTarget {
     std::size_t index{0};
     nav_kernel::Vec3 point{};
@@ -184,9 +196,9 @@ class Executor {
   };
 
   void activateRoute(const std::vector<nav_kernel::Vec3> &path,
-                     std::optional<double> final_yaw,
+                     std::optional<double> stage_yaw,
                      std::optional<double> goal_reached_m,
-                     std::optional<double> goal_yaw_tolerance_rad,
+                     std::optional<double> stage_yaw_tolerance,
                      std::optional<double> max_speed_mps);
   void clearRoute();
   ExecutionOutput tickRoute(const nav_kernel::Pose &map_body,
@@ -213,16 +225,15 @@ class Executor {
                                   nav_kernel::LocalPlannerDebugSnapshot *debug);
   void resetTeleopRotation();
   void resetTeleopBoundaryDeparture();
-  void resetTeleopReference();
   void resetLocalPlanning(bool full_follower_reset = false);
   SegmentTarget buildSegment(const nav_kernel::Pose &map_body,
                              const nav_kernel::Pose &planning_body,
                              const MapFromOdomTransform &map_from_odom);
   void buildReference(const SegmentTarget &target,
                       const MapFromOdomTransform &map_from_odom);
-  void applyCommittedLocalGuide(const nav_kernel::Pose &map_body,
-                                const nav_kernel::Pose &planning_body,
-                                const MapFromOdomTransform &map_from_odom, double timestamp_s);
+  void applyLocalGuide(const nav_kernel::Pose &map_body,
+                       const nav_kernel::Pose &planning_body,
+                       const MapFromOdomTransform &map_from_odom, double timestamp_s);
   nav_kernel::LocalKinematicState planningKinematics(const nav_kernel::Pose &planning_body,
                                                      const ExecutionObservation &observation,
                                                      double timestamp_s);
@@ -232,7 +243,7 @@ class Executor {
   debugSnapshotToMap(const nav_kernel::Pose &odom_map_body,
                      nav_kernel::LocalPlannerDebugSnapshot snapshot) const;
   double slowFactor(int slow_down) const;
-  bool atGoal(const nav_kernel::Pose &odom_map_body) const;
+  bool atGoal(const nav_kernel::Pose &body) const;
   bool autonomyMotionStalled(const nav_kernel::Pose &odom_map_body, double timestamp_s,
                             bool planning_pending);
   void setAutonomyMotionExpected(const nav_kernel::Twist &command,
@@ -247,15 +258,13 @@ class Executor {
   StairTraversal stairs_;
   StairTraversalOutput stair_step_;
   nav_kernel::Follower follower_{};
-  std::optional<double> last_scan_tick_s_;
   nav_kernel::Follower recovery_follower_{};
   std::vector<nav_kernel::Vec3> route;
   std::vector<PoseRouteStage> pose_stages_;
   std::size_t pose_stage_{0};
   std::shared_ptr<const collision::Body> route_body_{};
   std::optional<double> pose_final_tolerance_;
-  std::optional<double> pose_final_yaw_tolerance_;
-  std::optional<double> pose_requested_final_yaw_;
+  std::optional<double> pose_yaw_tolerance_;
   std::optional<double> pose_max_speed_;
   std::optional<std::uint64_t> pose_epoch_;
   void activatePoseStage();
@@ -270,20 +279,18 @@ class Executor {
   std::vector<nav_kernel::Vec3> segment;
   std::vector<nav_kernel::Vec3> reference;
   std::optional<std::uint64_t> reference_epoch;
-  std::vector<nav_kernel::Vec3> committed_local_path_map_;
+  std::vector<nav_kernel::Vec3> guide_map_;
   std::optional<double> teleop_recovery_intent_rad_;
   std::optional<double> teleop_boundary_departure_intent_rad_;
   std::optional<TeleopReference> teleop_reference_;
   std::uint64_t generation{0};
-  std::uint64_t committed_route_generation_{0};
-  double committed_local_path_time_s_{-1.0};
-  std::optional<double> final_yaw_;
-  bool goal_heading_active_{false};
+  std::uint64_t guide_generation_{0};
+  double guide_stamp_s_{-1.0};
+  std::optional<double> stage_yaw_;
   std::optional<nav_kernel::Vec3> requested_goal_;
-  std::optional<double> height_offset_;
   double active_goal_reached_m_{0.35};
   double active_max_speed_mps_{nav_kernel::kDefaultLinearSpeedMps};
-  double active_goal_yaw_tolerance_rad_{0.08726646259971647};
+  double stage_yaw_tolerance_{};
   std::size_t progress{0};
   std::vector<float> obstacle_xyzh_odom_scratch_;
   std::vector<nav_kernel::PredictedObstacle> predictions_odom_scratch_;
@@ -291,7 +298,6 @@ class Executor {
   int recovery_attempt_{-1};
   bool autonomy_motion_expected_{false};
   bool autonomy_stall_stop_{false};
-  bool autonomy_progress_valid_{false};
   nav_kernel::Twist autonomy_expected_command_{};  // Planning-frame translation.
   nav_kernel::Pose autonomy_progress_pose_{};
   double autonomy_progress_time_s_{0.0};
@@ -299,7 +305,7 @@ class Executor {
   double autonomy_observed_progress_{0.0};
   double autonomy_requested_progress_{0.0};
   nav_kernel::Vec3 previous_planning_velocity_{};
-  double previous_kinematics_time_s_{-1.0};
+  double velocity_stamp_s_{-1.0};
   std::uint64_t previous_kinematics_frame_epoch_{0};
   double local_blocked_since_s_{-1.0};
   double final_motion_blocked_since_s_{-1.0};

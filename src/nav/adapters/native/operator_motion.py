@@ -285,6 +285,10 @@ class NativeOperatorMotionClient:
             ),
         )
 
+    def status(self, max_age_ms: int = 250) -> dict[str, object] | None:
+        """Read native authority without issuing a motion or lease command."""
+        return self._session.read_operator_motion_status(max_age_ms)
+
     def close(self) -> None:
         """Close a directly owned session; factory views leave it shared."""
 

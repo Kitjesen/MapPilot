@@ -164,11 +164,11 @@ if(_HAS_OCTOPLANNER3D_RUNTIME)
     nav/dds/runtime.cpp
     nav/app/config/parse.cpp
     nav/app/config/build.cpp
+    nav/app/planner.cpp
     nav/input/gate.cpp
     nav/dds/codec.cpp
     nav/dds/frame.cpp
     nav/input/frame.cpp
-    nav/control/guard.cpp
     nav/control/authority.cpp
     nav/control/operator.cpp
     nav/status/control_loop_health.cpp
@@ -177,7 +177,7 @@ if(_HAS_OCTOPLANNER3D_RUNTIME)
     nav/status/nav_status_endpoint_adapter.cpp
     nav/status/navigation_goal_status_outbox.cpp
     nav/status/goal_terminal_status_delivery.cpp
-    nav/status/goal_terminal_transaction.cpp
+    nav/app/goal/terminal.cpp
     nav/app/navigation.cpp
     nav/status/navigation_state.cpp
     nav/status/status_snapshot_file_writer.cpp

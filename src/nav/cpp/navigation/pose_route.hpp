@@ -9,6 +9,8 @@
 
 namespace lingtu::nav::navigation {
 
+inline constexpr double kPoseYawToleranceRad = 0.17453292519943295;
+
 struct PoseRoutePoint {
   nav_kernel::Vec3 position{};
   double yaw{0.0};

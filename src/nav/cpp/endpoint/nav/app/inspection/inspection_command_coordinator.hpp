@@ -47,7 +47,7 @@ struct InspectionCommandActions {
   std::function<std::optional<lingtu::nav::inspection::Route>(const std::string &map_id,
                                                               const std::string &route_id)>
       load_route;
-  std::function<bool()> operator_takeover_latched;
+  std::function<bool()> motion_held;
   // The native adapter must clear route motion, confirm final zero output,
   // and only then invoke commit. It is the task-control physical-stop seam.
   std::function<InspectionStopBarrierResult(const std::string &reason,

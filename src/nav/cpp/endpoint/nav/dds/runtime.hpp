@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <optional>
 #include <string>
 #include <utility>
@@ -182,7 +181,8 @@ using OutputEvent =
                  PlanResultSample, semantic::ViewResult, GeofenceCommandAckSample, GeofenceAlertSample,
                  NavigationGoalStatusOutput, NavigationStateSample, ExplorationSegmentAck,
                  ExplorationSegmentStatus, InspectionTaskAckOutput, InspectionStatusOutput,
-                 InspectionTaskEventEnvelope, InspectionEvidenceRequestOutput>;
+                 InspectionTaskEventEnvelope, InspectionEvidenceRequestOutput,
+                 lingtu::message::PostureRequest>;
 
 struct PublishReceipt {
   bool published{false};
@@ -376,6 +376,7 @@ class Dds {
   bool writeCmdVel(const nav_kernel::Twist &cmd);
   bool writeOperatorMotionAck(const OperatorMotionAckSample &ack);
   bool writeOperatorMotionStatus(const OperatorMotionStatusSample &status);
+  bool writePostureRequest(const lingtu::message::PostureRequest &request);
   bool writeCommandAck(const char *task_id, const char *request_id,
                        lingtu::message::NavigationCommandKind kind, bool accepted,
                        const char *reason);
@@ -408,16 +409,17 @@ class Dds {
     }
 
     const DdsDrainBudget budget = drainBudget(profile);
-    T storage[kDdsReaderBatchSize]{};
-    void *samples[kDdsReaderBatchSize];
-    dds_sample_info_t infos[kDdsReaderBatchSize]{};
-    for (std::size_t index = 0U; index < kDdsReaderBatchSize; ++index) {
-      samples[index] = &storage[index];
-    }
     drainBatches(budget, [&](std::size_t capacity) -> std::ptrdiff_t {
+      void *samples[kDdsReaderBatchSize]{};
+      dds_sample_info_t infos[kDdsReaderBatchSize]{};
       const auto dds_capacity = static_cast<std::uint32_t>(capacity);
       const dds_return_t count = dds_take(reader, samples, infos, dds_capacity, dds_capacity);
-      if (count >= 0) {
+      if (count < 0) {
+        logDdsError(count, "dds_take");
+        return count;
+      }
+      // Handlers copy their owned values before the middleware sample is returned.
+      try {
         if (latest_only) {
           for (dds_return_t i = count; i > 0; --i) {
             if (infos[i - 1].valid_data) {
@@ -427,20 +429,14 @@ class Dds {
           }
         } else {
           for (dds_return_t i = 0; i < count; ++i) {
-            if (infos[i].valid_data) {
-              handler(*static_cast<T *>(samples[i]));
-            }
+            if (infos[i].valid_data) handler(*static_cast<T *>(samples[i]));
           }
         }
-      } else {
-        logDdsError(count, "dds_take");
+      } catch (...) {
+        if (count > 0) dds_return_loan(reader, samples, count);
+        throw;
       }
-      for (std::size_t index = 0U; index < capacity; ++index) {
-        dds_sample_free(samples[index], &descriptor, DDS_FREE_CONTENTS);
-        std::memset(&storage[index], 0, sizeof(T));
-        samples[index] = &storage[index];
-        infos[index] = {};
-      }
+      if (count > 0) logDdsError(dds_return_loan(reader, samples, count), descriptor.m_typename);
       return static_cast<std::ptrdiff_t>(count);
     });
   }
@@ -467,6 +463,9 @@ class Dds {
   dds_entity_t localization_health_reader_{0};
   dds_entity_t driver_control_state_reader_{0};
   dds_entity_t motion_profile_state_reader_{0};
+  dds_entity_t posture_ack_reader_{0};
+  dds_entity_t external_state_reader_{0};
+  dds_entity_t posture_request_writer_{0};
   dds_entity_t map_clearing_reader_{0};
   dds_entity_t cloud_clearing_reader_{0};
   dds_entity_t command_request_reader_{0};

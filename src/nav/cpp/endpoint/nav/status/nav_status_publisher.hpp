@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "status/nav_status_writer.hpp"
@@ -42,8 +43,7 @@ struct StatusRuntimeState {
   std::string estop_reason{"clear"};
   bool operator_takeover_latched{false};
   bool teleop_request_active{false};
-  bool operator_resume_required{false};
-  bool control_loop_hold{false};
+  std::string hold_reason{};
   FinalOutputDiagnostics final_output{};
   DriverControlDiagnostics driver_control{};
   MotionStopEvidenceDiagnostics motion_stop_evidence{};
@@ -102,6 +102,10 @@ class NavStatusPublisher {
   bool publishIfDue(const StatusRuntimeState &state, const CommandDiagnostics &commands,
                     const TimingDiagnostics &previous_timing, TimingDiagnostics &current_timing);
   void requestImmediate();
+  void configure(StatusWriterConfig config) {
+    config_ = std::move(config);
+    requestImmediate();
+  }
   void flush();
 
  private:

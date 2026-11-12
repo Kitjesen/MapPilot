@@ -29,18 +29,6 @@ std::uint64_t wallClockNanoseconds() {
                                         .count());
 }
 
-std::uint64_t boottimeNanoseconds() {
-  return lingtu::nav::platform::bootTimeNanoseconds();
-}
-
-std::string readHostBootId() {
-  return lingtu::nav::platform::hostBootId();
-}
-
-std::string makeProducerBootId(const std::string &host_boot_id, std::uint64_t start_boottime_ns) {
-  return lingtu::nav::platform::producerBootId(host_boot_id, start_boottime_ns);
-}
-
 void fillHeader(lingtu_dds_Header &header, double stamp_s, const char *frame_id) {
   if (!std::isfinite(stamp_s) || stamp_s <= 0.0) {
     stamp_s = nowSeconds();
@@ -100,7 +88,7 @@ lingtu_dds_FinalVelocityCommand toDdsFinalVelocity(const nav_kernel::Twist &cmd,
   out.host_boot_id = const_cast<char *>(host_boot_id.c_str());
   out.producer_boot_id = const_cast<char *>(producer_boot_id.c_str());
   out.output_seq = output_seq;
-  out.source_boottime_ns = boottimeNanoseconds();
+  out.source_boottime_ns = platform::bootTimeNanoseconds();
   out.source_wall_ns = wallClockNanoseconds();
   out.twist.linear.x = cmd.vx;
   out.twist.linear.y = cmd.vy;
@@ -252,8 +240,8 @@ GeofenceCommandView copyGeofenceCommand(const lingtu_dds_GeofenceCommandRequest 
 }
 
 Dds::Dds(int domain_id, DdsStatus *status, bool read_obstacle_cloud, bool read_simulation_clock)
-    : host_boot_id_(readHostBootId()),
-      producer_boot_id_(makeProducerBootId(host_boot_id_, boottimeNanoseconds())),
+    : host_boot_id_(platform::hostBootId()),
+      producer_boot_id_(platform::producerBootId(host_boot_id_, platform::bootTimeNanoseconds())),
       status_(status) {
   if (status_ != nullptr) {
     status_->producer_boot_id = producer_boot_id_;
@@ -290,6 +278,12 @@ Dds::Dds(int domain_id, DdsStatus *status, bool read_obstacle_cloud, bool read_s
                                        &lingtu_dds_Text_desc, "localization_health");
   motion_profile_state_reader_ = reader(lingtu::message::kMotionProfileState.dds_topic.data(),
       &lingtu_dds_MotionProfileState_desc, "motion_profile_state");
+  posture_ack_reader_ = reader(lingtu::message::kMotionPostureAck.dds_topic.data(),
+      &lingtu_dds_MotionPostureAck_desc, "posture_ack");
+  external_state_reader_ = reader(lingtu::message::kExternalControlState.dds_topic.data(),
+      &lingtu_dds_ExternalControlState_desc, "external_state");
+  posture_request_writer_ = writer(lingtu::message::kMotionPostureRequest.dds_topic.data(),
+      &lingtu_dds_MotionPostureRequest_desc, "posture_request");
   driver_control_state_reader_ =
       reader(lingtu::message::kDriverControlState.dds_topic.data(),
              &lingtu_dds_DriverControlState_desc, "driver_control_state");
@@ -483,6 +477,28 @@ CommandBatch Dds::takeCommands(double now_steady_s) {
   batch.receive_steady_s = now_steady_s;
   batch.receive_wall_s = nowSeconds();
 
+  if (dds_get_matched_publications(external_state_reader_, nullptr, 0) == 1) {
+    drainReader<lingtu_dds_ExternalControlState>(external_state_reader_,
+        lingtu_dds_ExternalControlState_desc, [&](const auto &state) {
+          batch.ordered.emplace_back(lingtu::message::ExternalState{
+              stringValue(state.session_id), state.selected, state.active, state.motors_enabled,
+              state.last_sequence, stringValue(state.reason), state.input_window,
+              state.fresh, state.joint_count, state.motor_disable_confirmed});
+        });
+  }
+  const bool one_posture_driver =
+      dds_get_matched_publications(posture_ack_reader_, nullptr, 0) == 1;
+  drainReader<lingtu_dds_MotionPostureAck>(
+      posture_ack_reader_, lingtu_dds_MotionPostureAck_desc,
+      [&](const lingtu_dds_MotionPostureAck &message) {
+        if (!one_posture_driver) return;
+        batch.ordered.emplace_back(lingtu::message::PostureAck{
+            {stringValue(message.producer_boot_id), stringValue(message.client_id),
+             stringValue(message.request_id), message.action, message.phase,
+             stringValue(message.profile_name), stringValue(message.external_session_id)},
+            message.final_result, message.accepted, stringValue(message.reason)});
+      });
+
   drainReader<lingtu_dds_OperatorMotionControl>(
       operator_motion_control_reader_, lingtu_dds_OperatorMotionControl_desc,
       [&](const lingtu_dds_OperatorMotionControl &message) {
@@ -592,6 +608,8 @@ PublishReceipt Dds::publish(const OutputEvent &output) {
           receipt.published = writeOperatorMotionAck(event);
         } else if constexpr (std::is_same_v<Event, OperatorMotionStatusSample>) {
           receipt.published = writeOperatorMotionStatus(event);
+        } else if constexpr (std::is_same_v<Event, lingtu::message::PostureRequest>) {
+          receipt.published = writePostureRequest(event);
         } else if constexpr (std::is_same_v<Event, CommandAckOutput>) {
           receipt.published = writeCommandAck(event.task_id.c_str(), event.request_id.c_str(),
                                               event.kind, event.accepted, event.reason.c_str());
@@ -634,6 +652,23 @@ bool Dds::writeLocalPath(const std::vector<nav_kernel::Vec3> &path) {
   PathMessage msg = toDdsPath(path, "map");
   const dds_return_t result = dds_write(local_path_writer_, &msg.msg);
   logDdsError(result, "dds_write(local_path)");
+  return result >= 0;
+}
+
+bool Dds::writePostureRequest(const lingtu::message::PostureRequest &request) {
+  lingtu_dds_MotionPostureRequest message{};
+  fillHeader(message.header, nowSeconds(), "body");
+  message.host_boot_id = const_cast<char *>(host_boot_id_.c_str());
+  message.producer_boot_id = const_cast<char *>(producer_boot_id_.c_str());
+  message.source_boottime_ns = platform::bootTimeNanoseconds();
+  message.client_id = const_cast<char *>(request.client_id.c_str());
+  message.request_id = const_cast<char *>(request.request_id.c_str());
+  message.action = request.action;
+  message.phase = request.phase;
+  message.profile_name = const_cast<char *>(request.profile_name.c_str());
+  message.external_session_id = const_cast<char *>(request.external_session_id.c_str());
+  const auto result = dds_write(posture_request_writer_, &message);
+  logDdsError(result, "dds_write(posture_request)");
   return result >= 0;
 }
 

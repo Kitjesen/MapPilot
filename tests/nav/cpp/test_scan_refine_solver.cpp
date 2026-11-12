@@ -12,6 +12,19 @@ namespace {
 
 using namespace nav_kernel::local::scan::upstream;
 
+TEST(ScanRefineSolver, CubicFallbackKeepsTrialInsideItsBracket) {
+  // Captured from the constrained garage refine: the cubic has no minimum.
+  double x = 0, fx = 0.024790567639842942, dx = -0.020584614952887565;
+  double y = 1, fy = .1, dy = .1;
+  double trial = 0.032369093694582435;
+  double value = 0.024134902879559637, derivative = -0.01992933171757719;
+  int bracketed = 1;
+  ASSERT_EQ(lbfgs::update_trial_interval(&x, &fx, &dx, &y, &fy, &dy,
+      &trial, &value, &derivative, 0, 1, &bracketed), 0);
+  EXPECT_GT(trial, std::min(x, y));
+  EXPECT_LT(trial, std::max(x, y));
+}
+
 BsplineOptimizerParams parameters() {
   BsplineOptimizerParams params;
   params.lambda_smooth = 1.0;

@@ -36,10 +36,9 @@ struct GoalPlanRequest {
 
 struct GoalPlanAdmissionContext {
   bool motion_allowed{false};
-  bool operator_takeover_latched{false};
+  std::string hold_reason{};
   bool autonomy_mode{false};
   std::string control_mode_name{"autonomy"};
-  std::string driver_control_blocker;
   double autonomy_request_not_before_s{0.0};
   std::optional<nav_kernel::Vec3> map_position;
   bool odometry_ready{false};
@@ -59,7 +58,7 @@ struct GoalPlanAdmissionContext {
 
 struct GoalPlanAdvanceContext {
   std::uint64_t frame_epoch{0U};
-  bool operator_takeover_latched{false};
+  std::string hold_reason{};
   double now_s{0.0};
 };
 

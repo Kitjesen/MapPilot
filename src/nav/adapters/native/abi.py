@@ -37,9 +37,13 @@ NATIVE_COMMAND_CAP_TRAVERSABILITY_GRID = 1 << 14
 NATIVE_COMMAND_CAP_PLAN_PREVIEW = 1 << 15
 NATIVE_COMMAND_CAP_JOINT_STATE = 1 << 16
 NATIVE_COMMAND_CAP_SEMANTIC_VIEW_QUERY = 1 << 17
+NATIVE_COMMAND_CAP_OPERATOR_MOTION_STATUS = 1 << 18
+NATIVE_COMMAND_CAP_EXTERNAL_CONTROL = 1 << 19
+NATIVE_COMMAND_CAP_PLANNER_SELECTION = 1 << 20
 NATIVE_JOINT_STATE_ABI_VERSION = 1
 
 NATIVE_OPERATOR_MOTION_RECEIPT_ABI_VERSION = 1
+NATIVE_OPERATOR_MOTION_STATUS_ABI_VERSION = 1
 NATIVE_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION = 1
 NATIVE_NAVIGATION_GOAL_STATUS_ABI_VERSION = 1
 NATIVE_INSPECTION_TASK_EVENT_ABI_VERSION = 3
@@ -59,6 +63,22 @@ NATIVE_TRAVERSABILITY_GRID_ABI_VERSION = 1
 NATIVE_TRAVERSABILITY_MAX_CELLS = 1_000_000
 
 
+class _NativeExternalJointV1(ctypes.Structure):
+    _fields_ = [(field, ctypes.c_double) for field in ("q", "dq", "kp", "kd", "tau")]
+
+
+class _NativeExternalStateV1(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32), ("struct_size", ctypes.c_uint32),
+        ("session_id", ctypes.c_char * 129),
+        ("selected", ctypes.c_uint8), ("active", ctypes.c_uint8),
+        ("motors_enabled", ctypes.c_uint8), ("fresh", ctypes.c_uint8),
+        ("last_sequence", ctypes.c_uint64), ("joint_count", ctypes.c_uint32),
+        ("reason", ctypes.c_char * 257), ("input_window", ctypes.c_uint64),
+        ("motor_disable_confirmed", ctypes.c_uint8),
+    ]
+
+
 class _NativeJointStateV1(ctypes.Structure):
     _fields_ = [
         ("abi_version", ctypes.c_uint32),
@@ -70,6 +90,26 @@ class _NativeJointStateV1(ctypes.Structure):
         ("position", ctypes.c_double * 12),
         ("velocity", ctypes.c_double * 12),
         ("effort", ctypes.c_double * 12),
+    ]
+
+
+class _NativeOperatorMotionStatusV1(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("struct_size", ctypes.c_uint32),
+        ("timestamp_s", ctypes.c_double),
+        ("active_source_id", ctypes.c_char * 129),
+        ("active_source_epoch", ctypes.c_uint64),
+        ("has_active_authority", ctypes.c_int32),
+        ("holding", ctypes.c_int32),
+        ("has_active_sample", ctypes.c_int32),
+        ("last_sample_sequence", ctypes.c_uint64),
+        ("admitted_sequence", ctypes.c_uint64),
+        ("final_output_sequence", ctypes.c_uint64),
+        ("authority_reason", ctypes.c_char * 256),
+        ("input_gate_reason", ctypes.c_char * 128),
+        ("received_age_ms", ctypes.c_double),
+        ("fresh", ctypes.c_int32),
     ]
 
 
@@ -493,6 +533,7 @@ class NativeCommandSession:
         self._inspection_task_event_configured = False
         self._exploration_run_event_configured = False
         self._operator_motion_configured = False
+        self._operator_motion_status_configured = False
         self._host_state_configured = False
         self._goal_status_configured = False
         self._path_telemetry_configured = False
@@ -920,6 +961,63 @@ class NativeCommandSession:
                 ) from exc
             self._operator_motion_configured = True
 
+    def ensure_operator_motion_status_abi(self) -> None:
+        with self.lock:
+            if self._operator_motion_status_configured:
+                return
+            self._require_capability(NATIVE_COMMAND_CAP_OPERATOR_MOTION_STATUS, "operator motion status")
+            try:
+                function = self.library.lingtu_nav_client_read_operator_motion_status_v1
+                function.argtypes = [
+                    ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(_NativeOperatorMotionStatusV1),
+                ]
+                function.restype = ctypes.c_int
+            except AttributeError as exc:
+                raise NativeCommandClientError("native operator motion status ABI is incomplete") from exc
+            self._operator_motion_status_configured = True
+
+    def read_operator_motion_status(self, max_age_ms: int = 250) -> dict[str, object] | None:
+        """Read source ownership; stale snapshots retain facts with fresh=False."""
+        if not 1 <= max_age_ms <= 0xFFFFFFFF:
+            raise ValueError("operator motion status age must be a positive uint32")
+        self.ensure_operator_motion_status_abi()
+        state = _NativeOperatorMotionStatusV1()
+        state.abi_version = NATIVE_OPERATOR_MOTION_STATUS_ABI_VERSION
+        state.struct_size = ctypes.sizeof(state)
+        with self.lock:
+            self.require_open()
+            result = int(self.library.lingtu_nav_client_read_operator_motion_status_v1(
+                self.handle, max_age_ms, ctypes.byref(state),
+            ))
+            if result < 0:
+                raise NativeCommandClientError(self.last_error(self.handle))
+        if result == 0:
+            return None
+        flags = (state.has_active_authority, state.holding, state.has_active_sample, state.fresh)
+        if (result != 1 or state.abi_version != NATIVE_OPERATOR_MOTION_STATUS_ABI_VERSION
+                or state.struct_size != ctypes.sizeof(state) or any(flag not in (0, 1) for flag in flags)
+                or not math.isfinite(state.timestamp_s) or state.timestamp_s <= 0
+                or not math.isfinite(state.received_age_ms) or state.received_age_ms < 0):
+            raise NativeCommandClientError("invalid native operator motion status")
+        source_id = self._decode_fixed_text(state.active_source_id)
+        if state.has_active_authority and (not source_id or state.active_source_epoch == 0):
+            raise NativeCommandClientError("native operator motion status has no active source identity")
+        return {
+            "timestamp_s": float(state.timestamp_s),
+            "active_source_id": source_id,
+            "active_source_epoch": int(state.active_source_epoch),
+            "has_active_authority": bool(state.has_active_authority),
+            "holding": bool(state.holding),
+            "has_active_sample": bool(state.has_active_sample),
+            "last_sample_sequence": int(state.last_sample_sequence),
+            "admitted_sequence": int(state.admitted_sequence),
+            "final_output_sequence": int(state.final_output_sequence),
+            "authority_reason": self._decode_fixed_text(state.authority_reason),
+            "input_gate_reason": self._decode_fixed_text(state.input_gate_reason),
+            "received_age_ms": float(state.received_age_ms),
+            "fresh": bool(state.fresh) and state.received_age_ms <= max_age_ms,
+        }
+
     def ensure_host_state_abi(self) -> None:
         """Validate the single native state-reader boundary used by HostBus."""
 
@@ -1209,12 +1307,13 @@ class NativeCommandSession:
         reference_z: float,
         camera_range_m: float,
         camera_horizontal_fov_rad: float,
-        views: list[dict[str, object]],
+        views: list[dict[str, object]] | None,
         timeout_ms: int,
     ) -> dict[str, object]:
         """Query native 3D observation candidates without issuing motion."""
 
         self.ensure_semantic_view_abi()
+        views = list(views or [])
         if len(views) > 256:
             raise ValueError("semantic view history exceeds 256 views")
         view_buffer = (_NativeSemanticCameraViewV1 * len(views))()
@@ -1241,7 +1340,7 @@ class NativeCommandSession:
                     str(boot_id).encode("utf-8"),
                     str(map_id).encode("utf-8"),
                     int(map_content_epoch),
-                    str(frame_id).encode("utf-8"),
+                    str(frame_id or "map").encode("utf-8"),
                     int(frame_epoch),
                     float(reference_z),
                     float(camera_range_m),
@@ -1739,6 +1838,17 @@ class NativeCommandSession:
                 if self._active_calls == 0:
                     self._state_changed.notify_all()
 
+    def select_navigation_planner(self, name: str, request_id: str) -> dict[str, object]:
+        self.ensure_navigation_abi()
+        self._require_capability(NATIVE_COMMAND_CAP_PLANNER_SELECTION, "planner selection")
+        function = self.library.lingtu_nav_client_select_planner_with_receipt_v1
+        function.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p,
+                            ctypes.c_int, ctypes.POINTER(_NativeNavigationCommandReceiptV1)]
+        function.restype = ctypes.c_int
+        return self._write_navigation_command_receipt(
+            function, name.encode("utf-8"), request_id.encode("utf-8"), 10000,
+        )
+
     def set_navigation_task_speed_limit(
         self, task_id: str, request_id: str, max_speed_mps: float,
     ) -> dict[str, object]:
@@ -1798,6 +1908,97 @@ class NativeCommandSession:
             str(reason or "resume_autonomy").encode("utf-8"),
             self.cancel_timeout_ms,
         )
+
+    def posture(self, action: str, request_id: str, reason: str) -> dict[str, object]:
+        self.ensure_navigation_abi()
+        function = getattr(self.library, f"lingtu_nav_client_{action}_with_receipt_v1")
+        function.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int,
+            ctypes.POINTER(_NativeNavigationCommandReceiptV1),
+        ]
+        function.restype = ctypes.c_int
+        return self._write_navigation_command_receipt(
+            function, request_id.encode("utf-8"), reason.encode("utf-8"),
+            max(10000, self.cancel_timeout_ms),
+        )
+
+    def switch_profile(self, name: str, request_id: str, reason: str) -> dict[str, object]:
+        self.ensure_navigation_abi()
+        function = self.library.lingtu_nav_client_switch_profile_with_receipt_v1
+        function.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int,
+            ctypes.POINTER(_NativeNavigationCommandReceiptV1),
+        ]
+        function.restype = ctypes.c_int
+        return self._write_navigation_command_receipt(
+            function, request_id.encode("utf-8"), name.encode("utf-8"), reason.encode("utf-8"),
+            max(10000, self.cancel_timeout_ms),
+        )
+
+    def external_control(self, kind, session_id, reason, request_id):
+        self.ensure_navigation_abi()
+        function = self.library.lingtu_nav_client_external_control_v1
+        function.argtypes = [
+            ctypes.c_void_p, ctypes.c_int32, ctypes.c_char_p, ctypes.c_char_p,
+            ctypes.c_char_p, ctypes.c_int, ctypes.POINTER(_NativeNavigationCommandReceiptV1),
+        ]
+        function.restype = ctypes.c_int
+        return self._write_navigation_command_receipt(
+            function, kind, session_id.encode(), str(request_id or "").encode(), reason.encode(),
+            max(10000, self.cancel_timeout_ms),
+        )
+
+    def external_frame(self, session_id, sequence, joints, input_window):
+        if len(joints) != 16 or not 1 <= sequence <= 0xFFFFFFFFFFFFFFFF:
+            raise ValueError("external frame requires 16 joints and positive uint64 sequence")
+        targets = (_NativeExternalJointV1 * 16)(*[
+            _NativeExternalJointV1(*(float(joint[field]) for field in ("q", "dq", "kp", "kd", "tau")))
+            for joint in joints
+        ])
+        function = self.library.lingtu_nav_client_external_frame_v1
+        function.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_uint64,
+            ctypes.POINTER(_NativeExternalJointV1), ctypes.c_uint32,
+        ]
+        function.restype = ctypes.c_int
+        with self.lock:
+            self.require_open()
+            result = function(self.handle, session_id.encode(), sequence, input_window, targets, 16)
+            if result < 0:
+                raise NativeCommandClientError(self.last_error(self.handle))
+        return True
+
+    def external_heartbeat(self, session_id):
+        function = self.library.lingtu_nav_client_external_heartbeat_v1
+        function.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        function.restype = ctypes.c_int
+        with self.lock:
+            self.require_open()
+            if function(self.handle, session_id.encode()) < 0:
+                raise NativeCommandClientError(self.last_error(self.handle))
+        return True
+
+    def external_status(self):
+        function = self.library.lingtu_nav_client_external_status_v1
+        function.argtypes = [ctypes.c_void_p, ctypes.POINTER(_NativeExternalStateV1)]
+        function.restype = ctypes.c_int
+        state = _NativeExternalStateV1(abi_version=1, struct_size=ctypes.sizeof(_NativeExternalStateV1))
+        with self.lock:
+            self.require_open()
+            result = function(self.handle, ctypes.byref(state))
+            if result < 0:
+                raise NativeCommandClientError(self.last_error(self.handle))
+        if result == 0:
+            return None
+        return {
+            "session_id": self._decode_fixed_text(state.session_id),
+            "selected": bool(state.selected), "active": bool(state.active),
+            "motors_enabled": bool(state.motors_enabled), "fresh": bool(state.fresh),
+            "last_sequence": int(state.last_sequence), "joint_count": int(state.joint_count),
+            "reason": self._decode_fixed_text(state.reason),
+            "input_window": int(state.input_window),
+            "motor_disable_confirmed": bool(state.motor_disable_confirmed),
+        }
 
     def _request_navigation_task_lifecycle(
         self,

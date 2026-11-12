@@ -236,7 +236,6 @@ int main(int argc,char** argv) try {
   if(!std::isfinite(yaw_tolerance) || yaw_tolerance<=0 || yaw_tolerance>std::acos(-1.))
     throw std::runtime_error("invalid_yaw_tolerance");
   n::Route route;route.goalToleranceM=.025;route.yawToleranceRad=yaw_tolerance;route.maxSpeedMps=.5;
-  route.finalYaw=goal.yaw;
   // The ablation retains the original checked stages with the same binary,
   // map and control limits; it does not disable any final support check.
   if(options.ground_support) {
@@ -267,7 +266,7 @@ int main(int argc,char** argv) try {
   // The input bitmap's voxel size is the only nonlegacy fixture override.
   params.scan.voxelResolution=tree->getResolution();
   const auto safety_config=lingtu::nav::endpoint::commandSafetyConfig(native_config);
-  const double final_reaction=!legacy?std::max(safety_config.cmd_max_age_s,1./native_config.tick_hz):.1;
+  const double final_reaction=!legacy ? 1. / native_config.tick_hz : .1;
   const double final_linear_deceleration=!legacy?std::min(native_config.velocity_smoother.x.deceleration,
       native_config.velocity_smoother.y.deceleration):.5;
   const double final_yaw_deceleration=!legacy?native_config.velocity_smoother.yaw.deceleration:1.;
@@ -301,7 +300,6 @@ int main(int argc,char** argv) try {
   support_config.max_slope=options.max_slope;support_config.max_step_height=options.max_step_height;
   support_config.ground_support=options.ground_support;
   support_config.direct_support_only=options.direct_support_only;
-  support_config.support_radius_cells=options.support_radius_cells;
   support_config.support_depth_cells=options.support_depth_cells;
   support.setConfig(support_config);support.setOctomap(tree);support.preparePoseQueries({start.x,start.y,start.z});
   std::ofstream states(out/"states.csv");

@@ -124,7 +124,7 @@ def test_native_endpoint_only_forwards_inspection_command_requests_to_coordinato
         "inspection_executor.Cancel",
         "inspection_store->Get",
         "active_map_identity()",
-        "control_authority.operatorTakeoverLatched()",
+        "control_authority.held()",
         "motion_stop.clearEndpointMotion",
     )
     for token in forbidden_command_ownership:
@@ -171,9 +171,9 @@ def test_command_coordinator_owns_resume_autonomy_and_zero_downgrade_policy() ->
     pause_block = source.split("CommandKind::kPause", 1)[1].split("CommandKind::kResume", 1)[0]
     cancel_block = source.split("CommandKind::kCancel", 1)[1]
 
-    assert "actions_.operator_takeover_latched()" in resume_block
+    assert "actions_.motion_held()" in resume_block
     assert "inspection_resume_requires_autonomy" in resume_block
-    assert resume_block.index("operator_takeover_latched") < resume_block.index("executor_.Resume")
+    assert resume_block.index("motion_held") < resume_block.index("executor_.Resume")
 
     assert "executor_.RequestPause" in pause_block
     assert "actions_.stop_and_commit" in pause_block

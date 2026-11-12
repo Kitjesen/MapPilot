@@ -15,19 +15,15 @@
 
 namespace lingtu::nav::endpoint {
 
-StopConfirmation::StopConfirmation(std::string producer_boot_id, std::uint64_t output_sequence,
-                                   std::uint64_t zero_published_source_wall_ns,
+StopConfirmation::StopConfirmation(std::uint64_t zero_published_source_wall_ns,
                                    Clock::time_point started_at,
                                    StopConfirmationConfig config)
-    : producer_boot_id_(std::move(producer_boot_id)),
-      zero_published_source_wall_ns_(zero_published_source_wall_ns),
+    : zero_published_source_wall_ns_(zero_published_source_wall_ns),
       started_at_(started_at),
       config_(config) {
-  if (producer_boot_id_.empty() || output_sequence == 0U ||
-      zero_published_source_wall_ns_ == 0U) {
+  if (zero_published_source_wall_ns_ == 0U) {
     throw std::invalid_argument(
-        "stop confirmation requires a sequenced producer identity and "
-        "zero-publication source wall stamp");
+        "stop confirmation requires a zero-publication source wall stamp");
   }
   if (config_.timeout <= std::chrono::milliseconds::zero() ||
       !std::isfinite(config_.linear_speed_threshold_mps) ||
@@ -36,47 +32,23 @@ StopConfirmation::StopConfirmation(std::string producer_boot_id, std::uint64_t o
       config_.angular_speed_threshold_radps < 0.0 || config_.quiet_odometry_samples == 0U) {
     throw std::invalid_argument("invalid stop confirmation configuration");
   }
-  if (config_.evidence_policy != StopConfirmationEvidencePolicy::DriverAckAndOdometry &&
-      config_.evidence_policy != StopConfirmationEvidencePolicy::DriverAckOnly) {
+  if (config_.evidence_policy != StopConfirmationEvidencePolicy::ZeroOutputAndOdometry &&
+      config_.evidence_policy != StopConfirmationEvidencePolicy::ZeroOutputOnly) {
     throw std::invalid_argument("invalid stop confirmation evidence policy");
   }
-  observePublishedZero(output_sequence, zero_published_source_wall_ns);
 }
 
-void StopConfirmation::observePublishedZero(std::uint64_t output_sequence,
-                                            std::uint64_t source_wall_ns) {
-  if (output_sequence == 0U || source_wall_ns == 0U ||
-      (!zero_publications_.empty() &&
-       output_sequence <= zero_publications_.back().output_sequence)) {
-    throw std::invalid_argument("stop zero publication requires a fresh sequenced output");
-  }
-  zero_publications_.push_back({output_sequence, source_wall_ns});
-}
-
-void StopConfirmation::observeDriverAck(const std::string &producer_boot_id,
-                                        std::uint64_t output_sequence, bool accepted,
-                                        std::uint64_t source_stamp_ns) noexcept {
-  if (producer_boot_id != producer_boot_id_ || output_sequence < driver_ack_output_sequence_) {
-    return;
-  }
-  const auto publication = std::find_if(
-      zero_publications_.rbegin(), zero_publications_.rend(),
-      [output_sequence](const ZeroPublication &zero) {
-        return zero.output_sequence == output_sequence;
-      });
-  if (publication == zero_publications_.rend() ||
-      source_stamp_ns <= publication->source_wall_ns) {
-    return;
-  }
-  if (!driver_ack_observed_ || driver_accepted_ != accepted) {
+void StopConfirmation::observeDriverState(bool zero_output,
+                                          std::uint64_t source_stamp_ns) noexcept {
+  if (source_stamp_ns <= zero_published_source_wall_ns_ ||
+      source_stamp_ns <= driver_state_stamp_ns_) return;
+  if (!driver_state_observed_ || driver_zero_output_ != zero_output) {
     quiet_odometry_samples_ = 0U;
     last_qualified_odometry_source_stamp_ns_ = 0U;
   }
-  driver_ack_source_stamp_ns_ = source_stamp_ns;
-  driver_ack_output_sequence_ = output_sequence;
-  zero_published_source_wall_ns_ = publication->source_wall_ns;
-  driver_ack_observed_ = true;
-  driver_accepted_ = accepted;
+  driver_state_stamp_ns_ = source_stamp_ns;
+  driver_state_observed_ = true;
+  driver_zero_output_ = zero_output;
 }
 
 void StopConfirmation::observeQuietOdometry(double source_stamp_s, double linear_speed_mps,
@@ -85,10 +57,10 @@ void StopConfirmation::observeQuietOdometry(double source_stamp_s, double linear
   last_observed_odometry_source_stamp_ns_ = sourceStampNanoseconds(source_stamp_s);
   last_linear_speed_mps_ = linear_speed_mps;
   last_angular_speed_radps_ = angular_speed_radps;
-  if (!driver_ack_observed_ || !driver_accepted_) {
+  if (!driver_state_observed_ || !driver_zero_output_) {
     return;
   }
-  ++post_ack_odometry_samples_;
+  ++post_zero_odometry_samples_;
   const std::uint64_t source_stamp_ns = last_observed_odometry_source_stamp_ns_;
   if (source_stamp_ns == 0U || source_stamp_ns <= last_qualified_odometry_source_stamp_ns_) {
     ++stale_odometry_samples_;
@@ -108,16 +80,13 @@ void StopConfirmation::observeQuietOdometry(double source_stamp_s, double linear
 }
 
 StopConfirmationState StopConfirmation::state(Clock::time_point now) const noexcept {
-  if (driver_ack_observed_ && !driver_accepted_) {
-    return StopConfirmationState::DriverRejected;
-  }
   if (now - started_at_ >= config_.timeout) {
     return StopConfirmationState::TimedOut;
   }
   const bool odometry_confirmed =
-      config_.evidence_policy == StopConfirmationEvidencePolicy::DriverAckOnly ||
+      config_.evidence_policy == StopConfirmationEvidencePolicy::ZeroOutputOnly ||
       quiet_odometry_samples_ >= config_.quiet_odometry_samples;
-  if (driver_ack_observed_ && driver_accepted_ && odometry_confirmed) {
+  if (driver_state_observed_ && driver_zero_output_ && odometry_confirmed) {
     return StopConfirmationState::Confirmed;
   }
   return StopConfirmationState::Pending;
@@ -126,22 +95,21 @@ StopConfirmationState StopConfirmation::state(Clock::time_point now) const noexc
 StopConfirmationDiagnostics StopConfirmation::diagnostics() const noexcept {
   return {
       zero_published_source_wall_ns_,
-      driver_ack_source_stamp_ns_,
+      driver_state_stamp_ns_,
       last_observed_odometry_source_stamp_ns_,
       odometry_samples_observed_,
-      post_ack_odometry_samples_,
+      post_zero_odometry_samples_,
       stale_odometry_samples_,
       moving_odometry_samples_,
       quiet_odometry_samples_,
-      config_.evidence_policy == StopConfirmationEvidencePolicy::DriverAckAndOdometry
+      config_.evidence_policy == StopConfirmationEvidencePolicy::ZeroOutputAndOdometry
           ? config_.quiet_odometry_samples
           : 0U,
-      config_.evidence_policy == StopConfirmationEvidencePolicy::DriverAckAndOdometry,
+      config_.evidence_policy == StopConfirmationEvidencePolicy::ZeroOutputAndOdometry,
       last_linear_speed_mps_,
       last_angular_speed_radps_,
-      driver_ack_observed_,
-      driver_accepted_,
-      driver_ack_output_sequence_,
+      driver_state_observed_,
+      driver_zero_output_,
   };
 }
 
@@ -273,7 +241,7 @@ MotionStopTerminalCommit MotionStopBarrier::deferGoalAbort(const std::string &re
 }
 
 MotionStopResult MotionStopBarrier::failClosed(MotionStopResult result) const {
-  if (!result.pending) actions_.record_stop_evidence_failure(result.reason);
+  if (!result.pending) actions_.hold(result.reason);
   return result;
 }
 
@@ -312,10 +280,8 @@ std::optional<MotionStopResult> MotionStopBarrier::poll() const {
   if (state != StopConfirmationState::Confirmed && pending.key.rfind("pause:", 0) == 0) {
     // Preserve the requested pause and its ticket across a reconnect. A fresh
     // zero publication starts the next evidence attempt; no motion is released.
-    const std::string failure = (state == StopConfirmationState::DriverRejected
-                                    ? "driver_rejected_zero_" : "stop_confirmation_timeout_") +
-                                    pending.failure_suffix;
-    actions_.record_stop_evidence_failure(failure);
+    const std::string failure = "stop_confirmation_timeout_" + pending.failure_suffix;
+    actions_.hold(failure);
     pending.output_sequence = actions_.last_output_sequence();
     pending_confirmation_ = std::move(pending);
     return MotionStopResult{false, failure, true};
@@ -325,9 +291,7 @@ std::optional<MotionStopResult> MotionStopBarrier::poll() const {
     result = pending.commit ? pending.commit()
                             : MotionStopResult{true, pending.confirmed_reason};
   } else {
-    result = {false, (state == StopConfirmationState::DriverRejected
-                         ? "driver_rejected_zero_" : "stop_confirmation_timeout_") +
-                         pending.failure_suffix};
+    result = {false, "stop_confirmation_timeout_" + pending.failure_suffix};
     if (pending.fail_closed) result = failClosed(std::move(result));
   }
   if (pending.retain_completion) {
@@ -405,7 +369,6 @@ MotionStopBarrier::runCancelPipeline(std::optional<MotionStopTerminalCommit> com
   }
   replaceConfirmation();
   actions_.cancel_control();
-  actions_.clear_operator_resume_required();
   actions_.cancel_inspection("navigation_cancelled");
   if (!commit_terminal) commit_terminal = deferGoalAbort("cancelled");
   if (!clearMotionOutputs("cancelled")) {
@@ -451,7 +414,6 @@ MotionStopResult MotionStopBarrier::resumeTask(MotionStopTerminalCommit commit_r
                            [this, commit_resumed = std::move(commit_resumed), source_stamp_s] {
                              if (!actions_.resume_control()) return MotionStopResult{false, "estop_latched"};
                              actions_.set_autonomy_request_not_before(source_stamp_s);
-                             actions_.clear_operator_resume_required();
                              commit_resumed();
                              return MotionStopResult{true, "resume_requested"};
                            });
@@ -511,7 +473,6 @@ MotionStopTerminalBarrierResult MotionStopBarrier::runStopPipeline(
   }
   replaceConfirmation();
   actions_.stop_control();
-  actions_.clear_operator_resume_required();
   actions_.cancel_inspection("navigation_stopped");
   if (defer_goal_terminal) commit_terminal = deferGoalAbort("stopped");
   if (!clearMotionOutputs("stopped")) {
@@ -557,7 +518,6 @@ MotionStopTerminalBarrierResult MotionStopBarrier::runEstopPipeline(
   actions_.latch_estop(estop_reason);
   const bool persisted = actions_.persist_estop_latch(estop_reason);
   actions_.cancel_control();
-  actions_.clear_operator_resume_required();
   actions_.cancel_inspection("estop_latched");
   if (!clearMotionOutputs("estop_latched")) {
     return {
@@ -594,54 +554,44 @@ MotionStopResult MotionStopBarrier::clearEstop(const std::string &precondition_e
           return MotionStopResult{false, "estop_latch_clear_failed_estop_remains_latched"};
         }
         const bool cleared = actions_.clear_control_estop();
-        actions_.clear_operator_resume_required();
         return MotionStopResult{cleared, cleared ? "estop_cleared" : "estop_remains_latched"};
       });
 }
 
-MotionStopResult MotionStopBarrier::resumeAutonomy(const ResumeAutonomyRequest &request) const {
+MotionStopResult MotionStopBarrier::resumeAutonomy(const ResumeRequest &request) const {
   if (!request.precondition_error.empty()) return {false, request.precondition_error};
-  if (!request.operator_takeover_latched && !request.resume_required) {
+  if (!request.held) {
     return {true, "autonomy_already_ready"};
   }
   const std::string key = "resume_autonomy:" + std::to_string(request.source_stamp_s);
   if (auto replay = replayConfirmation(key)) return *replay;
   replaceConfirmation();
   if (!actions_.suspend_motion_outputs("autonomy_resume_ready")) {
-    return {false, "zero_publish_failed_takeover_remains_latched"};
+    return {false, "zero_publish_failed_motion_remains_held"};
   }
-  return confirmTransition(key, "autonomy_resume_ready", "takeover_remains_latched", false,
+  return confirmTransition(key, "autonomy_resume_ready", "motion_remains_held", false,
       [this, source_stamp_s = request.source_stamp_s] {
         if (!actions_.resume_control()) return MotionStopResult{false, "estop_latched"};
         actions_.set_autonomy_request_not_before(source_stamp_s);
-        actions_.clear_operator_resume_required();
         return MotionStopResult{true, "autonomy_resume_ready"};
       });
 }
 
-MotionStopResult MotionStopBarrier::resumeTeleop(const ResumeTeleopRequest &request) const {
+MotionStopResult MotionStopBarrier::resumeTeleop(const ResumeRequest &request) const {
   if (!request.precondition_error.empty()) return {false, request.precondition_error};
-  if (!request.motion_hold_latched && !request.resume_required) return {true, "teleop_already_ready"};
+  if (!request.held) return {true, "teleop_already_ready"};
   const std::string key = "resume_teleop:" + std::to_string(request.source_stamp_s);
   if (auto replay = replayConfirmation(key)) return *replay;
   replaceConfirmation();
   if (!clearMotionOutputs("teleop_resume_ready")) {
-    return {false, "zero_publish_failed_takeover_remains_latched"};
+    return {false, "zero_publish_failed_motion_remains_held"};
   }
-  return confirmTransition(key, "teleop_resume_ready_reassert_command", "takeover_remains_latched", false,
+  return confirmTransition(key, "teleop_resume_ready_reassert_command", "motion_remains_held", false,
       [this, source_stamp_s = request.source_stamp_s] {
         actions_.set_teleop_request_not_before(source_stamp_s);
         if (!actions_.resume_control()) return MotionStopResult{false, "estop_latched"};
-        actions_.clear_operator_resume_required();
         return MotionStopResult{true, "teleop_resume_ready_reassert_command"};
       });
-}
-
-bool MotionStopBarrier::driverAuthorityLost(const std::string &blocker) const {
-  actions_.cancel_control();
-  actions_.clear_operator_resume_required();
-  actions_.cancel_inspection("driver_control_lost:" + blocker);
-  return clearEndpointMotion(blocker);
 }
 
 bool MotionStopBarrier::keepZeroFresh() const {
@@ -681,8 +631,7 @@ FinalShutdownResult MotionStopBarrier::runFinalShutdownPipeline(
   return {result->accepted,
           result->pending ? StopConfirmationState::Pending :
               result->accepted ? StopConfirmationState::Confirmed :
-              result->reason.find("driver_rejected_zero") == 0 ? StopConfirmationState::DriverRejected :
-                                                               StopConfirmationState::TimedOut,
+                                 StopConfirmationState::TimedOut,
           result->pending};
 }
 

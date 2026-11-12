@@ -1,9 +1,6 @@
 #include "app/config/config.hpp"
 
-#include <fstream>
 #include <stdexcept>
-
-#include "collision/body_io.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -64,14 +61,12 @@ const char *globalPlannerBackendName(GlobalPlannerBackend backend) {
 CommandSafetyConfig commandSafetyConfig(const CliConfig &cfg) {
   CommandSafetyConfig out;
   const bool autonomous = cfg.control_mode == ControlMode::Autonomy;
-  out.cmd_max_age_s = cfg.teleop_cmd_max_age_s;
   out.max_speed_mps = autonomous ? cfg.path_follower_max_speed_mps
                                  : cfg.teleop_max_speed_mps;
-  // Keep the final boundary consistent with the product's per-axis motion
-  // budget even for CMU/autonomy output, whose follower exposes only a total
-  // norm limit. The product resolves this shared axis value through the
-  // teleop field so all control modes use one number.
-  out.max_axis_speed_mps = cfg.teleop_max_speed_mps;
+  const bool scan_autonomy = autonomous &&
+      cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan;
+  out.max_vx_mps = scan_autonomy ? cfg.scan_follower.maxVx : cfg.teleop_max_speed_mps;
+  out.max_vy_mps = scan_autonomy ? cfg.scan_follower.maxVy : cfg.teleop_max_speed_mps;
   if (cfg.control_mode == ControlMode::Teleop ||
       cfg.control_mode == ControlMode::TeleopAvoid) {
     // Operator motion is limited per body axis.  Its planar norm is allowed
@@ -102,7 +97,6 @@ InputGateConfig inputGateConfig(const CliConfig &cfg) {
   out.traversability_max_age_s = cfg.traversability_max_age_s;
   out.localization_health_max_age_s = cfg.localization_health_max_age_s;
   out.driver_control_max_age_s = cfg.driver_control_max_age_s;
-  out.require_driver_control = true;
   out.future_tolerance_s = cfg.input_future_tolerance_s;
 
   if (cfg.control_mode == ControlMode::Teleop) {
@@ -176,7 +170,7 @@ StatusWriterConfig buildStatusWriterConfig(const CliConfig &cfg,
   out.local_planner_threads = cfg.local_planner_threads;
   out.stop_confirmation_timeout_s = cfg.stop_confirmation_timeout_s;
   out.stop_confirmation_evidence =
-      cfg.control_mode == ControlMode::Autonomy ? "driver_ack_and_odometry" : "driver_ack";
+      cfg.control_mode == ControlMode::Autonomy ? "zero_output_and_odometry" : "zero_output";
   out.local_planner_debug_candidate_limit = cfg.local_planner_debug_candidate_limit;
   out.local_map_debug_point_limit = cfg.local_map_debug_point_limit;
   out.planner_obstacle_height_min_m = cfg.local_planner_obstacle_height_min_m;
@@ -207,7 +201,6 @@ StatusWriterConfig buildStatusWriterConfig(const CliConfig &cfg,
   out.local_collision_max_age_s = gate_cfg.local_collision_max_age_s;
   out.input_require_traversability = gate_cfg.require_traversability;
   out.input_require_localization_health = gate_cfg.require_localization_health;
-  out.input_require_driver_control = gate_cfg.require_driver_control;
   out.traversability_max_age_s = gate_cfg.traversability_max_age_s;
   out.localization_health_max_age_s = gate_cfg.localization_health_max_age_s;
   out.driver_control_max_age_s = gate_cfg.driver_control_max_age_s;
@@ -279,36 +272,16 @@ nav_kernel::LocalPlannerParams buildLocalPlannerParams(const CliConfig &cfg) {
   return out;
 }
 
-std::shared_ptr<const collision::Body> buildNavigationBody(const CliConfig &cfg) {
-  if (!cfg.navigation_body_file.empty()) {
-    std::ifstream input(cfg.navigation_body_file);
-    if (!input) {
-      throw std::runtime_error("cannot open navigation BODY2 model: " +
-                               cfg.navigation_body_file);
-    }
-    const auto body = collision::readBody(input);
-    if (!body || body->parts.empty()) {
-      throw std::runtime_error("navigation BODY2 model has no collision parts: " +
-                               cfg.navigation_body_file);
-    }
-    body->margin_m = 0.0;
-    body->horizontal_margin_m = cfg.teleop_obstacle_margin_m;
-    return body;
-  }
-  auto body = std::make_shared<collision::Body>();
-  collision::Part box;
-  box.link = "navigation_body";
-  box.shape = collision::Shape::Box;
-  box.center.z = (cfg.collision_clearance_above_m - cfg.collision_clearance_below_m) * 0.5;
-  // The existing horizontal hard clearance is applied exactly once. Vertical
-  // clearances already describe the body-origin-relative collision extent;
-  // neither foot contact nor extra vertical padding is introduced here.
-  box.half_size = {cfg.vehicle_length_m * 0.5 + cfg.teleop_obstacle_margin_m,
-                   cfg.vehicle_width_m * 0.5 + cfg.teleop_obstacle_margin_m,
-                   (cfg.collision_clearance_above_m + cfg.collision_clearance_below_m) * 0.5};
-  body->parts.push_back(std::move(box));
-  body->margin_m = 0.0;
-  return body;
+void applyPlannerGeometry(CliConfig &cfg) {
+  if (cfg.local_planner_backend != nav_kernel::LocalPlannerBackend::Scan) return;
+  auto &octo = cfg.octoplanner_options;
+  // Match mapd's integer-cell vertical inflation; body sweep owns turning clearance.
+  octo.robot_radius = std::max(octo.robot_radius, cfg.collision_cylinder_radius_m);
+  const double resolution = cfg.scan_planner.voxelResolution;
+  octo.body_clearance_below_m = std::max(octo.body_clearance_below_m,
+      std::ceil(cfg.collision_clearance_below_m / resolution) * resolution);
+  octo.body_clearance_above_m = std::max(octo.body_clearance_above_m,
+      std::ceil(cfg.collision_clearance_above_m / resolution) * resolution);
 }
 
 /// Build ExecutorConfig from parsed CLI config.
@@ -316,8 +289,6 @@ std::shared_ptr<const collision::Body> buildNavigationBody(const CliConfig &cfg)
 lingtu::nav::navigation::ExecutorConfig
 buildExecutorConfig(const CliConfig &cfg) {
   lingtu::nav::navigation::ExecutorConfig out;
-  if (cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan)
-    out.body = buildNavigationBody(cfg);
   out.planning_frame = cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan
                            ? lingtu::nav::navigation::PlanningFrame::Map
                            : lingtu::nav::navigation::PlanningFrame::Odom;

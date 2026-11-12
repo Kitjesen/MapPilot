@@ -1625,13 +1625,15 @@ def test_goal_limits_reach_command_and_participate_in_replay_identity(goal_servi
     goal_service._test_commands.send_goal = send_goal
     from types import SimpleNamespace
 
+    from gateway.navigation.commands import submit_goal
     from gateway.navigation.goals import construct_goal_from_request
-    from gateway.navigation.routes import _publish_goal
     from gateway.schemas import ClickNavRequest
     body = ClickNavRequest(x=2, y=1, max_speed_mps=0.2, acceptance_radius_m=0.3)
     goal = construct_goal_from_request(body, default_source="map_click")
     owner = SimpleNamespace(_goals=goal_service)
-    result = _publish_goal(owner, goal, ts=10, task_id="limited-task", request_id="limited-request")
+    result = submit_goal(owner, goal.pose_stamped(ts=10), task_id="limited-task",
+                         request_id="limited-request", max_speed_mps=goal.max_speed_mps,
+                         acceptance_radius_m=goal.acceptance_radius_m)
     assert result["accepted"]
     assert captured == [{"max_speed_mps": 0.2, "acceptance_radius_m": 0.3}]
     rejected = goal_service.submit_goal(goal.pose_stamped(ts=10), task_id="limited-task",
@@ -1668,3 +1670,39 @@ def test_invalid_json_motion_limits_do_not_dispatch(goal_service, key, value):
     assert result["accepted"] is False
     assert "positive and finite" in result["message"]
     assert goal_service._test_commands.goals == []
+
+
+@pytest.mark.parametrize("action, kind", [
+    ("pause", NavigationCommandKind.PAUSE_TASK),
+    ("resume", NavigationCommandKind.RESUME_TASK),
+])
+@pytest.mark.parametrize("outcome", ["accepted", "rejected", "timeout"])
+def test_task_control_real_ledger(goal_service, action, kind, outcome):
+    from types import SimpleNamespace
+
+    from gateway.navigation.commands import CommandBoundaryError, submit_pause, submit_resume
+
+    calls = []
+    def control(task_id, reason, *, request_id):
+        calls.append((task_id, reason, request_id))
+        if outcome == "timeout":
+            raise TimeoutError("ACK timeout")
+        return NavigationCommandReceipt(outcome == "accepted", int(kind), task_id,
+                                        request_id, 101.0, f"{action}_requested")
+    setattr(goal_service._test_commands, f"{action}_task", control)
+    submit = submit_pause if action == "pause" else submit_resume
+    owner = SimpleNamespace(_goals=goal_service)
+    for _ in range(2):
+        if outcome == "accepted":
+            reply = submit(owner, "operator", task_id="control-task", request_id=f"{action}-1")
+            assert reply["state"] == f"{action}_requested"
+        else:
+            with pytest.raises(CommandBoundaryError) as error:
+                submit(owner, "operator", task_id="control-task", request_id=f"{action}-1")
+            if outcome == "timeout":
+                assert error.value.receipt["admission_unconfirmed"] is True
+    assert len(calls) == 1
+    record = goal_service.get_task("control-task")
+    assert record["execution_state"] is None
+    assert record["terminal"] is False
+    assert record["attempts"][0]["kind"] == action

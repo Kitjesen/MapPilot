@@ -73,7 +73,7 @@ InspectionCommandCoordinator::handle(const InspectionCommandRequest &request) {
       const auto active_map = actions_.active_map();
       if (request.task_id != executor_.status().task_id) {
         reason = "inspection_task_id_mismatch";
-      } else if (actions_.operator_takeover_latched()) {
+      } else if (actions_.motion_held()) {
         reason = "inspection_resume_requires_autonomy";
       } else if (active_map) {
         accepted = executor_.Resume(
@@ -240,7 +240,7 @@ void InspectionCommandCoordinator::validateConfiguration() const {
     throw std::invalid_argument("inspection command coordinator cache limit must be positive");
   }
   if (!actions_.route_source_available || !actions_.active_map || !actions_.load_route ||
-      !actions_.operator_takeover_latched || !actions_.stop_and_commit || !actions_.publish_ack ||
+      !actions_.motion_held || !actions_.stop_and_commit || !actions_.publish_ack ||
       !actions_.request_status || !actions_.now_s) {
     throw std::invalid_argument("inspection command coordinator actions are incomplete");
   }

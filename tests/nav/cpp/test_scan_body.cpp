@@ -180,6 +180,20 @@ TEST_F(ScanBodyTest, UsesActualHitBoundsWithoutLosingTheObstacleMargin) {
   EXPECT_EQ(Grid(params,request).inflatedOccupancy({0,0,.5},0),1);
 }
 
+TEST_F(ScanBodyTest, TwinCylindersKeepUpstreamInflatedQueryWithHitBounds) {
+  request.body.reset();
+  params.scan.cylinderOffset = 0;
+  params.scan.cylinderRadius = .32;
+  raw.occupy({.35,.05,.55});
+  inflated.occupy({0,0,.5});
+  snapshot();
+  request.environment.collision.terrain = std::make_shared<const c::Terrain>(
+      std::vector<c::Aabb>{{{.39,.05,.55},{}}}, .1);
+  const Grid grid(params,request);
+  EXPECT_EQ(grid.cylinderOccupancy({0,0,.5},0),1);
+  EXPECT_EQ(grid.brakingOccupancy({{0,0,.5},0},{},.35,4,4),1);
+}
+
 TEST_F(ScanBodyTest, HorizontalMarginKeepsFootFloorContactAndRejectsSideObstacle) {
   auto& foot = body->parts.front();
   foot.shape = c::Shape::Sphere;

@@ -72,11 +72,7 @@ Executor::SegmentTarget Executor::buildSegment(
   SegmentTarget target;
   if (route.empty()) return target;
   if (route.size() == 1) {
-    if (!height_offset_) {
-      height_offset_ = map_body.position.z - route.front().z;
-    }
     nav_kernel::Vec3 body_target = route.front();
-    body_target.z += *height_offset_;
     target.point = body_target;
     target.reachesGoal = true;
     const nav_kernel::Vec3 planning_target =
@@ -89,66 +85,37 @@ Executor::SegmentTarget Executor::buildSegment(
 
   const std::size_t first_segment =
       std::min(progress, route.size() - 2);
-  const auto route_point = [&](std::size_t index, double offset) {
-    nav_kernel::Vec3 point = route[index];
-    point.z += offset;
-    return point;
-  };
-  const auto nearest_projection = [&](double offset,
-                                      std::size_t* nearest_segment,
-                                      nav_kernel::Vec3* projection) {
-    *nearest_segment = first_segment;
-    *projection = projectSegment(
-        map_body.position,
-        route_point(first_segment, offset),
-        route_point(first_segment + 1, offset));
-    double nearest_distance =
-        nav_kernel::distance3D(map_body.position, *projection);
-    for (std::size_t index = first_segment + 1;
-         index + 1 < route.size(); ++index) {
-      const nav_kernel::Vec3 vertex = route_point(index, offset);
-      const nav_kernel::Vec3 candidate = projectSegment(
-          map_body.position, vertex, route_point(index + 1, offset));
-      const double distance =
-          nav_kernel::distance3D(map_body.position, candidate);
-      const bool closer = distance < nearest_distance - 1e-9;
-      const bool forward_vertex_tie =
-          std::abs(distance - nearest_distance) <= 1e-9 &&
-          nav_kernel::distance3D(map_body.position, vertex) <=
-              std::max(0.01, config_.waypoint_reached_m);
-      if (closer || forward_vertex_tie) {
-        *nearest_segment = index;
-        *projection = candidate;
-        nearest_distance = distance;
-      }
-    }
-  };
-
   std::size_t nearest_segment = first_segment;
-  nav_kernel::Vec3 projection{};
-  nearest_projection(height_offset_.value_or(0.0),
-                     &nearest_segment, &projection);
-  if (!height_offset_) {
-    height_offset_ = map_body.position.z - projection.z;
-    nearest_projection(*height_offset_, &nearest_segment, &projection);
+  nav_kernel::Vec3 projection = projectSegment(
+      map_body.position,
+      route[first_segment],
+      route[first_segment + 1]);
+  double nearest_distance =
+      nav_kernel::distance3D(map_body.position, projection);
+  for (std::size_t index = first_segment + 1;
+       index + 1 < route.size(); ++index) {
+    const nav_kernel::Vec3 vertex = route[index];
+    const nav_kernel::Vec3 candidate = projectSegment(
+        map_body.position, vertex, route[index + 1]);
+    const double distance =
+        nav_kernel::distance3D(map_body.position, candidate);
+    const bool closer = distance < nearest_distance - 1e-9;
+    const bool forward_vertex_tie =
+        std::abs(distance - nearest_distance) <= 1e-9 &&
+        nav_kernel::distance3D(map_body.position, vertex) <=
+            std::max(0.01, config_.waypoint_reached_m);
+    if (closer || forward_vertex_tie) {
+      nearest_segment = index;
+      projection = candidate;
+      nearest_distance = distance;
+    }
   }
   progress = nearest_segment;
-
-  // The first edge only connects the measured body pose to its projection on
-  // the global route. Its vertical delta is body heave/local map quantization,
-  // not a terrain slope. Anchor that connector at the measured body height;
-  // all forward route points keep their planned elevation.
+  // The measured start joins the route horizontally; a height discrepancy
+  // must not insert an in-place vertical leg. Forward route heights stay intact.
   projection.z = map_body.position.z;
-
-  // Calibrate the planner route to the body once. Recomputing this offset on
-  // every frame would erase ramps and floor changes whenever the robot lags
-  // behind the requested elevation.
-  const auto planning_route_point = [&](const nav_kernel::Vec3& point) {
-    return map_from_odom.odomPointFromMap(point);
-  };
-
   const nav_kernel::Vec3 projection_planning =
-      planning_route_point(projection);
+      map_from_odom.odomPointFromMap(projection);
   const double projection_distance=nav_kernel::distance3D(segment.back(),projection_planning);
   // A pose-stage boundary already reached within its declared tolerance does
   // not need a millimetre-scale sideways return before the forward reference.
@@ -163,7 +130,7 @@ Executor::SegmentTarget Executor::buildSegment(
   nav_kernel::Vec3 cursor = projection;
   for (std::size_t index = nearest_segment + 1;
        index < route.size(); ++index) {
-    const nav_kernel::Vec3 endpoint = route_point(index, *height_offset_);
+    const nav_kernel::Vec3 endpoint = route[index];
     // Lookahead is travel distance over the ground. Counting elevation in the
     // budget shortens the route segment exactly where a ramp or stair begins.
     const double length = std::hypot(endpoint.x - cursor.x,
@@ -177,7 +144,7 @@ Executor::SegmentTarget Executor::buildSegment(
           cursor.z + ratio * (endpoint.z - cursor.z),
       };
       const nav_kernel::Vec3 planning_target =
-          planning_route_point(target.point);
+          map_from_odom.odomPointFromMap(target.point);
       if (nav_kernel::distance3D(
               segment.back(), planning_target) > 1e-4) {
         segment.push_back(planning_target);
@@ -186,7 +153,7 @@ Executor::SegmentTarget Executor::buildSegment(
     }
     if (length > 1e-9) {
       const nav_kernel::Vec3 point =
-          planning_route_point(endpoint);
+          map_from_odom.odomPointFromMap(endpoint);
       if (nav_kernel::distance3D(
               segment.back(), point) > 1e-4) {
         segment.push_back(point);
@@ -202,7 +169,7 @@ Executor::SegmentTarget Executor::buildSegment(
     }
   }
   target.index = route.size() - 1;
-  target.point = route_point(route.size() - 1, *height_offset_);
+  target.point = route.back();
   target.reachesGoal = true;
   return target;
 }
@@ -219,16 +186,14 @@ void Executor::buildReference(
     reference.clear();
     for (std::size_t index = route.size() - 2; index < route.size(); ++index) {
       auto point = route[index];
-      point.z += height_offset_.value_or(0.0);
       reference.push_back(map_from_odom.odomPointFromMap(point));
     }
   }
-  if (target.reachesGoal || route.empty() || !height_offset_) return;
+  if (target.reachesGoal || route.empty()) return;
 
   const std::size_t first = std::min(target.index, route.size() - 1);
   for (std::size_t index = first; index < route.size(); ++index) {
     nav_kernel::Vec3 point = route[index];
-    point.z += *height_offset_;
     point = map_from_odom.odomPointFromMap(point);
     if (reference.empty() ||
         nav_kernel::distance3D(reference.back(), point) > 1e-4) {
@@ -237,7 +202,7 @@ void Executor::buildReference(
   }
 }
 
-void Executor::applyCommittedLocalGuide(
+void Executor::applyLocalGuide(
     const nav_kernel::Pose& map_body,
     const nav_kernel::Pose& planning_body,
     const MapFromOdomTransform& map_from_odom,
@@ -245,16 +210,14 @@ void Executor::applyCommittedLocalGuide(
   const double commitment_timeout_s =
       std::max(0.5, config_.recovery.blocked_interval_s);
   const bool commitment_expired =
-      committed_local_path_time_s_ < 0.0 || !std::isfinite(timestamp_s) ||
-      timestamp_s < committed_local_path_time_s_ ||
-      timestamp_s - committed_local_path_time_s_ > commitment_timeout_s;
+      guide_stamp_s_ < 0.0 || !std::isfinite(timestamp_s) ||
+      timestamp_s < guide_stamp_s_ ||
+      timestamp_s - guide_stamp_s_ > commitment_timeout_s;
   if (commitment_expired) {
-    committed_local_path_map_.clear();
-    committed_route_generation_ = 0;
-    committed_local_path_time_s_ = -1.0;
+    guide_map_.clear();
   }
-  if (committed_route_generation_ != generation ||
-      committed_local_path_map_.size() < 2 || segment.size() < 2) {
+  if (guide_generation_ != generation ||
+      guide_map_.size() < 2 || segment.size() < 2) {
     return;
   }
 
@@ -263,18 +226,18 @@ void Executor::applyCommittedLocalGuide(
       0.30,
       std::max(0.30, 0.5 * config_.corridor_lookahead_m));
   const auto closest = std::min_element(
-      committed_local_path_map_.begin(), committed_local_path_map_.end(),
+      guide_map_.begin(), guide_map_.end(),
       [&](const nav_kernel::Vec3& left, const nav_kernel::Vec3& right) {
         return nav_kernel::distance3D(map_body.position, left) <
                nav_kernel::distance3D(map_body.position, right);
       });
-  if (closest == committed_local_path_map_.end() ||
-      std::next(closest) == committed_local_path_map_.end()) {
+  if (closest == guide_map_.end() ||
+      std::next(closest) == guide_map_.end()) {
     return;
   }
   const nav_kernel::Vec3* guide_map = nullptr;
   for (auto point = std::next(closest);
-       point != committed_local_path_map_.end(); ++point) {
+       point != guide_map_.end(); ++point) {
     if (nav_kernel::distance3D(map_body.position, *point) >=
         minimum_guide_distance) {
       guide_map = &*point;
@@ -342,16 +305,189 @@ nav_kernel::LocalPlannerDebugSnapshot Executor::debugSnapshotToMap(
   return snapshot;
 }
 
-bool Executor::atGoal(const nav_kernel::Pose& odom_map_body) const {
+bool Executor::atGoal(const nav_kernel::Pose& body) const {
   if (route.empty()) return false;
   const bool task_goal = requested_goal_ &&
       (pose_stages_.empty() || pose_stage_ + 1 == pose_stages_.size());
-  nav_kernel::Vec3 goal = task_goal ? *requested_goal_ : route.back();
-  if (!task_goal) goal.z += height_offset_.value_or(0.0);
-  const double planar_distance =
-      std::hypot(goal.x - odom_map_body.position.x, goal.y - odom_map_body.position.y);
-  return planar_distance <= active_goal_reached_m_ &&
-         std::abs(goal.z - odom_map_body.position.z) <= config_.goal_height_tolerance_m;
+  const auto& goal = task_goal ? *requested_goal_ : route.back();
+  return std::hypot(goal.x - body.position.x, goal.y - body.position.y) <= active_goal_reached_m_ &&
+         std::abs(goal.z - body.position.z) <= config_.goal_height_tolerance_m;
 }
+
+bool TraversabilityGridView::valid() const {
+  return values != nullptr && rows > 0 && cols > 0 && resolution > 0.0;
+}
+
+
+std::vector<nav_kernel::Vec3> Executor::planningPathToBody(
+    const nav_kernel::Pose &body,
+    const std::vector<nav_kernel::Vec3> &planningPath) {
+  std::vector<nav_kernel::Vec3> result;
+  result.reserve(planningPath.size());
+  const double c = std::cos(body.yaw);
+  const double s = std::sin(body.yaw);
+  for (const auto &point : planningPath) {
+    const double dx = point.x - body.position.x;
+    const double dy = point.y - body.position.y;
+    result.push_back({c * dx + s * dy, -s * dx + c * dy,
+                      point.z - body.position.z});
+  }
+  return result;
+}
+
+
+std::vector<nav_kernel::Vec3> Executor::planningPathToMap(
+    const lingtu::nav::navigation::MapFromOdomTransform &mapFromOdom,
+    const std::vector<nav_kernel::Vec3> &planningPath) {
+  std::vector<nav_kernel::Vec3> result;
+  result.reserve(planningPath.size());
+  for (const auto &point : planningPath)
+    result.push_back(mapFromOdom.mapPointFromOdom(point));
+  return result;
+}
+
+
+nav_kernel::LocalPlanRequest Executor::makeLocalPlanRequest(
+    const nav_kernel::Pose &vehicle, const std::vector<nav_kernel::Vec3> &route,
+    const std::vector<nav_kernel::Vec3> *reference_route,
+    std::uint64_t route_generation,
+    nav_kernel::LocalKinematicState kinematics, const ExecutionObservation &observation,
+    const float *obstacle_xyzh, int obstacle_count, double timestamp_s,
+    bool execution_frozen, const TraversabilityGridView &traversability,
+    bool include_traversability,
+    const nav_kernel::LocalMotionIntent *intent) {
+  nav_kernel::LocalRouteView route_view{
+      route.empty() ? nullptr : route.data(),
+      static_cast<int>(route.size()),
+      route_generation,
+  };
+  nav_kernel::LocalPlanRequest request;
+  request.robot = {vehicle, kinematics};
+  request.objective = intent != nullptr
+                          ? nav_kernel::LocalObjective{
+                                nav_kernel::MotionIntentTarget{*intent, route_view}}
+                          : nav_kernel::LocalObjective{nav_kernel::RouteTarget{route_view}};
+  if (reference_route != nullptr && reference_route->size() >= 2U) {
+    request.reference = {
+        reference_route->data(),
+        static_cast<int>(reference_route->size()),
+        route_generation,
+    };
+  }
+  request.identity = {
+      observation.frame_epoch,
+      observation.collision.present() ? observation.collision.generation
+                                      : observation.cloud_generation,
+      include_traversability ? observation.traversability_generation : 0,
+  };
+  request.environment.obstacles = {obstacle_xyzh, obstacle_count};
+  request.environment.collision = observation.collision;
+  request.environment.predictions = observation.predictions;
+  request.environment.no_go_regions = observation.no_go_regions;
+  request.clock = {timestamp_s, execution_frozen, observation.clock_mode};
+  if (include_traversability && traversability.valid()) {
+    request.environment.traversability = {
+        traversability.values, traversability.rows, traversability.cols,
+        traversability.resolution, traversability.origin_x, traversability.origin_y,
+    };
+  }
+  return request;
+}
+
+
+nav_kernel::LocalPlan Executor::planLocal(
+    const nav_kernel::LocalPlanRequest &request,
+    const MapFromOdomTransform &map_from_odom,
+    nav_kernel::LocalPlannerDebugSnapshot *debug) {
+  nav_kernel::LocalPlan plan = local_planner_.plan(request);
+  nav_kernel::Pose map_body;
+  map_body.position = map_from_odom.mapPointFromOdom(request.robot.pose.position);
+  map_body.yaw = nav_kernel::normalizeAngle(map_from_odom.yaw + request.robot.pose.yaw);
+  *debug = debugSnapshotToMap(map_body, local_planner_.debugSnapshot());
+  if (debug->collisionEvidence && config_.planning_frame == PlanningFrame::Odom) {
+    auto &evidence = *debug->collisionEvidence;
+    evidence.rejectedPosition = map_from_odom.mapPointFromOdom(evidence.rejectedPosition);
+    if (evidence.measuredPoints) {
+      auto points = std::make_shared<std::vector<nav_kernel::Vec3>>(*evidence.measuredPoints);
+      for (auto &point : *points) point = map_from_odom.mapPointFromOdom(point);
+      evidence.measuredPoints = std::move(points);
+    }
+  }
+  return plan;
+}
+
+
+ExecutionOutput Executor::tickRoute(const nav_kernel::Pose &map_body,
+                                    const nav_kernel::Pose &odom_body,
+                                    const MapFromOdomTransform &map_from_odom,
+                                    const float *obstacle_xyzh_map, int obstacle_count,
+                                    double timestamp_s, TraversabilityGridView odom_traversability,
+                                    ExecutionObservation observation) {
+  if (config_.planning_frame == PlanningFrame::Odom && !map_from_odom.valid()) {
+    ExecutionOutput output;
+    output.active = !route.empty();
+    output.near_field_stop = output.active;
+    output.reason = "invalid_map_from_odom";
+    recovery_action_ = 0;
+    recovery_attempt_ = -1;
+    recovery_follower_.reset();
+    velocity_stamp_s_ = -1.0;
+    resetLocalPlanning(true);
+    recovery_.reset();
+    resetAutonomyProgress();
+    return output;
+  }
+
+  const int safe_obstacle_count =
+      obstacle_xyzh_map == nullptr ? 0 : std::max(0, obstacle_count);
+  if (config_.planning_frame == PlanningFrame::Map) {
+    if (reference_epoch && *reference_epoch != observation.frame_epoch) {
+      resetMotion();
+    }
+    reference_epoch = observation.frame_epoch;
+    // The occupancy layer and complete reference are already map-frame data.
+    // The optional 2D traversability view is odom-only; do not relabel it.
+    observation.collision.gridFromPlanningTranslation = {};
+    observation.collision.gridFromPlanningYaw = 0.0;
+    return tickInPlanningFrame(map_body, map_body, {}, obstacle_xyzh_map,
+                               safe_obstacle_count, timestamp_s, {}, observation);
+  }
+  obstacle_xyzh_odom_scratch_.clear();
+  predictions_odom_scratch_.clear();
+  if (observation.predictions.fresh(timestamp_s)) {
+    for (std::size_t i = 0; i < observation.predictions.count; ++i) {
+      auto prediction = observation.predictions.obstacles[i];
+      prediction.start = map_from_odom.odomPointFromMap(prediction.start);
+      prediction.end = map_from_odom.odomPointFromMap(prediction.end);
+      prediction.minZ -= map_from_odom.translation.z;
+      prediction.maxZ -= map_from_odom.translation.z;
+      predictions_odom_scratch_.push_back(prediction);
+    }
+  }
+  observation.predictions.obstacles = predictions_odom_scratch_.data();
+  observation.predictions.count = predictions_odom_scratch_.size();
+  obstacle_xyzh_odom_scratch_.reserve(static_cast<std::size_t>(safe_obstacle_count) * 4U);
+  for (int index = 0; index < safe_obstacle_count; ++index) {
+    const nav_kernel::Vec3 point_map{
+        obstacle_xyzh_map[index * 4],
+        obstacle_xyzh_map[index * 4 + 1],
+        obstacle_xyzh_map[index * 4 + 2],
+    };
+    const nav_kernel::Vec3 point_odom = map_from_odom.odomPointFromMap(point_map);
+    obstacle_xyzh_odom_scratch_.push_back(static_cast<float>(point_odom.x));
+    obstacle_xyzh_odom_scratch_.push_back(static_cast<float>(point_odom.y));
+    obstacle_xyzh_odom_scratch_.push_back(static_cast<float>(point_odom.z));
+    obstacle_xyzh_odom_scratch_.push_back(obstacle_xyzh_map[index * 4 + 3]);
+  }
+
+  observation.collision.gridFromPlanningTranslation = map_from_odom.translation;
+  observation.collision.gridFromPlanningYaw = map_from_odom.yaw;
+
+  return tickInPlanningFrame(
+      map_body, odom_body, map_from_odom,
+      obstacle_xyzh_odom_scratch_.empty() ? nullptr : obstacle_xyzh_odom_scratch_.data(),
+      safe_obstacle_count, timestamp_s, odom_traversability, observation);
+}
+
 
 }  // namespace lingtu::nav::navigation

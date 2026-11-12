@@ -22,7 +22,6 @@ using lingtu::nav::endpoint::FinalActions;
 using lingtu::nav::endpoint::FinalInput;
 using lingtu::nav::endpoint::FinalMode;
 using lingtu::nav::endpoint::InputGateState;
-using lingtu::nav::endpoint::enforcePostPlanningInputReadiness;
 using lingtu::nav::endpoint::TeleopDiagnostics;
 using lingtu::nav::endpoint::TeleopTickActions;
 using lingtu::nav::endpoint::TeleopTickController;
@@ -49,7 +48,7 @@ struct Fixture {
   TimingDiagnostics timing;
   PlanView planner_inputs;
   lingtu::nav::navigation::ExecutionOutput planner_output;
-  std::vector<double> ages{0.1, 0.1};
+  std::vector<double> ages{0.1};
   std::size_t age_index{0};
   std::vector<double> now_values{10.0};
   std::size_t now_index{0};
@@ -106,10 +105,9 @@ struct Fixture {
     actions.replan_motion = [&] { ++replan_calls; };
     actions.stop_linear_motion = [&] { ++stop_calls; };
     final_actions.command_safety = [&](const CommandSafetyConfig &config,
-                                       const nav_kernel::Twist &command,
-                                       double age_s) {
+                                       const nav_kernel::Twist &command) {
       ++safety_calls;
-      return lingtu::nav::endpoint::evaluateCommandSafety(config, command, age_s);
+      return lingtu::nav::endpoint::evaluateCommandSafety(config, command);
     };
     final_actions.shape = [&](const nav_kernel::Twist &raw, double now_s) {
       ++shape_calls;
@@ -217,6 +215,15 @@ void testBlockedGatePausesPlannerWithoutCancellingIntent() {
   require(fixture.velocity_stop_calls == 1 &&
               fixture.velocity_stop_reason == "input_cloud_stale",
           "blocked input must hard-stop smoother state");
+  fixture.gate.ready = true;
+  fixture.gate.reason = "ready";
+  fixture.planner_output.active = true;
+  fixture.planner_output.path_found = true;
+  fixture.planner_output.cmd_vel = {0.25, 0.0, 0.0};
+  fixture.planner_output.local_path_map = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
+  const auto resumed = controller.tick(fixture.input());
+  require(resumed.publish.command.vx > 0.0 && fixture.planner_calls == 1,
+          "fresh inputs must resume the retained intent without another resume action");
 }
 
 void testDirectCommandIsAcceptedOrLimitedWithoutPlannerSideEffects() {
@@ -244,7 +251,7 @@ void testDirectCommandIsAcceptedOrLimitedWithoutPlannerSideEffects() {
             "direct command counter mismatch");
     require(fixture.compute_calls == 0 && fixture.planner_calls == 0 && fixture.stop_calls == 0,
             "direct command must not enter or stop an unused planner");
-    require(fixture.age_index == 2 && fixture.safety_calls == 1,
+    require(fixture.age_index == 1 && fixture.safety_calls == 1,
             "direct command must sample publish age once and run final safety once");
   }
 }
@@ -253,9 +260,9 @@ void testDirectCommandMeasuresFinalControlWithoutInventingPlannerTime() {
   Fixture fixture;
   fixture.config.publish_cmd_vel=true;
   const auto safety=fixture.final_actions.command_safety;
-  fixture.final_actions.command_safety=[safety](const auto &config, const auto &command, double age) {
+  fixture.final_actions.command_safety=[safety](const auto &config, const auto &command) {
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    return safety(config,command,age);
+    return safety(config,command);
   };
   TeleopTickController controller(fixture.actions,fixture.control());
   const auto result=controller.tick(fixture.input());
@@ -265,11 +272,11 @@ void testDirectCommandMeasuresFinalControlWithoutInventingPlannerTime() {
           "a direct command must not invent an Executor measurement");
 }
 
-void testPublishTimeStaleOverridesAnEarlierAcceptedDecision() {
+void testExpiredOperatorSampleStopsAfterPlanning() {
   Fixture fixture;
   fixture.config.publish_cmd_vel = true;
   fixture.config.teleop_cmd_max_age_s = 0.35;
-  fixture.ages = {0.1, 0.5};
+  fixture.ages = {0.5};
   TeleopTickController controller(fixture.actions, fixture.control());
 
   const auto result = controller.tick(fixture.input());
@@ -284,8 +291,8 @@ void testPublishTimeStaleOverridesAnEarlierAcceptedDecision() {
           "stale transition must overwrite the accepted nonzero command");
   require(result.delta.teleop_stop_count == 1 && result.delta.teleop_limited_count == 1,
           "stale counters mismatch");
-  require(fixture.age_index == 2 && fixture.safety_calls == 1,
-          "publish-time expiry must be decided by one final safety evaluation");
+  require(fixture.age_index == 1 && fixture.safety_calls == 1,
+          "operator expiry must be checked once after final control");
 }
 
 void testTransportAgeSurvivesAdmissionAndExpiresOnSteadyTime() {
@@ -319,7 +326,7 @@ void testShortSampleBudgetIsRecheckedAfterPlanning() {
     Fixture fixture;
     fixture.config.publish_cmd_vel = true;
     fixture.config.teleop_local_planner = assisted;
-    fixture.ages = {0.08, 0.12};
+    fixture.ages = {0.12};
     fixture.planner_output.active = true;
     fixture.planner_output.path_found = true;
     fixture.planner_output.cmd_vel = {0.2, 0.0, 0.0};
@@ -393,7 +400,7 @@ void testAssistedDiagonalSurvivesAdmissionAndFinalCommand() {
   fixture.config.control_mode = ControlMode::TeleopAvoid;
   fixture.config.teleop_local_planner = true;
   fixture.config.publish_cmd_vel = true;
-  fixture.safety.max_axis_speed_mps = 1.0;
+  fixture.safety.max_vx_mps = fixture.safety.max_vy_mps = 1.0;
   fixture.safety.max_speed_mps = std::hypot(1.0, 1.0);
   fixture.request = {1.0, 1.0, 0.0};
   fixture.actions.tick_teleop_intent =
@@ -424,6 +431,23 @@ void testAssistedDiagonalSurvivesAdmissionAndFinalCommand() {
           "released keys must stop without reusing the previous diagonal plan");
 }
 
+void testTakeoverUsesOperatorLimits() {
+  Fixture fixture;
+  fixture.config.control_mode = ControlMode::Autonomy;
+  fixture.config.publish_cmd_vel = true;
+  fixture.config.teleop_local_planner = false;
+  fixture.config.teleop_max_speed_mps = 0.4;
+  fixture.safety.max_speed_mps = std::sqrt(2.0);
+  fixture.safety.max_vx_mps = 1.2;
+  fixture.safety.max_vy_mps = 1.0;
+  fixture.request = {1.2, 0, 0};
+  TeleopTickController controller(fixture.actions, fixture.control());
+  const auto result = controller.tick(fixture.input());
+  require(result.publish.cmd_vel && result.publish.command.vx == 0.4 &&
+              fixture.committed_command.vx == 0.4,
+          "teleop takeover must retain its own limit inside autonomous nav");
+}
+
 void testManualModeBypassesUnavailablePlanningInputs() {
   for (const char* reason : {"localization_health_stale", "local_collision_missing",
                              "local_collision_future", "collision_stale"}) {
@@ -449,12 +473,7 @@ void testManualModeBypassesUnavailablePlanningInputs() {
             "manual mode must be explicit in native diagnostics");
     require(fixture.compute_calls == 0 && fixture.planner_calls == 0,
             "manual mode must not enter the local planner");
-    bool stop_called = false;
-    const auto post_planning = enforcePostPlanningInputReadiness(
-        result.publish.command, fixture.gate,
-        [&](const std::string&) { stop_called = true; return true; }, true);
-    require(post_planning.allow_publish && !stop_called,
-            "manual planning-input bypass must survive the final input recheck");
+
 
     const auto assisted = controller.tick(fixture.input());
     require(assisted.teleop.stopped && assisted.publish.command.vx == 0.0 &&
@@ -464,13 +483,13 @@ void testManualModeBypassesUnavailablePlanningInputs() {
   }
 }
 
-void testManualModeDoesNotBypassDriverReadiness() {
+void testManualModeDoesNotBypassInvalidClock() {
   Fixture fixture;
   fixture.config.control_mode = ControlMode::TeleopAvoid;
   fixture.config.teleop_local_planner = true;
   fixture.config.publish_cmd_vel = true;
   fixture.gate.ready = false;
-  fixture.gate.reason = "driver_control_stale";
+  fixture.gate.reason = "input_clock_invalid";
   TeleopTickController controller(fixture.actions, fixture.control());
   auto input = fixture.input();
   input.manual_mode = true;
@@ -478,12 +497,12 @@ void testManualModeDoesNotBypassDriverReadiness() {
   const auto result = controller.tick(input);
 
   require(result.teleop.manual_mode && result.teleop.stopped,
-          "manual request must remain visible when driver readiness blocks it");
-  require(result.teleop.reason == "driver_control_stale" &&
+          "manual request must remain visible when the input clock is invalid");
+  require(result.teleop.reason == "input_clock_invalid" &&
               result.publish.command.vx == 0.0,
-          "manual mode must never bypass the driver-control gate");
+          "manual mode must not bypass an invalid input clock");
   require(fixture.planner_calls == 0 && fixture.velocity_stop_calls == 1,
-          "driver-control failure must stop without entering the planner");
+          "an invalid clock must stop without entering the planner");
 }
 
 void testCmuDetourPublishesTranslationAndYawWithoutRecovery() {
@@ -642,10 +661,9 @@ void testVerifiedRecoveryTranslationFlagIsScopedToTranslation() {
   fixture.planner_output.cmd_vel = {0.1, 0.0, 0.0};
   std::vector<bool> verified_translation_flags;
   fixture.final_actions.command_safety = [&](const CommandSafetyConfig &config,
-                                             const nav_kernel::Twist &command,
-                                             double age_s) {
+                                             const nav_kernel::Twist &command) {
     verified_translation_flags.push_back(config.verified_recovery_translation);
-    return lingtu::nav::endpoint::evaluateCommandSafety(config, command, age_s);
+    return lingtu::nav::endpoint::evaluateCommandSafety(config, command);
   };
   TeleopTickController controller(fixture.actions, fixture.control());
 
@@ -923,7 +941,7 @@ void testAssistedPublishTimeStaleUpdatesLocalFinalSafety() {
   fixture.config.teleop_local_planner = true;
   fixture.config.publish_cmd_vel = true;
   fixture.config.teleop_cmd_max_age_s = 0.35;
-  fixture.ages = {0.1, 0.5};
+  fixture.ages = {0.5};
   fixture.planner_inputs.obstacles = &fixture.obstacles;
   fixture.planner_output.active = true;
   fixture.planner_output.path_found = true;
@@ -969,7 +987,7 @@ void testAssistedRotationPausePreservesTrackingProgress() {
   fixture.planner_output.tracking.trajectoryId = 47;
   fixture.planner_output.tracking.executionTimeS = 1.25;
   fixture.final_actions.command_safety = [](const CommandSafetyConfig &,
-                                           const nav_kernel::Twist &, double) {
+                                           const nav_kernel::Twist &) {
     lingtu::nav::endpoint::CommandSafetyDecision decision;
     decision.should_publish = true;
     decision.stopped = true;
@@ -1004,14 +1022,13 @@ void testSafetyReplanEvidenceSurvivesReadyPendingAndInitializationFailure() {
   fixture.now_values = {10.0, 10.01, 10.02, 10.03, 10.04};
   bool safety_blocked = true;
   fixture.final_actions.command_safety = [&](const CommandSafetyConfig &config,
-                                            const nav_kernel::Twist &command,
-                                            double age_s) {
+                                            const nav_kernel::Twist &command) {
     if (!safety_blocked)
-      return lingtu::nav::endpoint::evaluateCommandSafety(config, command, age_s);
+      return lingtu::nav::endpoint::evaluateCommandSafety(config, command);
     lingtu::nav::endpoint::CommandSafetyDecision decision;
     decision.should_publish = true;
     decision.stopped = true;
-    decision.reason = "scan_actual_motion_blocked";
+    decision.reason = "brake_blocked";
     return decision;
   };
   TeleopTickController controller(fixture.actions, fixture.control());
@@ -1019,7 +1036,7 @@ void testSafetyReplanEvidenceSurvivesReadyPendingAndInitializationFailure() {
   const auto stopped = controller.tick(fixture.input());
   const auto &first = stopped.teleop.last_safety_replan;
   require(first.count == 1 && first.stamp_steady_s == 10.0 &&
-              first.reason == "scan_actual_motion_blocked",
+              first.reason == "brake_blocked",
           "the first final-safety replan must retain its reason, sequence and tick time");
   require(first.candidate_cmd_vel.vx == 0.25 && first.candidate_cmd_vel.vy == -0.1 &&
               first.candidate_cmd_vel.wz == 0.2 && first.final_cmd_vel.vx == 0.0 &&
@@ -1165,7 +1182,7 @@ void testHardZeroResetsSmootherBeforeNextCommand() {
   Fixture fixture;
   fixture.config.publish_cmd_vel = true;
   fixture.config.teleop_cmd_max_age_s = 0.35;
-  fixture.ages = {0.1, 0.5};
+  fixture.ages = {0.5};
   fixture.shape_from_mock_state = true;
   fixture.smoother_state = {0.4, 0.0, 0.0};
   TeleopTickController controller(fixture.actions, fixture.control());
@@ -1174,7 +1191,7 @@ void testHardZeroResetsSmootherBeforeNextCommand() {
   require(stopped.teleop.reason == "stale" && fixture.velocity_stop_calls == 1,
           "stale hard zero must reset smoother state");
 
-  fixture.ages = {0.1, 0.1};
+  fixture.ages = {0.1};
   fixture.age_index = 0;
   const auto resumed = controller.tick(fixture.input());
   require(resumed.publish.command.vx == 0.0 && fixture.smoother_state.vx == 0.0,
@@ -1284,13 +1301,13 @@ void testPureRotationUsesFinalControlWithoutATranslationPlan() {
         (void)smoother.Stop(now_s, reason);
       };
       fixture.final_actions.command_safety = [&](const CommandSafetyConfig &safety,
-                                                  const nav_kernel::Twist &raw, double age) {
+                                                  const nav_kernel::Twist &raw) {
         ++safety_calls;
-        auto decision = lingtu::nav::endpoint::evaluateCommandSafety(safety, raw, age);
+        auto decision = lingtu::nav::endpoint::evaluateCommandSafety(safety, raw);
         if (collision_blocked) {
           decision.cmd = {};
           decision.stopped = true;
-          decision.reason = "scan_actual_motion_blocked";
+          decision.reason = "brake_blocked";
         }
         return decision;
       };
@@ -1318,7 +1335,7 @@ void testPureRotationUsesFinalControlWithoutATranslationPlan() {
       collision_blocked = true;
       const auto blocked = controller.tick(fixture.input());
       require(blocked.teleop.stopped && blocked.publish.command.wz == 0.0 &&
-                  blocked.teleop.reason == "scan_actual_motion_blocked",
+                  blocked.teleop.reason == "brake_blocked",
               "pure Q/E must still obey the final collision veto");
       collision_blocked = false;
       fixture.ages = {0.5};
@@ -1370,13 +1387,13 @@ void testDirectYawContinuesFromTheFinalAppliedPathCommand() {
   std::vector<double> safety_candidates;
   bool collision_blocked = false;
   fixture.final_actions.command_safety = [&](const CommandSafetyConfig &config,
-                                              const nav_kernel::Twist &command, double age) {
+                                              const nav_kernel::Twist &command) {
     safety_candidates.push_back(command.wz);
-    auto decision = lingtu::nav::endpoint::evaluateCommandSafety(config, command, age);
+    auto decision = lingtu::nav::endpoint::evaluateCommandSafety(config, command);
     if (collision_blocked) {
       decision.cmd = {};
       decision.stopped = true;
-      decision.reason = "scan_actual_motion_blocked";
+      decision.reason = "brake_blocked";
       return decision;
     }
     decision.cmd.wz *= 0.5;
@@ -1384,48 +1401,46 @@ void testDirectYawContinuesFromTheFinalAppliedPathCommand() {
   };
   auto &control = fixture.control();
   auto result = control.finalize(FinalInput{FinalMode::kTeleopPath, fixture.safety,
-      {0.2, 0.0, 0.6}, 0.1, 0.35, false, true, 10.0});
+      {0.2, 0.0, 0.6}, false, true, 10.0});
   require(std::abs(result.decision.cmd.wz - 0.3) < 1e-9,
           "fixture must first commit the safety-limited path yaw");
   result = control.finalize(FinalInput{FinalMode::kTeleopCommand, fixture.safety,
-      {0.0, 0.0, 1.0}, 0.1, 0.35, false, true, 10.05, 2.0, 0.05});
+      {0.0, 0.0, 1.0}, false, true, 10.05, 2.0, 0.05});
   require(std::abs(safety_candidates.back() - 0.4) < 1e-9 &&
               std::abs(result.decision.cmd.wz - 0.2) < 1e-9,
           "pure yaw must continue from accepted path output before final safety");
   result = control.finalize(FinalInput{FinalMode::kTeleopCommand, fixture.safety,
-      {0.0, 0.0, 1.0}, 0.1, 0.35, false, true, 10.10, 2.0, 0.05});
+      {0.0, 0.0, 1.0}, false, true, 10.10, 2.0, 0.05});
   require(std::abs(safety_candidates.back() - 0.3) < 1e-9 &&
               std::abs(fixture.committed_command.wz - 0.15) < 1e-9,
           "the next yaw step must use actual safety output rather than its old candidate");
   collision_blocked = true;
   result = control.finalize(FinalInput{FinalMode::kTeleopCommand, fixture.safety,
-      {0.0, 0.0, 1.0}, 0.1, 0.35, false, true, 10.15, 2.0, 0.05});
+      {0.0, 0.0, 1.0}, false, true, 10.15, 2.0, 0.05});
   require(std::abs(safety_candidates.back() - 0.25) < 1e-9 &&
               result.decision.cmd.wz == 0.0 && result.decision.stopped &&
-              result.decision.reason == "scan_actual_motion_blocked",
+              result.decision.reason == "brake_blocked",
           "final collision safety must evaluate the limited yaw and retain its immediate veto");
   collision_blocked = false;
   result = control.finalize(FinalInput{FinalMode::kTeleopCommand, fixture.safety,
-      {0.0, 0.0, 1.0}, 0.1, 0.35, false, true, 10.20, 2.0, 0.05});
+      {0.0, 0.0, 1.0}, false, true, 10.20, 2.0, 0.05});
   require(std::abs(safety_candidates.back() - 0.1) < 1e-9,
           "motion after a collision stop must start from accepted zero");
 }
 
 void testDirectYawStopsResetTheAcceptedHistory() {
-  for (const int stop_kind : {0, 1, 2, 3, 4, 5}) {
+  for (const int stop_kind : {0, 2, 3, 4}) {
     Fixture fixture;
     auto &control = fixture.control();
-    const auto finalize = [&](double now, double age = 0.1, double yaw = 1.0) {
+    const auto finalize = [&](double now, double yaw = 1.0) {
       return control.finalize(FinalInput{FinalMode::kTeleopCommand, fixture.safety,
-          {0.0, 0.0, yaw}, age, 0.35, false, true, now, 2.0, 0.05});
+          {0.0, 0.0, yaw}, false, true, now, 2.0, 0.05});
     };
     auto result = finalize(10.0);
     require(std::abs(result.decision.cmd.wz - 0.1) < 1e-9,
             "fixture must first establish a nonzero direct yaw");
     if (stop_kind == 0) {
-      result = finalize(10.05, 0.1, 0.0);
-    } else if (stop_kind == 1) {
-      result = finalize(10.05, 0.5);
+      result = finalize(10.05, 0.0);
     } else if (stop_kind == 2) {
       fixture.shape_valid = false;
       result = finalize(10.05);
@@ -1434,16 +1449,12 @@ void testDirectYawStopsResetTheAcceptedHistory() {
       fixture.commit_succeeds = false;
       result = finalize(10.05);
       fixture.commit_succeeds = true;
-    } else if (stop_kind == 4) {
+    } else {
       control.stop(10.05, "operator_hold");
       result.decision.cmd = {};
-    } else {
-      fixture.safety.cmd_max_age_s = 0.01;
-      result = finalize(10.05);
-      fixture.safety.cmd_max_age_s = 0.35;
     }
     require(result.decision.cmd.wz == 0.0,
-            "zero, stale, failed shape or commit must immediately clear rotation");
+            "zero, failed shape or commit must immediately clear rotation");
     result = finalize(10.05);
     require(result.decision.cmd.wz == 0.0,
             "a second call at the stop timestamp must not spend another first step");
@@ -1486,85 +1497,20 @@ void testRawZeroStillHardStopsSmoother() {
 
 }
 
-void testPostPlanningStaleInputStopsInsteadOfPublishingNonzeroCommand() {
-  InputGateState fresh_gate;
-  fresh_gate.ready = true;
-  fresh_gate.reason = "ready";
-  bool stop_called = false;
-
-  const auto fresh = enforcePostPlanningInputReadiness(
-      {0.2, 0.0, 0.0}, fresh_gate, [&](const std::string &) {
-        stop_called = true;
-        return true;
-      });
-  require(fresh.allow_publish && !fresh.stop_required && !stop_called,
-          "fresh post-planning input must preserve the nonzero publish");
-
-  InputGateState stale_gate;
-  stale_gate.ready = false;
-  stale_gate.reason = "cloud_stale";
-  std::string stop_reason;
-  const auto stale = enforcePostPlanningInputReadiness(
-      {0.2, 0.0, 0.0}, stale_gate, [&](const std::string &reason) {
-        stop_called = true;
-        stop_reason = reason;
-        return true;
-      });
-  require(!stale.allow_publish && stale.stop_required && stale.stop_succeeded,
-          "stale post-planning input must suppress the nonzero publish through the stop path");
-  require(stop_reason == "input_gate_cloud_stale",
-          "post-planning stop must preserve the current input-gate reason");
-
-  stop_called = false;
-  const auto manual = enforcePostPlanningInputReadiness(
-      {0.2, 0.0, 0.0}, stale_gate,
-      [&](const std::string &) {
-        stop_called = true;
-        return true;
-      },
-      true);
-  require(manual.allow_publish && !manual.stop_required && !stop_called,
-          "manual mode must not be re-blocked by the post-planning input gate");
-
-  InputGateState driver_stale_gate;
-  driver_stale_gate.ready = false;
-  driver_stale_gate.reason = "driver_control_stale";
-  const auto driver_stale = enforcePostPlanningInputReadiness(
-      {0.2, 0.0, 0.0}, driver_stale_gate,
-      [&](const std::string &) {
-        stop_called = true;
-        return true;
-      },
-      true);
-  require(!driver_stale.allow_publish && driver_stale.stop_required,
-          "manual mode must still fail closed when driver control is stale");
-
-  stop_called = false;
-  const auto expired_sample = enforcePostPlanningInputReadiness(
-      {0.2, 0.0, 0.0}, fresh_gate,
-      [&](const std::string &reason) {
-        stop_called = true;
-        stop_reason = reason;
-        return true;
-      },
-      true, false);
-  require(!expired_sample.allow_publish && expired_sample.stop_required && stop_called &&
-              stop_reason == "teleop_sample_expired",
-          "manual mode must not publish an expired sample after other DDS writes");
-}
 
 }  // namespace
 
 int main() {
   try {
+    testTakeoverUsesOperatorLimits();
     testIdleTeleopPublishesAZeroHeartbeatForLateJoiningDriver();
     testIdleAutonomyDoesNotPublishTeleopHeartbeat();
     testBlockedGatePausesPlannerWithoutCancellingIntent();
     testManualModeBypassesUnavailablePlanningInputs();
-    testManualModeDoesNotBypassDriverReadiness();
+    testManualModeDoesNotBypassInvalidClock();
     testDirectCommandIsAcceptedOrLimitedWithoutPlannerSideEffects();
     testDirectCommandMeasuresFinalControlWithoutInventingPlannerTime();
-    testPublishTimeStaleOverridesAnEarlierAcceptedDecision();
+    testExpiredOperatorSampleStopsAfterPlanning();
     testTransportAgeSurvivesAdmissionAndExpiresOnSteadyTime();
     testShortSampleBudgetIsRecheckedAfterPlanning();
     testAssistedPathReturnsPlannerArtifactsAndFinalSafetyIntent();
@@ -1597,7 +1543,6 @@ int main() {
     testDirectYawStopsResetTheAcceptedHistory();
     testDirectYawSlewIsScopedToUnsmoothAssistedScan();
     testRawZeroStillHardStopsSmoother();
-    testPostPlanningStaleInputStopsInsteadOfPublishingNonzeroCommand();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "test_teleop_tick_controller: FAIL: %s\n", error.what());
     return 1;

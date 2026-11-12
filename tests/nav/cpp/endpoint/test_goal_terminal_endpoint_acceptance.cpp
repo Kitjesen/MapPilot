@@ -169,7 +169,7 @@ struct Fixture {
     actions.defer_goal_abort = [this](const std::string &reason) {
       return goal_plan.deferAbort(reason);
     };
-    actions.record_stop_evidence_failure = [](const std::string &) {};
+    actions.hold = [](const std::string &) {};
     actions.sync_goal_diagnostics = [] {};
     actions.rolling_segment_active = [] { return false; };
     actions.preempt_rolling_segment = [](const std::string &) { return true; };
@@ -193,9 +193,7 @@ struct Fixture {
     actions.cancel_inspection = [this](const std::string &reason) {
       order.emplace_back("cancel_inspection:" + reason);
     };
-    actions.clear_operator_resume_required = [this] {
-      order.emplace_back("clear_operator_resume_required");
-    };
+
     actions.set_autonomy_request_not_before = [](double) {};
     actions.persist_estop_latch = [this](const std::string &reason) {
       order.emplace_back("persist_estop:" + reason);
@@ -249,7 +247,7 @@ struct Fixture {
   void activateGoal() {
     submitGoalOnly();
     for (int i = 0; i < 1000; ++i) {
-      if (goal_plan.advance(GoalPlanAdvanceContext{7U, false, 2.0 + i * 0.001}).path_activated) {
+      if (goal_plan.advance(GoalPlanAdvanceContext{7U, {}, 2.0 + i * 0.001}).path_activated) {
         return;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -326,7 +324,7 @@ struct Fixture {
           const auto stopped =
               motion_stop.commitGoalTerminalAfterStop(terminal.reason, terminal.commit,
                   result.terminal_stop_policy == TerminalStopPolicy::kReached
-                      ? std::optional{lingtu::nav::endpoint::StopConfirmationEvidencePolicy::DriverAckOnly}
+                      ? std::optional{lingtu::nav::endpoint::StopConfirmationEvidencePolicy::ZeroOutputOnly}
                       : std::nullopt);
           committed = MotionStopTerminalBarrierResult{stopped.accepted, stopped.reason,
                                                       stopped.accepted};
@@ -451,7 +449,6 @@ void testActiveCancelAckIsNotTerminalWriterCompletion() {
   require(first_flush == GoalTerminalStatusDelivery::FlushResult::kDeliveryPending,
           "writer failure did not leave active cancel delivery pending");
   require(fixture.order == std::vector<std::string>{"cancel_control",
-                                                    "clear_operator_resume_required",
                                                     "cancel_inspection:navigation_cancelled",
                                                     "publish_zero_and_clear_motion_outputs",
                                                     "last_output_sequence", "confirm_zero:19",
@@ -496,7 +493,6 @@ void testActiveCancelRetryKeepsCancelStopPolicyAfterUnconfirmedZero() {
   require(fixture.runtime.terminalPending(),
           "unconfirmed zero cleared the cancel terminal intent");
   require(fixture.order == std::vector<std::string>{"cancel_control",
-                                                    "clear_operator_resume_required",
                                                     "cancel_inspection:navigation_cancelled",
                                                     "publish_zero_and_clear_motion_outputs",
                                                     "last_output_sequence", "confirm_zero:19"},
@@ -514,7 +510,6 @@ void testActiveCancelRetryKeepsCancelStopPolicyAfterUnconfirmedZero() {
   require(fixture.terminal_commit_count == 1,
           "confirmed retry did not commit cancel terminal exactly once");
   require(fixture.order == std::vector<std::string>{"cancel_control",
-                                                    "clear_operator_resume_required",
                                                     "cancel_inspection:navigation_cancelled",
                                                     "publish_zero_and_clear_motion_outputs",
                                                     "last_output_sequence", "confirm_zero:19",
@@ -555,7 +550,6 @@ void testActiveStopAckIsNotTerminalWriterCompletion() {
   require(first_flush == GoalTerminalStatusDelivery::FlushResult::kDeliveryPending,
           "writer failure did not leave active stop delivery pending");
   require(fixture.order == std::vector<std::string>{"stop_control",
-                                                    "clear_operator_resume_required",
                                                     "cancel_inspection:navigation_stopped",
                                                     "publish_zero_and_clear_motion_outputs",
                                                     "last_output_sequence", "confirm_zero:19",
@@ -602,7 +596,6 @@ void testActiveStopRetryKeepsStopPolicyAfterUnconfirmedZero() {
   require(fixture.runtime.terminalPending(),
           "unconfirmed zero cleared the stop terminal intent");
   require(fixture.order == std::vector<std::string>{"stop_control",
-                                                    "clear_operator_resume_required",
                                                     "cancel_inspection:navigation_stopped",
                                                     "publish_zero_and_clear_motion_outputs",
                                                     "last_output_sequence", "confirm_zero:19"},
@@ -620,7 +613,6 @@ void testActiveStopRetryKeepsStopPolicyAfterUnconfirmedZero() {
   require(fixture.terminal_commit_count == 1,
           "confirmed retry did not commit stop terminal exactly once");
   require(fixture.order == std::vector<std::string>{"stop_control",
-                                                    "clear_operator_resume_required",
                                                     "cancel_inspection:navigation_stopped",
                                                     "publish_zero_and_clear_motion_outputs",
                                                     "last_output_sequence", "confirm_zero:19",
@@ -663,7 +655,6 @@ void testActiveEstopAckIsNotTerminalWriterCompletion() {
   require(fixture.order == std::vector<std::string>{"latch_estop:operator_request",
                                                     "persist_estop:operator_request",
                                                     "cancel_control",
-                                                    "clear_operator_resume_required",
                                                     "cancel_inspection:estop_latched",
                                                     "publish_zero_and_clear_motion_outputs",
                                                     "last_output_sequence", "confirm_zero:19",
@@ -708,7 +699,6 @@ void testActiveEstopRetryKeepsEstopPolicyAfterPersistFailure() {
   require(fixture.order == std::vector<std::string>{"latch_estop:operator_request",
                                                     "persist_estop:operator_request",
                                                     "cancel_control",
-                                                    "clear_operator_resume_required",
                                                     "cancel_inspection:estop_latched",
                                                     "publish_zero_and_clear_motion_outputs",
                                                     "last_output_sequence", "confirm_zero:19"},
@@ -729,7 +719,6 @@ void testActiveEstopRetryKeepsEstopPolicyAfterPersistFailure() {
   require(fixture.order == std::vector<std::string>{"latch_estop:operator_request",
                                                     "persist_estop:operator_request",
                                                     "cancel_control",
-                                                    "clear_operator_resume_required",
                                                     "cancel_inspection:estop_latched",
                                                     "publish_zero_and_clear_motion_outputs",
                                                     "last_output_sequence", "confirm_zero:19",
@@ -781,7 +770,6 @@ void testDuplicateAlreadyLatchedEstopCompletesPersistWithoutNewTerminal() {
   require(fixture.order == std::vector<std::string>{"latch_estop:operator_request",
                                                     "persist_estop:operator_request",
                                                     "cancel_control",
-                                                    "clear_operator_resume_required",
                                                     "cancel_inspection:estop_latched",
                                                     "publish_zero_and_clear_motion_outputs",
                                                     "last_output_sequence", "confirm_zero:19",
@@ -855,7 +843,6 @@ void testActiveEstopRetryKeepsEstopPolicyAfterZeroUnavailableAndTimeout() {
     require(fixture.order == std::vector<std::string>{"latch_estop:operator_request",
                                                       "persist_estop:operator_request",
                                                       "cancel_control",
-                                                      "clear_operator_resume_required",
                                                       "cancel_inspection:estop_latched",
                                                       "publish_zero_and_clear_motion_outputs",
                                                       "last_output_sequence"},
@@ -893,7 +880,6 @@ void testActiveEstopRetryKeepsEstopPolicyAfterZeroUnavailableAndTimeout() {
     require(fixture.order == std::vector<std::string>{"latch_estop:operator_request",
                                                       "persist_estop:operator_request",
                                                       "cancel_control",
-                                                      "clear_operator_resume_required",
                                                       "cancel_inspection:estop_latched",
                                                       "publish_zero_and_clear_motion_outputs",
                                                       "last_output_sequence",
@@ -934,7 +920,6 @@ void testStopWithoutActiveGoalDoesNotCreateExecutionTerminal() {
   require(fixture.outbox.flush() == 0U,
           "stop without active goal published a fake execution status");
   require(fixture.order == std::vector<std::string>{"stop_control",
-                                                    "clear_operator_resume_required",
                                                     "cancel_inspection:navigation_stopped",
                                                     "publish_zero_and_clear_motion_outputs",
                                                     "last_output_sequence", "confirm_zero:19"},
@@ -964,7 +949,6 @@ void testEstopWithoutActiveGoalDoesNotCreateExecutionTerminal() {
   require(fixture.order == std::vector<std::string>{"latch_estop:operator_request",
                                                     "persist_estop:operator_request",
                                                     "cancel_control",
-                                                    "clear_operator_resume_required",
                                                     "cancel_inspection:estop_latched",
                                                     "publish_zero_and_clear_motion_outputs",
                                                     "last_output_sequence", "confirm_zero:19"},
@@ -1004,7 +988,6 @@ void testSafetyStopServicesReplayedNonStopTerminalFromRuntimeOwner() {
   require(fixture.runtime.terminalPending(),
           "writer failure acknowledged replayed terminal");
   require(fixture.order == std::vector<std::string>{"stop_control",
-                                                    "clear_operator_resume_required",
                                                     "cancel_inspection:navigation_stopped",
                                                     "publish_zero_and_clear_motion_outputs",
                                                     "last_output_sequence", "confirm_zero:19",
@@ -1056,7 +1039,6 @@ void testEstopPreservesExistingPendingTerminalFromRuntimeOwner() {
   require(fixture.order == std::vector<std::string>{"latch_estop:operator_request",
                                                     "persist_estop:operator_request",
                                                     "cancel_control",
-                                                    "clear_operator_resume_required",
                                                     "cancel_inspection:estop_latched",
                                                     "publish_zero_and_clear_motion_outputs",
                                                     "last_output_sequence", "confirm_zero:19",

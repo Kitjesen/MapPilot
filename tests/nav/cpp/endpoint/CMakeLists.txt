@@ -42,6 +42,19 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
   add_test(NAME test_nav_endpoint_config COMMAND test_nav_endpoint_config)
 endif()
 
+if(LINGTU_NAV_CPP_BUILD_TESTS)
+  add_executable(test_planner_selection
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_planner_selection.cpp"
+    "${_ENDPOINT_DIR}/nav/app/planner.cpp"
+    "${_ENDPOINT_DIR}/nav/app/config/build.cpp")
+  target_include_directories(test_planner_selection PRIVATE ${_EP_DIRS} "${_NAV_CORE_DIR}")
+  target_link_libraries(test_planner_selection PRIVATE lingtu_nav_navigation lingtu_nav_far)
+  target_compile_definitions(test_planner_selection PRIVATE
+    LINGTU_TEST_PATH_LIBRARY="${LINGTU_NAV_CPP_ROOT}/planning/local/cmu/paths/go2")
+  lingtu_endpoint_enable_warnings(test_planner_selection)
+  add_test(NAME test_planner_selection COMMAND test_planner_selection)
+endif()
+
 if(LINGTU_NAV_CPP_BUILD_ENDPOINT)
   find_package(CycloneDDS REQUIRED)
   if(WIN32)
@@ -357,25 +370,20 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     COMMAND test_control_loop_health)
 endif()
 
-if(LINGTU_NAV_CPP_BUILD_TESTS
-    AND NOT LINGTU_NAV_CPP_BUILD_ENDPOINT
-    AND EXISTS
-      "${LINGTU_NAV_TESTS_DIR}/endpoint/test_control_loop_runtime_guard.cpp"
-    AND EXISTS
-      "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/guard.cpp")
-  add_executable(test_control_loop_runtime_guard
-    "${LINGTU_NAV_TESTS_DIR}/endpoint/test_control_loop_runtime_guard.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/guard.cpp")
-  target_include_directories(test_control_loop_runtime_guard PRIVATE
-    "${LINGTU_NAV_CPP_ROOT}/endpoint"
+if(LINGTU_NAV_CPP_BUILD_TESTS)
+  set(_CADENCE_DRIVER_DIR "${LINGTU_NAV_CPP_ROOT}/../../drivers/real/motion")
+  add_executable(test_control_cadence
+    "${LINGTU_NAV_TESTS_DIR}/endpoint/test_control_cadence.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/control_loop_health.cpp"
+    "${_CADENCE_DRIVER_DIR}/core.cpp"
+    "${_CADENCE_DRIVER_DIR}/command_freshness_gate.cpp")
+  target_include_directories(test_control_cadence PRIVATE
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status")
-  target_compile_options(test_control_loop_runtime_guard PRIVATE
+    "${_CADENCE_DRIVER_DIR}")
+  target_compile_options(test_control_cadence PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
-  add_test(
-    NAME test_control_loop_runtime_guard
-    COMMAND test_control_loop_runtime_guard)
+  add_test(NAME test_control_cadence COMMAND test_control_cadence)
 endif()
 
 if(LINGTU_NAV_CPP_BUILD_TESTS
@@ -491,22 +499,22 @@ endif()
 if(LINGTU_NAV_CPP_BUILD_TESTS
     AND NOT LINGTU_NAV_CPP_BUILD_ENDPOINT
     AND EXISTS
-      "${LINGTU_NAV_TESTS_DIR}/endpoint/test_goal_terminal_transaction.cpp"
+      "${LINGTU_NAV_TESTS_DIR}/endpoint/test_goal_terminal.cpp"
     AND EXISTS
-      "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/goal_terminal_transaction.cpp")
+      "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/terminal.cpp")
   find_package(Threads REQUIRED)
-  add_executable(test_goal_terminal_transaction
-    "${LINGTU_NAV_TESTS_DIR}/endpoint/test_goal_terminal_transaction.cpp"
+  add_executable(test_goal_terminal
+    "${LINGTU_NAV_TESTS_DIR}/endpoint/test_goal_terminal.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/command/cancel.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/goal_terminal_status_delivery.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/goal_terminal_transaction.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/terminal.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/navigation_goal_status_outbox.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/safety/stop.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/task.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/retry.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/plan.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/runtime.cpp")
-  target_include_directories(test_goal_terminal_transaction PRIVATE
+  target_include_directories(test_goal_terminal PRIVATE
     "${LINGTU_SRC_ROOT}"
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav"
@@ -514,13 +522,13 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}"
     "${LINGTU_NAV_CPP_ROOT}"
     "${LINGTU_NAV_KERNEL_DIR}/include")
-  target_link_libraries(test_goal_terminal_transaction PRIVATE Threads::Threads)
-  target_compile_options(test_goal_terminal_transaction PRIVATE
+  target_link_libraries(test_goal_terminal PRIVATE Threads::Threads)
+  target_compile_options(test_goal_terminal PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
   add_test(
-    NAME test_goal_terminal_transaction
-    COMMAND test_goal_terminal_transaction)
+    NAME test_goal_terminal
+    COMMAND test_goal_terminal)
 endif()
 
 if(LINGTU_NAV_CPP_BUILD_TESTS
@@ -533,8 +541,9 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
   add_executable(test_navigation_runtime_controller
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_navigation_runtime_controller.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/navigation.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/command/cancel.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/goal_terminal_status_delivery.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/goal_terminal_transaction.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/terminal.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/navigation_goal_status_outbox.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/safety/stop.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/task.cpp"
@@ -919,6 +928,8 @@ set(_NAV_CLIENT_TEST_CASES
   inspection_commands
   operator_identity
   operator_receipts
+  operator_status
+  external_bridge
   estop_bypass
   ack_replay
   source_stamp
@@ -1040,30 +1051,30 @@ if(NOT TARGET test_active_path_replan_cycle
            COMMAND test_active_path_replan_cycle)
 endif()
 
-if(NOT TARGET test_goal_terminal_transaction
-    AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_terminal_transaction.cpp")
-  add_executable(test_goal_terminal_transaction
-    "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_terminal_transaction.cpp"
+if(NOT TARGET test_goal_terminal
+    AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_terminal.cpp")
+  add_executable(test_goal_terminal
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_terminal.cpp"
     "${_ENDPOINT_DIR}/nav/command/cancel.cpp"
     "${_ENDPOINT_DIR}/nav/status/goal_terminal_status_delivery.cpp"
-    "${_ENDPOINT_DIR}/nav/status/goal_terminal_transaction.cpp"
+    "${_ENDPOINT_DIR}/nav/app/goal/terminal.cpp"
     "${_ENDPOINT_DIR}/nav/status/navigation_goal_status_outbox.cpp"
     "${_ENDPOINT_DIR}/nav/safety/stop.cpp"
     "${_ENDPOINT_DIR}/nav/app/goal/task.cpp"
     "${_ENDPOINT_DIR}/nav/app/goal/retry.cpp"
     "${_ENDPOINT_DIR}/nav/app/goal/plan.cpp"
     "${_ENDPOINT_DIR}/nav/app/goal/runtime.cpp")
-  target_include_directories(test_goal_terminal_transaction PRIVATE
+  target_include_directories(test_goal_terminal PRIVATE
     "${_ENDPOINT_DIR}"
     "${_LINGTU_ROOT}/src"
     "${_NAV_CORE_DIR}"
     "${_NAV_CORE_DIR}"
     "${_NAV_KERNEL_DIR}/include"
     ${_EP_DIRS})
-  target_link_libraries(test_goal_terminal_transaction PRIVATE Threads::Threads)
-  lingtu_endpoint_enable_warnings(test_goal_terminal_transaction)
-  add_test(NAME test_goal_terminal_transaction
-           COMMAND test_goal_terminal_transaction)
+  target_link_libraries(test_goal_terminal PRIVATE Threads::Threads)
+  lingtu_endpoint_enable_warnings(test_goal_terminal)
+  add_test(NAME test_goal_terminal
+           COMMAND test_goal_terminal)
 endif()
 
 if(NOT TARGET test_navigation_runtime_controller
@@ -1071,8 +1082,9 @@ if(NOT TARGET test_navigation_runtime_controller
   add_executable(test_navigation_runtime_controller
     "${_NAV_ENDPOINT_TESTS_DIR}/test_navigation_runtime_controller.cpp"
     "${_ENDPOINT_DIR}/nav/app/navigation.cpp"
+    "${_ENDPOINT_DIR}/nav/command/cancel.cpp"
     "${_ENDPOINT_DIR}/nav/status/goal_terminal_status_delivery.cpp"
-    "${_ENDPOINT_DIR}/nav/status/goal_terminal_transaction.cpp"
+    "${_ENDPOINT_DIR}/nav/app/goal/terminal.cpp"
     "${_ENDPOINT_DIR}/nav/status/navigation_goal_status_outbox.cpp"
     "${_ENDPOINT_DIR}/nav/safety/stop.cpp"
     "${_ENDPOINT_DIR}/nav/app/goal/task.cpp"
@@ -1541,22 +1553,7 @@ if(NOT TARGET test_control_loop_health
     NAME test_control_loop_health
     COMMAND test_control_loop_health)
 endif()
-if(NOT TARGET test_control_loop_runtime_guard
-    AND EXISTS
-      "${_NAV_ENDPOINT_TESTS_DIR}/test_control_loop_runtime_guard.cpp"
-    AND EXISTS
-      "${_ENDPOINT_DIR}/nav/control/guard.cpp")
-  add_executable(test_control_loop_runtime_guard
-    "${_NAV_ENDPOINT_TESTS_DIR}/test_control_loop_runtime_guard.cpp"
-    "${_ENDPOINT_DIR}/nav/control/guard.cpp")
-  target_include_directories(test_control_loop_runtime_guard PRIVATE
-    "${_ENDPOINT_DIR}"
-    ${_EP_DIRS})
-  lingtu_endpoint_enable_warnings(test_control_loop_runtime_guard)
-  add_test(
-    NAME test_control_loop_runtime_guard
-    COMMAND test_control_loop_runtime_guard)
-endif()
+
 if(NOT TARGET test_nav_status_publisher
     AND EXISTS
       "${_NAV_ENDPOINT_TESTS_DIR}/test_nav_status_publisher.cpp")

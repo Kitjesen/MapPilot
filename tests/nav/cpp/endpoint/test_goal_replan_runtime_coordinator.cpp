@@ -183,7 +183,7 @@ struct Fixture {
     actions.defer_goal_abort = [this](const std::string &reason) {
       return goal_plan.deferAbort(reason);
     };
-    actions.record_stop_evidence_failure = [](const std::string &) {};
+    actions.hold = [](const std::string &) {};
     actions.sync_goal_diagnostics = [] {};
     actions.rolling_segment_active = [] { return false; };
     actions.preempt_rolling_segment = [](const std::string &) { return true; };
@@ -198,7 +198,7 @@ struct Fixture {
     actions.clear_control_estop = [] { return true; };
     actions.resume_control = [] { return true; };
     actions.cancel_inspection = [](const std::string &) {};
-    actions.clear_operator_resume_required = [] {};
+
     actions.set_autonomy_request_not_before = [](double) {};
     actions.persist_estop_latch = [](const std::string &) { return true; };
     actions.clear_persisted_estop_latch = [] { return true; };
@@ -239,7 +239,7 @@ struct Fixture {
   void activate(const GoalPlanRequest &goal) {
     require(goal_plan.submit(goal, admission()).accepted, "fixture goal submission failed");
     for (int i = 0; i < 1000; ++i) {
-      const auto result = goal_plan.advance(GoalPlanAdvanceContext{3U, false, 2.0});
+      const auto result = goal_plan.advance(GoalPlanAdvanceContext{3U, {}, 2.0});
       if (result.path_activated) {
         return;
       }
@@ -426,24 +426,24 @@ void testNormalReplanChainHasNoIntermediateTerminal() {
   }
 }
 
-void testRuntimeGuardHoldPausesInFlightReplanWithoutTerminal() {
+void testInputGapPausesInFlightReplanWithoutTerminal() {
   Fixture fixture;
   fixture.activate(fixture.request());
   fixture.block_on_call.store(2);
   (void)fixture.startReplan(70.0);
-  fixture.waitForPlannerCalls(2, "runtime-hold planner call did not start");
+  fixture.waitForPlannerCalls(2, "input-gap planner call did not start");
 
   auto held_input = fixture.frameInput(70.6);
-  held_input.control_hold = true;
-  held_input.fresh_admission.operator_takeover_latched = true;
+  held_input.fresh_admission.input_ready = false;
+  held_input.fresh_admission.input_gate_reason = "collision_stale";
   const auto held = fixture.coordinator.advancePlanningCycle(held_input);
 
-  require(held.handled && held.reason == "control_hold_pending" && held.zero_kept_fresh &&
+  require(held.handled && held.reason == "input_gate_hold_pending" && held.zero_kept_fresh &&
               !held.terminal_after_stop.has_value() && !fixture.coordinator.terminalPending(),
-          "runtime guard hold cancelled or terminalized an in-flight replan");
+          "input gap cancelled or terminalized an in-flight replan");
   require(fixture.goal_plan.snapshot().active_task_id == "task-a" &&
               fixture.cancelled_plans.load() == 0 && fixture.keep_zero_calls > 0,
-          "runtime guard hold changed the active goal or stopped refreshing zero");
+          "input gap changed the active goal or stopped refreshing zero");
 
   fixture.release_blocked.store(true);
   bool resumed = false;
@@ -457,41 +457,9 @@ void testRuntimeGuardHoldPausesInFlightReplanWithoutTerminal() {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   require(resumed && fixture.goal_plan.snapshot().active_task_id == "task-a",
-          "in-flight replan did not resume after runtime guard hold cleared");
+          "in-flight replan did not resume after input gap cleared");
 }
 
-void testDriverBlockerPausesInFlightReplanWithoutTerminal() {
-  Fixture fixture;
-  fixture.activate(fixture.request());
-  fixture.block_on_call.store(2);
-  (void)fixture.startReplan(71.0);
-  fixture.waitForPlannerCalls(2, "driver-hold planner call did not start");
-
-  auto held_input = fixture.frameInput(71.6);
-  held_input.fresh_admission.driver_control_blocker = "driver_control_rejected";
-  const auto held = fixture.coordinator.advancePlanningCycle(held_input);
-
-  require(held.handled && held.reason == "driver_control_hold_pending" && held.zero_kept_fresh &&
-              !held.terminal_after_stop.has_value() && !fixture.coordinator.terminalPending(),
-          "transient driver blocker cancelled or terminalized an in-flight replan");
-  require(fixture.goal_plan.snapshot().active_task_id == "task-a" &&
-              fixture.cancelled_plans.load() == 0 && fixture.keep_zero_calls > 0,
-          "transient driver blocker changed the active goal or stopped refreshing zero");
-
-  fixture.release_blocked.store(true);
-  bool resumed = false;
-  for (int i = 0; i < 1000; ++i) {
-    const auto result =
-        fixture.coordinator.advancePlanningCycle(fixture.frameInput(71.7 + i * 0.001));
-    if (result.plan_advance.path_activated) {
-      resumed = true;
-      break;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
-  require(resumed && fixture.goal_plan.snapshot().active_task_id == "task-a",
-          "in-flight replan did not resume after driver control recovered");
-}
 
 void testLegacyRecoveryReasonWithoutTypedTriggerDoesNotArm() {
   Fixture fixture;
@@ -807,14 +775,14 @@ void testExternalGoalReachedIntentReplaysUntilExactAck() {
               timeout_retry.terminal_intent_id == intent_id,
           "timed-out reached intent did not replay its exact ID");
 
-  fixture.confirmation = StopConfirmationState::DriverRejected;
+  fixture.confirmation = StopConfirmationState::Pending;
   require(!fixture.tryCommitTerminal(timeout_retry).accepted &&
               fixture.countStatus("task-a", NavigationGoalState::Reached) == 0U,
-          "driver-rejected reached stop published a terminal");
+          "unconfirmed reached stop published a terminal");
   const auto rejected_retry = fixture.coordinator.advancePlanningCycle(fixture.frameInput(16.2));
   require(rejected_retry.terminal_after_stop.has_value() &&
               rejected_retry.terminal_intent_id == intent_id,
-          "driver-rejected reached intent did not replay its exact ID");
+          "unconfirmed reached intent did not replay its exact ID");
   require(!fixture.coordinator.acknowledgeTerminal(intent_id + 1U) &&
               fixture.coordinator.terminalPending(),
           "wrong acknowledgement cleared a reached terminal intent");
@@ -884,7 +852,7 @@ void testGoalReachedMapDriftFailsClosed() {
               fixture.countStatus("task-a", NavigationGoalState::Reached) == 0U,
           "reached map drift did not commit exactly one Failed terminal");
 }
-void testGoalReachedHonorsCurrentMapDriftAndControlHold() {
+void testGoalReachedHonorsCurrentMapDrift() {
   Fixture drift;
   drift.activate(drift.request());
   auto drift_input = drift.frameInput(19.0);
@@ -900,20 +868,6 @@ void testGoalReachedHonorsCurrentMapDriftAndControlHold() {
   require(drift.countStatus("task-a", NavigationGoalState::Failed) == 1U &&
               drift.countStatus("task-a", NavigationGoalState::Reached) == 0U,
           "current map drift did not commit exactly one Failed terminal");
-
-  Fixture held;
-  held.activate(held.request());
-  auto held_input = held.frameInput(19.1);
-  const auto held_event = held.reachedEvent();
-  held_input.control_hold = true;
-  const auto ignored = held.coordinator.handleAutonomyOutcome(held_input, held_event);
-
-  require(ignored.handled && ignored.reason == "goal_reached_control_hold_ignored" &&
-              !ignored.terminal_after_stop.has_value() && !held.coordinator.terminalPending(),
-          "control-held reach consumed the active goal");
-  require(held.goal_plan.snapshot().active_task_id == "task-a" &&
-              held.countStatus("task-a", NavigationGoalState::Reached) == 0U,
-          "control-held reach changed the active lifecycle");
 }
 void testGoalReachedRequiresStableCapturedAndCurrentPlan() {
   auto require_unstable = [](Fixture &fixture, const GoalReplanRuntimeResult &result) {
@@ -1146,6 +1100,7 @@ void testReplacementWaitsForFreshInputsThenReplansFromStoppedPose() {
   }
 }
 
+
 void testReplacementInputWaitStillHonorsCancelAndSupersession() {
   for (const auto interruption : {GoalReplanRuntimeInterruption::kCancel,
                                   GoalReplanRuntimeInterruption::kNewGoal}) {
@@ -1337,8 +1292,6 @@ void testDeferredReplacementInterruptionsCloseBWithExactNonProjectingTerminals()
        TerminalStopPolicy::kEstop},
       {GoalReplanRuntimeInterruption::kShutdown, NavigationGoalState::Cancelled, "navd_shutdown",
        TerminalStopPolicy::kShutdown},
-      {GoalReplanRuntimeInterruption::kDriverAuthorityLost, NavigationGoalState::Cancelled,
-       "driver_authority_lost", TerminalStopPolicy::kGenericStop},
       {GoalReplanRuntimeInterruption::kControlHold, NavigationGoalState::Cancelled, "control_hold",
        TerminalStopPolicy::kGenericStop},
       {GoalReplanRuntimeInterruption::kInspectionPause, NavigationGoalState::Cancelled,
@@ -2105,38 +2058,6 @@ void testInFlightReplanPauseDrainsBeforeResume() {
           "resumed cancelled search did not complete the same retained destination");
 }
 
-void testDriverHeartbeatGapPreservesPendingReplan() {
-  Fixture fixture;
-  fixture.activate(fixture.request());
-  fixture.fail_on_call.store(2);
-  (void)fixture.startReplan(450.0);
-  const auto waiting = fixture.waitForPlanning(
-      [](const GoalReplanRuntimeResult &result) { return result.plan_advance.completion_consumed; },
-      450.501);
-  require(waiting.reason == "replan_waiting", "driver-gap fixture did not enter waiting");
-  const auto interrupted = fixture.coordinator.interrupt(
-      GoalReplanRuntimeInterruption::kDriverAuthorityLost, 451.0);
-  require(!interrupted.terminal_after_stop.has_value() && fixture.coordinator.replanPending() &&
-              fixture.goal_plan.snapshot().active_task_id == "task-a",
-          "temporary driver heartbeat gap discarded the retained retry");
-  auto blocked = fixture.frameInput(452.0);
-  blocked.fresh_admission.driver_control_blocker = "driver_heartbeat_stale";
-  const auto held = fixture.coordinator.advancePlanningCycle(blocked);
-  require(held.reason == "driver_control_hold_pending" && held.zero_kept_fresh &&
-              !held.replan_started && !held.terminal_after_stop.has_value() &&
-              fixture.planner_calls.load() == 2 &&
-              !decideGoalTerminalScheduling(held, false).run_autonomy_tick,
-          "driver gap started a search or resumed the old path");
-  const auto resumed = fixture.coordinator.advancePlanningCycle(fixture.frameInput(453.0));
-  require(resumed.replan_started && !resumed.terminal_after_stop.has_value(),
-          "healthy driver heartbeat did not resume the retained retry");
-  const auto completed = fixture.waitForPlanning(
-      [](const GoalReplanRuntimeResult &result) { return result.plan_advance.path_activated; },
-      453.001);
-  require(completed.reason == "replan_completed" && fixture.activations.size() == 2U &&
-              !fixture.coordinator.replanPending(),
-          "driver recovery did not activate a new path for the same destination");
-}
 
 void testTerminalIntentPersistsUntilExactSuccessfulAck() {
   Fixture fixture;
@@ -2164,13 +2085,13 @@ void testTerminalIntentPersistsUntilExactSuccessfulAck() {
   require(retry.terminal_after_stop.has_value() && retry.terminal_intent_id == first_intent_id,
           "timed-out terminal intent was not resurfaced");
 
-  fixture.confirmation = StopConfirmationState::DriverRejected;
+  fixture.confirmation = StopConfirmationState::Pending;
   require(!fixture.tryCommitTerminal(retry).accepted,
-          "driver-rejected stop unexpectedly committed terminal");
+          "unconfirmed stop unexpectedly committed terminal");
   auto final_retry = fixture.coordinator.advancePlanningCycle(fixture.frameInput(46.1));
   require(final_retry.terminal_after_stop.has_value() &&
               final_retry.terminal_intent_id == first_intent_id,
-          "driver-rejected terminal intent was not resurfaced");
+          "unconfirmed terminal intent was not resurfaced");
   const auto blocked_new_goal =
       fixture.coordinator.interrupt(GoalReplanRuntimeInterruption::kNewGoal, 46.15);
   require(blocked_new_goal.terminal_after_stop.has_value() &&
@@ -2548,6 +2469,32 @@ void testOperatorTakeoverPausesAndPreservesEverySingleGoalPhase() {
   }
 }
 
+void testFaultPauseKeepsGoal() {
+  Fixture fixture;
+  fixture.activate(fixture.request());
+  const auto before = fixture.goal_plan.snapshot();
+  fixture.confirmation = StopConfirmationState::Pending;
+  auto frame = fixture.frameInput(530.0);
+  frame.fresh_admission.hold_reason = "stop_confirmation_timeout";
+  const auto held = fixture.coordinator.advancePlanningCycle(frame);
+  require(held.reason == "task_pause_pending" && !held.terminal_after_stop &&
+              fixture.goal_plan.snapshot().active_task_id == before.active_task_id,
+          "automatic fault must pause the original goal instead of cancelling it");
+  fixture.confirmation = StopConfirmationState::TimedOut;
+  const auto retry = fixture.motion_stop.poll();
+  require(retry && retry->pending && fixture.goal_plan.snapshot().pause_pending,
+          "another stop timeout must retain the paused-goal transaction");
+  fixture.confirmation = StopConfirmationState::Confirmed;
+  const auto confirmed = fixture.motion_stop.poll();
+  require(confirmed && confirmed->accepted && fixture.goal_plan.snapshot().active_paused,
+          "confirmed stop must commit the fault pause");
+  const auto recovered = fixture.coordinator.advancePlanningCycle(fixture.frameInput(530.1));
+  require(recovered.reason == "task_paused" && !recovered.pending_resumed &&
+              fixture.goal_plan.snapshot().active_goal_epoch == before.active_goal_epoch &&
+              fixture.countStatus(before.active_task_id, NavigationGoalState::Cancelled) == 0U,
+          "clearing a fault must not cancel or automatically restart its goal");
+}
+
 void testIntentionalInterruptionsCancelActiveAttempt() {
   const std::vector<GoalReplanRuntimeInterruption> interruptions = {
       GoalReplanRuntimeInterruption::kNewGoal,
@@ -2683,22 +2630,22 @@ void testIneligibleOutcomesNeverTakeOver() {
 }
 
 void testPendingReplanObservesRuntimeChangesBeforeSubmission() {
-  for (int change = 0; change < 6; ++change) {
+  for (int change = 1; change < 6; ++change) {
     Fixture fixture;
     fixture.activate(fixture.request());
     require(fixture.arm(235.0).reason == "backoff_pending", "fixture did not arm retry");
     auto frame = fixture.frameInput(235.5);
     const char *reason = nullptr;
     switch (change) {
-      case 0: frame.control_hold = true; reason = "control_hold_pending"; break;
       case 1:
         frame.fresh_admission.input_ready = false;
         frame.fresh_admission.input_gate_reason = "collision_stale";
         reason = "input_gate_hold_pending";
         break;
       case 2:
-        frame.fresh_admission.driver_control_blocker = "driver_control_stale";
-        reason = "driver_control_hold_pending";
+        frame.fresh_admission.input_ready = false;
+        frame.fresh_admission.input_gate_reason = "odom_stale";
+        reason = "input_gate_hold_pending";
         break;
       case 3: frame.map_drift = true; reason = "map_drift"; break;
       case 4: frame.inspection_active = true; reason = "control_hold"; break;
@@ -3005,19 +2952,20 @@ void testInitialSearchFailuresRemainPlanningAcrossRuntimeRetries() {
     require(held.zero_kept_fresh && held.reason == "planning_waiting" &&
                 !held.terminal_after_stop && fixture.planner_calls == 1,
             "initial runtime retry did not retain zero output during backoff");
-    auto driver_gap = fixture.frameInput(now_s + .5);
-    driver_gap.fresh_admission.driver_control_blocker = "driver_control_stale";
-    const auto driver_held = fixture.coordinator.drainPendingCycle(driver_gap);
-    require(driver_held.zero_kept_fresh && driver_held.reason == "pending_waiting_for_driver" &&
-                !driver_held.terminal_after_stop && fixture.goal_plan.snapshot().pending_plan_queued,
-            "driver gap ended an initial pending runtime goal");
+    auto input_gap = fixture.frameInput(now_s + .5);
+    input_gap.fresh_admission.input_ready = false;
+    input_gap.fresh_admission.input_gate_reason = "odom_stale";
+    const auto input_held = fixture.coordinator.drainPendingCycle(input_gap);
+    require(input_held.zero_kept_fresh && input_held.reason == "pending_waiting_for_inputs" &&
+                !input_held.terminal_after_stop && fixture.goal_plan.snapshot().pending_plan_queued,
+            "input gap ended an initial pending runtime goal");
 
     fixture.fail_on_call = 2;
     now_s += .51;
     auto fresh = fixture.frameInput(now_s);
     fresh.fresh_admission.map_position = nav_kernel::Vec3{1, 2, 0};
     require(fixture.coordinator.drainPendingCycle(fresh).pending_resumed,
-            "initial runtime goal did not resume with recovered driver");
+            "initial runtime goal did not resume with recovered inputs");
     (void)complete();
     require(fixture.goal_plan.snapshot().pending_plan_queued && fixture.activations.empty() &&
                 !fixture.coordinator.terminalPending(),
@@ -3042,8 +2990,7 @@ int main() {
   testInitialSearchFailuresRemainPlanningAcrossRuntimeRetries();
   testInspectionLocalRecoveryRetriesWithoutEndingTheWaypoint();
   testNormalReplanChainHasNoIntermediateTerminal();
-  testRuntimeGuardHoldPausesInFlightReplanWithoutTerminal();
-  testDriverBlockerPausesInFlightReplanWithoutTerminal();
+  testInputGapPausesInFlightReplanWithoutTerminal();
   testLegacyRecoveryReasonWithoutTypedTriggerDoesNotArm();
   testExternalTerminalFailureWaitsForStopAndEndsWithoutReplanning();
   testStaleExternalTerminalFailureCannotEndTheCurrentGoal();
@@ -3058,7 +3005,7 @@ int main() {
   testExternalGoalReachedIntentReplaysUntilExactAck();
   testStaleGoalReachedIdentityIsIgnored();
   testGoalReachedMapDriftFailsClosed();
-  testGoalReachedHonorsCurrentMapDriftAndControlHold();
+  testGoalReachedHonorsCurrentMapDrift();
   testGoalReachedRequiresStableCapturedAndCurrentPlan();
   testReachedClosesAThenResumesPendingB();
   testReplacementCompletionDefersBActivationUntilOldActiveTerminalAck();
@@ -3079,7 +3026,6 @@ int main() {
   testPlannerNoPathWaitsAndRetriesSameGoal();
   testPendingReplanPauseResumeKeepsDestination();
   testInFlightReplanPauseDrainsBeforeResume();
-  testDriverHeartbeatGapPreservesPendingReplan();
   testTerminalIntentPersistsUntilExactSuccessfulAck();
   testReplayPendingTerminalIsReadOnlyExactSingleOwnerView();
   testSameTaskCanReplanAgainAfterSuccessAndResume();
@@ -3087,6 +3033,7 @@ int main() {
   testPendingRejectionClosesBThenDefersA();
   testReplacementPlannerFailureDefersOldActiveTerminal();
   testOperatorTakeoverPausesAndPreservesEverySingleGoalPhase();
+  testFaultPauseKeepsGoal();
   testIntentionalInterruptionsCancelActiveAttempt();
   testInspectionInterruptionsProduceCancelledTicketsWithDiagnosticReasons();
   testIneligibleOutcomesNeverTakeOver();

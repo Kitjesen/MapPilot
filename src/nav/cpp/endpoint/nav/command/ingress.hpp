@@ -19,6 +19,9 @@ struct CommandPayload {
   std::string frame_id;
   std::array<double, 9> goal{};
   std::string reason;
+  std::string profile_name;
+  std::string external_session_id{};
+  std::string local_planner;
 
   [[nodiscard]] std::string canonical() const;
 };

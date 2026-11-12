@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 
 #include "planning/rolling/segment.hpp"
@@ -382,6 +383,13 @@ CliConfig parseArgs(int argc, char **argv) {
         local_planner, "LINGTU_NAV_LOCAL_PLANNER_BACKEND");
   }
   cfg.product = envOrEmpty("LINGTU_PRODUCT");
+  if (const auto names = envOrEmpty("LINGTU_NAV_LOCAL_PLANNERS"); !names.empty()) {
+    cfg.local_planners.clear();
+    std::istringstream stream(names);
+    std::string name;
+    while (std::getline(stream, name, ','))
+      cfg.local_planners.push_back(parseLocalPlannerBackend(name, "LINGTU_NAV_LOCAL_PLANNERS"));
+  }
   cfg.product_session_id = envOrEmpty("LINGTU_PRODUCT_SESSION_ID");
   if (const auto value = envOrEmpty("LINGTU_NAV_MAX_SPEED_MPS"); !value.empty())
     cfg.path_follower_max_speed_mps = parseMotionLimit(value, "LINGTU_NAV_MAX_SPEED_MPS");
@@ -452,6 +460,7 @@ CliConfig parseArgs(int argc, char **argv) {
   applyEnvDouble(cfg.scan_follower.yawGain, "LINGTU_NAV_SCAN_YAW_GAIN");
   applyEnvDouble(cfg.scan_follower.maxVx, "LINGTU_NAV_SCAN_MAX_VX_MPS");
   applyEnvDouble(cfg.scan_follower.maxVy, "LINGTU_NAV_SCAN_MAX_VY_MPS");
+  applyEnvDouble(cfg.scan_follower.minVy, "LINGTU_NAV_SCAN_MIN_VY_MPS");
   applyEnvDouble(cfg.scan_follower.maxYawRateRadS,
                  "LINGTU_NAV_SCAN_MAX_YAW_RATE_RAD_S");
   applyEnvDouble(cfg.scan_follower.finishDistance,
@@ -606,7 +615,6 @@ CliConfig parseArgs(int argc, char **argv) {
   applyEnvDouble(cfg.sensor_offset_x_m, "LINGTU_NAV_SENSOR_OFFSET_X_M");
   applyEnvDouble(cfg.sensor_offset_y_m, "LINGTU_NAV_SENSOR_OFFSET_Y_M");
   applyEnvDouble(cfg.sensor_offset_z_m, "LINGTU_NAV_SENSOR_OFFSET_Z_M");
-  cfg.navigation_body_file = envOrEmpty("LINGTU_NAV_BODY_FILE");
   applyEnvDouble(cfg.octoplanner_options.robot_radius, "LINGTU_NAV_OCTO_ROBOT_RADIUS_M");
   applyEnvDouble(cfg.octoplanner_options.body_clearance_below_m,
                  "LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M");
@@ -619,12 +627,12 @@ CliConfig parseArgs(int argc, char **argv) {
                "LINGTU_NAV_OCTO_GROUND_SUPPORT");
   applyEnvBool(cfg.octoplanner_options.direct_support_only,
                "LINGTU_NAV_OCTO_DIRECT_SUPPORT_ONLY");
-  applyEnvInt(cfg.octoplanner_options.support_radius_cells,
-              "LINGTU_NAV_OCTO_SUPPORT_RADIUS_CELLS");
   applyEnvInt(cfg.octoplanner_options.support_depth_cells,
               "LINGTU_NAV_OCTO_SUPPORT_DEPTH_CELLS");
   applyEnvDouble(cfg.octoplanner_options.search_resolution_m, "LINGTU_NAV_OCTO_SEARCH_RESOLUTION_M");
   applyEnvDouble(cfg.octoplanner_options.surface_closing_radius_m, "LINGTU_NAV_OCTO_SURFACE_CLOSING_RADIUS_M");
+  applyEnvDouble(cfg.octoplanner_options.surface_max_hole_area_m2, "LINGTU_NAV_OCTO_SURFACE_MAX_HOLE_AREA_M2");
+  applyEnvDouble(cfg.octoplanner_options.surface_max_slope, "LINGTU_NAV_OCTO_SURFACE_MAX_SLOPE");
   applyEnvDouble(cfg.octoplanner_options.support_height_m, "LINGTU_NAV_OCTO_SUPPORT_HEIGHT_M");
   applyEnvDouble(cfg.octoplanner_options.support_height_tolerance_m,
                  "LINGTU_NAV_OCTO_SUPPORT_HEIGHT_TOLERANCE_M");
@@ -844,14 +852,16 @@ CliConfig parseArgs(int argc, char **argv) {
     } else if (arg == "--octo-direct-support-only") {
       cfg.octoplanner_options.direct_support_only =
           parseBool(next(), "--octo-direct-support-only");
-    } else if (arg == "--octo-support-radius-cells") {
-      cfg.octoplanner_options.support_radius_cells = parseInt(next(), arg.c_str());
     } else if (arg == "--octo-support-depth-cells") {
       cfg.octoplanner_options.support_depth_cells = parseInt(next(), arg.c_str());
     } else if (arg == "--octo-search-resolution-m") {
       cfg.octoplanner_options.search_resolution_m = parseDouble(next(), arg.c_str());
     } else if (arg == "--octo-surface-closing-radius-m") {
       cfg.octoplanner_options.surface_closing_radius_m = parseDouble(next(), arg.c_str());
+    } else if (arg == "--octo-surface-max-hole-area-m2") {
+      cfg.octoplanner_options.surface_max_hole_area_m2 = parseDouble(next(), arg.c_str());
+    } else if (arg == "--octo-surface-max-slope") {
+      cfg.octoplanner_options.surface_max_slope = parseDouble(next(), arg.c_str());
     } else if (arg == "--octo-support-height-m") {
       cfg.octoplanner_options.support_height_m = parseDouble(next(), arg.c_str());
     } else if (arg == "--octo-support-height-tolerance-m") {
@@ -957,7 +967,6 @@ CliConfig parseArgs(int argc, char **argv) {
           "[--octo-ground-support true|false] "
           "[--octo-support-height-m M] [--octo-surface-closing-radius-m M] [--octo-search-resolution-m M] [--octo-max-step-height-m M] "
           "[--octo-max-slope DZ_PER_DXY] "
-          "[--octo-support-radius-cells N] "
           "[--octo-obstacle-clearance-radius-cells N] [--status-file PATH] "
           "[--estop-latch-file PATH] [--geofence-file PATH]");
     } else {
@@ -1019,7 +1028,7 @@ CliConfig parseArgs(int argc, char **argv) {
     cfg.obstacle_voxel_size_m = ::lingtu::settings::local::native_nav::scan_motion_voxel_size_m;
     applyEnvDouble(cfg.obstacle_voxel_size_m, "LINGTU_NAV_SCAN_MOTION_VOXEL_SIZE_M");
   }
-  if (cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu) {
+  {
     const auto &cmu = cfg.cmu_planner;
     for (const double value : {cmu.pathScale, cmu.minPathScale, cmu.pathScaleStep,
                                cmu.minPathRange, cmu.pathRangeStep}) {
@@ -1049,6 +1058,7 @@ CliConfig parseArgs(int argc, char **argv) {
       !std::isfinite(cfg.scan_follower.yawGain) ||
       !std::isfinite(cfg.scan_follower.maxVx) ||
       !std::isfinite(cfg.scan_follower.maxVy) ||
+      !std::isfinite(cfg.scan_follower.minVy) || cfg.scan_follower.minVy < 0.0 ||
       !std::isfinite(cfg.scan_follower.maxYawRateRadS) ||
       !std::isfinite(cfg.scan_follower.finishDistance) ||
       !std::isfinite(cfg.recovery_blocked_interval_s) ||
@@ -1219,10 +1229,11 @@ CliConfig parseArgs(int argc, char **argv) {
   octo.body_clearance_above_m = std::max(0.0, octo.body_clearance_above_m);
   octo.max_iterations = std::max(1, octo.max_iterations);
   octo.snap_search_radius_cells = std::max(0, octo.snap_search_radius_cells);
-  octo.support_radius_cells = std::max(0, octo.support_radius_cells);
   octo.support_depth_cells = std::max(1, octo.support_depth_cells);
   octo.search_resolution_m = std::max(0.0, octo.search_resolution_m);
   octo.surface_closing_radius_m = std::max(0.0, octo.surface_closing_radius_m);
+  octo.surface_max_hole_area_m2 = std::max(0.0, octo.surface_max_hole_area_m2);
+  octo.surface_max_slope = std::max(0.0, octo.surface_max_slope);
   octo.support_height_m = std::max(0.0, octo.support_height_m);
   octo.support_height_tolerance_m = std::max(0.0, octo.support_height_tolerance_m);
   octo.support_patch_radius_cells = std::max(0, octo.support_patch_radius_cells);
@@ -1255,18 +1266,8 @@ CliConfig parseArgs(int argc, char **argv) {
   }
   if (cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan) {
     cfg.use_traversability_cost = false;
-    // Global XYZ search checks corridor width. SCAN and final command checking
-    // use the configured Body and heading/turning sweep.
-    // Adding the offset here would require turning room along straight routes.
-    octo.robot_radius = std::max(octo.robot_radius,
-        cfg.collision_cylinder_radius_m);
-    // Match Mapd's integer-cell vertical inflation without adding XY padding.
-    const double resolution = cfg.scan_planner.voxelResolution;
-    octo.body_clearance_below_m = std::max(octo.body_clearance_below_m,
-        std::ceil(cfg.collision_clearance_below_m / resolution) * resolution);
-    octo.body_clearance_above_m = std::max(octo.body_clearance_above_m,
-        std::ceil(cfg.collision_clearance_above_m / resolution) * resolution);
   }
+  applyPlannerGeometry(cfg);
   return cfg;
 }
 

@@ -39,7 +39,7 @@ waitForCompletion(lingtu::nav::endpoint::GoalPlanController &controller,
                   std::uint64_t frame_epoch, double now_s) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(12);
   while (std::chrono::steady_clock::now() < deadline) {
-    auto result = controller.advance({frame_epoch, false, now_s});
+    auto result = controller.advance({frame_epoch, {}, now_s});
     if (result.completion_consumed) return result;
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
@@ -219,7 +219,7 @@ int runTests() {
     support_context.planner_options.support_height_tolerance_m = 0.2;
     lingtu::nav::endpoint::GoalPlanAdvanceResult support_completion;
     for (int attempt = 0; attempt < 100 && !support_completion.completion_consumed; ++attempt) {
-      support_completion = support_controller.advance({context.frame_epoch, false, 20.0});
+      support_completion = support_controller.advance({context.frame_epoch, {}, 20.0});
       if (!support_completion.completion_consumed) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
@@ -268,7 +268,7 @@ int runTests() {
             "initial no-path retry fixture was not admitted");
     lingtu::nav::endpoint::GoalPlanAdvanceResult retry_completion;
     for (int tick = 0; tick < 1000 && !retry_completion.completion_consumed; ++tick) {
-      retry_completion = retry_controller.advance({context.frame_epoch, false, 20.0});
+      retry_completion = retry_controller.advance({context.frame_epoch, {}, 20.0});
       if (!retry_completion.completion_consumed)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
@@ -296,7 +296,7 @@ int runTests() {
             "initial no-path retry did not start at its deadline");
     retry_completion = {};
     for (int tick = 0; tick < 1000 && !retry_completion.completion_consumed; ++tick) {
-      retry_completion = retry_controller.advance({context.frame_epoch, false, 20.6});
+      retry_completion = retry_controller.advance({context.frame_epoch, {}, 20.6});
       if (!retry_completion.completion_consumed)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
@@ -452,18 +452,17 @@ int runTests() {
   expect_admission_rejection(request, blocked_context, "estop_latched", true, true);
 
   blocked_context = context;
-  blocked_context.operator_takeover_latched = true;
-  expect_admission_rejection(request, blocked_context, "operator_takeover_resume_required", true,
+  blocked_context.hold_reason = "operator_takeover";
+  expect_admission_rejection(request, blocked_context, "operator_takeover", true,
                              true);
+
+  blocked_context.hold_reason = "stop_confirmation_timeout";
+  expect_admission_rejection(request, blocked_context, "stop_confirmation_timeout", true, true);
 
   blocked_context = context;
   blocked_context.autonomy_mode = false;
   blocked_context.control_mode_name = "teleop";
   expect_admission_rejection(request, blocked_context, "goal_not_allowed_in_teleop", true, true);
-
-  blocked_context = context;
-  blocked_context.driver_control_blocker = "driver_control_stale";
-  expect_admission_rejection(request, blocked_context, "driver_control_stale", true, true);
 
   blocked_context = context;
   blocked_context.autonomy_request_not_before_s = request.source_stamp_s;
@@ -599,8 +598,7 @@ int runTests() {
   lingtu::nav::endpoint::GoalPlanAdvanceResult completion;
   for (int attempt = 0; attempt < 100 && !completion.completion_consumed; ++attempt) {
     completion = success_controller.advance(lingtu::nav::endpoint::GoalPlanAdvanceContext{
-        context.frame_epoch,
-        false,
+        context.frame_epoch, {},
         20.0,
     });
     if (!completion.completion_consumed) {
@@ -694,8 +692,8 @@ int runTests() {
   expect_resume_rejection(blocked_resume_context, "estop_latched");
 
   blocked_resume_context = context;
-  blocked_resume_context.operator_takeover_latched = true;
-  expect_resume_rejection(blocked_resume_context, "operator_takeover_resume_required");
+  blocked_resume_context.hold_reason = "operator_takeover";
+  expect_resume_rejection(blocked_resume_context, "operator_takeover");
 
   blocked_resume_context = context;
   blocked_resume_context.autonomy_mode = false;
@@ -703,12 +701,9 @@ int runTests() {
   expect_resume_rejection(blocked_resume_context, "resume_not_allowed_in_teleop");
 
   blocked_resume_context = context;
-  blocked_resume_context.driver_control_blocker = "driver_control_stale";
-  expect_resume_rejection(blocked_resume_context, "driver_control_stale");
-
-  blocked_resume_context.driver_control_blocker = "profile_transition";
   blocked_resume_context.input_ready = false;
-  expect_resume_rejection(blocked_resume_context, "profile_transition");
+  blocked_resume_context.input_gate_reason = "profile_transition";
+  expect_resume_rejection(blocked_resume_context, "input_gate_profile_transition");
   blocked_resume_context.motion_allowed = false;
   expect_resume_rejection(blocked_resume_context, "estop_latched");
 
@@ -788,7 +783,7 @@ int runTests() {
     lingtu::nav::endpoint::GoalPlanAdvanceResult overlay_completion;
     for (int i = 0; i < 1000 && !overlay_completion.path_activated; ++i) {
       overlay_completion = overlay_controller.advance(
-          lingtu::nav::endpoint::GoalPlanAdvanceContext{context.frame_epoch, false, 30.0});
+          lingtu::nav::endpoint::GoalPlanAdvanceContext{context.frame_epoch, {}, 30.0});
       if (!overlay_completion.completion_consumed) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
@@ -808,7 +803,7 @@ int runTests() {
     overlay_completion = {};
     for (int i = 0; i < 1000 && !overlay_completion.path_activated; ++i) {
       overlay_completion = overlay_controller.advance(
-          lingtu::nav::endpoint::GoalPlanAdvanceContext{context.frame_epoch, false, 31.0});
+          lingtu::nav::endpoint::GoalPlanAdvanceContext{context.frame_epoch, {}, 31.0});
       if (!overlay_completion.completion_consumed) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
@@ -846,7 +841,7 @@ int runTests() {
     auto wait_body_completion = [&] {
       lingtu::nav::endpoint::GoalPlanAdvanceResult result;
       for (int i = 0; i < 1000 && !result.completion_consumed; ++i) {
-        result = body_controller.advance({context.frame_epoch, false, 50.0});
+        result = body_controller.advance({context.frame_epoch, {}, 50.0});
         if (!result.completion_consumed)
           std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
@@ -921,7 +916,7 @@ int runTests() {
             "invalid body result fixture failed admission");
     lingtu::nav::endpoint::GoalPlanAdvanceResult invalid_completion;
     for (int i = 0; i < 1000 && !invalid_completion.completion_consumed; ++i) {
-      invalid_completion = invalid_body_controller.advance({context.frame_epoch, false, 52.0});
+      invalid_completion = invalid_body_controller.advance({context.frame_epoch, {}, 52.0});
       if (!invalid_completion.completion_consumed)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
@@ -992,7 +987,7 @@ int runTests() {
       require(blocked_controller.submit(leg, context).accepted, "inspection leg rejected");
       bool activated = false;
       for (int i = 0; i < 1000 && !activated; ++i) {
-        activated = blocked_controller.advance({context.frame_epoch, false, 40.0}).path_activated;
+        activated = blocked_controller.advance({context.frame_epoch, {}, 40.0}).path_activated;
         if (!activated) std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
       require(activated, "inspection leg failed to activate");

@@ -33,6 +33,20 @@ Robot feedback:     Driver state
 Algorithms call each other directly inside `navd`. DDS is the cross-process
 data plane; it does not choose a Product, planner backend, or recovery policy.
 
+Final velocity is a best-effort stream retaining the latest sample, with a
+200 ms lifespan. This keeps transport retransmission waits out of the navigation
+control loop. Driver output ACKs and confirmed stop transactions remain separate
+from velocity publication. Task requests and lifecycle results retain reliable
+delivery. Deploy all velocity readers with the same shared QoS profile.
+
+`ControlAuthority` owns operator takeover and fault holds separately. Failed
+stop confirmation and output publication call `hold(reason)`; they never claim
+an operator took control. Resume need is derived from that hold, without a second
+mutable resume latch. Loop timing is diagnostic only. Confirmed resume clears the hold
+but does not replay a previous path or velocity. Status publishes the same
+`hold_reason` used for goal admission. Go2 SDK error 3104 is an API timeout,
+not evidence that another controller owns the robot.
+
 The deployed executable names remain:
 
 - `navd`: goal navigation and assisted teleoperation.
@@ -50,6 +64,7 @@ The deployed executable names remain:
 | `nav/command/` | Ordered command admission, identity, cancellation, and terminal events. |
 | `nav/control/` | Teleop/autonomy candidates, authority, smoothing, and final arbitration. |
 | `nav/app/` | The Product-configured control loop (100 Hz for SCAN nav/teleop_avoid) and endpoint-only goal, inspection, rolling, and configuration lifecycle. |
+| `nav/app/goal/terminal.*` | Completes a task outcome through stop confirmation, task commit, and status delivery; does not decide goal geometry or generate motion. |
 | `nav/safety/` | E-stop, geofence, hard command limits, and confirmed zero motion. |
 | `nav/status/` | Typed lifecycle/status projection and asynchronous persistence. |
 | `src/explore/cpp/endpoint/` | Explore process entry and lifecycle source, composed here as `lingtu_explore_dds`. |
@@ -92,3 +107,10 @@ state, inspection/exploration state, warnings, and stop confirmation.
 Command ACK means admission, not physical completion. Request-correlated goal
 status remains authoritative for planning, active execution, cancellation,
 failure, and arrival.
+
+`GoalTerminal` sequences completion; `safety/stop.*` owns stopping and its
+evidence, and `status/goal_terminal_status_delivery.*` owns result delivery and
+acknowledgement. Retrying a failed delivery must not repeat the task commit.
+The current reached policy confirms the zero-command ACK after execution reports
+arrival; it does not recheck position or heading after the stop. Post-stop pose
+confirmation remains an execution behavior change, separate from this layout cleanup.

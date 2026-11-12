@@ -55,8 +55,7 @@ struct StatusWriterConfig {
   double teleop_planner_horizon_m{0.0};
   double teleop_planner_max_deviation_deg{0.0};
   bool operator_takeover_latched{false};
-  bool resume_required{false};
-  bool control_loop_hold{false};
+  std::string hold_reason{};
   std::string active_cmd_source{"none"};
   std::string path_library_dir;
   std::string map_path;
@@ -64,7 +63,7 @@ struct StatusWriterConfig {
   std::size_t max_obstacle_points{0};
   std::size_t local_planner_threads{0};
   double stop_confirmation_timeout_s{0.0};
-  std::string stop_confirmation_evidence{"driver_ack_and_odometry"};
+  std::string stop_confirmation_evidence{"zero_output_and_odometry"};
   std::size_t local_planner_debug_candidate_limit{0};
   std::size_t local_map_debug_point_limit{0};
   double planner_obstacle_height_min_m{
@@ -97,7 +96,6 @@ struct StatusWriterConfig {
   bool input_require_local_collision{false};
   bool input_require_traversability{false};
   bool input_require_localization_health{false};
-  bool input_require_driver_control{false};
   lingtu::nav::plan::GlobalPlannerOptions octoplanner_options{};
   lingtu::nav::plan::far_planner::FarPlannerConfig far_options{};
 };
@@ -267,9 +265,7 @@ struct DriverControlDiagnostics {
   bool received{false};
   bool ready{false};
   std::string reason{"not_received"};
-  bool last_command_accepted{false};
-  std::string accepted_producer_boot_id;
-  std::uint64_t accepted_output_sequence{0};
+  bool zero_output{false};
 };
 
 struct MotionStopEvidenceDiagnostics {
@@ -278,8 +274,8 @@ struct MotionStopEvidenceDiagnostics {
   std::uint64_t output_sequence{0U};
   double updated_at_s{0.0};
   std::string confirmation_state{"not_requested"};
-  bool driver_ack_observed{false};
-  bool driver_accepted{false};
+  bool driver_state_observed{false};
+  bool driver_zero_output{false};
   std::size_t quiet_odometry_samples{0U};
   std::size_t required_quiet_odometry_samples{0U};
   double last_linear_speed_mps{std::numeric_limits<double>::quiet_NaN()};

@@ -7,6 +7,7 @@ get_filename_component(LINGTU_NAV_ROOT
 get_filename_component(LINGTU_SRC_ROOT
   "${LINGTU_NAV_ROOT}/.." ABSOLUTE)
 include("${LINGTU_SRC_ROOT}/../scripts/build/cmake/settings.cmake")
+include_directories("${LINGTU_SRC_ROOT}/maps/include")
 
 set(LINGTU_NAV_INCLUDE_DIR "${LINGTU_NAV_CPP_ROOT}/include")
 set(LINGTU_NAV_LOCAL_PLANNING_DIR "${LINGTU_NAV_CPP_ROOT}/planning/local")
@@ -117,6 +118,8 @@ if(NOT TARGET lingtu_nav_local_planner)
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/path_searching/dyn_a_star.cpp"
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/plan_env/grid_map.cpp"
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/plan_manage/planner_manager.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/plan_manage/seed.cpp"
+    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/plan_manage/retiming.cpp"
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/plan_manage/planner_fsm.cpp"
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/traj_utils/polynomial_traj.cpp")
   add_library(LingTuNav::local_planner ALIAS lingtu_nav_local_planner)
@@ -164,6 +167,7 @@ endif()
 if(NOT TARGET lingtu_nav_navigation)
   add_library(lingtu_nav_navigation STATIC
     "${LINGTU_NAV_NAVIGATION_DIR}/executor.cpp"
+    "${LINGTU_NAV_NAVIGATION_DIR}/intent.cpp"
     "${LINGTU_NAV_NAVIGATION_DIR}/pose_route.cpp"
     "${LINGTU_NAV_NAVIGATION_DIR}/recovery.cpp"
     "${LINGTU_NAV_NAVIGATION_DIR}/recovery_search.cpp"

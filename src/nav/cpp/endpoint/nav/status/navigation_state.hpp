@@ -40,6 +40,7 @@ struct NavigationStateContext {
   bool operator_takeover{false};
   bool recovery_active{false};
   std::string authority{"none"};
+  std::string hold_reason{};
 };
 
 struct NavigationStateSample {
@@ -55,7 +56,7 @@ struct NavigationStateSample {
   std::int32_t recovery_state{static_cast<std::int32_t>(NavigationRecoveryState::kIdle)};
   float progress{-1.0F};
   std::string authority{"none"};
-  std::string hold_reason;
+  std::string hold_reason{};
   std::string failure_code;
 };
 

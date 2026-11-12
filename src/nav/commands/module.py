@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from functools import cached_property
 from typing import Any, Callable
 
 from nav.adapters.native.abi import (
@@ -146,13 +147,8 @@ class Commands(Module, layer=3):
     ) -> dict[str, object]:
         """Run one read-only plan through the native navigation endpoint."""
 
-        client = get_native_navigation_client(required=True)
-        if client is None:
-            raise RuntimeError("native navigation command boundary is unavailable")
-        return client.preview_plan(
-            float(x),
-            float(y),
-            float(z),
+        return self._navigation_client.preview_plan(
+            x, y, z,
             acceptance_radius_m=acceptance_radius_m,
         )
 
@@ -172,20 +168,17 @@ class Commands(Module, layer=3):
     ) -> dict[str, object]:
         """Query native 3D observation candidates without authorizing motion."""
 
-        client = get_native_navigation_client(required=True)
-        if client is None:
-            raise RuntimeError("native navigation command boundary is unavailable")
-        return client.query_semantic_views(
-            boot_id=str(boot_id),
-            map_id=str(map_id),
-            map_content_epoch=int(map_content_epoch),
-            frame_id=str(frame_id or "map"),
-            frame_epoch=int(frame_epoch),
-            reference_z=float(reference_z),
-            camera_range_m=float(camera_range_m),
-            camera_horizontal_fov_rad=float(camera_horizontal_fov_rad),
-            views=list(views or []),
-            timeout_ms=max(1, int(timeout_ms)),
+        return self._navigation_client.query_semantic_views(
+            boot_id=boot_id,
+            map_id=map_id,
+            map_content_epoch=map_content_epoch,
+            frame_id=frame_id,
+            frame_epoch=frame_epoch,
+            reference_z=reference_z,
+            camera_range_m=camera_range_m,
+            camera_horizontal_fov_rad=camera_horizontal_fov_rad,
+            views=views,
+            timeout_ms=timeout_ms,
         )
 
     @rpc
@@ -201,77 +194,50 @@ class Commands(Module, layer=3):
         max_speed_mps: float | None = None,
         acceptance_radius_m: float | None = None,
     ) -> NavigationCommandReceipt:
-        return self._navigation_receipt(
-            lambda client: client.start_task(
-                float(x),
-                float(y),
-                float(z),
-                None if yaw is None else float(yaw),
-                task_id=task_id,
-                request_id=request_id,
-                **{k: v for k, v in {"max_speed_mps": max_speed_mps,
-                    "acceptance_radius_m": acceptance_radius_m}.items() if v is not None},
-            )
+        return self._navigation_client.start_task(
+            x, y, z, yaw, task_id=task_id, request_id=request_id,
+            max_speed_mps=max_speed_mps, acceptance_radius_m=acceptance_radius_m,
         )
 
     @rpc
     def cancel_task(
-        self,
-        task_id: str,
-        reason: str = "cancel",
-        request_id: str | None = None,
+        self, task_id: str, reason: str = "cancel", request_id: str | None = None,
     ) -> NavigationCommandReceipt:
-        return self._navigation_receipt(
-            lambda client: client.cancel_task(
-                str(task_id or ""),
-                str(reason or "cancel"),
-                request_id=request_id,
-            )
-        )
+        return self._navigation_client.cancel_task(task_id, reason, request_id=request_id)
 
     @rpc
     def set_task_speed_limit(
         self, task_id: str, max_speed_mps: float, request_id: str | None = None,
     ) -> NavigationCommandReceipt:
-        return self._navigation_receipt(
-            lambda client: client.set_task_speed_limit(
-                task_id, max_speed_mps, request_id=request_id,
-            )
+        return self._navigation_client.set_task_speed_limit(task_id, max_speed_mps, request_id=request_id)
+
+    @rpc
+    def select_planner(self, name: str, request_id: str | None = None) -> dict[str, object]:
+        return self._navigation_control_receipt(
+            lambda client: client.select_planner(name, request_id=request_id),
+            action="select_planner", expected_kind=NavigationCommandKind.SELECT_PLANNER,
+            request_id=request_id,
         )
 
     @rpc
     def pause_task(
-        self,
-        task_id: str,
-        reason: str = "operator_pause",
-        request_id: str | None = None,
+        self, task_id: str, reason: str = "operator_pause", request_id: str | None = None,
     ) -> NavigationCommandReceipt:
-        """Request a stop-confirmed pause for one product task."""
-
-        return self._navigation_receipt(
-            lambda client: client.pause_task(
-                str(task_id or ""),
-                str(reason or "operator_pause"),
-                request_id=request_id,
-            )
-        )
+        return self._navigation_client.pause_task(task_id, reason, request_id=request_id)
 
     @rpc
     def resume_task(
-        self,
-        task_id: str,
-        reason: str = "operator_resume",
-        request_id: str | None = None,
+        self, task_id: str, reason: str = "operator_resume", request_id: str | None = None,
     ) -> NavigationCommandReceipt:
-        """Request continuation of the same paused product task."""
+        return self._navigation_client.resume_task(task_id, reason, request_id=request_id)
 
-        return self._navigation_receipt(
-            lambda client: client.resume_task(
-                str(task_id or ""),
-                str(reason or "operator_resume"),
-                request_id=request_id,
-            )
-        )
+    @rpc
+    def operator_motion_status(self, max_age_ms: int = 250) -> dict[str, object] | None:
+        """Read the native authority snapshot, including its freshness."""
+        client = get_native_operator_motion_client(required=True)
+        if client is None:
+            raise RuntimeError("native operator motion status boundary is unavailable")
+        return client.status(max_age_ms)
 
     @rpc
     def claim(
@@ -370,11 +336,13 @@ class Commands(Module, layer=3):
 
     @rpc
     def stop_motion(self, reason: str = "stop", request_id: str | None = None) -> bool:
-        return self._navigation(lambda client: client.stop(str(reason or "stop"), request_id=request_id))
+        self._navigation_client.stop(reason, request_id=request_id)
+        return True
 
     @rpc
     def estop(self, reason: str = "estop", request_id: str | None = None) -> bool:
-        return self._navigation(lambda client: client.estop(str(reason or "estop"), request_id=request_id))
+        self._navigation_client.estop(reason, request_id=request_id)
+        return True
 
     @rpc
     def clear_estop(
@@ -382,12 +350,8 @@ class Commands(Module, layer=3):
         reason: str = "clear_estop",
         request_id: str | None = None,
     ) -> bool:
-        return self._navigation(
-            lambda client: client.clear_estop(
-                str(reason or "clear_estop"),
-                request_id=request_id,
-            )
-        )
+        self._navigation_client.clear_estop(reason, request_id=request_id)
+        return True
 
     @rpc
     def resume_autonomy(
@@ -395,12 +359,8 @@ class Commands(Module, layer=3):
         reason: str = "resume_autonomy",
         request_id: str | None = None,
     ) -> bool:
-        return self._navigation(
-            lambda client: client.resume_autonomy(
-                str(reason or "resume_autonomy"),
-                request_id=request_id,
-            )
-        )
+        self._navigation_client.resume_autonomy(reason, request_id=request_id)
+        return True
 
     @rpc
     def resume_autonomy_with_receipt(
@@ -417,6 +377,95 @@ class Commands(Module, layer=3):
             expected_kind=NavigationCommandKind.RESUME_AUTONOMY,
             request_id=request_id,
         )
+
+    @rpc
+    def stand(self, reason: str = "stand", request_id: str | None = None) -> dict[str, object]:
+        return self._navigation_control_receipt(
+            lambda client: client.stand(str(reason or "stand"), request_id=request_id),
+            action="stand", expected_kind=NavigationCommandKind.STAND, request_id=request_id,
+        )
+
+    @rpc
+    def sit(self, reason: str = "sit", request_id: str | None = None) -> dict[str, object]:
+        return self._navigation_control_receipt(
+            lambda client: client.sit(str(reason or "sit"), request_id=request_id),
+            action="sit", expected_kind=NavigationCommandKind.SIT, request_id=request_id,
+        )
+
+    @rpc
+    def enable_motors(
+        self, reason: str = "enable_motors", request_id: str | None = None,
+    ) -> dict[str, object]:
+        return self._navigation_control_receipt(
+            lambda client: client.enable_motors(reason, request_id=request_id),
+            action="enable_motors", expected_kind=NavigationCommandKind.ENABLE_MOTORS,
+            request_id=request_id,
+        )
+
+    @rpc
+    def disable_motors(
+        self, reason: str = "disable_motors", request_id: str | None = None,
+    ) -> dict[str, object]:
+        return self._navigation_control_receipt(
+            lambda client: client.disable_motors(reason, request_id=request_id),
+            action="disable_motors", expected_kind=NavigationCommandKind.DISABLE_MOTORS,
+            request_id=request_id,
+        )
+
+    @rpc
+    def switch_profile(
+        self, name: str, reason: str = "switch_profile", request_id: str | None = None,
+    ) -> dict[str, object]:
+        return self._navigation_control_receipt(
+            lambda client: client.switch_profile(name, reason, request_id=request_id),
+            action="switch_profile", expected_kind=NavigationCommandKind.SWITCH_PROFILE,
+            request_id=request_id,
+        )
+
+    @rpc
+    def external_enter(self, reason="external_enter", request_id=None):
+        return self._navigation_control_receipt(
+            lambda client: client.external_enter(reason, request_id=request_id),
+            action="external_enter", expected_kind=NavigationCommandKind.ENTER_EXTERNAL,
+            request_id=request_id,
+        )
+
+    @rpc
+    def external_enable(self, session_id, reason="external_enable", request_id=None):
+        return self._navigation_control_receipt(
+            lambda client: client.external_enable(session_id, reason, request_id=request_id),
+            action="external_enable", expected_kind=NavigationCommandKind.ENABLE_EXTERNAL,
+            request_id=request_id,
+        )
+
+    @rpc
+    def external_disable(self, session_id, reason="external_disable", request_id=None):
+        return self._navigation_control_receipt(
+            lambda client: client.external_disable(session_id, reason, request_id=request_id),
+            action="external_disable", expected_kind=NavigationCommandKind.DISABLE_MOTORS,
+            request_id=request_id,
+        )
+
+    @rpc
+    def external_exit(self, session_id, reason="external_exit", request_id=None):
+        return self._navigation_control_receipt(
+            lambda client: client.external_exit(session_id, reason, request_id=request_id),
+            action="external_exit", expected_kind=NavigationCommandKind.EXIT_EXTERNAL,
+            request_id=request_id,
+        )
+
+    @rpc
+    def external_frame(self, session_id, sequence, joints, input_window):
+        client = get_native_navigation_client(required=True)
+        return client.external_frame(session_id, sequence, joints, input_window)
+
+    @rpc
+    def external_heartbeat(self, session_id):
+        return get_native_navigation_client(required=True).external_heartbeat(session_id)
+
+    @rpc
+    def external_status(self):
+        return get_native_navigation_client(required=True).external_status()
 
     @rpc
     def start_exploration(
@@ -610,35 +659,21 @@ class Commands(Module, layer=3):
             request_id,
         )
 
-    @staticmethod
-    def _navigation(operation: Callable[[Any], None]) -> bool:
+    @cached_property
+    def _navigation_client(self):
         client = get_native_navigation_client(required=True)
         if client is None:
             raise RuntimeError("native navigation command boundary is unavailable")
-        operation(client)
-        return True
+        return client
 
-    @staticmethod
-    def _navigation_receipt(
-        operation: Callable[[Any], Any],
-    ) -> NavigationCommandReceipt:
-        client = get_native_navigation_client(required=True)
-        if client is None:
-            raise RuntimeError("native navigation command boundary is unavailable")
-        return operation(client)
-
-    @staticmethod
     def _navigation_control_receipt(
-        operation: Callable[[Any], Any],
+        self, operation: Callable[[Any], Any],
         *,
         action: str,
         expected_kind: NavigationCommandKind,
         request_id: str | None,
     ) -> dict[str, object]:
-        client = get_native_navigation_client(required=True)
-        if client is None:
-            raise RuntimeError("native navigation command boundary is unavailable")
-        raw_receipt = operation(client)
+        raw_receipt = operation(self._navigation_client)
         if not isinstance(raw_receipt, Mapping):
             raise RuntimeError(f"native navigation {action} returned an invalid receipt")
 

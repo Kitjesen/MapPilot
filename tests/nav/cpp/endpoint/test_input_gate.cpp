@@ -70,14 +70,14 @@ void testAuxiliaryHealthOnlyBlocksCurrentHardLocalizationFailure() {
           "current valid localization must resume without another recovery window");
 }
 
-void testStaleCloudStopsImmediatelyAndRequiresRecoveryAgain() {
+void testFreshCloudResumesWithoutRecoveryWait() {
   lingtu::nav::endpoint::InputGate gate({0.25, 0.25, 0.35, 2});
   gate.evaluate(input(1.0, 1.0, 1.0, 1.0, true, 1));
   require(gate.evaluate(input(1.1, 1.1, 1.1, 1.1, true, 2)).ready,
           "gate must become ready");
 
   const auto stale = gate.evaluate(input(1.6, 1.6, 1.6, 1.1, true, 3));
-  require(!stale.ready && !stale.recovering, "stale cloud must close the gate immediately");
+  require(!stale.ready, "stale cloud must close the gate immediately");
   require(stale.reason == "cloud_stale", "stale cloud reason must be explicit");
 
   const auto recovering = gate.evaluate(input(1.7, 1.7, 1.7, 1.7, true, 4));
@@ -138,7 +138,6 @@ void testScanRequiresFreshLocalCollisionGeometry() {
   cfg.require_cloud = false;
   cfg.require_local_collision = true;
   cfg.require_localization_health = true;
-  cfg.require_driver_control = true;
   cfg.local_collision_max_age_s = 0.5;
   lingtu::nav::endpoint::InputGate gate(cfg);
 
@@ -550,41 +549,28 @@ void testSafetyInputsUseSourceTimestamps() {
   require(state.ready, "expired auxiliary health must not block current valid motion inputs");
 }
 
-void testDriverControlMustBeFreshAndReady() {
+void testDriverTelemetryDoesNotGateMotion() {
   lingtu::nav::endpoint::InputGateConfig cfg;
   cfg.require_odom = false;
   cfg.require_cloud = false;
-  cfg.require_driver_control = true;
   cfg.driver_control_max_age_s = 0.35;
   lingtu::nav::endpoint::InputGate gate(cfg);
-
   lingtu::nav::endpoint::InputSnapshot inputs;
   inputs.now_s = 10.0;
   auto state = gate.evaluate(inputs);
-  require(!state.ready && state.reason == "driver_control_missing",
-          "navigation must not start before lingtu-driver publishes control state");
-
+  require(state.ready && !state.driver_control_fresh,
+          "missing driver telemetry must not block planner inputs");
   inputs.driver_control_stamp_s = 9.0;
-  inputs.driver_control_generation = 1;
-  inputs.driver_control_ready = true;
   state = gate.evaluate(inputs);
-  require(!state.ready && state.reason == "driver_control_stale",
-          "stale Brainstem readiness must close the motion gate");
-  require(!lingtu::nav::endpoint::manualModeMayBypassInputGate(state),
-          "manual escape must retain the driver readiness requirement");
-
+  require(state.ready && !state.driver_control_fresh,
+          "stale driver telemetry must not block planner inputs");
   inputs.driver_control_stamp_s = 10.0;
   inputs.driver_control_ready = false;
-  inputs.driver_control_reason = "preempted";
+  inputs.driver_control_reason = "transport_error:stop_timeout:code=3104";
   state = gate.evaluate(inputs);
-  require(!state.ready && state.reason == "driver_control_rejected",
-          "lease loss or command rejection must close the motion gate");
-
-  ++inputs.driver_control_generation;
-  inputs.driver_control_ready = true;
-  inputs.driver_control_reason = "none";
-  state = gate.evaluate(inputs);
-  require(state.ready, "fresh accepted LingTu control ownership must open the gate");
+  require(state.ready && state.driver_control_fresh && !state.driver_control_ready &&
+              state.driver_control_reason == inputs.driver_control_reason,
+          "driver errors must remain visible without becoming navigation permission");
 }
 
 void testSourceOrderIsIndependentOfReceiverWallClock() {
@@ -605,7 +591,6 @@ void testInputFreshnessUsesReceiverSteadyClock() {
   cfg.require_cloud = true;
   cfg.require_traversability = true;
   cfg.require_localization_health = true;
-  cfg.require_driver_control = true;
   lingtu::nav::endpoint::InputGate gate(cfg);
 
   lingtu::nav::endpoint::InputSnapshot inputs;
@@ -669,7 +654,7 @@ int main() {
   try {
   testValidInputsAreReadyWithoutGenerationRecovery();
   testAuxiliaryHealthOnlyBlocksCurrentHardLocalizationFailure();
-  testStaleCloudStopsImmediatelyAndRequiresRecoveryAgain();
+  testFreshCloudResumesWithoutRecoveryWait();
   testMapFrameOdometryDoesNotRequireMapOdomTf();
   testFutureInputsCloseTheGate();
   testCloudCanBeOptional();
@@ -689,7 +674,7 @@ int main() {
   testStopEvidenceUsesFreshPlanarPoseInsteadOfBiasedVelocityState();
   testLocalizationStateAndCatastrophicReasonCloseTheGate();
   testSafetyInputsUseSourceTimestamps();
-  testDriverControlMustBeFreshAndReady();
+  testDriverTelemetryDoesNotGateMotion();
   testSourceOrderIsIndependentOfReceiverWallClock();
   testInputFreshnessUsesReceiverSteadyClock();
   testLocalizationHealthJsonCarriesSourceStateAndStamp();

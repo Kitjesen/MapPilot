@@ -17,10 +17,10 @@
 #include "command/ingress.hpp"
 #include "command/terminal.hpp"
 #include "app/config/config.hpp"
+#include "app/planner.hpp"
 #include "control/admission.hpp"
 #include "control/authority.hpp"
 #include "control/autonomy.hpp"
-#include "control/guard.hpp"
 #include "control/operator.hpp"
 #include "control/teleop.hpp"
 #include "dds/runtime.hpp"
@@ -46,7 +46,7 @@
 #include "safety/stop.hpp"
 #include "status/control_loop_health.hpp"
 #include "status/goal_terminal_status_delivery.hpp"
-#include "status/goal_terminal_transaction.hpp"
+#include "app/goal/terminal.hpp"
 #include "status/inspection_status_file_writer.hpp"
 #include "status/nav_status_endpoint_adapter.hpp"
 #include "status/nav_status_publisher.hpp"
@@ -116,6 +116,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto &goal_replan_runtime = ctx.goal_replan_runtime;
   auto &motion_stop = ctx.motion_stop;
   auto &goal_status_outbox = ctx.goal_status_outbox;
+  auto &navigation_runtime_controller = ctx.navigation_runtime_controller;
   auto &goal_terminal_delivery = ctx.goal_terminal_delivery;
   auto &inspection_runtime = ctx.inspection_runtime;
   auto &inspection_command_coordinator = ctx.inspection_command_coordinator;
@@ -126,13 +127,11 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto &rolling_segment_effect_coordinator = ctx.rolling_segment_effect_coordinator;
   auto &nav_status = ctx.nav_status;
   auto &control_loop_health = ctx.control_loop_health;
-  auto &control_loop_guard = ctx.control_loop_guard;
   auto &operator_motion_authority = ctx.operator_motion_authority;
   auto &command_ingress = ctx.command_ingress;
   auto &navigation_state = ctx.navigation_state;
   auto &current_map_identity = ctx.current_map_identity;
   auto &sync_goal_plan_diagnostics = ctx.sync_goal_plan_diagnostics;
-  auto &control_loop_guard_latched = ctx.control_loop_guard_latched;
   auto &current_timing = ctx.current_timing;
   std::uint64_t operator_motion_admitted_sequence{0U};
   std::uint64_t operator_motion_final_output_sequence{0U};
@@ -148,7 +147,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto &last_odom_s = state.last_odom_s;
   auto &last_odom_linear_speed_mps = state.last_odom_linear_speed_mps;
   auto &last_odom_angular_speed_radps = state.last_odom_angular_speed_radps;
-  auto &driver_authority_previous = state.driver_authority_previous;
   auto &input_gate_state = state.input_gate_state;
   auto &last_plan = state.last_plan;
   auto &last_local = state.last_local;
@@ -160,7 +158,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto &last_local_planner_debug = state.last_local_planner_debug;
   auto &control_authority = state.control_authority;
   auto &inspection_executor = state.inspection_executor;
-  auto &operator_resume_required = state.operator_resume_required;
   auto &odom_generation = state.odom_generation;
   auto &frame_epoch = state.frame_epoch;
   auto &goal_count = state.goal_count;
@@ -182,7 +179,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     if (map_body) {
       if (const auto zone = geofence.intrusion(map_body->position.x, map_body->position.y)) {
         evaluated.ready = false;
-        evaluated.recovering = false;
         evaluated.reason = "geofence_restricted_zone:" + *zone;
       }
     }
@@ -213,58 +209,49 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     local_path_published = true;
   };
 
-  auto record_final_output_failure = [&](const std::string &reason) {
-    control_authority.holdOperatorTakeover();
-    operator_resume_required = true;
-    last_teleop.published = false;
+  const auto &hold = ctx.hold;
+  auto fail_output = [&](const std::string &reason) {
     frames.last_error = reason;
-    nav_status.requestImmediate();
-  };
-  auto record_zero_publish_failure = [&](const std::string &reason) {
-    record_final_output_failure(reason + ":zero_publish_failed");
-  };
-  auto fail_closed_after_cmd_vel_write = [&](const std::string &reason) {
-    record_final_output_failure(reason);
     if (!motion_stop.keepZeroFresh()) {
-      record_zero_publish_failure(reason);
+      frames.last_error += ":zero_publish_failed";
     }
+    std::fprintf(stderr, "navd: %s\n", frames.last_error.c_str());
+    nav_status.requestImmediate();
   };
 
   std::optional<InspectionGoalDispatchIntent> staged_inspection_goal;
-  auto terminal_delivery_error = [&](const std::string &reason) {
-    frames.last_error = reason;
+  PlannerSelection planner_selection;
+  struct PendingPlanner {
+    CommandIngressRequest ingress;
+    std::string stop_key;
+    bool stopped{false};
+    std::optional<PreparedPlanner> prepared;
+  };
+  std::optional<PendingPlanner> pending_planner;
+  auto finish_planner = [&](bool accepted, const std::string &reason) {
+    if (!pending_planner) return;
+    const auto receipt = command_ingress.complete(pending_planner->ingress, {accepted, reason});
+    command_ingress.recordAckPublication(dds.publish(OutputEvent{CommandAckOutput{
+        receipt.task_id, receipt.request_id, receipt.kind, receipt.ack.accepted,
+        receipt.ack.reason}}).published);
+    if (pending_planner->prepared)
+      planner_selection.retire(std::move(pending_planner->prepared->executor));
+    pending_planner.reset();
     nav_status.requestImmediate();
   };
-  GoalTerminalTransaction goal_terminal_transaction(goal_replan_runtime, motion_stop,
-                                                    goal_terminal_delivery,
-                                                    GoalTerminalTransactionActions{
-                                                        terminal_delivery_error,
-                                                        [&](const std::string &reason) {
-                                                          if (inspection_executor.active()) {
-                                                            (void)inspection_executor.Pause(reason);
-                                                            inspection_runtime.requestStatus();
-                                                          }
-                                                        },
-                                                        sync_goal_plan_diagnostics,
-                                                    });
-  NavigationRuntimeController navigation_runtime_controller(goal_plan, goal_replan_runtime,
-                                                            goal_terminal_transaction);
   auto terminal_ingress = [&](GoalTerminalIngressKind kind) {
+    if ((pending_planner || planner_selection.busy()) &&
+        kind != GoalTerminalIngressKind::kTypedStop &&
+        kind != GoalTerminalIngressKind::kTypedEstop &&
+        kind != GoalTerminalIngressKind::kOperatorHold &&
+        kind != GoalTerminalIngressKind::kOperatorRelease &&
+        kind != GoalTerminalIngressKind::kTypedClientClockSync)
+      return GoalTerminalIngressVerdict{GoalTerminalIngressDecision::kReject, "planner_switch_pending"};
     return evaluateGoalTerminalIngress(navigation_runtime_controller.terminalPending()
                                            ? GoalTerminalBarrierState::kTerminalPending
                                            : GoalTerminalBarrierState::kOpen,
                                        kind);
   };
-  GoalTaskCancelRouter task_cancel_router(
-      goal_plan, goal_replan_runtime,
-      [&](const GoalReplanRuntimeResult &runtime_result) {
-        const GoalTerminalTransactionResult serviced =
-            navigation_runtime_controller.completeTerminal(runtime_result);
-        return GoalTaskCancelTerminalServiceResult{
-            serviced.action_committed, serviced.reason, motion_stop.confirmationPending()};
-      },
-      [&] { nav_status.requestImmediate(); });
-
   struct PendingPreview {
     std::string request_id;
     nav_kernel::Vec3 start;
@@ -315,11 +302,9 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       admission.body = executor.body();
     }
     admission.motion_allowed = control_authority.motionAllowed();
-    admission.operator_takeover_latched =
-        control_authority.operatorTakeoverLatched() || control_loop_guard_latched();
+    admission.hold_reason = control_authority.holdReason();
     admission.autonomy_mode = cfg.control_mode == ControlMode::Autonomy;
     admission.control_mode_name = controlModeName(cfg.control_mode);
-    admission.driver_control_blocker = inputs.driverBlocker(SteadyClock::now());
     admission.autonomy_request_not_before_s = autonomy_request_not_before_s;
     if (map_body) {
       admission.map_position = map_body->position;
@@ -369,11 +354,9 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       context.body = executor.body();
     }
     context.motion_allowed = control_authority.motionAllowed();
-    context.operator_takeover_latched =
-        control_authority.operatorTakeoverLatched() || control_loop_guard_latched();
+    context.hold_reason = control_authority.holdReason();
     context.autonomy_mode = cfg.control_mode == ControlMode::Autonomy;
     context.control_mode_name = controlModeName(cfg.control_mode);
-    context.driver_control_blocker = inputs.driverBlocker(SteadyClock::now());
     context.autonomy_request_not_before_s = autonomy_request_not_before_s;
     context.input_ready = input_gate_state.ready;
     context.input_gate_reason = input_gate_state.reason;
@@ -394,6 +377,51 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     return context;
   };
   std::optional<CommandIngressRequest> deferred_control_ack;
+  struct PendingPosture {
+    CommandIngressRequest ingress;
+    lingtu::message::PostureRequest request;
+    SteadyClock::time_point deadline;
+    SteadyClock::time_point retry_at;
+    std::string stop_key;
+    bool waiting_stop{false};
+  };
+  std::optional<PendingPosture> pending_posture;
+  bool external_selected = false;
+  bool external_active = false;
+  std::optional<lingtu::message::PostureRequest> external_stop_request;
+  auto external_stop_retry = SteadyClock::now();
+  auto finish_posture = [&](bool accepted, const std::string &reason) {
+    if (!pending_posture) return;
+    if (accepted && pending_posture->request.action == static_cast<int>(CommandKind::EnterExternal)) {
+      external_selected = true;
+      external_active = true;
+    }
+    if (accepted && pending_posture->request.action == static_cast<int>(CommandKind::ExitExternal)) {
+      external_selected = false;
+      external_active = false;
+    }
+    const auto receipt = command_ingress.complete(pending_posture->ingress, {accepted, reason});
+    command_ingress.recordAckPublication(dds.publish(OutputEvent{CommandAckOutput{
+        receipt.task_id, receipt.request_id, receipt.kind, receipt.ack.accepted,
+        receipt.ack.reason}}).published);
+    pending_posture.reset();
+    nav_status.requestImmediate();
+  };
+  auto send_posture = [&]() {
+    if (!pending_posture) return;
+    if (!dds.publish(OutputEvent{pending_posture->request}).published) {
+      finish_posture(false, "posture_publish_failed");
+      return;
+    }
+    pending_posture->retry_at = SteadyClock::now() + std::chrono::milliseconds(100);
+  };
+  auto cancel_posture = [&](const std::string &reason) {
+    if (!pending_posture) return;
+    auto request = pending_posture->request;
+    request.phase = 2;
+    (void)dds.publish(OutputEvent{request});
+    finish_posture(false, reason);
+  };
   std::string deferred_control_key;
   auto finish_deferred_control_ack = [&](CommandAck ack) {
     if (!deferred_control_ack) return;
@@ -405,68 +433,42 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     deferred_control_ack.reset();
     deferred_control_key.clear();
   };
-  struct PendingTaskResume {
-    std::string task_id;
-    std::string request_id;
-    double source_stamp_s{0.0};
-  };
-  std::optional<PendingTaskResume> pending_task_resume;
-  auto handle_task_pause = [&](const std::string &task_id, const std::string &request_id,
-                               const std::string &reason) -> std::pair<bool, std::string> {
-    auto transition = goal_plan.deferPause(task_id, request_id, reason);
-    if (!transition.accepted) return {false, transition.reason};
-    pending_task_resume.reset();
-    finish_deferred_control_ack({false, "task_pause_pending"});
-    const auto result = motion_stop.pauseTask(std::move(transition.commit), task_id + ":" + request_id);
-    sync_goal_plan_diagnostics();
-    nav_status.requestImmediate();
-    return {result.accepted || result.pending,
-            result.pending ? "pause_requested" : result.reason};
-  };
-  auto handle_task_resume = [&](const std::string &task_id, const std::string &request_id,
-                                double source_stamp_s) -> std::pair<bool, std::string> {
-    if (control_loop_guard_latched()) return {false, "control_loop_recovery_pending"};
+  auto resume_blocker = [&]() -> std::string {
     const auto operator_state = operator_motion_authority.snapshot();
     const auto &manual = operator_state.active_sample;
     if (operator_state.has_active_sample && !operator_state.holding &&
-        (manual.vx != 0.0 || manual.vy != 0.0 || manual.wz != 0.0)) {
-      return {false, "operator_authority_active"};
-    }
-    const auto paused = goal_plan.snapshot();
-    if (paused.paused_task_id != task_id) return {false, "task_not_active"};
-    if (!paused.pause_pending && !paused.active_paused) return {false, "task_not_paused"};
-    if (paused.pause_pending || motion_stop.confirmationPending()) {
-      pending_task_resume = PendingTaskResume{task_id, request_id, source_stamp_s};
-      return {true, "resume_requested"};
-    }
-    auto context = task_resume_context();
-    context.operator_takeover_latched = false;
-    context.autonomy_request_not_before_s = std::max(context.autonomy_request_not_before_s,
-                                                    source_stamp_s);
-    auto transition = goal_plan.deferResume(task_id, request_id, context);
-    if (!transition.accepted) return {false, transition.reason};
-    const auto result = motion_stop.resumeTask(
-        [&, commit = std::move(transition.commit), task_id] {
-          operator_motion_authority.releaseAfterStop();
-          commit();
-          const auto resumed = goal_plan.snapshot();
-          if (resumed.active_task_id == task_id && executor.hasRoute() &&
-              !goal_replan_runtime.replanPending()) {
-            executor.resumeRoute();
-            (void)control_authority.activatePath();
-          }
-          sync_goal_plan_diagnostics();
-          nav_status.requestImmediate();
-        }, source_stamp_s, task_id + ":" + request_id);
-    return {result.accepted || result.pending,
-            result.pending ? "resume_requested" : result.reason};
+        (manual.vx != 0.0 || manual.vy != 0.0 || manual.wz != 0.0))
+      return "operator_authority_active";
+    return {};
+  };
+  const GoalResumeActions resume_actions{
+      [&] { operator_motion_authority.releaseAfterStop(); },
+      [&] {
+        if (executor.hasRoute()) {
+          executor.resumeRoute();
+          (void)control_authority.activatePath();
+        }
+      },
+      [&] { sync_goal_plan_diagnostics(); nav_status.requestImmediate(); }};
+  auto handle_task_pause = [&](const std::string &task_id, const std::string &request_id,
+                               const std::string &reason) {
+    const auto result = navigation_runtime_controller.pauseTask(task_id, request_id, reason);
+    if (result.first) finish_deferred_control_ack({false, "task_pause_pending"});
+    sync_goal_plan_diagnostics();
+    nav_status.requestImmediate();
+    return result;
+  };
+  auto handle_task_resume = [&](const std::string &task_id, const std::string &request_id,
+                                double source_stamp_s) {
+    return navigation_runtime_controller.resumeTask(task_id, request_id, source_stamp_s,
+        task_resume_context(), resume_actions, resume_blocker());
   };
   auto handle_stop = [&](const std::string &) -> std::pair<bool, std::string> {
-    pending_task_resume.reset();
+    navigation_runtime_controller.cancelResume();
     const auto interruption = navigation_runtime_controller.interrupt(
         GoalReplanRuntimeInterruption::kStop, steadySeconds());
-    if (interruption.terminal_transaction) {
-      const auto &terminal_result = *interruption.terminal_transaction;
+    if (interruption.terminal) {
+      const auto &terminal_result = *interruption.terminal;
       return {terminal_result.action_committed || motion_stop.confirmationPending(),
               motion_stop.confirmationPending() ? "stop_requested" : terminal_result.reason};
     }
@@ -475,11 +477,11 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
             physical_stop.pending ? "stop_requested" : physical_stop.reason};
   };
   auto handle_estop = [&](const std::string &reason) -> std::pair<bool, std::string> {
-    pending_task_resume.reset();
+    navigation_runtime_controller.cancelResume();
     const auto interruption = navigation_runtime_controller.interrupt(
         GoalReplanRuntimeInterruption::kEstop, steadySeconds(), reason);
-    if (interruption.terminal_transaction) {
-      const auto &terminal_result = *interruption.terminal_transaction;
+    if (interruption.terminal) {
+      const auto &terminal_result = *interruption.terminal;
       return {terminal_result.action_committed || motion_stop.confirmationPending(),
               motion_stop.confirmationPending() ? "estop_requested" : terminal_result.reason};
     }
@@ -498,78 +500,29 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     if (operator_motion_authority.snapshot().has_active_authority) {
       return {false, "operator_authority_active"};
     }
-    const auto guard_resume = control_loop_guard.requestResume();
-    const bool runtime_guard_latched = control_loop_guard_latched();
-    MotionStopResult result;
-    if (cfg.control_mode == ControlMode::Autonomy) {
-      ResumeAutonomyRequest request;
-      request.resume_required = operator_resume_required;
-      if (!control_authority.motionAllowed()) {
-        request.precondition_error = "estop_latched";
-      } else {
-        request.source_stamp_s = source_stamp_s;
-        request.precondition_error =
-            sourceStampError("resume_autonomy", request.source_stamp_s, nowSeconds(),
-                             cfg.teleop_cmd_max_age_s, cfg.input_future_tolerance_s);
-        if (request.precondition_error.empty() && runtime_guard_latched &&
-            !guard_resume.resume_allowed) {
-          request.precondition_error = "control_loop_recovery_pending";
-        }
-      }
-      request.operator_takeover_latched =
-          control_authority.operatorTakeoverLatched() || runtime_guard_latched;
-      result = motion_stop.resumeAutonomy(request);
-    } else {
-      ResumeTeleopRequest request;
-      request.resume_required = operator_resume_required;
-      if (!control_authority.motionAllowed()) {
-        request.precondition_error = "estop_latched";
-      } else {
-        request.source_stamp_s = source_stamp_s;
-        request.precondition_error =
-            sourceStampError("resume_autonomy", source_stamp_s, nowSeconds(),
-                             cfg.teleop_cmd_max_age_s, cfg.input_future_tolerance_s);
-        if (request.precondition_error.empty()) {
-          input_gate_state = evaluate_input_gate();
-          if (!input_gate_state.ready) {
-            request.precondition_error =
-                inputGateStopReason(input_gate_state.reason);
-          } else if (runtime_guard_latched && !guard_resume.resume_allowed) {
-            request.precondition_error = "control_loop_recovery_pending";
-          }
-        }
-      }
-      request.motion_hold_latched =
-          control_authority.operatorTakeoverLatched() || runtime_guard_latched;
-      result = motion_stop.resumeTeleop(request);
-      if (result.accepted && (request.motion_hold_latched || request.resume_required)) {
-        input_gate_state = evaluate_input_gate();
-        if (!input_gate_state.ready) {
-          control_authority.holdOperatorTakeover();
-          operator_resume_required = true;
-          result = {
-              false,
-              inputGateStopReason(input_gate_state.reason),
-          };
-        }
-      }
-    }
-    if (!result.pending && control_loop_guard.completeResume(result.accepted).resume_completed) {
-      operator_resume_required = false;
-    }
+    const bool autonomy = cfg.control_mode == ControlMode::Autonomy;
+    ResumeRequest request;
+    request.held = control_authority.held();
+    request.source_stamp_s = source_stamp_s;
+    request.precondition_error = !control_authority.motionAllowed()
+        ? "estop_latched"
+        : sourceStampError("resume_autonomy", source_stamp_s, nowSeconds(),
+                           cfg.teleop_cmd_max_age_s, cfg.input_future_tolerance_s);
+    auto result = autonomy ? motion_stop.resumeAutonomy(request) : motion_stop.resumeTeleop(request);
     return {result.accepted || result.pending,
             result.pending ? "resume_requested" : result.reason};
   };
   auto handle_teleop = [&](const OperatorMotionInputSample &sample,
                            bool manual_mode) -> std::pair<bool, std::string> {
+    if (control_authority.held() && control_authority.holdReason() != "operator_takeover")
+      return {false, control_authority.holdReason()};
     ++teleop_cmd_count;
     const auto sample_receive_time = SteadyClock::now();
     TeleopAdmissionContext context;
     context.motion_allowed = control_authority.motionAllowed();
     context.autonomy_mode = cfg.control_mode == ControlMode::Autonomy;
     context.allow_takeover = cfg.allow_teleop_takeover;
-    context.operator_takeover_latched =
-        control_authority.operatorTakeoverLatched() || control_loop_guard_latched();
+    context.operator_takeover_latched = control_authority.operatorHeld();
     context.has_active_teleop = control_authority.teleopRequest().has_value();
     context.max_age_s = cfg.teleop_cmd_max_age_s;
     context.future_tolerance_s = cfg.input_future_tolerance_s;
@@ -578,24 +531,20 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     context.publish_cmd_vel = cfg.publish_cmd_vel;
     TeleopAdmissionRequest request;
     if (context.motion_allowed) {
-      if (control_loop_guard_latched()) {
-        request.decode_error = "control_loop_runtime_hold";
+      const auto decoded = parseMotion(sample);
+      if (!decoded.ok()) {
+        request.decode_error = decoded.error;
       } else {
-        const auto decoded = parseMotion(sample);
-        if (!decoded.ok()) {
-          request.decode_error = decoded.error;
-        } else {
-          request.command = decoded.value;
-          const double explicit_source_stamp_s =
-              static_cast<double>(sample.source_stamp_ns) * 1e-9;
-          request.source_stamp_s =
-              explicit_source_stamp_s > 0.0 &&
-                      explicit_source_stamp_s <
-                          static_cast<double>(std::numeric_limits<std::int32_t>::max())
-                  ? explicit_source_stamp_s
-                  : sample.stamp_s;
-          context.receive_s = nowSeconds();
-        }
+        request.command = decoded.value;
+        const double explicit_source_stamp_s =
+            static_cast<double>(sample.source_stamp_ns) * 1e-9;
+        request.source_stamp_s =
+            explicit_source_stamp_s > 0.0 &&
+                    explicit_source_stamp_s <
+                        static_cast<double>(std::numeric_limits<std::int32_t>::max())
+                ? explicit_source_stamp_s
+                : sample.stamp_s;
+        context.receive_s = nowSeconds();
       }
     }
     const auto admission = teleop_admission.admit(request, context);
@@ -633,10 +582,10 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     if (admission.update_receive_timestamp &&
         (request.command.vx != 0.0 || request.command.vy != 0.0 || request.command.wz != 0.0)) {
       motion_stop.cancelPendingResume();
-      pending_task_resume.reset();
+      navigation_runtime_controller.cancelResume();
       if (deferred_control_ack &&
           deferred_control_ack->raw_kind == static_cast<int>(CommandKind::ResumeAutonomy)) {
-        finish_deferred_control_ack({false, "operator_takeover_resume_required"});
+        finish_deferred_control_ack({false, "takeover_active"});
       }
     }
     if (admission.update_receive_timestamp) {
@@ -654,11 +603,10 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto complete_operator_zero_barrier =
       [&](const std::string &reason) -> std::pair<OperatorMotionReceipt, std::uint64_t> {
     const bool owns_motion = cfg.control_mode != ControlMode::Autonomy ||
-                             control_authority.operatorTakeoverLatched() || operator_resume_required;
+                             control_authority.operatorHeld();
     if (owns_motion && cfg.control_mode == ControlMode::Autonomy) {
-      control_authority.holdOperatorTakeover();
-      operator_resume_required = true;
-    } else if (owns_motion) {
+      control_authority.holdOperator();
+    } else if (owns_motion && !control_authority.held()) {
       control_authority.stop();
     }
     const auto output_before = dds_status.final_output_sequence;
@@ -719,10 +667,9 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     context.now_s = nowSeconds();
     context.input_ready = input_gate_state.ready;
     context.autonomy_mode = cfg.control_mode == ControlMode::Autonomy;
-    context.motion_allowed = control_authority.motionAllowed() && !control_loop_guard_latched();
+    context.motion_allowed = control_authority.motionAllowed();
     context.operator_takeover_latched =
-        control_authority.operatorTakeoverLatched() || control_loop_guard_latched();
-    context.driver_control_ready = inputs.driverBlocker(SteadyClock::now()).empty();
+        control_authority.held();
     const auto goal_snapshot = goal_plan.snapshot();
     context.generic_navigation_active =
         inspection_executor.active() || goal_snapshot.busy || control_authority.pathActive() ||
@@ -790,7 +737,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     if (control_authority.estopLatched()) {
       navigation_authority = "estop";
     } else if (operator_motion_snapshot.has_active_authority ||
-               control_authority.operatorTakeoverLatched()) {
+               control_authority.operatorHeld()) {
       navigation_authority = "operator";
     } else if (control_authority.pathActive()) {
       navigation_authority = "autonomy";
@@ -799,14 +746,13 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     const auto navigation_sample = navigation_state.sample(NavigationStateContext{
         navigation_map_identity, control_authority.pathActive(), input_gate_state.ready,
         input_gate_state.reason, control_authority.estopLatched(), control_authority.estopReason(),
-        control_authority.operatorTakeoverLatched(), last_local.recovery_state != 0,
-        navigation_authority});
+        control_authority.operatorHeld(), last_local.recovery_state != 0,
+        navigation_authority, control_authority.holdReason()});
     (void)navigation_state.publishIfDue(navigation_sample, steadySeconds(), [&](const auto &sample) {
       return dds.publish(OutputEvent{sample}).published;
     });
     timing.dds_write_ms += elapsedMs(navigation_state_write_start);
     auto status_runtime_state = statusRuntimeStateFromEndpoint(state);
-    status_runtime_state.control_loop_hold = control_loop_guard.snapshot().hold_motion;
     status_runtime_state.final_output.producer_boot_id = dds_status.producer_boot_id;
     status_runtime_state.final_output.output_sequence = dds_status.final_output_sequence;
     (void)nav_status.publishIfDue(status_runtime_state, command_ingress.diagnostics(), last_timing,
@@ -879,6 +825,14 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       const bool known_action = lingtu::message::isKnownOperatorMotionAction(raw_action);
       const auto action = known_action ? static_cast<OperatorMotionAction>(raw_action)
                                        : OperatorMotionAction::Claim;
+      if (external_selected && action == OperatorMotionAction::Claim) {
+        write_operator_motion_ack(message, {false, "external_control_selected", false, false}, 0U);
+        return;
+      }
+      if (pending_posture && action == OperatorMotionAction::Claim) {
+        write_operator_motion_ack(message, {false, "posture_pending", false, false}, 0U);
+        return;
+      }
       if (known_action) {
         GoalTerminalIngressKind ingress_kind = GoalTerminalIngressKind::kOperatorClaim;
         if (action == OperatorMotionAction::Hold) {
@@ -939,6 +893,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       write_operator_motion_ack(message, receipt, final_output_sequence);
     };
     auto process_sample = [&](const OperatorMotionInputSample &message) {
+      if (pending_posture || external_selected) return;
       const auto verdict = terminal_ingress(GoalTerminalIngressKind::kOperatorMotionSample);
       if (verdict.decision != GoalTerminalIngressDecision::kAllow) {
         frames.last_error = verdict.reason;
@@ -1064,12 +1019,82 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     }
     auto process_navigation_command = [&](const NavigationCommandSample &sample) {
       const auto &ingress_request = sample.ingress;
+      if (pending_posture &&
+          pending_posture->ingress.client_id == ingress_request.client_id &&
+          pending_posture->ingress.request_id == ingress_request.request_id &&
+          pending_posture->ingress.raw_kind == ingress_request.raw_kind &&
+          pending_posture->ingress.payload.canonical() == ingress_request.payload.canonical()) return;
       if (deferred_control_ack && deferred_control_ack->client_id == ingress_request.client_id &&
           deferred_control_ack->request_id == ingress_request.request_id &&
           deferred_control_ack->raw_kind == ingress_request.raw_kind &&
           deferred_control_ack->payload.canonical() == ingress_request.payload.canonical()) return;
+      if (pending_planner && pending_planner->ingress.client_id == ingress_request.client_id &&
+          pending_planner->ingress.request_id == ingress_request.request_id &&
+          pending_planner->ingress.raw_kind == ingress_request.raw_kind &&
+          pending_planner->ingress.payload.canonical() == ingress_request.payload.canonical()) return;
       const auto ingress_result = command_ingress.handle(
           ingress_request, [&](CommandKind kind, const CommandPayload &payload) -> CommandAck {
+            if (kind == CommandKind::Stop || kind == CommandKind::Estop) {
+              if (kind == CommandKind::Estop || payload.reason != "client_clock_sync")
+                finish_planner(false, "planner_switch_cancelled");
+              cancel_posture("posture_cancel_requested");
+              if (external_selected) {
+                external_stop_request = lingtu::message::PostureRequest{
+                    dds_status.producer_boot_id, ingress_request.client_id,
+                    "external-stop-" + ingress_request.request_id,
+                    static_cast<int>(CommandKind::DisableMotors), 0, {}, {}};
+                (void)dds.publish(OutputEvent{*external_stop_request});
+                external_stop_retry = SteadyClock::now() + std::chrono::milliseconds(100);
+              }
+            } else if (pending_posture) {
+              return {false, "posture_pending"};
+            } else if (pending_planner || planner_selection.busy()) {
+              return {false, "planner_switch_pending"};
+            }
+            if (external_selected && kind != CommandKind::Stop && kind != CommandKind::Estop &&
+                kind != CommandKind::DisableMotors && kind != CommandKind::ExitExternal &&
+                kind != CommandKind::EnableExternal && kind != CommandKind::ClearEstop &&
+                !(kind == CommandKind::EnterExternal && !external_active)) {
+              return {false, "external_control_selected"};
+            }
+            if (external_stop_request && kind == CommandKind::EnableExternal) {
+              return {false, "stop_confirmation_pending"};
+            }
+            if (kind == CommandKind::Stand || kind == CommandKind::Sit ||
+                kind == CommandKind::EnableMotors || kind == CommandKind::DisableMotors ||
+                kind == CommandKind::SwitchProfile || kind == CommandKind::EnterExternal ||
+                kind == CommandKind::ExitExternal || kind == CommandKind::EnableExternal) {
+              const bool disabling = kind == CommandKind::DisableMotors || kind == CommandKind::ExitExternal;
+              const bool disabled_hold = disabling && !control_authority.motionAllowed();
+              const auto stamp_error = sourceStampError("posture", sample.goal.stamp_s,
+                  nowSeconds(), cfg.teleop_cmd_max_age_s, cfg.input_future_tolerance_s);
+              if (!stamp_error.empty()) return {false, stamp_error};
+              if (!disabling && !control_authority.motionAllowed()) return {false, "estop_latched"};
+              if (!disabling && (navigation_runtime_controller.terminalPending() ||
+                  motion_stop.confirmationPending())) return {false, "stop_confirmation_pending"};
+              if (!disabled_hold && (goal_plan.snapshot().busy || inspection_executor.active() ||
+                  rolling_segment.snapshot().active || control_authority.pathActive())) {
+                return {false, "task_active"};
+              }
+              if (operator_motion_authority.snapshot().has_active_authority) {
+                return {false, "operator_authority_active"};
+              }
+              if (kind == CommandKind::SwitchProfile && payload.profile_name.empty()) {
+                return {false, "profile_name_required"};
+              }
+              hold("posture_requested");
+
+              if (!disabling && !motion_stop.holdEndpointMotion("posture_requested")) {
+                return {false, "zero_publish_failed"};
+              }
+              pending_posture = PendingPosture{ingress_request,
+                  {dds_status.producer_boot_id, ingress_request.client_id,
+                   ingress_request.request_id, static_cast<int>(kind), 0, payload.profile_name,
+                   payload.external_session_id},
+                  SteadyClock::now() + std::chrono::seconds(8), SteadyClock::now(), {}, false};
+              send_posture();
+              return {true, "posture_pending", true};
+            }
             GoalTerminalIngressKind ingress_kind = GoalTerminalIngressKind::kUnknown;
             switch (kind) {
               case CommandKind::Goal:
@@ -1087,6 +1112,9 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
               case CommandKind::TaskSpeedLimit:
                 ingress_kind = GoalTerminalIngressKind::kTypedTaskSpeedLimit;
                 break;
+              case CommandKind::SelectPlanner:
+                ingress_kind = GoalTerminalIngressKind::kTypedSelectPlanner;
+                break;
               case CommandKind::Stop:
                 ingress_kind = payload.reason == "client_clock_sync"
                                    ? GoalTerminalIngressKind::kTypedClientClockSync
@@ -1101,6 +1129,15 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
               case CommandKind::ResumeAutonomy:
                 ingress_kind = GoalTerminalIngressKind::kTypedResumeAutonomy;
                 break;
+              case CommandKind::Stand:
+              case CommandKind::Sit:
+              case CommandKind::EnableMotors:
+              case CommandKind::DisableMotors:
+              case CommandKind::SwitchProfile:
+              case CommandKind::EnterExternal:
+              case CommandKind::ExitExternal:
+              case CommandKind::EnableExternal:
+                break;
             }
             const auto current_goal = goal_plan.snapshot();
             const bool owns_cancel_target = kind == CommandKind::TaskCancel &&
@@ -1110,7 +1147,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
                  goal_replan_runtime.replayPendingTerminal().terminal_task_id == ingress_request.task_id);
             if (owns_cancel_target || kind == CommandKind::Estop ||
                 (kind == CommandKind::Stop && payload.reason != "client_clock_sync")) {
-              pending_task_resume.reset();
+              navigation_runtime_controller.cancelResume();
               finish_deferred_control_ack({false, kind == CommandKind::Estop ? "estop_latched" :
                                                         kind == CommandKind::TaskCancel ? "cancelled" : "stopped"});
             }
@@ -1134,16 +1171,38 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
                       preserved.pending ? "estop_requested" : preserved.reason};
             }
             std::pair<bool, std::string> result;
-            if (kind == CommandKind::Goal) {
+            if (kind == CommandKind::SelectPlanner) {
+              if (!current_goal.active_task_id.empty() || current_goal.busy ||
+                  current_goal.pending_plan_queued || executor.hasRoute() ||
+                  inspection_executor.active() || rolling_segment.snapshot().active ||
+                  staged_inspection_goal) return {false, "task_active"};
+              if (operator_motion_authority.snapshot().has_active_authority)
+                return {false, "operator_authority_active"};
+              if (motion_stop.confirmationPending()) return {false, "stop_confirmation_pending"};
+              if (payload.local_planner == nav_kernel::localPlannerBackendName(cfg.local_planner_backend))
+                return {true, "planner_unchanged"};
+              try {
+                const auto error = planner_selection.start(cfg, payload.local_planner);
+                if (!error.empty()) return {false, error};
+              } catch (const std::exception &error) {
+                return {false, error.what()};
+              }
+              const auto stop = motion_stop.stopWithoutTerminalCommit();
+              if (!stop.accepted && !stop.pending) return {false, stop.reason};
+              pending_planner.emplace(PendingPlanner{ingress_request,
+                  motion_stop.confirmationKey(), !stop.pending, std::nullopt});
+              return {true, "planner_switch_pending", true};
+            } else if (kind == CommandKind::Goal) {
               result = submit_goal(sample.goal, ingress_request.task_id,
                                    ingress_request.request_id,
                                    GoalPlanOrigin::kExternal);
             } else if (kind == CommandKind::TaskCancel) {
               ++cancel_count;
-              const CommandAck cancel_result = task_cancel_router.handle(
+              const CommandAck cancel_result = navigation_runtime_controller.cancelTask(
                   GoalTaskCancelRequest{ingress_request.task_id, ingress_request.request_id,
                                         payload.reason, steadySeconds()});
               result = {cancel_result.accepted, cancel_result.reason};
+              nav_status.requestImmediate();
             } else if (kind == CommandKind::TaskPause) {
               result = handle_task_pause(ingress_request.task_id, ingress_request.request_id,
                                          payload.reason);
@@ -1175,6 +1234,14 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
             return {result.first, result.second, pending_control};
           });
       if (ingress_result.ack.pending) {
+        if (ingress_result.kind == CommandKind::SelectPlanner) return;
+        if (ingress_result.kind == CommandKind::Stand || ingress_result.kind == CommandKind::Sit ||
+            ingress_result.kind == CommandKind::EnableMotors ||
+            ingress_result.kind == CommandKind::DisableMotors ||
+            ingress_result.kind == CommandKind::SwitchProfile ||
+            ingress_result.kind == CommandKind::EnterExternal ||
+            ingress_result.kind == CommandKind::ExitExternal ||
+            ingress_result.kind == CommandKind::EnableExternal) return;
         if (deferred_control_ack &&
             deferred_control_ack->request_id != ingress_request.request_id) {
           finish_deferred_control_ack({false, "stop_confirmation_pending"});
@@ -1297,6 +1364,10 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       if (!ctx.semantic_view_query->start(std::move(context))) reject("semantic_search_query_busy");
     };
     auto process_inspection_command = [&](const InspectionCommandRequest &request) {
+      if (pending_posture) {
+        (void)inspection_command_coordinator.reject(request, "posture_pending");
+        return;
+      }
       const auto verdict = terminal_ingress(GoalTerminalIngressKind::kInspectionCommand);
       if (verdict.decision != GoalTerminalIngressDecision::kAllow) {
         (void)inspection_command_coordinator.reject(request, std::string(verdict.reason));
@@ -1327,7 +1398,35 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       }
     };
     for (const auto &event : command_batch.ordered) {
-      if (const auto *command = std::get_if<NavigationCommandSample>(&event)) {
+      if (const auto *state = std::get_if<lingtu::message::ExternalState>(&event)) {
+        if (state->fresh) {
+          external_selected = state->selected;
+          external_active = state->active;
+          if (state->motor_disable_confirmed && !state->motors_enabled) external_stop_request.reset();
+        }
+      } else if (const auto *ack = std::get_if<lingtu::message::PostureAck>(&event)) {
+        if (!pending_posture ||
+            !lingtu::message::samePostureRequest(pending_posture->request, ack->request) ||
+            pending_posture->request.action != ack->request.action ||
+            pending_posture->request.profile_name != ack->request.profile_name ||
+            pending_posture->request.external_session_id != ack->request.external_session_id ||
+            pending_posture->request.phase != ack->request.phase ||
+            pending_posture->waiting_stop) continue;
+        if (ack->final_result) {
+          finish_posture(ack->accepted, ack->reason);
+        } else if (ack->reason == "stop_required" && ack->request.phase == 0) {
+          const auto stop = motion_stop.stopWithoutTerminalCommit();
+          if (stop.pending) {
+            pending_posture->waiting_stop = true;
+            pending_posture->stop_key = motion_stop.confirmationKey();
+          } else if (stop.accepted) {
+            pending_posture->request.phase = 1;
+            send_posture();
+          } else {
+            finish_posture(false, stop.reason);
+          }
+        }
+      } else if (const auto *command = std::get_if<NavigationCommandSample>(&event)) {
         process_navigation_command(*command);
       } else if (const auto *preview = std::get_if<PlanPreviewRequest>(&event)) {
         process_plan_request(*preview);
@@ -1362,6 +1461,11 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     auto process_rolling_command = [&](const RollingSegmentCommand &request) {
       const auto context = rolling_segment_context();
       auto command = request;
+      if (pending_posture) {
+        (void)rolling_segment_effect_coordinator.apply(rolling_segment.step(
+            RollingSegmentIngressRejected{std::move(command), context, "posture_pending"}));
+        return;
+      }
       const auto verdict = terminal_ingress(GoalTerminalIngressKind::kRollingCommand);
       if (verdict.decision != GoalTerminalIngressDecision::kAllow) {
         (void)rolling_segment_effect_coordinator.apply(
@@ -1393,7 +1497,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto advance_runtime = [&](const SteadyClock::time_point &input_start,
                              TimingDiagnostics &timing) -> double {
     const std::uint64_t output_before_runtime = dds_status.final_output_sequence;
-    if (motion_stop.confirmationPending()) {
+    if (pending_posture || pending_planner || planner_selection.busy() || motion_stop.confirmationPending()) {
       (void)motion_stop.keepZeroFresh();
       if (navigation_runtime_controller.terminalPending()) {
         (void)navigation_runtime_controller.completeTerminal(goal_replan_runtime.replayPendingTerminal());
@@ -1404,19 +1508,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     // navigation admission gate will hold the next motion command until the
     // required inputs recover; a temporary input gap must not rewrite the
     // inspection task state.
-    const std::string driver_blocker = inputs.driverBlocker(SteadyClock::now());
-    const bool driver_authority_now = driver_blocker.empty();
-    if (driver_authority_previous && !driver_authority_now) {
-      (void)goal_replan_runtime.interrupt(
-          GoalReplanRuntimeInterruption::kDriverAuthorityLost, steadySeconds());
-      if (!motion_stop.holdEndpointMotion("driver_control_lost:" + driver_blocker)) {
-        record_zero_publish_failure("driver_control_lost:" + driver_blocker);
-      }
-    }
-    if (!driver_authority_now && !motion_stop.keepZeroFresh()) {
-      record_zero_publish_failure("driver_control_blocked:" + driver_blocker);
-    }
-    driver_authority_previous = driver_authority_now;
     if (staged_inspection_goal &&
         (inspection_executor.status().state != lingtu::nav::inspection::RunState::kPlanning ||
          inspection_executor.status().task_id != staged_inspection_goal->task_id ||
@@ -1436,7 +1527,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
             dispatch_result.first, dispatch_result.second, nowSeconds());
         if (completion.clear_motion_reason) {
           if (!motion_stop.clearEndpointMotion(*completion.clear_motion_reason)) {
-            record_zero_publish_failure(*completion.clear_motion_reason);
+            hold(*completion.clear_motion_reason + std::string(":zero_publish_failed"));
           }
         }
       }
@@ -1447,7 +1538,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     runtime_frame.fresh_admission = task_resume_context();
     runtime_frame.inspection_active = inspection_executor.active();
     runtime_frame.rolling_segment_active = rolling_segment.snapshot().active;
-    runtime_frame.control_hold = control_loop_guard_latched();
     bool path_active_for_tick = false;
     AutonomyTickResult autonomy_result;
     NavigationRuntimeFrameActions runtime_actions;
@@ -1511,7 +1601,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
               control_authority.stop();
             } else {
               if (!motion_stop.clearEndpointMotion(intent.reason)) {
-                record_zero_publish_failure(intent.reason);
+                hold(intent.reason + std::string(":zero_publish_failed"));
               }
             }
           }
@@ -1530,7 +1620,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
                 dispatch.action.request_id, published, inspection_now);
             if (completion.clear_motion_reason) {
               if (!motion_stop.clearEndpointMotion(*completion.clear_motion_reason)) {
-                record_zero_publish_failure(*completion.clear_motion_reason);
+                hold(*completion.clear_motion_reason + std::string(":zero_publish_failed"));
               }
             }
           }
@@ -1546,7 +1636,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
             last_teleop.output = {};
             last_teleop.reason = "estop_latched";
             if (!motion_stop.keepZeroFresh()) {
-              record_zero_publish_failure("estop_latched");
+              hold("estop_latched" + std::string(":zero_publish_failed"));
             }
           }
           const auto &active_teleop_request = control_authority.teleopRequest();
@@ -1573,46 +1663,19 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
             }
             bool cmd_vel_published = false;
             if (teleop_result.publish.cmd_vel) {
-              const bool command_is_nonzero = teleop_result.publish.command.vx != 0.0 ||
-                                              teleop_result.publish.command.vy != 0.0 ||
-                                              teleop_result.publish.command.wz != 0.0;
-              PostPlanningInputReadinessResult post_planning_readiness;
-              if (command_is_nonzero) {
-                input_gate_state = evaluate_input_gate();
-                post_planning_readiness = enforcePostPlanningInputReadiness(
-                    teleop_result.publish.command, input_gate_state,
-                    [&](const std::string &reason) {
-                      return motion_stop.clearEndpointMotion(reason);
-                    },
-                    teleop_result.teleop.manual_mode,
-                    state.teleop_freshness.fresh(SteadyClock::now(), cfg.teleop_cmd_max_age_s));
-              }
-              if (post_planning_readiness.stop_required) {
-                operator_motion_final_output_sequence = 0U;
-                last_teleop.output = {};
-                last_teleop.published = false;
-                last_teleop.stopped = true;
-                last_teleop.reason = post_planning_readiness.reason;
-                ++teleop_stop_count;
-                if (!post_planning_readiness.stop_succeeded) {
-                  record_zero_publish_failure(post_planning_readiness.reason);
-                }
+              const auto write_start = SteadyClock::now();
+              const auto receipt =
+                  dds.publish(OutputEvent{FinalVelocityOutput{teleop_result.publish.command}});
+              cmd_vel_published = receipt.final_velocity.has_value();
+              timing.dds_write_ms += elapsedMs(write_start);
+              if (cmd_vel_published) {
+                operator_motion_final_output_sequence = receipt.final_velocity->output_sequence;
+                state.motion_stop_evidence.observePublishedFinalOutput(
+                    receipt.final_velocity->output_sequence, teleop_result.publish.command,
+                    static_cast<double>(receipt.final_velocity->source_wall_ns) / 1e9);
               } else {
-                const auto write_start = SteadyClock::now();
-                const auto receipt =
-                    dds.publish(OutputEvent{FinalVelocityOutput{teleop_result.publish.command}});
-                cmd_vel_published = receipt.final_velocity.has_value();
-                timing.dds_write_ms += elapsedMs(write_start);
-                if (cmd_vel_published) {
-                  operator_motion_final_output_sequence =
-                      receipt.final_velocity->output_sequence;
-                  state.motion_stop_evidence.observePublishedFinalOutput(
-                      receipt.final_velocity->output_sequence, teleop_result.publish.command,
-                      static_cast<double>(receipt.final_velocity->source_wall_ns) / 1e9);
-                } else {
-                  operator_motion_final_output_sequence = 0U;
-                  fail_closed_after_cmd_vel_write("teleop_cmd_vel_publish_failed");
-                }
+                operator_motion_final_output_sequence = 0U;
+                fail_output("teleop_cmd_vel_publish_failed");
               }
             } else if (operator_motion_admitted_sequence != 0U) {
               operator_motion_final_output_sequence = 0U;
@@ -1657,7 +1720,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       autonomy_result = autonomy_tick.tick(
           AutonomyTickInput{safety_config, map_body, input_gate_state, path_active_for_tick,
                             goal_snapshot_for_tick.active_map_identity,
-                            control_authority.motionAllowed() && !control_loop_guard_latched(),
+                            control_authority.motionAllowed(),
                             rolling_active, cfg.publish_cmd_vel, traversability_grid, last_local,
                             timing, active_goal_identity});
       GoalReplanRuntimeFrameInput autonomy_frame = runtime_frame;
@@ -1665,7 +1728,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       autonomy_frame.wall_now_s = nowSeconds();
       autonomy_frame.inspection_active = inspection_executor.active();
       autonomy_frame.rolling_segment_active = rolling_active;
-      autonomy_frame.control_hold = control_loop_guard_latched();
       autonomy_frame.map_drift =
           autonomy_result.outcome.reason == "active_path_map_identity_missing" ||
           autonomy_result.outcome.reason == "active_map_unavailable_during_navigation" ||
@@ -1697,35 +1759,17 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
         }
         bool cmd_vel_published = false;
         if (autonomy_result.publish.cmd_vel) {
-          const bool command_is_nonzero = autonomy_result.publish.command.vx != 0.0 ||
-                                          autonomy_result.publish.command.vy != 0.0 ||
-                                          autonomy_result.publish.command.wz != 0.0;
-          PostPlanningInputReadinessResult post_planning_readiness;
-          if (command_is_nonzero) {
-            input_gate_state = evaluate_input_gate();
-            post_planning_readiness = enforcePostPlanningInputReadiness(
-                autonomy_result.publish.command, input_gate_state,
-                [&](const std::string &reason) {
-                  return motion_stop.holdEndpointMotion(reason);
-                });
-          }
-          if (post_planning_readiness.stop_required) {
-            if (!post_planning_readiness.stop_succeeded) {
-              record_zero_publish_failure(post_planning_readiness.reason);
-            }
+          const auto cmd_write_start = SteadyClock::now();
+          const auto receipt =
+              dds.publish(OutputEvent{FinalVelocityOutput{autonomy_result.publish.command}});
+          cmd_vel_published = receipt.final_velocity.has_value();
+          timing.dds_write_ms += elapsedMs(cmd_write_start);
+          if (cmd_vel_published) {
+            state.motion_stop_evidence.observePublishedFinalOutput(
+                receipt.final_velocity->output_sequence, autonomy_result.publish.command,
+                static_cast<double>(receipt.final_velocity->source_wall_ns) / 1e9);
           } else {
-            const auto cmd_write_start = SteadyClock::now();
-            const auto receipt =
-                dds.publish(OutputEvent{FinalVelocityOutput{autonomy_result.publish.command}});
-            cmd_vel_published = receipt.final_velocity.has_value();
-            timing.dds_write_ms += elapsedMs(cmd_write_start);
-            if (cmd_vel_published) {
-              state.motion_stop_evidence.observePublishedFinalOutput(
-                  receipt.final_velocity->output_sequence, autonomy_result.publish.command,
-                  static_cast<double>(receipt.final_velocity->source_wall_ns) / 1e9);
-            } else {
-              fail_closed_after_cmd_vel_write("autonomy_cmd_vel_publish_failed");
-            }
+            fail_output("autonomy_cmd_vel_publish_failed");
           }
         }
         if (autonomy_result.clear_local_path) {
@@ -1784,7 +1828,8 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     if (cfg.publish_cmd_vel && !control_authority.pathActive() && !control_authority.teleopRequest() &&
         !zero_published_this_frame &&
         !motion_stop.keepZeroFresh()) {
-      record_zero_publish_failure("idle");
+      frames.last_error = "idle_zero_publish_failed";
+      nav_status.requestImmediate();
     }
     if (!navigation_runtime_controller.terminalPending()) {
       (void)goal_status_outbox.flush();
@@ -1849,17 +1894,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     current_timing = &timing;
     timing.motion_update_last_ms = last_timing.motion_update_last_ms;
     timing.obstacle_snapshot_last_ms = last_timing.obstacle_snapshot_last_ms;
-    const auto loop_guard_decision = control_loop_guard.observe(control_loop_health.snapshot());
-    if (loop_guard_decision.hold_motion) {
-      const std::string hold_reason = "control_loop_unhealthy:" + loop_guard_decision.reason;
-      if (loop_guard_decision.clear_motion) {
-        if (!motion_stop.holdEndpointMotion(hold_reason)) {
-          record_zero_publish_failure(hold_reason);
-        }
-      } else if (!motion_stop.keepZeroFresh()) {
-        record_zero_publish_failure(hold_reason);
-      }
-    }
     (void)rolling_segment_effect_coordinator.apply(
         rolling_segment.step(RollingSegmentBeginTick{nowSeconds()}));
     const auto input_start = SteadyClock::now();
@@ -1878,26 +1912,56 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       finish_deferred_control_ack({false, "stop_confirmation_pending"});
     }
     if (auto stop_result = motion_stop.poll(); stop_result && !stop_result->pending) {
-      if (deferred_control_ack && stop_result->accepted &&
-          deferred_control_ack->raw_kind == static_cast<int>(CommandKind::ResumeAutonomy)) {
-        (void)control_loop_guard.completeResume(true);
-        input_gate_state = evaluate_input_gate();
-        if (!input_gate_state.ready && cfg.control_mode != ControlMode::Autonomy) {
-          control_authority.holdOperatorTakeover();
-          operator_resume_required = true;
-          stop_result->accepted = false;
-          stop_result->reason = inputGateStopReason(input_gate_state.reason);
+      if (pending_planner && !pending_planner->stopped) {
+        if (completing_stop_key != pending_planner->stop_key || !stop_result->accepted)
+          finish_planner(false, stop_result->reason);
+        else
+          pending_planner->stopped = true;
+      }
+      if (pending_posture && pending_posture->waiting_stop) {
+        if (completing_stop_key != pending_posture->stop_key || !stop_result->accepted) {
+          finish_posture(false, stop_result->reason);
+        } else {
+          pending_posture->waiting_stop = false;
+          pending_posture->request.phase = 1;
+          send_posture();
         }
       }
       finish_deferred_control_ack({stop_result->accepted, stop_result->reason});
       sync_goal_plan_diagnostics();
       nav_status.requestImmediate();
     }
-    if (pending_task_resume && !motion_stop.confirmationPending()) {
-      auto resume = std::move(*pending_task_resume);
-      pending_task_resume.reset();
-      (void)handle_task_resume(resume.task_id, resume.request_id, resume.source_stamp_s);
+    try {
+      if (auto prepared = planner_selection.poll()) {
+        if (pending_planner)
+          pending_planner->prepared = std::move(prepared);
+        else
+          planner_selection.retire(std::move(prepared->executor));
+      }
+      if (pending_planner && pending_planner->stopped && pending_planner->prepared) {
+        ctx.apply_planner(*pending_planner->prepared);
+        last_local_path.clear();
+        last_local_planner_debug = {};
+        last_local_planner_debug.backend = cfg.local_planner_backend;
+        input_gate_state = evaluate_input_gate();
+        finish_planner(true, "planner_selected");
+      }
+    } catch (const std::exception &error) {
+      finish_planner(false, error.what());
     }
+    if (external_stop_request && SteadyClock::now() >= external_stop_retry) {
+      (void)dds.publish(OutputEvent{*external_stop_request});
+      external_stop_retry = SteadyClock::now() + std::chrono::milliseconds(100);
+    }
+    if (pending_posture) {
+      if (SteadyClock::now() >= pending_posture->deadline) {
+        cancel_posture("posture_ack_timeout");
+      } else if (!pending_posture->waiting_stop &&
+                 SteadyClock::now() >= pending_posture->retry_at) {
+        send_posture();
+      }
+    }
+    navigation_runtime_controller.retryResume(task_resume_context, resume_actions, resume_blocker);
     const auto runtime_start = SteadyClock::now();
     const double publish_now = advance_runtime(input_start, timing);
     timing.runtime_ms = elapsedMs(runtime_start);

@@ -70,7 +70,7 @@ case "${RUN_TESTS,,}" in
       test_rolling_segment_effect_coordinator \
       test_inspection_command_coordinator \
       test_control_loop_health \
-      test_control_loop_runtime_guard \
+      test_control_cadence \
       test_teleop_safety \
       test_active_occupancy_gate \
       test_far_c_api \

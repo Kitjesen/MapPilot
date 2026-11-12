@@ -112,9 +112,7 @@ struct DriverControlSample {
   bool critical_fault{false};
   bool control_assured{false};
   std::string reason;
-  std::string accepted_producer_boot_id;
-  std::uint64_t accepted_output_sequence{0U};
-  bool last_command_accepted{false};
+  bool zero_output{false};
 };
 
 struct MotionProfileSample {

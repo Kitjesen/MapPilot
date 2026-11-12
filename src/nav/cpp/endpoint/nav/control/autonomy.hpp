@@ -40,7 +40,6 @@ struct AutonomyTickActions {
   std::function<lingtu::nav::navigation::ExecutionOutput(const nav_kernel::Pose &, const float *, int,
                                                  double, lingtu::nav::navigation::TraversabilityGridView)>
       tick_autonomy;
-  std::function<void()> stop_linear_motion;
   std::function<void()> pause_linear_motion;
   std::function<void(bool, double)> report_final_motion_blocked;
 };

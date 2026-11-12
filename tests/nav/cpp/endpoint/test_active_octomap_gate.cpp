@@ -11,7 +11,9 @@
 #include <octomap/OcTree.h>
 
 #include "lingtu/maps/io/pcd.hpp"
+#include "lingtu/maps/no_go.hpp"
 #include "input/active/octomap.hpp"
+#include "planning/global/octoplanner/octoplanner3d_core.hpp"
 
 namespace {
 
@@ -106,10 +108,34 @@ void testValidActiveMapGetsPrivateSnapshot() {
           "planner must load a private snapshot, not the mutable active path");
   require(readFile(result.artifact->loadPath()) == readFile(configured),
           "private snapshot bytes differ from validated artifact");
+  require(std::filesystem::last_write_time(result.artifact->loadPath()) ==
+              std::filesystem::last_write_time(configured),
+          "private snapshot lost the source stamp used by prepared maps");
   const auto current = gate.currentIdentity(configured);
   require(current.ok(), "current active map identity is unavailable: " + current.reason);
   require(lingtu::nav::plan::sameMapIdentity(*current.identity, result.artifact->identity()),
           "prepare and current identity disagree");
+}
+
+void testPreparedMapSurvivesNewSnapshot() {
+  TempMapRoot root;
+  const auto configured = writeValidMap(root.path());
+  const auto cache = configured.parent_path() / ".nav";
+  lingtu::nav::plan::GlobalPlannerOptions options;
+  {
+    ActiveOctomapGate gate(mapIdentity());
+    const auto prepared = gate.prepare(configured);
+    require(prepared.ok(), "first private snapshot failed");
+    octoplanner3d::runtime::PlannerSession session(cache);
+    session.prepare(prepared.artifact->loadPath(), prepared.artifact->identity(), options);
+    require(session.cacheLoadCount() == 0, "fresh fixture unexpectedly restored a cache");
+  }
+  ActiveOctomapGate gate(mapIdentity());
+  const auto prepared = gate.prepare(configured);
+  require(prepared.ok(), "second private snapshot failed");
+  octoplanner3d::runtime::PlannerSession session(cache);
+  session.prepare(prepared.artifact->loadPath(), prepared.artifact->identity(), options);
+  require(session.cacheLoadCount() == 1, "new private snapshot rebuilt the same map");
 }
 
 void testConfiguredPathMustBelongToActiveMap() {
@@ -199,16 +225,45 @@ void testRepeatedPrepareReusesValidatedSnapshot() {
           "same map revision created duplicate private snapshots");
 }
 
+void testPolicySurvivesPrivateSnapshot() {
+  TempMapRoot root;
+  const auto configured=writeValidMap(root.path());
+  const std::vector<lingtu::maps::NoGoRegion> regions{{"door",{1,2,0},{2,3,2}}};
+  writeFile(configured.parent_path()/lingtu::maps::kNoGoFilename,
+            lingtu::maps::NoGoRegionsJson(regions));
+  ActiveOctomapGate gate(mapIdentity());
+  const auto prepared=gate.prepare(configured);
+  require(prepared.ok(),"policy map rejected");
+  require(prepared.artifact->noGoRegions() && prepared.artifact->noGoRegions()->size()==1,
+          "private snapshot lost independent no-go policy");
+  require(prepared.artifact->noGoRegions()->front().id=="door","policy identity changed");
+  bool received=false;
+  lingtu::nav::plan::GlobalPlanRequest request;
+  runWithActiveOctomap(gate,configured,request,{},[&](const auto& path,const auto&,const auto& input,const auto&){
+    require(path!=configured,"policy test did not use private snapshot");
+    require(input.no_go_regions==prepared.artifact->noGoRegions(),"planner did not receive validated policy");
+    received=true; return lingtu::nav::plan::GlobalPlanResult{};
+  });
+  require(received,"planner not called");
+  ActiveOctomapGate malformed(mapIdentity());
+  writeFile(configured.parent_path()/lingtu::maps::kNoGoFilename,"{}");
+  const auto rejected=malformed.prepare(configured);
+  require(!rejected.ok() && rejected.reason.find("no-go")!=std::string::npos,
+          "malformed user restrictions were ignored");
+}
+
 }  // namespace
 
 int main() {
   try {
     testValidActiveMapGetsPrivateSnapshot();
+    testPreparedMapSurvivesNewSnapshot();
     testConfiguredPathMustBelongToActiveMap();
     testPcdPreviewCannotEnterNavigationGate();
     testMissingArtifactNeverInvokesPlanner();
     testPlannerLoadsImmutableSnapshotAfterValidation();
     testRepeatedPrepareReusesValidatedSnapshot();
+    testPolicySurvivesPrivateSnapshot();
     std::cout << "test_active_octomap_gate: PASS\n";
     return 0;
   } catch (const std::exception &exc) {

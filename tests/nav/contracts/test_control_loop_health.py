@@ -164,11 +164,11 @@ def test_linux_endpoint_build_gate_requires_control_loop_health_ctest() -> None:
 def test_gateway_obeys_native_hold_and_projects_health_metrics() -> None:
     runtime_status = _read(GATEWAY_RUNTIME_STATUS)
     routes = _read(GATEWAY_STATUS_ROUTES)
-    assert '"native_control_loop_health_unavailable"' in runtime_status
+    assert '"native_control_loop_health_unavailable"' not in runtime_status
 
-    assert '"native_control_loop_unhealthy"' in runtime_status
+    assert '"native_control_loop_unhealthy"' not in runtime_status
     assert 'snapshot.get("control_loop_health")' in runtime_status
-    assert 'control_authority.get("control_loop_hold") is True' in runtime_status
+    assert 'control_authority.get("resume_required") is True' in runtime_status
     assert 'control_loop_health.get("healthy") is not True' not in runtime_status
     assert '"control_loop_health": control_loop_health' in runtime_status
 

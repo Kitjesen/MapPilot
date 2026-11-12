@@ -9,6 +9,7 @@
 
 #include "collision_bitmap.hpp"
 #include "collision/body.hpp"
+#include "planning/local/scan/grid.hpp"
 #include "planning/local/scan/task.hpp"
 #include "tracking/follower.hpp"
 #include "trajectory/spline.hpp"
@@ -78,6 +79,31 @@ TEST(LocalPlanTask, RejectsInvalidRouteWithoutStartingWork) {
   nav_kernel::LocalPlanRequest request;
   EXPECT_EQ(task.update(request).plan.status(),
             nav_kernel::LocalPlanStatus::InvalidInput);
+}
+
+TEST(LocalPlanTask, CopiesAuthoritativeExecutionProgressIntoWorkerFeedback) {
+  nav_kernel::local::scan::Task task(scanParams());
+  ASSERT_TRUE(task.configure());
+  RequestFixture fixture;
+  fixture.request.clock.mode = nav_kernel::PlanClockMode::External;
+  const auto ready = waitForPlan(task, fixture);
+  ASSERT_TRUE(ready.ready());
+  const auto first = std::get<nav_kernel::SplineTarget>(ready.target());
+  const double duration = nav_kernel::SplineView(first).duration();
+  fixture.request.clock.timestampS = first.startTimeS + duration + .3;
+  fixture.request.execution = nav_kernel::LocalExecutionProgress{
+      first.trajectoryId, fixture.request.clock.timestampS, 0.0};
+  fixture.request.clock.executionFrozen = false;
+  nav_kernel::local::scan::Update update;
+  for (int tick = 0; tick < 20; ++tick) {
+    update = task.update(fixture.request);
+    ASSERT_TRUE(update.plan.ready()) << update.debug.searchReason;
+    EXPECT_EQ(std::get<nav_kernel::SplineTarget>(update.plan.target()).trajectoryId,
+              first.trajectoryId);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  EXPECT_DOUBLE_EQ(update.debug.timestampS, fixture.request.clock.timestampS);
+  EXPECT_EQ(update.debug.searchReason, "scan_execute_trajectory");
 }
 
 TEST(LocalPlanTask, SupportHeightMetadataDoesNotRequireFullFloorObservation) {
@@ -202,6 +228,27 @@ TEST(LocalPlanTask, RepeatedResetPreservesPendingCoreReset) {
   EXPECT_GT(restarted.previewPath().back().y, std::abs(restarted.previewPath().back().x));
 }
 
+TEST(LocalPlanTask, ResetDiscardsPendingRoute) {
+  nav_kernel::local::scan::Task task(scanParams());
+  ASSERT_TRUE(task.configure());
+  RequestFixture fixture;
+  ASSERT_EQ(task.update(fixture.request).plan.status(),
+            nav_kernel::LocalPlanStatus::Pending);
+  task.reset();
+  task.reset();
+  fixture.route[1] = {0.0, 2.0, 0.5};
+  nav_kernel::LocalPlan plan = waitForPlan(task, fixture);
+  for (int tick = 0; tick < 20; ++tick) {
+    ASSERT_TRUE(plan.ready());
+    ASSERT_FALSE(plan.previewPath().empty());
+    EXPECT_GT(plan.previewPath().back().y,
+              std::abs(plan.previewPath().back().x));
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    fixture.request.clock.timestampS += 0.01;
+    plan = task.update(fixture.request).plan;
+  }
+}
+
 TEST(LocalPlanTask, RejectsNonFiniteReferenceSnapshot) {
   nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());
@@ -273,7 +320,7 @@ TEST(LocalPlanTask, SpeedOnlyUpdateReachesWorkerWithoutReplacingGuide) {
   EXPECT_GT(slower.trajectoryId, firstId);
 }
 
-TEST(LocalPlanTask, MovingSpeedReductionReanchorsItsBridgeWhenTheReferenceIsFrozen) {
+TEST(LocalPlanTask, FrozenSlowdownUsesMeasuredState) {
   nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());
   RequestFixture fixture;
@@ -437,7 +484,7 @@ TEST(LocalPlanTask, MovingReductionTracksTheBridgeAndItsNormalReplacement) {
   }
 }
 
-TEST(LocalPlanTask, RepeatedLowerCapsKeepTheLatestInputWithoutReplacingTheRoute) {
+TEST(LocalPlanTask, RepeatedLowerCapsKeepLatestCapAndRoute) {
   nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());
   RequestFixture fixture;
@@ -523,7 +570,7 @@ TEST(LocalPlanTask, PausesOwnedClockForTimerGeneratedReferences) {
   EXPECT_GT(runningAfter.debug.scanAttempt.attemptId, runningInitialAttempt);
 }
 
-TEST(LocalPlanTask, KeepsOfficialWorldFrameSplineDuringMapRefresh) {
+TEST(LocalPlanTask, KeepsWorldFrameSplineOnMapRefresh) {
   nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());
   RequestFixture fixture;
@@ -544,7 +591,7 @@ TEST(LocalPlanTask, KeepsOfficialWorldFrameSplineDuringMapRefresh) {
   EXPECT_DOUBLE_EQ(second.controls.front().y, first.controls.front().y);
 }
 
-TEST(LocalPlanTask, FirstSplineEpochIsItsActualReceptionTime) {
+TEST(LocalPlanTask, FirstSplineStartsAtReception) {
   nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());
   RequestFixture fixture;
@@ -935,7 +982,7 @@ TEST(LocalPlanTask, DropsCompletionForSupersededReference) {
             std::abs(plan.previewPath().back().x));
 }
 
-TEST(LocalPlanTask, ProcessesResetEpochOnCollisionTimer) {
+TEST(LocalPlanTask, ReplansOnMapReset) {
   nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());
   RequestFixture fixture;
@@ -945,21 +992,27 @@ TEST(LocalPlanTask, ProcessesResetEpochOnCollisionTimer) {
       std::get<nav_kernel::SplineTarget>(ready.target()).trajectoryId;
 
   fixture.bitmap.occupyInflated({0.5F, 0.0F, 0.5F}, 0.4, 0.2, 0.2);
-  nav_kernel::LocalPlan updated;
+  const nav_kernel::local::scan::Grid grid(scanParams(), fixture.request);
+  ASSERT_EQ(grid.inflatedOccupancy(fixture.request.robot.pose.position, 0.0), 0);
+  ASSERT_EQ(grid.inflatedOccupancy({0.5, 0.0, 0.5}, 0.0), 1);
+  nav_kernel::local::scan::Update updated;
   for (int tick = 0; tick < 400; ++tick) {
     fixture.request.clock.timestampS += 0.01;
     fixture.setGeneration(1);
     fixture.request.environment.collision.resetEpoch = 2;
-    updated = task.update(fixture.request).plan;
-    if (updated.ready() &&
-        std::get<nav_kernel::SplineTarget>(updated.target()).trajectoryId >
+    updated = task.update(fixture.request);
+    if (updated.plan.ready() &&
+        updated.debug.occupiedCellCount == grid.occupiedCellCount() &&
+        std::get<nav_kernel::SplineTarget>(updated.plan.target()).trajectoryId >
             firstId) {
       break;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
 
-  ASSERT_TRUE(updated.ready());
-  EXPECT_GT(std::get<nav_kernel::SplineTarget>(updated.target()).trajectoryId,
+  ASSERT_TRUE(updated.plan.ready())
+      << updated.debug.searchReason << ": " << updated.debug.scanAttempt.reason;
+  EXPECT_EQ(updated.debug.occupiedCellCount, grid.occupiedCellCount());
+  EXPECT_GT(std::get<nav_kernel::SplineTarget>(updated.plan.target()).trajectoryId,
             firstId);
 }

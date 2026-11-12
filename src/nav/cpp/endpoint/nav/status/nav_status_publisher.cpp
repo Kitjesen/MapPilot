@@ -55,7 +55,7 @@ std::string activeCommandSource(const StatusRuntimeState &state) {
 
 nav_kernel::Twist finalCommandVelocity(const StatusWriterConfig &config,
                                        const StatusRuntimeState &state) {
-  if (state.estop_latched) {
+  if (state.estop_latched || (!state.hold_reason.empty() && state.hold_reason != "operator_takeover")) {
     return {};
   }
   if (state.teleop_request_active) {
@@ -129,8 +129,7 @@ bool NavStatusPublisher::publishIfDue(const StatusRuntimeState &state,
   }
 
   config_.operator_takeover_latched = state.operator_takeover_latched;
-  config_.resume_required = state.operator_resume_required;
-  config_.control_loop_hold = state.control_loop_hold;
+  config_.hold_reason = state.hold_reason;
   config_.active_cmd_source = activeCommandSource(state);
 
   const StatusMotionLayerSample motion = actions_.sample_motion_layer(wall_now_s);

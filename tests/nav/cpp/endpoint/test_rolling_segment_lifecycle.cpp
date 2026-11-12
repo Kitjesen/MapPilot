@@ -69,7 +69,6 @@ RollingSegmentRuntimeContext readyContext(double now_s = 10.0) {
   context.input_ready = true;
   context.autonomy_mode = true;
   context.motion_allowed = true;
-  context.driver_control_ready = true;
   context.robot_pose = {0.5, 1.5, 0.0};
   context.map_z = 0.25;
   return context;

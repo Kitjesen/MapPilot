@@ -12,15 +12,13 @@ StatusRuntimeState statusRuntimeStateFromEndpoint(const EndpointState &state) {
   result.path_active = authority.pathActive();
   result.estop_latched = authority.estopLatched();
   result.estop_reason = authority.estopReason();
-  result.operator_takeover_latched = authority.operatorTakeoverLatched();
+  result.operator_takeover_latched = authority.operatorHeld();
   result.teleop_request_active = authority.teleopRequest().has_value();
-  result.operator_resume_required = state.operator_resume_required;
+  result.hold_reason = authority.holdReason();
   result.driver_control.received = state.driver_control_received;
   result.driver_control.ready = state.driver_control_ready;
   result.driver_control.reason = state.driver_control_reason;
-  result.driver_control.last_command_accepted = state.driver_last_command_accepted;
-  result.driver_control.accepted_producer_boot_id = state.driver_accepted_producer_boot_id;
-  result.driver_control.accepted_output_sequence = state.driver_accepted_output_sequence;
+  result.driver_control.zero_output = state.driver_zero_output;
   result.motion_stop_evidence = state.motion_stop_evidence.snapshot();
   result.counters = {
       state.odom_count,           state.tf_count,           state.goal_count,

@@ -28,6 +28,12 @@ void require(bool condition, const char *message) {
 }
 
 void testPublicationChangesHeartbeatAndRetry() {
+  NavigationStateTracker held(NavigationControlState::kAutonomy);
+  NavigationStateContext fault;
+  fault.hold_reason = "stop_confirmation_timeout";
+  const auto stopped = held.sample(fault);
+  require(stopped.hold_reason == fault.hold_reason && stopped.authority == "none",
+          "an automatic fault must keep its cause without inventing operator authority");
   NavigationStateTracker tracker(NavigationControlState::kAutonomy);
   NavigationStateSample state = tracker.sample({});
   int writes = 0;
@@ -103,6 +109,38 @@ void testLifecycleAndTransientHold() {
   require(state.lifecycle_state == static_cast<int>(NavigationLifecycleState::kPlanning),
           "transient hold must not destroy the underlying lifecycle");
   require(state.hold_reason.empty(), "transient hold leaked");
+}
+
+void testHoldPriority() {
+  NavigationStateTracker tracker(NavigationControlState::kAutonomy);
+  tracker.observe(GoalPlanStatus{"task-hold", "goal-hold", 3U,
+                                 NavigationGoalState::PathActive, "path_active"});
+  NavigationStateContext context;
+  context.path_active = true;
+  context.input_ready = false;
+  context.input_gate_reason = "collision_stale";
+  const auto held = tracker.sample(context);
+  require(held.hold_reason == "collision_stale", "input hold reason missing");
+  require(held.active_task_id == "task-hold" && held.active_request_id == "goal-hold" &&
+              held.lifecycle_state == static_cast<int>(NavigationLifecycleState::kExecuting),
+          "input hold replaced the underlying task");
+
+  context.operator_takeover = true;
+  require(tracker.sample(context).hold_reason == "operator_takeover",
+          "input hold hid manual takeover");
+  context.estop_latched = true;
+  require(tracker.sample(context).hold_reason == "estop_latched",
+          "input hold hid the estop");
+
+  context.estop_latched = false;
+  context.operator_takeover = false;
+  require(tracker.sample(context).hold_reason == "collision_stale",
+          "operator release hid the remaining input hold");
+  context.input_ready = true;
+  const auto resumed = tracker.sample(context);
+  require(resumed.hold_reason.empty() && resumed.active_task_id == held.active_task_id &&
+              resumed.lifecycle_state == held.lifecycle_state,
+          "input hold did not clear on recovery");
 }
 
 void testExecutionRecoveryAndTerminalState() {
@@ -318,6 +356,7 @@ int runTests() {
   testInspectionOwnsWholeTaskLifecycle();
   testPublicationChangesHeartbeatAndRetry();
   testLifecycleAndTransientHold();
+  testHoldPriority();
   testExecutionRecoveryAndTerminalState();
   testFailureCarriesStableCode();
   testExplicitTaskPausePersistsUntilPathResumes();

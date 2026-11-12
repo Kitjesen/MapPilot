@@ -21,6 +21,14 @@ are direct C++ calls rather than additional processes or DDS nodes.
 
 ## Runtime flow
 
+In autonomy mode, the typed `SelectPlanner` command selects a Product/env-enabled
+local backend while idle. `endpoint/nav/app/planner.cpp` loads the candidate on a
+worker; the endpoint confirms stopping before replacing the Executor, input
+requirements and reported configuration together. Stop/estop cancels adoption,
+and late candidates are discarded. CMU assets load on demand; the 100 Hz SCAN
+clock stays fixed. Public callers use `POST /api/v1/navigation/planner` or
+`robot.navigation.select_planner("cmu")`. This does not switch the Product or SLAM mode.
+
 ```text
 route generation (event-driven)
   goal + localization + validated saved map
@@ -152,6 +160,8 @@ control tick. These three identities must not be substituted for each other.
 [`tracking/follower.hpp`](tracking/follower.hpp) exposes the `Follower` control
 boundary. Callers submit either a geometric path or an exact B-spline through
 the same `follow` concept. Algorithm state remains private to `Follower`.
+The existing `LocalPlan` target selects the path or spline implementation directly;
+there is no second target variant, factory registry, or dynamic algorithm map.
 
 The functional result is a pre-safety body-frame `Twist`. Heading error,
 distance-to-end, turn scaling, and acceleration decisions are controller

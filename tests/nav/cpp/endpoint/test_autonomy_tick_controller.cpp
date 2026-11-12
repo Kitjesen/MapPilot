@@ -34,7 +34,6 @@ using lingtu::nav::endpoint::InputGateState;
 using lingtu::nav::endpoint::LocalDiagnostics;
 using lingtu::nav::endpoint::TimingDiagnostics;
 using lingtu::nav::endpoint::TraversabilityGrid;
-using lingtu::nav::endpoint::enforcePostPlanningInputReadiness;
 
 void require(bool condition, const char *message) {
   if (!condition) {
@@ -66,7 +65,6 @@ struct Fixture {
   int shape_calls{0};
   int commit_calls{0};
   int velocity_stop_calls{0};
-  int stop_calls{0};
   int pause_calls{0};
   double now_s{42.0};
   const float *tick_obstacles{nullptr};
@@ -124,7 +122,7 @@ struct Fixture {
       return next_output;
     };
     final_actions.command_safety =
-        [&](const CommandSafetyConfig &config, const nav_kernel::Twist &command, double) {
+        [&](const CommandSafetyConfig &config, const nav_kernel::Twist &command) {
       ++command_safety_calls;
       verified_translation_seen = config.verified_recovery_translation;
       command_safety_input = command;
@@ -155,7 +153,6 @@ struct Fixture {
       stop_stamp = stamp;
       velocity_stop_reason = reason;
     };
-    actions.stop_linear_motion = [&] { ++stop_calls; };
     actions.pause_linear_motion = [&] { ++pause_calls; };
   }
 
@@ -210,7 +207,7 @@ void testBlockedInputGateFailsClosedWithoutPlanning() {
   const auto result = controller.tick(fixture.input());
 
   require(result.handled, "active blocked path must be handled");
-  require(fixture.pause_calls == 1 && fixture.stop_calls == 0,
+  require(fixture.pause_calls == 1,
           "input hold must freeze planning and tracking without resetting the route");
   require(result.clear_local_path && result.clear_local_planner_debug,
           "blocked input must clear stale path products");
@@ -339,55 +336,6 @@ void testLocalizationHoldDoesNotTerminalizeRollingOrUnownedPaths() {
   }
 }
 
-void testInputsExpiringDuringPlanningBlockPublicationWithoutCompletingGoal() {
-  for (const char *reason : {"cloud_stale", "collision_stale", "odom_stale",
-                             "driver_control_stale"}) {
-    Fixture fixture;
-    fixture.next_output.cmd_vel = {0.3, 0.1, 0.2};
-    const auto planner = fixture.actions.tick_autonomy;
-    fixture.actions.tick_autonomy = [&, planner](
-        const nav_kernel::Pose &pose, const float *obstacles, int count, double stamp,
-        lingtu::nav::navigation::TraversabilityGridView traversability) {
-      auto result = planner(pose, obstacles, count, stamp, traversability);
-      fixture.gate.ready = false;
-      fixture.gate.reason = reason;
-      return result;
-    };
-    AutonomyTickController controller(fixture.actions, fixture.control());
-    const auto planned = controller.tick(fixture.input());
-    require(planned.publish.cmd_vel && near(planned.publish.command.vx, 0.3),
-            "the planner must start from ready inputs and produce a nonzero command");
-
-    int hold_calls = 0;
-    const auto readiness = enforcePostPlanningInputReadiness(
-        planned.publish.command, fixture.gate, [&](const std::string &stop_reason) {
-          ++hold_calls;
-          require(stop_reason == (std::string(reason) == "collision_stale"
-                                      ? "collision_stale"
-                                      : std::string("input_gate_") + reason),
-                  "the publication hold must expose the newly stale input");
-          return true;
-        });
-    require(!readiness.allow_publish && readiness.stop_required &&
-                readiness.stop_succeeded && hold_calls == 1,
-            "data expiring during planning must hold motion before nonzero publication");
-    require(planned.outcome.kind == AutonomyTickOutcomeKind::kNone && fixture.stop_calls == 0,
-            "a temporary input hold must not complete or abort the autonomous goal");
-
-    const auto failed_stop = enforcePostPlanningInputReadiness(
-        planned.publish.command, fixture.gate, [](const std::string &) { return false; });
-    require(!failed_stop.allow_publish && failed_stop.stop_required &&
-                !failed_stop.stop_succeeded,
-            "a failed zero publication must never allow the obsolete nonzero command");
-    const auto zero = enforcePostPlanningInputReadiness(
-        {}, fixture.gate, [&](const std::string &) {
-          ++hold_calls;
-          return false;
-        });
-    require(zero.allow_publish && !zero.stop_required && hold_calls == 1,
-            "stale inputs must not suppress an explicit zero command");
-  }
-}
 
 void testActiveMapIdentityGuardFailsClosedBeforePlanning() {
   auto expect_blocked = [](Fixture &fixture, const char *expected_reason,
@@ -462,9 +410,9 @@ void testExecutorAndFinalControlHaveSeparateRuntimeTimings() {
     return planner(body,points,count,now,terrain);
   };
   const auto safety=fixture.final_actions.command_safety;
-  fixture.final_actions.command_safety=[safety](const auto &config, const auto &command, double age) {
+  fixture.final_actions.command_safety=[safety](const auto &config, const auto &command) {
     std::this_thread::sleep_for(std::chrono::milliseconds(7));
-    return safety(config,command,age);
+    return safety(config,command);
   };
   AutonomyTickController controller(fixture.actions,fixture.control());
   const auto start=std::chrono::steady_clock::now();
@@ -554,7 +502,7 @@ void testZeroCommandSkipsFinalSafety() {
   const auto result = controller.tick(fixture.input());
 
   require(fixture.command_safety_calls == 0 &&
-              fixture.stop_calls == 0 && fixture.shape_calls == 0 &&
+              fixture.shape_calls == 0 &&
               fixture.velocity_stop_calls == 1 && fixture.velocity_stop_reason == "zero_command",
           "zero command must bypass shaping and the command boundary while resetting smoother state");
   require(result.local.has_value() && !result.local->final_safety_applied &&
@@ -579,7 +527,7 @@ void testInvalidShapingAndCommitFailureFailClosed() {
   require(invalid_result.output.has_value() && near(invalid_result.output->cmd_vel.vx, 0.0) &&
               invalid_result.publish.cmd_vel && near(invalid_result.publish.command.vx, 0.0),
           "invalid shaping must expose an immediate zero command");
-  require(invalid.pause_calls == 1 && invalid.stop_calls == 0 &&
+  require(invalid.pause_calls == 1 &&
               invalid_result.output->trajectory_frozen &&
               invalid_result.local->tracking.executionFrozen,
           "invalid shaping must pause the retained trajectory without resetting it");
@@ -604,7 +552,7 @@ void testInvalidShapingAndCommitFailureFailClosed() {
               commit_result.local->final_safety_stopped &&
               commit_result.local->final_safety_reason == "velocity_smoother_commit_failed",
           "commit failure must publish zero with explicit stopped diagnostics");
-  require(commit_failure.pause_calls == 1 && commit_failure.stop_calls == 0 &&
+  require(commit_failure.pause_calls == 1 &&
               commit_result.output->trajectory_frozen,
           "commit failure must pause planning and tracking until execution can resume");
 }
@@ -645,7 +593,7 @@ void testFinalLinearStopPausesTrajectoryAndPreservesAllowedRotation() {
 
     const auto result = controller.tick(fixture.input());
 
-    require(fixture.pause_calls == 1 && fixture.stop_calls == 0 &&
+    require(fixture.pause_calls == 1 &&
                 result.output.has_value() && result.output->trajectory_frozen &&
                 result.local->tracking.executionFrozen,
             "final translation suppression must freeze the retained trajectory");
@@ -665,7 +613,7 @@ void testShapingToZeroPausesTrajectoryBeforeSafety() {
   const auto result = controller.tick(fixture.input());
 
   require(fixture.command_safety_calls == 0 && fixture.commit_calls == 0 &&
-              fixture.pause_calls == 1 && fixture.stop_calls == 0 &&
+              fixture.pause_calls == 1 &&
               result.output.has_value() && result.output->trajectory_frozen &&
               near(result.publish.command.vx, 0.0),
           "valid zero shaping must pause trajectory time even without a stopped safety decision");
@@ -779,32 +727,35 @@ void testRecoveryMotionIsNotPreemptedByTaskReplanning() {
           "active recovery must not request a global replacement");
 }
 
-void testActualCollisionRestartsPlannerInsteadOfHoldingUnsafeTrackingTarget() {
-  Fixture fixture;
-  int blockage_reports = 0;
-  fixture.actions.report_final_motion_blocked = [&](bool blocked, double) {
-    require(blocked, "final braking rejection was reported as accepted motion");
-    ++blockage_reports;
-  };
-  fixture.next_output.active = true;
-  fixture.next_output.path_found = true;
-  fixture.next_output.cmd_vel = {0.3, 0.0, 0.0};
-  fixture.final_actions.command_safety = [](const auto &, const auto &, double) {
-    CommandSafetyDecision decision;
-    decision.should_publish = true;
-    decision.stopped = true;
-    decision.reason = "scan_actual_motion_blocked";
-    return decision;
-  };
-  AutonomyTickController controller(fixture.actions, fixture.control());
-  const auto result = controller.tick(fixture.input());
-  require(fixture.stop_calls == 1 && fixture.pause_calls == 0,
-          "actual collision must restart planning from odometry instead of resuming the old spline");
-  require(near(result.publish.command.vx, 0.0) && fixture.commit_calls == 0,
-          "the blocked command must never be committed");
-  require(result.local->final_safety_reason == "scan_actual_motion_blocked",
-          "collision rejection must be visible in navigation status");
-  require(blockage_reports == 1, "final braking rejection did not reach recovery");
+void testBrakingStopReportsBothCauses() {
+  for (const auto *reason : {"brake_blocked", "cmd_blocked"}) {
+    Fixture fixture;
+    int blockage_reports = 0;
+    fixture.actions.report_final_motion_blocked = [&](bool blocked, double) {
+      require(blocked, "final braking rejection was reported as accepted motion");
+      ++blockage_reports;
+    };
+    fixture.next_output.active = true;
+    fixture.next_output.path_found = true;
+    fixture.next_output.cmd_vel = {0.3, 0.0, 0.0};
+    fixture.final_actions.command_safety = [reason](const auto &, const auto &) {
+      CommandSafetyDecision decision;
+      decision.should_publish = true;
+      decision.stopped = true;
+      decision.reason = reason;
+      return decision;
+    };
+    AutonomyTickController controller(fixture.actions, fixture.control());
+    const auto result = controller.tick(fixture.input());
+    require(fixture.pause_calls == 1,
+            "final collision must hold execution while SCAN owns collision replanning");
+    require(near(result.publish.command.vx, 0.0) && near(result.publish.command.vy, 0.0) &&
+                near(result.publish.command.wz, 0.0) && fixture.commit_calls == 0,
+            "the blocked command must never be committed");
+    require(result.local->final_safety_reason == reason,
+            "collision rejection must be visible in navigation status");
+    require(blockage_reports == 1, "final braking rejection did not reach recovery");
+  }
 }
 
 void testActualPureYawBrakingStopsBeforeCommitAndAllowsClearTurn() {
@@ -853,10 +804,10 @@ void testActualPureYawBrakingStopsBeforeCommitAndAllowsClearTurn() {
     safety_input.measured = measured;
     safety_input.measured_velocity_valid = true;
     fixture.final_actions.command_safety =
-        [&](const CommandSafetyConfig &config, const nav_kernel::Twist &command, double age) {
+        [&](const CommandSafetyConfig &config, const nav_kernel::Twist &command) {
       ++fixture.command_safety_calls;
       fixture.command_safety_input = command;
-      return lingtu::nav::endpoint::evaluateFinalSafety(safety_input, config, command, age);
+      return lingtu::nav::endpoint::evaluateFinalSafety(safety_input, config, command);
     };
     AutonomyTickController controller(fixture.actions, fixture.control());
     const auto result = controller.tick(fixture.input());
@@ -870,9 +821,9 @@ void testActualPureYawBrakingStopsBeforeCommitAndAllowsClearTurn() {
       require(fixture.commit_calls == 0 && near(result.publish.command.vx, 0) &&
                   near(result.publish.command.vy, 0) && near(result.publish.command.wz, 0),
               "unsafe actual rotation must publish exact zero without committing a command");
-      require(fixture.velocity_stop_calls == 1 && fixture.stop_calls == 1 &&
+      require(fixture.velocity_stop_calls == 1 && fixture.pause_calls == 1 &&
                   result.local->final_safety_stopped &&
-                  result.local->final_safety_reason == "scan_actual_motion_blocked",
+                  result.local->final_safety_reason == "brake_blocked",
               "actual rotation collision must stop execution and preserve its reason");
     } else {
       require(fixture.commit_calls == 1 && near(fixture.committed_command.wz, .8) &&
@@ -907,7 +858,7 @@ struct FinalSafetyFixture {
   }
 
   CommandSafetyDecision evaluate(const nav_kernel::Twist &command) {
-    return lingtu::nav::endpoint::evaluateFinalSafety(input, safety, command, 0);
+    return lingtu::nav::endpoint::evaluateFinalSafety(input, safety, command);
   }
 };
 
@@ -944,8 +895,8 @@ void testTurnUsesFinalConfiguredBraking() {
   fixture.request.environment.predictions = {&crossing, 1, 3, 1, 1};
   fixture.request.clock.timestampS = 1;
   fixture.config.tick_hz = 100;
+  fixture.config.teleop_cmd_max_age_s = .01;
   fixture.config.velocity_smoother.yaw.deceleration = 4;
-  fixture.safety.cmd_max_age_s = .01;
   const nav_kernel::Twist command{0, 0, .2};
   const nav_kernel::local::scan::Grid grid(fixture.params, fixture.request);
   require(grid.segmentInflatedOccupancy(pose.position, pose.yaw, pose.position, .1) == 0 &&
@@ -957,8 +908,8 @@ void testTurnUsesFinalConfiguredBraking() {
   require(planner.turnClear(fixture.request, .1),
           "turn geometry must not override final control with fixed braking values");
   fixture.config.tick_hz = 10;
+  fixture.config.teleop_cmd_max_age_s = .1;
   fixture.config.velocity_smoother.yaw.deceleration = 1;
-  fixture.safety.cmd_max_age_s = .1;
   require(fixture.evaluate(command).limited,
           "final control must still limit the command when configured braking intersects");
 }
@@ -1076,7 +1027,7 @@ void testRuntimeFinalControlUsesReplacedMapEachCycle() {
   fixture.replaceMap();
   const auto blocked = fixture.finalize({-.5, 0, 0});
   require(blocked.decision.stopped &&
-              blocked.decision.reason == "scan_actual_motion_blocked",
+              blocked.decision.reason == "brake_blocked",
           "a replacement map must block unsafe measured momentum on the next cycle");
   fixture.geometry.bitmap.clear();
   fixture.replaceMap();
@@ -1101,7 +1052,7 @@ void testRuntimeFinalControlStopRestartsYawWithOneAccelerationStep() {
   fixture.geometry.params.checkObstacle = false;
   lingtu::nav::endpoint::FinalInput input{
       lingtu::nav::endpoint::FinalMode::kTeleopCommand, fixture.geometry.safety,
-      {0, 0, 1}, 0, 0, false, true, 42, 1, .01};
+      {0, 0, 1}, false, true, 42, 1, .01};
   require(near(fixture.control.finalize(input).decision.cmd.wz, .01),
           "the initial direct turn must use one nominal acceleration step");
   input.now_s = 42.1;
@@ -1125,14 +1076,15 @@ void testFinalSafetyKeepsMeasuredAndCommandBrakingDistinct() {
   fixture.input.measured = {.5,0,0};
   const auto measured_blocked = fixture.evaluate({-.5,0,0});
   require(measured_blocked.stopped && measured_blocked.limited &&
-              measured_blocked.reason == "scan_actual_motion_blocked" &&
-              near(measured_blocked.cmd.vx,0),
+              measured_blocked.reason == "brake_blocked" &&
+              near(measured_blocked.cmd.vx,0) && near(measured_blocked.cmd.vy,0) &&
+              near(measured_blocked.cmd.wz,0),
           "a safe reverse request must not hide unsafe measured forward momentum");
 
   fixture.input.measured = {-.5,0,0};
   const auto limited = fixture.evaluate({.5,0,0});
   require(!limited.stopped && limited.slowed && limited.limited &&
-              limited.reason == "scan_actual_motion_limited" &&
+              limited.reason == "cmd_limited" &&
               limited.cmd.vx > 0 && limited.cmd.vx < .5,
           "safe measured motion must still limit an unsafe forward command");
   require(grid.brakingOccupancy(pose,limited.cmd,.35,.5,1) == 0,
@@ -1141,9 +1093,21 @@ void testFinalSafetyKeepsMeasuredAndCommandBrakingDistinct() {
   require(!accepted.stopped && near(accepted.cmd.vx,-.5),
           "clear measured and commanded braking must retain the request");
 
+  fixture.input.measured_velocity_valid = false;
+  fixture.bitmap.occupy({.30,.45,.55});
+  require(grid.inflatedOccupancy(pose.position, pose.yaw) == 1 &&
+              grid.brakingScale(pose, {.5,0,0}, .35,.5,1) == 0,
+          "candidate fixture must have no braking scale from its occupied start");
+  const auto command_blocked = fixture.evaluate({.5,0,0});
+  require(command_blocked.stopped && command_blocked.limited &&
+              command_blocked.reason == "cmd_blocked" &&
+              near(command_blocked.cmd.vx,0) && near(command_blocked.cmd.vy,0) &&
+              near(command_blocked.cmd.wz,0),
+          "candidate rejection without measured velocity must retain its own cause and exact zero");
+
   fixture.input.has_pose = false;
   const auto missing_pose = fixture.evaluate({-.5,0,0});
-  require(missing_pose.stopped && missing_pose.reason == "scan_actual_motion_blocked",
+  require(missing_pose.stopped && missing_pose.reason == "brake_blocked",
           "missing actual pose must not authorize a nonzero checked command");
 }
 
@@ -1201,10 +1165,22 @@ void testFinalSafetyRetainsRouteLimitAndManualScope() {
   fixture.input.manual_mode = true;
   require(!fixture.evaluate({.5,0,0}).stopped,
           "manual mode must retain its existing bypass of SCAN geometry");
-  const auto stale = lingtu::nav::endpoint::evaluateFinalSafety(
-      fixture.input, fixture.safety, {.5,0,0}, 1);
-  require(stale.stopped && stale.reason == "stale",
-          "manual mode must still enforce the command freshness limit");
+
+}
+
+void testFinalNoGoUsesSharedPolicyWithoutObstacleChecks() {
+  FinalSafetyFixture fixture;
+  fixture.params.checkObstacle = false;
+  fixture.request.environment.no_go_regions =
+      std::make_shared<const std::vector<lingtu::maps::NoGoRegion>>(
+          std::vector<lingtu::maps::NoGoRegion>{{"door", {.65,.3,.3}, {.8,.6,.8}}});
+  fixture.input.measured = {.5,0,0};
+  const auto blocked = fixture.evaluate({-.5,0,0});
+  require(blocked.stopped && blocked.reason == "brake_blocked",
+          "final safety must block measured momentum entering an explicit no-go region");
+  fixture.request.environment.no_go_regions.reset();
+  require(!fixture.evaluate({-.5,0,0}).stopped,
+          "removing policy must restore the original disabled-obstacle behavior");
 }
 
 void testBrakingSlowdownRetainsActiveTrajectory() {
@@ -1219,18 +1195,18 @@ void testBrakingSlowdownRetainsActiveTrajectory() {
   fixture.next_output.cmd_vel = {0.75, 0.0, 0.0};
   fixture.next_output.tracking.active = true;
   fixture.next_output.tracking.trajectoryId = 17;
-  fixture.final_actions.command_safety = [](const auto &, const auto &, double) {
+  fixture.final_actions.command_safety = [](const auto &, const auto &) {
     CommandSafetyDecision decision;
     decision.should_publish = true;
     decision.cmd = {0.25, 0.0, 0.0};
     decision.slowed = decision.limited = true;
-    decision.reason = "scan_actual_motion_limited";
+    decision.reason = "cmd_limited";
     return decision;
   };
   AutonomyTickController controller(fixture.actions, fixture.control());
   const auto result = controller.tick(fixture.input());
   require(accepted_reports == 1, "accepted motion did not clear prior final blockage");
-  require(fixture.stop_calls == 0 && fixture.pause_calls == 0,
+  require(fixture.pause_calls == 0,
           "a safe lower speed must not discard or freeze the active trajectory");
   require(near(result.publish.command.vx, 0.25) && fixture.commit_calls == 1,
           "only the collision-checked lower speed may be committed");
@@ -1287,7 +1263,6 @@ int main() {
     testLocalizationHoldDoesNotExpireTheGoal();
     testLocalizationHoldDoesNotCrossGoalOrControlChanges();
     testLocalizationHoldDoesNotTerminalizeRollingOrUnownedPaths();
-    testInputsExpiringDuringPlanningBlockPublicationWithoutCompletingGoal();
     testActiveMapIdentityGuardFailsClosedBeforePlanning();
     testNormalTickProducesBorrowedInputIntentsAndDiagnostics();
     testExecutorAndFinalControlHaveSeparateRuntimeTimings();
@@ -1302,7 +1277,7 @@ int main() {
     testPlannerExhaustionTerminatesWithoutGlobalRetry();
     testRecoveryMotionIsNotPreemptedByTaskReplanning();
     testReachedOutcomesDistinguishInspectionArrival();
-    testActualCollisionRestartsPlannerInsteadOfHoldingUnsafeTrackingTarget();
+    testBrakingStopReportsBothCauses();
     testActualPureYawBrakingStopsBeforeCommitAndAllowsClearTurn();
     testRuntimeFinalControlUsesActiveRouteBody();
     testRuntimeFinalControlUsesObservedBody();
@@ -1310,6 +1285,7 @@ int main() {
     testFinalSafetyKeepsMeasuredAndCommandBrakingDistinct();
     testFinalSafetyPreservesVerifiedBoundaryDeparture();
     testFinalSafetyRetainsRouteLimitAndManualScope();
+    testFinalNoGoUsesSharedPolicyWithoutObstacleChecks();
     testFinalSafetyUsesTheActiveTaskBudgetForDeadband();
     testRuntimeFinalControlReadsCurrentPoseEachCycle();
     testRuntimeFinalControlUsesReplacedMapEachCycle();

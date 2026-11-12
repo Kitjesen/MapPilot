@@ -11,6 +11,8 @@
 #include "planning/semantic/contract.hpp"
 #include "app/rolling/contract.hpp"
 #include "safety/geofence.hpp"
+#include "message/protocol/posture.hpp"
+#include "message/protocol/external.hpp"
 
 namespace lingtu::nav::endpoint {
 
@@ -85,7 +87,8 @@ struct GeofenceCommandView {
 using CommandEvent =
     std::variant<OperatorMotionControlSample, OperatorMotionInputSample,
                  NavigationCommandSample, PlanPreviewRequest, semantic::ViewQuery, InspectionCommandRequest,
-                 GeofenceCommandView, RollingSegmentCommand, InspectionEvidenceResultSample>;
+                 GeofenceCommandView, RollingSegmentCommand, InspectionEvidenceResultSample,
+                 lingtu::message::PostureAck, lingtu::message::ExternalState>;
 
 struct CommandBatch {
   double receive_steady_s{0.0};

@@ -25,7 +25,6 @@ struct InputConfig {
   double simulation_clock_max_age_s{0.25};
   double source_transform_max_gap_s{0.25};
   double cloud_pose_max_gap_s{::lingtu::settings::control::native_nav::cloud_pose_max_gap_s};
-  double driver_control_max_age_s{::lingtu::settings::control::native_nav::driver_control_max_age_s};
   nav_kernel::Vec3 sensor_offset{};
   bool check_obstacle{true};
   std::size_t max_obstacle_points{::lingtu::settings::local::native_nav::max_obstacle_points};
@@ -73,7 +72,10 @@ class InputProjector {
   void projectLocalizationHealth(std::string payload, double receive_steady_s);
   InputGateState evaluateGate(double now_steady_s, SteadyClock::time_point now_time);
   double driverAge(SteadyClock::time_point now_time) const;
-  std::string driverBlocker(SteadyClock::time_point now_time) const;
+  void setSupportHeight(double height, double tolerance) {
+    config_.support_height_m = height;
+    config_.support_tolerance_m = tolerance;
+  }
 
  private:
   void projectTerrain(InputSample<PointCloudSample> sample, double receive_steady_s,

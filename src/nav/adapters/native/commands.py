@@ -11,7 +11,7 @@ from nav.adapters.native.abi import (
     NativeCommandSession,
     get_native_command_session,
 )
-from runtime.msgs import NavigationCommandReceipt
+from runtime.msgs import NavigationCommandKind, NavigationCommandReceipt
 
 NavigationClientError = NativeCommandClientError
 
@@ -69,16 +69,10 @@ class NativeNavigationClient:
         """Submit one product navigation task and return its business ACK."""
 
         receipt = self._session.start_navigation_task(
-            str(task_id or ""),
-            str(request_id or ""),
-            float(x),
-            float(y),
-            float(z),
-            None if yaw is None else float(yaw),
-            **{k: v for k, v in {"max_speed_mps": max_speed_mps,
-                "acceptance_radius_m": acceptance_radius_m}.items() if v is not None},
+            task_id, request_id or "", x, y, z, yaw,
+            max_speed_mps=max_speed_mps, acceptance_radius_m=acceptance_radius_m,
         )
-        return NavigationCommandReceipt(**receipt)
+        return self._receipt(receipt, NavigationCommandKind.GOAL, task_id, request_id)
 
     def preview_plan(
         self,
@@ -93,9 +87,7 @@ class NativeNavigationClient:
         request_id = f"plan-{os.getpid()}-{time.time_ns()}"
         return self._session.preview_plan(
             request_id,
-            float(x),
-            float(y),
-            float(z),
+            x, y, z,
             acceptance_radius_m=acceptance_radius_m,
         )
 
@@ -116,16 +108,16 @@ class NativeNavigationClient:
         """Return native 3D semantic observation candidates without moving."""
 
         return self._session.query_semantic_views(
-            boot_id=str(boot_id),
-            map_id=str(map_id),
-            map_content_epoch=int(map_content_epoch),
-            frame_id=str(frame_id or "map"),
-            frame_epoch=int(frame_epoch),
-            reference_z=float(reference_z),
-            camera_range_m=float(camera_range_m),
-            camera_horizontal_fov_rad=float(camera_horizontal_fov_rad),
-            views=list(views or []),
-            timeout_ms=max(1, int(timeout_ms)),
+            boot_id=boot_id,
+            map_id=map_id,
+            map_content_epoch=map_content_epoch,
+            frame_id=frame_id,
+            frame_epoch=frame_epoch,
+            reference_z=reference_z,
+            camera_range_m=camera_range_m,
+            camera_horizontal_fov_rad=camera_horizontal_fov_rad,
+            views=views,
+            timeout_ms=timeout_ms,
         )
 
     def cancel_task(
@@ -142,7 +134,10 @@ class NativeNavigationClient:
             str(request_id or ""),
             str(reason or "cancel"),
         )
-        return NavigationCommandReceipt(**receipt)
+        return self._receipt(receipt, NavigationCommandKind.TASK_CANCEL, task_id, request_id)
+
+    def select_planner(self, name: str, *, request_id: str | None = None) -> dict[str, object]:
+        return self._session.select_navigation_planner(name, request_id or "")
 
     def set_task_speed_limit(
         self, task_id: str, max_speed_mps: float, *, request_id: str | None = None,
@@ -150,7 +145,7 @@ class NativeNavigationClient:
         receipt = self._session.set_navigation_task_speed_limit(
             task_id, str(request_id or ""), float(max_speed_mps),
         )
-        return NavigationCommandReceipt(**receipt)
+        return self._receipt(receipt, NavigationCommandKind.TASK_SPEED_LIMIT, task_id, request_id)
 
     def pause_task(
         self,
@@ -166,7 +161,7 @@ class NativeNavigationClient:
             str(request_id or ""),
             str(reason or "operator_pause"),
         )
-        return NavigationCommandReceipt(**receipt)
+        return self._receipt(receipt, NavigationCommandKind.PAUSE_TASK, task_id, request_id)
 
     def resume_task(
         self,
@@ -182,7 +177,17 @@ class NativeNavigationClient:
             str(request_id or ""),
             str(reason or "operator_resume"),
         )
-        return NavigationCommandReceipt(**receipt)
+        return self._receipt(receipt, NavigationCommandKind.RESUME_TASK, task_id, request_id)
+
+    @staticmethod
+    def _receipt(raw, kind, task_id, request_id) -> NavigationCommandReceipt:
+        receipt = NavigationCommandReceipt(**raw)
+        if receipt.kind != int(kind) or receipt.task_id != task_id:
+            raise NavigationClientError("native navigation returned mismatched command identity")
+        if request_id and not (receipt.request_id == request_id or
+                               receipt.request_id.startswith(f"{request_id}-clock-retry-")):
+            raise NavigationClientError("native navigation returned the wrong request_id")
+        return receipt
 
     def stop(self, reason: str = "stop", *, request_id: str | None = None) -> None:
         """Immediately clear active motion without latching estop."""
@@ -234,6 +239,48 @@ class NativeNavigationClient:
             str(request_id or ""),
             str(reason or "resume_autonomy"),
         )
+
+    def stand(self, reason: str = "stand", *, request_id: str | None = None) -> dict[str, object]:
+        return self._session.posture("stand", str(request_id or ""), str(reason or "stand"))
+
+    def sit(self, reason: str = "sit", *, request_id: str | None = None) -> dict[str, object]:
+        return self._session.posture("sit", str(request_id or ""), str(reason or "sit"))
+
+    def external_enter(self, reason="external_enter", *, request_id=None):
+        return self._session.external_control(16, str(request_id or ""), reason, request_id)
+
+    def external_enable(self, session_id, reason="external_enable", *, request_id=None):
+        return self._session.external_control(18, session_id, reason, request_id)
+
+    def external_disable(self, session_id, reason="external_disable", *, request_id=None):
+        return self._session.external_control(14, session_id, reason, request_id)
+
+    def external_exit(self, session_id, reason="external_exit", *, request_id=None):
+        return self._session.external_control(17, session_id, reason, request_id)
+
+    def external_frame(self, session_id, sequence, joints, input_window):
+        return self._session.external_frame(session_id, sequence, joints, input_window)
+
+    def external_heartbeat(self, session_id):
+        return self._session.external_heartbeat(session_id)
+
+    def external_status(self):
+        return self._session.external_status()
+
+    def enable_motors(
+        self, reason: str = "enable_motors", *, request_id: str | None = None,
+    ) -> dict[str, object]:
+        return self._session.posture("enable_motors", str(request_id or ""), reason)
+
+    def disable_motors(
+        self, reason: str = "disable_motors", *, request_id: str | None = None,
+    ) -> dict[str, object]:
+        return self._session.posture("disable_motors", str(request_id or ""), reason)
+
+    def switch_profile(
+        self, name: str, reason: str = "switch_profile", *, request_id: str | None = None,
+    ) -> dict[str, object]:
+        return self._session.switch_profile(name, str(request_id or ""), reason)
 
     def _send_reason_command(
         self,

@@ -13,7 +13,7 @@
 #include "safety/stop.hpp"
 #include "app/goal/runtime.hpp"
 #include "status/goal_terminal_status_delivery.hpp"
-#include "status/goal_terminal_transaction.hpp"
+#include "app/goal/terminal.hpp"
 #include "status/navigation_goal_status_outbox.hpp"
 
 namespace {
@@ -32,8 +32,8 @@ using lingtu::nav::endpoint::GoalReplanRuntimeCoordinator;
 using lingtu::nav::endpoint::GoalReplanRuntimeInterruption;
 using lingtu::nav::endpoint::GoalReplanRuntimeResult;
 using lingtu::nav::endpoint::GoalTerminalStatusDelivery;
-using lingtu::nav::endpoint::GoalTerminalTransaction;
-using lingtu::nav::endpoint::GoalTerminalTransactionActions;
+using lingtu::nav::endpoint::GoalTerminal;
+using lingtu::nav::endpoint::GoalTerminalActions;
 using lingtu::nav::endpoint::MotionStopActions;
 using lingtu::nav::endpoint::MotionStopBarrier;
 using lingtu::nav::endpoint::MotionStopTerminalBarrierResult;
@@ -64,7 +64,7 @@ struct Fixture {
   MotionStopBarrier motion_stop;
   GoalReplanRuntimeCoordinator coordinator;
   GoalTerminalStatusDelivery delivery;
-  GoalTerminalTransaction transaction;
+  GoalTerminal transaction;
 
   Fixture()
       : outbox([this](const GoalPlanStatus &status) { observed.push_back(status); },
@@ -113,7 +113,7 @@ struct Fixture {
     actions.defer_goal_abort = [this](const std::string &reason) {
       return goal_plan.deferAbort(reason);
     };
-    actions.record_stop_evidence_failure = [](const std::string &) {};
+    actions.hold = [](const std::string &) {};
     actions.sync_goal_diagnostics = [] {};
     actions.rolling_segment_active = [] { return false; };
     actions.preempt_rolling_segment = [](const std::string &) { return true; };
@@ -127,7 +127,7 @@ struct Fixture {
     actions.clear_control_estop = [] { return true; };
     actions.resume_control = [] { return true; };
     actions.cancel_inspection = [](const std::string &) {};
-    actions.clear_operator_resume_required = [] {};
+
     actions.set_autonomy_request_not_before = [](double) {};
     actions.persist_estop_latch = [](const std::string &) { return true; };
     actions.clear_persisted_estop_latch = [] { return true; };
@@ -142,8 +142,8 @@ struct Fixture {
     return actions;
   }
 
-  GoalTerminalTransactionActions transactionActions() {
-    GoalTerminalTransactionActions actions;
+  GoalTerminalActions transactionActions() {
+    GoalTerminalActions actions;
     actions.report_error = [this](const std::string &reason) { reported_errors.push_back(reason); };
     actions.pause_inspection = [this](const std::string &reason) {
       inspection_pauses.push_back(reason);
@@ -174,7 +174,7 @@ struct Fixture {
     require(goal_plan.submit(request, admission()).accepted, "fixture goal submission failed");
 
     for (int index = 0; index < 1000; ++index) {
-      if (goal_plan.advance(GoalPlanAdvanceContext{7U, false, 2.0 + index * 0.001})
+      if (goal_plan.advance(GoalPlanAdvanceContext{7U, {}, 2.0 + index * 0.001})
               .path_activated) {
         require(outbox.flush() > 0U, "fixture initial goal statuses were not delivered");
         return;
@@ -213,10 +213,10 @@ void testOnlyReachedUsesDriverAckWithoutAdditionalOdometry() {
   const auto intent = reached.reachedIntent();
   require(!reached.transaction.advance(intent).action_committed,
           "reached committed before the zero command ACK");
-  require(reached.evidence_policies.back() == StopConfirmationEvidencePolicy::DriverAckOnly,
+  require(reached.evidence_policies.back() == StopConfirmationEvidencePolicy::ZeroOutputOnly,
           "reached retained the additional odometry wait");
   (void)reached.motion_stop.poll();
-  require(reached.evidence_policies.back() == StopConfirmationEvidencePolicy::DriverAckOnly,
+  require(reached.evidence_policies.back() == StopConfirmationEvidencePolicy::ZeroOutputOnly,
           "pending reached transaction lost its evidence policy");
   reached.confirmation = StopConfirmationState::Confirmed;
   require(reached.transaction.advance(reached.coordinator.replayPendingTerminal()).delivery_acknowledged,
@@ -235,10 +235,10 @@ void testSafetyStopAndEstopReplaceReachedEvidencePolicy() {
     fixture.activateGoal();
     fixture.confirmation = StopConfirmationState::Pending;
     (void)fixture.transaction.advance(fixture.reachedIntent());
-    require(fixture.evidence_policies.back() == StopConfirmationEvidencePolicy::DriverAckOnly,
+    require(fixture.evidence_policies.back() == StopConfirmationEvidencePolicy::ZeroOutputOnly,
             "reached fixture did not select ACK-only");
-    const auto stopped = estop ? fixture.transaction.estopWhileTerminalPending("operator_request")
-                               : fixture.transaction.stopWhileTerminalPending();
+    const auto stopped = estop ? fixture.transaction.estopPending("operator_request")
+                               : fixture.transaction.stopPending();
     require(stopped.pending && !stopped.terminal_committed,
             "safety replacement committed before complete stop evidence");
     require(!fixture.evidence_policies.back(),
@@ -252,7 +252,7 @@ void testSafetyStopAndEstopReplaceReachedEvidencePolicy() {
     if (estop) {
       require(fixture.latched_estop_reasons == std::vector<std::string>{"operator_request"},
               "ordinary replay overwrote the latched estop reason");
-      (void)fixture.transaction.stopWhileTerminalPending();
+      (void)fixture.transaction.stopPending();
       (void)fixture.transaction.advance(fixture.coordinator.replayPendingTerminal());
       require(!fixture.evidence_policies.back() &&
                   fixture.latched_estop_reasons == std::vector<std::string>{"operator_request"},
@@ -396,7 +396,7 @@ void testSafetyStopCommitsExactPendingTerminalWithoutAcknowledgingIt() {
   fixture.activateGoal();
   (void)fixture.terminalIntent();
 
-  const MotionStopTerminalBarrierResult stopped = fixture.transaction.stopWhileTerminalPending();
+  const MotionStopTerminalBarrierResult stopped = fixture.transaction.stopPending();
 
   require(stopped.accepted && stopped.terminal_committed && stopped.reason == "stopped",
           "safety stop did not preserve the pending terminal commit");
@@ -420,7 +420,7 @@ void testSafetyEstopPreservesTerminalAndUsesExactReason() {
   (void)fixture.terminalIntent();
 
   const MotionStopTerminalBarrierResult estopped =
-      fixture.transaction.estopWhileTerminalPending("operator_estop");
+      fixture.transaction.estopPending("operator_estop");
 
   require(estopped.accepted && estopped.terminal_committed && estopped.reason == "estop_latched",
           "safety estop did not preserve the pending terminal commit");
@@ -437,7 +437,7 @@ void testMissingPendingTerminalStillPerformsPhysicalStop() {
   Fixture fixture;
 
   const MotionStopTerminalBarrierResult stopped =
-      fixture.transaction.estopWhileTerminalPending("operator_estop");
+      fixture.transaction.estopPending("operator_estop");
 
   require(!stopped.accepted && !stopped.terminal_committed &&
               stopped.reason == "goal_terminal_surface_missing",
@@ -462,7 +462,7 @@ void testStageConflictStillCommitsExactPendingTerminalButFailsAdmission() {
               GoalTerminalStatusDelivery::StageResult::kStaged,
           "fixture could not stage the conflicting delivery identity");
 
-  const MotionStopTerminalBarrierResult stopped = fixture.transaction.stopWhileTerminalPending();
+  const MotionStopTerminalBarrierResult stopped = fixture.transaction.stopPending();
 
   require(!stopped.accepted && stopped.terminal_committed &&
               stopped.reason == "goal_terminal_delivery_ticket_conflict",
@@ -480,12 +480,12 @@ void testConstructorRejectsIncompleteActions() {
   Fixture fixture;
   bool rejected = false;
   try {
-    GoalTerminalTransaction invalid(fixture.coordinator, fixture.motion_stop, fixture.delivery,
-                                    GoalTerminalTransactionActions{});
+    GoalTerminal invalid(fixture.coordinator, fixture.motion_stop, fixture.delivery,
+                                    GoalTerminalActions{});
   } catch (const std::invalid_argument &) {
     rejected = true;
   }
-  require(rejected, "GoalTerminalTransaction accepted incomplete actions");
+  require(rejected, "GoalTerminal accepted incomplete actions");
 }
 
 void testTaskCancelAcceptsPendingStopWithoutEarlyTerminal() {
@@ -536,7 +536,7 @@ int main() {
     testConstructorRejectsIncompleteActions();
     return 0;
   } catch (const std::exception &exc) {
-    std::fprintf(stderr, "test_goal_terminal_transaction: FAIL: %s\n", exc.what());
+    std::fprintf(stderr, "test_goal_terminal: FAIL: %s\n", exc.what());
     return 1;
   }
 }

@@ -36,7 +36,6 @@ struct InputGateConfig {
   double odom_max_age_s{::lingtu::settings::control::native_nav::odom_max_age_s};
   double tf_max_age_s{::lingtu::settings::control::native_nav::tf_max_age_s};
   double cloud_max_age_s{::lingtu::settings::control::native_nav::cloud_max_age_s};
-  // Retained in config/status; current valid inputs admit motion without a frame-count gate.
   double future_tolerance_s{::lingtu::settings::control::native_nav::input_future_tolerance_s};
   bool require_odom{true};
   bool require_cloud{true};
@@ -45,7 +44,6 @@ struct InputGateConfig {
   double driver_control_max_age_s{::lingtu::settings::control::native_nav::driver_control_max_age_s};
   bool require_traversability{false};
   bool require_localization_health{false};
-  bool require_driver_control{false};
   double odom_max_speed_mps{3.0};
   double local_collision_max_age_s{::lingtu::settings::local::parameters::local_collision_max_age_s};
   bool require_local_collision{false};
@@ -135,7 +133,6 @@ class OdometrySpeedMonitor {
 
 struct InputGateState {
   bool ready{false};
-  bool recovering{false};
   std::string reason{"not_evaluated"};
   double odom_age_s{-1.0};
   double tf_age_s{-1.0};
@@ -150,7 +147,7 @@ struct InputGateState {
   bool driver_control_ready{false};
   std::string driver_control_reason;
   double odom_linear_speed_mps{0.0};
-  std::uint32_t fresh_frames{0};
+  bool driver_control_fresh{false};
 };
 
 inline bool manualModeMayBypassInputGate(const InputGateState &state) noexcept {
@@ -158,7 +155,7 @@ inline bool manualModeMayBypassInputGate(const InputGateState &state) noexcept {
   const auto starts_with = [&](std::string_view prefix) {
     return reason.size() >= prefix.size() && reason.substr(0, prefix.size()) == prefix;
   };
-  return state.ready || reason == "recovering" || starts_with("odom_") ||
+  return state.ready || starts_with("odom_") ||
           starts_with("tf_") || starts_with("cloud_") ||
           starts_with("traversability_") || localCollisionInputHold(state.reason) ||
           starts_with("localization_") || starts_with("simulation_clock_");

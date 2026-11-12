@@ -158,12 +158,9 @@ TeleopAdmissionController::admit(const TeleopAdmissionRequest &request,
 
     if (!already_owned) {
       if (!actions_.begin_operator_takeover ||
-          !actions_.begin_operator_takeover(request.command, request.source_stamp_s)) {
+          !actions_.begin_operator_takeover(request.command)) {
         result.reason = "estop_latched";
         return result;
-      }
-      if (actions_.mark_operator_resume_required) {
-        actions_.mark_operator_resume_required();
       }
       if (!actions_.clear_motion || !actions_.clear_motion("operator_takeover")) {
         if (actions_.hold_operator_takeover) {
@@ -180,7 +177,7 @@ TeleopAdmissionController::admit(const TeleopAdmissionRequest &request,
   }
 
   if (!takeover_started && (!actions_.accept_teleop ||
-                            !actions_.accept_teleop(request.command, request.source_stamp_s))) {
+                            !actions_.accept_teleop(request.command))) {
     result.reason = "estop_latched";
     return result;
   }

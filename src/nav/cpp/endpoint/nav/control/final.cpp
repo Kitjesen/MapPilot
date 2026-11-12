@@ -36,8 +36,7 @@ CommandSafetyDecision stoppedDecision(const std::string &reason) {
 
 CommandSafetyDecision evaluateFinalSafety(const FinalSafetyInput &input,
                                         const CommandSafetyConfig &base_safety,
-                                        const nav_kernel::Twist &command,
-                                        double request_age_s) {
+                                        const nav_kernel::Twist &command) {
   const auto &cfg = input.config;
   const auto &body = input.collision.robot.pose;
   auto safety = base_safety;
@@ -45,18 +44,15 @@ CommandSafetyDecision evaluateFinalSafety(const FinalSafetyInput &input,
       !input.operator_takeover) {
     safety.max_speed_mps = std::min(safety.max_speed_mps, input.active_max_speed_mps);
   }
-  auto decision = evaluateCommandSafety(safety, command, request_age_s);
+  auto decision = evaluateCommandSafety(safety, command);
   if (decision.stopped || input.planner.backend != nav_kernel::LocalPlannerBackend::Scan ||
-      !input.planner.checkObstacle || input.manual_mode ||
+      (!input.planner.checkObstacle && !input.collision.environment.no_go_regions) || input.manual_mode ||
       (cfg.control_mode != ControlMode::Autonomy && !cfg.teleop_local_planner)) return decision;
   nav_kernel::local::scan::Grid grid(input.planner, input.collision);
   const double deceleration = std::min(
       cfg.velocity_smoother.x.deceleration, cfg.velocity_smoother.y.deceleration);
-  const double reaction = std::max(safety.cmd_max_age_s, 1.0 / cfg.tick_hz);
-  const auto occupied = [&](const nav_kernel::Twist &twist) {
-    return !input.has_pose || grid.brakingOccupancy(body, twist, reaction, deceleration,
-                                              cfg.velocity_smoother.yaw.deceleration) != 0;
-  };
+  // Preserve the braking horizon independently of command expiry.
+  const double reaction = std::max(cfg.teleop_cmd_max_age_s, 1.0 / cfg.tick_hz);
   if (input.has_pose && safety.verified_recovery_translation &&
       grid.inflatedOccupancy(body.position, body.yaw) == 1 &&
       input.measured_velocity_valid &&
@@ -66,22 +62,26 @@ CommandSafetyDecision evaluateFinalSafety(const FinalSafetyInput &input,
     decision.reason = "scan_boundary_departure";
     return decision;
   }
-  const double braking_scale = !input.has_pose ||
-      (input.measured_velocity_valid && occupied(input.measured)) ? 0.0 :
+  const bool measured_blocked = !input.has_pose ||
+      (input.measured_velocity_valid &&
+       grid.brakingOccupancy(body, input.measured, reaction, deceleration,
+                             cfg.velocity_smoother.yaw.deceleration) != 0);
+  const double braking_scale = measured_blocked ? 0.0 :
       grid.brakingScale(body, decision.cmd, reaction, deceleration,
                         cfg.velocity_smoother.yaw.deceleration);
   if (braking_scale <= 0.0) {
     decision.cmd = {};
     decision.stopped = true;
     decision.limited = true;
-    decision.reason = "scan_actual_motion_blocked";
+    decision.reason = measured_blocked ? "brake_blocked"
+                                       : "cmd_blocked";
   } else if (braking_scale < 1.0) {
     decision.cmd.vx *= braking_scale;
     decision.cmd.vy *= braking_scale;
     decision.cmd.wz *= braking_scale;
     decision.slowed = true;
     decision.limited = true;
-    decision.reason = "scan_actual_motion_limited";
+    decision.reason = "cmd_limited";
   }
   return decision;
 }
@@ -99,12 +99,13 @@ FinalActions runtimeActions(const CliConfig &config,
                             const EndpointState &state, navigation::Executor &executor) {
   FinalActions actions;
   actions.command_safety = [&config, &planner, &state, &executor](
-      const CommandSafetyConfig &safety, const nav_kernel::Twist &command, double age) {
+      const CommandSafetyConfig &safety, const nav_kernel::Twist &command) {
     nav_kernel::LocalPlanRequest collision;
     collision.body = executor.activeBody();
     collision.observedBody = state.observed_body;
     if (state.map_body) collision.robot.pose = *state.map_body;
     collision.environment.collision = state.local_collision_map.view();
+    collision.environment.no_go_regions = state.no_go_regions;
     collision.clock.timestampS = steadySeconds();
     collision.environment.predictions = makePredictionView(
         state.predicted_obstacle_volumes, state.prediction_source_receive_s,
@@ -114,9 +115,9 @@ FinalActions runtimeActions(const CliConfig &config,
                          {state.odom_linear_velocity_body.x, state.odom_linear_velocity_body.y,
                           state.odom_yaw_rate},
                          state.odom_velocity_valid, executor.hasRoute(),
-                         state.control_authority.operatorTakeoverLatched(),
+                         state.control_authority.operatorHeld(),
                          state.control_authority.teleopManualMode(), executor.activeMaxSpeedMps()},
-        safety, command, age);
+        safety, command);
   };
   auto smoother = config.velocity_smoother_enabled
                       ? std::make_shared<nav_kernel::VelocitySmoother>(config.velocity_smoother)
@@ -139,11 +140,11 @@ FinalActions runtimeActions(const CliConfig &config,
   };
   actions.commit = [smoother, &executor](const nav_kernel::Twist &applied, double timestamp_s) {
     if (smoother && !smoother->CommitApplied(applied, timestamp_s)) return false;
-    executor.commitAppliedCommand(applied);
+    executor.commitApplied(applied);
     return true;
   };
   actions.stop = [smoother, &executor](double timestamp_s, const std::string &reason) {
-    executor.commitAppliedCommand({});
+    executor.commitApplied({});
     if (smoother) (void)smoother->Stop(timestamp_s, reason);
   };
   return actions;
@@ -192,23 +193,12 @@ FinalResult FinalControl::finalize(const FinalInput &input) {
     yaw_limited = candidate.wz != shaped.command.wz;
   }
 
-  CommandSafetyConfig final_safety = input.safety;
-  if (isTeleop(input.mode) && input.max_request_age_s > 0.0) {
-    final_safety.cmd_max_age_s = final_safety.cmd_max_age_s > 0.0
-                                     ? std::min(final_safety.cmd_max_age_s,
-                                                input.max_request_age_s)
-                                     : input.max_request_age_s;
-  }
-  result.decision =
-      actions_.command_safety(final_safety, candidate, input.request_age_s);
+  result.decision = actions_.command_safety(input.safety, candidate);
   result.safety_applied = true;
 
   if (isTeleop(input.mode)) {
     result.decision.limited =
         result.decision.limited || input.limited_before_final || shaped.limited || yaw_limited;
-    if (result.decision.stopped && result.decision.reason == "stale") {
-      result.decision.limited = true;
-    }
     if (input.mode == FinalMode::kTeleopCommand && !result.decision.stopped &&
         result.decision.reason == "accepted" && input.limited_before_final) {
       result.decision.reason = "limited";

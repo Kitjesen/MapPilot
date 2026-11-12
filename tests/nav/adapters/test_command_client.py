@@ -38,7 +38,9 @@ _DEFAULT_CAPABILITIES = (
 
 
 def test_navigation_task_enums_are_append_only_and_paused_is_not_terminal():
-    assert [int(kind) for kind in NavigationCommandKind] == [1, 2, 4, 5, 6, 7, 8, 9, 10]
+    assert [int(kind) for kind in NavigationCommandKind] == [
+        1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+    ]
     assert [int(state) for state in NavigationGoalState] == list(range(1, 7))
 
     terminal_states = {
@@ -725,6 +727,111 @@ def test_native_client_resume_autonomy_returns_rejected_endpoint_receipt(tmp_pat
         ),
         ("destroy", 41),
     ]
+
+
+@pytest.mark.parametrize("action,kind", [
+    ("stand", 11), ("sit", 12), ("enable_motors", 13), ("disable_motors", 14),
+])
+def test_native_posture_preserves_correlated_rejection(tmp_path, action, kind):
+    library = _Library()
+    library.navigation_command_accepted = False
+
+    def posture(handle, request_id, reason, timeout_ms, receipt):
+        library.calls.append((action, handle, request_id, reason, timeout_ms))
+        library._navigation_command_receipt(
+            receipt, task_id=b"", request_id=request_id, kind=kind, reason=b"control_busy",
+        )
+        return 0
+
+    setattr(library, f"lingtu_nav_client_{action}_with_receipt_v1", _Function(posture))
+    client = NativeNavigationClient(tmp_path / "liblingtu_nav_client.so", timeout_ms=250, library=library)
+    receipt = getattr(client, action)("operator_posture", request_id="posture-1")
+    client.close()
+    assert receipt == {
+        "accepted": False, "kind": kind, "task_id": "", "request_id": "posture-1",
+        "endpoint_timestamp_s": 124.5, "reason": "control_busy",
+    }
+    assert library.calls[1] == (action, 41, b"posture-1", b"operator_posture", 10000)
+
+
+def test_native_switch_profile_preserves_name_and_receipt(tmp_path):
+    library = _Library()
+
+    def switch_profile(handle, request_id, name, reason, timeout_ms, receipt):
+        library.calls.append((handle, request_id, name, reason, timeout_ms))
+        library._navigation_command_receipt(
+            receipt, task_id=b"", request_id=request_id, kind=15, reason=b"profile_switched",
+        )
+        return 0
+
+    library.lingtu_nav_client_switch_profile_with_receipt_v1 = _Function(switch_profile)
+    client = NativeNavigationClient(tmp_path / "liblingtu_nav_client.so", timeout_ms=250, library=library)
+    receipt = client.switch_profile("stairs", "manual_profile", request_id="profile-1")
+    client.close()
+    assert receipt["kind"] == 15
+    assert receipt["request_id"] == "profile-1"
+    assert library.calls[1] == (41, b"profile-1", b"stairs", b"manual_profile", 10000)
+
+
+@pytest.mark.parametrize("action,kind", [
+    ("external_enter", 16), ("external_enable", 18), ("external_disable", 14), ("external_exit", 17),
+])
+def test_external_commands_preserve_session_and_receipt(tmp_path, action, kind):
+    library = _Library()
+
+    def control(handle, actual_kind, session_id, request_id, reason, timeout_ms, receipt):
+        library.calls.append((actual_kind, session_id, request_id, reason))
+        library._navigation_command_receipt(
+            receipt, task_id=b"", request_id=request_id, kind=actual_kind, reason=b"external_ack",
+        )
+        return 0
+
+    library.lingtu_nav_client_external_control_v1 = _Function(control)
+    client = NativeNavigationClient(tmp_path / "liblingtu_nav_client.so", library=library)
+    operation = getattr(client, action)
+    if action == "external_enter":
+        receipt = operation(request_id="session-1")
+    else:
+        receipt = operation("session-1", request_id="action-1")
+    client.close()
+    assert receipt["kind"] == kind
+    assert library.calls[1][:2] == (kind, b"session-1")
+
+
+def test_external_frame_preserves_original_window_and_full_targets(tmp_path):
+    library = _Library()
+
+    def write(handle, session_id, sequence, input_window, joints, count):
+        library.calls.append((session_id, sequence, input_window, count, joints[15].tau, joints[0].q))
+        return 0
+
+    library.lingtu_nav_client_external_frame_v1 = _Function(write)
+    client = NativeNavigationClient(tmp_path / "liblingtu_nav_client.so", library=library)
+    joints = [{"q": i * 0.1, "dq": 0, "kp": 4, "kd": 1, "tau": i} for i in range(16)]
+    assert client.external_frame("session-1", 7, joints, 314)
+    assert library.calls[1] == (b"session-1", 7, 314, 16, 15, 0)
+    with pytest.raises(ValueError):
+        client.external_frame("session-1", 8, joints[:-1], 314)
+    client.close()
+
+
+def test_external_status_preserves_motor_disable_confirmation(tmp_path):
+    library = _Library()
+
+    def read(handle, output):
+        state = ctypes.cast(output, ctypes.POINTER(native_abi._NativeExternalStateV1)).contents
+        state.session_id = b"session-1"
+        state.fresh = True
+        state.motor_disable_confirmed = True
+        return 1
+
+    library.lingtu_nav_client_external_status_v1 = _Function(read)
+    client = NativeNavigationClient(tmp_path / "liblingtu_nav_client.so", library=library)
+    state = client.external_status()
+    client.close()
+    assert state["session_id"] == "session-1"
+    assert state["fresh"] is True
+    assert state["motor_disable_confirmed"] is True
 
 
 def test_native_client_legacy_resume_autonomy_does_not_require_receipt_symbol(tmp_path):
@@ -1679,6 +1786,21 @@ def test_semantic_view_query_crosses_ctypes_boundary_without_motion(tmp_path):
     assert ("semantic_views", 41, 1, 3000, 4.0) in library.calls
 
 
+def test_semantic_view_defaults_are_normalized_at_the_abi(tmp_path):
+    library = _Library()
+    client = NativeNavigationClient(tmp_path / "client.so", library=library)
+    try:
+        result = client.query_semantic_views(
+            boot_id="boot-7", map_id="903room", map_content_epoch=12,
+            frame_id="", camera_range_m=4.0, camera_horizontal_fov_rad=1.1,
+            views=None, timeout_ms=0,
+        )
+    finally:
+        client.close()
+    assert result["frame_id"] == "map"
+    assert ("semantic_views", 41, 0, 1, None) in library.calls
+
+
 def test_semantic_view_query_keeps_native_handle_alive_until_call_finishes(tmp_path):
     library = _Library()
     query_started = threading.Event()
@@ -1741,3 +1863,18 @@ def test_native_client_updates_task_speed_through_receipt_abi(tmp_path):
         ("create", 0), ("speed_limit", 41, b"task-1", b"speed-1", 0.3, 250),
         ("destroy", 41),
     ]
+
+
+@pytest.mark.parametrize("field, value", [("kind", 2), ("task_id", b"another-task"), ("request_id", b"another-request")])
+def test_task_ack_identity_checked_at_native_boundary(tmp_path, field, value):
+    library = _Library()
+    original = library._start_task_with_receipt
+    def mismatched(*args):
+        result = original(*args)
+        receipt = args[-1]._obj
+        setattr(receipt, field, value)
+        return result
+    library.lingtu_nav_client_start_task_with_receipt_v1 = _Function(mismatched)
+    client = NativeNavigationClient(tmp_path / "client.so", library=library)
+    with pytest.raises(NavigationClientError):
+        client.start_task(1, 2, 0, None, task_id="task-1", request_id="request-1")

@@ -265,7 +265,7 @@ class NavSkills(Module, layer=6):
         yaw_deg: float = 0.0,
         z: float | None = None,
     ) -> str:
-        """Submit a map-frame navigation goal with heading in degrees."""
+        """Submit a map-frame position goal; yaw is pose metadata in degrees."""
         try:
             yaw = math.radians(float(yaw_deg))
         except (TypeError, ValueError) as exc:

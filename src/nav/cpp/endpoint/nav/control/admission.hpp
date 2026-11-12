@@ -32,11 +32,10 @@ struct TeleopAdmissionContext {
 struct TeleopAdmissionActions {
   std::function<void()> hold_operator_takeover;
   std::function<void()> stop_control;
-  std::function<bool(const nav_kernel::Twist &, double)> begin_operator_takeover;
-  std::function<void()> mark_operator_resume_required;
+  std::function<bool(const nav_kernel::Twist &)> begin_operator_takeover;
   std::function<bool(const std::string &)> clear_motion;
   std::function<void(const std::string &)> pause_inspection;
-  std::function<bool(const nav_kernel::Twist &, double)> accept_teleop;
+  std::function<bool(const nav_kernel::Twist &)> accept_teleop;
   std::function<bool()> publish_zero;
 };
 

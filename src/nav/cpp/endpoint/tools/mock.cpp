@@ -201,7 +201,8 @@ TfMessage toMapOdomTf(double stamp_s) {
 }
 
 void writeStatus(const CliConfig &cfg, const Pose2D &pose, const TwistCommand &cmd,
-                 std::uint64_t cmd_count, std::uint64_t odom_count, bool active_cmd) {
+                 std::uint64_t cmd_count, std::uint64_t odom_count, bool active_cmd,
+                 std::uint64_t nonzero_commands) {
   if (cfg.status_file.empty()) {
     return;
   }
@@ -226,7 +227,8 @@ void writeStatus(const CliConfig &cfg, const Pose2D &pose, const TwistCommand &c
       << ", \"yaw\": " << pose.yaw << "},\n"
       << "  \"cmd_vel\": {\"vx\": " << cmd.vx << ", \"vy\": " << cmd.vy << ", \"wz\": " << cmd.wz
       << "},\n"
-      << "  \"counters\": {\"cmd_vel\": " << cmd_count << ", \"odometry\": " << odom_count << "}\n"
+      << "  \"counters\": {\"cmd_vel\": " << cmd_count << ", \"odometry\": " << odom_count
+      << ", \"nonzero_commands\": " << nonzero_commands << "}\n"
       << "}\n";
   out.close();
   std::error_code ec;
@@ -247,6 +249,8 @@ class DdsRuntime {
         reader(lingtu::message::kNavCmdVel, &lingtu_dds_FinalVelocityCommand_desc, "cmd_vel");
     odom_writer_ = writer(lingtu::message::kSlamOdometry, &lingtu_dds_Odometry_desc, "odom");
     tf_writer_ = writer(lingtu::message::kTf, &lingtu_dds_TFMessage_desc, "tf");
+    driver_writer_ = writer(lingtu::message::kDriverControlState,
+                            &lingtu_dds_DriverControlState_desc, "driver_control");
   }
 
   ~DdsRuntime() {
@@ -267,6 +271,10 @@ class DdsRuntime {
 
   void writeTf(const lingtu_dds_TFMessage &msg) {
     logDdsError(dds_write(tf_writer_, &msg), "dds_write(tf)");
+  }
+
+  void writeDriver(const lingtu_dds_DriverControlState &msg) {
+    logDdsError(dds_write(driver_writer_, &msg), "dds_write(driver_control)");
   }
 
  private:
@@ -296,6 +304,7 @@ class DdsRuntime {
   dds_entity_t cmd_vel_reader_{0};
   dds_entity_t odom_writer_{0};
   dds_entity_t tf_writer_{0};
+  dds_entity_t driver_writer_{0};
 };
 
 }  // namespace
@@ -311,6 +320,10 @@ int main(int argc, char **argv) {
     TwistCommand cmd;
     std::uint64_t cmd_count = 0;
     std::uint64_t odom_count = 0;
+    std::uint64_t nonzero_commands = 0;
+    lingtu_dds_DriverControlState driver{};
+    driver.connected = driver.ready = driver.motors_enabled = driver.control_assured = true;
+    driver.reason = const_cast<char *>("motion_mock");
     double last_s = nowSeconds();
     double next_status_s = last_s + 1.0;
 
@@ -320,6 +333,10 @@ int main(int argc, char **argv) {
 
     while (g_running) {
       dds.drainCmdVel([&](const lingtu_dds_FinalVelocityCommand &msg) {
+        driver.zero_output = msg.twist.linear.x == 0.0 && msg.twist.linear.y == 0.0 &&
+                             msg.twist.angular.z == 0.0;
+        if (msg.twist.linear.x != 0.0 || msg.twist.linear.y != 0.0 || msg.twist.angular.z != 0.0)
+          ++nonzero_commands;
         cmd.vx = std::clamp(msg.twist.linear.x, -cfg.max_linear, cfg.max_linear);
         cmd.vy = std::clamp(msg.twist.linear.y, -cfg.max_linear, cfg.max_linear);
         cmd.wz = std::clamp(msg.twist.angular.z, -cfg.max_angular, cfg.max_angular);
@@ -342,13 +359,15 @@ int main(int argc, char **argv) {
 
       const auto odom = toOdometry(pose, active_cmd ? cmd : TwistCommand{}, now);
       const auto tf = toMapOdomTf(now);
+      fillHeader(driver.header, now, "body");
+      dds.writeDriver(driver);
       dds.writeOdom(odom);
       dds.writeTf(tf.msg);
       ++odom_count;
 
       if (now >= next_status_s) {
         next_status_s = now + 1.0;
-        writeStatus(cfg, pose, cmd, cmd_count, odom_count, active_cmd);
+        writeStatus(cfg, pose, cmd, cmd_count, odom_count, active_cmd, nonzero_commands);
       }
 
       std::this_thread::sleep_for(

@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <filesystem>
+#include <fstream>
+
 #include <memory>
 #include <limits>
 #include <iostream>
@@ -17,6 +20,7 @@
 #include "planning/local/scan/task.hpp"
 #include "planning/local/scan/upstream/path_searching/dyn_a_star.h"
 #include "planning/local/scan/upstream/plan_env/grid_map.h"
+#include "planning/local/scan/upstream/plan_manage/closed_loop_controller.h"
 #include "planning/local/scan/upstream/plan_manage/planner_fsm.h"
 #include "trajectory/spline.hpp"
 #include "tracking/follower.hpp"
@@ -31,6 +35,109 @@ using nav_kernel::LocalPlanRequest;
 using nav_kernel::RouteTarget;
 using nav_kernel::SplineTarget;
 using nav_kernel::Vec3;
+
+TEST(ScanGridAdapter, InflationUsesWholeCells) {
+  CollisionBitmap bitmap;
+  bitmap.occupyInflated({.5F, 0, .5F}, .4, .2, .2);
+  LocalPlannerParams params;
+  params.scan.voxelResolution = .1;
+  params.scan.cylinderOffset = 0;
+  LocalPlanRequest request;
+  request.environment.collision = bitmap.view();
+  const nav_kernel::local::scan::Grid grid(params, request);
+  ASSERT_TRUE(grid.valid()) << grid.reason();
+  EXPECT_EQ(grid.occupiedCellCount(), 245);
+  for (int z = 2; z <= 8; ++z) {
+    for (int y = -5; y <= 5; ++y) {
+      for (int x = 0; x <= 10; ++x) {
+        const Vec3 point{(x + .5) * .1, (y + .5) * .1, (z + .5) * .1};
+        const bool occupied = z >= 3 && z <= 7 &&
+                              (x - 5) * (x - 5) + y * y <= 16;
+        EXPECT_EQ(grid.inflatedOccupancy(point, 0), occupied ? 1 : 0)
+            << "cell " << x << ',' << y << ',' << z;
+      }
+    }
+  }
+}
+
+TEST(ScanNoGo, PolicySurvivesDisabledObstacleChecksAndIsThreeDimensional) {
+  LocalPlannerParams params;
+  params.checkObstacle = false;
+  params.scan.voxelResolution = .1;
+  params.scan.cylinderRadius = .1;
+  params.scan.cylinderOffset = .15;
+  params.scan.bodyClearanceBelow = .1;
+  params.scan.bodyClearanceAbove = .1;
+  LocalPlanRequest request;
+  request.environment.no_go_regions = std::make_shared<const std::vector<lingtu::maps::NoGoRegion>>(
+      std::vector<lingtu::maps::NoGoRegion>{{"room", {.45,-.2,.2}, {.55,.2,.8}}});
+  const nav_kernel::local::scan::Grid grid(params, request);
+  ASSERT_TRUE(grid.valid()) << grid.reason();
+  EXPECT_EQ(grid.cylinderOccupancy({.5,0,.5}, 0), 1);
+  EXPECT_EQ(grid.cylinderOccupancy({.5,0,2}, 0), 0);
+  EXPECT_EQ(grid.segmentInflatedOccupancy({0,0,.5},0,{1,0,.5},0), 1);
+  EXPECT_EQ(grid.trajectoryOccupancy({0,0,.5},{1,0,0},{1,0,.5},{1,0,0},0,1), 1);
+  EXPECT_FALSE(grid.boundaryDepartureFree({{.5,0,.5},0},{.8,0,.5}));
+  request.environment.no_go_regions.reset();
+  const nav_kernel::local::scan::Grid removed(params, request);
+  EXPECT_EQ(removed.segmentInflatedOccupancy({0,0,.5},0,{1,0,.5},0), 0);
+}
+
+TEST(ScanNoGo, MapPolicyUsesPlanningTransformAndBrakingSweep) {
+  LocalPlannerParams params;
+  params.checkObstacle = false;
+  params.scan.voxelResolution = .1;
+  params.scan.cylinderRadius = .05;
+  params.scan.cylinderOffset = 0;
+  params.scan.bodyClearanceBelow = .1;
+  params.scan.bodyClearanceAbove = .1;
+  LocalPlanRequest request;
+  request.environment.no_go_regions = std::make_shared<const std::vector<lingtu::maps::NoGoRegion>>(
+      std::vector<lingtu::maps::NoGoRegion>{{"gate", {9.9,20.3,.3}, {10.1,20.35,.7}}});
+  request.environment.collision.gridFromPlanningTranslation = {10,20,0};
+  request.environment.collision.gridFromPlanningYaw = std::acos(-1.)*.5;
+  const nav_kernel::local::scan::Grid grid(params, request);
+  ASSERT_TRUE(grid.valid());
+  EXPECT_EQ(grid.cylinderOccupancy({.32,0,.5},0), 1);
+  EXPECT_EQ(grid.cylinderOccupancy({0,.32,.5},0), 0);
+  EXPECT_EQ(grid.brakingOccupancy({{0,0,.5},0},{1,0,0},.1,1,1), 1);
+  EXPECT_LT(grid.brakingScale({{0,0,.5},0},{1,0,0},.1,1,1), 1);
+}
+
+TEST(ScanNoGo, BodyCannotUseGroundContactExceptionForPolicy) {
+  LocalPlannerParams params;
+  params.scan.voxelResolution = .1;
+  auto body = std::make_shared<lingtu::nav::collision::Body>();
+  body->margin_m = 0;
+  body->parts.push_back({"contact", {0,0,-.1}, {}, {.1,.1,.1}});
+  body->parts.back().rotation = {1,0,0,0,1,0,0,0,1};
+  body->parts.back().support_contact = true;
+  CollisionBitmap bitmap({-2,-2,-1},{2,2,2},.1);
+  LocalPlanRequest request;
+  request.body = body;
+  request.environment.collision = bitmap.view();
+  request.environment.collision.measuredOccupiedStorage =
+      std::make_shared<const std::vector<std::uint8_t>>(
+          request.environment.collision.inflatedBytes, 0U);
+  request.environment.no_go_regions = std::make_shared<const std::vector<lingtu::maps::NoGoRegion>>(
+      std::vector<lingtu::maps::NoGoRegion>{{"floor", {-.05,-.05,.15}, {.05,.05,.3}}});
+  const nav_kernel::local::scan::Grid grid(params, request);
+  ASSERT_TRUE(grid.valid()) << grid.reason();
+  EXPECT_EQ(grid.inflatedOccupancy({0,0,.4},0),1);
+  EXPECT_FALSE(grid.boundaryDepartureFree({{0,0,.4},0},{.3,0,.4}));
+}
+
+TEST(ScanGridAdapter, InflationClipsOutsideSources) {
+  CollisionBitmap bitmap({0, 0, 0}, {1, 1, 1}, .1);
+  bitmap.occupyInflated({-.15F, .55F, .55F}, .3, 0, 0);
+  const auto view = bitmap.view();
+  EXPECT_TRUE(view.occupied({.05, .55, .55}));
+  EXPECT_TRUE(view.occupied({.15, .55, .55}));
+  EXPECT_FALSE(view.occupied({.25, .55, .55}));
+  EXPECT_TRUE(view.occupied({.05, .35, .55}));
+  EXPECT_TRUE(view.occupied({.05, .75, .55}));
+  EXPECT_FALSE(view.occupied({.05, .85, .55}));
+}
 
 TEST(ScanGridAdapter, PointQueriesUseSnapshotOriginOnEveryAxis) {
   LocalPlannerParams params;
@@ -402,11 +509,11 @@ TEST(ScanPredictions, WorkerConsumesPredictionUpdatesWithoutChangingMeasuredMap)
   for (int tick = 0; tick < 400; ++tick) {
     fixture.request.clock.timestampS += .005;
     update = task.update(fixture.request);
-    if (update.debug.predictedObstacleCount == 1 && !update.plan.ready()) break;
+    if (update.debug.predictedObstacleCount == 1) break;
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
   ASSERT_EQ(update.debug.predictedObstacleCount, 1U);
-  EXPECT_FALSE(update.plan.ready());
+  EXPECT_EQ(fixture.bitmap.view(1,1).occupiedCount(), 0U);
   fixture.request.environment.predictions = {nullptr,0,100.0};
   for (int tick = 0; tick < 400; ++tick) {
     fixture.request.clock.timestampS += .005;
@@ -999,6 +1106,42 @@ TEST(ScanMotionIntentRetiming, ConvergesWithNonzeroThreeAxisStartAcceleration) {
   EXPECT_LE(acceleration.getControlPoint().colwise().norm().maxCoeff(), 0.5 + 1e-9);
 }
 
+TEST(ScanBsplineEvaluation, MatchesVectorRecurrence) {
+  using nav_kernel::local::scan::upstream::UniformBspline;
+  for (int dimension : {1, 3, 5}) {
+    for (int degree = 0; degree <= 5; ++degree) {
+      Eigen::MatrixXd controls(dimension, 10);
+      for (int column = 0; column < controls.cols(); ++column)
+        for (int row = 0; row < dimension; ++row)
+          controls(row, column) = std::sin(.3 * column + .2 * row);
+      UniformBspline spline(controls, degree, .2);
+      auto knots = spline.getKnot();
+      for (int index = 1; index < knots.size(); ++index)
+        knots(index) = knots(index - 1) + .1 + .03 * (index % 3);
+      spline.setKnot(knots);
+      const double start = knots(degree);
+      const double end = knots(controls.cols());
+      for (int sample = -1; sample <= 21; ++sample) {
+        const double time = start + (end - start) * sample / 20.0;
+        const double bounded = std::clamp(time, start, end);
+        int knot = degree;
+        while (knots(knot + 1) < bounded) ++knot;
+        std::vector<Eigen::VectorXd> values;
+        for (int index = 0; index <= degree; ++index)
+          values.push_back(controls.col(knot - degree + index));
+        for (int level = 1; level <= degree; ++level)
+          for (int index = degree; index >= level; --index) {
+            const double alpha = (bounded - knots(index + knot - degree)) /
+                (knots(index + 1 + knot - level) - knots(index + knot - degree));
+            values[index] = (1 - alpha) * values[index - 1] + alpha * values[index];
+          }
+        EXPECT_LE((spline.evaluateDeBoor(time) - values.back()).norm(), 1e-12)
+            << dimension << ',' << degree << ',' << sample;
+      }
+    }
+  }
+}
+
 TEST(ScanBsplineFeasibility, SpeedOnlyViolationUsesActualSpeedRatio) {
   using nav_kernel::local::scan::upstream::UniformBspline;
   constexpr double interval = 0.2;
@@ -1192,6 +1335,71 @@ TEST(ScanAttemptDiagnostics, RecordsMeasuredBoundaryVelocityAndAccelerationViola
   }
 }
 
+TEST(ScanAttemptDiagnostics, FixedBodyAxisViolationDoesNotStretchRejectedTrajectory) {
+  using namespace nav_kernel::local::scan::upstream;
+  for (const double yaw : {0.0, 1.5707963267948966}) {
+    for (const bool atTarget : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << "yaw=" << yaw << " target=" << atTarget);
+      ScanAttemptFixture fixture(true);
+      auto plan = fixture.manager.pp_;
+      plan.max_vel_ = 1.0;
+      plan.max_body_vx_ = 1.0;
+      plan.max_body_vy_ = .35;
+      plan.body_yaw_ = yaw;
+      BsplineOptimizerParams optimizer;
+      optimizer.lambda_smooth = optimizer.lambda_collision = optimizer.lambda_fitness = 1;
+      optimizer.lambda_feasibility = .1;
+      optimizer.dist0 = .2;
+      optimizer.max_vel = plan.max_vel_;
+      optimizer.max_acc = plan.max_acc_;
+      fixture.manager.updatePlanParameters(plan, optimizer);
+      const Eigen::Vector3d lateral{-std::sin(yaw) * .4, std::cos(yaw) * .4, 0};
+      const auto zero = Eigen::Vector3d::Zero().eval();
+      ASSERT_LT(lateral.norm(), plan.max_vel_);
+      ASSERT_GT(plan.speedRatio(lateral), 1.0);
+      ASSERT_FALSE(fixture.manager.reboundReplan({0,0,.5}, atTarget ? zero : lateral,
+          zero, {2,0,.5}, atTarget ? lateral : zero, true, false, 1));
+      const auto &failed = fixture.manager.reboundDebug();
+      EXPECT_EQ(failed.stage, "dynamic_feasibility");
+      // This 20 cm / 1 m/s seed is below 0.25 s. Its fixed bad velocity
+      // cannot be repaired by stretching the candidate's execution time.
+      EXPECT_LT(failed.candidateIntervalS, .25);
+      ASSERT_TRUE(fixture.manager.reboundReplan({0,0,.5}, zero, zero, {2,0,.5},
+          zero, true, false, 2)) << fixture.manager.reboundDebug().reason;
+    }
+  }
+}
+
+TEST(ScanReferenceSeed, CollinearSamplesDoNotChangeTheOffsetStartConnector) {
+  const std::vector<Eigen::Vector3d> route{{0,0,.5},{2,0,.5},{2,2,.5},{3,2,1}};
+  std::vector<Eigen::Vector3d> sparseResult;
+  for (bool dense : {false, true}) {
+    SCOPED_TRACE(dense);
+    ScanAttemptFixture fixture;
+    std::vector<Eigen::Vector3d> waypoints;
+    for (std::size_t i = 1; i < route.size(); ++i) {
+      const int divisions = dense ? 10 : 1;
+      for (int j = 1; j <= divisions; ++j)
+        waypoints.push_back(route[i-1] + (route[i]-route[i-1])*j/divisions);
+    }
+    auto &manager = fixture.manager;
+    const auto zero = Eigen::Vector3d::Zero().eval();
+    ASSERT_TRUE(manager.planGlobalTrajWaypoints(route.front(), zero, zero,
+        waypoints, zero, zero, 1));
+    ASSERT_TRUE(manager.reboundReplan({.5,-.3,.5}, zero, zero, route.back(), zero,
+        true, false, 1, std::pair<double,double>{0, manager.global_data_.global_duration_}))
+        << manager.reboundDebug().reason;
+    const auto &curve = manager.local_data_.position_traj_;
+    for (int i = 0; i <= 100; ++i) {
+      const auto point = curve.evaluateDeBoorT(curve.getTimeSum()*i/100);
+      if (dense)
+        EXPECT_LT((point-sparseResult[i]).norm(), 1e-6) << i;
+      else
+        sparseResult.push_back(point);
+    }
+  }
+}
+
 TEST(ScanReboundInitialization, UpstreamStopsGuidanceAtCheckedPrefix) {
   using namespace nav_kernel::local::scan::upstream;
   RequestFixture fixture({{0.0, 0.0, 0.5}, {4.0, 0.0, 0.5}});
@@ -1330,6 +1538,45 @@ TEST(ScanMotionIntentBoundary, UpstreamOptimizerDoesNotCertifyFinalApproach) {
   EXPECT_TRUE(fixture.replan());
   EXPECT_TRUE(fixture.manager.reboundDebug().success);
   EXPECT_FALSE(fixture.manager.reboundDebug().collisionValid);
+}
+
+TEST(ScanBackend, ResetUsesUpdatedMap) {
+  RequestFixture fixture({{0, 0, .5}, {2, 0, .5}});
+  nav_kernel::local::scan::Backend backend(scanParams());
+  const auto tick = [&] {
+    fixture.request.clock.timestampS += .01;
+    return backend.tick(fixture.request);
+  };
+  LocalPlan plan;
+  for (int i = 0; i < 100 && !plan.ready(); ++i) plan = tick();
+  ASSERT_TRUE(plan.ready()) << backend.debugSnapshot().searchReason;
+
+  for (double x = -.25; x < .3; x += .1)
+    for (double y = -.25; y < .3; y += .1)
+      for (double z = .25; z < .8; z += .1)
+        fixture.bitmap.occupy({x, y, z});
+  fixture.refreshCollision(2);
+  backend.reset();
+  for (int i = 0; i < 20; ++i) {
+    plan = tick();
+    EXPECT_FALSE(plan.ready());
+  }
+  ASSERT_TRUE(backend.debugSnapshot().lastScanFailure);
+  EXPECT_EQ(backend.debugSnapshot().lastScanFailure->attempt.reason,
+            "collision_at_trajectory_start");
+
+  fixture.bitmap.clear();
+  fixture.request.robot.pose.position.y = .3;
+  fixture.refreshCollision(3);
+  backend.reset();
+  plan = tick();
+  EXPECT_FALSE(plan.ready());
+  for (int i = 0; i < 100 && !plan.ready(); ++i) plan = tick();
+  ASSERT_TRUE(plan.ready()) << backend.debugSnapshot().searchReason;
+  const nav_kernel::SplineView spline(std::get<SplineTarget>(plan.target()));
+  EXPECT_NEAR(spline.position(0).x, 0.0, 1e-6);
+  EXPECT_NEAR(spline.position(0).y, .3, 1e-6);
+  EXPECT_NEAR(spline.position(0).z, .5, 1e-6);
 }
 
 TEST(ScanAttemptDiagnostics, BackendRetainsFirstFailedTickAndOwnsItsCompleteMapAcrossReset) {
@@ -1649,6 +1896,289 @@ TEST(ScanBackend, BlockedForwardTargetsDoNotRemainPendingAndRecoverWhenClear) {
     plan = backend.tick(fixture.request);
   }
   EXPECT_TRUE(plan.ready()) << backend.debugSnapshot().searchReason;
+}
+
+TEST(ScanBackend, ApproachesStopAtTheClosestClearGoalCells) {
+  for (bool moving : {true, false}) {
+    SCOPED_TRACE(moving);
+    RequestFixture fixture({{1.5, 0, .44}, {2.6, 0, .435}}, .05);
+    for (int x = 55; x < 80; ++x)
+      for (int y = -8; y <= 8; ++y)
+        for (int z = 4; z < 16; ++z)
+          fixture.bitmap.occupy({(x+.5)*.05, (y+.5)*.05, (z+.5)*.05});
+    fixture.refreshCollision(2);
+    fixture.request.robot.pose.position = moving ? Vec3{2.2881, .00127, .44185}
+                                                : Vec3{2.4202, .0091, .44866};
+    fixture.request.robot.kinematics.valid = true;
+    fixture.request.robot.kinematics.linearVelocity = moving ? Vec3{.61853, .00306, .09104}
+                                                            : Vec3{};
+    fixture.request.maxLinearSpeedMps = 1.0;
+    auto params = scanParams();
+    params.scan.voxelResolution = .05;
+    params.scan.cylinderOffset = .25;
+    params.scan.maxVelocity = std::sqrt(2.0);
+    params.scan.maxAcceleration = 4.0;
+    params.scan.accelerationTolerance = 1.2;
+    nav_kernel::local::scan::Backend backend(params);
+    LocalPlan plan;
+    for (int i = 0; i < 20 && !plan.ready(); ++i) {
+      fixture.request.clock.timestampS += .01;
+      plan = backend.tick(fixture.request);
+    }
+    ASSERT_TRUE(plan.ready()) << backend.debugSnapshot().scanAttempt.reason;
+    const nav_kernel::SplineView spline(std::get<SplineTarget>(plan.target()));
+    EXPECT_LT(nav_kernel::distance3D(spline.position(0), fixture.request.robot.pose.position), 1e-8);
+    EXPECT_LT(nav_kernel::distance3D(spline.velocity(0),
+        fixture.request.robot.kinematics.linearVelocity), 1e-8);
+    EXPECT_LT(nav_kernel::distance3D(spline.position(spline.duration()), fixture.route.back()), .15);
+    EXPECT_LT(nav_kernel::distance3D(spline.velocity(spline.duration()), {}), 1e-8);
+    const nav_kernel::local::scan::Grid grid(params, fixture.request);
+    EXPECT_EQ(grid.cylinderOccupancy(spline.position(spline.duration()), 0), 0);
+    for (double t = 0; t + .001 <= spline.duration(); t += .001)
+      EXPECT_LE(nav_kernel::distance3D(spline.velocity(t + .001), spline.velocity(t)) / .001, 5.2);
+  }
+}
+
+TEST(ScanBackend, StoppedBesideBoxDoesNotRejoinTheBlockedStraightReference) {
+  RequestFixture fixture({{1.5, 0, .435}, {4.5, 0, .435}, {5.1, 0, .435}}, .05);
+  fixture.bitmap = CollisionBitmap({-1, -2, -1}, {7, 2, 2}, .05);
+  for (int x = 0; x < 140; ++x)
+    for (int y = -40; y < 40; ++y)
+      if (std::abs((y+.5)*.05) >= 1.05 ||
+          (x >= 56 && x < 76 && std::abs((y+.5)*.05) < .6))
+        fixture.bitmap.occupy({(x+.5)*.05, (y+.5)*.05, .435});
+  fixture.refreshCollision(2);
+  fixture.request.robot.pose = {{3.4132, -.8704, .435}, -.2132};
+  fixture.request.robot.kinematics.valid = true;
+  fixture.request.maxLinearSpeedMps = 1;
+  auto params = scanParams();
+  params.scan.voxelResolution = .05;
+  params.scan.cylinderOffset = .25;
+  params.scan.maxVelocity = std::sqrt(2.0);
+  params.scan.maxAcceleration = 4;
+  nav_kernel::local::scan::Backend backend(params);
+  LocalPlan plan;
+  for (int i = 0; i < 30 && !plan.ready(); ++i) {
+    fixture.request.clock.timestampS += .01;
+    plan = backend.tick(fixture.request);
+  }
+  ASSERT_TRUE(plan.ready()) << backend.debugSnapshot().scanAttempt.reason;
+  const nav_kernel::SplineView spline(std::get<SplineTarget>(plan.target()));
+  const nav_kernel::local::scan::Grid grid(params, fixture.request);
+  const auto start = fixture.request.robot.pose.position, end = fixture.route.back();
+  const double yaw = std::atan2(end.y-start.y, end.x-start.x);
+  double deviation = 0;
+  for (double t = 0; t < spline.duration(); t += .005) {
+    const auto position = spline.position(t), next = spline.position(t + .005);
+    ASSERT_EQ(grid.cylinderOccupancy(position,
+        std::atan2(next.y-position.y, next.x-position.x)), 0) << t;
+    const double fraction = t / spline.duration();
+    ASSERT_EQ(grid.cylinderOccupancy({start.x + fraction*(end.x-start.x),
+        start.y + fraction*(end.y-start.y), start.z}, yaw), 0);
+    deviation = std::max(deviation, std::abs((position.x-start.x)*std::sin(yaw) -
+        (position.y-start.y)*std::cos(yaw)));
+  }
+  EXPECT_LT(deviation, .05);
+  EXPECT_LT(nav_kernel::distance3D(spline.position(spline.duration()), fixture.route.back()), .15);
+}
+
+TEST(ScanBackend, SettledRestartPassesTheExecutionCollisionSampling) {
+  // Recorded MID360 occupancy around the stair post, cropped without reinflation.
+  RequestFixture fixture({{7.003047734271758,-0.7974033732901403,0.441843961866934},
+      {7.002899398133565,-0.7973314393409831,0.441843961866934},
+      {4.68550065731679,1.107836027329815,0.4595357234541344},
+      {1.35,3.85,0.485},
+      {1.359153810984217,3.929773517950581,0.485},
+      {1.369512784922856,4.009078361418888,0.485},
+      {1.381579444972146,4.087719104733054,0.485},
+      {1.395246196450511,4.165737590269246,0.485},
+      {1.40970389026566,4.24344848711891,0.485},
+      {1.426477670881355,4.320258683546141,0.485},
+      {1.457123137501822,4.391674335415958,0.485},
+      {1.503309292322005,4.45704638631922,0.485},
+      {1.552178702802601,4.5213749489101,0.485},
+      {1.601079920371524,4.58569114207774,0.485},
+      {1.65,4.65,0.485},
+      {2.85,4.65,0.885},
+      {3.75,4.65,1.285},
+      {5.65,4.65,1.685},
+      {6.65,4.65,2.085},
+      {6.850000000000001,4.65,2.285},
+      {6.944247358366724,4.641371037550083,2.285},
+      {7.037833755824101,4.631750633736149,2.285},
+      {7.130480230801153,4.620720346201725,2.285},
+      {7.222170688112456,4.608256032168681,2.285},
+      {7.313140999523471,4.594711499285205,2.285},
+      {7.403798512239467,4.580697768359198,2.285},
+      {7.481943023504682,4.54791453525702,2.285},
+      {7.551613039881721,4.502419559822579,2.285},
+      {7.617758558224743,4.451637837337113,2.285},
+      {7.68388495049556,4.400827425743341,2.285},
+      {7.75,4.350000000000001,2.285},
+      {7.4,1.55,2.235}}, .05);
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+      "fixtures/scan_stair_post.bits";
+  std::ifstream file(path, std::ios::binary);
+  ASSERT_TRUE(file.is_open());
+  const std::vector<std::uint8_t> bits((std::istreambuf_iterator<char>(file)), {});
+  ASSERT_EQ(bits.size(), 15000U);
+  auto &map = fixture.request.environment.collision;
+  map.inflatedBits = bits.data();
+  map.inflatedBytes = bits.size();
+  map.sizeX = 80; map.sizeY = 50; map.sizeZ = 30;
+  map.resolution = .05;
+  map.aabbMin = {.5, 2.75, .25};
+  map.aabbMax = {4.5, 5.25, 1.75};
+  fixture.request.robot.pose = {{1.9792515135284106,3.4447798822858062,.44640039107286},2.418857814053};
+  fixture.request.robot.kinematics.valid = true;
+  fixture.request.robot.kinematics.linearVelocity = {.007881182897,.008279941134,-.013874996858};
+  fixture.request.maxLinearSpeedMps = 1;
+  fixture.request.clock.executionFrozen = true;
+  auto params = scanParams();
+  params.scan.voxelResolution = .05;
+  params.scan.cylinderOffset = .25;
+  params.scan.cylinderRadius = .390512483795333;
+  params.scan.maxVelocity = std::sqrt(2.0);
+  params.scan.maxAcceleration = 4;
+  params.scan.accelerationTolerance = 1.2;
+  params.scan.velocityTolerance = 1;
+  nav_kernel::local::scan::Backend backend(params);
+  LocalPlan plan;
+  for (int i = 0; i < 8 && !plan.ready(); ++i) {
+    fixture.request.clock.timestampS += .01;
+    plan = backend.tick(fixture.request);
+  }
+  ASSERT_TRUE(plan.ready()) << backend.debugSnapshot().scanAttempt.reason;
+  const nav_kernel::SplineView spline(std::get<SplineTarget>(plan.target()));
+  const nav_kernel::local::scan::Grid grid(params, fixture.request);
+  EXPECT_LT(nav_kernel::distance3D(spline.position(0),fixture.request.robot.pose.position), .005);
+  for (double t = 0; t < spline.duration()*2/3; t += .01) {
+    const auto position=spline.position(t), next=spline.position(t+.01);
+    EXPECT_EQ(grid.cylinderOccupancy(position,
+        std::atan2(next.y-position.y,next.x-position.x)),0) << t;
+  }
+}
+
+TEST(ScanTrajectoryValidation, SmallNorthboundSamplesDoNotBecomeEastFacing) {
+  using namespace nav_kernel::local::scan::upstream;
+  RequestFixture fixture({{0,0,.5},{0,1,.5}}, .05);
+  fixture.request.robot.pose.yaw = std::acos(-1.) / 2;
+  fixture.bitmap.occupy({.225,.025,.525});
+  fixture.refreshCollision(2);
+  auto params = scanParams();
+  params.scan.voxelResolution = .05;
+  params.scan.cylinderOffset = .23;
+  const nav_kernel::local::scan::Grid grid(params, fixture.request);
+  ASSERT_EQ(grid.cylinderOccupancy({0,0,.5},0),1);
+  ASSERT_EQ(grid.cylinderOccupancy({0,0,.5},std::acos(-1.)/2),0);
+  BsplineOptimizer optimizer;
+  optimizer.setEnvironment(std::make_shared<GridMap>(grid));
+  Eigen::MatrixXd controls(3,7);
+  controls.row(0).setZero();
+  controls.row(1) << 0,0,0,.5,1,1,1;
+  controls.row(2).setConstant(.5);
+  // Slower timing changes displacement per sample, not the geometric heading.
+  for (double interval : {.2, 1.0}) {
+    const UniformBspline spline(controls,3,interval);
+    EXPECT_TRUE(optimizer.checkTrajectoryCollisionFree(spline))
+        << interval << ':' << optimizer.optimizationDebug().reason;
+  }
+}
+
+TEST(ScanTrajectoryValidation, QuietMotionKeepsMeasuredHeadingButMovingTurnIsChecked) {
+  using namespace nav_kernel::local::scan::upstream;
+  RequestFixture fixture({{0,0,.5},{1,0,.5}}, .05);
+  fixture.bitmap.occupy({.025,.225,.525});
+  fixture.refreshCollision(2);
+  auto params = scanParams();
+  params.scan.voxelResolution = .05;
+  params.scan.cylinderOffset = .23;
+  const nav_kernel::local::scan::Grid grid(params, fixture.request);
+  ASSERT_EQ(grid.cylinderOccupancy({0,0,.5},0),0);
+  ASSERT_EQ(grid.cylinderOccupancy({0,0,.5},std::acos(-1.)/2),1);
+  BsplineOptimizer optimizer;
+  optimizer.setEnvironment(std::make_shared<GridMap>(grid));
+  Eigen::MatrixXd controls(3,7);
+  controls.row(0).setZero();
+  controls.row(2).setConstant(.5);
+  for (double step : {.0001, .004}) {
+    controls.row(1) << 0,0,0,step,2*step,3*step,4*step;
+    EXPECT_TRUE(optimizer.checkTrajectoryCollisionFree(UniformBspline(controls,3,.2)));
+  }
+  controls.row(1) << 0,0,0,.5,1,1.5,2;
+  EXPECT_FALSE(optimizer.checkTrajectoryCollisionFree(UniformBspline(controls,3,.2)));
+  EXPECT_GT(optimizer.optimizationDebug().collisionTimeS, 0);
+}
+
+TEST(ScanTrajectoryValidation, FutureMovingBoundaryUsesItsVelocityHeading) {
+  using namespace nav_kernel::local::scan::upstream;
+  RequestFixture fixture({{-1,0,.5},{0,1,.5}}, .05);
+  fixture.bitmap.occupy({.225,.025,.525});
+  fixture.refreshCollision(2);
+  auto params = scanParams();
+  params.scan.voxelResolution = .05;
+  params.scan.cylinderOffset = .23;
+  const nav_kernel::local::scan::Grid grid(params, fixture.request);
+  const GridMap map(grid);
+  ASSERT_EQ(grid.cylinderOccupancy({0,0,.5},0),1);
+  EXPECT_EQ(map.getTrajectoryOccupancy({0,0,.5},{0,.2,0},
+                                     {0,.002,.5},{0,.2,0},0,.01),0);
+}
+
+TEST(ScanBackend, RestToRestCornerKeepsTheClearCurveWithinAccelerationLimits) {
+  const auto directory = std::filesystem::path(__FILE__).parent_path() / "fixtures";
+  std::ifstream routeFile(directory / "scan_rest_corner.route");
+  ASSERT_TRUE(routeFile.is_open());
+  std::vector<Vec3> route;
+  Vec3 point;
+  while (routeFile >> point.x >> point.y >> point.z) route.push_back(point);
+  ASSERT_EQ(route.size(), 58U);
+  RequestFixture fixture(route, .05);
+  std::ifstream file(directory / "scan_rest_corner.bits", std::ios::binary);
+  ASSERT_TRUE(file.is_open());
+  const std::vector<std::uint8_t> bits((std::istreambuf_iterator<char>(file)), {});
+  ASSERT_EQ(bits.size(), 18750U);
+  auto &map = fixture.request.environment.collision;
+  map.inflatedBits = bits.data();
+  map.inflatedBytes = bits.size();
+  map.sizeX = 100; map.sizeY = 50; map.sizeZ = 30;
+  map.resolution = .05;
+  map.aabbMin = {.5, 2.75, .25};
+  map.aabbMax = {5.5, 5.25, 1.75};
+  fixture.request.robot.pose = {{2.3879,3.37746,.428},2.4};
+  fixture.request.robot.kinematics.valid = true;
+  fixture.request.maxLinearSpeedMps = 1;
+  fixture.request.clock.executionFrozen = true;
+  auto params = scanParams();
+  params.scan.voxelResolution = .05;
+  params.scan.cylinderOffset = .23;
+  params.scan.cylinderRadius = .32;
+  params.scan.maxVelocity = std::sqrt(2.0);
+  params.scan.maxAcceleration = 4;
+  params.scan.accelerationTolerance = 1.2;
+  params.scan.velocityTolerance = 1;
+  nav_kernel::local::scan::Backend backend(params);
+  LocalPlan plan;
+  for (int i = 0; i < 4; ++i) {
+    fixture.request.clock.timestampS += .01;
+    plan = backend.tick(fixture.request);
+  }
+  ASSERT_TRUE(plan.ready()) << backend.debugSnapshot().scanAttempt.reason;
+  EXPECT_EQ(backend.debugSnapshot().scanAttempt.attemptId, 1U);
+  const nav_kernel::SplineView spline(std::get<SplineTarget>(plan.target()));
+  EXPECT_LT(nav_kernel::distance3D(spline.position(0), fixture.request.robot.pose.position), 1e-8);
+  EXPECT_LT(nav_kernel::distance3D(spline.velocity(0), {}), 1e-8);
+  EXPECT_LT(nav_kernel::distance3D(spline.velocity(spline.duration()), {}), 1e-8);
+  const nav_kernel::local::scan::Grid grid(params, fixture.request);
+  for (double t = 0; t < spline.duration(); t += .01) {
+    EXPECT_LE(nav_kernel::distance3D(spline.velocity(t), spline.velocity(t+.001))/.001,
+              params.scan.maxAcceleration + 1e-6);
+    if (t < spline.duration()*2/3) {
+      const auto position=spline.position(t), next=spline.position(t+.01);
+      EXPECT_EQ(grid.cylinderOccupancy(position,
+          std::atan2(next.y-position.y,next.x-position.x)),0) << t;
+    }
+  }
 }
 
 TEST(ScanBackend, ThousandBlockedRoundsStopAndWaitForNewReference) {
@@ -2364,6 +2894,8 @@ TEST(ScanTrajectoryValidation, EmergencyStopIsNotReportedAsReadyAndRecoversWhenC
   ASSERT_FALSE(plan.ready());
   EXPECT_TRUE(plan.previewPath().empty());
   EXPECT_EQ(backend.debugSnapshot().searchReason, "scan_emergency_stop");
+  fixture.request.robot.kinematics.valid = true;
+  fixture.request.robot.kinematics.linearVelocity = {0.0, 0.0, 0.12};
   for (int tick = 0; tick < 3; ++tick) {
     fixture.request.clock.timestampS += 0.01;
     plan = backend.tick(fixture.request);
@@ -2372,8 +2904,6 @@ TEST(ScanTrajectoryValidation, EmergencyStopIsNotReportedAsReadyAndRecoversWhenC
 
   fixture.bitmap.clear();
   fixture.refreshCollision(3);
-  fixture.request.robot.kinematics.valid = true;
-  fixture.request.robot.kinematics.linearVelocity = {0.0, 0.0, 0.12};
   for (int tick = 0; tick < 3; ++tick) {
     fixture.request.clock.timestampS += 0.01;
     EXPECT_EQ(backend.tick(fixture.request).status(), nav_kernel::LocalPlanStatus::NearFieldStop);
@@ -2778,6 +3308,100 @@ TEST(ScanDynAStar, MovesOccupiedStartBackwardLikeUpstream) {
   ASSERT_GE(path.size(), 2U);
   EXPECT_LT(path.front().x(), -0.05);
   EXPECT_NEAR(path.back().x(), 1.5, 0.11);
+}
+
+TEST(ScanDynAStar, AdjustsGuideEndToAnAdmissibleIncomingHeading) {
+  using namespace nav_kernel::local::scan;
+  using namespace upstream;
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+      "fixtures/scan_guide_endpoint.bits";
+  std::ifstream file(path, std::ios::binary);
+  ASSERT_TRUE(file.is_open());
+  const std::vector<std::uint8_t> bits((std::istreambuf_iterator<char>(file)), {});
+  ASSERT_EQ(bits.size(), 750U);
+  LocalPlanRequest request;
+  auto &view = request.environment.collision;
+  view.inflatedBits = bits.data(); view.inflatedBytes = bits.size();
+  view.sizeX = 60; view.sizeY = 50; view.sizeZ = 2;
+  view.resolution = .05;
+  view.aabbMin = {2, -1, .4}; view.aabbMax = {5, 1.5, .5};
+  view.complete = true; view.live = true;
+  auto params = scanParams();
+  params.scan.voxelResolution = .05;
+  params.scan.cylinderOffset = .23;
+  Grid grid(params, request);
+  ASSERT_TRUE(grid.valid()) << grid.reason();
+  auto map = std::make_shared<GridMap>(grid);
+  const Eigen::Vector3d start(3.1569167801104676, .69728865808315, .4386563541387469);
+  const Eigen::Vector3d end(3.560668099140927, .6293777752508265, .4379328672213102);
+  const Eigen::Vector3d center = .5 * (start + end);
+  const Eigen::Vector3d snapped = center + ((end - center) / .05).array().round().matrix() * .05;
+  const double yaw = std::atan2(end.y() - start.y(), end.x() - start.x());
+  ASSERT_EQ(map->getInflateOccupancy(snapped, yaw), 0);
+  // The recorded endpoint admits the chord heading, but none of the search directions.
+  for (int dx = -1; dx <= 1; ++dx)
+    for (int dy = -1; dy <= 1; ++dy)
+      if (dx != 0 || dy != 0)
+        ASSERT_EQ(map->getInflateOccupancy(snapped, std::atan2(double(dy), double(dx))), 1);
+  AStar search;
+  search.initGridMap(map, {80, 80, 6});
+  ASSERT_EQ(search.search(.05, start, end), AStarResult::Success);
+  const auto guide = search.path();
+  ASSERT_GE(guide.size(), 2U);
+  EXPECT_GT((guide.back() - snapped).norm(), .049);
+  for (std::size_t i = 1; i < guide.size(); ++i) {
+    const auto direction = guide[i] - guide[i - 1];
+    EXPECT_EQ(map->getInflateOccupancy(guide[i], std::atan2(direction.y(), direction.x())), 0);
+  }
+}
+
+TEST(ScanDynAStar, SearchReuseDoesNotHideAnAdmissibleDetour) {
+  using namespace nav_kernel::local::scan;
+  using namespace upstream;
+  lingtu::nav::tests::CollisionBitmap bitmap({.8, 3., .45}, {3.3, 5.5, .5}, .05);
+  // Recorded inflated post slice: 5 cm cells at Z = 0.475 m.
+  const std::uint64_t rows[] = {
+      0x0ULL, 0x0ULL, 0x0ULL, 0x0ULL, 0x0ULL,
+      0x0ULL, 0x0ULL, 0x0ULL, 0x0ULL, 0x0ULL,
+      0x0ULL, 0x0ULL, 0x0ULL, 0x3f80000ULL, 0x3fffffffe0000ULL,
+      0x3ffffffff0000ULL, 0x3ffffffff8000ULL, 0x3ffffffff8000ULL, 0x3ffffffffc000ULL, 0x3ffffffffc000ULL,
+      0x3ffffffffc000ULL, 0x3ffffffffc000ULL, 0x3ffffffffc000ULL, 0x3ffffffffc000ULL, 0x3ffffffffc000ULL,
+      0x3ffffffffc000ULL, 0x3ffffffffc000ULL, 0x3ffffffff8000ULL, 0x3ffffffff8000ULL, 0x3ffffffff0000ULL,
+      0x3fffffffc0000ULL, 0x3ffffc0000000ULL, 0x3ffffc0000000ULL, 0x3ffffc0000000ULL, 0x3ffffe0000000ULL,
+      0x3ffffe0000000ULL, 0x3ffffe0000000ULL, 0x3ffffe0000000ULL, 0x3ffffe0000000ULL, 0x3ffffe0000000ULL,
+      0x3ffffe0000000ULL, 0x3ffffc0000000ULL, 0x3ffffc0000000ULL, 0x3ffffc0000000ULL, 0x3ffffc0000000ULL,
+      0x3ffffc0000000ULL, 0x3ffffc0000000ULL, 0x3ffffc0000000ULL, 0x3ffffc0000000ULL, 0x3ffffc0000000ULL};
+  for (int y = 0; y < 50; ++y) {
+    for (int x = 0; x < 50; ++x) {
+      if (rows[y] & (1ULL << x))
+        bitmap.occupy({.8 + (x+.5)*.05, 3. + (y+.5)*.05, .475});
+    }
+  }
+  LocalPlannerParams params;
+  params.scan.voxelResolution = .05;
+  params.scan.cylinderOffset = .25;
+  LocalPlanRequest request;
+  request.environment.collision = bitmap.view();
+  Grid grid(params, request);
+  auto adapter = std::make_shared<GridMap>(grid);
+  AStar reused;
+  reused.initGridMap(adapter, {80, 80, 20});
+  const Eigen::Vector3d points[] = {
+      {1.90642277, 3.49869806, .47970177}, {1.56521229, 3.83470721, .48098684},
+      {1.42603009, 4.18632639, .48381457}, {1.67962456, 4.5347187, .48430411},
+      {1.8552175, 4.70102441, .48731245}};
+  const int segments[][2] = {{0, 1}, {1, 2}, {3, 4}};
+  for (const auto &segment : segments) {
+    const auto &start = points[segment[0]], &end = points[segment[1]];
+    AStar fresh;
+    fresh.initGridMap(adapter, {80, 80, 20});
+    ASSERT_EQ(fresh.search(.05, start, end), AStarResult::Success);
+    ASSERT_EQ(reused.search(.05, start, end), AStarResult::Success);
+    const auto expected = fresh.path(), actual = reused.path();
+    ASSERT_EQ(actual.size(), expected.size()) << segment[0];
+    for (std::size_t i = 0; i < actual.size(); ++i)
+      EXPECT_LT((actual[i] - expected[i]).norm(), 1e-10) << segment[0] << ": " << i;
+  }
 }
 
 TEST(ScanDynAStar, DoesNotPublishPartialProgressPath) {
@@ -3654,6 +4278,32 @@ TEST(ScanReplanFsm, HeldMotionIntentReplanUsesMeasuredStateWhenTrackingLags) {
   }
 }
 
+TEST(ScanController, ForwardClockGapsAdvanceExecutionTime) {
+  using namespace nav_kernel::local::scan::upstream;
+  ScanAttemptFixture fixture;
+  ASSERT_TRUE(fixture.replan());
+  const auto &spline = fixture.manager.local_data_.position_traj_;
+  const BsplineTrajectory trajectory{spline.getControlPoint(), spline.getKnot(), 3, 1, 10.0};
+  for (const double gap : {0.3, 0.5}) {
+    SCOPED_TRACE(gap);
+    ClosedLoopController controller;
+    ASSERT_TRUE(controller.setTrajectory(trajectory, 10.0));
+    ClosedLoopControllerState state;
+    state.position = spline.evaluateDeBoorT(0.0);
+    state.nowS = 10.05;
+    state.desiredHeading = 0.0;
+    const auto moving = controller.step(state, ClosedLoopControllerParams{});
+    state.nowS += gap;
+    const auto delayed = controller.step(state, ClosedLoopControllerParams{});
+
+    EXPECT_TRUE(controller.hasTrajectory());
+    EXPECT_EQ(controller.trajectoryId(), trajectory.trajectoryId);
+    EXPECT_FALSE(delayed.executionFrozen);
+    EXPECT_NEAR(delayed.executionTimeS - moving.executionTimeS, gap, 1e-12);
+    EXPECT_GT(delayed.command.vx, 0.0);
+  }
+}
+
 TEST(ScanReplanFsm, ReferenceCallbackDoesNotAdvanceFrozenTrajectoryTime) {
   using nav_kernel::local::scan::upstream::FsmInput;
   using nav_kernel::local::scan::upstream::FsmOdometry;
@@ -3709,6 +4359,90 @@ TEST(ScanReplanFsm, ExplicitFreezePreservesProgressAcrossLongTimerGaps) {
     (void)fsm.tick(input);
     EXPECT_NEAR(manager.local_data_.start_time_, gap, 1e-12);
   }
+}
+
+TEST(ScanReplanFsm, FirstFrozenAcknowledgementPreservesItsReceptionInterval) {
+  using namespace nav_kernel::local::scan::upstream;
+  SCANPlannerManager manager;
+  PlannerFsm fsm(manager, ScanReplanParams{});
+  FsmInput input;
+  input.nowS = 9.99;
+  input.executionFrozen = true;
+  ASSERT_EQ(fsm.tick(input).state, ScanReplanState::INIT);
+
+  manager.local_data_.traj_id_ = 1;
+  input.executingTrajectoryId = 1;
+  input.executionStartTimeS = 10.0;
+  input.nowS = 10.01;
+  ASSERT_EQ(fsm.tick(input).state, ScanReplanState::INIT);
+  EXPECT_NEAR(manager.local_data_.start_time_, 10.01, 1e-12);
+
+  input.nowS = 10.02;
+  (void)fsm.tick(input);
+  EXPECT_NEAR(manager.local_data_.start_time_, 10.02, 1e-12);
+  input.nowS = 10.03;
+  input.executionFrozen = false;
+  (void)fsm.tick(input);
+  EXPECT_NEAR(input.nowS - manager.local_data_.start_time_, .01, 1e-12);
+}
+
+TEST(ScanReplanFsm, FirstFrozenAcknowledgementDoesNotRefreezeSettledMotionTime) {
+  using namespace nav_kernel::local::scan::upstream;
+  SCANPlannerManager manager;
+  PlannerFsm fsm(manager, ScanReplanParams{});
+  FsmInput input;
+  input.nowS = 9.99;
+  input.executionFrozen = true;
+  ASSERT_EQ(fsm.tick(input).state, ScanReplanState::INIT);
+
+  manager.local_data_.traj_id_ = 1;
+  input.nowS = 10.20;
+  input.executionFrozen = false;
+  (void)fsm.tick(input);
+  input.executingTrajectoryId = 1;
+  input.executionStartTimeS = 10.0;
+  input.nowS = 10.21;
+  input.executionFrozen = true;
+  ASSERT_EQ(fsm.tick(input).state, ScanReplanState::INIT);
+  EXPECT_NEAR(manager.local_data_.start_time_, 10.01, 1e-12);
+}
+
+TEST(ScanReplanFsm, AuthoritativeExecutionPhaseCorrectsMissedFreezeWithoutAccumulatingAgain) {
+  using namespace nav_kernel::local::scan::upstream;
+  SCANPlannerManager manager;
+  PlannerFsm fsm(manager, ScanReplanParams{});
+  FsmInput input;
+  input.nowS = 9.99;
+  input.executionFrozen = false;
+  (void)fsm.tick(input);
+  manager.local_data_.traj_id_ = 1;
+  manager.local_data_.duration_ = 5.0;
+  input.executingTrajectoryId = 1;
+  input.executionStartTimeS = 10.0;
+  input.nowS = 10.10;
+  input.executionTimeS = .03;
+  (void)fsm.tick(input);
+  EXPECT_NEAR(manager.local_data_.start_time_, 10.07, 1e-12);
+
+  input.nowS = 10.20;
+  input.executionFrozen = true;
+  input.executionTimeS = .04;
+  (void)fsm.tick(input);
+  EXPECT_NEAR(manager.local_data_.start_time_, 10.16, 1e-12);
+  input.nowS = 10.21;
+  (void)fsm.tick(input);
+  EXPECT_NEAR(manager.local_data_.start_time_, 10.17, 1e-12);
+
+  input.nowS = 10.22;
+  input.executionFrozen = false;
+  input.executionTimeS = .05;
+  (void)fsm.tick(input);
+  EXPECT_NEAR(manager.local_data_.start_time_, 10.17, 1e-12);
+  input.nowS = 10.23;
+  input.executingTrajectoryId = 2;
+  input.executionTimeS = 3.0;
+  (void)fsm.tick(input);
+  EXPECT_NEAR(manager.local_data_.start_time_, 10.17, 1e-12);
 }
 
 TEST(ScanBackend, LowerLimitKeepsAnAlreadyFeasibleSplineWithoutChangingItsTiming) {
@@ -3886,6 +4620,7 @@ TEST(ScanBackend, BlockedSpeedBridgeStopsInsteadOfPublishingUncheckedOrOldGeomet
     plan=backend.tick(fixture.request);
   }
   ASSERT_TRUE(plan.ready());
+  const auto oldId = std::get<SplineTarget>(plan.target()).trajectoryId;
   fixture.request.robot.kinematics.valid=true;
   fixture.request.robot.kinematics.linearVelocity={.6,0,0};
   fixture.request.maxLinearSpeedMps=.2;
@@ -3894,7 +4629,21 @@ TEST(ScanBackend, BlockedSpeedBridgeStopsInsteadOfPublishingUncheckedOrOldGeomet
   plan=backend.tick(fixture.request);
   EXPECT_EQ(plan.status(),nav_kernel::LocalPlanStatus::NearFieldStop);
   EXPECT_EQ(backend.debugSnapshot().searchReason,"scan_speed_transition_blocked");
-  EXPECT_FALSE(backend.tick(fixture.request).ready());
+  const auto replacement = backend.tick(fixture.request);
+  if (replacement.ready()) {
+    const auto target = std::get<SplineTarget>(replacement.target());
+    EXPECT_GT(target.trajectoryId, oldId);
+    const nav_kernel::SplineView curve(target);
+    const nav_kernel::local::scan::Grid grid(scanParams(), fixture.request);
+    EXPECT_LT(nav_kernel::distance3D(curve.position(0), fixture.request.robot.pose.position), .01);
+    EXPECT_LT(nav_kernel::distance3D(curve.velocity(curve.duration()), {}), .01);
+    for (double t = 0; t < curve.duration(); t += .005) {
+      const auto position = curve.position(t), next = curve.position(t + .005);
+      EXPECT_EQ(grid.cylinderOccupancy(position,
+          std::atan2(next.y-position.y, next.x-position.x)), 0);
+      EXPECT_LE(nav_kernel::distance3D(curve.velocity(t), {}), .601);
+    }
+  }
 }
 
 TEST(ScanBackend, LowerCapKeepsMovingAtAnAlreadyLegalObservedSpeedWhilePreparingReplacement) {
@@ -4087,9 +4836,9 @@ TEST(ScanSpeedTransition, RejectedBridgeWithdrawsTheUnreceivedFasterOffer) {
   const auto offerId=output.trajectory->trajectoryId;
   fixture.manager.pp_.max_vel_=.1;
   fixture.request.bitmap.occupy({.55,.05,.55});
-  EXPECT_FALSE(fixture.manager.decelerate(input.odometry->position,
-      input.odometry->velocity,Eigen::Vector3d::Zero(),.4,input.nowS,transition));
-  fsm.abandonTrajectory();
+  EXPECT_FALSE(fsm.startSpeedTransition(*input.odometry,input.nowS,.185,output));
+  EXPECT_FALSE(output.trajectory);
+  EXPECT_EQ(output.state,ScanReplanState::GEN_NEW_TRAJ);
   EXPECT_FALSE(offer->receive());
   EXPECT_GE(fixture.manager.local_data_.traj_id_,offerId);
   input.odometry->velocity.setZero();
@@ -4604,6 +5353,81 @@ TEST(ScanBackend, ReachedReferenceWaitsWithoutStartingAnotherTrajectory) {
   }
   ASSERT_TRUE(plan.ready());
   EXPECT_EQ(std::get<SplineTarget>(plan.target()).trajectoryId, first.trajectoryId);
+  EXPECT_EQ(backend.debugSnapshot().searchReason, "scan_wait_target");
+}
+
+TEST(ScanBackend, FreshExecutionFeedbackFinishesReferenceDespiteOlderRequestClock) {
+  RequestFixture fixture({{0.0, 0.0, 0.5}, {2.0, 0.0, 0.5}});
+  fixture.request.clock.mode = nav_kernel::PlanClockMode::External;
+  nav_kernel::local::scan::Backend backend(scanParams());
+  LocalPlan plan;
+  for (int tick = 0; tick < 20 && !plan.ready(); ++tick) {
+    fixture.request.clock.timestampS += .01;
+    plan = backend.tick(fixture.request);
+  }
+  ASSERT_TRUE(plan.ready());
+  const auto first = std::get<SplineTarget>(plan.target());
+  const double duration = nav_kernel::SplineView(first).duration();
+  fixture.request.robot.pose.position = fixture.route.back();
+  fixture.request.clock.timestampS = first.startTimeS + .5 * duration;
+  const nav_kernel::local::scan::ExecutionFeedback execution{
+      first.startTimeS + duration + .3, first.trajectoryId, first.startTimeS, false};
+  backend.setExecutionFeedback([execution] { return execution; });
+
+  plan = backend.tick(fixture.request);
+  ASSERT_TRUE(plan.ready());
+  EXPECT_EQ(std::get<SplineTarget>(plan.target()).trajectoryId, first.trajectoryId);
+  EXPECT_EQ(backend.debugSnapshot().searchReason, "scan_wait_target");
+}
+
+TEST(ScanBackend, ExecutionProgressOverridesElapsedWallTimeAndKeepsFrozenPhase) {
+  RequestFixture fixture({{0.0, 0.0, 0.5}, {2.0, 0.0, 0.5}});
+  fixture.request.clock.mode = nav_kernel::PlanClockMode::External;
+  nav_kernel::local::scan::Backend backend(scanParams());
+  LocalPlan plan;
+  for (int tick = 0; tick < 20 && !plan.ready(); ++tick) {
+    fixture.request.clock.timestampS += .01;
+    plan = backend.tick(fixture.request);
+  }
+  ASSERT_TRUE(plan.ready());
+  const auto first = std::get<SplineTarget>(plan.target());
+  const nav_kernel::SplineView view(first);
+  nav_kernel::local::scan::ExecutionFeedback execution{
+      first.startTimeS + view.duration() + .3, first.trajectoryId, first.startTimeS, false};
+  execution.progress = nav_kernel::LocalExecutionProgress{
+      first.trajectoryId, execution.nowS - .05, 0.0};
+  fixture.request.robot.pose.position = view.position(.05);
+  backend.setExecutionFeedback([&execution] { return execution; });
+  plan = backend.tick(fixture.request);
+  ASSERT_TRUE(plan.ready());
+  EXPECT_EQ(backend.debugSnapshot().searchReason, "scan_execute_trajectory");
+
+  execution.nowS += .01;
+  execution.frozen = true;
+  execution.progress = nav_kernel::LocalExecutionProgress{
+      first.trajectoryId, execution.nowS - .5, 0.0};
+  fixture.request.robot.pose.position = view.position(0.0);
+  plan = backend.tick(fixture.request);
+  ASSERT_TRUE(plan.ready());
+  EXPECT_EQ(std::get<SplineTarget>(plan.target()).trajectoryId, first.trajectoryId);
+  EXPECT_EQ(backend.debugSnapshot().searchReason, "scan_execute_trajectory");
+
+  execution.nowS += .01;
+  execution.frozen = false;
+  execution.progress = nav_kernel::LocalExecutionProgress{
+      first.trajectoryId + 1, execution.nowS, view.duration()};
+  fixture.request.robot.pose.position = view.position(.01);
+  plan = backend.tick(fixture.request);
+  ASSERT_TRUE(plan.ready());
+  EXPECT_EQ(backend.debugSnapshot().searchReason, "scan_execute_trajectory");
+
+  execution.nowS += .01;
+  execution.frozen = true;
+  execution.progress = nav_kernel::LocalExecutionProgress{
+      first.trajectoryId, execution.nowS, view.duration()};
+  fixture.request.robot.pose.position = fixture.route.back();
+  plan = backend.tick(fixture.request);
+  ASSERT_TRUE(plan.ready());
   EXPECT_EQ(backend.debugSnapshot().searchReason, "scan_wait_target");
 }
 
@@ -5349,5 +6173,114 @@ TEST(ScanTask, NewRecoveryGoalDoesNotInheritPreviousFailure) {
     const nav_kernel::SplineView spline(std::get<SplineTarget>(plan.target()));
     EXPECT_NEAR(spline.position(spline.duration()).x, -1.2, .01);
     EXPECT_NEAR(spline.velocity(spline.duration()).x, 0.0, .01);
+  }
+}
+
+namespace {
+
+bool hasStrictPlanarSelfIntersection(const std::vector<Eigen::Vector3d> &points) {
+  const auto cross = [](const Eigen::Vector3d &a, const Eigen::Vector3d &b,
+                        const Eigen::Vector3d &c) {
+    return (b.x() - a.x()) * (c.y() - a.y()) -
+           (b.y() - a.y()) * (c.x() - a.x());
+  };
+  for (std::size_t i = 1; i < points.size(); ++i) {
+    for (std::size_t j = i + 2; j < points.size(); ++j) {
+      const auto &a = points[i - 1], &b = points[i];
+      const auto &c = points[j - 1], &d = points[j];
+      if (cross(a, b, c) * cross(a, b, d) < 0 &&
+          cross(c, d, a) * cross(c, d, b) < 0) return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+TEST(ScanRouteContinuity, RecordedMovingRetimeKeepsFlatCurveSimple) {
+  using namespace nav_kernel::local::scan::upstream;
+  ASSERT_TRUE(hasStrictPlanarSelfIntersection({{0,0,0},{1,1,0},{0,1,0},{1,0,0}}));
+  ASSERT_FALSE(hasStrictPlanarSelfIntersection({{0,0,0},{1,0,0},{1,1,0},{2,1,0}}));
+  const auto directory = std::filesystem::path(__FILE__).parent_path() / "fixtures";
+  // Original begin inputs from tora-curve-upstream-20261106/stages/stages.jsonl.
+  std::ifstream routeFile(directory / "tora_retime.route");
+  ASSERT_TRUE(routeFile.is_open());
+  std::vector<Eigen::Vector3d> route;
+  Eigen::Vector3d point;
+  while (routeFile >> point.x() >> point.y() >> point.z()) route.push_back(point);
+  ASSERT_GE(route.size(), 2U);
+  std::ifstream attempts(directory / "tora_retime.attempts");
+  ASSERT_TRUE(attempts.is_open());
+  for (const int expectedAttempt : {22, 23, 50}) {
+    int attempt;
+    double now;
+    ASSERT_TRUE(attempts >> attempt >> now);
+    SCOPED_TRACE(attempt);
+    ASSERT_EQ(attempt, expectedAttempt);
+    Eigen::Vector3d start, initialVelocity, initialAcceleration, target, targetVelocity;
+    for (auto *value : {&start, &initialVelocity, &initialAcceleration, &target,
+                        &targetVelocity}) {
+      ASSERT_TRUE(attempts >> value->x() >> value->y() >> value->z());
+    }
+    std::pair<double, double> referenceWindow;
+    ASSERT_TRUE(attempts >> referenceWindow.first >> referenceWindow.second);
+
+    auto params = scanParams();
+    params.checkObstacle = false;
+    const nav_kernel::local::scan::Grid grid(params, LocalPlanRequest{});
+    ASSERT_TRUE(grid.valid()) << grid.reason();
+    PlanParameters plan;
+    plan.max_vel_ = std::sqrt(2.0);
+    plan.max_acc_ = .5;
+    plan.max_jerk_ = 4;
+    plan.ctrl_pt_dist = .2;
+    plan.preserve_boundary_ = true;
+    // The capture omitted body yaw, so use explicit fixed body-axis bounds.
+    plan.max_body_vx_ = 1;
+    plan.max_body_vy_ = 1;
+    plan.body_yaw_ = 0;
+    BsplineOptimizerParams optimizer;
+    optimizer.lambda_smooth = 1;
+    optimizer.lambda_collision = 1;
+    optimizer.lambda_feasibility = .1;
+    optimizer.lambda_fitness = 1;
+    optimizer.dist0 = .2;
+    optimizer.max_vel = plan.max_vel_;
+    optimizer.max_acc = plan.max_acc_;
+    SCANPlannerManager manager;
+    manager.initPlanModules(plan, optimizer, std::make_shared<GridMap>(grid));
+    const auto zero = Eigen::Vector3d::Zero().eval();
+    const std::vector<Eigen::Vector3d> waypoints(route.begin() + 1, route.end());
+    ASSERT_TRUE(manager.planGlobalTrajWaypoints(route.front(), zero, zero,
+        waypoints, zero, zero, now));
+    ASSERT_TRUE(manager.reboundReplan(start, initialVelocity, initialAcceleration,
+        target, targetVelocity, true, false, now, referenceWindow))
+        << manager.reboundDebug().stage << ':' << manager.reboundDebug().reason;
+    const auto &position = manager.local_data_.position_traj_;
+    const auto velocity = position.getDerivative();
+    const auto acceleration = velocity.getDerivative();
+    const double duration = position.getTimeSum();
+    EXPECT_LT((position.evaluateDeBoorT(0) - start).norm(), 1e-9);
+    EXPECT_LT((velocity.evaluateDeBoorT(0) - initialVelocity).norm(), 1e-9);
+    EXPECT_LT((acceleration.evaluateDeBoorT(0) - initialAcceleration).norm(), 1e-9);
+    EXPECT_LT((position.evaluateDeBoorT(duration) - target).norm(), 1e-9);
+    EXPECT_LT((velocity.evaluateDeBoorT(duration) - targetVelocity).norm(), 1e-9);
+    EXPECT_LT(acceleration.evaluateDeBoorT(duration).norm(), 1e-9);
+    const Eigen::Vector3d chord = (target - start).normalized();
+    std::vector<Eigen::Vector3d> samples;
+    const int intervals = static_cast<int>(std::ceil(duration / .01));
+    double maximumProgress = 0, maximumBacktrack = 0;
+    for (int i = 0; i <= intervals; ++i) {
+      const double t = duration * i / intervals;
+      samples.push_back(position.evaluateDeBoorT(t));
+      EXPECT_LE(plan.speedRatio(velocity.evaluateDeBoorT(t)), 1 + 1e-8) << t;
+      EXPECT_LE(acceleration.evaluateDeBoorT(t).norm(), plan.max_acc_ + 1e-8) << t;
+      const double progress = (samples.back() - start).dot(chord);
+      maximumProgress = std::max(maximumProgress, progress);
+      maximumBacktrack = std::max(maximumBacktrack, maximumProgress - progress);
+    }
+    EXPECT_FALSE(hasStrictPlanarSelfIntersection(samples));
+    // These forward flat bends have no reversing objective.
+    EXPECT_LE(maximumBacktrack, .02);
   }
 }

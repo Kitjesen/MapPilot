@@ -510,19 +510,9 @@ void writeMetricDistributionJson(std::ostream &out, const MetricDistribution &di
 void writeMotionOutputJson(std::ostream &out, const nav_kernel::Twist &final_cmd_vel,
                            const FinalOutputDiagnostics &final_output,
                            const DriverControlDiagnostics &driver_control,
-                           const InputGateState &input_gate, const StatusWriterConfig &cfg) {
+                           const InputGateState &input_gate) {
   const bool published =
       final_output.output_sequence != 0U && !final_output.producer_boot_id.empty();
-  const bool driver_control_fresh =
-      driver_control.received && driver_control.ready && input_gate.driver_control_ready &&
-      std::isfinite(input_gate.driver_control_age_s) && input_gate.driver_control_age_s >= 0.0 &&
-      cfg.driver_control_max_age_s > 0.0 &&
-      input_gate.driver_control_age_s <= cfg.driver_control_max_age_s &&
-      input_gate.reason != "driver_control_stale";
-  const bool driver_delivery_accepted =
-      published && driver_control_fresh && driver_control.last_command_accepted &&
-      driver_control.accepted_producer_boot_id == final_output.producer_boot_id &&
-      driver_control.accepted_output_sequence == final_output.output_sequence;
 
   out << "  \"final_cmd_vel\": ";
   writeTwistJson(out, final_cmd_vel);
@@ -530,18 +520,14 @@ void writeMotionOutputJson(std::ostream &out, const nav_kernel::Twist &final_cmd
       << "  \"final_output\": {\"published\": " << (published ? "true" : "false")
       << ", \"producer_boot_id\": \"" << jsonEscape(final_output.producer_boot_id)
       << "\", \"output_sequence\": " << final_output.output_sequence
-      << ", \"driver_delivery_accepted\": " << (driver_delivery_accepted ? "true" : "false")
       << "},\n"
       << "  \"driver_control\": {\"received\": " << (driver_control.received ? "true" : "false")
       << ", \"ready\": " << (driver_control.ready ? "true" : "false")
-      << ", \"fresh\": " << (driver_control_fresh ? "true" : "false") << ", \"age_s\": "
+      << ", \"fresh\": " << (input_gate.driver_control_fresh ? "true" : "false") << ", \"age_s\": "
       << (std::isfinite(input_gate.driver_control_age_s) ? input_gate.driver_control_age_s : -1.0)
       << ", \"reason\": \"" << jsonEscape(driver_control.reason)
-      << "\", \"last_command_accepted\": "
-      << (driver_control.last_command_accepted ? "true" : "false")
-      << ", \"accepted_producer_boot_id\": \""
-      << jsonEscape(driver_control.accepted_producer_boot_id)
-      << "\", \"accepted_output_sequence\": " << driver_control.accepted_output_sequence << "},\n";
+      << "\", \"zero_output\": " << (driver_control.zero_output ? "true" : "false")
+      << "},\n";
 }
 
 void writeMotionStopEvidenceJson(std::ostream &out,
@@ -551,9 +537,9 @@ void writeMotionStopEvidenceJson(std::ostream &out,
       << "\", \"output_sequence\": " << evidence.output_sequence
       << ", \"updated_at_s\": " << evidence.updated_at_s
       << ", \"confirmation_state\": \"" << jsonEscape(evidence.confirmation_state)
-      << "\", \"driver_ack_observed\": "
-      << (evidence.driver_ack_observed ? "true" : "false")
-      << ", \"driver_accepted\": " << (evidence.driver_accepted ? "true" : "false")
+      << "\", \"driver_state_observed\": "
+      << (evidence.driver_state_observed ? "true" : "false")
+      << ", \"driver_zero_output\": " << (evidence.driver_zero_output ? "true" : "false")
       << ", \"quiet_odometry_samples\": " << evidence.quiet_odometry_samples
       << ", \"required_quiet_odometry_samples\": "
       << evidence.required_quiet_odometry_samples << ", \"last_linear_speed_mps\": ";
@@ -584,7 +570,7 @@ void MotionStopEvidenceTracker::configure(StopConfirmationConfig config) {
   snapshot_.linear_speed_threshold_mps = config_.linear_speed_threshold_mps;
   snapshot_.angular_speed_threshold_radps = config_.angular_speed_threshold_radps;
   snapshot_.required_quiet_odometry_samples =
-      config_.evidence_policy == StopConfirmationEvidencePolicy::DriverAckAndOdometry
+      config_.evidence_policy == StopConfirmationEvidencePolicy::ZeroOutputAndOdometry
           ? config_.quiet_odometry_samples
           : 0U;
 }
@@ -608,13 +594,8 @@ void MotionStopEvidenceTracker::update(StopConfirmationState state,
     case StopConfirmationState::Confirmed:
       snapshot_.state = "CONFIRMED";
       snapshot_.reason = diagnostics.quiet_odometry_required
-          ? "stop_confirmed" : "zero_command_accepted";
+          ? "stop_confirmed" : "zero_output_confirmed";
       snapshot_.confirmation_state = "confirmed";
-      break;
-    case StopConfirmationState::DriverRejected:
-      snapshot_.state = "FAILED";
-      snapshot_.reason = "driver_rejected";
-      snapshot_.confirmation_state = "driver_rejected";
       break;
     case StopConfirmationState::TimedOut:
       snapshot_.state = "FAILED";
@@ -623,11 +604,8 @@ void MotionStopEvidenceTracker::update(StopConfirmationState state,
       break;
   }
   snapshot_.updated_at_s = updated_at_s;
-  if (diagnostics.driver_ack_output_sequence != 0U) {
-    snapshot_.output_sequence = diagnostics.driver_ack_output_sequence;
-  }
-  snapshot_.driver_ack_observed = diagnostics.driver_ack_observed;
-  snapshot_.driver_accepted = diagnostics.driver_accepted;
+  snapshot_.driver_state_observed = diagnostics.driver_state_observed;
+  snapshot_.driver_zero_output = diagnostics.driver_zero_output;
   snapshot_.quiet_odometry_samples = diagnostics.quiet_odometry_samples;
   snapshot_.required_quiet_odometry_samples = diagnostics.required_quiet_odometry_samples;
   snapshot_.last_linear_speed_mps = diagnostics.last_linear_speed_mps;
@@ -653,7 +631,7 @@ void MotionStopEvidenceTracker::resetToNotRequested(const std::string &reason,
   const double linear_threshold = config_.linear_speed_threshold_mps;
   const double angular_threshold = config_.angular_speed_threshold_radps;
   const std::size_t required_quiet_samples =
-      config_.evidence_policy == StopConfirmationEvidencePolicy::DriverAckAndOdometry
+      config_.evidence_policy == StopConfirmationEvidencePolicy::ZeroOutputAndOdometry
           ? config_.quiet_odometry_samples
           : 0U;
   snapshot_ = {};
@@ -906,10 +884,11 @@ void writeStatusSnapshot(
     const bool operator_motion_enabled =
         cfg.control_mode == "teleop" || cfg.control_mode == "teleop_avoid" ||
         (cfg.control_mode == "autonomy" && cfg.allow_teleop_takeover);
+    const bool held = cfg.operator_takeover_latched || !cfg.hold_reason.empty();
     const bool navigation_ready =
         !cfg.product_session_id.empty() && has_odom && has_map_odom_tf && input_gate.ready &&
-        control_loop_health.ready && !cfg.control_loop_hold && !estop_latched &&
-        !cfg.operator_takeover_latched && !cfg.resume_required && cfg.publish_cmd_vel &&
+        !estop_latched &&
+        !held && cfg.publish_cmd_vel &&
         (!far_input.required || far_input.ready);
     std::ostringstream out;
     out << std::fixed << std::setprecision(6);
@@ -961,9 +940,9 @@ void writeStatusSnapshot(
         << "\"estop_reason\": \"" << jsonEscape(estop_reason) << "\", "
         << "\"operator_takeover_latched\": " << (cfg.operator_takeover_latched ? "true" : "false")
         << ", "
-        << "\"resume_required\": " << (cfg.resume_required ? "true" : "false") << ", "
-        << "\"control_loop_hold\": " << (cfg.control_loop_hold ? "true" : "false") << "},\n";
-    writeMotionOutputJson(out, final_cmd_vel, final_output, driver_control, input_gate, cfg);
+        << "\"hold_reason\": \"" << jsonEscape(cfg.hold_reason) << "\", "
+        << "\"resume_required\": " << (held ? "true" : "false") << "},\n";
+    writeMotionOutputJson(out, final_cmd_vel, final_output, driver_control, input_gate);
     writeMotionStopEvidenceJson(out, motion_stop_evidence);
     out << "  \"global_planner\": \"" << jsonEscape(cfg.global_planner) << "\",\n"
         << "  \"local_planner\": \"" << jsonEscape(cfg.local_planner) << "\",\n"
@@ -988,8 +967,6 @@ void writeStatusSnapshot(
         << (cfg.octoplanner_options.ground_support ? "true" : "false") << ", "
         << "\"direct_support_only\": "
         << (cfg.octoplanner_options.direct_support_only ? "true" : "false") << ", "
-        << "\"support_radius_cells\": "
-        << cfg.octoplanner_options.support_radius_cells << ", "
         << "\"support_depth_cells\": " << cfg.octoplanner_options.support_depth_cells
         << ", "
         << "\"support_height_m\": " << cfg.octoplanner_options.support_height_m << ", "
@@ -1070,9 +1047,7 @@ void writeStatusSnapshot(
         << "  \"has_terrain_map_ext\": " << (has_terrain_map_ext ? "true" : "false") << ",\n"
         << "  \"input_gate\": {"
         << "\"ready\": " << (input_gate.ready ? "true" : "false") << ", "
-        << "\"recovering\": " << (input_gate.recovering ? "true" : "false") << ", "
         << "\"reason\": \"" << jsonEscape(input_gate.reason) << "\", "
-        << "\"fresh_frames\": " << input_gate.fresh_frames << ", "
         << "\"required_frames\": 1, "
         << "\"require_odom\": " << (cfg.input_require_odom ? "true" : "false") << ", "
         << "\"require_cloud\": " << (cfg.input_require_cloud ? "true" : "false") << ", "
@@ -1082,7 +1057,7 @@ void writeStatusSnapshot(
         << ", "
         << "\"require_localization_health\": "
         << (cfg.input_require_localization_health ? "true" : "false") << ", "
-        << "\"require_driver_control\": " << (cfg.input_require_driver_control ? "true" : "false")
+        << "\"require_driver_control\": false"
         << ", "
         << "\"odom_age_s\": "
         << (std::isfinite(input_gate.odom_age_s) ? input_gate.odom_age_s : -1.0) << ", "

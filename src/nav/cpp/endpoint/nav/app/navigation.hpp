@@ -5,8 +5,9 @@
 #include <string>
 
 #include "control/autonomy.hpp"
+#include "command/cancel.hpp"
 #include "app/goal/runtime.hpp"
-#include "status/goal_terminal_transaction.hpp"
+#include "app/goal/terminal.hpp"
 
 namespace lingtu::nav::endpoint {
 
@@ -40,7 +41,7 @@ struct NavigationRuntimeFrameResult {
 // not have to reach into GoalReplanRuntimeCoordinator directly.
 struct NavigationRuntimeInterruptionResult {
   GoalReplanRuntimeResult runtime_result;
-  std::optional<GoalTerminalTransactionResult> terminal_transaction;
+  std::optional<GoalTerminalResult> terminal;
 };
 
 // Result of the single production goal-admission path.  A preemption terminal
@@ -48,7 +49,13 @@ struct NavigationRuntimeInterruptionResult {
 // value the endpoint needs to publish as the command receipt.
 struct NavigationRuntimeGoalSubmissionResult {
   GoalPlanSubmitResult plan_result;
-  std::optional<GoalTerminalTransactionResult> preemption_terminal;
+  std::optional<GoalTerminalResult> preemption_terminal;
+};
+
+struct GoalResumeActions {
+  std::function<void()> release_operator;
+  std::function<void()> activate_route;
+  std::function<void()> changed;
 };
 
 // Owns the strict, single-frame ordering of the native navigation lifecycle.
@@ -59,7 +66,7 @@ class NavigationRuntimeController {
  public:
   NavigationRuntimeController(GoalPlanController &goal_plan,
                               GoalReplanRuntimeCoordinator &goal_replan_runtime,
-                              GoalTerminalTransaction &goal_terminal_transaction);
+                              GoalTerminal &goal_terminal, MotionStopBarrier &motion_stop);
 
   [[nodiscard]] NavigationRuntimeFrameResult
   advanceFrame(const GoalReplanRuntimeFrameInput &frame,
@@ -72,17 +79,38 @@ class NavigationRuntimeController {
   [[nodiscard]] NavigationRuntimeGoalSubmissionResult
   submitGoal(const GoalPlanRequest &request, const GoalPlanAdmissionContext &admission,
              double steady_now_s);
-  [[nodiscard]] GoalTerminalTransactionResult
+  [[nodiscard]] GoalTerminalResult
   completeTerminal(const GoalReplanRuntimeResult &runtime_result,
                    const std::string &estop_reason = "estop_latched");
   [[nodiscard]] MotionStopTerminalBarrierResult stopWhileTerminalPending();
   [[nodiscard]] MotionStopTerminalBarrierResult
   estopWhileTerminalPending(const std::string &estop_reason);
 
+  [[nodiscard]] CommandAck cancelTask(const GoalTaskCancelRequest &request);
+  [[nodiscard]] std::pair<bool, std::string> pauseTask(
+      const std::string &task_id, const std::string &request_id, const std::string &reason);
+  [[nodiscard]] std::pair<bool, std::string> resumeTask(
+      const std::string &task_id, const std::string &request_id, double source_stamp_s,
+      GoalPlanAdmissionContext context, GoalResumeActions actions, const std::string &blocker = {});
+  void retryResume(const std::function<GoalPlanAdmissionContext()> &context,
+                   const GoalResumeActions &actions, const std::function<std::string()> &blocker);
+  void cancelResume();
+  [[nodiscard]] MotionStopResult interruptRelated(
+      GoalReplanRuntimeInterruption interruption, double now_s,
+      const std::string &reason, std::function<bool()> commit);
+
  private:
   GoalPlanController &goal_plan_;
   GoalReplanRuntimeCoordinator &goal_replan_runtime_;
-  GoalTerminalTransaction &goal_terminal_transaction_;
+  GoalTerminal &goal_terminal_;
+  MotionStopBarrier &motion_stop_;
+  struct PendingResume {
+    std::string task_id;
+    std::string request_id;
+    double source_stamp_s;
+  };
+  std::optional<PendingResume> pending_resume_;
+
 };
 
 }  // namespace lingtu::nav::endpoint

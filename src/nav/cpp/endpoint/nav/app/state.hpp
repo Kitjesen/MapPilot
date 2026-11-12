@@ -57,6 +57,7 @@ struct EndpointState {
   TraversabilityGrid traversability_grid;
   TraversabilityGrid local_traversability_grid;
   LocalCollisionMap local_collision_map;
+  std::shared_ptr<const std::vector<lingtu::maps::NoGoRegion>> no_go_regions;
 
   // -- Timestamps --------------------------------------------------------------
   std::optional<double> simulation_time_s;
@@ -97,10 +98,7 @@ struct EndpointState {
   bool driver_control_received{false};
   bool driver_control_ready{false};
   std::string driver_control_reason{"not_received"};
-  std::string driver_accepted_producer_boot_id;
-  std::uint64_t driver_accepted_output_sequence{0};
-  bool driver_last_command_accepted{false};
-  bool driver_authority_previous{false};
+  bool driver_zero_output{false};
   std::optional<MotionProfileSample> motion_profile;
   double motion_profile_receive_s{0.0};
 
@@ -125,7 +123,6 @@ struct EndpointState {
   // -- Control ------------------------------------------------------------------
   ControlAuthority control_authority;
   lingtu::nav::inspection::Executor inspection_executor;
-  bool operator_resume_required{false};
 
   // -- Epoch / counters ---------------------------------------------------------
   std::uint64_t odom_count{0};

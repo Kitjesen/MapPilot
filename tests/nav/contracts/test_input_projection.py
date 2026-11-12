@@ -175,7 +175,7 @@ def test_epoch_reset_keeps_synchronous_external_side_effects_in_main() -> None:
     assert "path_echo" not in main
 
 
-def test_stop_confirm_loop_observes_driver_ack_and_keeps_sensor_inputs_current() -> None:
+def test_stop_confirm_loop_observes_driver_zero_state_and_keeps_sensor_inputs_current() -> None:
     main = _read(MAIN_PATH)
     stop_block = _block_after(
         main,
@@ -185,8 +185,8 @@ def test_stop_confirm_loop_observes_driver_ack_and_keeps_sensor_inputs_current()
 
     assert "stop_speed_monitor = OdometrySpeedMonitor" in stop_block
     assert "const auto confirmation_state = stop_confirmation->state();" in stop_block
-    assert "stop_confirmation->observeDriverAck" in stop_block
-    _assert_in_order(stop_block, ["observeQuietOdometry", "observeDriverAck"])
+    assert "stop_confirmation->observeDriverState" in stop_block
+    _assert_in_order(stop_block, ["observeQuietOdometry", "observeDriverState"])
     loop = _read(LOOP_PATH)
     _assert_in_order(loop, ["ctx.observe_stop_inputs(batch)", "inputs.apply(std::move(batch)"])
     assert "loop_ctx.observe_stop_inputs = observe_stop_inputs" in main

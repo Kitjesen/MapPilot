@@ -12,8 +12,8 @@ namespace {
 using lingtu::nav::endpoint::MotionStopActions;
 using lingtu::nav::endpoint::MotionStopBarrier;
 using lingtu::nav::endpoint::MotionStopTerminalCommit;
-using lingtu::nav::endpoint::ResumeAutonomyRequest;
-using lingtu::nav::endpoint::ResumeTeleopRequest;
+using lingtu::nav::endpoint::ResumeRequest;
+using lingtu::nav::endpoint::ResumeRequest;
 using lingtu::nav::endpoint::StopConfirmationState;
 
 void require(bool condition, const char *message) {
@@ -46,7 +46,7 @@ struct Fixture {
       order.emplace_back("defer_abort:" + reason);
       return [&, reason] { order.emplace_back("abort:" + reason); };
     };
-    actions.record_stop_evidence_failure = [&](const std::string &reason) {
+    actions.hold = [&](const std::string &reason) {
       order.emplace_back("stop_failure:" + reason);
       stop_evidence_failure_latched = true;
     };
@@ -91,7 +91,7 @@ struct Fixture {
     actions.cancel_inspection = [&](const std::string &reason) {
       order.emplace_back("cancel_inspection:" + reason);
     };
-    actions.clear_operator_resume_required = [&] { order.emplace_back("clear_resume_required"); };
+
     actions.set_autonomy_request_not_before = [&](double stamp_s) {
       order.emplace_back("set_resume_stamp:" + std::to_string(stamp_s));
     };
@@ -331,7 +331,7 @@ void testCancelStopAndConfirmationFailures() {
   const auto cancel_result = cancel_coordinator.cancel();
   require(cancel_result.accepted && cancel_result.reason == "cancelled", "cancel result mismatch");
   orderIs(cancelled,
-          {"cancel_control", "clear_resume_required", "cancel_inspection:navigation_cancelled",
+          {"cancel_control", "cancel_inspection:navigation_cancelled",
            "defer_abort:cancelled", "sync", "rolling_active", "clear_outputs:cancelled",
            "last_sequence", "confirm_zero:17", "abort:cancelled"});
 
@@ -339,7 +339,7 @@ void testCancelStopAndConfirmationFailures() {
   MotionStopBarrier stopped_coordinator(true, stopped.actions);
   const auto stopped_result = stopped_coordinator.stop();
   require(stopped_result.accepted && stopped_result.reason == "stopped", "stop result mismatch");
-  orderIs(stopped, {"stop_control", "clear_resume_required", "cancel_inspection:navigation_stopped",
+  orderIs(stopped, {"stop_control", "cancel_inspection:navigation_stopped",
                     "defer_abort:stopped", "sync", "rolling_active", "clear_outputs:stopped",
                     "last_sequence", "confirm_zero:17", "abort:stopped"});
 
@@ -350,16 +350,16 @@ void testCancelStopAndConfirmationFailures() {
   require(!zero_result.accepted && zero_result.reason == "zero_publish_failed",
           "zero publication failure mismatch");
   orderIs(zero_failure,
-          {"stop_control", "clear_resume_required", "cancel_inspection:navigation_stopped",
+          {"stop_control", "cancel_inspection:navigation_stopped",
            "defer_abort:stopped", "sync", "rolling_active", "clear_outputs:stopped",
            "stop_failure:zero_publish_failed"});
 
   Fixture rejected;
-  rejected.confirmation = StopConfirmationState::DriverRejected;
+  rejected.confirmation = StopConfirmationState::TimedOut;
   MotionStopBarrier rejected_coordinator(true, rejected.actions);
   const auto rejected_result = rejected_coordinator.cancel();
   require(!rejected_result.accepted &&
-              rejected_result.reason == "driver_rejected_zero_cancel_remains_stopped",
+              rejected_result.reason == "stop_confirmation_timeout_cancel_remains_stopped",
           "driver rejection reason mismatch");
 
   Fixture timed_out;
@@ -409,11 +409,11 @@ void testCancelTerminalFollowsConfirmedStopEvidence() {
           "cancel zero-publication failure did not fail closed");
 
   Fixture rejected;
-  rejected.confirmation = StopConfirmationState::DriverRejected;
+  rejected.confirmation = StopConfirmationState::TimedOut;
   MotionStopBarrier rejected_coordinator(true, rejected.actions);
   const auto rejected_result = rejected_coordinator.cancel();
   require(!rejected_result.accepted &&
-              rejected_result.reason == "driver_rejected_zero_cancel_remains_stopped",
+              rejected_result.reason == "stop_confirmation_timeout_cancel_remains_stopped",
           "cancel driver rejection mismatch");
   require(!actionIndex(rejected, "abort:cancelled").has_value(),
           "cancelled terminal must not publish when the driver rejects zero");
@@ -451,7 +451,7 @@ void testStopPreservingGoalTerminalCommitsAfterConfirmedZero() {
 
   require(result.accepted && result.reason == "stopped" && result.terminal_committed,
           "preserving stop success result mismatch");
-  orderIs(fixture, {"stop_control", "clear_resume_required", "cancel_inspection:navigation_stopped",
+  orderIs(fixture, {"stop_control", "cancel_inspection:navigation_stopped",
                     "rolling_active", "clear_outputs:stopped", "last_sequence", "confirm_zero:17",
                     "terminal:preserved"});
   require(!actionIndex(fixture, "defer_abort:stopped").has_value(),
@@ -466,7 +466,7 @@ void testStopWithoutTerminalCommitKeepsPhysicalStopSideEffectsOnly() {
   const auto result = coordinator.stopWithoutTerminalCommit();
 
   require(result.accepted && result.reason == "stopped", "physical-only stop result mismatch");
-  orderIs(fixture, {"stop_control", "clear_resume_required", "cancel_inspection:navigation_stopped",
+  orderIs(fixture, {"stop_control", "cancel_inspection:navigation_stopped",
                     "rolling_active", "clear_outputs:stopped", "last_sequence",
                     "confirm_zero:17"});
   require(!actionIndex(fixture, "defer_abort:stopped").has_value(),
@@ -487,7 +487,7 @@ void testStopWithoutTerminalCommitFailsClosedWithoutConfirmedZero() {
   require(zero_failed.stop_evidence_failure_latched,
           "physical-only stop zero-publication failure must fail closed");
   orderIs(zero_failed,
-          {"stop_control", "clear_resume_required", "cancel_inspection:navigation_stopped",
+          {"stop_control", "cancel_inspection:navigation_stopped",
            "rolling_active", "clear_outputs:stopped", "stop_failure:zero_publish_failed"});
 
   Fixture timed_out;
@@ -499,7 +499,7 @@ void testStopWithoutTerminalCommitFailsClosedWithoutConfirmedZero() {
           "physical-only stop timeout mismatch");
   require(timed_out.stop_evidence_failure_latched, "physical-only stop timeout must fail closed");
   orderIs(timed_out,
-          {"stop_control", "clear_resume_required", "cancel_inspection:navigation_stopped",
+          {"stop_control", "cancel_inspection:navigation_stopped",
            "rolling_active", "clear_outputs:stopped", "last_sequence", "confirm_zero:17",
            "stop_failure:stop_confirmation_timeout_stop_remains_latched"});
 }
@@ -516,7 +516,7 @@ void testStopPreservingGoalTerminalDoesNotCommitWithoutConfirmedZero() {
   require(zero_failed.stop_evidence_failure_latched,
           "preserving stop zero-publication failure must fail closed");
   orderIs(zero_failed,
-          {"stop_control", "clear_resume_required", "cancel_inspection:navigation_stopped",
+          {"stop_control", "cancel_inspection:navigation_stopped",
            "rolling_active", "clear_outputs:stopped", "stop_failure:zero_publish_failed"});
 
   Fixture unavailable;
@@ -530,7 +530,7 @@ void testStopPreservingGoalTerminalDoesNotCommitWithoutConfirmedZero() {
   require(unavailable.stop_evidence_failure_latched,
           "preserving stop without a writer must fail closed");
   orderIs(unavailable,
-          {"stop_control", "clear_resume_required", "cancel_inspection:navigation_stopped",
+          {"stop_control", "cancel_inspection:navigation_stopped",
            "rolling_active", "clear_outputs:stopped",
            "stop_failure:zero_publish_unavailable_stop_remains_latched"});
 
@@ -546,25 +546,25 @@ void testStopPreservingGoalTerminalDoesNotCommitWithoutConfirmedZero() {
   require(no_sequence.stop_evidence_failure_latched,
           "preserving stop without an output sequence must fail closed");
   orderIs(no_sequence,
-          {"stop_control", "clear_resume_required", "cancel_inspection:navigation_stopped",
+          {"stop_control", "cancel_inspection:navigation_stopped",
            "rolling_active", "clear_outputs:stopped", "last_sequence",
            "stop_failure:zero_publish_unavailable_stop_remains_latched"});
 
   Fixture rejected;
-  rejected.confirmation = StopConfirmationState::DriverRejected;
+  rejected.confirmation = StopConfirmationState::TimedOut;
   MotionStopBarrier rejected_coordinator(true, rejected.actions);
   const auto rejected_result = rejected_coordinator.stopPreservingGoalTerminal(
       [&] { rejected.order.emplace_back("terminal:preserved"); });
   require(!rejected_result.accepted &&
-              rejected_result.reason == "driver_rejected_zero_stop_remains_latched" &&
+              rejected_result.reason == "stop_confirmation_timeout_stop_remains_latched" &&
               !rejected_result.terminal_committed,
           "preserving stop driver rejection mismatch");
   require(rejected.stop_evidence_failure_latched,
           "preserving stop driver rejection must fail closed");
   orderIs(rejected,
-          {"stop_control", "clear_resume_required", "cancel_inspection:navigation_stopped",
+          {"stop_control", "cancel_inspection:navigation_stopped",
            "rolling_active", "clear_outputs:stopped", "last_sequence", "confirm_zero:17",
-           "stop_failure:driver_rejected_zero_stop_remains_latched"});
+           "stop_failure:stop_confirmation_timeout_stop_remains_latched"});
 
   Fixture timed_out;
   timed_out.confirmation = StopConfirmationState::TimedOut;
@@ -577,7 +577,7 @@ void testStopPreservingGoalTerminalDoesNotCommitWithoutConfirmedZero() {
           "preserving stop timeout mismatch");
   require(timed_out.stop_evidence_failure_latched, "preserving stop timeout must fail closed");
   orderIs(timed_out,
-          {"stop_control", "clear_resume_required", "cancel_inspection:navigation_stopped",
+          {"stop_control", "cancel_inspection:navigation_stopped",
            "rolling_active", "clear_outputs:stopped", "last_sequence", "confirm_zero:17",
            "stop_failure:stop_confirmation_timeout_stop_remains_latched"});
 }
@@ -592,7 +592,7 @@ void testEstopPreservingGoalTerminalCommitsAfterConfirmedZero() {
           "preserving estop success result mismatch");
   require(confirmed.estop_latched, "preserving estop must latch control");
   orderIs(confirmed, {"latch_estop:operator_request", "persist_estop:operator_request",
-                      "cancel_control", "clear_resume_required",
+                      "cancel_control",
                       "cancel_inspection:estop_latched", "rolling_active",
                       "clear_outputs:estop_latched", "last_sequence", "confirm_zero:17",
                       "terminal:preserved"});
@@ -613,7 +613,7 @@ void testEstopWithoutTerminalCommitKeepsPhysicalEstopSideEffectsOnly() {
           "physical-only estop did not acknowledge the latched estop fact");
   require(fixture.estop_latched, "physical-only estop must latch control");
   orderIs(fixture, {"latch_estop:operator_request", "persist_estop:operator_request",
-                    "cancel_control", "clear_resume_required",
+                    "cancel_control",
                     "cancel_inspection:estop_latched", "rolling_active",
                     "clear_outputs:estop_latched", "last_sequence", "confirm_zero:17"});
   require(!actionIndex(fixture, "defer_abort:estop_latched").has_value(),
@@ -641,7 +641,7 @@ void testEstopPersistFailureStillZerosButDoesNotCommitTerminal() {
   require(persist_failed.estop_latched, "persist-failed estop must leave control latched");
   orderIs(persist_failed, {"latch_estop:operator_request",
                            "persist_estop:operator_request", "cancel_control",
-                           "clear_resume_required", "cancel_inspection:estop_latched",
+                           "cancel_inspection:estop_latched",
                            "rolling_active",
                            "clear_outputs:estop_latched", "last_sequence",
                            "confirm_zero:17"});
@@ -658,7 +658,7 @@ void testEstopPersistFailureStillZerosButDoesNotCommitTerminal() {
           "physical-only estop without a zero writer must preserve the estop latch");
   orderIs(unavailable, {"latch_estop:operator_request",
                         "persist_estop:operator_request", "cancel_control",
-                        "clear_resume_required", "cancel_inspection:estop_latched",
+                        "cancel_inspection:estop_latched",
                         "rolling_active",
                         "clear_outputs:estop_latched"});
 }
@@ -674,7 +674,7 @@ void testEstopPreservingGoalTerminalDoesNotCommitWithoutConfirmedZero() {
               !zero_failed_result.terminal_committed,
           "preserving estop zero-publication failure mismatch");
   orderIs(zero_failed, {"latch_estop:operator_request", "persist_estop:operator_request",
-                        "cancel_control", "clear_resume_required",
+                        "cancel_control",
                         "cancel_inspection:estop_latched", "rolling_active",
                         "clear_outputs:estop_latched"});
 
@@ -689,7 +689,7 @@ void testEstopPreservingGoalTerminalDoesNotCommitWithoutConfirmedZero() {
   require(unavailable.estop_latched,
           "preserving estop unavailable confirmation must preserve the estop latch");
   orderIs(unavailable, {"latch_estop:operator_request", "persist_estop:operator_request",
-                        "cancel_control", "clear_resume_required",
+                        "cancel_control",
                         "cancel_inspection:estop_latched", "rolling_active",
                         "clear_outputs:estop_latched"});
 
@@ -703,22 +703,22 @@ void testEstopPreservingGoalTerminalDoesNotCommitWithoutConfirmedZero() {
               !no_sequence_result.terminal_committed,
           "preserving estop missing sequence mismatch");
   orderIs(no_sequence, {"latch_estop:operator_request", "persist_estop:operator_request",
-                        "cancel_control", "clear_resume_required",
+                        "cancel_control",
                         "cancel_inspection:estop_latched", "rolling_active",
                         "clear_outputs:estop_latched", "last_sequence"});
 
   Fixture rejected;
-  rejected.confirmation = StopConfirmationState::DriverRejected;
+  rejected.confirmation = StopConfirmationState::TimedOut;
   MotionStopBarrier rejected_coordinator(true, rejected.actions);
   const auto rejected_result = rejected_coordinator.estopPreservingGoalTerminal(
       "operator_request", [&] { rejected.order.emplace_back("terminal:preserved"); });
   require(!rejected_result.accepted &&
-              rejected_result.reason == "driver_rejected_zero_estop_remains_latched" &&
+              rejected_result.reason == "stop_confirmation_timeout_estop_remains_latched" &&
               !rejected_result.terminal_committed,
           "preserving estop driver rejection mismatch");
   orderIs(rejected,
           {"latch_estop:operator_request", "persist_estop:operator_request", "cancel_control",
-           "clear_resume_required", "cancel_inspection:estop_latched", "rolling_active",
+           "cancel_inspection:estop_latched", "rolling_active",
            "clear_outputs:estop_latched", "last_sequence", "confirm_zero:17"});
 
   Fixture timed_out;
@@ -733,7 +733,7 @@ void testEstopPreservingGoalTerminalDoesNotCommitWithoutConfirmedZero() {
   require(timed_out.estop_latched, "preserving estop timeout must preserve the estop latch");
   orderIs(timed_out,
           {"latch_estop:operator_request", "persist_estop:operator_request", "cancel_control",
-           "clear_resume_required", "cancel_inspection:estop_latched", "rolling_active",
+           "cancel_inspection:estop_latched", "rolling_active",
            "clear_outputs:estop_latched", "last_sequence", "confirm_zero:17"});
 }
 
@@ -791,12 +791,12 @@ void testGoalTerminalCommitRequiresConfirmedStopEvidence() {
           "goal-terminal zero-publication failure did not fail closed");
 
   Fixture rejected;
-  rejected.confirmation = StopConfirmationState::DriverRejected;
+  rejected.confirmation = StopConfirmationState::TimedOut;
   MotionStopBarrier rejected_coordinator(true, rejected.actions);
   const auto rejected_result = rejected_coordinator.commitGoalTerminalAfterStop(
       "goal_failed", [&] { rejected.order.emplace_back("terminal:failed"); });
   require(!rejected_result.accepted &&
-              rejected_result.reason == "driver_rejected_zero_goal_terminal_pending",
+              rejected_result.reason == "stop_confirmation_timeout_goal_terminal_pending",
           "goal-terminal driver rejection mismatch");
   require(!actionIndex(rejected, "terminal:failed").has_value(),
           "goal terminal must not publish when the driver rejects zero");
@@ -881,17 +881,17 @@ void testGoalReplanStopConfirmsWithoutTerminalSideEffects() {
                         "stop_failure:zero_publish_unavailable_goal_replan_pending"});
 
   Fixture rejected;
-  rejected.confirmation = StopConfirmationState::DriverRejected;
+  rejected.confirmation = StopConfirmationState::TimedOut;
   MotionStopBarrier rejected_coordinator(true, rejected.actions);
   const auto rejected_result = rejected_coordinator.confirmGoalReplanStop("goal_replan");
   require(!rejected_result.accepted &&
-              rejected_result.reason == "driver_rejected_zero_goal_replan_pending",
+              rejected_result.reason == "stop_confirmation_timeout_goal_replan_pending",
           "goal-replan driver rejection mismatch");
   require(rejected.stop_evidence_failure_latched,
           "goal-replan driver rejection did not fail closed");
   orderIs(rejected, {"stop_control", "rolling_active", "clear_outputs:goal_replan",
                      "last_sequence", "confirm_zero:17",
-                     "stop_failure:driver_rejected_zero_goal_replan_pending"});
+                     "stop_failure:stop_confirmation_timeout_goal_replan_pending"});
 
   Fixture timed_out;
   timed_out.confirmation = StopConfirmationState::TimedOut;
@@ -919,7 +919,7 @@ void testEstopPersistFailureRemainsLatched() {
           "persist-failed estop must not commit a terminal");
   orderIs(fixture,
           {"latch_estop:operator_request", "persist_estop:operator_request", "cancel_control",
-           "clear_resume_required", "cancel_inspection:estop_latched", "rolling_active",
+           "cancel_inspection:estop_latched", "rolling_active",
            "clear_outputs:estop_latched", "last_sequence", "confirm_zero:17"});
 }
 
@@ -963,18 +963,18 @@ void testClearEstopRequiresConfirmedZero() {
   orderIs(confirmed,
           {"defer_abort:estop_cleared", "sync", "rolling_active", "clear_outputs:estop_cleared",
            "last_sequence", "confirm_zero:17", "abort:estop_cleared", "clear_persisted_estop",
-           "clear_control_estop", "clear_resume_required"});
+           "clear_control_estop"});
 }
 
 void testResumeOnlyUnlatchesAfterConfirmation() {
-  const ResumeAutonomyRequest request{{}, true, 42.5};
+  const ResumeRequest request{{}, true, 42.5};
 
   Fixture rejected;
-  rejected.confirmation = StopConfirmationState::DriverRejected;
+  rejected.confirmation = StopConfirmationState::TimedOut;
   MotionStopBarrier rejected_coordinator(true, rejected.actions);
   const auto rejected_result = rejected_coordinator.resumeAutonomy(request);
   require(!rejected_result.accepted &&
-              rejected_result.reason == "driver_rejected_zero_takeover_remains_latched",
+              rejected_result.reason == "stop_confirmation_timeout_motion_remains_held",
           "resume rejection mismatch");
   require(rejected.takeover_latched, "unconfirmed resume must preserve takeover latch");
   orderIs(rejected, {"suspend_outputs:autonomy_resume_ready", "last_sequence",
@@ -988,7 +988,7 @@ void testResumeOnlyUnlatchesAfterConfirmation() {
   require(!confirmed.takeover_latched, "confirmed resume must unlatch takeover");
   orderIs(confirmed, {"suspend_outputs:autonomy_resume_ready", "last_sequence",
                       "confirm_zero:17", "resume_control",
-                      "set_resume_stamp:42.500000", "clear_resume_required"});
+                      "set_resume_stamp:42.500000"});
   require(!actionIndex(confirmed, "defer_abort:autonomy_resume_ready").has_value() &&
               !actionIndex(confirmed, "abort:autonomy_resume_ready").has_value(),
           "autonomy resume must preserve the paused goal");
@@ -1003,7 +1003,7 @@ void testResumeOnlyUnlatchesAfterConfirmation() {
   Fixture independent_hold;
   independent_hold.takeover_latched = false;
   MotionStopBarrier independent_coordinator(true, independent_hold.actions);
-  const auto independent_result = independent_coordinator.resumeAutonomy({{}, false, 42.5, true});
+  const auto independent_result = independent_coordinator.resumeAutonomy({{}, true, 42.5});
   require(independent_result.accepted && independent_result.reason == "autonomy_resume_ready",
           "independent resume requirement must not report already ready");
   require(independent_hold.order == confirmed.order, "independent hold must use the full resume barrier");
@@ -1012,20 +1012,20 @@ void testResumeOnlyUnlatchesAfterConfirmation() {
   independent_timeout.takeover_latched = false;
   independent_timeout.confirmation = StopConfirmationState::TimedOut;
   MotionStopBarrier timeout_coordinator(true, independent_timeout.actions);
-  require(!timeout_coordinator.resumeAutonomy({{}, false, 42.5, true}).accepted,
+  require(!timeout_coordinator.resumeAutonomy({{}, true, 42.5}).accepted,
           "independent resume must still require confirmed zero");
   require(independent_timeout.order == rejected.order, "unconfirmed independent hold must not clear resume");
 }
 
 void testTeleopResumeConfirmsZeroWithoutTouchingAutonomyGoal() {
-  const ResumeTeleopRequest request{{}, true, 42.5};
+  const ResumeRequest request{{}, true, 42.5};
 
   Fixture rejected;
   rejected.confirmation = StopConfirmationState::TimedOut;
   MotionStopBarrier rejected_coordinator(true, rejected.actions);
   const auto rejected_result = rejected_coordinator.resumeTeleop(request);
   require(!rejected_result.accepted &&
-              rejected_result.reason == "stop_confirmation_timeout_takeover_remains_latched",
+              rejected_result.reason == "stop_confirmation_timeout_motion_remains_held",
           "teleop resume timeout mismatch");
   require(rejected.takeover_latched, "unconfirmed teleop resume must preserve the runtime hold");
   orderIs(rejected, {"rolling_active", "clear_outputs:teleop_resume_ready", "last_sequence",
@@ -1039,8 +1039,7 @@ void testTeleopResumeConfirmsZeroWithoutTouchingAutonomyGoal() {
           "teleop resume success mismatch");
   require(!confirmed.takeover_latched, "confirmed teleop resume must release the runtime hold");
   orderIs(confirmed, {"rolling_active", "clear_outputs:teleop_resume_ready", "last_sequence",
-                      "confirm_zero:17", "set_teleop_stamp:42.500000", "resume_control",
-                      "clear_resume_required"});
+                      "confirm_zero:17", "set_teleop_stamp:42.500000", "resume_control"});
 
   Fixture already_ready;
   MotionStopBarrier already_ready_coordinator(true, already_ready.actions);
@@ -1052,7 +1051,7 @@ void testTeleopResumeConfirmsZeroWithoutTouchingAutonomyGoal() {
   Fixture independent_hold;
   independent_hold.takeover_latched = false;
   MotionStopBarrier independent_coordinator(true, independent_hold.actions);
-  const auto independent_result = independent_coordinator.resumeTeleop({{}, false, 42.5, true});
+  const auto independent_result = independent_coordinator.resumeTeleop({{}, true, 42.5});
   require(independent_result.accepted && independent_result.reason == "teleop_resume_ready_reassert_command",
           "teleop independent resume requirement must not report already ready");
   require(independent_hold.order == confirmed.order, "independent teleop hold must use the full resume barrier");
@@ -1061,19 +1060,14 @@ void testTeleopResumeConfirmsZeroWithoutTouchingAutonomyGoal() {
   independent_timeout.takeover_latched = false;
   independent_timeout.confirmation = StopConfirmationState::TimedOut;
   MotionStopBarrier timeout_coordinator(true, independent_timeout.actions);
-  require(!timeout_coordinator.resumeTeleop({{}, false, 42.5, true}).accepted,
+  require(!timeout_coordinator.resumeTeleop({{}, true, 42.5}).accepted,
           "teleop independent resume must still require confirmed zero");
   require(independent_timeout.order == rejected.order, "unconfirmed independent teleop hold must not clear resume");
 }
 
-void testDriverLossAndKeepZeroOrder() {
+void testKeepZeroFresh() {
   Fixture fixture;
   MotionStopBarrier coordinator(true, fixture.actions);
-  require(coordinator.driverAuthorityLost("lease_not_owned"), "driver-loss clear must succeed");
-  orderIs(fixture, {"cancel_control", "clear_resume_required",
-                    "cancel_inspection:driver_control_lost:lease_not_owned", "rolling_active",
-                    "clear_outputs:lease_not_owned"});
-  fixture.order.clear();
   require(coordinator.keepZeroFresh(), "fresh zero must report publication result");
   orderIs(fixture, {"publish_zero"});
 }
@@ -1121,13 +1115,13 @@ void testShutdownZeroFailuresNeverCommitTerminal() {
                            "clear_outputs:navd_shutdown", "publish_sequenced_zero"});
 
   Fixture rejected;
-  rejected.confirmation = StopConfirmationState::DriverRejected;
+  rejected.confirmation = StopConfirmationState::TimedOut;
   int rejected_commits = 0;
   MotionStopBarrier rejected_coordinator(true, rejected.actions);
   const auto rejected_result = rejected_coordinator.finalShutdownPreservingGoalTerminal(
       [&] { ++rejected_commits; });
   require(!rejected_result.success &&
-              rejected_result.confirmation_state == StopConfirmationState::DriverRejected &&
+              rejected_result.confirmation_state == StopConfirmationState::TimedOut &&
               rejected_commits == 0,
           "driver-rejected shutdown zero committed the terminal");
 
@@ -1170,7 +1164,7 @@ int main() {
     testClearEstopRequiresConfirmedZero();
     testResumeOnlyUnlatchesAfterConfirmation();
     testTeleopResumeConfirmsZeroWithoutTouchingAutonomyGoal();
-    testDriverLossAndKeepZeroOrder();
+    testKeepZeroFresh();
     testShutdownPhysicalOnlyAndTerminalPreservingPipelines();
     testShutdownZeroFailuresNeverCommitTerminal();
     testMotionStartInvalidatesCompletedStopReplay();

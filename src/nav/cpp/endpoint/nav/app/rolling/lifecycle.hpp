@@ -19,7 +19,6 @@ struct RollingSegmentRuntimeContext {
   bool autonomy_mode{false};
   bool motion_allowed{false};
   bool operator_takeover_latched{false};
-  bool driver_control_ready{false};
   bool generic_navigation_active{false};
   std::optional<lingtu::explore::Pose2D> robot_pose;
   std::optional<double> map_z;

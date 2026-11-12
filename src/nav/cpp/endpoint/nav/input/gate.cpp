@@ -275,7 +275,7 @@ InputGateState InputGate::evaluate(const InputSnapshot &inputs) {
                                               inputs.localization_health_stamp_s))
           : -1.0;
   state.driver_control_age_s =
-      config_.require_driver_control
+      inputs.driver_control_stamp_s > 0.0
           ? age(inputs.now_s, receiveOrSource(inputs.driver_control_receive_s,
                                               inputs.driver_control_stamp_s))
           : -1.0;
@@ -284,6 +284,11 @@ InputGateState InputGate::evaluate(const InputSnapshot &inputs) {
   state.localization_reason = inputs.localization_reason;
   state.driver_control_ready = inputs.driver_control_ready;
   state.driver_control_reason = inputs.driver_control_reason;
+  state.driver_control_fresh = inputs.driver_control_stamp_s > 0.0 &&
+      std::isfinite(state.driver_control_age_s) &&
+      state.driver_control_age_s >= -config_.future_tolerance_s &&
+      (config_.driver_control_max_age_s <= 0.0 ||
+       state.driver_control_age_s <= config_.driver_control_max_age_s);
   state.odom_linear_speed_mps = inputs.odom_linear_speed_mps;
   const bool current_localization_health = config_.require_localization_health &&
       inputs.localization_health_stamp_s > 0.0 &&
@@ -294,20 +299,9 @@ InputGateState InputGate::evaluate(const InputSnapshot &inputs) {
   std::transform(localization_state.begin(), localization_state.end(), localization_state.begin(),
                  [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
 
-  const char *stop_reason = nullptr;
+  std::string stop_reason;
   if (!std::isfinite(inputs.now_s) || inputs.now_s <= 0.0) {
     stop_reason = "input_clock_invalid";
-  } else if (config_.require_driver_control && inputs.driver_control_stamp_s <= 0.0) {
-    stop_reason = "driver_control_missing";
-  } else if (config_.require_driver_control &&
-             state.driver_control_age_s < -config_.future_tolerance_s) {
-    stop_reason = "driver_control_future";
-  } else if (config_.require_driver_control && config_.driver_control_max_age_s > 0.0 &&
-             state.driver_control_age_s > config_.driver_control_max_age_s) {
-    stop_reason = "driver_control_stale";
-  } else if (config_.require_driver_control && !inputs.driver_control_ready) {
-    stop_reason = inputs.driver_control_reason.empty() ? "driver_control_not_ready"
-                                                       : "driver_control_rejected";
   } else if (config_.require_odom && inputs.odom_stamp_s <= 0.0) {
     stop_reason = "odom_missing";
   } else if (config_.require_odom && state.odom_age_s < -config_.future_tolerance_s) {
@@ -358,12 +352,11 @@ InputGateState InputGate::evaluate(const InputSnapshot &inputs) {
     stop_reason = "collision_stale";
   }
 
-  if (stop_reason != nullptr) {
+  if (!stop_reason.empty()) {
     state.reason = stop_reason;
     return state;
   }
 
-  state.fresh_frames = 1;
   state.ready = true;
   state.reason = "ready";
   return state;

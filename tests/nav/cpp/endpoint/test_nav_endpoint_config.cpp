@@ -18,7 +18,6 @@ using lingtu::nav::endpoint::CliConfig;
 using lingtu::nav::endpoint::ControlMode;
 using lingtu::nav::endpoint::GlobalPlannerBackend;
 using lingtu::nav::endpoint::buildExecutorConfig;
-using lingtu::nav::endpoint::buildNavigationBody;
 using lingtu::nav::endpoint::buildLocalPlannerParams;
 using lingtu::nav::endpoint::buildStatusWriterConfig;
 using lingtu::nav::endpoint::commandSafetyConfig;
@@ -160,20 +159,20 @@ void testOrdinaryAccelerationDefaultsAndExplicitOverrides() {
   ScopedEnvironment scan_accel("LINGTU_NAV_SCAN_PLANNER_MAX_ACCELERATION_MPS2", "");
   ScopedEnvironment x_accel("LINGTU_NAV_SMOOTHER_X_ACCEL_MPS2", "");
   ScopedEnvironment y_accel("LINGTU_NAV_SMOOTHER_Y_ACCEL_MPS2", "");
-  require(nav_kernel::ScanPlannerParams{}.maxAcceleration == 4.0 &&
-              nav_kernel::FollowerParams{}.maxAccel == 4.0 &&
-              nav_kernel::VelocitySmootherConfig{}.x.acceleration == 4.0 &&
-              nav_kernel::VelocitySmootherConfig{}.y.acceleration == 4.0,
+  require(nav_kernel::ScanPlannerParams{}.maxAcceleration == 0.5 &&
+              nav_kernel::FollowerParams{}.maxAccel == 0.5 &&
+              nav_kernel::VelocitySmootherConfig{}.x.acceleration == 0.5 &&
+              nav_kernel::VelocitySmootherConfig{}.y.acceleration == 0.5,
           "native library ordinary acceleration defaults must agree");
   for (const char *backend : {"cmu", "scan"}) {
     const auto cfg = parse({"navd", "--path-library", "fixture-paths", "--local-planner", backend});
-    require(cfg.path_follower_max_accel_mps2 == 4.0 &&
-                cfg.scan_planner.maxAcceleration == 4.0 &&
-                cfg.velocity_smoother.x.acceleration == 4.0 &&
-                cfg.velocity_smoother.y.acceleration == 4.0,
+    require(cfg.path_follower_max_accel_mps2 == 0.5 &&
+                cfg.scan_planner.maxAcceleration == 0.5 &&
+                cfg.velocity_smoother.x.acceleration == 0.5 &&
+                cfg.velocity_smoother.y.acceleration == 0.5,
             "ordinary endpoint acceleration defaults must agree");
-    require(buildExecutorConfig(cfg).follower.maxAccel == 4.0 &&
-                buildLocalPlannerParams(cfg).scan.maxAcceleration == 4.0,
+    require(buildExecutorConfig(cfg).follower.maxAccel == 0.5 &&
+                buildLocalPlannerParams(cfg).scan.maxAcceleration == 0.5,
             "ordinary defaults must reach planner and follower");
 
     const auto lower = parse({"navd", "--path-library", "fixture-paths", "--local-planner", backend,
@@ -434,14 +433,16 @@ void testOctoPlanner3DPhysicalContractIsConfigurable() {
       "true",
       "--octo-direct-support-only",
       "false",
-      "--octo-support-radius-cells",
-      "1",
       "--octo-support-depth-cells",
       "8",
       "--octo-search-resolution-m",
       "0.15",
       "--octo-surface-closing-radius-m",
       "0.4",
+      "--octo-surface-max-hole-area-m2",
+      "0.12",
+      "--octo-surface-max-slope",
+      "0.5",
       "--octo-support-height-m",
       "0.55",
       "--octo-support-height-tolerance-m",
@@ -487,10 +488,11 @@ void testOctoPlanner3DPhysicalContractIsConfigurable() {
   require(octo.snap_search_radius_cells == 16, "snap radius must parse");
   require(octo.ground_support, "ground support must stay enabled");
   require(!octo.direct_support_only, "nearby support must remain allowed");
-  require(octo.support_radius_cells == 1, "support XY radius must parse");
   require(octo.support_depth_cells == 8, "support depth must parse");
   require(std::abs(octo.search_resolution_m - 0.15) < 1e-12, "search resolution must parse");
   require(std::abs(octo.surface_closing_radius_m - 0.4) < 1e-12, "surface closing radius must parse");
+  require(std::abs(octo.surface_max_hole_area_m2 - 0.12) < 1e-12, "surface hole area must parse");
+  require(std::abs(octo.surface_max_slope - 0.5) < 1e-12, "surface fit slope must parse");
   require(std::abs(octo.support_height_m - 0.55) < 1e-12, "support height must parse");
   require(std::abs(octo.support_height_tolerance_m - 0.05) < 1e-12, "support tolerance must parse");
   require(!octo.enable_preblocked_costmap, "preblocked soft cost must be configurable");
@@ -728,10 +730,8 @@ void testControlModesLockTheirSafetyContract() {
   require(!teleop_gate.require_traversability, "pure teleop must not require traversability");
   require(!teleop_gate.require_localization_health,
           "pure teleop must not require localization health");
-  require(teleop_gate.require_driver_control,
-          "all hardware motion modes must require LingTu's Brainstem lease");
-  require(buildStatusWriterConfig(teleop, teleop_gate).stop_confirmation_evidence == "driver_ack",
-          "pure teleop status must disclose Brainstem ACK-only stop confirmation");
+  require(buildStatusWriterConfig(teleop, teleop_gate).stop_confirmation_evidence == "zero_output",
+          "pure teleop status must disclose driver zero-output confirmation");
 
   const auto avoid_gate = inputGateConfig(teleop_avoid);
   require(avoid_gate.require_odom, "teleop_avoid needs pose for spatial obstacle safety");
@@ -739,8 +739,8 @@ void testControlModesLockTheirSafetyContract() {
   require(!avoid_gate.require_traversability,
           "scan-only teleop_avoid must not wait for traversability");
   require(buildStatusWriterConfig(teleop_avoid, avoid_gate).stop_confirmation_evidence ==
-              "driver_ack",
-          "operator-assisted control must not block on quiet odometry after driver ACK");
+              "zero_output",
+          "operator-assisted control must not block on quiet odometry after zero output");
   require(!avoid_gate.require_localization_health,
           "teleop_avoid must use odometry freshness without a second localization-health hard gate");
 
@@ -770,8 +770,6 @@ void testControlModesLockTheirSafetyContract() {
   require(!autonomy_gate.require_traversability,
           "disabled autonomy traversability must remain optional");
   require(autonomy_gate.require_localization_health, "autonomy must require healthy localization");
-  require(autonomy_gate.require_driver_control,
-          "autonomy must require fresh lingtu-driver control readiness");
   require(std::abs(autonomy_gate.localization_health_max_age_s - 0.4) < 1e-12,
           "localization health max age must parse into the gate contract");
   require(std::abs(autonomy_gate.driver_control_max_age_s - 0.3) < 1e-12,
@@ -1012,15 +1010,10 @@ void testGo2RunPlanGeometryEnvironmentParsesExactly() {
   require(!scan.useTerrainAnalysis,
           "SCAN collision input must not inherit the CMU terrain-cloud interpretation");
   const auto body = buildExecutorConfig(scan_cfg).body;
-  require(body && body->parts.size() == 1 &&
-              std::abs(body->parts.front().half_size.x - .43) < 1e-12 &&
-              std::abs(body->parts.front().half_size.y - .205) < 1e-12 &&
-              body->margin_m == 0.0,
-          "Go2 five-centimeter RunPlan margin must produce a 0.86 x 0.41 m box once");
-  const auto &box = body->parts.front();
-  require(std::abs(box.center.z - box.half_size.z + .10) < 1e-12 &&
-              std::abs(box.center.z + box.half_size.z - .24) < 1e-12,
-          "Go2 horizontal margin change must preserve the configured vertical extent");
+  require(!body, "Go2 final control must not replace the SCAN cylinders with a box");
+  require(std::abs(scan.scan.bodyClearanceBelow - .10) < 1e-12 &&
+              std::abs(scan.scan.bodyClearanceAbove - .24) < 1e-12,
+          "Go2 must retain the configured cylinder height");
 }
 
 void testScanPlannerEnvironmentReachesCore() {
@@ -1096,6 +1089,7 @@ void testScanFollowerEnvironmentReachesExecutor() {
   ScopedEnvironment yaw_gain("LINGTU_NAV_SCAN_YAW_GAIN", "1.40");
   ScopedEnvironment max_vx("LINGTU_NAV_SCAN_MAX_VX_MPS", "0.68");
   ScopedEnvironment max_vy("LINGTU_NAV_SCAN_MAX_VY_MPS", "0.32");
+  ScopedEnvironment min_vy("LINGTU_NAV_SCAN_MIN_VY_MPS", "0.25");
   ScopedEnvironment max_yaw("LINGTU_NAV_SCAN_MAX_YAW_RATE_RAD_S", "0.95");
   ScopedEnvironment finish_distance("LINGTU_NAV_SCAN_FINISH_DISTANCE_M", "0.07");
 
@@ -1114,6 +1108,18 @@ void testScanFollowerEnvironmentReachesExecutor() {
           "SCAN body velocity limits must reach Executor");
   require(std::abs(executor_config.follower.spline.finishDistance - 0.07) < 1e-12,
           "SCAN finish distance must reach Executor independently");
+  require(std::abs(executor_config.follower.spline.minVy - 0.25) < 1e-12,
+          "lateral minimum must reach the follower before final safety");
+  for (const char *value : {"-0.1", "nan", "inf"}) {
+    ScopedEnvironment invalid_minimum("LINGTU_NAV_SCAN_MIN_VY_MPS", value);
+    bool rejected = false;
+    try {
+      (void)parse({"navd", "--local-planner", "scan"});
+    } catch (const std::runtime_error &) {
+      rejected = true;
+    }
+    require(rejected, "invalid lateral minimum must fail at the native boundary");
+  }
 }
 
 void testGoalHeightToleranceIsIndependentOfLocalPlanner() {
@@ -1272,7 +1278,7 @@ void testLocalPlannerUsesConfiguredTraversabilityPolicy() {
   const auto scan_gate = inputGateConfig(cfg);
   require(!scan_gate.require_traversability && !scan_gate.require_cloud &&
               scan_gate.require_odom && scan_gate.require_local_collision &&
-              scan_gate.require_localization_health && scan_gate.require_driver_control,
+              scan_gate.require_localization_health,
           "SCAN must require authoritative collision and retain pose, localization and driver gates");
 
   cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Cmu;
@@ -1293,10 +1299,11 @@ void testCommandBoundaryUsesActiveControlModeMotionLimits() {
   cfg.teleop_max_yaw_rate = 1.0;
 
   cfg.control_mode = ControlMode::Autonomy;
+  cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Cmu;
   auto safety = commandSafetyConfig(cfg);
   require(std::abs(safety.max_speed_mps - 0.6) < 1e-12,
           "autonomy command boundary must preserve the configured follower speed limit");
-  require(std::abs(safety.max_axis_speed_mps - 0.4) < 1e-12,
+  require(safety.max_vx_mps == 0.4 && safety.max_vy_mps == 0.4,
           "autonomy command boundary must preserve the shared body-axis speed budget");
   require(std::abs(safety.max_yaw_rate - 0.8) < 1e-12,
           "autonomy command boundary must preserve the configured follower yaw limit");
@@ -1304,7 +1311,7 @@ void testCommandBoundaryUsesActiveControlModeMotionLimits() {
   cfg.control_mode = ControlMode::Teleop;
   safety = commandSafetyConfig(cfg);
   require(std::abs(safety.max_speed_mps - std::hypot(0.4, 0.4)) < 1e-12 &&
-              std::abs(safety.max_axis_speed_mps - 0.4) < 1e-12,
+              safety.max_vx_mps == 0.4 && safety.max_vy_mps == 0.4,
           "teleop command boundary must allow the full per-axis diagonal budget");
   require(std::abs(safety.max_yaw_rate - 1.0) < 1e-12,
           "teleop command boundary must use the teleop yaw limit");
@@ -1313,20 +1320,29 @@ void testCommandBoundaryUsesActiveControlModeMotionLimits() {
   safety = commandSafetyConfig(cfg);
   require(std::abs(safety.max_speed_mps - std::hypot(0.4, 0.4)) < 1e-12,
           "teleop_avoid total speed must allow both body axes together");
-  require(std::abs(safety.max_axis_speed_mps - 0.4) < 1e-12,
+  require(safety.max_vx_mps == 0.4 && safety.max_vy_mps == 0.4,
           "teleop_avoid must preserve its separate body-axis bound");
   require(std::abs(safety.max_yaw_rate - 1.0) < 1e-12,
           "teleop_avoid command boundary must use the teleop yaw limit");
   cfg.teleop_max_speed_mps = 1.0;
   cfg.path_follower_max_speed_mps = std::hypot(1.0, 1.0);
   safety = commandSafetyConfig(cfg);
-  require(safety.max_axis_speed_mps == 1.0 &&
+  require(safety.max_vx_mps == 1.0 && safety.max_vy_mps == 1.0 &&
               std::abs(safety.max_speed_mps - std::hypot(1.0, 1.0)) < 1e-12,
           "resolved assisted profile must admit the full diagonal budget");
   cfg.path_follower_max_speed_mps = 1.2;
   safety = commandSafetyConfig(cfg);
   require(std::abs(safety.max_speed_mps - 1.2) < 1e-12,
           "explicit lower assisted total-speed override must remain binding");
+
+  cfg.control_mode = ControlMode::Autonomy;
+  cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Scan;
+  cfg.scan_follower.maxVx = 1.2;
+  cfg.scan_follower.maxVy = 1.0;
+  cfg.teleop_max_speed_mps = 0.4;
+  safety = commandSafetyConfig(cfg);
+  require(safety.max_vx_mps == 1.2 && safety.max_vy_mps == 1.0,
+          "autonomous SCAN must use its own body-axis budgets");
 }
 
 void testScanCollisionEnvelopeIsConfigurable() {
@@ -1764,69 +1780,23 @@ void testRollingSegmentPoliciesAreConfigurableAndBounded() {
   }
 }
 
-void testNavigationBoxUsesOneHorizontalMarginAndOriginalVerticalExtent() {
+void testScanUsesConfiguredCylindersWithoutBodyFallback() {
   CliConfig cfg;
   cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Scan;
-  cfg.vehicle_length_m = 0.76;
-  cfg.vehicle_width_m = 0.31;
-  cfg.teleop_obstacle_margin_m = 0.10;
-  cfg.collision_clearance_below_m = 0.10;
-  cfg.collision_clearance_above_m = 0.24;
-  const auto body = buildExecutorConfig(cfg).body;
-  require(body && body->parts.size() == 1, "navigation must use one shared box");
-  const auto& box = body->parts.front();
-  require(box.shape == lingtu::nav::collision::Shape::Box,
-          "navigation must not fall back to cylinder geometry");
-  require(std::abs(box.half_size.x - .48) < 1e-12 &&
-          std::abs(box.half_size.y - .255) < 1e-12,
-          "horizontal hard margin must be included once");
-  require(std::abs(box.center.z - box.half_size.z + .10) < 1e-12 &&
-          std::abs(box.center.z + box.half_size.z - .24) < 1e-12 && body->margin_m == 0.0,
-          "horizontal margin must not change vertical body clearances");
-  require(!box.support_contact,
-          "body volume must not invent foot support contacts");
-  cfg.vehicle_length_m = 1.0;
-  cfg.vehicle_width_m = 0.6;
-  cfg.collision_cylinder_radius_m = 20.0;
-  const auto other = buildExecutorConfig(cfg).body;
-  require(std::abs(other->parts.front().half_size.x - .6) < 1e-12 &&
-          std::abs(other->parts.front().half_size.y - .4) < 1e-12,
-          "other robot dimensions must work without legacy cylinder inflation");
-  cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Cmu;
+  cfg.collision_cylinder_radius_m = .32;
+  cfg.collision_cylinder_offset_m = .23;
+  cfg.collision_clearance_below_m = .05;
+  cfg.collision_clearance_above_m = .35;
+  cfg.teleop_obstacle_margin_m = .08;
   require(!buildExecutorConfig(cfg).body,
-          "legacy CMU cannot be given a pose-route body it does not consume");
-}
-
-void testRobotConfigBody2ModelReplacesDimensionDerivedBox() {
-  const auto path = std::filesystem::temp_directory_path() /
-                    "lingtu-navigation-body2-test.body2";
-  {
-    std::ofstream output(path);
-    output << "BODY2 2\n"
-           << "base 0 0 0.2 1 0 0 0 1 0 0 0 1 0.5 0.3 0.2 box 0 0 0 0\n"
-           << "FL_foot 0.2 0.1 0.02 1 0 0 0 1 0 0 0 1 0.03 0.03 0.03 sphere 0.03 0 1 1\n";
-  }
-  CliConfig cfg;
-  cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Scan;
-  cfg.navigation_body_file = path.string();
-  cfg.teleop_obstacle_margin_m = .05;
-  const auto body = buildNavigationBody(cfg);
-  require(body && body->parts.size() == 2,
-          "RobotConfig BODY2 must retain all exported collision parts");
-  require(body->parts.front().link == "base" &&
-              body->parts.back().support_contact &&
-              body->parts.back().shape == lingtu::nav::collision::Shape::Sphere,
-          "BODY2 support roles and primitive types must reach native navigation");
-  require(body->margin_m == 0.0 && body->horizontal_margin_m == .05 &&
-              body->parts.front().half_size.z == .2 && body->parts.back().radius_m == .03,
-          "BODY2 must use configured horizontal clearance without hidden isotropic padding");
-  cfg.teleop_obstacle_margin_m = .12;
-  const auto wider = buildNavigationBody(cfg);
-  require(wider->horizontal_margin_m == .12 && wider->margin_m == 0.0 &&
-              wider->parts.front().half_size.x == .5,
-          "changing configured clearance must reach BODY2 without baking it twice");
-  std::error_code error;
-  std::filesystem::remove(path, error);
+          "SCAN final control must use the inflated twin cylinders, not a fallback box");
+  const auto local = buildLocalPlannerParams(cfg);
+  require(std::abs(local.scan.cylinderRadius - .32) < 1e-12 &&
+              std::abs(local.scan.cylinderOffset - .23) < 1e-12,
+          "the same configured radius and offset must reach SCAN and final control");
+  require(std::abs(local.scan.bodyClearanceBelow - .05) < 1e-12 &&
+              std::abs(local.scan.bodyClearanceAbove - .35) < 1e-12,
+          "body-relative cylinder height must not receive another margin");
 }
 
 void testStairLandingUsesPhysicalFootprint() {
@@ -1845,14 +1815,14 @@ void testStairLandingUsesPhysicalFootprint() {
           "stair footprint mapping must retain the local collision envelope");
 }
 
+
 }  // namespace
 
 int main() {
   try {
     ScopedEnvironment runtime_env("LINGTU_ENV", "");
     testNavigationRateAndAcceleration();
-    testNavigationBoxUsesOneHorizontalMarginAndOriginalVerticalExtent();
-    testRobotConfigBody2ModelReplacesDimensionDerivedBox();
+    testScanUsesConfiguredCylindersWithoutBodyFallback();
     testOrdinaryAccelerationDefaultsAndExplicitOverrides();
     testOrdinarySpeedDefaultsAgreeAcrossTheNativeBoundary();
     testBackendSettingsReachPlannerAndFollower();

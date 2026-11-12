@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <stdexcept>
 #include <utility>
 
@@ -85,13 +86,16 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
   result.handled = true;
   const double tick_now = actions_.steady_now_s();
   CommandSafetyConfig sample_safety = input.safety;
+  // A takeover keeps the operator budget even inside an autonomous Product.
+  sample_safety.max_vx_mps = input.config.teleop_max_speed_mps;
+  sample_safety.max_vy_mps = input.config.teleop_max_speed_mps;
+  sample_safety.max_speed_mps = std::min(sample_safety.max_speed_mps,
+      std::hypot(input.config.teleop_max_speed_mps, input.config.teleop_max_speed_mps));
+  sample_safety.max_yaw_rate = std::min(sample_safety.max_yaw_rate, input.config.teleop_max_yaw_rate);
   double max_age_s = input.config.teleop_cmd_max_age_s;
   if (input.sample_freshness_budget_s) {
     const double budget_s = *input.sample_freshness_budget_s;
     max_age_s = max_age_s > 0.0 ? std::min(max_age_s, budget_s) : budget_s;
-    sample_safety.cmd_max_age_s = sample_safety.cmd_max_age_s > 0.0
-                                    ? std::min(sample_safety.cmd_max_age_s, budget_s)
-                                    : budget_s;
   }
   bool velocity_stopped = false;
   bool linear_motion_paused = false;
@@ -155,20 +159,9 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
     result.delta.teleop_limited_count = 1U;
     stop_velocity(result.teleop.reason);
   } else if (!input.path_active) {
-    const double age_s = actions_.teleop_receive_age_s();
-    double publish_age_s = age_s;
-    bool publish_age_sampled = false;
-    const auto sample_publish_age = [&]() {
-      if (!publish_age_sampled) {
-        publish_age_s = actions_.teleop_receive_age_s();
-        publish_age_sampled = true;
-      }
-      return publish_age_s;
-    };
     const auto precheck =
-        arbitrateTeleopCommand(sample_safety, *input.active_request, age_s);
+        evaluateCommandSafety(sample_safety, *input.active_request);
     auto decision = precheck;
-    bool final_safety_applied = false;
     bool hard_zero_requested = isZeroCommand(precheck.cmd);
     // Pure rotation needs final swept-footprint safety, not a translation path.
     const bool use_assisted_planner =
@@ -203,20 +196,15 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
             FinalMode::kTeleopPath,
             path_safety,
             assisted.cmd_vel,
-            sample_publish_age(),
-            max_age_s,
             precheck.limited,
             input.config.publish_cmd_vel,
             tick_now,
         });
         result.timing.final_control_ms += elapsedMs(final_start);
         decision = final.decision;
-        final_safety_applied = final.safety_applied;
         velocity_stopped = velocity_stopped || final.smoother_stopped;
         if (decision.stopped) {
-          if (decision.reason == "stale") {
-            stop_linear_motion();
-          } else if (path_ready && std::abs(decision.cmd.wz) > 1e-6) {
+          if (path_ready && std::abs(decision.cmd.wz) > 1e-6) {
             pause_linear_motion();
           } else {
             replan_motion(assisted.cmd_vel, decision);
@@ -239,10 +227,7 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
 
       auto local = makeLocalDiagnostics(assisted, &decision, true);
       local.goal_reached = false;
-      local.path_found = assisted.path_found;
       local.near_field_stop = assisted.near_field_stop || decision.stopped;
-      local.reason = assisted.reason;
-      local.slow_down = assisted.slow_down;
       local.target_index = 0;
       local.cmd_vel = decision.cmd;
       result.local = std::move(local);
@@ -253,16 +238,12 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
       result.publish.waypoint = true;
       result.delta.output_count = 1U;
     } else {
-      if (precheck.stopped || !precheck.should_publish || hard_zero_requested) {
-        decision = precheck;
-      } else {
+      if (!precheck.stopped && precheck.should_publish && !hard_zero_requested) {
         const auto final_start = Clock::now();
         const auto final = final_control_.finalize(FinalInput{
             FinalMode::kTeleopCommand,
             sample_safety,
             precheck.cmd,
-            sample_publish_age(),
-            max_age_s,
             precheck.limited,
             input.config.publish_cmd_vel,
             tick_now,
@@ -276,7 +257,6 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
         });
         result.timing.final_control_ms += elapsedMs(final_start);
         decision = final.decision;
-        final_safety_applied = final.safety_applied;
         velocity_stopped = velocity_stopped || final.smoother_stopped;
       }
       if (input.manual_mode && decision.should_publish && !decision.stopped) {
@@ -290,8 +270,8 @@ TeleopTickResult TeleopTickController::tick(const TeleopTickInput &input) {
       }
     }
 
-    (void)sample_publish_age();
-    if (!final_safety_applied && max_age_s > 0.0 &&
+    const double publish_age_s = actions_.teleop_receive_age_s();
+    if (max_age_s > 0.0 &&
         publish_age_s > max_age_s) {
       decision = {};
       decision.should_publish = true;

@@ -27,17 +27,16 @@ struct Fixture {
   Fixture() {
     actions.hold_operator_takeover = [&] { order.emplace_back("hold"); };
     actions.stop_control = [&] { order.emplace_back("stop"); };
-    actions.begin_operator_takeover = [&](const nav_kernel::Twist &, double) {
+    actions.begin_operator_takeover = [&](const nav_kernel::Twist &) {
       order.emplace_back("begin");
       return begin_ok;
     };
-    actions.mark_operator_resume_required = [&] { order.emplace_back("mark_resume"); };
     actions.clear_motion = [&](const std::string &) {
       order.emplace_back("clear_motion");
       return clear_ok;
     };
     actions.pause_inspection = [&](const std::string &) { order.emplace_back("pause"); };
-    actions.accept_teleop = [&](const nav_kernel::Twist &, double) {
+    actions.accept_teleop = [&](const nav_kernel::Twist &) {
       order.emplace_back("accept");
       return accept_ok;
     };
@@ -229,7 +228,7 @@ void testTakeoverOrderAndFailures() {
   require(result.accepted && result.reason == "takeover_active_for_safety_arbitration",
           "takeover result mismatch");
   require(result.update_receive_timestamp, "takeover must update receive timestamp");
-  orderIs(fixture, {"begin", "mark_resume", "clear_motion", "pause"});
+  orderIs(fixture, {"begin", "clear_motion", "pause"});
 
   Fixture begin_failure;
   begin_failure.begin_ok = false;
@@ -244,7 +243,7 @@ void testTakeoverOrderAndFailures() {
   const auto clear = clear_controller.admit(request(), context());
   require(!clear.accepted && clear.reason == "zero_publish_failed_manual_hold_latched",
           "clear failure mismatch");
-  orderIs(clear_failure, {"begin", "mark_resume", "clear_motion", "hold"});
+  orderIs(clear_failure, {"begin", "clear_motion", "hold"});
 }
 
 void testOwnedAndManualOnlyQueue() {

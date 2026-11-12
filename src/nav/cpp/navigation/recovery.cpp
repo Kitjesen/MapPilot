@@ -159,7 +159,6 @@ class Recovery::Impl {
     }
     behavior_index_ = selection.behavior_index;
 
-    search_input = makeSearchInput(request, goal_direction_body_rad);
     std::string failure_reason;
     if (updateActive(request, search_input, output, &failure_reason) ==
         Update::Failed) {
@@ -174,23 +173,15 @@ class Recovery::Impl {
 
   void reset() {
     session_active_ = false;
-    state_ = 0;
+    clearActive();
     cycle_count_ = 0;
-    action_ = nav_kernel::RecoveryAction::None;
-    world_path_.clear();
-    path_cumulative_.clear();
-    path_length_ = 0.0;
-    target_yaw_delta_ = 0.0;
     start_pose_ = {};
     last_progress_ = 0.0;
     last_progress_time_ = -1.0;
     candidate_count_ = 0;
-    rotation_direction_ = 0;
-    direction_bin_ = -1;
     rejected_translation_mask_ = 0;
     rejected_rotation_mask_ = 0;
     behavior_cursor_ = 0;
-    behavior_index_ = -1;
     reason_.clear();
   }
 

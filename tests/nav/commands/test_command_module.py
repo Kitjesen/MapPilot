@@ -18,7 +18,8 @@ class _NavigationClient:
     def __init__(self) -> None:
         self.calls = []
 
-    def start_task(self, x, y, z, yaw, *, task_id=None, request_id=None):
+    def start_task(self, x, y, z, yaw, *, task_id=None, request_id=None,
+                   max_speed_mps=None, acceptance_radius_m=None):
         self.calls.append(("goal", x, y, z, yaw, task_id, request_id))
         return NavigationCommandReceipt(
             accepted=True,
@@ -422,6 +423,47 @@ def test_commands_resume_autonomy_returns_plain_native_receipt(monkeypatch) -> N
     assert navigation.calls == [
         ("resume_autonomy_with_receipt", "operator_resume", "resume-1"),
     ]
+
+
+@pytest.mark.parametrize("action,kind", [
+    ("stand", 11), ("sit", 12), ("enable_motors", 13), ("disable_motors", 14),
+])
+def test_commands_posture_returns_actual_native_receipt(monkeypatch, action, kind):
+    navigation = _NavigationClient()
+
+    def posture(reason, *, request_id):
+        navigation.calls.append((action, reason, request_id))
+        return {
+            "accepted": False, "kind": kind, "task_id": "", "request_id": request_id,
+            "endpoint_timestamp_s": 128.0, "reason": "control_busy",
+        }
+
+    setattr(navigation, action, posture)
+    monkeypatch.setattr(command_module, "get_native_navigation_client", lambda **_: navigation)
+    receipt = getattr(command_module.Commands(), action)(request_id="posture-1")
+    assert receipt["accepted"] is False
+    assert receipt["kind"] == kind
+    assert receipt["reason"] == "control_busy"
+    assert navigation.calls == [(action, action, "posture-1")]
+
+
+def test_commands_switch_profile_preserves_name_and_native_rejection(monkeypatch):
+    navigation = _NavigationClient()
+
+    def switch_profile(name, reason, *, request_id):
+        navigation.calls.append((name, reason, request_id))
+        return {
+            "accepted": False, "kind": 15, "task_id": "", "request_id": request_id,
+            "endpoint_timestamp_s": 128.0, "reason": "profile_requires_grounded",
+        }
+
+    navigation.switch_profile = switch_profile
+    monkeypatch.setattr(command_module, "get_native_navigation_client", lambda **_: navigation)
+    receipt = command_module.Commands().switch_profile("stairs", request_id="profile-1")
+    assert receipt["accepted"] is False
+    assert receipt["kind"] == 15
+    assert receipt["reason"] == "profile_requires_grounded"
+    assert navigation.calls == [("stairs", "switch_profile", "profile-1")]
 
 
 def test_commands_forward_task_addressed_inspection_requests_without_v1_fallback(monkeypatch) -> None:

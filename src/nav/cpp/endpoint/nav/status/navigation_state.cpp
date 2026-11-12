@@ -157,8 +157,11 @@ NavigationStateSample NavigationStateTracker::sample(const NavigationStateContex
   std::string hold_reason;
   if (context.estop_latched) {
     hold_reason = context.estop_reason.empty() ? "estop_latched" : context.estop_reason;
+  } else if (!context.hold_reason.empty()) {
+    hold_reason = context.hold_reason;
   } else if (context.operator_takeover) {
     hold_reason = "operator_takeover";
+
   } else if (!context.input_ready) {
     hold_reason =
         context.input_gate_reason.empty() ? "input_gate_blocked" : context.input_gate_reason;

@@ -17,6 +17,8 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from runtime.msgs import NavigationCommandKind
+
 _DEFAULT_RELATIVE_PATH = Path("lingtu") / "navigation_tasks.sqlite3"
 _GOAL_STATUS_STATES = {
     1: "planning",
@@ -167,13 +169,16 @@ def _command_kind(value: object) -> str:
     if isinstance(value, bool):
         raise ValueError("native_ack.kind is invalid")
     if isinstance(value, int):
-        names = {1: "goal", 2: "cancel"}
+        names = {int(kind): name for kind, name in (
+            (NavigationCommandKind.GOAL, "goal"), (NavigationCommandKind.TASK_CANCEL, "cancel"),
+            (NavigationCommandKind.PAUSE_TASK, "pause"), (NavigationCommandKind.RESUME_TASK, "resume"),
+        )}
         try:
             return names[value]
         except KeyError as exc:
             raise ValueError(f"unsupported navigation task command kind {value!r}") from exc
     normalized = str(value or "").strip().lower()
-    if normalized in {"goal", "cancel"}:
+    if normalized in {"goal", "cancel", "pause", "resume"}:
         return normalized
     raise ValueError(f"unsupported navigation task command kind {value!r}")
 
@@ -304,8 +309,8 @@ class NavigationTaskLedger:
             raise ValueError("request_id uses the reserved native clock-retry namespace")
 
         attempt_kind = _required_identity(kind, "kind").lower()
-        if attempt_kind not in {"goal", "cancel"}:
-            raise ValueError("kind must be 'goal' or 'cancel'")
+        if attempt_kind not in {"goal", "cancel", "pause", "resume"}:
+            raise ValueError("kind must be goal, cancel, pause or resume")
         payload_json = _canonical_json(payload, label="payload")
         target_json = _canonical_json(target, label="target")
         map_json = _canonical_json(map_identity, label="map_identity")
@@ -390,8 +395,8 @@ class NavigationTaskLedger:
             raise ValueError("request_id uses the reserved native clock-retry namespace")
 
         attempt_kind = _required_identity(kind, "kind").lower()
-        if attempt_kind not in {"goal", "cancel"}:
-            raise ValueError("kind must be 'goal' or 'cancel'")
+        if attempt_kind not in {"goal", "cancel", "pause", "resume"}:
+            raise ValueError("kind must be goal, cancel, pause or resume")
         payload_json = _canonical_json(payload, label="payload")
         target_json = _canonical_json(target, label="target")
         map_json = _canonical_json(map_identity, label="map_identity")
@@ -553,7 +558,7 @@ class NavigationTaskLedger:
             )
 
             kind = str(attempt["kind"])
-            event_state = attempt_state
+            event_state = f"{kind}_requested" if accepted and kind in {"pause", "resume"} else attempt_state
             if kind == "goal":
                 self._conn.execute(
                     """

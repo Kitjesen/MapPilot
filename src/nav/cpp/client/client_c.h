@@ -39,6 +39,9 @@ enum {
   LINGTU_NAV_CLIENT_CAP_PLAN_PREVIEW = 1ULL << 15,
   LINGTU_NAV_CLIENT_CAP_JOINT_STATE = 1ULL << 16,
   LINGTU_NAV_CLIENT_CAP_SEMANTIC_VIEW_QUERY = 1ULL << 17,
+  LINGTU_NAV_CLIENT_CAP_OPERATOR_MOTION_STATUS = 1ULL << 18,
+  LINGTU_NAV_CLIENT_CAP_EXTERNAL_CONTROL = 1ULL << 19,
+  LINGTU_NAV_CLIENT_CAP_PLANNER_SELECTION = 1ULL << 20,
 };
 
 enum {
@@ -52,6 +55,7 @@ enum {
 
 enum {
   LINGTU_NAV_OPERATOR_MOTION_RECEIPT_ABI_VERSION = 1,
+  LINGTU_NAV_OPERATOR_MOTION_STATUS_ABI_VERSION = 1,
   LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION = 1,
   LINGTU_NAV_NAVIGATION_GOAL_STATUS_ABI_VERSION = 1,
   LINGTU_NAV_INSPECTION_TASK_EVENT_ABI_VERSION = 3,
@@ -102,6 +106,24 @@ typedef struct lingtu_nav_semantic_view_result_v1 {
   uint32_t candidate_count;
   lingtu_nav_semantic_view_candidate_v1 candidates[LINGTU_NAV_SEMANTIC_VIEW_MAX_CANDIDATES];
 } lingtu_nav_semantic_view_result_v1;
+
+typedef struct lingtu_nav_operator_motion_status_v1 {
+  uint32_t abi_version;
+  uint32_t struct_size;
+  double timestamp_s;
+  char active_source_id[129];
+  uint64_t active_source_epoch;
+  int32_t has_active_authority;
+  int32_t holding;
+  int32_t has_active_sample;
+  uint64_t last_sample_sequence;
+  uint64_t admitted_sequence;
+  uint64_t final_output_sequence;
+  char authority_reason[256];
+  char input_gate_reason[128];
+  double received_age_ms;
+  int32_t fresh;
+} lingtu_nav_operator_motion_status_v1;
 
 typedef struct lingtu_nav_joint_state_v1 {
   uint32_t abi_version;
@@ -409,6 +431,41 @@ typedef struct lingtu_nav_map_scene_health_v1 {
 LINGTU_NAV_CLIENT_API uint32_t lingtu_nav_client_abi_version(void);
 LINGTU_NAV_CLIENT_API uint64_t lingtu_nav_client_capabilities(void);
 
+typedef struct lingtu_nav_external_joint_v1 {
+  double q;
+  double dq;
+  double kp;
+  double kd;
+  double tau;
+} lingtu_nav_external_joint_v1;
+
+typedef struct lingtu_nav_external_state_v1 {
+  uint32_t abi_version;
+  uint32_t struct_size;
+  char session_id[129];
+  uint8_t selected;
+  uint8_t active;
+  uint8_t motors_enabled;
+  uint8_t fresh;
+  uint64_t last_sequence;
+  uint32_t joint_count;
+  char reason[257];
+  uint64_t input_window;
+  uint8_t motor_disable_confirmed;
+} lingtu_nav_external_state_v1;
+
+LINGTU_NAV_CLIENT_API int lingtu_nav_client_external_control_v1(
+    lingtu_nav_client_handle handle, int32_t kind, const char *session_id,
+    const char *request_id, const char *reason, int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1 *receipt);
+LINGTU_NAV_CLIENT_API int lingtu_nav_client_external_frame_v1(
+    lingtu_nav_client_handle handle, const char *session_id, uint64_t sequence,
+    uint64_t input_window, const lingtu_nav_external_joint_v1 *joints, uint32_t count);
+LINGTU_NAV_CLIENT_API int lingtu_nav_client_external_heartbeat_v1(
+    lingtu_nav_client_handle handle, const char *session_id);
+LINGTU_NAV_CLIENT_API int lingtu_nav_client_external_status_v1(
+    lingtu_nav_client_handle handle, lingtu_nav_external_state_v1 *state);
+
 LINGTU_NAV_CLIENT_API lingtu_nav_client_handle lingtu_nav_client_create(int domain_id);
 LINGTU_NAV_CLIENT_API void lingtu_nav_client_destroy(lingtu_nav_client_handle handle);
 
@@ -493,6 +550,10 @@ LINGTU_NAV_CLIENT_API int lingtu_nav_client_pause_task_with_receipt_v1(
     int timeout_ms,
     lingtu_nav_navigation_command_receipt_v1* receipt);
 
+LINGTU_NAV_CLIENT_API int lingtu_nav_client_select_planner_with_receipt_v1(
+    lingtu_nav_client_handle handle, const char* name, const char* request_id,
+    int timeout_ms, lingtu_nav_navigation_command_receipt_v1* receipt);
+
 LINGTU_NAV_CLIENT_API int lingtu_nav_client_set_task_speed_limit_with_receipt_v1(
     lingtu_nav_client_handle handle,
     const char* task_id,
@@ -558,6 +619,22 @@ LINGTU_NAV_CLIENT_API int lingtu_nav_client_resume_autonomy_with_id(
 LINGTU_NAV_CLIENT_API int lingtu_nav_client_resume_autonomy_with_receipt_v1(
     lingtu_nav_client_handle handle, const char *request_id, const char *reason, int timeout_ms,
     lingtu_nav_navigation_command_receipt_v1 *receipt);
+
+LINGTU_NAV_CLIENT_API int lingtu_nav_client_stand_with_receipt_v1(
+    lingtu_nav_client_handle handle, const char *request_id, const char *reason, int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1 *receipt);
+LINGTU_NAV_CLIENT_API int lingtu_nav_client_sit_with_receipt_v1(
+    lingtu_nav_client_handle handle, const char *request_id, const char *reason, int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1 *receipt);
+LINGTU_NAV_CLIENT_API int lingtu_nav_client_enable_motors_with_receipt_v1(
+    lingtu_nav_client_handle handle, const char *request_id, const char *reason, int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1 *receipt);
+LINGTU_NAV_CLIENT_API int lingtu_nav_client_disable_motors_with_receipt_v1(
+    lingtu_nav_client_handle handle, const char *request_id, const char *reason, int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1 *receipt);
+LINGTU_NAV_CLIENT_API int lingtu_nav_client_switch_profile_with_receipt_v1(
+    lingtu_nav_client_handle handle, const char *request_id, const char *name, const char *reason,
+    int timeout_ms, lingtu_nav_navigation_command_receipt_v1 *receipt);
 
 LINGTU_NAV_CLIENT_API int lingtu_nav_client_start_exploration_with_receipt_v1(
     lingtu_nav_client_handle handle,
@@ -725,6 +802,12 @@ LINGTU_NAV_CLIENT_API int lingtu_nav_client_operator_motion_release_with_receipt
 LINGTU_NAV_CLIENT_API int lingtu_nav_client_read_navigation_state(
     lingtu_nav_client_handle handle,
     lingtu_nav_navigation_state* state);
+
+// Returns 1 for a last-observed snapshot, 0 when unknown, -1 on error.
+// Ownership fields establish authority only when fresh is 1.
+LINGTU_NAV_CLIENT_API int lingtu_nav_client_read_operator_motion_status_v1(
+    lingtu_nav_client_handle handle, uint32_t max_age_ms,
+    lingtu_nav_operator_motion_status_v1 *state);
 
 // Pops one deduplicated lifecycle event from the bounded client queue.
 // Returns 1 when an event is available, 0 when the queue is empty, and -1 on

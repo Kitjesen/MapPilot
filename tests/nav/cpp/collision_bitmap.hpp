@@ -24,16 +24,9 @@ class CollisionBitmap {
   void clear() { std::fill(bits_.begin(), bits_.end(), 0U); }
 
   void occupy(const nav_kernel::Vec3 &point) {
-    const int x = index(point.x, minimum_.x, size_x_);
-    const int y = index(point.y, minimum_.y, size_y_);
-    const int z = index(point.z, minimum_.z, size_z_);
-    if (x < 0 || y < 0 || z < 0) return;
-    const std::size_t linear =
-        (static_cast<std::size_t>(z) * static_cast<std::size_t>(size_y_) +
-         static_cast<std::size_t>(y)) *
-            static_cast<std::size_t>(size_x_) +
-        static_cast<std::size_t>(x);
-    bits_[linear / 8U] |= static_cast<std::uint8_t>(1U << (linear % 8U));
+    occupyCell(nav_kernel::local::GridAxis(minimum_.x, resolution_).index(point.x),
+               nav_kernel::local::GridAxis(minimum_.y, resolution_).index(point.y),
+               nav_kernel::local::GridAxis(minimum_.z, resolution_).index(point.z));
   }
 
   void occupyPoints(const std::vector<float> &xyz) {
@@ -47,17 +40,20 @@ class CollisionBitmap {
     const int xy_cells = static_cast<int>(std::ceil(radius / resolution_));
     const int down_cells = static_cast<int>(std::ceil(below / resolution_));
     const int up_cells = static_cast<int>(std::ceil(above / resolution_));
+    const nav_kernel::local::GridAxis x_axis(minimum_.x, resolution_);
+    const nav_kernel::local::GridAxis y_axis(minimum_.y, resolution_);
+    const nav_kernel::local::GridAxis z_axis(minimum_.z, resolution_);
     for (std::size_t offset = 0U; offset + 2U < xyz.size(); offset += 3U) {
-      const nav_kernel::Vec3 center{xyz[offset], xyz[offset + 1U], xyz[offset + 2U]};
+      const auto center_x = x_axis.index(xyz[offset]);
+      const auto center_y = y_axis.index(xyz[offset + 1U]);
+      const auto center_z = z_axis.index(xyz[offset + 2U]);
       for (int z = -down_cells; z <= up_cells; ++z) {
         for (int y = -xy_cells; y <= xy_cells; ++y) {
           for (int x = -xy_cells; x <= xy_cells; ++x) {
             const double dx = static_cast<double>(x) * resolution_;
             const double dy = static_cast<double>(y) * resolution_;
             if (dx * dx + dy * dy <= radius * radius + 1e-9) {
-              occupy(nav_kernel::Vec3{
-                  center.x + dx, center.y + dy,
-                  center.z + static_cast<double>(z) * resolution_});
+              occupyCell(center_x + x, center_y + y, center_z + z);
             }
           }
         }
@@ -91,9 +87,15 @@ class CollisionBitmap {
     return static_cast<int>(std::llround(extent / resolution_));
   }
 
-  [[nodiscard]] int index(double value, double minimum, int size) const {
-    const auto result = nav_kernel::local::GridAxis(minimum, resolution_).index(value);
-    return result >= 0 && result < size ? static_cast<int>(result) : -1;
+  void occupyCell(std::int64_t x, std::int64_t y, std::int64_t z) {
+    if (x < 0 || x >= size_x_ || y < 0 || y >= size_y_ || z < 0 || z >= size_z_)
+      return;
+    const std::size_t linear =
+        (static_cast<std::size_t>(z) * static_cast<std::size_t>(size_y_) +
+         static_cast<std::size_t>(y)) *
+            static_cast<std::size_t>(size_x_) +
+        static_cast<std::size_t>(x);
+    bits_[linear / 8U] |= static_cast<std::uint8_t>(1U << (linear % 8U));
   }
 
   [[nodiscard]] std::size_t cellCount() const {

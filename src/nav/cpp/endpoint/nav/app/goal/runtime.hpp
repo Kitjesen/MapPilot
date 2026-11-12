@@ -19,7 +19,6 @@ enum class GoalReplanRuntimeInterruption {
   kEstop,
   kShutdown,
   kOperatorTakeover,
-  kDriverAuthorityLost,
   kControlHold,
   kInspectionPause,
   kInspectionCancel,
@@ -53,7 +52,6 @@ struct GoalReplanRuntimeFrameInput {
   GoalPlanAdmissionContext fresh_admission;
   bool inspection_active{false};
   bool rolling_segment_active{false};
-  bool control_hold{false};
   bool map_drift{false};
 };
 
@@ -121,6 +119,7 @@ class GoalReplanRuntimeCoordinator {
   [[nodiscard]] BoundedGoalReplanSnapshot snapshot() const;
 
  private:
+  [[nodiscard]] GoalReplanRuntimeResult pause(const std::string &reason);
   [[nodiscard]] static bool attemptActive(BoundedGoalReplanState state);
   [[nodiscard]] static bool validTime(double steady_now_s);
   [[nodiscard]] static bool validPosition(const nav_kernel::Vec3 &position);

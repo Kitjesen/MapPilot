@@ -9,13 +9,12 @@
 #include <limits>
 #include <optional>
 #include <string>
-#include <vector>
 
 namespace lingtu::nav::endpoint {
 
 enum class StopConfirmationEvidencePolicy {
-  DriverAckAndOdometry,
-  DriverAckOnly,
+  ZeroOutputAndOdometry,
+  ZeroOutputOnly,
 };
 
 struct StopConfirmationConfig {
@@ -24,22 +23,21 @@ struct StopConfirmationConfig {
   double angular_speed_threshold_radps{0.08};
   std::size_t quiet_odometry_samples{8};
   StopConfirmationEvidencePolicy evidence_policy{
-      StopConfirmationEvidencePolicy::DriverAckAndOdometry};
+      StopConfirmationEvidencePolicy::ZeroOutputAndOdometry};
 };
 
 enum class StopConfirmationState {
   Pending,
   Confirmed,
-  DriverRejected,
   TimedOut,
 };
 
 struct StopConfirmationDiagnostics {
   std::uint64_t zero_published_source_wall_ns{0U};
-  std::uint64_t driver_ack_source_stamp_ns{0U};
+  std::uint64_t driver_state_stamp_ns{0U};
   std::uint64_t last_odometry_source_stamp_ns{0U};
   std::size_t odometry_samples_observed{0U};
-  std::size_t post_ack_odometry_samples{0U};
+  std::size_t post_zero_odometry_samples{0U};
   std::size_t stale_odometry_samples{0U};
   std::size_t moving_odometry_samples{0U};
   std::size_t quiet_odometry_samples{0U};
@@ -47,24 +45,18 @@ struct StopConfirmationDiagnostics {
   bool quiet_odometry_required{true};
   double last_linear_speed_mps{std::numeric_limits<double>::quiet_NaN()};
   double last_angular_speed_radps{std::numeric_limits<double>::quiet_NaN()};
-  bool driver_ack_observed{false};
-  bool driver_accepted{false};
-  std::uint64_t driver_ack_output_sequence{0U};
+  bool driver_state_observed{false};
+  bool driver_zero_output{false};
 };
 
 class StopConfirmation {
  public:
   using Clock = std::chrono::steady_clock;
 
-  StopConfirmation(std::string producer_boot_id, std::uint64_t output_sequence,
-                   std::uint64_t zero_published_source_wall_ns, Clock::time_point started_at,
+  StopConfirmation(std::uint64_t zero_published_source_wall_ns, Clock::time_point started_at,
                    StopConfirmationConfig config = {});
 
-  // Register only successfully published zero outputs from this stop wait.
-  void observePublishedZero(std::uint64_t output_sequence,
-                            std::uint64_t source_wall_ns);
-  void observeDriverAck(const std::string &producer_boot_id, std::uint64_t output_sequence,
-                        bool accepted, std::uint64_t source_stamp_ns) noexcept;
+  void observeDriverState(bool zero_output, std::uint64_t source_stamp_ns) noexcept;
   void observeQuietOdometry(double source_stamp_s, double linear_speed_mps,
                             double angular_speed_radps) noexcept;
   [[nodiscard]] StopConfirmationState state(Clock::time_point now = Clock::now()) const noexcept;
@@ -73,28 +65,21 @@ class StopConfirmation {
  private:
   static std::uint64_t sourceStampNanoseconds(double source_stamp_s) noexcept;
 
-  std::string producer_boot_id_;
-  struct ZeroPublication {
-    std::uint64_t output_sequence;
-    std::uint64_t source_wall_ns;
-  };
-  std::vector<ZeroPublication> zero_publications_;
-  std::uint64_t driver_ack_output_sequence_{0U};
   std::uint64_t zero_published_source_wall_ns_{0U};
   Clock::time_point started_at_{};
   StopConfirmationConfig config_;
-  std::uint64_t driver_ack_source_stamp_ns_{0U};
+  std::uint64_t driver_state_stamp_ns_{0U};
   std::uint64_t last_observed_odometry_source_stamp_ns_{0U};
   std::uint64_t last_qualified_odometry_source_stamp_ns_{0U};
   std::size_t odometry_samples_observed_{0U};
-  std::size_t post_ack_odometry_samples_{0U};
+  std::size_t post_zero_odometry_samples_{0U};
   std::size_t stale_odometry_samples_{0U};
   std::size_t moving_odometry_samples_{0U};
   std::size_t quiet_odometry_samples_{0};
   double last_linear_speed_mps_{std::numeric_limits<double>::quiet_NaN()};
   double last_angular_speed_radps_{std::numeric_limits<double>::quiet_NaN()};
-  bool driver_ack_observed_{false};
-  bool driver_accepted_{false};
+  bool driver_state_observed_{false};
+  bool driver_zero_output_{false};
 };
 
 class EstopLatchStore {
@@ -125,18 +110,10 @@ struct MotionStopTerminalBarrierResult {
   bool pending{false};
 };
 
-struct ResumeAutonomyRequest {
+struct ResumeRequest {
   std::string precondition_error;
-  bool operator_takeover_latched{false};
+  bool held{false};
   double source_stamp_s{0.0};
-  bool resume_required{false};
-};
-
-struct ResumeTeleopRequest {
-  std::string precondition_error;
-  bool motion_hold_latched{false};
-  double source_stamp_s{0.0};
-  bool resume_required{false};
 };
 
 struct FinalShutdownResult {
@@ -149,7 +126,7 @@ using MotionStopTerminalCommit = std::function<void()>;
 
 struct MotionStopActions {
   std::function<MotionStopTerminalCommit(const std::string &)> defer_goal_abort;
-  std::function<void(const std::string &)> record_stop_evidence_failure;
+  std::function<void(const std::string &)> hold;
   std::function<void()> sync_goal_diagnostics;
   std::function<bool()> rolling_segment_active;
   std::function<bool(const std::string &)> preempt_rolling_segment;
@@ -163,7 +140,6 @@ struct MotionStopActions {
   std::function<bool()> resume_control;
 
   std::function<void(const std::string &)> cancel_inspection;
-  std::function<void()> clear_operator_resume_required;
   std::function<void(double)> set_autonomy_request_not_before;
   std::function<void(double)> set_teleop_request_not_before;
 
@@ -216,10 +192,9 @@ class MotionStopBarrier {
   estopPreservingGoalTerminal(const std::string &estop_reason,
                               MotionStopTerminalCommit commit_terminal) const;
   MotionStopResult clearEstop(const std::string &precondition_error) const;
-  MotionStopResult resumeAutonomy(const ResumeAutonomyRequest &request) const;
-  MotionStopResult resumeTeleop(const ResumeTeleopRequest &request) const;
+  MotionStopResult resumeAutonomy(const ResumeRequest &request) const;
+  MotionStopResult resumeTeleop(const ResumeRequest &request) const;
 
-  bool driverAuthorityLost(const std::string &blocker) const;
   bool keepZeroFresh() const;
   FinalShutdownResult finalShutdownWithoutTerminalCommit() const;
   FinalShutdownResult

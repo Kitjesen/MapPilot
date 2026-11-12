@@ -77,8 +77,8 @@ TEST(AssistedTeleop, TakeoverDetoursAndResumeStaysFresh) {
 
   nav_kernel::Twist intent;
   intent.vx = 0.3;
-  ASSERT_TRUE(authority.beginOperatorTakeover(intent, 1.0));
-  EXPECT_TRUE(authority.operatorTakeoverLatched());
+  ASSERT_TRUE(authority.takeover(intent));
+  EXPECT_TRUE(authority.operatorHeld());
   EXPECT_FALSE(authority.pathActive());
   EXPECT_FALSE(authority.activatePath());
 
@@ -96,9 +96,9 @@ TEST(AssistedTeleop, TakeoverDetoursAndResumeStaysFresh) {
   }
   EXPECT_GT(max_lateral, 0.1);
 
-  authority.holdOperatorTakeover();
-  EXPECT_TRUE(authority.operatorTakeoverLatched());
-  ASSERT_TRUE(authority.resumeMotion());
+  authority.holdOperator();
+  EXPECT_TRUE(authority.operatorHeld());
+  ASSERT_TRUE(authority.resume());
   EXPECT_FALSE(authority.pathActive());
   EXPECT_FALSE(authority.teleopRequest().has_value());
   EXPECT_TRUE(authority.activatePath());

@@ -52,6 +52,7 @@ GoalTerminalIngressVerdict evaluateGoalTerminalIngress(
     case GoalTerminalIngressKind::kTypedTaskPause:
     case GoalTerminalIngressKind::kTypedTaskResume:
     case GoalTerminalIngressKind::kTypedTaskSpeedLimit:
+    case GoalTerminalIngressKind::kTypedSelectPlanner:
     case GoalTerminalIngressKind::kTypedClearEstop:
     case GoalTerminalIngressKind::kTypedResumeAutonomy:
     case GoalTerminalIngressKind::kInspectionCommand:

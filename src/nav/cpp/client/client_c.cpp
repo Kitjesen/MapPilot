@@ -656,7 +656,10 @@ uint64_t lingtu_nav_client_capabilities(void) {
       LINGTU_NAV_CLIENT_CAP_TRAVERSABILITY_GRID |
       LINGTU_NAV_CLIENT_CAP_JOINT_STATE |
       LINGTU_NAV_CLIENT_CAP_PLAN_PREVIEW |
-      LINGTU_NAV_CLIENT_CAP_SEMANTIC_VIEW_QUERY;
+      LINGTU_NAV_CLIENT_CAP_SEMANTIC_VIEW_QUERY |
+      LINGTU_NAV_CLIENT_CAP_OPERATOR_MOTION_STATUS |
+      LINGTU_NAV_CLIENT_CAP_EXTERNAL_CONTROL |
+      LINGTU_NAV_CLIENT_CAP_PLANNER_SELECTION;
 }
 
 lingtu_nav_client_handle lingtu_nav_client_create(int domain_id) {
@@ -876,6 +879,16 @@ int lingtu_nav_client_pause_task_with_receipt_v1(
   });
 }
 
+int lingtu_nav_client_select_planner_with_receipt_v1(
+    lingtu_nav_client_handle handle, const char* name, const char* request_id,
+    int timeout_ms, lingtu_nav_navigation_command_receipt_v1* receipt) {
+  if (!validateNavigationReceiptBuffer(receipt, "local planner selection")) return -1;
+  return invoke(handle, [&](lingtu::nav::commands::Client& client) {
+    copyNavigationReceipt(receipt, client.navigation().selectPlanner(
+        name == nullptr ? "" : name, timeout_ms, request_id == nullptr ? "" : request_id));
+  });
+}
+
 int lingtu_nav_client_set_task_speed_limit_with_receipt_v1(
     lingtu_nav_client_handle handle,
     const char* task_id,
@@ -1016,6 +1029,126 @@ int lingtu_nav_client_resume_autonomy_with_receipt_v1(
                                        reason == nullptr ? "resume_autonomy" : reason, timeout_ms,
                                        request_id == nullptr ? "" : request_id));
   });
+}
+
+int lingtu_nav_client_stand_with_receipt_v1(
+    lingtu_nav_client_handle handle, const char *request_id, const char *reason, int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1 *receipt) {
+  if (!validateNavigationReceiptBuffer(receipt, "stand")) return -1;
+  return invoke(handle, [&](lingtu::nav::commands::Client &client) {
+    copyNavigationReceipt(receipt, client.navigation().stand(
+        reason == nullptr ? "stand" : reason, timeout_ms,
+        request_id == nullptr ? "" : request_id));
+  });
+}
+
+int lingtu_nav_client_sit_with_receipt_v1(
+    lingtu_nav_client_handle handle, const char *request_id, const char *reason, int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1 *receipt) {
+  if (!validateNavigationReceiptBuffer(receipt, "sit")) return -1;
+  return invoke(handle, [&](lingtu::nav::commands::Client &client) {
+    copyNavigationReceipt(receipt, client.navigation().sit(
+        reason == nullptr ? "sit" : reason, timeout_ms,
+        request_id == nullptr ? "" : request_id));
+  });
+}
+
+int lingtu_nav_client_enable_motors_with_receipt_v1(
+    lingtu_nav_client_handle handle, const char *request_id, const char *reason, int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1 *receipt) {
+  if (!validateNavigationReceiptBuffer(receipt, "enable_motors")) return -1;
+  return invoke(handle, [&](lingtu::nav::commands::Client &client) {
+    copyNavigationReceipt(receipt, client.navigation().enableMotors(
+        reason == nullptr ? "enable_motors" : reason, timeout_ms,
+        request_id == nullptr ? "" : request_id));
+  });
+}
+
+int lingtu_nav_client_disable_motors_with_receipt_v1(
+    lingtu_nav_client_handle handle, const char *request_id, const char *reason, int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1 *receipt) {
+  if (!validateNavigationReceiptBuffer(receipt, "disable_motors")) return -1;
+  return invoke(handle, [&](lingtu::nav::commands::Client &client) {
+    copyNavigationReceipt(receipt, client.navigation().disableMotors(
+        reason == nullptr ? "disable_motors" : reason, timeout_ms,
+        request_id == nullptr ? "" : request_id));
+  });
+}
+
+int lingtu_nav_client_switch_profile_with_receipt_v1(
+    lingtu_nav_client_handle handle, const char *request_id, const char *name, const char *reason,
+    int timeout_ms, lingtu_nav_navigation_command_receipt_v1 *receipt) {
+  if (!validateNavigationReceiptBuffer(receipt, "switch_profile")) return -1;
+  return invoke(handle, [&](lingtu::nav::commands::Client &client) {
+    copyNavigationReceipt(receipt, client.navigation().switchProfile(
+        name == nullptr ? "" : name, reason == nullptr ? "switch_profile" : reason, timeout_ms,
+        request_id == nullptr ? "" : request_id));
+  });
+}
+
+int lingtu_nav_client_external_control_v1(
+    lingtu_nav_client_handle handle, int32_t kind, const char *session_id,
+    const char *request_id, const char *reason, int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1 *receipt) {
+  if (!validateNavigationReceiptBuffer(receipt, "external_control")) return -1;
+  return invoke(handle, [&](lingtu::nav::commands::Client &client) {
+    copyNavigationReceipt(receipt, client.navigation().externalControl(kind,
+        session_id ? session_id : "", reason ? reason : "external_control", timeout_ms,
+        request_id ? request_id : ""));
+  });
+}
+
+int lingtu_nav_client_external_frame_v1(
+    lingtu_nav_client_handle handle, const char *session_id, uint64_t sequence,
+    uint64_t input_window, const lingtu_nav_external_joint_v1 *joints, uint32_t count) {
+  return invoke(handle, [&](lingtu::nav::commands::Client &client) {
+    if (!joints || count != 16) throw std::invalid_argument("external frame requires 16 joints");
+    lingtu::message::ExternalFrame frame;
+    frame.session_id = session_id ? session_id : "";
+    frame.sequence = sequence;
+    frame.input_window = input_window;
+    for (std::size_t i = 0; i < frame.joints.size(); ++i) {
+      frame.joints[i] = {joints[i].q, joints[i].dq, joints[i].kp, joints[i].kd, joints[i].tau};
+    }
+    if (!client.externalFrame(frame)) throw std::runtime_error("external DDS publish failed");
+  });
+}
+
+int lingtu_nav_client_external_heartbeat_v1(
+    lingtu_nav_client_handle handle, const char *session_id) {
+  return invoke(handle, [&](lingtu::nav::commands::Client &client) {
+    lingtu::message::ExternalFrame frame;
+    frame.session_id = session_id ? session_id : "";
+    if (!client.externalFrame(frame, true)) throw std::runtime_error("external heartbeat publish failed");
+  });
+}
+
+int lingtu_nav_client_external_status_v1(
+    lingtu_nav_client_handle raw_handle, lingtu_nav_external_state_v1 *state) {
+  auto *handle = asHandle(raw_handle);
+  if (!handle || !handle->client || !state || state->abi_version != 1 ||
+      state->struct_size < sizeof(*state)) {
+    thread_error = "external state ABI mismatch";
+    return -1;
+  }
+  try {
+    const auto snapshot = handle->client->externalStatus();
+    if (!snapshot) return 0;
+    copyString(state->session_id, snapshot->session_id);
+    state->selected = snapshot->selected;
+    state->active = snapshot->active;
+    state->motors_enabled = snapshot->motors_enabled;
+    state->fresh = snapshot->fresh;
+    state->last_sequence = snapshot->last_sequence;
+    state->joint_count = snapshot->joint_count;
+    copyString(state->reason, snapshot->reason);
+    state->input_window = snapshot->input_window;
+    state->motor_disable_confirmed = snapshot->motor_disable_confirmed;
+    return 1;
+  } catch (const std::exception &error) {
+    thread_error = error.what();
+    return -1;
+  }
 }
 
 int lingtu_nav_client_start_exploration_with_receipt_v1(
@@ -1396,6 +1529,52 @@ int lingtu_nav_client_operator_motion_release_with_receipt_v1(
             timeout_ms,
             request_id == nullptr ? "" : request_id));
   });
+}
+
+int lingtu_nav_client_read_operator_motion_status_v1(
+    lingtu_nav_client_handle raw_handle, uint32_t max_age_ms,
+    lingtu_nav_operator_motion_status_v1 *state) {
+  Handle *handle = asHandle(raw_handle);
+  if (handle == nullptr || handle->client == nullptr || state == nullptr) {
+    thread_error = "operator motion status read received a null argument";
+    return -1;
+  }
+  if (state->abi_version != LINGTU_NAV_OPERATOR_MOTION_STATUS_ABI_VERSION ||
+      state->struct_size < sizeof(*state)) {
+    thread_error = "operator motion status buffer ABI mismatch";
+    return -1;
+  }
+  try {
+    const auto snapshot = handle->client->latestOperatorMotionStatus(max_age_ms);
+    if (!snapshot) {
+      thread_error.clear();
+      return 0;
+    }
+    std::memset(state, 0, sizeof(*state));
+    state->abi_version = LINGTU_NAV_OPERATOR_MOTION_STATUS_ABI_VERSION;
+    state->struct_size = sizeof(*state);
+    state->timestamp_s = snapshot->timestamp_s;
+    copyString(state->active_source_id, snapshot->active_source_id);
+    state->active_source_epoch = snapshot->active_source_epoch;
+    state->has_active_authority = snapshot->has_active_authority;
+    state->holding = snapshot->holding;
+    state->has_active_sample = snapshot->has_active_sample;
+    state->last_sample_sequence = snapshot->last_sample_sequence;
+    state->admitted_sequence = snapshot->admitted_sequence;
+    state->final_output_sequence = snapshot->final_output_sequence;
+    copyString(state->authority_reason, snapshot->authority_reason);
+    copyString(state->input_gate_reason, snapshot->input_gate_reason);
+    state->received_age_ms = snapshot->received_age_ms;
+    state->fresh = snapshot->fresh;
+    thread_error.clear();
+    return 1;
+  } catch (const std::exception &exc) {
+    thread_error = exc.what();
+    return -1;
+  } catch (...) {
+    thread_error = "unknown native operator motion status read failure";
+    return -1;
+  }
 }
 
 int lingtu_nav_client_read_navigation_state(

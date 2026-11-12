@@ -36,8 +36,7 @@ struct FinalSafetyInput {
 
 CommandSafetyDecision evaluateFinalSafety(const FinalSafetyInput &input,
                                         const CommandSafetyConfig &base_safety,
-                                        const nav_kernel::Twist &command,
-                                        double request_age_s);
+                                        const nav_kernel::Twist &command);
 
 enum class FinalMode {
   kTeleopCommand,
@@ -49,8 +48,6 @@ struct FinalInput {
   FinalMode mode;
   const CommandSafetyConfig &safety;
   nav_kernel::Twist candidate;
-  double request_age_s{0.0};
-  double max_request_age_s{0.0};
   bool limited_before_final{false};
   bool publish{false};
   double now_s{0.0};
@@ -67,7 +64,7 @@ struct FinalResult {
 
 struct FinalActions {
   std::function<CommandSafetyDecision(
-      const CommandSafetyConfig &, const nav_kernel::Twist &, double)>
+      const CommandSafetyConfig &, const nav_kernel::Twist &)>
       command_safety;
   std::function<nav_kernel::VelocitySmootherOutput(const nav_kernel::Twist &, double)>
       shape;

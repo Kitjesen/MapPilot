@@ -15,17 +15,29 @@ velocity.
 
 | 文件 | 作用 |
 | --- | --- |
-| [`executor.hpp / executor.cpp`](executor.cpp) | 执行入口：接收路线或遥控意图，协调局部规划、跟踪和恢复，返回候选速度及状态。 |
-| [`route.hpp / route.cpp`](route.hpp) | 描述路线、目标和约束；从路线准备局部参考、计算路线进度和到达位置。 |
+| [`executor.hpp / executor.cpp`](executor.cpp) | 统一入口和普通路线每拍执行：处理阶段、终点、局部规划结果，调用跟踪，返回候选速度。 |
+| [`intent.cpp`](intent.cpp) | 辅助运动的完整流程：滚动参考、操作方向变化、局部规划、边界脱离及跟踪。 |
+| [`route.hpp / route.cpp`](route.cpp) | 路线参考、进度与位置到达判断；map/odom/机身坐标转换、规划请求构造及诊断转换。 |
 | [`pose_route.hpp / pose_route.cpp`](pose_route.cpp) | 把带方向的路线整理成行走或转身阶段，并对适合的阶段生成连续参考。 |
-| [`state.cpp`](state.cpp) | 根据里程计计算运动状态，并判断运动是否有进展。 |
+| [`state.cpp`](state.cpp) | 路线与姿态阶段的激活、限速、清除、暂停和恢复；实际命令反馈、运动状态及停滞记录。 |
 | [`recovery.hpp / recovery.cpp`](recovery.cpp) | 路线受阻或运动停滞时，管理恢复动作及重试。 |
 | [`recovery_search.hpp / recovery_search.cpp`](recovery_search.cpp) | 为 CMU 平移恢复搜索路径，并检查旋转恢复，供 Recovery 内部使用。 |
 | [`stairs.hpp / stairs.cpp`](stairs.cpp) | 实验性的楼梯段匹配和进出梯状态；正式导航端点目前未接通这套流程，不等于 SCAN 的三维上下楼算法。 |
 
 局部规划算法位于 `../planning/local/`，轨迹跟踪位于 `../tracking/`；最终运动检查由 `../endpoint/nav/control/` 所有。要读正常导航，先看 `route.hpp` 的 `Route`，再看 `executor.hpp` 的 `ExecutionInput` / `ExecutionOutput` 和 `Executor::tick()`；需要排查某种具体行为时，再进入对应实现。
 
-`route.cpp` 和 `state.cpp` 是同一个 `Executor` 类的实现文件，不是另外两个管理器。辅助遥控的平移意图也可进入 `Executor::tick()`；纯原地转向则由遥控端点分流后进行最终检查。
+`executor.cpp`、`intent.cpp`、`route.cpp` 和 `state.cpp` 实现同一个 `Executor`，没有新增管理器或重复状态。看正常路线从 `tick()` / `tickInPlanningFrame()` 进入；看辅助运动直接读 `intent.cpp`。辅助遥控的平移意图也可进入 `Executor::tick()`；纯原地转向则由遥控端点分流后进行最终检查。
+
+最终控制通过 `commitApplied()` 反馈实际采用的命令，与 Follower 的同名接口一致；该调用不负责向驱动发送命令。2026-11-08 从较长的 `commitAppliedCommand()` 改名，源码调用、测试和基准程序同步更新，未保留第二个别名。
+
+`Executor::resetMotion()` 重置局部规划、跟踪和恢复状态，保留已接受的路线与目标；
+`clear()` 会同时清除路线。`pauseLinearMotion()` 则保留轨迹并冻结执行进度。
+自主 SCAN 的最终碰撞拦截通过 `reportFinalMotionBlocked()` 撤掉被拒绝的局部轨迹，
+随后从当前实测状态重新规划；全局路线和目标由 Executor 继续持有。
+缓存的局部引导路径以 `guide_map_`、`guide_generation_`、`guide_stamp_s_` 表示：
+分别为地图坐标下的路径、所属路线版本和更新时间（秒）。
+空路径表示引导缓存无效；重新填充时同步更新版本和时间。临时 `segment` 由
+`buildSegment()` 在每次构造时统一清空，路线生命周期不再重复清理。
 
 ## Data flow
 
@@ -35,13 +47,15 @@ same-position turns. Sampled edges may translate and change yaw when both
 headings match forward travel within the route's yaw tolerance. Arbitrary
 independent yaw/crabbing on one moving edge is not represented by this tangent
 interface and is rejected explicitly. Mixed explicit stair/pose routes retain
-their existing boundary. Ordinary `Route.points` retains its existing behavior.
+their existing boundary. Ordinary goals use XYZ position; no requested final yaw
+is sent to Follower. Trailing yaw-only pose stages are discarded, while turns
+needed to join another movement segment retain their 3D sweep checks.
 
 Compatible intermediate forward corners share one SCAN reference. Existing
 fillet conditioning remains available; when it does not apply, the original
 ordered XYZ polyline can be passed directly to SCAN. Its corner is no longer a
 local stopping endpoint. SCAN validates its resulting spline, and the follower
-uses that spline's tangent while retaining the requested final yaw.
+uses that spline's tangent.
 
 Separate turn stages validate the actual centre, measured yaw, turn sweep and
 reconnection to the next segment. Intermediate arrival uses the existing goal,
@@ -50,10 +64,11 @@ centimetre-perfect base position or a separate observed-body snapshot is not an
 additional prerequisite. Movement into a separate turn still settles first;
 an aligned turn hands measured motion to the next translation without waiting
 for another zero-velocity sample. The reference generation changes on stage
-transition, not each control tick. The terminal heading is required only when
-the accepted goal explicitly requests one; path headings still guide movement
-and collision checks. Cancellation, replacement and frame changes discard pose
-state and prior model candidates. Endpoint FinalControl remains required.
+transition, not each control tick. Path headings guide movement and collision
+checks; arrival does not add a final heading adjustment. Cancellation, replacement and frame changes discard pose
+state and prior model candidates. Endpoint FinalControl remains required. Its veto stops commands and pauses execution;
+it does not reset the local planner. SCAN retains ownership of trajectory
+collision detection, replacement and emergency replanning.
 
 The component probe in `tests/nav/cpp/benchmark_body_execution.cpp` runs
 the real global planner, SCAN and Follower on fixed map fixtures. Its internal
@@ -64,20 +79,19 @@ through the platform configuration and record the actual part set used by a
 trial. See `docs/design/navigation-body-model-and-motion-posture.md` and
 `docs/operations/error_record.md` for current failures and validation boundaries.
 
-Arrival checks the task position, its requested final yaw when present, and one
-valid low-speed odometry observation. It does not accumulate a half-second
-settling window. Successful goal termination additionally waits for the driver
-to acknowledge the zero command; that acknowledgement alone does not prove
-continuous physical stillness.
+Follower tracks the supplied local plan with the SCAN controller. The reference
+clock and position error determine spline completion. Executor checks the task's
+position/height region; reaching an intermediate local endpoint does not finish
+the task. A goal already inside that region with no executing spline needs no
+new trajectory. The endpoint's existing stop acknowledgement still precedes
+formal task success.
 
-Entering the goal region does not interrupt a moving SCAN terminal spline.
-While its applied-command baseline exceeds the existing 0.03 m/s quiet bound,
-the spline and normal collision checks continue so its zero-terminal-velocity
-reference can decelerate. Only then may arrival settling or a separate terminal
-yaw stage reset the follower. An initially stationary robot already at its goal
-retains direct settling; CMU arrival and urgent safety stops retain their own
-behavior. Odom-frame references retain the real final route segment if the
-measured terminal connector collapses to one point during deceleration.
+`FollowerGoal`, terminal-heading takeover, the minimum terminal turn rate,
+terminal yaw hysteresis and the `goal_follower` settings were removed. Ordinary
+heading alignment still freezes the reference clock, but does not skip the
+existing linear acceleration limiter. Collision and emergency holds still stop
+commands immediately. Applied-command feedback remains for platform rate limits.
+Evidence: `build/scan-upstream-goal-20261108/`.
 
 ```text
 GlobalPlanner -> Route -> Executor -> LocalPlanner -> LocalPlan -> Follower
@@ -200,12 +214,27 @@ spline tracking share map coordinates; the Follower still returns body-frame
 velocity. Small map-to-odom corrections update the measured robot pose, not
 the reference generation or spline execution clock.
 
-The complete map reference is prepared once after route activation and height
-calibration. The map-frame SCAN path reuses that reference; the odom-frame path
+The complete map reference is prepared once after route activation using the
+route's original heights. The map-frame SCAN path reuses that reference; the odom-frame path
 continues to update its bounded local segment. Suspension or a frame-epoch
 reset discards the reference and pending local work; the next valid input
 rebuilds it. A new goal and cancellation use `setRoute()` and `clear()`
 respectively, which reset the planner and follower.
+
+The previous Executor shifted a route without a requested goal by the initial
+body-to-route height difference (for example, 0.30 m became 0.48 m for a body
+at 0.48 m). It now keeps 0.30 m: route points are already in the planning
+frame, while rolling exploration assigns the observed body height at admission.
+Only the initial projection point keeps the measured body height, preventing
+an in-place vertical connection before approaching the original forward route.
+The fixed [SCAN upstream](https://github.com/wuyi2121/SCAN-Planner/blob/348e8a590a50a5a6bbab8d8c6dcfd171f009be26/src/planner/plan_manage/src/scan_replan_fsm.cpp)
+uses its configured body height to convert ground-reference input; that frame
+conversion remains in the SCAN adapter and is distinct from shifting the route.
+`Executor.RouteHeightIsNotShiftedToRobot` covers the before/after example.
+`Executor.ScanReconnectsSmallHeightDifference` covers a requested-goal route
+with the measured start 3 cm above/below it. Both connector variants planned in
+this empty-map test; retaining the measured projection avoids a synthetic
+vertical first edge without claiming a reproduced field planning failure.
 
 The global route is one ordered polyline, not a stream of new goals for its
 individual points. LocalPlanner owns local target selection and replanning along

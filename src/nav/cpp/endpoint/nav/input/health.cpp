@@ -21,9 +21,7 @@ void InputProjector::projectDriverControl(const DriverControlSample &message,
           std::chrono::duration<double>(receive_steady_s))};
   state_.driver_control_received = true;
   state_.driver_control_reason = message.reason;
-  state_.driver_accepted_producer_boot_id = message.accepted_producer_boot_id;
-  state_.driver_accepted_output_sequence = message.accepted_output_sequence;
-  state_.driver_last_command_accepted = message.last_command_accepted;
+  state_.driver_zero_output = message.zero_output;
   state_.driver_control_ready = message.connected && message.ready && message.motors_enabled &&
                                 !message.critical_fault && message.control_assured;
 
@@ -48,22 +46,6 @@ double InputProjector::driverAge(SteadyClock::time_point now_time) const {
     return std::numeric_limits<double>::infinity();
   }
   return std::chrono::duration<double>(now_time - state_.driver_control_receive_time).count();
-}
-
-std::string InputProjector::driverBlocker(SteadyClock::time_point now_time) const {
-  if (state_.driver_control_stamp_s <= 0.0 || !state_.driver_control_received) {
-    return "driver_control_missing";
-  }
-  const double age_s = driverAge(now_time);
-  if (config_.driver_control_max_age_s > 0.0 && age_s > config_.driver_control_max_age_s) {
-    return "driver_control_stale";
-  }
-  if (!state_.driver_control_ready) {
-    return state_.driver_control_reason.empty()
-               ? "driver_control_not_ready"
-               : std::string{"driver_control_"} + state_.driver_control_reason;
-  }
-  return {};
 }
 
 InputGateState InputProjector::evaluateGate(double now_steady_s, SteadyClock::time_point now_time) {

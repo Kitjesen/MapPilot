@@ -1026,6 +1026,14 @@ struct Client::Impl {
           lingtu::message::kOperatorMotionAck,
           &lingtu_dds_OperatorMotionAck_desc,
           "operator_motion_ack");
+      operator_motion_status_reader = createReader(
+          lingtu::message::kOperatorMotionStatus,
+          &lingtu_dds_OperatorMotionStatus_desc,
+          "operator_motion_status");
+      external_command_writer = createWriter(lingtu::message::kExternalCommand,
+          &lingtu_dds_ExternalCommand_desc, "external_command");
+      external_state_reader = createReader(lingtu::message::kExternalControlState,
+          &lingtu_dds_ExternalControlState_desc, "external_state");
       navigation_goal_status_reader = createReader(
           lingtu::message::kNavGoalStatus,
           &lingtu_dds_NavigationGoalStatus_desc,
@@ -1943,6 +1951,69 @@ struct Client::Impl {
     return count > 0;
   }
 
+  bool takeOperatorMotionStatuses() {
+    constexpr std::size_t kMaxSamples = 16;
+    void *samples[kMaxSamples]{};
+    dds_sample_info_t infos[kMaxSamples]{};
+    const auto count = dds_take(operator_motion_status_reader, samples, infos,
+                                kMaxSamples, kMaxSamples);
+    checked(count, "dds_take(operator_motion_status)");
+    const bool one_writer =
+        dds_get_matched_publications(operator_motion_status_reader, nullptr, 0) == 1;
+    {
+      std::lock_guard<std::mutex> lock(operator_motion_status_mutex);
+      if (!one_writer) latest_operator_motion_status.reset();
+      for (dds_return_t i = 0; i < count; ++i) {
+        if (!one_writer || !infos[i].valid_data) continue;
+        const auto &state = *static_cast<lingtu_dds_OperatorMotionStatus *>(samples[i]);
+        const auto stamp = stampSeconds(state.header.stamp);
+        const auto source = text(state.active_source_id);
+        if (!std::isfinite(stamp) || stamp <= 0.0 || text(state.header.frame_id) != "map" ||
+            (state.has_active_authority && (source.empty() || state.active_source_epoch == 0))) {
+          latest_operator_motion_status.reset();
+          continue;
+        }
+        if (latest_operator_motion_status && stamp < latest_operator_motion_status->timestamp_s) continue;
+        latest_operator_motion_status = OperatorMotionStatusSnapshot{
+            stamp, source, state.active_source_epoch, state.has_active_authority,
+            state.holding, state.has_active_sample, state.last_sample_sequence,
+            state.admitted_sequence, state.final_output_sequence,
+            text(state.authority_reason), text(state.input_gate_reason)};
+        operator_motion_status_received_at = SteadyClock::now();
+      }
+    }
+    if (count > 0) {
+      checked(dds_return_loan(operator_motion_status_reader, samples, count),
+              "dds_return_loan(operator_motion_status)");
+    }
+    return count > 0;
+  }
+
+  bool takeExternalStates() {
+    void *samples[16]{};
+    dds_sample_info_t infos[16]{};
+    const auto count = dds_take(external_state_reader, samples, infos, 16, 16);
+    checked(count, "dds_take(external_state)");
+    const bool one_writer = dds_get_matched_publications(external_state_reader, nullptr, 0) == 1;
+    {
+      std::lock_guard<std::mutex> lock(external_mutex);
+      if (!one_writer) latest_external_state.reset();
+      for (dds_return_t i = 0; i < count; ++i) {
+        if (!one_writer || !infos[i].valid_data) continue;
+        const auto &state = *static_cast<lingtu_dds_ExternalControlState *>(samples[i]);
+        latest_external_state = lingtu::message::ExternalState{
+            text(state.session_id), state.selected, state.active, state.motors_enabled,
+            state.last_sequence, text(state.reason), state.input_window,
+            state.fresh, state.joint_count, state.motor_disable_confirmed};
+        external_received_at = SteadyClock::now();
+        external_source_stamp = stampSeconds(state.header.stamp);
+      }
+    }
+    if (count > 0) checked(dds_return_loan(external_state_reader, samples, count),
+        "dds_return_loan(external_state)");
+    return count > 0;
+  }
+
   bool takeNavigationStates() {
     constexpr std::size_t kMaxSamples = 16;
     void* samples[kMaxSamples]{};
@@ -2640,6 +2711,8 @@ struct Client::Impl {
             takeSemanticViewResults() |
             takeInspectionTaskAcks() |
             takeOperatorMotionAcks() |
+            takeOperatorMotionStatuses() |
+            takeExternalStates() |
             takeNavigationGoalStatuses() | takeInspectionTaskEvents() |
             takeExplorationRunEvents() |
             takeNavigationStates() |
@@ -3137,7 +3210,9 @@ struct Client::Impl {
       const std::string& requested_reason,
       const char* default_reason,
       int timeout_ms,
-      const std::string& requested_id) const {
+      const std::string& requested_id,
+      const std::string& profile_name = {},
+      const std::string& external_session_id = {}) const {
     const std::string reason =
         requested_reason.empty() ? std::string(default_reason) : requested_reason;
     const std::string request_id =
@@ -3147,6 +3222,8 @@ struct Client::Impl {
     message.request_id = const_cast<char*>(request_id.c_str());
     message.kind = static_cast<std::int32_t>(kind);
     message.reason = const_cast<char*>(reason.c_str());
+    message.profile_name = const_cast<char*>(profile_name.c_str());
+    message.external_session_id = const_cast<char*>(external_session_id.c_str());
     return writeCommandReceipt(message, "", request_id, kind, timeout_ms);
   }
 
@@ -3287,6 +3364,13 @@ struct Client::Impl {
   mutable std::string ack_receiver_error;
   mutable std::mutex navigation_state_mutex;
   std::optional<NavigationStateSnapshot> latest_navigation_state;
+  mutable std::mutex operator_motion_status_mutex;
+  mutable std::mutex external_mutex;
+  std::optional<lingtu::message::ExternalState> latest_external_state;
+  SteadyClock::time_point external_received_at{};
+  double external_source_stamp{0};
+  std::optional<OperatorMotionStatusSnapshot> latest_operator_motion_status;
+  SteadyClock::time_point operator_motion_status_received_at{};
   mutable std::mutex navigation_goal_status_mutex;
   std::deque<NavigationGoalStatusSnapshot> pending_goal_status_events;
   std::unordered_map<std::string, NavigationGoalStatusSnapshot>
@@ -3349,6 +3433,9 @@ struct Client::Impl {
   dds_entity_t operator_motion_control_writer{0};
   dds_entity_t operator_motion_sample_writer{0};
   dds_entity_t operator_motion_ack_reader{0};
+  dds_entity_t operator_motion_status_reader{0};
+  dds_entity_t external_command_writer{0};
+  dds_entity_t external_state_reader{0};
   dds_entity_t navigation_goal_status_reader{0};
   dds_entity_t navigation_state_reader{0};
   dds_entity_t global_path_reader{0};
@@ -3396,6 +3483,56 @@ SemanticViewResult Client::querySemanticViews(
 std::optional<NavigationStateSnapshot> Client::latestNavigationState() const {
   std::lock_guard<std::mutex> lock(impl_->navigation_state_mutex);
   return impl_->latest_navigation_state;
+}
+
+std::optional<OperatorMotionStatusSnapshot> Client::latestOperatorMotionStatus(
+    std::uint32_t max_age_ms) const {
+  if (max_age_ms == 0) throw std::invalid_argument("operator motion status age must be positive");
+  std::lock_guard<std::mutex> lock(impl_->operator_motion_status_mutex);
+  if (!impl_->latest_operator_motion_status) return std::nullopt;
+  auto snapshot = *impl_->latest_operator_motion_status;
+  snapshot.received_age_ms = std::chrono::duration<double, std::milli>(
+      SteadyClock::now() - impl_->operator_motion_status_received_at).count();
+  const auto source_age_ms = (nowSeconds() - snapshot.timestamp_s) * 1000.0;
+  snapshot.fresh = snapshot.received_age_ms >= 0.0 && snapshot.received_age_ms <= max_age_ms &&
+      source_age_ms >= -50.0 && source_age_ms <= max_age_ms &&
+      dds_get_matched_publications(impl_->operator_motion_status_reader, nullptr, 0) == 1;
+  return snapshot;
+}
+
+std::optional<lingtu::message::ExternalState> Client::externalStatus() const {
+  std::lock_guard<std::mutex> lock(impl_->external_mutex);
+  if (!impl_->latest_external_state) return std::nullopt;
+  auto state = *impl_->latest_external_state;
+  const auto age = SteadyClock::now() - impl_->external_received_at;
+  const auto source_age = nowSeconds() - impl_->external_source_stamp;
+  state.fresh = state.fresh && age <= std::chrono::milliseconds(250) &&
+      source_age >= -0.05 && source_age <= 0.25 &&
+      dds_get_matched_publications(impl_->external_state_reader, nullptr, 0) == 1;
+  return state;
+}
+
+bool Client::externalFrame(const lingtu::message::ExternalFrame &frame, bool heartbeat) {
+  if (frame.session_id.empty()) throw std::invalid_argument("external session id is required");
+  if (!heartbeat && (frame.sequence == 0 || frame.input_window == 0)) {
+    throw std::invalid_argument("external frame requires sequence and input window");
+  }
+  lingtu_dds_ExternalCommand message{};
+  const auto boot = lingtu::nav::platform::hostBootId();
+  message.host_boot_id = const_cast<char *>(boot.c_str());
+  message.session_id = const_cast<char *>(frame.session_id.c_str());
+  message.frame_sequence = frame.sequence;
+  message.input_window = frame.input_window;
+  message.source_boottime_ns = lingtu::nav::platform::bootTimeNanoseconds();
+  message.heartbeat = heartbeat;
+  for (std::size_t i = 0; i < frame.joints.size(); ++i) {
+    const auto &joint = frame.joints[i];
+    if (!heartbeat && (!std::isfinite(joint.q) || !std::isfinite(joint.dq) ||
+        !std::isfinite(joint.kp) || !std::isfinite(joint.kd) || !std::isfinite(joint.tau) ||
+        joint.kp < 0 || joint.kd < 0)) throw std::invalid_argument("invalid external joint command");
+    message.joints[i] = {joint.q, joint.dq, joint.kp, joint.kd, joint.tau};
+  }
+  return dds_write(impl_->external_command_writer, &message) >= 0;
 }
 
 bool Client::takeNavigationGoalStatus(NavigationGoalStatusSnapshot* status) {
@@ -3670,6 +3807,19 @@ NavigationCommandReceipt Client::NavigationCommands::setTaskSpeedLimit(
       message, task_id, request_id, CommandKind::TaskSpeedLimit, timeout_ms);
 }
 
+NavigationCommandReceipt Client::NavigationCommands::selectPlanner(
+    const std::string& name, int timeout_ms, const std::string& requested_id) {
+  const std::string request_id = requested_id.empty()
+      ? makeRequestId(CommandKind::SelectPlanner) : requested_id;
+  lingtu_dds_NavigationCommandRequest message{};
+  fillHeader(message.header, nowSeconds(), "map");
+  message.request_id = const_cast<char*>(request_id.c_str());
+  message.kind = static_cast<std::int32_t>(CommandKind::SelectPlanner);
+  message.local_planner = const_cast<char*>(name.c_str());
+  return owner_.impl_->writeCommandReceipt(
+      message, "", request_id, CommandKind::SelectPlanner, timeout_ms);
+}
+
 void Client::NavigationCommands::stop(
     const std::string& reason,
     int timeout_ms,
@@ -3703,6 +3853,50 @@ Client::NavigationCommands::resumeAutonomyWithReceipt(const std::string &reason,
                                                       const std::string &requested_id) {
   return owner_.impl_->writeReasonCommandReceipt(CommandKind::ResumeAutonomy, reason,
                                                  "resume_autonomy", timeout_ms, requested_id);
+}
+
+NavigationCommandReceipt Client::NavigationCommands::stand(
+    const std::string &reason, int timeout_ms, const std::string &request_id) {
+  return owner_.impl_->writeReasonCommandReceipt(CommandKind::Stand, reason, "stand",
+                                                timeout_ms, request_id);
+}
+
+NavigationCommandReceipt Client::NavigationCommands::sit(
+    const std::string &reason, int timeout_ms, const std::string &request_id) {
+  return owner_.impl_->writeReasonCommandReceipt(CommandKind::Sit, reason, "sit",
+                                                timeout_ms, request_id);
+}
+
+NavigationCommandReceipt Client::NavigationCommands::enableMotors(
+    const std::string &reason, int timeout_ms, const std::string &request_id) {
+  return owner_.impl_->writeReasonCommandReceipt(CommandKind::EnableMotors, reason,
+      "enable_motors", timeout_ms, request_id);
+}
+
+NavigationCommandReceipt Client::NavigationCommands::disableMotors(
+    const std::string &reason, int timeout_ms, const std::string &request_id) {
+  return owner_.impl_->writeReasonCommandReceipt(CommandKind::DisableMotors, reason,
+      "disable_motors", timeout_ms, request_id);
+}
+
+NavigationCommandReceipt Client::NavigationCommands::switchProfile(
+    const std::string &name, const std::string &reason, int timeout_ms,
+    const std::string &request_id) {
+  if (name.empty()) throw std::invalid_argument("profile name is required");
+  return owner_.impl_->writeReasonCommandReceipt(CommandKind::SwitchProfile, reason,
+      "switch_profile", timeout_ms, request_id, name);
+}
+
+NavigationCommandReceipt Client::NavigationCommands::externalControl(
+    std::int32_t raw_kind, const std::string &session_id, const std::string &reason,
+    int timeout_ms, const std::string &request_id) {
+  const auto kind = static_cast<CommandKind>(raw_kind);
+  if (kind != CommandKind::EnterExternal && kind != CommandKind::ExitExternal &&
+      kind != CommandKind::EnableExternal && kind != CommandKind::DisableMotors) {
+    throw std::invalid_argument("invalid external control action");
+  }
+  return owner_.impl_->writeReasonCommandReceipt(kind, reason, "external_control",
+      timeout_ms, request_id, {}, session_id);
 }
 
 void Client::NavigationCommands::resumeAutonomy(

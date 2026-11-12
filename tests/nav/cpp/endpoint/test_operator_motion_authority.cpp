@@ -464,11 +464,11 @@ void testInnerTeleopRequestIsClearedBeforeOuterZeroCompletes() {
   ControlAuthority inner;
   require(outer.claim(claim("board", 1, 1)).accepted, "outer claim failed");
   require(submitSample(outer, sample("board", 1, 2), 10.02).accepted, "outer sample failed");
-  require(inner.acceptTeleop({0.3, 0.0, 0.1}, 10.01), "inner teleop admission failed");
+  require(inner.acceptTeleop({0.3, 0.0, 0.1}), "inner teleop admission failed");
   require(inner.teleopRequest().has_value(), "inner teleop request missing");
 
   require(outer.hold({"board", 1, 3}).accepted, "outer hold failed");
-  inner.holdOperatorTakeover();
+  inner.holdOperator();
   require(!inner.teleopRequest().has_value(),
           "inner request must be cleared before publishing the zero barrier");
   require(!inner.pathActive(), "inner path must be inactive before publishing the zero barrier");

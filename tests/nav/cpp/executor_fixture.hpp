@@ -13,11 +13,11 @@ class ExecutorHarness : public navigation::Executor {
   using navigation::Executor::tick;
 
   void setRoute(const std::vector<nav_kernel::Vec3> &points,
-                std::optional<double> final_yaw = std::nullopt,
+                std::optional<double> = std::nullopt,
                 std::optional<double> goal_tolerance_m = std::nullopt,
                 std::optional<double> yaw_tolerance_rad = std::nullopt) {
     navigation::Executor::setRoute(
-        navigation::Route{points, final_yaw, goal_tolerance_m, yaw_tolerance_rad});
+        navigation::Route{points, goal_tolerance_m, yaw_tolerance_rad});
   }
 
   void clearRoute() { clear(); }

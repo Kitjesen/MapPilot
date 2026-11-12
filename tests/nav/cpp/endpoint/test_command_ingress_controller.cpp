@@ -320,6 +320,60 @@ void testPendingControlReceiptCompletesWithOriginalRequest() {
           "completed control receipt was not replayed exactly");
 }
 
+void testPostureAdmissionAndCompletion() {
+  for (const auto kind : {NavigationCommandKind::Stand, NavigationCommandKind::Sit,
+       NavigationCommandKind::EnableMotors, NavigationCommandKind::DisableMotors,
+       NavigationCommandKind::SwitchProfile}) {
+    CommandIngressController controller;
+    const auto command = request("sdk-client", "posture-1", kind);
+    const auto pending = controller.handle(command, [](auto, const auto &) {
+      return CommandAck{true, "posture_pending", true};
+    });
+    require(pending.dispatched && pending.ack.pending && pending.task_id.empty(),
+            "posture command must be admitted without a task identity");
+    const auto completed = controller.complete(command, {true, "body_action_accepted"});
+    require(completed.request_id == command.request_id && completed.kind == kind,
+            "posture completion must preserve original command identity");
+    const auto retry = controller.handle(command, [](auto, const auto &) -> CommandAck {
+      throw std::runtime_error("completed posture must not execute again");
+    });
+    require(retry.replayed && retry.ack.accepted && !retry.ack.pending,
+            "completed posture retry must replay final ACK");
+  }
+}
+
+void testProfileNameIsPartOfRequestIdentity() {
+  CommandIngressController controller;
+  auto command = request("sdk-client", "profile-1", NavigationCommandKind::SwitchProfile);
+  command.payload.profile_name = "walk";
+  const auto result = controller.handle(command, [](auto, const auto &payload) {
+    require(payload.profile_name == "walk", "profile target was not preserved");
+    return CommandAck{true, "profile_switched"};
+  });
+  require(result.ack.accepted, "profile switch was not admitted");
+  command.payload.profile_name = "stairs";
+  const auto conflict = controller.handle(command, [](auto, const auto &) -> CommandAck {
+    throw std::runtime_error("a changed profile target must not execute under the same id");
+  });
+  require(conflict.ack.reason == "idempotency_conflict", "profile target alias was accepted");
+}
+
+void testPlannerSelectionIdentity() {
+  CommandIngressController controller;
+  auto command = request("sdk-client", "planner-1", NavigationCommandKind::SelectPlanner);
+  command.payload.local_planner = "scan";
+  const auto result = controller.handle(command, [](auto, const auto &) {
+    return CommandAck{true, "planner_switch_pending", true};
+  });
+  require(result.ack.pending, "selection must wait for completion");
+  controller.complete(command, {true, "planner_selected"});
+  command.payload.local_planner = "cmu";
+  const auto conflict = controller.handle(command, [](auto, const auto &) -> CommandAck {
+    throw std::runtime_error("changed planner target must not reuse the same request id");
+  });
+  require(conflict.ack.reason == "idempotency_conflict", "planner target alias was accepted");
+}
+
 }  // namespace
 
 int main() {
@@ -333,6 +387,9 @@ int main() {
     testTaskPauseResumeCommandsAreDistinctUserActions();
     testPendingControlReceiptCompletesWithOriginalRequest();
     testSpeedLimitUpdatesAreRequestScoped();
+    testPostureAdmissionAndCompletion();
+    testProfileNameIsPartOfRequestIdentity();
+    testPlannerSelectionIdentity();
   } catch (const std::exception &exc) {
     std::fprintf(stderr, "test_command_ingress_controller: FAIL: %s\n", exc.what());
     return 1;

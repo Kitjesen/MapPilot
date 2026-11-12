@@ -44,6 +44,9 @@ std::string CommandPayload::canonical() const {
     appendDouble(output, value);
   }
   appendString(output, reason);
+  appendString(output, profile_name);
+  appendString(output, external_session_id);
+  appendString(output, local_planner);
   return output;
 }
 

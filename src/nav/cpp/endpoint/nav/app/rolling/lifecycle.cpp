@@ -500,7 +500,7 @@ RollingSegmentLifecycle::handleCommand(const RollingSegmentCommand &command,
     return result;
   }
   if (!context.input_ready || !context.autonomy_mode || !context.motion_allowed ||
-      context.operator_takeover_latched || !context.driver_control_ready || !context.robot_pose ||
+      context.operator_takeover_latched || !context.robot_pose ||
       !context.map_z || !std::isfinite(*context.map_z)) {
     reject("segment_inputs_not_ready", true);
     return result;
@@ -601,7 +601,7 @@ RollingSegmentStepResult RollingSegmentLifecycle::handle(const RollingSegmentRev
   input.now_s = event.context.now_s;
   input.input_ready = event.context.input_ready && event.context.autonomy_mode &&
                       event.context.motion_allowed && !event.context.operator_takeover_latched &&
-                      event.context.driver_control_ready && event.context.robot_pose.has_value();
+                      event.context.robot_pose.has_value();
   input.robot_pose = event.context.robot_pose.value_or(lingtu::explore::Pose2D{});
   const auto decision = executor_.revalidate(input);
   if (decision.action != rolling::SegmentAction::Cancel && executor_.active()) {

@@ -91,6 +91,7 @@ struct Fixture {
     input_gate.reason = "ready";
     input_gate.driver_control_age_s = 0.1;
     input_gate.driver_control_ready = true;
+    input_gate.driver_control_fresh = true;
     input_gate.driver_control_reason = "ready";
     local.cmd_vel.vx = 0.31;
     local.recovery_state = 2;
@@ -137,7 +138,7 @@ struct Fixture {
     state.counters.outputs = 11;
     state.counters.cmd_vel = 10;
     state.final_output = {"endpoint-a:boot", 17U};
-    state.driver_control = {true, true, "ready", true, "endpoint-a:boot", 17U};
+    state.driver_control = {true, true, "ready", true};
     state.input_gate = &input_gate;
     operator_motion_transport.ack_sent = 4;
     operator_motion_transport.ack_publish_failed = 1;
@@ -195,10 +196,9 @@ struct Fixture {
     result.check_obstacle = true;
     result.use_traversability_cost = true;
     result.driver_control_max_age_s = 0.35;
-    result.input_require_driver_control = true;
     result.local_map_debug_point_limit = 4;
     result.stop_confirmation_timeout_s = 4.0;
-    result.stop_confirmation_evidence = "driver_ack_and_odometry";
+    result.stop_confirmation_evidence = "zero_output_and_odometry";
     return result;
   }
 
@@ -357,14 +357,14 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
   require(contains(autonomy, "\"stop_confirmation_timeout_s\": 4.000000"),
           "status must expose the active stop confirmation product contract");
   require(contains(autonomy,
-                   "\"stop_confirmation_evidence\": \"driver_ack_and_odometry\""),
+                   "\"stop_confirmation_evidence\": \"zero_output_and_odometry\""),
           "status must expose the active stop evidence policy");
   require(contains(autonomy,
                    "\"motion_stop_evidence\": {\"state\": \"NOT_REQUESTED\", "
                    "\"reason\": \"not_requested\", \"output_sequence\": 0, "
                    "\"updated_at_s\": 0.000000, "
                    "\"confirmation_state\": \"not_requested\", "
-                   "\"driver_ack_observed\": false, \"driver_accepted\": false, "
+                   "\"driver_state_observed\": false, \"driver_zero_output\": false, "
                    "\"quiet_odometry_samples\": 0, "
                    "\"required_quiet_odometry_samples\": 0, "
                    "\"last_linear_speed_mps\": null, "
@@ -412,14 +412,12 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
           "last_local must expose the complete recovery decision and progress evidence");
   require(contains(autonomy, "\"final_output\": {\"published\": true") &&
               contains(autonomy, "\"producer_boot_id\": \"endpoint-a:boot\"") &&
-              contains(autonomy, "\"output_sequence\": 17") &&
-              contains(autonomy, "\"driver_delivery_accepted\": true"),
+              contains(autonomy, "\"output_sequence\": 17"),
           "final output must expose its exact DDS identity and correlated driver ACK");
   require(contains(autonomy, "\"driver_control\": {\"received\": true") &&
               contains(autonomy, "\"ready\": true") &&
-              contains(autonomy, "\"last_command_accepted\": true") &&
-              contains(autonomy, "\"fresh\": true") && contains(autonomy, "\"age_s\": 0.100000") &&
-              contains(autonomy, "\"accepted_output_sequence\": 17"),
+              contains(autonomy, "\"zero_output\": true") &&
+              contains(autonomy, "\"fresh\": true") && contains(autonomy, "\"age_s\": 0.100000"),
           "driver control must expose current acceptance evidence");
   require(contains(autonomy, "\"stamp_s\": 1234.500000"),
           "JSON snapshot must use wall-clock stamp");
@@ -483,45 +481,56 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
   require(current.status_log_ms >= 0.0 && current.status_snapshot_ms >= 0.0,
           "current status timing fields must be updated");
 
-  fixture.state.control_loop_hold = true;
-  publisher.requestImmediate();
-  require(publisher.publishIfDue(fixture.state, fixture.commands, previous, current),
-          "native loop hold snapshot must publish");
-  publisher.flush();
-  require(contains(fixture.writes.back(), "\"control_loop_hold\": true") &&
-              contains(fixture.writes.back(), "\"navigation_ready\": false"),
-          "an actual native motion hold must block admission");
-  fixture.state.control_loop_hold = false;
-  fixture.state.driver_control.accepted_output_sequence = 16U;
-  publisher.requestImmediate();
-  require(publisher.publishIfDue(fixture.state, fixture.commands, previous, current),
-          "mismatched driver ACK snapshot must publish");
-  publisher.flush();
-  require(contains(fixture.writes.back(), "\"driver_delivery_accepted\": false"),
-          "a different driver output sequence must not acknowledge the final output");
-
+  for (const bool ready : {false, true}) {
+    fixture.loop_health.ready = ready;
+    fixture.loop_health.reason = ready ? "consecutive_deadline_misses" : "warming_up";
+    fixture.loop_health.current_miss_streak = ready ? 200U : 0U;
+    publisher.requestImmediate();
+    require(publisher.publishIfDue(fixture.state, fixture.commands, previous, current),
+            "performance diagnostic snapshot must publish");
+    publisher.flush();
+    require(!contains(fixture.writes.back(), "\"control_loop_hold\"") &&
+                contains(fixture.writes.back(), "\"resume_required\": false") &&
+                contains(fixture.writes.back(), "\"navigation_ready\": true"),
+            "performance diagnostics must not block motion admission");
+  }
   fixture.state.path_active = false;
-  fixture.state.driver_control.accepted_output_sequence = 17U;
   fixture.input_gate.driver_control_age_s = 0.36;
+  fixture.input_gate.driver_control_fresh = false;
   publisher.requestImmediate();
   require(publisher.publishIfDue(fixture.state, fixture.commands, previous, current),
           "stale driver ACK snapshot must publish");
   publisher.flush();
-  require(contains(fixture.writes.back(), "\"fresh\": false") &&
-              contains(fixture.writes.back(), "\"driver_delivery_accepted\": false"),
+  require(contains(fixture.writes.back(), "\"fresh\": false"),
           "an over-age driver sample must not acknowledge the final output");
 
   fixture.input_gate.driver_control_age_s = 0.1;
-  fixture.input_gate.reason = "driver_control_stale";
+  fixture.input_gate.reason = "driver_control_transport_error";
+  fixture.input_gate.driver_control_fresh = true;
+  fixture.state.driver_control.ready = false;
   publisher.requestImmediate();
   require(publisher.publishIfDue(fixture.state, fixture.commands, previous, current),
           "stale input-gate reason snapshot must publish");
   publisher.flush();
-  require(contains(fixture.writes.back(), "\"fresh\": false") &&
-              contains(fixture.writes.back(), "\"driver_delivery_accepted\": false"),
-          "a stale input-gate reason must not acknowledge the final output");
+  require(contains(fixture.writes.back(), "\"fresh\": true"),
+          "status must copy freshness without confusing a current fault with stale data");
 
   fixture.input_gate.reason = "ready";
+  fixture.state.driver_control.ready = true;
+
+  fixture.state.hold_reason = "stop_confirmation_timeout_stop_remains_latched";
+  publisher.requestImmediate();
+  require(publisher.publishIfDue(fixture.state, fixture.commands, previous, current),
+          "fault hold snapshot must publish");
+  publisher.flush();
+  const auto fault = fixture.writes.back();
+  require(contains(fault, "\"operator_takeover_latched\": false") &&
+              contains(fault, "\"active_cmd_source\": \"none\"") &&
+              contains(fault, "\"hold_reason\": \"stop_confirmation_timeout_stop_remains_latched\"") &&
+              contains(fault, "\"resume_required\": true") &&
+              contains(fault, "\"final_cmd_vel\": {\"vx\": 0.000000"),
+          "fault status must retain the cause and zero without claiming operator control");
+  fixture.state.hold_reason.clear();
 
   fixture.state.operator_takeover_latched = true;
   fixture.state.teleop_request_active = true;
@@ -531,7 +540,8 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
           "manual-hold snapshot must publish");
   publisher.flush();
   const std::string manual_hold = fixture.writes.back();
-  require(contains(manual_hold, "\"active_cmd_source\": \"manual_hold\""),
+  require(contains(manual_hold, "\"active_cmd_source\": \"manual_hold\"") &&
+              contains(manual_hold, "\"resume_required\": true"),
           "stale takeover must select manual_hold source");
   require(contains(manual_hold, "\"final_cmd_vel\": {\"vx\": 0.770000"),
           "teleop request presence must select teleop final velocity");
@@ -628,9 +638,8 @@ void testConfirmedMotionStopEvidenceIsPublished() {
   MotionStopEvidenceTracker evidence(config);
   evidence.begin(23U, 1234.0);
   StopConfirmationDiagnostics diagnostics;
-  diagnostics.driver_ack_output_sequence = 25U;
-  diagnostics.driver_ack_observed = true;
-  diagnostics.driver_accepted = true;
+  diagnostics.driver_state_observed = true;
+  diagnostics.driver_zero_output = true;
   diagnostics.quiet_odometry_samples = 3U;
   diagnostics.required_quiet_odometry_samples = 3U;
   diagnostics.last_linear_speed_mps = 0.012;
@@ -649,30 +658,30 @@ void testConfirmedMotionStopEvidenceIsPublished() {
   const std::string &status = fixture.writes.back();
   require(contains(status,
                    "\"motion_stop_evidence\": {\"state\": \"CONFIRMED\", "
-                   "\"reason\": \"stop_confirmed\", \"output_sequence\": 25, "
+                   "\"reason\": \"stop_confirmed\", \"output_sequence\": 23, "
                    "\"updated_at_s\": 1235.000000, "
                    "\"confirmation_state\": \"confirmed\", "
-                   "\"driver_ack_observed\": true, \"driver_accepted\": true, "
+                   "\"driver_state_observed\": true, \"driver_zero_output\": true, "
                    "\"quiet_odometry_samples\": 3, "
                    "\"required_quiet_odometry_samples\": 3, "
                    "\"last_linear_speed_mps\": 0.012000, "
                    "\"last_angular_speed_radps\": 0.034000, "
                    "\"linear_speed_threshold_mps\": 0.030000, "
                    "\"angular_speed_threshold_radps\": 0.080000}"),
-          "confirmed stop evidence must identify the refreshed zero ACK and quiet-odometry proof");
+          "confirmed stop evidence must identify the zero-output state and quiet-odometry proof");
 }
 
 void testAckOnlyConfirmationDoesNotClaimOdometryStopEvidence() {
   StopConfirmationConfig config;
-  config.evidence_policy = lingtu::nav::endpoint::StopConfirmationEvidencePolicy::DriverAckOnly;
+  config.evidence_policy = lingtu::nav::endpoint::StopConfirmationEvidencePolicy::ZeroOutputOnly;
   MotionStopEvidenceTracker evidence(config);
   evidence.begin(23U, 1234.0);
   StopConfirmationDiagnostics diagnostics;
-  diagnostics.driver_ack_observed = diagnostics.driver_accepted = true;
+  diagnostics.driver_state_observed = diagnostics.driver_zero_output = true;
   diagnostics.quiet_odometry_required = false;
   evidence.update(StopConfirmationState::Confirmed, diagnostics, 1235.0);
   const auto &snapshot = evidence.snapshot();
-  require(snapshot.state == "CONFIRMED" && snapshot.reason == "zero_command_accepted" &&
+  require(snapshot.state == "CONFIRMED" && snapshot.reason == "zero_output_confirmed" &&
               snapshot.required_quiet_odometry_samples == 0U &&
               snapshot.quiet_odometry_samples == 0U,
           "ACK-only confirmation must distinguish command acceptance from physical stop proof");
@@ -700,7 +709,7 @@ void testPendingMotionStopEvidenceIsPublished() {
                    "\"reason\": \"awaiting_stop_confirmation\", "
                    "\"output_sequence\": 22, \"updated_at_s\": 1234.250000, "
                    "\"confirmation_state\": \"pending\", "
-                   "\"driver_ack_observed\": false, \"driver_accepted\": false, "
+                   "\"driver_state_observed\": false, \"driver_zero_output\": false, "
                    "\"quiet_odometry_samples\": 0, "
                    "\"required_quiet_odometry_samples\": 4, "
                    "\"last_linear_speed_mps\": null, "
@@ -727,8 +736,8 @@ void testPendingMotionStopEvidenceRefreshesAtStatusCadence() {
   publisher.flush();
 
   StopConfirmationDiagnostics diagnostics;
-  diagnostics.driver_ack_observed = true;
-  diagnostics.driver_accepted = true;
+  diagnostics.driver_state_observed = true;
+  diagnostics.driver_zero_output = true;
   diagnostics.quiet_odometry_samples = 2U;
   diagnostics.required_quiet_odometry_samples = 3U;
   diagnostics.last_linear_speed_mps = 0.01;
@@ -748,9 +757,9 @@ void testPendingMotionStopEvidenceRefreshesAtStatusCadence() {
           "pending refresh must add exactly one cadence-limited snapshot");
   require(contains(fixture.writes.back(),
                    "\"motion_stop_evidence\": {\"state\": \"PENDING\", ") &&
-              contains(fixture.writes.back(), "\"driver_ack_observed\": true") &&
+              contains(fixture.writes.back(), "\"driver_state_observed\": true") &&
               contains(fixture.writes.back(), "\"quiet_odometry_samples\": 2"),
-          "pending refresh must expose current ACK and quiet-odometry progress");
+          "pending refresh must expose current driver state and quiet-odometry progress");
 }
 
 void testFailedMotionStopEvidenceKeepsExactFailure() {
@@ -759,12 +768,12 @@ void testFailedMotionStopEvidenceKeepsExactFailure() {
   config.quiet_odometry_samples = 2U;
   MotionStopEvidenceTracker evidence(config);
   StopConfirmationDiagnostics diagnostics;
-  diagnostics.driver_ack_observed = true;
-  diagnostics.driver_accepted = false;
+  diagnostics.driver_state_observed = true;
+  diagnostics.driver_zero_output = false;
   diagnostics.required_quiet_odometry_samples = 2U;
 
   evidence.begin(31U, 2000.0);
-  evidence.update(StopConfirmationState::DriverRejected, diagnostics, 2000.1);
+  evidence.update(StopConfirmationState::TimedOut, diagnostics, 2000.1);
   fixture.state.motion_stop_evidence = evidence.snapshot();
   NavStatusPublisher publisher(fixture.config(), 10.0, fixture.actions(), fixture.sink());
   TimingDiagnostics previous;
@@ -775,13 +784,13 @@ void testFailedMotionStopEvidenceKeepsExactFailure() {
   publisher.flush();
   require(contains(fixture.writes.back(),
                    "\"motion_stop_evidence\": {\"state\": \"FAILED\", "
-                   "\"reason\": \"driver_rejected\", \"output_sequence\": 31") &&
+                   "\"reason\": \"timed_out\", \"output_sequence\": 31") &&
               contains(fixture.writes.back(),
-                       "\"confirmation_state\": \"driver_rejected\", "
-                       "\"driver_ack_observed\": true, \"driver_accepted\": false"),
-          "driver rejection must remain distinct and retain the rejected ACK");
+                       "\"confirmation_state\": \"timed_out\", "
+                       "\"driver_state_observed\": true, \"driver_zero_output\": false"),
+          "nonzero driver state must remain visible when stop confirmation times out");
 
-  diagnostics.driver_ack_observed = false;
+  diagnostics.driver_state_observed = false;
   evidence.begin(32U, 2001.0);
   evidence.update(StopConfirmationState::TimedOut, diagnostics, 2005.0);
   fixture.state.motion_stop_evidence = evidence.snapshot();
@@ -800,8 +809,8 @@ void testZeroKeepalivePreservesConfirmedMotionStopEvidence() {
   Fixture fixture;
   MotionStopEvidenceTracker evidence;
   StopConfirmationDiagnostics diagnostics;
-  diagnostics.driver_ack_observed = true;
-  diagnostics.driver_accepted = true;
+  diagnostics.driver_state_observed = true;
+  diagnostics.driver_zero_output = true;
   diagnostics.quiet_odometry_samples = 8U;
   diagnostics.required_quiet_odometry_samples = 8U;
   diagnostics.last_linear_speed_mps = 0.0;
@@ -829,8 +838,8 @@ void testNonzeroOutputInvalidatesConfirmedMotionStopEvidence() {
   Fixture fixture;
   MotionStopEvidenceTracker evidence;
   StopConfirmationDiagnostics diagnostics;
-  diagnostics.driver_ack_observed = true;
-  diagnostics.driver_accepted = true;
+  diagnostics.driver_state_observed = true;
+  diagnostics.driver_zero_output = true;
   diagnostics.quiet_odometry_samples = 8U;
   diagnostics.required_quiet_odometry_samples = 8U;
   diagnostics.last_linear_speed_mps = 0.01;
@@ -854,7 +863,7 @@ void testNonzeroOutputInvalidatesConfirmedMotionStopEvidence() {
                    "\"reason\": \"nonzero_output_published\", \"output_sequence\": 0, "
                    "\"updated_at_s\": 4001.000000, "
                    "\"confirmation_state\": \"not_requested\", "
-                   "\"driver_ack_observed\": false, \"driver_accepted\": false, "
+                   "\"driver_state_observed\": false, \"driver_zero_output\": false, "
                    "\"quiet_odometry_samples\": 0"),
           "a later nonzero final output must invalidate all evidence from the prior stop");
 }

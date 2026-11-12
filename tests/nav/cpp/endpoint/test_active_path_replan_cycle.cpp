@@ -84,7 +84,6 @@ struct Fixture {
   int planner_input_calls{0};
   int motion_calls{0};
   int command_safety_calls{0};
-  int stop_linear_motion_calls{0};
   CommandSafetyConfig safety;
   std::optional<nav_kernel::Pose> map_body{nav_kernel::Pose{}};
   InputGateState input_gate;
@@ -153,7 +152,7 @@ struct Fixture {
     actions.defer_goal_abort = [this](const std::string &reason) {
       return goal_plan.deferAbort(reason);
     };
-    actions.record_stop_evidence_failure = [this](const std::string &reason) {
+    actions.hold = [this](const std::string &reason) {
       ++stop_evidence_failure_calls;
       last_stop_evidence_failure = reason;
     };
@@ -171,7 +170,7 @@ struct Fixture {
     actions.clear_control_estop = [] { return true; };
     actions.resume_control = [] { return true; };
     actions.cancel_inspection = [](const std::string &) {};
-    actions.clear_operator_resume_required = [] {};
+
     actions.set_autonomy_request_not_before = [](double) {};
     actions.persist_estop_latch = [](const std::string &) { return true; };
     actions.clear_persisted_estop_latch = [] { return true; };
@@ -202,7 +201,6 @@ struct Fixture {
       output.reason = "local_recovery_exhausted";
       return output;
     };
-    actions.stop_linear_motion = [this] { ++stop_linear_motion_calls; };
     actions.pause_linear_motion = [] {};
     return actions;
   }
@@ -210,7 +208,7 @@ struct Fixture {
   FinalActions finalControlActions() {
     FinalActions actions;
     actions.command_safety = [this](const CommandSafetyConfig &,
-                                    const nav_kernel::Twist &command, double) {
+                                    const nav_kernel::Twist &command) {
       ++command_safety_calls;
       CommandSafetyDecision decision;
       decision.should_publish = true;
@@ -218,13 +216,13 @@ struct Fixture {
       decision.reason = "accepted";
       return decision;
     };
-    actions.shape = [](const nav_kernel::Twist &command, double) {
+    actions.shape = [](const nav_kernel::Twist &command) {
       nav_kernel::VelocitySmootherOutput output;
       output.command = command;
       output.valid = true;
       return output;
     };
-    actions.commit = [](const nav_kernel::Twist &, double) { return true; };
+    actions.commit = [](const nav_kernel::Twist &) { return true; };
     actions.stop = [](double, const std::string &) {};
     return actions;
   }
@@ -262,7 +260,7 @@ struct Fixture {
   void activateInitialPath() {
     require(goal_plan.submit(request(), admission()).accepted, "initial goal was rejected");
     for (int attempt = 0; attempt < 2000; ++attempt) {
-      const auto result = goal_plan.advance(GoalPlanAdvanceContext{kFrameEpoch, false, 2.0});
+      const auto result = goal_plan.advance(GoalPlanAdvanceContext{kFrameEpoch, {}, 2.0});
       if (result.path_activated) {
         require(activations.size() == 1U, "initial path activated more than once");
         return;

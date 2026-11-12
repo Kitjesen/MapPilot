@@ -11,23 +11,13 @@ double linearSpeed(const nav_kernel::Twist &cmd) {
 
 CommandSafetyDecision
 evaluateCommandSafety(const CommandSafetyConfig &cfg,
-                      const nav_kernel::Twist &raw_request,
-                      double request_age_s) {
+                      const nav_kernel::Twist &raw_request) {
   CommandSafetyDecision decision;
   decision.should_publish = true;
-  if (cfg.cmd_max_age_s > 0.0 && request_age_s > cfg.cmd_max_age_s) {
-    decision.stopped = true;
-    decision.reason = "stale";
-    return decision;
-  }
-
   decision.cmd = raw_request;
-  for (double *axis : {&decision.cmd.vx, &decision.cmd.vy}) {
-    if (std::abs(*axis) > cfg.max_axis_speed_mps) {
-      *axis = std::copysign(cfg.max_axis_speed_mps, *axis);
-      decision.limited = true;
-    }
-  }
+  decision.cmd.vx = std::clamp(decision.cmd.vx, -cfg.max_vx_mps, cfg.max_vx_mps);
+  decision.cmd.vy = std::clamp(decision.cmd.vy, -cfg.max_vy_mps, cfg.max_vy_mps);
+  decision.limited = decision.cmd.vx != raw_request.vx || decision.cmd.vy != raw_request.vy;
   const double speed = linearSpeed(decision.cmd);
   if (speed > cfg.max_speed_mps && speed > 1e-6) {
     const double scale = cfg.max_speed_mps / speed;
@@ -42,7 +32,7 @@ evaluateCommandSafety(const CommandSafetyConfig &cfg,
 
   const double limited_speed = linearSpeed(decision.cmd);
   // A deadband above the single-axis budget would suppress every legal axis input.
-  const double single_axis_budget = std::min(cfg.max_speed_mps, cfg.max_axis_speed_mps);
+  const double single_axis_budget = std::min({cfg.max_speed_mps, cfg.max_vx_mps, cfg.max_vy_mps});
   if (cfg.min_motion_speed_mps <= single_axis_budget &&
       limited_speed > 1e-9 && limited_speed < cfg.min_motion_speed_mps) {
     decision.cmd.vx = 0.0;

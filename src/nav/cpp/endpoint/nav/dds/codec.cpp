@@ -89,6 +89,9 @@ commandIngressRequestFromDds(const lingtu_dds_NavigationCommandRequest &message)
       message.goal.orientation.w, message.max_speed_mps, message.acceptance_radius_m,
   };
   payload.reason = stringValue(message.reason);
+  payload.profile_name = stringValue(message.profile_name);
+  payload.external_session_id = stringValue(message.external_session_id);
+  payload.local_planner = stringValue(message.local_planner);
   return request;
 }
 
@@ -220,9 +223,7 @@ DriverControlSample copyDriverControlSample(const lingtu_dds_DriverControlState 
   sample.critical_fault = message.critical_fault;
   sample.control_assured = message.control_assured;
   sample.reason = stringValue(message.reason);
-  sample.accepted_producer_boot_id = stringValue(message.accepted_producer_boot_id);
-  sample.accepted_output_sequence = message.accepted_output_sequence;
-  sample.last_command_accepted = message.last_command_accepted;
+  sample.zero_output = message.zero_output;
   return sample;
 }
 

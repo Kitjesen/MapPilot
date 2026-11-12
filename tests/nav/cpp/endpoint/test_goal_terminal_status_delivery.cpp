@@ -97,7 +97,7 @@ struct Fixture {
     actions.defer_goal_abort = [this](const std::string &reason) {
       return goal_plan.deferAbort(reason);
     };
-    actions.record_stop_evidence_failure = [](const std::string &) {};
+    actions.hold = [](const std::string &) {};
     actions.sync_goal_diagnostics = [] {};
     actions.rolling_segment_active = [] { return false; };
     actions.preempt_rolling_segment = [](const std::string &) { return true; };
@@ -109,7 +109,7 @@ struct Fixture {
     actions.clear_control_estop = [] { return true; };
     actions.resume_control = [] { return true; };
     actions.cancel_inspection = [](const std::string &) {};
-    actions.clear_operator_resume_required = [] {};
+
     actions.set_autonomy_request_not_before = [](double) {};
     actions.persist_estop_latch = [](const std::string &) { return true; };
     actions.clear_persisted_estop_latch = [] { return true; };
@@ -143,7 +143,7 @@ struct Fixture {
     require(goal_plan.submit(request, admission()).accepted, "fixture goal submission failed");
 
     for (int i = 0; i < 1000; ++i) {
-      if (goal_plan.advance(GoalPlanAdvanceContext{7U, false, 2.0 + i * 0.001}).path_activated) {
+      if (goal_plan.advance(GoalPlanAdvanceContext{7U, {}, 2.0 + i * 0.001}).path_activated) {
         return;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(1));

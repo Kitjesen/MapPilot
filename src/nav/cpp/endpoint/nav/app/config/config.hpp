@@ -48,6 +48,8 @@ struct CliConfig {
           ? nav_kernel::LocalPlannerBackend::Scan
           : nav_kernel::LocalPlannerBackend::Cmu};
   int domain_id{0};
+  std::vector<nav_kernel::LocalPlannerBackend> local_planners{
+      nav_kernel::LocalPlannerBackend::Cmu, nav_kernel::LocalPlannerBackend::Scan};
   bool use_simulation_clock{false};
   double tick_hz{::lingtu::settings::control::native_nav::tick_hz};
   double control_loop_deadline_miss_ratio_limit{::lingtu::settings::control::native_nav::control_loop_deadline_miss_ratio_limit};
@@ -146,9 +148,6 @@ struct CliConfig {
   double sensor_offset_x_m{0.0};
   double sensor_offset_y_m{0.0};
   double sensor_offset_z_m{0.0};
-  // Optional RobotConfig-selected offline BODY2 collision model. Empty keeps
-  // the existing dimension-derived OBB for robots without an exported model.
-  std::string navigation_body_file;
   lingtu::nav::plan::GlobalPlannerOptions octoplanner_options{};
   lingtu::nav::plan::far_planner::FarPlannerConfig far_options{};
   lingtu::nav::plan::MapIdentity map_identity{};
@@ -161,6 +160,7 @@ struct CliConfig {
 };
 
 CliConfig parseArgs(int argc, char **argv);
+void applyPlannerGeometry(CliConfig &cfg);
 
 CommandSafetyConfig commandSafetyConfig(const CliConfig &cfg);
 OperatorMotionAuthorityOptions operatorMotionAuthorityOptions(const CliConfig &cfg);
@@ -169,7 +169,6 @@ rolling::SegmentExecutorConfig rollingSegmentExecutorConfig(const CliConfig &cfg
 StatusWriterConfig buildStatusWriterConfig(const CliConfig &cfg,
                                            const InputGateConfig &gate_cfg);
 nav_kernel::LocalPlannerParams buildLocalPlannerParams(const CliConfig &cfg);
-std::shared_ptr<const collision::Body> buildNavigationBody(const CliConfig &cfg);
 lingtu::nav::navigation::ExecutorConfig buildExecutorConfig(const CliConfig &cfg);
 
 }  // namespace lingtu::nav::endpoint

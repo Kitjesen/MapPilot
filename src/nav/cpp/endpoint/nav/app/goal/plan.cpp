@@ -98,14 +98,11 @@ GoalPlanSubmitResult GoalPlanController::submit(const GoalPlanRequest &request,
   if (!context.motion_allowed) {
     return reject("estop_latched", true, true);
   }
-  if (context.operator_takeover_latched) {
-    return reject("operator_takeover_resume_required", true, true);
+  if (!context.hold_reason.empty()) {
+    return reject(context.hold_reason, true, true);
   }
   if (!context.autonomy_mode) {
     return reject(std::string{"goal_not_allowed_in_"} + context.control_mode_name, true, true);
-  }
-  if (!context.driver_control_blocker.empty()) {
-    return reject(context.driver_control_blocker, true, true);
   }
   if (context.autonomy_request_not_before_s > 0.0 &&
       (!std::isfinite(request.source_stamp_s) || request.source_stamp_s <= 0.0 ||
@@ -190,14 +187,11 @@ GoalPlanSubmitResult GoalPlanController::replanActive(const GoalPlanAdmissionCon
   if (!context.motion_allowed) {
     return reject("estop_latched", true, true);
   }
-  if (context.operator_takeover_latched) {
-    return reject("operator_takeover_resume_required", true, true);
+  if (!context.hold_reason.empty()) {
+    return reject(context.hold_reason, true, true);
   }
   if (!context.autonomy_mode) {
     return reject(std::string{"goal_not_allowed_in_"} + context.control_mode_name, true, true);
-  }
-  if (!context.driver_control_blocker.empty()) {
-    return reject(context.driver_control_blocker, true, true);
   }
   if (!context.map_position) {
     return reject(context.odometry_ready ? "map_odom_tf_not_ready" : "odometry_not_ready");
@@ -330,18 +324,14 @@ GoalPlanController::resumePending(const GoalPlanAdmissionContext &fresh_context,
     return reject_pending(lingtu::message::NavigationGoalState::Cancelled, "estop_latched", true,
                           true);
   }
-  if (fresh_context.operator_takeover_latched) {
+  if (!fresh_context.hold_reason.empty()) {
     return reject_pending(lingtu::message::NavigationGoalState::Cancelled,
-                          "operator_takeover_resume_required", true, true);
+                          fresh_context.hold_reason, true, true);
   }
   if (!fresh_context.autonomy_mode) {
     return reject_pending(lingtu::message::NavigationGoalState::Cancelled,
                           std::string{"goal_not_allowed_in_"} + fresh_context.control_mode_name,
                           true, true);
-  }
-  if (!fresh_context.driver_control_blocker.empty()) {
-    diagnostics_.reason = fresh_context.driver_control_blocker;
-    return {false, diagnostics_.reason, false, false, true, std::nullopt};
   }
   if (!fresh_context.input_ready && !localCollisionInputHold(fresh_context.input_gate_reason)) {
     if (goalPlanInputGapIsRecoverable(fresh_context.input_gate_reason)) {
@@ -526,7 +516,7 @@ GoalPlanAdvanceResult GoalPlanController::advance(const GoalPlanAdvanceContext &
     if (completing_replan) {
       const auto planning_goal_epoch = planning_goal_epoch_;
       clearPlanningIdentity();
-      if (plan_result.cancelled || context.operator_takeover_latched) {
+      if (plan_result.cancelled || !context.hold_reason.empty()) {
         advance_result.terminal_after_stop =
             terminalAfterStop(diagnostics_.reason,
                               deferActiveTerminalWithTicket(
@@ -538,7 +528,7 @@ GoalPlanAdvanceResult GoalPlanController::advance(const GoalPlanAdvanceContext &
       }
       return advance_result;
     }
-    if (planning_target_ && !context.operator_takeover_latched &&
+    if (planning_target_ && context.hold_reason.empty() &&
         (completion->timed_out ||
          (!plan_result.cancelled && retryableGlobalSearchFailure(diagnostics_.reason)))) {
       GoalPlanRequest retry_request;
@@ -566,9 +556,9 @@ GoalPlanAdvanceResult GoalPlanController::advance(const GoalPlanAdvanceContext &
     return advance_result;
   }
 
-  if (context.operator_takeover_latched) {
+  if (!context.hold_reason.empty()) {
     diagnostics_.accepted = false;
-    diagnostics_.reason = "operator_takeover_discarded_plan";
+    diagnostics_.reason = context.hold_reason;
     if (completing_replan) {
       clearPlanningIdentity();
       advance_result.terminal_after_stop = terminalAfterStop(
@@ -724,18 +714,14 @@ GoalPlanController::activateDeferredReplacement(double now_s,
     return failDeferredReplacementLocked(lingtu::message::NavigationGoalState::Cancelled,
                                          "estop_latched");
   }
-  if (fresh_context.operator_takeover_latched) {
+  if (!fresh_context.hold_reason.empty()) {
     return failDeferredReplacementLocked(lingtu::message::NavigationGoalState::Cancelled,
-                                         "operator_takeover_resume_required");
+                                         fresh_context.hold_reason);
   }
   if (!fresh_context.autonomy_mode) {
     return failDeferredReplacementLocked(lingtu::message::NavigationGoalState::Cancelled,
                                          std::string{"goal_not_allowed_in_"} +
                                              fresh_context.control_mode_name);
-  }
-  if (!fresh_context.driver_control_blocker.empty()) {
-    return failDeferredReplacementLocked(lingtu::message::NavigationGoalState::Cancelled,
-                                         fresh_context.driver_control_blocker);
   }
   if (!fresh_context.input_ready) {
     const std::string &reason = fresh_context.input_gate_reason;
@@ -1030,14 +1016,11 @@ GoalPlanTaskTransition GoalPlanController::deferResume(const std::string &task_i
   if (!context.motion_allowed) {
     return {false, "estop_latched", {}};
   }
-  if (context.operator_takeover_latched) {
-    return {false, "operator_takeover_resume_required", {}};
+  if (!context.hold_reason.empty()) {
+    return {false, context.hold_reason, {}};
   }
   if (!context.autonomy_mode) {
     return {false, std::string{"resume_not_allowed_in_"} + context.control_mode_name, {}};
-  }
-  if (!context.driver_control_blocker.empty()) {
-    return {false, context.driver_control_blocker, {}};
   }
   if (!context.input_ready) {
     if (goalPlanInputGapIsRecoverable(context.input_gate_reason)) {

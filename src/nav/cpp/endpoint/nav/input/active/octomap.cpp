@@ -2,12 +2,14 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <stdexcept>
 #include <system_error>
 #include <utility>
 
 
 #include "lingtu/maps/storage/store.hpp"
+#include "lingtu/maps/no_go.hpp"
 #include "nav/cpp/planning/global/octoplanner/octoplanner3d_core.hpp"
 #include "nav/cpp/platform/runtime.hpp"
 
@@ -53,8 +55,10 @@ bool sameFileState(const std::filesystem::path &path,
 }  // namespace
 
 ValidatedOctomap::ValidatedOctomap(std::filesystem::path load_path,
-                                   lingtu::nav::plan::MapIdentity identity)
-    : load_path_(std::move(load_path)), identity_(std::move(identity)) {}
+                                   lingtu::nav::plan::MapIdentity identity,
+                                   std::shared_ptr<const std::vector<lingtu::maps::NoGoRegion>> no_go_regions)
+    : load_path_(std::move(load_path)), identity_(std::move(identity)),
+      no_go_regions_(std::move(no_go_regions)) {}
 
 ValidatedOctomap::~ValidatedOctomap() {
   std::error_code error;
@@ -82,6 +86,13 @@ ActiveOctomapGateResult ActiveOctomapGate::prepare(
   if (error) {
     return {nullptr, "cannot inspect configured octomap: " + error.message()};
   }
+  std::shared_ptr<const std::vector<lingtu::maps::NoGoRegion>> no_go_regions;
+  try {
+    no_go_regions = std::make_shared<const std::vector<lingtu::maps::NoGoRegion>>(
+        lingtu::maps::ReadNoGoRegions(source.parent_path()));
+  } catch (const std::exception& error) {
+    return {nullptr, std::string("cannot load no-go regions: ") + error.what()};
+  }
   std::string copy_error;
   auto snapshot = copyPrivateSnapshot(source, &copy_error);
   if (snapshot.empty()) {
@@ -91,8 +102,14 @@ ActiveOctomapGateResult ActiveOctomapGate::prepare(
     std::filesystem::remove(snapshot, error);
     return {nullptr, "octomap changed while it was being loaded"};
   }
+  // Keep the source stamp so persistent preparation survives private snapshots.
+  std::filesystem::last_write_time(snapshot, modified, error);
+  if (error) {
+    std::fprintf(stderr,"navd snapshot stamp not preserved; prepared cache may rebuild: %s\n",
+                 error.message().c_str());
+  }
   cached_artifact_ = std::shared_ptr<const ValidatedOctomap>(
-      new ValidatedOctomap(std::move(snapshot), *bound.identity));
+      new ValidatedOctomap(std::move(snapshot), *bound.identity, std::move(no_go_regions)));
   return {cached_artifact_, {}};
 }
 
@@ -110,8 +127,10 @@ lingtu::nav::plan::GlobalPlanResult runWithActiveOctomap(
   if (!prepared.ok()) {
     throw std::runtime_error("active_octomap_gate_rejected: " + prepared.reason);
   }
+  auto constrained = request;
+  constrained.no_go_regions = prepared.artifact->noGoRegions();
   auto result = planner(prepared.artifact->loadPath(), prepared.artifact->identity(),
-                        request, cancel_check);
+                        constrained, cancel_check);
   result.map_identity = prepared.artifact->identity();
   return result;
 }
