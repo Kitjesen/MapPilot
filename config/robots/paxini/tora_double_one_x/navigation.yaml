@@ -1,0 +1,16 @@
+# Offline geometry profile; not a real RobotConfig or a motion-qualified preset.
+reference_frame: base_imu_link_0
+posture: urdf_zero_locked
+geometry:
+  vehicle_length: 0.78
+  vehicle_width: 0.51
+  vehicle_height: 1.70
+  # All collision meshes fit inside 0.464488 m; add 5 cm and round up to centimetres.
+  collision_cylinder_radius: 0.52
+  collision_cylinder_offset: 0.0
+  collision_hard_margin: 0.0  # The horizontal allowance is already in the radius.
+  # Locked-pose driving band covers all nonwheel meshes; the lowest 3.8 cm of wheels contacts the floor.
+  collision_clearance_below: 0.14
+  collision_clearance_above: 1.57
+  support_height: 0.178000853265161
+  support_height_tolerance: 0.0  # No measured field tolerance is available.

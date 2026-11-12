@@ -1,0 +1,2457 @@
+<?xml version="1.0" ?>
+<robot name="tora_double_one_x">
+  <link name="base_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.1214431578457 -0.000102735418228711 0.21223761234848"/>
+      <mass value="23.517826743742"/>
+      <inertia ixx="0.306892100473942" ixy="0.000286351664264955" ixz="-0.107001702573724" iyy="0.461761567531327" iyz="-5.68728689181782E-05" izz="0.583769982772607"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/base_link.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/base_link.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="left_front_leg_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.187531646380635 -0.00653655102896653 -0.0572692376010847"/>
+      <mass value="1.44683721783096"/>
+      <inertia ixx="0.00473726704959332" ixy="0.000174514514574731" ixz="0.00426742440470917" iyy="0.0223868210160904" iyz="-0.000183772840956305" izz="0.018712640382397"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_front_leg_link.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.62745 0.63137 0.63529 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_front_leg_link.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_front_leg_joint" type="revolute">
+    <origin xyz="0.0194999999994844 0.16779999999999 0.255000853265161" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="left_front_leg_link"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.6353" upper="0.2443" effort="20" velocity="50"/>
+  </joint>
+  <link name="left_front_wheel_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-4.6234174e-06 -0.021855738 1.6834039e-05"/>
+      <mass value="2.758"/>
+      <inertia ixx="0.0080104976" ixy="-2.7207298e-07" ixz="4.7059373e-06" iyy="0.012733165" iyz="1.0375982e-06" izz="0.0080166125"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_front_wheel_link.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_front_wheel_link.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_front_wheel_joint" type="continuous">
+    <origin xyz="0.2999999999997 0.05140000000001 -0.148069999999905" rpy="0 0 0"/>
+    <parent link="left_front_leg_link"/>
+    <child link="left_front_wheel_link"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="20" velocity="50"/>
+  </joint>
+  <link name="left_front_ultrasonic_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.0108029017182465 8.3993898930268E-06 -0.00384353657613046"/>
+      <mass value="0.0112982456938478"/>
+      <inertia ixx="1.10546224448942E-06" ixy="-4.3746944812906E-12" ixz="1.4083241215539E-07" iyy="1.34176248811735E-06" iyz="1.18948530073086E-11" izz="7.59111432099481E-07"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_front_ultrasonic_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_front_ultrasonic_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_front_ultrasonic_joint_0" type="fixed">
+    <origin xyz="0.390904261682746 -0.00410850741447835 -0.0587290651012725" rpy="0 0 0"/>
+    <parent link="left_front_leg_link"/>
+    <child link="left_front_ultrasonic_link_0"/>
+  </joint>
+  <link name="left_center_ultrasonic_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.000118848006822964 -0.0114209862106499 -0.00101194929686663"/>
+      <mass value="0.0112981559803248"/>
+      <inertia ixx="7.18379330615409E-07" ixy="-1.9833967957198E-09" ixz="7.62423958790862E-08" iyy="1.15691981560587E-06" iyz="-1.6242708881691E-08" izz="1.33096814283341E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_center_ultrasonic_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_center_ultrasonic_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_center_ultrasonic_joint_0" type="fixed">
+    <origin xyz="0.147180867844175 0.0308337167583643 -0.0761555223462645" rpy="0 0 0"/>
+    <parent link="left_front_leg_link"/>
+    <child link="left_center_ultrasonic_link_0"/>
+  </joint>
+  <link name="right_front_leg_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.186996194218039 0.00647518171174724 -0.0571715296753652"/>
+      <mass value="1.44985367155739"/>
+      <inertia ixx="0.00474681288006502" ixy="-0.000194265737507573" ixz="0.004294498314245" iyy="0.0224631772976551" iyz="0.000187168499399753" izz="0.0187870215967136"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_front_leg_link.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.62745 0.63137 0.63529 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_front_leg_link.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_front_leg_joint" type="revolute">
+    <origin xyz="0.0194999999994834 -0.16779999999999 0.255000853265161" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="right_front_leg_link"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.6353" upper="0.2443" effort="20" velocity="50"/>
+  </joint>
+  <link name="right_front_wheel_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-4.5394824e-06 0.021855707 -1.6802146e-05"/>
+      <mass value="2.758"/>
+      <inertia ixx="0.0080104994" ixy="-2.7060972e-07" ixz="-4.7096543e-06" iyy="0.012733177" iyz="-1.0370392e-06" izz="0.0080166228"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_front_wheel_link.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_front_wheel_link.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_front_wheel_joint" type="continuous">
+    <origin xyz="0.300000000000043 -0.05140000000001 -0.148069999999996" rpy="0 0 0"/>
+    <parent link="right_front_leg_link"/>
+    <child link="right_front_wheel_link"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="20" velocity="50"/>
+  </joint>
+  <link name="right_front_ultrasonic_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.0108029017181446 8.39938980362609E-06 -0.00384353657606426"/>
+      <mass value="0.0112982456938479"/>
+      <inertia ixx="1.10546224448939E-06" ixy="-4.37469447718743E-12" ixz="1.40832412155426E-07" iyy="1.34176248811735E-06" iyz="1.18948530036754E-11" izz="7.59111432099515E-07"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_front_ultrasonic_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_front_ultrasonic_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_front_ultrasonic_joint_0" type="fixed">
+    <origin xyz="0.390904261682655 0.00409171798599162 -0.0587290651013232" rpy="0 0 0"/>
+    <parent link="right_front_leg_link"/>
+    <child link="right_front_ultrasonic_link_0"/>
+  </joint>
+  <link name="right_center_ultrasonic_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.000116746906011711 0.0114225287405034 -0.000995416200640642"/>
+      <mass value="0.0112980675060096"/>
+      <inertia ixx="7.18357688048329E-07" ixy="1.9919493978322E-09" ixz="7.62511410679653E-08" iyy="1.15690367667271E-06" iyz="1.62342000187854E-08" izz="1.33096238242404E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_center_ultrasonic_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_center_ultrasonic_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_center_ultrasonic_joint_0" type="fixed">
+    <origin xyz="0.147178834510048 -0.0308344837128025 -0.0761719283111942" rpy="0 0 0"/>
+    <parent link="right_front_leg_link"/>
+    <child link="right_center_ultrasonic_link_0"/>
+  </joint>
+  <link name="waist_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.000365210708966511 0.000988978131849448 0.0647132423001052"/>
+      <mass value="2.36317676943111"/>
+      <inertia ixx="0.00744574664016866" ixy="1.48772664832605E-07" ixz="1.04570948394985E-05" iyy="0.00774269426304858" iyz="-4.70319887818941E-05" izz="0.00688904544185642"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/waist_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/waist_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="waist_joint_0" type="fixed">
+    <origin xyz="0 0 0.305000853265161" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="waist_link_0"/>
+  </joint>
+  <link name="waist_link_1">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.00061191357 -0.0096996686 0.17464541"/>
+      <mass value="4.6"/>
+      <inertia ixx="0.25737366" ixy="1.7912906e-06" ixz="0.00077955308" iyy="0.23620509" iyz="0.009044787" izz="0.034145941"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/waist_link_1.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/waist_link_1.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="waist_joint_1" type="revolute">
+    <origin xyz="-0.000449999999614315 0 0.084799999999993" rpy="0 0 0"/>
+    <parent link="waist_link_0"/>
+    <child link="waist_link_1"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.5358" upper="1.5358" effort="207" velocity="1.0472"/>
+  </joint>
+  <link name="waist_link_2">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0028248121 0.010966603 0.1097032"/>
+      <mass value="7.9"/>
+      <inertia ixx="0.19801833" ixy="9.7271595e-06" ixz="-0.0022395472" iyy="0.19620864" iyz="-0.0095775878" izz="0.013511409"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/waist_link_2.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/waist_link_2.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="waist_joint_2" type="revolute">
+    <origin xyz="-2.72703873991653E-05 0 0.35203297561959" rpy="0 0 0"/>
+    <parent link="waist_link_1"/>
+    <child link="waist_link_2"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.3038" upper="2.3038" effort="207" velocity="1.0472"/>
+  </joint>
+  <link name="waist_link_3">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00388395981776962 0.000114604046681327 0.0703371161578105"/>
+      <mass value="2.55856240662883"/>
+      <inertia ixx="0.0193666018019539" ixy="-1.58279095756265E-06" ixz="-8.57507801488114E-05" iyy="0.011449739196331" iyz="5.33070972508807E-06" izz="0.0126080398127157"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/waist_link_3.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/waist_link_3.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="waist_joint_3" type="revolute">
+    <origin xyz="-2.609754763476E-05 0 0.220121511218" rpy="0 0 0"/>
+    <parent link="waist_link_2"/>
+    <child link="waist_link_3"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.2340" upper="1.1868" effort="207" velocity="1.0472"/>
+  </joint>
+  <link name="waist_link_4">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.0883883622888866 7.52822980552233E-05 0.189436081181416"/>
+      <mass value="13.3209537214381"/>
+      <inertia ixx="0.140341671992841" ixy="-2.47028168571402E-05" ixz="0.0317501966250186" iyy="0.13703783448997" iyz="3.64101545482872E-05" izz="0.0662691683905965"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/waist_link_4.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.95686 0.95686 0.95686 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/waist_link_4.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="waist_joint_4" type="revolute">
+    <origin xyz="0.0515000012277532 0 0.118839999467742" rpy="0 0 0"/>
+    <parent link="waist_link_3"/>
+    <child link="waist_link_4"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-0.4886" upper="0.4886" effort="108" velocity="1.0472"/>
+  </joint>
+  <link name="neck_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00297262864981426 -5.05954845278166E-05 0.055261281578181"/>
+      <mass value="0.192340892383212"/>
+      <inertia ixx="0.000276144738797642" ixy="1.01762031083138E-08" ixz="-1.54567222141495E-05" iyy="0.000282426941557964" iyz="3.83096074398412E-07" izz="6.59445610072043E-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/neck_link.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/neck_link.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="neck_joint" type="revolute">
+    <origin xyz="-0.122732699778597 0 0.366500000531438" rpy="0 0 0"/>
+    <parent link="waist_link_4"/>
+    <child link="neck_link"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-1.5358" upper="1.5358" effort="20" velocity="3.927"/>
+  </joint>
+  <link name="head_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.053601905 0.02866194 0.053469865"/>
+      <mass value="1.55"/>
+      <inertia ixx="0.036" ixy="0" ixz="0" iyy="0.036" iyz="0" izz="0.036"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/head_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/head_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="head_joint_0" type="revolute">
+    <origin xyz="0.00500000000000002 0 0.0799999999999998" rpy="0 0 0"/>
+    <parent link="neck_link"/>
+    <child link="head_link_0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.0122" upper="0.6632" effort="20" velocity="3.927"/>
+  </joint>
+  <link name="head_imu_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-8.67619350895712E-05 -0.000671165019855889 0.00226392613127668"/>
+      <mass value="0.00781659345587542"/>
+      <inertia ixx="2.29176184747535E-06" ixy="4.44927309717979E-10" ixz="2.96576981702704E-09" iyy="1.88088616711126E-06" iyz="1.53981430389977E-08" izz="3.53758206283503E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/head_imu_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.62745 0.63137 0.63529 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/head_imu_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="head_imu_joint_0" type="fixed">
+    <origin xyz="0.0739999999879494 -0.0324999999900628 0.0499999999999998" rpy="0 0 0"/>
+    <parent link="head_link_0"/>
+    <child link="head_imu_link_0"/>
+  </joint>
+  <link name="head_rgb_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.015702679267951 -1.92210242328773E-06 0.00283052288088426"/>
+      <mass value="0.00908720340158415"/>
+      <inertia ixx="1.09145152861572E-06" ixy="-2.34004772258356E-10" ixz="3.44599683076741E-07" iyy="1.52373275254915E-06" iyz="2.82424727538649E-10" izz="1.22795877188324E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/head_rgb_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/head_rgb_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="head_rgb_joint_0" type="fixed">
+    <origin xyz="0.152775844668664 0 0.0844588970120199" rpy="5.28175465407292E-05 0.0822305821104359 0"/>
+    <parent link="head_link_0"/>
+    <child link="head_rgb_link_0"/>
+  </joint>
+  <link name="head_rgbd_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.0110887746455935 -0.0304517421693825 0.00451770305905619"/>
+      <mass value="0.0307621963568962"/>
+      <inertia ixx="2.04550199050936E-05" ixy="1.02403622369801E-07" ixz="-4.63677033159495E-08" iyy="2.94143611679254E-06" iyz="-2.9691808305983E-08" izz="2.03274254517541E-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/head_rgbd_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/head_rgbd_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="head_rgbd_joint_0" type="fixed">
+    <origin xyz="0.142791327133741 0.0325000000000132 0.11592166915588" rpy="5.26390745843591E-05 0 0"/>
+    <parent link="head_link_0"/>
+    <child link="head_rgbd_link_0"/>
+  </joint>
+  <link name="head_lidar_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00388072933659935 -4.32501744211865E-06 -0.0273839584772628"/>
+      <mass value="0.15234496268046"/>
+      <inertia ixx="7.12715015169334E-05" ixy="2.01774242985386E-10" ixz="9.99797261166237E-07" iyy="7.10992915241386E-05" iyz="1.47467980094266E-08" izz="6.4243125136277E-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/head_lidar_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/head_lidar_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="head_lidar_joint_0" type="fixed">
+    <origin xyz="0.0896490400924848 0 0.0162963757199397" rpy="-3.14159265358974 -0.139626340159576 0"/>
+    <parent link="head_link_0"/>
+    <child link="head_lidar_link_0"/>
+  </joint>
+  <link name="right_arm_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.0023437317 -0.066913521 -0.00029831065"/>
+      <mass value="1.438"/>
+      <inertia ixx="0.0078186809" ixy="-0.00022226029" ixz="-1.7695346e-05" iyy="0.00085518654" iyz="-2.6879461e-05" izz="0.0076163398"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_arm_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.62745 0.63137 0.63529 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_arm_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_arm_joint_0" type="revolute">
+    <origin xyz="-0.107500008004795 -0.0949999999874005 0.249320000531464" rpy="0 0 0"/>
+    <parent link="waist_link_4"/>
+    <child link="right_arm_link_0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.7576" upper="2.7576" effort="120" velocity="3.1416"/>
+  </joint>
+  <link name="right_arm_link_1">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.026983932 -0.0033236712 -0.11026329"/>
+      <mass value="1.438"/>
+      <inertia ixx="0.021901486" ixy="-1.4442864e-05" ixz="-0.0046159368" iyy="0.022895564" iyz="1.3336749e-05" izz="0.0022024261"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_arm_link_1.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.62745 0.63137 0.63529 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_arm_link_1.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_arm_joint_1" type="revolute">
+    <origin xyz="0 -0.075 0" rpy="0 0 0"/>
+    <parent link="right_arm_link_0"/>
+    <child link="right_arm_link_1"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-2.3212" upper="0.4014" effort="120" velocity="3.1416"/>
+  </joint>
+  <link name="right_arm_link_2">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00230324932466612 -0.000415041866432653 -0.0546138153894238"/>
+      <mass value="0.349887170148782"/>
+      <inertia ixx="0.000489073406270074" ixy="1.50048248060747E-06" ixz="5.35840443865481E-05" iyy="0.000528107769663564" iyz="-7.16009152032027E-06" izz="0.000269879385830112"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_arm_link_2.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.62745 0.63137 0.63529 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_arm_link_2.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_arm_joint_2" type="revolute">
+    <origin xyz="0 -0.030000000600852 -0.184799999904795" rpy="0 0 0"/>
+    <parent link="right_arm_link_1"/>
+    <child link="right_arm_link_2"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.7576" upper="2.7576" effort="60" velocity="3.927"/>
+  </joint>
+  <link name="right_arm_link_3">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.019173486 -0.0045730961 -0.082111726"/>
+      <mass value="0.92"/>
+      <inertia ixx="0.0078118715" ixy="-2.9081393e-05" ixz="-0.0014814774" iyy="0.0080456849" iyz="-5.2201364e-05" izz="0.00091730782"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_arm_link_3.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.62745 0.63137 0.63529 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_arm_link_3.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_arm_joint_3" type="revolute">
+    <origin xyz="0.0199999980587658 0 -0.105199999935598" rpy="0 0 0"/>
+    <parent link="right_arm_link_2"/>
+    <child link="right_arm_link_3"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.6703" upper="0.3141" effort="60" velocity="3.927"/>
+  </joint>
+  <link name="right_arm_link_4">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.00052993028 -0.0024811098 -0.080589843"/>
+      <mass value="0.798"/>
+      <inertia ixx="0.0070665457" ixy="3.8955568e-06" ixz="-7.0127421e-05" iyy="0.0070491253" iyz="-0.00019177491" izz="0.00045913117"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_arm_link_4.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.62745 0.63137 0.63529 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_arm_link_4.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_arm_joint_4" type="revolute">
+    <origin xyz="-0.02 0 -0.13201" rpy="0 0 0"/>
+    <parent link="right_arm_link_3"/>
+    <child link="right_arm_link_4"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.7576" upper="2.7576" effort="20" velocity="3.927"/>
+  </joint>
+  <link name="right_arm_link_5">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0031586201 -0.0036353086 0.0058365839"/>
+      <mass value="0.569"/>
+      <inertia ixx="0.00039470905" ixy="1.0250211e-05" ixz="-0.00010480822" iyy="0.00049312333" iyz="1.2233125e-05" izz="0.00017177571"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_arm_link_5.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.62745 0.63137 0.63529 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_arm_link_5.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_arm_joint_5" type="revolute">
+    <origin xyz="0 0 -0.178" rpy="0 0 0"/>
+    <parent link="right_arm_link_4"/>
+    <child link="right_arm_link_5"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-1.3613" upper="1.3613" effort="20" velocity="3.927"/>
+  </joint>
+  <link name="right_arm_link_6">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.014778055 0.038673395 -0.10569556"/>
+      <mass value="0.959"/>
+      <inertia ixx="0.015820368" ixy="-0.0010731825" ixz="0.0007331736" iyy="0.017186116" iyz="0.0039085666" izz="0.0051355743"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_arm_link_6.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.62745 0.63137 0.63529 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_arm_link_6.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_arm_joint_6" type="revolute">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="right_arm_link_5"/>
+    <child link="right_arm_link_6"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.5358" upper="1.5358" effort="20" velocity="3.927"/>
+  </joint>
+  <link name="right_palm_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.000198872856514733 -0.0018930455779045 -0.0208565974434863"/>
+      <mass value="0.135107994120618"/>
+      <inertia ixx="0.000104586196496367" ixy="-7.69247889977505E-07" ixz="7.40747307084093E-07" iyy="0.00015591945391722" iyz="8.26004736252084E-06" izz="9.38212108566662E-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_palm_link.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_palm_link.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_palm_joint" type="fixed">
+    <origin xyz="0 0.000135367293623595 -0.0568020939776286" rpy="0 0 0"/>
+    <parent link="right_arm_link_6"/>
+    <child link="right_palm_link"/>
+  </joint>
+  <link name="right_palm_rgb_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.00464735006297745 1.23599047663348E-15 0.000127071500931251"/>
+      <mass value="0.000654042467848703"/>
+      <inertia ixx="1.19134649754253E-08" ixy="5.44626316985924E-22" ixz="5.87163576825396E-10" iyy="9.12315073908897E-09" iyz="-2.68210671817292E-23" izz="8.60499726201905E-09"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_palm_rgb_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_palm_rgb_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_palm_rgb_joint_0" type="fixed">
+    <origin xyz="-0.00451244484106304 0.0201025347313107 -0.0351064059959285" rpy="3.14159265358979 0.833566385941898 1.5707963267949"/>
+    <parent link="right_palm_link"/>
+    <child link="right_palm_rgb_link_0"/>
+  </joint>
+  <link name="right_thumb_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00915426636054534 -0.00235767779723992 0.000527984669156031"/>
+      <mass value="0.00395630335895201"/>
+      <inertia ixx="1.47582052428826E-07" ixy="-5.86420721560808E-08" ixz="-2.13906436163318E-08" iyy="2.59416896007673E-07" iyz="-5.70362088288863E-09" izz="3.5679101786101E-07"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_thumb_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_thumb_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_thumb_joint_0" type="revolute">
+    <origin xyz="0.030018 0.018327 -0.017808" rpy="0 0 0.11491"/>
+    <parent link="right_palm_link"/>
+    <child link="right_thumb_link_0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.9133" effort="20" velocity="50"/>
+  </joint>
+  <link name="right_thumb_link_1">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0314593350748727 0.0051856221649982 4.3085262632624E-05"/>
+      <mass value="0.0186700386421083"/>
+      <inertia ixx="2.78066115760517E-06" ixy="-6.25555209934524E-07" ixz="-2.18825203509212E-08" iyy="7.13516407242001E-06" iyz="-1.8170455125107E-09" izz="5.83821189328892E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_thumb_link_1.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_thumb_link_1.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_thumb_joint_1" type="revolute">
+    <origin xyz="0.0215 1.91E-05 0.0015" rpy="-1.5708 0 0"/>
+    <parent link="right_thumb_link_0"/>
+    <child link="right_thumb_link_1"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.5186" effort="20" velocity="50"/>
+  </joint>
+  <link name="right_thumb_link_2">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.013872849340888 -0.0092547819061669 -0.00024833922405142"/>
+      <mass value="0.015451379991269"/>
+      <inertia ixx="5.9505518483459E-07" ixy="1.74249608727136E-07" ixz="-1.71739321706732E-08" iyy="1.26324188750378E-06" iyz="-3.42732295383561E-09" izz="1.20339035485985E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_thumb_link_2.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_thumb_link_2.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_thumb_joint_2" type="revolute">
+    <origin xyz="0.06029 0.0125 -1.91E-05" rpy="0 0 -0.17453"/>
+    <parent link="right_thumb_link_1"/>
+    <child link="right_thumb_link_2"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="2.0973" effort="20" velocity="50"/>
+  </joint>
+  <link name="right_thumb_tactile_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-5.69119586448993E-07 0.00725267874298827 0.00384771526093473"/>
+      <mass value="0.00728796573180342"/>
+      <inertia ixx="6.31335927717884E-07" ixy="2.89457363622682E-11" ixz="3.12272541529654E-11" iyy="4.14819807467411E-07" iyz="-2.36493306619516E-08" izz="8.00774281859433E-07"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_thumb_tactile_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_thumb_tactile_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_thumb_tactile_joint_0" type="fixed">
+    <origin xyz="0.019356 -0.0056462 0" rpy="1.4314 -1.5708 -3.1415"/>
+    <parent link="right_thumb_link_2"/>
+    <child link="right_thumb_tactile_link_0"/>
+  </joint>
+  <link name="right_index_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0204566798403885 -0.00340394105744322 0.000106728035644002"/>
+      <mass value="0.00775076081804147"/>
+      <inertia ixx="3.44452724545479E-07" ixy="-4.78355558605564E-08" ixz="2.17143075126767E-08" iyy="1.38929119520555E-06" iyz="-3.23578397866081E-10" izz="1.28696059253806E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_index_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_index_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_index_joint_0" type="revolute">
+    <origin xyz="0.0302 0.00423 -0.09413" rpy="0 1.5533 0"/>
+    <parent link="right_palm_link"/>
+    <child link="right_index_link_0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3963" effort="20" velocity="50"/>
+  </joint>
+  <link name="right_index_link_1">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00863658912229184 0.00390662260254431 0.000178232799969938"/>
+      <mass value="0.00147411311776174"/>
+      <inertia ixx="8.50508069874372E-08" ixy="-9.90007558120046E-09" ixz="1.36909304402037E-10" iyy="8.83249626297202E-08" iyz="3.83385953896828E-10" izz="7.42503766938353E-08"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_index_link_1.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_index_link_1.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_index_joint_1" type="revolute">
+    <origin xyz="0.04392915363646 -0.00596952380563201 -4.99999999999945E-05" rpy="0 0 0"/>
+    <parent link="right_index_link_0"/>
+    <child link="right_index_link_1"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3963" effort="20" velocity="50"/>
+  </joint>
+  <link name="right_index_link_2">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00544463264270352 -0.00571994916017481 3.87072064990564E-05"/>
+      <mass value="0.00192056389934334"/>
+      <inertia ixx="4.49524580735319E-08" ixy="6.91021862584258E-09" ixz="4.37461010862228E-10" iyy="1.34518302376392E-07" iyz="1.97365670337091E-10" izz="1.26184975181792E-07"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_index_link_2.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_index_link_2.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_index_joint_2" type="revolute">
+    <origin xyz="0.016724 0.0091327 5E-05" rpy="0 0 0"/>
+    <parent link="right_index_link_1"/>
+    <child link="right_index_link_2"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3090" effort="20" velocity="50"/>
+  </joint>
+  <link name="right_index_tactile_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-7.15100412839245E-06 0.00766638584209177 0.00153149297635188"/>
+      <mass value="0.00158521757996334"/>
+      <inertia ixx="5.42387314555164E-08" ixy="2.30095480330116E-11" ixz="2.18106835205775E-11" iyy="3.12164065189363E-08" iyz="3.83024468574558E-10" izz="6.98174123980231E-08"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_index_tactile_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_index_tactile_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_index_tactile_joint_0" type="fixed">
+    <origin xyz="0.0089007 -0.0022127 0" rpy="-0.20944 -1.5708 -1.396"/>
+    <parent link="right_index_link_2"/>
+    <child link="right_index_tactile_link_0"/>
+  </joint>
+  <link name="right_middle_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0204566818829428 -0.00340391962524049 0.000106767395921498"/>
+      <mass value="0.007750772178221"/>
+      <inertia ixx="3.44450679028759E-07" ixy="-4.78343494228642E-08" ixz="2.17187420665001E-08" iyy="1.38929079085453E-06" iyz="-3.1999754771607E-10" izz="1.28696368873274E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_middle_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_middle_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_middle_joint_0" type="revolute">
+    <origin xyz="0.010122 0.00423 -0.09862" rpy="0 1.5708 0"/>
+    <parent link="right_palm_link"/>
+    <child link="right_middle_link_0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3963" effort="20" velocity="50"/>
+  </joint>
+  <link name="right_middle_link_1">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00863631796568731 0.0039071445442652 0.000118198818823393"/>
+      <mass value="0.0014741245806173"/>
+      <inertia ixx="8.50531114605136E-08" ixy="-9.90079727011316E-09" ixz="1.36622133199617E-10" iyy="8.83235607260495E-08" iyz="3.82911452729274E-10" izz="7.42511595737248E-08"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_middle_link_1.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_middle_link_1.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_middle_joint_1" type="revolute">
+    <origin xyz="0.04392915363646 -0.005969523805632 0" rpy="0 0 0"/>
+    <parent link="right_middle_link_0"/>
+    <child link="right_middle_link_1"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3963" effort="20" velocity="50"/>
+  </joint>
+  <link name="right_middle_link_2">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00544522885312974 -0.00571959708458459 3.870581986847E-05"/>
+      <mass value="0.00192056278233717"/>
+      <inertia ixx="4.49511632023778E-08" ixy="6.90206083462684E-09" ixz="4.37482383004285E-10" iyy="1.34519436455462E-07" iyz="1.9740772851189E-10" izz="1.26184829369779E-07"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_middle_link_2.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_middle_link_2.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_middle_joint_2" type="revolute">
+    <origin xyz="0.0167237876724677 0.00913388024645703 0" rpy="0 0 0"/>
+    <parent link="right_middle_link_1"/>
+    <child link="right_middle_link_2"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3090" effort="20" velocity="50"/>
+  </joint>
+  <link name="right_middle_tactile_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00785041929166511 0.00292268067662876 -7.15372715284247E-06"/>
+      <mass value="0.00158521558034911"/>
+      <inertia ixx="5.42385291304753E-08" ixy="2.30172330666832E-11" ixz="2.18046948187613E-11" iyy="3.12164225504677E-08" iyz="3.83172825410139E-10" izz="6.98173241973119E-08"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_middle_tactile_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_middle_tactile_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_middle_tactile_joint_0" type="fixed">
+    <origin xyz="0.0089 -0.002282 0" rpy="-0.20944 -1.5707 -1.396"/>
+    <parent link="right_middle_link_2"/>
+    <child link="right_middle_tactile_link_0"/>
+  </joint>
+  <link name="right_ring_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0204566759998715 -0.00340392811285324 0.000106772324885974"/>
+      <mass value="0.00775077755470957"/>
+      <inertia ixx="3.44451485452443E-07" ixy="-4.78354823066705E-08" ixz="2.17194982343289E-08" iyy="1.38929487102993E-06" iyz="-3.19579709867518E-10" izz="1.28696820924996E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_ring_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_ring_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_ring_joint_0" type="revolute">
+    <origin xyz="-0.010455 0.00423 -0.09713" rpy="3.1416 1.5533 3.1416"/>
+    <parent link="right_palm_link"/>
+    <child link="right_ring_link_0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3963" effort="20" velocity="50"/>
+  </joint>
+  <link name="right_ring_link_1">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00863639227316165 0.00390725720855701 0.000178124384369907"/>
+      <mass value="0.00147411538572404"/>
+      <inertia ixx="8.50522945253343E-08" ixy="-9.90026582587805E-09" ixz="1.36075830484433E-10" iyy="8.83230269770029E-08" iyz="3.82289138852519E-10" izz="7.42498081527427E-08"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_ring_link_1.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_ring_link_1.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_ring_joint_1" type="revolute">
+    <origin xyz="0.04392915363646 -0.005969523805632 -4.99999999999962E-05" rpy="0 0 0"/>
+    <parent link="right_ring_link_0"/>
+    <child link="right_ring_link_1"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3963" effort="20" velocity="50"/>
+  </joint>
+  <link name="right_ring_link_2">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00544523126977781 -0.00571959544632963 3.87050605735774E-05"/>
+      <mass value="0.00192056331217887"/>
+      <inertia ixx="4.4951181897581E-08" ixy="6.90204644918302E-09" ixz="4.3751928181978E-10" iyy="1.34519485194743E-07" iyz="1.97405832033945E-10" izz="1.26184880379989E-07"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_ring_link_2.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_ring_link_2.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_ring_joint_2" type="revolute">
+    <origin xyz="0.0167237873015873 0.00913388092552479 4.9999999999998E-05" rpy="0 0 0"/>
+    <parent link="right_ring_link_1"/>
+    <child link="right_ring_link_2"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3090" effort="20" velocity="50"/>
+  </joint>
+  <link name="right_ring_tactile_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-7.15640375705678E-06 0.00766631872729323 0.00153146898895024"/>
+      <mass value="0.00158520981987023"/>
+      <inertia ixx="5.42381913416579E-08" ixy="2.29309619906004E-11" ixz="2.18194053478983E-11" iyy="3.12163523326913E-08" iyz="3.83299619943428E-10" izz="6.98170353614144E-08"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_ring_tactile_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_ring_tactile_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_ring_tactile_joint_0" type="fixed">
+    <origin xyz="0.008901 -0.0022121 0" rpy="-0.20944 -1.5708 -1.396"/>
+    <parent link="right_ring_link_2"/>
+    <child link="right_ring_tactile_link_0"/>
+  </joint>
+  <link name="right_pinky_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0204566320849562 -0.00340397932705835 0.000106758481168662"/>
+      <mass value="0.00775080799697266"/>
+      <inertia ixx="3.4445516764241E-07" ixy="-4.78396126326604E-08" ixz="2.17210475191001E-08" iyy="1.38930238641114E-06" iyz="-3.20698354988118E-10" izz="1.28697725756875E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_pinky_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_pinky_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_pinky_joint_0" type="revolute">
+    <origin xyz="-0.0302455433199348 0.00423 -0.09115" rpy="3.14159265358979 1.53101985492551 3.14159265358979"/>
+    <parent link="right_palm_link"/>
+    <child link="right_pinky_link_0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3963" effort="20" velocity="50"/>
+  </joint>
+  <link name="right_pinky_link_1">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0086367190942447 0.00390674254317849 0.000178100520830515"/>
+      <mass value="0.00147410502769596"/>
+      <inertia ixx="8.50500055441173E-08" ixy="-9.8993109245728E-09" ixz="1.35964210268015E-10" iyy="8.83240858577245E-08" iyz="3.81817891969922E-10" izz="7.42486018043892E-08"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_pinky_link_1.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_pinky_link_1.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_pinky_joint_1" type="revolute">
+    <origin xyz="0.04392915363646 -0.005969523805632 -5.00000000000014E-05" rpy="0 0 0"/>
+    <parent link="right_pinky_link_0"/>
+    <child link="right_pinky_link_1"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3963" effort="20" velocity="50"/>
+  </joint>
+  <link name="right_pinky_link_2">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00544527710274111 -0.00572113006438069 3.87074165105021E-05"/>
+      <mass value="0.00192056391260119"/>
+      <inertia ixx="4.49524581563179E-08" ixy="6.91022643879277E-09" ixz="4.37452150219782E-10" iyy="1.34518321540256E-07" iyz="1.97366290977812E-10" izz="1.2618499410813E-07"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_pinky_link_2.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_pinky_link_2.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_pinky_joint_2" type="revolute">
+    <origin xyz="0.0167237879375845 0.00913387976103822 5.00000000000014E-05" rpy="0 0 0"/>
+    <parent link="right_pinky_link_1"/>
+    <child link="right_pinky_link_2"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3090" effort="20" velocity="50"/>
+  </joint>
+  <link name="right_pinky_tactile_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-7.18918515098602E-06 0.00766631609267261 0.00153147811560624"/>
+      <mass value="0.00158523246085631"/>
+      <inertia ixx="5.42383147209828E-08" ixy="2.29743170653397E-11" ixz="2.18736088196047E-11" iyy="3.12168084014964E-08" iyz="3.8346057803497E-10" izz="6.98175159321323E-08"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_pinky_tactile_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_pinky_tactile_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_pinky_tactile_joint_0" type="fixed">
+    <origin xyz="0.0089013 -0.0022139 0" rpy="-0.20944 -1.5708 -1.396"/>
+    <parent link="right_pinky_link_2"/>
+    <child link="right_pinky_tactile_link_0"/>
+  </joint>
+  <link name="left_arm_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.0023437317 0.066913521 -0.00029831065"/>
+      <mass value="1.438"/>
+      <inertia ixx="0.0078186809" ixy="0.00022226029" ixz="-1.7695346e-05" iyy="0.00085518654" iyz="2.6879461e-05" izz="0.0076163398"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_arm_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.62745 0.63137 0.63529 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_arm_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_arm_joint_0" type="revolute">
+    <origin xyz="-0.107500008004785 0.0950000000125995 0.249320000531464" rpy="0 0 0"/>
+    <parent link="waist_link_4"/>
+    <child link="left_arm_link_0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.7576" upper="2.7576" effort="120" velocity="3.1416"/>
+  </joint>
+  <link name="left_arm_link_1">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.026983932 0.0033236712 -0.11026329"/>
+      <mass value="1.438"/>
+      <inertia ixx="0.021901486" ixy="1.4442864e-05" ixz="-0.0046159368" iyy="0.022895564" iyz="-1.3336749e-05" izz="0.0022024261"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_arm_link_1.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.62745 0.63137 0.63529 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_arm_link_1.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_arm_joint_1" type="revolute">
+    <origin xyz="0.037 0.075 0" rpy="0 0 0"/>
+    <parent link="left_arm_link_0"/>
+    <child link="left_arm_link_1"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-0.4014" upper="2.3212" effort="120" velocity="3.1416"/>
+  </joint>
+  <link name="left_arm_link_2">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00230353933914788 0.00041482316903535 -0.0546140694673691"/>
+      <mass value="0.349885789944274"/>
+      <inertia ixx="0.000489072189196032" ixy="-1.50177107263747E-06" ixz="5.35847218005351E-05" iyy="0.000528105401046152" iyz="7.15814716363024E-06" izz="0.0002698789250794"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_arm_link_2.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.62745 0.63137 0.63529 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_arm_link_2.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_arm_joint_2" type="revolute">
+    <origin xyz="-0.0370000000000302 0.030000000600852 -0.18479999990479" rpy="0 0 0"/>
+    <parent link="left_arm_link_1"/>
+    <child link="left_arm_link_2"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.7576" upper="2.7576" effort="60" velocity="3.927"/>
+  </joint>
+  <link name="left_arm_link_3">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.019173486 0.0045730961 -0.082111726"/>
+      <mass value="0.92"/>
+      <inertia ixx="0.0078118715" ixy="2.9081393e-05" ixz="-0.0014814774" iyy="0.0080456849" iyz="5.2201364e-05" izz="0.00091730782"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_arm_link_3.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.62745 0.63137 0.63529 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_arm_link_3.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_arm_joint_3" type="revolute">
+    <origin xyz="0.0199999980587653 0 -0.105199999935598" rpy="0 0 0"/>
+    <parent link="left_arm_link_2"/>
+    <child link="left_arm_link_3"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.6703" upper="0.3141" effort="60" velocity="3.927"/>
+  </joint>
+  <link name="left_arm_link_4">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.00052993028 0.0024811098 -0.080589843"/>
+      <mass value="0.798"/>
+      <inertia ixx="0.0070665457" ixy="-3.8955568e-06" ixz="-7.0127421e-05" iyy="0.0070491253" iyz="0.00019177491" izz="0.00045913117"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_arm_link_4.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.62745 0.63137 0.63529 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_arm_link_4.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_arm_joint_4" type="revolute">
+    <origin xyz="-0.0199999966178426 0 -0.132007765390932" rpy="0 0 0"/>
+    <parent link="left_arm_link_3"/>
+    <child link="left_arm_link_4"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.7576" upper="2.7576" effort="20" velocity="3.927"/>
+  </joint>
+  <link name="left_arm_link_5">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0031586201 0.0036353086 0.0058365839"/>
+      <mass value="0.569"/>
+      <inertia ixx="0.00039470905" ixy="-1.0250211e-05" ixz="-0.00010480822" iyy="0.00049312333" iyz="-1.2233125e-05" izz="0.00017177571"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_arm_link_5.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.62745 0.63137 0.63529 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_arm_link_5.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_arm_joint_5" type="revolute">
+    <origin xyz="0 0 -0.177999987423921" rpy="0 0 0"/>
+    <parent link="left_arm_link_4"/>
+    <child link="left_arm_link_5"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-1.3613" upper="1.3613" effort="20" velocity="3.927"/>
+  </joint>
+  <link name="left_arm_link_6">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.014778055 -0.038673395 -0.10569556"/>
+      <mass value="0.959"/>
+      <inertia ixx="0.015820368" ixy="0.0010731825" ixz="0.0007331736" iyy="0.017186116" iyz="-0.0039085666" izz="0.0051355743"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_arm_link_6.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.62745 0.63137 0.63529 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_arm_link_6.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_arm_joint_6" type="revolute">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="left_arm_link_5"/>
+    <child link="left_arm_link_6"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.5358" upper="1.5358" effort="20" velocity="3.927"/>
+  </joint>
+  <link name="left_palm_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.000224527561288826 0.00158307933540662 -0.0214840283300513"/>
+      <mass value="0.138023316328305"/>
+      <inertia ixx="0.00010441363157202" ixy="7.84508741395596E-07" ixz="7.49593125316604E-07" iyy="0.000156427337479679" iyz="-8.26348519891999E-06" izz="9.45151976134503E-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_palm_link.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_palm_link.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_palm_joint" type="fixed">
+    <origin xyz="0 -0.000135367293630811 -0.0568020939775561" rpy="0 0 0"/>
+    <parent link="left_arm_link_6"/>
+    <child link="left_palm_link"/>
+  </joint>
+  <link name="left_palm_rgb_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.00464735006297746 1.23512311489549E-15 0.000127071500931244"/>
+      <mass value="0.000654042467848702"/>
+      <inertia ixx="1.19134649754253E-08" ixy="5.46394410156514E-22" ixz="5.87163576825399E-10" iyy="9.12315073908897E-09" iyz="-2.5479398549717E-23" izz="8.60499726201906E-09"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_palm_rgb_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_palm_rgb_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_palm_rgb_joint_0" type="fixed">
+    <origin xyz="-0.00451244484106 -0.0201025347313067 -0.0351064059959295" rpy="3.14159265358979 0.833566385941898 -1.5707963267949"/>
+    <parent link="left_palm_link"/>
+    <child link="left_palm_rgb_link_0"/>
+  </joint>
+  <link name="left_thumb_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00886190592400368 -0.00203400290112155 -0.000319447367067315"/>
+      <mass value="0.00395630335895201"/>
+      <inertia ixx="1.45654128977515E-07" ixy="-5.64417822654374E-08" ixz="1.82838410760135E-08" iyy="2.5184523636244E-07" iyz="1.18338554507999E-08" izz="3.36149981771904E-07"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_thumb_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_thumb_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_thumb_joint_0" type="revolute">
+    <origin xyz="0.030018 -0.018327 -0.017808" rpy="3.1416 0 0"/>
+    <parent link="left_palm_link"/>
+    <child link="left_thumb_link_0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.9133" effort="20" velocity="50"/>
+  </joint>
+  <link name="left_thumb_link_1">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0314598532944025 0.00518571088036306 6.24000457684279E-05"/>
+      <mass value="0.0186700386421083"/>
+      <inertia ixx="2.78068751676717E-06" ixy="-6.25632820068549E-07" ixz="-2.19324671389508E-08" iyy="7.1354171072541E-06" iyz="-1.84133130210875E-09" izz="5.83847795078633E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_thumb_link_1.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_thumb_link_1.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_thumb_joint_1" type="revolute">
+    <origin xyz="0.0213582162736342 0.00246508447013965 -0.00150009683382987" rpy="1.5707963267949 0 0.114907789219488"/>
+    <parent link="left_thumb_link_0"/>
+    <child link="left_thumb_link_1"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.5186" effort="20" velocity="50"/>
+  </joint>
+  <link name="left_thumb_link_2">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0115158413080773 -0.0118042467238058 -0.000244197665490851"/>
+      <mass value="0.015451379991269"/>
+      <inertia ixx="1.30225686518134E-06" ixy="5.2068665233815E-07" ixz="-3.64416529159111E-08" iyy="2.28234852593261E-06" iyz="1.41145553666713E-11" izz="2.35874397775107E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_thumb_link_2.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_thumb_link_2.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_thumb_joint_2" type="revolute">
+    <origin xyz="0.0602895552108653 0.0124999999999762 0" rpy="0 0 0"/>
+    <parent link="left_thumb_link_1"/>
+    <child link="left_thumb_link_2"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="2.0973" effort="20" velocity="50"/>
+  </joint>
+  <link name="left_thumb_tactile_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-5.78077314935047E-07 0.00725268176877747 0.00384771731961831"/>
+      <mass value="0.00728796921833148"/>
+      <inertia ixx="6.31336153673872E-07" ixy="2.93222685321651E-11" ixz="3.15221829171601E-11" iyy="4.14819918339156E-07" iyz="-2.36494153433172E-08" izz="8.00774477654966E-07"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_thumb_tactile_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_thumb_tactile_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_thumb_tactile_joint_0" type="fixed">
+    <origin xyz="0.0180809955600047 -0.00892245083780965 0" rpy="1.16590454050981 -1.57079631189374 -3.0481158724312"/>
+    <parent link="left_thumb_link_2"/>
+    <child link="left_thumb_tactile_link_0"/>
+  </joint>
+  <link name="left_index_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0204566759048482 -0.00340392796790297 0.000106772385285211"/>
+      <mass value="0.00775077740728454"/>
+      <inertia ixx="3.44451476870945E-07" ixy="-4.78354768283327E-08" ixz="2.17194999011832E-08" iyy="1.38929483134256E-06" iyz="-3.19576191697703E-10" izz="1.28696816579278E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_index_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_index_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_index_joint_0" type="revolute">
+    <origin xyz="0.030201 -0.0042267 -0.094134" rpy="3.1416 1.5533 0"/>
+    <parent link="left_palm_link"/>
+    <child link="left_index_link_0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3963" effort="20" velocity="50"/>
+  </joint>
+  <link name="left_index_link_1">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00863637835336946 0.00390728796933644 0.00022812438552915"/>
+      <mass value="0.00147411538103135"/>
+      <inertia ixx="8.50523649205121E-08" ixy="-9.90027735639069E-09" ixz="1.360744834463E-10" iyy="8.83229560348037E-08" iyz="3.82289631659958E-10" izz="7.42498077305066E-08"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_index_link_1.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_index_link_1.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_index_joint_1" type="revolute">
+    <origin xyz="0.04392915363646 -0.005969523805632 -9.99999999999925E-05" rpy="0 0 0"/>
+    <parent link="left_index_link_0"/>
+    <child link="left_index_link_1"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3963" effort="20" velocity="50"/>
+  </joint>
+  <link name="left_index_link_2">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00544517868245926 -0.00571942748708435 3.87051916627967E-05"/>
+      <mass value="0.00192056328826974"/>
+      <inertia ixx="4.49511190321312E-08" ixy="6.90164159931278E-09" ixz="4.37513400245771E-10" iyy="1.34519537371655E-07" iyz="1.97407413314327E-10" izz="1.2618487011176E-07"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_index_link_2.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_index_link_2.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_index_joint_2" type="revolute">
+    <origin xyz="0.0167238384567498 0.00913378726174574 9.99999999999959E-05" rpy="0 0 0"/>
+    <parent link="left_index_link_1"/>
+    <child link="left_index_link_2"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3090" effort="20" velocity="50"/>
+  </joint>
+  <link name="left_index_tactile_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-7.15639129139981E-06 0.00766631875010511 0.00153146885589252"/>
+      <mass value="0.00158520992402904"/>
+      <inertia ixx="5.42381925578706E-08" ixy="2.29314385505891E-11" ixz="2.18195244823304E-11" iyy="3.12163534275782E-08" iyz="3.83299582470554E-10" izz="6.98170364019621E-08"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_index_tactile_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_index_tactile_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_index_tactile_joint_0" type="fixed">
+    <origin xyz="0.00890093470302482 -0.00221208366030078 0" rpy="-0.209440026514175 -1.57079630572147 -1.39618505518417"/>
+    <parent link="left_index_link_2"/>
+    <child link="left_index_tactile_link_0"/>
+  </joint>
+  <link name="left_middle_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0204566843404468 -0.00340391868913875 0.000106768367714546"/>
+      <mass value="0.00775077114830107"/>
+      <inertia ixx="3.44450484584185E-07" ixy="-4.78341328337178E-08" ixz="2.17188635148522E-08" iyy="1.38929048262302E-06" iyz="-3.19908504195602E-10" izz="1.28696329179596E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_middle_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_middle_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_middle_joint_0" type="revolute">
+    <origin xyz="0.010124 -0.0042267 -0.098624" rpy="3.1416 1.5708 0"/>
+    <parent link="left_palm_link"/>
+    <child link="left_middle_link_0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3963" effort="20" velocity="50"/>
+  </joint>
+  <link name="left_middle_link_1">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00863630329429653 0.00390717697250072 0.000178198821438267"/>
+      <mass value="0.00147412457646992"/>
+      <inertia ixx="8.50531857082762E-08" ixy="-9.90080938380614E-09" ixz="1.36620691896439E-10" iyy="8.83234859795491E-08" iyz="3.82911990898269E-10" izz="7.42511592135602E-08"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_middle_link_1.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_middle_link_1.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_middle_joint_1" type="revolute">
+    <origin xyz="0.04392915363646 -0.005969523805632 -5.00000000000014E-05" rpy="0 0 0"/>
+    <parent link="left_middle_link_0"/>
+    <child link="left_middle_link_1"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3963" effort="20" velocity="50"/>
+  </joint>
+  <link name="left_middle_link_2">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00544517825896275 -0.00571942655304089 3.87062181183163E-05"/>
+      <mass value="0.0019205628110718"/>
+      <inertia ixx="4.49510973862107E-08" ixy="6.90163155175447E-09" ixz="4.37479021613873E-10" iyy="1.34519512849208E-07" iyz="1.97409459008021E-10" izz="1.26184839413668E-07"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_middle_link_2.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_middle_link_2.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_middle_joint_2" type="revolute">
+    <origin xyz="0.016723753369016 0.00913394305449331 5.00004041466481E-05" rpy="0 0 0"/>
+    <parent link="left_middle_link_1"/>
+    <child link="left_middle_link_2"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3090" effort="20" velocity="50"/>
+  </joint>
+  <link name="left_middle_tactile_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-7.15844607341622E-06 0.00766635884219313 0.00153148014341381"/>
+      <mass value="0.00158521558034911"/>
+      <inertia ixx="5.42385291304753E-08" ixy="2.30172330666832E-11" ixz="2.18046948187613E-11" iyy="3.12164225504677E-08" iyz="3.83172825410139E-10" izz="6.98173241973119E-08"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_middle_tactile_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_middle_tactile_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_middle_tactile_joint_0" type="fixed">
+    <origin xyz="0.00890093470302482 -0.00221208366030078 0" rpy="-0.209440026514175 -1.57079630572147 -1.39618505518417"/>
+    <parent link="left_middle_link_2"/>
+    <child link="left_middle_tactile_link_0"/>
+  </joint>
+  <link name="left_ring_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0204566799094852 -0.00340394110598915 0.000106728030791091"/>
+      <mass value="0.00775076085736334"/>
+      <inertia ixx="3.44452724587101E-07" ixy="-4.78355554817442E-08" ixz="2.17143080175849E-08" iyy="1.38929120760948E-06" iyz="-3.23578169779354E-10" izz="1.28696060487313E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_ring_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_ring_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_ring_joint_0" type="revolute">
+    <origin xyz="-0.010453 -0.0042267 -0.097134" rpy="0 1.5533 3.1416"/>
+    <parent link="left_palm_link"/>
+    <child link="left_ring_link_0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3963" effort="20" velocity="50"/>
+  </joint>
+  <link name="left_ring_link_1">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00863656473844775 0.00390667648276935 0.000178232806539416"/>
+      <mass value="0.0014741131075788"/>
+      <inertia ixx="8.50509302188356E-08" ixy="-9.90009590017202E-09" ixz="1.36906888194624E-10" iyy="8.83248382793323E-08" iyz="3.8338680560416E-10" izz="7.42503757420285E-08"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_ring_link_1.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_ring_link_1.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_ring_joint_1" type="revolute">
+    <origin xyz="0.04392915363646 -0.005969523805632 -4.99999999999962E-05" rpy="0 0 0"/>
+    <parent link="left_ring_link_0"/>
+    <child link="left_ring_link_1"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3963" effort="20" velocity="50"/>
+  </joint>
+  <link name="left_ring_link_2">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00544466822102549 -0.00571991563049642 3.87070573198301E-05"/>
+      <mass value="0.00192056394303065"/>
+      <inertia ixx="4.49523741315909E-08" ixy="6.90966639422232E-09" ixz="4.37465598166537E-10" iyy="1.3451840374751E-07" iyz="1.97368857345781E-10" izz="1.26184990669624E-07"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_ring_link_2.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_ring_link_2.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_ring_joint_2" type="revolute">
+    <origin xyz="0.0167243755033895 0.00913280386803666 4.99999999999997E-05" rpy="0 0 0"/>
+    <parent link="left_ring_link_1"/>
+    <child link="left_ring_link_2"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3090" effort="20" velocity="50"/>
+  </joint>
+  <link name="left_ring_tactile_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-7.15541671762743E-06 0.00766639156198312 0.00153149157651967"/>
+      <mass value="0.00158521916302358"/>
+      <inertia ixx="5.42387930699269E-08" ixy="2.30550121512106E-11" ixz="2.18004637932601E-11" iyy="3.12164460613495E-08" iyz="3.83037594481985E-10" izz="6.98175063378475E-08"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_ring_tactile_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_ring_tactile_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_ring_tactile_joint_0" type="fixed">
+    <origin xyz="0.0089007023596345 -0.00221269147396499 0" rpy="-0.209508596064922 -1.57079631189374 -1.39620674492064"/>
+    <parent link="left_ring_link_2"/>
+    <child link="left_ring_tactile_link_0"/>
+  </joint>
+  <link name="left_pinky_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0204567127384005 -0.0034039131860276 0.000106743859423136"/>
+      <mass value="0.00775072844348533"/>
+      <inertia ixx="3.44448176446781E-07" ixy="-4.78315002665733E-08" ixz="2.17135671842384E-08" iyy="1.38928021700541E-06" iyz="-3.2256933391953E-10" izz="1.28694894767849E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_pinky_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_pinky_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_pinky_joint_0" type="revolute">
+    <origin xyz="-0.03024425117588 -0.00422669382602999 -0.091146782918886" rpy="0 1.53101985492608 3.14159265358979"/>
+    <parent link="left_palm_link"/>
+    <child link="left_pinky_link_0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3963" effort="20" velocity="50"/>
+  </joint>
+  <link name="left_pinky_link_1">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.00863655350828611 0.0039067127925473 0.000178243368767029"/>
+      <mass value="0.00147411219977373"/>
+      <inertia ixx="8.50508776599289E-08" ixy="-9.90010875713495E-09" ixz="1.37001987854559E-10" iyy="8.83246994146833E-08" iyz="3.834493370159E-10" izz="7.4250258388128E-08"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_pinky_link_1.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_pinky_link_1.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_pinky_joint_1" type="revolute">
+    <origin xyz="0.04392915363646 -0.005969523805632 -4.99999999999876E-05" rpy="0 0 0"/>
+    <parent link="left_pinky_link_0"/>
+    <child link="left_pinky_link_1"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3963" effort="20" velocity="50"/>
+  </joint>
+  <link name="left_pinky_link_2">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0054446956530864 -0.0057198878104568 3.87066617438571E-05"/>
+      <mass value="0.00192056483242852"/>
+      <inertia ixx="4.49523519116082E-08" ixy="6.90924150322846E-09" ixz="4.37504600188643E-10" iyy="1.3451846186697E-07" iyz="1.97365104715346E-10" izz="1.26185001076875E-07"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_pinky_link_2.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_pinky_link_2.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_pinky_joint_2" type="revolute">
+    <origin xyz="0.0167243485647923 0.00913285319895867 4.99999999999945E-05" rpy="0 0 0"/>
+    <parent link="left_pinky_link_1"/>
+    <child link="left_pinky_link_2"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="1.3090" effort="20" velocity="50"/>
+  </joint>
+  <link name="left_pinky_tactile_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-7.14358971995455E-06 0.00766640462962512 0.00153149665580644"/>
+      <mass value="0.00158521629715875"/>
+      <inertia ixx="5.42388591160837E-08" ixy="2.30039380728861E-11" ixz="2.17969870089367E-11" iyy="3.12163701243537E-08" iyz="3.8293793025905E-10" izz="6.98174651358071E-08"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_pinky_tactile_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_pinky_tactile_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_pinky_tactile_joint_0" type="fixed">
+    <origin xyz="0.00890071232397469 -0.00221265139133513 0" rpy="-0.209508592020271 -1.57079630572147 -1.39619987514526"/>
+    <parent link="left_pinky_link_2"/>
+    <child link="left_pinky_tactile_link_0"/>
+  </joint>
+  <link name="waist_rgbd_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-0.00790985164364078 -0.0291931793365432 -0.000119993769641891"/>
+      <mass value="0.0186665709221046"/>
+      <inertia ixx="1.1399372033923E-05" ixy="1.18014849774201E-07" ixz="1.31873338967045E-08" iyy="1.51364613706475E-06" iyz="2.18148472274861E-08" izz="1.16813059766383E-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/waist_rgbd_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/waist_rgbd_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="waist_rgbd_joint_0" type="fixed">
+    <origin xyz="0.0587976342015818 0.0300000611558659 0.0512966970925152" rpy="0 0.78714350297877 0"/>
+    <parent link="waist_link_3"/>
+    <child link="waist_rgbd_link_0"/>
+  </joint>
+  <link name="left_center_wheel_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0.016877271 0"/>
+      <mass value="1.176"/>
+      <inertia ixx="0.0059306416" ixy="0" ixz="3.5957902e-09" iyy="0.011126353" iyz="0" izz="0.0059306413"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_center_wheel_link.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_center_wheel_link.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_center_wheel_joint" type="continuous">
+    <origin xyz="0.0194999999994844 0.16779999999999 0.255000853265161" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="left_center_wheel_link"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="20" velocity="50"/>
+  </joint>
+  <link name="right_center_wheel_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 -0.016877271 0"/>
+      <mass value="1.176"/>
+      <inertia ixx="0.0059306417" ixy="0" ixz="-3.5873086e-09" iyy="0.011126353" iyz="0" izz="0.0059306411"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_center_wheel_link.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_center_wheel_link.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_center_wheel_joint" type="continuous">
+    <origin xyz="0.0194999999994834 -0.16779999999999 0.255000853265161" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="right_center_wheel_link"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="20" velocity="50"/>
+  </joint>
+  <link name="left_rear_wheel_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="3.1993284e-05 -0.03544575 -2.3913783e-06"/>
+      <mass value="3.792"/>
+      <inertia ixx="0.014422943" ixy="-1.6566169e-05" ixz="1.7642834e-07" iyy="0.016280503" iyz="1.4183819e-06" izz="0.014426304"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_rear_wheel_link.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_rear_wheel_link.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_rear_wheel_joint" type="continuous">
+    <origin xyz="-0.240500000000528 0.2083 0.100000853265204" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="left_rear_wheel_link"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="20" velocity="50"/>
+  </joint>
+  <link name="right_rear_wheel_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-3.1993284e-05 0.03544575 -2.3913783e-06"/>
+      <mass value="3.792"/>
+      <inertia ixx="0.014422943" ixy="-1.6566169e-05" ixz="-1.7642834e-07" iyy="0.016280503" iyz="-1.4183819e-06" izz="0.014426304"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_rear_wheel_link.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_rear_wheel_link.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_rear_wheel_joint" type="continuous">
+    <origin xyz="-0.240500000000528 -0.2083 0.100000853265204" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="right_rear_wheel_link"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="20" velocity="50"/>
+  </joint>
+  <link name="base_imu_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="-3.48811409895053E-05 0.0182898719684007 -0.000509356400209188"/>
+      <mass value="0.0183359225074287"/>
+      <inertia ixx="3.97721406503341E-06" ixy="1.96012067460147E-10" ixz="3.3830699716099E-09" iyy="2.40329040200632E-06" iyz="2.21981422512288E-08" izz="5.56619609578046E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/base_imu_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.62745 0.63137 0.63529 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/base_imu_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="base_imu_joint_0" type="fixed">
+    <origin xyz="0.0194999999994805 0 0.178000853265161" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="base_imu_link_0"/>
+  </joint>
+  <link name="left_rear_ultrasonic_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0114219796967968 5.14430655908227E-06 -0.00100769431594813"/>
+      <mass value="0.0112981559322083"/>
+      <inertia ixx="1.15688791189308E-06" ixy="-7.54728065986915E-12" ixz="1.61835333675899E-08" iyy="7.09032845100282E-07" iyz="1.21777332253772E-11" izz="1.34034653419039E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/left_rear_ultrasonic_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/left_rear_ultrasonic_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="left_rear_ultrasonic_joint_0" type="fixed">
+    <origin xyz="-0.330591005556898 0.121004917175975 0.18253162374965" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="left_rear_ultrasonic_link_0"/>
+  </joint>
+  <link name="right_rear_ultrasonic_link_0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0114219795731024 5.14428643330622E-06 -0.00100769430491468"/>
+      <mass value="0.0112981559322083"/>
+      <inertia ixx="1.15688791189327E-06" ixy="-7.54728359082919E-12" ixz="1.61835333686381E-08" iyy="7.09032845100278E-07" iyz="1.21776987582113E-11" izz="1.34034653419021E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/right_rear_ultrasonic_link_0.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.07843 0.07843 0.07843 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/collision/right_rear_ultrasonic_link_0.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_rear_ultrasonic_joint_0" type="fixed">
+    <origin xyz="-0.33059107001121 -0.121014507484935 0.182531629388898" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="right_rear_ultrasonic_link_0"/>
+  </joint>
+  <link name="base_odom_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="1.38777878078145E-16 -4.13590306335159E-19 -4.16333634234434E-17"/>
+      <mass value="0.001"/>
+      <inertia ixx="1.66666666666667E-08" ixy="6.59431907523974E-25" ixz="-4.50700039643867E-24" iyy="1.66666666666666E-08" iyz="-1.00920934900968E-24" izz="1.66666666666666E-08"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tora_double_one_x_description/meshes/visual/base_odom_link.dae"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.95686 0.95686 0.95686 0.5"/>
+      </material>
+    </visual>
+  </link>
+  <joint name="base_odom_joint" type="fixed">
+    <origin xyz="-0.240500000000528 0 0.100000853265204" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="base_odom_link"/>
+  </joint>
+</robot>

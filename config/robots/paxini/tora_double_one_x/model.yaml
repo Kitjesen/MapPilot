@@ -1,0 +1,3 @@
+description: Paxini Tora Double One X, fixed URDF zero posture for navigation.
+urdf: description/urdf/tora_double_one_x.urdf
+navigation_geometry: navigation.yaml
