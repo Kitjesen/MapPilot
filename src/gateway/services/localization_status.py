@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from gateway.services.runtime_status import backend_capability_defaults
+from runtime.runtime_policy import backend_capability_defaults
 
 
 def handle_localization_status(gw: Any, state: dict[str, Any]) -> None:

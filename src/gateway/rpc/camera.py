@@ -36,29 +36,41 @@ def frame(gateway, context):
     return pb.CameraFrame(jpeg=response.body)
 
 
-def watch(gateway, context, slots):
+def sample(gateway, context):
+    return _sample(frame(gateway, context))
+
+
+def _sample(frame, sequence=None):
+    return pb.CameraSample(frame=frame, info=pb.CameraInfo(encoding="jpeg"), sequence=sequence)
+
+
+def watch(gateway, context, slots, *, samples=False):
     authorize(context)
     if not slots.acquire(blocking=False):
         context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, "SDK watch limit reached")
     stopped = threading.Event()
-    context.add_callback(stopped.set)
     relay = getattr(gateway, "_camera_module", None)
     connect = getattr(relay, "on_camera_client_connect", None)
     registered = False
     try:
+        if not context.add_callback(stopped.set):
+            return
+        with gateway._jpeg_lock:
+            last_sequence = gateway._latest_jpeg_seq
         if callable(connect):
             connect()
             registered = True
-        last_sequence = None
+        context.send_initial_metadata(())
         last_frame = time.monotonic()
         while context.is_active():
             with gateway._jpeg_lock:
                 jpeg = gateway._latest_jpeg
                 sequence = gateway._latest_jpeg_seq
             if jpeg and sequence != last_sequence:
-                yield pb.CameraFrame(jpeg=jpeg)
+                frame = pb.CameraFrame(jpeg=jpeg)
                 last_sequence = sequence
                 last_frame = time.monotonic()
+                yield _sample(frame, sequence) if samples else frame
             elif time.monotonic() - last_frame >= CAMERA_STREAM_STALE_MS / 1000:
                 context.abort(grpc.StatusCode.UNAVAILABLE, "Camera JPEG source has no new frame")
             elif not jpeg:

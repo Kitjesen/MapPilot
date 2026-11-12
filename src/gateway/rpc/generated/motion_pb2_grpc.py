@@ -3,8 +3,10 @@
 import grpc
 import warnings
 
-from . import common_pb2 as common__pb2
-from . import motion_pb2 as motion__pb2
+from .messages import common_pb2 as messages_dot_common__pb2
+from .messages import controller_pb2 as messages_dot_controller__pb2
+from .messages import motion_pb2 as messages_dot_motion__pb2
+from .messages import system_pb2 as messages_dot_system__pb2
 
 GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
@@ -35,42 +37,245 @@ class MotionStub(object):
         Args:
             channel: A grpc.Channel.
         """
+        self.Controller = channel.unary_unary(
+                '/doso.v1.Motion/Controller',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_controller__pb2.ControllerState.FromString,
+                _registered_method=True)
+        self.ExternalControl = channel.stream_stream(
+                '/doso.v1.Motion/ExternalControl',
+                request_serializer=messages_dot_controller__pb2.ExternalControlRequest.SerializeToString,
+                response_deserializer=messages_dot_controller__pb2.ExternalControlReply.FromString,
+                _registered_method=True)
+        self.StandUp = channel.unary_unary(
+                '/doso.v1.Motion/StandUp',
+                request_serializer=messages_dot_common__pb2.Command.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
+        self.SitDown = channel.unary_unary(
+                '/doso.v1.Motion/SitDown',
+                request_serializer=messages_dot_common__pb2.Command.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
+        self.EnableMotors = channel.unary_unary(
+                '/doso.v1.Motion/EnableMotors',
+                request_serializer=messages_dot_common__pb2.Command.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
+        self.DisableMotors = channel.unary_unary(
+                '/doso.v1.Motion/DisableMotors',
+                request_serializer=messages_dot_common__pb2.Command.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
+        self.Profile = channel.unary_unary(
+                '/doso.v1.Motion/Profile',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_motion__pb2.ProfileInfo.FromString,
+                _registered_method=True)
+        self.SwitchProfile = channel.unary_unary(
+                '/doso.v1.Motion/SwitchProfile',
+                request_serializer=messages_dot_motion__pb2.SwitchProfileRequest.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
         self.Stop = channel.unary_unary(
                 '/doso.v1.Motion/Stop',
-                request_serializer=common__pb2.Command.SerializeToString,
-                response_deserializer=common__pb2.Receipt.FromString,
+                request_serializer=messages_dot_common__pb2.Command.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
+        self.StopMotion = channel.unary_unary(
+                '/doso.v1.Motion/StopMotion',
+                request_serializer=messages_dot_common__pb2.Command.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
+        self.ClearEmergencyStop = channel.unary_unary(
+                '/doso.v1.Motion/ClearEmergencyStop',
+                request_serializer=messages_dot_common__pb2.Command.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
+        self.Resume = channel.unary_unary(
+                '/doso.v1.Motion/Resume',
+                request_serializer=messages_dot_common__pb2.Command.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
+        self.ControlStatus = channel.unary_unary(
+                '/doso.v1.Motion/ControlStatus',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_motion__pb2.BodyControlStatus.FromString,
+                _registered_method=True)
+        self.ControlState = channel.unary_unary(
+                '/doso.v1.Motion/ControlState',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_system__pb2.ControlState.FromString,
+                _registered_method=True)
+        self.WatchControlState = channel.unary_stream(
+                '/doso.v1.Motion/WatchControlState',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_system__pb2.ControlState.FromString,
+                _registered_method=True)
+        self.Velocity = channel.unary_unary(
+                '/doso.v1.Motion/Velocity',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_motion__pb2.VelocitySample.FromString,
+                _registered_method=True)
+        self.WatchVelocity = channel.unary_stream(
+                '/doso.v1.Motion/WatchVelocity',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_motion__pb2.VelocitySample.FromString,
+                _registered_method=True)
+        self.Odometry = channel.unary_unary(
+                '/doso.v1.Motion/Odometry',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_motion__pb2.OdometrySample.FromString,
+                _registered_method=True)
+        self.WatchOdometry = channel.unary_stream(
+                '/doso.v1.Motion/WatchOdometry',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_motion__pb2.OdometrySample.FromString,
                 _registered_method=True)
         self.Status = channel.unary_unary(
                 '/doso.v1.Motion/Status',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=common__pb2.Snapshot.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Snapshot.FromString,
                 _registered_method=True)
         self.WatchState = channel.unary_stream(
                 '/doso.v1.Motion/WatchState',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=common__pb2.Snapshot.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Snapshot.FromString,
                 _registered_method=True)
         self.WatchStateAt = channel.unary_stream(
                 '/doso.v1.Motion/WatchStateAt',
-                request_serializer=motion__pb2.WatchStateRequest.SerializeToString,
-                response_deserializer=common__pb2.Snapshot.FromString,
+                request_serializer=messages_dot_motion__pb2.WatchStateRequest.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Snapshot.FromString,
                 _registered_method=True)
         self.BodyState = channel.unary_unary(
                 '/doso.v1.Motion/BodyState',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=motion__pb2.BodyState.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_motion__pb2.BodyState.FromString,
                 _registered_method=True)
         self.WatchBodyState = channel.unary_stream(
                 '/doso.v1.Motion/WatchBodyState',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=motion__pb2.BodyState.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_motion__pb2.BodyState.FromString,
+                _registered_method=True)
+        self.Teleop = channel.stream_stream(
+                '/doso.v1.Motion/Teleop',
+                request_serializer=messages_dot_motion__pb2.TeleopRequest.SerializeToString,
+                response_deserializer=messages_dot_motion__pb2.TeleopReply.FromString,
                 _registered_method=True)
 
 
 class MotionServicer(object):
     """Missing associated documentation comment in .proto file."""
 
+    def Controller(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ExternalControl(self, request_iterator, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StandUp(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SitDown(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def EnableMotors(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DisableMotors(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Profile(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SwitchProfile(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def Stop(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StopMotion(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ClearEmergencyStop(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Resume(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ControlStatus(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ControlState(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def WatchControlState(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Velocity(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def WatchVelocity(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Odometry(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def WatchOdometry(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -106,38 +311,139 @@ class MotionServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Teleop(self, request_iterator, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_MotionServicer_to_server(servicer, server):
     rpc_method_handlers = {
+            'Controller': grpc.unary_unary_rpc_method_handler(
+                    servicer.Controller,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_controller__pb2.ControllerState.SerializeToString,
+            ),
+            'ExternalControl': grpc.stream_stream_rpc_method_handler(
+                    servicer.ExternalControl,
+                    request_deserializer=messages_dot_controller__pb2.ExternalControlRequest.FromString,
+                    response_serializer=messages_dot_controller__pb2.ExternalControlReply.SerializeToString,
+            ),
+            'StandUp': grpc.unary_unary_rpc_method_handler(
+                    servicer.StandUp,
+                    request_deserializer=messages_dot_common__pb2.Command.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
+            'SitDown': grpc.unary_unary_rpc_method_handler(
+                    servicer.SitDown,
+                    request_deserializer=messages_dot_common__pb2.Command.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
+            'EnableMotors': grpc.unary_unary_rpc_method_handler(
+                    servicer.EnableMotors,
+                    request_deserializer=messages_dot_common__pb2.Command.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
+            'DisableMotors': grpc.unary_unary_rpc_method_handler(
+                    servicer.DisableMotors,
+                    request_deserializer=messages_dot_common__pb2.Command.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
+            'Profile': grpc.unary_unary_rpc_method_handler(
+                    servicer.Profile,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_motion__pb2.ProfileInfo.SerializeToString,
+            ),
+            'SwitchProfile': grpc.unary_unary_rpc_method_handler(
+                    servicer.SwitchProfile,
+                    request_deserializer=messages_dot_motion__pb2.SwitchProfileRequest.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
             'Stop': grpc.unary_unary_rpc_method_handler(
                     servicer.Stop,
-                    request_deserializer=common__pb2.Command.FromString,
-                    response_serializer=common__pb2.Receipt.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Command.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
+            'StopMotion': grpc.unary_unary_rpc_method_handler(
+                    servicer.StopMotion,
+                    request_deserializer=messages_dot_common__pb2.Command.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
+            'ClearEmergencyStop': grpc.unary_unary_rpc_method_handler(
+                    servicer.ClearEmergencyStop,
+                    request_deserializer=messages_dot_common__pb2.Command.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
+            'Resume': grpc.unary_unary_rpc_method_handler(
+                    servicer.Resume,
+                    request_deserializer=messages_dot_common__pb2.Command.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
+            'ControlStatus': grpc.unary_unary_rpc_method_handler(
+                    servicer.ControlStatus,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_motion__pb2.BodyControlStatus.SerializeToString,
+            ),
+            'ControlState': grpc.unary_unary_rpc_method_handler(
+                    servicer.ControlState,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_system__pb2.ControlState.SerializeToString,
+            ),
+            'WatchControlState': grpc.unary_stream_rpc_method_handler(
+                    servicer.WatchControlState,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_system__pb2.ControlState.SerializeToString,
+            ),
+            'Velocity': grpc.unary_unary_rpc_method_handler(
+                    servicer.Velocity,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_motion__pb2.VelocitySample.SerializeToString,
+            ),
+            'WatchVelocity': grpc.unary_stream_rpc_method_handler(
+                    servicer.WatchVelocity,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_motion__pb2.VelocitySample.SerializeToString,
+            ),
+            'Odometry': grpc.unary_unary_rpc_method_handler(
+                    servicer.Odometry,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_motion__pb2.OdometrySample.SerializeToString,
+            ),
+            'WatchOdometry': grpc.unary_stream_rpc_method_handler(
+                    servicer.WatchOdometry,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_motion__pb2.OdometrySample.SerializeToString,
             ),
             'Status': grpc.unary_unary_rpc_method_handler(
                     servicer.Status,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=common__pb2.Snapshot.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_common__pb2.Snapshot.SerializeToString,
             ),
             'WatchState': grpc.unary_stream_rpc_method_handler(
                     servicer.WatchState,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=common__pb2.Snapshot.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_common__pb2.Snapshot.SerializeToString,
             ),
             'WatchStateAt': grpc.unary_stream_rpc_method_handler(
                     servicer.WatchStateAt,
-                    request_deserializer=motion__pb2.WatchStateRequest.FromString,
-                    response_serializer=common__pb2.Snapshot.SerializeToString,
+                    request_deserializer=messages_dot_motion__pb2.WatchStateRequest.FromString,
+                    response_serializer=messages_dot_common__pb2.Snapshot.SerializeToString,
             ),
             'BodyState': grpc.unary_unary_rpc_method_handler(
                     servicer.BodyState,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=motion__pb2.BodyState.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_motion__pb2.BodyState.SerializeToString,
             ),
             'WatchBodyState': grpc.unary_stream_rpc_method_handler(
                     servicer.WatchBodyState,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=motion__pb2.BodyState.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_motion__pb2.BodyState.SerializeToString,
+            ),
+            'Teleop': grpc.stream_stream_rpc_method_handler(
+                    servicer.Teleop,
+                    request_deserializer=messages_dot_motion__pb2.TeleopRequest.FromString,
+                    response_serializer=messages_dot_motion__pb2.TeleopReply.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -149,6 +455,222 @@ def add_MotionServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class Motion(object):
     """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def Controller(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Motion/Controller',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_controller__pb2.ControllerState.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ExternalControl(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_stream(
+            request_iterator,
+            target,
+            '/doso.v1.Motion/ExternalControl',
+            messages_dot_controller__pb2.ExternalControlRequest.SerializeToString,
+            messages_dot_controller__pb2.ExternalControlReply.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StandUp(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Motion/StandUp',
+            messages_dot_common__pb2.Command.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SitDown(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Motion/SitDown',
+            messages_dot_common__pb2.Command.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def EnableMotors(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Motion/EnableMotors',
+            messages_dot_common__pb2.Command.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DisableMotors(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Motion/DisableMotors',
+            messages_dot_common__pb2.Command.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Profile(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Motion/Profile',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_motion__pb2.ProfileInfo.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SwitchProfile(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Motion/SwitchProfile',
+            messages_dot_motion__pb2.SwitchProfileRequest.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
 
     @staticmethod
     def Stop(request,
@@ -165,8 +687,278 @@ class Motion(object):
             request,
             target,
             '/doso.v1.Motion/Stop',
-            common__pb2.Command.SerializeToString,
-            common__pb2.Receipt.FromString,
+            messages_dot_common__pb2.Command.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StopMotion(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Motion/StopMotion',
+            messages_dot_common__pb2.Command.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ClearEmergencyStop(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Motion/ClearEmergencyStop',
+            messages_dot_common__pb2.Command.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Resume(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Motion/Resume',
+            messages_dot_common__pb2.Command.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ControlStatus(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Motion/ControlStatus',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_motion__pb2.BodyControlStatus.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ControlState(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Motion/ControlState',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_system__pb2.ControlState.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def WatchControlState(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/doso.v1.Motion/WatchControlState',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_system__pb2.ControlState.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Velocity(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Motion/Velocity',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_motion__pb2.VelocitySample.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def WatchVelocity(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/doso.v1.Motion/WatchVelocity',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_motion__pb2.VelocitySample.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Odometry(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Motion/Odometry',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_motion__pb2.OdometrySample.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def WatchOdometry(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/doso.v1.Motion/WatchOdometry',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_motion__pb2.OdometrySample.FromString,
             options,
             channel_credentials,
             insecure,
@@ -192,8 +984,8 @@ class Motion(object):
             request,
             target,
             '/doso.v1.Motion/Status',
-            common__pb2.Empty.SerializeToString,
-            common__pb2.Snapshot.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_common__pb2.Snapshot.FromString,
             options,
             channel_credentials,
             insecure,
@@ -219,8 +1011,8 @@ class Motion(object):
             request,
             target,
             '/doso.v1.Motion/WatchState',
-            common__pb2.Empty.SerializeToString,
-            common__pb2.Snapshot.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_common__pb2.Snapshot.FromString,
             options,
             channel_credentials,
             insecure,
@@ -246,8 +1038,8 @@ class Motion(object):
             request,
             target,
             '/doso.v1.Motion/WatchStateAt',
-            motion__pb2.WatchStateRequest.SerializeToString,
-            common__pb2.Snapshot.FromString,
+            messages_dot_motion__pb2.WatchStateRequest.SerializeToString,
+            messages_dot_common__pb2.Snapshot.FromString,
             options,
             channel_credentials,
             insecure,
@@ -273,8 +1065,8 @@ class Motion(object):
             request,
             target,
             '/doso.v1.Motion/BodyState',
-            common__pb2.Empty.SerializeToString,
-            motion__pb2.BodyState.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_motion__pb2.BodyState.FromString,
             options,
             channel_credentials,
             insecure,
@@ -300,8 +1092,35 @@ class Motion(object):
             request,
             target,
             '/doso.v1.Motion/WatchBodyState',
-            common__pb2.Empty.SerializeToString,
-            motion__pb2.BodyState.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_motion__pb2.BodyState.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Teleop(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_stream(
+            request_iterator,
+            target,
+            '/doso.v1.Motion/Teleop',
+            messages_dot_motion__pb2.TeleopRequest.SerializeToString,
+            messages_dot_motion__pb2.TeleopReply.FromString,
             options,
             channel_credentials,
             insecure,

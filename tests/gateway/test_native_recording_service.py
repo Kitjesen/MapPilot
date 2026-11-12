@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from gateway.routes.operations import register_operation_routes
 from gateway.schemas import RecordingStartRequest
@@ -348,6 +349,50 @@ def test_evidence_recording_supports_task_lifetime_and_exact_session_stop(tmp_pa
     assert replayed.state == "completed"
     assert [command[1] for command in harness.commands].count("stop") == stop_count + 1
     assert [command[1] for command in harness.commands].count("status") == 0
+
+
+@pytest.mark.parametrize("request_body", [None, {}, {"expected_session_id": None}])
+def test_gateway_stop_without_session_keeps_current_behavior(tmp_path, request_body):
+    harness = _NativeHarness(tmp_path / "recordings")
+    service = _service(tmp_path, harness)
+    started = service.start(duration=60, prefix="field")
+    app = FastAPI()
+    register_operation_routes(app, SimpleNamespace(_go2rtc_upstream="", _recording=service))
+
+    with TestClient(app) as http:
+        response = http.post("/api/v1/recordings/stop", json=request_body)
+
+    assert response.status_code == 200
+    assert response.json()["session_id"] == started.session_id
+    assert response.json()["state"] == "completed"
+    assert "--expected-session-id" not in harness.commands[-1]
+
+
+def test_gateway_stop_requires_requested_session(tmp_path):
+    harness = _NativeHarness(tmp_path / "recordings")
+    service = _service(tmp_path, harness)
+    started = service.start(duration=60, prefix="field")
+    app = FastAPI()
+    register_operation_routes(app, SimpleNamespace(_go2rtc_upstream="", _recording=service))
+
+    with TestClient(app) as http:
+        mismatch = http.post("/api/v1/recordings/stop", json={"expected_session_id": "older-session"})
+        assert mismatch.status_code == 409
+        assert mismatch.json()["error"] == "recording_session_mismatch"
+        assert harness.state == "recording"
+
+        invalid = http.post("/api/v1/recordings/stop", json={"expected_session_id": "../other"})
+        assert invalid.status_code == 422
+        assert invalid.json()["error"] == "recording_session_invalid"
+        assert harness.state == "recording"
+
+        stopped = http.post("/api/v1/recordings/stop", json={"expected_session_id": started.session_id})
+
+    assert stopped.status_code == 200
+    assert stopped.json()["session_id"] == started.session_id
+    assert stopped.json()["state"] == "completed"
+    command = harness.commands[-1]
+    assert command[command.index("--expected-session-id") + 1] == started.session_id
 
 
 def test_exact_inspection_start_adopts_the_active_native_session(tmp_path: Path) -> None:

@@ -23,40 +23,21 @@ _sym_db = _symbol_database.Default()
 
 
 from . import common_pb2 as common__pb2
-from google.protobuf import duration_pb2 as google_dot_protobuf_dot_duration__pb2
+try:
+  messages_dot_common__pb2 = common__pb2.messages_dot_common__pb2
+except AttributeError:
+  messages_dot_common__pb2 = common__pb2.messages.common_pb2
+from .messages import observations_pb2 as messages_dot_observations__pb2
 
+from .messages.observations_pb2 import *
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12observations.proto\x12\x07\x64oso.v1\x1a\x0c\x63ommon.proto\x1a\x1egoogle/protobuf/duration.proto\"*\n\x07Vector3\x12\t\n\x01x\x18\x01 \x01(\x01\x12\t\n\x01y\x18\x02 \x01(\x01\x12\t\n\x01z\x18\x03 \x01(\x01\"8\n\nQuaternion\x12\t\n\x01w\x18\x01 \x01(\x01\x12\t\n\x01x\x18\x02 \x01(\x01\x12\t\n\x01y\x18\x03 \x01(\x01\x12\t\n\x01z\x18\x04 \x01(\x01\"\xdc\x01\n\tImuSample\x12\x30\n\x16\x61ngular_velocity_rad_s\x18\x01 \x01(\x0b\x32\x10.doso.v1.Vector3\x12\x36\n\x19orientation_world_to_body\x18\x02 \x01(\x0b\x32\x13.doso.v1.Quaternion\x12\x32\n\x18linear_acceleration_m_s2\x18\x03 \x01(\x0b\x32\x10.doso.v1.Vector3\x12\x31\n\x0esource_elapsed\x18\x04 \x01(\x0b\x32\x19.google.protobuf.Duration\"n\n\nJointState\x12\n\n\x02id\x18\x01 \x01(\r\x12\x14\n\x0cposition_rad\x18\x02 \x01(\x01\x12\x16\n\x0evelocity_rad_s\x18\x03 \x01(\x01\x12\x11\n\ttorque_nm\x18\x04 \x01(\x01\x12\x13\n\x0bstatus_code\x18\x05 \x01(\r\"e\n\x0bJointSample\x12#\n\x06joints\x18\x01 \x03(\x0b\x32\x13.doso.v1.JointState\x12\x31\n\x0esource_elapsed\x18\x02 \x01(\x0b\x32\x19.google.protobuf.Duration\"d\n\nMotorState\x12\n\n\x02id\x18\x01 \x01(\r\x12\x0e\n\x06online\x18\x02 \x01(\x08\x12\x13\n\x0bstatus_code\x18\x03 \x01(\r\x12\x15\n\rtemperature_c\x18\x04 \x01(\x01\x12\x0e\n\x06\x65rrors\x18\x05 \x03(\r\"2\n\x0bMotorStates\x12#\n\x06motors\x18\x01 \x03(\x0b\x32\x13.doso.v1.MotorState\"&\n\x15MotorVoltagesResponse\x12\r\n\x05volts\x18\x01 \x03(\x01\"\x1b\n\x0b\x43\x61meraFrame\x12\x0c\n\x04jpeg\x18\x01 \x01(\x0c\"0\n\x0c\x43loudRequest\x12 \n\x04kind\x18\x01 \x01(\x0e\x32\x12.doso.v1.CloudKind\"\x1a\n\nCloudFrame\x12\x0c\n\x04pcld\x18\x01 \x01(\x0c*P\n\tCloudKind\x12\x1a\n\x16\x43LOUD_KIND_UNSPECIFIED\x10\x00\x12\x12\n\x0e\x43LOUD_KIND_MAP\x10\x01\x12\x13\n\x0f\x43LOUD_KIND_SCAN\x10\x02\x32\xf4\x03\n\x0cObservations\x12*\n\x05Scene\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12\x31\n\x0c\x43\x61meraStatus\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12\x30\n\x08WatchImu\x12\x0e.doso.v1.Empty\x1a\x12.doso.v1.ImuSample0\x01\x12\x35\n\x0bWatchJoints\x12\x0e.doso.v1.Empty\x1a\x14.doso.v1.JointSample0\x01\x12.\n\x06Motors\x12\x0e.doso.v1.Empty\x1a\x14.doso.v1.MotorStates\x12?\n\rMotorVoltages\x12\x0e.doso.v1.Empty\x1a\x1e.doso.v1.MotorVoltagesResponse\x12\x33\n\x0b\x43\x61meraFrame\x12\x0e.doso.v1.Empty\x1a\x14.doso.v1.CameraFrame\x12\x35\n\x0bWatchCamera\x12\x0e.doso.v1.Empty\x1a\x14.doso.v1.CameraFrame0\x01\x12?\n\x0fWatchPointCloud\x12\x15.doso.v1.CloudRequest\x1a\x13.doso.v1.CloudFrame0\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12observations.proto\x12\x07\x64oso.v1\x1a\x0c\x63ommon.proto\x1a\x1bmessages/observations.proto2\xab\x05\n\x0cObservations\x12*\n\x05Scene\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12\x31\n\x0c\x43\x61meraStatus\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12?\n\x11\x43\x61meraCalibration\x12\x0e.doso.v1.Empty\x1a\x1a.doso.v1.CameraCalibration\x12\x30\n\x08WatchImu\x12\x0e.doso.v1.Empty\x1a\x12.doso.v1.ImuSample0\x01\x12\x35\n\x0bWatchJoints\x12\x0e.doso.v1.Empty\x1a\x14.doso.v1.JointSample0\x01\x12.\n\x06Motors\x12\x0e.doso.v1.Empty\x1a\x14.doso.v1.MotorStates\x12?\n\rMotorVoltages\x12\x0e.doso.v1.Empty\x1a\x1e.doso.v1.MotorVoltagesResponse\x12\x33\n\x0b\x43\x61meraFrame\x12\x0e.doso.v1.Empty\x1a\x14.doso.v1.CameraFrame\x12\x35\n\x0bWatchCamera\x12\x0e.doso.v1.Empty\x1a\x14.doso.v1.CameraFrame0\x01\x12\x35\n\x0c\x43\x61meraSample\x12\x0e.doso.v1.Empty\x1a\x15.doso.v1.CameraSample\x12=\n\x12WatchCameraSamples\x12\x0e.doso.v1.Empty\x1a\x15.doso.v1.CameraSample0\x01\x12?\n\x0fWatchPointCloud\x12\x15.doso.v1.CloudRequest\x1a\x13.doso.v1.CloudFrame0\x01P\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'observations_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_CLOUDKIND']._serialized_start=918
-  _globals['_CLOUDKIND']._serialized_end=998
-  _globals['_VECTOR3']._serialized_start=77
-  _globals['_VECTOR3']._serialized_end=119
-  _globals['_QUATERNION']._serialized_start=121
-  _globals['_QUATERNION']._serialized_end=177
-  _globals['_IMUSAMPLE']._serialized_start=180
-  _globals['_IMUSAMPLE']._serialized_end=400
-  _globals['_JOINTSTATE']._serialized_start=402
-  _globals['_JOINTSTATE']._serialized_end=512
-  _globals['_JOINTSAMPLE']._serialized_start=514
-  _globals['_JOINTSAMPLE']._serialized_end=615
-  _globals['_MOTORSTATE']._serialized_start=617
-  _globals['_MOTORSTATE']._serialized_end=717
-  _globals['_MOTORSTATES']._serialized_start=719
-  _globals['_MOTORSTATES']._serialized_end=769
-  _globals['_MOTORVOLTAGESRESPONSE']._serialized_start=771
-  _globals['_MOTORVOLTAGESRESPONSE']._serialized_end=809
-  _globals['_CAMERAFRAME']._serialized_start=811
-  _globals['_CAMERAFRAME']._serialized_end=838
-  _globals['_CLOUDREQUEST']._serialized_start=840
-  _globals['_CLOUDREQUEST']._serialized_end=888
-  _globals['_CLOUDFRAME']._serialized_start=890
-  _globals['_CLOUDFRAME']._serialized_end=916
-  _globals['_OBSERVATIONS']._serialized_start=1001
-  _globals['_OBSERVATIONS']._serialized_end=1501
+  _globals['_OBSERVATIONS']._serialized_start=75
+  _globals['_OBSERVATIONS']._serialized_end=758
 # @@protoc_insertion_point(module_scope)

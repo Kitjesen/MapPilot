@@ -141,6 +141,8 @@ def _control_projection(
     )
     if control.get("estop_latched") is True or source == "estop":
         reason = "estop_latched"
+    elif _text(control.get("hold_reason")):
+        reason = _text(control["hold_reason"])
     elif control.get("operator_takeover_latched") is True:
         reason = "operator_takeover"
     elif resume_required:
@@ -176,12 +178,12 @@ def _motion_permission(
     if endpoint_unknown:
         return "UNKNOWN", "native_endpoint_status_unavailable"
 
+    if _text(control.get("hold_reason")):
+        return "HELD", _text(control["hold_reason"])
     input_gate = _mapping(native_endpoint.get("input_gate"))
     if input_gate.get("ready") is False:
         return "HELD", _text(input_gate.get("reason")) or "input_gate_blocked"
     blockers = [_text(code) for code in readiness.get("blockers", []) if _text(code)]
-    if "native_control_loop_unhealthy" in blockers:
-        return "HELD", "native_control_loop_unhealthy"
     if control.get("operator_takeover_latched") is True:
         return "HELD", "operator_takeover"
     if control.get("resume_required") is True:

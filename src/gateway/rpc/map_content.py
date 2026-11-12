@@ -10,6 +10,20 @@ from .codec import _abort
 from .generated import maps_pb2 as pb
 
 
+def artifact_error(context, error):
+    missing = {"artifact_not_found", "map_not_found", "missing_artifact", "missing_capability"}
+    unavailable = {"connection_closed", "fd_passing_unsupported", "mapd_unavailable"}
+    if error.reason_code in missing:
+        code = grpc.StatusCode.NOT_FOUND
+    elif error.reason_code == "map_write_in_progress":
+        code = grpc.StatusCode.FAILED_PRECONDITION
+    elif error.reason_code in unavailable:
+        code = grpc.StatusCode.UNAVAILABLE
+    else:
+        code = grpc.StatusCode.INTERNAL
+    _abort(context, code, {"reason_code": error.reason_code, "message": str(error)})
+
+
 def point_cloud(gateway, request, context, slots):
     error = public_map_name_error(request.map_name)
     if error is not None:
@@ -55,17 +69,7 @@ def point_cloud(gateway, request, context, slots):
                 "reason_code": "artifact_size_mismatch", "message": "Map artifact ended before its declared size.",
             })
     except MapClientError as exc:
-        missing = {"artifact_not_found", "map_not_found", "missing_artifact", "missing_capability"}
-        unavailable = {"connection_closed", "fd_passing_unsupported", "mapd_unavailable"}
-        if exc.reason_code in missing:
-            code = grpc.StatusCode.NOT_FOUND
-        elif exc.reason_code == "map_write_in_progress":
-            code = grpc.StatusCode.FAILED_PRECONDITION
-        elif exc.reason_code in unavailable:
-            code = grpc.StatusCode.UNAVAILABLE
-        else:
-            code = grpc.StatusCode.INTERNAL
-        _abort(context, code, {"reason_code": exc.reason_code, "message": str(exc)})
+        artifact_error(context, exc)
     except OSError as exc:
         _abort(context, grpc.StatusCode.UNAVAILABLE, {"reason_code": "map_artifact_unavailable", "message": str(exc)})
     except (TypeError, ValueError, OverflowError) as exc:

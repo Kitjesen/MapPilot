@@ -23,26 +23,21 @@ _sym_db = _symbol_database.Default()
 
 
 from . import common_pb2 as common__pb2
-from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
+try:
+  messages_dot_common__pb2 = common__pb2.messages_dot_common__pb2
+except AttributeError:
+  messages_dot_common__pb2 = common__pb2.messages.common_pb2
+from .messages import navigation_pb2 as messages_dot_navigation__pb2
 
+from .messages.navigation_pb2 import *
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x10navigation.proto\x12\x07\x64oso.v1\x1a\x0c\x63ommon.proto\x1a\x1cgoogle/protobuf/struct.proto\"F\n\x04Goal\x12!\n\x07\x63ommand\x18\x01 \x01(\x0b\x32\x10.doso.v1.Command\x12\x1b\n\x04pose\x18\x02 \x01(\x0b\x32\r.doso.v1.Pose\"\x1c\n\tTaskQuery\x12\x0f\n\x07task_id\x18\x01 \x01(\t\"P\n\nCancelTask\x12!\n\x07\x63ommand\x18\x01 \x01(\x0b\x32\x10.doso.v1.Command\x12\x0f\n\x07task_id\x18\x02 \x01(\t\x12\x0e\n\x06reason\x18\x03 \x01(\t\"\x98\x01\n\x04Task\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\r\n\x05\x66ound\x18\x02 \x01(\x08\x12!\n\x05state\x18\x03 \x01(\x0e\x32\x12.doso.v1.TaskState\x12\x0e\n\x06reason\x18\x04 \x01(\t\x12(\n\x07\x64\x65tails\x18\x05 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x13\n\x0breason_code\x18\x06 \x01(\t*\xa1\x01\n\tTaskState\x12\x10\n\x0cTASK_UNKNOWN\x10\x00\x12\x11\n\rTASK_PLANNING\x10\x01\x12\x12\n\x0eTASK_EXECUTING\x10\x02\x12\x0f\n\x0bTASK_PAUSED\x10\x03\x12\x13\n\x0fTASK_RECOVERING\x10\x04\x12\x10\n\x0cTASK_SUCCESS\x10\x05\x12\x0f\n\x0bTASK_FAILED\x10\x06\x12\x12\n\x0eTASK_CANCELLED\x10\x07\x32\x95\x02\n\nNavigation\x12%\n\x02Go\x12\r.doso.v1.Goal\x1a\x10.doso.v1.Receipt\x12+\n\x06Status\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12)\n\x04Path\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12)\n\x04Task\x12\x12.doso.v1.TaskQuery\x1a\r.doso.v1.Task\x12/\n\x06\x43\x61ncel\x12\x13.doso.v1.CancelTask\x1a\x10.doso.v1.Receipt\x12,\n\x05Watch\x12\x12.doso.v1.TaskQuery\x1a\r.doso.v1.Task0\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x10navigation.proto\x12\x07\x64oso.v1\x1a\x0c\x63ommon.proto\x1a\x19messages/navigation.proto2\x89\x05\n\nNavigation\x12%\n\x02Go\x12\r.doso.v1.Goal\x1a\x10.doso.v1.Receipt\x12\x30\n\rGoWithOptions\x12\r.doso.v1.Goal\x1a\x10.doso.v1.Receipt\x12\x37\n\x0bPreviewPlan\x12\x12.doso.v1.PlanQuery\x1a\x14.doso.v1.PlanPreview\x12:\n\rSetSpeedLimit\x12\x17.doso.v1.TaskSpeedLimit\x1a\x10.doso.v1.Receipt\x12+\n\x06Status\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12)\n\x04Path\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12\x30\n\x05Route\x12\x0e.doso.v1.Empty\x1a\x17.doso.v1.NavigationPath\x12\x36\n\tWatchPath\x12\x0e.doso.v1.Empty\x1a\x17.doso.v1.NavigationPath0\x01\x12)\n\x04Task\x12\x12.doso.v1.TaskQuery\x1a\r.doso.v1.Task\x12/\n\x06\x43\x61ncel\x12\x13.doso.v1.CancelTask\x1a\x10.doso.v1.Receipt\x12/\n\x05Pause\x12\x14.doso.v1.TaskControl\x1a\x10.doso.v1.Receipt\x12\x30\n\x06Resume\x12\x14.doso.v1.TaskControl\x1a\x10.doso.v1.Receipt\x12,\n\x05Watch\x12\x12.doso.v1.TaskQuery\x1a\r.doso.v1.Task0\x01P\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'navigation_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_TASKSTATE']._serialized_start=413
-  _globals['_TASKSTATE']._serialized_end=574
-  _globals['_GOAL']._serialized_start=73
-  _globals['_GOAL']._serialized_end=143
-  _globals['_TASKQUERY']._serialized_start=145
-  _globals['_TASKQUERY']._serialized_end=173
-  _globals['_CANCELTASK']._serialized_start=175
-  _globals['_CANCELTASK']._serialized_end=255
-  _globals['_TASK']._serialized_start=258
-  _globals['_TASK']._serialized_end=410
-  _globals['_NAVIGATION']._serialized_start=577
-  _globals['_NAVIGATION']._serialized_end=854
+  _globals['_NAVIGATION']._serialized_start=71
+  _globals['_NAVIGATION']._serialized_end=720
 # @@protoc_insertion_point(module_scope)

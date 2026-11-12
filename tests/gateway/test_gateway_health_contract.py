@@ -529,11 +529,7 @@ def test_brainstem_probe_projects_native_driver_status(monkeypatch, tmp_path):
                     "initial_zero_acknowledged": True,
                     "decision": "ready",
                 },
-                "output_ack": {
-                    "producer_boot_id": "navd:boot",
-                    "output_sequence": 17,
-                    "accepted": True,
-                },
+                "zero_output": True,
                 "last_reason": "accepted",
                 "last_error": "",
             }
@@ -550,7 +546,7 @@ def test_brainstem_probe_projects_native_driver_status(monkeypatch, tmp_path):
     assert info["host"] == "192.168.66.20:13145"
     assert info["fsm"] == "STANDING"
     assert info["lease_valid"] is True
-    assert info["output_ack"]["output_sequence"] == 17
+    assert info["zero_output"] is True
 
 
 def test_brainstem_probe_rejects_stale_driver_status(monkeypatch, tmp_path):

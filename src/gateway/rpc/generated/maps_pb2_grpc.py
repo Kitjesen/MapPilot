@@ -3,8 +3,8 @@
 import grpc
 import warnings
 
-from . import common_pb2 as common__pb2
-from . import maps_pb2 as maps__pb2
+from .messages import common_pb2 as messages_dot_common__pb2
+from .messages import maps_pb2 as messages_dot_maps__pb2
 
 GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
@@ -37,33 +37,38 @@ class MapsStub(object):
         """
         self.List = channel.unary_unary(
                 '/doso.v1.Maps/List',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=maps__pb2.MapList.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_maps__pb2.MapList.FromString,
                 _registered_method=True)
         self.PointCloud = channel.unary_stream(
                 '/doso.v1.Maps/PointCloud',
-                request_serializer=maps__pb2.MapContentRequest.SerializeToString,
-                response_deserializer=maps__pb2.MapContent.FromString,
+                request_serializer=messages_dot_maps__pb2.MapContentRequest.SerializeToString,
+                response_deserializer=messages_dot_maps__pb2.MapContent.FromString,
+                _registered_method=True)
+        self.Grid = channel.unary_unary(
+                '/doso.v1.Maps/Grid',
+                request_serializer=messages_dot_maps__pb2.MapContentRequest.SerializeToString,
+                response_deserializer=messages_dot_maps__pb2.MapGrid.FromString,
                 _registered_method=True)
         self.Save = channel.unary_unary(
                 '/doso.v1.Maps/Save',
-                request_serializer=maps__pb2.SaveMap.SerializeToString,
-                response_deserializer=common__pb2.Receipt.FromString,
+                request_serializer=messages_dot_maps__pb2.SaveMap.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
                 _registered_method=True)
         self.Operation = channel.unary_unary(
                 '/doso.v1.Maps/Operation',
-                request_serializer=maps__pb2.MapQuery.SerializeToString,
-                response_deserializer=maps__pb2.MapOperation.FromString,
+                request_serializer=messages_dot_maps__pb2.MapQuery.SerializeToString,
+                response_deserializer=messages_dot_maps__pb2.MapOperation.FromString,
                 _registered_method=True)
         self.Switch = channel.unary_unary(
                 '/doso.v1.Maps/Switch',
-                request_serializer=maps__pb2.SwitchProduct.SerializeToString,
-                response_deserializer=maps__pb2.ProductOperation.FromString,
+                request_serializer=messages_dot_maps__pb2.SwitchProduct.SerializeToString,
+                response_deserializer=messages_dot_maps__pb2.ProductOperation.FromString,
                 _registered_method=True)
         self.ProductOperation = channel.unary_unary(
                 '/doso.v1.Maps/ProductOperation',
-                request_serializer=maps__pb2.ProductQuery.SerializeToString,
-                response_deserializer=maps__pb2.ProductOperation.FromString,
+                request_serializer=messages_dot_maps__pb2.ProductQuery.SerializeToString,
+                response_deserializer=messages_dot_maps__pb2.ProductOperation.FromString,
                 _registered_method=True)
 
 
@@ -77,6 +82,12 @@ class MapsServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def PointCloud(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Grid(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -111,33 +122,38 @@ def add_MapsServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'List': grpc.unary_unary_rpc_method_handler(
                     servicer.List,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=maps__pb2.MapList.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_maps__pb2.MapList.SerializeToString,
             ),
             'PointCloud': grpc.unary_stream_rpc_method_handler(
                     servicer.PointCloud,
-                    request_deserializer=maps__pb2.MapContentRequest.FromString,
-                    response_serializer=maps__pb2.MapContent.SerializeToString,
+                    request_deserializer=messages_dot_maps__pb2.MapContentRequest.FromString,
+                    response_serializer=messages_dot_maps__pb2.MapContent.SerializeToString,
+            ),
+            'Grid': grpc.unary_unary_rpc_method_handler(
+                    servicer.Grid,
+                    request_deserializer=messages_dot_maps__pb2.MapContentRequest.FromString,
+                    response_serializer=messages_dot_maps__pb2.MapGrid.SerializeToString,
             ),
             'Save': grpc.unary_unary_rpc_method_handler(
                     servicer.Save,
-                    request_deserializer=maps__pb2.SaveMap.FromString,
-                    response_serializer=common__pb2.Receipt.SerializeToString,
+                    request_deserializer=messages_dot_maps__pb2.SaveMap.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
             ),
             'Operation': grpc.unary_unary_rpc_method_handler(
                     servicer.Operation,
-                    request_deserializer=maps__pb2.MapQuery.FromString,
-                    response_serializer=maps__pb2.MapOperation.SerializeToString,
+                    request_deserializer=messages_dot_maps__pb2.MapQuery.FromString,
+                    response_serializer=messages_dot_maps__pb2.MapOperation.SerializeToString,
             ),
             'Switch': grpc.unary_unary_rpc_method_handler(
                     servicer.Switch,
-                    request_deserializer=maps__pb2.SwitchProduct.FromString,
-                    response_serializer=maps__pb2.ProductOperation.SerializeToString,
+                    request_deserializer=messages_dot_maps__pb2.SwitchProduct.FromString,
+                    response_serializer=messages_dot_maps__pb2.ProductOperation.SerializeToString,
             ),
             'ProductOperation': grpc.unary_unary_rpc_method_handler(
                     servicer.ProductOperation,
-                    request_deserializer=maps__pb2.ProductQuery.FromString,
-                    response_serializer=maps__pb2.ProductOperation.SerializeToString,
+                    request_deserializer=messages_dot_maps__pb2.ProductQuery.FromString,
+                    response_serializer=messages_dot_maps__pb2.ProductOperation.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -165,8 +181,8 @@ class Maps(object):
             request,
             target,
             '/doso.v1.Maps/List',
-            common__pb2.Empty.SerializeToString,
-            maps__pb2.MapList.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_maps__pb2.MapList.FromString,
             options,
             channel_credentials,
             insecure,
@@ -192,8 +208,35 @@ class Maps(object):
             request,
             target,
             '/doso.v1.Maps/PointCloud',
-            maps__pb2.MapContentRequest.SerializeToString,
-            maps__pb2.MapContent.FromString,
+            messages_dot_maps__pb2.MapContentRequest.SerializeToString,
+            messages_dot_maps__pb2.MapContent.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Grid(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Maps/Grid',
+            messages_dot_maps__pb2.MapContentRequest.SerializeToString,
+            messages_dot_maps__pb2.MapGrid.FromString,
             options,
             channel_credentials,
             insecure,
@@ -219,8 +262,8 @@ class Maps(object):
             request,
             target,
             '/doso.v1.Maps/Save',
-            maps__pb2.SaveMap.SerializeToString,
-            common__pb2.Receipt.FromString,
+            messages_dot_maps__pb2.SaveMap.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
             options,
             channel_credentials,
             insecure,
@@ -246,8 +289,8 @@ class Maps(object):
             request,
             target,
             '/doso.v1.Maps/Operation',
-            maps__pb2.MapQuery.SerializeToString,
-            maps__pb2.MapOperation.FromString,
+            messages_dot_maps__pb2.MapQuery.SerializeToString,
+            messages_dot_maps__pb2.MapOperation.FromString,
             options,
             channel_credentials,
             insecure,
@@ -273,8 +316,8 @@ class Maps(object):
             request,
             target,
             '/doso.v1.Maps/Switch',
-            maps__pb2.SwitchProduct.SerializeToString,
-            maps__pb2.ProductOperation.FromString,
+            messages_dot_maps__pb2.SwitchProduct.SerializeToString,
+            messages_dot_maps__pb2.ProductOperation.FromString,
             options,
             channel_credentials,
             insecure,
@@ -300,8 +343,8 @@ class Maps(object):
             request,
             target,
             '/doso.v1.Maps/ProductOperation',
-            maps__pb2.ProductQuery.SerializeToString,
-            maps__pb2.ProductOperation.FromString,
+            messages_dot_maps__pb2.ProductQuery.SerializeToString,
+            messages_dot_maps__pb2.ProductOperation.FromString,
             options,
             channel_credentials,
             insecure,

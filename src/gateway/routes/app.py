@@ -15,6 +15,17 @@ from gateway.services.app_bootstrap import (
 
 
 def register_app_routes(app, gw) -> None:
+    from gateway.routes.amap import register_amap_routes
+
+    register_amap_routes(app)
+
+    @app.get("/api/v1/geography/location", summary="Fresh WGS84 position from the robot GNSS owner")
+    def geographic_location_snapshot():
+        from fastapi.responses import JSONResponse
+        from gateway.services.geography import geographic_location
+
+        return JSONResponse(geographic_location(), headers={"Cache-Control": "no-store"})
+
     @app.get(
         "/api/v1/app/bootstrap",
         summary="App/Web bootstrap snapshot",

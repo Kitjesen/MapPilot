@@ -40,8 +40,6 @@ def _probe_brainstem() -> dict[str, Any]:
     adapter = dict(adapter) if isinstance(adapter, Mapping) else {}
     control = payload.get("control")
     control = dict(control) if isinstance(control, Mapping) else {}
-    output_ack = payload.get("output_ack")
-    output_ack = dict(output_ack) if isinstance(output_ack, Mapping) else {}
     try:
         stamp_s = float(payload.get("stamp_s"))
         max_age_s = float(os.environ.get("LINGTU_DRIVER_STATUS_MAX_AGE_S", "1.5") or "1.5")
@@ -65,7 +63,7 @@ def _probe_brainstem() -> dict[str, Any]:
             "owner_id": adapter.get("control_owner_id"),
             "connected": connected,
             "ready": payload.get("ready") is True,
-            "output_ack": output_ack,
+            "zero_output": payload.get("zero_output") is True,
             "last_reason": payload.get("last_reason"),
             "last_error": payload.get("last_error"),
             "status_age_s": round(age_s, 3) if math.isfinite(age_s) else None,

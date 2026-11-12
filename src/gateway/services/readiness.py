@@ -13,8 +13,6 @@ from gateway.services.safety_status import safety_stop_active, safety_summary
 from message.topics import TOPICS
 
 READINESS_SCHEMA_VERSION = 1
-_CALIBRATION_CACHE_TTL_S = 30.0
-_CALIBRATION_CACHE: tuple[float, dict[str, Any]] | None = None
 
 _LOCALIZATION_BLOCKING_STATES = {
     "no_odometry",
@@ -439,43 +437,7 @@ def _runtime_readiness_reasons(
         runtime["safety"] = {"error": str(exc)}
         reasons.append("safety:status_error")
 
-    calibration = _calibration_status()
-    runtime["calibration"] = calibration
-    if calibration.get("errors"):
-        reasons.append("calibration:error")
-
     return list(dict.fromkeys(reasons)), runtime, navigation_projection
-
-
-def _calibration_status(now: float | None = None) -> dict[str, Any]:
-    """Return cached startup calibration diagnostics for client readiness."""
-    global _CALIBRATION_CACHE
-    ts = time.time() if now is None else now
-    if _CALIBRATION_CACHE is not None:
-        cached_ts, cached = _CALIBRATION_CACHE
-        if ts - cached_ts < _CALIBRATION_CACHE_TTL_S:
-            return cached
-    try:
-        from runtime.utils.calibration_check import run_calibration_check
-
-        report = run_calibration_check(require_camera=False, require_slam=False)
-        payload = {
-            "ok": report.ok,
-            "errors": list(report.errors),
-            "warnings": list(report.warnings),
-            "info_count": len(report.info),
-            "summary": report.summary(),
-        }
-    except Exception as exc:
-        payload = {
-            "ok": False,
-            "errors": [str(exc)],
-            "warnings": [],
-            "info_count": 0,
-            "summary": "Calibration check unavailable",
-        }
-    _CALIBRATION_CACHE = (ts, payload)
-    return payload
 
 
 def _normalize_startup_status(source: Any, *, source_name: str) -> dict[str, Any]:
@@ -676,10 +638,7 @@ def build_readiness_snapshot(
         )
     if runtime:
         runtime["summary"] = modes
-    calibration = runtime.get("calibration")
     advisories = list(startup["advisories"])
-    if isinstance(calibration, Mapping):
-        advisories.extend(str(w) for w in (calibration.get("warnings") or []) if w)
     payload = {
         "schema_version": READINESS_SCHEMA_VERSION,
         "status": "ready" if ready else "degraded",

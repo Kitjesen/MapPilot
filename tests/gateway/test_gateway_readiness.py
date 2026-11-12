@@ -741,26 +741,14 @@ def test_readiness_snapshot_blocks_motion_but_not_data_when_safety_stop_active()
 
 
 
-def test_readiness_snapshot_surfaces_calibration_warnings(monkeypatch):
+def test_readiness_does_not_repeat_static_calibration(monkeypatch):
     from gateway.gateway_module import GatewayModule
-    from gateway.services import readiness as readiness_service
     from gateway.services.readiness import build_readiness_snapshot
 
-    class Report:
-        ok = True
-        errors: list[str] = []
-        warnings = ["Camera rotation is identity"]
-        info = ["camera intrinsics ok"]
+    def unexpected_check(**_kwargs):
+        raise AssertionError("readiness must not repeat startup calibration")
 
-        def summary(self):
-            return "Calibration: 1 warning(s)"
-
-    monkeypatch.setattr(
-        "runtime.utils.calibration_check.run_calibration_check",
-        lambda **_kwargs: Report(),
-    )
-    readiness_service._CALIBRATION_CACHE = None
-
+    monkeypatch.setattr("runtime.utils.calibration_check.run_calibration_check", unexpected_check)
     gateway = GatewayModule()
     gateway._all_modules = {"host.bus": _HealthyModule()}
     _set_session_mode(gateway, "navigating")
@@ -781,14 +769,7 @@ def test_readiness_snapshot_surfaces_calibration_warnings(monkeypatch):
 
     assert status_code == 200
     assert payload["ready"] is True
-    assert payload["advisories"] == ["Camera rotation is identity"]
-    assert payload["runtime"]["calibration"] == {
-        "ok": True,
-        "errors": [],
-        "warnings": ["Camera rotation is identity"],
-        "info_count": 1,
-        "summary": "Calibration: 1 warning(s)",
-    }
+    assert "calibration" not in payload["runtime"]
     assert "calibration:error" not in payload["reasons"]
 
 

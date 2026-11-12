@@ -9,9 +9,7 @@ from collections.abc import Mapping
 from dataclasses import asdict
 from typing import Any
 
-from runtime.runtime_policy import (
-    backend_capability_defaults as _backend_capability_defaults,
-)
+from runtime.runtime_policy import backend_capability_defaults
 from runtime.tf.conversions import map_from_odom_transform_from_mapping, map_from_odom_transform_to_dict
 
 logger = logging.getLogger(__name__)
@@ -76,10 +74,6 @@ def _as_optional_bool(value: Any) -> bool | None:
         if lowered in {"false", "0", "no", "n"}:
             return False
     return None
-
-
-def backend_capability_defaults(backend_name: str | None) -> dict[str, Any]:
-    return _backend_capability_defaults(backend_name)
 
 
 def safe_session(gw: Any) -> dict[str, Any]:

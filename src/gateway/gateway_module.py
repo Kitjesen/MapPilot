@@ -38,11 +38,9 @@ from gateway.services.event_handlers import (
     handle_scene_graph,
     handle_tare_stats,
     handle_visual_servo_status,
-    json_payload,
 )
 from gateway.services.exploration import (
     begin_exploration,
-    coerce_explorer_result,
     end_exploration,
     exploration_start_readiness,
     exploration_status_payload,
@@ -109,9 +107,6 @@ from gateway.services.teleop import (
 )
 from gateway.services.teleop import (
     release as teleop_release,
-)
-from gateway.services.teleop import (
-    twist_from_velocity as teleop_twist_from_velocity,
 )
 from gateway.services.traffic import (
     DEFAULT_SSE_RASTER_MIN_INTERVAL_S,
@@ -487,6 +482,7 @@ class GatewayModule(Module, layer=6):
     def stop(self) -> None:
         stop_background_threads(self)
         self._recording.close_streams()
+        self._imu_monitor.close()
         shutdown_teleop(self)
         super().stop()
 
@@ -504,9 +500,6 @@ class GatewayModule(Module, layer=6):
 
     def _explorer_unavailable_detail(self) -> dict[str, Any]:
         return explorer_unavailable_detail()
-
-    def _coerce_explorer_result(self, result: Any) -> Any:
-        return coerce_explorer_result(result)
 
     def _begin_exploration(self) -> Any:
         return begin_exploration(self)
@@ -546,14 +539,6 @@ class GatewayModule(Module, layer=6):
             source_epoch=source_epoch,
             sequence=sequence,
         )
-
-    def _teleop_twist_from_velocity(
-        self,
-        vx_mps: float,
-        vy_mps: float,
-        yaw_rps: float,
-    ) -> Twist:
-        return teleop_twist_from_velocity(self, vx_mps, vy_mps, yaw_rps)
 
     def push_jpeg(self, jpeg_bytes: bytes) -> None:
         """Cache a frame produced by CameraJpegRelayModule."""
@@ -642,9 +627,6 @@ class GatewayModule(Module, layer=6):
     def _on_exploration_supervisor(self, state: dict) -> None:
         handle_exploration_supervisor(self, state)
 
-    def _json_payload(self, value: Any) -> Any:
-        return json_payload(value)
-
     def _on_global_path(self, path: Path | list) -> None:
         handle_global_path(self, path)
 
@@ -663,6 +645,8 @@ class GatewayModule(Module, layer=6):
         if age_s > 2.0 or age_s < -1.0 or state.ts <= getattr(self, "_last_joint_state_stamp", 0.0):
             return
         self._last_joint_state_stamp = state.ts
+        with self._state_lock:
+            self._latest_joint_state = state
         payload = state.to_dict()
         payload.update(type="joint_state", stamp=state.ts, source_age_s=max(0.0, age_s))
         self.push_event(payload)

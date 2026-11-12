@@ -3,8 +3,8 @@
 import grpc
 import warnings
 
-from . import common_pb2 as common__pb2
-from . import navigation_pb2 as navigation__pb2
+from .messages import common_pb2 as messages_dot_common__pb2
+from .messages import navigation_pb2 as messages_dot_navigation__pb2
 
 GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
@@ -37,33 +37,68 @@ class NavigationStub(object):
         """
         self.Go = channel.unary_unary(
                 '/doso.v1.Navigation/Go',
-                request_serializer=navigation__pb2.Goal.SerializeToString,
-                response_deserializer=common__pb2.Receipt.FromString,
+                request_serializer=messages_dot_navigation__pb2.Goal.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
+        self.GoWithOptions = channel.unary_unary(
+                '/doso.v1.Navigation/GoWithOptions',
+                request_serializer=messages_dot_navigation__pb2.Goal.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
+        self.PreviewPlan = channel.unary_unary(
+                '/doso.v1.Navigation/PreviewPlan',
+                request_serializer=messages_dot_navigation__pb2.PlanQuery.SerializeToString,
+                response_deserializer=messages_dot_navigation__pb2.PlanPreview.FromString,
+                _registered_method=True)
+        self.SetSpeedLimit = channel.unary_unary(
+                '/doso.v1.Navigation/SetSpeedLimit',
+                request_serializer=messages_dot_navigation__pb2.TaskSpeedLimit.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
                 _registered_method=True)
         self.Status = channel.unary_unary(
                 '/doso.v1.Navigation/Status',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=common__pb2.Snapshot.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Snapshot.FromString,
                 _registered_method=True)
         self.Path = channel.unary_unary(
                 '/doso.v1.Navigation/Path',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=common__pb2.Snapshot.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Snapshot.FromString,
+                _registered_method=True)
+        self.Route = channel.unary_unary(
+                '/doso.v1.Navigation/Route',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_navigation__pb2.NavigationPath.FromString,
+                _registered_method=True)
+        self.WatchPath = channel.unary_stream(
+                '/doso.v1.Navigation/WatchPath',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_navigation__pb2.NavigationPath.FromString,
                 _registered_method=True)
         self.Task = channel.unary_unary(
                 '/doso.v1.Navigation/Task',
-                request_serializer=navigation__pb2.TaskQuery.SerializeToString,
-                response_deserializer=navigation__pb2.Task.FromString,
+                request_serializer=messages_dot_navigation__pb2.TaskQuery.SerializeToString,
+                response_deserializer=messages_dot_navigation__pb2.Task.FromString,
                 _registered_method=True)
         self.Cancel = channel.unary_unary(
                 '/doso.v1.Navigation/Cancel',
-                request_serializer=navigation__pb2.CancelTask.SerializeToString,
-                response_deserializer=common__pb2.Receipt.FromString,
+                request_serializer=messages_dot_navigation__pb2.CancelTask.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
+        self.Pause = channel.unary_unary(
+                '/doso.v1.Navigation/Pause',
+                request_serializer=messages_dot_navigation__pb2.TaskControl.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
+        self.Resume = channel.unary_unary(
+                '/doso.v1.Navigation/Resume',
+                request_serializer=messages_dot_navigation__pb2.TaskControl.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
                 _registered_method=True)
         self.Watch = channel.unary_stream(
                 '/doso.v1.Navigation/Watch',
-                request_serializer=navigation__pb2.TaskQuery.SerializeToString,
-                response_deserializer=navigation__pb2.Task.FromString,
+                request_serializer=messages_dot_navigation__pb2.TaskQuery.SerializeToString,
+                response_deserializer=messages_dot_navigation__pb2.Task.FromString,
                 _registered_method=True)
 
 
@@ -71,6 +106,24 @@ class NavigationServicer(object):
     """Missing associated documentation comment in .proto file."""
 
     def Go(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GoWithOptions(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PreviewPlan(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SetSpeedLimit(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -88,6 +141,18 @@ class NavigationServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Route(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def WatchPath(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def Task(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -95,6 +160,18 @@ class NavigationServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def Cancel(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Pause(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Resume(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -111,33 +188,68 @@ def add_NavigationServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'Go': grpc.unary_unary_rpc_method_handler(
                     servicer.Go,
-                    request_deserializer=navigation__pb2.Goal.FromString,
-                    response_serializer=common__pb2.Receipt.SerializeToString,
+                    request_deserializer=messages_dot_navigation__pb2.Goal.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
+            'GoWithOptions': grpc.unary_unary_rpc_method_handler(
+                    servicer.GoWithOptions,
+                    request_deserializer=messages_dot_navigation__pb2.Goal.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
+            'PreviewPlan': grpc.unary_unary_rpc_method_handler(
+                    servicer.PreviewPlan,
+                    request_deserializer=messages_dot_navigation__pb2.PlanQuery.FromString,
+                    response_serializer=messages_dot_navigation__pb2.PlanPreview.SerializeToString,
+            ),
+            'SetSpeedLimit': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetSpeedLimit,
+                    request_deserializer=messages_dot_navigation__pb2.TaskSpeedLimit.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
             ),
             'Status': grpc.unary_unary_rpc_method_handler(
                     servicer.Status,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=common__pb2.Snapshot.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_common__pb2.Snapshot.SerializeToString,
             ),
             'Path': grpc.unary_unary_rpc_method_handler(
                     servicer.Path,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=common__pb2.Snapshot.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_common__pb2.Snapshot.SerializeToString,
+            ),
+            'Route': grpc.unary_unary_rpc_method_handler(
+                    servicer.Route,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_navigation__pb2.NavigationPath.SerializeToString,
+            ),
+            'WatchPath': grpc.unary_stream_rpc_method_handler(
+                    servicer.WatchPath,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_navigation__pb2.NavigationPath.SerializeToString,
             ),
             'Task': grpc.unary_unary_rpc_method_handler(
                     servicer.Task,
-                    request_deserializer=navigation__pb2.TaskQuery.FromString,
-                    response_serializer=navigation__pb2.Task.SerializeToString,
+                    request_deserializer=messages_dot_navigation__pb2.TaskQuery.FromString,
+                    response_serializer=messages_dot_navigation__pb2.Task.SerializeToString,
             ),
             'Cancel': grpc.unary_unary_rpc_method_handler(
                     servicer.Cancel,
-                    request_deserializer=navigation__pb2.CancelTask.FromString,
-                    response_serializer=common__pb2.Receipt.SerializeToString,
+                    request_deserializer=messages_dot_navigation__pb2.CancelTask.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
+            'Pause': grpc.unary_unary_rpc_method_handler(
+                    servicer.Pause,
+                    request_deserializer=messages_dot_navigation__pb2.TaskControl.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
+            'Resume': grpc.unary_unary_rpc_method_handler(
+                    servicer.Resume,
+                    request_deserializer=messages_dot_navigation__pb2.TaskControl.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
             ),
             'Watch': grpc.unary_stream_rpc_method_handler(
                     servicer.Watch,
-                    request_deserializer=navigation__pb2.TaskQuery.FromString,
-                    response_serializer=navigation__pb2.Task.SerializeToString,
+                    request_deserializer=messages_dot_navigation__pb2.TaskQuery.FromString,
+                    response_serializer=messages_dot_navigation__pb2.Task.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -165,8 +277,89 @@ class Navigation(object):
             request,
             target,
             '/doso.v1.Navigation/Go',
-            navigation__pb2.Goal.SerializeToString,
-            common__pb2.Receipt.FromString,
+            messages_dot_navigation__pb2.Goal.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GoWithOptions(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Navigation/GoWithOptions',
+            messages_dot_navigation__pb2.Goal.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PreviewPlan(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Navigation/PreviewPlan',
+            messages_dot_navigation__pb2.PlanQuery.SerializeToString,
+            messages_dot_navigation__pb2.PlanPreview.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetSpeedLimit(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Navigation/SetSpeedLimit',
+            messages_dot_navigation__pb2.TaskSpeedLimit.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
             options,
             channel_credentials,
             insecure,
@@ -192,8 +385,8 @@ class Navigation(object):
             request,
             target,
             '/doso.v1.Navigation/Status',
-            common__pb2.Empty.SerializeToString,
-            common__pb2.Snapshot.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_common__pb2.Snapshot.FromString,
             options,
             channel_credentials,
             insecure,
@@ -219,8 +412,62 @@ class Navigation(object):
             request,
             target,
             '/doso.v1.Navigation/Path',
-            common__pb2.Empty.SerializeToString,
-            common__pb2.Snapshot.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_common__pb2.Snapshot.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Route(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Navigation/Route',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_navigation__pb2.NavigationPath.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def WatchPath(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/doso.v1.Navigation/WatchPath',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_navigation__pb2.NavigationPath.FromString,
             options,
             channel_credentials,
             insecure,
@@ -246,8 +493,8 @@ class Navigation(object):
             request,
             target,
             '/doso.v1.Navigation/Task',
-            navigation__pb2.TaskQuery.SerializeToString,
-            navigation__pb2.Task.FromString,
+            messages_dot_navigation__pb2.TaskQuery.SerializeToString,
+            messages_dot_navigation__pb2.Task.FromString,
             options,
             channel_credentials,
             insecure,
@@ -273,8 +520,62 @@ class Navigation(object):
             request,
             target,
             '/doso.v1.Navigation/Cancel',
-            navigation__pb2.CancelTask.SerializeToString,
-            common__pb2.Receipt.FromString,
+            messages_dot_navigation__pb2.CancelTask.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Pause(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Navigation/Pause',
+            messages_dot_navigation__pb2.TaskControl.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Resume(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Navigation/Resume',
+            messages_dot_navigation__pb2.TaskControl.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
             options,
             channel_credentials,
             insecure,
@@ -300,8 +601,8 @@ class Navigation(object):
             request,
             target,
             '/doso.v1.Navigation/Watch',
-            navigation__pb2.TaskQuery.SerializeToString,
-            navigation__pb2.Task.FromString,
+            messages_dot_navigation__pb2.TaskQuery.SerializeToString,
+            messages_dot_navigation__pb2.Task.FromString,
             options,
             channel_credentials,
             insecure,

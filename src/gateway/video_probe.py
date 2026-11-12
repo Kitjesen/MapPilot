@@ -23,10 +23,10 @@ def create_app(probe_dir: Path | None = None) -> FastAPI:
     """Expose actual, unstarted Gateway state and the configured media backend."""
     for name in ("LINGTU_PRODUCT", "LINGTU_PRODUCT_SESSION_ID", "LINGTU_RUN_PLAN"):
         if os.environ.get(name):
-            raise ValueError(f"video test requires an unmanaged environment: unset {name}")
+            raise ValueError(f"video probe requires an unmanaged environment: unset {name}")
     for name in ("LINGTU_ROBOT", "LINGTU_WEBRTC_URL", "LINGTU_VIDEO_STATUS_FILE"):
         if not os.environ.get(name):
-            raise ValueError(f"video test requires {name}")
+            raise ValueError(f"video probe requires {name}")
 
     # Construction supplies status projection only: never call setup() or start().
     gateway = GatewayModule(product="", product_session_id="")

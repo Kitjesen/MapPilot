@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 from typing import Any
 
 import grpc
@@ -19,6 +20,8 @@ from .generated import common_pb2 as common_pb
 from .generated import error_pb2 as error_pb
 from .generated import maps_pb2 as maps_pb
 from .generated import navigation_pb2 as navigation_pb
+
+logger = logging.getLogger(__name__)
 
 _HTTP_STATUS = {
     400: grpc.StatusCode.INVALID_ARGUMENT,
@@ -70,8 +73,9 @@ def invoke(context, function, *args, **kwargs):
         _abort(context, _HTTP_STATUS.get(exc.status_code, grpc.StatusCode.INTERNAL), {"detail": exc.detail})
     except (ValidationError, ValueError) as exc:
         _abort(context, grpc.StatusCode.INVALID_ARGUMENT, {"message": str(exc)})
-    except Exception as exc:
-        _abort(context, grpc.StatusCode.INTERNAL, {"message": str(exc)})
+    except Exception:
+        logger.exception("SDK operation failed")
+        _abort(context, grpc.StatusCode.INTERNAL, {"reason_code": "internal_error"}, "Internal service error")
     if isinstance(value, Response):
         status = value.status_code
         value = json.loads(value.body)

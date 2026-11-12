@@ -90,6 +90,10 @@ def init_module_refs(gw: Any) -> None:
 
 def init_recording_state(gw: Any) -> None:
     gw._recording = NativeRecordingService()
+    from gateway.services.imu_monitor import ImuMonitor
+    from gateway.services.runtime_status import robot_model
+
+    gw._imu_monitor = ImuMonitor(getattr(gw, "_observations", None), gw._recording._root() / "imu", robot_model(gw))
 
 
 def init_cloud_and_frame_state(gw: Any, *, frame_tree: Any | None) -> None:

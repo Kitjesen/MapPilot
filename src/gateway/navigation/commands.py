@@ -38,14 +38,14 @@ def submit_goal(
     request_id: str | None = None,
     max_speed_mps: float | None = None,
     acceptance_radius_m: float | None = None,
-) -> dict[str, Any] | bool:
+) -> dict[str, Any]:
     goals = getattr(owner, "_goals", None)
     if goals is None:
         modules = getattr(owner, "_all_modules", None)
         goals = modules.get("nav.goals") if isinstance(modules, dict) else None
     operation = getattr(goals, "submit_goal", None)
     if not callable(operation):
-        return False
+        raise CommandBoundaryError("goal service is unavailable")
     try:
         limits = {key: value for key, value in {"max_speed_mps": max_speed_mps,
                   "acceptance_radius_m": acceptance_radius_m}.items() if value is not None}
@@ -87,7 +87,7 @@ def submit_cancel(
         raise CommandBoundaryError(str(exc)) from exc
     if not _has_positive_mapping_ack(result):
         message = result.get("message") if isinstance(result, Mapping) else "invalid goal service response"
-        raise CommandBoundaryError(str(message))
+        raise CommandBoundaryError(str(message), receipt=result if isinstance(result, Mapping) else None)
     receipt = dict(result)
     expected_task_id = str(task_id or "").strip()
     returned_task_id = str(receipt.get("task_id") or "").strip()
@@ -123,7 +123,7 @@ def _submit_task_control(
         raise CommandBoundaryError(str(exc)) from exc
     if not _has_positive_mapping_ack(result):
         message = result.get("message") if isinstance(result, Mapping) else f"invalid {method} service response"
-        raise CommandBoundaryError(str(message))
+        raise CommandBoundaryError(str(message), receipt=result if isinstance(result, Mapping) else None)
 
     receipt = dict(result)
     expected_task_id = str(task_id or "").strip()
@@ -226,7 +226,10 @@ def invoke_navigation_command(
         if result.get("accepted") is True:
             return dict(result)
         reason = str(result.get("reason") or "was rejected")
-        raise CommandBoundaryError(f"native navigation command {method} was rejected: {reason}")
+        raise CommandBoundaryError(
+            f"native navigation command {method} was rejected: {reason}",
+            receipt=dict(result),
+        )
     if result is not True:
         outcome = "was rejected" if result is False else "returned an invalid acknowledgement"
         raise CommandBoundaryError(f"native navigation command {method} {outcome}")

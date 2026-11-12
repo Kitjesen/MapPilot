@@ -132,8 +132,6 @@ def construct_goal_from_request(
         yaw = _optional_float(yaw_value, "yaw")
         if source == "map_click" and hasattr(body, "model_fields_set") and "yaw" not in fields_set:
             yaw = None
-        if yaw is None and source != "map_click":
-            yaw = 0.0
 
     return ConstructedGoal(
         x=x,

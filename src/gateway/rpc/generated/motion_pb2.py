@@ -23,23 +23,27 @@ _sym_db = _symbol_database.Default()
 
 
 from . import common_pb2 as common__pb2
+try:
+  messages_dot_common__pb2 = common__pb2.messages_dot_common__pb2
+except AttributeError:
+  messages_dot_common__pb2 = common__pb2.messages.common_pb2
+from .messages import motion_pb2 as messages_dot_motion__pb2
+try:
+  messages_dot_system__pb2 = messages_dot_motion__pb2.messages_dot_system__pb2
+except AttributeError:
+  messages_dot_system__pb2 = messages_dot_motion__pb2.messages.system_pb2
+from .messages import controller_pb2 as messages_dot_controller__pb2
 
+from .messages.motion_pb2 import *
+from .messages.controller_pb2 import *
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0cmotion.proto\x12\x07\x64oso.v1\x1a\x0c\x63ommon.proto\")\n\x11WatchStateRequest\x12\x14\n\x0c\x66requency_hz\x18\x01 \x01(\r\"o\n\tBodyState\x12\x1f\n\x04kind\x18\x01 \x01(\x0e\x32\x11.doso.v1.BodyKind\x12+\n\ntransition\x18\x02 \x01(\x0e\x32\x17.doso.v1.BodyTransition\x12\x14\n\x0cgesture_name\x18\x03 \x01(\t*\x82\x01\n\x08\x42odyKind\x12\x12\n\x0e\x42ODY_KIND_ZERO\x10\x00\x12\x16\n\x12\x42ODY_KIND_GROUNDED\x10\x01\x12\x16\n\x12\x42ODY_KIND_STANDING\x10\x02\x12\x15\n\x11\x42ODY_KIND_WALKING\x10\x03\x12\x1b\n\x17\x42ODY_KIND_TRANSITIONING\x10\x04*\x83\x01\n\x0e\x42odyTransition\x12\x18\n\x14\x42ODY_TRANSITION_NONE\x10\x00\x12\x1c\n\x18\x42ODY_TRANSITION_STAND_UP\x10\x01\x12\x1c\n\x18\x42ODY_TRANSITION_SIT_DOWN\x10\x02\x12\x1b\n\x17\x42ODY_TRANSITION_GESTURE\x10\x03\x32\xbe\x02\n\x06Motion\x12*\n\x04Stop\x12\x10.doso.v1.Command\x1a\x10.doso.v1.Receipt\x12+\n\x06Status\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12\x31\n\nWatchState\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot0\x01\x12?\n\x0cWatchStateAt\x12\x1a.doso.v1.WatchStateRequest\x1a\x11.doso.v1.Snapshot0\x01\x12/\n\tBodyState\x12\x0e.doso.v1.Empty\x1a\x12.doso.v1.BodyState\x12\x36\n\x0eWatchBodyState\x12\x0e.doso.v1.Empty\x1a\x12.doso.v1.BodyState0\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0cmotion.proto\x12\x07\x64oso.v1\x1a\x0c\x63ommon.proto\x1a\x15messages/motion.proto\x1a\x19messages/controller.proto2\xf1\n\n\x06Motion\x12\x36\n\nController\x12\x0e.doso.v1.Empty\x1a\x18.doso.v1.ControllerState\x12U\n\x0f\x45xternalControl\x12\x1f.doso.v1.ExternalControlRequest\x1a\x1d.doso.v1.ExternalControlReply(\x01\x30\x01\x12-\n\x07StandUp\x12\x10.doso.v1.Command\x1a\x10.doso.v1.Receipt\x12-\n\x07SitDown\x12\x10.doso.v1.Command\x1a\x10.doso.v1.Receipt\x12\x32\n\x0c\x45nableMotors\x12\x10.doso.v1.Command\x1a\x10.doso.v1.Receipt\x12\x33\n\rDisableMotors\x12\x10.doso.v1.Command\x1a\x10.doso.v1.Receipt\x12/\n\x07Profile\x12\x0e.doso.v1.Empty\x1a\x14.doso.v1.ProfileInfo\x12@\n\rSwitchProfile\x12\x1d.doso.v1.SwitchProfileRequest\x1a\x10.doso.v1.Receipt\x12*\n\x04Stop\x12\x10.doso.v1.Command\x1a\x10.doso.v1.Receipt\x12\x30\n\nStopMotion\x12\x10.doso.v1.Command\x1a\x10.doso.v1.Receipt\x12\x38\n\x12\x43learEmergencyStop\x12\x10.doso.v1.Command\x1a\x10.doso.v1.Receipt\x12,\n\x06Resume\x12\x10.doso.v1.Command\x1a\x10.doso.v1.Receipt\x12;\n\rControlStatus\x12\x0e.doso.v1.Empty\x1a\x1a.doso.v1.BodyControlStatus\x12\x35\n\x0c\x43ontrolState\x12\x0e.doso.v1.Empty\x1a\x15.doso.v1.ControlState\x12<\n\x11WatchControlState\x12\x0e.doso.v1.Empty\x1a\x15.doso.v1.ControlState0\x01\x12\x33\n\x08Velocity\x12\x0e.doso.v1.Empty\x1a\x17.doso.v1.VelocitySample\x12:\n\rWatchVelocity\x12\x0e.doso.v1.Empty\x1a\x17.doso.v1.VelocitySample0\x01\x12\x33\n\x08Odometry\x12\x0e.doso.v1.Empty\x1a\x17.doso.v1.OdometrySample\x12:\n\rWatchOdometry\x12\x0e.doso.v1.Empty\x1a\x17.doso.v1.OdometrySample0\x01\x12+\n\x06Status\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12\x31\n\nWatchState\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot0\x01\x12?\n\x0cWatchStateAt\x12\x1a.doso.v1.WatchStateRequest\x1a\x11.doso.v1.Snapshot0\x01\x12/\n\tBodyState\x12\x0e.doso.v1.Empty\x1a\x12.doso.v1.BodyState\x12\x36\n\x0eWatchBodyState\x12\x0e.doso.v1.Empty\x1a\x12.doso.v1.BodyState0\x01\x12:\n\x06Teleop\x12\x16.doso.v1.TeleopRequest\x1a\x14.doso.v1.TeleopReply(\x01\x30\x01P\x01P\x02\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'motion_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_BODYKIND']._serialized_start=196
-  _globals['_BODYKIND']._serialized_end=326
-  _globals['_BODYTRANSITION']._serialized_start=329
-  _globals['_BODYTRANSITION']._serialized_end=460
-  _globals['_WATCHSTATEREQUEST']._serialized_start=39
-  _globals['_WATCHSTATEREQUEST']._serialized_end=80
-  _globals['_BODYSTATE']._serialized_start=82
-  _globals['_BODYSTATE']._serialized_end=193
-  _globals['_MOTION']._serialized_start=463
-  _globals['_MOTION']._serialized_end=781
+  _globals['_MOTION']._serialized_start=90
+  _globals['_MOTION']._serialized_end=1483
 # @@protoc_insertion_point(module_scope)

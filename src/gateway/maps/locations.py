@@ -92,6 +92,7 @@ def _location_metadata(
     gw,
     existing: Any,
     requested: Mapping[str, Any],
+    selected_map: tuple[str, int] | None = None,
 ) -> dict[str, Any]:
     """Merge caller metadata while keeping map binding server-owned."""
     merged: dict[str, Any] = {}
@@ -107,7 +108,17 @@ def _location_metadata(
                 if str(key) not in _LOCATION_BINDING_METADATA_KEYS
             }
         )
-    binding = _location_map_binding(gw)
+    if selected_map is None:
+        binding = _location_map_binding(gw)
+    else:
+        map_id, epoch = selected_map
+        response = mapd_request(gw, {"action": "get_record", "map_id": map_id})
+        record = response.get("record", {})
+        if response.get("success") is not True or record.get("content_epoch") != epoch:
+            raise ValueError("地图已变化或不可用，请刷新后再保存巡检点。")
+        if isinstance(existing_metadata, Mapping) and existing_metadata.get("map_id") not in {None, map_id}:
+            raise ValueError("同名点已属于另一张地图，请使用不同名称。")
+        binding = {"map_id": map_id, "map_content_epoch": epoch, "frame_id": "map", "binding_status": "bound"}
     if (
         isinstance(existing_metadata, Mapping)
         and existing_metadata.get("binding_status") == "bound"
@@ -269,7 +280,8 @@ def upsert_location(
             yaw=yaw,
             tags=body.tags,
             source=body.source,
-            metadata=_location_metadata(gw, existing, body.metadata),
+            metadata=_location_metadata(gw, existing, body.metadata,
+                (body.map_id, body.expected_map_content_epoch) if body.map_id is not None else None),
         )
         entry = tlm.store.query(body.name)
     except Exception as exc:
@@ -307,8 +319,17 @@ def register_location_routes(app, gw) -> None:
         summary="List tagged navigation locations",
         response_model=LocationsResponse,
     )
-    async def get_locations():
-        return build_locations_response(await asyncio.to_thread(location_entries, gw))
+    async def get_locations(map_id: str | None = None, q: str = ""):
+        entries = await asyncio.to_thread(location_entries, gw)
+        query = q.strip().casefold()
+        if map_id is not None:
+            entries = [entry for entry in entries if entry.get("metadata", {}).get("map_id") == map_id]
+        if query:
+            entries = [entry for entry in entries if query in " ".join([
+                entry.get("name", ""), str(entry.get("metadata", {}).get("region", "")),
+                *entry.get("tags", []),
+            ]).casefold()]
+        return build_locations_response(entries)
 
     @app.post(
         "/api/v1/locations",

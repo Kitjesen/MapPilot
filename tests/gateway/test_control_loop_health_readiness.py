@@ -17,8 +17,8 @@ def _write_native_status(path, loop_health, *, hold=False):
                     "owner": "native_endpoint",
                     "estop_latched": False,
                     "operator_takeover_latched": False,
-                    "resume_required": False,
-                    "control_loop_hold": hold,
+                    "resume_required": hold,
+                    "hold_reason": "motion_fault" if hold else "",
                 },
                 "control_mode": "autonomy",
                 "global_planner": "octoplanner3d",
@@ -62,7 +62,7 @@ def test_native_endpoint_readiness_surfaces_loop_health_warmup_without_blocking(
     assert "native_control_loop_health_unavailable" not in result["blockers"]
 
 
-def test_native_endpoint_readiness_blocks_missing_loop_health(
+def test_native_endpoint_readiness_allows_missing_performance_metrics(
     monkeypatch,
     tmp_path,
 ):
@@ -72,12 +72,12 @@ def test_native_endpoint_readiness_blocks_missing_loop_health(
 
     result = _native_endpoint_readiness({"mode": "navigating"})
 
-    assert result["ok"] is False
+    assert result["ok"] is True
     assert result["control_loop_health"] == {}
-    assert "native_control_loop_health_unavailable" in result["blockers"]
+    assert "native_control_loop_health_unavailable" not in result["blockers"]
 
 
-@pytest.mark.parametrize("reason", ["p95_utilization_high", "deadline_miss_ratio_high"])
+@pytest.mark.parametrize("reason", ["p95_utilization_high", "deadline_miss_ratio_high", "consecutive_deadline_misses"])
 def test_native_endpoint_readiness_preserves_native_permission_during_rolling_warning(
     monkeypatch,
     tmp_path,
@@ -116,7 +116,7 @@ def test_native_endpoint_readiness_keeps_native_hold_until_explicit_recovery(
 
     result = _native_endpoint_readiness({"mode": "navigating"})
     assert result["ok"] is False
-    assert "native_control_loop_unhealthy" in result["blockers"]
+    assert "native_resume_required" in result["blockers"]
 
 
 def test_native_endpoint_readiness_accepts_mature_healthy_loop(

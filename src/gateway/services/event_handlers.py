@@ -367,6 +367,8 @@ def handle_agent_message(gw: Any, msg: Any) -> None:
                 "phase": str(payload.get("phase", "")),
                 "run_id": str(payload.get("run_id") or ""),
                 "ts": float(payload.get("ts", time.time())),
+                **{key: payload[key] for key in ("conversation_id", "id", "turn_id", "seq", "revision",
+                                                 "kind", "created_at", "metadata") if key in payload},
             }
         )
     except Exception as exc:

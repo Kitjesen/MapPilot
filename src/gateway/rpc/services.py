@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import math
 import os
 import threading
+import time
 from pathlib import Path
 from urllib.parse import quote
 from uuid import UUID
@@ -26,19 +26,35 @@ from gateway.schemas import (
     LocalizationRelocalizationRequest,
     MapSaveRequest,
     StopRequest,
+    SwitchProfileRequest,
 )
 from gateway.services.app_bootstrap import build_app_capabilities
+from gateway.services.body import change as change_body
 from gateway.services.instructions import cancel_run, get_run, send
 from gateway.services.native_status import read_json_snapshot
 from gateway.services.readiness import build_readiness_snapshot
+from gateway.services.resume import resume
 from gateway.services.runtime_status import build_localization_status, robot_model, runtime_identity
 from gateway.services.state_snapshot import build_state_snapshot
-from gateway.services.stop import stop
+from gateway.services.stop import clear_emergency_stop, stop, stop_motion
 from gateway.services.telemetry_normalizers import build_path_response
 
+from . import (
+    control,
+    external,
+    faults,
+    inspection,
+    kinematics,
+    location,
+    navigation_control,
+    system_state,
+    system_view,
+    task_run,
+    telemetry,
+    teleop,
+)
 from .codec import _abort, command, fields, invoke, map_operation, model, pose, product_operation, receipt, task
 from .generated import common_pb2 as common_pb
-from .generated import localization_pb2 as localization_pb
 from .generated import localization_pb2_grpc as localization_rpc
 from .generated import maps_pb2 as maps_pb
 from .generated import maps_pb2_grpc as maps_rpc
@@ -51,6 +67,8 @@ from .generated import system_pb2_grpc as system_rpc
 from .generated import tasks_pb2 as tasks_pb
 from .generated import tasks_pb2_grpc as tasks_rpc
 from .map_content import point_cloud
+from .map_grid import grid
+from .motion_state import body_state, control_status
 from .observations import Observations
 from .source import Source
 
@@ -64,7 +82,7 @@ class Service:
         self.gw = gateway
 
 
-class System(Service, system_rpc.SystemServicer):
+class System(Source, system_rpc.SystemServicer):
     def Handshake(self, request, context):
         if request.protocol_version != PROTOCOL_VERSION:
             _abort(
@@ -114,33 +132,97 @@ class System(Service, system_rpc.SystemServicer):
         return system_pb.Ping(status="ok")
 
     def State(self, request, context):
-        return common_pb.Snapshot(fields=fields(invoke(context, build_state_snapshot, self.gw)))
+        return common_pb.Snapshot(fields=fields(system_view.state(invoke(context, build_state_snapshot, self.gw))))
+
+    def RobotStatus(self, request, context):
+        return invoke(context, system_state.robot_status, self.gw)
 
     def Health(self, request, context):
-        return common_pb.Snapshot(fields=fields(invoke(context, build_health, self.gw)))
+        return common_pb.Snapshot(fields=fields(system_view.health(invoke(context, build_health, self.gw))))
+
+    def Faults(self, request, context):
+        return faults.read()
+
+    def WatchFaults(self, request, context):
+        return telemetry.watch(context, self._watch_slots, faults.read, interval=0.02)
 
     def Readiness(self, request, context):
         result, _ = invoke(context, build_readiness_snapshot, self.gw)
-        return common_pb.Snapshot(fields=fields(result))
+        return common_pb.Snapshot(fields=fields(system_view.readiness(result)))
 
     def Capabilities(self, request, context):
-        return common_pb.Snapshot(fields=fields(invoke(context, build_app_capabilities, self.gw)))
+        return common_pb.Snapshot(fields=fields(system_view.capabilities(invoke(context, build_app_capabilities, self.gw))))
 
     def Session(self, request, context):
-        return common_pb.Snapshot(fields=fields(invoke(context, self.gw._session_snapshot)))
+        return common_pb.Snapshot(fields=fields(system_view.session(invoke(context, self.gw._session_snapshot))))
 
     def ProductStatus(self, request, context):
-        return common_pb.Snapshot(fields=fields(invoke(context, _forward, "/status")))
-
-
-def body_state(event):
-    return motion_pb.BodyState(kind=event.kind, transition=event.transition, gesture_name=event.gesture_name)
+        return common_pb.Snapshot(fields=fields(system_view.product_status(invoke(context, _forward, "/status"))))
 
 
 class Motion(Source, motion_rpc.MotionServicer):
+    def Controller(self, request, context):
+        return external.state(self.gw)
+
+    def ExternalControl(self, requests, context):
+        return external.control(self.gw, requests, context, self._watch_slots)
+
+    def Velocity(self, request, context):
+        return kinematics.velocity(self.gw, context)
+
+    def WatchVelocity(self, request, context):
+        return telemetry.watch(context, self._watch_slots, lambda: self.Velocity(request, context))
+
+    def Odometry(self, request, context):
+        return kinematics.odometry(self.gw, context)
+
+    def WatchOdometry(self, request, context):
+        return telemetry.watch(context, self._watch_slots, lambda: self.Odometry(request, context), interval=0.1)
+
+    def StandUp(self, request, context):
+        body = model(context, StopRequest, **command(context, request))
+        return receipt(context, invoke(context, change_body, self.gw, body, "stand"), request.request_id)
+
+    def SitDown(self, request, context):
+        body = model(context, StopRequest, **command(context, request))
+        return receipt(context, invoke(context, change_body, self.gw, body, "sit"), request.request_id)
+
+    def EnableMotors(self, request, context):
+        body = model(context, StopRequest, **command(context, request))
+        return receipt(context, invoke(context, change_body, self.gw, body, "enable_motors"), request.request_id)
+
+    def DisableMotors(self, request, context):
+        body = model(context, StopRequest, **command(context, request))
+        return receipt(context, invoke(context, change_body, self.gw, body, "disable_motors"), request.request_id)
+
+    def Profile(self, request, context):
+        profile = self._read("profile", context)
+        return motion_pb.ProfileInfo(
+            current=profile.current, available=profile.available,
+            descriptions=profile.descriptions, current_description=profile.current_description,
+        )
+
+    def SwitchProfile(self, request, context):
+        metadata = command(context, request.command)
+        if not request.name.strip():
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "profile name is required")
+        body = model(context, SwitchProfileRequest, name=request.name, **metadata)
+        return receipt(context, invoke(context, change_body, self.gw, body, "switch_profile"), metadata["request_id"])
+
+    def Teleop(self, requests, context):
+        return teleop.teleop(self.gw, requests, context, self._watch_slots)
+
     def Stop(self, request, context):
         body = model(context, StopRequest, **command(context, request))
         return receipt(context, invoke(context, stop, self.gw, body), request.request_id)
+
+    def StopMotion(self, request, context):
+        body = model(context, StopRequest, **command(context, request))
+        return receipt(context, invoke(context, stop_motion, self.gw, body), request.request_id)
+
+    def ClearEmergencyStop(self, request, context):
+        body = model(context, StopRequest, **command(context, request))
+        return receipt(context, invoke(context, clear_emergency_stop, self.gw, body), request.request_id)
 
     def Status(self, request, context):
         return common_pb.Snapshot(fields=fields(invoke(context, build_navigation_status, self.gw)))
@@ -148,15 +230,28 @@ class Motion(Source, motion_rpc.MotionServicer):
     def BodyState(self, request, context):
         return body_state(self._read("body", context))
 
+    def ControlStatus(self, request, context):
+        return control_status(self._read("control", context))
+
+    def Resume(self, request, context):
+        body = model(context, StopRequest, **command(context, request))
+        return receipt(context, invoke(context, resume, self.gw, body), request.request_id)
+
+    def ControlState(self, request, context):
+        return control.state(self.gw)
+
+    def WatchControlState(self, request, context):
+        return telemetry.watch(context, self._watch_slots, lambda: self.ControlState(request, context), interval=0.02)
+
     def WatchBodyState(self, request, context):
         return self._watch("body", body_state, context)
 
     def WatchState(self, request, context):
-        return self._watch_state(request, context, 0.25)
+        return self._watch_state(request, context, 0.01)
 
     def WatchStateAt(self, request, context):
-        if not 1 <= request.frequency_hz <= 4:
-            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "motion state frequency must be between 1 and 4 Hz")
+        if not 1 <= request.frequency_hz <= 100:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "motion state frequency must be between 1 and 100 Hz")
         return self._watch_state(request, context, 1.0 / request.frequency_hz)
 
     def _watch_state(self, request, context, interval):
@@ -166,29 +261,38 @@ class Motion(Source, motion_rpc.MotionServicer):
             stopped = threading.Event()
             context.add_callback(stopped.set)
             while context.is_active():
+                started = time.monotonic()
                 yield self.Status(request, context)
-                if stopped.wait(interval):
+                if stopped.wait(max(0.0, interval - (time.monotonic() - started))):
                     return
         finally:
             self._watch_slots.release()
 
 
 class Localization(Service, localization_rpc.LocalizationServicer):
+    def __init__(self, gateway, watch_slots=None):
+        super().__init__(gateway)
+        self._watch_slots = watch_slots if watch_slots is not None else threading.BoundedSemaphore(8)
+
     def Status(self, request, context):
         return common_pb.Snapshot(fields=fields(invoke(context, build_localization_status, self.gw)))
 
+    def State(self, request, context):
+        return invoke(context, telemetry.localization_state, self.gw)
+
+    def Location(self, request, context):
+        return location.read()
+
+    def WatchLocation(self, request, context):
+        return telemetry.watch(context, self._watch_slots, location.read, interval=1.0)
+
     def Pose(self, request, context):
-        state = invoke(context, build_state_snapshot, self.gw)
-        odometry = (state.get("localization") or {}).get("odometry") or {}
-        if odometry.get("frame_id") != "map" or any(
-            type(odometry.get(key)) not in (int, float) or not math.isfinite(odometry[key])
-            for key in ("x", "y", "z", "yaw")
-        ):
-            context.abort(grpc.StatusCode.UNAVAILABLE, "map pose unavailable")
-        return localization_pb.PoseSample(
-            pose=common_pb.Pose(**{key: odometry[key] for key in ("x", "y", "z", "yaw")}),
-            frame_id="map",
-            details=fields(odometry),
+        return telemetry.map_pose(self.gw, context)
+
+    def WatchPose(self, request, context):
+        return telemetry.watch(
+            context, self._watch_slots,
+            lambda: telemetry.map_pose(self.gw, context, require_fresh=True),
         )
 
     def Relocalize(self, request, context):
@@ -211,6 +315,9 @@ class Maps(Service, maps_rpc.MapsServicer):
 
     def PointCloud(self, request, context):
         return point_cloud(self.gw, request, context, self._watch_slots)
+
+    def Grid(self, request, context):
+        return grid(self.gw, request, context, self._watch_slots)
 
     def List(self, request, context):
         result = invoke(context, list_maps, self.gw)
@@ -267,12 +374,26 @@ class Navigation(Service, navigation_rpc.NavigationServicer):
         # shortcut: synchronous streams occupy workers; use async execution when scaling beyond this limit.
         self._watch_slots = watch_slots if watch_slots is not None else threading.BoundedSemaphore(8)
 
+    def GoWithOptions(self, request, context):
+        if not any(request.HasField(name) for name in ("max_speed_mps", "acceptance_radius_m")):
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "at least one goal option is required")
+        return self.Go(request, context)
+
     def Go(self, request, context):
         metadata = command(context, request.command)
         if not request.HasField("pose"):
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "pose is required")
-        body = model(context, GoalRequest, **metadata, **pose(request.pose), frame_id="map")
+        options = {name: getattr(request, name) for name in ("max_speed_mps", "acceptance_radius_m") if request.HasField(name)}
+        body = model(context, GoalRequest, **metadata, **pose(request.pose), frame_id="map", **options)
         return receipt(context, invoke(context, go, self.gw, body), metadata["request_id"])
+
+    def PreviewPlan(self, request, context):
+        from .navigation import preview
+
+        return preview(self.gw, request, context)
+
+    def SetSpeedLimit(self, request, context):
+        return navigation_control.control(self.gw, request, context, "speed_limit")
 
     def Status(self, request, context):
         return common_pb.Snapshot(fields=fields(invoke(context, build_navigation_status, self.gw)))
@@ -282,6 +403,12 @@ class Navigation(Service, navigation_rpc.NavigationServicer):
             path, robot = self.gw._last_path, self.gw._odom
         return common_pb.Snapshot(fields=fields(build_path_response(path, robot)))
 
+    def Route(self, request, context):
+        return telemetry.navigation_path(self.gw, context)
+
+    def WatchPath(self, request, context):
+        return telemetry.watch(context, self._watch_slots, lambda: self.Route(request, context))
+
     def Task(self, request, context):
         return task(invoke(context, query_navigation_task_status, self.gw, request.task_id))
 
@@ -290,12 +417,20 @@ class Navigation(Service, navigation_rpc.NavigationServicer):
         body = model(context, CancelRequest, **metadata, task_id=request.task_id, reason=request.reason)
         return receipt(context, invoke(context, cancel, self.gw, body, request.task_id), metadata["request_id"])
 
+    def Pause(self, request, context):
+        return navigation_control.control(self.gw, request, context, "pause")
+
+    def Resume(self, request, context):
+        return navigation_control.control(self.gw, request, context, "resume")
+
     def Watch(self, request, context):
         if not self._watch_slots.acquire(blocking=False):
             context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, "navigation watch limit reached")
         try:
             stopped = threading.Event()
-            context.add_callback(stopped.set)
+            if not context.add_callback(stopped.set):
+                return
+            next_tick = time.monotonic()
             while context.is_active():
                 state = self.Task(request, context)
                 yield state
@@ -303,13 +438,21 @@ class Navigation(Service, navigation_rpc.NavigationServicer):
                     navigation_pb.TASK_SUCCESS, navigation_pb.TASK_FAILED, navigation_pb.TASK_CANCELLED,
                 ):
                     return
-                if stopped.wait(0.25):
+                next_tick += 0.02
+                now = time.monotonic()
+                if now - next_tick > 0.02:
+                    next_tick = now
+                if stopped.wait(max(0.0, next_tick - now)):
                     return
         finally:
             self._watch_slots.release()
 
 
 class Tasks(Service, tasks_rpc.TasksServicer):
+    def __init__(self, gateway, watch_slots=None):
+        super().__init__(gateway)
+        self._watch_slots = watch_slots if watch_slots is not None else threading.BoundedSemaphore(8)
+
     def Send(self, request, context):
         metadata = command(context, request.command)
         body = model(
@@ -323,12 +466,54 @@ class Tasks(Service, tasks_rpc.TasksServicer):
         return receipt(context, invoke(context, send, self.gw, body), metadata["request_id"])
 
     def Get(self, request, context):
+        if not request.run_id.strip():
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "run_id is required")
         result = invoke(context, get_run, self.gw, request.run_id)
         return tasks_pb.Run(
             run_id=result.get("run_id") or request.run_id, found=result.get("found") is True, details=fields(result)
         )
 
+    def Watch(self, request, context):
+        return task_run.watch(context, self._watch_slots, lambda: self.Get(request, context))
+
     def Cancel(self, request, context):
         metadata = command(context, request.command)
         body = model(context, AgentTaskCancelRequest, **metadata)
         return receipt(context, invoke(context, cancel_run, self.gw, request.run_id, body), metadata["request_id"])
+
+    def InspectionRoutes(self, request, context):
+        return inspection.routes(self.gw, request, context)
+
+    def InspectionRoute(self, request, context):
+        return inspection.route(self.gw, request, context)
+
+    def PutInspectionRoute(self, request, context):
+        return inspection.put_route(self.gw, request, context)
+
+    def DeleteInspectionRoute(self, request, context):
+        return inspection.delete_route(self.gw, request, context)
+
+    def StartInspection(self, request, context):
+        return inspection.start(self.gw, request, context)
+
+    def InspectionTask(self, request, context):
+        return inspection.task(self.gw, request, context)
+
+    def InspectionTasks(self, request, context):
+        return inspection.tasks(self.gw, request, context)
+
+    def WatchInspection(self, request, context):
+        return task_run.watch(context, self._watch_slots, lambda: self.InspectionTask(request, context),
+                              terminal=lambda task: task.terminal)
+
+    def PauseInspection(self, request, context):
+        return inspection.control(self.gw, request, context, "pause")
+
+    def ResumeInspection(self, request, context):
+        return inspection.control(self.gw, request, context, "resume")
+
+    def CancelInspection(self, request, context):
+        return inspection.control(self.gw, request, context, "cancel")
+
+    def InspectionReport(self, request, context):
+        return inspection.report(self.gw, request, context)

@@ -5,9 +5,10 @@ import json
 import logging
 import math
 import time
-from collections.abc import Mapping
+from collections.abc import Coroutine, Mapping
 from typing import Annotated, Any
 
+from anyio import CancelScope
 from fastapi import Query
 from fastapi.responses import StreamingResponse
 from starlette.websockets import WebSocket as StarletteWebSocket
@@ -47,6 +48,24 @@ def _public_control_rejection(result: TeleopSessionResult, *, request_id: str) -
     }
 
 def register_realtime_routes(app, gw) -> None:
+    async def stream_until_disconnect(ws: StarletteWebSocket, sender: Coroutine[Any, Any, None]) -> None:
+        async def disconnected() -> None:
+            while True:
+                message = await ws.receive()
+                if message["type"] == "websocket.disconnect":
+                    return
+
+        tasks = (asyncio.create_task(sender), asyncio.create_task(disconnected()))
+        try:
+            completed, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in completed:
+                task.result()
+        finally:
+            for task in tasks:
+                task.cancel()
+            with CancelScope(shield=True):
+                await asyncio.gather(*tasks, return_exceptions=True)
+
     async def send_bytes_or_disconnect(
         ws: StarletteWebSocket,
         payload: bytes,
@@ -74,6 +93,14 @@ def register_realtime_routes(app, gw) -> None:
                     break
                 last_seq = seq
             await asyncio.sleep(0.1)
+
+    async def send_queued_frames(ws: StarletteWebSocket, queue: asyncio.Queue, latest: bytes | None, *, label: str) -> None:
+        if latest is not None and not await send_bytes_or_disconnect(ws, latest, label=label):
+            return
+        while True:
+            frame = await queue.get()
+            if not await send_bytes_or_disconnect(ws, frame, label=label):
+                return
 
     async def ws_teleop_endpoint(ws: StarletteWebSocket):
         await ws.accept()
@@ -365,7 +392,7 @@ def register_realtime_routes(app, gw) -> None:
         if tm is not None and hasattr(tm, "on_camera_client_connect"):
             tm.on_camera_client_connect()
         try:
-            await send_camera_frames(ws, label="camera ws")
+            await stream_until_disconnect(ws, send_camera_frames(ws, label="camera ws"))
         except StarletteWebSocketDisconnect:
             pass
         finally:
@@ -387,13 +414,7 @@ def register_realtime_routes(app, gw) -> None:
             registry.register(conn_id, "/ws/cloud", client_ip=client_ip)
         q, latest = gw._cloud_viewer.cloud_subscribe()
         try:
-            if latest is not None:
-                if not await send_bytes_or_disconnect(ws, latest, label="cloud ws"):
-                    return
-            while True:
-                buf = await q.get()
-                if not await send_bytes_or_disconnect(ws, buf, label="cloud ws"):
-                    break
+            await stream_until_disconnect(ws, send_queued_frames(ws, q, latest, label="cloud ws"))
         except StarletteWebSocketDisconnect:
             pass
         except Exception as e:
@@ -416,13 +437,7 @@ def register_realtime_routes(app, gw) -> None:
             registry.register(conn_id, "/ws/scan", client_ip=client_ip)
         q, latest = gw._cloud_viewer.scan_subscribe()
         try:
-            if latest is not None:
-                if not await send_bytes_or_disconnect(ws, latest, label="scan ws"):
-                    return
-            while True:
-                buf = await q.get()
-                if not await send_bytes_or_disconnect(ws, buf, label="scan ws"):
-                    break
+            await stream_until_disconnect(ws, send_queued_frames(ws, q, latest, label="scan ws"))
         except StarletteWebSocketDisconnect:
             pass
         except Exception as e:

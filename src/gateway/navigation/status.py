@@ -178,24 +178,12 @@ def _native_endpoint_readiness(
     input_gate = _mapping(snapshot.get("input_gate"))
     control_loop_health = _mapping(snapshot.get("control_loop_health"))
     blockers: list[str] = []
-    control_loop_reason = str(control_loop_health.get("reason") or "").strip().lower()
-    if not control_loop_health:
-        blockers.append("native_control_loop_health_unavailable")
-    elif control_loop_health.get("ready") is False:
-        if control_loop_reason != "warming_up":
-            blockers.append("native_control_loop_health_unavailable")
-    elif control_loop_health.get("ready") is not True:
-        blockers.append("native_control_loop_health_unavailable")
     if input_gate.get("ready") is not True:
         blockers.append("native_input_gate_not_ready")
     active_cmd_source = str(snapshot.get("active_cmd_source") or "").strip().lower()
     if active_cmd_source not in {"none", "autonomy", "teleop", "manual_hold", "estop"}:
         blockers.append("native_active_cmd_source_invalid")
     control_authority = _mapping(snapshot.get("control_authority"))
-    # The native runtime owns motion holds. Rolling performance warnings are
-    # diagnostics, not a second admission policy in Gateway.
-    if control_authority.get("control_loop_hold") is True:
-        blockers.append("native_control_loop_unhealthy")
     if str(control_authority.get("owner") or "").strip().lower() != "native_endpoint":
         blockers.append("native_control_authority_invalid")
     estop_latched = control_authority.get("estop_latched") is True
@@ -517,6 +505,7 @@ def evaluate_navigation_gate(
         "active_cmd_source": active_source,
         "operator_takeover_latched": authority.get("operator_takeover_latched") is True,
         "resume_required": authority.get("resume_required") is True,
+        "hold_reason": str(authority.get("hold_reason") or ""),
         "estop_latched": (
             authority.get("estop_latched") is True
             or active_source == "estop"
@@ -528,7 +517,9 @@ def evaluate_navigation_gate(
     blockers: list[str] = []
     if control["estop_latched"]:
         blockers.append("estop_latched")
-    if control["operator_takeover_latched"]:
+    if control["hold_reason"]:
+        blockers.append(control["hold_reason"])
+    elif control["operator_takeover_latched"]:
         blockers.append("operator_takeover")
     elif control["resume_required"]:
         blockers.append("resume_required")

@@ -3,8 +3,8 @@
 import grpc
 import warnings
 
-from . import common_pb2 as common__pb2
-from . import localization_pb2 as localization__pb2
+from .messages import common_pb2 as messages_dot_common__pb2
+from .messages import localization_pb2 as messages_dot_localization__pb2
 
 GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
@@ -37,18 +37,38 @@ class LocalizationStub(object):
         """
         self.Status = channel.unary_unary(
                 '/doso.v1.Localization/Status',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=common__pb2.Snapshot.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Snapshot.FromString,
+                _registered_method=True)
+        self.State = channel.unary_unary(
+                '/doso.v1.Localization/State',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_localization__pb2.LocalizationState.FromString,
                 _registered_method=True)
         self.Pose = channel.unary_unary(
                 '/doso.v1.Localization/Pose',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=localization__pb2.PoseSample.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_localization__pb2.PoseSample.FromString,
+                _registered_method=True)
+        self.WatchPose = channel.unary_stream(
+                '/doso.v1.Localization/WatchPose',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_localization__pb2.PoseSample.FromString,
+                _registered_method=True)
+        self.Location = channel.unary_unary(
+                '/doso.v1.Localization/Location',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_localization__pb2.GeographicLocation.FromString,
+                _registered_method=True)
+        self.WatchLocation = channel.unary_stream(
+                '/doso.v1.Localization/WatchLocation',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_localization__pb2.GeographicLocation.FromString,
                 _registered_method=True)
         self.Relocalize = channel.unary_unary(
                 '/doso.v1.Localization/Relocalize',
-                request_serializer=localization__pb2.Relocalize.SerializeToString,
-                response_deserializer=common__pb2.Receipt.FromString,
+                request_serializer=messages_dot_localization__pb2.Relocalize.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
                 _registered_method=True)
 
 
@@ -61,7 +81,31 @@ class LocalizationServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def State(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def Pose(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def WatchPose(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Location(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def WatchLocation(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -78,18 +122,38 @@ def add_LocalizationServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'Status': grpc.unary_unary_rpc_method_handler(
                     servicer.Status,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=common__pb2.Snapshot.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_common__pb2.Snapshot.SerializeToString,
+            ),
+            'State': grpc.unary_unary_rpc_method_handler(
+                    servicer.State,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_localization__pb2.LocalizationState.SerializeToString,
             ),
             'Pose': grpc.unary_unary_rpc_method_handler(
                     servicer.Pose,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=localization__pb2.PoseSample.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_localization__pb2.PoseSample.SerializeToString,
+            ),
+            'WatchPose': grpc.unary_stream_rpc_method_handler(
+                    servicer.WatchPose,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_localization__pb2.PoseSample.SerializeToString,
+            ),
+            'Location': grpc.unary_unary_rpc_method_handler(
+                    servicer.Location,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_localization__pb2.GeographicLocation.SerializeToString,
+            ),
+            'WatchLocation': grpc.unary_stream_rpc_method_handler(
+                    servicer.WatchLocation,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_localization__pb2.GeographicLocation.SerializeToString,
             ),
             'Relocalize': grpc.unary_unary_rpc_method_handler(
                     servicer.Relocalize,
-                    request_deserializer=localization__pb2.Relocalize.FromString,
-                    response_serializer=common__pb2.Receipt.SerializeToString,
+                    request_deserializer=messages_dot_localization__pb2.Relocalize.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -117,8 +181,35 @@ class Localization(object):
             request,
             target,
             '/doso.v1.Localization/Status',
-            common__pb2.Empty.SerializeToString,
-            common__pb2.Snapshot.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_common__pb2.Snapshot.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def State(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Localization/State',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_localization__pb2.LocalizationState.FromString,
             options,
             channel_credentials,
             insecure,
@@ -144,8 +235,89 @@ class Localization(object):
             request,
             target,
             '/doso.v1.Localization/Pose',
-            common__pb2.Empty.SerializeToString,
-            localization__pb2.PoseSample.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_localization__pb2.PoseSample.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def WatchPose(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/doso.v1.Localization/WatchPose',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_localization__pb2.PoseSample.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Location(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Localization/Location',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_localization__pb2.GeographicLocation.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def WatchLocation(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/doso.v1.Localization/WatchLocation',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_localization__pb2.GeographicLocation.FromString,
             options,
             channel_credentials,
             insecure,
@@ -171,8 +343,8 @@ class Localization(object):
             request,
             target,
             '/doso.v1.Localization/Relocalize',
-            localization__pb2.Relocalize.SerializeToString,
-            common__pb2.Receipt.FromString,
+            messages_dot_localization__pb2.Relocalize.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
             options,
             channel_credentials,
             insecure,

@@ -44,11 +44,13 @@ def register_product_control_routes(app: FastAPI) -> None:
         return await asyncio.to_thread(_forward, f"/operations/{quote(request_id, safe='')}")
 
     @app.post("/api/v1/product-control/switch")
-    async def control_switch(request: HttpRequest):
+    @app.post("/api/v1/product-control/stop")
+    async def control_mutation(request: HttpRequest):
         try:
             body = await request.json()
         except ValueError:
             return JSONResponse({"message": "Invalid JSON request"}, status_code=400)
         if not isinstance(body, dict):
             return JSONResponse({"message": "Expected a JSON object"}, status_code=400)
-        return await asyncio.to_thread(_forward, "/switch", body)
+        action = request.url.path.rsplit("/", 1)[1]
+        return await asyncio.to_thread(_forward, f"/{action}", body)

@@ -1,6 +1,6 @@
 # Foreground video acceptance Gateway
 
-`python -m gateway.video_test` is a development/acceptance entry point. It
+`python -m gateway.video_probe` is a development/acceptance entry point. It
 constructs the real `GatewayModule` status projection without calling its
 `setup()` or `start()`. It does not load a Host graph, start a Product, acquire
 the camera, or launch navigation/driver processes. Product deployment and
@@ -25,7 +25,7 @@ export LINGTU_ROBOT=unitree/go2
 export LINGTU_ENV=real
 export LINGTU_WEBRTC_URL=http://127.0.0.1:19090/whep/endpoint
 export LINGTU_VIDEO_STATUS_FILE=/absolute/test/run/video-status.json
-PYTHONPATH=src python -m gateway.video_test --host 127.0.0.1 --port 15051
+PYTHONPATH=src python -m gateway.video_probe --host 127.0.0.1 --port 15051
 ```
 
 The default listener is loopback. For an authorized LAN acceptance test,
@@ -48,7 +48,7 @@ is embedded in this entry point.
 Local checks:
 
 ```bash
-pytest -q tests/gateway/test_video_test_gateway.py \
+pytest -q tests/gateway/test_video_probe.py \
   tests/gateway/test_video_routes.py tests/gateway/test_media_access.py
 ```
 

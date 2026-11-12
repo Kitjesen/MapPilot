@@ -110,6 +110,8 @@ class ControlCommandService:
         rejection = self.control_lease_rejection(command, body)
         if rejection is not None:
             return rejection
+        if command == "disable_motors":
+            return None
         try:
             with self._gw._state_lock:
                 safety = getattr(self._gw, "_navigation_state", None)
@@ -222,52 +224,61 @@ class ControlCommandService:
                     ),
                 )
             except CommandBoundaryError as exc:
-                reason = str(exc)
-                receipt = exc.receipt or {}
-                if receipt.get("admission_unconfirmed") is True:
-                    return JSONResponse(status_code=503, content={
-                        "schema_version": 1,
-                        "ok": False,
-                        "error": "native_command_unconfirmed",
-                        "message": "未收到导航服务的确认，请先核对当前任务，再重新操作。",
-                        "detail": self.command_error_detail(
-                            reason_code="native_command_unconfirmed",
-                            reason=reason,
-                            source="native_navigation_command",
-                            task_id=receipt.get("task_id"),
-                            request_id=receipt.get("request_id"),
-                        ),
-                    })
-                native_ack = receipt.get("native_ack")
-                if isinstance(native_ack, Mapping) and native_ack.get("accepted") is False:
-                    code = str(native_ack.get("reason") or "native_command_rejected")
-                    return self.rejected_response(
-                        command,
-                        body,
-                        error="native_command_rejected",
-                        message="Native navigation endpoint rejected the command.",
-                        detail=self.command_error_detail(
-                            reason_code=code,
-                            reason=reason,
-                            source="native_navigation_command_ack",
-                            blockers=[code],
-                            native_ack=dict(native_ack),
-                        ),
-                    )
-                return self.rejected_response(
-                    command,
-                    body,
-                    error="goal_submission_rejected",
-                    message="The goal could not be submitted to navigation.",
-                    detail=self.command_error_detail(
-                        reason_code="goal_submission_rejected",
-                        reason=reason,
-                        source="goal_service",
-                        blockers=[reason],
-                    ),
-                )
+                return self.native_error(command, body, exc)
 
         return self._gw._run_control_command(command, body, _execute)
+
+    def native_error(
+        self, command: str, body: Any, exc: CommandBoundaryError,
+        fallback_error: str = "goal_submission_rejected",
+    ) -> JSONResponse:
+        reason = str(exc)
+        receipt = exc.receipt or {}
+        if receipt.get("admission_unconfirmed") is True:
+            return JSONResponse(status_code=503, content={
+                "schema_version": 1,
+                "ok": False,
+                "error": "native_command_unconfirmed",
+                "stage": "unconfirmed",
+                "task_id": receipt.get("task_id"),
+                "request_id": receipt.get("request_id"),
+                "message": "未收到导航服务的确认，请先核对当前任务，再重新操作。",
+                "detail": self.command_error_detail(
+                    reason_code="native_command_unconfirmed",
+                    reason=reason,
+                    source="native_navigation_command",
+                    task_id=receipt.get("task_id"),
+                    request_id=receipt.get("request_id"),
+                ),
+            })
+        native_ack = receipt.get("native_ack")
+        if isinstance(native_ack, Mapping) and native_ack.get("accepted") is False:
+            code = str(native_ack.get("reason") or "native_command_rejected")
+            return self.rejected_response(
+                command,
+                body,
+                error="native_command_rejected",
+                message="Native navigation endpoint rejected the command.",
+                detail=self.command_error_detail(
+                    reason_code=code,
+                    reason=reason,
+                    source="native_navigation_command_ack",
+                    blockers=[code],
+                    native_ack=dict(native_ack),
+                ),
+            )
+        return self.rejected_response(
+            command,
+            body,
+            error=fallback_error,
+            message="The command could not be submitted to navigation.",
+            detail=self.command_error_detail(
+                reason_code=fallback_error,
+                reason=reason,
+                source="goal_service",
+                blockers=[reason],
+            ),
+        )
 
     def run_motion_guarded_command(
         self,
@@ -284,19 +295,7 @@ class ControlCommandService:
             try:
                 return action()
             except CommandBoundaryError as exc:
-                reason = str(exc)
-                return self.rejected_response(
-                    command,
-                    body,
-                    error="native_command_rejected",
-                    message="Native navigation endpoint rejected the command.",
-                    detail=self.command_error_detail(
-                        reason_code="native_command_rejected",
-                        reason=reason,
-                        source="native_navigation_command_ack",
-                        blockers=[reason],
-                    ),
-                )
+                return self.native_error(command, body, exc, "native_command_rejected")
 
         return self._gw._run_control_command(
             command, body, _execute, success_status_code=success_status_code

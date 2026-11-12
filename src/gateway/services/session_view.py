@@ -9,7 +9,6 @@ from typing import Any
 from gateway.maps.transport import active_map as read_active_map
 from gateway.maps.transport import map_bundle, map_query_request
 from gateway.services.runtime_status import (
-    backend_capability_defaults,
     classify_pose_freshness,
     compiled_session_context,
     localizer_algorithm_healthy,
@@ -20,6 +19,7 @@ from gateway.services.safety_status import (
     safety_clear_for_motion,
     safety_summary,
 )
+from runtime.runtime_policy import backend_capability_defaults
 
 
 def _runtime_projection(gw: Any) -> dict[str, Any]:

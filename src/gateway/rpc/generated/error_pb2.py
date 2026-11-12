@@ -22,16 +22,15 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
-from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
+from .messages import error_pb2 as messages_dot_error__pb2
 
+from .messages.error_pb2 import *
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0b\x65rror.proto\x12\x07\x64oso.v1\x1a\x1cgoogle/protobuf/struct.proto\"L\n\x0b\x45rrorDetail\x12\x13\n\x0breason_code\x18\x01 \x01(\t\x12(\n\x07\x64\x65tails\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Structb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0b\x65rror.proto\x12\x07\x64oso.v1\x1a\x14messages/error.protoP\x00\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'error_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_ERRORDETAIL']._serialized_start=54
-  _globals['_ERRORDETAIL']._serialized_end=130
 # @@protoc_insertion_point(module_scope)

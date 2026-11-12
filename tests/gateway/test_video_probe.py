@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gateway.gateway_module import GatewayModule
-from gateway.video_test import create_app
+from gateway.video_probe import create_app
 
 
 @pytest.fixture

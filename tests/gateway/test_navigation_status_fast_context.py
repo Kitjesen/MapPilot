@@ -95,7 +95,7 @@ def test_repeated_native_navigation_callbacks_do_not_query_full_session_or_maps(
     [
         (lambda state: state.update(stamp_s=time.time() - 10), "native_endpoint_status_missing_or_stale"),
         (lambda state: state["control_authority"].update(estop_latched=True), "estop_latched"),
-        (lambda state: state["control_authority"].update(control_loop_hold=True), "native_control_loop_unhealthy"),
+        (lambda state: state["control_authority"].update(resume_required=True, hold_reason="motion_fault"), "native_resume_required"),
         (
             lambda state: state["input_gate"].update(ready=False, reason="map_identity_mismatch"),
             "native_input_gate_not_ready",

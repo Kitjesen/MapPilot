@@ -6,7 +6,8 @@ import asyncio
 import time
 from typing import Any
 
-from fastapi.responses import JSONResponse
+from fastapi import Query
+from fastapi.responses import JSONResponse, Response
 
 from gateway.navigation.commands import (
     CommandBoundaryError,
@@ -15,6 +16,12 @@ from gateway.schemas import (
     AgentTaskCancelRequest,
     CancelRequest,
     ControlCommandResponse,
+    ConversationApprovalRequest,
+    ConversationAttachmentRequest,
+    ConversationForkRequest,
+    ConversationMessageRequest,
+    ConversationQueueEditRequest,
+    ConversationUpdateRequest,
     FollowTaskCancelRequest,
     GatewayErrorResponse,
     InstructionRequest,
@@ -24,15 +31,13 @@ from gateway.schemas import (
     StopRequest,
     VisualServoRequest,
 )
+from gateway.services import conversations
 from gateway.services.control_commands import ControlCommandService
 from gateway.services.instructions import cancel_run, get_run, send
 from gateway.services.native_control import (
-    clear_estop as native_clear_estop,
-)
-from gateway.services.native_control import (
     estop as native_estop,
 )
-from gateway.services.stop import stop
+from gateway.services.stop import clear_emergency_stop, stop
 
 CONTROL_COMMAND_ERROR_RESPONSES = {
     409: {"model": GatewayErrorResponse},
@@ -48,6 +53,111 @@ def register_command_routes(app, gw) -> None:
     """Register Gateway navigation and direct-control command routes."""
 
     command_service = ControlCommandService(gw)
+
+    @app.get("/api/v1/agent/options")
+    async def get_conversation_options():
+        return await asyncio.to_thread(conversations.call, gw, "get_conversation_options")
+
+    @app.get("/api/v1/agent/connections/codex")
+    async def codex_connection_status():
+        result = await asyncio.to_thread(conversations.call, gw, "codex_connection")
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/v1/agent/connections/codex/login")
+    async def codex_login():
+        result = await asyncio.to_thread(conversations.call, gw, "codex_connection", "start")
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/v1/agent/connections/codex/login/{login_id}/poll")
+    async def codex_login_status(login_id: str):
+        result = await asyncio.to_thread(conversations.call, gw, "codex_connection", "poll", login_id)
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+    @app.delete("/api/v1/agent/connections/codex/login/{login_id}")
+    async def cancel_codex_login(login_id: str):
+        return await asyncio.to_thread(conversations.call, gw, "codex_connection", "cancel", login_id)
+
+    @app.delete("/api/v1/agent/connections/codex")
+    async def disconnect_codex():
+        return await asyncio.to_thread(conversations.call, gw, "codex_connection", "disconnect")
+
+    @app.post("/api/v1/agent/conversations", status_code=201)
+    async def create_conversation():
+        return await asyncio.to_thread(conversations.call, gw, "create_conversation")
+
+    @app.get("/api/v1/agent/conversations")
+    async def list_conversations(archived: bool = False):
+        return await asyncio.to_thread(conversations.call, gw, "list_conversations", archived)
+
+    @app.get("/api/v1/agent/conversations/search")
+    async def search_conversations(q: str = Query(min_length=1, max_length=200), archived: bool = False):
+        return await asyncio.to_thread(conversations.call, gw, "search_conversations", q, archived)
+
+    @app.get("/api/v1/agent/shares/{token}")
+    async def get_shared_conversation(token: str):
+        return await asyncio.to_thread(conversations.call, gw, "get_shared_conversation", token)
+
+    @app.get("/api/v1/agent/conversations/{conversation_id}")
+    async def get_conversation(conversation_id: str, before_seq: int | None = Query(default=None, ge=1)):
+        if before_seq is None:
+            return await asyncio.to_thread(conversations.call, gw, "get_conversation", conversation_id)
+        return await asyncio.to_thread(conversations.call, gw, "get_conversation", conversation_id, before_seq)
+
+    @app.patch("/api/v1/agent/conversations/{conversation_id}")
+    async def update_conversation(conversation_id: str, body: ConversationUpdateRequest):
+        return await asyncio.to_thread(conversations.call, gw, "update_conversation", conversation_id,
+                                       title=body.title, archived=body.archived)
+
+    @app.post("/api/v1/agent/conversations/{conversation_id}/fork", status_code=201)
+    async def fork_conversation(conversation_id: str, body: ConversationForkRequest):
+        return await asyncio.to_thread(conversations.call, gw, "fork_conversation", conversation_id, body.message_id)
+
+    @app.post("/api/v1/agent/conversations/{conversation_id}/share")
+    async def share_conversation(conversation_id: str):
+        return await asyncio.to_thread(conversations.call, gw, "share_conversation", conversation_id)
+
+    @app.delete("/api/v1/agent/conversations/{conversation_id}/share")
+    async def revoke_conversation_share(conversation_id: str):
+        return await asyncio.to_thread(conversations.call, gw, "revoke_conversation_share", conversation_id)
+
+    @app.post("/api/v1/agent/conversations/{conversation_id}/attachments", status_code=201)
+    async def upload_conversation_attachment(conversation_id: str, body: ConversationAttachmentRequest):
+        return await asyncio.to_thread(
+            conversations.call, gw, "upload_conversation_attachment", conversation_id,
+            body.attachment_id, body.name, body.mime_type, body.data_base64, model=body.model)
+
+    @app.get("/api/v1/agent/conversations/{conversation_id}/attachments/{attachment_id}")
+    async def download_conversation_attachment(conversation_id: str, attachment_id: str):
+        attachment = await asyncio.to_thread(conversations.call, gw, "get_conversation_attachment",
+                                             conversation_id, attachment_id)
+        filename = attachment["name"].replace('"', "").replace("\r", "").replace("\n", "")
+        return Response(content=attachment["data"], media_type=attachment["mime_type"],
+                        headers={"Content-Disposition": f'inline; filename="{filename}"'})
+
+    @app.post("/api/v1/agent/conversations/{conversation_id}/messages", status_code=202)
+    async def post_conversation_message(conversation_id: str, body: ConversationMessageRequest):
+        return await asyncio.to_thread(conversations.submit, gw, conversation_id, body)
+
+    @app.patch("/api/v1/agent/conversations/{conversation_id}/queue/{turn_id}")
+    async def edit_queued_message(conversation_id: str, turn_id: str, body: ConversationQueueEditRequest):
+        return await asyncio.to_thread(conversations.call, gw, "edit_queued_conversation", conversation_id, turn_id, body.text)
+
+    @app.post("/api/v1/agent/conversations/{conversation_id}/queue/{turn_id}/promote")
+    async def promote_queued_message(conversation_id: str, turn_id: str):
+        return await asyncio.to_thread(conversations.call, gw, "promote_queued_conversation", conversation_id, turn_id)
+
+    @app.delete("/api/v1/agent/conversations/{conversation_id}/queue/{turn_id}")
+    async def cancel_queued_message(conversation_id: str, turn_id: str):
+        return await asyncio.to_thread(conversations.call, gw, "edit_queued_conversation", conversation_id, turn_id, None)
+
+    @app.post("/api/v1/agent/conversations/{conversation_id}/approvals/{approval_id}")
+    async def post_conversation_approval(conversation_id: str, approval_id: str, body: ConversationApprovalRequest):
+        return await asyncio.to_thread(conversations.call, gw, "decide_conversation_approval",
+                                       conversation_id, approval_id, body.approved)
+
+    @app.get("/api/v1/agent/conversations/{conversation_id}/turns/{turn_id}")
+    async def get_conversation_turn(conversation_id: str, turn_id: str):
+        return await asyncio.to_thread(conversations.call, gw, "get_conversation_turn", conversation_id, turn_id)
 
 
     @app.post(
@@ -385,47 +495,7 @@ def register_command_routes(app, gw) -> None:
         responses=CONTROL_COMMAND_ERROR_RESPONSES,
     )
     async def post_estop_reset(body: StopRequest | None = None):
-        def _publish() -> dict[str, Any]:
-            request_id = body.request_id if body is not None else None
-            wrote_dds = native_clear_estop(
-                gw,
-                "operator_reset",
-                request_id=request_id,
-            )
-            if not wrote_dds:
-                raise CommandBoundaryError("native estop reset boundary is unavailable")
-            with gw._state_lock:
-                if gw._mode == "estop":
-                    gw._mode = "manual"
-            return {
-                "accepted": True,
-                "status": "estop_cleared",
-                "stage": "native_acknowledged",
-                "dds": wrote_dds,
-                "mode": gw._mode,
-            }
-
-        try:
-            return await asyncio.to_thread(
-                gw._run_control_command,
-                "estop_reset",
-                body,
-                _publish,
-            )
-        except CommandBoundaryError as exc:
-            reason = str(exc)
-            return command_service.rejected_response(
-                "estop_reset",
-                body,
-                error="native_command_rejected",
-                message="Native navigation endpoint did not acknowledge emergency-stop reset.",
-                detail=command_service.command_error_detail(
-                    reason_code="native_command_rejected",
-                    reason=reason,
-                    source="native_navigation_command_ack",
-                    blockers=[reason],
-                ),
-            )
+        return await asyncio.to_thread(clear_emergency_stop, gw, body)
 
     @app.post(
         "/api/v1/lease",

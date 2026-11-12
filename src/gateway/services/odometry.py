@@ -13,6 +13,17 @@ logger = logging.getLogger(__name__)
 def handle_odometry(gw: Any, odom: Any) -> None:
     # Native SLAM resolves the map pose and body twist before Host delivery.
     # Gateway serializes these values without applying another transform.
+    twist = getattr(odom, "twist", None)
+    linear = getattr(twist, "linear", None)
+    angular = getattr(twist, "angular", None)
+    twist_available = (
+        getattr(odom, "twist_available", False) is True
+        and linear is not None and angular is not None
+        and all(
+            getattr(vector, axis, None) is not None
+            for vector in (linear, angular) for axis in ("x", "y", "z")
+        )
+    )
     data = {
         "x": float(odom.x),
         "y": float(odom.y),
@@ -22,6 +33,9 @@ def handle_odometry(gw: Any, odom: Any) -> None:
         "vy": odom.twist.linear.y if odom.twist else 0.0,
         "vz": odom.twist.linear.z if odom.twist else 0.0,
         "wz": odom.twist.angular.z if odom.twist else 0.0,
+        "wx": getattr(angular, "x", None),
+        "wy": getattr(angular, "y", None),
+        "twist_available": twist_available,
         "frame_id": str(getattr(odom, "frame_id", "") or "unknown"),
         "child_frame_id": str(getattr(odom, "child_frame_id", "") or "body"),
         "ts": odom.ts,
@@ -36,6 +50,9 @@ def handle_odometry(gw: Any, odom: Any) -> None:
             data["orientation"] = [value / norm for value in values]
     numeric_fields = ("x", "y", "z", "yaw", "vx", "vy", "vz", "wz", "ts")
     invalid_fields = [name for name in numeric_fields if not math.isfinite(float(data.get(name, 0.0)))]
+    invalid_fields.extend(
+        name for name in ("wx", "wy") if data[name] is not None and not math.isfinite(float(data[name]))
+    )
     if invalid_fields:
         invalid_odometry = {
             "reason": "non_finite_odometry",

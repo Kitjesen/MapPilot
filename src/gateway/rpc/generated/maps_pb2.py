@@ -23,44 +23,21 @@ _sym_db = _symbol_database.Default()
 
 
 from . import common_pb2 as common__pb2
-from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
+try:
+  messages_dot_common__pb2 = common__pb2.messages_dot_common__pb2
+except AttributeError:
+  messages_dot_common__pb2 = common__pb2.messages.common_pb2
+from .messages import maps_pb2 as messages_dot_maps__pb2
 
+from .messages.maps_pb2 import *
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\nmaps.proto\x12\x07\x64oso.v1\x1a\x0c\x63ommon.proto\x1a\x1cgoogle/protobuf/struct.proto\"H\n\x07SaveMap\x12!\n\x07\x63ommand\x18\x01 \x01(\x0b\x32\x10.doso.v1.Command\x12\x11\n\x04name\x18\x02 \x01(\tH\x00\x88\x01\x01\x42\x07\n\x05_name\" \n\x08MapQuery\x12\x14\n\x0coperation_id\x18\x01 \x01(\t\"\x88\x01\n\tMapRecord\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x19\n\x0c\x63\x61n_activate\x18\x02 \x01(\x08H\x00\x88\x01\x01\x12\x0f\n\x07has_pcd\x18\x03 \x01(\x08\x12\x13\n\x0bhas_octomap\x18\x04 \x01(\x08\x12\x1b\n\x13\x61\x63tivation_blockers\x18\x05 \x03(\tB\x0f\n\r_can_activate\"e\n\x07MapList\x12 \n\x04maps\x18\x01 \x03(\x0b\x32\x12.doso.v1.MapRecord\x12\x0e\n\x06\x61\x63tive\x18\x02 \x01(\t\x12(\n\x07\x64\x65tails\x18\x03 \x01(\x0b\x32\x17.google.protobuf.Struct\"%\n\x11MapContentRequest\x12\x10\n\x08map_name\x18\x01 \x01(\t\"\x86\x01\n\x0eMapContentInfo\x12\x0e\n\x06map_id\x18\x01 \x01(\t\x12\x1a\n\rcontent_epoch\x18\x02 \x01(\x04H\x00\x88\x01\x01\x12\x15\n\x08\x66rame_id\x18\x03 \x01(\tH\x01\x88\x01\x01\x12\x12\n\nsize_bytes\x18\x04 \x01(\x04\x42\x10\n\x0e_content_epochB\x0b\n\t_frame_id\"O\n\nMapContent\x12\'\n\x04info\x18\x01 \x01(\x0b\x32\x17.doso.v1.MapContentInfoH\x00\x12\x0f\n\x05\x63hunk\x18\x02 \x01(\x0cH\x00\x42\x07\n\x05value\"\x95\x01\n\x0cMapOperation\x12\x14\n\x0coperation_id\x18\x01 \x01(\t\x12 \n\x05state\x18\x02 \x01(\x0e\x32\x11.doso.v1.MapState\x12\x0e\n\x06reason\x18\x03 \x01(\t\x12(\n\x07\x64\x65tails\x18\x04 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x13\n\x0breason_code\x18\x05 \x01(\t\"\xc3\x01\n\rSwitchProduct\x12!\n\x07\x63ommand\x18\x01 \x01(\x0b\x32\x10.doso.v1.Command\x12!\n\x07product\x18\x02 \x01(\x0e\x32\x10.doso.v1.Product\x12#\n\x1b\x65xpected_product_session_id\x18\x03 \x01(\t\x12\x15\n\x08map_name\x18\x04 \x01(\tH\x00\x88\x01\x01\x12#\n\x0cinitial_pose\x18\x05 \x01(\x0b\x32\r.doso.v1.PoseB\x0b\n\t_map_name\"\"\n\x0cProductQuery\x12\x12\n\nrequest_id\x18\x01 \x01(\t\"\xab\x01\n\x10ProductOperation\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12$\n\x05state\x18\x02 \x01(\x0e\x32\x15.doso.v1.ProductState\x12\x0e\n\x06\x61\x63tive\x18\x03 \x01(\x08\x12\x0e\n\x06reason\x18\x04 \x01(\t\x12(\n\x07\x64\x65tails\x18\x05 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x13\n\x0breason_code\x18\x06 \x01(\t*\x8c\x01\n\x08MapState\x12\x0f\n\x0bMAP_UNKNOWN\x10\x00\x12\x18\n\x14MAP_WAITING_SNAPSHOT\x10\x01\x12\x0e\n\nMAP_QUEUED\x10\x02\x12\x0f\n\x0bMAP_RUNNING\x10\x03\x12\x11\n\rMAP_SUCCEEDED\x10\x04\x12\x0e\n\nMAP_FAILED\x10\x05\x12\x11\n\rMAP_CANCELLED\x10\x06*@\n\x07Product\x12\x13\n\x0fPRODUCT_UNKNOWN\x10\x00\x12\x0f\n\x0bPRODUCT_MAP\x10\x01\x12\x0f\n\x0bPRODUCT_NAV\x10\x02*\x82\x01\n\x0cProductState\x12\x19\n\x15PRODUCT_STATE_UNKNOWN\x10\x00\x12\x13\n\x0fPRODUCT_RUNNING\x10\x01\x12\x15\n\x11PRODUCT_SUCCEEDED\x10\x02\x12\x12\n\x0ePRODUCT_FAILED\x10\x03\x12\x17\n\x13PRODUCT_INTERRUPTED\x10\x04\x32\xd7\x02\n\x04Maps\x12(\n\x04List\x12\x0e.doso.v1.Empty\x1a\x10.doso.v1.MapList\x12?\n\nPointCloud\x12\x1a.doso.v1.MapContentRequest\x1a\x13.doso.v1.MapContent0\x01\x12*\n\x04Save\x12\x10.doso.v1.SaveMap\x1a\x10.doso.v1.Receipt\x12\x35\n\tOperation\x12\x11.doso.v1.MapQuery\x1a\x15.doso.v1.MapOperation\x12;\n\x06Switch\x12\x16.doso.v1.SwitchProduct\x1a\x19.doso.v1.ProductOperation\x12\x44\n\x10ProductOperation\x12\x15.doso.v1.ProductQuery\x1a\x19.doso.v1.ProductOperationb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\nmaps.proto\x12\x07\x64oso.v1\x1a\x0c\x63ommon.proto\x1a\x13messages/maps.proto2\x8d\x03\n\x04Maps\x12(\n\x04List\x12\x0e.doso.v1.Empty\x1a\x10.doso.v1.MapList\x12?\n\nPointCloud\x12\x1a.doso.v1.MapContentRequest\x1a\x13.doso.v1.MapContent0\x01\x12\x34\n\x04Grid\x12\x1a.doso.v1.MapContentRequest\x1a\x10.doso.v1.MapGrid\x12*\n\x04Save\x12\x10.doso.v1.SaveMap\x1a\x10.doso.v1.Receipt\x12\x35\n\tOperation\x12\x11.doso.v1.MapQuery\x1a\x15.doso.v1.MapOperation\x12;\n\x06Switch\x12\x16.doso.v1.SwitchProduct\x1a\x19.doso.v1.ProductOperation\x12\x44\n\x10ProductOperation\x12\x15.doso.v1.ProductQuery\x1a\x19.doso.v1.ProductOperationP\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'maps_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_MAPSTATE']._serialized_start=1235
-  _globals['_MAPSTATE']._serialized_end=1375
-  _globals['_PRODUCT']._serialized_start=1377
-  _globals['_PRODUCT']._serialized_end=1441
-  _globals['_PRODUCTSTATE']._serialized_start=1444
-  _globals['_PRODUCTSTATE']._serialized_end=1574
-  _globals['_SAVEMAP']._serialized_start=67
-  _globals['_SAVEMAP']._serialized_end=139
-  _globals['_MAPQUERY']._serialized_start=141
-  _globals['_MAPQUERY']._serialized_end=173
-  _globals['_MAPRECORD']._serialized_start=176
-  _globals['_MAPRECORD']._serialized_end=312
-  _globals['_MAPLIST']._serialized_start=314
-  _globals['_MAPLIST']._serialized_end=415
-  _globals['_MAPCONTENTREQUEST']._serialized_start=417
-  _globals['_MAPCONTENTREQUEST']._serialized_end=454
-  _globals['_MAPCONTENTINFO']._serialized_start=457
-  _globals['_MAPCONTENTINFO']._serialized_end=591
-  _globals['_MAPCONTENT']._serialized_start=593
-  _globals['_MAPCONTENT']._serialized_end=672
-  _globals['_MAPOPERATION']._serialized_start=675
-  _globals['_MAPOPERATION']._serialized_end=824
-  _globals['_SWITCHPRODUCT']._serialized_start=827
-  _globals['_SWITCHPRODUCT']._serialized_end=1022
-  _globals['_PRODUCTQUERY']._serialized_start=1024
-  _globals['_PRODUCTQUERY']._serialized_end=1058
-  _globals['_PRODUCTOPERATION']._serialized_start=1061
-  _globals['_PRODUCTOPERATION']._serialized_end=1232
-  _globals['_MAPS']._serialized_start=1577
-  _globals['_MAPS']._serialized_end=1920
+  _globals['_MAPS']._serialized_start=59
+  _globals['_MAPS']._serialized_end=456
 # @@protoc_insertion_point(module_scope)

@@ -131,10 +131,11 @@ def _canonical_request(command: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     arguments: dict[str, Any] = {}
     map_id = str(command.get("map_id") or "")
     map_actions = {
-        "delete_map", "rename_map", "import_pcd", "crop_pcd", "save_edited_source", "get_record",
+        "delete_map", "rename_map", "import_pcd", "crop_pcd", "save_edited_source", "preview_source_edits", "get_record",
         "get_bundle", "get_map_points", "validate_artifacts",
         "get_voxel_edits", "edit_octomap_voxels", "build_occupancy_snapshot",
-        "build_octomap_artifact",
+        "build_octomap_artifact", "get_no_go_regions", "set_no_go_region", "delete_no_go_region",
+        "get_surface_map",
     }
     if action in map_actions:
         arguments["map_id"] = map_id
@@ -150,6 +151,29 @@ def _canonical_request(command: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             expected_source_content_epoch=command.get("expected_source_content_epoch"),
             operations=command.get("operations"),
         )
+    elif action == "preview_source_edits":
+        arguments.update(
+            expected_source_content_epoch=command.get("expected_source_content_epoch"),
+            operations=command.get("operations"),
+        )
+    elif action == "get_surface_map":
+        for key in ("headroom_m", "radius_m", "max_hole_area_m2", "max_slope"):
+            if key in command:
+                arguments[key] = command[key]
+    elif action in {"set_no_go_region", "delete_no_go_region"}:
+        arguments["expected_content_epoch"] = command["expected_content_epoch"]
+        if action == "set_no_go_region":
+            region = command["region"]
+            arguments["region_id"] = region["id"]
+            if "label" in region:
+                arguments["region_label"] = region["label"]
+            if "kind" in region:
+                arguments["region_kind"] = region["kind"]
+            for axis, index in zip("xyz", range(3)):
+                arguments[f"min_{axis}"] = region["min"][index]
+                arguments[f"max_{axis}"] = region["max"][index]
+        else:
+            arguments["region_id"] = command["region_id"]
     elif action == "build_octomap_artifact":
         if "inherit_saved_metadata" in command:
             arguments["inherit_saved_metadata"] = command["inherit_saved_metadata"]
@@ -161,6 +185,8 @@ def _canonical_request(command: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         arguments["new_map_id"] = str(command.get("new_map_id") or "")
     elif action in {"get_save_map_status", "cancel_save_map", "retry_save_map", "process_save_map"}:
         arguments["job_id"] = str(command.get("job_id") or "")
+    elif action == "reoptimize_save_map":
+        arguments.update(job_id=command["job_id"], request_id=command["request_id"])
     elif action == "list_save_map_jobs":
         arguments["limit"] = max(1, min(int(command.get("limit") or 100), 1000))
     elif action in {"import_pcd", "crop_pcd"}:

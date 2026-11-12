@@ -68,7 +68,7 @@ def test_snapshot_unavailable_is_not_an_empty_success(reader, env_name, content,
 @pytest.mark.parametrize("env", ["real", "sim"])
 def test_snapshot_retains_original_timestamp_and_evidence(reader, env_name, env, monkeypatch, tmp_path):
     path = tmp_path / "status.json"
-    payload = {"stamp_s": 1.0, "ready": True, "output_ack": {"accepted": False}}
+    payload = {"stamp_s": 1.0, "ready": True, "zero_output": False}
     path.write_text(json.dumps(payload), encoding="utf-8")
     monkeypatch.setenv("LINGTU_ENV", env)
     monkeypatch.setenv("LINGTU_SESSION_ROOT", str(tmp_path / "session"))

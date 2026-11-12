@@ -199,7 +199,7 @@ def test_stale_task_source_does_not_erase_independent_axes() -> None:
 @pytest.mark.parametrize(
     ("evidence", "vx", "observation", "confirmation", "reason"),
     [
-        ({"state": "PENDING", "reason": "driver_ack_pending"}, 0.0, "QUIET", "PENDING", "driver_ack_pending"),
+        ({"state": "PENDING", "reason": "stop_confirmation_pending"}, 0.0, "QUIET", "PENDING", "stop_confirmation_pending"),
         ({"state": "CONFIRMED", "reason": "stop_confirmed"}, 0.0, "QUIET", "CONFIRMED", "stop_confirmed"),
         ({"state": "FAILED", "reason": "timed_out"}, 0.0, "QUIET", "FAILED", "timed_out"),
         (
@@ -275,14 +275,30 @@ def test_operator_takeover_is_projected_as_requiring_resume() -> None:
     assert state["motion"]["reason"] == "operator_takeover"
 
 
+def test_stop_failure_is_not_operator_takeover() -> None:
+    facts = _facts()
+    reason = "stop_confirmation_timeout_stop_remains_latched"
+    facts.update(can_accept_goal=False, blockers=[reason, "native_resume_required"])
+    facts["native_endpoint"].update(active_cmd_source="none")
+    facts["control"].update(
+        active_cmd_source="none", operator_takeover_latched=False,
+        resume_required=True, hold_reason=reason,
+    )
+    state = project_navigation_status(facts)
+    assert state["control"] == {"authority": "NONE", "resume_required": True, "reason": reason}
+    assert state["motion"]["permission"] == "HELD"
+    assert state["motion"]["reason"] == reason
+    assert state["goal_admission"]["reason"] == reason
+
+
 @pytest.mark.parametrize(
     "blockers",
     [
-        ["operator_takeover", "native_resume_required", "native_control_loop_unhealthy"],
-        ["native_control_loop_unhealthy", "operator_takeover"],
+        ["operator_takeover", "native_resume_required", "input_clock_invalid"],
+        ["input_clock_invalid", "operator_takeover"],
     ],
 )
-def test_independent_control_loop_hold_is_not_hidden_by_operator_takeover(
+def test_input_failure_is_not_hidden_by_operator_takeover(
     blockers: list[str],
 ) -> None:
     facts = _facts()
@@ -293,13 +309,14 @@ def test_independent_control_loop_hold_is_not_hidden_by_operator_takeover(
         resume_required=True,
     )
     facts["native_endpoint"].update(active_cmd_source="teleop")
+    facts["native_endpoint"]["input_gate"] = {"ready": False, "reason": "input_clock_invalid"}
 
     state = project_navigation_status(facts)
 
     assert state["control"]["authority"] == "OPERATOR"
     assert state["control"]["reason"] == "operator_takeover"
     assert state["motion"]["permission"] == "HELD"
-    assert state["motion"]["reason"] == "native_control_loop_unhealthy"
+    assert state["motion"]["reason"] == "input_clock_invalid"
 
 
 def test_global_map_admission_does_not_add_a_manual_motion_hold() -> None:

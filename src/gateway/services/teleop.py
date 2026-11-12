@@ -439,6 +439,17 @@ class NativeTeleopSession:
         self._opened = True
         return TeleopSessionResult(True, "connected")
 
+    @property
+    def identity(self) -> tuple[str, int]:
+        return self._source_id, self._source_epoch
+
+    def claim(self) -> TeleopSessionResult:
+        """Explicitly acquire or re-acquire this session's native authority."""
+
+        if not self._opened:
+            return TeleopSessionResult(False, "session_closed")
+        return self._ensure_native_authority()
+
     def move(
         self,
         vx_mps: float,

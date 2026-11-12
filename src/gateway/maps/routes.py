@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any, Literal
 from urllib.parse import quote
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Query
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 
 from gateway.maps.status import EnvironmentMapFeedback
@@ -28,9 +28,12 @@ from gateway.schemas import (
     MapLifecycleResponse,
     MapListResponse,
     MapPointsResponse,
+    MapPreviewResponse,
     MapRenameRequest,
+    MapReoptimizeRequest,
     MapSaveOperationResponse,
     MapSaveRequest,
+    NoGoRequest,
     PlanPreviewRequest,
 )
 from gateway.services.control_commands import ControlCommandService
@@ -229,6 +232,9 @@ def _sanitize_external_operation_status(value: Any) -> dict[str, Any] | None:
     operation_id = _external_operation_scalar(value.get("operation_id") or value.get("job_id"))
     if isinstance(operation_id, str) and operation_id:
         sanitized["operation_id"] = operation_id
+    source_operation_id = _external_operation_scalar(value.get("source_job_id"))
+    if isinstance(source_operation_id, str) and source_operation_id:
+        sanitized["source_operation_id"] = source_operation_id
     for key in _EXTERNAL_OPERATION_STATUS_FIELDS:
         if key not in value:
             continue
@@ -357,6 +363,15 @@ def _map_mutation_status_code(resp: dict[str, Any], *, default: int = 400) -> in
                        "source_epoch_mismatch", "build_in_progress"}:
         return 409
     return default
+
+
+def _source_edit_error(body: dict[str, Any]) -> str | None:
+    epoch = body.get("expected_source_content_epoch")
+    if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch <= 0:
+        return "A positive source content epoch is required."
+    if not isinstance(body.get("operations"), list):
+        return "Edit operations must be a list; an empty list copies the source."
+    return None
 
 
 def _customer_map_lifecycle_response(
@@ -735,6 +750,30 @@ def _register_save_operation_routes(app, gw) -> None:
             {**resp, "success": accepted}, status_code=202 if accepted else 409,
         )
 
+    @app.post(
+        "/api/v1/maps/operations/{operation_id}/reoptimize",
+        summary="Realign archived scans and rebuild the navigation map",
+        response_model=MapSaveOperationResponse,
+    )
+    async def reoptimize_map_operation(operation_id: str, body: MapReoptimizeRequest):
+        if MAP_OPERATION_ID_PATTERN.fullmatch(operation_id) is None:
+            return _external_operation_lifecycle_response(
+                False, status_code=400, reason_code="invalid_operation_id",
+                message="invalid map operation id",
+            )
+        resp = await asyncio.to_thread(
+            _mapd_http_request, gw, {
+                "action": "reoptimize_save_map", "job_id": operation_id,
+                "request_id": body.request_id,
+            },
+        )
+        accepted = resp.get("accepted") is True
+        return _external_operation_json_response(
+            {**resp, "schema_version": 1, "ok": accepted,
+             "success": None if accepted else False, "ts": time.time()},
+            status_code=202 if accepted else 409,
+        )
+
     @app.get(
         "/api/v1/maps/operations/{operation_id}/source/pcd",
         summary="Download the point cloud archived by this save operation",
@@ -761,11 +800,115 @@ def _register_save_operation_routes(app, gw) -> None:
         return _artifact_response(artifact, "map.source.pcd", operation_id=operation_id)
 
 
+async def preview_map_edits_request(gw: Any, name: str, body: dict[str, Any]):
+    error = public_map_name_error(name) or _source_edit_error(body)
+    if error is not None:
+        return _map_lifecycle_response(False, status_code=400, message=error)
+    resp = await asyncio.to_thread(
+        _mapd_http_request, gw,
+        {"action": "preview_source_edits", "map_id": name,
+         "expected_source_content_epoch": body["expected_source_content_epoch"],
+         "operations": body["operations"]},
+    )
+    return _customer_map_lifecycle_response(
+        resp, name=name, status_code=_map_mutation_status_code(resp),
+        success_message="Point-cloud preview ready.",
+        failure_message={
+            "response_too_large": "清洗预览数据超过地图服务的响应上限。",
+            "source_epoch_mismatch": "地图已更新，请重新打开后预览。",
+            "invalid_operations": "清洗参数无效，请检查参数。",
+            "build_in_progress": "地图正在处理，请稍后再预览。",
+            "map_pcd_unreadable": "保存的点云无法读取。",
+        }.get(str(resp.get("reason_code")), "点云清洗预览失败，请检查参数后重试。"),
+        **{key: resp[key] for key in (
+            "map_id", "source_content_epoch", "frame_id", "point_count", "removed_points", "added_points",
+            "preview_points", "preview_removed", "preview_sample",
+        ) if key in resp},
+    )
+
+
+async def save_edited_map_as_request(gw: Any, name: str, body: dict[str, Any]):
+    target = body.get("name")
+    for candidate in (name, target):
+        error = public_map_name_error(candidate)
+        if error is not None:
+            return _map_lifecycle_response(False, status_code=400, message=error)
+    error = _source_edit_error(body)
+    if error is not None:
+        return _map_lifecycle_response(False, status_code=400, message=error)
+    resp = await asyncio.to_thread(
+        _mapd_http_request, gw,
+        {"action": "save_edited_source", "map_id": name, "new_map_id": target,
+         "expected_source_content_epoch": body["expected_source_content_epoch"],
+         "operations": body["operations"]},
+    )
+    return _customer_map_lifecycle_response(
+        resp, name=target, status_code=_map_mutation_status_code(resp),
+        success_message="Edited map saved. Navigation data must be rebuilt.",
+        failure_message="Edited map could not be saved.",
+        **{key: resp[key] for key in (
+            "map_id", "source_map_id", "content_epoch", "source_content_epoch", "frame_id",
+            "point_count", "removed_points", "saved_rays_preserved", "build_options", "replayed",
+        ) if key in resp},
+        activation_ready=False,
+    )
+
+
+async def set_no_go_request(gw: Any, name: str, body: NoGoRequest):
+    error = public_map_name_error(name)
+    if error:
+        raise HTTPException(400, detail=error)
+    result = await asyncio.to_thread(_mapd_http_request, gw, {
+        "action": "set_no_go_region", "map_id": name,
+        "expected_content_epoch": body.expected_content_epoch,
+        "region": body.region.model_dump(exclude_defaults=True),
+    })
+    return JSONResponse(result, status_code=200 if result.get("success") else _map_mutation_status_code(result))
+
+
 def register_map_routes(app, gw) -> None:
     """Register saved-map query and lifecycle routes on the Gateway app."""
 
     command_service = ControlCommandService(gw)
     _register_save_operation_routes(app, gw)
+
+    @app.get("/api/v1/maps/{name}/surface", summary="Preview native observed and inferred support surfaces")
+    async def get_surface_map(name: str, headroom_m: float | None = None, radius_m: float | None = None,
+                              max_hole_area_m2: float | None = None, max_slope: float | None = None):
+        error = public_map_name_error(name)
+        if error:
+            raise HTTPException(400, detail=error)
+        command = {"action": "get_surface_map", "map_id": name}
+        command.update({key: value for key, value in {
+            "headroom_m": headroom_m, "radius_m": radius_m,
+            "max_hole_area_m2": max_hole_area_m2, "max_slope": max_slope,
+        }.items() if value is not None})
+        result = await asyncio.to_thread(_mapd_http_request, gw, command)
+        return JSONResponse(result, status_code=200 if result.get("success") else _map_mutation_status_code(result))
+
+    @app.get("/api/v1/maps/{name}/no_go", summary="Read independent 3D no-go regions")
+    async def get_no_go(name: str):
+        error = public_map_name_error(name)
+        if error:
+            raise HTTPException(400, detail=error)
+        result = await asyncio.to_thread(_mapd_http_request, gw,
+                                         {"action": "get_no_go_regions", "map_id": name})
+        return JSONResponse(result, status_code=200 if result.get("success") else _map_mutation_status_code(result))
+
+    @app.put("/api/v1/maps/{name}/no_go", summary="Add or replace an independent 3D no-go region")
+    async def set_no_go(name: str, body: NoGoRequest):
+        return await set_no_go_request(gw, name, body)
+
+    @app.delete("/api/v1/maps/{name}/no_go/{region_id}", summary="Remove a no-go region without changing sensor occupancy")
+    async def delete_no_go(name: str, region_id: str, expected_content_epoch: int = Query(gt=0)):
+        error = public_map_name_error(name)
+        if error:
+            raise HTTPException(400, detail=error)
+        result = await asyncio.to_thread(_mapd_http_request, gw, {
+            "action": "delete_no_go_region", "map_id": name,
+            "expected_content_epoch": expected_content_epoch, "region_id": region_id,
+        })
+        return JSONResponse(result, status_code=200 if result.get("success") else _map_mutation_status_code(result))
 
     @app.get(
         "/api/v1/slam/maps",
@@ -865,39 +1008,16 @@ def register_map_routes(app, gw) -> None:
             failure_message="Map could not be imported.",
         )
 
+    @app.post("/api/v1/maps/{name}/edit_preview", summary="Preview edits on the complete saved point cloud")
+    async def preview_map_edits(name: str, body: dict[str, Any]):
+        return await preview_map_edits_request(gw, name, body)
+
     @app.post(
         "/api/v1/maps/{name}/save_as",
         summary="Copy a saved source, optionally applying point-cloud subset edits",
     )
     async def save_edited_map_as(name: str, body: dict[str, Any]):
-        target = body.get("name")
-        for candidate in (name, target):
-            error = public_map_name_error(candidate)
-            if error is not None:
-                return _map_lifecycle_response(False, status_code=400, message=error)
-        epoch = body.get("expected_source_content_epoch")
-        operations = body.get("operations")
-        if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch <= 0:
-            return _map_lifecycle_response(False, status_code=400,
-                                           message="A positive source content epoch is required.")
-        if not isinstance(operations, list):
-            return _map_lifecycle_response(False, status_code=400,
-                                           message="Edit operations must be a list; an empty list copies the source.")
-        resp = await asyncio.to_thread(
-            _mapd_http_request, gw,
-            {"action": "save_edited_source", "map_id": name, "new_map_id": target,
-             "expected_source_content_epoch": epoch, "operations": operations},
-        )
-        return _customer_map_lifecycle_response(
-            resp, name=target, status_code=_map_mutation_status_code(resp),
-            success_message="Edited map saved. Navigation data must be rebuilt.",
-            failure_message="Edited map could not be saved.",
-            **{key: resp[key] for key in (
-                "map_id", "source_map_id", "content_epoch", "source_content_epoch", "frame_id",
-                "point_count", "removed_points", "saved_rays_preserved", "build_options", "replayed",
-            ) if key in resp},
-            activation_ready=False,
-        )
+        return await save_edited_map_as_request(gw, name, body)
 
     @app.post(
         "/api/v1/maps/{name}/crop",
@@ -1150,6 +1270,52 @@ def register_map_routes(app, gw) -> None:
             ) from exc
 
         return _artifact_response(artifact, filename)
+
+    @app.get(
+        "/api/v1/maps/{name}/preview",
+        summary="Saved map thumbnail point sample",
+        response_model=MapPreviewResponse,
+    )
+    async def get_saved_map_preview(name: str, content_epoch: int | None = Query(default=None, gt=0)):
+        if public_map_name_error(name) is not None:
+            raise HTTPException(status_code=400, detail={
+                "reason_code": "invalid_map_id", "message": "Invalid map ID.",
+            })
+        resp = await asyncio.to_thread(
+            _mapd_http_request, gw,
+            {"action": "get_map_points", "map_id": name, "max_points": 24000},
+        )
+        if resp.get("success") is not True:
+            reason = str(resp.get("reason_code") or "map_preview_unavailable")
+            status = 400
+            if reason in {"map_not_found", "map_pcd_not_found"}:
+                status = 404
+            elif reason in {"map_write_in_progress", "map_build_in_progress"}:
+                status = 409
+            raise HTTPException(status_code=status, detail={
+                "reason_code": reason, "message": "Saved map preview is unavailable.",
+            })
+        if resp.get("map_id") != name:
+            raise HTTPException(status_code=409, detail="Saved map preview identity changed; retry")
+        cleanup_state = resp.get("cleanup_state")
+        if cleanup_state not in ("unknown", "cleaned", "not_cleaned"):
+            cleanup_state = "unknown"
+        try:
+            preview = MapPreviewResponse(
+                name=name,
+                content_epoch=resp.get("content_epoch"),
+                frame_id=normalize_frame_id(resp.get("frame_id")),
+                count=resp.get("returned"),
+                total_points=resp.get("point_count"),
+                points=resp.get("points"),
+                built_at_ms=resp.get("built_at_ms"),
+                cleanup_state=cleanup_state,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=502, detail="Saved map preview response is invalid.") from exc
+        if content_epoch is not None and preview.content_epoch != content_epoch:
+            raise HTTPException(status_code=409, detail="Saved map preview content changed; refresh the map list")
+        return preview
 
     @app.get(
         "/api/v1/maps/{name}/points",

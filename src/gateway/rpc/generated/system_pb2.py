@@ -23,23 +23,21 @@ _sym_db = _symbol_database.Default()
 
 
 from . import common_pb2 as common__pb2
+try:
+  messages_dot_common__pb2 = common__pb2.messages_dot_common__pb2
+except AttributeError:
+  messages_dot_common__pb2 = common__pb2.messages.common_pb2
+from .messages import system_pb2 as messages_dot_system__pb2
 
+from .messages.system_pb2 import *
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0csystem.proto\x12\x07\x64oso.v1\x1a\x0c\x63ommon.proto\"\x16\n\x04Ping\x12\x0e\n\x06status\x18\x01 \x01(\t\"M\n\tHandshake\x12\x18\n\x10protocol_version\x18\x01 \x01(\r\x12\x11\n\tclient_id\x18\x02 \x01(\t\x12\x13\n\x0bsdk_version\x18\x03 \x01(\t\"S\n\x0eHandshakeReply\x12\x18\n\x10protocol_version\x18\x01 \x01(\r\x12!\n\x04info\x18\x08 \x01(\x0b\x32\x13.doso.v1.SystemInfoJ\x04\x08\x02\x10\x08\"\x92\x01\n\nSystemInfo\x12\x1d\n\x10\x66irmware_version\x18\x01 \x01(\tH\x00\x88\x01\x01\x12\x1a\n\rrobot_version\x18\x02 \x01(\tH\x01\x88\x01\x01\x12\x15\n\x08robot_id\x18\x03 \x01(\tH\x02\x88\x01\x01\x42\x13\n\x11_firmware_versionB\x10\n\x0e_robot_versionB\x0b\n\t_robot_id2\x87\x03\n\x06System\x12\x38\n\tHandshake\x12\x12.doso.v1.Handshake\x1a\x17.doso.v1.HandshakeReply\x12%\n\x04Ping\x12\x0e.doso.v1.Empty\x1a\r.doso.v1.Ping\x12*\n\x05State\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12+\n\x06Health\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12.\n\tReadiness\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12\x31\n\x0c\x43\x61pabilities\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12,\n\x07Session\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12\x32\n\rProductStatus\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshotb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0csystem.proto\x12\x07\x64oso.v1\x1a\x0c\x63ommon.proto\x1a\x15messages/system.proto2\xa3\x04\n\x06System\x12\x38\n\tHandshake\x12\x12.doso.v1.Handshake\x1a\x17.doso.v1.HandshakeReply\x12%\n\x04Ping\x12\x0e.doso.v1.Empty\x1a\r.doso.v1.Ping\x12*\n\x05State\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12\x33\n\x0bRobotStatus\x12\x0e.doso.v1.Empty\x1a\x14.doso.v1.RobotStatus\x12+\n\x06Health\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12.\n\x06\x46\x61ults\x12\x0e.doso.v1.Empty\x1a\x14.doso.v1.FaultReport\x12\x35\n\x0bWatchFaults\x12\x0e.doso.v1.Empty\x1a\x14.doso.v1.FaultReport0\x01\x12.\n\tReadiness\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12\x31\n\x0c\x43\x61pabilities\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12,\n\x07Session\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12\x32\n\rProductStatus\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.SnapshotP\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'system_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_PING']._serialized_start=39
-  _globals['_PING']._serialized_end=61
-  _globals['_HANDSHAKE']._serialized_start=63
-  _globals['_HANDSHAKE']._serialized_end=140
-  _globals['_HANDSHAKEREPLY']._serialized_start=142
-  _globals['_HANDSHAKEREPLY']._serialized_end=225
-  _globals['_SYSTEMINFO']._serialized_start=228
-  _globals['_SYSTEMINFO']._serialized_end=374
-  _globals['_SYSTEM']._serialized_start=377
-  _globals['_SYSTEM']._serialized_end=768
+  _globals['_SYSTEM']._serialized_start=63
+  _globals['_SYSTEM']._serialized_end=610
 # @@protoc_insertion_point(module_scope)

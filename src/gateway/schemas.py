@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator, model_validator
 
 from lingtu.products import ProductName
 from runtime.tf.frames import body_frame_id, map_frame_id
@@ -131,7 +131,7 @@ class GoalRequest(BaseModel):
     x: float
     y: float
     z: float = 0.0
-    yaw: float = 0.0
+    yaw: float | None = None
     frame_id: MapFrameId = GATEWAY_MAP_FRAME_ID
     instruction: str | None = None
     source: GoalSource = "coordinate"
@@ -146,10 +146,10 @@ class GoalRequest(BaseModel):
 
     @field_validator("x", "y", "z", "yaw")
     @classmethod
-    def finite(cls, v: float) -> float:
+    def finite(cls, v: float | None) -> float | None:
         import math
 
-        if not math.isfinite(v):
+        if v is not None and not math.isfinite(v):
             raise ValueError("must be finite")
         return v
 
@@ -158,6 +158,7 @@ class ClickNavRequest(BaseModel):
     x: float
     y: float
     z: float = 0.0
+    yaw: float | None = None
     frame_id: MapFrameId = GATEWAY_MAP_FRAME_ID
     source: GoalSource = "map_click"
     target_type: GoalTargetType = "map_point"
@@ -169,12 +170,12 @@ class ClickNavRequest(BaseModel):
     request_id: str | None = Field(default=None, max_length=128)
     client_id: str = Field(default="unknown", max_length=128)
 
-    @field_validator("x", "y", "z")
+    @field_validator("x", "y", "z", "yaw")
     @classmethod
-    def finite(cls, v: float) -> float:
+    def finite(cls, v: float | None) -> float | None:
         import math
 
-        if not math.isfinite(v):
+        if v is not None and not math.isfinite(v):
             raise ValueError("must be finite")
         return v
 
@@ -308,6 +309,98 @@ class AgentTaskCancelRequest(BaseModel):
     client_id: str = Field(default="unknown", max_length=128)
 
 
+class ConversationMapContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    map_id: str = Field(min_length=1, max_length=128)
+    content_epoch: int = Field(gt=0, strict=True)
+    selection: dict[Literal["min", "max"], tuple[FiniteFloat, FiniteFloat, FiniteFloat]] | None = None
+
+    @field_validator("selection")
+    @classmethod
+    def valid_selection(cls, value):
+        if value is not None and (set(value) != {"min", "max"}
+                                  or any(a > b for a, b in zip(value["min"], value["max"]))):
+            raise ValueError("selection requires ordered min/max coordinates")
+        return value
+
+
+class ConversationMessageRequest(BaseModel):
+    enqueue: bool = False
+    message_id: str = Field(min_length=1, max_length=128)
+    text: str = Field(default="", max_length=8000)
+    reply_to_message_id: str | None = Field(default=None, min_length=1, max_length=128)
+    reply_quote: str | None = Field(default=None, min_length=1)
+    client_id: str = Field(default="web", max_length=128)
+    model: str | None = Field(default=None, min_length=1, max_length=256)
+    reasoning: str = Field(default="default", min_length=1, max_length=32)
+    permission_mode: Literal["read_only", "default", "full_access"] = "default"
+    persona: str = Field(default="", max_length=2000)
+    attachment_ids: list[str] = Field(default_factory=list, max_length=4)
+    map_context: ConversationMapContext | None = None
+
+    @field_validator("message_id")
+    @classmethod
+    def reject_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def require_content(self) -> ConversationMessageRequest:
+        if not self.text.strip() and not self.attachment_ids:
+            raise ValueError("text or attachments required")
+        if any(not value.strip() or len(value) > 128 for value in self.attachment_ids):
+            raise ValueError("invalid attachment id")
+        if len(set(self.attachment_ids)) != len(self.attachment_ids):
+            raise ValueError("duplicate attachment id")
+        return self
+
+
+class ConversationForkRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    message_id: str = Field(min_length=1, max_length=128)
+
+    @field_validator("message_id")
+    @classmethod
+    def reject_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value
+
+
+class ConversationQueueEditRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=8000)
+
+
+class ConversationUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=80)
+    archived: bool | None = Field(default=None, strict=True)
+
+    @field_validator("title")
+    @classmethod
+    def reject_blank_title(cls, value: str | None) -> str | None:
+        if value is not None:
+            value = value.strip()
+            if not value:
+                raise ValueError("must not be blank")
+        return value
+
+
+class ConversationApprovalRequest(BaseModel):
+    approved: bool = Field(strict=True)
+
+
+class ConversationAttachmentRequest(BaseModel):
+    model: str | None = Field(default=None, min_length=1, max_length=256)
+    attachment_id: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=255)
+    mime_type: str = Field(min_length=1, max_length=128)
+    data_base64: str = Field(max_length=13981016)
+
+
 class SafetyEstopRequest(BaseModel):
     """Emergency-stop activation request."""
 
@@ -366,6 +459,14 @@ class FollowTaskCancelRequest(BaseModel):
 class StopRequest(BaseModel):
     request_id: str | None = Field(default=None, max_length=128)
     client_id: str = Field(default="unknown", max_length=128)
+
+
+class SwitchProfileRequest(StopRequest):
+    name: str = Field(min_length=1)
+
+
+class SelectPlannerRequest(StopRequest):
+    name: Literal["scan", "cmu"]
 
 
 class CancelRequest(BaseModel):
@@ -444,6 +545,27 @@ class MapSaveRequest(BaseModel):
     )
 
 
+class MapReoptimizeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(max_length=128, pattern=r"^[A-Za-z0-9_][A-Za-z0-9_-]*$")
+
+
+class NoGoRegion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    min: tuple[FiniteFloat, FiniteFloat, FiniteFloat]
+    max: tuple[FiniteFloat, FiniteFloat, FiniteFloat]
+    label: str = Field(default="", max_length=128)
+    kind: Literal["no_go", "glass"] = "no_go"
+
+
+class NoGoRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_content_epoch: int = Field(gt=0)
+    region: NoGoRegion
+
+
 class TemporalSemanticRequest(BaseModel):
     embedding: list[float] | None = None
     since: str | None = Field(default=None, max_length=64)
@@ -505,6 +627,10 @@ class LocalizationMapTrackingRequest(BaseModel):
         max_length=128,
         pattern=r"^[A-Za-z0-9_][A-Za-z0-9_-]*$",
     )
+
+
+class RecordingStopRequest(BaseModel):
+    expected_session_id: str | None = None
 
 
 class RecordingStartRequest(BaseModel):
@@ -981,6 +1107,16 @@ class ConstructedGoalTarget(GatewayResponseModel):
     ts: float | None = None
 
 
+class BodyCommandResponse(GatewayResponseModel):
+    schema_version: int = 1
+    ok: bool
+    command: CommandReceipt
+    accepted: bool
+    stage: str
+    execution_confirmed: bool
+    native_ack: dict[str, Any]
+
+
 class ControlCommandResponse(GatewayResponseModel):
     schema_version: int = 1
     ok: bool = True
@@ -1087,6 +1223,21 @@ class LocationEntry(GatewayResponseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class InspectionPointSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    dwell: float = Field(default=3, ge=0, le=3600, allow_inf_nan=False)
+    action: str = "capture:overview"
+
+    @field_validator("action")
+    @classmethod
+    def supported_action(cls, value: str) -> str:
+        from runtime.contracts.inspection_evidence import SUPPORTED_ACTIONS
+
+        if value and value not in SUPPORTED_ACTIONS:
+            raise ValueError("unsupported inspection point action")
+        return value
+
+
 class LocationUpsertRequest(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     x: float | None = None
@@ -1097,8 +1248,19 @@ class LocationUpsertRequest(BaseModel):
     source: str = Field(default="app", max_length=64)
     metadata: dict[str, Any] = Field(default_factory=dict)
     use_current_pose: bool = False
+    map_id: str | None = Field(default=None, min_length=1, max_length=128)
+    expected_map_content_epoch: int | None = Field(default=None, gt=0, strict=True)
     request_id: str | None = Field(default=None, max_length=128)
     client_id: str = Field(default="unknown", max_length=128)
+
+    @field_validator("metadata")
+    @classmethod
+    def point_settings(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if "region" in value and (not isinstance(value["region"], str) or len(value["region"]) > 128):
+            raise ValueError("region must be a name up to 128 characters")
+        if "inspection" in value:
+            value = {**value, "inspection": InspectionPointSettings.model_validate(value["inspection"]).model_dump()}
+        return value
 
     @field_validator("x", "y", "z", "yaw")
     @classmethod
@@ -1111,6 +1273,10 @@ class LocationUpsertRequest(BaseModel):
 
     @model_validator(mode="after")
     def require_coordinates_or_current_pose(self) -> LocationUpsertRequest:
+        if (self.map_id is None) != (self.expected_map_content_epoch is None):
+            raise ValueError("map_id and expected_map_content_epoch must be provided together")
+        if self.map_id is not None and self.use_current_pose:
+            raise ValueError("saved-map editing requires explicit coordinates")
         if not self.use_current_pose and (self.x is None or self.y is None):
             raise ValueError("x and y are required unless use_current_pose is true")
         return self
@@ -1178,7 +1344,6 @@ class DdsTwistSnapshot(GatewayResponseModel):
     active_source: str = "none"
     evidence_stage: str = "unavailable"
     final_output_confirmed: bool = False
-    driver_delivery_accepted: bool = False
     output_sequence: int = 0
     ts: float | None = None
     operator_motion: dict[str, Any] | None = None
@@ -1877,6 +2042,7 @@ class MapSaveOperationStatus(GatewayResponseModel):
     model_config = ConfigDict(extra="ignore")
 
     operation_id: str | None = None
+    source_operation_id: str | None = None
     request_id: str | None = None
     map_id: str | None = None
     name: str | None = None
@@ -1966,6 +2132,26 @@ class MapLifecycleResponse(GatewayResponseModel):
     switch: str | None = None
     operator_command: str | None = None
     ts: float = Field(default_factory=time.time)
+
+
+class MapPreviewResponse(GatewayResponseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    schema_version: Literal[1] = 1
+    name: str
+    content_epoch: int = Field(gt=0, strict=True)
+    frame_id: str | None = Field(default=None, min_length=1)
+    count: int = Field(ge=0, le=24000, strict=True)
+    total_points: int = Field(ge=0, strict=True)
+    points: list[tuple[FiniteFloat, FiniteFloat, FiniteFloat]] = Field(max_length=24000)
+    built_at_ms: int | None = Field(default=None, ge=0, strict=True)
+    cleanup_state: Literal["unknown", "cleaned", "not_cleaned"] = "unknown"
+
+    @model_validator(mode="after")
+    def validate_point_counts(self) -> MapPreviewResponse:
+        if self.count != len(self.points) or self.total_points < self.count:
+            raise ValueError("Map preview point counts do not match the sample")
+        return self
 
 
 class MapPointsResponse(GatewayResponseModel):
@@ -2173,6 +2359,8 @@ class WebRTCStatusResponse(Go2RTCStatusResponse):
 
 
 class ClientLinks(GatewayResponseModel):
+    robot_capabilities: str | None = None
+    robot_sensor: str | None = None
     bootstrap: str | None = None
     capabilities: str | None = None
     traffic: str | None = None
@@ -2213,6 +2401,8 @@ class ClientLinks(GatewayResponseModel):
     inspection_task_resume: str | None = None
     inspection_task_cancel: str | None = None
     inspection_status: str | None = None
+    inspection_schedules: str | None = None
+    inspection_schedule_detail: str | None = None
     navigation_cancel: str | None = None
     navigation_task_cancel: str | None = None
     navigation_task_pause: str | None = None
@@ -2236,9 +2426,14 @@ class ClientLinks(GatewayResponseModel):
     map_operation_cancel: str | None = None
     map_operation_retry: str | None = None
     map_operation_process: str | None = None
+    map_operation_reoptimize: str | None = None
     map_operation_source: str | None = None
     map_import_pcd: str | None = None
     map_crop: str | None = None
+    map_edit_preview: str | None = None
+    map_no_go: str | None = None
+    map_surface: str | None = None
+    map_no_go_region: str | None = None
     map_mark_zone: str | None = None
     map_build_octomap: str | None = None
     map_validate_plan: str | None = None

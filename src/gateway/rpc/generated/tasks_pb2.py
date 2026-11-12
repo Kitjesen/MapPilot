@@ -23,24 +23,23 @@ _sym_db = _symbol_database.Default()
 
 
 from . import common_pb2 as common__pb2
-from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
+try:
+  messages_dot_common__pb2 = common__pb2.messages_dot_common__pb2
+except AttributeError:
+  messages_dot_common__pb2 = common__pb2.messages.common_pb2
+from .messages import tasks_pb2 as messages_dot_tasks__pb2
+from .messages import inspection_pb2 as messages_dot_inspection__pb2
 
+from .messages.tasks_pb2 import *
+from .messages.inspection_pb2 import *
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0btasks.proto\x12\x07\x64oso.v1\x1a\x0c\x63ommon.proto\x1a\x1cgoogle/protobuf/struct.proto\"t\n\x0bInstruction\x12!\n\x07\x63ommand\x18\x01 \x01(\x0b\x32\x10.doso.v1.Command\x12\x0c\n\x04text\x18\x02 \x01(\t\x12\x13\n\x06run_id\x18\x03 \x01(\tH\x00\x88\x01\x01\x12\x14\n\x0c\x63ontrol_only\x18\x04 \x01(\x08\x42\t\n\x07_run_id\"\x1a\n\x08RunQuery\x12\x0e\n\x06run_id\x18\x01 \x01(\t\">\n\tCancelRun\x12!\n\x07\x63ommand\x18\x01 \x01(\x0b\x32\x10.doso.v1.Command\x12\x0e\n\x06run_id\x18\x02 \x01(\t\"N\n\x03Run\x12\x0e\n\x06run_id\x18\x01 \x01(\t\x12\r\n\x05\x66ound\x18\x02 \x01(\x08\x12(\n\x07\x64\x65tails\x18\x03 \x01(\x0b\x32\x17.google.protobuf.Struct2\x8f\x01\n\x05Tasks\x12.\n\x04Send\x12\x14.doso.v1.Instruction\x1a\x10.doso.v1.Receipt\x12&\n\x03Get\x12\x11.doso.v1.RunQuery\x1a\x0c.doso.v1.Run\x12.\n\x06\x43\x61ncel\x12\x12.doso.v1.CancelRun\x1a\x10.doso.v1.Receiptb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0btasks.proto\x12\x07\x64oso.v1\x1a\x0c\x63ommon.proto\x1a\x14messages/tasks.proto\x1a\x19messages/inspection.proto2\x9a\x08\n\x05Tasks\x12.\n\x04Send\x12\x14.doso.v1.Instruction\x1a\x10.doso.v1.Receipt\x12&\n\x03Get\x12\x11.doso.v1.RunQuery\x1a\x0c.doso.v1.Run\x12*\n\x05Watch\x12\x11.doso.v1.RunQuery\x1a\x0c.doso.v1.Run0\x01\x12.\n\x06\x43\x61ncel\x12\x12.doso.v1.CancelRun\x1a\x10.doso.v1.Receipt\x12L\n\x10InspectionRoutes\x12\x1d.doso.v1.InspectionRouteQuery\x1a\x19.doso.v1.InspectionRoutes\x12J\n\x0fInspectionRoute\x12\x1d.doso.v1.InspectionRouteQuery\x1a\x18.doso.v1.InspectionRoute\x12K\n\x12PutInspectionRoute\x12\x1b.doso.v1.PutInspectionRoute\x1a\x18.doso.v1.InspectionRoute\x12I\n\x15\x44\x65leteInspectionRoute\x12\x1e.doso.v1.DeleteInspectionRoute\x1a\x10.doso.v1.Receipt\x12=\n\x0fStartInspection\x12\x18.doso.v1.StartInspection\x1a\x10.doso.v1.Receipt\x12G\n\x0eInspectionTask\x12\x1c.doso.v1.InspectionTaskQuery\x1a\x17.doso.v1.InspectionTask\x12M\n\x0fInspectionTasks\x12 .doso.v1.InspectionTaskListQuery\x1a\x18.doso.v1.InspectionTasks\x12J\n\x0fWatchInspection\x12\x1c.doso.v1.InspectionTaskQuery\x1a\x17.doso.v1.InspectionTask0\x01\x12?\n\x0fPauseInspection\x12\x1a.doso.v1.InspectionControl\x1a\x10.doso.v1.Receipt\x12@\n\x10ResumeInspection\x12\x1a.doso.v1.InspectionControl\x1a\x10.doso.v1.Receipt\x12@\n\x10\x43\x61ncelInspection\x12\x1a.doso.v1.InspectionControl\x1a\x10.doso.v1.Receipt\x12\x43\n\x10InspectionReport\x12\x1c.doso.v1.InspectionTaskQuery\x1a\x11.doso.v1.SnapshotP\x01P\x02\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'tasks_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_INSTRUCTION']._serialized_start=68
-  _globals['_INSTRUCTION']._serialized_end=184
-  _globals['_RUNQUERY']._serialized_start=186
-  _globals['_RUNQUERY']._serialized_end=212
-  _globals['_CANCELRUN']._serialized_start=214
-  _globals['_CANCELRUN']._serialized_end=276
-  _globals['_RUN']._serialized_start=278
-  _globals['_RUN']._serialized_end=356
-  _globals['_TASKS']._serialized_start=359
-  _globals['_TASKS']._serialized_end=502
+  _globals['_TASKS']._serialized_start=88
+  _globals['_TASKS']._serialized_end=1138
 # @@protoc_insertion_point(module_scope)

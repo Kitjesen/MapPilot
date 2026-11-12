@@ -3,8 +3,9 @@
 import grpc
 import warnings
 
-from . import common_pb2 as common__pb2
-from . import tasks_pb2 as tasks__pb2
+from .messages import common_pb2 as messages_dot_common__pb2
+from .messages import inspection_pb2 as messages_dot_inspection__pb2
+from .messages import tasks_pb2 as messages_dot_tasks__pb2
 
 GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
@@ -37,18 +38,83 @@ class TasksStub(object):
         """
         self.Send = channel.unary_unary(
                 '/doso.v1.Tasks/Send',
-                request_serializer=tasks__pb2.Instruction.SerializeToString,
-                response_deserializer=common__pb2.Receipt.FromString,
+                request_serializer=messages_dot_tasks__pb2.Instruction.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
                 _registered_method=True)
         self.Get = channel.unary_unary(
                 '/doso.v1.Tasks/Get',
-                request_serializer=tasks__pb2.RunQuery.SerializeToString,
-                response_deserializer=tasks__pb2.Run.FromString,
+                request_serializer=messages_dot_tasks__pb2.RunQuery.SerializeToString,
+                response_deserializer=messages_dot_tasks__pb2.Run.FromString,
+                _registered_method=True)
+        self.Watch = channel.unary_stream(
+                '/doso.v1.Tasks/Watch',
+                request_serializer=messages_dot_tasks__pb2.RunQuery.SerializeToString,
+                response_deserializer=messages_dot_tasks__pb2.Run.FromString,
                 _registered_method=True)
         self.Cancel = channel.unary_unary(
                 '/doso.v1.Tasks/Cancel',
-                request_serializer=tasks__pb2.CancelRun.SerializeToString,
-                response_deserializer=common__pb2.Receipt.FromString,
+                request_serializer=messages_dot_tasks__pb2.CancelRun.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
+        self.InspectionRoutes = channel.unary_unary(
+                '/doso.v1.Tasks/InspectionRoutes',
+                request_serializer=messages_dot_inspection__pb2.InspectionRouteQuery.SerializeToString,
+                response_deserializer=messages_dot_inspection__pb2.InspectionRoutes.FromString,
+                _registered_method=True)
+        self.InspectionRoute = channel.unary_unary(
+                '/doso.v1.Tasks/InspectionRoute',
+                request_serializer=messages_dot_inspection__pb2.InspectionRouteQuery.SerializeToString,
+                response_deserializer=messages_dot_inspection__pb2.InspectionRoute.FromString,
+                _registered_method=True)
+        self.PutInspectionRoute = channel.unary_unary(
+                '/doso.v1.Tasks/PutInspectionRoute',
+                request_serializer=messages_dot_inspection__pb2.PutInspectionRoute.SerializeToString,
+                response_deserializer=messages_dot_inspection__pb2.InspectionRoute.FromString,
+                _registered_method=True)
+        self.DeleteInspectionRoute = channel.unary_unary(
+                '/doso.v1.Tasks/DeleteInspectionRoute',
+                request_serializer=messages_dot_inspection__pb2.DeleteInspectionRoute.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
+        self.StartInspection = channel.unary_unary(
+                '/doso.v1.Tasks/StartInspection',
+                request_serializer=messages_dot_inspection__pb2.StartInspection.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
+        self.InspectionTask = channel.unary_unary(
+                '/doso.v1.Tasks/InspectionTask',
+                request_serializer=messages_dot_inspection__pb2.InspectionTaskQuery.SerializeToString,
+                response_deserializer=messages_dot_inspection__pb2.InspectionTask.FromString,
+                _registered_method=True)
+        self.InspectionTasks = channel.unary_unary(
+                '/doso.v1.Tasks/InspectionTasks',
+                request_serializer=messages_dot_inspection__pb2.InspectionTaskListQuery.SerializeToString,
+                response_deserializer=messages_dot_inspection__pb2.InspectionTasks.FromString,
+                _registered_method=True)
+        self.WatchInspection = channel.unary_stream(
+                '/doso.v1.Tasks/WatchInspection',
+                request_serializer=messages_dot_inspection__pb2.InspectionTaskQuery.SerializeToString,
+                response_deserializer=messages_dot_inspection__pb2.InspectionTask.FromString,
+                _registered_method=True)
+        self.PauseInspection = channel.unary_unary(
+                '/doso.v1.Tasks/PauseInspection',
+                request_serializer=messages_dot_inspection__pb2.InspectionControl.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
+        self.ResumeInspection = channel.unary_unary(
+                '/doso.v1.Tasks/ResumeInspection',
+                request_serializer=messages_dot_inspection__pb2.InspectionControl.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
+        self.CancelInspection = channel.unary_unary(
+                '/doso.v1.Tasks/CancelInspection',
+                request_serializer=messages_dot_inspection__pb2.InspectionControl.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Receipt.FromString,
+                _registered_method=True)
+        self.InspectionReport = channel.unary_unary(
+                '/doso.v1.Tasks/InspectionReport',
+                request_serializer=messages_dot_inspection__pb2.InspectionTaskQuery.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Snapshot.FromString,
                 _registered_method=True)
 
 
@@ -67,7 +133,85 @@ class TasksServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Watch(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def Cancel(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def InspectionRoutes(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def InspectionRoute(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PutInspectionRoute(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeleteInspectionRoute(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StartInspection(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def InspectionTask(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def InspectionTasks(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def WatchInspection(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PauseInspection(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ResumeInspection(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CancelInspection(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def InspectionReport(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -78,18 +222,83 @@ def add_TasksServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'Send': grpc.unary_unary_rpc_method_handler(
                     servicer.Send,
-                    request_deserializer=tasks__pb2.Instruction.FromString,
-                    response_serializer=common__pb2.Receipt.SerializeToString,
+                    request_deserializer=messages_dot_tasks__pb2.Instruction.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
             ),
             'Get': grpc.unary_unary_rpc_method_handler(
                     servicer.Get,
-                    request_deserializer=tasks__pb2.RunQuery.FromString,
-                    response_serializer=tasks__pb2.Run.SerializeToString,
+                    request_deserializer=messages_dot_tasks__pb2.RunQuery.FromString,
+                    response_serializer=messages_dot_tasks__pb2.Run.SerializeToString,
+            ),
+            'Watch': grpc.unary_stream_rpc_method_handler(
+                    servicer.Watch,
+                    request_deserializer=messages_dot_tasks__pb2.RunQuery.FromString,
+                    response_serializer=messages_dot_tasks__pb2.Run.SerializeToString,
             ),
             'Cancel': grpc.unary_unary_rpc_method_handler(
                     servicer.Cancel,
-                    request_deserializer=tasks__pb2.CancelRun.FromString,
-                    response_serializer=common__pb2.Receipt.SerializeToString,
+                    request_deserializer=messages_dot_tasks__pb2.CancelRun.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
+            'InspectionRoutes': grpc.unary_unary_rpc_method_handler(
+                    servicer.InspectionRoutes,
+                    request_deserializer=messages_dot_inspection__pb2.InspectionRouteQuery.FromString,
+                    response_serializer=messages_dot_inspection__pb2.InspectionRoutes.SerializeToString,
+            ),
+            'InspectionRoute': grpc.unary_unary_rpc_method_handler(
+                    servicer.InspectionRoute,
+                    request_deserializer=messages_dot_inspection__pb2.InspectionRouteQuery.FromString,
+                    response_serializer=messages_dot_inspection__pb2.InspectionRoute.SerializeToString,
+            ),
+            'PutInspectionRoute': grpc.unary_unary_rpc_method_handler(
+                    servicer.PutInspectionRoute,
+                    request_deserializer=messages_dot_inspection__pb2.PutInspectionRoute.FromString,
+                    response_serializer=messages_dot_inspection__pb2.InspectionRoute.SerializeToString,
+            ),
+            'DeleteInspectionRoute': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteInspectionRoute,
+                    request_deserializer=messages_dot_inspection__pb2.DeleteInspectionRoute.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
+            'StartInspection': grpc.unary_unary_rpc_method_handler(
+                    servicer.StartInspection,
+                    request_deserializer=messages_dot_inspection__pb2.StartInspection.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
+            'InspectionTask': grpc.unary_unary_rpc_method_handler(
+                    servicer.InspectionTask,
+                    request_deserializer=messages_dot_inspection__pb2.InspectionTaskQuery.FromString,
+                    response_serializer=messages_dot_inspection__pb2.InspectionTask.SerializeToString,
+            ),
+            'InspectionTasks': grpc.unary_unary_rpc_method_handler(
+                    servicer.InspectionTasks,
+                    request_deserializer=messages_dot_inspection__pb2.InspectionTaskListQuery.FromString,
+                    response_serializer=messages_dot_inspection__pb2.InspectionTasks.SerializeToString,
+            ),
+            'WatchInspection': grpc.unary_stream_rpc_method_handler(
+                    servicer.WatchInspection,
+                    request_deserializer=messages_dot_inspection__pb2.InspectionTaskQuery.FromString,
+                    response_serializer=messages_dot_inspection__pb2.InspectionTask.SerializeToString,
+            ),
+            'PauseInspection': grpc.unary_unary_rpc_method_handler(
+                    servicer.PauseInspection,
+                    request_deserializer=messages_dot_inspection__pb2.InspectionControl.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
+            'ResumeInspection': grpc.unary_unary_rpc_method_handler(
+                    servicer.ResumeInspection,
+                    request_deserializer=messages_dot_inspection__pb2.InspectionControl.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
+            'CancelInspection': grpc.unary_unary_rpc_method_handler(
+                    servicer.CancelInspection,
+                    request_deserializer=messages_dot_inspection__pb2.InspectionControl.FromString,
+                    response_serializer=messages_dot_common__pb2.Receipt.SerializeToString,
+            ),
+            'InspectionReport': grpc.unary_unary_rpc_method_handler(
+                    servicer.InspectionReport,
+                    request_deserializer=messages_dot_inspection__pb2.InspectionTaskQuery.FromString,
+                    response_serializer=messages_dot_common__pb2.Snapshot.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -117,8 +326,8 @@ class Tasks(object):
             request,
             target,
             '/doso.v1.Tasks/Send',
-            tasks__pb2.Instruction.SerializeToString,
-            common__pb2.Receipt.FromString,
+            messages_dot_tasks__pb2.Instruction.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
             options,
             channel_credentials,
             insecure,
@@ -144,8 +353,35 @@ class Tasks(object):
             request,
             target,
             '/doso.v1.Tasks/Get',
-            tasks__pb2.RunQuery.SerializeToString,
-            tasks__pb2.Run.FromString,
+            messages_dot_tasks__pb2.RunQuery.SerializeToString,
+            messages_dot_tasks__pb2.Run.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Watch(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/doso.v1.Tasks/Watch',
+            messages_dot_tasks__pb2.RunQuery.SerializeToString,
+            messages_dot_tasks__pb2.Run.FromString,
             options,
             channel_credentials,
             insecure,
@@ -171,8 +407,332 @@ class Tasks(object):
             request,
             target,
             '/doso.v1.Tasks/Cancel',
-            tasks__pb2.CancelRun.SerializeToString,
-            common__pb2.Receipt.FromString,
+            messages_dot_tasks__pb2.CancelRun.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def InspectionRoutes(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Tasks/InspectionRoutes',
+            messages_dot_inspection__pb2.InspectionRouteQuery.SerializeToString,
+            messages_dot_inspection__pb2.InspectionRoutes.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def InspectionRoute(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Tasks/InspectionRoute',
+            messages_dot_inspection__pb2.InspectionRouteQuery.SerializeToString,
+            messages_dot_inspection__pb2.InspectionRoute.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PutInspectionRoute(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Tasks/PutInspectionRoute',
+            messages_dot_inspection__pb2.PutInspectionRoute.SerializeToString,
+            messages_dot_inspection__pb2.InspectionRoute.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteInspectionRoute(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Tasks/DeleteInspectionRoute',
+            messages_dot_inspection__pb2.DeleteInspectionRoute.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StartInspection(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Tasks/StartInspection',
+            messages_dot_inspection__pb2.StartInspection.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def InspectionTask(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Tasks/InspectionTask',
+            messages_dot_inspection__pb2.InspectionTaskQuery.SerializeToString,
+            messages_dot_inspection__pb2.InspectionTask.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def InspectionTasks(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Tasks/InspectionTasks',
+            messages_dot_inspection__pb2.InspectionTaskListQuery.SerializeToString,
+            messages_dot_inspection__pb2.InspectionTasks.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def WatchInspection(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/doso.v1.Tasks/WatchInspection',
+            messages_dot_inspection__pb2.InspectionTaskQuery.SerializeToString,
+            messages_dot_inspection__pb2.InspectionTask.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PauseInspection(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Tasks/PauseInspection',
+            messages_dot_inspection__pb2.InspectionControl.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ResumeInspection(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Tasks/ResumeInspection',
+            messages_dot_inspection__pb2.InspectionControl.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CancelInspection(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Tasks/CancelInspection',
+            messages_dot_inspection__pb2.InspectionControl.SerializeToString,
+            messages_dot_common__pb2.Receipt.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def InspectionReport(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Tasks/InspectionReport',
+            messages_dot_inspection__pb2.InspectionTaskQuery.SerializeToString,
+            messages_dot_common__pb2.Snapshot.FromString,
             options,
             channel_credentials,
             insecure,

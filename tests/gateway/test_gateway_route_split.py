@@ -571,6 +571,8 @@ def test_navigation_routes_own_commands_and_queries_once():
         "/api/v1/navigation/tasks/{task_id}/cancel",
         "/api/v1/navigation/tasks/{task_id}/pause",
         "/api/v1/navigation/tasks/{task_id}/resume",
+        "/api/v1/navigation/tasks/{task_id}/speed-limit",
+        "/api/v1/navigation/planner",
         "/api/v1/navigation/resume",
         "/api/v1/navigation/status",
         "/api/v1/navigation/goals/{request_id}",
@@ -1765,6 +1767,7 @@ def test_openapi_exposes_client_response_models():
     assert "command" in schemas["LeaseResponse"]["required"]
 
     assert "application/sdp" in _content_for(openapi, "/api/v1/webrtc/whep", method="post")
+    assert "application/sdp" in _content_for(openapi, "/api/v1/webrtc/whep", status="201", method="post")
     assert "/api/v1/webrtc/offer" not in openapi["paths"]
     assert "/api/v1/webrtc/stats" not in openapi["paths"]
     assert "/api/v1/webrtc/bitrate" not in openapi["paths"]

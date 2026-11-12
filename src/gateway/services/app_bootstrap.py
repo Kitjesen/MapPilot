@@ -37,6 +37,8 @@ _OPERATION_CONTRACT_CACHE_ATTR = "_app_capabilities_operation_contract_cache"
 _OPERATION_CONTRACT_CACHE_LOCK = threading.RLock()
 
 CLIENT_LINKS: dict[str, str] = {
+    "robot_capabilities": "/api/v1/robot/capabilities",
+    "robot_sensor": "/api/v1/robot/sensors/{sensor}",
     "bootstrap": "/api/v1/app/bootstrap",
     "capabilities": "/api/v1/app/capabilities",
     "traffic": "/api/v1/app/traffic",
@@ -79,6 +81,8 @@ CLIENT_LINKS: dict[str, str] = {
     "inspection_task_resume": "/api/v1/inspection/tasks/{task_id}/resume",
     "inspection_task_cancel": "/api/v1/inspection/tasks/{task_id}/cancel",
     "inspection_status": "/api/v1/inspection/status",
+    "inspection_schedules": "/api/v1/inspection/schedules",
+    "inspection_schedule_detail": "/api/v1/inspection/schedules/{schedule_id}",
     "navigation_cancel": "/api/v1/navigation/cancel",
     "navigation_task_cancel": "/api/v1/navigation/tasks/{task_id}/cancel",
     "navigation_task_pause": "/api/v1/navigation/tasks/{task_id}/pause",
@@ -100,9 +104,14 @@ CLIENT_LINKS: dict[str, str] = {
     "map_operation_cancel": "/api/v1/maps/operations/{operation_id}/cancel",
     "map_operation_retry": "/api/v1/maps/operations/{operation_id}/retry",
     "map_operation_process": "/api/v1/maps/operations/{operation_id}/process",
+    "map_operation_reoptimize": "/api/v1/maps/operations/{operation_id}/reoptimize",
     "map_operation_source": "/api/v1/maps/operations/{operation_id}/source/pcd",
     "map_import_pcd": "/api/v1/maps/import_pcd",
     "map_crop": "/api/v1/maps/{name}/crop",
+    "map_edit_preview": "/api/v1/maps/{name}/edit_preview",
+    "map_no_go": "/api/v1/maps/{name}/no_go",
+    "map_surface": "/api/v1/maps/{name}/surface",
+    "map_no_go_region": "/api/v1/maps/{name}/no_go/{region_id}",
     "map_mark_zone": "/api/v1/maps/{name}/mark_zone",
     "map_build_octomap": "/api/v1/maps/{name}/build_octomap",
     "map_validate_plan": "/api/v1/maps/{name}/validate_plan",
@@ -133,6 +142,8 @@ CLIENT_LINKS: dict[str, str] = {
 CLIENT_ENDPOINTS: dict[str, dict[str, dict[str, str]]] = {
     "app": {
         "bootstrap": {"method": "GET", "path": CLIENT_LINKS["bootstrap"]},
+        "robot_capabilities": {"method": "GET", "path": CLIENT_LINKS["robot_capabilities"]},
+        "robot_sensor": {"method": "GET", "path": CLIENT_LINKS["robot_sensor"]},
         "capabilities": {"method": "GET", "path": CLIENT_LINKS["capabilities"]},
         "traffic": {"method": "GET", "path": CLIENT_LINKS["traffic"]},
     },
@@ -226,9 +237,15 @@ CLIENT_ENDPOINTS: dict[str, dict[str, dict[str, str]]] = {
             "path": CLIENT_LINKS["map_operation_retry"],
         },
         "map_operation_process": {"method": "POST", "path": CLIENT_LINKS["map_operation_process"]},
+        "map_operation_reoptimize": {"method": "POST", "path": CLIENT_LINKS["map_operation_reoptimize"]},
         "map_operation_source": {"method": "GET", "path": CLIENT_LINKS["map_operation_source"]},
         "map_import_pcd": {"method": "POST", "path": CLIENT_LINKS["map_import_pcd"]},
         "map_crop": {"method": "POST", "path": CLIENT_LINKS["map_crop"]},
+        "map_edit_preview": {"method": "POST", "path": CLIENT_LINKS["map_edit_preview"]},
+        "map_no_go": {"method": "GET", "path": CLIENT_LINKS["map_no_go"]},
+        "map_surface": {"method": "GET", "path": CLIENT_LINKS["map_surface"]},
+        "map_no_go_set": {"method": "PUT", "path": CLIENT_LINKS["map_no_go"]},
+        "map_no_go_delete": {"method": "DELETE", "path": CLIENT_LINKS["map_no_go_region"]},
         "map_mark_zone": {"method": "POST", "path": CLIENT_LINKS["map_mark_zone"]},
         "map_build_octomap": {
             "method": "POST",
@@ -320,6 +337,10 @@ CLIENT_ENDPOINTS: dict[str, dict[str, dict[str, str]]] = {
             "path": CLIENT_LINKS["inspection_task_cancel"],
         },
         "inspection_status": {"method": "GET", "path": CLIENT_LINKS["inspection_status"]},
+        "inspection_schedule_list": {"method": "GET", "path": CLIENT_LINKS["inspection_schedules"]},
+        "inspection_schedule_create": {"method": "POST", "path": CLIENT_LINKS["inspection_schedules"]},
+        "inspection_schedule_update": {"method": "PUT", "path": CLIENT_LINKS["inspection_schedule_detail"]},
+        "inspection_schedule_delete": {"method": "DELETE", "path": CLIENT_LINKS["inspection_schedule_detail"]},
         "routecheck_latest": {"method": "GET", "path": CLIENT_LINKS["routecheck_latest"]},
         "real_runtime_evidence_latest": {
             "method": "GET",
@@ -339,10 +360,6 @@ def _mapping(value: Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return dict(value)
     return {}
-
-
-def _safety_summary(safety: Any) -> dict[str, Any]:
-    return safety_summary(safety)
 
 
 def _map_summary(gw: Any, session: Mapping[str, Any]) -> dict[str, Any]:
@@ -940,7 +957,7 @@ def build_app_bootstrap(gw: Any) -> dict[str, Any]:
             "model": model,
         },
         "session": session,
-        "safety": _safety_summary(safety),
+        "safety": safety_summary(safety),
         "localization": localization,
         "navigation": navigation,
         "control": control,

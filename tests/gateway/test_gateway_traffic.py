@@ -954,7 +954,7 @@ def test_gateway_run_server_reports_unexpected_uvicorn_return(monkeypatch):
 def test_gateway_stop_signals_background_threads_without_server_start():
     from gateway.gateway_module import GatewayModule
 
-    gateway = GatewayModule()
+    gateway = GatewayModule(host="127.0.0.1", grpc_port=0)
     gateway._defer_server = True
     gateway._drift_watchdog_enabled = True
     gateway._drift_watchdog_interval = 60.0
@@ -1001,7 +1001,7 @@ def test_gateway_stop_retains_background_thread_when_join_times_out():
 def test_gateway_start_replaces_stopped_event():
     from gateway.gateway_module import GatewayModule
 
-    gateway = GatewayModule()
+    gateway = GatewayModule(host="127.0.0.1", grpc_port=0)
     gateway._defer_server = True
     gateway._drift_watchdog_enabled = False
     gateway.setup()
@@ -1018,7 +1018,7 @@ def test_gateway_start_replaces_stopped_event():
 def test_gateway_start_does_not_duplicate_background_threads():
     from gateway.gateway_module import GatewayModule
 
-    gateway = GatewayModule()
+    gateway = GatewayModule(host="127.0.0.1", grpc_port=0)
     gateway._defer_server = True
     gateway._drift_watchdog_enabled = True
     gateway._drift_watchdog_interval = 60.0

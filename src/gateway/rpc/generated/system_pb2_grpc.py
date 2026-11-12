@@ -3,8 +3,8 @@
 import grpc
 import warnings
 
-from . import common_pb2 as common__pb2
-from . import system_pb2 as system__pb2
+from .messages import common_pb2 as messages_dot_common__pb2
+from .messages import system_pb2 as messages_dot_system__pb2
 
 GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
@@ -37,43 +37,58 @@ class SystemStub(object):
         """
         self.Handshake = channel.unary_unary(
                 '/doso.v1.System/Handshake',
-                request_serializer=system__pb2.Handshake.SerializeToString,
-                response_deserializer=system__pb2.HandshakeReply.FromString,
+                request_serializer=messages_dot_system__pb2.Handshake.SerializeToString,
+                response_deserializer=messages_dot_system__pb2.HandshakeReply.FromString,
                 _registered_method=True)
         self.Ping = channel.unary_unary(
                 '/doso.v1.System/Ping',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=system__pb2.Ping.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_system__pb2.Ping.FromString,
                 _registered_method=True)
         self.State = channel.unary_unary(
                 '/doso.v1.System/State',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=common__pb2.Snapshot.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Snapshot.FromString,
+                _registered_method=True)
+        self.RobotStatus = channel.unary_unary(
+                '/doso.v1.System/RobotStatus',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_system__pb2.RobotStatus.FromString,
                 _registered_method=True)
         self.Health = channel.unary_unary(
                 '/doso.v1.System/Health',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=common__pb2.Snapshot.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Snapshot.FromString,
+                _registered_method=True)
+        self.Faults = channel.unary_unary(
+                '/doso.v1.System/Faults',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_system__pb2.FaultReport.FromString,
+                _registered_method=True)
+        self.WatchFaults = channel.unary_stream(
+                '/doso.v1.System/WatchFaults',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_system__pb2.FaultReport.FromString,
                 _registered_method=True)
         self.Readiness = channel.unary_unary(
                 '/doso.v1.System/Readiness',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=common__pb2.Snapshot.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Snapshot.FromString,
                 _registered_method=True)
         self.Capabilities = channel.unary_unary(
                 '/doso.v1.System/Capabilities',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=common__pb2.Snapshot.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Snapshot.FromString,
                 _registered_method=True)
         self.Session = channel.unary_unary(
                 '/doso.v1.System/Session',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=common__pb2.Snapshot.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Snapshot.FromString,
                 _registered_method=True)
         self.ProductStatus = channel.unary_unary(
                 '/doso.v1.System/ProductStatus',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=common__pb2.Snapshot.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Snapshot.FromString,
                 _registered_method=True)
 
 
@@ -98,7 +113,25 @@ class SystemServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def RobotStatus(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def Health(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Faults(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def WatchFaults(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -133,43 +166,58 @@ def add_SystemServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'Handshake': grpc.unary_unary_rpc_method_handler(
                     servicer.Handshake,
-                    request_deserializer=system__pb2.Handshake.FromString,
-                    response_serializer=system__pb2.HandshakeReply.SerializeToString,
+                    request_deserializer=messages_dot_system__pb2.Handshake.FromString,
+                    response_serializer=messages_dot_system__pb2.HandshakeReply.SerializeToString,
             ),
             'Ping': grpc.unary_unary_rpc_method_handler(
                     servicer.Ping,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=system__pb2.Ping.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_system__pb2.Ping.SerializeToString,
             ),
             'State': grpc.unary_unary_rpc_method_handler(
                     servicer.State,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=common__pb2.Snapshot.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_common__pb2.Snapshot.SerializeToString,
+            ),
+            'RobotStatus': grpc.unary_unary_rpc_method_handler(
+                    servicer.RobotStatus,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_system__pb2.RobotStatus.SerializeToString,
             ),
             'Health': grpc.unary_unary_rpc_method_handler(
                     servicer.Health,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=common__pb2.Snapshot.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_common__pb2.Snapshot.SerializeToString,
+            ),
+            'Faults': grpc.unary_unary_rpc_method_handler(
+                    servicer.Faults,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_system__pb2.FaultReport.SerializeToString,
+            ),
+            'WatchFaults': grpc.unary_stream_rpc_method_handler(
+                    servicer.WatchFaults,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_system__pb2.FaultReport.SerializeToString,
             ),
             'Readiness': grpc.unary_unary_rpc_method_handler(
                     servicer.Readiness,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=common__pb2.Snapshot.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_common__pb2.Snapshot.SerializeToString,
             ),
             'Capabilities': grpc.unary_unary_rpc_method_handler(
                     servicer.Capabilities,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=common__pb2.Snapshot.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_common__pb2.Snapshot.SerializeToString,
             ),
             'Session': grpc.unary_unary_rpc_method_handler(
                     servicer.Session,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=common__pb2.Snapshot.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_common__pb2.Snapshot.SerializeToString,
             ),
             'ProductStatus': grpc.unary_unary_rpc_method_handler(
                     servicer.ProductStatus,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=common__pb2.Snapshot.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_common__pb2.Snapshot.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -197,8 +245,8 @@ class System(object):
             request,
             target,
             '/doso.v1.System/Handshake',
-            system__pb2.Handshake.SerializeToString,
-            system__pb2.HandshakeReply.FromString,
+            messages_dot_system__pb2.Handshake.SerializeToString,
+            messages_dot_system__pb2.HandshakeReply.FromString,
             options,
             channel_credentials,
             insecure,
@@ -224,8 +272,8 @@ class System(object):
             request,
             target,
             '/doso.v1.System/Ping',
-            common__pb2.Empty.SerializeToString,
-            system__pb2.Ping.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_system__pb2.Ping.FromString,
             options,
             channel_credentials,
             insecure,
@@ -251,8 +299,35 @@ class System(object):
             request,
             target,
             '/doso.v1.System/State',
-            common__pb2.Empty.SerializeToString,
-            common__pb2.Snapshot.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_common__pb2.Snapshot.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RobotStatus(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.System/RobotStatus',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_system__pb2.RobotStatus.FromString,
             options,
             channel_credentials,
             insecure,
@@ -278,8 +353,62 @@ class System(object):
             request,
             target,
             '/doso.v1.System/Health',
-            common__pb2.Empty.SerializeToString,
-            common__pb2.Snapshot.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_common__pb2.Snapshot.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Faults(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.System/Faults',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_system__pb2.FaultReport.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def WatchFaults(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/doso.v1.System/WatchFaults',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_system__pb2.FaultReport.FromString,
             options,
             channel_credentials,
             insecure,
@@ -305,8 +434,8 @@ class System(object):
             request,
             target,
             '/doso.v1.System/Readiness',
-            common__pb2.Empty.SerializeToString,
-            common__pb2.Snapshot.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_common__pb2.Snapshot.FromString,
             options,
             channel_credentials,
             insecure,
@@ -332,8 +461,8 @@ class System(object):
             request,
             target,
             '/doso.v1.System/Capabilities',
-            common__pb2.Empty.SerializeToString,
-            common__pb2.Snapshot.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_common__pb2.Snapshot.FromString,
             options,
             channel_credentials,
             insecure,
@@ -359,8 +488,8 @@ class System(object):
             request,
             target,
             '/doso.v1.System/Session',
-            common__pb2.Empty.SerializeToString,
-            common__pb2.Snapshot.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_common__pb2.Snapshot.FromString,
             options,
             channel_credentials,
             insecure,
@@ -386,8 +515,8 @@ class System(object):
             request,
             target,
             '/doso.v1.System/ProductStatus',
-            common__pb2.Empty.SerializeToString,
-            common__pb2.Snapshot.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_common__pb2.Snapshot.FromString,
             options,
             channel_credentials,
             insecure,

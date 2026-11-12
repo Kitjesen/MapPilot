@@ -57,24 +57,23 @@ def build_gateway_app(gw: Any):
     from gateway.maps.stairs import register_stair_routes
     from gateway.navigation.diagnostics import register_navigation_diagnostic_routes
     from gateway.navigation.routes import register_navigation_routes
-    from gateway.routes import (
-        mount_dashboard_assets,
-        register_app_routes,
-        register_asset_routes,
-        register_camera_routes,
-        register_command_routes,
-        register_diagnostic_routes,
-        register_health_routes,
-        register_inspection_routes,
-        register_operation_routes,
-        register_realtime_routes,
-        register_recording_routes,
-        register_safety_routes,
-        register_session_routes,
-        register_status_routes,
-    )
+    from gateway.routes.app import register_app_routes
+    from gateway.routes.assets import mount_dashboard_assets, register_asset_routes
+    from gateway.routes.body import register_body_routes
+    from gateway.routes.camera import register_camera_routes
+    from gateway.routes.commands import register_command_routes
+    from gateway.routes.diagnostics import register_diagnostic_routes
+    from gateway.routes.health import register_health_routes
+    from gateway.routes.inspection import register_inspection_routes
     from gateway.routes.measurements import register_measurement_routes
+    from gateway.routes.observations import register_observation_routes
+    from gateway.routes.operations import register_operation_routes
+    from gateway.routes.realtime import register_realtime_routes
+    from gateway.routes.recordings import register_recording_routes
+    from gateway.routes.safety import register_safety_routes
     from gateway.routes.sensor_control import register_sensor_control_routes
+    from gateway.routes.session import register_session_routes
+    from gateway.routes.status import register_status_routes
     from gateway.services.rate_limit import RateLimitMiddleware
 
     app.add_middleware(RateLimitMiddleware)
@@ -152,6 +151,7 @@ def build_gateway_app(gw: Any):
 
     register_product_control_routes(app)
     register_command_routes(app, gw)
+    register_body_routes(app, gw)
     register_navigation_routes(app, gw)
     register_navigation_diagnostic_routes(app, gw)
     register_inspection_routes(app, gw)
@@ -162,6 +162,7 @@ def build_gateway_app(gw: Any):
     register_app_routes(app, gw)
     register_asset_routes(app)
     register_camera_routes(app, gw)
+    register_observation_routes(app, gw)
     register_realtime_routes(app, gw)
     mount_dashboard_assets(app)
 

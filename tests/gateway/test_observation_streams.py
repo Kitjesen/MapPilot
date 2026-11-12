@@ -9,12 +9,14 @@ import grpc
 import pytest
 from google.protobuf.duration_pb2 import Duration
 from google.protobuf.empty_pb2 import Empty
+from tools.sdk.observe import start as start_observation_listener
 
 from gateway.rpc.generated import common_pb2 as common_pb
 from gateway.rpc.generated import motion_pb2_grpc as motion_rpc
 from gateway.rpc.generated import navigation_pb2 as navigation_pb
 from gateway.rpc.generated import navigation_pb2_grpc as navigation_rpc
 from gateway.rpc.generated import observations_pb2_grpc as observations_rpc
+from gateway.rpc.generated import system_pb2 as system_pb
 from gateway.rpc.generated import system_pb2_grpc as system_rpc
 from gateway.rpc.observations import imu_sample, joint_sample
 from gateway.rpc.server import start
@@ -166,7 +168,10 @@ def test_tls_uses_resolved_files_and_server_name(monkeypatch, tmp_path):
     assert Observations(environment)._channel() == "channel"
     assert captured["files"] == (b"CA", b"KEY", b"CERT")
     assert captured["channel"] == (
-        "192.168.66.64:13145", "credentials", [("grpc.ssl_target_name_override", "brainstem")],
+        "192.168.66.64:13145", "credentials", [
+            (grpc.experimental.ChannelOptions.SingleThreadedUnaryStream, 1),
+            ("grpc.ssl_target_name_override", "brainstem"),
+        ],
     )
 
 
@@ -223,3 +228,74 @@ def test_cancel_shutdown_and_watch_limit_release_upstream():
         finally:
             for watch in watches:
                 watch.cancel()
+
+
+@pytest.fixture
+def observation_listener(monkeypatch):
+    for name in ("CA_FILE", "CERT_FILE", "KEY_FILE", "SERVER_NAME"):
+        monkeypatch.delenv(f"LINGTU_DRIVER_TLS_{name}", raising=False)
+    monkeypatch.delenv("LINGTU_OBSERVATIONS_TRANSPORT", raising=False)
+
+    @contextmanager
+    def listener(source):
+        server, port = start_observation_listener(source._environment["LINGTU_DRIVER_TARGET"], port=0,
+                                                  lan_development=True)
+        with grpc.insecure_channel(f"127.0.0.1:{port}") as channel:
+            try:
+                yield channel, server
+            finally:
+                server.stop(0).wait(3)
+
+    return listener
+
+
+@pytest.mark.parametrize("event,method", [
+    (imu(), "WatchImu"),
+    (source_pb.Joint(single_joint=source_pb.SingleJoint(id=3, position=1.5)), "WatchJoints"),
+])
+def test_read_only_listener_streams_and_preserves_disconnect(observation_listener, event, method):
+    def events(request, context):
+        yield event
+        context.abort(grpc.StatusCode.UNAVAILABLE, "upstream disconnected")
+
+    with upstream(events) as source, observation_listener(source) as (channel, _):
+        reply = system_rpc.SystemStub(channel).Handshake(
+            system_pb.Handshake(protocol_version=2, client_id="observation-test"), timeout=3,
+        )
+        assert reply.protocol_version == 2
+        watch = getattr(observations_rpc.ObservationsStub(channel), method)(common_pb.Empty(), timeout=3)
+        assert next(watch) == (imu_sample(event) if method == "WatchImu" else joint_sample(event))
+        with pytest.raises(grpc.RpcError) as caught:
+            next(watch)
+        assert caught.value.code() == grpc.StatusCode.UNAVAILABLE
+        assert caught.value.details() == "upstream disconnected"
+        for method_name in ("System/Ping", "Motion/Stop", "Maps/List", "Observations/Motors"):
+            with pytest.raises(grpc.RpcError) as caught:
+                channel.unary_unary(f"/doso.v1.{method_name}")(b"", timeout=3)
+            assert caught.value.code() == grpc.StatusCode.UNIMPLEMENTED
+
+
+@pytest.mark.parametrize("stop_server", [False, True])
+def test_read_only_listener_cancel_and_shutdown_release_upstream(observation_listener, stop_server):
+    closed = threading.Event()
+
+    def events(request, context):
+        stopped = threading.Event()
+        context.add_callback(stopped.set)
+        try:
+            yield imu()
+            stopped.wait(10)
+        finally:
+            closed.set()
+
+    with upstream(events) as source, observation_listener(source) as (channel, server):
+        watch = observations_rpc.ObservationsStub(channel).WatchImu(common_pb.Empty(), timeout=10)
+        try:
+            next(watch)
+            if stop_server:
+                server.stop(0).wait(3)
+            else:
+                watch.cancel()
+            assert closed.wait(3)
+        finally:
+            watch.cancel()

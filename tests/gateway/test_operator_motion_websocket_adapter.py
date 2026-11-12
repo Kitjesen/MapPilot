@@ -438,6 +438,22 @@ def test_slow_claim_cannot_refresh_an_expired_browser_input(monkeypatch, finish)
         gateway.stop()
 
 
+def test_idle_connection_does_not_change_robot_control(monkeypatch) -> None:
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    commands = RecordingCommands()
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway.on_system_modules({"nav.commands": commands})
+    try:
+        session = teleop.NativeTeleopSession(gateway, "web:viewer")
+        assert session.open().accepted
+        assert session.disconnect(request_id="viewer-closed").accepted
+        assert commands.calls == []
+        assert gateway._web_teleop_owner is None
+    finally:
+        gateway.stop()
+
+
 def test_websocket_velocity_reports_ingress_only_and_uses_native_command_path(monkeypatch) -> None:
     monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
     commands = RecordingCommands()

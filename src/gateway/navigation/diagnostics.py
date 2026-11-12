@@ -192,9 +192,6 @@ def _native_cmd_vel_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]
         "active_source": active_source,
         "evidence_stage": evidence_stage,
         "final_output_confirmed": final_output_published,
-        "driver_delivery_accepted": (
-            final_output_published and final_output.get("driver_delivery_accepted") is True
-        ),
         "output_sequence": output_sequence if final_output_published else 0,
         "ts": payload.get("stamp_s"),
     }

@@ -67,6 +67,21 @@ def test_ping():
         assert system_rpc.SystemStub(channel).Ping(common_pb.Empty(), timeout=3).status == "ok"
 
 
+def test_robot_status_is_typed_and_read_only(monkeypatch):
+    monkeypatch.setattr(services.system_state, "build_readiness_snapshot", lambda _: (
+        {"ready": False, "reasons": ["no_modules_loaded"]}, 503,
+    ))
+    monkeypatch.setattr(services.system_state, "read_navigation_status", lambda: None)
+    control = Mock(side_effect=AssertionError("status query invoked control"))
+    with serve(SimpleNamespace(_mode="manual", _run_control_command=control)) as channel:
+        state = system_rpc.SystemStub(channel).RobotStatus(common_pb.Empty(), timeout=3)
+    assert state.mode == "manual"
+    assert state.HasField("ready") and state.ready is False
+    assert state.health == system_pb.HEALTH_STATUS_UNKNOWN
+    assert not state.HasField("software_emergency_stop")
+    control.assert_not_called()
+
+
 def test_handshake_configuration_identity(monkeypatch, tmp_path):
     robot_id = "8f7e1c62-0a4d-4b89-96e2-6c47b03db1a5"
     monkeypatch.setenv("DOSO_DEVICE_ID", robot_id)
@@ -200,7 +215,10 @@ def test_maps_save_list_operation(monkeypatch):
         completed = maps.Operation(maps_pb.MapQuery(operation_id=saved.operation_id), timeout=3)
         assert completed.operation_id == saved.operation_id
         assert completed.state == maps_pb.MAP_SUCCEEDED
-    assert calls[1] == {"action": "save_map", "map_id": "lab", "slam_profile": "native_dds", "request_id": "save-1"}
+    assert calls[1] == {
+        "action": "save_map", "map_id": "lab", "slam_profile": "native_dds",
+        "request_id": "save-1", "auto_process": True,
+    }
 
 
 @pytest.mark.parametrize("method, query", [
@@ -468,7 +486,7 @@ def test_watch_limit_preserves_commands_and_releases_slot(monkeypatch, motion_wa
     assert calls == ["stop"]
 
 
-@pytest.mark.parametrize("frequency", [None, 2])
+@pytest.mark.parametrize("frequency", [None, 2, 100])
 def test_motion_watch_reuses_status_and_delivers_updates(monkeypatch, frequency):
     state = {"state": "idle", "control": {"estop_latched": False}, "source": "owner_fixture"}
     monkeypatch.setattr(services, "build_navigation_status", lambda gateway: dict(state))
@@ -483,7 +501,10 @@ def test_motion_watch_reuses_status_and_delivers_updates(monkeypatch, frequency)
             assert next(watching) == motion.Status(common_pb.Empty(), timeout=3)
             state["state"] = "estop"
             state["control"] = {"estop_latched": True}
+            deadline = time.monotonic() + 2
             updated = next(watching)
+            while updated.fields["state"] != "estop" and time.monotonic() < deadline:
+                updated = next(watching)
             assert updated.fields["state"] == "estop"
             assert updated.fields["control"]["estop_latched"] is True
             assert updated.fields["source"] == "owner_fixture"
@@ -492,7 +513,7 @@ def test_motion_watch_reuses_status_and_delivers_updates(monkeypatch, frequency)
     control.assert_not_called()
 
 
-@pytest.mark.parametrize("frequency", [None, 1, 2, 3, 4])
+@pytest.mark.parametrize("frequency", [None, 1, 2, 4, 100])
 def test_motion_watch_uses_selected_interval(monkeypatch, frequency):
     waits = []
 
@@ -504,6 +525,7 @@ def test_motion_watch_uses_selected_interval(monkeypatch, frequency):
     slots = threading.BoundedSemaphore(1)
     motion = services.Motion(SimpleNamespace(), slots)
     monkeypatch.setattr(services, "threading", SimpleNamespace(Event=lambda: stopped))
+    monkeypatch.setattr(services, "time", SimpleNamespace(monotonic=lambda: 10.0))
     monkeypatch.setattr(services, "build_navigation_status", lambda gateway: {"state": "idle"})
     context = SimpleNamespace(add_callback=lambda callback: True, is_active=lambda: True)
     stream = (
@@ -511,11 +533,26 @@ def test_motion_watch_uses_selected_interval(monkeypatch, frequency):
         motion.WatchStateAt(motion_pb.WatchStateRequest(frequency_hz=frequency), context)
     )
     assert len(list(stream)) == 1
-    assert waits == [1.0 / (frequency or 4)]
+    assert waits == [1.0 / (frequency or 100)]
     assert slots.acquire(blocking=False)
 
 
-@pytest.mark.parametrize("frequency", [0, 5, 2**32 - 1])
+@pytest.mark.parametrize(("elapsed", "remaining"), [(0.004, 0.006), (0.02, 0.0)])
+def test_motion_watch_accounts_for_processing_time(monkeypatch, elapsed, remaining):
+    waits = []
+    stopped = SimpleNamespace(set=lambda: None, wait=lambda interval: waits.append(interval) or True)
+    ticks = iter([0.0, elapsed])
+    monkeypatch.setattr(services, "threading", SimpleNamespace(Event=lambda: stopped))
+    monkeypatch.setattr(services, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+    monkeypatch.setattr(services, "build_navigation_status", lambda gateway: {"state": "idle"})
+    context = SimpleNamespace(add_callback=lambda callback: True, is_active=lambda: True)
+    motion = services.Motion(SimpleNamespace(), threading.BoundedSemaphore(1))
+
+    assert len(list(motion.WatchState(common_pb.Empty(), context))) == 1
+    assert waits == [pytest.approx(remaining)]
+
+
+@pytest.mark.parametrize("frequency", [0, 101, 2**32 - 1])
 def test_motion_watch_rejects_unsupported_frequency(monkeypatch, frequency):
     status = Mock(side_effect=AssertionError("invalid frequency read status"))
     monkeypatch.setattr(services, "build_navigation_status", status)
@@ -561,3 +598,43 @@ def test_software_stop_ack(accepted):
                 motion.Stop(command("stop-1"), timeout=3)
             assert rejected.value.code() == grpc.StatusCode.FAILED_PRECONDITION
     assert calls == [("rest_emergency_stop", "stop-1")]
+
+
+@pytest.mark.parametrize("method,native,reason", [
+    ("StopMotion", "stop_motion", "operator_stop"),
+    ("ClearEmergencyStop", "clear_estop", "operator_reset"),
+])
+@pytest.mark.parametrize("accepted", [True, False])
+def test_motion_stop_and_reset_use_native_owner(method, native, reason, accepted):
+    gateway = GatewayModule()
+    gateway._mode = "estop"
+    calls = []
+
+    def apply(*, reason, request_id):
+        calls.append((reason, request_id))
+        return accepted
+
+    gateway._nav_commands = SimpleNamespace(**{native: apply})
+    with serve(gateway) as channel:
+        operation = getattr(motion_rpc.MotionStub(channel), method)
+        if accepted:
+            reply = operation(command("motion-1"), timeout=3)
+            assert reply.accepted and reply.stage == "native_acknowledged"
+            assert reply.request_id == "motion-1"
+        else:
+            with pytest.raises(grpc.RpcError) as rejected:
+                operation(command("motion-1"), timeout=3)
+            assert rejected.value.code() == grpc.StatusCode.FAILED_PRECONDITION
+    assert calls == [(reason, "motion-1")]
+    assert gateway._mode == ("manual" if accepted and method == "ClearEmergencyStop" else "estop")
+
+
+@pytest.mark.parametrize("method", ["StopMotion", "ClearEmergencyStop"])
+def test_motion_commands_validate_identity_before_delivery(method):
+    operation = Mock(side_effect=AssertionError("invalid identity reached command owner"))
+    gateway = SimpleNamespace(_run_control_command=operation)
+    with serve(gateway) as channel:
+        with pytest.raises(grpc.RpcError) as rejected:
+            getattr(motion_rpc.MotionStub(channel), method)(common_pb.Command(), timeout=3)
+    assert rejected.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    operation.assert_not_called()

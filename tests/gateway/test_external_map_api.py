@@ -10,16 +10,144 @@ from types import SimpleNamespace
 
 import pytest
 
-from gateway.schemas import MapSaveRequest
+from gateway.schemas import MapReoptimizeRequest, MapSaveRequest
 
 
 def _endpoint(app, path: str):
     return next(route.endpoint for route in app.routes if route.path == path)
 
 
+def test_no_go_http_round_trip(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from gateway.maps import routes
+
+    calls = []
+    region = {"id": "door", "min": [1, 2, 0], "max": [2, 3, 2]}
+    native = {"success": True, "map_id": "hall", "content_epoch": 11,
+              "schema": "lingtu.no_go.v1", "frame_id": "map", "regions": [region]}
+
+    def request(_gw, command):
+        calls.append(command)
+        return native
+
+    monkeypatch.setattr(routes, "_mapd_http_request", request)
+    app = FastAPI()
+    routes.register_map_routes(app, SimpleNamespace())
+    with TestClient(app) as client:
+        assert client.get("/api/v1/maps/hall/no_go").json() == native
+        assert client.put("/api/v1/maps/hall/no_go", json={
+            "expected_content_epoch": 11, "region": region}).status_code == 200
+        assert client.delete("/api/v1/maps/hall/no_go/door?expected_content_epoch=12").status_code == 200
+    assert calls == [
+        {"action": "get_no_go_regions", "map_id": "hall"},
+        {"action": "set_no_go_region", "map_id": "hall", "expected_content_epoch": 11,
+         "region": {"id": "door", "min": (1, 2, 0), "max": (2, 3, 2)}},
+        {"action": "delete_no_go_region", "map_id": "hall", "region_id": "door",
+         "expected_content_epoch": 12},
+    ]
+
+
+@pytest.mark.parametrize("reason,status", [
+    ("active_map_conflict", 409), ("source_epoch_mismatch", 409),
+    ("invalid_no_go_region", 400), ("map_not_found", 404),
+])
+def test_no_go_rejection_is_not_success(monkeypatch, reason, status):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from gateway.maps import routes
+
+    monkeypatch.setattr(routes, "_mapd_http_request", lambda *_: {
+        "success": False, "reason_code": reason})
+    app = FastAPI()
+    routes.register_map_routes(app, SimpleNamespace())
+    with TestClient(app) as client:
+        response = client.put("/api/v1/maps/hall/no_go", json={
+            "expected_content_epoch": 11,
+            "region": {"id": "door", "min": [2, 2, 0], "max": [1, 3, 2]}})
+    assert response.status_code == status
+    assert response.json() == {"success": False, "reason_code": reason}
+
+
+@pytest.mark.parametrize("epoch,region", [
+    (0, {"id": "door", "min": [1, 2, 0], "max": [2, 3, 2]}),
+    (11, {"id": "bad/name", "min": [1, 2, 0], "max": [2, 3, 2]}),
+    (11, {"id": "door", "min": [1, 2], "max": [2, 3, 2]}),
+])
+def test_no_go_shape_checked_at_http_boundary(monkeypatch, epoch, region):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from gateway.maps import routes
+
+    monkeypatch.setattr(routes, "_mapd_http_request", lambda *_: pytest.fail("invalid shape reached mapd"))
+    app = FastAPI()
+    routes.register_map_routes(app, SimpleNamespace())
+    with TestClient(app) as client:
+        response = client.put("/api/v1/maps/hall/no_go", json={
+            "expected_content_epoch": epoch, "region": region})
+    assert response.status_code == 422
+
+
 def test_save_map_schema_rejects_public_optimizer_selection():
     with pytest.raises(ValueError):
         MapSaveRequest.model_validate({"name": "warehouse", "optimization": "auto"})
+
+
+@pytest.mark.parametrize("accepted", [True, False])
+def test_reoptimize_uses_archived_operation(monkeypatch, accepted):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import gateway.maps.routes as map_routes
+
+    requests = []
+
+    def submit(_gw, request):
+        requests.append(request)
+        return {
+            "accepted": accepted,
+            "reason_code": "" if accepted else "patch_bundle_incomplete",
+            "status": {
+                "job_id": "optimize_job_1", "source_job_id": "save_job_1",
+                "state": "QUEUED" if accepted else "FAILED",
+                "capture_dir": "/private/capture",
+            },
+        }
+
+    monkeypatch.setattr(map_routes, "_mapd_http_request", submit)
+    app = FastAPI()
+    map_routes.register_map_routes(app, SimpleNamespace())
+    response = TestClient(app).post(
+        "/api/v1/maps/operations/save_job_1/reoptimize", json={"request_id": "optimize_1"},
+    )
+
+    assert response.status_code == (202 if accepted else 409)
+    assert requests == [{
+        "action": "reoptimize_save_map", "job_id": "save_job_1", "request_id": "optimize_1",
+    }]
+    payload = response.json()
+    assert payload["operation"]["operation_id"] == "optimize_job_1"
+    assert payload["operation"]["source_operation_id"] == "save_job_1"
+    assert payload["success"] is (None if accepted else False)
+    if not accepted:
+        assert payload["reason_code"] == "patch_bundle_incomplete"
+    _assert_external_operation_payload_is_path_free(payload)
+
+
+@pytest.mark.parametrize("body", [{}, {"request_id": ""}, {"request_id": "a/b"}, {"request_id": "x" * 129}])
+def test_reoptimize_rejects_invalid_request(body):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import gateway.maps.routes as map_routes
+
+    app = FastAPI()
+    map_routes.register_map_routes(app, SimpleNamespace())
+    response = TestClient(app).post("/api/v1/maps/operations/save_1/reoptimize", json=body)
+    assert response.status_code == 422
 
 
 def test_rename_map_accepts_the_validated_http_request(monkeypatch):
@@ -661,6 +789,11 @@ def test_save_map_keeps_gateway_event_loop_responsive(monkeypatch):
             "process_save_map",
             ("save_job_1",),
         ),
+        (
+            "/api/v1/maps/operations/{operation_id}/reoptimize",
+            "reoptimize_save_map",
+            ("save_job_1", MapReoptimizeRequest(request_id="optimize_1")),
+        ),
     ],
 )
 def test_customer_map_queries_keep_gateway_event_loop_responsive(
@@ -1040,6 +1173,76 @@ def test_save_edited_map_as_preserves_identity_and_build_provenance(monkeypatch)
         {"action": "build_octomap_artifact", "map_id": "cleaned", **build}]
 
 
+def test_edit_preview_preserves_full_counts_sampled_points_and_order(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import gateway.maps.routes as routes
+
+    calls = []
+    native = {"success": True, "map_id": "original", "source_content_epoch": 11,
+              "frame_id": "floor_903", "point_count": 40000, "removed_points": 300,
+              "preview_points": [0, 1, 2], "preview_removed": [3, 4, 5], "preview_sample": True}
+    def request(_gw, command):
+        calls.append(command)
+        return native
+    monkeypatch.setattr(routes, "_mapd_http_request", request)
+    app = FastAPI()
+    routes.register_map_routes(app, SimpleNamespace())
+    operations = [{"operation": "radius", "radius": 0.2, "min_points": 12},
+                  {"operation": "voxel", "voxel_size": 0.1}]
+    with TestClient(app) as client:
+        response = client.post("/api/v1/maps/original/edit_preview", json={
+            "expected_source_content_epoch": 11, "operations": operations})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    for key in native.keys() - {"success"}:
+        assert payload[key] == native[key]
+    assert calls == [{"action": "preview_source_edits", "map_id": "original",
+                      "expected_source_content_epoch": 11, "operations": operations}]
+
+
+@pytest.mark.parametrize("reason,status", [("source_epoch_mismatch", 409), ("invalid_operations", 400),
+                                          ("response_too_large", 400)])
+def test_edit_preview_reports_native_rejection(monkeypatch, reason, status):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import gateway.maps.routes as routes
+
+    monkeypatch.setattr(routes, "_mapd_http_request", lambda *_: {
+        "success": False, "reason_code": reason, "message": "Edit parameters could not be applied."})
+    app = FastAPI()
+    routes.register_map_routes(app, SimpleNamespace())
+    with TestClient(app) as client:
+        response = client.post("/api/v1/maps/original/edit_preview", json={
+            "expected_source_content_epoch": 11, "operations": [{"operation": "radius", "radius": -1}]})
+    assert response.status_code == status
+    assert response.json()["ok"] is False
+    assert response.json()["reason_code"] == reason
+    assert "预览" in response.json()["message"] or "参数" in response.json()["message"]
+    assert "save" not in response.json()["message"].lower()
+    if reason == "response_too_large":
+        assert "响应上限" in response.json()["message"]
+
+
+@pytest.mark.parametrize("epoch,operations", [(True, []), (0, []), (11, {})])
+def test_edit_preview_rejects_invalid_request_before_mapd(monkeypatch, epoch, operations):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import gateway.maps.routes as routes
+
+    monkeypatch.setattr(routes, "_mapd_http_request", lambda *_: pytest.fail("invalid request reached mapd"))
+    app = FastAPI()
+    routes.register_map_routes(app, SimpleNamespace())
+    with TestClient(app) as client:
+        response = client.post("/api/v1/maps/original/edit_preview", json={
+            "expected_source_content_epoch": epoch, "operations": operations})
+    assert response.status_code == 400
+
+
 def test_resolution_copy_preserves_source_and_reports_native_build_resolution(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -1086,3 +1289,27 @@ def test_save_edited_map_conflicts_are_not_reported_as_saved(monkeypatch, reason
     assert result.status_code == 409
     assert result.json()["ok"] is False
     assert result.json()["reason_code"] == reason
+
+
+def test_surface_preview_forwards_geometry_options_and_native_layers(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from gateway.maps import routes
+
+    calls = []
+    native = {"success": True, "map_id": "hall", "content_epoch": 11, "frame_id": "map",
+              "resolution": .1, "observed_count": 20, "inferred_count": 1,
+              "observed_xyz": [0, 0, 0], "inferred_xyz": [1, 1, 2], "sampled": True}
+    def request(_gw, command):
+        calls.append(command)
+        return native
+    monkeypatch.setattr(routes, "_mapd_http_request", request)
+    app = FastAPI()
+    routes.register_map_routes(app, SimpleNamespace())
+    with TestClient(app) as client:
+        response = client.get("/api/v1/maps/hall/surface?headroom_m=.5&radius_m=.3&max_hole_area_m2=.1&max_slope=.4")
+    assert response.status_code == 200
+    assert response.json() == native
+    assert calls == [{"action": "get_surface_map", "map_id": "hall", "headroom_m": .5,
+                      "radius_m": .3, "max_hole_area_m2": .1, "max_slope": .4}]

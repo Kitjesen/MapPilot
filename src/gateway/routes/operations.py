@@ -35,6 +35,7 @@ from gateway.schemas import (
     RecordingOperationResponse,
     RecordingStartRequest,
     RecordingStatusResponse,
+    RecordingStopRequest,
     ServiceStatusResponse,
     SlamStatusResponse,
     TemporalMemoryResponse,
@@ -1198,11 +1199,14 @@ def register_operation_routes(app, gw) -> None:
         "/api/v1/recordings/stop",
         summary="Stop native MCAP recording",
         response_model=RecordingOperationResponse,
-        responses={404: {"model": RecordingOperationResponse}},
+        responses={404: {"model": RecordingOperationResponse}, 409: {"model": RecordingOperationResponse}},
     )
-    async def recording_stop():
+    async def recording_stop(body: RecordingStopRequest | None = None):
         try:
-            snapshot = await asyncio.to_thread(gw._recording.stop)
+            options = {} if body is None or body.expected_session_id is None else {
+                "expected_session_id": body.expected_session_id,
+            }
+            snapshot = await asyncio.to_thread(gw._recording.stop, **options)
         except NativeRecordingError as exc:
             return _recording_error_response(exc)
         return {

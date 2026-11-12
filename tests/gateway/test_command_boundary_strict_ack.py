@@ -131,3 +131,18 @@ def test_speed_limit_rejects_negative_or_mismatched_native_ack(accepted, task_id
     owner = SimpleNamespace(_nav_commands=SimpleNamespace(set_task_speed_limit=lambda **kwargs: receipt))
     with pytest.raises(CommandBoundaryError):
         submit_speed_limit(owner, 0.3, task_id="task-1", request_id="speed-1")
+
+
+def test_unconfirmed_command_keeps_sdk_query_identity():
+    import json
+
+    from gateway.services.control_commands import ControlCommandService
+    from lingtu.sdk.models import _parse_command_result
+
+    error = CommandBoundaryError("ACK timeout", receipt={"admission_unconfirmed": True,
+        "task_id": "task-1", "request_id": "pause-1"})
+    response = ControlCommandService(SimpleNamespace()).native_error("pause", None, error)
+    assert response.status_code == 503
+    result = _parse_command_result(json.loads(response.body))
+    assert (result.task_id, result.request_id, result.stage) == ("task-1", "pause-1", "unconfirmed")
+    assert result.accepted is False

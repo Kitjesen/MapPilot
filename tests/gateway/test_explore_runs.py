@@ -158,7 +158,7 @@ def test_transition_phase_keeps_last_confirmed_public_state(
     runs.observe_event(_event(state="running", sequence=1))
     event = _event(state=transition_phase, sequence=2)
     event["kind"] = 3
-    event["motion_stop_reason"] = "driver_ack_pending"
+    event["motion_stop_reason"] = "stop_confirmation_pending"
 
     result = runs.observe_event(event)
 
@@ -348,7 +348,7 @@ def test_endpoint_restart_during_transition_marks_confirmed_state_unavailable() 
     runs.observe_event(_event(state="running", sequence=1))
     pausing = _event(state="pausing", sequence=2)
     pausing["kind"] = 3
-    pausing["motion_stop_reason"] = "driver_ack_pending"
+    pausing["motion_stop_reason"] = "stop_confirmation_pending"
     runs.observe_event(pausing)
 
     interrupted = runs.reconcile_runtime(

@@ -147,7 +147,15 @@ def register_video_routes(app: Any, gw: Any) -> None:
     async def camera_video_diagnostics() -> dict[str, Any]:
         return build_camera_video_diagnostics(gw, await media_status())
 
-    @app.post("/api/v1/webrtc/whep", summary="Negotiate a video receiver with the media endpoint")
+    @app.post(
+        "/api/v1/webrtc/whep",
+        summary="Negotiate a video receiver with the media endpoint",
+        response_class=Response,
+        responses={
+            200: {"content": {"application/sdp": {"schema": {"type": "string"}}}},
+            201: {"description": "Video receiver created", "content": {"application/sdp": {"schema": {"type": "string"}}}},
+        },
+    )
     async def offer(request: Request) -> Response:
         if httpx is None:
             return JSONResponse({"error": "httpx_missing"}, status_code=503)

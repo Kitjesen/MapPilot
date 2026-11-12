@@ -1204,7 +1204,7 @@ def test_map_workbench_import_rejects_host_path_escape(monkeypatch, tmp_path):
     assert "escapes configured root" in payload["message"]
 
 
-def test_operational_routes_validate_idle_json_contracts():
+def test_operational_routes_validate_idle_json_contracts(monkeypatch):
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import (
         ExplorationStatusResponse,
@@ -1217,6 +1217,7 @@ def test_operational_routes_validate_idle_json_contracts():
 
     gateway = GatewayModule()
     gateway.setup()
+    monkeypatch.setattr(gateway._recording, "_binary_candidates", lambda: ())
 
     class _TemporalStore:
         def query(self, **_kwargs):
@@ -1267,6 +1268,25 @@ def test_operational_routes_validate_idle_json_contracts():
     }
     assert recording_status.recording is False
     assert recording_stop.error == "native_recorder_unavailable"
+
+
+@pytest.mark.parametrize("path", ["/api/v1/recordings/status", "/api/v1/recordings/stop"])
+def test_recording_route_preserves_unavailable_error(monkeypatch, path):
+    from gateway.gateway_module import GatewayModule
+    from gateway.services.recording import NativeRecordingError
+
+    gateway = GatewayModule()
+    gateway.setup()
+
+    def unavailable():
+        raise NativeRecordingError("native_recorder_unavailable", "recorder unavailable", status_code=503)
+
+    monkeypatch.setattr(gateway._recording, "status", unavailable)
+    monkeypatch.setattr(gateway._recording, "stop", unavailable)
+    response = asyncio.run(_endpoint(gateway, path)())
+
+    assert response.status_code == 503
+    assert _payload(response) == {"error": "native_recorder_unavailable", "detail": None}
 
 
 def test_slam_status_uses_run_plan_and_native_telemetry():

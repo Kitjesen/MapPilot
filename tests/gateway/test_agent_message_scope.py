@@ -41,6 +41,17 @@ def test_unowned_domain_message_is_not_assigned_to_an_agent():
     assert events[0]["run_id"] == ""
 
 
+def test_persisted_conversation_message_keeps_identity_revision_and_state_in_sse():
+    events = []
+    message = {"conversation_id": "chat", "id": "answer", "turn_id": "turn", "seq": 7,
+               "revision": 3, "role": "assistant", "text": "完整累积内容", "kind": "reply", "created_at": 12,
+               "metadata": {"status": "streaming"}, "private_model_items": "not public"}
+    handle_agent_message(SimpleNamespace(push_event=events.append), message)
+    assert {key: events[0][key] for key in message if key != "private_model_items"} == {
+        key: value for key, value in message.items() if key != "private_model_items"}
+    assert events[0]["type"] == "agent_message" and "private_model_items" not in events[0]
+
+
 def test_semantic_message_retains_the_instruction_owner(harness):
     events = []
     harness.module.agent_message.subscribe(events.append)

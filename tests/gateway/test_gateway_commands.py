@@ -345,7 +345,7 @@ def test_web_map_goal_preserves_optional_heading():
     for yaw in (0.0, 1.2):
         explicit = body.model_copy(update={"yaw": yaw})
         assert construct_goal_from_request(explicit).yaw == yaw
-    assert construct_goal_from_request(GoalRequest(x=1.0, y=2.0)).yaw == 0.0
+    assert construct_goal_from_request(GoalRequest(x=1.0, y=2.0)).yaw is None
 
 
 def test_constructed_goal_preview_preserves_the_submission_acceptance_radius():
@@ -1868,6 +1868,7 @@ def test_mode_estop_and_explicit_reset_use_native_boundary(monkeypatch):
     from gateway.gateway_module import GatewayModule
     from gateway.routes import commands
     from gateway.schemas import ControlCommandResponse, ModeRequest, StopRequest
+    from gateway.services import stop as stop_service
 
     calls = []
     monkeypatch.setattr(
@@ -1876,8 +1877,8 @@ def test_mode_estop_and_explicit_reset_use_native_boundary(monkeypatch):
         lambda _gw, reason="estop", *, request_id=None: calls.append(("estop", reason, request_id)) or True,
     )
     monkeypatch.setattr(
-        commands,
-        "native_clear_estop",
+        stop_service,
+        "clear_estop",
         lambda _gw, reason="clear_estop", *, request_id=None: calls.append(("clear", reason, request_id)) or True,
     )
     gateway = GatewayModule()
@@ -1967,7 +1968,7 @@ def test_navigation_resume_releases_takeover_without_replaying_old_motion(
     monkeypatch,
 ):
     from gateway.gateway_module import GatewayModule
-    from gateway.navigation import routes as commands
+    from gateway.services import resume as commands
     from gateway.schemas import ControlCommandResponse, StopRequest
 
     calls: list[tuple[str, str | None]] = []
@@ -2008,7 +2009,7 @@ def test_navigation_resume_in_teleop_avoid_requires_fresh_operator_command(
     monkeypatch,
 ):
     from gateway.gateway_module import GatewayModule
-    from gateway.navigation import routes as commands
+    from gateway.services import resume as commands
     from gateway.schemas import StopRequest
 
     monkeypatch.setattr(commands, "native_resume_control", lambda *_args, **_kwargs: True)
@@ -2043,7 +2044,7 @@ def test_navigation_resume_with_unknown_status_does_not_guess_goal_semantics(
     monkeypatch,
 ):
     from gateway.gateway_module import GatewayModule
-    from gateway.navigation import routes as commands
+    from gateway.services import resume as commands
 
     monkeypatch.setattr(commands, "native_resume_control", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
@@ -2069,7 +2070,7 @@ def test_navigation_resume_with_unknown_status_does_not_guess_goal_semantics(
 
 def test_navigation_resume_uses_authoritative_native_reason(monkeypatch):
     from gateway.gateway_module import GatewayModule
-    from gateway.navigation import routes as commands
+    from gateway.services import resume as commands
     from runtime.msgs import NavigationCommandKind
 
     monkeypatch.setattr(
@@ -2106,26 +2107,28 @@ def test_navigation_resume_uses_authoritative_native_reason(monkeypatch):
     assert result["fresh_operator_command_required"] is False
 
 
-def test_navigation_resume_rejects_missing_local_resume_implementation(monkeypatch):
+def test_navigation_resume_missing_boundary_is_unavailable(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+
     from gateway.gateway_module import GatewayModule
-    from gateway.navigation import routes as commands
+    from gateway.services import resume as commands
 
     monkeypatch.setattr(commands, "native_resume_control", lambda *_args, **_kwargs: False)
     gateway = GatewayModule()
     gateway.setup()
 
-    response = _payload(
+    with pytest.raises(HTTPException) as error:
         asyncio.run(_endpoint(gateway, "/api/v1/navigation/resume")())
-    )
 
-    assert response["ok"] is False
-    assert response["error"] == "native_command_rejected"
-    assert "unavailable" in response["message"].lower()
+    assert error.value.status_code == 503
+    assert error.value.detail["reason_code"] == "motion_resume_ack_unknown"
+    assert "unavailable" in error.value.detail["reason"]
 
 
 def test_active_control_lease_blocks_other_rest_resume_clients(monkeypatch):
     from gateway.gateway_module import GatewayModule
-    from gateway.navigation import routes as commands
+    from gateway.services import resume as commands
     from gateway.schemas import StopRequest
 
     calls = []

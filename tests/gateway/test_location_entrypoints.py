@@ -134,3 +134,30 @@ def test_bound_location_is_preserved_when_map_binding_cannot_be_read(location_ru
     assert response.json()["ok"] is False
     assert response.json()["error"] == "location_binding_unavailable"
     assert tagged.store.query("dock") == before
+
+
+def test_saved_map_points_bind_without_activating_map_and_keep_actions(location_runtime, monkeypatch):
+    gateway, tagged, _, _ = location_runtime
+    monkeypatch.setattr("gateway.maps.locations.mapd_request", lambda _gw, command: {
+        "success": True, "record": {"content_epoch": 15},
+    })
+    app = FastAPI()
+    register_location_routes(app, gateway)
+    with TestClient(app) as http:
+        for name in ("一号柜", "二号柜"):
+            result = http.post("/api/v1/locations", json={"name": name, "x": 1, "y": 2, "z": 1.1,
+                "map_id": "offline-map", "expected_map_content_epoch": 15,
+                "metadata": {"region": "东区机房", "inspection": {"action": "capture:indicator_green", "dwell": 7}}})
+            assert result.status_code == 200 and result.json()["ok"]
+        matches = http.get("/api/v1/locations", params={"map_id": "offline-map", "q": "东区"}).json()["locations"]
+        assert {point["name"] for point in matches} == {"一号柜", "二号柜"}
+        assert matches[0]["metadata"]["inspection"]["dwell"] == 7
+        assert tagged.store.query("一号柜")["metadata"]["map_content_epoch"] == 15
+        before = tagged.store.query("一号柜")
+        stale = http.post("/api/v1/locations", json={"name": "一号柜", "x": 9, "y": 9,
+            "map_id": "offline-map", "expected_map_content_epoch": 14})
+        assert stale.json()["ok"] is False
+        assert tagged.store.query("一号柜") == before
+        invalid = http.post("/api/v1/locations", json={"name": "坏动作", "x": 1, "y": 2,
+            "metadata": {"inspection": {"dwell": -1, "action": "invented_action"}}})
+        assert invalid.status_code == 422

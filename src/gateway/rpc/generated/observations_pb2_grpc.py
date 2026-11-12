@@ -3,8 +3,8 @@
 import grpc
 import warnings
 
-from . import common_pb2 as common__pb2
-from . import observations_pb2 as observations__pb2
+from .messages import common_pb2 as messages_dot_common__pb2
+from .messages import observations_pb2 as messages_dot_observations__pb2
 
 GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
@@ -37,48 +37,63 @@ class ObservationsStub(object):
         """
         self.Scene = channel.unary_unary(
                 '/doso.v1.Observations/Scene',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=common__pb2.Snapshot.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Snapshot.FromString,
                 _registered_method=True)
         self.CameraStatus = channel.unary_unary(
                 '/doso.v1.Observations/CameraStatus',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=common__pb2.Snapshot.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_common__pb2.Snapshot.FromString,
+                _registered_method=True)
+        self.CameraCalibration = channel.unary_unary(
+                '/doso.v1.Observations/CameraCalibration',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_observations__pb2.CameraCalibration.FromString,
                 _registered_method=True)
         self.WatchImu = channel.unary_stream(
                 '/doso.v1.Observations/WatchImu',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=observations__pb2.ImuSample.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_observations__pb2.ImuSample.FromString,
                 _registered_method=True)
         self.WatchJoints = channel.unary_stream(
                 '/doso.v1.Observations/WatchJoints',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=observations__pb2.JointSample.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_observations__pb2.JointSample.FromString,
                 _registered_method=True)
         self.Motors = channel.unary_unary(
                 '/doso.v1.Observations/Motors',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=observations__pb2.MotorStates.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_observations__pb2.MotorStates.FromString,
                 _registered_method=True)
         self.MotorVoltages = channel.unary_unary(
                 '/doso.v1.Observations/MotorVoltages',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=observations__pb2.MotorVoltagesResponse.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_observations__pb2.MotorVoltagesResponse.FromString,
                 _registered_method=True)
         self.CameraFrame = channel.unary_unary(
                 '/doso.v1.Observations/CameraFrame',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=observations__pb2.CameraFrame.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_observations__pb2.CameraFrame.FromString,
                 _registered_method=True)
         self.WatchCamera = channel.unary_stream(
                 '/doso.v1.Observations/WatchCamera',
-                request_serializer=common__pb2.Empty.SerializeToString,
-                response_deserializer=observations__pb2.CameraFrame.FromString,
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_observations__pb2.CameraFrame.FromString,
+                _registered_method=True)
+        self.CameraSample = channel.unary_unary(
+                '/doso.v1.Observations/CameraSample',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_observations__pb2.CameraSample.FromString,
+                _registered_method=True)
+        self.WatchCameraSamples = channel.unary_stream(
+                '/doso.v1.Observations/WatchCameraSamples',
+                request_serializer=messages_dot_common__pb2.Empty.SerializeToString,
+                response_deserializer=messages_dot_observations__pb2.CameraSample.FromString,
                 _registered_method=True)
         self.WatchPointCloud = channel.unary_stream(
                 '/doso.v1.Observations/WatchPointCloud',
-                request_serializer=observations__pb2.CloudRequest.SerializeToString,
-                response_deserializer=observations__pb2.CloudFrame.FromString,
+                request_serializer=messages_dot_observations__pb2.CloudRequest.SerializeToString,
+                response_deserializer=messages_dot_observations__pb2.CloudFrame.FromString,
                 _registered_method=True)
 
 
@@ -92,6 +107,12 @@ class ObservationsServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def CameraStatus(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CameraCalibration(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -133,6 +154,18 @@ class ObservationsServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def CameraSample(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def WatchCameraSamples(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def WatchPointCloud(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -144,48 +177,63 @@ def add_ObservationsServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'Scene': grpc.unary_unary_rpc_method_handler(
                     servicer.Scene,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=common__pb2.Snapshot.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_common__pb2.Snapshot.SerializeToString,
             ),
             'CameraStatus': grpc.unary_unary_rpc_method_handler(
                     servicer.CameraStatus,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=common__pb2.Snapshot.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_common__pb2.Snapshot.SerializeToString,
+            ),
+            'CameraCalibration': grpc.unary_unary_rpc_method_handler(
+                    servicer.CameraCalibration,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_observations__pb2.CameraCalibration.SerializeToString,
             ),
             'WatchImu': grpc.unary_stream_rpc_method_handler(
                     servicer.WatchImu,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=observations__pb2.ImuSample.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_observations__pb2.ImuSample.SerializeToString,
             ),
             'WatchJoints': grpc.unary_stream_rpc_method_handler(
                     servicer.WatchJoints,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=observations__pb2.JointSample.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_observations__pb2.JointSample.SerializeToString,
             ),
             'Motors': grpc.unary_unary_rpc_method_handler(
                     servicer.Motors,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=observations__pb2.MotorStates.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_observations__pb2.MotorStates.SerializeToString,
             ),
             'MotorVoltages': grpc.unary_unary_rpc_method_handler(
                     servicer.MotorVoltages,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=observations__pb2.MotorVoltagesResponse.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_observations__pb2.MotorVoltagesResponse.SerializeToString,
             ),
             'CameraFrame': grpc.unary_unary_rpc_method_handler(
                     servicer.CameraFrame,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=observations__pb2.CameraFrame.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_observations__pb2.CameraFrame.SerializeToString,
             ),
             'WatchCamera': grpc.unary_stream_rpc_method_handler(
                     servicer.WatchCamera,
-                    request_deserializer=common__pb2.Empty.FromString,
-                    response_serializer=observations__pb2.CameraFrame.SerializeToString,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_observations__pb2.CameraFrame.SerializeToString,
+            ),
+            'CameraSample': grpc.unary_unary_rpc_method_handler(
+                    servicer.CameraSample,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_observations__pb2.CameraSample.SerializeToString,
+            ),
+            'WatchCameraSamples': grpc.unary_stream_rpc_method_handler(
+                    servicer.WatchCameraSamples,
+                    request_deserializer=messages_dot_common__pb2.Empty.FromString,
+                    response_serializer=messages_dot_observations__pb2.CameraSample.SerializeToString,
             ),
             'WatchPointCloud': grpc.unary_stream_rpc_method_handler(
                     servicer.WatchPointCloud,
-                    request_deserializer=observations__pb2.CloudRequest.FromString,
-                    response_serializer=observations__pb2.CloudFrame.SerializeToString,
+                    request_deserializer=messages_dot_observations__pb2.CloudRequest.FromString,
+                    response_serializer=messages_dot_observations__pb2.CloudFrame.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -213,8 +261,8 @@ class Observations(object):
             request,
             target,
             '/doso.v1.Observations/Scene',
-            common__pb2.Empty.SerializeToString,
-            common__pb2.Snapshot.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_common__pb2.Snapshot.FromString,
             options,
             channel_credentials,
             insecure,
@@ -240,8 +288,35 @@ class Observations(object):
             request,
             target,
             '/doso.v1.Observations/CameraStatus',
-            common__pb2.Empty.SerializeToString,
-            common__pb2.Snapshot.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_common__pb2.Snapshot.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CameraCalibration(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Observations/CameraCalibration',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_observations__pb2.CameraCalibration.FromString,
             options,
             channel_credentials,
             insecure,
@@ -267,8 +342,8 @@ class Observations(object):
             request,
             target,
             '/doso.v1.Observations/WatchImu',
-            common__pb2.Empty.SerializeToString,
-            observations__pb2.ImuSample.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_observations__pb2.ImuSample.FromString,
             options,
             channel_credentials,
             insecure,
@@ -294,8 +369,8 @@ class Observations(object):
             request,
             target,
             '/doso.v1.Observations/WatchJoints',
-            common__pb2.Empty.SerializeToString,
-            observations__pb2.JointSample.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_observations__pb2.JointSample.FromString,
             options,
             channel_credentials,
             insecure,
@@ -321,8 +396,8 @@ class Observations(object):
             request,
             target,
             '/doso.v1.Observations/Motors',
-            common__pb2.Empty.SerializeToString,
-            observations__pb2.MotorStates.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_observations__pb2.MotorStates.FromString,
             options,
             channel_credentials,
             insecure,
@@ -348,8 +423,8 @@ class Observations(object):
             request,
             target,
             '/doso.v1.Observations/MotorVoltages',
-            common__pb2.Empty.SerializeToString,
-            observations__pb2.MotorVoltagesResponse.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_observations__pb2.MotorVoltagesResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -375,8 +450,8 @@ class Observations(object):
             request,
             target,
             '/doso.v1.Observations/CameraFrame',
-            common__pb2.Empty.SerializeToString,
-            observations__pb2.CameraFrame.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_observations__pb2.CameraFrame.FromString,
             options,
             channel_credentials,
             insecure,
@@ -402,8 +477,62 @@ class Observations(object):
             request,
             target,
             '/doso.v1.Observations/WatchCamera',
-            common__pb2.Empty.SerializeToString,
-            observations__pb2.CameraFrame.FromString,
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_observations__pb2.CameraFrame.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CameraSample(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/doso.v1.Observations/CameraSample',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_observations__pb2.CameraSample.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def WatchCameraSamples(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/doso.v1.Observations/WatchCameraSamples',
+            messages_dot_common__pb2.Empty.SerializeToString,
+            messages_dot_observations__pb2.CameraSample.FromString,
             options,
             channel_credentials,
             insecure,
@@ -429,8 +558,8 @@ class Observations(object):
             request,
             target,
             '/doso.v1.Observations/WatchPointCloud',
-            observations__pb2.CloudRequest.SerializeToString,
-            observations__pb2.CloudFrame.FromString,
+            messages_dot_observations__pb2.CloudRequest.SerializeToString,
+            messages_dot_observations__pb2.CloudFrame.FromString,
             options,
             channel_credentials,
             insecure,

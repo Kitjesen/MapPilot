@@ -26,6 +26,8 @@ def test_client_links_advertise_public_map_operation_flow():
         "map_operation_status": ("GET", "/api/v1/maps/operations/{operation_id}"),
         "map_operation_cancel": ("POST", "/api/v1/maps/operations/{operation_id}/cancel"),
         "map_operation_retry": ("POST", "/api/v1/maps/operations/{operation_id}/retry"),
+        "map_operation_reoptimize": ("POST", "/api/v1/maps/operations/{operation_id}/reoptimize"),
+        "map_edit_preview": ("POST", "/api/v1/maps/{name}/edit_preview"),
     }
     for name, (method, path) in expected.items():
         assert CLIENT_LINKS[name] == path
@@ -58,15 +60,18 @@ def test_app_bootstrap_uses_run_plan_teleop_limits(monkeypatch):
     monkeypatch.setenv("LINGTU_TELEOP_MAX_YAW_RATE", "0.3")
     monkeypatch.setenv("LINGTU_ROBOT", "doso/thunder_v4")
     plan = compile_run_plan("teleop_avoid", "real", robot="unitree/go2")
+    environment = plan.native_process_environment
+    max_speed = float(environment["LINGTU_TELEOP_MAX_SPEED_MPS"])
+    max_yaw = float(environment["LINGTU_TELEOP_MAX_YAW_RATE"])
 
     gateway = GatewayModule(run_plan=plan)
     payload = build_app_bootstrap(gateway)
 
-    assert gateway._teleop_max_speed == 0.5
-    assert gateway._teleop_max_yaw == 1.0
+    assert gateway._teleop_max_speed == max_speed
+    assert gateway._teleop_max_yaw == max_yaw
     assert payload["control"]["teleop"]["limits"] == {
-        "linear_mps": 0.5,
-        "yaw_rad_s": 1.0,
+        "linear_mps": max_speed,
+        "yaw_rad_s": max_yaw,
     }
     assert payload["robot"]["model"] == "unitree/go2"
 

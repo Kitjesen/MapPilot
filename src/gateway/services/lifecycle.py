@@ -11,7 +11,10 @@ logger = logging.getLogger(__name__)
 
 def start_background_threads(gw: Any) -> None:
     stop_event = gw._stop_event
-    if not gw._defer_server and gw._grpc_server is None:
+    scheduler = getattr(gw, "_inspection_scheduler", None)
+    if scheduler is not None:
+        scheduler.start()
+    if gw._grpc_server is None:
         from gateway.rpc.server import start
 
         gw._grpc_server = start(gw, f"{gw._host}:{gw._grpc_port}")
@@ -36,6 +39,9 @@ def start_background_threads(gw: Any) -> None:
 
 def stop_background_threads(gw: Any) -> None:
     gw._stop_event.set()
+    scheduler = getattr(gw, "_inspection_scheduler", None)
+    if scheduler is not None:
+        scheduler.stop()
     if gw._grpc_server is not None:
         gw._grpc_server.stop(0).wait(timeout=2.0)
         gw._grpc_server = None

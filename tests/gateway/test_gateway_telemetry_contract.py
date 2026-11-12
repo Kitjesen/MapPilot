@@ -203,7 +203,6 @@ def test_navigation_dds_snapshot_reads_native_endpoint_status(monkeypatch, tmp_p
     assert snapshot.cmd_vel.active_source == "native_local_planner_preview"
     assert snapshot.cmd_vel.evidence_stage == "local_planner_output"
     assert snapshot.cmd_vel.final_output_confirmed is False
-    assert snapshot.cmd_vel.driver_delivery_accepted is False
     assert snapshot.cmd_vel.output_sequence == 0
     assert snapshot.traversability_endpoint is not None
     assert snapshot.traversability_endpoint["counters"]["published"] == 2
@@ -229,7 +228,6 @@ def test_navigation_dds_snapshot_prefers_native_final_teleop_command(
                 "final_output": {
                     "published": True,
                     "output_sequence": 41,
-                    "driver_delivery_accepted": False,
                 },
                 "teleop": {"fresh": True, "published": True},
                 "last_local": {"cmd_vel": {"vx": 0.0, "vy": 0.0, "wz": 0.0}},
@@ -253,7 +251,6 @@ def test_navigation_dds_snapshot_prefers_native_final_teleop_command(
     assert snapshot.cmd_vel.active_source == "native_teleop"
     assert snapshot.cmd_vel.evidence_stage == "final_output_published"
     assert snapshot.cmd_vel.final_output_confirmed is True
-    assert snapshot.cmd_vel.driver_delivery_accepted is False
     assert snapshot.cmd_vel.output_sequence == 41
     assert gateway._teleop_active is True
 
@@ -275,7 +272,6 @@ def test_native_teleop_policy_output_is_preview_not_final():
     assert snapshot.active_source == "native_teleop_policy_preview"
     assert snapshot.evidence_stage == "teleop_policy_output"
     assert snapshot.final_output_confirmed is False
-    assert snapshot.driver_delivery_accepted is False
     assert snapshot.output_sequence == 0
 
 

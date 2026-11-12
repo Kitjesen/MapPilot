@@ -15,6 +15,27 @@ class RecordingMapClient:
         return {"success": True, "action": action}
 
 
+def test_no_go_transport_keeps_policy_separate_from_occupancy():
+    from gateway.maps.transport import mapd_request
+
+    client = RecordingMapClient()
+    gw = SimpleNamespace(_map_client=client)
+    mapd_request(gw, {"action": "get_no_go_regions", "map_id": "hall"})
+    mapd_request(gw, {"action": "set_no_go_region", "map_id": "hall",
+                     "expected_content_epoch": 11,
+                     "region": {"id": "door", "min": [1, 2, 0], "max": [2, 3, 2]}})
+    mapd_request(gw, {"action": "delete_no_go_region", "map_id": "hall",
+                     "expected_content_epoch": 12, "region_id": "door"})
+    assert client.calls == [
+        ("get_no_go_regions", {"map_id": "hall"}),
+        ("set_no_go_region", {"map_id": "hall", "expected_content_epoch": 11,
+                              "region_id": "door", "min_x": 1, "min_y": 2, "min_z": 0,
+                              "max_x": 2, "max_y": 3, "max_z": 2}),
+        ("delete_no_go_region", {"map_id": "hall", "expected_content_epoch": 12,
+                                 "region_id": "door"}),
+    ]
+
+
 @pytest.mark.parametrize("auto_process", [True, False])
 def test_save_forwards_processing_choice(auto_process):
     from gateway.maps.transport import mapd_request
@@ -34,6 +55,18 @@ def test_process_uses_existing_job_without_a_new_snapshot():
     client = RecordingMapClient()
     mapd_request(SimpleNamespace(_map_client=client), {"action": "process_save_map", "job_id": "save_1"})
     assert client.calls == [("process_save_map", {"job_id": "save_1"})]
+
+
+def test_reoptimize_forwards_source_and_request():
+    from gateway.maps.transport import mapd_request
+
+    client = RecordingMapClient()
+    mapd_request(SimpleNamespace(_map_client=client), {
+        "action": "reoptimize_save_map", "job_id": "save_1", "request_id": "optimize_1",
+    })
+    assert client.calls == [("reoptimize_save_map", {
+        "job_id": "save_1", "request_id": "optimize_1",
+    })]
 
 
 def test_mapd_request_uses_mapd_canonical_action_without_maps_module() -> None:
@@ -268,3 +301,26 @@ def test_edited_source_and_octomap_build_keep_structured_contract():
           "expected_source_content_epoch": 21, "operations": operations}),
         ("build_octomap_artifact", {"map_id": "new", "octomap_frame_id": "floor_903",
           "octomap_resolution": 0.1, "octomap_source_profile": "ltlio"})]
+
+
+def test_edit_preview_forwards_the_same_filter_history_without_a_target():
+    from gateway.maps.transport import mapd_request
+
+    client = RecordingMapClient()
+    operations = [{"operation": "statistical", "neighbors": 20, "std_ratio": 1.5},
+                  {"operation": "plane_crop", "distance_threshold": 0.05, "margin": 0.5}]
+    mapd_request(SimpleNamespace(_map_client=client), {
+        "action": "preview_source_edits", "map_id": "source",
+        "expected_source_content_epoch": 21, "operations": operations})
+
+    assert client.calls == [("preview_source_edits", {
+        "map_id": "source", "expected_source_content_epoch": 21, "operations": operations})]
+
+
+def test_surface_preview_transport_keeps_physical_options():
+    from gateway.maps.transport import mapd_request
+    client = RecordingMapClient()
+    mapd_request(SimpleNamespace(_map_client=client), {"action": "get_surface_map", "map_id": "hall",
+        "radius_m": .3, "max_hole_area_m2": .1, "headroom_m": .5, "max_slope": .4})
+    assert client.calls == [("get_surface_map", {"map_id": "hall", "radius_m": .3,
+        "max_hole_area_m2": .1, "headroom_m": .5, "max_slope": .4})]

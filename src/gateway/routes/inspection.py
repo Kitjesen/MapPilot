@@ -792,6 +792,637 @@ def _validate_route_evidence_worker(route: dict[str, Any]) -> JSONResponse | Non
     return None
 
 
+async def list_routes(gw, map_id: str | None = None):
+    resolved = _resolve_map_id(gw, map_id)
+    if isinstance(resolved, JSONResponse):
+        return resolved
+    try:
+        payload = await asyncio.to_thread(_run_store_operation, gw, "list", resolved)
+    except InspectionBoundaryError as exc:
+        return _native_error(exc)
+    routes = _routes_from_native(payload)
+    return {
+        "schema_version": "lingtu.inspection.v1",
+        "ok": True,
+        "map_id": resolved,
+        "routes": routes,
+        "count": len(routes),
+        "ts": time.time(),
+    }
+
+
+async def put_route(gw, body: InspectionRouteRequest):
+    version = await asyncio.to_thread(_map_content_epoch, gw, body.map_id)
+    if isinstance(version, JSONResponse):
+        return version
+    if body.map_content_epoch is not None and body.map_content_epoch != version:
+        return _error(
+            409,
+            "inspection_map_content_epoch_mismatch",
+            "route map_content_epoch does not match the current map record",
+            detail={"requested": body.map_content_epoch, "current": version},
+        )
+    payload = _route_payload(body)
+    payload["map_content_epoch"] = version
+    try:
+        stored = await asyncio.to_thread(_run_store_operation, gw, "put", payload)
+        route = _normalize_route(stored)
+    except InspectionBoundaryError as exc:
+        return _native_error(exc)
+    return {
+        "schema_version": "lingtu.inspection.v1",
+        "ok": True,
+        "route": route,
+        "ts": time.time(),
+    }
+
+
+async def get_route(gw, route_id: str, map_id: str | None = None):
+    resolved = _resolve_map_id(gw, map_id)
+    if isinstance(resolved, JSONResponse):
+        return resolved
+    try:
+        route = await asyncio.to_thread(
+            _run_store_operation,
+            gw,
+            "get",
+            resolved,
+            route_id,
+        )
+    except InspectionBoundaryError as exc:
+        return _native_error(exc)
+    return {
+        "schema_version": "lingtu.inspection.v1",
+        "ok": True,
+        "route": _normalize_route(route),
+        "ts": time.time(),
+    }
+
+
+async def delete_route(gw, route_id: str, map_id: str | None = None):
+    resolved = _resolve_map_id(gw, map_id)
+    if isinstance(resolved, JSONResponse):
+        return resolved
+    try:
+        await asyncio.to_thread(
+            _run_store_operation,
+            gw,
+            "delete",
+            resolved,
+            route_id,
+        )
+    except InspectionBoundaryError as exc:
+        return _native_error(exc)
+    return InspectionCommandResponse(
+        action="delete",
+        route_id=route_id,
+        map_id=resolved,
+    )
+
+
+async def list_tasks(
+    gw,
+    map_id: str | None = None,
+    route_id: str | None = None,
+    include_terminal: bool = False,
+    limit: int = 20,
+):
+    try:
+        return ensure_inspection_task_timeline(gw).list_tasks(
+            map_id=map_id,
+            route_id=route_id,
+            include_terminal=include_terminal,
+            limit=limit,
+        )
+    except InspectionTaskJournalUnavailable as exc:
+        return _error(503, "inspection_task_journal_unavailable", str(exc))
+
+
+async def start_task(gw, body: InspectionTaskStartRequest):
+    task_timeline = ensure_inspection_task_timeline(gw)
+    try:
+        task_timeline.require_available()
+    except InspectionTaskJournalUnavailable as exc:
+        return _error(503, "inspection_task_journal_unavailable", str(exc))
+    product_session_id, runtime_error = _start_runtime_binding(gw, body)
+    if runtime_error is not None:
+        return runtime_error
+    assert product_session_id is not None
+    resolved = _resolve_map_id(gw, None)
+    if isinstance(resolved, JSONResponse):
+        return resolved
+    if body.map_id and body.map_id != resolved:
+        return _error(
+            409,
+            "inspection_active_map_mismatch",
+            "inspection can only start on the active map",
+            detail={"requested": body.map_id, "active": resolved},
+        )
+    try:
+        route = await asyncio.to_thread(
+            _run_store_operation,
+            gw,
+            "get",
+            resolved,
+            body.route_id,
+        )
+    except InspectionBoundaryError as exc:
+        return _native_error(exc)
+    try:
+        current_revision = int(route["revision"])
+    except (KeyError, TypeError, ValueError):
+        return _error(
+            503,
+            "inspection_route_revision_unavailable",
+            "stored inspection route has no valid revision",
+        )
+    if body.revision not in (0, current_revision):
+        return _error(
+            409,
+            "inspection_route_revision_mismatch",
+            "inspection start revision does not match the stored route",
+            detail={
+                "requested": body.revision,
+                "current": current_revision,
+                "route_id": body.route_id,
+            },
+        )
+    try:
+        route_snapshot = task_timeline.prepare_route_snapshot(route)
+    except (TypeError, ValueError) as exc:
+        return _error(
+            503,
+            "inspection_route_snapshot_unavailable",
+            "stored inspection route cannot be preserved for task reporting",
+            detail={"reason": str(exc), "route_id": body.route_id},
+        )
+    request_id = _new_task_request_id(body.request_id)
+    task_id = _task_id_for_request(request_id)
+    try:
+        task_timeline.require_route_snapshot_compatible(
+            task_id,
+            route_snapshot,
+        )
+    except ValueError as exc:
+        return _error(
+            409,
+            "inspection_task_route_snapshot_mismatch",
+            "this start request already identifies a different route revision",
+            detail={
+                "task_id": task_id,
+                "request_id": request_id,
+                "reason": str(exc),
+            },
+        )
+    except InspectionTaskJournalUnavailable as exc:
+        return _error(503, "inspection_task_journal_unavailable", str(exc))
+    evidence_error = _validate_route_evidence_worker(route)
+    if evidence_error is not None:
+        return evidence_error
+    try:
+        task_timeline.reserve_submission(
+            task_id=task_id,
+            action="start",
+            request_id=request_id,
+            route_snapshot=route_snapshot,
+            product_session_id=product_session_id,
+        )
+    except ValueError as exc:
+        return _error(
+            409,
+            "inspection_request_id_conflict",
+            "this request_id already identifies a different inspection command",
+            detail={
+                "task_id": task_id,
+                "request_id": request_id,
+                "reason": str(exc),
+            },
+        )
+    except InspectionTaskJournalUnavailable as exc:
+        return _error(503, "inspection_task_journal_unavailable", str(exc))
+    recording_snapshot = task_timeline.query(task_id).get("recording")
+    new_recording_session_id = ""
+    rollback_recording_session_id = (
+        str(recording_snapshot.get("session_id") or "")
+        if isinstance(recording_snapshot, dict)
+        else ""
+    )
+    if not isinstance(recording_snapshot, dict):
+        recording_service = getattr(gw, "_recording", None)
+        if recording_service is None:
+            return _error(
+                503,
+                "inspection_recording_start_failed",
+                "inspection evidence recording service is unavailable",
+            )
+        try:
+            started_recording = await asyncio.to_thread(
+                recording_service.start,
+                duration=0,
+                prefix="inspection",
+                capture_profile="evidence",
+                task_id=task_id,
+                camera=False,
+            )
+            new_recording_session_id = str(
+                getattr(started_recording, "session_id", "") or ""
+            )
+            rollback_recording_session_id = new_recording_session_id
+            recording_product_session_id = str(
+                getattr(started_recording, "product_session_id", "") or ""
+            )
+            task_timeline.bind_recording(
+                task_id=task_id,
+                session_id=new_recording_session_id,
+                product_session_id=recording_product_session_id,
+            )
+        except NativeRecordingError as exc:
+            _LOGGER.warning("Inspection recording start failed [%s]: %s", exc.code, exc)
+            return _error(
+                exc.status_code,
+                "inspection_recording_start_failed",
+                "inspection evidence recording could not be started",
+                detail={"recording_error": exc.code},
+            )
+        except (InspectionTaskJournalUnavailable, ValueError) as exc:
+            cleanup_error = ""
+            if new_recording_session_id:
+                try:
+                    await asyncio.to_thread(
+                        recording_service.stop,
+                        expected_session_id=new_recording_session_id,
+                    )
+                except Exception as cleanup_exc:
+                    cleanup_error = str(
+                        getattr(cleanup_exc, "code", None)
+                        or cleanup_exc
+                        or "recording_stop_failed"
+                    )
+            return _error(
+                503,
+                "inspection_task_journal_commit_failed",
+                str(exc),
+                detail={
+                    "task_id": task_id,
+                    "request_id": request_id,
+                    **(
+                        {"orphan_cleanup_error": cleanup_error}
+                        if cleanup_error
+                        else {}
+                    ),
+                },
+            )
+
+    async def rollback_recording() -> dict[str, Any]:
+        if not rollback_recording_session_id:
+            return {"attempted": False, "session_id": "", "state": "missing", "error": ""}
+        claimed = task_timeline.claim_recording_stop(task_id)
+        if claimed is None:
+            retained = task_timeline.query(task_id).get("recording")
+            return {
+                "attempted": False,
+                "session_id": rollback_recording_session_id,
+                "state": str(retained.get("state") or "unknown")
+                if isinstance(retained, dict)
+                else "missing",
+                "error": str(retained.get("error") or "")
+                if isinstance(retained, dict)
+                else "",
+            }
+        try:
+            await asyncio.to_thread(
+                gw._recording.stop,
+                expected_session_id=rollback_recording_session_id,
+            )
+        except NativeRecordingError as exc:
+            resulting_state = (
+                "failed"
+                if exc.code == "recording_session_mismatch"
+                else "recording"
+            )
+            task_timeline.finish_recording_stop(
+                task_id=task_id,
+                expected_session_id=rollback_recording_session_id,
+                state=resulting_state,
+                error=exc.code,
+            )
+            return {
+                "attempted": True,
+                "session_id": rollback_recording_session_id,
+                "state": resulting_state,
+                "error": exc.code,
+            }
+        else:
+            task_timeline.finish_recording_stop(
+                task_id=task_id,
+                expected_session_id=rollback_recording_session_id,
+                state="completed",
+            )
+            return {
+                "attempted": True,
+                "session_id": rollback_recording_session_id,
+                "state": "completed",
+                "error": "",
+            }
+
+    retained = task_timeline.query(task_id)
+    retained_recording = retained.get("recording")
+    recording_confirmed_active = (
+        isinstance(retained_recording, dict)
+        and retained_recording.get("state") == "recording"
+        and not str(retained_recording.get("error") or "")
+    )
+    if isinstance(retained_recording, dict) and not recording_confirmed_active:
+        submission = retained.get("last_submission")
+        if isinstance(submission, dict) and submission.get("request_id") == request_id:
+            return InspectionTaskCommandResponse(
+                action="start",
+                task_id=task_id,
+                request_id=request_id,
+                route_id=body.route_id,
+                map_id=resolved,
+                revision=current_revision,
+            )
+        if (
+            retained_recording.get("state") == "recording"
+            and retained_recording.get("error")
+        ):
+            cleanup = await rollback_recording()
+            return _task_command_rejected(
+                RuntimeError("inspection recording requires exact-session cleanup"),
+                action="start",
+                task_id=task_id,
+                request_id=request_id,
+                recording_cleanup=cleanup,
+            )
+        return _task_command_rejected(
+            RuntimeError("inspection recording is not active after prior rejection"),
+            action="start",
+            task_id=task_id,
+            request_id=request_id,
+            recording_cleanup={
+                "attempted": False,
+                "session_id": str(retained_recording.get("session_id") or ""),
+                "state": str(retained_recording.get("state") or "unknown"),
+                "error": str(retained_recording.get("error") or ""),
+            },
+        )
+    try:
+        await asyncio.to_thread(
+            _run_native_task_command,
+            gw,
+            "start",
+            task_id,
+            route_id=body.route_id,
+            revision=current_revision,
+            request_id=request_id,
+        )
+    except InspectionCommandRejected as exc:
+        recording_cleanup = await rollback_recording()
+        return _task_command_rejected(
+            exc,
+            action="start",
+            task_id=task_id,
+            request_id=request_id,
+            recording_cleanup=recording_cleanup,
+        )
+    except InspectionBoundaryError as exc:
+        return _error(503, "inspection_native_unavailable", str(exc))
+    try:
+        task_timeline.record_submission(
+            task_id=task_id,
+            action="start",
+            request_id=request_id,
+            route_id=body.route_id,
+            map_id=resolved,
+            map_content_epoch=int(route.get("map_content_epoch", 0) or 0),
+            route_revision=current_revision,
+            route_snapshot=route_snapshot,
+            product_session_id=product_session_id,
+        )
+    except ValueError as exc:
+        return _error(
+            409,
+            "inspection_task_route_snapshot_mismatch",
+            "the accepted native command conflicts with the retained task identity",
+            detail={
+                "task_id": task_id,
+                "request_id": request_id,
+                "reason": str(exc),
+                "native_command_accepted": True,
+                "retry_safe": False,
+            },
+        )
+    except InspectionTaskJournalUnavailable as exc:
+        return _error(
+            503,
+            "inspection_task_journal_commit_failed",
+            str(exc),
+            detail={
+                "task_id": task_id,
+                "request_id": request_id,
+                "native_command_accepted": True,
+                "retry_safe": False,
+            },
+        )
+    # This is a business ACK only. Execution and terminal truth arrive on
+    # the native task-event stream, so the receipt must never say RUNNING.
+    return InspectionTaskCommandResponse(
+        action="start",
+        task_id=task_id,
+        request_id=request_id,
+        route_id=body.route_id,
+        map_id=resolved,
+        revision=current_revision,
+    )
+
+
+async def control_task(
+    gw,
+    task_id: str,
+    body: InspectionTaskControlRequest | None,
+    *,
+    action: str,
+) -> InspectionTaskCommandResponse | JSONResponse:
+    normalized_task_id = str(task_id or "").strip()
+    if not normalized_task_id:
+        return _error(400, "inspection_task_id_required", "inspection task_id is required")
+    task_timeline = ensure_inspection_task_timeline(gw)
+    try:
+        task_timeline.require_available()
+    except InspectionTaskJournalUnavailable as exc:
+        return _error(503, "inspection_task_journal_unavailable", str(exc))
+    request = body or InspectionTaskControlRequest(reason=f"operator_{action}")
+    request_id = _new_task_request_id(request.request_id)
+    default_reason = f"operator_{action}"
+    reason = str(request.reason or default_reason).strip() or default_reason
+    task = task_timeline.query(normalized_task_id)
+    task_product_session_id = str(task.get("product_session_id") or "").strip()
+    if not task_product_session_id:
+        return _error(
+            409,
+            "inspection_task_product_session_unbound",
+            "inspection task has no bound Product session and is read-only",
+        )
+    runtime_conflict = _control_runtime_conflict(
+        gw,
+        request,
+        task_product_session_id=task_product_session_id,
+    )
+    if runtime_conflict is not None:
+        return runtime_conflict
+    try:
+        task_timeline.reserve_submission(
+            task_id=normalized_task_id,
+            action=action,
+            request_id=request_id,
+            reason=reason,
+            product_session_id=task_product_session_id,
+        )
+    except ValueError as exc:
+        return _error(
+            409,
+            "inspection_request_id_conflict",
+            "this request_id already identifies a different inspection command",
+            detail={
+                "task_id": normalized_task_id,
+                "request_id": request_id,
+                "action": action,
+                "reason": str(exc),
+            },
+        )
+    except InspectionTaskJournalUnavailable as exc:
+        return _error(503, "inspection_task_journal_unavailable", str(exc))
+
+    def invoke_if_runtime_bound() -> JSONResponse | None:
+        final_conflict = _control_runtime_conflict(
+            gw,
+            request,
+            task_product_session_id=task_product_session_id,
+        )
+        if final_conflict is not None:
+            return final_conflict
+        _run_native_task_command(
+            gw,
+            action,
+            normalized_task_id,
+            reason=reason,
+            request_id=request_id,
+        )
+        return None
+
+    try:
+        runtime_conflict = await asyncio.to_thread(invoke_if_runtime_bound)
+        if runtime_conflict is not None:
+            return runtime_conflict
+    except InspectionCommandRejected as exc:
+        return _task_command_rejected(
+            exc,
+            action=action,
+            task_id=normalized_task_id,
+            request_id=request_id,
+        )
+    except InspectionBoundaryError as exc:
+        return _error(503, "inspection_native_unavailable", str(exc))
+    try:
+        task_timeline.record_submission(
+            task_id=normalized_task_id,
+            action=action,
+            request_id=request_id,
+            reason=reason,
+            product_session_id=task_product_session_id,
+        )
+    except ValueError as exc:
+        return _error(
+            409,
+            "inspection_request_id_conflict",
+            "the accepted native command conflicts with its reserved request_id",
+            detail={
+                "task_id": normalized_task_id,
+                "request_id": request_id,
+                "action": action,
+                "reason": str(exc),
+                "native_command_accepted": True,
+                "retry_safe": False,
+            },
+        )
+    except InspectionTaskJournalUnavailable as exc:
+        return _error(
+            503,
+            "inspection_task_journal_commit_failed",
+            str(exc),
+            detail={
+                "task_id": normalized_task_id,
+                "request_id": request_id,
+                "native_command_accepted": True,
+                "retry_safe": False,
+            },
+        )
+    return InspectionTaskCommandResponse(
+        action=action,
+        task_id=normalized_task_id,
+        request_id=request_id,
+    )
+
+
+async def task_report(gw, task_id: str):
+    task = ensure_inspection_task_timeline(gw).query(task_id)
+    if task.get("found") is not True:
+        reason = str(task.get("reason") or "task_status_unknown")
+        if reason in {"task_journal_corrupt", "task_journal_write_failed"}:
+            return _error(503, "inspection_task_journal_unavailable", reason)
+        return _error(
+            404,
+            "inspection_task_not_found",
+            "inspection task was not found",
+            detail={"task_id": task_id},
+        )
+    identity = task.get("identity")
+    if not isinstance(identity, dict):
+        identity = {}
+    map_id = str(identity.get("map_id") or "")
+    route_id = str(identity.get("route_id") or "")
+    if not map_id or not route_id:
+        return _error(
+            409,
+            "inspection_task_identity_incomplete",
+            "inspection task has no immutable route identity",
+            detail={"task_id": task_id},
+        )
+    route = task.get("route_snapshot")
+    if not isinstance(route, dict):
+        return _error(
+            409,
+            "inspection_task_route_snapshot_unavailable",
+            "inspection task has no immutable route requirements snapshot",
+            detail={
+                "task_id": task_id,
+                "route_id": route_id,
+                "route_revision": int(identity.get("route_revision") or 0),
+            },
+        )
+    expected_revision = int(identity.get("route_revision") or 0)
+    actual_revision = int(route.get("revision") or 0)
+    if expected_revision <= 0 or actual_revision != expected_revision:
+        return _error(
+            409,
+            "inspection_task_route_revision_unavailable",
+            "the immutable route revision used by this task is unavailable",
+            detail={
+                "task_id": task_id,
+                "route_id": route_id,
+                "expected_revision": expected_revision,
+                "available_revision": actual_revision,
+            },
+        )
+    evidence = await asyncio.to_thread(_report_evidence_by_id, task)
+    return build_inspection_task_report(task, route, evidence)
+
+
+async def get_task(gw, task_id: str):
+    return ensure_inspection_task_timeline(gw).query(task_id)
+
+
 def register_inspection_routes(app, gw) -> None:
     @app.get(
         "/api/v1/inspection/evidence",
@@ -891,22 +1522,7 @@ def register_inspection_routes(app, gw) -> None:
         responses={400: {"model": GatewayErrorResponse}, 503: {"model": GatewayErrorResponse}},
     )
     async def list_inspection_routes(map_id: str | None = None):
-        resolved = _resolve_map_id(gw, map_id)
-        if isinstance(resolved, JSONResponse):
-            return resolved
-        try:
-            payload = await asyncio.to_thread(_run_store_operation, gw, "list", resolved)
-        except InspectionBoundaryError as exc:
-            return _native_error(exc)
-        routes = _routes_from_native(payload)
-        return {
-            "schema_version": "lingtu.inspection.v1",
-            "ok": True,
-            "map_id": resolved,
-            "routes": routes,
-            "count": len(routes),
-            "ts": time.time(),
-        }
+        return await list_routes(gw, map_id)
 
     @app.post(
         "/api/v1/inspection/routes",
@@ -915,29 +1531,7 @@ def register_inspection_routes(app, gw) -> None:
         responses={400: {"model": GatewayErrorResponse}, 503: {"model": GatewayErrorResponse}},
     )
     async def put_inspection_route(body: InspectionRouteRequest):
-        version = await asyncio.to_thread(_map_content_epoch, gw, body.map_id)
-        if isinstance(version, JSONResponse):
-            return version
-        if body.map_content_epoch is not None and body.map_content_epoch != version:
-            return _error(
-                409,
-                "inspection_map_content_epoch_mismatch",
-                "route map_content_epoch does not match the current map record",
-                detail={"requested": body.map_content_epoch, "current": version},
-            )
-        payload = _route_payload(body)
-        payload["map_content_epoch"] = version
-        try:
-            stored = await asyncio.to_thread(_run_store_operation, gw, "put", payload)
-            route = _normalize_route(stored)
-        except InspectionBoundaryError as exc:
-            return _native_error(exc)
-        return {
-            "schema_version": "lingtu.inspection.v1",
-            "ok": True,
-            "route": route,
-            "ts": time.time(),
-        }
+        return await put_route(gw, body)
 
     @app.get(
         "/api/v1/inspection/routes/{route_id}",
@@ -950,25 +1544,7 @@ def register_inspection_routes(app, gw) -> None:
         },
     )
     async def get_inspection_route(route_id: str, map_id: str | None = None):
-        resolved = _resolve_map_id(gw, map_id)
-        if isinstance(resolved, JSONResponse):
-            return resolved
-        try:
-            route = await asyncio.to_thread(
-                _run_store_operation,
-                gw,
-                "get",
-                resolved,
-                route_id,
-            )
-        except InspectionBoundaryError as exc:
-            return _native_error(exc)
-        return {
-            "schema_version": "lingtu.inspection.v1",
-            "ok": True,
-            "route": _normalize_route(route),
-            "ts": time.time(),
-        }
+        return await get_route(gw, route_id, map_id)
 
     @app.delete(
         "/api/v1/inspection/routes/{route_id}",
@@ -981,24 +1557,7 @@ def register_inspection_routes(app, gw) -> None:
         },
     )
     async def delete_inspection_route(route_id: str, map_id: str | None = None):
-        resolved = _resolve_map_id(gw, map_id)
-        if isinstance(resolved, JSONResponse):
-            return resolved
-        try:
-            await asyncio.to_thread(
-                _run_store_operation,
-                gw,
-                "delete",
-                resolved,
-                route_id,
-            )
-        except InspectionBoundaryError as exc:
-            return _native_error(exc)
-        return InspectionCommandResponse(
-            action="delete",
-            route_id=route_id,
-            map_id=resolved,
-        )
+        return await delete_route(gw, route_id, map_id)
 
     @app.get(
         "/api/v1/inspection/tasks",
@@ -1011,15 +1570,7 @@ def register_inspection_routes(app, gw) -> None:
         include_terminal: bool = False,
         limit: int = 20,
     ):
-        try:
-            return ensure_inspection_task_timeline(gw).list_tasks(
-                map_id=map_id,
-                route_id=route_id,
-                include_terminal=include_terminal,
-                limit=limit,
-            )
-        except InspectionTaskJournalUnavailable as exc:
-            return _error(503, "inspection_task_journal_unavailable", str(exc))
+        return await list_tasks(gw, map_id, route_id, include_terminal, limit)
 
     @app.post(
         "/api/v1/inspection/tasks",
@@ -1033,342 +1584,7 @@ def register_inspection_routes(app, gw) -> None:
         },
     )
     async def start_inspection_task(body: InspectionTaskStartRequest):
-        task_timeline = ensure_inspection_task_timeline(gw)
-        try:
-            task_timeline.require_available()
-        except InspectionTaskJournalUnavailable as exc:
-            return _error(503, "inspection_task_journal_unavailable", str(exc))
-        product_session_id, runtime_error = _start_runtime_binding(gw, body)
-        if runtime_error is not None:
-            return runtime_error
-        assert product_session_id is not None
-        resolved = _resolve_map_id(gw, None)
-        if isinstance(resolved, JSONResponse):
-            return resolved
-        if body.map_id and body.map_id != resolved:
-            return _error(
-                409,
-                "inspection_active_map_mismatch",
-                "inspection can only start on the active map",
-                detail={"requested": body.map_id, "active": resolved},
-            )
-        try:
-            route = await asyncio.to_thread(
-                _run_store_operation,
-                gw,
-                "get",
-                resolved,
-                body.route_id,
-            )
-        except InspectionBoundaryError as exc:
-            return _native_error(exc)
-        try:
-            current_revision = int(route["revision"])
-        except (KeyError, TypeError, ValueError):
-            return _error(
-                503,
-                "inspection_route_revision_unavailable",
-                "stored inspection route has no valid revision",
-            )
-        if body.revision not in (0, current_revision):
-            return _error(
-                409,
-                "inspection_route_revision_mismatch",
-                "inspection start revision does not match the stored route",
-                detail={
-                    "requested": body.revision,
-                    "current": current_revision,
-                    "route_id": body.route_id,
-                },
-            )
-        try:
-            route_snapshot = task_timeline.prepare_route_snapshot(route)
-        except (TypeError, ValueError) as exc:
-            return _error(
-                503,
-                "inspection_route_snapshot_unavailable",
-                "stored inspection route cannot be preserved for task reporting",
-                detail={"reason": str(exc), "route_id": body.route_id},
-            )
-        request_id = _new_task_request_id(body.request_id)
-        task_id = _task_id_for_request(request_id)
-        try:
-            task_timeline.require_route_snapshot_compatible(
-                task_id,
-                route_snapshot,
-            )
-        except ValueError as exc:
-            return _error(
-                409,
-                "inspection_task_route_snapshot_mismatch",
-                "this start request already identifies a different route revision",
-                detail={
-                    "task_id": task_id,
-                    "request_id": request_id,
-                    "reason": str(exc),
-                },
-            )
-        except InspectionTaskJournalUnavailable as exc:
-            return _error(503, "inspection_task_journal_unavailable", str(exc))
-        evidence_error = _validate_route_evidence_worker(route)
-        if evidence_error is not None:
-            return evidence_error
-        try:
-            task_timeline.reserve_submission(
-                task_id=task_id,
-                action="start",
-                request_id=request_id,
-                route_snapshot=route_snapshot,
-                product_session_id=product_session_id,
-            )
-        except ValueError as exc:
-            return _error(
-                409,
-                "inspection_request_id_conflict",
-                "this request_id already identifies a different inspection command",
-                detail={
-                    "task_id": task_id,
-                    "request_id": request_id,
-                    "reason": str(exc),
-                },
-            )
-        except InspectionTaskJournalUnavailable as exc:
-            return _error(503, "inspection_task_journal_unavailable", str(exc))
-        recording_snapshot = task_timeline.query(task_id).get("recording")
-        new_recording_session_id = ""
-        rollback_recording_session_id = (
-            str(recording_snapshot.get("session_id") or "")
-            if isinstance(recording_snapshot, dict)
-            else ""
-        )
-        if not isinstance(recording_snapshot, dict):
-            recording_service = getattr(gw, "_recording", None)
-            if recording_service is None:
-                return _error(
-                    503,
-                    "inspection_recording_start_failed",
-                    "inspection evidence recording service is unavailable",
-                )
-            try:
-                started_recording = await asyncio.to_thread(
-                    recording_service.start,
-                    duration=0,
-                    prefix="inspection",
-                    capture_profile="evidence",
-                    task_id=task_id,
-                    camera=False,
-                )
-                new_recording_session_id = str(
-                    getattr(started_recording, "session_id", "") or ""
-                )
-                rollback_recording_session_id = new_recording_session_id
-                recording_product_session_id = str(
-                    getattr(started_recording, "product_session_id", "") or ""
-                )
-                task_timeline.bind_recording(
-                    task_id=task_id,
-                    session_id=new_recording_session_id,
-                    product_session_id=recording_product_session_id,
-                )
-            except NativeRecordingError as exc:
-                _LOGGER.warning("Inspection recording start failed [%s]: %s", exc.code, exc)
-                return _error(
-                    exc.status_code,
-                    "inspection_recording_start_failed",
-                    "inspection evidence recording could not be started",
-                    detail={"recording_error": exc.code},
-                )
-            except (InspectionTaskJournalUnavailable, ValueError) as exc:
-                cleanup_error = ""
-                if new_recording_session_id:
-                    try:
-                        await asyncio.to_thread(
-                            recording_service.stop,
-                            expected_session_id=new_recording_session_id,
-                        )
-                    except Exception as cleanup_exc:
-                        cleanup_error = str(
-                            getattr(cleanup_exc, "code", None)
-                            or cleanup_exc
-                            or "recording_stop_failed"
-                        )
-                return _error(
-                    503,
-                    "inspection_task_journal_commit_failed",
-                    str(exc),
-                    detail={
-                        "task_id": task_id,
-                        "request_id": request_id,
-                        **(
-                            {"orphan_cleanup_error": cleanup_error}
-                            if cleanup_error
-                            else {}
-                        ),
-                    },
-                )
-
-        async def rollback_recording() -> dict[str, Any]:
-            if not rollback_recording_session_id:
-                return {"attempted": False, "session_id": "", "state": "missing", "error": ""}
-            claimed = task_timeline.claim_recording_stop(task_id)
-            if claimed is None:
-                retained = task_timeline.query(task_id).get("recording")
-                return {
-                    "attempted": False,
-                    "session_id": rollback_recording_session_id,
-                    "state": str(retained.get("state") or "unknown")
-                    if isinstance(retained, dict)
-                    else "missing",
-                    "error": str(retained.get("error") or "")
-                    if isinstance(retained, dict)
-                    else "",
-                }
-            try:
-                await asyncio.to_thread(
-                    gw._recording.stop,
-                    expected_session_id=rollback_recording_session_id,
-                )
-            except NativeRecordingError as exc:
-                resulting_state = (
-                    "failed"
-                    if exc.code == "recording_session_mismatch"
-                    else "recording"
-                )
-                task_timeline.finish_recording_stop(
-                    task_id=task_id,
-                    expected_session_id=rollback_recording_session_id,
-                    state=resulting_state,
-                    error=exc.code,
-                )
-                return {
-                    "attempted": True,
-                    "session_id": rollback_recording_session_id,
-                    "state": resulting_state,
-                    "error": exc.code,
-                }
-            else:
-                task_timeline.finish_recording_stop(
-                    task_id=task_id,
-                    expected_session_id=rollback_recording_session_id,
-                    state="completed",
-                )
-                return {
-                    "attempted": True,
-                    "session_id": rollback_recording_session_id,
-                    "state": "completed",
-                    "error": "",
-                }
-
-        retained = task_timeline.query(task_id)
-        retained_recording = retained.get("recording")
-        recording_confirmed_active = (
-            isinstance(retained_recording, dict)
-            and retained_recording.get("state") == "recording"
-            and not str(retained_recording.get("error") or "")
-        )
-        if isinstance(retained_recording, dict) and not recording_confirmed_active:
-            submission = retained.get("last_submission")
-            if isinstance(submission, dict) and submission.get("request_id") == request_id:
-                return InspectionTaskCommandResponse(
-                    action="start",
-                    task_id=task_id,
-                    request_id=request_id,
-                    route_id=body.route_id,
-                    map_id=resolved,
-                    revision=current_revision,
-                )
-            if (
-                retained_recording.get("state") == "recording"
-                and retained_recording.get("error")
-            ):
-                cleanup = await rollback_recording()
-                return _task_command_rejected(
-                    RuntimeError("inspection recording requires exact-session cleanup"),
-                    action="start",
-                    task_id=task_id,
-                    request_id=request_id,
-                    recording_cleanup=cleanup,
-                )
-            return _task_command_rejected(
-                RuntimeError("inspection recording is not active after prior rejection"),
-                action="start",
-                task_id=task_id,
-                request_id=request_id,
-                recording_cleanup={
-                    "attempted": False,
-                    "session_id": str(retained_recording.get("session_id") or ""),
-                    "state": str(retained_recording.get("state") or "unknown"),
-                    "error": str(retained_recording.get("error") or ""),
-                },
-            )
-        try:
-            await asyncio.to_thread(
-                _run_native_task_command,
-                gw,
-                "start",
-                task_id,
-                route_id=body.route_id,
-                revision=current_revision,
-                request_id=request_id,
-            )
-        except InspectionCommandRejected as exc:
-            recording_cleanup = await rollback_recording()
-            return _task_command_rejected(
-                exc,
-                action="start",
-                task_id=task_id,
-                request_id=request_id,
-                recording_cleanup=recording_cleanup,
-            )
-        except InspectionBoundaryError as exc:
-            return _error(503, "inspection_native_unavailable", str(exc))
-        try:
-            task_timeline.record_submission(
-                task_id=task_id,
-                action="start",
-                request_id=request_id,
-                route_id=body.route_id,
-                map_id=resolved,
-                map_content_epoch=int(route.get("map_content_epoch", 0) or 0),
-                route_revision=current_revision,
-                route_snapshot=route_snapshot,
-                product_session_id=product_session_id,
-            )
-        except ValueError as exc:
-            return _error(
-                409,
-                "inspection_task_route_snapshot_mismatch",
-                "the accepted native command conflicts with the retained task identity",
-                detail={
-                    "task_id": task_id,
-                    "request_id": request_id,
-                    "reason": str(exc),
-                    "native_command_accepted": True,
-                    "retry_safe": False,
-                },
-            )
-        except InspectionTaskJournalUnavailable as exc:
-            return _error(
-                503,
-                "inspection_task_journal_commit_failed",
-                str(exc),
-                detail={
-                    "task_id": task_id,
-                    "request_id": request_id,
-                    "native_command_accepted": True,
-                    "retry_safe": False,
-                },
-            )
-        # This is a business ACK only. Execution and terminal truth arrive on
-        # the native task-event stream, so the receipt must never say RUNNING.
-        return InspectionTaskCommandResponse(
-            action="start",
-            task_id=task_id,
-            request_id=request_id,
-            route_id=body.route_id,
-            map_id=resolved,
-            revision=current_revision,
-        )
+        return await start_task(gw, body)
 
     async def _control_inspection_task(
         task_id: str,
@@ -1376,125 +1592,7 @@ def register_inspection_routes(app, gw) -> None:
         *,
         action: str,
     ) -> InspectionTaskCommandResponse | JSONResponse:
-        normalized_task_id = str(task_id or "").strip()
-        if not normalized_task_id:
-            return _error(400, "inspection_task_id_required", "inspection task_id is required")
-        task_timeline = ensure_inspection_task_timeline(gw)
-        try:
-            task_timeline.require_available()
-        except InspectionTaskJournalUnavailable as exc:
-            return _error(503, "inspection_task_journal_unavailable", str(exc))
-        request = body or InspectionTaskControlRequest(reason=f"operator_{action}")
-        request_id = _new_task_request_id(request.request_id)
-        default_reason = f"operator_{action}"
-        reason = str(request.reason or default_reason).strip() or default_reason
-        task = task_timeline.query(normalized_task_id)
-        task_product_session_id = str(task.get("product_session_id") or "").strip()
-        if not task_product_session_id:
-            return _error(
-                409,
-                "inspection_task_product_session_unbound",
-                "inspection task has no bound Product session and is read-only",
-            )
-        runtime_conflict = _control_runtime_conflict(
-            gw,
-            request,
-            task_product_session_id=task_product_session_id,
-        )
-        if runtime_conflict is not None:
-            return runtime_conflict
-        try:
-            task_timeline.reserve_submission(
-                task_id=normalized_task_id,
-                action=action,
-                request_id=request_id,
-                reason=reason,
-                product_session_id=task_product_session_id,
-            )
-        except ValueError as exc:
-            return _error(
-                409,
-                "inspection_request_id_conflict",
-                "this request_id already identifies a different inspection command",
-                detail={
-                    "task_id": normalized_task_id,
-                    "request_id": request_id,
-                    "action": action,
-                    "reason": str(exc),
-                },
-            )
-        except InspectionTaskJournalUnavailable as exc:
-            return _error(503, "inspection_task_journal_unavailable", str(exc))
-
-        def invoke_if_runtime_bound() -> JSONResponse | None:
-            final_conflict = _control_runtime_conflict(
-                gw,
-                request,
-                task_product_session_id=task_product_session_id,
-            )
-            if final_conflict is not None:
-                return final_conflict
-            _run_native_task_command(
-                gw,
-                action,
-                normalized_task_id,
-                reason=reason,
-                request_id=request_id,
-            )
-            return None
-
-        try:
-            runtime_conflict = await asyncio.to_thread(invoke_if_runtime_bound)
-            if runtime_conflict is not None:
-                return runtime_conflict
-        except InspectionCommandRejected as exc:
-            return _task_command_rejected(
-                exc,
-                action=action,
-                task_id=normalized_task_id,
-                request_id=request_id,
-            )
-        except InspectionBoundaryError as exc:
-            return _error(503, "inspection_native_unavailable", str(exc))
-        try:
-            task_timeline.record_submission(
-                task_id=normalized_task_id,
-                action=action,
-                request_id=request_id,
-                reason=reason,
-                product_session_id=task_product_session_id,
-            )
-        except ValueError as exc:
-            return _error(
-                409,
-                "inspection_request_id_conflict",
-                "the accepted native command conflicts with its reserved request_id",
-                detail={
-                    "task_id": normalized_task_id,
-                    "request_id": request_id,
-                    "action": action,
-                    "reason": str(exc),
-                    "native_command_accepted": True,
-                    "retry_safe": False,
-                },
-            )
-        except InspectionTaskJournalUnavailable as exc:
-            return _error(
-                503,
-                "inspection_task_journal_commit_failed",
-                str(exc),
-                detail={
-                    "task_id": normalized_task_id,
-                    "request_id": request_id,
-                    "native_command_accepted": True,
-                    "retry_safe": False,
-                },
-            )
-        return InspectionTaskCommandResponse(
-            action=action,
-            task_id=normalized_task_id,
-            request_id=request_id,
-        )
+        return await control_task(gw, task_id, body, action=action)
 
     @app.post(
         "/api/v1/inspection/tasks/{task_id}/pause",
@@ -1591,57 +1689,7 @@ def register_inspection_routes(app, gw) -> None:
         },
     )
     async def get_inspection_task_report(task_id: str):
-        task = ensure_inspection_task_timeline(gw).query(task_id)
-        if task.get("found") is not True:
-            reason = str(task.get("reason") or "task_status_unknown")
-            if reason in {"task_journal_corrupt", "task_journal_write_failed"}:
-                return _error(503, "inspection_task_journal_unavailable", reason)
-            return _error(
-                404,
-                "inspection_task_not_found",
-                "inspection task was not found",
-                detail={"task_id": task_id},
-            )
-        identity = task.get("identity")
-        if not isinstance(identity, dict):
-            identity = {}
-        map_id = str(identity.get("map_id") or "")
-        route_id = str(identity.get("route_id") or "")
-        if not map_id or not route_id:
-            return _error(
-                409,
-                "inspection_task_identity_incomplete",
-                "inspection task has no immutable route identity",
-                detail={"task_id": task_id},
-            )
-        route = task.get("route_snapshot")
-        if not isinstance(route, dict):
-            return _error(
-                409,
-                "inspection_task_route_snapshot_unavailable",
-                "inspection task has no immutable route requirements snapshot",
-                detail={
-                    "task_id": task_id,
-                    "route_id": route_id,
-                    "route_revision": int(identity.get("route_revision") or 0),
-                },
-            )
-        expected_revision = int(identity.get("route_revision") or 0)
-        actual_revision = int(route.get("revision") or 0)
-        if expected_revision <= 0 or actual_revision != expected_revision:
-            return _error(
-                409,
-                "inspection_task_route_revision_unavailable",
-                "the immutable route revision used by this task is unavailable",
-                detail={
-                    "task_id": task_id,
-                    "route_id": route_id,
-                    "expected_revision": expected_revision,
-                    "available_revision": actual_revision,
-                },
-            )
-        evidence = await asyncio.to_thread(_report_evidence_by_id, task)
-        return build_inspection_task_report(task, route, evidence)
+        return await task_report(gw, task_id)
 
     @app.get(
         "/api/v1/inspection/tasks/{task_id}",
@@ -1649,7 +1697,7 @@ def register_inspection_routes(app, gw) -> None:
         response_model=InspectionTaskStatusResponse,
     )
     async def get_inspection_task(task_id: str):
-        return ensure_inspection_task_timeline(gw).query(task_id)
+        return await get_task(gw, task_id)
 
     @app.get(
         "/api/v1/inspection/status",
@@ -1676,3 +1724,23 @@ def register_inspection_routes(app, gw) -> None:
             "status": status,
             "ts": time.time(),
         }
+
+    from gateway.routes.inspection_schedules import register_inspection_schedule_routes
+    from gateway.services.control_commands import ControlCommandService
+
+    async def validate_scheduled_route(body):
+        try:
+            route = await asyncio.to_thread(_run_store_operation, gw, "get", body.map_id, body.route_id)
+        except InspectionBoundaryError as exc:
+            return _native_error(exc)
+        if route.get("revision") != body.revision:
+            return _error(409, "inspection_route_revision_mismatch", "schedule requires the saved route revision")
+        return None
+
+    async def dispatch_scheduled_task(body):
+        rejection = ControlCommandService(gw).motion_safety_rejection("start_inspection_task", body)
+        if rejection is not None:
+            return rejection
+        return await start_inspection_task(body)
+
+    register_inspection_schedule_routes(app, gw, dispatch_scheduled_task, validate_scheduled_route)

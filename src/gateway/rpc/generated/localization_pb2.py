@@ -23,20 +23,21 @@ _sym_db = _symbol_database.Default()
 
 
 from . import common_pb2 as common__pb2
-from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
+try:
+  messages_dot_common__pb2 = common__pb2.messages_dot_common__pb2
+except AttributeError:
+  messages_dot_common__pb2 = common__pb2.messages.common_pb2
+from .messages import localization_pb2 as messages_dot_localization__pb2
 
+from .messages.localization_pb2 import *
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12localization.proto\x12\x07\x64oso.v1\x1a\x0c\x63ommon.proto\x1a\x1cgoogle/protobuf/struct.proto\"e\n\nPoseSample\x12\x1b\n\x04pose\x18\x01 \x01(\x0b\x32\r.doso.v1.Pose\x12\x10\n\x08\x66rame_id\x18\x02 \x01(\t\x12(\n\x07\x64\x65tails\x18\x03 \x01(\x0b\x32\x17.google.protobuf.Struct\"f\n\nRelocalize\x12!\n\x07\x63ommand\x18\x01 \x01(\x0b\x32\x10.doso.v1.Command\x12\x10\n\x08map_name\x18\x02 \x01(\t\x12#\n\x0cinitial_pose\x18\x03 \x01(\x0b\x32\r.doso.v1.Pose2\x9d\x01\n\x0cLocalization\x12+\n\x06Status\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12+\n\x04Pose\x12\x0e.doso.v1.Empty\x1a\x13.doso.v1.PoseSample\x12\x33\n\nRelocalize\x12\x13.doso.v1.Relocalize\x1a\x10.doso.v1.Receiptb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12localization.proto\x12\x07\x64oso.v1\x1a\x0c\x63ommon.proto\x1a\x1bmessages/localization.proto2\xff\x02\n\x0cLocalization\x12+\n\x06Status\x12\x0e.doso.v1.Empty\x1a\x11.doso.v1.Snapshot\x12\x33\n\x05State\x12\x0e.doso.v1.Empty\x1a\x1a.doso.v1.LocalizationState\x12+\n\x04Pose\x12\x0e.doso.v1.Empty\x1a\x13.doso.v1.PoseSample\x12\x32\n\tWatchPose\x12\x0e.doso.v1.Empty\x1a\x13.doso.v1.PoseSample0\x01\x12\x37\n\x08Location\x12\x0e.doso.v1.Empty\x1a\x1b.doso.v1.GeographicLocation\x12>\n\rWatchLocation\x12\x0e.doso.v1.Empty\x1a\x1b.doso.v1.GeographicLocation0\x01\x12\x33\n\nRelocalize\x12\x13.doso.v1.Relocalize\x1a\x10.doso.v1.ReceiptP\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'localization_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_POSESAMPLE']._serialized_start=75
-  _globals['_POSESAMPLE']._serialized_end=176
-  _globals['_RELOCALIZE']._serialized_start=178
-  _globals['_RELOCALIZE']._serialized_end=280
-  _globals['_LOCALIZATION']._serialized_start=283
-  _globals['_LOCALIZATION']._serialized_end=440
+  _globals['_LOCALIZATION']._serialized_start=75
+  _globals['_LOCALIZATION']._serialized_end=458
 # @@protoc_insertion_point(module_scope)

@@ -3,6 +3,7 @@
 import socket
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import contextmanager
 from types import SimpleNamespace
 
@@ -58,7 +59,7 @@ def development_policy(monkeypatch):
     monkeypatch.delenv("LINGTU_MEDIA_VIEWER_TOKEN", raising=False)
 
 
-@pytest.mark.parametrize("method", ["CameraFrame", "WatchCamera"])
+@pytest.mark.parametrize("method", ["CameraFrame", "WatchCamera", "CameraSample", "WatchCameraSamples"])
 @pytest.mark.parametrize("token,header,code", [
     (None, None, grpc.StatusCode.UNAVAILABLE),
     ("viewer", None, grpc.StatusCode.UNAUTHENTICATED),
@@ -70,10 +71,10 @@ def test_camera_uses_media_bearer(monkeypatch, method, token, header, code):
     if token:
         monkeypatch.setenv("LINGTU_MEDIA_VIEWER_TOKEN", token)
     metadata = [("authorization", header)] if header else [("x-api-key", "viewer")]
-    with endpoint() as (_, stub, _):
+    with endpoint(relay=True, cold=True) as (_, stub, _):
         def read():
             result = getattr(stub, method)(common_pb.Empty(), metadata=metadata, timeout=2)
-            if method == "WatchCamera":
+            if method.startswith("Watch"):
                 try:
                     return next(result)
                 finally:
@@ -84,7 +85,9 @@ def test_camera_uses_media_bearer(monkeypatch, method, token, header, code):
                 read()
             assert error.value.code() == code
         else:
-            assert read().jpeg == b"jpeg-first"
+            result = read()
+            expected = b"jpeg-second" if method.startswith("Watch") else b"jpeg-first"
+            assert (result.frame.jpeg if "Sample" in method else result.jpeg) == expected
 
 
 def test_snapshot_reuses_jpeg_and_missing_frame_is_unavailable():
@@ -94,6 +97,35 @@ def test_snapshot_reuses_jpeg_and_missing_frame_is_unavailable():
         with pytest.raises(grpc.RpcError) as error:
             stub.CameraFrame(common_pb.Empty(), timeout=2)
         assert error.value.code() == grpc.StatusCode.UNAVAILABLE
+
+
+def test_camera_samples_preserve_source_sequence_and_unknown_metadata():
+    with endpoint(relay=True) as (gateway, stub, _):
+        snapshot = stub.CameraSample(common_pb.Empty(), timeout=2)
+        assert snapshot.frame.jpeg == b"jpeg-first"
+        assert snapshot.info.encoding == "jpeg"
+        assert not snapshot.info.HasField("camera_id")
+        assert not snapshot.info.HasField("width_px")
+        assert not snapshot.info.HasField("height_px")
+        assert not snapshot.info.HasField("frame_id")
+        assert not snapshot.HasField("sequence")
+        assert not snapshot.HasField("time")
+
+        call = stub.WatchCameraSamples(common_pb.Empty(), timeout=2)
+        call.initial_metadata()
+        gateway._camera_module.publish()
+        first = next(call)
+        assert first.frame.jpeg == b"jpeg-second"
+        assert first.info.encoding == "jpeg"
+        assert first.sequence == 2
+        assert not first.HasField("time")
+        with gateway._jpeg_lock:
+            gateway._latest_jpeg = b"jpeg-third"
+            gateway._latest_jpeg_seq += 1
+        second = next(call)
+        assert second.frame.jpeg == b"jpeg-third"
+        assert second.sequence == 3
+        call.cancel()
 
 
 def test_cold_stream_waits_for_encoder_then_sends_changed_frames():
@@ -118,9 +150,9 @@ def test_empty_or_stalled_stream_ends_and_unregisters(monkeypatch):
             next(stub.WatchCamera(common_pb.Empty(), timeout=2))
         assert error.value.code() == grpc.StatusCode.UNAVAILABLE
         assert gateway._camera_module.clients == 0
-    with endpoint(relay=True) as (gateway, stub, _):
+    with endpoint(relay=True, cold=True) as (gateway, stub, _):
         call = stub.WatchCamera(common_pb.Empty(), timeout=2)
-        assert next(call).jpeg == b"jpeg-first"
+        assert next(call).jpeg == b"jpeg-second"
         with pytest.raises(grpc.RpcError) as error:
             next(call)
         assert error.value.code() == grpc.StatusCode.UNAVAILABLE
@@ -131,9 +163,12 @@ def test_camera_streams_share_limit_and_leave_ping_available():
     with endpoint(relay=True) as (gateway, stub, system):
         calls = [stub.WatchCamera(common_pb.Empty(), timeout=3) for _ in range(8)]
         try:
-            assert all(next(call).jpeg == b"jpeg-first" for call in calls)
+            for call in calls:
+                call.initial_metadata()
+            gateway._camera_module.publish()
+            assert all(next(call).jpeg == b"jpeg-second" for call in calls)
             with pytest.raises(grpc.RpcError) as error:
-                next(stub.WatchCamera(common_pb.Empty(), timeout=2))
+                next(stub.WatchCameraSamples(common_pb.Empty(), timeout=2))
             assert error.value.code() == grpc.StatusCode.RESOURCE_EXHAUSTED
             assert system.Ping(common_pb.Empty(), timeout=2).status == "ok"
         finally:
@@ -143,3 +178,43 @@ def test_camera_streams_share_limit_and_leave_ping_available():
         while gateway._camera_module.clients and time.monotonic() < deadline:
             time.sleep(0.01)
         assert gateway._camera_module.clients == 0
+
+
+@pytest.mark.parametrize("method", ["WatchCamera", "WatchCameraSamples"])
+def test_cached_frame_waits_for_publication_after_subscription(method):
+    with endpoint(relay=True) as (gateway, stub, _):
+        call = getattr(stub, method)(common_pb.Empty(), timeout=3)
+        call.initial_metadata()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(next, call)
+            try:
+                with pytest.raises(TimeoutError):
+                    pending.result(timeout=0.1)
+                gateway._camera_module.publish()
+                received = pending.result(timeout=1)
+                assert (received.frame.jpeg if "Samples" in method else received.jpeg) == b"jpeg-second"
+            finally:
+                call.cancel()
+
+
+def test_cancel_before_first_frame_unregisters_and_releases_slot():
+    with endpoint(relay=True) as (gateway, stub, _):
+        for _ in range(9):
+            call = stub.WatchCamera(common_pb.Empty(), timeout=2)
+            call.initial_metadata()
+            call.cancel()
+            deadline = time.monotonic() + 1
+            while gateway._camera_module.clients and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert gateway._camera_module.clients == 0
+
+
+def test_cancelled_request_does_not_register_camera_client():
+    gateway = SimpleNamespace()
+    gateway._camera_module = Relay(gateway)
+    context = SimpleNamespace(invocation_metadata=lambda: (), add_callback=lambda callback: False)
+    slots = threading.BoundedSemaphore(1)
+
+    assert list(camera.watch(gateway, context, slots)) == []
+    assert gateway._camera_module.clients == 0
+    assert slots.acquire(blocking=False)
